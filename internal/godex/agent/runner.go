@@ -5,11 +5,13 @@ import (
 	"fmt"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/google/uuid"
 	godecommands "github.com/pandelisz/gode/internal/godex/commands"
 	"github.com/pandelisz/gode/internal/godex/contextwindow"
 	"github.com/pandelisz/gode/internal/godex/eventbus"
+	"github.com/pandelisz/gode/internal/godex/goals"
 	"github.com/pandelisz/gode/internal/godex/journal"
 	messagestore "github.com/pandelisz/gode/internal/godex/message"
 	"github.com/pandelisz/gode/internal/godex/provider"
@@ -28,6 +30,7 @@ type Config struct {
 	Model                 string
 	DisableAutoCompaction bool
 	AutoCompactTokenLimit int
+	Goals                 *goals.Runtime
 	ContextMessages       []provider.Message
 	Skills                []godeskills.Skill
 	Commands              []godecommands.Command
@@ -43,6 +46,7 @@ type Runner struct {
 	model                 string
 	disableAutoCompaction bool
 	autoCompactTokenLimit int
+	goals                 *goals.Runtime
 	contextMessages       []provider.Message
 	skills                []godeskills.Skill
 	commands              []godecommands.Command
@@ -76,6 +80,7 @@ func NewRunner(cfg Config) *Runner {
 		model:                 cfg.Model,
 		disableAutoCompaction: cfg.DisableAutoCompaction,
 		autoCompactTokenLimit: cfg.AutoCompactTokenLimit,
+		goals:                 cfg.Goals,
 		contextMessages:       append([]provider.Message(nil), cfg.ContextMessages...),
 		skills:                append([]godeskills.Skill(nil), cfg.Skills...),
 		commands:              append([]godecommands.Command(nil), cfg.Commands...),
@@ -165,10 +170,12 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (RunResult, error) {
 			Tools:          r.providerToolSpecs(),
 			Compaction:     compaction,
 		}
+		started := time.Now()
 		outcome, err := r.streamProviderTurn(ctx, req, providerReq, messages, final, &stats, true)
 		if err != nil {
 			return RunResult{}, r.fail(ctx, req, err)
 		}
+		r.recordGoalUsage(ctx, req, providerReq.Messages, time.Since(started))
 		messages = outcome.Messages
 		final = outcome.Final
 		if outcome.HadToolCall {
@@ -189,10 +196,12 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (RunResult, error) {
 			Messages:       messages,
 			Compaction:     compaction,
 		}
+		started := time.Now()
 		outcome, err := r.streamProviderTurn(ctx, req, providerReq, messages, final, &stats, false)
 		if err != nil {
 			return RunResult{}, r.fail(ctx, req, err)
 		}
+		r.recordGoalUsage(ctx, req, providerReq.Messages, time.Since(started))
 		messages = outcome.Messages
 		final = outcome.Final
 	}
@@ -220,6 +229,11 @@ func (r *Runner) initialMessages(ctx context.Context, req RunRequest, runMessage
 			return nil, err
 		}
 		messages = append(providerMessages(excludeRunMessages(prior, req.RunID)), messages...)
+	}
+	if goalMessage, ok, err := r.goalContextMessage(ctx, req.SessionID); err != nil {
+		return nil, err
+	} else if ok {
+		messages = append(messages, goalMessage)
 	}
 	messages = append(messages, provider.Message{Role: provider.RoleUser, Content: prompt})
 	return messages, nil

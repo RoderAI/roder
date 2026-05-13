@@ -166,7 +166,7 @@ func New(ctx context.Context, cfg Config) (*App, error) {
 		_ = shutdownTelemetry(ctx)
 		return nil, err
 	}
-	runner := agent.NewRunner(runnerConfig(cfg, bus, store, sessionStore, messageStore, reg, prov, repoContext, skillCatalog.Skills, commandCatalog.Commands))
+	runner := agent.NewRunner(runnerConfig(cfg, bus, store, sessionStore, messageStore, reg, goalRuntime, prov, repoContext, skillCatalog.Skills, commandCatalog.Commands))
 
 	return &App{
 		Config:            cfg,
@@ -228,7 +228,7 @@ func (a *App) SetModelReasoning(model string, reasoning string) error {
 
 	a.Config = cfg
 	a.provider = prov
-	a.runner = agent.NewRunner(runnerConfig(cfg, a.Bus, a.Journal, a.Sessions, a.Messages, a.Tools, prov, a.contextMessages, a.skills, a.commands))
+	a.runner = agent.NewRunner(runnerConfig(cfg, a.Bus, a.Journal, a.Sessions, a.Messages, a.Tools, a.Goals, prov, a.contextMessages, a.skills, a.commands))
 	return nil
 }
 
@@ -242,11 +242,11 @@ func (a *App) SetFastMode(fastMode bool) error {
 
 	a.Config = cfg
 	a.provider = prov
-	a.runner = agent.NewRunner(runnerConfig(cfg, a.Bus, a.Journal, a.Sessions, a.Messages, a.Tools, prov, a.contextMessages, a.skills, a.commands))
+	a.runner = agent.NewRunner(runnerConfig(cfg, a.Bus, a.Journal, a.Sessions, a.Messages, a.Tools, a.Goals, prov, a.contextMessages, a.skills, a.commands))
 	return nil
 }
 
-func runnerConfig(cfg Config, bus *eventbus.Bus, journalStore *journal.Store, sessionStore *session.Store, messageStore *messagestore.Store, registry *tools.Registry, prov provider.Provider, contextMessages []provider.Message, skills []godeskills.Skill, commands []godecommands.Command) agent.Config {
+func runnerConfig(cfg Config, bus *eventbus.Bus, journalStore *journal.Store, sessionStore *session.Store, messageStore *messagestore.Store, registry *tools.Registry, goalRuntime *goals.Runtime, prov provider.Provider, contextMessages []provider.Message, skills []godeskills.Skill, commands []godecommands.Command) agent.Config {
 	return agent.Config{
 		Bus:                   bus,
 		Journal:               journalStore,
@@ -257,6 +257,7 @@ func runnerConfig(cfg Config, bus *eventbus.Bus, journalStore *journal.Store, se
 		Model:                 cfg.Model,
 		DisableAutoCompaction: cfg.DisableAutoCompaction,
 		AutoCompactTokenLimit: cfg.AutoCompactTokenLimit,
+		Goals:                 goalRuntime,
 		ContextMessages:       contextMessages,
 		Skills:                skills,
 		Commands:              commands,
