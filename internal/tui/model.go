@@ -29,6 +29,7 @@ type runDoneMsg struct {
 type Model struct {
 	app          *godex.App
 	zones        *zone.Manager
+	transcript   components.TranscriptCache
 	input        textarea.Model
 	messages     []viewmodel.Message
 	nextID       int
@@ -39,6 +40,10 @@ type Model struct {
 	running      bool
 	hoveredID    string
 	status       string
+
+	transcriptLineWidth int
+	transcriptLineTotal int
+	transcriptLineDirty bool
 }
 
 func New(app *godex.App) Model {
@@ -53,11 +58,13 @@ func New(app *godex.App) Model {
 	applyComposerStyles(&input)
 	input.Focus()
 	return Model{
-		app:        app,
-		zones:      zone.New(),
-		input:      input,
-		followTail: true,
-		status:     "ready",
+		app:                 app,
+		zones:               zone.New(),
+		transcript:          components.NewTranscriptCache(),
+		input:               input,
+		followTail:          true,
+		status:              "ready",
+		transcriptLineDirty: true,
 	}
 }
 
@@ -81,9 +88,13 @@ func (m Model) Init() tea.Cmd {
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
+		oldWrapWidth := m.transcriptWrapWidth()
 		m.width = msg.Width
 		m.height = msg.Height
 		m.input.SetWidth(max(20, msg.Width-4))
+		if m.transcriptWrapWidth() != oldWrapWidth {
+			m.markTranscriptLinesDirty()
+		}
 		m.clampScroll()
 		return m, nil
 	case tea.KeyPressMsg:
@@ -157,7 +168,7 @@ func (m Model) View() tea.View {
 		vm.Provider = m.app.Config.Provider
 		vm.Model = m.app.Config.Model
 	}
-	view := tea.NewView(m.zones.Scan(components.Render(vm, m.zones)))
+	view := tea.NewView(m.zones.Scan(components.RenderWithCache(vm, m.zones, &m.transcript)))
 	view.AltScreen = true
 	view.MouseMode = tea.MouseModeAllMotion
 	view.WindowTitle = "gode"
@@ -257,9 +268,13 @@ func (m *Model) addMessage(role viewmodel.Role, title string, body string) {
 	if overflow := len(m.messages) - maxTranscriptMessages; overflow > 0 {
 		m.messages = m.messages[overflow:]
 		m.scrollOffset = max(0, m.scrollOffset-overflow)
+		m.transcript.Prune(m.messages)
+		m.markTranscriptLinesDirty()
 	}
+	m.markTranscriptLinesDirty()
 	if m.followTail {
 		m.scrollOffset = 0
+		return
 	}
 	m.clampScroll()
 }
@@ -269,6 +284,7 @@ func (m *Model) appendAssistantDelta(text string) {
 		last := &m.messages[len(m.messages)-1]
 		if last.Role == viewmodel.RoleAssistant {
 			last.Body += text
+			m.markTranscriptLinesDirty()
 			if m.followTail {
 				m.scrollOffset = 0
 			}
@@ -302,111 +318,11 @@ func (m *Model) updateHover(msg tea.MouseMsg) {
 	m.hoveredID = ""
 }
 
-func (m *Model) scrollBy(delta int) {
-	m.scrollOffset = clamp(m.scrollOffset+delta, 0, m.maxScrollOffset())
-	m.followTail = m.scrollOffset == 0
-}
-
-func (m *Model) scrollToOldest() {
-	m.scrollOffset = m.maxScrollOffset()
-	m.followTail = false
-}
-
-func (m *Model) follow() {
-	m.scrollOffset = 0
-	m.followTail = true
-}
-
 func truncate(text string, limit int) string {
 	if len(text) <= limit {
 		return text
 	}
 	return text[:limit] + "\n... truncated in TUI; full result is in the event journal"
-}
-
-func (m *Model) clampScroll() {
-	m.scrollOffset = clamp(m.scrollOffset, 0, m.maxScrollOffset())
-	if m.scrollOffset == 0 {
-		m.followTail = true
-	}
-}
-
-func (m Model) maxScrollOffset() int {
-	return max(0, m.transcriptLineCount()-m.visibleTranscriptLines())
-}
-
-func (m Model) visibleTranscriptLines() int {
-	composerHeight := max(3, m.input.Height()+2)
-	transcriptHeight := max(6, m.height-composerHeight-2)
-	return max(1, transcriptHeight-2)
-}
-
-func (m Model) transcriptLineCount() int {
-	width := max(12, m.width-4)
-	total := 0
-	for _, msg := range m.messages {
-		total++
-		total += countWrappedLines(msg.Body, width)
-	}
-	return total
-}
-
-func countWrappedLines(text string, width int) int {
-	text = strings.TrimSpace(text)
-	if text == "" {
-		return 1
-	}
-
-	total := 0
-	for _, raw := range strings.Split(text, "\n") {
-		words := strings.Fields(raw)
-		if len(words) == 0 {
-			total++
-			continue
-		}
-
-		line := ""
-		for _, word := range words {
-			if lipgloss.Width(word) > width {
-				if line != "" {
-					total++
-					line = ""
-				}
-				total += longWordLines(word, width)
-				continue
-			}
-			if line == "" {
-				line = word
-				continue
-			}
-			next := line + " " + word
-			if lipgloss.Width(next) > width {
-				total++
-				line = word
-				continue
-			}
-			line = next
-		}
-		if line != "" {
-			total++
-		}
-	}
-	return total
-}
-
-func longWordLines(word string, width int) int {
-	lines := 1
-	line := ""
-	for _, r := range word {
-		next := line + string(r)
-		if line != "" && lipgloss.Width(next) > width {
-			lines++
-			line = string(r)
-			continue
-		}
-		line = next
-	}
-	return lines
 }
 
 func max(a, b int) int {

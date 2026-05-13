@@ -7,6 +7,10 @@ import (
 )
 
 func Render(vm viewmodel.Model, zones *zone.Manager) string {
+	return RenderWithCache(vm, zones, nil)
+}
+
+func RenderWithCache(vm viewmodel.Model, zones *zone.Manager, transcriptCache *TranscriptCache) string {
 	width := max(40, vm.Width)
 	composerHeight := max(3, vm.InputHeight+2)
 	bodyHeight := max(6, vm.Height-composerHeight-2)
@@ -14,7 +18,7 @@ func Render(vm viewmodel.Model, zones *zone.Manager) string {
 	return lipgloss.JoinVertical(
 		lipgloss.Left,
 		Header(width, vm.Provider, vm.Model, vm.Running),
-		Transcript(width, bodyHeight, vm.Messages, vm.ScrollOffset, vm.HoveredID, zones),
+		TranscriptWithCache(width, bodyHeight, vm.Messages, vm.ScrollOffset, vm.HoveredID, zones, transcriptCache),
 		Composer(width, vm.Input),
 		Footer(width, vm.ScrollOffset, vm.Status),
 	)
