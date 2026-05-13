@@ -2,4 +2,10 @@
 /bin/
 /dist/
 /tmp/
+.gode/
+__pycache__/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
 *.test
+*.pyc
