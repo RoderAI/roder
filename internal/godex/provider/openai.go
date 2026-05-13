@@ -106,19 +106,28 @@ func (o *OpenAI) Stream(ctx context.Context, req Request) (<-chan Event, <-chan 
 				if ev.Item.Type == "function_call" && !emittedToolItems[ev.Item.ID] {
 					call := ev.Item.AsFunctionCall()
 					callID := firstNonEmpty(call.CallID, toolCallIDs[ev.Item.ID], call.ID)
+					var items []Item
+					if raw, ok := rawResponseOutputItem(ev.Item); ok {
+						items = providerItemsFromRaw([]json.RawMessage{raw})
+					}
 					events <- Event{Kind: EventToolCall, ToolRequest: &ToolRequest{
 						ID:        callID,
 						Name:      call.Name,
 						Input:     decodeArgs(call.Arguments),
 						Arguments: call.Arguments,
-					}}
+					}, Items: items}
 					emittedToolItems[ev.Item.ID] = true
 				}
 			case "response.completed":
 				if final == "" {
 					final = ev.Response.OutputText()
 				}
-				events <- Event{Kind: EventCompleted, Text: final}
+				events <- Event{
+					Kind:       EventCompleted,
+					Text:       final,
+					ResponseID: ev.Response.ID,
+					Items:      providerItemsFromRaw(rawResponseOutputItems(ev.Response.Output)),
+				}
 			case "response.failed", "error":
 				errs <- &ProviderError{Message: ev.Message}
 				return
