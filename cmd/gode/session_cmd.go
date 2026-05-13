@@ -16,21 +16,28 @@ import (
 
 func runSession(args []string) error {
 	if len(args) == 0 {
-		return fmt.Errorf("usage: gode session list|show|debug|compact|last|rename|delete")
+		return fmt.Errorf("usage: gode session list|show|debug|compact|doctor|repair|last|rename|delete")
 	}
 	command := args[0]
 	flags := newFlagSet("gode session " + command)
 	cfg := godex.DefaultConfig()
 	runID := ""
 	debugSessionID := ""
+	repairFromJournal := false
 	if command == "debug" {
 		flags.StringVar(&runID, "run", runID, "run id to filter")
 	}
+	if command == "repair" {
+		flags.BoolVar(&repairFromJournal, "from-journal", false, "write repaired session files from events.jsonl beside originals")
+	}
 	bindConfigFlags(flags, &cfg)
 	switch command {
-	case "list", "last":
+	case "list", "last", "doctor", "repair":
 		if err := flags.Parse(args[1:]); err != nil {
 			return err
+		}
+		if command == "repair" && !repairFromJournal {
+			return fmt.Errorf("usage: gode session repair --from-journal")
 		}
 	case "show", "delete", "compact":
 		if err := flags.Parse(args[1:]); err != nil {
@@ -146,12 +153,40 @@ func runSession(args []string) error {
 			return err
 		}
 		fmt.Printf("compacted\t%s\t%s\titems=%d\n", result.SessionID, result.ResponseID, result.OutputItems)
+	case "doctor":
+		report, err := session.Doctor(ctx, loaded.Config.DataDir)
+		if err != nil {
+			return err
+		}
+		printRepairReport(report)
+	case "repair":
+		report, err := session.RepairFromJournal(ctx, loaded.Config.DataDir, filepath.Join(loaded.Config.DataDir, "events.jsonl"))
+		if err != nil {
+			return err
+		}
+		printRepairReport(report)
 	}
 	return nil
 }
 
 func printSession(item session.Session) {
 	fmt.Printf("%s\t%s\t%d\t%s\n", item.ID, item.UpdatedAt.Format("2006-01-02T15:04:05Z07:00"), item.MessageCount, item.Title)
+}
+
+func printRepairReport(report session.RepairReport) {
+	fmt.Printf("sessions\t%d\n", report.Sessions)
+	fmt.Printf("turns\t%d\n", report.Turns)
+	fmt.Printf("items\t%d\n", report.Items)
+	fmt.Printf("missing_index\t%d\n", report.MissingIndex)
+	fmt.Printf("missing_turns\t%d\n", report.MissingTurns)
+	fmt.Printf("invalid_items\t%d\n", report.InvalidItems)
+	fmt.Printf("repair_actions\t%d\n", len(report.RepairActions))
+	for _, diagnostic := range report.Diagnostics {
+		fmt.Println("diagnostic\t" + diagnostic)
+	}
+	for _, action := range report.RepairActions {
+		fmt.Println("action\t" + action)
+	}
 }
 
 func printMessage(msg messagestore.Message) {
