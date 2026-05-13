@@ -46,6 +46,16 @@ func TestParseConfigAppliesFlags(t *testing.T) {
 	}
 }
 
+func TestUnknownCommandReturnsError(t *testing.T) {
+	err := run(context.Background(), []string{"does-not-exist"})
+	if err == nil {
+		t.Fatal("expected unknown command error")
+	}
+	if !strings.Contains(err.Error(), `unknown command "does-not-exist"`) {
+		t.Fatalf("error = %v", err)
+	}
+}
+
 func TestParseAppServerConfigAppliesFlags(t *testing.T) {
 	mcpConfig := filepath.Join(t.TempDir(), "mcp.json")
 	if err := os.WriteFile(mcpConfig, []byte(`{"mcp":{"helper":{"command":"/bin/echo","args":["hi"]}}}`), 0o600); err != nil {

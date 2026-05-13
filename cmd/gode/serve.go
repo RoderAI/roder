@@ -37,18 +37,6 @@ func runServe(ctx context.Context, command string, args []string) error {
 	return serveWithConfig(ctx, command, cfg, listen, defaultServeIO())
 }
 
-func runRemoteRuntime(ctx context.Context, args []string) error {
-	return runRemoteRuntimeWithIO(ctx, args, defaultServeIO())
-}
-
-func runRemoteRuntimeWithIO(ctx context.Context, args []string, ioStreams serveIO) error {
-	cfg, listen, err := parseRemoteRuntimeConfig(args)
-	if err != nil {
-		return err
-	}
-	return serveWithConfig(ctx, "gode remote-runtime", cfg, listen, ioStreams)
-}
-
 func defaultServeIO() serveIO {
 	return serveIO{stdin: os.Stdin, stdout: os.Stdout, stderr: os.Stderr}
 }
@@ -97,48 +85,6 @@ func parseServeConfig(command string, args []string) (godex.Config, appserver.Li
 		return cfg, appserver.ListenConfig{}, err
 	}
 	cfg = loaded.Config
-	if mcpConfigPath != "" {
-		if err := applyMCPConfigPath(&cfg, mcpConfigPath); err != nil {
-			return cfg, appserver.ListenConfig{}, err
-		}
-	}
-	listen, err := appserver.ParseListenURL(listenRaw)
-	if err != nil {
-		return cfg, appserver.ListenConfig{}, err
-	}
-	return cfg, listen, nil
-}
-
-func parseRemoteRuntimeConfig(args []string) (godex.Config, appserver.ListenConfig, error) {
-	flags := newFlagSet("gode remote-runtime")
-	cfg := godex.DefaultConfig()
-	listenRaw := "stdio://"
-	cwd := ""
-	mcpConfigPath := ""
-	flags.StringVar(&listenRaw, "listen", listenRaw, "local protocol endpoint: stdio://, ws://IP:PORT, or off")
-	flags.StringVar(&cwd, "cwd", cwd, "workspace root to pin for this local runtime")
-	flags.StringVar(&mcpConfigPath, "mcp-config", mcpConfigPath, "path to an MCP config file")
-	bindConfigFlags(flags, &cfg)
-	flags.Usage = func() {
-		fmt.Fprintf(flags.Output(), "Usage of %s:\n", flags.Name())
-		flags.PrintDefaults()
-		fmt.Fprintln(flags.Output(), "Cloud workspace creation, TLS pinning, tunnels, git bootstrap, and machine APIs are outside this local phase.")
-	}
-	if err := flags.Parse(args); err != nil {
-		return cfg, appserver.ListenConfig{}, err
-	}
-	cwd = strings.TrimSpace(cwd)
-	if cwd != "" {
-		cfg.Workspace = cwd
-	}
-	loaded, err := loadConfigFromFlags(cfg, flags)
-	if err != nil {
-		return cfg, appserver.ListenConfig{}, err
-	}
-	cfg = loaded.Config
-	if cwd != "" {
-		cfg.Workspace = cwd
-	}
 	if mcpConfigPath != "" {
 		if err := applyMCPConfigPath(&cfg, mcpConfigPath); err != nil {
 			return cfg, appserver.ListenConfig{}, err
