@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"time"
 
 	"charm.land/bubbles/v2/textarea"
 	tea "charm.land/bubbletea/v2"
@@ -61,6 +62,8 @@ type Model struct {
 	transcriptLineRefs  []selection.TranscriptLineRef
 	composerSelection   selection.OffsetRange
 	composerMouseDown   bool
+	clipboardWrite      selection.ClipboardWriter
+	copyNoticeUntil     time.Time
 
 	transcriptLineWidth int
 	transcriptLineTotal int
@@ -91,6 +94,7 @@ func New(app *godex.App) Model {
 		contextLeft:         defaultContextLeft(app),
 		transcriptLineDirty: true,
 		messageKeys:         map[string]string{},
+		clipboardWrite:      selection.SystemClipboardWriter,
 	}
 	if app != nil && app.Bus != nil {
 		ctx, cancel := context.WithCancel(context.Background())
@@ -149,6 +153,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.status = "ready"
 				return m, nil
 			}
+		}
+		if m.handleSelectionKey(msg) {
+			return m, nil
 		}
 		switch msg.String() {
 		case "ctrl+c", "esc":
