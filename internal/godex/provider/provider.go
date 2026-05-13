@@ -36,6 +36,27 @@ type ToolRequest struct {
 	Arguments string
 }
 
+type ItemKind string
+
+const (
+	ItemMessage      ItemKind = "message"
+	ItemFunctionCall ItemKind = "function_call"
+	ItemFunctionOut  ItemKind = "function_call_output"
+	ItemReasoning    ItemKind = "reasoning"
+	ItemCompaction   ItemKind = "compaction"
+	ItemRaw          ItemKind = "raw"
+)
+
+type Item struct {
+	ID         string
+	Kind       ItemKind
+	Role       string
+	ToolName   string
+	ToolCallID string
+	Text       string
+	RawJSON    json.RawMessage
+}
+
 type EventKind string
 
 const (
@@ -50,6 +71,8 @@ type Event struct {
 	Kind        EventKind
 	Text        string
 	ToolRequest *ToolRequest
+	ResponseID  string
+	Items       []Item
 }
 
 type CompactionOptions struct {

@@ -45,3 +45,35 @@ func TestResponsesItemConversionPreservesRawCompactionItems(t *testing.T) {
 		}
 	}
 }
+
+func TestOpenAIItemConversionPreservesOutputShapes(t *testing.T) {
+	items := providerItemsFromRaw([]json.RawMessage{
+		json.RawMessage(`{"id":"msg_1","type":"message","role":"assistant","content":[{"type":"output_text","text":"hello"}]}`),
+		json.RawMessage(`{"id":"fc_1","type":"function_call","call_id":"call_1","name":"read_file","arguments":"{\"path\":\"README.md\"}"}`),
+		json.RawMessage(`{"type":"function_call_output","call_id":"call_1","output":"contents"}`),
+		json.RawMessage(`{"id":"rs_1","type":"reasoning","summary":[{"type":"summary_text","text":"looked around"}]}`),
+		json.RawMessage(`{"id":"cmp_1","type":"compaction","encrypted_content":"opaque"}`),
+		json.RawMessage(`{"id":"weird_1","type":"new_future_item","payload":true}`),
+	})
+	if len(items) != 6 {
+		t.Fatalf("items = %#v", items)
+	}
+	if items[0].Kind != ItemMessage || items[0].Role != "assistant" || items[0].Text != "hello" {
+		t.Fatalf("message item = %#v", items[0])
+	}
+	if items[1].Kind != ItemFunctionCall || items[1].ToolCallID != "call_1" || items[1].ToolName != "read_file" || !strings.Contains(items[1].Text, "README.md") {
+		t.Fatalf("function call item = %#v", items[1])
+	}
+	if items[2].Kind != ItemFunctionOut || items[2].ToolCallID != "call_1" || items[2].Text != "contents" {
+		t.Fatalf("function output item = %#v", items[2])
+	}
+	if items[3].Kind != ItemReasoning || items[3].Text != "looked around" {
+		t.Fatalf("reasoning item = %#v", items[3])
+	}
+	if items[4].Kind != ItemCompaction || len(items[4].RawJSON) == 0 {
+		t.Fatalf("compaction item = %#v", items[4])
+	}
+	if items[5].Kind != ItemRaw || !strings.Contains(string(items[5].RawJSON), "new_future_item") {
+		t.Fatalf("raw item = %#v", items[5])
+	}
+}
