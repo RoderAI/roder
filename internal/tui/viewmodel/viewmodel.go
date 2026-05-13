@@ -3,6 +3,7 @@ package viewmodel
 import "github.com/pandelisz/gode/internal/tui/selection"
 
 const TranscriptZoneID = "transcript"
+const ComposerZoneID = "composer"
 
 type Role string
 
@@ -41,6 +42,7 @@ type Model struct {
 	ReasoningSummary          string
 	Attachments               []Attachment
 	Input                     string
+	ComposerValue             string
 	InputHeight               int
 	SlashMenu                 *ListDialog
 	ScrollOffset              int
@@ -49,6 +51,9 @@ type Model struct {
 	TranscriptSelectionHint   string
 	TranscriptSelectionActive bool
 	CopyNotice                string
+	ComposerSelection         selection.OffsetRange
+	ComposerSelectionHint     string
+	ComposerSelectionActive   bool
 	Running                   bool
 	HoveredID                 string
 	Status                    string
