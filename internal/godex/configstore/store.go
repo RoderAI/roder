@@ -11,6 +11,7 @@ import (
 
 	"github.com/BurntSushi/toml"
 	"github.com/pandelisz/gode/internal/godex"
+	"github.com/pandelisz/gode/internal/godex/lsp"
 	"github.com/pandelisz/gode/internal/godex/mcp"
 	"github.com/pandelisz/gode/internal/godex/provider"
 )
@@ -52,6 +53,7 @@ type overlay struct {
 	Telemetry         *bool                              `json:"telemetry,omitempty" toml:"telemetry,omitempty"`
 	TelemetryEndpoint *string                            `json:"telemetry_endpoint,omitempty" toml:"telemetry_endpoint,omitempty"`
 	MCP               map[string]any                     `json:"mcp,omitempty" toml:"mcp,omitempty"`
+	LSP               map[string]lsp.Config              `json:"lsp,omitempty" toml:"lsp,omitempty"`
 	ProviderConfig    map[string]provider.ProviderConfig `json:"provider_config,omitempty" toml:"provider_config,omitempty"`
 	SelectedModels    map[string]provider.SelectedModel  `json:"selected_models,omitempty" toml:"selected_models,omitempty"`
 	ContextPaths      []string                           `json:"context_paths,omitempty" toml:"context_paths,omitempty"`
@@ -173,6 +175,9 @@ func applyOverlay(cfg *godex.Config, patch overlay) error {
 		}
 		cfg.MCP = mergeMap(cfg.MCP, parsed)
 	}
+	if patch.LSP != nil {
+		cfg.LSP = mergeMap(cfg.LSP, patch.LSP)
+	}
 	if patch.ProviderConfig != nil {
 		cfg.ProviderConfig = mergeMap(cfg.ProviderConfig, patch.ProviderConfig)
 	}
@@ -264,6 +269,9 @@ func fillDerivedDefaults(cfg *godex.Config) {
 	}
 	if cfg.MCP == nil {
 		cfg.MCP = map[string]mcp.ServerConfig{}
+	}
+	if cfg.LSP == nil {
+		cfg.LSP = map[string]lsp.Config{}
 	}
 	if cfg.ProviderConfig == nil {
 		cfg.ProviderConfig = map[string]provider.ProviderConfig{}
