@@ -90,7 +90,10 @@ func TranscriptWithCache(width int, height int, messages []viewmodel.Message, sc
 }
 
 func TranscriptDetailedWithCache(width int, height int, messages []viewmodel.Message, scrollOffset int, hoveredID string, zones *zone.Manager, cache *TranscriptCache, options TranscriptOptions) TranscriptRenderResult {
-	panelHeight := max(4, height)
+	panelHeight := max(0, height)
+	if panelHeight == 0 {
+		return TranscriptRenderResult{}
+	}
 	innerWidth := max(20, width-2)
 	contentWidth := max(12, innerWidth-2)
 	innerHeight := max(1, panelHeight-2)
@@ -114,7 +117,11 @@ func TranscriptDetailedWithCache(width int, height int, messages []viewmodel.Mes
 		body = strings.Join(parts, "\n")
 	}
 
-	panel := transcriptStyle.
+	style := transcriptStyle
+	if panelHeight < 3 {
+		style = lipgloss.NewStyle()
+	}
+	panel := style.
 		Width(innerWidth).
 		Height(panelHeight).
 		Render(body)

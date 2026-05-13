@@ -48,15 +48,19 @@ func RenderWithCache(vm viewmodel.Model, zones *zone.Manager, transcriptCache *T
 	}
 	footer := Footer(width, vm.ScrollOffset, vm.Status, vm.ShowErrorLog, len(vm.ErrorLog), vm.ContextLeft)
 	reservedHeight := renderedHeight(header) + renderedHeight(reasoning) + renderedHeight(attachment) + renderedHeight(composer) + renderedHeight(slashMenu) + renderedHeight(errorLog) + renderedHeight(footer)
-	bodyHeight := max(1, height-reservedHeight)
+	bodyHeight := max(0, height-reservedHeight)
 
-	parts := []string{
-		header,
-		TranscriptDetailedWithCache(width, bodyHeight, vm.Messages, vm.ScrollOffset, vm.HoveredID, zones, transcriptCache, TranscriptOptions{
+	transcript := ""
+	if bodyHeight > 0 {
+		transcript = TranscriptDetailedWithCache(width, bodyHeight, vm.Messages, vm.ScrollOffset, vm.HoveredID, zones, transcriptCache, TranscriptOptions{
 			Selection:         vm.TranscriptSelection,
 			TimelineStyle:     vm.TimelineStyle,
 			MarkdownRendering: vm.MarkdownRendering,
-		}).View,
+		}).View
+	}
+	parts := []string{header}
+	if transcript != "" {
+		parts = append(parts, transcript)
 	}
 	for _, part := range []string{reasoning, attachment, composer, slashMenu, errorLog, footer} {
 		if part != "" {

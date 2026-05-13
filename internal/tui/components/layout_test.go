@@ -73,6 +73,46 @@ func TestRenderUsesRenderedComposerHeight(t *testing.T) {
 	}
 }
 
+func TestRenderShrinksTranscriptInsteadOfClippingFooter(t *testing.T) {
+	zones := zone.New()
+	t.Cleanup(zones.Close)
+
+	out := zones.Scan(Render(viewmodel.Model{
+		Width:       80,
+		Height:      12,
+		Model:       "gpt-test",
+		Provider:    "codex",
+		Input:       "Ask gode to work on this repo",
+		InputHeight: 1,
+		Messages: []viewmodel.Message{{
+			ID:   "m1",
+			Role: viewmodel.RoleAssistant,
+			Body: strings.Repeat("assistant text ", 80),
+		}},
+		ShowErrorLog: true,
+		ErrorLog: []viewmodel.ErrorLogEntry{{
+			Time:    "22:45:00",
+			Source:  "run",
+			Message: "debug entry",
+		}},
+		Status: "ready",
+	}, zones))
+
+	if got := lipgloss.Height(out); got != 12 {
+		t.Fatalf("height = %d, want 12\n%s", got, out)
+	}
+	lines := strings.Split(out, "\n")
+	if !strings.Contains(out, "ERROR LOG") {
+		t.Fatalf("error log should stay visible above the footer:\n%s", out)
+	}
+	if !strings.Contains(out, "└") {
+		t.Fatalf("composer bottom border should stay visible:\n%s", out)
+	}
+	if !strings.Contains(lines[len(lines)-1], "scroll") {
+		t.Fatalf("footer should stay on the bottom row, got %q\n%s", lines[len(lines)-1], out)
+	}
+}
+
 func TestRenderSettingsDialogOverTimeline(t *testing.T) {
 	zones := zone.New()
 	t.Cleanup(zones.Close)
