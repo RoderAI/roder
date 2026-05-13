@@ -12,6 +12,7 @@ import (
 	messagestore "github.com/pandelisz/gode/internal/godex/message"
 	"github.com/pandelisz/gode/internal/godex/provider"
 	"github.com/pandelisz/gode/internal/godex/session"
+	godeskills "github.com/pandelisz/gode/internal/godex/skills"
 	"github.com/pandelisz/gode/internal/godex/tools"
 )
 
@@ -121,6 +122,32 @@ func TestRunnerPrependsContextMessages(t *testing.T) {
 		t.Fatalf("context message = %#v", capture.request.Messages[0])
 	}
 	if capture.request.Messages[1].Role != provider.RoleUser || capture.request.Messages[1].Content != "hello" {
+		t.Fatalf("user message = %#v", capture.request.Messages[1])
+	}
+}
+
+func TestRunnerInjectsInvokedSkillsAndCleansPrompt(t *testing.T) {
+	capture := &captureProvider{finalText: "done"}
+	runner := NewRunner(Config{
+		Bus:      eventbus.New(eventbus.WithSubscriberBuffer(16)),
+		Provider: capture,
+		Skills: []godeskills.Skill{{
+			Name: "go-tests",
+			Body: "Run Go tests before reporting completion.",
+		}},
+	})
+	defer runner.bus.Close()
+
+	if _, err := runner.Run(context.Background(), RunRequest{Prompt: "$go-tests please check this"}); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	if len(capture.request.Messages) != 2 {
+		t.Fatalf("messages = %#v", capture.request.Messages)
+	}
+	if capture.request.Messages[0].Role != provider.RoleSystem || !strings.Contains(capture.request.Messages[0].Content, `<skill name="go-tests">`) {
+		t.Fatalf("skill message = %#v", capture.request.Messages[0])
+	}
+	if capture.request.Messages[1].Role != provider.RoleUser || capture.request.Messages[1].Content != "please check this" {
 		t.Fatalf("user message = %#v", capture.request.Messages[1])
 	}
 }

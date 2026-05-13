@@ -12,6 +12,7 @@ import (
 	messagestore "github.com/pandelisz/gode/internal/godex/message"
 	"github.com/pandelisz/gode/internal/godex/provider"
 	"github.com/pandelisz/gode/internal/godex/session"
+	godeskills "github.com/pandelisz/gode/internal/godex/skills"
 	"github.com/pandelisz/gode/internal/godex/tools"
 )
 
@@ -23,6 +24,7 @@ type Config struct {
 	Tools           *tools.Registry
 	Provider        provider.Provider
 	ContextMessages []provider.Message
+	Skills          []godeskills.Skill
 }
 
 type Runner struct {
@@ -33,6 +35,7 @@ type Runner struct {
 	tools           *tools.Registry
 	provider        provider.Provider
 	contextMessages []provider.Message
+	skills          []godeskills.Skill
 }
 
 type RunRequest struct {
@@ -59,6 +62,7 @@ func NewRunner(cfg Config) *Runner {
 		tools:           cfg.Tools,
 		provider:        cfg.Provider,
 		contextMessages: append([]provider.Message(nil), cfg.ContextMessages...),
+		skills:          append([]godeskills.Skill(nil), cfg.Skills...),
 	}
 }
 
@@ -118,7 +122,8 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (RunResult, error) {
 		Payload:   map[string]any{"provider": r.provider.Name()},
 	})
 
-	messages, err := r.initialMessages(ctx, req)
+	invocation := godeskills.ApplyInvocations(req.Prompt, godeskills.Catalog{Skills: r.skills})
+	messages, err := r.initialMessages(ctx, req, invocation.Messages, invocation.Prompt)
 	if err != nil {
 		return RunResult{}, r.fail(ctx, req, err)
 	}
@@ -258,8 +263,9 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (RunResult, error) {
 	return RunResult{SessionID: req.SessionID, RunID: req.RunID, FinalText: final}, nil
 }
 
-func (r *Runner) initialMessages(ctx context.Context, req RunRequest) ([]provider.Message, error) {
+func (r *Runner) initialMessages(ctx context.Context, req RunRequest, runMessages []provider.Message, prompt string) ([]provider.Message, error) {
 	messages := append([]provider.Message(nil), r.contextMessages...)
+	messages = append(messages, runMessages...)
 	messages = append(messages, req.Messages...)
 	if req.Resume && r.messages != nil {
 		prior, err := r.messages.ListBySession(ctx, req.SessionID)
@@ -268,7 +274,7 @@ func (r *Runner) initialMessages(ctx context.Context, req RunRequest) ([]provide
 		}
 		messages = append(providerMessages(prior), messages...)
 	}
-	messages = append(messages, provider.Message{Role: provider.RoleUser, Content: req.Prompt})
+	messages = append(messages, provider.Message{Role: provider.RoleUser, Content: prompt})
 	return messages, nil
 }
 

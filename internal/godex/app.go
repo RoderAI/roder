@@ -20,6 +20,7 @@ import (
 	"github.com/pandelisz/gode/internal/godex/provider"
 	"github.com/pandelisz/gode/internal/godex/repoconfig"
 	"github.com/pandelisz/gode/internal/godex/session"
+	godeskills "github.com/pandelisz/gode/internal/godex/skills"
 	godetelemetry "github.com/pandelisz/gode/internal/godex/telemetry"
 	"github.com/pandelisz/gode/internal/godex/tools"
 	"github.com/pandelisz/gode/internal/godex/tools/builtin"
@@ -41,6 +42,7 @@ type App struct {
 	provider          provider.Provider
 	runner            *agent.Runner
 	contextMessages   []provider.Message
+	skills            []godeskills.Skill
 	shutdownTelemetry func(context.Context) error
 }
 
@@ -97,6 +99,7 @@ func New(ctx context.Context, cfg Config) (*App, error) {
 		_ = shutdownTelemetry(ctx)
 		return nil, err
 	}
+	skillCatalog := godeskills.Discover(godeskills.DiscoverOptions{Workspace: cfg.Workspace, DataDir: cfg.DataDir})
 
 	permissionService := permission.New(permission.WithEventBus(bus))
 	hookRunner := hooks.New(nil)
@@ -129,7 +132,7 @@ func New(ctx context.Context, cfg Config) (*App, error) {
 		_ = shutdownTelemetry(ctx)
 		return nil, err
 	}
-	runner := agent.NewRunner(agent.Config{Bus: bus, Journal: store, Sessions: sessionStore, Messages: messageStore, Tools: reg, Provider: prov, ContextMessages: repoContext})
+	runner := agent.NewRunner(agent.Config{Bus: bus, Journal: store, Sessions: sessionStore, Messages: messageStore, Tools: reg, Provider: prov, ContextMessages: repoContext, Skills: skillCatalog.Skills})
 
 	return &App{
 		Config:            cfg,
@@ -142,6 +145,7 @@ func New(ctx context.Context, cfg Config) (*App, error) {
 		provider:          prov,
 		runner:            runner,
 		contextMessages:   repoContext,
+		skills:            skillCatalog.Skills,
 		shutdownTelemetry: shutdownTelemetry,
 	}, nil
 }
@@ -179,7 +183,7 @@ func (a *App) SetModelReasoning(model string, reasoning string) error {
 
 	a.Config = cfg
 	a.provider = prov
-	a.runner = agent.NewRunner(agent.Config{Bus: a.Bus, Journal: a.Journal, Sessions: a.Sessions, Messages: a.Messages, Tools: a.Tools, Provider: prov, ContextMessages: a.contextMessages})
+	a.runner = agent.NewRunner(agent.Config{Bus: a.Bus, Journal: a.Journal, Sessions: a.Sessions, Messages: a.Messages, Tools: a.Tools, Provider: prov, ContextMessages: a.contextMessages, Skills: a.skills})
 	return nil
 }
 
@@ -193,7 +197,7 @@ func (a *App) SetFastMode(fastMode bool) error {
 
 	a.Config = cfg
 	a.provider = prov
-	a.runner = agent.NewRunner(agent.Config{Bus: a.Bus, Journal: a.Journal, Sessions: a.Sessions, Messages: a.Messages, Tools: a.Tools, Provider: prov, ContextMessages: a.contextMessages})
+	a.runner = agent.NewRunner(agent.Config{Bus: a.Bus, Journal: a.Journal, Sessions: a.Sessions, Messages: a.Messages, Tools: a.Tools, Provider: prov, ContextMessages: a.contextMessages, Skills: a.skills})
 	return nil
 }
 
