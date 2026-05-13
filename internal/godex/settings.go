@@ -18,11 +18,13 @@ const (
 )
 
 type Settings struct {
-	DefaultModel          string `json:"default_model,omitempty" toml:"default_model,omitempty"`
-	DefaultReasoning      string `json:"default_reasoning,omitempty" toml:"default_reasoning,omitempty"`
-	FastMode              bool   `json:"fast_mode,omitempty" toml:"fast_mode,omitempty"`
-	DisableAutoCompaction bool   `json:"disable_auto_compaction,omitempty" toml:"disable_auto_compaction,omitempty"`
-	AutoCompactTokenLimit int    `json:"auto_compact_token_limit,omitempty" toml:"auto_compact_token_limit,omitempty"`
+	DefaultModel          string            `json:"default_model,omitempty" toml:"default_model,omitempty"`
+	DefaultReasoning      string            `json:"default_reasoning,omitempty" toml:"default_reasoning,omitempty"`
+	FastMode              bool              `json:"fast_mode,omitempty" toml:"fast_mode,omitempty"`
+	DisableAutoCompaction bool              `json:"disable_auto_compaction,omitempty" toml:"disable_auto_compaction,omitempty"`
+	AutoCompactTokenLimit int               `json:"auto_compact_token_limit,omitempty" toml:"auto_compact_token_limit,omitempty"`
+	ActiveSkills          map[string]bool   `json:"active_skills,omitempty" toml:"active_skills,omitempty"`
+	SkillSources          map[string]string `json:"skill_sources,omitempty" toml:"skill_sources,omitempty"`
 }
 
 func LoadSettings(dataDir string) (Settings, error) {
@@ -85,11 +87,13 @@ func loadLegacySettings(dataDir string) (Settings, error) {
 		return Settings{}, fmt.Errorf("read legacy settings: %w", err)
 	}
 	var settings struct {
-		DefaultModel          string `json:"default_model"`
-		DefaultReasoning      string `json:"default_reasoning"`
-		FastMode              bool   `json:"fast_mode"`
-		DisableAutoCompaction bool   `json:"disable_auto_compaction"`
-		AutoCompactTokenLimit int    `json:"auto_compact_token_limit"`
+		DefaultModel          string            `json:"default_model"`
+		DefaultReasoning      string            `json:"default_reasoning"`
+		FastMode              bool              `json:"fast_mode"`
+		DisableAutoCompaction bool              `json:"disable_auto_compaction"`
+		AutoCompactTokenLimit int               `json:"auto_compact_token_limit"`
+		ActiveSkills          map[string]bool   `json:"active_skills"`
+		SkillSources          map[string]string `json:"skill_sources"`
 	}
 	if err := json.Unmarshal(data, &settings); err != nil {
 		return Settings{}, fmt.Errorf("parse legacy settings: %w", err)
@@ -100,5 +104,7 @@ func loadLegacySettings(dataDir string) (Settings, error) {
 		FastMode:              settings.FastMode,
 		DisableAutoCompaction: settings.DisableAutoCompaction,
 		AutoCompactTokenLimit: settings.AutoCompactTokenLimit,
+		ActiveSkills:          settings.ActiveSkills,
+		SkillSources:          settings.SkillSources,
 	}, nil
 }
