@@ -11,9 +11,11 @@ import (
 	"github.com/pandelisz/gode/internal/godex/agent"
 	"github.com/pandelisz/gode/internal/godex/codexauth"
 	"github.com/pandelisz/gode/internal/godex/eventbus"
+	"github.com/pandelisz/gode/internal/godex/hooks"
 	"github.com/pandelisz/gode/internal/godex/journal"
 	"github.com/pandelisz/gode/internal/godex/mcp"
 	messagestore "github.com/pandelisz/gode/internal/godex/message"
+	"github.com/pandelisz/gode/internal/godex/permission"
 	"github.com/pandelisz/gode/internal/godex/provider"
 	"github.com/pandelisz/gode/internal/godex/session"
 	godetelemetry "github.com/pandelisz/gode/internal/godex/telemetry"
@@ -86,7 +88,15 @@ func New(ctx context.Context, cfg Config) (*App, error) {
 	}
 	messageStore := messagestore.Open(cfg.DataDir)
 
-	reg := tools.NewRegistry(tools.WithEventBus(bus), tools.WithAutoApprove(cfg.AutoApprove))
+	permissionService := permission.New(permission.WithEventBus(bus))
+	hookRunner := hooks.New(nil)
+	reg := tools.NewRegistry(
+		tools.WithEventBus(bus),
+		tools.WithAutoApprove(cfg.AutoApprove),
+		tools.WithPermissionService(permissionService),
+		tools.WithHookRunner(hookRunner),
+		tools.WithWorkspace(cfg.Workspace),
+	)
 	builtin.RegisterFilesystem(reg, cfg.Workspace)
 	builtin.RegisterTodo(reg)
 	builtin.RegisterMemory(reg, filepath.Join(cfg.DataDir, "memory.jsonl"))
