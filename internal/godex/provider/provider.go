@@ -44,10 +44,11 @@ type Event struct {
 }
 
 type Request struct {
-	SessionID string
-	RunID     string
-	Messages  []Message
-	Tools     []ToolSpec
+	SessionID    string
+	RunID        string
+	Instructions string
+	Messages     []Message
+	Tools        []ToolSpec
 }
 
 type Provider interface {

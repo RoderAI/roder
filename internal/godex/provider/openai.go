@@ -117,6 +117,9 @@ func (o *OpenAI) responseParams(req Request) responses.ResponseNewParams {
 		Reasoning: shared.ReasoningParam{Effort: shared.ReasoningEffort(o.reasoning)},
 		Tools:     openAITools(req.Tools),
 	}
+	if req.Instructions != "" {
+		params.Instructions = param.NewOpt(req.Instructions)
+	}
 	if o.serviceTier != "" {
 		params.ServiceTier = responses.ResponseNewParamsServiceTier(o.serviceTier)
 	}
