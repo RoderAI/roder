@@ -51,8 +51,8 @@ func New(ctx context.Context, cfg Config) (*App, error) {
 	builtin.RegisterSubagent(reg)
 
 	mcpManager := mcp.NewManager(bus, cfg.MCP)
-	builtin.RegisterMCP(reg, mcpManager)
 	_ = mcpManager.Start(ctx)
+	builtin.RegisterMCP(reg, mcpManager)
 
 	prov, err := buildProvider(cfg)
 	if err != nil {
