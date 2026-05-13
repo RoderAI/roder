@@ -199,6 +199,7 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (RunResult, error) {
 		if err != nil {
 			return RunResult{}, r.fail(ctx, req, err)
 		}
+		inputItems = providerItemsFromProviderMessages(messages)
 		compaction := r.compactionOptions(ctx, req, messages)
 		providerReq := provider.Request{
 			SessionID:      req.SessionID,

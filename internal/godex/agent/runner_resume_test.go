@@ -318,6 +318,16 @@ func TestRunnerPrecompactsOversizedResumeBeforeProviderRequest(t *testing.T) {
 	if got[1].Role != provider.RoleUser || got[1].Content != "continue" {
 		t.Fatalf("current prompt should be preserved after compaction: %#v", got[1])
 	}
+	gotItems := compactProvider.request.InputItems
+	if len(gotItems) != 2 {
+		t.Fatalf("provider input items = %#v", gotItems)
+	}
+	if gotItems[0].Kind != provider.ItemRaw || !strings.Contains(string(gotItems[0].RawJSON), `"encrypted_content":"opaque"`) {
+		t.Fatalf("first provider input item should be raw compaction item: %#v", gotItems[0])
+	}
+	if gotItems[1].Kind != provider.ItemMessage || gotItems[1].Role != "user" || gotItems[1].Text != "continue" {
+		t.Fatalf("current prompt input item should be preserved after compaction: %#v", gotItems[1])
+	}
 	events, err := store.Replay(context.Background(), journal.ReplayFilter{SessionID: "s-compact", RunID: "r-compact"})
 	if err != nil {
 		t.Fatalf("replay: %v", err)
