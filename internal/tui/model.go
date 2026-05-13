@@ -40,6 +40,8 @@ type codexAuthDoneMsg struct {
 
 type skillsInstallDoneMsg struct {
 	Installed int
+	Source    string
+	Output    string
 	Err       error
 }
 
@@ -303,13 +305,17 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case skillsInstallDoneMsg:
 		if msg.Err != nil {
-			m.settings.Err = msg.Err.Error()
+			m.settings.InstallPrompt.Installing = false
+			m.settings.Err = truncateStatus(firstNonEmpty(msg.Output, msg.Err.Error()), 160)
 			m.status = "skill install failed"
+			m.addMessage(viewmodel.RoleSystem, "skill install", skillInstallTranscript(msg))
 			return m, nil
 		}
 		if m.settings.Open {
 			m.refreshSettingsSkills()
+			m.settings.OpenSkills()
 		}
+		m.addMessage(viewmodel.RoleSystem, "skill install", skillInstallTranscript(msg))
 		m.status = fmt.Sprintf("installed %d skills", msg.Installed)
 		return m, nil
 	}

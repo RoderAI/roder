@@ -86,6 +86,8 @@ func settingsContent(width int, settings viewmodel.SettingsDialog, zones *zone.M
 		return skillSettingsContent(width, settings.Skills, zones)
 	case viewmodel.SettingsScreenSkillRecs:
 		return recommendedSkillSettingsContent(width, settings.RecommendedSkills, zones)
+	case viewmodel.SettingsScreenSkillInstall:
+		return installSkillSettingsContent(width, settings.InstallPrompt)
 	default:
 		return menuSettingsContent(width, settings.MenuItems, zones)
 	}
@@ -222,6 +224,23 @@ func recommendedSkillSettingsContent(width int, items []viewmodel.SettingsRecomm
 	return lines
 }
 
+func installSkillSettingsContent(width int, prompt viewmodel.SettingsInstallPrompt) []string {
+	source := prompt.Source
+	if source == "" {
+		source = "pandelisz/gode@go-development"
+		source = settingsDescriptionStyle.Render(source)
+	}
+	status := "ready"
+	if prompt.Installing {
+		status = "installing"
+	}
+	return []string{
+		settingsLabelValue(width, "Source", source),
+		settingsLabelValue(width, "Status", status),
+		settingsDescriptionStyle.Render(truncateCell("Use a local path, git URL, or owner/repo@skill source.", width)),
+	}
+}
+
 func settingsLabelValue(width int, label string, value string) string {
 	if value == "" {
 		return truncateCell(label, width)
@@ -245,6 +264,8 @@ func settingsHelp(screen string) string {
 		return "space toggle  i install  r recommended  esc back"
 	case viewmodel.SettingsScreenSkillRecs:
 		return "a install missing  esc back  up/down navigate"
+	case viewmodel.SettingsScreenSkillInstall:
+		return "enter install  esc back  type source"
 	default:
 		return "enter open  esc close  up/down navigate"
 	}
