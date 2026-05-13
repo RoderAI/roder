@@ -1,0 +1,338 @@
+package dialogs
+
+import (
+	"github.com/pandelisz/gode/internal/godex"
+	"github.com/pandelisz/gode/internal/godex/codexauth"
+	"github.com/pandelisz/gode/internal/tui/viewmodel"
+)
+
+type Screen int
+
+const (
+	ScreenMenu Screen = iota
+	ScreenModels
+	ScreenReasoning
+	ScreenConfig
+)
+
+type Settings struct {
+	Open           bool
+	Screen         Screen
+	Config         godex.Config
+	Models         []godex.ModelConfig
+	MenuIndex      int
+	ModelIndex     int
+	ReasoningIndex int
+	Err            string
+}
+
+func NewSettings(cfg godex.Config) Settings {
+	settings := Settings{
+		Open:   true,
+		Screen: ScreenMenu,
+		Config: cfg,
+		Models: godex.BuiltInModels(false),
+	}
+	settings.selectCurrentModel()
+	return settings
+}
+
+func (s *Settings) OpenMenu() {
+	s.Screen = ScreenMenu
+	s.Err = ""
+}
+
+func (s *Settings) OpenModels() {
+	s.Screen = ScreenModels
+	s.Err = ""
+	s.selectCurrentModel()
+}
+
+func (s *Settings) BackToModels() {
+	s.Screen = ScreenModels
+	s.Err = ""
+}
+
+func (s *Settings) OpenReasoning() {
+	s.Screen = ScreenReasoning
+	s.Err = ""
+	s.selectCurrentReasoning()
+}
+
+func (s *Settings) OpenConfig() {
+	s.Screen = ScreenConfig
+	s.Err = ""
+}
+
+func (s *Settings) Move(delta int) {
+	count := s.SelectionCount()
+	if count == 0 {
+		return
+	}
+	switch s.Screen {
+	case ScreenMenu:
+		s.MenuIndex = wrapIndex(s.MenuIndex+delta, count)
+	case ScreenModels:
+		s.ModelIndex = wrapIndex(s.ModelIndex+delta, count)
+	case ScreenReasoning:
+		s.ReasoningIndex = wrapIndex(s.ReasoningIndex+delta, count)
+	}
+}
+
+func (s Settings) SelectionCount() int {
+	switch s.Screen {
+	case ScreenMenu:
+		return len(s.MenuItems())
+	case ScreenModels:
+		return len(s.Models)
+	case ScreenReasoning:
+		return len(s.ReasoningOptions())
+	default:
+		return 0
+	}
+}
+
+func (s Settings) SelectedMenuID() string {
+	items := s.MenuItems()
+	if len(items) == 0 {
+		return ""
+	}
+	index := clamp(s.MenuIndex, 0, len(items)-1)
+	return items[index].ID
+}
+
+func (s *Settings) selectCurrentModel() {
+	s.ModelIndex = 0
+	for i, model := range s.Models {
+		if model.ID == s.Config.Model {
+			s.ModelIndex = i
+			return
+		}
+	}
+}
+
+func (s *Settings) selectCurrentReasoning() {
+	s.ReasoningIndex = 0
+	options := s.ReasoningOptions()
+	selectedModel := s.SelectedModel()
+	preferred := s.PreferredReasoning(selectedModel)
+	for i, option := range options {
+		if option.Effort == preferred {
+			s.ReasoningIndex = i
+			return
+		}
+	}
+}
+
+func (s Settings) PreferredReasoning(model godex.ModelConfig) string {
+	preferred := s.Config.Reasoning
+	if preferred == "" || !model.SupportsReasoning(preferred) {
+		preferred = model.DefaultReasoning
+	}
+	if preferred == "" && len(model.SupportedReasoning) > 0 {
+		preferred = model.SupportedReasoning[0].Effort
+	}
+	return preferred
+}
+
+func (s Settings) SelectedModel() godex.ModelConfig {
+	if len(s.Models) == 0 {
+		return godex.DefaultModelConfig()
+	}
+	index := clamp(s.ModelIndex, 0, len(s.Models)-1)
+	return s.Models[index]
+}
+
+func (s Settings) ReasoningOptions() []godex.ReasoningOption {
+	model := s.SelectedModel()
+	if len(model.SupportedReasoning) == 0 {
+		return []godex.ReasoningOption{{Effort: model.DefaultReasoning}}
+	}
+	return model.SupportedReasoning
+}
+
+func (s Settings) SelectedReasoningEffort() string {
+	options := s.ReasoningOptions()
+	if len(options) == 0 {
+		return ""
+	}
+	index := clamp(s.ReasoningIndex, 0, len(options)-1)
+	return options[index].Effort
+}
+
+func (s Settings) MenuItems() []viewmodel.SettingsMenuItem {
+	codexStatus := "signed out"
+	if (codexauth.Store{DataDir: s.Config.DataDir}).SignedIn() {
+		codexStatus = "signed in"
+	}
+	return []viewmodel.SettingsMenuItem{
+		{
+			ID:          "models",
+			Label:       "Models",
+			Description: "Choose the default model for new gode sessions.",
+			Value:       godex.DisplayModelLabel(s.Config) + " / " + s.Config.Reasoning,
+		},
+		{
+			ID:          "fast-mode",
+			Label:       "Fast Mode",
+			Description: "Use OpenAI priority processing for model requests.",
+			Value:       onOff(s.Config.FastMode),
+		},
+		{
+			ID:          "codex-auth",
+			Label:       "Codex Sign In",
+			Description: "Connect ChatGPT Codex so GPT models use Codex auth.",
+			Value:       codexStatus,
+		},
+		{
+			ID:          "config",
+			Label:       "Config",
+			Description: "Review provider, reasoning, workspace, and data paths.",
+			Value:       godex.DisplayProvider(s.Config),
+		},
+	}
+}
+
+func (s Settings) ViewModel() *viewmodel.SettingsDialog {
+	if !s.Open {
+		return nil
+	}
+
+	vm := &viewmodel.SettingsDialog{
+		Title:      s.title(),
+		Screen:     s.ScreenName(),
+		MenuItems:  s.viewMenuItems(),
+		Models:     s.viewModels(),
+		Reasoning:  s.viewReasoning(),
+		ConfigRows: s.configRows(),
+		Selected:   s.selectedIndex(),
+		Error:      s.Err,
+	}
+	return vm
+}
+
+func (s Settings) title() string {
+	switch s.Screen {
+	case ScreenModels:
+		return "Models"
+	case ScreenReasoning:
+		return "Reasoning"
+	case ScreenConfig:
+		return "Config"
+	default:
+		return "Settings"
+	}
+}
+
+func (s Settings) ScreenName() string {
+	switch s.Screen {
+	case ScreenModels:
+		return viewmodel.SettingsScreenModels
+	case ScreenReasoning:
+		return viewmodel.SettingsScreenReasoning
+	case ScreenConfig:
+		return viewmodel.SettingsScreenConfig
+	default:
+		return viewmodel.SettingsScreenMenu
+	}
+}
+
+func (s Settings) selectedIndex() int {
+	switch s.Screen {
+	case ScreenModels:
+		return s.ModelIndex
+	case ScreenReasoning:
+		return s.ReasoningIndex
+	default:
+		return s.MenuIndex
+	}
+}
+
+func (s Settings) viewMenuItems() []viewmodel.SettingsMenuItem {
+	items := s.MenuItems()
+	for i := range items {
+		items[i].Selected = i == s.MenuIndex
+	}
+	return items
+}
+
+func (s Settings) viewModels() []viewmodel.SettingsModelItem {
+	items := make([]viewmodel.SettingsModelItem, 0, len(s.Models))
+	for i, model := range s.Models {
+		items = append(items, viewmodel.SettingsModelItem{
+			ID:               model.ID,
+			DisplayName:      model.DisplayName,
+			Description:      model.Description,
+			Provider:         model.Provider,
+			DefaultReasoning: model.DefaultReasoning,
+			Current:          model.ID == s.Config.Model,
+			Selected:         i == s.ModelIndex,
+		})
+	}
+	return items
+}
+
+func (s Settings) viewReasoning() []viewmodel.SettingsReasoningItem {
+	options := s.ReasoningOptions()
+	items := make([]viewmodel.SettingsReasoningItem, 0, len(options))
+	selectedModel := s.SelectedModel()
+	current := ""
+	if s.Config.Model == selectedModel.ID {
+		current = s.Config.Reasoning
+	}
+	for i, option := range options {
+		items = append(items, viewmodel.SettingsReasoningItem{
+			Effort:      option.Effort,
+			Label:       reasoningLabel(option.Effort),
+			Description: option.Description,
+			Current:     option.Effort == current,
+			Selected:    i == s.ReasoningIndex,
+		})
+	}
+	return items
+}
+
+func (s Settings) configRows() []viewmodel.SettingsConfigRow {
+	return []viewmodel.SettingsConfigRow{
+		{Label: "Model", Value: s.Config.Model},
+		{Label: "Provider", Value: godex.DisplayProvider(s.Config)},
+		{Label: "Reasoning", Value: s.Config.Reasoning},
+		{Label: "Fast mode", Value: onOff(s.Config.FastMode)},
+		{Label: "Workspace", Value: s.Config.Workspace},
+		{Label: "Data dir", Value: s.Config.DataDir},
+	}
+}
+
+func settingsFromConfig(cfg godex.Config) godex.Settings {
+	return godex.Settings{
+		DefaultModel:     cfg.Model,
+		DefaultReasoning: cfg.Reasoning,
+		FastMode:         cfg.FastMode,
+	}
+}
+
+func onOff(enabled bool) string {
+	if enabled {
+		return "on"
+	}
+	return "off"
+}
+
+func reasoningLabel(effort string) string {
+	switch effort {
+	case godex.ReasoningNone:
+		return "None"
+	case godex.ReasoningMinimal:
+		return "Minimal"
+	case godex.ReasoningLow:
+		return "Low"
+	case godex.ReasoningMedium:
+		return "Medium"
+	case godex.ReasoningHigh:
+		return "High"
+	case godex.ReasoningXHigh:
+		return "XHigh"
+	default:
+		return effort
+	}
+}

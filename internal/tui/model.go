@@ -14,6 +14,7 @@ import (
 	"github.com/pandelisz/gode/internal/godex/codexauth"
 	"github.com/pandelisz/gode/internal/godex/eventbus"
 	"github.com/pandelisz/gode/internal/tui/components"
+	"github.com/pandelisz/gode/internal/tui/dialogs"
 	"github.com/pandelisz/gode/internal/tui/eventadapter"
 	"github.com/pandelisz/gode/internal/tui/viewmodel"
 )
@@ -51,7 +52,7 @@ type Model struct {
 	running          bool
 	hoveredID        string
 	status           string
-	settings         settingsDialog
+	settings         dialogs.Settings
 	codexLogin       func(context.Context, string) (codexauth.Tokens, string, error)
 	errorLog         []viewmodel.ErrorLogEntry
 	showErrorLog     bool
@@ -124,7 +125,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.clampScroll()
 		return m, nil
 	case tea.KeyPressMsg:
-		if m.settings.open {
+		if m.settings.Open {
 			return m.updateSettings(msg)
 		}
 		switch msg.String() {
@@ -174,7 +175,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.updateHover(msg)
 		return m, nil
 	case tea.MouseClickMsg:
-		if m.settings.open {
+		if m.settings.Open {
 			return m.updateSettingsMouse(msg)
 		}
 		m.updateHover(msg)
@@ -212,6 +213,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m Model) View() tea.View {
+	settings := m.settings.ViewModel()
 	vm := viewmodel.Model{
 		Width:            m.width,
 		Height:           m.height,
@@ -224,7 +226,8 @@ func (m Model) View() tea.View {
 		Running:          m.running,
 		HoveredID:        m.hoveredID,
 		Status:           m.status,
-		Settings:         m.settings.viewModel(),
+		Dialogs:          viewmodel.DialogStack{Settings: settings},
+		Settings:         settings,
 		ErrorLog:         m.errorLog,
 		ShowErrorLog:     m.showErrorLog,
 	}

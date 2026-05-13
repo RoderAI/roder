@@ -12,6 +12,7 @@ import (
 	"github.com/pandelisz/gode/internal/godex"
 	"github.com/pandelisz/gode/internal/godex/codexauth"
 	"github.com/pandelisz/gode/internal/godex/eventbus"
+	"github.com/pandelisz/gode/internal/tui/dialogs"
 	"github.com/pandelisz/gode/internal/tui/eventadapter"
 	"github.com/pandelisz/gode/internal/tui/viewmodel"
 )
@@ -182,7 +183,7 @@ func TestCtrlPOpensSettingsDialog(t *testing.T) {
 	updated, _ := model.Update(keyCtrlP())
 	got := updated.(Model)
 
-	if !got.settings.open {
+	if !got.settings.Open {
 		t.Fatal("settings dialog should be open")
 	}
 	if got.input.Focused() {
@@ -260,11 +261,11 @@ func TestSettingsMenuCodexSignInRunsAuth(t *testing.T) {
 		return codexauth.Tokens{AccountID: "acct_test"}, "", nil
 	}
 	model.openSettings()
-	model.settings.menuIndex = 2
+	model.settings.MenuIndex = 2
 
 	updated, cmd := model.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 	got := updated.(Model)
-	if got.settings.open {
+	if got.settings.Open {
 		t.Fatal("settings should close while codex sign-in runs")
 	}
 	if got.status != "opening browser for codex sign-in" {
@@ -315,8 +316,8 @@ func TestSettingsMenuEnterOpensModelList(t *testing.T) {
 	updated, _ := model.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 	got := updated.(Model)
 
-	if got.settings.screen != settingsScreenModels {
-		t.Fatalf("settings screen = %v, want models", got.settings.screen)
+	if got.settings.Screen != dialogs.ScreenModels {
+		t.Fatalf("settings screen = %v, want models", got.settings.Screen)
 	}
 	view := got.View().Content
 	for _, want := range []string{"Models", "GPT-5.5", "GPT-5.4-Mini"} {
@@ -337,8 +338,8 @@ func TestSettingsMenuClickOpensModelList(t *testing.T) {
 	updated, _ := model.Update(click)
 	got := updated.(Model)
 
-	if got.settings.screen != settingsScreenModels {
-		t.Fatalf("settings screen = %v, want models", got.settings.screen)
+	if got.settings.Screen != dialogs.ScreenModels {
+		t.Fatalf("settings screen = %v, want models", got.settings.Screen)
 	}
 }
 
@@ -359,11 +360,11 @@ func TestSettingsFastModeToggleSavesAndUpdatesApp(t *testing.T) {
 
 	model := New(app)
 	model.openSettings()
-	model.settings.menuIndex = 1
+	model.settings.MenuIndex = 1
 	updated, _ := model.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 	got := updated.(Model)
 
-	if !got.settings.open {
+	if !got.settings.Open {
 		t.Fatal("settings dialog should remain open after toggling fast mode")
 	}
 	if !app.Config.FastMode {
@@ -405,8 +406,8 @@ func TestSettingsModelSelectionSavesDefaultAndUpdatesApp(t *testing.T) {
 	updated, _ = updated.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 	got := updated.(Model)
 
-	if got.settings.screen != settingsScreenReasoning {
-		t.Fatalf("settings screen = %v, want reasoning", got.settings.screen)
+	if got.settings.Screen != dialogs.ScreenReasoning {
+		t.Fatalf("settings screen = %v, want reasoning", got.settings.Screen)
 	}
 	view := got.View().Content
 	for _, want := range []string{"Reasoning", "Low", "Medium", "High", "XHigh"} {
@@ -420,7 +421,7 @@ func TestSettingsModelSelectionSavesDefaultAndUpdatesApp(t *testing.T) {
 
 	wantModel := godex.BuiltInModels(false)[1].ID
 	wantReasoning := godex.ReasoningMedium
-	if got.settings.open {
+	if got.settings.Open {
 		t.Fatal("settings dialog should close after choosing reasoning")
 	}
 	if app.Config.Model != wantModel {
@@ -467,8 +468,8 @@ func TestSettingsModelSelectionPersistsBeforeReasoningConfirmation(t *testing.T)
 	got := updated.(Model)
 
 	wantModel := godex.BuiltInModels(false)[1].ID
-	if got.settings.screen != settingsScreenReasoning {
-		t.Fatalf("settings screen = %v, want reasoning", got.settings.screen)
+	if got.settings.Screen != dialogs.ScreenReasoning {
+		t.Fatalf("settings screen = %v, want reasoning", got.settings.Screen)
 	}
 	if app.Config.Model != wantModel {
 		t.Fatalf("app model = %q, want %q", app.Config.Model, wantModel)
@@ -500,7 +501,7 @@ func TestSettingsModelClickOpensReasoningAndReasoningClickSavesDefault(t *testin
 	model.width = 80
 	model.height = 24
 	model.openSettings()
-	model.settings.openModels()
+	model.settings.OpenModels()
 	_ = model.View()
 
 	wantModel := godex.BuiltInModels(false)[1].ID
@@ -508,15 +509,15 @@ func TestSettingsModelClickOpensReasoningAndReasoningClickSavesDefault(t *testin
 	updated, _ := model.Update(click)
 	got := updated.(Model)
 
-	if got.settings.screen != settingsScreenReasoning {
-		t.Fatalf("settings screen = %v, want reasoning", got.settings.screen)
+	if got.settings.Screen != dialogs.ScreenReasoning {
+		t.Fatalf("settings screen = %v, want reasoning", got.settings.Screen)
 	}
 	_ = got.View()
 	click = clickZone(t, got, viewmodel.SettingsReasoningZoneID(godex.ReasoningHigh))
 	updated, _ = got.Update(click)
 	got = updated.(Model)
 
-	if got.settings.open {
+	if got.settings.Open {
 		t.Fatal("settings dialog should close after clicking reasoning")
 	}
 	if app.Config.Model != wantModel {
@@ -540,7 +541,7 @@ func TestSettingsModelClickOpensReasoningAndReasoningClickSavesDefault(t *testin
 func TestSettingsReasoningListUsesSelectedModelOptions(t *testing.T) {
 	model := New(nil)
 	model.openSettings()
-	model.settings.models = []godex.ModelConfig{
+	model.settings.Models = []godex.ModelConfig{
 		{
 			ID:               "custom-model",
 			DisplayName:      "Custom Model",
@@ -552,13 +553,13 @@ func TestSettingsReasoningListUsesSelectedModelOptions(t *testing.T) {
 			},
 		},
 	}
-	model.settings.openModels()
+	model.settings.OpenModels()
 
 	updated, _ := model.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 	got := updated.(Model)
 
-	if got.settings.screen != settingsScreenReasoning {
-		t.Fatalf("settings screen = %v, want reasoning", got.settings.screen)
+	if got.settings.Screen != dialogs.ScreenReasoning {
+		t.Fatalf("settings screen = %v, want reasoning", got.settings.Screen)
 	}
 	view := got.View().Content
 	for _, want := range []string{"Low", "High"} {
@@ -580,11 +581,11 @@ func TestSettingsSubscreenEscapeReturnsToMenu(t *testing.T) {
 	updated, _ = updated.Update(tea.KeyPressMsg{Code: tea.KeyEscape})
 	got := updated.(Model)
 
-	if !got.settings.open {
+	if !got.settings.Open {
 		t.Fatal("settings dialog should stay open")
 	}
-	if got.settings.screen != settingsScreenMenu {
-		t.Fatalf("settings screen = %v, want menu", got.settings.screen)
+	if got.settings.Screen != dialogs.ScreenMenu {
+		t.Fatalf("settings screen = %v, want menu", got.settings.Screen)
 	}
 }
 
@@ -604,14 +605,14 @@ func TestSettingsDialogSavesModelAndUpdatesApp(t *testing.T) {
 
 	model := New(app)
 	model.openSettings()
-	model.settings.openModels()
-	model.settings.modelIndex = 1
+	model.settings.OpenModels()
+	model.settings.ModelIndex = 1
 	updated, _ := model.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 	updated, _ = updated.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 	got := updated.(Model)
 
 	wantModel := godex.BuiltInModels(false)[1].ID
-	if got.settings.open {
+	if got.settings.Open {
 		t.Fatal("settings dialog should close after save")
 	}
 	if app.Config.Model != wantModel {
