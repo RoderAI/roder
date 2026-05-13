@@ -3,6 +3,7 @@ package godex
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -223,7 +224,7 @@ func TestCompactSessionPersistsRawCompactionItems(t *testing.T) {
 		t.Fatalf("messages = %#v", messages)
 	}
 	last := messages[len(messages)-1]
-	if last.Role != messagestore.RoleCompaction || !strings.Contains(string(last.RawJSON), `"encrypted_content":"opaque"`) {
+	if last.Role != messagestore.RoleCompaction || last.SourceKind != "compacted" || !strings.Contains(string(last.RawJSON), `"encrypted_content":"opaque"`) {
 		t.Fatalf("last message = %#v", last)
 	}
 	next := providerMessagesFromStored(messages)
@@ -243,9 +244,57 @@ func TestCompactSessionPersistsRawCompactionItems(t *testing.T) {
 	}
 }
 
+func TestCompactSessionFailureLeavesMessagesUntouched(t *testing.T) {
+	dataDir := t.TempDir()
+	sessionStore, err := session.Open(dataDir)
+	if err != nil {
+		t.Fatalf("session store: %v", err)
+	}
+	if _, err := sessionStore.Ensure(context.Background(), session.Session{ID: "s1", Title: "hello"}); err != nil {
+		t.Fatalf("ensure session: %v", err)
+	}
+	messageStore := messagestore.Open(dataDir)
+	if _, err := messageStore.Append(context.Background(), messagestore.Message{SessionID: "s1", Role: messagestore.RoleUser, Text: "hello"}); err != nil {
+		t.Fatalf("append message: %v", err)
+	}
+	journalStore, err := journal.Open(filepath.Join(dataDir, "events.jsonl"))
+	if err != nil {
+		t.Fatalf("journal: %v", err)
+	}
+	defer journalStore.Close()
+	app := &App{
+		Config:   Config{Model: "gpt-5.5"},
+		Bus:      eventbus.New(),
+		Journal:  journalStore,
+		Sessions: sessionStore,
+		Messages: messageStore,
+		provider: &fakeCompactor{err: errors.New("compact failed")},
+	}
+	defer app.Bus.Close()
+
+	if _, err := app.CompactSession(context.Background(), "s1"); err == nil {
+		t.Fatal("expected compact error")
+	}
+	messages, err := messageStore.ListBySession(context.Background(), "s1")
+	if err != nil {
+		t.Fatalf("list messages: %v", err)
+	}
+	if len(messages) != 1 || messages[0].Text != "hello" {
+		t.Fatalf("messages should be untouched, got %#v", messages)
+	}
+	events, err := journalStore.Replay(context.Background(), journal.ReplayFilter{SessionID: "s1", Kinds: []eventbus.Kind{eventbus.KindContextCompactionFailed}})
+	if err != nil {
+		t.Fatalf("replay: %v", err)
+	}
+	if len(events) != 1 {
+		t.Fatalf("failed events = %d", len(events))
+	}
+}
+
 type fakeCompactor struct {
 	request provider.CompactRequest
 	output  []json.RawMessage
+	err     error
 }
 
 func (f *fakeCompactor) Name() string {
@@ -262,5 +311,8 @@ func (f *fakeCompactor) Stream(context.Context, provider.Request) (<-chan provid
 
 func (f *fakeCompactor) Compact(_ context.Context, req provider.CompactRequest) (provider.CompactResult, error) {
 	f.request = req
+	if f.err != nil {
+		return provider.CompactResult{}, f.err
+	}
 	return provider.CompactResult{ID: "cmp_resp", Output: f.output}, nil
 }

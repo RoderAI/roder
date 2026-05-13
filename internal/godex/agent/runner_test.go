@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"path/filepath"
 	"strings"
@@ -503,6 +504,38 @@ func TestRunnerResumeLoadsPriorMessages(t *testing.T) {
 	}
 	if got[2].Role != provider.RoleUser || got[2].Content != "next prompt" {
 		t.Fatalf("new prompt = %#v", got[2])
+	}
+}
+
+func TestRunnerResumeUsesCanonicalCompactedWindow(t *testing.T) {
+	messageStore := messagestore.Open(t.TempDir())
+	if _, err := messageStore.Append(context.Background(), messagestore.Message{SessionID: "s1", RunID: "old", Role: messagestore.RoleUser, Text: "old prompt"}); err != nil {
+		t.Fatalf("append prior user: %v", err)
+	}
+	raw := json.RawMessage(`{"type":"compaction","encrypted_content":"opaque","id":"cmp_123"}`)
+	if _, err := messageStore.Append(context.Background(), messagestore.Message{SessionID: "s1", RunID: "compact", Role: messagestore.RoleCompaction, Text: "canonical compacted context", RawJSON: raw}); err != nil {
+		t.Fatalf("append compaction: %v", err)
+	}
+	capture := &captureProvider{finalText: "done"}
+	runner := NewRunner(Config{
+		Bus:      eventbus.New(eventbus.WithSubscriberBuffer(16)),
+		Messages: messageStore,
+		Provider: capture,
+	})
+	defer runner.bus.Close()
+
+	if _, err := runner.Run(context.Background(), RunRequest{SessionID: "s1", Prompt: "next prompt", Resume: true}); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	got := capture.request.Messages
+	if len(got) != 2 {
+		t.Fatalf("messages = %#v", got)
+	}
+	if len(got[0].RawJSON) == 0 || !strings.Contains(string(got[0].RawJSON), `"encrypted_content":"opaque"`) {
+		t.Fatalf("first message should be compacted raw item, got %#v", got[0])
+	}
+	if got[1].Role != provider.RoleUser || got[1].Content != "next prompt" {
+		t.Fatalf("new prompt = %#v", got[1])
 	}
 }
 
