@@ -18,7 +18,7 @@ func TestRenderFillsRequestedHeight(t *testing.T) {
 		Height:      24,
 		Model:       "mock",
 		Provider:    "mock",
-		Input:       "> Ask gode to work on this repo",
+		Input:       "Ask gode to work on this repo",
 		InputHeight: 1,
 		Messages: []viewmodel.Message{{
 			ID:   "m1",
@@ -42,7 +42,7 @@ func TestRenderSettingsDialogOverTimeline(t *testing.T) {
 		Height:      24,
 		Model:       "gpt-test",
 		Provider:    "mock",
-		Input:       "> Ask gode to work on this repo",
+		Input:       "Ask gode to work on this repo",
 		InputHeight: 1,
 		Messages: []viewmodel.Message{{
 			ID:   "m1",
@@ -82,7 +82,7 @@ func TestRenderListDialogOverTimeline(t *testing.T) {
 		Height:      24,
 		Model:       "gpt-test",
 		Provider:    "mock",
-		Input:       "> Ask gode to work on this repo",
+		Input:       "Ask gode to work on this repo",
 		InputHeight: 1,
 		Status:      "commands",
 		Dialogs: viewmodel.DialogStack{Commands: &viewmodel.ListDialog{
@@ -115,7 +115,7 @@ func TestRenderPermissionDialogOverTimeline(t *testing.T) {
 		Height:      24,
 		Model:       "gpt-test",
 		Provider:    "mock",
-		Input:       "> Ask gode to work on this repo",
+		Input:       "Ask gode to work on this repo",
 		InputHeight: 1,
 		Status:      "permission requested",
 		Dialogs: viewmodel.DialogStack{Permissions: &viewmodel.PermissionDialog{
@@ -147,7 +147,7 @@ func TestRenderErrorLogBelowComposer(t *testing.T) {
 		Height:       24,
 		Model:        "gpt-test",
 		Provider:     "codex",
-		Input:        "> Ask gode to work on this repo",
+		Input:        "Ask gode to work on this repo",
 		InputHeight:  1,
 		ShowErrorLog: true,
 		ErrorLog: []viewmodel.ErrorLogEntry{{
@@ -178,7 +178,7 @@ func TestRenderReasoningSummaryAboveComposer(t *testing.T) {
 		Model:            "gpt-test",
 		Provider:         "codex",
 		ReasoningSummary: "Checking workspace before editing files.",
-		Input:            "> Ask gode to work on this repo",
+		Input:            "Ask gode to work on this repo",
 		InputHeight:      1,
 		Status:           "reasoning",
 	}, zones))
@@ -187,7 +187,7 @@ func TestRenderReasoningSummaryAboveComposer(t *testing.T) {
 		t.Fatalf("height = %d, want 24\n%s", got, out)
 	}
 	reasoningIndex := strings.Index(out, "REASONING")
-	composerIndex := strings.Index(out, "> Ask gode to work on this repo")
+	composerIndex := strings.Index(out, "Ask gode to work on this repo")
 	if reasoningIndex < 0 || composerIndex < 0 || reasoningIndex > composerIndex {
 		t.Fatalf("reasoning summary should render above composer:\n%s", out)
 	}
@@ -217,7 +217,7 @@ func TestRenderClipsTallToolTranscriptBeforeComposer(t *testing.T) {
 		Height:      18,
 		Model:       "gpt-test",
 		Provider:    "codex",
-		Input:       "> Ask gode to work on this repo",
+		Input:       "Ask gode to work on this repo",
 		InputHeight: 1,
 		Messages:    messages,
 		Status:      "tool completed: search_files",
@@ -226,7 +226,7 @@ func TestRenderClipsTallToolTranscriptBeforeComposer(t *testing.T) {
 	if got := lipgloss.Height(out); got != 18 {
 		t.Fatalf("height = %d, want 18\n%s", got, out)
 	}
-	if !strings.Contains(out, "> Ask gode to work on this repo") {
+	if !strings.Contains(out, "Ask gode to work on this repo") {
 		t.Fatalf("composer should stay visible below tall tool output:\n%s", out)
 	}
 	if !strings.Contains(out, "tool completed: search_files") {
@@ -243,7 +243,7 @@ func TestRenderToolCardWithDiffAndMetadata(t *testing.T) {
 		Height:      24,
 		Model:       "gpt-test",
 		Provider:    "codex",
-		Input:       "> Ask gode to work on this repo",
+		Input:       "Ask gode to work on this repo",
 		InputHeight: 1,
 		Messages: []viewmodel.Message{{
 			ID:    "tool-diff",
@@ -281,7 +281,7 @@ func TestRenderToolCardShowsHookAndPermissionMetadata(t *testing.T) {
 		Height:      24,
 		Model:       "gpt-test",
 		Provider:    "codex",
-		Input:       "> Ask gode to work on this repo",
+		Input:       "Ask gode to work on this repo",
 		InputHeight: 1,
 		Messages: []viewmodel.Message{
 			{ID: "tool-shell", Role: viewmodel.RoleTool, Title: "shell", Body: "ok\nhook: allow"},
@@ -315,7 +315,7 @@ func TestRenderFooterUsesBottomRowWhenScrolled(t *testing.T) {
 		Height:       18,
 		Model:        "gpt-test",
 		Provider:     "codex",
-		Input:        "> Ask gode to work on this repo",
+		Input:        "Ask gode to work on this repo",
 		InputHeight:  1,
 		Messages:     messages,
 		ScrollOffset: 4,

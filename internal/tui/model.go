@@ -80,7 +80,7 @@ func New(app *godex.App) Model {
 	zones.SetEnabled(true)
 	input := textarea.New()
 	input.Placeholder = "Ask gode to work on this repo"
-	input.Prompt = "> "
+	input.Prompt = ""
 	input.ShowLineNumbers = false
 	input.DynamicHeight = true
 	input.MinHeight = 1
