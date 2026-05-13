@@ -42,8 +42,8 @@ func RenderWithCache(vm viewmodel.Model, zones *zone.Manager, transcriptCache *T
 		lipgloss.Left,
 		parts...,
 	)
-	if vm.Settings != nil {
-		return OverlaySettingsDialog(view, width, height, *vm.Settings, zones)
+	if settings := vm.ActiveSettingsDialog(); settings != nil {
+		return OverlaySettingsDialog(view, width, height, *settings, zones)
 	}
 	return view
 }

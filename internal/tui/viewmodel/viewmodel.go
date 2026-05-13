@@ -38,9 +38,21 @@ type Model struct {
 	Running          bool
 	HoveredID        string
 	Status           string
+	Dialogs          DialogStack
 	Settings         *SettingsDialog
 	ErrorLog         []ErrorLogEntry
 	ShowErrorLog     bool
+}
+
+type DialogStack struct {
+	Settings *SettingsDialog
+}
+
+func (m Model) ActiveSettingsDialog() *SettingsDialog {
+	if m.Dialogs.Settings != nil {
+		return m.Dialogs.Settings
+	}
+	return m.Settings
 }
 
 type ErrorLogEntry struct {
