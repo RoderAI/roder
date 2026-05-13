@@ -31,3 +31,13 @@ func newSkillManager(cfg Config) *godeskills.Manager {
 		},
 	}
 }
+
+func loadActiveSkills(dataDir string) func(context.Context) (map[string]bool, error) {
+	return func(context.Context) (map[string]bool, error) {
+		settings, err := LoadSettings(dataDir)
+		if err != nil {
+			return nil, err
+		}
+		return settings.ActiveSkills, nil
+	}
+}

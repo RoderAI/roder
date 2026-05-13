@@ -263,6 +263,7 @@ func runnerConfig(cfg Config, bus *eventbus.Bus, journalStore *journal.Store, se
 		Goals:                 goalRuntime,
 		ContextMessages:       contextMessages,
 		Skills:                skills,
+		LoadActiveSkills:      loadActiveSkills(cfg.DataDir),
 		Commands:              commands,
 	}
 }

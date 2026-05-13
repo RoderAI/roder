@@ -99,6 +99,24 @@ func TestApplyInvocationsLeavesPromptUnchangedWhenNoSkillFound(t *testing.T) {
 	}
 }
 
+func TestApplyInvocationsFilteredReportsDisabledSkill(t *testing.T) {
+	result := ApplyInvocationsFiltered("use $go-tests and $unknown", Catalog{Skills: []Skill{{
+		Name: "go-tests",
+		Path: "/skills/go-tests/SKILL.md",
+		Body: "Run Go tests.",
+	}}}, map[string]bool{"go-tests": false})
+
+	if result.Prompt != "use $go-tests and $unknown" {
+		t.Fatalf("prompt = %q", result.Prompt)
+	}
+	if len(result.Messages) != 0 || len(result.Invoked) != 0 {
+		t.Fatalf("disabled skill should not inject: %#v", result)
+	}
+	if len(result.Diagnostics) != 1 || !strings.Contains(result.Diagnostics[0].Message, "disabled") || result.Diagnostics[0].Path == "" {
+		t.Fatalf("diagnostics = %#v", result.Diagnostics)
+	}
+}
+
 func TestParseFrontmatterFields(t *testing.T) {
 	skill, err := Parse(`---
 name: go-tests

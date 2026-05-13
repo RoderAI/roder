@@ -227,6 +227,68 @@ func TestRunnerInjectsInvokedSkillsAndCleansPrompt(t *testing.T) {
 	}
 }
 
+func TestRunnerSkipsDisabledInvokedSkillAndKeepsPromptDiagnostic(t *testing.T) {
+	capture := &captureProvider{finalText: "done"}
+	runner := NewRunner(Config{
+		Bus:      eventbus.New(eventbus.WithSubscriberBuffer(16)),
+		Provider: capture,
+		Skills: []godeskills.Skill{{
+			Name: "go-tests",
+			Path: "/skills/go-tests/SKILL.md",
+			Body: "Run Go tests before reporting completion.",
+		}},
+		ActiveSkills: map[string]bool{"go-tests": false},
+	})
+	defer runner.bus.Close()
+
+	if _, err := runner.Run(context.Background(), RunRequest{Prompt: "$go-tests please check this"}); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	if len(capture.request.Messages) != 2 {
+		t.Fatalf("messages = %#v", capture.request.Messages)
+	}
+	if capture.request.Messages[0].Role != provider.RoleSystem || !strings.Contains(capture.request.Messages[0].Content, "Skill diagnostic") || !strings.Contains(capture.request.Messages[0].Content, "disabled") {
+		t.Fatalf("diagnostic message = %#v", capture.request.Messages[0])
+	}
+	if strings.Contains(capture.request.Messages[0].Content, `<skill name="go-tests">`) {
+		t.Fatalf("disabled skill body leaked into diagnostic: %#v", capture.request.Messages[0])
+	}
+	if capture.request.Messages[1].Role != provider.RoleUser || capture.request.Messages[1].Content != "$go-tests please check this" {
+		t.Fatalf("user prompt = %#v", capture.request.Messages[1])
+	}
+}
+
+func TestRunnerLoadsActiveSkillSettingsPerRun(t *testing.T) {
+	active := map[string]bool{"go-tests": false}
+	capture := &captureProvider{finalText: "done"}
+	runner := NewRunner(Config{
+		Bus:      eventbus.New(eventbus.WithSubscriberBuffer(16)),
+		Provider: capture,
+		Skills: []godeskills.Skill{{
+			Name: "go-tests",
+			Body: "Run Go tests before reporting completion.",
+		}},
+		LoadActiveSkills: func(context.Context) (map[string]bool, error) {
+			return active, nil
+		},
+	})
+	defer runner.bus.Close()
+
+	if _, err := runner.Run(context.Background(), RunRequest{Prompt: "$go-tests one"}); err != nil {
+		t.Fatalf("first run: %v", err)
+	}
+	if !strings.Contains(capture.request.Messages[0].Content, "disabled") {
+		t.Fatalf("first run should see disabled skill: %#v", capture.request.Messages)
+	}
+	active = map[string]bool{"go-tests": true}
+	if _, err := runner.Run(context.Background(), RunRequest{Prompt: "$go-tests two"}); err != nil {
+		t.Fatalf("second run: %v", err)
+	}
+	if len(capture.request.Messages) != 2 || !strings.Contains(capture.request.Messages[0].Content, `<skill name="go-tests">`) || capture.request.Messages[1].Content != "two" {
+		t.Fatalf("second run messages = %#v", capture.request.Messages)
+	}
+}
+
 func TestRunnerExpandsSlashCommandsBeforeProviderRequest(t *testing.T) {
 	capture := &captureProvider{finalText: "done"}
 	runner := NewRunner(Config{
