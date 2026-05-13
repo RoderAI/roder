@@ -238,6 +238,12 @@ func (s Settings) MenuItems() []viewmodel.SettingsMenuItem {
 			Value:       permissionModeLabel(s.Config.AutoApprove),
 		},
 		{
+			ID:          "timeline-style",
+			Label:       "Timeline Style",
+			Description: "Choose detailed tool output or compact tool summaries.",
+			Value:       timelineStyleLabel(s.Config.TimelineStyle),
+		},
+		{
 			ID:          "codex-auth",
 			Label:       "Codex Sign In",
 			Description: "Connect ChatGPT Codex so GPT models use Codex auth.",
@@ -399,6 +405,7 @@ func (s Settings) configRows() []viewmodel.SettingsConfigRow {
 		{Label: "Reasoning", Value: s.Config.Reasoning},
 		{Label: "Fast mode", Value: onOff(s.Config.FastMode)},
 		{Label: "Permission mode", Value: permissionModeLabel(s.Config.AutoApprove)},
+		{Label: "Timeline style", Value: timelineStyleLabel(s.Config.TimelineStyle)},
 		{Label: "Workspace", Value: s.Config.Workspace},
 		{Label: "Data dir", Value: s.Config.DataDir},
 	}
@@ -414,6 +421,7 @@ func settingsFromConfig(cfg godex.Config) godex.Settings {
 		DefaultReasoning:      cfg.Reasoning,
 		FastMode:              cfg.FastMode,
 		AutoApprove:           cfg.AutoApprove,
+		TimelineStyle:         cfg.TimelineStyle,
 		DisableAutoCompaction: cfg.DisableAutoCompaction,
 		AutoCompactTokenLimit: cfg.AutoCompactTokenLimit,
 	}
@@ -431,6 +439,15 @@ func permissionModeLabel(autoApprove bool) string {
 		return "allow all"
 	}
 	return "request"
+}
+
+func timelineStyleLabel(style string) string {
+	switch godex.NormalizeTimelineStyle(style) {
+	case godex.TimelineStyleMinimal:
+		return "minimal"
+	default:
+		return "detailed"
+	}
 }
 
 func reasoningLabel(effort string) string {

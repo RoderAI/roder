@@ -25,6 +25,7 @@ type renderedLine struct {
 type TranscriptOptions struct {
 	Selection      selection.Range
 	SelectionStyle lipgloss.Style
+	TimelineStyle  string
 }
 
 type TranscriptRenderResult struct {
@@ -37,11 +38,12 @@ type TranscriptCache struct {
 }
 
 type cachedMessage struct {
-	width int
-	role  viewmodel.Role
-	title string
-	body  string
-	item  renderedMessage
+	width         int
+	timelineStyle string
+	role          viewmodel.Role
+	title         string
+	body          string
+	item          renderedMessage
 }
 
 var (
@@ -88,7 +90,8 @@ func TranscriptDetailedWithCache(width int, height int, messages []viewmodel.Mes
 	innerWidth := max(20, width-2)
 	contentWidth := max(12, innerWidth-2)
 	innerHeight := max(1, panelHeight-2)
-	visible := visibleMessages(messages, contentWidth, innerHeight, scrollOffset, cache)
+	timelineStyle := normalizeTimelineStyle(options.TimelineStyle)
+	visible := visibleMessages(messages, contentWidth, innerHeight, scrollOffset, cache, timelineStyle)
 	refs := visibleLineRefs(visible)
 
 	var body string
@@ -122,7 +125,7 @@ func TranscriptLineRefs(width int, height int, messages []viewmodel.Message, scr
 	innerWidth := max(20, width-2)
 	contentWidth := max(12, innerWidth-2)
 	innerHeight := max(1, panelHeight-2)
-	return visibleLineRefs(visibleMessages(messages, contentWidth, innerHeight, scrollOffset, cache))
+	return visibleLineRefs(visibleMessages(messages, contentWidth, innerHeight, scrollOffset, cache, viewmodel.TimelineStyleDetailed))
 }
 
 func (c *TranscriptCache) Prune(messages []viewmodel.Message) {
@@ -140,16 +143,20 @@ func (c *TranscriptCache) Prune(messages []viewmodel.Message) {
 	}
 }
 
-func visibleMessages(messages []viewmodel.Message, width int, height int, scrollOffset int, cache *TranscriptCache) []renderedMessage {
+func visibleMessages(messages []viewmodel.Message, width int, height int, scrollOffset int, cache *TranscriptCache, styles ...string) []renderedMessage {
 	if len(messages) == 0 || height <= 0 {
 		return nil
+	}
+	timelineStyle := viewmodel.TimelineStyleDetailed
+	if len(styles) > 0 {
+		timelineStyle = normalizeTimelineStyle(styles[0])
 	}
 
 	lineBudget := max(height, height+max(0, scrollOffset))
 	reversed := make([]renderedMessage, 0, min(len(messages), height))
 	total := 0
 	for i := len(messages) - 1; i >= 0 && total < lineBudget; i-- {
-		item := renderMessageCached(messages[i], width, cache)
+		item := renderMessageCached(messages[i], width, timelineStyle, cache)
 		item.messageIndex = i
 		reversed = append(reversed, item)
 		total += len(item.lines)
@@ -191,36 +198,38 @@ func visibleMessages(messages []viewmodel.Message, width int, height int, scroll
 	return visible
 }
 
-func renderMessageCached(msg viewmodel.Message, width int, cache *TranscriptCache) renderedMessage {
+func renderMessageCached(msg viewmodel.Message, width int, timelineStyle string, cache *TranscriptCache) renderedMessage {
 	if cache == nil {
-		return renderMessage(msg, width)
+		return renderMessage(msg, width, timelineStyle)
 	}
 	if cache.entries == nil {
 		cache.entries = make(map[string]cachedMessage)
 	}
 	if entry, ok := cache.entries[msg.ID]; ok &&
 		entry.width == width &&
+		entry.timelineStyle == timelineStyle &&
 		entry.role == msg.Role &&
 		entry.title == msg.Title &&
 		entry.body == msg.Body {
 		return entry.item
 	}
-	item := renderMessage(msg, width)
+	item := renderMessage(msg, width, timelineStyle)
 	cache.entries[msg.ID] = cachedMessage{
-		width: width,
-		role:  msg.Role,
-		title: msg.Title,
-		body:  msg.Body,
-		item:  item,
+		width:         width,
+		timelineStyle: timelineStyle,
+		role:          msg.Role,
+		title:         msg.Title,
+		body:          msg.Body,
+		item:          item,
 	}
 	return item
 }
 
-func renderMessage(msg viewmodel.Message, width int) renderedMessage {
+func renderMessage(msg viewmodel.Message, width int, timelineStyle string) renderedMessage {
 	item := renderedMessage{}
 	switch msg.Role {
 	case viewmodel.RoleTool:
-		item = renderToolMessage(msg, width)
+		item = renderToolMessage(msg, width, timelineStyle)
 	case viewmodel.RoleUser:
 		item = renderUserMessage(msg, width)
 	case viewmodel.RoleAssistant:
@@ -284,10 +293,13 @@ func renderMetaMessage(msg viewmodel.Message, width int, prefix string, title st
 	return renderedMessage{id: msg.ID, lines: lines}
 }
 
-func renderToolMessage(msg viewmodel.Message, width int) renderedMessage {
+func renderToolMessage(msg viewmodel.Message, width int, timelineStyle string) renderedMessage {
 	title := strings.TrimSpace(msg.Title)
 	if title == "" {
 		title = "tool"
+	}
+	if timelineStyle == viewmodel.TimelineStyleMinimal {
+		return renderMinimalToolMessage(msg, title, width)
 	}
 	prefix := toolTitleStyle.Render("› " + title)
 	lines := []renderedLine{{
@@ -296,6 +308,30 @@ func renderToolMessage(msg viewmodel.Message, width int) renderedMessage {
 	}}
 	lines = append(lines, toolBodyLines(title, msg.Body, max(12, width-2))...)
 	return renderedMessage{id: msg.ID, lines: lines}
+}
+
+func renderMinimalToolMessage(msg viewmodel.Message, title string, width int) renderedMessage {
+	summary := firstToolSummaryLine(msg.Body)
+	label := toolTitleStyle.Render("└ ● " + title)
+	if summary != "" {
+		label += toolMetaStyle.Render(" (" + truncateCell(summary, max(8, width-lipgloss.Width("└ ● "+title)-3)) + ")")
+	}
+	return renderedMessage{id: msg.ID, lines: []renderedLine{{
+		text: label,
+		ref: selection.TranscriptLineRef{
+			Text:     label,
+			CopyText: strings.TrimSpace(title + " " + summary),
+		},
+	}}}
+}
+
+func firstToolSummaryLine(body string) string {
+	for _, line := range strings.Split(body, "\n") {
+		if trimmed := strings.TrimSpace(line); trimmed != "" {
+			return trimmed
+		}
+	}
+	return ""
 }
 
 func toolBodyLines(tool string, body string, width int) []renderedLine {
@@ -391,6 +427,15 @@ func looksLikeDiff(text string) bool {
 		}
 	}
 	return false
+}
+
+func normalizeTimelineStyle(style string) string {
+	switch strings.TrimSpace(strings.ToLower(style)) {
+	case viewmodel.TimelineStyleMinimal:
+		return viewmodel.TimelineStyleMinimal
+	default:
+		return viewmodel.TimelineStyleDetailed
+	}
 }
 
 func wrappedBodyLines(text string, width int) []renderedLine {

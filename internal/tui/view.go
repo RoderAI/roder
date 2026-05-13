@@ -64,6 +64,7 @@ func (m Model) viewModel() viewmodel.Model {
 		vm.Model = m.app.Config.Model
 		vm.Reasoning = m.app.Config.Reasoning
 		vm.AutoApprove = m.app.Config.AutoApprove
+		vm.TimelineStyle = m.app.Config.TimelineStyle
 	}
 	return vm
 }

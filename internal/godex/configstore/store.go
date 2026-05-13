@@ -50,6 +50,7 @@ type overlay struct {
 	DefaultReasoning      *string                            `json:"default_reasoning,omitempty" toml:"default_reasoning,omitempty"`
 	FastMode              *bool                              `json:"fast_mode,omitempty" toml:"fast_mode,omitempty"`
 	AutoApprove           *bool                              `json:"auto_approve,omitempty" toml:"auto_approve,omitempty"`
+	TimelineStyle         *string                            `json:"timeline_style,omitempty" toml:"timeline_style,omitempty"`
 	DisableAutoCompaction *bool                              `json:"disable_auto_compaction,omitempty" toml:"disable_auto_compaction,omitempty"`
 	AutoCompactTokenLimit *int                               `json:"auto_compact_token_limit,omitempty" toml:"auto_compact_token_limit,omitempty"`
 	Telemetry             *bool                              `json:"telemetry,omitempty" toml:"telemetry,omitempty"`
@@ -164,6 +165,9 @@ func applyOverlay(cfg *godex.Config, patch overlay) error {
 	if patch.AutoApprove != nil {
 		cfg.AutoApprove = *patch.AutoApprove
 	}
+	if patch.TimelineStyle != nil {
+		cfg.TimelineStyle = godex.NormalizeTimelineStyle(*patch.TimelineStyle)
+	}
 	if patch.DisableAutoCompaction != nil {
 		cfg.DisableAutoCompaction = *patch.DisableAutoCompaction
 	}
@@ -218,6 +222,9 @@ func applyEnv(cfg *godex.Config, env map[string]string) error {
 		}
 		cfg.AutoApprove = parsed
 	}
+	if value := strings.TrimSpace(env["GODE_TIMELINE_STYLE"]); value != "" {
+		cfg.TimelineStyle = godex.NormalizeTimelineStyle(value)
+	}
 	if value := strings.TrimSpace(env["GODE_DISABLE_AUTO_COMPACTION"]); value != "" {
 		parsed, err := strconv.ParseBool(value)
 		if err != nil {
@@ -257,6 +264,9 @@ func applyFlags(cfg *godex.Config, flags godex.Config, set map[string]bool) {
 	if isSet(set, "auto-approve") || isSet(set, "auto_approve") {
 		cfg.AutoApprove = flags.AutoApprove
 	}
+	if isSet(set, "timeline-style") || isSet(set, "timeline_style") {
+		cfg.TimelineStyle = godex.NormalizeTimelineStyle(flags.TimelineStyle)
+	}
 	if isSet(set, "disable-auto-compaction") || isSet(set, "disable_auto_compaction") {
 		cfg.DisableAutoCompaction = flags.DisableAutoCompaction
 	}
@@ -292,6 +302,7 @@ func fillDerivedDefaults(cfg *godex.Config) {
 	if cfg.Reasoning == "" {
 		cfg.Reasoning = godex.ModelConfigFor(cfg.Model).DefaultReasoning
 	}
+	cfg.TimelineStyle = godex.NormalizeTimelineStyle(cfg.TimelineStyle)
 	if cfg.TelemetryEndpoint == "" {
 		cfg.TelemetryEndpoint = defaults.TelemetryEndpoint
 	}
