@@ -114,6 +114,8 @@ func (m Model) footerStatus() string {
 		queue := queueStatus(len(m.queuedPrompts))
 		if strings.TrimSpace(status) == "" || status == "ready" {
 			status = queue
+		} else if status == queue {
+			status = queue
 		} else {
 			status += " · " + queue
 		}

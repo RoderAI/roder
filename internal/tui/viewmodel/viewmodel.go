@@ -47,6 +47,7 @@ type Model struct {
 	TimelineStyle             string
 	MarkdownRendering         bool
 	ReasoningSummary          string
+	QueuedPrompts             []string
 	Attachments               []Attachment
 	Input                     string
 	ComposerValue             string

@@ -225,6 +225,36 @@ func TestRenderInlineSlashMenuBelowComposer(t *testing.T) {
 	}
 }
 
+func TestRenderQueuedPromptsAboveComposer(t *testing.T) {
+	zones := zone.New()
+	t.Cleanup(zones.Close)
+
+	out := zones.Scan(Render(viewmodel.Model{
+		Width:         90,
+		Height:        18,
+		Model:         "gpt-test",
+		Provider:      "mock",
+		Input:         "Ask gode to work on this repo",
+		InputHeight:   1,
+		QueuedPrompts: []string{"first follow-up", "second follow-up"},
+		Status:        "queued 2 prompts",
+	}, zones))
+
+	if got := lipgloss.Height(out); got != 18 {
+		t.Fatalf("height = %d, want 18\n%s", got, out)
+	}
+	queueIndex := strings.Index(out, "Queued follow-up inputs")
+	composerIndex := strings.Index(out, "Ask gode to work on this repo")
+	if queueIndex < 0 || composerIndex < 0 || queueIndex > composerIndex {
+		t.Fatalf("queue should render above composer:\n%s", out)
+	}
+	for _, want := range []string{"↳ first follow-up", "↳ second follow-up", "queued 2 prompts"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("rendered output missing %q:\n%s", want, out)
+		}
+	}
+}
+
 func TestRenderPermissionDialogOverTimeline(t *testing.T) {
 	zones := zone.New()
 	t.Cleanup(zones.Close)

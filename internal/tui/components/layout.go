@@ -23,6 +23,7 @@ func RenderWithCache(vm viewmodel.Model, zones *zone.Manager, transcriptCache *T
 	if len(vm.Attachments) > 0 {
 		attachmentHeight = 1
 	}
+	queuedHeight := QueuedPromptsHeight(vm.QueuedPrompts)
 
 	header := Header(width, vm.Provider, vm.Model, vm.Reasoning, vm.SessionTitle, vm.Running)
 	reasoning := ""
@@ -32,6 +33,10 @@ func RenderWithCache(vm viewmodel.Model, zones *zone.Manager, transcriptCache *T
 	attachment := ""
 	if attachmentHeight > 0 {
 		attachment = AttachmentBar(width, vm.Attachments)
+	}
+	queuedPrompts := ""
+	if queuedHeight > 0 {
+		queuedPrompts = QueuedPrompts(width, vm.QueuedPrompts)
 	}
 	composer := ComposerWithSelection(width, vm.Input, ComposerOptions{
 		Value:       vm.ComposerValue,
@@ -47,7 +52,7 @@ func RenderWithCache(vm viewmodel.Model, zones *zone.Manager, transcriptCache *T
 		errorLog = ErrorConsole(width, errorHeight, vm.ErrorLog)
 	}
 	footer := Footer(width, vm.ScrollOffset, vm.Status, vm.ShowErrorLog, len(vm.ErrorLog), vm.ContextLeft)
-	reservedHeight := renderedHeight(header) + renderedHeight(reasoning) + renderedHeight(attachment) + renderedHeight(composer) + renderedHeight(slashMenu) + renderedHeight(errorLog) + renderedHeight(footer)
+	reservedHeight := renderedHeight(header) + renderedHeight(reasoning) + renderedHeight(attachment) + renderedHeight(queuedPrompts) + renderedHeight(composer) + renderedHeight(slashMenu) + renderedHeight(errorLog) + renderedHeight(footer)
 	bodyHeight := max(0, height-reservedHeight)
 
 	transcript := ""
@@ -62,7 +67,7 @@ func RenderWithCache(vm viewmodel.Model, zones *zone.Manager, transcriptCache *T
 	if transcript != "" {
 		parts = append(parts, transcript)
 	}
-	for _, part := range []string{reasoning, attachment, composer, slashMenu, errorLog, footer} {
+	for _, part := range []string{reasoning, attachment, queuedPrompts, composer, slashMenu, errorLog, footer} {
 		if part != "" {
 			parts = append(parts, part)
 		}
