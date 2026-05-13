@@ -294,11 +294,12 @@ func (m *Model) appendEvent(ev eventbus.Event) {
 		m.status = "tool running: " + payload.Tool
 	case eventbus.KindToolCompleted:
 		var payload struct {
-			Tool string `json:"tool"`
-			Text string `json:"text"`
+			Tool  string         `json:"tool"`
+			Input map[string]any `json:"input"`
+			Text  string         `json:"text"`
 		}
 		_ = ev.DecodePayload(&payload)
-		m.addMessage(viewmodel.RoleTool, payload.Tool, truncate(payload.Text, 1600))
+		m.addMessage(viewmodel.RoleTool, payload.Tool, summarizeToolTimeline(payload.Tool, payload.Input, payload.Text))
 		m.status = "tool completed: " + payload.Tool
 	case eventbus.KindToolFailed:
 		var payload struct {

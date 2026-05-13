@@ -41,6 +41,32 @@ func TestModelCoalescesAssistantDeltaEvents(t *testing.T) {
 	}
 }
 
+func TestModelSummarizesReadFileToolOutput(t *testing.T) {
+	model := New(nil)
+	fullContents := strings.Repeat("package main\n", 200)
+	updated, _ := model.Update(eventMsg{Event: eventbus.Event{
+		Kind: eventbus.KindToolCompleted,
+		Payload: map[string]any{
+			"tool": "read_file",
+			"input": map[string]any{
+				"path": "internal/godex/tools/registry.go",
+			},
+			"text": fullContents,
+		},
+	}})
+
+	got := updated.(Model)
+	if len(got.messages) != 1 {
+		t.Fatalf("messages = %#v", got.messages)
+	}
+	if got.messages[0].Body != "read internal/godex/tools/registry.go" {
+		t.Fatalf("tool body = %q", got.messages[0].Body)
+	}
+	if strings.Contains(got.messages[0].Body, "package main") {
+		t.Fatalf("read_file timeline should not include file contents:\n%s", got.messages[0].Body)
+	}
+}
+
 func TestModelShowsReasoningSummaryAboveComposer(t *testing.T) {
 	model := New(nil)
 	model.width = 80

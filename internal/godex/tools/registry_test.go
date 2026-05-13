@@ -54,6 +54,41 @@ func TestRegistryReturnsToolFailureAsResult(t *testing.T) {
 	}
 }
 
+func TestRegistryPublishesCompletedToolInput(t *testing.T) {
+	bus := eventbus.New(eventbus.WithSubscriberBuffer(8))
+	defer bus.Close()
+
+	reg := NewRegistry(WithEventBus(bus))
+	reg.Register(Tool{
+		Name:        "read_file",
+		Description: "read",
+		ReadOnly:    true,
+		Run: func(context.Context, Call) (Result, error) {
+			return Result{Text: "contents"}, nil
+		},
+	})
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	events := bus.Subscribe(ctx, eventbus.Filter{Kinds: []eventbus.Kind{eventbus.KindToolCompleted}})
+
+	if _, err := reg.Run(context.Background(), Call{Name: "read_file", Input: map[string]any{"path": "README.md"}}); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	ev := <-events
+	var payload struct {
+		Tool  string         `json:"tool"`
+		Input map[string]any `json:"input"`
+		Text  string         `json:"text"`
+	}
+	if err := ev.DecodePayload(&payload); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if payload.Tool != "read_file" || payload.Text != "contents" || payload.Input["path"] != "README.md" {
+		t.Fatalf("payload = %#v", payload)
+	}
+}
+
 func TestRegistryRequestsPermissionForMutatingTool(t *testing.T) {
 	bus := eventbus.New(eventbus.WithSubscriberBuffer(4))
 	defer bus.Close()
