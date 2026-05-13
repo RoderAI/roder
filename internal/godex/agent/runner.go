@@ -130,6 +130,22 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (RunResult, error) {
 						RunID:     req.RunID,
 						Payload:   map[string]any{"text": ev.Text},
 					})
+				case provider.EventReasoningSummaryDelta:
+					r.emit(ctx, eventbus.Event{
+						Kind:      eventbus.KindReasoningSummaryDelta,
+						Source:    eventbus.SourceProvider,
+						SessionID: req.SessionID,
+						RunID:     req.RunID,
+						Payload:   map[string]any{"text": ev.Text},
+					})
+				case provider.EventReasoningSummaryDone:
+					r.emit(ctx, eventbus.Event{
+						Kind:      eventbus.KindReasoningSummaryCompleted,
+						Source:    eventbus.SourceProvider,
+						SessionID: req.SessionID,
+						RunID:     req.RunID,
+						Payload:   map[string]any{"text": ev.Text},
+					})
 				case provider.EventToolCall:
 					turnHadToolCall = true
 					if ev.ToolRequest == nil {
