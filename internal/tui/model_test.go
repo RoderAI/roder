@@ -12,6 +12,7 @@ import (
 	"github.com/pandelisz/gode/internal/godex"
 	"github.com/pandelisz/gode/internal/godex/codexauth"
 	"github.com/pandelisz/gode/internal/godex/eventbus"
+	"github.com/pandelisz/gode/internal/tui/eventadapter"
 	"github.com/pandelisz/gode/internal/tui/viewmodel"
 )
 
@@ -41,6 +42,35 @@ func TestModelCoalescesAssistantDeltaEvents(t *testing.T) {
 	}
 }
 
+func TestModelDrainsBufferedFastEvents(t *testing.T) {
+	app, err := godex.New(context.Background(), godex.Config{DataDir: t.TempDir(), Workspace: t.TempDir(), Provider: "mock", AutoApprove: true})
+	if err != nil {
+		t.Fatalf("app: %v", err)
+	}
+	defer app.Close(context.Background())
+
+	model := New(app)
+	defer model.cancelEvents()
+	app.Bus.Publish(context.Background(), eventbus.Event{Kind: eventbus.KindAssistantDelta, Payload: map[string]any{"text": "hel"}})
+	app.Bus.Publish(context.Background(), eventbus.Event{Kind: eventbus.KindAssistantDelta, Payload: map[string]any{"text": "lo"}})
+
+	firstCmd := model.Init()
+	if firstCmd == nil {
+		t.Fatal("expected initial event wait command")
+	}
+	updated, nextCmd := model.Update(firstCmd())
+	got := updated.(Model)
+	if nextCmd == nil {
+		t.Fatal("expected follow-up event wait command")
+	}
+	updated, _ = got.Update(nextCmd())
+	got = updated.(Model)
+
+	if len(got.messages) != 1 || got.messages[0].Body != "hello" {
+		t.Fatalf("messages = %#v", got.messages)
+	}
+}
+
 func TestModelSummarizesReadFileToolOutput(t *testing.T) {
 	model := New(nil)
 	fullContents := strings.Repeat("package main\n", 200)
@@ -64,6 +94,30 @@ func TestModelSummarizesReadFileToolOutput(t *testing.T) {
 	}
 	if strings.Contains(got.messages[0].Body, "package main") {
 		t.Fatalf("read_file timeline should not include file contents:\n%s", got.messages[0].Body)
+	}
+}
+
+func TestEventAdapterStateEventsDoNotRenderEmptyTranscriptRows(t *testing.T) {
+	model := New(nil)
+	events := []eventbus.Event{
+		{Kind: eventbus.KindPermissionResponded, Payload: map[string]any{"decision": "deny"}},
+		{Kind: eventbus.KindMCPStateChanged, Payload: map[string]any{"server": "github", "state": "connected"}},
+		{Kind: eventbus.KindLSPStateChanged, Payload: map[string]any{"server": "gopls", "state": "connected"}},
+		{Kind: eventadapter.KindHookResult, Payload: map[string]any{"hook": "policy", "decision": "allow"}},
+		{Kind: eventadapter.KindSessionUpdate, Payload: map[string]any{"title": "feature"}},
+		{Kind: eventadapter.KindModelChanged, Payload: map[string]any{"model": "gpt-5.5"}},
+	}
+
+	var updated tea.Model = model
+	for _, ev := range events {
+		updated, _ = updated.Update(eventMsg{Event: ev})
+	}
+	got := updated.(Model)
+	if len(got.messages) != 0 {
+		t.Fatalf("state events should not render transcript rows: %#v", got.messages)
+	}
+	if strings.TrimSpace(got.status) == "" {
+		t.Fatal("state events should leave a useful status")
 	}
 }
 
