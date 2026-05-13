@@ -25,6 +25,16 @@ func (m *Model) openSessions() {
 	m.status = "sessions"
 }
 
+func (m *Model) openResumeSessions() {
+	m.sessions = dialogs.NewSessions(m.recentSessionItems())
+	m.input.Blur()
+	if len(m.sessions.Items) == 0 {
+		m.status = "no sessions"
+		return
+	}
+	m.status = "resume session"
+}
+
 func (m Model) updateCommands(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 	case "esc", "escape", "ctrl+[", "ctrl+p":
@@ -340,6 +350,11 @@ func (m Model) sessionItems() []dialogs.SessionItem {
 		ID:    dialogs.NewSessionID,
 		Title: "New Session",
 	}}
+	return append(items, m.recentSessionItems()...)
+}
+
+func (m Model) recentSessionItems() []dialogs.SessionItem {
+	var items []dialogs.SessionItem
 	if m.app == nil || m.app.Sessions == nil {
 		return items
 	}

@@ -540,6 +540,52 @@ func TestCtrlSOpensSessionsDialogAndLoadsMessages(t *testing.T) {
 	}
 }
 
+func TestNewResumeOpensRecentSessionPicker(t *testing.T) {
+	app, err := godex.New(context.Background(), godex.Config{DataDir: t.TempDir(), Workspace: t.TempDir(), Provider: "mock", AutoApprove: true})
+	if err != nil {
+		t.Fatalf("app: %v", err)
+	}
+	defer app.Close(context.Background())
+	first, err := app.Sessions.Create(context.Background(), "Older session", "")
+	if err != nil {
+		t.Fatalf("create first session: %v", err)
+	}
+	second, err := app.Sessions.Create(context.Background(), "Recent session", "")
+	if err != nil {
+		t.Fatalf("create second session: %v", err)
+	}
+	if _, err := app.Messages.Append(context.Background(), messagestore.Message{SessionID: second.ID, Role: messagestore.RoleUser, Text: "resume me"}); err != nil {
+		t.Fatalf("append user: %v", err)
+	}
+	if _, err := app.Sessions.UpdateMessageCount(context.Background(), second.ID, 1); err != nil {
+		t.Fatalf("update message count: %v", err)
+	}
+
+	model := NewResume(app)
+	defer model.cancelEvents()
+	if !model.sessions.Open {
+		t.Fatal("resume session picker should open")
+	}
+	if len(model.sessions.Items) != 2 {
+		t.Fatalf("session items = %#v", model.sessions.Items)
+	}
+	if model.sessions.Items[0].ID == dialogs.NewSessionID {
+		t.Fatalf("resume picker should only show existing sessions: %#v", model.sessions.Items)
+	}
+	if model.sessions.Items[0].ID != second.ID || model.sessions.Items[1].ID != first.ID {
+		t.Fatalf("sessions not sorted by recency: %#v", model.sessions.Items)
+	}
+
+	updated, _ := model.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	got := updated.(Model)
+	if got.currentSessionID != second.ID || got.currentSession != "Recent session" {
+		t.Fatalf("current session = %q title %q", got.currentSessionID, got.currentSession)
+	}
+	if len(got.messages) != 1 || got.messages[0].Body != "resume me" {
+		t.Fatalf("messages = %#v", got.messages)
+	}
+}
+
 func TestNewSessionActionClearsViewWithoutDeletingHistory(t *testing.T) {
 	app, err := godex.New(context.Background(), godex.Config{DataDir: t.TempDir(), Workspace: t.TempDir(), Provider: "mock", AutoApprove: true})
 	if err != nil {
