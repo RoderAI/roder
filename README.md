@@ -8,6 +8,7 @@ Go Code: a Go-native TUI coding agent and event-driven agent harness.
 
 - `cmd/gode`: CLI entrypoint.
 - `internal/godex`: event bus, JSONL journal, runner, provider interface, MCP manager, and tool registry.
+- `internal/godex/appserver`: Codex-style app-server protocol, request handling, and transports for desktop control.
 - `internal/godex/tools/builtin`: broad initial coding tool set.
 - `internal/tui`: Bubble Tea UI with composable Lip Gloss components and view models.
 
@@ -18,6 +19,7 @@ Every meaningful state transition flows through the `godex` event bus so the TUI
 ```sh
 go run ./cmd/gode version
 go run ./cmd/gode
+go run ./cmd/gode app-server --listen ws://127.0.0.1:0
 make run
 make ask PROMPT="summarize this repo"
 ```
@@ -30,6 +32,16 @@ make run
 ```
 
 Then open Jaeger at <http://localhost:16686>.
+
+## App Server
+
+`gode app-server` mirrors Codex's app-server naming and wire style: JSON-RPC-shaped messages without the `jsonrpc` field, an `initialize` handshake before requests, and Codex-like method names such as `thread/start`, `turn/start`, `fs/readFile`, and `command/exec`.
+
+Supported transports:
+
+- `--listen stdio://` for JSONL over stdin/stdout.
+- `--listen ws://IP:PORT` for WebSocket frames plus `/readyz` and `/healthz`.
+- `--listen off` to disable the local control transport.
 
 ## Near-Term Direction
 
