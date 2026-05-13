@@ -36,7 +36,9 @@ func TestModelCoalescesAssistantDeltaEvents(t *testing.T) {
 
 func TestModelScrollState(t *testing.T) {
 	model := New(nil)
-	for i := 0; i < 8; i++ {
+	model.width = 40
+	model.height = 10
+	for i := 0; i < 10; i++ {
 		model.addMessage("user", "", "message")
 	}
 

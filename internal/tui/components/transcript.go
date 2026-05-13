@@ -15,13 +15,12 @@ type renderedMessage struct {
 
 var (
 	transcriptStyle = lipgloss.NewStyle().
-			Background(lipgloss.Color("232")).
 			Padding(1, 1)
 	emptyStyle = lipgloss.NewStyle().
 			Foreground(lipgloss.Color("244")).
 			Italic(true)
 	messageHoverStyle = lipgloss.NewStyle().
-				Background(lipgloss.Color("236"))
+				Foreground(lipgloss.Color("231"))
 	labelStyle = lipgloss.NewStyle().
 			Bold(true).
 			Padding(0, 1)
@@ -30,8 +29,9 @@ var (
 )
 
 func Transcript(width int, height int, messages []viewmodel.Message, scrollOffset int, hoveredID string, zones *zone.Manager) string {
+	panelHeight := max(4, height)
 	innerWidth := max(20, width-2)
-	innerHeight := max(4, height-2)
+	innerHeight := max(1, panelHeight-2)
 	visible := visibleMessages(messages, innerWidth, innerHeight, scrollOffset)
 
 	var body string
@@ -51,7 +51,7 @@ func Transcript(width int, height int, messages []viewmodel.Message, scrollOffse
 
 	panel := transcriptStyle.
 		Width(innerWidth).
-		Height(innerHeight).
+		Height(panelHeight).
 		Render(body)
 	return zones.Mark(viewmodel.TranscriptZoneID, panel)
 }
@@ -61,23 +61,35 @@ func visibleMessages(messages []viewmodel.Message, width int, height int, scroll
 		return nil
 	}
 
-	end := len(messages) - clamp(scrollOffset, 0, len(messages)-1)
-	if end < 1 {
-		end = 1
-	}
-
-	rendered := make([]renderedMessage, 0, min(end, 200))
-	for i := max(0, end-200); i < end; i++ {
+	rendered := make([]renderedMessage, 0, min(len(messages), 200))
+	for i := max(0, len(messages)-200); i < len(messages); i++ {
 		rendered = append(rendered, renderMessage(messages[i], width))
 	}
 
-	var total int
-	start := len(rendered)
-	for start > 0 && total < height {
-		start--
-		total += len(rendered[start].lines)
+	total := 0
+	for _, item := range rendered {
+		total += len(item.lines)
 	}
-	return rendered[start:]
+	scrollOffset = clamp(scrollOffset, 0, max(0, total-height))
+	startLine := max(0, total-height-scrollOffset)
+	endLine := min(total, startLine+height)
+
+	visible := make([]renderedMessage, 0, len(rendered))
+	cursor := 0
+	for _, item := range rendered {
+		itemStart := cursor
+		itemEnd := cursor + len(item.lines)
+		cursor = itemEnd
+
+		if itemEnd <= startLine || itemStart >= endLine {
+			continue
+		}
+
+		from := max(0, startLine-itemStart)
+		to := min(len(item.lines), endLine-itemStart)
+		visible = append(visible, renderedMessage{id: item.id, lines: item.lines[from:to]})
+	}
+	return visible
 }
 
 func renderMessage(msg viewmodel.Message, width int) renderedMessage {
