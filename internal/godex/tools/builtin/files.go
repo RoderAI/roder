@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -71,6 +72,7 @@ func RegisterFilesystem(reg *tools.Registry, root string) {
 				return tools.Result{}, errors.New("query is required")
 			}
 			var matches []string
+			ignored := newGitIgnoreChecker(root)
 			err := filepath.WalkDir(root, func(path string, entry os.DirEntry, err error) error {
 				if err != nil {
 					return err
@@ -84,6 +86,12 @@ func RegisterFilesystem(reg *tools.Registry, root string) {
 					if strings.HasPrefix(entry.Name(), ".git") {
 						return filepath.SkipDir
 					}
+					if ignored(path, true) {
+						return filepath.SkipDir
+					}
+					return nil
+				}
+				if ignored(path, false) {
 					return nil
 				}
 				file, err := os.Open(path)
@@ -113,6 +121,28 @@ func RegisterFilesystem(reg *tools.Registry, root string) {
 			return tools.Result{Text: strings.Join(matches, "\n")}, nil
 		},
 	})
+}
+
+func newGitIgnoreChecker(root string) func(string, bool) bool {
+	rootAbs, err := filepath.Abs(root)
+	if err != nil {
+		return func(string, bool) bool { return false }
+	}
+	if err := exec.Command("git", "-C", rootAbs, "rev-parse", "--is-inside-work-tree").Run(); err != nil {
+		return func(string, bool) bool { return false }
+	}
+	return func(path string, isDir bool) bool {
+		rel, err := filepath.Rel(rootAbs, path)
+		if err != nil || rel == "." {
+			return false
+		}
+		rel = filepath.ToSlash(rel)
+		if isDir && !strings.HasSuffix(rel, "/") {
+			rel += "/"
+		}
+		err = exec.Command("git", "-C", rootAbs, "check-ignore", "-q", "--", rel).Run()
+		return err == nil
+	}
 }
 
 func looksLikeText(file *os.File) (bool, error) {

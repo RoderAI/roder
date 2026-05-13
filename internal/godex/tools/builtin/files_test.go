@@ -3,6 +3,7 @@ package builtin
 import (
 	"context"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -68,6 +69,47 @@ func TestSearchFilesSkipsBinaryFiles(t *testing.T) {
 	}
 }
 
+func TestSearchFilesSkipsGitignoredFiles(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git is required for gitignore test")
+	}
+	root := t.TempDir()
+	runGit(t, root, "init")
+	if err := os.WriteFile(filepath.Join(root, ".gitignore"), []byte("ignored.txt\nignored-dir/\n*.log\n"), 0o600); err != nil {
+		t.Fatalf("write gitignore: %v", err)
+	}
+	if err := os.Mkdir(filepath.Join(root, "ignored-dir"), 0o700); err != nil {
+		t.Fatalf("mkdir ignored dir: %v", err)
+	}
+	files := map[string]string{
+		"visible.txt":            "needle visible\n",
+		"ignored.txt":            "needle ignored\n",
+		"ignored.log":            "needle ignored by glob\n",
+		"ignored-dir/hidden.txt": "needle ignored in dir\n",
+	}
+	for name, content := range files {
+		if err := os.WriteFile(filepath.Join(root, name), []byte(content), 0o600); err != nil {
+			t.Fatalf("write %s: %v", name, err)
+		}
+	}
+
+	reg := tools.NewRegistry()
+	RegisterFilesystem(reg, root)
+
+	search, err := reg.Run(context.Background(), tools.Call{Name: "search_files", Input: map[string]any{"query": "needle"}})
+	if err != nil {
+		t.Fatalf("search: %v", err)
+	}
+	if !strings.Contains(search.Text, "visible.txt:1:needle visible") {
+		t.Fatalf("search should include visible file, got:\n%s", search.Text)
+	}
+	for _, ignored := range []string{"ignored.txt", "ignored.log", "ignored-dir"} {
+		if strings.Contains(search.Text, ignored) {
+			t.Fatalf("search should skip gitignored path %q, got:\n%s", ignored, search.Text)
+		}
+	}
+}
+
 func TestFilesystemToolsRejectPathEscape(t *testing.T) {
 	root := t.TempDir()
 	reg := tools.NewRegistry()
@@ -76,5 +118,13 @@ func TestFilesystemToolsRejectPathEscape(t *testing.T) {
 	_, err := reg.Run(context.Background(), tools.Call{Name: "read_file", Input: map[string]any{"path": "../secret"}})
 	if err == nil {
 		t.Fatal("expected path escape error")
+	}
+}
+
+func runGit(t *testing.T, dir string, args ...string) {
+	t.Helper()
+	cmd := exec.Command("git", append([]string{"-C", dir}, args...)...)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("git %v: %v\n%s", args, err, out)
 	}
 }
