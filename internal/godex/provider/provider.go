@@ -1,6 +1,9 @@
 package provider
 
-import "context"
+import (
+	"context"
+	"encoding/json"
+)
 
 type Role string
 
@@ -17,6 +20,7 @@ type Message struct {
 	ToolCallID    string
 	ToolName      string
 	ToolArguments string
+	RawJSON       json.RawMessage
 }
 
 type ToolSpec struct {
@@ -68,4 +72,21 @@ type Request struct {
 type Provider interface {
 	Name() string
 	Stream(context.Context, Request) (<-chan Event, <-chan error)
+}
+
+type CompactRequest struct {
+	SessionID    string
+	RunID        string
+	Model        string
+	Instructions string
+	Messages     []Message
+}
+
+type CompactResult struct {
+	ID     string
+	Output []json.RawMessage
+}
+
+type Compactor interface {
+	Compact(context.Context, CompactRequest) (CompactResult, error)
 }

@@ -235,8 +235,13 @@ func firstNonEmpty(values ...string) string {
 }
 
 func providerMessages(messages []messagestore.Message) []provider.Message {
+	messages = canonicalProviderWindow(messages)
 	out := make([]provider.Message, 0, len(messages))
 	for _, msg := range messages {
+		if len(msg.RawJSON) > 0 {
+			out = append(out, provider.Message{RawJSON: append([]byte(nil), msg.RawJSON...)})
+			continue
+		}
 		switch msg.Role {
 		case messagestore.RoleUser:
 			out = append(out, provider.Message{Role: provider.RoleUser, Content: msg.Text})
@@ -244,9 +249,37 @@ func providerMessages(messages []messagestore.Message) []provider.Message {
 			out = append(out, provider.Message{Role: provider.RoleAssistant, Content: msg.Text})
 		case messagestore.RoleTool:
 			out = append(out, provider.Message{Role: provider.RoleTool, Content: msg.Text, ToolCallID: msg.ToolCallID})
+		case messagestore.RoleCompaction:
+			out = append(out, provider.Message{RawJSON: append([]byte(nil), msg.RawJSON...)})
 		}
 	}
 	return out
+}
+
+func canonicalProviderWindow(messages []messagestore.Message) []messagestore.Message {
+	latestCompaction := -1
+	latestRunID := ""
+	for i, msg := range messages {
+		if msg.Role == messagestore.RoleCompaction && len(msg.RawJSON) > 0 {
+			latestCompaction = i
+			latestRunID = msg.RunID
+		}
+	}
+	if latestCompaction == -1 {
+		return messages
+	}
+	start := latestCompaction
+	for i := latestCompaction; i >= 0; i-- {
+		msg := messages[i]
+		if msg.Role != messagestore.RoleCompaction || len(msg.RawJSON) == 0 {
+			break
+		}
+		if latestRunID != "" && msg.RunID != latestRunID {
+			break
+		}
+		start = i
+	}
+	return messages[start:]
 }
 
 func excludeRunMessages(messages []messagestore.Message, runID string) []messagestore.Message {
@@ -327,6 +360,7 @@ func contextWindowMessages(messages []provider.Message) []contextwindow.Message 
 			ToolCallID:    msg.ToolCallID,
 			ToolName:      msg.ToolName,
 			ToolArguments: msg.ToolArguments,
+			RawJSON:       msg.RawJSON,
 		})
 	}
 	return out
