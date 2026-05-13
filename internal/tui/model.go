@@ -14,6 +14,7 @@ import (
 	"github.com/pandelisz/gode/internal/godex/codexauth"
 	"github.com/pandelisz/gode/internal/godex/eventbus"
 	"github.com/pandelisz/gode/internal/tui/components"
+	"github.com/pandelisz/gode/internal/tui/eventadapter"
 	"github.com/pandelisz/gode/internal/tui/viewmodel"
 )
 
@@ -37,6 +38,8 @@ type codexAuthDoneMsg struct {
 type Model struct {
 	app              *godex.App
 	zones            *zone.Manager
+	eventCancel      context.CancelFunc
+	eventCh          <-chan eventbus.Event
 	transcript       components.TranscriptCache
 	input            textarea.Model
 	messages         []viewmodel.Message
@@ -72,7 +75,7 @@ func New(app *godex.App) Model {
 	input.SetWidth(80)
 	applyComposerStyles(&input)
 	input.Focus()
-	return Model{
+	model := Model{
 		app:                 app,
 		zones:               zones,
 		transcript:          components.NewTranscriptCache(),
@@ -82,6 +85,12 @@ func New(app *godex.App) Model {
 		codexLogin:          codexauth.LoginBrowser,
 		transcriptLineDirty: true,
 	}
+	if app != nil && app.Bus != nil {
+		ctx, cancel := context.WithCancel(context.Background())
+		model.eventCancel = cancel
+		model.eventCh = app.Bus.Subscribe(ctx, eventbus.Filter{})
+	}
+	return model
 }
 
 func applyComposerStyles(input *textarea.Model) {
@@ -120,6 +129,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		switch msg.String() {
 		case "ctrl+c", "esc":
+			m.cancelEvents()
 			return m, tea.Quit
 		case "ctrl+p":
 			m.openSettings()
@@ -169,7 +179,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.updateHover(msg)
 	case eventMsg:
-		m.appendEvent(msg.Event)
+		m.applyEvent(eventadapter.Apply(msg.Event))
 		return m, m.waitForEvent()
 	case runDoneMsg:
 		m.running = false
@@ -231,15 +241,22 @@ func (m Model) View() tea.View {
 }
 
 func (m Model) waitForEvent() tea.Cmd {
-	if m.app == nil || m.app.Bus == nil {
+	if m.eventCh == nil {
 		return nil
 	}
 	return func() tea.Msg {
-		ev, err := m.app.Bus.Await(context.Background(), eventbus.Filter{})
-		if err != nil {
-			return runDoneMsg{Err: err}
+		ev, ok := <-m.eventCh
+		if !ok {
+			return runDoneMsg{Err: eventbus.ErrClosed}
 		}
 		return eventMsg{Event: ev}
+	}
+}
+
+func (m *Model) cancelEvents() {
+	if m.eventCancel != nil {
+		m.eventCancel()
+		m.eventCancel = nil
 	}
 }
 
@@ -250,83 +267,24 @@ func (m Model) runPrompt(prompt string) tea.Cmd {
 	}
 }
 
-func (m *Model) appendEvent(ev eventbus.Event) {
-	switch ev.Kind {
-	case eventbus.KindAssistantDelta:
-		var payload struct {
-			Text string `json:"text"`
-		}
-		_ = ev.DecodePayload(&payload)
-		if payload.Text != "" {
-			m.appendAssistantDelta(payload.Text)
-		}
-	case eventbus.KindReasoningSummaryDelta:
-		var payload struct {
-			Text string `json:"text"`
-		}
-		_ = ev.DecodePayload(&payload)
-		if payload.Text != "" {
-			m.reasoningSummary += payload.Text
-			m.status = "reasoning"
-		}
-	case eventbus.KindReasoningSummaryCompleted:
-		var payload struct {
-			Text string `json:"text"`
-		}
-		_ = ev.DecodePayload(&payload)
-		if payload.Text != "" {
-			m.reasoningSummary = payload.Text
-		}
-	case eventbus.KindAssistantCompleted:
-		m.status = "assistant completed"
-	case eventbus.KindToolRequested:
-		var payload struct {
-			Tool string `json:"tool"`
-		}
-		_ = ev.DecodePayload(&payload)
-		m.addMessage(viewmodel.RoleTool, payload.Tool, "requested")
-		m.status = "tool requested: " + payload.Tool
-	case eventbus.KindToolStarted:
-		var payload struct {
-			Tool string `json:"tool"`
-		}
-		_ = ev.DecodePayload(&payload)
-		m.status = "tool running: " + payload.Tool
-	case eventbus.KindToolCompleted:
-		var payload struct {
-			Tool  string         `json:"tool"`
-			Input map[string]any `json:"input"`
-			Text  string         `json:"text"`
-		}
-		_ = ev.DecodePayload(&payload)
-		m.addMessage(viewmodel.RoleTool, payload.Tool, summarizeToolTimeline(payload.Tool, payload.Input, payload.Text))
-		m.status = "tool completed: " + payload.Tool
-	case eventbus.KindToolFailed:
-		var payload struct {
-			Tool  string `json:"tool"`
-			Error string `json:"error"`
-		}
-		_ = ev.DecodePayload(&payload)
-		m.addMessage(viewmodel.RoleError, payload.Tool, payload.Error)
-		m.status = "tool failed: " + payload.Tool + " - ctrl+l errors"
-	case eventbus.KindPermissionRequested:
-		var payload struct {
-			Tool string `json:"tool"`
-		}
-		_ = ev.DecodePayload(&payload)
-		m.addMessage(viewmodel.RoleSystem, "permission", payload.Tool)
-		m.status = "permission requested"
-	case eventbus.KindRunCompleted:
-		m.running = false
-		m.status = "run completed"
-	case eventbus.KindRunFailed:
-		var payload struct {
-			Error string `json:"error"`
-		}
-		_ = ev.DecodePayload(&payload)
-		m.running = false
-		m.addMessage(viewmodel.RoleError, "", payload.Error)
-		m.status = "run failed - ctrl+l errors"
+func (m *Model) applyEvent(update eventadapter.Update) {
+	for _, message := range update.Messages {
+		m.addMessage(message.Role, message.Title, message.Body)
+	}
+	if update.AssistantDelta != "" {
+		m.appendAssistantDelta(update.AssistantDelta)
+	}
+	if update.ReasoningDelta != "" {
+		m.reasoningSummary += update.ReasoningDelta
+	}
+	if update.HasReasoningSummary {
+		m.reasoningSummary = update.ReasoningSummary
+	}
+	if update.Running != nil {
+		m.running = *update.Running
+	}
+	if update.HasStatus {
+		m.status = update.Status
 	}
 }
 
