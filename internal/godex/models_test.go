@@ -130,6 +130,37 @@ func TestConfigWithExplicitProviderAndNoModelUsesProviderDefaultModel(t *testing
 	}
 }
 
+func TestAnthropicProviderAndModels(t *testing.T) {
+	provider, ok := LookupProvider(ProviderAnthropic)
+	if !ok {
+		t.Fatal("anthropic provider missing")
+	}
+	if provider.Kind != ProviderKindAnthropic || provider.EnvKey != "ANTHROPIC_API_KEY" || provider.DefaultModel != "claude-sonnet-4-6" {
+		t.Fatalf("anthropic provider = %#v", provider)
+	}
+	opus := ModelConfigFor("claude-opus-4-7")
+	if opus.Provider != ProviderAnthropic || opus.ContextWindow != 1000000 || opus.MaxContextWindow != 1000000 || opus.DefaultReasoning != ReasoningHigh {
+		t.Fatalf("opus config = %#v", opus)
+	}
+	haiku := ModelConfigFor("claude-haiku-4-5-20251001")
+	if haiku.ContextWindow != 200000 || haiku.DefaultReasoning != ReasoningLow {
+		t.Fatalf("haiku config = %#v", haiku)
+	}
+}
+
+func TestConfigWithAnthropicProviderDefaultsToSonnet(t *testing.T) {
+	cfg := (Config{Provider: ProviderAnthropic}).withDefaults()
+	if cfg.Model != "claude-sonnet-4-6" {
+		t.Fatalf("model = %q", cfg.Model)
+	}
+	if cfg.Provider != ProviderAnthropic {
+		t.Fatalf("provider = %q", cfg.Provider)
+	}
+	if cfg.Reasoning != ReasoningMedium {
+		t.Fatalf("reasoning = %q", cfg.Reasoning)
+	}
+}
+
 func TestDisplayProviderShowsCodexWhenOpenAIGPTUsesCodexAuth(t *testing.T) {
 	dataDir := t.TempDir()
 	cfg := Config{

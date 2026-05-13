@@ -46,6 +46,24 @@ var modelWindows = map[string]ModelWindow{
 	},
 	"gpt-5.3-codex": openAIWindow(DefaultOpenAIContextWindow),
 	"gpt-5.2":       openAIWindow(DefaultOpenAIContextWindow),
+	"claude-opus-4-7": {
+		ContextWindow:         1000000,
+		MaxContextWindow:      1000000,
+		AutoCompactTokenLimit: 800000,
+		SupportsCompaction:    false,
+	},
+	"claude-sonnet-4-6": {
+		ContextWindow:         1000000,
+		MaxContextWindow:      1000000,
+		AutoCompactTokenLimit: 800000,
+		SupportsCompaction:    false,
+	},
+	"claude-haiku-4-5-20251001": {
+		ContextWindow:         200000,
+		MaxContextWindow:      200000,
+		AutoCompactTokenLimit: 160000,
+		SupportsCompaction:    false,
+	},
 	"codex-auto-review": {
 		ContextWindow:         DefaultOpenAIContextWindow,
 		MaxContextWindow:      DefaultOpenAIContextWindow,
