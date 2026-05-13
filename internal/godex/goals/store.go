@@ -82,10 +82,10 @@ func (s *Store) Set(ctx context.Context, req SetRequest) (*Goal, error) {
 		return nil, err
 	}
 	status := req.Status
-	if status == "" {
+	if status == "" && objective != "" {
 		status = StatusActive
 	}
-	if !ValidStatus(status) {
+	if status != "" && !ValidStatus(status) {
 		return nil, ErrInvalidStatus
 	}
 
@@ -112,14 +112,18 @@ func (s *Store) Set(ctx context.Context, req SetRequest) (*Goal, error) {
 		}
 	case hasActive:
 		goal = active
-		goal.Status = status
+		if status != "" {
+			goal.Status = status
+		}
 		if req.TokenBudget != nil {
 			goal.TokenBudget = cloneBudget(req.TokenBudget)
 		}
 		goal.UpdatedAt = now
 	case hasExisting:
 		goal = existing
-		goal.Status = status
+		if status != "" {
+			goal.Status = status
+		}
 		if req.TokenBudget != nil {
 			goal.TokenBudget = cloneBudget(req.TokenBudget)
 		}

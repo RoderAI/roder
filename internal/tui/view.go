@@ -25,7 +25,7 @@ func (m Model) View() tea.View {
 		FollowTail:       m.followTail,
 		Running:          m.running,
 		HoveredID:        m.hoveredID,
-		Status:           m.status,
+		Status:           m.footerStatus(),
 		SessionTitle:     m.currentSession,
 		Dialogs: viewmodel.DialogStack{
 			Settings:    settings,
