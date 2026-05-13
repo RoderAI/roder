@@ -3,6 +3,7 @@ package memory
 import (
 	"path/filepath"
 	"strings"
+	"time"
 )
 
 const (
@@ -27,6 +28,28 @@ type Settings struct {
 	EmbeddingModel string `json:"embedding_model,omitempty" toml:"embedding_model,omitempty"`
 	RecallLimit    int    `json:"recall_limit,omitempty" toml:"recall_limit,omitempty"`
 	DatabasePath   string `json:"database_path,omitempty" toml:"database_path,omitempty"`
+}
+
+type Entry struct {
+	ID             string
+	WorkspaceID    string
+	WorkspaceRoot  string
+	Content        string
+	ContentHash    string
+	Source         string
+	CreatedAt      time.Time
+	UpdatedAt      time.Time
+	DeletedAt      *time.Time
+	EmbeddingModel string
+	EmbeddingDims  int
+	Score          float64
+	Metadata       map[string]string
+}
+
+type Vector struct {
+	Model      string
+	Dimensions int
+	Values     []float32
 }
 
 func DefaultConfig(dataDir string) Config {
