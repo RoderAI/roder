@@ -1,6 +1,8 @@
 package tui
 
 import (
+	"time"
+
 	tea "charm.land/bubbletea/v2"
 	"github.com/pandelisz/gode/internal/godex"
 	"github.com/pandelisz/gode/internal/tui/components"
@@ -11,7 +13,7 @@ func (m Model) View() tea.View {
 	vm := m.viewModel()
 	view := tea.NewView(m.zones.Scan(components.RenderWithCache(vm, m.zones, &m.transcript)))
 	view.AltScreen = true
-	view.MouseMode = tea.MouseModeAllMotion
+	view.MouseMode = m.selectionMouseMode(time.Now())
 	view.WindowTitle = "gode"
 	return view
 }
