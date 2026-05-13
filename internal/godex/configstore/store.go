@@ -11,6 +11,7 @@ import (
 
 	"github.com/BurntSushi/toml"
 	"github.com/pandelisz/gode/internal/godex"
+	"github.com/pandelisz/gode/internal/godex/mcp"
 	"github.com/pandelisz/gode/internal/godex/provider"
 )
 
@@ -125,11 +126,13 @@ func applyFile(cfg *godex.Config, source Source, path string) (bool, error) {
 	default:
 		return false, fmt.Errorf("parse %s config %s: unsupported extension", source, path)
 	}
-	applyOverlay(cfg, patch)
+	if err := applyOverlay(cfg, patch); err != nil {
+		return false, fmt.Errorf("parse %s config %s: %w", source, path, err)
+	}
 	return true, nil
 }
 
-func applyOverlay(cfg *godex.Config, patch overlay) {
+func applyOverlay(cfg *godex.Config, patch overlay) error {
 	if patch.Workspace != nil {
 		cfg.Workspace = strings.TrimSpace(*patch.Workspace)
 	}
@@ -164,7 +167,11 @@ func applyOverlay(cfg *godex.Config, patch overlay) {
 		cfg.TelemetryEndpoint = strings.TrimSpace(*patch.TelemetryEndpoint)
 	}
 	if patch.MCP != nil {
-		cfg.MCP = mergeMap(cfg.MCP, patch.MCP)
+		parsed, err := mcp.ParseConfigMap(patch.MCP)
+		if err != nil {
+			return err
+		}
+		cfg.MCP = mergeMap(cfg.MCP, parsed)
 	}
 	if patch.ProviderConfig != nil {
 		cfg.ProviderConfig = mergeMap(cfg.ProviderConfig, patch.ProviderConfig)
@@ -178,6 +185,7 @@ func applyOverlay(cfg *godex.Config, patch overlay) {
 	if patch.DisabledTools != nil {
 		cfg.DisabledTools = append([]string(nil), patch.DisabledTools...)
 	}
+	return nil
 }
 
 func applyEnv(cfg *godex.Config, env map[string]string) error {
@@ -255,7 +263,7 @@ func fillDerivedDefaults(cfg *godex.Config) {
 		cfg.TelemetryEndpoint = defaults.TelemetryEndpoint
 	}
 	if cfg.MCP == nil {
-		cfg.MCP = map[string]any{}
+		cfg.MCP = map[string]mcp.ServerConfig{}
 	}
 	if cfg.ProviderConfig == nil {
 		cfg.ProviderConfig = map[string]provider.ProviderConfig{}
