@@ -148,10 +148,25 @@ func (o *OpenAI) responseParams(req Request) responses.ResponseNewParams {
 	if req.Instructions != "" {
 		params.Instructions = param.NewOpt(req.Instructions)
 	}
+	if strings.TrimSpace(req.ResponseFormat) != "" {
+		params.Text = responseTextConfig(req.ResponseFormat)
+	}
 	if o.serviceTier != "" {
 		params.ServiceTier = responses.ResponseNewParamsServiceTier(o.serviceTier)
 	}
 	return params
+}
+
+func responseTextConfig(raw string) responses.ResponseTextConfigParam {
+	trimmed := bytes.TrimSpace([]byte(raw))
+	var object map[string]json.RawMessage
+	if json.Unmarshal(trimmed, &object) == nil {
+		if _, ok := object["format"]; ok {
+			return param.Override[responses.ResponseTextConfigParam](json.RawMessage(trimmed))
+		}
+	}
+	wrapped, _ := json.Marshal(map[string]json.RawMessage{"format": trimmed})
+	return param.Override[responses.ResponseTextConfigParam](json.RawMessage(wrapped))
 }
 
 func (o *OpenAI) detailedStreamError(err error, req Request) error {

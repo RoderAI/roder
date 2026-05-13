@@ -6,14 +6,17 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 
+	"github.com/BurntSushi/toml"
 	"github.com/pandelisz/gode/internal/godex"
 	"github.com/pandelisz/gode/internal/godex/acp"
 	"github.com/pandelisz/gode/internal/godex/agent"
 	"github.com/pandelisz/gode/internal/godex/appserver"
 	"github.com/pandelisz/gode/internal/godex/codexauth"
 	"github.com/pandelisz/gode/internal/godex/configstore"
+	"github.com/pandelisz/gode/internal/godex/mcp"
 	"github.com/pandelisz/gode/internal/godex/provider"
 	"github.com/pandelisz/gode/internal/tui"
 )
@@ -43,6 +46,10 @@ func run(ctx context.Context, args []string) error {
 
 	if len(args) > 0 && args[0] == "acp" {
 		return runACP(ctx, args[1:])
+	}
+
+	if len(args) > 0 && args[0] == "serve" {
+		return runServe(ctx, "gode serve", args[1:])
 	}
 
 	if len(args) > 0 && args[0] == "app-server" {
@@ -156,18 +163,22 @@ func runACP(ctx context.Context, args []string) error {
 }
 
 func runAppServer(ctx context.Context, args []string) error {
-	cfg, listen, err := parseAppServerConfig(args)
+	return runServe(ctx, "gode app-server", args)
+}
+
+func runServe(ctx context.Context, command string, args []string) error {
+	cfg, listen, err := parseServeConfig(command, args)
 	if err != nil {
 		return err
-	}
-	if listen.Kind == appserver.TransportOff {
-		return nil
 	}
 	app, err := godex.New(ctx, cfg)
 	if err != nil {
 		return err
 	}
 	defer app.Close(ctx)
+	if listen.Kind == appserver.TransportOff {
+		return nil
+	}
 
 	server := appserver.New(app, appserver.Options{Version: version})
 	switch listen.Kind {
@@ -179,11 +190,11 @@ func runAppServer(ctx context.Context, args []string) error {
 			return err
 		}
 		defer listener.Close(context.Background())
-		fmt.Fprintf(os.Stderr, "gode app-server listening on %s\n", listener.WebSocketURL())
+		fmt.Fprintf(os.Stderr, "%s listening on %s\n", command, listener.WebSocketURL())
 		<-ctx.Done()
 		return ctx.Err()
 	default:
-		return fmt.Errorf("unsupported app-server transport")
+		return fmt.Errorf("unsupported serve transport")
 	}
 }
 
@@ -193,9 +204,17 @@ func runPrompt(ctx context.Context, args []string) error {
 	sessionID := ""
 	resume := false
 	promptFlag := ""
+	jsonOutput := false
+	systemPromptFile := ""
+	responseFormat := ""
+	mcpConfigPath := ""
 	flags.StringVar(&sessionID, "session", sessionID, "session id to use")
 	flags.BoolVar(&resume, "resume", resume, "resume prior session messages")
 	flags.StringVar(&promptFlag, "prompt", promptFlag, "prompt to run")
+	flags.BoolVar(&jsonOutput, "json", jsonOutput, "print a structured JSON result")
+	flags.StringVar(&systemPromptFile, "system-prompt-file", systemPromptFile, "path to a system prompt file")
+	flags.StringVar(&responseFormat, "response-format", responseFormat, "JSON response format passed to the provider")
+	flags.StringVar(&mcpConfigPath, "mcp-config", mcpConfigPath, "path to an MCP config file")
 	bindConfigFlags(flags, &cfg)
 	if err := flags.Parse(args); err != nil {
 		return err
@@ -205,6 +224,23 @@ func runPrompt(ctx context.Context, args []string) error {
 		return err
 	}
 	cfg = loaded.Config
+	if mcpConfigPath != "" {
+		if err := applyMCPConfigPath(&cfg, mcpConfigPath); err != nil {
+			return err
+		}
+	}
+	responseFormat = strings.TrimSpace(responseFormat)
+	if responseFormat != "" && !json.Valid([]byte(responseFormat)) {
+		return fmt.Errorf("response format must be valid JSON")
+	}
+	instructions := ""
+	if systemPromptFile != "" {
+		data, err := os.ReadFile(systemPromptFile)
+		if err != nil {
+			return fmt.Errorf("read system prompt file: %w", err)
+		}
+		instructions = strings.TrimSpace(string(data))
+	}
 	prompt := strings.TrimSpace(promptFlag)
 	if prompt == "" {
 		prompt = strings.TrimSpace(strings.Join(flags.Args(), " "))
@@ -219,22 +255,36 @@ func runPrompt(ctx context.Context, args []string) error {
 		return err
 	}
 	defer app.Close(ctx)
-	var result agent.RunResult
-	if sessionID != "" || resume {
-		runResult, err := app.Run(ctx, agent.RunRequest{SessionID: sessionID, Prompt: prompt, Resume: resume})
-		if err != nil {
-			return err
-		}
-		result = runResult
-	} else {
-		runResult, err := app.RunPrompt(ctx, prompt)
-		if err != nil {
-			return err
-		}
-		result = runResult
+	result, err := app.Run(ctx, agent.RunRequest{
+		SessionID:      sessionID,
+		Prompt:         prompt,
+		Resume:         resume,
+		Instructions:   instructions,
+		ResponseFormat: responseFormat,
+	})
+	if err != nil {
+		return err
+	}
+	if jsonOutput {
+		encoder := json.NewEncoder(os.Stdout)
+		return encoder.Encode(runJSONOutput{
+			SessionID: result.SessionID,
+			RunID:     result.RunID,
+			FinalText: result.FinalText,
+			Model:     cfg.Model,
+			Provider:  godex.DisplayProvider(cfg),
+		})
 	}
 	fmt.Println(result.FinalText)
 	return nil
+}
+
+type runJSONOutput struct {
+	SessionID string `json:"session_id"`
+	RunID     string `json:"run_id"`
+	FinalText string `json:"final_text"`
+	Model     string `json:"model"`
+	Provider  string `json:"provider"`
 }
 
 func parseConfig(args []string) (godex.Config, error) {
@@ -259,10 +309,16 @@ func parseConfigWithName(name string, args []string) (godex.Config, error) {
 }
 
 func parseAppServerConfig(args []string) (godex.Config, appserver.ListenConfig, error) {
-	flags := newFlagSet("gode app-server")
+	return parseServeConfig("gode app-server", args)
+}
+
+func parseServeConfig(command string, args []string) (godex.Config, appserver.ListenConfig, error) {
+	flags := newFlagSet(command)
 	cfg := godex.DefaultConfig()
 	listenRaw := "stdio://"
+	mcpConfigPath := ""
 	flags.StringVar(&listenRaw, "listen", listenRaw, "transport endpoint: stdio://, ws://IP:PORT, or off")
+	flags.StringVar(&mcpConfigPath, "mcp-config", mcpConfigPath, "path to an MCP config file")
 	bindConfigFlags(flags, &cfg)
 	if err := flags.Parse(args); err != nil {
 		return cfg, appserver.ListenConfig{}, err
@@ -272,11 +328,70 @@ func parseAppServerConfig(args []string) (godex.Config, appserver.ListenConfig, 
 		return cfg, appserver.ListenConfig{}, err
 	}
 	cfg = loaded.Config
+	if mcpConfigPath != "" {
+		if err := applyMCPConfigPath(&cfg, mcpConfigPath); err != nil {
+			return cfg, appserver.ListenConfig{}, err
+		}
+	}
 	listen, err := appserver.ParseListenURL(listenRaw)
 	if err != nil {
 		return cfg, appserver.ListenConfig{}, err
 	}
 	return cfg, listen, nil
+}
+
+func applyMCPConfigPath(cfg *godex.Config, path string) error {
+	servers, err := loadMCPConfigFile(path)
+	if err != nil {
+		return err
+	}
+	if cfg.MCP == nil {
+		cfg.MCP = map[string]mcp.ServerConfig{}
+	}
+	for name, server := range servers {
+		cfg.MCP[name] = server
+	}
+	return nil
+}
+
+type mcpConfigFile struct {
+	MCP map[string]any `json:"mcp" toml:"mcp"`
+}
+
+func loadMCPConfigFile(path string) (map[string]mcp.ServerConfig, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("read mcp config: %w", err)
+	}
+	ext := strings.ToLower(filepath.Ext(path))
+	var wrapper mcpConfigFile
+	var raw map[string]any
+	switch ext {
+	case ".json":
+		if err := json.Unmarshal(data, &wrapper); err != nil {
+			return nil, fmt.Errorf("parse mcp config: %w", err)
+		}
+		if wrapper.MCP == nil {
+			if err := json.Unmarshal(data, &raw); err != nil {
+				return nil, fmt.Errorf("parse mcp config: %w", err)
+			}
+		}
+	case ".toml":
+		if err := toml.Unmarshal(data, &wrapper); err != nil {
+			return nil, fmt.Errorf("parse mcp config: %w", err)
+		}
+		if wrapper.MCP == nil {
+			if err := toml.Unmarshal(data, &raw); err != nil {
+				return nil, fmt.Errorf("parse mcp config: %w", err)
+			}
+		}
+	default:
+		return nil, fmt.Errorf("parse mcp config: unsupported extension")
+	}
+	if wrapper.MCP != nil {
+		raw = wrapper.MCP
+	}
+	return mcp.ParseConfigMap(raw)
 }
 
 func bindConfigFlags(flags *flag.FlagSet, cfg *godex.Config) {

@@ -57,6 +57,22 @@ func TestOpenAIResponseParamsIncludesInstructions(t *testing.T) {
 	}
 }
 
+func TestOpenAIResponseParamsIncludesResponseFormat(t *testing.T) {
+	openaiProvider := NewOpenAI("gpt-5.5", "medium")
+
+	params := openaiProvider.responseParams(Request{
+		ResponseFormat: `{"type":"json_object"}`,
+		Messages:       []Message{{Role: RoleUser, Content: "hello"}},
+	})
+	data, err := json.Marshal(params.Text)
+	if err != nil {
+		t.Fatalf("marshal text config: %v", err)
+	}
+	if !strings.Contains(string(data), `"type":"json_object"`) {
+		t.Fatalf("text config missing response format:\n%s", data)
+	}
+}
+
 func TestOpenAIResponseParamsUsesInputItemList(t *testing.T) {
 	openaiProvider := NewOpenAI("gpt-5.5", "medium")
 
