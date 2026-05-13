@@ -78,6 +78,7 @@ func bindConfigFlags(flags *flag.FlagSet, cfg *godex.Config) {
 	flags.StringVar(&cfg.DataDir, "data-dir", cfg.DataDir, "gode data directory")
 	flags.StringVar(&cfg.Provider, "provider", cfg.Provider, "provider: mock, codex, openai")
 	flags.StringVar(&cfg.Model, "model", cfg.Model, "provider model")
+	flags.StringVar(&cfg.Reasoning, "reasoning", cfg.Reasoning, "reasoning effort: none, minimal, low, medium, high, xhigh")
 	flags.BoolVar(&cfg.AutoApprove, "auto-approve", cfg.AutoApprove, "auto approve mutating tool calls")
 }
 

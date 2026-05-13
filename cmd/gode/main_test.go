@@ -8,6 +8,7 @@ func TestParseConfigAppliesFlags(t *testing.T) {
 		"--data-dir", "/tmp/data",
 		"--provider", "mock",
 		"--model", "test-model",
+		"--reasoning", "low",
 		"--auto-approve",
 	})
 	if err != nil {
@@ -24,6 +25,9 @@ func TestParseConfigAppliesFlags(t *testing.T) {
 	}
 	if cfg.Model != "test-model" {
 		t.Fatalf("model = %q", cfg.Model)
+	}
+	if cfg.Reasoning != "low" {
+		t.Fatalf("reasoning = %q", cfg.Reasoning)
 	}
 	if !cfg.AutoApprove {
 		t.Fatal("auto approve = false")

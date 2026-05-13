@@ -30,6 +30,7 @@ type RunRequest struct {
 	SessionID string
 	RunID     string
 	Prompt    string
+	MaxTurns  int
 }
 
 type RunResult struct {
@@ -92,81 +93,108 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (RunResult, error) {
 		Payload:   map[string]any{"provider": r.provider.Name()},
 	})
 
-	providerReq := provider.Request{
-		SessionID: req.SessionID,
-		RunID:     req.RunID,
-		Messages:  []provider.Message{{Role: provider.RoleUser, Content: req.Prompt}},
-		Tools:     r.providerToolSpecs(),
+	messages := []provider.Message{{Role: provider.RoleUser, Content: req.Prompt}}
+	maxTurns := req.MaxTurns
+	if maxTurns <= 0 {
+		maxTurns = 8
 	}
-	events, errs := r.provider.Stream(ctx, providerReq)
 
 	final := ""
-	for events != nil || errs != nil {
-		select {
-		case ev, ok := <-events:
-			if !ok {
-				events = nil
-				continue
-			}
-			switch ev.Kind {
-			case provider.EventDelta:
-				final += ev.Text
-				r.emit(ctx, eventbus.Event{
-					Kind:      eventbus.KindAssistantDelta,
-					Source:    eventbus.SourceProvider,
-					SessionID: req.SessionID,
-					RunID:     req.RunID,
-					Payload:   map[string]any{"text": ev.Text},
-				})
-			case provider.EventToolCall:
-				if ev.ToolRequest == nil {
+	for turn := 0; turn < maxTurns; turn++ {
+		providerReq := provider.Request{
+			SessionID: req.SessionID,
+			RunID:     req.RunID,
+			Messages:  messages,
+			Tools:     r.providerToolSpecs(),
+		}
+		events, errs := r.provider.Stream(ctx, providerReq)
+
+		turnHadToolCall := false
+		turnProducedText := false
+		for events != nil || errs != nil {
+			select {
+			case ev, ok := <-events:
+				if !ok {
+					events = nil
 					continue
 				}
-				r.emit(ctx, eventbus.Event{
-					Kind:      eventbus.KindToolRequested,
-					Source:    eventbus.SourceProvider,
-					SessionID: req.SessionID,
-					RunID:     req.RunID,
-					Payload: map[string]any{
-						"tool_call_id": ev.ToolRequest.ID,
-						"tool":         ev.ToolRequest.Name,
-						"input":        ev.ToolRequest.Input,
-					},
-				})
-				if r.tools != nil {
-					if _, err := r.tools.Run(ctx, tools.Call{
-						ID:        ev.ToolRequest.ID,
-						Name:      ev.ToolRequest.Name,
-						Input:     ev.ToolRequest.Input,
+				switch ev.Kind {
+				case provider.EventDelta:
+					turnProducedText = true
+					final += ev.Text
+					r.emit(ctx, eventbus.Event{
+						Kind:      eventbus.KindAssistantDelta,
+						Source:    eventbus.SourceProvider,
 						SessionID: req.SessionID,
 						RunID:     req.RunID,
-					}); err != nil {
-						return RunResult{}, r.fail(ctx, req, err)
+						Payload:   map[string]any{"text": ev.Text},
+					})
+				case provider.EventToolCall:
+					turnHadToolCall = true
+					if ev.ToolRequest == nil {
+						continue
 					}
+					r.emit(ctx, eventbus.Event{
+						Kind:      eventbus.KindToolRequested,
+						Source:    eventbus.SourceProvider,
+						SessionID: req.SessionID,
+						RunID:     req.RunID,
+						Payload: map[string]any{
+							"tool_call_id": ev.ToolRequest.ID,
+							"tool":         ev.ToolRequest.Name,
+							"input":        ev.ToolRequest.Input,
+						},
+					})
+					if r.tools != nil {
+						result, err := r.tools.Run(ctx, tools.Call{
+							ID:        ev.ToolRequest.ID,
+							Name:      ev.ToolRequest.Name,
+							Input:     ev.ToolRequest.Input,
+							SessionID: req.SessionID,
+							RunID:     req.RunID,
+						})
+						if err != nil {
+							return RunResult{}, r.fail(ctx, req, err)
+						}
+						messages = append(messages, provider.Message{
+							Role:       provider.RoleTool,
+							ToolCallID: ev.ToolRequest.ID,
+							Content:    fmt.Sprintf("Tool %s result:\n%s", ev.ToolRequest.Name, result.Text),
+						})
+					}
+				case provider.EventCompleted:
+					if final == "" {
+						final = ev.Text
+					}
+					if ev.Text != "" || final != "" {
+						turnProducedText = true
+					}
+					r.emit(ctx, eventbus.Event{
+						Kind:      eventbus.KindAssistantCompleted,
+						Source:    eventbus.SourceProvider,
+						SessionID: req.SessionID,
+						RunID:     req.RunID,
+						Payload:   map[string]any{"text": final},
+					})
 				}
-			case provider.EventCompleted:
-				if final == "" {
-					final = ev.Text
+			case err, ok := <-errs:
+				if !ok {
+					errs = nil
+					continue
 				}
-				r.emit(ctx, eventbus.Event{
-					Kind:      eventbus.KindAssistantCompleted,
-					Source:    eventbus.SourceProvider,
-					SessionID: req.SessionID,
-					RunID:     req.RunID,
-					Payload:   map[string]any{"text": final},
-				})
+				if err != nil {
+					return RunResult{}, r.fail(ctx, req, err)
+				}
+			case <-ctx.Done():
+				return RunResult{}, r.fail(ctx, req, ctx.Err())
 			}
-		case err, ok := <-errs:
-			if !ok {
-				errs = nil
-				continue
-			}
-			if err != nil {
-				return RunResult{}, r.fail(ctx, req, err)
-			}
-		case <-ctx.Done():
-			return RunResult{}, r.fail(ctx, req, ctx.Err())
 		}
+		if !turnHadToolCall || turnProducedText {
+			break
+		}
+	}
+	if final == "" {
+		return RunResult{}, r.fail(ctx, req, fmt.Errorf("agent stopped without final text after tool loop"))
 	}
 
 	r.emit(ctx, eventbus.Event{

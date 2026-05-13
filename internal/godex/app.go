@@ -95,7 +95,7 @@ func buildProvider(cfg Config) (provider.Provider, error) {
 	case "mock":
 		return provider.NewMock("mock response", nil), nil
 	case "codex", "openai":
-		return provider.NewOpenAI(cfg.Model), nil
+		return provider.NewOpenAI(cfg.Model, cfg.Reasoning), nil
 	default:
 		return nil, fmt.Errorf("unknown provider %q", cfg.Provider)
 	}

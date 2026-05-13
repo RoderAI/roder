@@ -8,18 +8,23 @@ import (
 	"github.com/openai/openai-go/v3/option"
 	"github.com/openai/openai-go/v3/packages/param"
 	"github.com/openai/openai-go/v3/responses"
+	"github.com/openai/openai-go/v3/shared"
 )
 
 type OpenAI struct {
-	client openai.Client
-	model  string
+	client    openai.Client
+	model     string
+	reasoning string
 }
 
-func NewOpenAI(model string, opts ...option.RequestOption) *OpenAI {
+func NewOpenAI(model string, reasoning string, opts ...option.RequestOption) *OpenAI {
 	if model == "" {
-		model = "gpt-5.1-codex"
+		model = "gpt-5.4-mini"
 	}
-	return &OpenAI{client: openai.NewClient(opts...), model: model}
+	if reasoning == "" {
+		reasoning = "low"
+	}
+	return &OpenAI{client: openai.NewClient(opts...), model: model, reasoning: reasoning}
 }
 
 func (o *OpenAI) Name() string {
@@ -37,7 +42,8 @@ func (o *OpenAI) Stream(ctx context.Context, req Request) (<-chan Event, <-chan 
 			Input: responses.ResponseNewParamsInputUnion{
 				OfString: param.NewOpt(inputString(req.Messages)),
 			},
-			Tools: openAITools(req.Tools),
+			Reasoning: shared.ReasoningParam{Effort: shared.ReasoningEffort(o.reasoning)},
+			Tools:     openAITools(req.Tools),
 		}
 		stream := o.client.Responses.NewStreaming(ctx, params)
 		defer stream.Close()
