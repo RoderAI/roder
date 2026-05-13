@@ -314,7 +314,7 @@ func providerMessages(messages []messagestore.Message) []provider.Message {
 		case messagestore.RoleUser:
 			out = append(out, provider.Message{Role: provider.RoleUser, Content: msg.Text})
 		case messagestore.RoleAssistant:
-			out = append(out, provider.Message{Role: provider.RoleAssistant, Content: msg.Text})
+			out = append(out, provider.Message{Role: provider.RoleAssistant, Phase: msg.Phase, Content: msg.Text})
 		case messagestore.RoleTool:
 			out = append(out, provider.Message{Role: provider.RoleTool, Content: msg.Text, ToolCallID: msg.ToolCallID})
 		case messagestore.RoleCompaction:

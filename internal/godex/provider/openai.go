@@ -67,12 +67,17 @@ func (o *OpenAI) Stream(ctx context.Context, req Request) (<-chan Event, <-chan 
 		toolNames := map[string]string{}
 		toolCallIDs := map[string]string{}
 		emittedToolItems := map[string]bool{}
+		messagePhases := map[string]string{}
+		currentMessagePhase := ""
 		for stream.Next() {
 			ev := stream.Current()
 			switch ev.Type {
 			case "response.output_text.delta":
-				final += ev.Delta
-				events <- Event{Kind: EventDelta, Text: ev.Delta}
+				phase := firstNonEmpty(messagePhases[ev.ItemID], currentMessagePhase)
+				if phase == "" || phase == PhaseFinalAnswer {
+					final += ev.Delta
+				}
+				events <- Event{Kind: EventDelta, Text: ev.Delta, Phase: phase}
 			case "response.reasoning_summary_text.delta":
 				if ev.Delta != "" {
 					events <- Event{Kind: EventReasoningSummaryDelta, Text: ev.Delta}
@@ -82,6 +87,11 @@ func (o *OpenAI) Stream(ctx context.Context, req Request) (<-chan Event, <-chan 
 					events <- Event{Kind: EventReasoningSummaryDone, Text: ev.Text}
 				}
 			case "response.output_item.added":
+				if ev.Item.Type == "message" {
+					msg := ev.Item.AsMessage()
+					currentMessagePhase = string(msg.Phase)
+					messagePhases[ev.Item.ID] = currentMessagePhase
+				}
 				if ev.Item.Type == "function_call" {
 					call := ev.Item.AsFunctionCall()
 					toolNames[ev.Item.ID] = call.Name
@@ -119,6 +129,10 @@ func (o *OpenAI) Stream(ctx context.Context, req Request) (<-chan Event, <-chan 
 					emittedToolItems[ev.Item.ID] = true
 				}
 			case "response.completed":
+				rawItems := rawResponseOutputItems(ev.Response.Output)
+				if final == "" {
+					final = finalAnswerTextFromRaw(rawItems)
+				}
 				if final == "" {
 					final = ev.Response.OutputText()
 				}
@@ -126,7 +140,7 @@ func (o *OpenAI) Stream(ctx context.Context, req Request) (<-chan Event, <-chan 
 					Kind:       EventCompleted,
 					Text:       final,
 					ResponseID: ev.Response.ID,
-					Items:      providerItemsFromRaw(rawResponseOutputItems(ev.Response.Output)),
+					Items:      providerItemsFromRaw(rawItems),
 					Usage:      openAITokenUsage(ev.Response.Usage),
 				}
 			case "response.failed", "error":
@@ -370,15 +384,26 @@ func inputString(messages []Message) string {
 }
 
 func openAITools(specs []ToolSpec) []responses.ToolUnionParam {
-	out := make([]responses.ToolUnionParam, 0, len(specs))
+	if len(specs) == 0 {
+		return nil
+	}
+	namespaceTools := make([]responses.NamespaceToolToolUnionParam, 0, len(specs))
 	for _, spec := range specs {
 		schema := normalizeToolSchema(spec.Schema)
-		out = append(out, responses.ToolParamOfFunction(spec.Name, schema, false))
-		if out[len(out)-1].OfFunction != nil {
-			out[len(out)-1].OfFunction.Description = param.NewOpt(spec.Description)
-		}
+		namespaceTools = append(namespaceTools, responses.NamespaceToolToolUnionParam{
+			OfFunction: &responses.NamespaceToolToolFunctionParam{
+				Name:         spec.Name,
+				Description:  param.NewOpt(spec.Description),
+				Parameters:   schema,
+				Strict:       param.NewOpt(false),
+				DeferLoading: param.NewOpt(true),
+			},
+		})
 	}
-	return out
+	return []responses.ToolUnionParam{
+		responses.ToolParamOfNamespace("Gode coding-agent tools for reading, searching, editing, and inspecting the current workspace.", "gode", namespaceTools),
+		{OfToolSearch: &responses.ToolSearchToolParam{Execution: responses.ToolSearchToolExecutionServer}},
+	}
 }
 
 func normalizeToolSchema(schema map[string]any) map[string]any {

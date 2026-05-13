@@ -47,9 +47,11 @@ func ProjectionFromEvent(ev eventbus.Event) []Item {
 			return items
 		}
 		var payload struct {
-			Text string `json:"text"`
+			Text  string `json:"text"`
+			Phase string `json:"phase"`
 		}
 		_ = ev.DecodePayload(&payload)
+		base.Phase = strings.TrimSpace(payload.Phase)
 		return itemSingle(base, ItemMessage, "assistant", strings.TrimSpace(payload.Text))
 	case eventbus.KindReasoningSummaryDelta, eventbus.KindReasoningSummaryCompleted:
 		var payload struct {
@@ -268,7 +270,7 @@ func projectItems(ctx context.Context, store *ItemStore, cache map[string]map[st
 	items := ProjectionFromEvent(ev)
 	for _, item := range items {
 		if (ev.Kind == eventbus.KindAssistantDelta || ev.Kind == eventbus.KindAssistantCompleted) && item.Kind == ItemMessage && item.Role == "assistant" {
-			key := ev.SessionID + "\x00" + ev.RunID
+			key := ev.SessionID + "\x00" + ev.RunID + "\x00" + item.Phase
 			existing := assistant[key]
 			if existing.ID == "" {
 				existing = item

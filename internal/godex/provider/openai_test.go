@@ -150,6 +150,28 @@ func TestOpenAIResponseParamsUsesInputItemList(t *testing.T) {
 	}
 }
 
+func TestOpenAIResponseParamsPreservesAssistantPhase(t *testing.T) {
+	openaiProvider := NewOpenAI("gpt-5.5", "medium")
+
+	params := openaiProvider.responseParams(Request{
+		Messages: []Message{{
+			Role:    RoleAssistant,
+			Phase:   PhaseCommentary,
+			Content: "I will inspect the workspace first.",
+		}},
+	})
+	data, err := json.Marshal(params.Input)
+	if err != nil {
+		t.Fatalf("marshal input: %v", err)
+	}
+	raw := string(data)
+	for _, want := range []string{`"role":"assistant"`, `"phase":"commentary"`, "I will inspect"} {
+		if !strings.Contains(raw, want) {
+			t.Fatalf("input JSON missing %q:\n%s", want, raw)
+		}
+	}
+}
+
 func TestOpenAIResponseParamsPreservesRawCompactionItems(t *testing.T) {
 	openaiProvider := NewOpenAI("gpt-5.5", "medium")
 	rawItem := json.RawMessage(`{"type":"compaction","encrypted_content":"opaque","id":"cmp_123"}`)
@@ -164,6 +186,36 @@ func TestOpenAIResponseParamsPreservesRawCompactionItems(t *testing.T) {
 	for _, want := range []string{`"type":"compaction"`, `"encrypted_content":"opaque"`, `"id":"cmp_123"`} {
 		if !strings.Contains(string(data), want) {
 			t.Fatalf("input JSON missing %q:\n%s", want, data)
+		}
+	}
+}
+
+func TestOpenAIResponseParamsUsesHostedToolSearchForDeferredTools(t *testing.T) {
+	openaiProvider := NewOpenAI("gpt-5.5", "medium")
+
+	params := openaiProvider.responseParams(Request{
+		Messages: []Message{{Role: RoleUser, Content: "hello"}},
+		Tools: []ToolSpec{{
+			Name:        "read_file",
+			Description: "Read a file",
+			Schema:      map[string]any{"type": "object", "properties": map[string]any{}, "required": []string{}},
+		}},
+	})
+	data, err := json.Marshal(params.Tools)
+	if err != nil {
+		t.Fatalf("marshal tools: %v", err)
+	}
+	raw := string(data)
+	for _, want := range []string{
+		`"type":"namespace"`,
+		`"name":"gode"`,
+		`"type":"tool_search"`,
+		`"execution":"server"`,
+		`"defer_loading":true`,
+		`"name":"read_file"`,
+	} {
+		if !strings.Contains(raw, want) {
+			t.Fatalf("tools JSON missing %q:\n%s", want, raw)
 		}
 	}
 }

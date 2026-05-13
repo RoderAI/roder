@@ -44,6 +44,23 @@ func TestModelCoalescesAssistantDeltaEvents(t *testing.T) {
 	}
 }
 
+func TestModelKeepsCommentaryAndFinalAnswerDeltasSeparate(t *testing.T) {
+	model := New(nil)
+	updated, _ := model.Update(eventMsg{Event: eventbus.Event{Kind: eventbus.KindAssistantDelta, Payload: map[string]any{"text": "I will inspect first.", "phase": "commentary"}}})
+	updated, _ = updated.Update(eventMsg{Event: eventbus.Event{Kind: eventbus.KindAssistantDelta, Payload: map[string]any{"text": "Done.", "phase": "final_answer"}}})
+
+	got := updated.(Model)
+	if len(got.messages) != 2 {
+		t.Fatalf("messages = %#v", got.messages)
+	}
+	if got.messages[0].Title != "commentary" || got.messages[0].Body != "I will inspect first." {
+		t.Fatalf("commentary message = %#v", got.messages[0])
+	}
+	if got.messages[1].Title != "" || got.messages[1].Body != "Done." {
+		t.Fatalf("final message = %#v", got.messages[1])
+	}
+}
+
 func TestModelDrainsBufferedFastEvents(t *testing.T) {
 	app, err := godex.New(context.Background(), godex.Config{DataDir: t.TempDir(), Workspace: t.TempDir(), Provider: "mock", AutoApprove: true})
 	if err != nil {

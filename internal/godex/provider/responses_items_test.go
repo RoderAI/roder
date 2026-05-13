@@ -48,7 +48,7 @@ func TestResponsesItemConversionPreservesRawCompactionItems(t *testing.T) {
 
 func TestOpenAIItemConversionPreservesOutputShapes(t *testing.T) {
 	items := providerItemsFromRaw([]json.RawMessage{
-		json.RawMessage(`{"id":"msg_1","type":"message","role":"assistant","content":[{"type":"output_text","text":"hello"}]}`),
+		json.RawMessage(`{"id":"msg_1","type":"message","role":"assistant","phase":"commentary","content":[{"type":"output_text","text":"hello"}]}`),
 		json.RawMessage(`{"id":"fc_1","type":"function_call","call_id":"call_1","name":"read_file","arguments":"{\"path\":\"README.md\"}"}`),
 		json.RawMessage(`{"type":"function_call_output","call_id":"call_1","output":"contents"}`),
 		json.RawMessage(`{"id":"rs_1","type":"reasoning","summary":[{"type":"summary_text","text":"looked around"}]}`),
@@ -58,7 +58,7 @@ func TestOpenAIItemConversionPreservesOutputShapes(t *testing.T) {
 	if len(items) != 6 {
 		t.Fatalf("items = %#v", items)
 	}
-	if items[0].Kind != ItemMessage || items[0].Role != "assistant" || items[0].Text != "hello" {
+	if items[0].Kind != ItemMessage || items[0].Role != "assistant" || items[0].Phase != PhaseCommentary || items[0].Text != "hello" {
 		t.Fatalf("message item = %#v", items[0])
 	}
 	if items[1].Kind != ItemFunctionCall || items[1].ToolCallID != "call_1" || items[1].ToolName != "read_file" || !strings.Contains(items[1].Text, "README.md") {
@@ -75,6 +75,42 @@ func TestOpenAIItemConversionPreservesOutputShapes(t *testing.T) {
 	}
 	if items[5].Kind != ItemRaw || !strings.Contains(string(items[5].RawJSON), "new_future_item") {
 		t.Fatalf("raw item = %#v", items[5])
+	}
+}
+
+func TestOpenAIItemConversionPreservesToolSearchRoundTripItems(t *testing.T) {
+	items := providerItemsFromRaw([]json.RawMessage{
+		json.RawMessage(`{"type":"tool_search_call","execution":"server","call_id":null,"status":"completed","arguments":{"paths":["gode"]}}`),
+		json.RawMessage(`{"type":"tool_search_output","execution":"server","call_id":null,"status":"completed","tools":[{"type":"namespace","name":"gode","tools":[]}]}`),
+	})
+	if len(items) != 2 {
+		t.Fatalf("items = %#v", items)
+	}
+	for _, item := range items {
+		if item.Kind != ItemRaw || len(item.RawJSON) == 0 {
+			t.Fatalf("tool search item should be replayed as raw item: %#v", item)
+		}
+	}
+	input := providerInputItems(items)
+	data, err := json.Marshal(input)
+	if err != nil {
+		t.Fatalf("marshal input: %v", err)
+	}
+	raw := string(data)
+	for _, want := range []string{`"type":"tool_search_call"`, `"type":"tool_search_output"`, `"execution":"server"`} {
+		if !strings.Contains(raw, want) {
+			t.Fatalf("input JSON missing %q:\n%s", want, raw)
+		}
+	}
+}
+
+func TestFinalAnswerTextFromRawIgnoresCommentary(t *testing.T) {
+	text := finalAnswerTextFromRaw([]json.RawMessage{
+		json.RawMessage(`{"id":"msg_1","type":"message","role":"assistant","phase":"commentary","content":[{"type":"output_text","text":"I will inspect first."}]}`),
+		json.RawMessage(`{"id":"msg_2","type":"message","role":"assistant","phase":"final_answer","content":[{"type":"output_text","text":"Done."}]}`),
+	})
+	if text != "Done." {
+		t.Fatalf("final answer text = %q", text)
 	}
 }
 

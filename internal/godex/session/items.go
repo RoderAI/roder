@@ -22,6 +22,7 @@ type Item struct {
 	TurnID     string          `json:"turn_id"`
 	Kind       ItemKind        `json:"kind"`
 	Role       string          `json:"role,omitempty"`
+	Phase      string          `json:"phase,omitempty"`
 	ToolName   string          `json:"tool_name,omitempty"`
 	ToolCallID string          `json:"tool_call_id,omitempty"`
 	Text       string          `json:"text,omitempty"`

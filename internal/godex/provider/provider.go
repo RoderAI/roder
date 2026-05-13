@@ -15,9 +15,15 @@ const (
 	RoleTool      Role = "tool"
 )
 
+const (
+	PhaseCommentary  = "commentary"
+	PhaseFinalAnswer = "final_answer"
+)
+
 type Message struct {
 	Role          Role
 	Content       string
+	Phase         string
 	ToolCallID    string
 	ToolName      string
 	ToolArguments string
@@ -52,6 +58,7 @@ type Item struct {
 	ID         string
 	Kind       ItemKind
 	Role       string
+	Phase      string
 	ToolName   string
 	ToolCallID string
 	Text       string
@@ -82,6 +89,7 @@ const (
 type Event struct {
 	Kind        EventKind
 	Text        string
+	Phase       string
 	ToolRequest *ToolRequest
 	ResponseID  string
 	Items       []Item

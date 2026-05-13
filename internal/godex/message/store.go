@@ -130,9 +130,11 @@ func ProjectionFromEvent(ev eventbus.Event) []Message {
 		return single(base, RoleUser, payload.Prompt)
 	case eventbus.KindAssistantDelta, eventbus.KindAssistantCompleted:
 		var payload struct {
-			Text string `json:"text"`
+			Text  string `json:"text"`
+			Phase string `json:"phase"`
 		}
 		_ = ev.DecodePayload(&payload)
+		base.Phase = strings.TrimSpace(payload.Phase)
 		return single(base, RoleAssistant, payload.Text)
 	case eventbus.KindToolRequested:
 		var payload struct {
@@ -261,9 +263,10 @@ func coalesceAssistant(messages []Message) []Message {
 			out = append(out, msg)
 			continue
 		}
-		index, ok := assistantByRun[msg.RunID]
+		key := msg.RunID + "\x00" + msg.Phase
+		index, ok := assistantByRun[key]
 		if !ok {
-			assistantByRun[msg.RunID] = len(out)
+			assistantByRun[key] = len(out)
 			out = append(out, msg)
 			continue
 		}
