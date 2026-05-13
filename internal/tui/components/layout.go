@@ -45,6 +45,12 @@ func RenderWithCache(vm viewmodel.Model, zones *zone.Manager, transcriptCache *T
 	if settings := vm.ActiveSettingsDialog(); settings != nil {
 		return OverlaySettingsDialog(view, width, height, *settings, zones)
 	}
+	if permissions := vm.ActivePermissionDialog(); permissions != nil {
+		return OverlayPermissionDialog(view, width, height, *permissions, zones)
+	}
+	if list := vm.ActiveListDialog(); list != nil {
+		return OverlayListDialog(view, width, height, *list, zones)
+	}
 	return view
 }
 

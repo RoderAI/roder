@@ -23,3 +23,10 @@ func wrapIndex(index int, count int) int {
 	}
 	return index
 }
+
+func max(a int, b int) int {
+	if a > b {
+		return a
+	}
+	return b
+}

@@ -45,7 +45,10 @@ type Model struct {
 }
 
 type DialogStack struct {
-	Settings *SettingsDialog
+	Settings    *SettingsDialog
+	Commands    *ListDialog
+	Sessions    *ListDialog
+	Permissions *PermissionDialog
 }
 
 func (m Model) ActiveSettingsDialog() *SettingsDialog {
@@ -53,6 +56,52 @@ func (m Model) ActiveSettingsDialog() *SettingsDialog {
 		return m.Dialogs.Settings
 	}
 	return m.Settings
+}
+
+func (m Model) ActiveListDialog() *ListDialog {
+	switch {
+	case m.Dialogs.Commands != nil:
+		return m.Dialogs.Commands
+	case m.Dialogs.Sessions != nil:
+		return m.Dialogs.Sessions
+	default:
+		return nil
+	}
+}
+
+func (m Model) ActivePermissionDialog() *PermissionDialog {
+	return m.Dialogs.Permissions
+}
+
+type ListDialog struct {
+	Kind  string
+	Title string
+	Help  string
+	Items []ListDialogItem
+	Error string
+}
+
+type ListDialogItem struct {
+	ID          string
+	Label       string
+	Description string
+	Value       string
+	Selected    bool
+}
+
+type PermissionDialog struct {
+	Title    string
+	Help     string
+	Requests []PermissionDialogRequest
+	Error    string
+}
+
+type PermissionDialogRequest struct {
+	ID       string
+	Tool     string
+	Action   string
+	Input    string
+	Selected bool
 }
 
 type ErrorLogEntry struct {
@@ -121,4 +170,8 @@ func SettingsModelZoneID(id string) string {
 
 func SettingsReasoningZoneID(effort string) string {
 	return "settings:reasoning:" + effort
+}
+
+func DialogItemZoneID(kind string, id string) string {
+	return "dialog:" + kind + ":" + id
 }

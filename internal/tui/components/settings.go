@@ -47,22 +47,7 @@ func SettingsDialog(width int, height int, settings viewmodel.SettingsDialog, zo
 
 func OverlaySettingsDialog(base string, width int, height int, settings viewmodel.SettingsDialog, zones *zone.Manager) string {
 	box := SettingsDialogBox(width, settings, zones)
-	baseLines := padLines(strings.Split(base, "\n"), width, height)
-	boxLines := strings.Split(box, "\n")
-	boxHeight := len(boxLines)
-	boxWidth := maxLineWidth(boxLines)
-	startY := clamp((height-boxHeight)/2, 0, max(0, height-1))
-	startX := max(0, (width-boxWidth)/2)
-
-	for i, line := range boxLines {
-		y := startY + i
-		if y >= len(baseLines) {
-			break
-		}
-		baseLines[y] = strings.Repeat(" ", startX) + line
-		baseLines[y] = padLine(baseLines[y], width)
-	}
-	return strings.Join(baseLines, "\n")
+	return overlayDialogBox(base, width, height, box)
 }
 
 func SettingsDialogBox(width int, settings viewmodel.SettingsDialog, zones *zone.Manager) string {
