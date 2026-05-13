@@ -29,14 +29,15 @@ type Result struct {
 }
 
 type Tool struct {
-	Name          string
-	Description   string
-	Schema        map[string]any
-	ReadOnly      bool
-	Action        permission.Action
-	PathFromInput func(map[string]any) string
-	Network       bool
-	Run           func(context.Context, Call) (Result, error)
+	Name           string
+	Description    string
+	Schema         map[string]any
+	ReadOnly       bool
+	SkipPermission bool
+	Action         permission.Action
+	PathFromInput  func(map[string]any) string
+	Network        bool
+	Run            func(context.Context, Call) (Result, error)
 }
 
 type Registry struct {
@@ -176,7 +177,7 @@ func (r *Registry) runHooks(ctx context.Context, tool Tool, call *Call) (hooks.H
 }
 
 func (r *Registry) authorize(ctx context.Context, tool Tool, call Call, hookResult hooks.HookResult) error {
-	if tool.ReadOnly || r.autoApprove || hookResult.Decision == hooks.DecisionAllow {
+	if tool.ReadOnly || tool.SkipPermission || r.autoApprove || hookResult.Decision == hooks.DecisionAllow {
 		return nil
 	}
 	if _, ok := r.allowedTools[call.Name]; ok {

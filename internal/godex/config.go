@@ -20,6 +20,8 @@ type Config struct {
 	AutoApprove           bool
 	DisableAutoCompaction bool
 	AutoCompactTokenLimit int
+	GoalsEnabled          bool
+	DisableGoals          bool
 	Telemetry             bool
 	TelemetryEndpoint     string
 	MCP                   map[string]mcp.ServerConfig
@@ -40,6 +42,7 @@ func DefaultConfig() Config {
 		Model:             defaultModel.ID,
 		Reasoning:         defaultModel.DefaultReasoning,
 		AutoApprove:       false,
+		GoalsEnabled:      true,
 		Telemetry:         false,
 		TelemetryEndpoint: "localhost:4317",
 		MCP:               map[string]mcp.ServerConfig{},
@@ -88,6 +91,9 @@ func (c Config) withDefaults() Config {
 	}
 	if c.TelemetryEndpoint == "" {
 		c.TelemetryEndpoint = defaults.TelemetryEndpoint
+	}
+	if !c.DisableGoals {
+		c.GoalsEnabled = true
 	}
 	if c.MCP == nil {
 		c.MCP = defaults.MCP
