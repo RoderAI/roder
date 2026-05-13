@@ -17,6 +17,7 @@ const (
 	ScreenConfig
 	ScreenSkills
 	ScreenSkillRecommendations
+	ScreenSkillInstall
 )
 
 type Settings struct {
@@ -31,6 +32,7 @@ type Settings struct {
 	RecommendedIndex    int
 	Skills              []viewmodel.SettingsSkillItem
 	RecommendedSkills   []viewmodel.SettingsRecommendedSkillItem
+	InstallPrompt       viewmodel.SettingsInstallPrompt
 	SkillInstalledCount int
 	SkillEnabledCount   int
 	Err                 string
@@ -88,6 +90,12 @@ func (s *Settings) OpenSkillRecommendations() {
 	if s.RecommendedIndex >= len(s.RecommendedSkills) {
 		s.RecommendedIndex = 0
 	}
+}
+
+func (s *Settings) OpenSkillInstall() {
+	s.Screen = ScreenSkillInstall
+	s.Err = ""
+	s.InstallPrompt.Open = true
 }
 
 func (s *Settings) Move(delta int) {
@@ -258,6 +266,7 @@ func (s Settings) ViewModel() *viewmodel.SettingsDialog {
 		ConfigRows:        s.configRows(),
 		Skills:            s.viewSkills(),
 		RecommendedSkills: s.viewRecommendedSkills(),
+		InstallPrompt:     s.InstallPrompt,
 		Selected:          s.selectedIndex(),
 		Error:             s.Err,
 	}
@@ -276,6 +285,8 @@ func (s Settings) title() string {
 		return "Installed Skills"
 	case ScreenSkillRecommendations:
 		return "Recommended Skills"
+	case ScreenSkillInstall:
+		return "Install Skill"
 	default:
 		return "Settings"
 	}
@@ -293,6 +304,8 @@ func (s Settings) ScreenName() string {
 		return viewmodel.SettingsScreenSkills
 	case ScreenSkillRecommendations:
 		return viewmodel.SettingsScreenSkillRecs
+	case ScreenSkillInstall:
+		return viewmodel.SettingsScreenSkillInstall
 	default:
 		return viewmodel.SettingsScreenMenu
 	}

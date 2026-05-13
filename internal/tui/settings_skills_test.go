@@ -2,6 +2,7 @@ package tui
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -11,6 +12,7 @@ import (
 	"github.com/pandelisz/gode/internal/godex"
 	godeskills "github.com/pandelisz/gode/internal/godex/skills"
 	"github.com/pandelisz/gode/internal/tui/dialogs"
+	"github.com/pandelisz/gode/internal/tui/viewmodel"
 )
 
 func TestSettingsMenuShowsSkillsCounts(t *testing.T) {
@@ -115,6 +117,104 @@ func TestSettingsRecommendedScreenAndInstallAllCommand(t *testing.T) {
 	}
 }
 
+func TestSettingsInstallPromptOpensWithI(t *testing.T) {
+	app := newSkillsTestApp(t)
+	defer app.Close(context.Background())
+
+	model := New(app)
+	model.openSettings()
+	model.settings.OpenSkills()
+
+	updated, _ := model.Update(tea.KeyPressMsg{Code: 'i', Text: "i"})
+	got := updated.(Model)
+	if got.settings.Screen != dialogs.ScreenSkillInstall {
+		t.Fatalf("screen = %v, want install", got.settings.Screen)
+	}
+	if !strings.Contains(got.View().Content, "Install Skill") {
+		t.Fatalf("view missing install prompt:\n%s", got.View().Content)
+	}
+}
+
+func TestSettingsInstallPromptRunsInstallAndRefreshesSkills(t *testing.T) {
+	app := newSkillsTestApp(t)
+	defer app.Close(context.Background())
+	var commands [][]string
+	app.SkillManager.RunCommand = func(_ context.Context, command []string) (string, string, error) {
+		commands = append(commands, command)
+		writeTUISkill(t, filepath.Join(app.Config.DataDir, "skills", "repo-navigation"), "repo-navigation", "Repo navigation")
+		return "installed repo-navigation", "", nil
+	}
+
+	model := New(app)
+	model.openSettings()
+	model.settings.OpenSkills()
+	model.settings.OpenSkillInstall()
+	updated := typeSettingsText(t, model, "pandelisz/gode@repo-navigation")
+	got := updated.(Model)
+	updated, cmd := got.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	got = updated.(Model)
+	if cmd == nil {
+		t.Fatal("expected install command")
+	}
+	if !got.settings.InstallPrompt.Installing || !strings.Contains(got.status, "installing pandelisz/gode@repo-navigation") {
+		t.Fatalf("install state = installing:%v status:%q", got.settings.InstallPrompt.Installing, got.status)
+	}
+
+	updated, _ = got.Update(cmd())
+	got = updated.(Model)
+	if len(commands) != 1 {
+		t.Fatalf("commands = %#v", commands)
+	}
+	if got.settings.Screen != dialogs.ScreenSkills {
+		t.Fatalf("screen = %v, want skills", got.settings.Screen)
+	}
+	if !hasSettingsSkill(got.settings.Skills, "repo-navigation", true) {
+		t.Fatalf("skills = %#v", got.settings.Skills)
+	}
+	settings, err := godex.LoadSettings(app.Config.DataDir)
+	if err != nil {
+		t.Fatalf("load settings: %v", err)
+	}
+	if !settings.ActiveSkills["repo-navigation"] {
+		t.Fatalf("active skills = %#v", settings.ActiveSkills)
+	}
+	if len(got.messages) == 0 || !strings.Contains(got.messages[len(got.messages)-1].Body, "installed repo-navigation") {
+		t.Fatalf("messages = %#v", got.messages)
+	}
+}
+
+func TestSettingsInstallFailureShowsStderrAndKeepsFullTranscript(t *testing.T) {
+	app := newSkillsTestApp(t)
+	defer app.Close(context.Background())
+	longStderr := strings.Repeat("installer failed with details ", 12)
+	app.SkillManager.RunCommand = func(context.Context, []string) (string, string, error) {
+		return "", longStderr, errors.New("exit status 1")
+	}
+
+	model := New(app)
+	model.openSettings()
+	model.settings.OpenSkills()
+	model.settings.OpenSkillInstall()
+	updated := typeSettingsText(t, model, "pandelisz/gode@terminal-debugging")
+	got := updated.(Model)
+	updated, cmd := got.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	got = updated.(Model)
+	if cmd == nil {
+		t.Fatal("expected install command")
+	}
+	updated, _ = got.Update(cmd())
+	got = updated.(Model)
+	if got.settings.Err == "" || len([]rune(got.settings.Err)) > 160 {
+		t.Fatalf("dialog error = %q", got.settings.Err)
+	}
+	if hasSettingsSkill(got.settings.Skills, "terminal-debugging", true) {
+		t.Fatalf("failed install should not add enabled skill: %#v", got.settings.Skills)
+	}
+	if len(got.messages) == 0 || !strings.Contains(got.messages[len(got.messages)-1].Body, strings.TrimSpace(longStderr)) {
+		t.Fatalf("full stderr missing from transcript: %#v", got.messages)
+	}
+}
+
 func TestSavingModelSettingsPreservesActiveSkills(t *testing.T) {
 	app := newSkillsTestApp(t)
 	defer app.Close(context.Background())
@@ -137,6 +237,28 @@ func TestSavingModelSettingsPreservesActiveSkills(t *testing.T) {
 	if settings.ActiveSkills["go-development"] {
 		t.Fatalf("active skills were not preserved: %#v", settings.ActiveSkills)
 	}
+}
+
+func typeSettingsText(t *testing.T, model Model, text string) tea.Model {
+	t.Helper()
+	var updated tea.Model = model
+	for _, r := range text {
+		var cmd tea.Cmd
+		updated, cmd = updated.Update(tea.KeyPressMsg{Code: r, Text: string(r)})
+		if cmd != nil {
+			t.Fatalf("unexpected command while typing %q", string(r))
+		}
+	}
+	return updated
+}
+
+func hasSettingsSkill(items []viewmodel.SettingsSkillItem, name string, enabled bool) bool {
+	for _, item := range items {
+		if item.Name == name && item.Enabled == enabled {
+			return true
+		}
+	}
+	return false
 }
 
 func newSkillsTestApp(t *testing.T) *godex.App {

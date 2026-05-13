@@ -195,12 +195,13 @@ type SettingsInstallPrompt struct {
 }
 
 const (
-	SettingsScreenMenu      = "menu"
-	SettingsScreenModels    = "models"
-	SettingsScreenReasoning = "reasoning"
-	SettingsScreenConfig    = "config"
-	SettingsScreenSkills    = "skills"
-	SettingsScreenSkillRecs = "skill-recommendations"
+	SettingsScreenMenu         = "menu"
+	SettingsScreenModels       = "models"
+	SettingsScreenReasoning    = "reasoning"
+	SettingsScreenConfig       = "config"
+	SettingsScreenSkills       = "skills"
+	SettingsScreenSkillRecs    = "skill-recommendations"
+	SettingsScreenSkillInstall = "skill-install"
 )
 
 func SettingsMenuItemZoneID(id string) string {

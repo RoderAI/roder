@@ -3,10 +3,12 @@ package tui
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/pandelisz/gode/internal/godex"
 	"github.com/pandelisz/gode/internal/godex/codexauth"
+	godeskills "github.com/pandelisz/gode/internal/godex/skills"
 	"github.com/pandelisz/gode/internal/tui/dialogs"
 	tuiskills "github.com/pandelisz/gode/internal/tui/skills"
 	"github.com/pandelisz/gode/internal/tui/viewmodel"
@@ -32,6 +34,9 @@ func (m *Model) closeSettings(status string) tea.Cmd {
 }
 
 func (m Model) updateSettings(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
+	if m.settings.Screen == dialogs.ScreenSkillInstall {
+		return m.updateSkillInstallPrompt(msg)
+	}
 	switch msg.String() {
 	case "ctrl+c":
 		return m, tea.Quit
@@ -67,6 +72,12 @@ func (m Model) updateSettings(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		return m, nil
+	case "i":
+		if m.settings.Screen == dialogs.ScreenSkills {
+			m.settings.OpenSkillInstall()
+			return m, nil
+		}
+		return m, nil
 	case "a":
 		if m.settings.Screen == dialogs.ScreenSkillRecommendations {
 			return m, m.installMissingRecommendedSkills()
@@ -78,6 +89,28 @@ func (m Model) updateSettings(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	case "up", "k":
 		m.settings.Move(-1)
 		return m, nil
+	}
+	return m, nil
+}
+
+func (m Model) updateSkillInstallPrompt(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
+	switch msg.String() {
+	case "ctrl+c":
+		return m, tea.Quit
+	case "esc", "escape", "ctrl+[", "left":
+		m.settings.OpenSkills()
+		return m, nil
+	case "enter":
+		return m, m.installSkillSource()
+	case "backspace":
+		source := []rune(m.settings.InstallPrompt.Source)
+		if len(source) > 0 {
+			m.settings.InstallPrompt.Source = string(source[:len(source)-1])
+		}
+		return m, nil
+	}
+	if msg.Text != "" && !m.settings.InstallPrompt.Installing {
+		m.settings.InstallPrompt.Source += msg.Text
 	}
 	return m, nil
 }
@@ -328,6 +361,34 @@ func (m *Model) refreshSettingsSkills() {
 	m.settings.SkillEnabledCount = state.EnabledN
 }
 
+func (m *Model) installSkillSource() tea.Cmd {
+	if m.app == nil || m.app.SkillManager == nil {
+		m.settings.Err = "skills manager unavailable"
+		return nil
+	}
+	if m.settings.InstallPrompt.Installing {
+		m.settings.Err = "install already running"
+		return nil
+	}
+	source := strings.TrimSpace(m.settings.InstallPrompt.Source)
+	if source == "" {
+		m.settings.Err = "source is required"
+		return nil
+	}
+	manager := m.app.SkillManager
+	m.settings.Err = ""
+	m.settings.InstallPrompt.Installing = true
+	m.status = "installing " + source
+	return func() tea.Msg {
+		result, err := manager.Install(context.Background(), godeskills.InstallRequest{Source: source, Scope: godeskills.InstallScopeGlobal})
+		output := strings.TrimSpace(strings.Join([]string{result.Stdout, result.Stderr}, "\n"))
+		if err != nil {
+			return skillsInstallDoneMsg{Source: source, Output: output, Err: err}
+		}
+		return skillsInstallDoneMsg{Source: source, Output: output, Installed: 1}
+	}
+}
+
 func (m Model) toggleSelectedSkill() (tea.Model, tea.Cmd) {
 	item, ok := tuiskills.SelectedSkill(m.settings.Skills, m.settings.SkillIndex)
 	if !ok || item.Name == "" {
@@ -367,6 +428,34 @@ func (m *Model) installMissingRecommendedSkills() tea.Cmd {
 		}
 		return skillsInstallDoneMsg{Installed: len(results)}
 	}
+}
+
+func skillInstallTranscript(msg skillsInstallDoneMsg) string {
+	lines := []string{}
+	if msg.Source != "" {
+		lines = append(lines, "source: "+msg.Source)
+	}
+	if msg.Err != nil {
+		lines = append(lines, "error: "+msg.Err.Error())
+	}
+	if strings.TrimSpace(msg.Output) != "" {
+		lines = append(lines, strings.TrimSpace(msg.Output))
+	}
+	if len(lines) == 0 {
+		return "skill install completed"
+	}
+	return strings.Join(lines, "\n")
+}
+
+func truncateStatus(value string, maxRunes int) string {
+	runes := []rune(strings.TrimSpace(value))
+	if len(runes) <= maxRunes {
+		return string(runes)
+	}
+	if maxRunes <= 1 {
+		return string(runes[:maxRunes])
+	}
+	return string(runes[:maxRunes-1]) + "…"
 }
 
 func onOff(enabled bool) string {
