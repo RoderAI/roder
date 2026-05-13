@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/pandelisz/gode/internal/godex/permission"
 	"github.com/pandelisz/gode/internal/godex/tools"
 )
 
@@ -14,6 +15,7 @@ func RegisterShell(reg *tools.Registry, root string) {
 		Name:        "shell",
 		Description: "Run a shell command in the workspace.",
 		ReadOnly:    false,
+		Action:      permission.ActionExecute,
 		Schema:      objectSchema("command"),
 		Run: func(ctx context.Context, call tools.Call) (tools.Result, error) {
 			command := stringInput(call.Input, "command")

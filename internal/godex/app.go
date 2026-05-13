@@ -98,6 +98,10 @@ func New(ctx context.Context, cfg Config) (*App, error) {
 		tools.WithWorkspace(cfg.Workspace),
 	)
 	builtin.RegisterFilesystem(reg, cfg.Workspace)
+	builtin.RegisterSearch(reg, cfg.Workspace)
+	builtin.RegisterEditing(reg, cfg.Workspace)
+	builtin.RegisterDownload(reg, cfg.Workspace)
+	builtin.RegisterGit(reg, cfg.Workspace)
 	builtin.RegisterTodo(reg)
 	builtin.RegisterMemory(reg, filepath.Join(cfg.DataDir, "memory.jsonl"))
 	builtin.RegisterShell(reg, cfg.Workspace)

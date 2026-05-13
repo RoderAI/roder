@@ -6,6 +6,7 @@ import (
 	"os/exec"
 	"strings"
 
+	"github.com/pandelisz/gode/internal/godex/permission"
 	"github.com/pandelisz/gode/internal/godex/tools"
 )
 
@@ -14,6 +15,7 @@ func RegisterPatch(reg *tools.Registry, root string) {
 		Name:        "apply_patch",
 		Description: "Apply a unified patch in the workspace using git apply.",
 		ReadOnly:    false,
+		Action:      permission.ActionWrite,
 		Schema:      objectSchema("patch"),
 		Run: func(ctx context.Context, call tools.Call) (tools.Result, error) {
 			patch := stringInput(call.Input, "patch")

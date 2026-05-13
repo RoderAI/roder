@@ -12,15 +12,18 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/pandelisz/gode/internal/godex/permission"
 	"github.com/pandelisz/gode/internal/godex/tools"
 )
 
 func RegisterFilesystem(reg *tools.Registry, root string) {
 	reg.Register(tools.Tool{
-		Name:        "read_file",
-		Description: "Read a UTF-8 text file inside the workspace.",
-		ReadOnly:    true,
-		Schema:      objectSchema("path"),
+		Name:          "read_file",
+		Description:   "Read a UTF-8 text file inside the workspace.",
+		ReadOnly:      true,
+		Action:        permission.ActionRead,
+		PathFromInput: pathInput,
+		Schema:        objectSchema("path"),
 		Run: func(ctx context.Context, call tools.Call) (tools.Result, error) {
 			path, err := cleanWorkspacePath(root, stringInput(call.Input, "path"))
 			if err != nil {
@@ -35,10 +38,12 @@ func RegisterFilesystem(reg *tools.Registry, root string) {
 	})
 
 	reg.Register(tools.Tool{
-		Name:        "list_files",
-		Description: "List direct children of a workspace directory.",
-		ReadOnly:    true,
-		Schema:      objectSchema("path"),
+		Name:          "list_files",
+		Description:   "List direct children of a workspace directory.",
+		ReadOnly:      true,
+		Action:        permission.ActionRead,
+		PathFromInput: pathInput,
+		Schema:        objectSchema("path"),
 		Run: func(ctx context.Context, call tools.Call) (tools.Result, error) {
 			path, err := cleanWorkspacePath(root, stringInputDefault(call.Input, "path", "."))
 			if err != nil {
@@ -65,6 +70,7 @@ func RegisterFilesystem(reg *tools.Registry, root string) {
 		Name:        "search_files",
 		Description: "Search workspace text files for a literal query.",
 		ReadOnly:    true,
+		Action:      permission.ActionRead,
 		Schema:      objectSchema("query"),
 		Run: func(ctx context.Context, call tools.Call) (tools.Result, error) {
 			query := stringInput(call.Input, "query")
