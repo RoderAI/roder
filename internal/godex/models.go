@@ -3,12 +3,14 @@ package godex
 import "github.com/pandelisz/gode/internal/godex/contextwindow"
 
 const (
-	ProviderMock   = "mock"
-	ProviderOpenAI = "openai"
-	ProviderCodex  = "codex"
+	ProviderMock      = "mock"
+	ProviderOpenAI    = "openai"
+	ProviderCodex     = "codex"
+	ProviderAnthropic = "anthropic"
 
-	ProviderKindMock   = "mock"
-	ProviderKindOpenAI = "openai"
+	ProviderKindMock      = "mock"
+	ProviderKindOpenAI    = "openai"
+	ProviderKindAnthropic = "anthropic"
 
 	ReasoningNone    = "none"
 	ReasoningMinimal = "minimal"
@@ -183,6 +185,16 @@ var builtInProviders = []ProviderConfig{
 		RequiresAuth:       true,
 		SupportsWebSockets: true,
 	},
+	{
+		ID:                 ProviderAnthropic,
+		Name:               "Anthropic",
+		Kind:               ProviderKindAnthropic,
+		DefaultModel:       "claude-sonnet-4-6",
+		BaseURL:            "https://api.anthropic.com",
+		EnvKey:             "ANTHROPIC_API_KEY",
+		RequiresAuth:       true,
+		SupportsWebSockets: false,
+	},
 }
 
 var builtInModels = []ModelConfig{
@@ -239,6 +251,33 @@ var builtInModels = []ModelConfig{
 		DefaultReasoning:   ReasoningMedium,
 		SupportedReasoning: standardReasoning(),
 		Hidden:             true,
+	}),
+	withContextWindow(ModelConfig{
+		ID:                 "claude-opus-4-7",
+		DisplayName:        "Claude Opus 4.7",
+		Description:        "Most capable Claude model for complex reasoning and agentic coding.",
+		Provider:           ProviderAnthropic,
+		DefaultReasoning:   ReasoningHigh,
+		SupportedReasoning: standardReasoning(),
+	}),
+	withContextWindow(ModelConfig{
+		ID:                 "claude-sonnet-4-6",
+		DisplayName:        "Claude Sonnet 4.6",
+		Description:        "Balanced Claude model for coding, tool use, and everyday agent workflows.",
+		Provider:           ProviderAnthropic,
+		DefaultReasoning:   ReasoningMedium,
+		SupportedReasoning: standardReasoning(),
+	}),
+	withContextWindow(ModelConfig{
+		ID:               "claude-haiku-4-5-20251001",
+		DisplayName:      "Claude Haiku 4.5",
+		Description:      "Fast Claude model for lower-latency tool workflows.",
+		Provider:         ProviderAnthropic,
+		DefaultReasoning: ReasoningLow,
+		SupportedReasoning: []ReasoningOption{
+			{Effort: ReasoningLow, Description: "Fast responses with lighter reasoning"},
+			{Effort: ReasoningMedium, Description: "Balances speed and reasoning depth for everyday tasks"},
+		},
 	}),
 	{
 		ID:                 "mock",

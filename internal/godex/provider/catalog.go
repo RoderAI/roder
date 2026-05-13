@@ -127,6 +127,7 @@ func (c ModelCatalog) SelectedModel(providerID string) (SelectedModel, bool) {
 
 func defaultProviders() []ProviderConfig {
 	return []ProviderConfig{
+		{ID: "anthropic", Name: "Anthropic", Kind: "anthropic", DefaultModel: "claude-sonnet-4-6", BaseURL: "https://api.anthropic.com", EnvKey: "ANTHROPIC_API_KEY", RequiresAuth: true},
 		{ID: "anthropic-compatible", Name: "Anthropic Compatible", Kind: "anthropic-compatible", DefaultModel: "claude-sonnet-4.5", RequiresAuth: true},
 		{ID: "openai", Name: "OpenAI", Kind: "openai", DefaultModel: "gpt-5.4-mini", BaseURL: "https://api.openai.com/v1", EnvKey: "OPENAI_API_KEY", RequiresAuth: true, SupportsWebSockets: true},
 		{ID: "openai-compatible", Name: "OpenAI Compatible", Kind: "openai-compatible", DefaultModel: "gpt-5.4-mini", RequiresAuth: true},
@@ -135,6 +136,9 @@ func defaultProviders() []ProviderConfig {
 
 func defaultModels() []ModelMetadata {
 	return []ModelMetadata{
+		{ID: "claude-opus-4-7", DisplayName: "Claude Opus 4.7", Provider: "anthropic", ContextWindow: 1000000, SupportsImages: true, ReasoningEfforts: standardReasoningEfforts(), DefaultReasoning: "high"},
+		{ID: "claude-sonnet-4-6", DisplayName: "Claude Sonnet 4.6", Provider: "anthropic", ContextWindow: 1000000, SupportsImages: true, ReasoningEfforts: standardReasoningEfforts(), DefaultReasoning: "medium"},
+		{ID: "claude-haiku-4-5-20251001", DisplayName: "Claude Haiku 4.5", Provider: "anthropic", ContextWindow: 200000, SupportsImages: true, ReasoningEfforts: []string{"low", "medium"}, DefaultReasoning: "low"},
 		{ID: "claude-sonnet-4.5", DisplayName: "Claude Sonnet 4.5", Provider: "anthropic-compatible", ContextWindow: 200000, SupportsImages: true, ReasoningEfforts: []string{"none"}, DefaultReasoning: "none"},
 		{ID: "gpt-5.3-codex", DisplayName: "GPT-5.3-Codex", Provider: "openai", ContextWindow: 272000, SupportsImages: true, ReasoningEfforts: standardReasoningEfforts(), DefaultReasoning: "medium"},
 		{ID: "gpt-5.4", DisplayName: "GPT-5.4", Provider: "openai", ContextWindow: 272000, SupportsImages: true, ReasoningEfforts: standardReasoningEfforts(), DefaultReasoning: "medium"},
