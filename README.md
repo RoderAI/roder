@@ -22,6 +22,15 @@ make run
 make ask PROMPT="summarize this repo"
 ```
 
+`make run` enables local OpenTelemetry tracing by default and exports OTLP/gRPC spans to `localhost:4317`.
+
+```sh
+./jaeger.sh
+make run
+```
+
+Then open Jaeger at <http://localhost:16686>.
+
 ## Near-Term Direction
 
 - Deepen the OpenAI/Codex provider loop with multi-turn tool result continuation.
