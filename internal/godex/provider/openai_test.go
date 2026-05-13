@@ -111,6 +111,34 @@ func TestOpenAIResponseParamsUsesInputItemList(t *testing.T) {
 	}
 }
 
+func TestOpenAIResponseParamsNormalizesNullRequiredToolSchema(t *testing.T) {
+	openaiProvider := NewOpenAI("gpt-5.5", "medium")
+
+	params := openaiProvider.responseParams(Request{
+		Messages: []Message{{Role: RoleUser, Content: "hello"}},
+		Tools: []ToolSpec{{
+			Name:        "git_diff",
+			Description: "Show git diff",
+			Schema: map[string]any{
+				"type":       "object",
+				"properties": map[string]any{},
+				"required":   []string(nil),
+			},
+		}},
+	})
+	data, err := json.Marshal(params.Tools)
+	if err != nil {
+		t.Fatalf("marshal tools: %v", err)
+	}
+	raw := string(data)
+	if strings.Contains(raw, `"required":null`) {
+		t.Fatalf("tool schema should not contain required:null:\n%s", raw)
+	}
+	if !strings.Contains(raw, `"required":[]`) {
+		t.Fatalf("tool schema should contain required array:\n%s", raw)
+	}
+}
+
 func TestOpenAIStreamErrorIncludesHTTPDebugDetails(t *testing.T) {
 	openaiProvider := NewOpenAIWithConfig(OpenAIConfig{
 		Model:       "gpt-5.5",

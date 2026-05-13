@@ -346,14 +346,52 @@ func inputString(messages []Message) string {
 func openAITools(specs []ToolSpec) []responses.ToolUnionParam {
 	out := make([]responses.ToolUnionParam, 0, len(specs))
 	for _, spec := range specs {
-		schema := spec.Schema
-		if schema == nil {
-			schema = map[string]any{"type": "object", "properties": map[string]any{}}
-		}
+		schema := normalizeToolSchema(spec.Schema)
 		out = append(out, responses.ToolParamOfFunction(spec.Name, schema, false))
 		if out[len(out)-1].OfFunction != nil {
 			out[len(out)-1].OfFunction.Description = param.NewOpt(spec.Description)
 		}
 	}
 	return out
+}
+
+func normalizeToolSchema(schema map[string]any) map[string]any {
+	if schema == nil {
+		return map[string]any{"type": "object", "properties": map[string]any{}}
+	}
+	normalized, ok := normalizeSchemaValue(schema).(map[string]any)
+	if !ok {
+		return map[string]any{"type": "object", "properties": map[string]any{}}
+	}
+	return normalized
+}
+
+func normalizeSchemaValue(value any) any {
+	switch typed := value.(type) {
+	case map[string]any:
+		out := make(map[string]any, len(typed))
+		for key, item := range typed {
+			out[key] = normalizeSchemaValue(item)
+		}
+		if required, ok := out["required"]; ok && required == nil {
+			out["required"] = []any{}
+		}
+		return out
+	case []any:
+		if typed == nil {
+			return []any{}
+		}
+		out := make([]any, len(typed))
+		for i, item := range typed {
+			out[i] = normalizeSchemaValue(item)
+		}
+		return out
+	case []string:
+		if typed == nil {
+			return []string{}
+		}
+		return append([]string{}, typed...)
+	default:
+		return typed
+	}
 }
