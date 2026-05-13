@@ -60,14 +60,18 @@ func (m Model) acceptCommandSelection() (tea.Model, tea.Cmd) {
 		m.commands.Err = "no command selected"
 		return m, nil
 	}
+	m.insertCommandItem(item)
+	m.commands = dialogs.Commands{}
+	m.status = "command inserted"
+	return m, m.input.Focus()
+}
+
+func (m *Model) insertCommandItem(item dialogs.CommandItem) {
 	if strings.HasPrefix(item.ID, "mcp:") {
 		m.input.SetValue("Use MCP prompt " + strings.TrimPrefix(item.ID, "mcp:") + " ")
 	} else {
 		m.input.SetValue("/" + item.ID + " ")
 	}
-	m.commands = dialogs.Commands{}
-	m.status = "command inserted"
-	return m, m.input.Focus()
 }
 
 func (m Model) updateSessions(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
@@ -285,19 +289,18 @@ func (m Model) permissionsViewModel() *viewmodel.PermissionDialog {
 }
 
 func (m Model) commandItems() []dialogs.CommandItem {
-	if m.app == nil {
-		return nil
+	items := builtinCommandItems()
+	if m.app != nil {
+		for _, command := range m.app.Commands() {
+			items = append(items, dialogs.CommandItem{
+				ID:          command.ID,
+				Title:       "/" + command.ID,
+				Description: firstLine(command.Prompt),
+				Source:      command.Scope,
+			})
+		}
 	}
-	items := []dialogs.CommandItem{}
-	for _, command := range m.app.Commands() {
-		items = append(items, dialogs.CommandItem{
-			ID:          command.ID,
-			Title:       "/" + command.ID,
-			Description: firstLine(command.Prompt),
-			Source:      command.Scope,
-		})
-	}
-	if m.app.MCP != nil {
+	if m.app != nil && m.app.MCP != nil {
 		for _, prompt := range m.app.MCP.Prompts() {
 			id := "mcp:" + prompt.Server + ":" + prompt.Name
 			items = append(items, dialogs.CommandItem{
@@ -309,6 +312,15 @@ func (m Model) commandItems() []dialogs.CommandItem {
 		}
 	}
 	return items
+}
+
+func builtinCommandItems() []dialogs.CommandItem {
+	return []dialogs.CommandItem{{
+		ID:          "goal",
+		Title:       "/goal",
+		Description: "set, show, pause, resume, clear, or budget the current goal",
+		Source:      "builtin",
+	}}
 }
 
 func (m Model) sessionItems() []dialogs.SessionItem {

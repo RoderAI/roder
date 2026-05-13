@@ -21,11 +21,13 @@ func (m Model) View() tea.View {
 		Attachments:      m.attachmentViewModels(),
 		Input:            m.input.View(),
 		InputHeight:      m.input.Height(),
+		SlashMenu:        m.slashMenuViewModel(),
 		ScrollOffset:     m.scrollOffset,
 		FollowTail:       m.followTail,
 		Running:          m.running,
 		HoveredID:        m.hoveredID,
 		Status:           m.footerStatus(),
+		ContextLeft:      m.contextLeft,
 		SessionTitle:     m.currentSession,
 		Dialogs: viewmodel.DialogStack{
 			Settings:    settings,

@@ -25,6 +25,8 @@ type Update struct {
 	ReasoningDelta      string
 	ReasoningSummary    string
 	HasReasoningSummary bool
+	ContextUsedPercent  float64
+	HasContextTokens    bool
 	Status              string
 	HasStatus           bool
 	Running             *bool
@@ -44,6 +46,10 @@ func Apply(ev eventbus.Event) Update {
 		var payload textPayload
 		_ = ev.DecodePayload(&payload)
 		return Update{ReasoningSummary: payload.Text, HasReasoningSummary: payload.Text != ""}
+	case eventbus.KindContextTokensUpdated:
+		var payload contextTokensPayload
+		_ = ev.DecodePayload(&payload)
+		return Update{ContextUsedPercent: payload.Percent, HasContextTokens: true}
 	case eventbus.KindAssistantCompleted:
 		return status("assistant completed")
 	case eventbus.KindToolRequested:
@@ -149,6 +155,10 @@ type namedPayload struct {
 type errorPayload struct {
 	Error  string `json:"error"`
 	Detail string `json:"detail"`
+}
+
+type contextTokensPayload struct {
+	Percent float64 `json:"percent"`
 }
 
 func (p errorPayload) Message() string {

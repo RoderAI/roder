@@ -3,8 +3,21 @@ package components
 import (
 	"strings"
 
+	"charm.land/lipgloss/v2"
 	zone "github.com/lrstanley/bubblezone/v2"
 	"github.com/pandelisz/gode/internal/tui/viewmodel"
+)
+
+var (
+	inlineListStyle = lipgloss.NewStyle().
+			Padding(0, 2)
+	inlineListLabelStyle = lipgloss.NewStyle().
+				Foreground(lipgloss.Color("231"))
+	inlineListSelectedLabelStyle = lipgloss.NewStyle().
+					Bold(true).
+					Foreground(lipgloss.Color("152"))
+	inlineListDescriptionStyle = lipgloss.NewStyle().
+					Foreground(lipgloss.Color("244"))
 )
 
 func OverlayListDialog(base string, width int, height int, dialog viewmodel.ListDialog, zones *zone.Manager) string {
@@ -13,6 +26,47 @@ func OverlayListDialog(base string, width int, height int, dialog viewmodel.List
 
 func OverlayPermissionDialog(base string, width int, height int, dialog viewmodel.PermissionDialog, zones *zone.Manager) string {
 	return overlayDialogBox(base, width, height, PermissionDialogBox(width, dialog, zones))
+}
+
+func InlineListDialogHeight(dialog *viewmodel.ListDialog) int {
+	if dialog == nil || len(dialog.Items) == 0 {
+		return 0
+	}
+	height := min(maxSlashListRows, len(dialog.Items))
+	if dialog.Error != "" {
+		height++
+	}
+	return height
+}
+
+func InlineListDialog(width int, dialog viewmodel.ListDialog, zones *zone.Manager) string {
+	contentWidth := max(20, width-4)
+	rows := dialog.Items
+	if len(rows) > maxSlashListRows {
+		rows = rows[:maxSlashListRows]
+	}
+	lines := make([]string, 0, len(rows)+1)
+	for _, item := range rows {
+		labelStyle := inlineListLabelStyle
+		prefix := "  "
+		if item.Selected {
+			prefix = "> "
+			labelStyle = inlineListSelectedLabelStyle
+		}
+		labelWidth := min(22, max(8, contentWidth/3))
+		label := labelStyle.Render(truncateCell(item.Label, labelWidth))
+		descWidth := max(1, contentWidth-lipgloss.Width(prefix)-labelWidth-2)
+		desc := inlineListDescriptionStyle.Render(truncateCell(item.Description, descWidth))
+		line := prefix + padCell(label, labelWidth) + "  " + desc
+		if zones != nil {
+			line = zones.Mark(viewmodel.DialogItemZoneID(dialog.Kind, item.ID), line)
+		}
+		lines = append(lines, line)
+	}
+	if dialog.Error != "" {
+		lines = append(lines, settingsErrorStyle.Render(truncateCell(dialog.Error, contentWidth)))
+	}
+	return inlineListStyle.Width(width).Render(strings.Join(lines, "\n"))
 }
 
 func ListDialogBox(width int, dialog viewmodel.ListDialog, zones *zone.Manager) string {
@@ -50,6 +104,12 @@ func ListDialogBox(width int, dialog viewmodel.ListDialog, zones *zone.Manager) 
 		lines = append(lines, "", settingsHelpStyle.Render(dialog.Help))
 	}
 	return settingsBoxStyle.Width(dialogWidth).Render(strings.Join(lines, "\n"))
+}
+
+const maxSlashListRows = 8
+
+func padCell(text string, width int) string {
+	return text + strings.Repeat(" ", max(0, width-lipgloss.Width(text)))
 }
 
 func PermissionDialogBox(width int, dialog viewmodel.PermissionDialog, zones *zone.Manager) string {

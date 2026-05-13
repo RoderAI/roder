@@ -143,6 +143,45 @@ func TestModelShowsReasoningSummaryAboveComposer(t *testing.T) {
 	}
 }
 
+func TestModelShowsContextLeftInFooter(t *testing.T) {
+	model := New(nil)
+	model.width = 80
+	model.height = 12
+
+	updated, _ := model.Update(eventMsg{Event: eventbus.Event{
+		Kind: eventbus.KindContextTokensUpdated,
+		Payload: map[string]any{
+			"tokens":         1200,
+			"context_window": 10000,
+			"percent":        12.4,
+		},
+	}})
+
+	got := updated.(Model)
+	if got.contextLeft != "ctx 88%" {
+		t.Fatalf("context left = %q", got.contextLeft)
+	}
+	if !strings.Contains(got.View().Content, "ctx 88%") {
+		t.Fatalf("view missing context left:\n%s", got.View().Content)
+	}
+}
+
+func TestFormatContextLeftClampsBounds(t *testing.T) {
+	for _, tc := range []struct {
+		used float64
+		want string
+	}{
+		{used: -4.9, want: "ctx 100%"},
+		{used: 0, want: "ctx 100%"},
+		{used: 12.6, want: "ctx 87%"},
+		{used: 101, want: "ctx 0%"},
+	} {
+		if got := formatContextLeft(tc.used); got != tc.want {
+			t.Fatalf("formatContextLeft(%v) = %q, want %q", tc.used, got, tc.want)
+		}
+	}
+}
+
 func TestModelScrollState(t *testing.T) {
 	model := New(nil)
 	model.width = 40
@@ -196,35 +235,48 @@ func TestCtrlPOpensSettingsDialog(t *testing.T) {
 	}
 }
 
-func TestSlashOpensCommandsDialogAndSelectionInsertsCommand(t *testing.T) {
+func TestSlashShowsInlineMenuAndSelectionInsertsCommand(t *testing.T) {
 	model := New(nil)
 	updated, _ := model.Update(tea.KeyPressMsg{Code: '/', Text: "/"})
 	got := updated.(Model)
 	if got.commands.Open {
-		t.Fatal("slash key should stay in the composer until it is submitted bare")
+		t.Fatal("slash key should use the inline menu, not the modal command dialog")
 	}
 	if got.input.Value() != "/" {
 		t.Fatalf("input = %q", got.input.Value())
 	}
-
-	updated, _ = got.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
-	got = updated.(Model)
-	if !got.commands.Open {
-		t.Fatal("commands dialog should open when bare slash is submitted")
+	view := got.View().Content
+	for _, want := range []string{"/goal", "set, show, pause"} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("slash menu missing %q:\n%s", want, view)
+		}
 	}
 
-	got.commands = dialogs.NewCommands([]dialogs.CommandItem{{ID: "project:test", Title: "/project:test", Source: "project"}})
 	updated, _ = got.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 	got = updated.(Model)
-
 	if got.commands.Open {
-		t.Fatal("commands dialog should close after selection")
+		t.Fatal("commands dialog should stay closed after inline selection")
 	}
-	if got.input.Value() != "/project:test " {
+	if got.input.Value() != "/goal " {
 		t.Fatalf("input = %q", got.input.Value())
 	}
 	if !got.input.Focused() {
-		t.Fatal("composer should refocus after command selection")
+		t.Fatal("composer should stay focused after inline command selection")
+	}
+}
+
+func TestSlashMenuFiltersProjectCommands(t *testing.T) {
+	app, err := godex.New(context.Background(), godex.Config{DataDir: t.TempDir(), Workspace: t.TempDir(), Provider: "mock", AutoApprove: true})
+	if err != nil {
+		t.Fatalf("app: %v", err)
+	}
+	defer app.Close(context.Background())
+	model := New(app)
+	model.input.SetValue("/go")
+
+	menu := model.slashMenuViewModel()
+	if menu == nil || len(menu.Items) != 1 || menu.Items[0].ID != "goal" {
+		t.Fatalf("slash menu = %#v", menu)
 	}
 }
 

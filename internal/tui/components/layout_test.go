@@ -106,6 +106,45 @@ func TestRenderListDialogOverTimeline(t *testing.T) {
 	}
 }
 
+func TestRenderInlineSlashMenuBelowComposer(t *testing.T) {
+	zones := zone.New()
+	t.Cleanup(zones.Close)
+
+	out := zones.Scan(Render(viewmodel.Model{
+		Width:       80,
+		Height:      18,
+		Model:       "gpt-test",
+		Provider:    "mock",
+		Input:       "/",
+		InputHeight: 1,
+		SlashMenu: &viewmodel.ListDialog{
+			Kind: "slash",
+			Items: []viewmodel.ListDialogItem{{
+				ID:          "goal",
+				Label:       "/goal",
+				Description: "set, show, pause, resume, clear, or budget the current goal",
+				Value:       "builtin",
+				Selected:    true,
+			}},
+		},
+		Status: "ready",
+	}, zones))
+
+	if got := lipgloss.Height(out); got != 18 {
+		t.Fatalf("height = %d, want 18\n%s", got, out)
+	}
+	inputIndex := strings.Index(out, "/")
+	menuIndex := strings.Index(out, "/goal")
+	if inputIndex < 0 || menuIndex < 0 || menuIndex < inputIndex {
+		t.Fatalf("slash menu should render below composer:\n%s", out)
+	}
+	for _, want := range []string{"/goal", "set, show, pause"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("rendered output missing %q:\n%s", want, out)
+		}
+	}
+}
+
 func TestRenderPermissionDialogOverTimeline(t *testing.T) {
 	zones := zone.New()
 	t.Cleanup(zones.Close)
@@ -331,6 +370,16 @@ func TestRenderFooterUsesBottomRowWhenScrolled(t *testing.T) {
 	}
 	if !strings.Contains(lines[len(lines)-1], "scroll 4") {
 		t.Fatalf("footer should render on bottom row, got %q\n%s", lines[len(lines)-1], out)
+	}
+}
+
+func TestFooterShowsContextLeftWithErrorsAndScroll(t *testing.T) {
+	out := Footer(80, 6, "ready", true, 2, "ctx 88%")
+
+	for _, want := range []string{"ready", "errors open 2", "ctx 88%", "scroll 6"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("footer missing %q:\n%s", want, out)
+		}
 	}
 }
 
