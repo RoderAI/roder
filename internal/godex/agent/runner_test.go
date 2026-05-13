@@ -96,6 +96,61 @@ func TestRunnerSendsGodeInstructions(t *testing.T) {
 	}
 }
 
+func TestRunnerCarriesFunctionCallBeforeToolOutput(t *testing.T) {
+	reg := tools.NewRegistry(tools.WithAutoApprove(true))
+	reg.Register(tools.Tool{
+		Name:        "echo",
+		Description: "echo",
+		ReadOnly:    true,
+		Run: func(context.Context, tools.Call) (tools.Result, error) {
+			return tools.Result{Text: "echoed"}, nil
+		},
+	})
+	script := &scriptedProvider{
+		streams: [][]provider.Event{
+			{
+				{
+					Kind: provider.EventToolCall,
+					ToolRequest: &provider.ToolRequest{
+						ID:        "call_abc",
+						Name:      "echo",
+						Input:     map[string]any{"text": "hello"},
+						Arguments: `{"text":"hello"}`,
+					},
+				},
+				{Kind: provider.EventCompleted},
+			},
+			{
+				{Kind: provider.EventDelta, Text: "done"},
+				{Kind: provider.EventCompleted, Text: "done"},
+			},
+		},
+	}
+	runner := NewRunner(Config{
+		Bus:      eventbus.New(eventbus.WithSubscriberBuffer(16)),
+		Tools:    reg,
+		Provider: script,
+	})
+	defer runner.bus.Close()
+
+	if _, err := runner.Run(context.Background(), RunRequest{Prompt: "hello"}); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	if len(script.requests) != 2 {
+		t.Fatalf("requests = %d, want 2", len(script.requests))
+	}
+	messages := script.requests[1].Messages
+	if len(messages) != 3 {
+		t.Fatalf("second request messages = %#v", messages)
+	}
+	if messages[1].Role != provider.RoleAssistant || messages[1].ToolCallID != "call_abc" || messages[1].ToolName != "echo" || messages[1].ToolArguments != `{"text":"hello"}` {
+		t.Fatalf("assistant function call message = %#v", messages[1])
+	}
+	if messages[2].Role != provider.RoleTool || messages[2].ToolCallID != "call_abc" || !strings.Contains(messages[2].Content, "echoed") {
+		t.Fatalf("tool output message = %#v", messages[2])
+	}
+}
+
 type captureProvider struct {
 	request   provider.Request
 	finalText string
@@ -111,6 +166,30 @@ func (p *captureProvider) Stream(_ context.Context, req provider.Request) (<-cha
 	errs := make(chan error)
 	events <- provider.Event{Kind: provider.EventDelta, Text: p.finalText}
 	events <- provider.Event{Kind: provider.EventCompleted, Text: p.finalText}
+	close(events)
+	close(errs)
+	return events, errs
+}
+
+type scriptedProvider struct {
+	requests []provider.Request
+	streams  [][]provider.Event
+}
+
+func (p *scriptedProvider) Name() string {
+	return "scripted"
+}
+
+func (p *scriptedProvider) Stream(_ context.Context, req provider.Request) (<-chan provider.Event, <-chan error) {
+	p.requests = append(p.requests, req)
+	events := make(chan provider.Event, 8)
+	errs := make(chan error)
+	index := len(p.requests) - 1
+	if index < len(p.streams) {
+		for _, ev := range p.streams[index] {
+			events <- ev
+		}
+	}
 	close(events)
 	close(errs)
 	return events, errs

@@ -65,7 +65,8 @@ func (o *OpenAI) Stream(ctx context.Context, req Request) (<-chan Event, <-chan 
 		final := ""
 		toolArgs := map[string]string{}
 		toolNames := map[string]string{}
-		emittedTools := map[string]bool{}
+		toolCallIDs := map[string]string{}
+		emittedToolItems := map[string]bool{}
 		for stream.Next() {
 			ev := stream.Current()
 			switch ev.Type {
@@ -74,21 +75,36 @@ func (o *OpenAI) Stream(ctx context.Context, req Request) (<-chan Event, <-chan 
 				events <- Event{Kind: EventDelta, Text: ev.Delta}
 			case "response.output_item.added":
 				if ev.Item.Type == "function_call" {
-					toolNames[ev.Item.ID] = ev.Item.Name
+					call := ev.Item.AsFunctionCall()
+					toolNames[ev.Item.ID] = call.Name
+					toolCallIDs[ev.Item.ID] = firstNonEmpty(call.CallID, call.ID, ev.Item.ID)
+					toolArgs[ev.Item.ID] = call.Arguments
 				}
 			case "response.function_call_arguments.delta":
 				toolArgs[ev.ItemID] += ev.Delta
 			case "response.function_call_arguments.done":
 				toolArgs[ev.ItemID] = firstNonEmpty(ev.Arguments, toolArgs[ev.ItemID])
-				if name := firstNonEmpty(ev.Name, toolNames[ev.ItemID]); name != "" && !emittedTools[ev.ItemID] {
-					events <- Event{Kind: EventToolCall, ToolRequest: &ToolRequest{ID: ev.ItemID, Name: name, Input: decodeArgs(toolArgs[ev.ItemID])}}
-					emittedTools[ev.ItemID] = true
+				if name := firstNonEmpty(ev.Name, toolNames[ev.ItemID]); name != "" && !emittedToolItems[ev.ItemID] {
+					arguments := toolArgs[ev.ItemID]
+					events <- Event{Kind: EventToolCall, ToolRequest: &ToolRequest{
+						ID:        firstNonEmpty(toolCallIDs[ev.ItemID], ev.ItemID),
+						Name:      name,
+						Input:     decodeArgs(arguments),
+						Arguments: arguments,
+					}}
+					emittedToolItems[ev.ItemID] = true
 				}
 			case "response.output_item.done":
-				if ev.Item.Type == "function_call" && !emittedTools[ev.Item.ID] {
+				if ev.Item.Type == "function_call" && !emittedToolItems[ev.Item.ID] {
 					call := ev.Item.AsFunctionCall()
-					events <- Event{Kind: EventToolCall, ToolRequest: &ToolRequest{ID: call.ID, Name: call.Name, Input: decodeArgs(call.Arguments)}}
-					emittedTools[call.ID] = true
+					callID := firstNonEmpty(call.CallID, toolCallIDs[ev.Item.ID], call.ID)
+					events <- Event{Kind: EventToolCall, ToolRequest: &ToolRequest{
+						ID:        callID,
+						Name:      call.Name,
+						Input:     decodeArgs(call.Arguments),
+						Arguments: call.Arguments,
+					}}
+					emittedToolItems[ev.Item.ID] = true
 				}
 			case "response.completed":
 				if final == "" {
@@ -112,7 +128,7 @@ func (o *OpenAI) responseParams(req Request) responses.ResponseNewParams {
 	params := responses.ResponseNewParams{
 		Model: responses.ResponsesModel(o.model),
 		Input: responses.ResponseNewParamsInputUnion{
-			OfString: param.NewOpt(inputString(req.Messages)),
+			OfInputItemList: responseInputItems(req.Messages),
 		},
 		Reasoning: shared.ReasoningParam{Effort: shared.ReasoningEffort(o.reasoning)},
 		Tools:     openAITools(req.Tools),
@@ -223,6 +239,41 @@ func toolNames(tools []ToolSpec) string {
 		}
 	}
 	return strings.Join(names, ", ")
+}
+
+func responseInputItems(messages []Message) responses.ResponseInputParam {
+	items := make(responses.ResponseInputParam, 0, len(messages))
+	for _, msg := range messages {
+		if msg.Role == RoleAssistant && msg.ToolCallID != "" && msg.ToolName != "" {
+			arguments := strings.TrimSpace(msg.ToolArguments)
+			if arguments == "" {
+				arguments = "{}"
+			}
+			items = append(items, responses.ResponseInputItemParamOfFunctionCall(arguments, msg.ToolCallID, msg.ToolName))
+			continue
+		}
+		if msg.Role == RoleTool && msg.ToolCallID != "" {
+			items = append(items, responses.ResponseInputItemParamOfFunctionCallOutput(msg.ToolCallID, strings.TrimSpace(msg.Content)))
+			continue
+		}
+		content := strings.TrimSpace(msg.Content)
+		if content == "" {
+			continue
+		}
+		items = append(items, responses.ResponseInputItemParamOfMessage(content, easyInputRole(msg.Role)))
+	}
+	return items
+}
+
+func easyInputRole(role Role) responses.EasyInputMessageRole {
+	switch role {
+	case RoleSystem:
+		return responses.EasyInputMessageRoleSystem
+	case RoleAssistant:
+		return responses.EasyInputMessageRoleAssistant
+	default:
+		return responses.EasyInputMessageRoleUser
+	}
 }
 
 func decodeArgs(raw string) map[string]any {
