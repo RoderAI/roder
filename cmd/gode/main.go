@@ -283,7 +283,7 @@ func parseConfigWithName(name string, args []string) (godex.Config, error) {
 func bindConfigFlags(flags *flag.FlagSet, cfg *godex.Config) {
 	flags.StringVar(&cfg.Workspace, "workspace", cfg.Workspace, "workspace root")
 	flags.StringVar(&cfg.DataDir, "data-dir", cfg.DataDir, "gode data directory")
-	flags.StringVar(&cfg.Provider, "provider", cfg.Provider, "provider: mock, codex, openai")
+	flags.StringVar(&cfg.Provider, "provider", cfg.Provider, "provider: mock, codex, openai, anthropic")
 	flags.StringVar(&cfg.Model, "model", cfg.Model, "provider model")
 	flags.StringVar(&cfg.Reasoning, "reasoning", cfg.Reasoning, "reasoning effort: none, minimal, low, medium, high, xhigh")
 	flags.BoolVar(&cfg.FastMode, "fast-mode", cfg.FastMode, "use OpenAI priority processing service tier")

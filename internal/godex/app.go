@@ -344,6 +344,12 @@ func buildProvider(cfg Config) (provider.Provider, error) {
 			return provider.NewOpenAIWithConfig(openAIConfig, codexauth.OpenAIOptions(cfg.DataDir)...), nil
 		}
 		return provider.NewOpenAIWithConfig(openAIConfig), nil
+	case ProviderKindAnthropic:
+		return provider.NewAnthropicWithConfig(provider.AnthropicConfig{
+			Model:   cfg.Model,
+			BaseURL: providerConfig.BaseURL,
+			APIKey:  os.Getenv(providerConfig.EnvKey),
+		}), nil
 	default:
 		return nil, fmt.Errorf("unknown provider kind %q for %q", providerConfig.Kind, cfg.Provider)
 	}
