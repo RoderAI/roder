@@ -24,46 +24,49 @@ const maxErrorLogEntries = 200
 const wheelScrollLines = 3
 
 type Model struct {
-	app                 *godex.App
-	zones               *zone.Manager
-	eventCancel         context.CancelFunc
-	eventCh             <-chan eventbus.Event
-	transcript          components.TranscriptCache
-	input               textarea.Model
-	messages            []viewmodel.Message
-	messageKeys         map[string]string
-	nextID              int
-	width               int
-	height              int
-	scrollOffset        int
-	followTail          bool
-	running             bool
-	hoveredID           string
-	status              string
-	settings            dialogs.Settings
-	commands            dialogs.Commands
-	sessions            dialogs.Sessions
-	completions         dialogs.Commands
-	completionMode      string
-	permissions         dialogs.Permissions
-	currentSessionID    string
-	currentSession      string
-	attachments         []attachments.Attachment
-	codexLogin          func(context.Context, string) (codexauth.Tokens, string, error)
-	errorLog            []viewmodel.ErrorLogEntry
-	showErrorLog        bool
-	reasoningSummary    string
-	contextLeft         string
-	slashSelected       int
-	goalSummary         string
-	queuedPrompts       []pendingPrompt
-	transcriptSelection selection.Range
-	transcriptMouseDown bool
-	transcriptLineRefs  []selection.TranscriptLineRef
-	composerSelection   selection.OffsetRange
-	composerMouseDown   bool
-	clipboardWrite      selection.ClipboardWriter
-	copyNoticeUntil     time.Time
+	app                     *godex.App
+	zones                   *zone.Manager
+	eventCancel             context.CancelFunc
+	eventCh                 <-chan eventbus.Event
+	transcript              components.TranscriptCache
+	input                   textarea.Model
+	messages                []viewmodel.Message
+	messageKeys             map[string]string
+	nextID                  int
+	width                   int
+	height                  int
+	scrollOffset            int
+	followTail              bool
+	running                 bool
+	hoveredID               string
+	status                  string
+	settings                dialogs.Settings
+	commands                dialogs.Commands
+	sessions                dialogs.Sessions
+	completions             dialogs.Commands
+	completionMode          string
+	permissions             dialogs.Permissions
+	currentSessionID        string
+	currentSession          string
+	attachments             []attachments.Attachment
+	codexLogin              func(context.Context, string) (codexauth.Tokens, string, error)
+	errorLog                []viewmodel.ErrorLogEntry
+	showErrorLog            bool
+	reasoningSummary        string
+	contextLeft             string
+	slashSelected           int
+	goalSummary             string
+	queuedPrompts           []pendingPrompt
+	transcriptSelection     selection.Range
+	transcriptMouseDown     bool
+	transcriptLineRefs      []selection.TranscriptLineRef
+	composerSelection       selection.OffsetRange
+	composerMouseDown       bool
+	clipboardWrite          selection.ClipboardWriter
+	copyNoticeUntil         time.Time
+	selectionCaptureEnabled bool
+	captureDisabledUntil    time.Time
+	captureRestoreSeq       int
 
 	transcriptLineWidth int
 	transcriptLineTotal int
@@ -84,17 +87,18 @@ func New(app *godex.App) Model {
 	applyComposerStyles(&input)
 	input.Focus()
 	model := Model{
-		app:                 app,
-		zones:               zones,
-		transcript:          components.NewTranscriptCache(),
-		input:               input,
-		followTail:          true,
-		status:              "ready",
-		codexLogin:          codexauth.LoginBrowser,
-		contextLeft:         defaultContextLeft(app),
-		transcriptLineDirty: true,
-		messageKeys:         map[string]string{},
-		clipboardWrite:      selection.SystemClipboardWriter,
+		app:                     app,
+		zones:                   zones,
+		transcript:              components.NewTranscriptCache(),
+		input:                   input,
+		followTail:              true,
+		status:                  "ready",
+		codexLogin:              codexauth.LoginBrowser,
+		contextLeft:             defaultContextLeft(app),
+		transcriptLineDirty:     true,
+		messageKeys:             map[string]string{},
+		clipboardWrite:          selection.SystemClipboardWriter,
+		selectionCaptureEnabled: true,
 	}
 	if app != nil && app.Bus != nil {
 		ctx, cancel := context.WithCancel(context.Background())
@@ -242,8 +246,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 	case tea.MouseWheelMsg:
-		m.handleWheel(msg)
-		return m, nil
+		return m, m.handleWheel(msg)
 	case tea.MouseMotionMsg:
 		if m.updateComposerSelectionDrag(msg) {
 			return m, nil
@@ -342,6 +345,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.addMessage(viewmodel.RoleSystem, "skill install", skillInstallTranscript(msg))
 		m.status = fmt.Sprintf("installed %d skills", msg.Installed)
+		return m, nil
+	case mouseCaptureRestoreMsg:
+		m.restoreMouseCapture(msg)
 		return m, nil
 	}
 
@@ -459,19 +465,6 @@ func (m *Model) appendAssistantDelta(text string) {
 		}
 	}
 	m.addMessage(viewmodel.RoleAssistant, "", text)
-}
-
-func (m *Model) handleWheel(msg tea.MouseWheelMsg) {
-	if transcript := m.zones.Get(viewmodel.TranscriptZoneID); transcript != nil && !transcript.InBounds(msg) {
-		return
-	}
-	mouse := msg.Mouse()
-	switch mouse.Button {
-	case tea.MouseWheelUp:
-		m.scrollBy(wheelScrollLines)
-	case tea.MouseWheelDown:
-		m.scrollBy(-wheelScrollLines)
-	}
 }
 
 func (m *Model) updateHover(msg tea.MouseMsg) {
