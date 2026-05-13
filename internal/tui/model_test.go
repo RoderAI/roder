@@ -8,6 +8,7 @@ import (
 	"time"
 
 	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 	"github.com/pandelisz/gode/internal/godex"
 	"github.com/pandelisz/gode/internal/godex/agent"
 	"github.com/pandelisz/gode/internal/godex/eventbus"
@@ -350,6 +351,33 @@ func TestCtrlPOpensSettingsDialog(t *testing.T) {
 		if !strings.Contains(view, want) {
 			t.Fatalf("view should render settings menu %q:\n%s", want, view)
 		}
+	}
+}
+
+func TestViewKeepsComposerAndFooterInsideWindow(t *testing.T) {
+	model := New(nil)
+	updated, _ := model.Update(tea.WindowSizeMsg{Width: 120, Height: 32})
+	got := updated.(Model)
+	got.messages = []viewmodel.Message{
+		{ID: "m1", Role: viewmodel.RoleAssistant, Body: strings.Repeat("assistant text ", 80)},
+	}
+	got.status = "running"
+
+	view := got.View().Content
+	lines := strings.Split(view, "\n")
+	if len(lines) != 32 {
+		t.Fatalf("view line count = %d, want 32\n%s", len(lines), view)
+	}
+	for i, line := range lines {
+		if lipgloss.Width(line) > 120 {
+			t.Fatalf("line %d width %d exceeds viewport:\n%s", i, lipgloss.Width(line), view)
+		}
+	}
+	if !strings.Contains(lines[len(lines)-2], "└") {
+		t.Fatalf("composer bottom border should remain visible, got %q\n%s", lines[len(lines)-2], view)
+	}
+	if !strings.Contains(lines[len(lines)-1], "scroll") {
+		t.Fatalf("footer should remain visible on bottom row, got %q\n%s", lines[len(lines)-1], view)
 	}
 }
 

@@ -14,6 +14,16 @@ import (
 	"github.com/pandelisz/gode/internal/godex/session"
 )
 
+func TestDefaultWorkspaceIsDot(t *testing.T) {
+	cfg, err := parseConfig(nil)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if cfg.Workspace != "." {
+		t.Fatalf("workspace = %q, want %q", cfg.Workspace, ".")
+	}
+}
+
 func TestParseConfigAppliesFlags(t *testing.T) {
 	cfg, err := parseConfig([]string{
 		"--workspace", "/tmp/workspace",

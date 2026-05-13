@@ -40,6 +40,25 @@ make run
 
 Then open Jaeger at <http://localhost:16686>.
 
+## Homebrew Release
+
+The formula builds `gode` from source, so local installs do not need a signed binary artifact.
+
+Create a local Homebrew release from a clean working tree:
+
+```sh
+VERSION=0.1.0 make release-brew
+brew install --build-from-source ./Formula/gode.rb
+```
+
+That creates `dist/gode-v0.1.0.tar.gz`, computes its checksum, and writes `Formula/gode.rb` with a `file://` URL for local testing. To publish a formula update that points at the git tag instead:
+
+```sh
+VERSION=0.1.0 PUBLISH=1 make release-brew
+```
+
+`PUBLISH=1` creates tag `v0.1.0`, rewrites the formula to use the git tag and revision, commits `Formula/gode.rb`, and pushes the tag plus the current branch to `origin`.
+
 ## Agent Client Protocol
 
 `gode acp` runs gode as an [Agent Client Protocol](https://agentclientprotocol.com/protocol/overview) agent over stdio. It speaks JSON-RPC 2.0 with one JSON message per line on stdin/stdout, which is the transport expected by ACP clients.
