@@ -67,6 +67,30 @@ func TestResumePickerKeyboardTogglesScopeAndChoosesSession(t *testing.T) {
 	}
 }
 
+func TestResumePickerArrowKeysMoveSelection(t *testing.T) {
+	current := filepath.Join(t.TempDir(), "current")
+	model := resumePickerModel{
+		workspace:    normalizeWorkspace(current),
+		scopeCurrent: true,
+		sessions: []session.Session{
+			{ID: "s-first", Title: "First", Workspace: current, UpdatedAt: time.Now()},
+			{ID: "s-second", Title: "Second", Workspace: current, UpdatedAt: time.Now()},
+		},
+	}
+
+	updated, _ := model.Update(tea.KeyPressMsg{Code: tea.KeyDown})
+	got := updated.(resumePickerModel)
+	if got.selected != 1 {
+		t.Fatalf("selected after down = %d, want 1", got.selected)
+	}
+
+	updated, _ = got.Update(tea.KeyPressMsg{Code: tea.KeyUp})
+	got = updated.(resumePickerModel)
+	if got.selected != 0 {
+		t.Fatalf("selected after up = %d, want 0", got.selected)
+	}
+}
+
 func TestResumePickerShowsCurrentAllControls(t *testing.T) {
 	workspace := t.TempDir()
 	model := resumePickerModel{

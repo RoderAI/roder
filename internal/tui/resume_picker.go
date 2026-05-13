@@ -158,7 +158,7 @@ func (m resumePickerModel) viewString() string {
 	return strings.Join(lines, "\n")
 }
 
-func (m resumePickerModel) move(delta int) {
+func (m *resumePickerModel) move(delta int) {
 	items := m.filtered()
 	if len(items) == 0 {
 		m.selected = 0
