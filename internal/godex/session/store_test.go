@@ -99,6 +99,36 @@ func TestStoreRenameDeleteAndJournalIndependence(t *testing.T) {
 	}
 }
 
+func TestStoreEnsureAndUpdateMessageCount(t *testing.T) {
+	ctx := context.Background()
+	store := openTestStore(t, t.TempDir(), time.Date(2026, 5, 13, 10, 0, 0, 0, time.UTC))
+
+	created, err := store.Ensure(ctx, Session{ID: "session-id", Title: "Initial"})
+	if err != nil {
+		t.Fatalf("ensure create: %v", err)
+	}
+	if created.ID != "session-id" || created.Title != "Initial" {
+		t.Fatalf("created = %#v", created)
+	}
+
+	store.now = fixedClock(time.Date(2026, 5, 13, 11, 0, 0, 0, time.UTC))
+	ensured, err := store.Ensure(ctx, Session{ID: "session-id", Title: "Replacement"})
+	if err != nil {
+		t.Fatalf("ensure existing: %v", err)
+	}
+	if ensured.Title != "Initial" || !ensured.UpdatedAt.After(created.UpdatedAt) {
+		t.Fatalf("ensured = %#v", ensured)
+	}
+
+	updated, err := store.UpdateMessageCount(ctx, "session-id", 3)
+	if err != nil {
+		t.Fatalf("update count: %v", err)
+	}
+	if updated.MessageCount != 3 {
+		t.Fatalf("message count = %d", updated.MessageCount)
+	}
+}
+
 func TestStoreLastEmpty(t *testing.T) {
 	store := openTestStore(t, t.TempDir(), time.Now())
 	last, ok, err := store.Last(context.Background())

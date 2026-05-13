@@ -13,7 +13,9 @@ import (
 	"github.com/pandelisz/gode/internal/godex/eventbus"
 	"github.com/pandelisz/gode/internal/godex/journal"
 	"github.com/pandelisz/gode/internal/godex/mcp"
+	messagestore "github.com/pandelisz/gode/internal/godex/message"
 	"github.com/pandelisz/gode/internal/godex/provider"
+	"github.com/pandelisz/gode/internal/godex/session"
 	godetelemetry "github.com/pandelisz/gode/internal/godex/telemetry"
 	"github.com/pandelisz/gode/internal/godex/tools"
 	"github.com/pandelisz/gode/internal/godex/tools/builtin"
@@ -24,11 +26,13 @@ import (
 )
 
 type App struct {
-	Config  Config
-	Bus     *eventbus.Bus
-	Journal *journal.Store
-	Tools   *tools.Registry
-	MCP     *mcp.Manager
+	Config   Config
+	Bus      *eventbus.Bus
+	Journal  *journal.Store
+	Sessions *session.Store
+	Messages *messagestore.Store
+	Tools    *tools.Registry
+	MCP      *mcp.Manager
 
 	provider          provider.Provider
 	runner            *agent.Runner
@@ -73,6 +77,14 @@ func New(ctx context.Context, cfg Config) (*App, error) {
 		_ = shutdownTelemetry(ctx)
 		return nil, err
 	}
+	sessionStore, err := session.Open(cfg.DataDir)
+	if err != nil {
+		_ = store.Close()
+		recordSpanError(span, err)
+		_ = shutdownTelemetry(ctx)
+		return nil, err
+	}
+	messageStore := messagestore.Open(cfg.DataDir)
 
 	reg := tools.NewRegistry(tools.WithEventBus(bus), tools.WithAutoApprove(cfg.AutoApprove))
 	builtin.RegisterFilesystem(reg, cfg.Workspace)
@@ -93,12 +105,14 @@ func New(ctx context.Context, cfg Config) (*App, error) {
 		_ = shutdownTelemetry(ctx)
 		return nil, err
 	}
-	runner := agent.NewRunner(agent.Config{Bus: bus, Journal: store, Tools: reg, Provider: prov})
+	runner := agent.NewRunner(agent.Config{Bus: bus, Journal: store, Sessions: sessionStore, Messages: messageStore, Tools: reg, Provider: prov})
 
 	return &App{
 		Config:            cfg,
 		Bus:               bus,
 		Journal:           store,
+		Sessions:          sessionStore,
+		Messages:          messageStore,
 		Tools:             reg,
 		MCP:               mcpManager,
 		provider:          prov,
@@ -140,7 +154,7 @@ func (a *App) SetModelReasoning(model string, reasoning string) error {
 
 	a.Config = cfg
 	a.provider = prov
-	a.runner = agent.NewRunner(agent.Config{Bus: a.Bus, Journal: a.Journal, Tools: a.Tools, Provider: prov})
+	a.runner = agent.NewRunner(agent.Config{Bus: a.Bus, Journal: a.Journal, Sessions: a.Sessions, Messages: a.Messages, Tools: a.Tools, Provider: prov})
 	return nil
 }
 
@@ -154,7 +168,7 @@ func (a *App) SetFastMode(fastMode bool) error {
 
 	a.Config = cfg
 	a.provider = prov
-	a.runner = agent.NewRunner(agent.Config{Bus: a.Bus, Journal: a.Journal, Tools: a.Tools, Provider: prov})
+	a.runner = agent.NewRunner(agent.Config{Bus: a.Bus, Journal: a.Journal, Sessions: a.Sessions, Messages: a.Messages, Tools: a.Tools, Provider: prov})
 	return nil
 }
 
