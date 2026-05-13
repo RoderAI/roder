@@ -22,7 +22,7 @@ func RenderWithCache(vm viewmodel.Model, zones *zone.Manager, transcriptCache *T
 	bodyHeight := max(1, height-composerHeight-errorHeight-2)
 
 	parts := []string{
-		Header(width, vm.Provider, vm.Model, vm.Running),
+		Header(width, vm.Provider, vm.Model, vm.Reasoning, vm.Running),
 		TranscriptWithCache(width, bodyHeight, vm.Messages, vm.ScrollOffset, vm.HoveredID, zones, transcriptCache),
 		Composer(width, vm.Input),
 	}

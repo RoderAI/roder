@@ -218,6 +218,7 @@ func (m Model) View() tea.View {
 	if m.app != nil {
 		vm.Provider = godex.DisplayProvider(m.app.Config)
 		vm.Model = m.app.Config.Model
+		vm.Reasoning = m.app.Config.Reasoning
 	}
 	view := tea.NewView(m.zones.Scan(components.RenderWithCache(vm, m.zones, &m.transcript)))
 	view.AltScreen = true
