@@ -111,8 +111,7 @@ func (m Model) updateSettingsMouse(msg tea.MouseClickMsg) (tea.Model, tea.Cmd) {
 			z := m.zones.Get(viewmodel.SettingsModelZoneID(model.ID))
 			if z != nil && z.InBounds(msg) {
 				m.settings.modelIndex = i
-				m.settings.openReasoning()
-				return m, nil
+				return m.selectSettingsModel()
 			}
 		}
 	case settingsScreenReasoning:
@@ -142,8 +141,7 @@ func (m Model) activateSettingsSelection() (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 	case settingsScreenModels:
-		m.settings.openReasoning()
-		return m, nil
+		return m.selectSettingsModel()
 	case settingsScreenReasoning:
 		return m, m.saveSelectedModelReasoning()
 	case settingsScreenConfig:
@@ -152,6 +150,41 @@ func (m Model) activateSettingsSelection() (tea.Model, tea.Cmd) {
 	default:
 		return m, nil
 	}
+}
+
+func (m Model) selectSettingsModel() (tea.Model, tea.Cmd) {
+	selected := m.settings.selectedModel()
+	if selected.ID == "" {
+		m.settings.err = "model is required"
+		return m, nil
+	}
+	if m.running {
+		m.settings.err = "finish the current run before changing models"
+		return m, nil
+	}
+	reasoning := m.settings.preferredReasoning(selected)
+	if reasoning == "" {
+		m.settings.err = "reasoning is required"
+		return m, nil
+	}
+	if m.app != nil {
+		if err := m.app.SetModelReasoning(selected.ID, reasoning); err != nil {
+			m.settings.err = err.Error()
+			return m, nil
+		}
+		if err := godex.SaveSettings(m.app.Config.DataDir, settingsFromConfig(m.app.Config)); err != nil {
+			m.settings.err = fmt.Sprintf("save settings: %v", err)
+			return m, nil
+		}
+		m.settings.cfg = m.app.Config
+	} else {
+		m.settings.cfg.Model = selected.ID
+		m.settings.cfg.Provider = selected.Provider
+		m.settings.cfg.Reasoning = reasoning
+	}
+	m.settings.openReasoning()
+	m.status = "default model selected"
+	return m, nil
 }
 
 func (m *Model) startCodexSignIn() tea.Cmd {
@@ -309,16 +342,24 @@ func (s *settingsDialog) selectCurrentReasoning() {
 	s.reasoningIndex = 0
 	options := s.reasoningOptions()
 	selectedModel := s.selectedModel()
-	preferred := s.cfg.Reasoning
-	if preferred == "" || !selectedModel.SupportsReasoning(preferred) {
-		preferred = selectedModel.DefaultReasoning
-	}
+	preferred := s.preferredReasoning(selectedModel)
 	for i, option := range options {
 		if option.Effort == preferred {
 			s.reasoningIndex = i
 			return
 		}
 	}
+}
+
+func (s settingsDialog) preferredReasoning(model godex.ModelConfig) string {
+	preferred := s.cfg.Reasoning
+	if preferred == "" || !model.SupportsReasoning(preferred) {
+		preferred = model.DefaultReasoning
+	}
+	if preferred == "" && len(model.SupportedReasoning) > 0 {
+		preferred = model.SupportedReasoning[0].Effort
+	}
+	return preferred
 }
 
 func (s settingsDialog) selectedModel() godex.ModelConfig {
