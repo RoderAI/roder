@@ -4,6 +4,10 @@ Go Code: a Go-native TUI coding agent and event-driven agent harness.
 
 `gode` is built around `godex`, an internal harness for coding-agent sessions, tools, workspace state, MCPs, context management, provider adapters, and event subscriptions. The goal is to provide a solid open-source base that ML labs can use to train, evaluate, and run their own coding agents.
 
+## Alpha Status
+
+This is alpha software and will change rapidly as it materializes its shape. For the time being, expect no API guarantees: packages, commands, configuration, event formats, and integration points may move, break, or disappear without notice.
+
 ## Shape
 
 - `cmd/gode`: CLI entrypoint.
