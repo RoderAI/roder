@@ -1,8 +1,6 @@
 package components
 
 import (
-	"strings"
-
 	"charm.land/lipgloss/v2"
 	zone "github.com/lrstanley/bubblezone/v2"
 	"github.com/pandelisz/gode/internal/tui/viewmodel"
@@ -26,7 +24,7 @@ func RenderWithCache(vm viewmodel.Model, zones *zone.Manager, transcriptCache *T
 	if len(vm.Attachments) > 0 {
 		attachmentHeight = 1
 	}
-	bodyHeight := max(1, height-composerHeight-reasoningHeight-attachmentHeight-errorHeight-3)
+	bodyHeight := max(1, height-composerHeight-reasoningHeight-attachmentHeight-errorHeight-2)
 
 	parts := []string{
 		Header(width, vm.Provider, vm.Model, vm.Reasoning, vm.SessionTitle, vm.Running),
@@ -43,7 +41,6 @@ func RenderWithCache(vm viewmodel.Model, zones *zone.Manager, transcriptCache *T
 		parts = append(parts, ErrorConsole(width, errorHeight, vm.ErrorLog))
 	}
 	parts = append(parts, Footer(width, vm.ScrollOffset, vm.Status, vm.ShowErrorLog, len(vm.ErrorLog)))
-	parts = append(parts, BottomGutter(width))
 
 	view := lipgloss.JoinVertical(
 		lipgloss.Left,
@@ -63,10 +60,6 @@ func RenderWithCache(vm viewmodel.Model, zones *zone.Manager, transcriptCache *T
 
 func errorConsoleHeight(totalHeight int) int {
 	return min(14, max(5, totalHeight/3))
-}
-
-func BottomGutter(width int) string {
-	return strings.Repeat(" ", max(1, width-1))
 }
 
 func max(a, b int) int {

@@ -297,7 +297,7 @@ func TestRenderToolCardShowsHookAndPermissionMetadata(t *testing.T) {
 	}
 }
 
-func TestRenderKeepsBottomGutterWhenScrolled(t *testing.T) {
+func TestRenderFooterUsesBottomRowWhenScrolled(t *testing.T) {
 	zones := zone.New()
 	t.Cleanup(zones.Close)
 
@@ -329,11 +329,8 @@ func TestRenderKeepsBottomGutterWhenScrolled(t *testing.T) {
 	if len(lines) != 18 {
 		t.Fatalf("line count = %d, want 18\n%s", len(lines), out)
 	}
-	if strings.TrimSpace(lines[len(lines)-1]) != "" {
-		t.Fatalf("last line should be reserved bottom gutter, got %q\n%s", lines[len(lines)-1], out)
-	}
-	if !strings.Contains(lines[len(lines)-2], "scroll 4") {
-		t.Fatalf("footer should stay above bottom gutter, got %q\n%s", lines[len(lines)-2], out)
+	if !strings.Contains(lines[len(lines)-1], "scroll 4") {
+		t.Fatalf("footer should render on bottom row, got %q\n%s", lines[len(lines)-1], out)
 	}
 }
 
