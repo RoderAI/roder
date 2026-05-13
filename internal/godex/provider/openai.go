@@ -49,22 +49,32 @@ func (o *OpenAI) Stream(ctx context.Context, req Request) (<-chan Event, <-chan 
 		defer stream.Close()
 		final := ""
 		toolArgs := map[string]string{}
+		toolNames := map[string]string{}
+		emittedTools := map[string]bool{}
 		for stream.Next() {
 			ev := stream.Current()
 			switch ev.Type {
 			case "response.output_text.delta":
 				final += ev.Delta
 				events <- Event{Kind: EventDelta, Text: ev.Delta}
+			case "response.output_item.added":
+				if ev.Item.Type == "function_call" {
+					toolNames[ev.Item.ID] = ev.Item.Name
+				}
 			case "response.function_call_arguments.delta":
 				toolArgs[ev.ItemID] += ev.Delta
 			case "response.function_call_arguments.done":
-				args := map[string]any{}
-				raw := ev.Arguments
-				if raw == "" {
-					raw = toolArgs[ev.ItemID]
+				toolArgs[ev.ItemID] = firstNonEmpty(ev.Arguments, toolArgs[ev.ItemID])
+				if name := firstNonEmpty(ev.Name, toolNames[ev.ItemID]); name != "" && !emittedTools[ev.ItemID] {
+					events <- Event{Kind: EventToolCall, ToolRequest: &ToolRequest{ID: ev.ItemID, Name: name, Input: decodeArgs(toolArgs[ev.ItemID])}}
+					emittedTools[ev.ItemID] = true
 				}
-				_ = json.Unmarshal([]byte(raw), &args)
-				events <- Event{Kind: EventToolCall, ToolRequest: &ToolRequest{ID: ev.ItemID, Name: ev.Name, Input: args}}
+			case "response.output_item.done":
+				if ev.Item.Type == "function_call" && !emittedTools[ev.Item.ID] {
+					call := ev.Item.AsFunctionCall()
+					events <- Event{Kind: EventToolCall, ToolRequest: &ToolRequest{ID: call.ID, Name: call.Name, Input: decodeArgs(call.Arguments)}}
+					emittedTools[call.ID] = true
+				}
 			case "response.completed":
 				if final == "" {
 					final = ev.Response.OutputText()
@@ -81,6 +91,21 @@ func (o *OpenAI) Stream(ctx context.Context, req Request) (<-chan Event, <-chan 
 		}
 	}()
 	return events, errs
+}
+
+func decodeArgs(raw string) map[string]any {
+	args := map[string]any{}
+	_ = json.Unmarshal([]byte(raw), &args)
+	return args
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if value != "" {
+			return value
+		}
+	}
+	return ""
 }
 
 type ProviderError struct {
