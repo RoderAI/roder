@@ -32,6 +32,21 @@ func TestOpenAIResponseParamsOmitsServiceTierByDefault(t *testing.T) {
 	}
 }
 
+func TestOpenAIResponseParamsIncludesInstructions(t *testing.T) {
+	openaiProvider := NewOpenAI("gpt-5.5", "medium")
+
+	params := openaiProvider.responseParams(Request{
+		Instructions: "You are gode.",
+		Messages:     []Message{{Role: RoleUser, Content: "hello"}},
+	})
+	if !params.Instructions.Valid() {
+		t.Fatal("instructions should be set")
+	}
+	if params.Instructions.Value != "You are gode." {
+		t.Fatalf("instructions = %q", params.Instructions.Value)
+	}
+}
+
 func TestOpenAIStreamErrorIncludesHTTPDebugDetails(t *testing.T) {
 	openaiProvider := NewOpenAIWithConfig(OpenAIConfig{
 		Model:       "gpt-5.5",

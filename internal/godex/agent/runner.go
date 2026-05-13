@@ -102,10 +102,11 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (RunResult, error) {
 	final := ""
 	for turn := 0; turn < maxTurns; turn++ {
 		providerReq := provider.Request{
-			SessionID: req.SessionID,
-			RunID:     req.RunID,
-			Messages:  messages,
-			Tools:     r.providerToolSpecs(),
+			SessionID:    req.SessionID,
+			RunID:        req.RunID,
+			Instructions: GodeInstructions,
+			Messages:     messages,
+			Tools:        r.providerToolSpecs(),
 		}
 		events, errs := r.provider.Stream(ctx, providerReq)
 

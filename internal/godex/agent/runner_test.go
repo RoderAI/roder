@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/pandelisz/gode/internal/godex/eventbus"
@@ -69,4 +70,48 @@ func TestRunnerPublishesAndJournalsMockTurn(t *testing.T) {
 			t.Fatalf("missing event kind %q in %#v", want, kinds)
 		}
 	}
+}
+
+func TestRunnerSendsGodeInstructions(t *testing.T) {
+	capture := &captureProvider{finalText: "done"}
+	runner := NewRunner(Config{
+		Bus:      eventbus.New(eventbus.WithSubscriberBuffer(16)),
+		Provider: capture,
+	})
+	defer runner.bus.Close()
+
+	if _, err := runner.Run(context.Background(), RunRequest{Prompt: "hello"}); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	if capture.request.Instructions == "" {
+		t.Fatal("instructions should be sent to provider")
+	}
+	for _, want := range []string{"You are gode", "Go-native coding agent", "dirty git worktree"} {
+		if !strings.Contains(capture.request.Instructions, want) {
+			t.Fatalf("instructions missing %q:\n%s", want, capture.request.Instructions)
+		}
+	}
+	if len(capture.request.Messages) != 1 || capture.request.Messages[0].Content != "hello" {
+		t.Fatalf("messages = %#v", capture.request.Messages)
+	}
+}
+
+type captureProvider struct {
+	request   provider.Request
+	finalText string
+}
+
+func (p *captureProvider) Name() string {
+	return "capture"
+}
+
+func (p *captureProvider) Stream(_ context.Context, req provider.Request) (<-chan provider.Event, <-chan error) {
+	p.request = req
+	events := make(chan provider.Event, 2)
+	errs := make(chan error)
+	events <- provider.Event{Kind: provider.EventDelta, Text: p.finalText}
+	events <- provider.Event{Kind: provider.EventCompleted, Text: p.finalText}
+	close(events)
+	close(errs)
+	return events, errs
 }
