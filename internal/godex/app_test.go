@@ -54,6 +54,25 @@ func TestNewAppWiresBroadCoreWithMockProvider(t *testing.T) {
 	if !ok || session.MessageCount != 2 {
 		t.Fatalf("session = %#v ok=%v", session, ok)
 	}
+	if app.LSP == nil {
+		t.Fatal("lsp manager should be wired")
+	}
+}
+
+func TestAppWiresLSPManager(t *testing.T) {
+	app, err := New(context.Background(), Config{
+		Workspace:   filepath.Join(t.TempDir(), "workspace"),
+		DataDir:     t.TempDir(),
+		Provider:    "mock",
+		AutoApprove: true,
+	})
+	if err != nil {
+		t.Fatalf("new app: %v", err)
+	}
+	defer app.Close(context.Background())
+	if app.LSP == nil {
+		t.Fatal("lsp manager should be wired")
+	}
 }
 
 func TestNewAppLoadsRepoContextMessages(t *testing.T) {
