@@ -38,11 +38,12 @@ func New(app *godex.App) Model {
 	input.MinHeight = 1
 	input.MaxHeight = 6
 	input.SetWidth(80)
+	input.Focus()
 	return Model{app: app, input: input}
 }
 
 func (m Model) Init() tea.Cmd {
-	return tea.Batch(m.input.Focus(), m.waitForEvent())
+	return m.waitForEvent()
 }
 
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
