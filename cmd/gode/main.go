@@ -44,7 +44,8 @@ func run(ctx context.Context, args []string) error {
 
 func runPrompt(ctx context.Context, args []string) error {
 	flags := newFlagSet("gode run")
-	cfg := bindConfigFlags(flags)
+	cfg := godex.DefaultConfig()
+	bindConfigFlags(flags, &cfg)
 	if err := flags.Parse(args); err != nil {
 		return err
 	}
@@ -67,18 +68,17 @@ func runPrompt(ctx context.Context, args []string) error {
 
 func parseConfig(args []string) (godex.Config, error) {
 	flags := newFlagSet("gode")
-	cfg := bindConfigFlags(flags)
+	cfg := godex.DefaultConfig()
+	bindConfigFlags(flags, &cfg)
 	return cfg, flags.Parse(args)
 }
 
-func bindConfigFlags(flags *flag.FlagSet) godex.Config {
-	cfg := godex.DefaultConfig()
+func bindConfigFlags(flags *flag.FlagSet, cfg *godex.Config) {
 	flags.StringVar(&cfg.Workspace, "workspace", cfg.Workspace, "workspace root")
 	flags.StringVar(&cfg.DataDir, "data-dir", cfg.DataDir, "gode data directory")
 	flags.StringVar(&cfg.Provider, "provider", cfg.Provider, "provider: mock, codex, openai")
 	flags.StringVar(&cfg.Model, "model", cfg.Model, "provider model")
 	flags.BoolVar(&cfg.AutoApprove, "auto-approve", cfg.AutoApprove, "auto approve mutating tool calls")
-	return cfg
 }
 
 func newFlagSet(name string) *flag.FlagSet {
