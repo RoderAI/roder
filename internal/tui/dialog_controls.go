@@ -423,7 +423,11 @@ func (m *Model) loadSessionMessages(sessionID string) error {
 	m.messages = nil
 	m.nextID = 0
 	for _, msg := range messages {
-		m.addMessage(messageRole(msg.Role), msg.ToolName, msg.Text)
+		title := msg.ToolName
+		if msg.Role == messagestore.RoleAssistant {
+			title = assistantPhaseTitle(msg.Phase)
+		}
+		m.addMessage(messageRole(msg.Role), title, msg.Text)
 	}
 	m.follow()
 	return nil

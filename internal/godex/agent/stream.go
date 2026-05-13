@@ -47,7 +47,7 @@ func (r *Runner) streamProviderTurn(ctx context.Context, req RunRequest, provide
 					Source:    eventbus.SourceProvider,
 					SessionID: req.SessionID,
 					RunID:     req.RunID,
-					Payload:   map[string]any{"text": ev.Text},
+					Payload:   map[string]any{"text": ev.Text, "phase": ev.Phase},
 				})
 			case provider.EventReasoningSummaryDelta:
 				r.emit(ctx, eventbus.Event{
@@ -107,6 +107,7 @@ func (r *Runner) streamProviderTurn(ctx context.Context, req RunRequest, provide
 					RunID:     req.RunID,
 					Payload: map[string]any{
 						"text":        outcome.Final,
+						"phase":       provider.PhaseFinalAnswer,
 						"response_id": ev.ResponseID,
 						"items":       r.sessionItemsFromProviderItems(req, ev.Items),
 						"usage":       ev.Usage,

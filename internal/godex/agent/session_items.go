@@ -74,6 +74,7 @@ func (r *Runner) sessionItemsFromProviderItems(req RunRequest, providerItems []p
 			TurnID:     req.RunID,
 			Kind:       sessionItemKind(item.Kind),
 			Role:       item.Role,
+			Phase:      item.Phase,
 			ToolName:   item.ToolName,
 			ToolCallID: item.ToolCallID,
 			Text:       item.Text,
@@ -100,6 +101,7 @@ func providerItemsFromSessionItems(items []session.Item) []provider.Item {
 			ID:         item.ID,
 			Kind:       providerItemKind(item.Kind),
 			Role:       item.Role,
+			Phase:      item.Phase,
 			ToolName:   item.ToolName,
 			ToolCallID: item.ToolCallID,
 			Text:       item.Text,
@@ -115,6 +117,7 @@ func providerMessagesFromProviderItems(items []provider.Item) []provider.Message
 		out = appendProviderMessageFromSessionItem(out, session.Item{
 			Kind:       sessionItemKind(item.Kind),
 			Role:       item.Role,
+			Phase:      item.Phase,
 			ToolName:   item.ToolName,
 			ToolCallID: item.ToolCallID,
 			Text:       item.Text,
@@ -145,7 +148,7 @@ func providerItemFromProviderMessage(message provider.Message) provider.Item {
 	case message.Role == provider.RoleTool && message.ToolCallID != "":
 		return provider.Item{Kind: provider.ItemFunctionOut, Role: string(provider.RoleTool), ToolName: message.ToolName, ToolCallID: message.ToolCallID, Text: message.Content}
 	case message.Role != "":
-		return provider.Item{Kind: provider.ItemMessage, Role: string(message.Role), Text: message.Content}
+		return provider.Item{Kind: provider.ItemMessage, Role: string(message.Role), Phase: message.Phase, Text: message.Content}
 	default:
 		return provider.Item{}
 	}
@@ -183,7 +186,7 @@ func appendProviderMessageFromSessionItem(out []provider.Message, item session.I
 	}
 	switch item.Kind {
 	case session.ItemMessage:
-		out = append(out, provider.Message{Role: provider.Role(item.Role), Content: item.Text})
+		out = append(out, provider.Message{Role: provider.Role(item.Role), Phase: item.Phase, Content: item.Text})
 	case session.ItemFunctionCall:
 		out = append(out, provider.Message{
 			Role:          provider.RoleAssistant,

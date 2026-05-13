@@ -18,6 +18,7 @@ type Message struct {
 	SessionID  string          `json:"session_id"`
 	RunID      string          `json:"run_id,omitempty"`
 	Role       string          `json:"role"`
+	Phase      string          `json:"phase,omitempty"`
 	Text       string          `json:"text"`
 	ToolName   string          `json:"tool_name,omitempty"`
 	ToolCallID string          `json:"tool_call_id,omitempty"`

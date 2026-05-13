@@ -368,7 +368,7 @@ func (m *Model) applyEvent(update eventadapter.Update) {
 		m.addOrUpdateMessage(message)
 	}
 	if update.AssistantDelta != "" {
-		m.appendAssistantDelta(update.AssistantDelta)
+		m.appendAssistantDelta(update.AssistantDelta, update.AssistantPhase)
 	}
 	if update.ReasoningDelta != "" {
 		m.reasoningSummary += update.ReasoningDelta
@@ -461,10 +461,11 @@ func (m *Model) pruneMessageKeys() {
 	}
 }
 
-func (m *Model) appendAssistantDelta(text string) {
+func (m *Model) appendAssistantDelta(text string, phase ...string) {
+	title := assistantPhaseTitle(firstNonEmpty(phase...))
 	if len(m.messages) > 0 {
 		last := &m.messages[len(m.messages)-1]
-		if last.Role == viewmodel.RoleAssistant {
+		if last.Role == viewmodel.RoleAssistant && last.Title == title {
 			last.Body += text
 			m.markTranscriptLinesDirty()
 			if m.followTail {
@@ -474,7 +475,16 @@ func (m *Model) appendAssistantDelta(text string) {
 			return
 		}
 	}
-	m.addMessage(viewmodel.RoleAssistant, "", text)
+	m.addMessage(viewmodel.RoleAssistant, title, text)
+}
+
+func assistantPhaseTitle(phase string) string {
+	switch strings.TrimSpace(phase) {
+	case "commentary":
+		return "commentary"
+	default:
+		return ""
+	}
 }
 
 func (m *Model) updateHover(msg tea.MouseMsg) {

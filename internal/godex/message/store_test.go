@@ -91,6 +91,34 @@ func TestProjectionFromEventAndAssistantCoalescing(t *testing.T) {
 	assertMessage(t, messages[5], RoleError, "run failed\nsession_id: s1", "", "")
 }
 
+func TestAssistantCoalescingKeepsPhaseMessagesSeparate(t *testing.T) {
+	ctx := context.Background()
+	store := Open(t.TempDir())
+	events := []eventbus.Event{
+		event("e1", eventbus.KindAssistantDelta, map[string]any{"text": "I will inspect.", "phase": "commentary"}),
+		event("e2", eventbus.KindAssistantDelta, map[string]any{"text": "Done.", "phase": "final_answer"}),
+	}
+	for _, ev := range events {
+		if _, err := store.AppendProjected(ctx, ev); err != nil {
+			t.Fatalf("append projected %s: %v", ev.ID, err)
+		}
+	}
+
+	messages, err := store.ListBySession(ctx, "s1")
+	if err != nil {
+		t.Fatalf("list: %v", err)
+	}
+	if len(messages) != 2 {
+		t.Fatalf("messages = %#v", messages)
+	}
+	if messages[0].Phase != "commentary" || messages[0].Text != "I will inspect." {
+		t.Fatalf("commentary message = %#v", messages[0])
+	}
+	if messages[1].Phase != "final_answer" || messages[1].Text != "Done." {
+		t.Fatalf("final answer message = %#v", messages[1])
+	}
+}
+
 func TestProjectionIgnoresEmptyAndUntrackedEvents(t *testing.T) {
 	if got := ProjectionFromEvent(event("e1", eventbus.KindRunStarted, nil)); len(got) != 0 {
 		t.Fatalf("run started projection = %#v", got)

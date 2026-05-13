@@ -31,7 +31,7 @@ func responseInputItems(messages []Message) responses.ResponseInputParam {
 		if content == "" {
 			continue
 		}
-		items = append(items, responses.ResponseInputItemParamOfMessage(content, easyInputRole(msg.Role)))
+		items = append(items, responseInputMessageParam(content, msg.Role, msg.Phase))
 	}
 	return items
 }
@@ -43,7 +43,7 @@ func providerInputItems(providerItems []Item) responses.ResponseInputParam {
 		case ItemMessage:
 			content := strings.TrimSpace(item.Text)
 			if content != "" {
-				items = append(items, responses.ResponseInputItemParamOfMessage(content, easyInputRole(Role(item.Role))))
+				items = append(items, responseInputMessageParam(content, Role(item.Role), item.Phase))
 			}
 		case ItemFunctionCall:
 			arguments := strings.TrimSpace(item.Text)
@@ -100,6 +100,23 @@ func providerItemsFromRaw(rawItems []json.RawMessage) []Item {
 	return items
 }
 
+func finalAnswerTextFromRaw(rawItems []json.RawMessage) string {
+	parts := make([]string, 0, len(rawItems))
+	for _, raw := range rawItems {
+		item := providerItemFromRaw(raw)
+		if item.Kind != ItemMessage {
+			continue
+		}
+		if item.Phase != "" && item.Phase != PhaseFinalAnswer {
+			continue
+		}
+		if item.Text != "" {
+			parts = append(parts, item.Text)
+		}
+	}
+	return strings.Join(parts, "")
+}
+
 func providerItemFromRaw(raw json.RawMessage) Item {
 	var object map[string]json.RawMessage
 	if err := json.Unmarshal(raw, &object); err != nil {
@@ -114,6 +131,7 @@ func providerItemFromRaw(raw json.RawMessage) Item {
 	switch item.Kind {
 	case ItemMessage:
 		item.Role = rawString(object["role"])
+		item.Phase = rawString(object["phase"])
 		item.Text = messageText(object["content"])
 	case ItemFunctionCall:
 		item.ToolName = rawString(object["name"])
@@ -126,6 +144,17 @@ func providerItemFromRaw(raw json.RawMessage) Item {
 		item.Text = firstNonEmpty(rawString(object["text"]), messageText(object["summary"]))
 	}
 	return item
+}
+
+func responseInputMessageParam(content string, role Role, phase string) responses.ResponseInputItemUnionParam {
+	message := responses.EasyInputMessageParam{
+		Content: responses.EasyInputMessageContentUnionParam{OfString: param.NewOpt(content)},
+		Role:    easyInputRole(role),
+	}
+	if role == RoleAssistant && strings.TrimSpace(phase) != "" {
+		message.Phase = responses.EasyInputMessagePhase(phase)
+	}
+	return param.Override[responses.ResponseInputItemUnionParam](message)
 }
 
 func providerItemKind(typ string) ItemKind {

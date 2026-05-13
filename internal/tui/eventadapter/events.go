@@ -23,6 +23,7 @@ type Message struct {
 type Update struct {
 	Messages            []Message
 	AssistantDelta      string
+	AssistantPhase      string
 	ReasoningDelta      string
 	ReasoningSummary    string
 	HasReasoningSummary bool
@@ -38,7 +39,7 @@ func Apply(ev eventbus.Event) Update {
 	case eventbus.KindAssistantDelta:
 		var payload textPayload
 		_ = ev.DecodePayload(&payload)
-		return Update{AssistantDelta: payload.Text}
+		return Update{AssistantDelta: payload.Text, AssistantPhase: payload.Phase}
 	case eventbus.KindReasoningSummaryDelta:
 		var payload textPayload
 		_ = ev.DecodePayload(&payload)
@@ -119,7 +120,8 @@ func Apply(ev eventbus.Event) Update {
 }
 
 type textPayload struct {
-	Text string `json:"text"`
+	Text  string `json:"text"`
+	Phase string `json:"phase"`
 }
 
 type toolPayload struct {
