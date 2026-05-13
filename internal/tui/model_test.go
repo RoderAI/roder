@@ -2,6 +2,7 @@ package tui
 
 import (
 	"context"
+	"errors"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -90,6 +91,49 @@ func TestCtrlPOpensSettingsDialog(t *testing.T) {
 		if !strings.Contains(view, want) {
 			t.Fatalf("view should render settings menu %q:\n%s", want, view)
 		}
+	}
+}
+
+func TestCtrlLTogglesErrorLogBelowComposer(t *testing.T) {
+	model := New(nil)
+	updated, _ := model.Update(runDoneMsg{Err: errors.New(`POST "https://chatgpt.com/backend-api/codex/responses": 400 Bad Request`)})
+	got := updated.(Model)
+
+	if len(got.errorLog) != 1 {
+		t.Fatalf("error log length = %d", len(got.errorLog))
+	}
+	if got.showErrorLog {
+		t.Fatal("error log should stay hidden until ctrl+l")
+	}
+	if got.status != "run failed - ctrl+l errors" {
+		t.Fatalf("status = %q", got.status)
+	}
+
+	updated, _ = got.Update(keyCtrlL())
+	got = updated.(Model)
+	if !got.showErrorLog {
+		t.Fatal("error log should be visible")
+	}
+	view := got.View().Content
+	for _, want := range []string{"ERROR LOG", "400 Bad Request"} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("view should render error log %q:\n%s", want, view)
+		}
+	}
+}
+
+func TestRunDoneDoesNotDuplicateRunFailedEventError(t *testing.T) {
+	const message = `POST "https://chatgpt.com/backend-api/codex/responses": 400 Bad Request`
+	model := New(nil)
+	updated, _ := model.Update(eventMsg{Event: eventbus.Event{Kind: eventbus.KindRunFailed, Payload: map[string]any{"error": message}}})
+	updated, _ = updated.Update(runDoneMsg{Err: errors.New(message)})
+	got := updated.(Model)
+
+	if len(got.messages) != 1 {
+		t.Fatalf("messages length = %d, want 1: %#v", len(got.messages), got.messages)
+	}
+	if len(got.errorLog) != 1 {
+		t.Fatalf("error log length = %d, want 1: %#v", len(got.errorLog), got.errorLog)
 	}
 }
 
@@ -461,4 +505,8 @@ func clickZone(t *testing.T, model Model, id string) tea.MouseClickMsg {
 
 func keyCtrlP() tea.KeyPressMsg {
 	return tea.KeyPressMsg{Code: 'p', Mod: tea.ModCtrl}
+}
+
+func keyCtrlL() tea.KeyPressMsg {
+	return tea.KeyPressMsg{Code: 'l', Mod: tea.ModCtrl}
 }

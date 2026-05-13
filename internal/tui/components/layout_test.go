@@ -73,6 +73,36 @@ func TestRenderSettingsDialogOverTimeline(t *testing.T) {
 	}
 }
 
+func TestRenderErrorLogBelowComposer(t *testing.T) {
+	zones := zone.New()
+	t.Cleanup(zones.Close)
+
+	out := zones.Scan(Render(viewmodel.Model{
+		Width:        80,
+		Height:       24,
+		Model:        "gpt-test",
+		Provider:     "codex",
+		Input:        "> Ask gode to work on this repo",
+		InputHeight:  1,
+		ShowErrorLog: true,
+		ErrorLog: []viewmodel.ErrorLogEntry{{
+			Time:    "10:02:20",
+			Source:  "run",
+			Message: `POST "https://chatgpt.com/backend-api/codex/responses": 400 Bad Request`,
+		}},
+		Status: "run failed - ctrl+l errors",
+	}, zones))
+
+	if got := lipgloss.Height(out); got != 24 {
+		t.Fatalf("height = %d, want 24\n%s", got, out)
+	}
+	for _, want := range []string{"ERROR LOG", "ctrl+l close", "400 Bad Request"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("rendered output missing %q:\n%s", want, out)
+		}
+	}
+}
+
 func TestVisibleMessagesUsesLineScroll(t *testing.T) {
 	messages := []viewmodel.Message{
 		{ID: "m1", Role: viewmodel.RoleUser, Body: "one"},

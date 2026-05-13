@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"time"
 
 	"charm.land/bubbles/v2/textarea"
 	tea "charm.land/bubbletea/v2"
@@ -17,6 +18,7 @@ import (
 )
 
 const maxTranscriptMessages = 500
+const maxErrorLogEntries = 200
 const wheelScrollLines = 3
 
 type eventMsg struct {
@@ -48,6 +50,8 @@ type Model struct {
 	status       string
 	settings     settingsDialog
 	codexLogin   func(context.Context, string) (codexauth.Tokens, string, error)
+	errorLog     []viewmodel.ErrorLogEntry
+	showErrorLog bool
 
 	transcriptLineWidth int
 	transcriptLineTotal int
@@ -119,6 +123,15 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "ctrl+p":
 			m.openSettings()
 			return m, nil
+		case "ctrl+l":
+			m.showErrorLog = !m.showErrorLog
+			if m.showErrorLog {
+				m.status = "error log open"
+			} else {
+				m.status = "ready"
+			}
+			m.clampScroll()
+			return m, nil
 		case "pgup":
 			m.scrollBy(max(4, m.visibleTranscriptLines()-1))
 			return m, nil
@@ -159,8 +172,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case runDoneMsg:
 		m.running = false
 		if msg.Err != nil {
-			m.addMessage(viewmodel.RoleError, "", msg.Err.Error())
-			m.status = "run failed"
+			if !m.hasRecentError(msg.Err.Error()) {
+				m.addMessage(viewmodel.RoleError, "", msg.Err.Error())
+			}
+			m.status = "run failed - ctrl+l errors"
 		} else {
 			m.status = "ready"
 		}
@@ -197,6 +212,8 @@ func (m Model) View() tea.View {
 		HoveredID:    m.hoveredID,
 		Status:       m.status,
 		Settings:     m.settings.viewModel(),
+		ErrorLog:     m.errorLog,
+		ShowErrorLog: m.showErrorLog,
 	}
 	if m.app != nil {
 		vm.Provider = godex.DisplayProvider(m.app.Config)
@@ -269,7 +286,7 @@ func (m *Model) appendEvent(ev eventbus.Event) {
 		}
 		_ = ev.DecodePayload(&payload)
 		m.addMessage(viewmodel.RoleError, payload.Tool, payload.Error)
-		m.status = "tool failed: " + payload.Tool
+		m.status = "tool failed: " + payload.Tool + " - ctrl+l errors"
 	case eventbus.KindPermissionRequested:
 		var payload struct {
 			Tool string `json:"tool"`
@@ -287,7 +304,7 @@ func (m *Model) appendEvent(ev eventbus.Event) {
 		_ = ev.DecodePayload(&payload)
 		m.running = false
 		m.addMessage(viewmodel.RoleError, "", payload.Error)
-		m.status = "run failed"
+		m.status = "run failed - ctrl+l errors"
 	}
 }
 
@@ -299,6 +316,9 @@ func (m *Model) addMessage(role viewmodel.Role, title string, body string) {
 		Title: title,
 		Body:  body,
 	})
+	if role == viewmodel.RoleError {
+		m.addErrorLog(title, body)
+	}
 	if overflow := len(m.messages) - maxTranscriptMessages; overflow > 0 {
 		m.messages = m.messages[overflow:]
 		m.scrollOffset = max(0, m.scrollOffset-overflow)
@@ -311,6 +331,40 @@ func (m *Model) addMessage(role viewmodel.Role, title string, body string) {
 		return
 	}
 	m.clampScroll()
+}
+
+func (m *Model) addErrorLog(source string, message string) {
+	message = strings.TrimSpace(message)
+	if message == "" {
+		return
+	}
+	source = strings.TrimSpace(source)
+	if source == "" {
+		source = "run"
+	}
+	m.errorLog = append(m.errorLog, viewmodel.ErrorLogEntry{
+		ID:      fmt.Sprintf("e%d", len(m.errorLog)+1),
+		Time:    time.Now().Format("15:04:05"),
+		Source:  source,
+		Message: message,
+	})
+	if overflow := len(m.errorLog) - maxErrorLogEntries; overflow > 0 {
+		m.errorLog = m.errorLog[overflow:]
+	}
+}
+
+func (m Model) hasRecentError(message string) bool {
+	message = strings.TrimSpace(message)
+	if message == "" {
+		return false
+	}
+	for i := len(m.messages) - 1; i >= 0 && i >= len(m.messages)-3; i-- {
+		msg := m.messages[i]
+		if msg.Role == viewmodel.RoleError && strings.TrimSpace(msg.Body) == message {
+			return true
+		}
+	}
+	return false
 }
 
 func (m *Model) appendAssistantDelta(text string) {

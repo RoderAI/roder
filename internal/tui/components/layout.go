@@ -15,19 +15,34 @@ func RenderWithCache(vm viewmodel.Model, zones *zone.Manager, transcriptCache *T
 	height := max(12, vm.Height)
 
 	composerHeight := max(3, vm.InputHeight+2)
-	bodyHeight := max(6, height-composerHeight-2)
+	errorHeight := 0
+	if vm.ShowErrorLog {
+		errorHeight = errorConsoleHeight(height)
+	}
+	bodyHeight := max(1, height-composerHeight-errorHeight-2)
 
-	view := lipgloss.JoinVertical(
-		lipgloss.Left,
+	parts := []string{
 		Header(width, vm.Provider, vm.Model, vm.Running),
 		TranscriptWithCache(width, bodyHeight, vm.Messages, vm.ScrollOffset, vm.HoveredID, zones, transcriptCache),
 		Composer(width, vm.Input),
-		Footer(width, vm.ScrollOffset, vm.Status),
+	}
+	if vm.ShowErrorLog {
+		parts = append(parts, ErrorConsole(width, errorHeight, vm.ErrorLog))
+	}
+	parts = append(parts, Footer(width, vm.ScrollOffset, vm.Status, vm.ShowErrorLog, len(vm.ErrorLog)))
+
+	view := lipgloss.JoinVertical(
+		lipgloss.Left,
+		parts...,
 	)
 	if vm.Settings != nil {
 		return OverlaySettingsDialog(view, width, height, *vm.Settings, zones)
 	}
 	return view
+}
+
+func errorConsoleHeight(totalHeight int) int {
+	return min(8, max(3, totalHeight/4))
 }
 
 func max(a, b int) int {
