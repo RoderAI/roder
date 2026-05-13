@@ -1,12 +1,15 @@
 package dialogs
 
+import "fmt"
+
 type SessionItem struct {
-	ID       string
-	Title    string
-	Provider string
-	Model    string
-	Current  bool
-	Selected bool
+	ID           string
+	Title        string
+	Provider     string
+	Model        string
+	MessageCount int
+	Current      bool
+	Selected     bool
 }
 
 type Sessions struct {
@@ -17,7 +20,9 @@ type Sessions struct {
 }
 
 func NewSessions(items []SessionItem) Sessions {
-	return Sessions{Open: true, Items: append([]SessionItem(nil), items...)}
+	out := Sessions{Open: true, Items: append([]SessionItem(nil), items...)}
+	out.markSelected()
+	return out
 }
 
 func (s *Sessions) Move(delta int) {
@@ -25,6 +30,7 @@ func (s *Sessions) Move(delta int) {
 		return
 	}
 	s.Selected = wrapIndex(s.Selected+delta, len(s.Items))
+	s.markSelected()
 }
 
 func (s Sessions) SelectedItem() SessionItem {
@@ -32,4 +38,18 @@ func (s Sessions) SelectedItem() SessionItem {
 		return SessionItem{}
 	}
 	return s.Items[clamp(s.Selected, 0, len(s.Items)-1)]
+}
+
+func (s SessionItem) Value() string {
+	value := fmt.Sprintf("%d msg", s.MessageCount)
+	if s.Current {
+		value += " current"
+	}
+	return value
+}
+
+func (s *Sessions) markSelected() {
+	for i := range s.Items {
+		s.Items[i].Selected = i == s.Selected
+	}
 }

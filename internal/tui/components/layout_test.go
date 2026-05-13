@@ -73,6 +73,71 @@ func TestRenderSettingsDialogOverTimeline(t *testing.T) {
 	}
 }
 
+func TestRenderListDialogOverTimeline(t *testing.T) {
+	zones := zone.New()
+	t.Cleanup(zones.Close)
+
+	out := zones.Scan(Render(viewmodel.Model{
+		Width:       80,
+		Height:      24,
+		Model:       "gpt-test",
+		Provider:    "mock",
+		Input:       "> Ask gode to work on this repo",
+		InputHeight: 1,
+		Status:      "commands",
+		Dialogs: viewmodel.DialogStack{Commands: &viewmodel.ListDialog{
+			Kind:  "commands",
+			Title: "Commands",
+			Help:  "enter insert",
+			Items: []viewmodel.ListDialogItem{{
+				ID:          "project:test",
+				Label:       "/project:test",
+				Description: "Run project tests",
+				Value:       "project",
+				Selected:    true,
+			}},
+		}},
+	}, zones))
+
+	for _, want := range []string{"Commands", "/project:test", "Run project tests", "enter insert"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("rendered output missing %q:\n%s", want, out)
+		}
+	}
+}
+
+func TestRenderPermissionDialogOverTimeline(t *testing.T) {
+	zones := zone.New()
+	t.Cleanup(zones.Close)
+
+	out := zones.Scan(Render(viewmodel.Model{
+		Width:       80,
+		Height:      24,
+		Model:       "gpt-test",
+		Provider:    "mock",
+		Input:       "> Ask gode to work on this repo",
+		InputHeight: 1,
+		Status:      "permission requested",
+		Dialogs: viewmodel.DialogStack{Permissions: &viewmodel.PermissionDialog{
+			Title: "Permission",
+			Help:  "a allow",
+			Requests: []viewmodel.PermissionDialogRequest{{
+				ID:       "corr-1",
+				Tool:     "write_file",
+				Action:   "write",
+				Input:    "README.md",
+				Selected: true,
+			}},
+		}},
+	}, zones))
+
+	for _, want := range []string{"Permission", "write_file", "README.md", "a allow"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("rendered output missing %q:\n%s", want, out)
+		}
+	}
+}
+
 func TestRenderErrorLogBelowComposer(t *testing.T) {
 	zones := zone.New()
 	t.Cleanup(zones.Close)

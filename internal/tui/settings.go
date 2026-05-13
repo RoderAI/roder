@@ -35,7 +35,7 @@ func (m Model) updateSettings(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		return m, tea.Quit
 	case "ctrl+p":
 		return m, m.closeSettings("ready")
-	case "esc":
+	case "esc", "escape", "ctrl+[":
 		if m.settings.Screen == dialogs.ScreenMenu {
 			return m, m.closeSettings("ready")
 		}

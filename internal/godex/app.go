@@ -170,6 +170,10 @@ func (a *App) RunPrompt(ctx context.Context, prompt string) (agent.RunResult, er
 	return a.runner.Run(ctx, agent.RunRequest{SessionID: uuid.NewString(), Prompt: prompt})
 }
 
+func (a *App) Commands() []godecommands.Command {
+	return append([]godecommands.Command(nil), a.commands...)
+}
+
 func (a *App) SetModel(model string) error {
 	return a.SetModelReasoning(model, "")
 }

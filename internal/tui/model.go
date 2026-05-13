@@ -11,6 +11,7 @@ import (
 	"charm.land/lipgloss/v2"
 	zone "github.com/lrstanley/bubblezone/v2"
 	"github.com/pandelisz/gode/internal/godex"
+	"github.com/pandelisz/gode/internal/godex/agent"
 	"github.com/pandelisz/gode/internal/godex/codexauth"
 	"github.com/pandelisz/gode/internal/godex/eventbus"
 	"github.com/pandelisz/gode/internal/tui/components"
@@ -28,7 +29,8 @@ type eventMsg struct {
 }
 
 type runDoneMsg struct {
-	Err error
+	Result agent.RunResult
+	Err    error
 }
 
 type codexAuthDoneMsg struct {
@@ -53,6 +55,10 @@ type Model struct {
 	hoveredID        string
 	status           string
 	settings         dialogs.Settings
+	commands         dialogs.Commands
+	sessions         dialogs.Sessions
+	permissions      dialogs.Permissions
+	currentSessionID string
 	codexLogin       func(context.Context, string) (codexauth.Tokens, string, error)
 	errorLog         []viewmodel.ErrorLogEntry
 	showErrorLog     bool
@@ -128,12 +134,24 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.settings.Open {
 			return m.updateSettings(msg)
 		}
+		if m.permissions.Open {
+			return m.updatePermissions(msg)
+		}
+		if m.commands.Open {
+			return m.updateCommands(msg)
+		}
+		if m.sessions.Open {
+			return m.updateSessions(msg)
+		}
 		switch msg.String() {
 		case "ctrl+c", "esc":
 			m.cancelEvents()
 			return m, tea.Quit
 		case "ctrl+p":
 			m.openSettings()
+			return m, nil
+		case "ctrl+s":
+			m.openSessions()
 			return m, nil
 		case "ctrl+l":
 			m.showErrorLog = !m.showErrorLog
@@ -168,6 +186,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.status = "waiting for model"
 			return m, m.runPrompt(prompt)
 		}
+		if msg.String() == "/" && strings.TrimSpace(m.input.Value()) == "" {
+			m.openCommands()
+			return m, nil
+		}
 	case tea.MouseWheelMsg:
 		m.handleWheel(msg)
 		return m, nil
@@ -178,12 +200,25 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.settings.Open {
 			return m.updateSettingsMouse(msg)
 		}
+		if m.permissions.Open {
+			return m.updatePermissionsMouse(msg)
+		}
+		if m.commands.Open {
+			return m.updateCommandsMouse(msg)
+		}
+		if m.sessions.Open {
+			return m.updateSessionsMouse(msg)
+		}
 		m.updateHover(msg)
 	case eventMsg:
+		m.capturePermissionRequest(msg.Event)
 		m.applyEvent(eventadapter.Apply(msg.Event))
 		return m, m.waitForEvent()
 	case runDoneMsg:
 		m.running = false
+		if msg.Result.SessionID != "" {
+			m.currentSessionID = msg.Result.SessionID
+		}
 		if msg.Err != nil {
 			if !m.hasRecentError(msg.Err.Error()) {
 				m.addMessage(viewmodel.RoleError, "", msg.Err.Error())
@@ -214,6 +249,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 func (m Model) View() tea.View {
 	settings := m.settings.ViewModel()
+	commands := m.commandsViewModel()
+	sessions := m.sessionsViewModel()
+	permissions := m.permissionsViewModel()
 	vm := viewmodel.Model{
 		Width:            m.width,
 		Height:           m.height,
@@ -226,10 +264,15 @@ func (m Model) View() tea.View {
 		Running:          m.running,
 		HoveredID:        m.hoveredID,
 		Status:           m.status,
-		Dialogs:          viewmodel.DialogStack{Settings: settings},
-		Settings:         settings,
-		ErrorLog:         m.errorLog,
-		ShowErrorLog:     m.showErrorLog,
+		Dialogs: viewmodel.DialogStack{
+			Settings:    settings,
+			Commands:    commands,
+			Sessions:    sessions,
+			Permissions: permissions,
+		},
+		Settings:     settings,
+		ErrorLog:     m.errorLog,
+		ShowErrorLog: m.showErrorLog,
 	}
 	if m.app != nil {
 		vm.Provider = godex.DisplayProvider(m.app.Config)
@@ -241,33 +284,6 @@ func (m Model) View() tea.View {
 	view.MouseMode = tea.MouseModeAllMotion
 	view.WindowTitle = "gode"
 	return view
-}
-
-func (m Model) waitForEvent() tea.Cmd {
-	if m.eventCh == nil {
-		return nil
-	}
-	return func() tea.Msg {
-		ev, ok := <-m.eventCh
-		if !ok {
-			return runDoneMsg{Err: eventbus.ErrClosed}
-		}
-		return eventMsg{Event: ev}
-	}
-}
-
-func (m *Model) cancelEvents() {
-	if m.eventCancel != nil {
-		m.eventCancel()
-		m.eventCancel = nil
-	}
-}
-
-func (m Model) runPrompt(prompt string) tea.Cmd {
-	return func() tea.Msg {
-		_, err := m.app.RunPrompt(context.Background(), prompt)
-		return runDoneMsg{Err: err}
-	}
 }
 
 func (m *Model) applyEvent(update eventadapter.Update) {

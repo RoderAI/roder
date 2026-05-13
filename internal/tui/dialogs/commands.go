@@ -17,7 +17,9 @@ type Commands struct {
 }
 
 func NewCommands(items []CommandItem) Commands {
-	return Commands{Open: true, Items: append([]CommandItem(nil), items...)}
+	out := Commands{Open: true, Items: append([]CommandItem(nil), items...)}
+	out.markSelected()
+	return out
 }
 
 func (c *Commands) Move(delta int) {
@@ -25,6 +27,7 @@ func (c *Commands) Move(delta int) {
 		return
 	}
 	c.Selected = wrapIndex(c.Selected+delta, len(c.Items))
+	c.markSelected()
 }
 
 func (c Commands) SelectedItem() CommandItem {
@@ -32,4 +35,10 @@ func (c Commands) SelectedItem() CommandItem {
 		return CommandItem{}
 	}
 	return c.Items[clamp(c.Selected, 0, len(c.Items)-1)]
+}
+
+func (c *Commands) markSelected() {
+	for i := range c.Items {
+		c.Items[i].Selected = i == c.Selected
+	}
 }
