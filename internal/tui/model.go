@@ -309,6 +309,10 @@ func (m *Model) appendEvent(ev eventbus.Event) {
 }
 
 func (m *Model) addMessage(role viewmodel.Role, title string, body string) {
+	if role == viewmodel.RoleError {
+		m.addErrorLog(title, body)
+		body = summarizeTimelineError(body)
+	}
 	m.nextID++
 	m.messages = append(m.messages, viewmodel.Message{
 		ID:    fmt.Sprintf("m%d", m.nextID),
@@ -316,9 +320,6 @@ func (m *Model) addMessage(role viewmodel.Role, title string, body string) {
 		Title: title,
 		Body:  body,
 	})
-	if role == viewmodel.RoleError {
-		m.addErrorLog(title, body)
-	}
 	if overflow := len(m.messages) - maxTranscriptMessages; overflow > 0 {
 		m.messages = m.messages[overflow:]
 		m.scrollOffset = max(0, m.scrollOffset-overflow)
@@ -358,13 +359,66 @@ func (m Model) hasRecentError(message string) bool {
 	if message == "" {
 		return false
 	}
-	for i := len(m.messages) - 1; i >= 0 && i >= len(m.messages)-3; i-- {
-		msg := m.messages[i]
-		if msg.Role == viewmodel.RoleError && strings.TrimSpace(msg.Body) == message {
+	for i := len(m.errorLog) - 1; i >= 0 && i >= len(m.errorLog)-3; i-- {
+		entry := m.errorLog[i]
+		if strings.TrimSpace(entry.Message) == message {
 			return true
 		}
 	}
 	return false
+}
+
+func summarizeTimelineError(message string) string {
+	message = strings.TrimSpace(message)
+	if message == "" {
+		return ""
+	}
+	lines := nonEmptyLines(message)
+	first := lines[0]
+	if status := valueLine(lines, "status: "); status != "" {
+		if first == "OpenAI stream request failed" {
+			if apiMessage := valueLine(lines, "error_message: "); apiMessage != "" {
+				return truncateSingleLine(first+": "+status+" - "+apiMessage+" - ctrl+l for details", 180)
+			}
+			return truncateSingleLine(first+": "+status+" - ctrl+l for details", 180)
+		}
+		return truncateSingleLine(status+" - ctrl+l for details", 180)
+	}
+	if len(lines) > 1 {
+		return truncateSingleLine(first+" - ctrl+l for details", 180)
+	}
+	return truncateSingleLine(first, 180)
+}
+
+func nonEmptyLines(message string) []string {
+	lines := []string{}
+	for _, line := range strings.Split(message, "\n") {
+		line = strings.TrimSpace(line)
+		if line != "" {
+			lines = append(lines, line)
+		}
+	}
+	if len(lines) == 0 {
+		return []string{""}
+	}
+	return lines
+}
+
+func valueLine(lines []string, prefix string) string {
+	for _, line := range lines {
+		if strings.HasPrefix(line, prefix) {
+			return strings.TrimSpace(strings.TrimPrefix(line, prefix))
+		}
+	}
+	return ""
+}
+
+func truncateSingleLine(text string, limit int) string {
+	text = strings.Join(strings.Fields(text), " ")
+	if len(text) <= limit {
+		return text
+	}
+	return text[:limit] + "..."
 }
 
 func (m *Model) appendAssistantDelta(text string) {
