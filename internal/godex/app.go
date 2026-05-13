@@ -285,6 +285,7 @@ func runnerConfig(cfg Config, bus *eventbus.Bus, journalStore *journal.Store, se
 		Tools:                 registry,
 		Provider:              prov,
 		Model:                 cfg.Model,
+		Workspace:             cfg.Workspace,
 		DisableAutoCompaction: cfg.DisableAutoCompaction,
 		AutoCompactTokenLimit: cfg.AutoCompactTokenLimit,
 		Goals:                 goalRuntime,

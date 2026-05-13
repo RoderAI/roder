@@ -13,17 +13,25 @@ func TestRunResumeStartsResumeTUIWithConfig(t *testing.T) {
 	dataDir := filepath.Join(t.TempDir(), "data")
 	var got godex.Config
 	called := false
-	previous := runResumeTUI
-	runResumeTUI = func(_ context.Context, app *godex.App) error {
-		called = true
+	previousPicker := pickResumeSession
+	previousRunner := runResumeTUI
+	pickResumeSession = func(_ context.Context, app *godex.App) (string, error) {
 		got = app.Config
 		if app.Sessions == nil {
 			t.Fatal("sessions store not wired")
 		}
+		return "session-id", nil
+	}
+	runResumeTUI = func(_ context.Context, app *godex.App, sessionID string) error {
+		called = true
+		if sessionID != "session-id" {
+			t.Fatalf("session id = %q", sessionID)
+		}
 		return nil
 	}
 	t.Cleanup(func() {
-		runResumeTUI = previous
+		pickResumeSession = previousPicker
+		runResumeTUI = previousRunner
 	})
 
 	err := runResume(context.Background(), []string{
@@ -45,10 +53,13 @@ func TestRunResumeStartsResumeTUIWithConfig(t *testing.T) {
 }
 
 func TestRunDispatchesResumeCommand(t *testing.T) {
-	previous := runResumeTUI
-	runResumeTUI = func(context.Context, *godex.App) error { return nil }
+	previousPicker := pickResumeSession
+	previousRunner := runResumeTUI
+	pickResumeSession = func(context.Context, *godex.App) (string, error) { return "", nil }
+	runResumeTUI = func(context.Context, *godex.App, string) error { return nil }
 	t.Cleanup(func() {
-		runResumeTUI = previous
+		pickResumeSession = previousPicker
+		runResumeTUI = previousRunner
 	})
 
 	err := run(context.Background(), []string{"resume", "--data-dir", t.TempDir(), "--provider", "mock", "--model", "mock", "--reasoning", "none"})

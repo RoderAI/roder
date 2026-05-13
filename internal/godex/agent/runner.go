@@ -29,6 +29,7 @@ type Config struct {
 	Tools                 *tools.Registry
 	Provider              provider.Provider
 	Model                 string
+	Workspace             string
 	DisableAutoCompaction bool
 	AutoCompactTokenLimit int
 	Goals                 *goals.Runtime
@@ -49,6 +50,7 @@ type Runner struct {
 	tools                 *tools.Registry
 	provider              provider.Provider
 	model                 string
+	workspace             string
 	disableAutoCompaction bool
 	autoCompactTokenLimit int
 	goals                 *goals.Runtime
@@ -90,6 +92,7 @@ func NewRunner(cfg Config) *Runner {
 		tools:                 cfg.Tools,
 		provider:              cfg.Provider,
 		model:                 cfg.Model,
+		workspace:             cfg.Workspace,
 		disableAutoCompaction: cfg.DisableAutoCompaction,
 		autoCompactTokenLimit: cfg.AutoCompactTokenLimit,
 		goals:                 cfg.Goals,
@@ -118,7 +121,13 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (RunResult, error) {
 	active := r.registerActiveRun(req)
 	defer r.unregisterActiveRun(active)
 	if r.sessions != nil {
-		if _, err := r.sessions.Ensure(ctx, session.Session{ID: req.SessionID, Title: req.Prompt}); err != nil {
+		if _, err := r.sessions.Ensure(ctx, session.Session{
+			ID:        req.SessionID,
+			Title:     req.Prompt,
+			Workspace: r.workspace,
+			Model:     r.model,
+			Provider:  r.providerName(),
+		}); err != nil {
 			return RunResult{}, r.fail(ctx, req, err)
 		}
 	}

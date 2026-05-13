@@ -31,6 +31,7 @@ make ask PROMPT="summarize this repo"
 ```
 
 `make run` enables local OpenTelemetry tracing by default and exports OTLP/gRPC spans to `localhost:4317`.
+`gode resume` opens a compact inline session picker. Type to search, press `tab` to toggle between sessions from the current workspace and all sessions, then press `enter` to resume.
 
 ```sh
 ./jaeger.sh
