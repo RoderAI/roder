@@ -58,6 +58,8 @@ var (
 				Foreground(lipgloss.Color("231"))
 	bodyStyle = lipgloss.NewStyle().
 			Foreground(lipgloss.Color("252"))
+	assistantBodyStyle = lipgloss.NewStyle().
+				Foreground(lipgloss.Color("231"))
 	userMessageStyle = lipgloss.NewStyle().
 				Foreground(lipgloss.Color("252"))
 	userRailStyle = lipgloss.NewStyle().
@@ -131,12 +133,12 @@ func TranscriptDetailedWithCache(width int, height int, messages []viewmodel.Mes
 	}
 }
 
-func TranscriptLineRefs(width int, height int, messages []viewmodel.Message, scrollOffset int, cache *TranscriptCache) []selection.TranscriptLineRef {
+func TranscriptLineRefs(width int, height int, messages []viewmodel.Message, scrollOffset int, cache *TranscriptCache, styles ...string) []selection.TranscriptLineRef {
 	panelHeight := max(4, height)
 	innerWidth := max(20, width-2)
 	contentWidth := max(12, innerWidth-2)
 	innerHeight := max(1, panelHeight-2)
-	return visibleLineRefs(visibleMessages(messages, contentWidth, innerHeight, scrollOffset, cache, viewmodel.TimelineStyleDetailed))
+	return visibleLineRefs(visibleMessages(messages, contentWidth, innerHeight, scrollOffset, cache, styles...))
 }
 
 func (c *TranscriptCache) Prune(messages []viewmodel.Message) {
@@ -155,7 +157,7 @@ func (c *TranscriptCache) Prune(messages []viewmodel.Message) {
 }
 
 func visibleMessages(messages []viewmodel.Message, width int, height int, scrollOffset int, cache *TranscriptCache, styles ...string) []renderedMessage {
-	timelineStyle := viewmodel.TimelineStyleDetailed
+	timelineStyle := viewmodel.TimelineStyleMinimal
 	if len(styles) > 0 {
 		timelineStyle = normalizeTimelineStyle(styles[0])
 	}
@@ -280,7 +282,7 @@ func renderUserMessage(msg viewmodel.Message, width int) renderedMessage {
 }
 
 func renderAssistantMessage(msg viewmodel.Message, width int, markdown bool) renderedMessage {
-	lines := bodyLines(msg.Body, max(12, width), markdown)
+	lines := assistantBodyLines(msg.Body, max(12, width), markdown)
 	if msg.Title != "" {
 		headerText := metaPrefixStyle.Render("· ") + metaTitleStyle.Render(strings.TrimSpace(msg.Title))
 		header := renderedLine{
@@ -448,20 +450,31 @@ func looksLikeDiff(text string) bool {
 
 func normalizeTimelineStyle(style string) string {
 	switch strings.TrimSpace(strings.ToLower(style)) {
-	case viewmodel.TimelineStyleMinimal:
-		return viewmodel.TimelineStyleMinimal
-	default:
+	case viewmodel.TimelineStyleDetailed:
 		return viewmodel.TimelineStyleDetailed
+	default:
+		return viewmodel.TimelineStyleMinimal
 	}
 }
 
 func wrappedBodyLines(text string, width int) []renderedLine {
+	return styledWrappedBodyLines(text, width, bodyStyle)
+}
+
+func styledWrappedBodyLines(text string, width int, style lipgloss.Style) []renderedLine {
 	lines := wrapText(text, width)
 	out := make([]renderedLine, 0, len(lines))
 	for i := range lines {
-		out = append(out, bodyRenderedLine(bodyStyle.Render(lines[i]), lines[i]))
+		out = append(out, bodyRenderedLine(style.Render(lines[i]), lines[i]))
 	}
 	return out
+}
+
+func assistantBodyLines(text string, width int, markdown bool) []renderedLine {
+	if markdown {
+		return markdownBodyLinesWithBaseColor(text, width, "231")
+	}
+	return styledWrappedBodyLines(text, width, assistantBodyStyle)
 }
 
 func bodyLines(text string, width int, markdown bool) []renderedLine {

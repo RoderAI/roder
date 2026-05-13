@@ -14,8 +14,9 @@ func TestThreadPersistenceAcrossServerInstances(t *testing.T) {
 	ctx := context.Background()
 	dataDir := t.TempDir()
 	workspace := filepath.Join(t.TempDir(), "workspace")
+	reopenedWorkspace := filepath.Join(t.TempDir(), "reopened-workspace")
 	app, err := godex.New(ctx, godex.Config{
-		Workspace:   workspace,
+		Workspace:   reopenedWorkspace,
 		DataDir:     dataDir,
 		Provider:    "mock",
 		AutoApprove: true,
@@ -38,7 +39,7 @@ func TestThreadPersistenceAcrossServerInstances(t *testing.T) {
 	}
 
 	reopened, err := godex.New(ctx, godex.Config{
-		Workspace:   workspace,
+		Workspace:   reopenedWorkspace,
 		DataDir:     dataDir,
 		Provider:    "mock",
 		AutoApprove: true,
@@ -59,8 +60,14 @@ func TestThreadPersistenceAcrossServerInstances(t *testing.T) {
 	if len(listed) != 1 || stringField(t, listed[0].(map[string]any), "id") != threadID {
 		t.Fatalf("thread/list after reopen = %#v", listed)
 	}
+	if got := stringField(t, listed[0].(map[string]any), "cwd"); got != workspace {
+		t.Fatalf("thread/list cwd after reopen = %q, want %q", got, workspace)
+	}
 	sendJSONRequest(t, second, map[string]any{"id": 23, "method": "thread/read", "params": map[string]any{"threadId": threadID, "includeTurns": true}})
 	thread := objectField(t, responseResult(t, secondMessages, 23), "thread")
+	if got := stringField(t, thread, "cwd"); got != workspace {
+		t.Fatalf("thread/read cwd after reopen = %q, want %q", got, workspace)
+	}
 	turns := sliceField(t, thread, "turns")
 	if len(turns) != 1 {
 		t.Fatalf("turns after reopen = %#v", turns)

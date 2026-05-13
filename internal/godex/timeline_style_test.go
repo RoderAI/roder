@@ -7,6 +7,15 @@ import (
 	"testing"
 )
 
+func TestDefaultTimelineStyleIsMinimal(t *testing.T) {
+	if got := DefaultConfig().TimelineStyle; got != TimelineStyleMinimal {
+		t.Fatalf("default timeline style = %q, want %q", got, TimelineStyleMinimal)
+	}
+	if got := NormalizeTimelineStyle(""); got != TimelineStyleMinimal {
+		t.Fatalf("empty timeline style = %q, want %q", got, TimelineStyleMinimal)
+	}
+}
+
 func TestSettingsRoundTripTimelineStyle(t *testing.T) {
 	dataDir := t.TempDir()
 

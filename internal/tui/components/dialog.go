@@ -34,10 +34,14 @@ func OverlayConfirmDialog(base string, width int, height int, dialog viewmodel.C
 }
 
 func InlineListDialogHeight(dialog *viewmodel.ListDialog) int {
+	return InlineListDialogHeightForRows(dialog, maxInlineListRows)
+}
+
+func InlineListDialogHeightForRows(dialog *viewmodel.ListDialog, maxRows int) int {
 	if dialog == nil || len(dialog.Items) == 0 {
 		return 0
 	}
-	height := min(maxSlashListRows, len(dialog.Items))
+	height := min(maxRows, len(dialog.Items))
 	if dialog.Error != "" {
 		height++
 	}
@@ -45,10 +49,14 @@ func InlineListDialogHeight(dialog *viewmodel.ListDialog) int {
 }
 
 func InlineListDialog(width int, dialog viewmodel.ListDialog, zones *zone.Manager) string {
+	return InlineListDialogWithRows(width, dialog, maxInlineListRows, zones)
+}
+
+func InlineListDialogWithRows(width int, dialog viewmodel.ListDialog, maxRows int, zones *zone.Manager) string {
 	contentWidth := max(20, width-4)
 	rows := dialog.Items
-	if len(rows) > maxSlashListRows {
-		rows = rows[:maxSlashListRows]
+	if len(rows) > maxRows {
+		rows = rows[:maxRows]
 	}
 	lines := make([]string, 0, len(rows)+1)
 	for _, item := range rows {
@@ -111,7 +119,8 @@ func ListDialogBox(width int, dialog viewmodel.ListDialog, zones *zone.Manager) 
 	return settingsBoxStyle.Width(dialogWidth).Render(strings.Join(lines, "\n"))
 }
 
-const maxSlashListRows = 8
+const maxInlineListRows = 8
+const maxInlineListRowsWithoutFooter = 9
 
 func padCell(text string, width int) string {
 	return text + strings.Repeat(" ", max(0, width-lipgloss.Width(text)))

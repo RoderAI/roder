@@ -74,7 +74,11 @@ func (m *Model) transcriptPointForMouse(msg tea.MouseMsg) (selection.Point, bool
 
 func (m *Model) refreshTranscriptLineRefs() {
 	height := max(4, m.visibleTranscriptLines()+2)
-	m.transcriptLineRefs = components.TranscriptLineRefs(m.width, height, m.messages, m.scrollOffset, &m.transcript)
+	timelineStyle := ""
+	if m.app != nil {
+		timelineStyle = m.app.Config.TimelineStyle
+	}
+	m.transcriptLineRefs = components.TranscriptLineRefs(m.width, height, m.messages, m.scrollOffset, &m.transcript, timelineStyle)
 }
 
 func (m *Model) transcriptSelectionTextLines() []string {

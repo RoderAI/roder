@@ -205,13 +205,21 @@ func (m Model) resourceCompletionItems(query string) []dialogs.CommandItem {
 }
 
 func (m Model) promptWithAttachments(prompt string) (string, error) {
+	input, err := m.promptInputWithAttachments(prompt)
+	if err != nil {
+		return "", err
+	}
+	return input.Prompt, nil
+}
+
+func (m Model) promptInputWithAttachments(prompt string) (attachments.PromptInput, error) {
 	workspace := "."
 	if m.app != nil {
 		workspace = m.app.Config.Workspace
 	}
-	out, err := attachments.AppendTextContext(workspace, prompt, m.attachments)
+	out, err := attachments.BuildPromptInput(workspace, prompt, m.attachments)
 	if err != nil {
-		return "", err
+		return attachments.PromptInput{}, err
 	}
 	return out, nil
 }

@@ -73,6 +73,7 @@ type RunRequest struct {
 	ResponseFormat string
 	Messages       []provider.Message
 	InputItems     []provider.Item
+	ReplacePrompt  bool
 }
 
 type RunResult struct {
@@ -289,9 +290,11 @@ func (r *Runner) initialContext(ctx context.Context, req RunRequest, runMessages
 		messages = append(messages, goalMessage)
 		inputItems = append(inputItems, providerItemFromProviderMessage(goalMessage))
 	}
-	userMessage := provider.Message{Role: provider.RoleUser, Content: prompt}
-	messages = append(messages, userMessage)
-	inputItems = append(inputItems, providerItemFromProviderMessage(userMessage))
+	if !req.ReplacePrompt {
+		userMessage := provider.Message{Role: provider.RoleUser, Content: prompt}
+		messages = append(messages, userMessage)
+		inputItems = append(inputItems, providerItemFromProviderMessage(userMessage))
+	}
 	return initialContext{Messages: messages, InputItems: inputItems}, nil
 }
 

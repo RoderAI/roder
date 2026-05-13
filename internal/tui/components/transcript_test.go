@@ -94,3 +94,18 @@ func TestTranscriptUserMessageUsesCompactRail(t *testing.T) {
 		t.Fatalf("expected only user body row, got %#v", result.Lines)
 	}
 }
+
+func TestTranscriptAssistantMessageUsesWhiteText(t *testing.T) {
+	result := TranscriptDetailedWithCache(50, 8, []viewmodel.Message{{
+		ID:   "m1",
+		Role: viewmodel.RoleAssistant,
+		Body: "final answer",
+	}}, 0, "", zone.New(), nil, TranscriptOptions{})
+
+	if !strings.Contains(result.View, "38;5;231") {
+		t.Fatalf("expected assistant message body to use white text:\n%s", result.View)
+	}
+	if strings.Contains(result.View, "38;5;252mfinal answer") {
+		t.Fatalf("assistant message body should not use light gray text:\n%s", result.View)
+	}
+}

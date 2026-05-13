@@ -51,6 +51,7 @@ type Model struct {
 	currentSession          string
 	attachments             []attachments.Attachment
 	codexLogin              func(context.Context, string) (codexauth.Tokens, string, error)
+	imagePaste              func(context.Context, string) (attachments.Attachment, error)
 	errorLog                []viewmodel.ErrorLogEntry
 	showErrorLog            bool
 	reasoningSummary        string
@@ -95,6 +96,7 @@ func New(app *godex.App) Model {
 		followTail:              true,
 		status:                  "ready",
 		codexLogin:              codexauth.LoginBrowser,
+		imagePaste:              attachments.PasteImageFromClipboard,
 		contextLeft:             defaultContextLeft(app),
 		transcriptLineDirty:     true,
 		messageKeys:             map[string]string{},
@@ -179,6 +181,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "ctrl+s":
 			m.openSessions()
 			return m, nil
+		case "ctrl+v", "ctrl+alt+v":
+			return m, m.pasteImageFromClipboard()
 		case "ctrl+l":
 			m.showErrorLog = !m.showErrorLog
 			if m.showErrorLog {
@@ -202,7 +206,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		case "enter":
 			prompt := strings.TrimSpace(m.input.Value())
-			if prompt == "" {
+			if prompt == "" && len(m.attachments) == 0 {
 				return m, nil
 			}
 			if m.running {
@@ -229,7 +233,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.String() == "tab" {
 			if m.running {
 				prompt := strings.TrimSpace(m.input.Value())
-				if prompt == "" {
+				if prompt == "" && len(m.attachments) == 0 {
 					return m, nil
 				}
 				pending, err := m.preparePrompt(prompt)
@@ -251,6 +255,18 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			return m, nil
 		}
+	case tea.PasteMsg:
+		if attachment, ok := m.pastedImagePath(msg.Content); ok {
+			m.attachImage(attachment)
+			return m, nil
+		}
+	case imagePasteDoneMsg:
+		if msg.Err != nil {
+			m.failImagePaste(msg.Err)
+			return m, nil
+		}
+		m.attachImage(msg.Attachment)
+		return m, nil
 	case tea.MouseWheelMsg:
 		return m, m.handleWheel(msg)
 	case tea.MouseMotionMsg:
@@ -385,6 +401,13 @@ func (m *Model) applyEvent(update eventadapter.Update) {
 	if update.HasStatus {
 		m.status = update.Status
 	}
+}
+
+func (m Model) visibleReasoningSummary() string {
+	if !m.running {
+		return ""
+	}
+	return m.reasoningSummary
 }
 
 func (m *Model) addOrUpdateMessage(message eventadapter.Message) {

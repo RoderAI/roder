@@ -183,6 +183,7 @@ func TestModelShowsReasoningSummaryAboveComposer(t *testing.T) {
 	model := New(nil)
 	model.width = 80
 	model.height = 24
+	model.running = true
 	updated, _ := model.Update(eventMsg{Event: eventbus.Event{Kind: eventbus.KindReasoningSummaryDelta, Payload: map[string]any{"text": "Checking workspace"}}})
 	updated, _ = updated.Update(eventMsg{Event: eventbus.Event{Kind: eventbus.KindReasoningSummaryDelta, Payload: map[string]any{"text": " before editing."}}})
 
@@ -198,6 +199,19 @@ func TestModelShowsReasoningSummaryAboveComposer(t *testing.T) {
 	}
 	if !strings.Contains(view, "Checking workspace before editing.") {
 		t.Fatalf("view missing reasoning summary:\n%s", view)
+	}
+}
+
+func TestModelHidesReasoningSummaryWhenIdle(t *testing.T) {
+	model := New(nil)
+	model.width = 80
+	model.height = 24
+	model.reasoningSummary = "Finished checking workspace."
+	model.running = false
+
+	view := model.View().Content
+	if strings.Contains(view, "REASONING") || strings.Contains(view, "Finished checking workspace.") {
+		t.Fatalf("idle view should hide reasoning summary:\n%s", view)
 	}
 }
 
@@ -262,7 +276,7 @@ func TestModelTabWhileRunningQueuesPrompt(t *testing.T) {
 	if strings.TrimSpace(got.input.Value()) != "" {
 		t.Fatalf("input should clear after queue, got %q", got.input.Value())
 	}
-	if got.footerStatus() != "queued 1 prompt" {
+	if !strings.Contains(got.footerStatus(), "queued 1 prompt") {
 		t.Fatalf("footer status = %q", got.footerStatus())
 	}
 	if !strings.Contains(got.View().Content, "Queued follow-up inputs") || !strings.Contains(got.View().Content, "run after this") {

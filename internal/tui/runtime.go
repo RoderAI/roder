@@ -29,13 +29,24 @@ func (m *Model) cancelEvents() {
 }
 
 func (m Model) runPrompt(prompt string) tea.Cmd {
+	return m.runPreparedPrompt(pendingPrompt{Prompt: prompt, Display: prompt})
+}
+
+func (m Model) runPreparedPrompt(pending pendingPrompt) tea.Cmd {
 	return func() tea.Msg {
 		var result agent.RunResult
 		var err error
+		req := agent.RunRequest{
+			SessionID:     m.currentSessionID,
+			Prompt:        pending.Prompt,
+			Resume:        true,
+			InputItems:    pending.InputItems,
+			ReplacePrompt: pending.ReplacePrompt,
+		}
 		if m.currentSessionID != "" {
-			result, err = m.app.Run(context.Background(), agent.RunRequest{SessionID: m.currentSessionID, Prompt: prompt, Resume: true})
+			result, err = m.app.Run(context.Background(), req)
 		} else {
-			result, err = m.app.RunPrompt(context.Background(), prompt)
+			result, err = m.app.RunPrompt(context.Background(), pending.Prompt)
 		}
 		return runDoneMsg{Result: result, Err: err}
 	}

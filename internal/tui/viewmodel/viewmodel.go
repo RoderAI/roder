@@ -53,6 +53,7 @@ type Model struct {
 	ComposerValue             string
 	InputHeight               int
 	SlashMenu                 *ListDialog
+	CompletionMenu            *ListDialog
 	ScrollOffset              int
 	FollowTail                bool
 	TranscriptSelection       selection.Range
@@ -91,8 +92,6 @@ func (m Model) ActiveSettingsDialog() *SettingsDialog {
 
 func (m Model) ActiveListDialog() *ListDialog {
 	switch {
-	case m.Dialogs.Completions != nil:
-		return m.Dialogs.Completions
 	case m.Dialogs.Commands != nil:
 		return m.Dialogs.Commands
 	case m.Dialogs.Sessions != nil:

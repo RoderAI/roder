@@ -255,6 +255,96 @@ func TestRenderQueuedPromptsAboveComposer(t *testing.T) {
 	}
 }
 
+func TestRenderInlineSlashMenuHidesFooterForExtraRow(t *testing.T) {
+	zones := zone.New()
+	t.Cleanup(zones.Close)
+
+	items := make([]viewmodel.ListDialogItem, 10)
+	for i := range items {
+		name := "/cmd" + strconv.Itoa(i+1)
+		items[i] = viewmodel.ListDialogItem{
+			ID:          name,
+			Label:       name,
+			Description: "command " + strconv.Itoa(i+1),
+			Selected:    i == 0,
+		}
+	}
+	out := zones.Scan(Render(viewmodel.Model{
+		Width:       80,
+		Height:      18,
+		Model:       "gpt-test",
+		Provider:    "mock",
+		Input:       "/",
+		InputHeight: 1,
+		SlashMenu: &viewmodel.ListDialog{
+			Kind:  "slash",
+			Items: items,
+		},
+		Status: "ready",
+	}, zones))
+
+	if got := lipgloss.Height(out); got != 18 {
+		t.Fatalf("height = %d, want 18\n%s", got, out)
+	}
+	if strings.Contains(out, "ready") || strings.Contains(out, "scroll 0") {
+		t.Fatalf("footer should be hidden while slash menu is open:\n%s", out)
+	}
+	if !strings.Contains(out, "/cmd9") {
+		t.Fatalf("slash menu should use footer row for a ninth item:\n%s", out)
+	}
+	if strings.Contains(out, "/cmd10") {
+		t.Fatalf("slash menu should still cap at nine rows:\n%s", out)
+	}
+}
+
+func TestRenderInlineCompletionMenuBelowComposer(t *testing.T) {
+	zones := zone.New()
+	t.Cleanup(zones.Close)
+
+	out := zones.Scan(Render(viewmodel.Model{
+		Width:       80,
+		Height:      18,
+		Model:       "gpt-test",
+		Provider:    "mock",
+		Input:       "@read",
+		InputHeight: 1,
+		CompletionMenu: &viewmodel.ListDialog{
+			Kind: "completions",
+			Items: []viewmodel.ListDialogItem{{
+				ID:          "README.md",
+				Label:       "@README.md",
+				Description: "Attach workspace file",
+				Value:       "text",
+				Selected:    true,
+			}},
+		},
+		Dialogs: viewmodel.DialogStack{Completions: &viewmodel.ListDialog{
+			Kind:  "completions",
+			Title: "File completions",
+			Items: []viewmodel.ListDialogItem{{
+				ID:          "README.md",
+				Label:       "@README.md",
+				Description: "Attach workspace file",
+				Value:       "text",
+				Selected:    true,
+			}},
+		}},
+		Status: "file completions",
+	}, zones))
+
+	if got := lipgloss.Height(out); got != 18 {
+		t.Fatalf("height = %d, want 18\n%s", got, out)
+	}
+	inputIndex := strings.Index(out, "@read")
+	menuIndex := strings.Index(out, "@README.md")
+	if inputIndex < 0 || menuIndex < 0 || menuIndex < inputIndex {
+		t.Fatalf("completion menu should render below composer:\n%s", out)
+	}
+	if strings.Contains(out, "File completions") {
+		t.Fatalf("completion menu should not render as an overlay dialog:\n%s", out)
+	}
+}
+
 func TestRenderPermissionDialogOverTimeline(t *testing.T) {
 	zones := zone.New()
 	t.Cleanup(zones.Close)
@@ -347,6 +437,13 @@ func TestRenderReasoningSummaryAboveComposer(t *testing.T) {
 	}
 }
 
+func TestRenderReasoningSummaryDoesNotPrefixClippedTextWithEllipsis(t *testing.T) {
+	out := ReasoningSummary(32, 2, "one two three four five six seven eight nine ten")
+	if strings.Contains(out, "...") {
+		t.Fatalf("reasoning summary should not render ellipsis:\n%s", out)
+	}
+}
+
 func TestRenderClipsTallToolTranscriptBeforeComposer(t *testing.T) {
 	zones := zone.New()
 	t.Cleanup(zones.Close)
@@ -406,7 +503,8 @@ func TestRenderToolCardWithDiffAndMetadata(t *testing.T) {
 				"hook: allow",
 			}, "\n"),
 		}},
-		Status: "tool completed: git_diff",
+		Status:        "tool completed: git_diff",
+		TimelineStyle: viewmodel.TimelineStyleDetailed,
 	}, zones))
 
 	for _, want := range []string{"› git_diff", "diff --git", "-old", "+new"} {
@@ -436,7 +534,8 @@ func TestRenderToolCardShowsHookAndPermissionMetadata(t *testing.T) {
 			{ID: "tool-shell", Role: viewmodel.RoleTool, Title: "shell", Body: "ok\nhook: allow"},
 			{ID: "tool-perm", Role: viewmodel.RoleTool, Title: "write_file", Body: "permission requested\naction: write\npath: README.md"},
 		},
-		Status: "permission requested",
+		Status:        "permission requested",
+		TimelineStyle: viewmodel.TimelineStyleDetailed,
 	}, zones))
 
 	for _, want := range []string{"› shell", "hook:", "allow", "› write_file", "action:", "README.md"} {
@@ -465,7 +564,7 @@ func TestRenderTimelineUsesCompactLabels(t *testing.T) {
 		Status: "ready",
 	}, zones))
 
-	for _, want := range []string{"▌", "whats in this folder?", "This is your home folder.", "› shell", "Desktop"} {
+	for _, want := range []string{"whats in this folder?", "This is your home folder.", "└ ● shell", "ls -la"} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("rendered output missing %q:\n%s", want, out)
 		}
@@ -474,6 +573,9 @@ func TestRenderTimelineUsesCompactLabels(t *testing.T) {
 		if strings.Contains(out, unwanted) {
 			t.Fatalf("rendered output should not use large %q label:\n%s", unwanted, out)
 		}
+	}
+	if strings.Contains(out, "Desktop") || strings.Contains(out, "Documents") {
+		t.Fatalf("default timeline should hide detailed tool output:\n%s", out)
 	}
 }
 

@@ -14,6 +14,13 @@ func RenderWithCache(vm viewmodel.Model, zones *zone.Manager, transcriptCache *T
 	width := max(40, vm.Width)
 	height := max(12, vm.Height)
 
+	inlineMenuOpen := vm.SlashMenu != nil || vm.CompletionMenu != nil
+	maxInlineRows := maxInlineListRows
+	showFooter := true
+	if inlineMenuOpen {
+		maxInlineRows = maxInlineListRowsWithoutFooter
+		showFooter = false
+	}
 	reasoningHeight := ReasoningSummaryHeight(vm.ReasoningSummary, height)
 	errorHeight := 0
 	if vm.ShowErrorLog {
@@ -24,7 +31,6 @@ func RenderWithCache(vm viewmodel.Model, zones *zone.Manager, transcriptCache *T
 		attachmentHeight = 1
 	}
 	queuedHeight := QueuedPromptsHeight(vm.QueuedPrompts)
-
 	header := Header(width, vm.Provider, vm.Model, vm.Reasoning, vm.SessionTitle, vm.Running)
 	reasoning := ""
 	if reasoningHeight > 0 {
@@ -45,14 +51,21 @@ func RenderWithCache(vm viewmodel.Model, zones *zone.Manager, transcriptCache *T
 	}, zones)
 	slashMenu := ""
 	if vm.SlashMenu != nil {
-		slashMenu = InlineListDialog(width, *vm.SlashMenu, zones)
+		slashMenu = InlineListDialogWithRows(width, *vm.SlashMenu, maxInlineRows, zones)
+	}
+	completionMenu := ""
+	if vm.CompletionMenu != nil {
+		completionMenu = InlineListDialogWithRows(width, *vm.CompletionMenu, maxInlineRows, zones)
 	}
 	errorLog := ""
 	if vm.ShowErrorLog {
 		errorLog = ErrorConsole(width, errorHeight, vm.ErrorLog)
 	}
-	footer := Footer(width, vm.ScrollOffset, vm.Status, vm.ShowErrorLog, len(vm.ErrorLog), vm.ContextLeft)
-	reservedHeight := renderedHeight(header) + renderedHeight(reasoning) + renderedHeight(attachment) + renderedHeight(queuedPrompts) + renderedHeight(composer) + renderedHeight(slashMenu) + renderedHeight(errorLog) + renderedHeight(footer)
+	footer := ""
+	if showFooter {
+		footer = Footer(width, vm.ScrollOffset, vm.Status, vm.ShowErrorLog, len(vm.ErrorLog), vm.ContextLeft)
+	}
+	reservedHeight := renderedHeight(header) + renderedHeight(reasoning) + renderedHeight(attachment) + renderedHeight(queuedPrompts) + renderedHeight(composer) + renderedHeight(slashMenu) + renderedHeight(completionMenu) + renderedHeight(errorLog) + renderedHeight(footer)
 	bodyHeight := max(0, height-reservedHeight)
 
 	transcript := ""
@@ -67,7 +80,7 @@ func RenderWithCache(vm viewmodel.Model, zones *zone.Manager, transcriptCache *T
 	if transcript != "" {
 		parts = append(parts, transcript)
 	}
-	for _, part := range []string{reasoning, attachment, queuedPrompts, composer, slashMenu, errorLog, footer} {
+	for _, part := range []string{reasoning, attachment, queuedPrompts, composer, slashMenu, completionMenu, errorLog, footer} {
 		if part != "" {
 			parts = append(parts, part)
 		}

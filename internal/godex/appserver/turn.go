@@ -34,11 +34,11 @@ func (c *Connection) handleTurnStart(ctx context.Context, raw json.RawMessage) (
 	if params.ThreadID == "" {
 		return nil, rpcError(errorInvalidParams, "threadId is required")
 	}
-	prompt, err := params.prompt()
+	input, err := params.input()
 	if err != nil {
 		return nil, rpcError(errorInvalidParams, err.Error())
 	}
-	if strings.TrimSpace(prompt) == "" {
+	if strings.TrimSpace(input.Prompt) == "" && len(input.InputItems) == 0 {
 		return nil, rpcError(errorInvalidParams, "input text is required")
 	}
 
@@ -74,7 +74,7 @@ func (c *Connection) handleTurnStart(ctx context.Context, raw json.RawMessage) (
 	c.server.mu.Unlock()
 
 	c.subscribe(params.ThreadID)
-	go c.server.runTurn(runCtx, params.ThreadID, turn.ID, prompt)
+	go c.server.runTurn(runCtx, params.ThreadID, turn.ID, input)
 	return map[string]any{"turn": turn}, nil
 }
 
@@ -146,7 +146,7 @@ func (s *Server) handleTurnInterrupt(ctx context.Context, raw json.RawMessage) (
 	return map[string]any{}, nil
 }
 
-func (s *Server) runTurn(ctx context.Context, threadID, turnID, prompt string) {
+func (s *Server) runTurn(ctx context.Context, threadID, turnID string, input builtTurnInput) {
 	start := time.Now()
 	itemID := uuid.NewString()
 	subCtx, cancelSub := context.WithCancel(context.Background())
@@ -175,7 +175,14 @@ func (s *Server) runTurn(ctx context.Context, threadID, turnID, prompt string) {
 	resultCh := make(chan agent.RunResult, 1)
 	errCh := make(chan error, 1)
 	go func() {
-		result, err := s.app.Run(ctx, agent.RunRequest{SessionID: threadID, RunID: turnID, Prompt: prompt, Resume: true})
+		result, err := s.app.Run(ctx, agent.RunRequest{
+			SessionID:     threadID,
+			RunID:         turnID,
+			Prompt:        input.Prompt,
+			Resume:        true,
+			InputItems:    input.InputItems,
+			ReplacePrompt: input.ReplacePrompt,
+		})
 		if err != nil {
 			errCh <- err
 			return
@@ -315,26 +322,6 @@ func (s *Server) turnSnapshot(threadID, turnID string) Turn {
 	return Turn{}
 }
 
-func (p turnStartParams) prompt() (string, error) {
-	return turnInputPrompt(p.Prompt, p.Input)
-}
-
-func turnInputPrompt(prompt string, input []json.RawMessage) (string, error) {
-	if prompt != "" {
-		return prompt, nil
-	}
-	var parts []string
-	for _, raw := range input {
-		var item struct {
-			Type string `json:"type"`
-			Text string `json:"text"`
-		}
-		if err := json.Unmarshal(raw, &item); err != nil {
-			return "", err
-		}
-		if item.Text != "" {
-			parts = append(parts, item.Text)
-		}
-	}
-	return strings.Join(parts, "\n"), nil
+func (p turnStartParams) input() (builtTurnInput, error) {
+	return buildTurnInput(p.Prompt, p.Input)
 }

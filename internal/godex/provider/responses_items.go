@@ -28,10 +28,10 @@ func responseInputItems(messages []Message) responses.ResponseInputParam {
 			continue
 		}
 		content := strings.TrimSpace(msg.Content)
-		if content == "" {
+		if content == "" && len(msg.Images) == 0 {
 			continue
 		}
-		items = append(items, responseInputMessageParam(content, msg.Role, msg.Phase))
+		items = append(items, responseInputMessageParam(content, msg.Role, msg.Phase, msg.Images))
 	}
 	return items
 }
@@ -42,8 +42,8 @@ func providerInputItems(providerItems []Item) responses.ResponseInputParam {
 		switch item.Kind {
 		case ItemMessage:
 			content := strings.TrimSpace(item.Text)
-			if content != "" {
-				items = append(items, responseInputMessageParam(content, Role(item.Role), item.Phase))
+			if content != "" || len(item.Images) > 0 {
+				items = append(items, responseInputMessageParam(content, Role(item.Role), item.Phase, item.Images))
 			}
 		case ItemFunctionCall:
 			arguments := strings.TrimSpace(item.Text)
@@ -133,6 +133,7 @@ func providerItemFromRaw(raw json.RawMessage) Item {
 		item.Role = rawString(object["role"])
 		item.Phase = rawString(object["phase"])
 		item.Text = messageText(object["content"])
+		item.Images = messageImages(object["content"])
 	case ItemFunctionCall:
 		item.ToolName = rawString(object["name"])
 		item.ToolCallID = firstNonEmpty(rawString(object["call_id"]), item.ID)
@@ -146,7 +147,32 @@ func providerItemFromRaw(raw json.RawMessage) Item {
 	return item
 }
 
-func responseInputMessageParam(content string, role Role, phase string) responses.ResponseInputItemUnionParam {
+func responseInputMessageParam(content string, role Role, phase string, images []Image) responses.ResponseInputItemUnionParam {
+	if len(images) > 0 {
+		message := map[string]any{
+			"type": "message",
+			"role": string(easyInputRole(role)),
+		}
+		if role == RoleAssistant && strings.TrimSpace(phase) != "" {
+			message["phase"] = phase
+		}
+		parts := make([]map[string]any, 0, len(images)+1)
+		if strings.TrimSpace(content) != "" {
+			parts = append(parts, map[string]any{"type": "input_text", "text": content})
+		}
+		for _, image := range images {
+			if strings.TrimSpace(image.URL) == "" {
+				continue
+			}
+			part := map[string]any{"type": "input_image", "image_url": image.URL}
+			if strings.TrimSpace(image.Detail) != "" {
+				part["detail"] = image.Detail
+			}
+			parts = append(parts, part)
+		}
+		message["content"] = parts
+		return param.Override[responses.ResponseInputItemUnionParam](message)
+	}
 	message := responses.EasyInputMessageParam{
 		Content: responses.EasyInputMessageContentUnionParam{OfString: param.NewOpt(content)},
 		Role:    easyInputRole(role),
@@ -192,6 +218,25 @@ func messageText(raw json.RawMessage) string {
 		}
 	}
 	return strings.Join(parts, "")
+}
+
+func messageImages(raw json.RawMessage) []Image {
+	var content []map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &content); err != nil {
+		return nil
+	}
+	images := make([]Image, 0, len(content))
+	for _, part := range content {
+		if rawString(part["type"]) != "input_image" {
+			continue
+		}
+		url := firstNonEmpty(rawString(part["image_url"]), rawString(part["url"]))
+		if url == "" {
+			continue
+		}
+		images = append(images, Image{URL: url, Detail: rawString(part["detail"])})
+	}
+	return images
 }
 
 func easyInputRole(role Role) responses.EasyInputMessageRole {

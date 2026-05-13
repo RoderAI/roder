@@ -35,7 +35,7 @@ func (m *Model) maxScrollOffset() int {
 
 func (m *Model) visibleTranscriptLines() int {
 	composerHeight := max(3, m.input.Height()+2)
-	reasoningHeight := components.ReasoningSummaryHeight(m.reasoningSummary, m.height)
+	reasoningHeight := components.ReasoningSummaryHeight(m.visibleReasoningSummary(), m.height)
 	transcriptHeight := max(6, m.height-composerHeight-reasoningHeight-3)
 	return max(1, transcriptHeight-2)
 }

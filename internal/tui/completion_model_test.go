@@ -29,6 +29,18 @@ func TestAtOpensFileCompletionAndAttachesFile(t *testing.T) {
 	if !got.completions.Open {
 		t.Fatal("file completions should open")
 	}
+	if got.input.Focused() {
+		t.Fatal("composer should blur while navigating completions")
+	}
+	view := got.View().Content
+	inputIndex := strings.Index(view, "@")
+	menuIndex := strings.Index(view, "@README.md")
+	if inputIndex < 0 || menuIndex < 0 || menuIndex < inputIndex {
+		t.Fatalf("file completions should render inline below composer:\n%s", view)
+	}
+	if strings.Contains(view, "Files") || strings.Contains(view, "enter insert") {
+		t.Fatalf("file completions should not render as an overlay dialog:\n%s", view)
+	}
 
 	updated, _ = got.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 	got = updated.(Model)

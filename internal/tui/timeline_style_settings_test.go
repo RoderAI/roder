@@ -11,7 +11,7 @@ import (
 	"github.com/pandelisz/gode/internal/godex"
 )
 
-func TestSettingsTimelineStyleToggleSavesDefault(t *testing.T) {
+func TestSettingsTimelineStyleToggleCanSwitchToMinimal(t *testing.T) {
 	dataDir := t.TempDir()
 	app, err := godex.New(context.Background(), godex.Config{
 		DataDir:       dataDir,
