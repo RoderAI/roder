@@ -101,6 +101,79 @@ func TestRunnerSendsGodeInstructions(t *testing.T) {
 	}
 }
 
+func TestRunnerConfiguresOpenAICompactionAndTokenEvents(t *testing.T) {
+	bus := eventbus.New(eventbus.WithSubscriberBuffer(16))
+	defer bus.Close()
+	store, err := journal.Open(filepath.Join(t.TempDir(), "events.jsonl"))
+	if err != nil {
+		t.Fatalf("journal: %v", err)
+	}
+	defer store.Close()
+	capture := &captureProvider{name: "openai", finalText: "done"}
+	runner := NewRunner(Config{
+		Bus:      bus,
+		Journal:  store,
+		Provider: capture,
+		Model:    "gpt-5.5",
+	})
+
+	if _, err := runner.Run(context.Background(), RunRequest{SessionID: "s-context", RunID: "r-context", Prompt: "hello"}); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	if !capture.request.Compaction.Enabled {
+		t.Fatal("compaction should be enabled for OpenAI gpt-5.5")
+	}
+	if capture.request.Compaction.CompactThreshold != 800000 {
+		t.Fatalf("threshold = %d", capture.request.Compaction.CompactThreshold)
+	}
+	events, err := store.Replay(context.Background(), journal.ReplayFilter{SessionID: "s-context", RunID: "r-context"})
+	if err != nil {
+		t.Fatalf("replay: %v", err)
+	}
+	kinds := map[eventbus.Kind]eventbus.Event{}
+	for _, ev := range events {
+		kinds[ev.Kind] = ev
+	}
+	for _, want := range []eventbus.Kind{eventbus.KindContextTokensUpdated, eventbus.KindContextCompactionConfigured} {
+		if _, ok := kinds[want]; !ok {
+			t.Fatalf("missing event kind %q in %#v", want, kinds)
+		}
+	}
+	var payload struct {
+		Model            string `json:"model"`
+		Tokens           int    `json:"tokens"`
+		ContextWindow    int    `json:"context_window"`
+		CompactThreshold int    `json:"compact_threshold"`
+	}
+	if err := kinds[eventbus.KindContextCompactionConfigured].DecodePayload(&payload); err != nil {
+		t.Fatalf("decode payload: %v", err)
+	}
+	if payload.Model != "gpt-5.5" || payload.ContextWindow != 1050000 || payload.CompactThreshold != 800000 || payload.Tokens <= 0 {
+		t.Fatalf("payload = %#v", payload)
+	}
+}
+
+func TestRunnerOmitsCompactionWhenDisabled(t *testing.T) {
+	capture := &captureProvider{name: "openai", finalText: "done"}
+	runner := NewRunner(Config{
+		Bus:                   eventbus.New(eventbus.WithSubscriberBuffer(16)),
+		Provider:              capture,
+		Model:                 "gpt-5.5",
+		DisableAutoCompaction: true,
+	})
+	defer runner.bus.Close()
+
+	if _, err := runner.Run(context.Background(), RunRequest{Prompt: "hello"}); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	if capture.request.Compaction.Enabled {
+		t.Fatalf("compaction should be disabled: %#v", capture.request.Compaction)
+	}
+	if capture.request.Compaction.CompactThreshold != 800000 {
+		t.Fatalf("threshold should still be discoverable, got %d", capture.request.Compaction.CompactThreshold)
+	}
+}
+
 func TestRunnerPrependsContextMessages(t *testing.T) {
 	capture := &captureProvider{finalText: "done"}
 	runner := NewRunner(Config{
@@ -547,11 +620,15 @@ func openSessionStore(t *testing.T, dataDir string) *session.Store {
 }
 
 type captureProvider struct {
+	name      string
 	request   provider.Request
 	finalText string
 }
 
 func (p *captureProvider) Name() string {
+	if p.name != "" {
+		return p.name
+	}
 	return "capture"
 }
 

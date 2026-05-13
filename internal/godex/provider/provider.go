@@ -48,6 +48,13 @@ type Event struct {
 	ToolRequest *ToolRequest
 }
 
+type CompactionOptions struct {
+	Enabled          bool
+	Model            string
+	ContextWindow    int
+	CompactThreshold int
+}
+
 type Request struct {
 	SessionID      string
 	RunID          string
@@ -55,6 +62,7 @@ type Request struct {
 	ResponseFormat string
 	Messages       []Message
 	Tools          []ToolSpec
+	Compaction     CompactionOptions
 }
 
 type Provider interface {

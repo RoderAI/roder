@@ -154,6 +154,13 @@ func (o *OpenAI) responseParams(req Request) responses.ResponseNewParams {
 	if o.serviceTier != "" {
 		params.ServiceTier = responses.ResponseNewParamsServiceTier(o.serviceTier)
 	}
+	if req.Compaction.Enabled && req.Compaction.CompactThreshold > 0 {
+		params.ContextManagement = []responses.ResponseNewParamsContextManagement{{
+			Type:             "compaction",
+			CompactThreshold: param.NewOpt(int64(req.Compaction.CompactThreshold)),
+		}}
+		params.Truncation = responses.ResponseNewParamsTruncationDisabled
+	}
 	return params
 }
 
@@ -226,6 +233,12 @@ func (o *OpenAI) formatStreamError(err error, req Request) string {
 		fmt.Sprintf("input_chars: %d", inputChars(req.Messages)),
 		fmt.Sprintf("tools: %d", len(req.Tools)),
 	)
+	if req.Compaction.Enabled {
+		lines = append(lines,
+			fmt.Sprintf("compaction_threshold: %d", req.Compaction.CompactThreshold),
+			fmt.Sprintf("context_window: %d", req.Compaction.ContextWindow),
+		)
+	}
 	if o.serviceTier != "" {
 		lines = append(lines, "service_tier: "+o.serviceTier)
 	}

@@ -10,7 +10,7 @@ import (
 func TestSettingsRoundTripDefaultModel(t *testing.T) {
 	dataDir := t.TempDir()
 
-	if err := SaveSettings(dataDir, Settings{DefaultModel: "gpt-5.5", DefaultReasoning: ReasoningHigh, FastMode: true}); err != nil {
+	if err := SaveSettings(dataDir, Settings{DefaultModel: "gpt-5.5", DefaultReasoning: ReasoningHigh, FastMode: true, DisableAutoCompaction: true, AutoCompactTokenLimit: 12345}); err != nil {
 		t.Fatalf("save settings: %v", err)
 	}
 
@@ -27,6 +27,12 @@ func TestSettingsRoundTripDefaultModel(t *testing.T) {
 	if !settings.FastMode {
 		t.Fatal("fast mode = false")
 	}
+	if !settings.DisableAutoCompaction {
+		t.Fatal("disable auto compaction = false")
+	}
+	if settings.AutoCompactTokenLimit != 12345 {
+		t.Fatalf("auto compact token limit = %d", settings.AutoCompactTokenLimit)
+	}
 	if _, err := os.Stat(filepath.Join(dataDir, "config.toml")); err != nil {
 		t.Fatalf("config.toml should be written: %v", err)
 	}
@@ -37,7 +43,7 @@ func TestSettingsRoundTripDefaultModel(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read config.toml: %v", err)
 	}
-	for _, want := range []string{`default_model = "gpt-5.5"`, `default_reasoning = "high"`, `fast_mode = true`} {
+	for _, want := range []string{`default_model = "gpt-5.5"`, `default_reasoning = "high"`, `fast_mode = true`, `disable_auto_compaction = true`, `auto_compact_token_limit = 12345`} {
 		if !strings.Contains(string(data), want) {
 			t.Fatalf("config.toml should contain %q, got:\n%s", want, string(data))
 		}

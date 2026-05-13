@@ -56,6 +56,10 @@ func run(ctx context.Context, args []string) error {
 		return runDirs(args[1:])
 	}
 
+	if len(args) > 0 && args[0] == "debug" {
+		return runDebug(args[1:])
+	}
+
 	if len(args) > 0 && args[0] == "models" {
 		return runModels(args[1:])
 	}
@@ -280,6 +284,8 @@ func bindConfigFlags(flags *flag.FlagSet, cfg *godex.Config) {
 	flags.StringVar(&cfg.Reasoning, "reasoning", cfg.Reasoning, "reasoning effort: none, minimal, low, medium, high, xhigh")
 	flags.BoolVar(&cfg.FastMode, "fast-mode", cfg.FastMode, "use OpenAI priority processing service tier")
 	flags.BoolVar(&cfg.AutoApprove, "auto-approve", cfg.AutoApprove, "auto approve mutating tool calls")
+	flags.BoolVar(&cfg.DisableAutoCompaction, "disable-auto-compaction", cfg.DisableAutoCompaction, "disable OpenAI Responses server-side compaction")
+	flags.IntVar(&cfg.AutoCompactTokenLimit, "auto-compact-token-limit", cfg.AutoCompactTokenLimit, "override OpenAI Responses compaction token threshold")
 	flags.BoolVar(&cfg.Telemetry, "telemetry", cfg.Telemetry, "export OpenTelemetry traces over OTLP/gRPC")
 	flags.StringVar(&cfg.TelemetryEndpoint, "telemetry-endpoint", cfg.TelemetryEndpoint, "OTLP/gRPC endpoint for traces")
 }
@@ -337,7 +343,8 @@ func runModels(args []string) error {
 		return err
 	}
 	for _, model := range provider.Catalog.Models(false) {
-		fmt.Printf("%s\t%s\t%s\t%s\n", model.Provider, model.ID, model.DisplayName, model.DefaultReasoning)
+		cfg := godex.ModelConfigFor(model.ID)
+		fmt.Printf("%s\t%s\t%s\t%s\tcontext=%d\tauto_compact=%d\n", model.Provider, model.ID, model.DisplayName, model.DefaultReasoning, cfg.ContextWindow, cfg.AutoCompactTokenLimit)
 	}
 	return nil
 }

@@ -41,23 +41,25 @@ type LoadOptions struct {
 }
 
 type overlay struct {
-	Workspace         *string                            `json:"workspace,omitempty" toml:"workspace,omitempty"`
-	DataDir           *string                            `json:"data_dir,omitempty" toml:"data_dir,omitempty"`
-	Provider          *string                            `json:"provider,omitempty" toml:"provider,omitempty"`
-	Model             *string                            `json:"model,omitempty" toml:"model,omitempty"`
-	Reasoning         *string                            `json:"reasoning,omitempty" toml:"reasoning,omitempty"`
-	DefaultModel      *string                            `json:"default_model,omitempty" toml:"default_model,omitempty"`
-	DefaultReasoning  *string                            `json:"default_reasoning,omitempty" toml:"default_reasoning,omitempty"`
-	FastMode          *bool                              `json:"fast_mode,omitempty" toml:"fast_mode,omitempty"`
-	AutoApprove       *bool                              `json:"auto_approve,omitempty" toml:"auto_approve,omitempty"`
-	Telemetry         *bool                              `json:"telemetry,omitempty" toml:"telemetry,omitempty"`
-	TelemetryEndpoint *string                            `json:"telemetry_endpoint,omitempty" toml:"telemetry_endpoint,omitempty"`
-	MCP               map[string]any                     `json:"mcp,omitempty" toml:"mcp,omitempty"`
-	LSP               map[string]lsp.Config              `json:"lsp,omitempty" toml:"lsp,omitempty"`
-	ProviderConfig    map[string]provider.ProviderConfig `json:"provider_config,omitempty" toml:"provider_config,omitempty"`
-	SelectedModels    map[string]provider.SelectedModel  `json:"selected_models,omitempty" toml:"selected_models,omitempty"`
-	ContextPaths      []string                           `json:"context_paths,omitempty" toml:"context_paths,omitempty"`
-	DisabledTools     []string                           `json:"disabled_tools,omitempty" toml:"disabled_tools,omitempty"`
+	Workspace             *string                            `json:"workspace,omitempty" toml:"workspace,omitempty"`
+	DataDir               *string                            `json:"data_dir,omitempty" toml:"data_dir,omitempty"`
+	Provider              *string                            `json:"provider,omitempty" toml:"provider,omitempty"`
+	Model                 *string                            `json:"model,omitempty" toml:"model,omitempty"`
+	Reasoning             *string                            `json:"reasoning,omitempty" toml:"reasoning,omitempty"`
+	DefaultModel          *string                            `json:"default_model,omitempty" toml:"default_model,omitempty"`
+	DefaultReasoning      *string                            `json:"default_reasoning,omitempty" toml:"default_reasoning,omitempty"`
+	FastMode              *bool                              `json:"fast_mode,omitempty" toml:"fast_mode,omitempty"`
+	AutoApprove           *bool                              `json:"auto_approve,omitempty" toml:"auto_approve,omitempty"`
+	DisableAutoCompaction *bool                              `json:"disable_auto_compaction,omitempty" toml:"disable_auto_compaction,omitempty"`
+	AutoCompactTokenLimit *int                               `json:"auto_compact_token_limit,omitempty" toml:"auto_compact_token_limit,omitempty"`
+	Telemetry             *bool                              `json:"telemetry,omitempty" toml:"telemetry,omitempty"`
+	TelemetryEndpoint     *string                            `json:"telemetry_endpoint,omitempty" toml:"telemetry_endpoint,omitempty"`
+	MCP                   map[string]any                     `json:"mcp,omitempty" toml:"mcp,omitempty"`
+	LSP                   map[string]lsp.Config              `json:"lsp,omitempty" toml:"lsp,omitempty"`
+	ProviderConfig        map[string]provider.ProviderConfig `json:"provider_config,omitempty" toml:"provider_config,omitempty"`
+	SelectedModels        map[string]provider.SelectedModel  `json:"selected_models,omitempty" toml:"selected_models,omitempty"`
+	ContextPaths          []string                           `json:"context_paths,omitempty" toml:"context_paths,omitempty"`
+	DisabledTools         []string                           `json:"disabled_tools,omitempty" toml:"disabled_tools,omitempty"`
 }
 
 func Load(opts LoadOptions) (Loaded, error) {
@@ -162,6 +164,12 @@ func applyOverlay(cfg *godex.Config, patch overlay) error {
 	if patch.AutoApprove != nil {
 		cfg.AutoApprove = *patch.AutoApprove
 	}
+	if patch.DisableAutoCompaction != nil {
+		cfg.DisableAutoCompaction = *patch.DisableAutoCompaction
+	}
+	if patch.AutoCompactTokenLimit != nil {
+		cfg.AutoCompactTokenLimit = *patch.AutoCompactTokenLimit
+	}
 	if patch.Telemetry != nil {
 		cfg.Telemetry = *patch.Telemetry
 	}
@@ -210,6 +218,20 @@ func applyEnv(cfg *godex.Config, env map[string]string) error {
 		}
 		cfg.AutoApprove = parsed
 	}
+	if value := strings.TrimSpace(env["GODE_DISABLE_AUTO_COMPACTION"]); value != "" {
+		parsed, err := strconv.ParseBool(value)
+		if err != nil {
+			return fmt.Errorf("parse env GODE_DISABLE_AUTO_COMPACTION: %w", err)
+		}
+		cfg.DisableAutoCompaction = parsed
+	}
+	if value := strings.TrimSpace(env["GODE_AUTO_COMPACT_TOKEN_LIMIT"]); value != "" {
+		parsed, err := strconv.Atoi(value)
+		if err != nil {
+			return fmt.Errorf("parse env GODE_AUTO_COMPACT_TOKEN_LIMIT: %w", err)
+		}
+		cfg.AutoCompactTokenLimit = parsed
+	}
 	return nil
 }
 
@@ -234,6 +256,12 @@ func applyFlags(cfg *godex.Config, flags godex.Config, set map[string]bool) {
 	}
 	if isSet(set, "auto-approve") || isSet(set, "auto_approve") {
 		cfg.AutoApprove = flags.AutoApprove
+	}
+	if isSet(set, "disable-auto-compaction") || isSet(set, "disable_auto_compaction") {
+		cfg.DisableAutoCompaction = flags.DisableAutoCompaction
+	}
+	if isSet(set, "auto-compact-token-limit") || isSet(set, "auto_compact_token_limit") {
+		cfg.AutoCompactTokenLimit = flags.AutoCompactTokenLimit
 	}
 	if isSet(set, "telemetry") {
 		cfg.Telemetry = flags.Telemetry

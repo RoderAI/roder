@@ -23,6 +23,9 @@ func TestBuiltInModelCatalogHasDefaultModelConfig(t *testing.T) {
 	if model.ContextWindow <= 0 {
 		t.Fatalf("context window = %d", model.ContextWindow)
 	}
+	if model.AutoCompactTokenLimit <= 0 {
+		t.Fatalf("auto compact limit = %d", model.AutoCompactTokenLimit)
+	}
 }
 
 func TestBuiltInModelCatalogReturnsCopies(t *testing.T) {
@@ -51,6 +54,49 @@ func TestConfigDefaultsComeFromDefaultModelConfig(t *testing.T) {
 	}
 	if cfg.Reasoning != ReasoningMedium {
 		t.Fatalf("reasoning = %q", cfg.Reasoning)
+	}
+}
+
+func TestGPT55ModelConfigUsesOneMillionClassWindow(t *testing.T) {
+	model := ModelConfigFor("gpt-5.5")
+	if model.ContextWindow != 1050000 {
+		t.Fatalf("context window = %d", model.ContextWindow)
+	}
+	if model.MaxContextWindow != 1050000 {
+		t.Fatalf("max context window = %d", model.MaxContextWindow)
+	}
+	if model.AutoCompactTokenLimit != 800000 {
+		t.Fatalf("auto compact limit = %d", model.AutoCompactTokenLimit)
+	}
+	if !model.SupportsCompaction {
+		t.Fatal("gpt-5.5 should support compaction")
+	}
+}
+
+func TestVisibleOpenAIModelsHaveContextWindowsAndThresholds(t *testing.T) {
+	for _, model := range BuiltInModels(false) {
+		if model.Provider != ProviderOpenAI {
+			continue
+		}
+		if model.ContextWindow <= 0 {
+			t.Fatalf("%s context window = %d", model.ID, model.ContextWindow)
+		}
+		if model.AutoCompactTokenLimit <= 0 {
+			t.Fatalf("%s auto compact limit = %d", model.ID, model.AutoCompactTokenLimit)
+		}
+	}
+}
+
+func TestFallbackModelDoesNotClaimOneMillionClassWindow(t *testing.T) {
+	model := ModelConfigFor("gpt-future")
+	if model.ContextWindow != 272000 {
+		t.Fatalf("context window = %d", model.ContextWindow)
+	}
+	if model.AutoCompactTokenLimit != 217600 {
+		t.Fatalf("auto compact limit = %d", model.AutoCompactTokenLimit)
+	}
+	if model.SupportsCompaction {
+		t.Fatal("fallback model should not claim compaction support")
 	}
 }
 
