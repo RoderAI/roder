@@ -184,12 +184,43 @@ func TestSearchFilesSkipsGitignoredFiles(t *testing.T) {
 	}
 }
 
-func TestFilesystemToolsRejectPathEscape(t *testing.T) {
+func TestReadFileAllowsPathsOutsideWorkspace(t *testing.T) {
 	root := t.TempDir()
+	outside := t.TempDir()
+	outsidePath := filepath.Join(outside, "secret.txt")
+	if err := os.WriteFile(outsidePath, []byte("outside workspace\n"), 0o600); err != nil {
+		t.Fatalf("write outside: %v", err)
+	}
 	reg := tools.NewRegistry()
 	RegisterFilesystem(reg, root)
 
-	result, err := reg.Run(context.Background(), tools.Call{Name: "read_file", Input: map[string]any{"path": "../secret"}})
+	relative, err := filepath.Rel(root, outsidePath)
+	if err != nil {
+		t.Fatalf("rel: %v", err)
+	}
+	result, err := reg.Run(context.Background(), tools.Call{Name: "read_file", Input: map[string]any{"path": relative}})
+	if err != nil {
+		t.Fatalf("read relative outside workspace: %v", err)
+	}
+	if result.Error != "" || !strings.Contains(result.Text, "outside workspace") || !strings.Contains(result.Text, "path: "+relative) {
+		t.Fatalf("read relative outside workspace result = %#v", result)
+	}
+
+	result, err = reg.Run(context.Background(), tools.Call{Name: "read_file", Input: map[string]any{"path": outsidePath}})
+	if err != nil {
+		t.Fatalf("read absolute outside workspace: %v", err)
+	}
+	if result.Error != "" || !strings.Contains(result.Text, "outside workspace") || !strings.Contains(result.Text, "path: "+outsidePath) {
+		t.Fatalf("read absolute outside workspace result = %#v", result)
+	}
+}
+
+func TestWriteFileRejectsPathEscape(t *testing.T) {
+	root := t.TempDir()
+	reg := tools.NewRegistry()
+	RegisterEditing(reg, root)
+
+	result, err := reg.Run(context.Background(), tools.Call{Name: "write_file", Input: map[string]any{"path": "../secret", "content": "nope"}})
 	if err != nil {
 		t.Fatalf("run should return path escape as a failed tool result: %v", err)
 	}

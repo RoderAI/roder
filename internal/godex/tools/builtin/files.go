@@ -25,14 +25,14 @@ const (
 func RegisterFilesystem(reg *tools.Registry, root string) {
 	reg.Register(tools.Tool{
 		Name: "read_file",
-		Description: "Read a UTF-8 text file inside the workspace by line range. " +
+		Description: "Read a UTF-8 text file by line range. Relative paths resolve from the workspace and absolute paths are allowed. " +
 			"Always request a focused range with start_line and limit; output is capped at 400 lines.",
 		ReadOnly:      true,
 		Action:        permission.ActionRead,
 		PathFromInput: pathInput,
 		Schema:        readFileSchema(),
 		Run: func(ctx context.Context, call tools.Call) (tools.Result, error) {
-			path, err := cleanWorkspacePath(root, stringInput(call.Input, "path"))
+			path, err := cleanReadPath(root, stringInput(call.Input, "path"))
 			if err != nil {
 				return tools.Result{}, err
 			}
@@ -142,7 +142,7 @@ func readFileSchema() map[string]any {
 		"properties": map[string]any{
 			"path": map[string]any{
 				"type":        "string",
-				"description": "Workspace-relative path to read.",
+				"description": "Workspace-relative path, parent-relative path, or absolute path to read.",
 			},
 			"start_line": map[string]any{
 				"type":        "integer",
@@ -301,6 +301,27 @@ func cleanWorkspacePath(root, input string) (string, error) {
 	}
 	if rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
 		return "", fmt.Errorf("path escapes workspace: %s", input)
+	}
+	return abs, nil
+}
+
+func cleanReadPath(root, input string) (string, error) {
+	if input == "" {
+		input = "."
+	}
+	var path string
+	if filepath.IsAbs(input) {
+		path = filepath.Clean(input)
+	} else {
+		rootAbs, err := filepath.Abs(root)
+		if err != nil {
+			return "", err
+		}
+		path = filepath.Join(rootAbs, input)
+	}
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		return "", err
 	}
 	return abs, nil
 }
