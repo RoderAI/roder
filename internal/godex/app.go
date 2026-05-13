@@ -218,11 +218,12 @@ func (a *App) CompactSession(ctx context.Context, sessionID string) (CompactSess
 			text = "canonical compacted context"
 		}
 		if _, err := a.Messages.Append(ctx, messagestore.Message{
-			SessionID: sessionID,
-			RunID:     runID,
-			Role:      messagestore.RoleCompaction,
-			Text:      text,
-			RawJSON:   append([]byte(nil), raw...),
+			SessionID:  sessionID,
+			RunID:      runID,
+			Role:       messagestore.RoleCompaction,
+			Text:       text,
+			RawJSON:    append([]byte(nil), raw...),
+			SourceKind: "compacted",
 		}); err != nil {
 			a.recordCompactionFailure(ctx, sessionID, runID, err)
 			return CompactSessionResult{}, err

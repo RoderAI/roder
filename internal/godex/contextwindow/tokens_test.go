@@ -2,6 +2,7 @@ package contextwindow
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 )
 
@@ -29,5 +30,16 @@ func TestEstimateMessagesPercentUsesSelectedWindow(t *testing.T) {
 	estimate := EstimateMessages([]Message{{Role: "user", Content: "01234567890123456789"}}, window)
 	if estimate.Percent <= 0 || estimate.Percent >= 100 {
 		t.Fatalf("percent should use selected window, got %f with %d tokens", estimate.Percent, estimate.Tokens)
+	}
+}
+
+func TestGPT55CanRepresentNineHundredThousandTokenEstimate(t *testing.T) {
+	window := ForModel("gpt-5.5")
+	estimate := EstimateMessages([]Message{{Role: "user", Content: strings.Repeat("abcd", 900000)}}, window)
+	if estimate.Tokens < 900000 {
+		t.Fatalf("tokens = %d", estimate.Tokens)
+	}
+	if estimate.Tokens >= window.ContextWindow {
+		t.Fatalf("estimate should fit gpt-5.5 context, tokens=%d window=%d", estimate.Tokens, window.ContextWindow)
 	}
 }
