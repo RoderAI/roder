@@ -51,8 +51,9 @@ func Transcript(width int, height int, messages []viewmodel.Message, scrollOffse
 func TranscriptWithCache(width int, height int, messages []viewmodel.Message, scrollOffset int, hoveredID string, zones *zone.Manager, cache *TranscriptCache) string {
 	panelHeight := max(4, height)
 	innerWidth := max(20, width-2)
+	contentWidth := max(12, innerWidth-2)
 	innerHeight := max(1, panelHeight-2)
-	visible := visibleMessages(messages, innerWidth, innerHeight, scrollOffset, cache)
+	visible := visibleMessages(messages, contentWidth, innerHeight, scrollOffset, cache)
 
 	var body string
 	if len(visible) == 0 {
@@ -62,7 +63,7 @@ func TranscriptWithCache(width int, height int, messages []viewmodel.Message, sc
 		for _, item := range visible {
 			block := strings.Join(item.lines, "\n")
 			if item.id == hoveredID {
-				block = messageHoverStyle.Width(innerWidth).Render(block)
+				block = messageHoverStyle.Width(contentWidth).Render(block)
 			}
 			parts = append(parts, zones.Mark(viewmodel.MessageZoneID(item.id), block))
 		}
