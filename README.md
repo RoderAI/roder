@@ -141,7 +141,7 @@ Reply with the selected outcome:
 
 ## App Server
 
-`gode app-server` mirrors Codex's app-server naming and wire style: JSON-RPC-shaped messages without the `jsonrpc` field, an `initialize` handshake before requests, and Codex-like method names such as `thread/start`, `turn/start`, `fs/readFile`, and `command/exec`.
+`gode app-server` mirrors Codex's app-server naming and wire style: JSON-RPC-shaped messages without the `jsonrpc` field, an `initialize` handshake before requests, and Codex-like method names such as `thread/start`, `turn/start`, `turn/steer`, `fs/readFile`, and `command/exec`. Use `turn/steer` with `threadId`, `expectedTurnId`, and text `input` to add steering instructions to the active turn.
 
 Supported transports:
 

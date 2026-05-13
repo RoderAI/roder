@@ -9,6 +9,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/pandelisz/gode/internal/godex"
+	"github.com/pandelisz/gode/internal/godex/agent"
 	"github.com/pandelisz/gode/internal/godex/eventbus"
 	messagestore "github.com/pandelisz/gode/internal/godex/message"
 	"github.com/pandelisz/gode/internal/tui/dialogs"
@@ -202,6 +203,67 @@ func TestModelShowsContextLeftInFooter(t *testing.T) {
 	}
 	if !strings.Contains(got.View().Content, "ctx 88%") {
 		t.Fatalf("view missing context left:\n%s", got.View().Content)
+	}
+}
+
+func TestModelEnterWhileRunningSubmitsSteer(t *testing.T) {
+	model := New(nil)
+	model.running = true
+	model.currentSessionID = "s1"
+	model.input.SetValue("change direction")
+
+	updated, cmd := model.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	got := updated.(Model)
+	if cmd == nil {
+		t.Fatal("expected steer command")
+	}
+	if strings.TrimSpace(got.input.Value()) != "" {
+		t.Fatalf("input should clear after steer, got %q", got.input.Value())
+	}
+	if len(got.messages) != 1 || got.messages[0].Role != viewmodel.RoleUser || got.messages[0].Title != "steer" || got.messages[0].Body != "change direction" {
+		t.Fatalf("messages = %#v", got.messages)
+	}
+	if got.status != "steer queued for active run" {
+		t.Fatalf("status = %q", got.status)
+	}
+}
+
+func TestModelTabWhileRunningQueuesPrompt(t *testing.T) {
+	model := New(nil)
+	model.running = true
+	model.input.SetValue("run after this")
+
+	updated, cmd := model.Update(tea.KeyPressMsg{Code: tea.KeyTab})
+	got := updated.(Model)
+	if cmd != nil {
+		t.Fatal("queueing should not start a command immediately")
+	}
+	if len(got.queuedPrompts) != 1 || got.queuedPrompts[0].Prompt != "run after this" {
+		t.Fatalf("queued prompts = %#v", got.queuedPrompts)
+	}
+	if strings.TrimSpace(got.input.Value()) != "" {
+		t.Fatalf("input should clear after queue, got %q", got.input.Value())
+	}
+	if !strings.Contains(got.footerStatus(), "queued 1 prompt") {
+		t.Fatalf("footer status = %q", got.footerStatus())
+	}
+}
+
+func TestModelRunDoneStartsNextQueuedPrompt(t *testing.T) {
+	model := New(nil)
+	model.currentSessionID = "s1"
+	model.queuedPrompts = []pendingPrompt{{Display: "next", Prompt: "next"}}
+
+	updated, cmd := model.Update(runDoneMsg{Result: agent.RunResult{SessionID: "s1", FinalText: "done"}})
+	got := updated.(Model)
+	if cmd == nil {
+		t.Fatal("expected queued prompt command")
+	}
+	if len(got.queuedPrompts) != 0 || !got.running {
+		t.Fatalf("queued=%#v running=%v", got.queuedPrompts, got.running)
+	}
+	if len(got.messages) != 1 || got.messages[0].Body != "next" {
+		t.Fatalf("messages = %#v", got.messages)
 	}
 }
 

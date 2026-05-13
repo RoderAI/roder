@@ -32,6 +32,11 @@ type runDoneMsg struct {
 	Err    error
 }
 
+type steerDoneMsg struct {
+	RunID string
+	Err   error
+}
+
 type codexAuthDoneMsg struct {
 	AccountID string
 	Err       error
@@ -77,6 +82,7 @@ type Model struct {
 	contextLeft      string
 	slashSelected    int
 	goalSummary      string
+	queuedPrompts    []pendingPrompt
 
 	transcriptLineWidth int
 	transcriptLineTotal int
@@ -215,30 +221,44 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if prompt == "" {
 				return m, nil
 			}
-			if handled, cmd := m.handleGoalInput(prompt); handled {
-				m.input.Reset()
-				return m, cmd
-			}
-			runPrompt := prompt
-			if len(m.attachments) > 0 {
-				withAttachments, err := m.promptWithAttachments(prompt)
+			if m.running {
+				pending, err := m.preparePrompt(prompt)
 				if err != nil {
 					m.addMessage(viewmodel.RoleError, "attachments", err.Error())
 					m.status = "attachment failed - ctrl+l errors"
 					return m, nil
 				}
-				runPrompt = withAttachments
+				return m, m.steerPreparedPrompt(pending)
 			}
-			m.addMessage(viewmodel.RoleUser, "", prompt)
-			m.reasoningSummary = ""
-			m.attachments = nil
-			m.input.Reset()
-			m.running = true
-			m.status = "waiting for model"
-			return m, m.runPrompt(runPrompt)
+			if handled, cmd := m.handleGoalInput(prompt); handled {
+				m.input.Reset()
+				return m, cmd
+			}
+			pending, err := m.preparePrompt(prompt)
+			if err != nil {
+				m.addMessage(viewmodel.RoleError, "attachments", err.Error())
+				m.status = "attachment failed - ctrl+l errors"
+				return m, nil
+			}
+			return m, m.submitPreparedPrompt(pending)
 		}
-		if msg.String() == "tab" && m.openCompletionForCurrentToken() {
-			return m, nil
+		if msg.String() == "tab" {
+			if m.running {
+				prompt := strings.TrimSpace(m.input.Value())
+				if prompt == "" {
+					return m, nil
+				}
+				pending, err := m.preparePrompt(prompt)
+				if err != nil {
+					m.addMessage(viewmodel.RoleError, "attachments", err.Error())
+					m.status = "attachment failed - ctrl+l errors"
+					return m, nil
+				}
+				return m, m.queuePreparedPrompt(pending)
+			}
+			if m.openCompletionForCurrentToken() {
+				return m, nil
+			}
 		}
 		if msg.Text == "@" || msg.Text == "$" {
 			m.input.InsertString(msg.Text)
@@ -290,6 +310,17 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.status = "run failed - ctrl+l errors"
 		} else {
 			m.status = "ready"
+			if cmd := m.submitNextQueuedPrompt(); cmd != nil {
+				return m, cmd
+			}
+		}
+		return m, nil
+	case steerDoneMsg:
+		if msg.Err != nil {
+			m.status = "steer failed - ctrl+l errors"
+			m.addMessage(viewmodel.RoleError, "steer", msg.Err.Error())
+		} else {
+			m.status = "steer queued for active run"
 		}
 		return m, nil
 	case codexAuthDoneMsg:

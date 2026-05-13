@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strings"
 	"time"
 
@@ -16,6 +17,13 @@ type turnStartParams struct {
 	ThreadID string            `json:"threadId"`
 	Input    []json.RawMessage `json:"input"`
 	Prompt   string            `json:"prompt"`
+}
+
+type turnSteerParams struct {
+	ThreadID      string            `json:"threadId"`
+	ExpectedRunID string            `json:"expectedTurnId"`
+	Input         []json.RawMessage `json:"input"`
+	Prompt        string            `json:"prompt"`
 }
 
 func (c *Connection) handleTurnStart(ctx context.Context, raw json.RawMessage) (any, *RPCError) {
@@ -62,11 +70,47 @@ func (c *Connection) handleTurnStart(ctx context.Context, raw json.RawMessage) (
 	state.Turns = append(state.Turns, turn)
 	runCtx, cancel := context.WithCancel(context.Background())
 	state.activeCancel = cancel
+	state.activeTurnID = turn.ID
 	c.server.mu.Unlock()
 
 	c.subscribe(params.ThreadID)
 	go c.server.runTurn(runCtx, params.ThreadID, turn.ID, prompt)
 	return map[string]any{"turn": turn}, nil
+}
+
+func (s *Server) handleTurnSteer(ctx context.Context, raw json.RawMessage) (any, *RPCError) {
+	params, err := decodeParams[turnSteerParams](raw)
+	if err != nil {
+		return nil, rpcError(errorInvalidParams, err.Error())
+	}
+	if params.ThreadID == "" {
+		return nil, rpcError(errorInvalidParams, "threadId is required")
+	}
+	if params.ExpectedRunID == "" {
+		return nil, rpcError(errorInvalidParams, "expectedTurnId is required")
+	}
+	prompt, err := turnInputPrompt(params.Prompt, params.Input)
+	if err != nil {
+		return nil, rpcError(errorInvalidParams, err.Error())
+	}
+	if strings.TrimSpace(prompt) == "" {
+		return nil, rpcError(errorInvalidParams, "input text is required")
+	}
+	turnID, err := s.app.Steer(ctx, agent.SteerRequest{
+		SessionID:     params.ThreadID,
+		ExpectedRunID: params.ExpectedRunID,
+		Prompt:        prompt,
+	})
+	if err != nil {
+		if errors.Is(err, agent.ErrNoActiveRun) {
+			return nil, rpcError(errorInvalidRequest, "no active turn to steer")
+		}
+		if errors.Is(err, agent.ErrActiveRunMismatch) {
+			return nil, rpcError(errorInvalidRequest, err.Error())
+		}
+		return nil, rpcError(errorInternal, err.Error())
+	}
+	return map[string]any{"turnId": turnID}, nil
 }
 
 func (s *Server) handleTurnInterrupt(ctx context.Context, raw json.RawMessage) (any, *RPCError) {
@@ -82,6 +126,10 @@ func (s *Server) handleTurnInterrupt(ctx context.Context, raw json.RawMessage) (
 	if state == nil {
 		s.mu.Unlock()
 		return nil, rpcError(errorInvalidParams, "thread not found")
+	}
+	if params.TurnID != "" && state.activeTurnID != "" && params.TurnID != state.activeTurnID {
+		s.mu.Unlock()
+		return nil, rpcError(errorInvalidParams, fmt.Sprintf("expected active turn id %q but found %q", params.TurnID, state.activeTurnID))
 	}
 	cancel := state.activeCancel
 	s.mu.Unlock()
@@ -217,7 +265,10 @@ func (s *Server) completeTurn(threadID, turnID, itemID, finalText, status string
 	if state != nil {
 		state.Status = idleStatus()
 		state.UpdatedAt = completed
-		state.activeCancel = nil
+		if state.activeTurnID == turnID {
+			state.activeCancel = nil
+			state.activeTurnID = ""
+		}
 		for i := range state.Turns {
 			if state.Turns[i].ID == turnID {
 				state.Turns[i].Status = status
@@ -265,11 +316,15 @@ func (s *Server) turnSnapshot(threadID, turnID string) Turn {
 }
 
 func (p turnStartParams) prompt() (string, error) {
-	if p.Prompt != "" {
-		return p.Prompt, nil
+	return turnInputPrompt(p.Prompt, p.Input)
+}
+
+func turnInputPrompt(prompt string, input []json.RawMessage) (string, error) {
+	if prompt != "" {
+		return prompt, nil
 	}
 	var parts []string
-	for _, raw := range p.Input {
+	for _, raw := range input {
 		var item struct {
 			Type string `json:"type"`
 			Text string `json:"text"`

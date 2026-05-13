@@ -51,6 +51,10 @@ func Apply(ev eventbus.Event) Update {
 		var payload contextTokensPayload
 		_ = ev.DecodePayload(&payload)
 		return Update{ContextUsedPercent: payload.Percent, HasContextTokens: true}
+	case eventbus.KindUserSteerSubmitted:
+		return status("steer queued for active run")
+	case eventbus.KindUserSteerApplied:
+		return status("steer applied")
 	case eventbus.KindAssistantCompleted:
 		return status("assistant completed")
 	case eventbus.KindToolRequested:

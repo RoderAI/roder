@@ -22,6 +22,8 @@ type Kind string
 
 const (
 	KindUserPromptSubmitted Kind = "user.prompt_submitted"
+	KindUserSteerSubmitted  Kind = "user.steer_submitted"
+	KindUserSteerApplied    Kind = "user.steer_applied"
 	KindRunStarted          Kind = "run.started"
 	KindRunCompleted        Kind = "run.completed"
 	KindRunFailed           Kind = "run.failed"

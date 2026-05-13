@@ -57,6 +57,8 @@ type Runner struct {
 	activeSkills          map[string]bool
 	loadActiveSkills      func(context.Context) (map[string]bool, error)
 	commands              []godecommands.Command
+	activeMu              sync.RWMutex
+	activeRuns            map[string]*activeRun
 }
 
 type RunRequest struct {
@@ -96,6 +98,7 @@ func NewRunner(cfg Config) *Runner {
 		activeSkills:          cloneActiveSkills(cfg.ActiveSkills),
 		loadActiveSkills:      cfg.LoadActiveSkills,
 		commands:              append([]godecommands.Command(nil), cfg.Commands...),
+		activeRuns:            map[string]*activeRun{},
 	}
 }
 
@@ -112,6 +115,8 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (RunResult, error) {
 	if r.provider == nil {
 		return RunResult{}, fmt.Errorf("provider is required")
 	}
+	active := r.registerActiveRun(req)
+	defer r.unregisterActiveRun(active)
 	if r.sessions != nil {
 		if _, err := r.sessions.Ensure(ctx, session.Session{ID: req.SessionID, Title: req.Prompt}); err != nil {
 			return RunResult{}, r.fail(ctx, req, err)
@@ -203,6 +208,11 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (RunResult, error) {
 		}
 		r.recordGoalUsage(ctx, req, outcome.Usage, time.Since(started))
 		messages = outcome.Messages
+		appliedSteers := false
+		if steers := r.drainSteers(active); len(steers) > 0 {
+			messages = r.appendSteers(ctx, req, messages, steers)
+			appliedSteers = true
+		}
 		inputItems = providerItemsFromProviderMessages(messages)
 		if outcome.HadToolCall {
 			stats.ToolTurns++
@@ -210,7 +220,12 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (RunResult, error) {
 		} else {
 			final = outcome.Final
 		}
+		if !outcome.HadToolCall && appliedSteers {
+			final = ""
+			continue
+		}
 		if !outcome.HadToolCall {
+			r.unregisterActiveRun(active)
 			break
 		}
 	}
