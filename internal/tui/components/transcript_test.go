@@ -76,3 +76,21 @@ func TestTranscriptDetailedCopyTextDropsWrappedChrome(t *testing.T) {
 		}
 	}
 }
+
+func TestTranscriptUserMessageUsesCompactRail(t *testing.T) {
+	result := TranscriptDetailedWithCache(50, 8, []viewmodel.Message{{
+		ID:   "m1",
+		Role: viewmodel.RoleUser,
+		Body: "hello user",
+	}}, 0, "", zone.New(), nil, TranscriptOptions{})
+
+	if strings.Contains(result.View, "48;5;236") {
+		t.Fatalf("did not expect dark gray user message background:\n%s", result.View)
+	}
+	if !strings.Contains(ansi.Strip(result.View), "▌ hello user") {
+		t.Fatalf("expected compact user rail:\n%s", result.View)
+	}
+	if len(result.Lines) != 1 {
+		t.Fatalf("expected only user body row, got %#v", result.Lines)
+	}
+}

@@ -58,6 +58,8 @@ var (
 				Foreground(lipgloss.Color("231"))
 	bodyStyle = lipgloss.NewStyle().
 			Foreground(lipgloss.Color("252"))
+	userMessageStyle = lipgloss.NewStyle().
+				Foreground(lipgloss.Color("252"))
 	userRailStyle = lipgloss.NewStyle().
 			Foreground(lipgloss.Color("212"))
 	metaPrefixStyle = lipgloss.NewStyle().
@@ -258,9 +260,9 @@ func renderMessage(msg viewmodel.Message, width int, timelineStyle string, markd
 
 func renderUserMessage(msg viewmodel.Message, width int) renderedMessage {
 	prefix := userRailStyle.Render("▌") + " "
-	lines := prefixedWrappedLines(msg.Body, prefix, max(12, width-lipgloss.Width(prefix)))
+	lines := userMessageLines(msg.Body, prefix, max(12, width-lipgloss.Width(prefix)))
 	if msg.Title != "" {
-		title := metaPrefixStyle.Render(strings.TrimSpace(msg.Title))
+		title := userMessageStyle.Render(strings.TrimSpace(msg.Title))
 		header := renderedLine{
 			text: prefix + title,
 			ref:  selection.TranscriptLineRef{Text: prefix + title, Decorative: true},
@@ -462,11 +464,11 @@ func bodyLines(text string, width int, markdown bool) []renderedLine {
 	return wrappedBodyLines(text, width)
 }
 
-func prefixedWrappedLines(text string, prefix string, width int) []renderedLine {
+func userMessageLines(text string, prefix string, width int) []renderedLine {
 	wrapped := wrapText(text, width)
 	lines := make([]renderedLine, 0, len(wrapped))
 	for _, line := range wrapped {
-		lines = append(lines, bodyRenderedLine(prefix+bodyStyle.Render(line), line))
+		lines = append(lines, bodyRenderedLine(prefix+userMessageStyle.Render(line), line))
 	}
 	return lines
 }
