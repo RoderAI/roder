@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"encoding/json"
 	"strings"
 	"testing"
 
@@ -122,6 +123,55 @@ func TestRunnerPersistsTurnResponseIDAndProviderItems(t *testing.T) {
 	}
 	if items[1].ID != "msg_123" || items[1].Role != "assistant" || !strings.Contains(string(items[1].RawJSON), `"type":"message"`) {
 		t.Fatalf("assistant item = %#v", items[1])
+	}
+}
+
+func TestRunnerCompactionWritesCanonicalItemWindow(t *testing.T) {
+	dataDir := t.TempDir()
+	itemStore := openItemStore(t, dataDir)
+	if _, err := itemStore.Append(context.Background(), session.Item{
+		SessionID: "s-compact-items",
+		TurnID:    "old",
+		Kind:      session.ItemMessage,
+		Role:      "user",
+		Text:      strings.Repeat("large context ", 80),
+	}); err != nil {
+		t.Fatalf("append old item: %v", err)
+	}
+	compactProvider := &compactingCaptureProvider{
+		captureProvider: captureProvider{name: "openai", finalText: "done"},
+		output:          []json.RawMessage{json.RawMessage(`{"type":"compaction","encrypted_content":"opaque"}`)},
+	}
+	runner := NewRunner(Config{
+		Bus:                   eventbus.New(eventbus.WithSubscriberBuffer(16)),
+		Items:                 itemStore,
+		Provider:              compactProvider,
+		Model:                 "gpt-5.5",
+		AutoCompactTokenLimit: 50,
+	})
+	defer runner.bus.Close()
+
+	if _, err := runner.Run(context.Background(), RunRequest{SessionID: "s-compact-items", RunID: "r-compact", Prompt: "continue", Resume: true}); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	got := compactProvider.request.Messages
+	if len(got) != 2 {
+		t.Fatalf("provider messages = %#v", got)
+	}
+	if len(got[0].RawJSON) == 0 || !strings.Contains(string(got[0].RawJSON), `"encrypted_content":"opaque"`) {
+		t.Fatalf("first provider message should be compacted raw item: %#v", got[0])
+	}
+	if got[1].Role != provider.RoleUser || got[1].Content != "continue" {
+		t.Fatalf("suffix prompt = %#v", got[1])
+	}
+
+	items, err := itemStore.ListBySession(context.Background(), "s-compact-items")
+	if err != nil {
+		t.Fatalf("items: %v", err)
+	}
+	canonical := providerMessagesFromSessionItems(items)
+	if len(canonical) < 3 || len(canonical[0].RawJSON) == 0 || canonical[1].Content != "continue" || canonical[2].Content != "done" {
+		t.Fatalf("canonical items = %#v", canonical)
 	}
 }
 

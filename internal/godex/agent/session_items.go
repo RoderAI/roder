@@ -95,6 +95,7 @@ func (r *Runner) sessionItemsFromProviderItems(req RunRequest, providerItems []p
 }
 
 func providerMessagesFromSessionItems(items []session.Item) []provider.Message {
+	items = canonicalProviderItems(items)
 	out := make([]provider.Message, 0, len(items))
 	for _, item := range items {
 		out = appendProviderMessageFromSessionItem(out, item)
@@ -115,6 +116,32 @@ func providerMessagesFromProviderItems(items []provider.Item) []provider.Message
 		})
 	}
 	return out
+}
+
+func canonicalProviderItems(items []session.Item) []session.Item {
+	latestCompaction := -1
+	latestTurnID := ""
+	for i, item := range items {
+		if item.Kind == session.ItemCompaction && len(item.RawJSON) > 0 {
+			latestCompaction = i
+			latestTurnID = item.TurnID
+		}
+	}
+	if latestCompaction == -1 {
+		return items
+	}
+	start := latestCompaction
+	for i := latestCompaction; i >= 0; i-- {
+		item := items[i]
+		if item.Kind != session.ItemCompaction || len(item.RawJSON) == 0 {
+			break
+		}
+		if latestTurnID != "" && item.TurnID != latestTurnID {
+			break
+		}
+		start = i
+	}
+	return items[start:]
 }
 
 func appendProviderMessageFromSessionItem(out []provider.Message, item session.Item) []provider.Message {
