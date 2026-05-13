@@ -151,6 +151,51 @@ func TestRunnerCarriesFunctionCallBeforeToolOutput(t *testing.T) {
 	}
 }
 
+func TestRunnerPublishesReasoningSummaryEvents(t *testing.T) {
+	bus := eventbus.New(eventbus.WithSubscriberBuffer(16))
+	defer bus.Close()
+
+	store, err := journal.Open(filepath.Join(t.TempDir(), "events.jsonl"))
+	if err != nil {
+		t.Fatalf("journal: %v", err)
+	}
+	defer store.Close()
+
+	runner := NewRunner(Config{
+		Bus:     bus,
+		Journal: store,
+		Provider: &scriptedProvider{streams: [][]provider.Event{{
+			{Kind: provider.EventReasoningSummaryDelta, Text: "Checking files"},
+			{Kind: provider.EventReasoningSummaryDone, Text: "Checking files before editing."},
+			{Kind: provider.EventDelta, Text: "done"},
+			{Kind: provider.EventCompleted, Text: "done"},
+		}}},
+	})
+
+	if _, err := runner.Run(context.Background(), RunRequest{SessionID: "s-reasoning", Prompt: "hello"}); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+
+	events, err := store.Replay(context.Background(), journal.ReplayFilter{SessionID: "s-reasoning"})
+	if err != nil {
+		t.Fatalf("replay: %v", err)
+	}
+	kinds := map[eventbus.Kind]string{}
+	for _, ev := range events {
+		var payload struct {
+			Text string `json:"text"`
+		}
+		_ = ev.DecodePayload(&payload)
+		kinds[ev.Kind] = payload.Text
+	}
+	if kinds[eventbus.KindReasoningSummaryDelta] != "Checking files" {
+		t.Fatalf("reasoning delta = %q", kinds[eventbus.KindReasoningSummaryDelta])
+	}
+	if kinds[eventbus.KindReasoningSummaryCompleted] != "Checking files before editing." {
+		t.Fatalf("reasoning completed = %q", kinds[eventbus.KindReasoningSummaryCompleted])
+	}
+}
+
 type captureProvider struct {
 	request   provider.Request
 	finalText string

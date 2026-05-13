@@ -35,9 +35,11 @@ type ToolRequest struct {
 type EventKind string
 
 const (
-	EventDelta     EventKind = "delta"
-	EventToolCall  EventKind = "tool_call"
-	EventCompleted EventKind = "completed"
+	EventDelta                 EventKind = "delta"
+	EventReasoningSummaryDelta EventKind = "reasoning_summary_delta"
+	EventReasoningSummaryDone  EventKind = "reasoning_summary_done"
+	EventToolCall              EventKind = "tool_call"
+	EventCompleted             EventKind = "completed"
 )
 
 type Event struct {

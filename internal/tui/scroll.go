@@ -4,6 +4,7 @@ import (
 	"strings"
 
 	"charm.land/lipgloss/v2"
+	"github.com/pandelisz/gode/internal/tui/components"
 )
 
 func (m *Model) scrollBy(delta int) {
@@ -34,7 +35,8 @@ func (m *Model) maxScrollOffset() int {
 
 func (m *Model) visibleTranscriptLines() int {
 	composerHeight := max(3, m.input.Height()+2)
-	transcriptHeight := max(6, m.height-composerHeight-2)
+	reasoningHeight := components.ReasoningSummaryHeight(m.reasoningSummary, m.height)
+	transcriptHeight := max(6, m.height-composerHeight-reasoningHeight-2)
 	return max(1, transcriptHeight-2)
 }
 

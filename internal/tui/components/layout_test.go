@@ -103,6 +103,36 @@ func TestRenderErrorLogBelowComposer(t *testing.T) {
 	}
 }
 
+func TestRenderReasoningSummaryAboveComposer(t *testing.T) {
+	zones := zone.New()
+	t.Cleanup(zones.Close)
+
+	out := zones.Scan(Render(viewmodel.Model{
+		Width:            80,
+		Height:           24,
+		Model:            "gpt-test",
+		Provider:         "codex",
+		ReasoningSummary: "Checking workspace before editing files.",
+		Input:            "> Ask gode to work on this repo",
+		InputHeight:      1,
+		Status:           "reasoning",
+	}, zones))
+
+	if got := lipgloss.Height(out); got != 24 {
+		t.Fatalf("height = %d, want 24\n%s", got, out)
+	}
+	reasoningIndex := strings.Index(out, "REASONING")
+	composerIndex := strings.Index(out, "> Ask gode to work on this repo")
+	if reasoningIndex < 0 || composerIndex < 0 || reasoningIndex > composerIndex {
+		t.Fatalf("reasoning summary should render above composer:\n%s", out)
+	}
+	for _, want := range []string{"REASONING", "Checking workspace before editing files."} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("rendered output missing %q:\n%s", want, out)
+		}
+	}
+}
+
 func TestErrorConsoleIsBorderlessAndShowsMultilineDetails(t *testing.T) {
 	out := ErrorConsole(80, 8, []viewmodel.ErrorLogEntry{{
 		Time:   "10:02:20",

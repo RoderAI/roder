@@ -41,6 +41,28 @@ func TestModelCoalescesAssistantDeltaEvents(t *testing.T) {
 	}
 }
 
+func TestModelShowsReasoningSummaryAboveComposer(t *testing.T) {
+	model := New(nil)
+	model.width = 80
+	model.height = 24
+	updated, _ := model.Update(eventMsg{Event: eventbus.Event{Kind: eventbus.KindReasoningSummaryDelta, Payload: map[string]any{"text": "Checking workspace"}}})
+	updated, _ = updated.Update(eventMsg{Event: eventbus.Event{Kind: eventbus.KindReasoningSummaryDelta, Payload: map[string]any{"text": " before editing."}}})
+
+	got := updated.(Model)
+	if got.reasoningSummary != "Checking workspace before editing." {
+		t.Fatalf("reasoning summary = %q", got.reasoningSummary)
+	}
+	view := got.View().Content
+	reasoningIndex := strings.Index(view, "REASONING")
+	inputIndex := strings.Index(view, "sk gode to work on this repo")
+	if reasoningIndex < 0 || inputIndex < 0 || reasoningIndex > inputIndex {
+		t.Fatalf("reasoning summary should render above composer:\n%s", view)
+	}
+	if !strings.Contains(view, "Checking workspace before editing.") {
+		t.Fatalf("view missing reasoning summary:\n%s", view)
+	}
+}
+
 func TestModelScrollState(t *testing.T) {
 	model := New(nil)
 	model.width = 40

@@ -52,6 +52,9 @@ func TestOpenAIResponseParamsIncludesInstructions(t *testing.T) {
 	if params.Store.Value {
 		t.Fatal("store should be false")
 	}
+	if params.Reasoning.Summary == "" {
+		t.Fatal("reasoning summary should be requested")
+	}
 }
 
 func TestOpenAIResponseParamsUsesInputItemList(t *testing.T) {

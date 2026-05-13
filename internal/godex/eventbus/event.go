@@ -28,8 +28,10 @@ const (
 
 	KindProviderDelta Kind = "provider.delta"
 
-	KindAssistantDelta     Kind = "assistant.delta"
-	KindAssistantCompleted Kind = "assistant.completed"
+	KindAssistantDelta            Kind = "assistant.delta"
+	KindAssistantCompleted        Kind = "assistant.completed"
+	KindReasoningSummaryDelta     Kind = "reasoning_summary.delta"
+	KindReasoningSummaryCompleted Kind = "reasoning_summary.completed"
 
 	KindToolRequested Kind = "tool.requested"
 	KindToolStarted   Kind = "tool.started"

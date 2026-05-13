@@ -73,6 +73,14 @@ func (o *OpenAI) Stream(ctx context.Context, req Request) (<-chan Event, <-chan 
 			case "response.output_text.delta":
 				final += ev.Delta
 				events <- Event{Kind: EventDelta, Text: ev.Delta}
+			case "response.reasoning_summary_text.delta":
+				if ev.Delta != "" {
+					events <- Event{Kind: EventReasoningSummaryDelta, Text: ev.Delta}
+				}
+			case "response.reasoning_summary_text.done":
+				if ev.Text != "" {
+					events <- Event{Kind: EventReasoningSummaryDone, Text: ev.Text}
+				}
 			case "response.output_item.added":
 				if ev.Item.Type == "function_call" {
 					call := ev.Item.AsFunctionCall()
@@ -130,9 +138,12 @@ func (o *OpenAI) responseParams(req Request) responses.ResponseNewParams {
 		Input: responses.ResponseNewParamsInputUnion{
 			OfInputItemList: responseInputItems(req.Messages),
 		},
-		Reasoning: shared.ReasoningParam{Effort: shared.ReasoningEffort(o.reasoning)},
-		Store:     param.NewOpt(false),
-		Tools:     openAITools(req.Tools),
+		Reasoning: shared.ReasoningParam{
+			Effort:  shared.ReasoningEffort(o.reasoning),
+			Summary: shared.ReasoningSummaryAuto,
+		},
+		Store: param.NewOpt(false),
+		Tools: openAITools(req.Tools),
 	}
 	if req.Instructions != "" {
 		params.Instructions = param.NewOpt(req.Instructions)

@@ -15,17 +15,21 @@ func RenderWithCache(vm viewmodel.Model, zones *zone.Manager, transcriptCache *T
 	height := max(12, vm.Height)
 
 	composerHeight := max(3, vm.InputHeight+2)
+	reasoningHeight := ReasoningSummaryHeight(vm.ReasoningSummary, height)
 	errorHeight := 0
 	if vm.ShowErrorLog {
 		errorHeight = errorConsoleHeight(height)
 	}
-	bodyHeight := max(1, height-composerHeight-errorHeight-2)
+	bodyHeight := max(1, height-composerHeight-reasoningHeight-errorHeight-2)
 
 	parts := []string{
 		Header(width, vm.Provider, vm.Model, vm.Reasoning, vm.Running),
 		TranscriptWithCache(width, bodyHeight, vm.Messages, vm.ScrollOffset, vm.HoveredID, zones, transcriptCache),
-		Composer(width, vm.Input),
 	}
+	if reasoningHeight > 0 {
+		parts = append(parts, ReasoningSummary(width, reasoningHeight, vm.ReasoningSummary))
+	}
+	parts = append(parts, Composer(width, vm.Input))
 	if vm.ShowErrorLog {
 		parts = append(parts, ErrorConsole(width, errorHeight, vm.ErrorLog))
 	}

@@ -24,22 +24,23 @@ func MessageZoneID(id string) string {
 }
 
 type Model struct {
-	Width        int
-	Height       int
-	Provider     string
-	Model        string
-	Reasoning    string
-	Messages     []Message
-	Input        string
-	InputHeight  int
-	ScrollOffset int
-	FollowTail   bool
-	Running      bool
-	HoveredID    string
-	Status       string
-	Settings     *SettingsDialog
-	ErrorLog     []ErrorLogEntry
-	ShowErrorLog bool
+	Width            int
+	Height           int
+	Provider         string
+	Model            string
+	Reasoning        string
+	Messages         []Message
+	ReasoningSummary string
+	Input            string
+	InputHeight      int
+	ScrollOffset     int
+	FollowTail       bool
+	Running          bool
+	HoveredID        string
+	Status           string
+	Settings         *SettingsDialog
+	ErrorLog         []ErrorLogEntry
+	ShowErrorLog     bool
 }
 
 type ErrorLogEntry struct {

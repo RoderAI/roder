@@ -35,23 +35,24 @@ type codexAuthDoneMsg struct {
 }
 
 type Model struct {
-	app          *godex.App
-	zones        *zone.Manager
-	transcript   components.TranscriptCache
-	input        textarea.Model
-	messages     []viewmodel.Message
-	nextID       int
-	width        int
-	height       int
-	scrollOffset int
-	followTail   bool
-	running      bool
-	hoveredID    string
-	status       string
-	settings     settingsDialog
-	codexLogin   func(context.Context, string) (codexauth.Tokens, string, error)
-	errorLog     []viewmodel.ErrorLogEntry
-	showErrorLog bool
+	app              *godex.App
+	zones            *zone.Manager
+	transcript       components.TranscriptCache
+	input            textarea.Model
+	messages         []viewmodel.Message
+	nextID           int
+	width            int
+	height           int
+	scrollOffset     int
+	followTail       bool
+	running          bool
+	hoveredID        string
+	status           string
+	settings         settingsDialog
+	codexLogin       func(context.Context, string) (codexauth.Tokens, string, error)
+	errorLog         []viewmodel.ErrorLogEntry
+	showErrorLog     bool
+	reasoningSummary string
 
 	transcriptLineWidth int
 	transcriptLineTotal int
@@ -150,6 +151,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, nil
 			}
 			m.addMessage(viewmodel.RoleUser, "", prompt)
+			m.reasoningSummary = ""
 			m.input.Reset()
 			m.running = true
 			m.status = "waiting for model"
@@ -201,19 +203,20 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 func (m Model) View() tea.View {
 	vm := viewmodel.Model{
-		Width:        m.width,
-		Height:       m.height,
-		Messages:     m.messages,
-		Input:        m.input.View(),
-		InputHeight:  m.input.Height(),
-		ScrollOffset: m.scrollOffset,
-		FollowTail:   m.followTail,
-		Running:      m.running,
-		HoveredID:    m.hoveredID,
-		Status:       m.status,
-		Settings:     m.settings.viewModel(),
-		ErrorLog:     m.errorLog,
-		ShowErrorLog: m.showErrorLog,
+		Width:            m.width,
+		Height:           m.height,
+		Messages:         m.messages,
+		ReasoningSummary: m.reasoningSummary,
+		Input:            m.input.View(),
+		InputHeight:      m.input.Height(),
+		ScrollOffset:     m.scrollOffset,
+		FollowTail:       m.followTail,
+		Running:          m.running,
+		HoveredID:        m.hoveredID,
+		Status:           m.status,
+		Settings:         m.settings.viewModel(),
+		ErrorLog:         m.errorLog,
+		ShowErrorLog:     m.showErrorLog,
 	}
 	if m.app != nil {
 		vm.Provider = godex.DisplayProvider(m.app.Config)
@@ -256,6 +259,23 @@ func (m *Model) appendEvent(ev eventbus.Event) {
 		_ = ev.DecodePayload(&payload)
 		if payload.Text != "" {
 			m.appendAssistantDelta(payload.Text)
+		}
+	case eventbus.KindReasoningSummaryDelta:
+		var payload struct {
+			Text string `json:"text"`
+		}
+		_ = ev.DecodePayload(&payload)
+		if payload.Text != "" {
+			m.reasoningSummary += payload.Text
+			m.status = "reasoning"
+		}
+	case eventbus.KindReasoningSummaryCompleted:
+		var payload struct {
+			Text string `json:"text"`
+		}
+		_ = ev.DecodePayload(&payload)
+		if payload.Text != "" {
+			m.reasoningSummary = payload.Text
 		}
 	case eventbus.KindAssistantCompleted:
 		m.status = "assistant completed"
