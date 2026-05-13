@@ -40,11 +40,13 @@ func New(app *godex.App, options Options) *Server {
 	if options.Version == "" {
 		options.Version = "dev"
 	}
-	return &Server{
+	server := &Server{
 		app:      app,
 		options:  options,
 		threads:  make(map[string]*threadState),
 		commands: make(map[string]*activeCommand),
 		conns:    make(map[*Connection]struct{}),
 	}
+	server.startEventBridge(context.Background())
+	return server
 }

@@ -33,6 +33,15 @@ type Tool struct {
 	InputSchema map[string]any
 }
 
+type ServerState struct {
+	Server    string `json:"server"`
+	State     State  `json:"state"`
+	Error     string `json:"error,omitempty"`
+	Tools     int    `json:"tools,omitempty"`
+	Resources int    `json:"resources,omitempty"`
+	Prompts   int    `json:"prompts,omitempty"`
+}
+
 type server struct {
 	cfg       ServerConfig
 	session   *sdkmcp.ClientSession
@@ -148,6 +157,26 @@ func (m *Manager) Tools() []Tool {
 	var out []Tool
 	for _, srv := range m.servers {
 		out = append(out, srv.tools...)
+	}
+	return out
+}
+
+func (m *Manager) States() []ServerState {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	out := make([]ServerState, 0, len(m.servers))
+	for name, srv := range m.servers {
+		state := ServerState{
+			Server:    name,
+			State:     srv.state,
+			Tools:     len(srv.tools),
+			Resources: len(srv.resources),
+			Prompts:   len(srv.prompts),
+		}
+		if srv.err != nil {
+			state.Error = srv.err.Error()
+		}
+		out = append(out, state)
 	}
 	return out
 }
