@@ -274,6 +274,30 @@ func TestRegistryHookDenyReturnsFailedToolResult(t *testing.T) {
 	}
 }
 
+func TestRegistryDoesNotRunHooksForMCPTools(t *testing.T) {
+	runner := hooks.New([]hooks.Hook{{
+		Name:    "deny",
+		Command: hookScript(t, `exit 2`),
+		Tools:   []string{"*"},
+	}})
+	reg := NewRegistry(WithHookRunner(runner), WithWorkspace(t.TempDir()))
+	reg.Register(Tool{
+		Name:     "mcp.server.tool",
+		ReadOnly: true,
+		Run: func(context.Context, Call) (Result, error) {
+			return Result{Text: "mcp ran"}, nil
+		},
+	})
+
+	result, err := reg.Run(context.Background(), Call{Name: "mcp.server.tool", SessionID: "s1"})
+	if err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	if result.Text != "mcp ran" {
+		t.Fatalf("result = %#v", result)
+	}
+}
+
 func hookScript(t *testing.T, body string) string {
 	t.Helper()
 	path := t.TempDir() + "/hook.sh"
