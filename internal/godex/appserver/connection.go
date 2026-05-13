@@ -105,6 +105,18 @@ func (c *Connection) dispatch(ctx context.Context, msg inboundMessage) (any, *RP
 		return map[string]any{}, nil
 	case "model/list":
 		return c.server.handleModelList(), nil
+	case "mcp/state":
+		return c.server.handleMCPState(), nil
+	case "mcp/resources/list":
+		return c.server.handleMCPResourcesList(), nil
+	case "mcp/resource/read":
+		return c.server.handleMCPResourceRead(ctx, msg.Params)
+	case "lsp/state":
+		return c.server.handleLSPState(), nil
+	case "lsp/diagnostics":
+		return c.server.handleLSPDiagnostics(ctx, msg.Params)
+	case "permission/respond":
+		return c.server.handlePermissionRespond(ctx, msg.Params)
 	default:
 		return nil, rpcError(errorMethodNotFound, fmt.Sprintf("Method not found: %s", msg.Method))
 	}

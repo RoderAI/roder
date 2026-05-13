@@ -21,6 +21,12 @@ const (
 	StateClosed    State = "closed"
 )
 
+type ServerState struct {
+	Server string `json:"server"`
+	State  State  `json:"state"`
+	Error  string `json:"error,omitempty"`
+}
+
 type server struct {
 	cfg    Config
 	state  State
@@ -92,6 +98,20 @@ func (m *Manager) Diagnostics(ctx context.Context, path string) ([]Diagnostic, e
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	return append([]Diagnostic(nil), m.diags[abs]...), nil
+}
+
+func (m *Manager) States() []ServerState {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	out := make([]ServerState, 0, len(m.servers))
+	for name, srv := range m.servers {
+		state := ServerState{Server: name, State: srv.state}
+		if srv.err != nil {
+			state.Error = srv.err.Error()
+		}
+		out = append(out, state)
+	}
+	return out
 }
 
 func (m *Manager) Restart(ctx context.Context, name string) error {
