@@ -91,3 +91,33 @@ extra_context = "inline repo context"
 		}
 	}
 }
+
+func TestNewAppDiscoversProjectSkills(t *testing.T) {
+	workspace := filepath.Join(t.TempDir(), "workspace")
+	skillDir := filepath.Join(workspace, ".agents", "skills", "go-tests")
+	if err := os.MkdirAll(skillDir, 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(skillDir, "SKILL.md"), []byte(`---
+name: go-tests
+description: Run tests
+---
+Run Go tests.
+`), 0o644); err != nil {
+		t.Fatalf("write skill: %v", err)
+	}
+	app, err := New(context.Background(), Config{
+		Workspace:   workspace,
+		DataDir:     t.TempDir(),
+		Provider:    "mock",
+		AutoApprove: true,
+	})
+	if err != nil {
+		t.Fatalf("new app: %v", err)
+	}
+	defer app.Close(context.Background())
+
+	if len(app.skills) != 1 || app.skills[0].Name != "go-tests" {
+		t.Fatalf("skills = %#v", app.skills)
+	}
+}
