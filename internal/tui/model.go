@@ -192,6 +192,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "ctrl+p":
 			m.openSettings()
 			return m, nil
+		case "shift+tab":
+			return m, m.togglePermissionMode(false)
 		case "ctrl+s":
 			m.openSessions()
 			return m, nil

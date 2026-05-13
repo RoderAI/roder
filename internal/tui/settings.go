@@ -169,6 +169,8 @@ func (m Model) activateSettingsSelection() (tea.Model, tea.Cmd) {
 			m.settings.OpenModels()
 		case "fast-mode":
 			return m, m.toggleFastMode()
+		case "permission-mode":
+			return m, m.togglePermissionMode(true)
 		case "config":
 			m.settings.OpenConfig()
 		case "codex-auth":
@@ -317,6 +319,7 @@ func settingsFromConfig(cfg godex.Config) godex.Settings {
 		DefaultModel:          cfg.Model,
 		DefaultReasoning:      cfg.Reasoning,
 		FastMode:              cfg.FastMode,
+		AutoApprove:           cfg.AutoApprove,
 		DisableAutoCompaction: cfg.DisableAutoCompaction,
 		AutoCompactTokenLimit: cfg.AutoCompactTokenLimit,
 	}
@@ -330,9 +333,44 @@ func saveSettingsFromConfig(dataDir string, cfg godex.Config) error {
 	settings.DefaultModel = cfg.Model
 	settings.DefaultReasoning = cfg.Reasoning
 	settings.FastMode = cfg.FastMode
+	settings.AutoApprove = cfg.AutoApprove
 	settings.DisableAutoCompaction = cfg.DisableAutoCompaction
 	settings.AutoCompactTokenLimit = cfg.AutoCompactTokenLimit
 	return godex.SaveSettings(dataDir, settings)
+}
+
+func (m *Model) togglePermissionMode(persist bool) tea.Cmd {
+	next := true
+	if m.app != nil {
+		next = !m.app.Config.AutoApprove
+	} else {
+		next = !m.settings.Config.AutoApprove
+	}
+	return m.setPermissionMode(next, persist)
+}
+
+func (m *Model) setPermissionMode(autoApprove bool, persist bool) tea.Cmd {
+	if m.app != nil {
+		m.app.SetAutoApprove(autoApprove)
+		if persist {
+			if err := saveSettingsFromConfig(m.app.Config.DataDir, m.app.Config); err != nil {
+				m.settings.Err = fmt.Sprintf("save settings: %v", err)
+				return nil
+			}
+		}
+		m.settings.Config = m.app.Config
+	} else {
+		m.settings.Config.AutoApprove = autoApprove
+	}
+	m.status = "permission mode " + permissionModeStatus(autoApprove)
+	return nil
+}
+
+func permissionModeStatus(autoApprove bool) string {
+	if autoApprove {
+		return "allow all"
+	}
+	return "request"
 }
 
 func (m *Model) refreshSettingsSkills() {

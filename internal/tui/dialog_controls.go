@@ -126,6 +126,8 @@ func (m Model) acceptSessionSelection() (tea.Model, tea.Cmd) {
 
 func (m Model) updatePermissions(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
+	case "shift+tab":
+		return m.allowAllPendingPermissions()
 	case "down", "j":
 		m.permissions.Move(1)
 		return m, nil
@@ -179,6 +181,16 @@ func (m Model) respondPermission(approved bool, allowForSession bool, reason str
 	}
 	m.status = "permission " + reason
 	return m, nil
+}
+
+func (m Model) allowAllPendingPermissions() (tea.Model, tea.Cmd) {
+	m.setPermissionMode(true, false)
+	for m.permissions.Open {
+		next, _ := m.respondPermission(true, true, "allow all")
+		m = next.(Model)
+	}
+	m.status = "permission mode allow all"
+	return m, m.input.Focus()
 }
 
 func (m *Model) capturePermissionRequest(ev eventbus.Event) {

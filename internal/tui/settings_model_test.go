@@ -2,6 +2,7 @@ package tui
 
 import (
 	"context"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -35,7 +36,7 @@ func TestSettingsMenuCodexSignInRunsAuth(t *testing.T) {
 		return codexauth.Tokens{AccountID: "acct_test"}, "", nil
 	}
 	model.openSettings()
-	model.settings.MenuIndex = 2
+	model.settings.MenuIndex = settingsMenuIndex(t, model.settings, "codex-auth")
 
 	updated, cmd := model.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 	got := updated.(Model)
@@ -53,6 +54,85 @@ func TestSettingsMenuCodexSignInRunsAuth(t *testing.T) {
 	got = updated.(Model)
 	if got.status != "signed in to codex: acct_test" {
 		t.Fatalf("status = %q", got.status)
+	}
+}
+
+func TestShiftTabTogglesPermissionMode(t *testing.T) {
+	app, err := godex.New(context.Background(), godex.Config{
+		DataDir:     t.TempDir(),
+		Workspace:   filepath.Join(t.TempDir(), "workspace"),
+		Provider:    "mock",
+		AutoApprove: false,
+	})
+	if err != nil {
+		t.Fatalf("app: %v", err)
+	}
+	defer app.Close(context.Background())
+
+	model := New(app)
+	updated, _ := model.Update(tea.KeyPressMsg{Code: tea.KeyTab, Mod: tea.ModShift})
+	got := updated.(Model)
+	if !app.Config.AutoApprove || !app.Tools.AutoApprove() {
+		t.Fatalf("auto approve not enabled: config=%v registry=%v", app.Config.AutoApprove, app.Tools.AutoApprove())
+	}
+	if got.status != "permission mode allow all" {
+		t.Fatalf("status = %q", got.status)
+	}
+
+	updated, _ = got.Update(tea.KeyPressMsg{Code: tea.KeyTab, Mod: tea.ModShift})
+	got = updated.(Model)
+	if app.Config.AutoApprove || app.Tools.AutoApprove() {
+		t.Fatalf("auto approve not disabled: config=%v registry=%v", app.Config.AutoApprove, app.Tools.AutoApprove())
+	}
+	if got.status != "permission mode request" {
+		t.Fatalf("status = %q", got.status)
+	}
+}
+
+func TestSettingsPermissionModeToggleSavesDefault(t *testing.T) {
+	dataDir := t.TempDir()
+	app, err := godex.New(context.Background(), godex.Config{
+		DataDir:     dataDir,
+		Workspace:   filepath.Join(t.TempDir(), "workspace"),
+		Provider:    "mock",
+		AutoApprove: false,
+	})
+	if err != nil {
+		t.Fatalf("app: %v", err)
+	}
+	defer app.Close(context.Background())
+
+	model := New(app)
+	model.openSettings()
+	model.settings.MenuIndex = settingsMenuIndex(t, model.settings, "permission-mode")
+	updated, _ := model.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	got := updated.(Model)
+
+	if !got.settings.Open {
+		t.Fatal("settings dialog should remain open after toggling permission mode")
+	}
+	if !app.Config.AutoApprove || !app.Tools.AutoApprove() {
+		t.Fatalf("auto approve not enabled: config=%v registry=%v", app.Config.AutoApprove, app.Tools.AutoApprove())
+	}
+	settings, err := godex.LoadSettings(dataDir)
+	if err != nil {
+		t.Fatalf("load settings: %v", err)
+	}
+	if !settings.AutoApprove {
+		t.Fatal("saved auto approve = false")
+	}
+	data, err := os.ReadFile(filepath.Join(dataDir, "config.toml"))
+	if err != nil {
+		t.Fatalf("read config.toml: %v", err)
+	}
+	if !strings.Contains(string(data), "auto_approve = true") {
+		t.Fatalf("config.toml missing auto_approve:\n%s", string(data))
+	}
+	view := got.View().Content
+	for _, want := range []string{"Permission Mode", "allow all"} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("view should render %q after permission mode toggle:\n%s", want, view)
+		}
 	}
 }
 

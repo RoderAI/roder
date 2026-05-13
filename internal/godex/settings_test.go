@@ -14,6 +14,7 @@ func TestSettingsRoundTripDefaultModel(t *testing.T) {
 		DefaultModel:          "gpt-5.5",
 		DefaultReasoning:      ReasoningHigh,
 		FastMode:              true,
+		AutoApprove:           true,
 		DisableAutoCompaction: true,
 		AutoCompactTokenLimit: 12345,
 		ActiveSkills:          map[string]bool{"go-tests": true, "legacy-disabled": false},
@@ -34,6 +35,9 @@ func TestSettingsRoundTripDefaultModel(t *testing.T) {
 	}
 	if !settings.FastMode {
 		t.Fatal("fast mode = false")
+	}
+	if !settings.AutoApprove {
+		t.Fatal("auto approve = false")
 	}
 	if !settings.DisableAutoCompaction {
 		t.Fatal("disable auto compaction = false")
@@ -57,7 +61,7 @@ func TestSettingsRoundTripDefaultModel(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read config.toml: %v", err)
 	}
-	for _, want := range []string{`default_model = "gpt-5.5"`, `default_reasoning = "high"`, `fast_mode = true`, `disable_auto_compaction = true`, `auto_compact_token_limit = 12345`, `[active_skills]`, `go-tests = true`, `legacy-disabled = false`, `[skill_sources]`, `go-tests = "pandelisz/gode@go-tests"`} {
+	for _, want := range []string{`default_model = "gpt-5.5"`, `default_reasoning = "high"`, `fast_mode = true`, `auto_approve = true`, `disable_auto_compaction = true`, `auto_compact_token_limit = 12345`, `[active_skills]`, `go-tests = true`, `legacy-disabled = false`, `[skill_sources]`, `go-tests = "pandelisz/gode@go-tests"`} {
 		if !strings.Contains(string(data), want) {
 			t.Fatalf("config.toml should contain %q, got:\n%s", want, string(data))
 		}

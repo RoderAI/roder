@@ -267,6 +267,13 @@ func (a *App) SetFastMode(fastMode bool) error {
 	return nil
 }
 
+func (a *App) SetAutoApprove(autoApprove bool) {
+	a.Config.AutoApprove = autoApprove
+	if a.Tools != nil {
+		a.Tools.SetAutoApprove(autoApprove)
+	}
+}
+
 func runnerConfig(cfg Config, bus *eventbus.Bus, journalStore *journal.Store, sessionStore *session.Store, turnStore *session.TurnStore, itemStore *session.ItemStore, messageStore *messagestore.Store, registry *tools.Registry, goalRuntime *goals.Runtime, prov provider.Provider, contextMessages []provider.Message, skills []godeskills.Skill, commands []godecommands.Command) agent.Config {
 	return agent.Config{
 		Bus:                   bus,

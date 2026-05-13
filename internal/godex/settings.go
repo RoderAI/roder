@@ -21,6 +21,7 @@ type Settings struct {
 	DefaultModel          string            `json:"default_model,omitempty" toml:"default_model,omitempty"`
 	DefaultReasoning      string            `json:"default_reasoning,omitempty" toml:"default_reasoning,omitempty"`
 	FastMode              bool              `json:"fast_mode,omitempty" toml:"fast_mode,omitempty"`
+	AutoApprove           bool              `json:"auto_approve" toml:"auto_approve"`
 	DisableAutoCompaction bool              `json:"disable_auto_compaction,omitempty" toml:"disable_auto_compaction,omitempty"`
 	AutoCompactTokenLimit int               `json:"auto_compact_token_limit,omitempty" toml:"auto_compact_token_limit,omitempty"`
 	ActiveSkills          map[string]bool   `json:"active_skills,omitempty" toml:"active_skills,omitempty"`
@@ -90,6 +91,7 @@ func loadLegacySettings(dataDir string) (Settings, error) {
 		DefaultModel          string            `json:"default_model"`
 		DefaultReasoning      string            `json:"default_reasoning"`
 		FastMode              bool              `json:"fast_mode"`
+		AutoApprove           bool              `json:"auto_approve"`
 		DisableAutoCompaction bool              `json:"disable_auto_compaction"`
 		AutoCompactTokenLimit int               `json:"auto_compact_token_limit"`
 		ActiveSkills          map[string]bool   `json:"active_skills"`
@@ -102,6 +104,7 @@ func loadLegacySettings(dataDir string) (Settings, error) {
 		DefaultModel:          strings.TrimSpace(settings.DefaultModel),
 		DefaultReasoning:      strings.TrimSpace(settings.DefaultReasoning),
 		FastMode:              settings.FastMode,
+		AutoApprove:           settings.AutoApprove,
 		DisableAutoCompaction: settings.DisableAutoCompaction,
 		AutoCompactTokenLimit: settings.AutoCompactTokenLimit,
 		ActiveSkills:          settings.ActiveSkills,

@@ -232,6 +232,12 @@ func (s Settings) MenuItems() []viewmodel.SettingsMenuItem {
 			Value:       onOff(s.Config.FastMode),
 		},
 		{
+			ID:          "permission-mode",
+			Label:       "Permission Mode",
+			Description: "Choose whether mutating tools ask first or run without prompts.",
+			Value:       permissionModeLabel(s.Config.AutoApprove),
+		},
+		{
 			ID:          "codex-auth",
 			Label:       "Codex Sign In",
 			Description: "Connect ChatGPT Codex so GPT models use Codex auth.",
@@ -392,6 +398,7 @@ func (s Settings) configRows() []viewmodel.SettingsConfigRow {
 		{Label: "Provider", Value: godex.DisplayProvider(s.Config)},
 		{Label: "Reasoning", Value: s.Config.Reasoning},
 		{Label: "Fast mode", Value: onOff(s.Config.FastMode)},
+		{Label: "Permission mode", Value: permissionModeLabel(s.Config.AutoApprove)},
 		{Label: "Workspace", Value: s.Config.Workspace},
 		{Label: "Data dir", Value: s.Config.DataDir},
 	}
@@ -406,6 +413,7 @@ func settingsFromConfig(cfg godex.Config) godex.Settings {
 		DefaultModel:          cfg.Model,
 		DefaultReasoning:      cfg.Reasoning,
 		FastMode:              cfg.FastMode,
+		AutoApprove:           cfg.AutoApprove,
 		DisableAutoCompaction: cfg.DisableAutoCompaction,
 		AutoCompactTokenLimit: cfg.AutoCompactTokenLimit,
 	}
@@ -416,6 +424,13 @@ func onOff(enabled bool) string {
 		return "on"
 	}
 	return "off"
+}
+
+func permissionModeLabel(autoApprove bool) string {
+	if autoApprove {
+		return "allow all"
+	}
+	return "request"
 }
 
 func reasoningLabel(effort string) string {
