@@ -208,3 +208,24 @@ func TestDisplayProviderKeepsOpenAIForNonGPTModels(t *testing.T) {
 		t.Fatalf("display provider = %q", got)
 	}
 }
+
+func TestEmbeddingModelIsHiddenFromChatModelPickers(t *testing.T) {
+	model, ok := LookupModel("text-embedding-3-large")
+	if !ok {
+		t.Fatal("embedding model missing from catalog")
+	}
+	if model.Provider != ProviderOpenAI {
+		t.Fatalf("provider = %q", model.Provider)
+	}
+	if model.DefaultReasoning != ReasoningNone || len(model.SupportedReasoning) != 0 {
+		t.Fatalf("reasoning = %q %#v", model.DefaultReasoning, model.SupportedReasoning)
+	}
+	if !model.Hidden {
+		t.Fatal("embedding model should be hidden")
+	}
+	for _, visible := range BuiltInModels(false) {
+		if visible.ID == "text-embedding-3-large" {
+			t.Fatal("embedding model leaked into visible model picker")
+		}
+	}
+}

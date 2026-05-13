@@ -280,6 +280,15 @@ var builtInModels = []ModelConfig{
 		},
 	}),
 	{
+		ID:                 "text-embedding-3-large",
+		DisplayName:        "Text Embedding 3 Large",
+		Description:        "OpenAI embedding model for local semantic memories.",
+		Provider:           ProviderOpenAI,
+		DefaultReasoning:   ReasoningNone,
+		SupportedReasoning: nil,
+		Hidden:             true,
+	},
+	{
 		ID:                 "mock",
 		DisplayName:        "Mock",
 		Description:        "Local deterministic mock provider for tests and offline development.",
