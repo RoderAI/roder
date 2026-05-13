@@ -138,6 +138,7 @@ func (c *Connection) handleInitialize(ctx context.Context, msg inboundMessage) e
 		"workspace":      c.server.app.Config.Workspace,
 		"platformFamily": runtime.GOOS,
 		"platformOs":     runtime.GOOS,
+		"capabilities":   protocolCapabilities(),
 	}
 	return c.send(ctx, Message{ID: msg.ID, Result: jsonValue(result)})
 }

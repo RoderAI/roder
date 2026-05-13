@@ -53,6 +53,11 @@ func TestConnectionRequiresInitializeAndStreamsThreadTurnNotifications(t *testin
 	if initResult["platformOs"] == "" {
 		t.Fatalf("initialize platformOs missing: %#v", initResult)
 	}
+	capabilities := objectField(t, initResult, "capabilities")
+	methods := sliceField(t, capabilities, "methods")
+	if !slices.ContainsFunc(methods, func(method any) bool { return method == "thread/start" }) {
+		t.Fatalf("initialize capabilities missing thread/start: %#v", capabilities)
+	}
 
 	if err := conn.HandleJSON(ctx, []byte(`{"method":"initialized"}`)); err != nil {
 		t.Fatalf("initialized notification: %v", err)
