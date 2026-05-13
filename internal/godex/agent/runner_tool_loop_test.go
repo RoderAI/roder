@@ -81,7 +81,7 @@ func TestRunnerToolLoopContinuesAfterTextBeforeToolTurn(t *testing.T) {
 	}
 }
 
-func TestRunnerFinalizesAfterToolTurnSafetyLimitWithoutTools(t *testing.T) {
+func TestRunnerContinuesToolTurnsUntilProviderStopsRequestingTools(t *testing.T) {
 	reg := tools.NewRegistry(tools.WithAutoApprove(true))
 	reg.Register(tools.Tool{
 		Name:        "echo",
@@ -114,7 +114,7 @@ func TestRunnerFinalizesAfterToolTurnSafetyLimitWithoutTools(t *testing.T) {
 	})
 	defer runner.bus.Close()
 
-	result, err := runner.Run(context.Background(), RunRequest{Prompt: "loop", MaxTurns: 2})
+	result, err := runner.Run(context.Background(), RunRequest{Prompt: "loop"})
 	if err != nil {
 		t.Fatalf("run: %v", err)
 	}
@@ -124,11 +124,9 @@ func TestRunnerFinalizesAfterToolTurnSafetyLimitWithoutTools(t *testing.T) {
 	if len(script.requests) != 3 {
 		t.Fatalf("requests = %d, want 3", len(script.requests))
 	}
-	finalReq := script.requests[2]
-	if len(finalReq.Tools) != 0 {
-		t.Fatalf("finalization request should not expose tools: %#v", finalReq.Tools)
-	}
-	if len(finalReq.Messages) == 0 || !strings.Contains(finalReq.Messages[len(finalReq.Messages)-1].Content, "safety limit") {
-		t.Fatalf("finalization prompt missing:\n%#v", finalReq.Messages)
+	for i, req := range script.requests {
+		if len(req.Tools) == 0 {
+			t.Fatalf("request %d should keep tools available until the provider stops asking: %#v", i, req.Tools)
+		}
 	}
 }

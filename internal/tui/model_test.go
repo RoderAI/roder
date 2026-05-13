@@ -592,17 +592,16 @@ func TestRunDoneDoesNotDuplicateRunFailedEventError(t *testing.T) {
 
 func TestRunFailedEventUsesDetailInErrorLog(t *testing.T) {
 	detail := strings.Join([]string{
-		"agent stopped without final text after tool loop",
+		"agent stopped without final text",
 		"",
 		"debug:",
 		"session_id: s1",
 		"run_id: r1",
-		"max_turns: 8",
 		"last_tool: shell",
 	}, "\n")
 	model := New(nil)
 	updated, _ := model.Update(eventMsg{Event: eventbus.Event{Kind: eventbus.KindRunFailed, Payload: map[string]any{
-		"error":  "agent stopped without final text after tool loop",
+		"error":  "agent stopped without final text",
 		"detail": detail,
 	}}})
 	got := updated.(Model)
