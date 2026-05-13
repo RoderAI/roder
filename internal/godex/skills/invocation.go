@@ -19,6 +19,10 @@ type InvocationResult struct {
 }
 
 func ApplyInvocations(prompt string, catalog Catalog) InvocationResult {
+	return ApplyInvocationsFiltered(prompt, catalog, nil)
+}
+
+func ApplyInvocationsFiltered(prompt string, catalog Catalog, activeSkills map[string]bool) InvocationResult {
 	byName := map[string]Skill{}
 	for _, skill := range catalog.Skills {
 		byName[skill.Name] = skill
@@ -29,6 +33,13 @@ func ApplyInvocations(prompt string, catalog Catalog) InvocationResult {
 		name := strings.TrimPrefix(match, "$")
 		skill, ok := byName[name]
 		if !ok {
+			return match
+		}
+		if !IsSkillEnabled(activeSkills, name) {
+			catalog.Diagnostics = append(catalog.Diagnostics, Diagnostic{
+				Path:    skill.Path,
+				Message: fmt.Sprintf("skill %q is disabled; enable it in settings before invoking", name),
+			})
 			return match
 		}
 		found = true

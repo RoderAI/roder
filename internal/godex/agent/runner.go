@@ -33,6 +33,8 @@ type Config struct {
 	Goals                 *goals.Runtime
 	ContextMessages       []provider.Message
 	Skills                []godeskills.Skill
+	ActiveSkills          map[string]bool
+	LoadActiveSkills      func(context.Context) (map[string]bool, error)
 	Commands              []godecommands.Command
 }
 
@@ -49,6 +51,8 @@ type Runner struct {
 	goals                 *goals.Runtime
 	contextMessages       []provider.Message
 	skills                []godeskills.Skill
+	activeSkills          map[string]bool
+	loadActiveSkills      func(context.Context) (map[string]bool, error)
 	commands              []godecommands.Command
 }
 
@@ -83,6 +87,8 @@ func NewRunner(cfg Config) *Runner {
 		goals:                 cfg.Goals,
 		contextMessages:       append([]provider.Message(nil), cfg.ContextMessages...),
 		skills:                append([]godeskills.Skill(nil), cfg.Skills...),
+		activeSkills:          cloneActiveSkills(cfg.ActiveSkills),
+		loadActiveSkills:      cfg.LoadActiveSkills,
 		commands:              append([]godecommands.Command(nil), cfg.Commands...),
 	}
 }
@@ -147,8 +153,14 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (RunResult, error) {
 	if err != nil {
 		return RunResult{}, r.fail(ctx, req, err)
 	}
-	invocation := godeskills.ApplyInvocations(commandExpansion.Prompt, godeskills.Catalog{Skills: r.skills})
-	messages, err := r.initialMessages(ctx, req, invocation.Messages, invocation.Prompt)
+	activeSkills, err := r.activeSkillSettings(ctx)
+	if err != nil {
+		return RunResult{}, r.fail(ctx, req, err)
+	}
+	invocation := godeskills.ApplyInvocationsFiltered(commandExpansion.Prompt, godeskills.Catalog{Skills: r.skills}, activeSkills)
+	runMessages := append([]provider.Message{}, invocation.Messages...)
+	runMessages = append(runMessages, skillDiagnosticMessages(invocation.Diagnostics)...)
+	messages, err := r.initialMessages(ctx, req, runMessages, invocation.Prompt)
 	if err != nil {
 		return RunResult{}, r.fail(ctx, req, err)
 	}
