@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"sort"
@@ -90,6 +91,10 @@ func RegisterFilesystem(reg *tools.Registry, root string) {
 					return nil
 				}
 				defer file.Close()
+				text, err := looksLikeText(file)
+				if err != nil || !text {
+					return nil
+				}
 				rel, _ := filepath.Rel(root, path)
 				scanner := bufio.NewScanner(file)
 				lineNo := 0
@@ -108,6 +113,24 @@ func RegisterFilesystem(reg *tools.Registry, root string) {
 			return tools.Result{Text: strings.Join(matches, "\n")}, nil
 		},
 	})
+}
+
+func looksLikeText(file *os.File) (bool, error) {
+	const sniffSize = 8192
+	buf := make([]byte, sniffSize)
+	n, err := file.Read(buf)
+	if err != nil && err != io.EOF {
+		return false, err
+	}
+	if _, err := file.Seek(0, io.SeekStart); err != nil {
+		return false, err
+	}
+	for _, b := range buf[:n] {
+		if b == 0 {
+			return false, nil
+		}
+	}
+	return true, nil
 }
 
 func cleanWorkspacePath(root, input string) (string, error) {
