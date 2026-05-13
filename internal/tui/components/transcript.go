@@ -110,11 +110,10 @@ func visibleMessages(messages []viewmodel.Message, width int, height int, scroll
 		return nil
 	}
 
-	startIndex := max(0, len(messages)-200)
 	lineBudget := max(height, height+max(0, scrollOffset))
-	reversed := make([]renderedMessage, 0, min(len(messages)-startIndex, height))
+	reversed := make([]renderedMessage, 0, min(len(messages), height))
 	total := 0
-	for i := len(messages) - 1; i >= startIndex && total < lineBudget; i-- {
+	for i := len(messages) - 1; i >= 0 && total < lineBudget; i-- {
 		item := renderMessageCached(messages[i], width, cache)
 		reversed = append(reversed, item)
 		total += len(item.lines)

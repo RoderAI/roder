@@ -240,6 +240,23 @@ func TestModelScrollState(t *testing.T) {
 	}
 }
 
+func TestModelKeepsEntireTimelineHistory(t *testing.T) {
+	model := New(nil)
+	model.width = 80
+	model.height = 20
+	for i := 0; i < 550; i++ {
+		model.addMessage("user", "", "message")
+	}
+
+	if len(model.messages) != 550 {
+		t.Fatalf("messages retained = %d, want 550", len(model.messages))
+	}
+	model.scrollToOldest()
+	if model.scrollOffset <= 0 {
+		t.Fatalf("scrollOffset = %d, want ability to scroll to oldest history", model.scrollOffset)
+	}
+}
+
 func TestNewModelFocusesComposer(t *testing.T) {
 	model := New(nil)
 	if !model.input.Focused() {

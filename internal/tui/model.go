@@ -20,7 +20,6 @@ import (
 	"github.com/pandelisz/gode/internal/tui/viewmodel"
 )
 
-const maxTranscriptMessages = 500
 const maxErrorLogEntries = 200
 const wheelScrollLines = 3
 
@@ -400,13 +399,6 @@ func (m *Model) addMessage(role viewmodel.Role, title string, body string) {
 		Title: title,
 		Body:  body,
 	})
-	if overflow := len(m.messages) - maxTranscriptMessages; overflow > 0 {
-		m.messages = m.messages[overflow:]
-		m.scrollOffset = max(0, m.scrollOffset-overflow)
-		m.transcript.Prune(m.messages)
-		m.pruneMessageKeys()
-		m.markTranscriptLinesDirty()
-	}
 	m.markTranscriptLinesDirty()
 	if m.followTail {
 		m.scrollOffset = 0
