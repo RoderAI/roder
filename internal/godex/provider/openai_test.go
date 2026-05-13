@@ -46,6 +46,12 @@ func TestOpenAIResponseParamsIncludesInstructions(t *testing.T) {
 	if params.Instructions.Value != "You are gode." {
 		t.Fatalf("instructions = %q", params.Instructions.Value)
 	}
+	if !params.Store.Valid() {
+		t.Fatal("store should be set")
+	}
+	if params.Store.Value {
+		t.Fatal("store should be false")
+	}
 }
 
 func TestOpenAIResponseParamsUsesInputItemList(t *testing.T) {

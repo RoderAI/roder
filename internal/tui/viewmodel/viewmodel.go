@@ -28,6 +28,7 @@ type Model struct {
 	Height       int
 	Provider     string
 	Model        string
+	Reasoning    string
 	Messages     []Message
 	Input        string
 	InputHeight  int

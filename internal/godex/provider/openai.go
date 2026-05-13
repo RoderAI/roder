@@ -131,6 +131,7 @@ func (o *OpenAI) responseParams(req Request) responses.ResponseNewParams {
 			OfInputItemList: responseInputItems(req.Messages),
 		},
 		Reasoning: shared.ReasoningParam{Effort: shared.ReasoningEffort(o.reasoning)},
+		Store:     param.NewOpt(false),
 		Tools:     openAITools(req.Tools),
 	}
 	if req.Instructions != "" {

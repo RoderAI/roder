@@ -18,10 +18,14 @@ var (
 			Foreground(lipgloss.Color("252"))
 )
 
-func Header(width int, provider string, model string, running bool) string {
+func Header(width int, provider string, model string, reasoning string, running bool) string {
 	left := headerAccentStyle.Render("gode")
 	if provider != "" {
-		left += headerMetaStyle.Render("  " + provider + "/" + model)
+		modelLabel := provider + "/" + model
+		if reasoning != "" {
+			modelLabel += " " + reasoning
+		}
+		left += headerMetaStyle.Render("  " + modelLabel)
 	}
 
 	right := "idle"
