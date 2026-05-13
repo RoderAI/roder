@@ -10,6 +10,7 @@ import (
 
 	"github.com/pandelisz/gode/internal/godex"
 	"github.com/pandelisz/gode/internal/godex/acp"
+	"github.com/pandelisz/gode/internal/godex/agent"
 	"github.com/pandelisz/gode/internal/godex/appserver"
 	"github.com/pandelisz/gode/internal/godex/codexauth"
 	"github.com/pandelisz/gode/internal/godex/configstore"
@@ -58,6 +59,10 @@ func run(ctx context.Context, args []string) error {
 
 	if len(args) > 0 && args[0] == "config" {
 		return runConfig(args[1:])
+	}
+
+	if len(args) > 0 && args[0] == "session" {
+		return runSession(args[1:])
 	}
 
 	cfg, err := parseConfig(args)
@@ -181,6 +186,10 @@ func runAppServer(ctx context.Context, args []string) error {
 func runPrompt(ctx context.Context, args []string) error {
 	flags := newFlagSet("gode run")
 	cfg := godex.DefaultConfig()
+	sessionID := ""
+	resume := false
+	flags.StringVar(&sessionID, "session", sessionID, "session id to use")
+	flags.BoolVar(&resume, "resume", resume, "resume prior session messages")
 	bindConfigFlags(flags, &cfg)
 	if err := flags.Parse(args); err != nil {
 		return err
@@ -199,9 +208,19 @@ func runPrompt(ctx context.Context, args []string) error {
 		return err
 	}
 	defer app.Close(ctx)
-	result, err := app.RunPrompt(ctx, prompt)
-	if err != nil {
-		return err
+	var result agent.RunResult
+	if sessionID != "" || resume {
+		runResult, err := app.Run(ctx, agent.RunRequest{SessionID: sessionID, Prompt: prompt, Resume: resume})
+		if err != nil {
+			return err
+		}
+		result = runResult
+	} else {
+		runResult, err := app.RunPrompt(ctx, prompt)
+		if err != nil {
+			return err
+		}
+		result = runResult
 	}
 	fmt.Println(result.FinalText)
 	return nil

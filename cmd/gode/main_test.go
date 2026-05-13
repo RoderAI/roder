@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"io"
 	"os"
 	"path/filepath"
@@ -9,6 +10,7 @@ import (
 
 	"github.com/pandelisz/gode/internal/godex"
 	"github.com/pandelisz/gode/internal/godex/appserver"
+	"github.com/pandelisz/gode/internal/godex/session"
 )
 
 func TestParseConfigAppliesFlags(t *testing.T) {
@@ -235,6 +237,77 @@ func TestRunConfigSchemaPrintsJSON(t *testing.T) {
 		if !strings.Contains(out, want) {
 			t.Fatalf("schema output missing %q:\n%s", want, out)
 		}
+	}
+}
+
+func TestSessionCLIListShowRenameDeleteAndRunResume(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	workspace := filepath.Join(t.TempDir(), "workspace")
+	dataDir := filepath.Join(t.TempDir(), "data")
+	if err := os.MkdirAll(workspace, 0o700); err != nil {
+		t.Fatalf("mkdir workspace: %v", err)
+	}
+
+	out := captureStdout(t, func() error {
+		return runPrompt(context.Background(), []string{"--workspace", workspace, "--data-dir", dataDir, "--provider", "mock", "--model", "mock", "--reasoning", "none", "first prompt"})
+	})
+	if !strings.Contains(out, "mock response") {
+		t.Fatalf("run output = %q", out)
+	}
+	store, err := session.Open(dataDir)
+	if err != nil {
+		t.Fatalf("session store: %v", err)
+	}
+	last, ok, err := store.Last(context.Background())
+	if err != nil {
+		t.Fatalf("last: %v", err)
+	}
+	if !ok {
+		t.Fatal("expected session after run")
+	}
+
+	listOut := captureStdout(t, func() error {
+		return runSession([]string{"list", "--data-dir", dataDir})
+	})
+	if !strings.Contains(listOut, last.ID) || !strings.Contains(listOut, "first prompt") {
+		t.Fatalf("list output:\n%s", listOut)
+	}
+
+	showOut := captureStdout(t, func() error {
+		return runSession([]string{"show", "--data-dir", dataDir, last.ID})
+	})
+	for _, want := range []string{last.ID, "user\tfirst prompt", "assistant\tmock response"} {
+		if !strings.Contains(showOut, want) {
+			t.Fatalf("show output missing %q:\n%s", want, showOut)
+		}
+	}
+
+	renameOut := captureStdout(t, func() error {
+		return runSession([]string{"rename", "--data-dir", dataDir, last.ID, "Renamed", "Session"})
+	})
+	if !strings.Contains(renameOut, "Renamed Session") {
+		t.Fatalf("rename output:\n%s", renameOut)
+	}
+
+	resumeOut := captureStdout(t, func() error {
+		return runPrompt(context.Background(), []string{"--workspace", workspace, "--data-dir", dataDir, "--provider", "mock", "--model", "mock", "--reasoning", "none", "--session", last.ID, "--resume", "second prompt"})
+	})
+	if !strings.Contains(resumeOut, "mock response") {
+		t.Fatalf("resume output:\n%s", resumeOut)
+	}
+	showOut = captureStdout(t, func() error {
+		return runSession([]string{"show", "--data-dir", dataDir, last.ID})
+	})
+	if !strings.Contains(showOut, "user\tsecond prompt") {
+		t.Fatalf("show after resume:\n%s", showOut)
+	}
+
+	deleteOut := captureStdout(t, func() error {
+		return runSession([]string{"delete", "--data-dir", dataDir, last.ID})
+	})
+	if !strings.Contains(deleteOut, "deleted\t"+last.ID) {
+		t.Fatalf("delete output:\n%s", deleteOut)
 	}
 }
 
