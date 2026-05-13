@@ -9,7 +9,7 @@ import (
 	"time"
 )
 
-func TestStoreCreateGetListReopenAndLast(t *testing.T) {
+func TestSessionStoreCreateGetListReopenAndLast(t *testing.T) {
 	ctx := context.Background()
 	dataDir := t.TempDir()
 	store := openTestStore(t, dataDir, time.Date(2026, 5, 13, 10, 0, 0, 0, time.UTC))
@@ -49,6 +49,13 @@ func TestStoreCreateGetListReopenAndLast(t *testing.T) {
 	if !ok || last.ID != second.ID {
 		t.Fatalf("last = %#v ok=%v", last, ok)
 	}
+	lastSession, ok, err := store.LastSession(ctx)
+	if err != nil {
+		t.Fatalf("last session: %v", err)
+	}
+	if !ok || lastSession.ID != second.ID {
+		t.Fatalf("last session = %#v ok=%v", lastSession, ok)
+	}
 
 	reopened, err := Open(dataDir)
 	if err != nil {
@@ -63,7 +70,7 @@ func TestStoreCreateGetListReopenAndLast(t *testing.T) {
 	}
 }
 
-func TestStoreRenameDeleteAndJournalIndependence(t *testing.T) {
+func TestSessionStoreRenameDeleteAndJournalIndependence(t *testing.T) {
 	ctx := context.Background()
 	dataDir := t.TempDir()
 	store := openTestStore(t, dataDir, time.Date(2026, 5, 13, 10, 0, 0, 0, time.UTC))
@@ -99,7 +106,7 @@ func TestStoreRenameDeleteAndJournalIndependence(t *testing.T) {
 	}
 }
 
-func TestStoreEnsureAndUpdateMessageCount(t *testing.T) {
+func TestSessionStoreEnsureAndUpdateMessageCount(t *testing.T) {
 	ctx := context.Background()
 	store := openTestStore(t, t.TempDir(), time.Date(2026, 5, 13, 10, 0, 0, 0, time.UTC))
 
@@ -129,7 +136,7 @@ func TestStoreEnsureAndUpdateMessageCount(t *testing.T) {
 	}
 }
 
-func TestStoreLastEmpty(t *testing.T) {
+func TestSessionStoreLastEmpty(t *testing.T) {
 	store := openTestStore(t, t.TempDir(), time.Now())
 	last, ok, err := store.Last(context.Background())
 	if err != nil {
