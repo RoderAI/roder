@@ -75,3 +75,34 @@ func TestAnthropicParamsUseCanonicalItemsOnly(t *testing.T) {
 		t.Fatalf("legacy message fallback leaked into Anthropic params: %s", data)
 	}
 }
+
+func TestAnthropicParamsSerializeImages(t *testing.T) {
+	anthropicProvider := NewAnthropic("")
+	params, err := anthropicProvider.messageParams(Request{
+		InputItems: []Item{{
+			Kind:   ItemMessage,
+			Role:   "user",
+			Text:   "look",
+			Images: []Image{{URL: "data:image/png;base64,abc"}},
+		}},
+	})
+	if err != nil {
+		t.Fatalf("params: %v", err)
+	}
+	data, err := json.Marshal(params.Messages)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	raw := string(data)
+	for _, want := range []string{
+		`"type":"text"`,
+		`"text":"look"`,
+		`"type":"image"`,
+		`"media_type":"image/png"`,
+		`"data":"abc"`,
+	} {
+		if !strings.Contains(raw, want) {
+			t.Fatalf("messages JSON missing %q:\n%s", want, raw)
+		}
+	}
+}

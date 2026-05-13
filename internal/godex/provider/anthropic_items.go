@@ -52,7 +52,7 @@ func AnthropicInputFromResponsesItems(items []Item, tools []ToolSpec) (Anthropic
 		switch item.Kind {
 		case ItemMessage:
 			text := strings.TrimSpace(item.Text)
-			if text == "" {
+			if text == "" && len(item.Images) == 0 {
 				continue
 			}
 			switch item.Role {
@@ -61,7 +61,14 @@ func AnthropicInputFromResponsesItems(items []Item, tools []ToolSpec) (Anthropic
 			case string(RoleAssistant):
 				input.appendBlock("assistant", AnthropicBlock{Type: "text", Text: text})
 			default:
-				input.appendBlock("user", AnthropicBlock{Type: "text", Text: text})
+				if text != "" {
+					input.appendBlock("user", AnthropicBlock{Type: "text", Text: text})
+				}
+				for _, image := range item.Images {
+					if strings.TrimSpace(image.URL) != "" {
+						input.appendBlock("user", AnthropicBlock{Type: "image", Text: image.URL})
+					}
+				}
 			}
 		case ItemFunctionCall:
 			block := AnthropicBlock{
@@ -117,7 +124,7 @@ func userMessageCanAcceptToolResult(message AnthropicMessage) bool {
 }
 
 func (input *AnthropicInput) appendBlock(role string, block AnthropicBlock) {
-	if role == "user" && block.Type == "text" && len(input.Messages) > 0 {
+	if role == "user" && block.Type != "tool_result" && len(input.Messages) > 0 {
 		last := &input.Messages[len(input.Messages)-1]
 		if last.Role == "user" {
 			last.Content = append(last.Content, block)

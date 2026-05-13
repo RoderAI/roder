@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 
 	anthropic "github.com/anthropics/anthropic-sdk-go"
 	"github.com/anthropics/anthropic-sdk-go/option"
@@ -135,6 +136,12 @@ func anthropicContentBlocks(blocks []AnthropicBlock) []anthropic.ContentBlockPar
 		switch block.Type {
 		case "text":
 			out = append(out, anthropic.ContentBlockParamUnion{OfText: &anthropic.TextBlockParam{Text: block.Text}})
+		case "image":
+			if mediaType, data, ok := parseDataImageURL(block.Text); ok {
+				out = append(out, anthropic.NewImageBlockBase64(mediaType, data))
+			} else {
+				out = append(out, anthropic.NewImageBlock(anthropic.URLImageSourceParam{URL: block.Text}))
+			}
 		case "tool_use":
 			var input any = map[string]any{}
 			if len(block.Input) > 0 {
@@ -146,6 +153,18 @@ func anthropicContentBlocks(blocks []AnthropicBlock) []anthropic.ContentBlockPar
 		}
 	}
 	return out
+}
+
+func parseDataImageURL(value string) (string, string, bool) {
+	prefix, data, ok := strings.Cut(value, ",")
+	if !ok || !strings.HasPrefix(prefix, "data:image/") || !strings.Contains(prefix, ";base64") {
+		return "", "", false
+	}
+	mediaType := strings.TrimPrefix(strings.TrimSuffix(prefix, ";base64"), "data:")
+	if mediaType == "" || data == "" {
+		return "", "", false
+	}
+	return mediaType, data, true
 }
 
 func blockContentString(value any) string {
