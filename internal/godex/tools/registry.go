@@ -107,7 +107,7 @@ func (r *Registry) Run(ctx context.Context, call Call) (Result, error) {
 		r.publish(ctx, eventbus.KindToolFailed, call, map[string]any{"tool": call.Name, "tool_call_id": call.ID, "error": result.Error, "text": result.Text})
 		return result, nil
 	}
-	r.publish(ctx, eventbus.KindToolCompleted, call, map[string]any{"tool": call.Name, "tool_call_id": call.ID, "text": result.Text})
+	r.publish(ctx, eventbus.KindToolCompleted, call, map[string]any{"tool": call.Name, "tool_call_id": call.ID, "input": call.Input, "text": result.Text})
 	return result, nil
 }
 
