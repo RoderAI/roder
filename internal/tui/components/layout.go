@@ -14,8 +14,6 @@ func RenderWithCache(vm viewmodel.Model, zones *zone.Manager, transcriptCache *T
 	width := max(40, vm.Width)
 	height := max(12, vm.Height)
 
-	composerHeight := max(3, vm.InputHeight+2)
-	slashMenuHeight := InlineListDialogHeight(vm.SlashMenu)
 	reasoningHeight := ReasoningSummaryHeight(vm.ReasoningSummary, height)
 	errorHeight := 0
 	if vm.ShowErrorLog {
@@ -25,34 +23,46 @@ func RenderWithCache(vm viewmodel.Model, zones *zone.Manager, transcriptCache *T
 	if len(vm.Attachments) > 0 {
 		attachmentHeight = 1
 	}
-	bodyHeight := max(1, height-composerHeight-slashMenuHeight-reasoningHeight-attachmentHeight-errorHeight-2)
+
+	header := Header(width, vm.Provider, vm.Model, vm.Reasoning, vm.SessionTitle, vm.Running)
+	reasoning := ""
+	if reasoningHeight > 0 {
+		reasoning = ReasoningSummary(width, reasoningHeight, vm.ReasoningSummary)
+	}
+	attachment := ""
+	if attachmentHeight > 0 {
+		attachment = AttachmentBar(width, vm.Attachments)
+	}
+	composer := ComposerWithSelection(width, vm.Input, ComposerOptions{
+		Value:       vm.ComposerValue,
+		Selection:   vm.ComposerSelection,
+		AutoApprove: vm.AutoApprove,
+	}, zones)
+	slashMenu := ""
+	if vm.SlashMenu != nil {
+		slashMenu = InlineListDialog(width, *vm.SlashMenu, zones)
+	}
+	errorLog := ""
+	if vm.ShowErrorLog {
+		errorLog = ErrorConsole(width, errorHeight, vm.ErrorLog)
+	}
+	footer := Footer(width, vm.ScrollOffset, vm.Status, vm.ShowErrorLog, len(vm.ErrorLog), vm.ContextLeft)
+	reservedHeight := renderedHeight(header) + renderedHeight(reasoning) + renderedHeight(attachment) + renderedHeight(composer) + renderedHeight(slashMenu) + renderedHeight(errorLog) + renderedHeight(footer)
+	bodyHeight := max(1, height-reservedHeight)
 
 	parts := []string{
-		Header(width, vm.Provider, vm.Model, vm.Reasoning, vm.SessionTitle, vm.Running),
+		header,
 		TranscriptDetailedWithCache(width, bodyHeight, vm.Messages, vm.ScrollOffset, vm.HoveredID, zones, transcriptCache, TranscriptOptions{
 			Selection:         vm.TranscriptSelection,
 			TimelineStyle:     vm.TimelineStyle,
 			MarkdownRendering: vm.MarkdownRendering,
 		}).View,
 	}
-	if reasoningHeight > 0 {
-		parts = append(parts, ReasoningSummary(width, reasoningHeight, vm.ReasoningSummary))
+	for _, part := range []string{reasoning, attachment, composer, slashMenu, errorLog, footer} {
+		if part != "" {
+			parts = append(parts, part)
+		}
 	}
-	if attachmentHeight > 0 {
-		parts = append(parts, AttachmentBar(width, vm.Attachments))
-	}
-	parts = append(parts, ComposerWithSelection(width, vm.Input, ComposerOptions{
-		Value:       vm.ComposerValue,
-		Selection:   vm.ComposerSelection,
-		AutoApprove: vm.AutoApprove,
-	}, zones))
-	if vm.SlashMenu != nil {
-		parts = append(parts, InlineListDialog(width, *vm.SlashMenu, zones))
-	}
-	if vm.ShowErrorLog {
-		parts = append(parts, ErrorConsole(width, errorHeight, vm.ErrorLog))
-	}
-	parts = append(parts, Footer(width, vm.ScrollOffset, vm.Status, vm.ShowErrorLog, len(vm.ErrorLog), vm.ContextLeft))
 
 	view := lipgloss.JoinVertical(
 		lipgloss.Left,
@@ -75,6 +85,13 @@ func RenderWithCache(vm viewmodel.Model, zones *zone.Manager, transcriptCache *T
 
 func errorConsoleHeight(totalHeight int) int {
 	return min(14, max(5, totalHeight/3))
+}
+
+func renderedHeight(view string) int {
+	if view == "" {
+		return 0
+	}
+	return lipgloss.Height(view)
 }
 
 func max(a, b int) int {

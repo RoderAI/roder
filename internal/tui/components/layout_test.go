@@ -34,6 +34,45 @@ func TestRenderFillsRequestedHeight(t *testing.T) {
 	}
 }
 
+func TestRenderUsesRenderedComposerHeight(t *testing.T) {
+	zones := zone.New()
+	t.Cleanup(zones.Close)
+
+	out := zones.Scan(Render(viewmodel.Model{
+		Width:       80,
+		Height:      18,
+		Model:       "gpt-test",
+		Provider:    "codex",
+		Input:       "first line\nsecond line",
+		InputHeight: 1,
+		Messages: []viewmodel.Message{{
+			ID:   "m1",
+			Role: viewmodel.RoleAssistant,
+			Body: strings.Repeat("assistant text ", 80),
+		}},
+		Status: "running",
+	}, zones))
+
+	if got := lipgloss.Height(out); got != 18 {
+		t.Fatalf("height = %d, want 18\n%s", got, out)
+	}
+	lines := strings.Split(out, "\n")
+	if len(lines) != 18 {
+		t.Fatalf("line count = %d, want 18\n%s", len(lines), out)
+	}
+	if !strings.Contains(lines[len(lines)-2], "└") {
+		t.Fatalf("composer bottom border should render before footer, got %q\n%s", lines[len(lines)-2], out)
+	}
+	if !strings.Contains(lines[len(lines)-1], "scroll") {
+		t.Fatalf("footer should render on bottom row, got %q\n%s", lines[len(lines)-1], out)
+	}
+	for i, line := range lines {
+		if lipgloss.Width(line) > 80 {
+			t.Fatalf("line %d width %d exceeds viewport:\n%s", i, lipgloss.Width(line), out)
+		}
+	}
+}
+
 func TestRenderSettingsDialogOverTimeline(t *testing.T) {
 	zones := zone.New()
 	t.Cleanup(zones.Close)
