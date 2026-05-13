@@ -64,7 +64,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			m.lines = append(m.lines, "user: "+prompt)
 			m.input.Reset()
-			return m, tea.Batch(m.runPrompt(prompt), m.waitForEvent())
+			return m, m.runPrompt(prompt)
 		}
 	case eventMsg:
 		m.appendEvent(msg.Event)
