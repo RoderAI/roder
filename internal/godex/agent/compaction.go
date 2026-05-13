@@ -9,6 +9,7 @@ import (
 	"github.com/pandelisz/gode/internal/godex/eventbus"
 	messagestore "github.com/pandelisz/gode/internal/godex/message"
 	"github.com/pandelisz/gode/internal/godex/provider"
+	"github.com/pandelisz/gode/internal/godex/session"
 )
 
 func (r *Runner) compactMessagesIfNeeded(ctx context.Context, req RunRequest, messages []provider.Message) ([]provider.Message, error) {
@@ -112,26 +113,70 @@ func rawCompactionMessages(items []json.RawMessage) []provider.Message {
 }
 
 func (r *Runner) persistCompactedWindow(ctx context.Context, req RunRequest, items []json.RawMessage, suffix []provider.Message) {
-	if r.messages == nil {
-		return
-	}
-	for i, raw := range items {
-		text := "compaction item"
-		if i == len(items)-1 {
-			text = "canonical compacted context"
+	if r.items != nil {
+		var stored []session.Item
+		for i, raw := range items {
+			stored = append(stored, session.Item{
+				ID:        fmt.Sprintf("%s:compaction:%d", req.RunID, i),
+				SessionID: req.SessionID,
+				TurnID:    req.RunID,
+				Kind:      session.ItemCompaction,
+				RawJSON:   append([]byte(nil), raw...),
+			})
 		}
-		_, _ = r.messages.Append(ctx, messagestore.Message{
-			SessionID:  req.SessionID,
-			RunID:      req.RunID,
-			Role:       messagestore.RoleCompaction,
-			Text:       text,
-			RawJSON:    append([]byte(nil), raw...),
-			SourceKind: "compacted",
-		})
+		for i, msg := range suffix {
+			if item, ok := providerSuffixItem(req, msg, i); ok {
+				stored = append(stored, item)
+			}
+		}
+		if len(stored) > 0 {
+			_, _ = r.items.AppendMany(ctx, stored)
+		}
 	}
-	for _, msg := range suffix {
-		_ = appendProviderSuffix(ctx, r.messages, req, msg)
+	if r.messages != nil {
+		for i, raw := range items {
+			text := "compaction item"
+			if i == len(items)-1 {
+				text = "canonical compacted context"
+			}
+			_, _ = r.messages.Append(ctx, messagestore.Message{
+				SessionID:  req.SessionID,
+				RunID:      req.RunID,
+				Role:       messagestore.RoleCompaction,
+				Text:       text,
+				RawJSON:    append([]byte(nil), raw...),
+				SourceKind: "compacted",
+			})
+		}
+		for _, msg := range suffix {
+			_ = appendProviderSuffix(ctx, r.messages, req, msg)
+		}
 	}
+}
+
+func providerSuffixItem(req RunRequest, msg provider.Message, index int) (session.Item, bool) {
+	item := session.Item{
+		ID:        fmt.Sprintf("%s:suffix:%d", req.RunID, index),
+		SessionID: req.SessionID,
+		TurnID:    req.RunID,
+		Text:      msg.Content,
+	}
+	switch msg.Role {
+	case provider.RoleUser:
+		item.Kind = session.ItemMessage
+		item.Role = "user"
+	case provider.RoleAssistant:
+		item.Kind = session.ItemMessage
+		item.Role = "assistant"
+	case provider.RoleTool:
+		item.Kind = session.ItemFunctionOut
+		item.Role = "tool"
+		item.ToolCallID = msg.ToolCallID
+		item.ToolName = msg.ToolName
+	default:
+		return session.Item{}, false
+	}
+	return item, true
 }
 
 func appendProviderSuffix(ctx context.Context, store *messagestore.Store, req RunRequest, msg provider.Message) error {
