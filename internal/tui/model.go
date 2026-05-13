@@ -7,6 +7,7 @@ import (
 
 	"charm.land/bubbles/v2/textarea"
 	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 	zone "github.com/lrstanley/bubblezone/v2"
 	"github.com/pandelisz/gode/internal/godex"
 	"github.com/pandelisz/gode/internal/godex/eventbus"
@@ -15,6 +16,7 @@ import (
 )
 
 const maxTranscriptMessages = 500
+const wheelScrollLines = 3
 
 type eventMsg struct {
 	Event eventbus.Event
@@ -68,16 +70,17 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.width = msg.Width
 		m.height = msg.Height
 		m.input.SetWidth(max(20, msg.Width-4))
+		m.clampScroll()
 		return m, nil
 	case tea.KeyPressMsg:
 		switch msg.String() {
 		case "ctrl+c", "esc":
 			return m, tea.Quit
 		case "pgup":
-			m.scrollBy(4)
+			m.scrollBy(max(4, m.visibleTranscriptLines()-1))
 			return m, nil
 		case "pgdown":
-			m.scrollBy(-4)
+			m.scrollBy(-max(4, m.visibleTranscriptLines()-1))
 			return m, nil
 		case "home":
 			m.scrollToOldest()
@@ -244,6 +247,7 @@ func (m *Model) addMessage(role viewmodel.Role, title string, body string) {
 	if m.followTail {
 		m.scrollOffset = 0
 	}
+	m.clampScroll()
 }
 
 func (m *Model) appendAssistantDelta(text string) {
@@ -267,9 +271,9 @@ func (m *Model) handleWheel(msg tea.MouseWheelMsg) {
 	mouse := msg.Mouse()
 	switch mouse.Button {
 	case tea.MouseWheelUp:
-		m.scrollBy(3)
+		m.scrollBy(wheelScrollLines)
 	case tea.MouseWheelDown:
-		m.scrollBy(-3)
+		m.scrollBy(-wheelScrollLines)
 	}
 }
 
@@ -285,12 +289,12 @@ func (m *Model) updateHover(msg tea.MouseMsg) {
 }
 
 func (m *Model) scrollBy(delta int) {
-	m.scrollOffset = clamp(m.scrollOffset+delta, 0, max(0, len(m.messages)-1))
+	m.scrollOffset = clamp(m.scrollOffset+delta, 0, m.maxScrollOffset())
 	m.followTail = m.scrollOffset == 0
 }
 
 func (m *Model) scrollToOldest() {
-	m.scrollOffset = max(0, len(m.messages)-1)
+	m.scrollOffset = m.maxScrollOffset()
 	m.followTail = false
 }
 
@@ -304,6 +308,91 @@ func truncate(text string, limit int) string {
 		return text
 	}
 	return text[:limit] + "\n... truncated in TUI; full result is in the event journal"
+}
+
+func (m *Model) clampScroll() {
+	m.scrollOffset = clamp(m.scrollOffset, 0, m.maxScrollOffset())
+	if m.scrollOffset == 0 {
+		m.followTail = true
+	}
+}
+
+func (m Model) maxScrollOffset() int {
+	return max(0, m.transcriptLineCount()-m.visibleTranscriptLines())
+}
+
+func (m Model) visibleTranscriptLines() int {
+	composerHeight := max(3, m.input.Height()+2)
+	transcriptHeight := max(6, m.height-composerHeight-2)
+	return max(1, transcriptHeight-2)
+}
+
+func (m Model) transcriptLineCount() int {
+	width := max(12, m.width-4)
+	total := 0
+	for _, msg := range m.messages {
+		total++
+		total += countWrappedLines(msg.Body, width)
+	}
+	return total
+}
+
+func countWrappedLines(text string, width int) int {
+	text = strings.TrimSpace(text)
+	if text == "" {
+		return 1
+	}
+
+	total := 0
+	for _, raw := range strings.Split(text, "\n") {
+		words := strings.Fields(raw)
+		if len(words) == 0 {
+			total++
+			continue
+		}
+
+		line := ""
+		for _, word := range words {
+			if lipgloss.Width(word) > width {
+				if line != "" {
+					total++
+					line = ""
+				}
+				total += longWordLines(word, width)
+				continue
+			}
+			if line == "" {
+				line = word
+				continue
+			}
+			next := line + " " + word
+			if lipgloss.Width(next) > width {
+				total++
+				line = word
+				continue
+			}
+			line = next
+		}
+		if line != "" {
+			total++
+		}
+	}
+	return total
+}
+
+func longWordLines(word string, width int) int {
+	lines := 1
+	line := ""
+	for _, r := range word {
+		next := line + string(r)
+		if line != "" && lipgloss.Width(next) > width {
+			lines++
+			line = string(r)
+			continue
+		}
+		line = next
+	}
+	return lines
 }
 
 func max(a, b int) int {

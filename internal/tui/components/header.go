@@ -10,14 +10,12 @@ var (
 	headerBarStyle = lipgloss.NewStyle().
 			Bold(true).
 			Foreground(lipgloss.Color("231")).
-			Background(lipgloss.Color("235")).
 			Padding(0, 1)
 	headerAccentStyle = lipgloss.NewStyle().
 				Bold(true).
 				Foreground(lipgloss.Color("212"))
 	headerMetaStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("252")).
-			Background(lipgloss.Color("235"))
+			Foreground(lipgloss.Color("252"))
 )
 
 func Header(width int, provider string, model string, running bool) string {

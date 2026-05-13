@@ -9,7 +9,6 @@ import (
 
 var footerStyle = lipgloss.NewStyle().
 	Foreground(lipgloss.Color("248")).
-	Background(lipgloss.Color("235")).
 	Padding(0, 1)
 
 func Footer(width int, scrollOffset int, status string) string {
