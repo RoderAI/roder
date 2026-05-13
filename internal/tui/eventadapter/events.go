@@ -101,7 +101,7 @@ func Apply(ev eventbus.Event) Update {
 		var payload errorPayload
 		_ = ev.DecodePayload(&payload)
 		done := false
-		return withStatus(withMessage(viewmodel.RoleError, "", payload.Error), "run failed - ctrl+l errors").withRunning(&done)
+		return withStatus(withMessage(viewmodel.RoleError, "", payload.Message()), "run failed - ctrl+l errors").withRunning(&done)
 	default:
 		return Update{}
 	}
@@ -147,7 +147,15 @@ type namedPayload struct {
 }
 
 type errorPayload struct {
-	Error string `json:"error"`
+	Error  string `json:"error"`
+	Detail string `json:"detail"`
+}
+
+func (p errorPayload) Message() string {
+	if strings.TrimSpace(p.Detail) != "" {
+		return p.Detail
+	}
+	return p.Error
 }
 
 func withMessage(role viewmodel.Role, title string, body string) Update {

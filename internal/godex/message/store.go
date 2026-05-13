@@ -33,6 +33,13 @@ func Open(dataDir string) *Store {
 	}
 }
 
+func (s *Store) SessionPath(sessionID string) string {
+	if s == nil {
+		return ""
+	}
+	return s.path(sessionID)
+}
+
 func (s *Store) Append(ctx context.Context, msg Message) (Message, error) {
 	if err := ctx.Err(); err != nil {
 		return Message{}, err
@@ -164,10 +171,15 @@ func ProjectionFromEvent(ev eventbus.Event) []Message {
 		return single(base, RoleTool, text)
 	case eventbus.KindRunFailed:
 		var payload struct {
-			Error string `json:"error"`
+			Error  string `json:"error"`
+			Detail string `json:"detail"`
 		}
 		_ = ev.DecodePayload(&payload)
-		return single(base, RoleError, payload.Error)
+		text := payload.Detail
+		if text == "" {
+			text = payload.Error
+		}
+		return single(base, RoleError, text)
 	default:
 		return nil
 	}

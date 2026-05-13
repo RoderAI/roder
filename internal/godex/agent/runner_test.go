@@ -316,6 +316,86 @@ func TestRunnerFeedsToolFailureBackToModel(t *testing.T) {
 	}
 }
 
+func TestRunnerToolLoopFailureIncludesDebugDetail(t *testing.T) {
+	reg := tools.NewRegistry(tools.WithAutoApprove(true))
+	reg.Register(tools.Tool{
+		Name:        "echo",
+		Description: "echo",
+		ReadOnly:    true,
+		Run: func(context.Context, tools.Call) (tools.Result, error) {
+			return tools.Result{Text: "again"}, nil
+		},
+	})
+	dataDir := t.TempDir()
+	store, err := journal.Open(filepath.Join(dataDir, "events.jsonl"))
+	if err != nil {
+		t.Fatalf("journal: %v", err)
+	}
+	defer store.Close()
+	messageStore := messagestore.Open(dataDir)
+	script := &scriptedProvider{
+		streams: [][]provider.Event{
+			{
+				{Kind: provider.EventToolCall, ToolRequest: &provider.ToolRequest{ID: "call_1", Name: "echo", Arguments: `{}`}},
+				{Kind: provider.EventCompleted},
+			},
+			{
+				{Kind: provider.EventToolCall, ToolRequest: &provider.ToolRequest{ID: "call_2", Name: "echo", Arguments: `{}`}},
+				{Kind: provider.EventCompleted},
+			},
+		},
+	}
+	runner := NewRunner(Config{
+		Bus:      eventbus.New(eventbus.WithSubscriberBuffer(16)),
+		Journal:  store,
+		Messages: messageStore,
+		Tools:    reg,
+		Provider: script,
+	})
+	defer runner.bus.Close()
+
+	_, err = runner.Run(context.Background(), RunRequest{SessionID: "s-loop", RunID: "r-loop", Prompt: "loop", MaxTurns: 2})
+	if err == nil {
+		t.Fatal("expected tool loop error")
+	}
+	for _, want := range []string{
+		"agent stopped without final text after tool loop",
+		"session_id: s-loop",
+		"run_id: r-loop",
+		"max_turns: 2",
+		"tool_turns: 2",
+		"tool_calls: 2",
+		"last_tool: echo",
+		"last_tool_call_id: call_2",
+		"event_journal: " + filepath.Join(dataDir, "events.jsonl"),
+		"message_log: " + filepath.Join(dataDir, "sessions", "s-loop", "messages.jsonl"),
+	} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("error missing %q:\n%s", want, err)
+		}
+	}
+	events, err := store.Replay(context.Background(), journal.ReplayFilter{SessionID: "s-loop", RunID: "r-loop", Kinds: []eventbus.Kind{eventbus.KindRunFailed}})
+	if err != nil {
+		t.Fatalf("replay: %v", err)
+	}
+	if len(events) != 1 {
+		t.Fatalf("run failed events = %d", len(events))
+	}
+	var payload struct {
+		Error  string `json:"error"`
+		Detail string `json:"detail"`
+	}
+	if err := events[0].DecodePayload(&payload); err != nil {
+		t.Fatalf("decode payload: %v", err)
+	}
+	if payload.Error != "agent stopped without final text after tool loop" {
+		t.Fatalf("summary = %q", payload.Error)
+	}
+	if !strings.Contains(payload.Detail, "last_tool_call_id: call_2") {
+		t.Fatalf("detail missing last call:\n%s", payload.Detail)
+	}
+}
+
 func TestRunnerResumeLoadsPriorMessages(t *testing.T) {
 	messageStore := messagestore.Open(t.TempDir())
 	if _, err := messageStore.Append(context.Background(), messagestore.Message{SessionID: "s1", RunID: "old", Role: messagestore.RoleUser, Text: "previous prompt"}); err != nil {

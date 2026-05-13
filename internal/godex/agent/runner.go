@@ -143,6 +143,10 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (RunResult, error) {
 	}
 
 	final := ""
+	toolTurns := 0
+	toolCalls := 0
+	lastTool := ""
+	lastToolCallID := ""
 	for turn := 0; turn < maxTurns; turn++ {
 		providerReq := provider.Request{
 			SessionID:      req.SessionID,
@@ -195,6 +199,9 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (RunResult, error) {
 					if ev.ToolRequest == nil {
 						continue
 					}
+					toolCalls++
+					lastTool = ev.ToolRequest.Name
+					lastToolCallID = ev.ToolRequest.ID
 					r.emit(ctx, eventbus.Event{
 						Kind:      eventbus.KindToolRequested,
 						Source:    eventbus.SourceProvider,
@@ -256,12 +263,15 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (RunResult, error) {
 				return RunResult{}, r.fail(ctx, req, ctx.Err())
 			}
 		}
+		if turnHadToolCall {
+			toolTurns++
+		}
 		if !turnHadToolCall || turnProducedText {
 			break
 		}
 	}
 	if final == "" {
-		return RunResult{}, r.fail(ctx, req, fmt.Errorf("agent stopped without final text after tool loop"))
+		return RunResult{}, r.fail(ctx, req, r.toolLoopError(req, maxTurns, toolTurns, toolCalls, lastTool, lastToolCallID))
 	}
 
 	r.emit(ctx, eventbus.Event{
@@ -283,7 +293,7 @@ func (r *Runner) initialMessages(ctx context.Context, req RunRequest, runMessage
 		if err != nil {
 			return nil, err
 		}
-		messages = append(providerMessages(prior), messages...)
+		messages = append(providerMessages(excludeRunMessages(prior, req.RunID)), messages...)
 	}
 	messages = append(messages, provider.Message{Role: provider.RoleUser, Content: prompt})
 	return messages, nil
@@ -308,6 +318,19 @@ func providerMessages(messages []messagestore.Message) []provider.Message {
 			out = append(out, provider.Message{Role: provider.RoleAssistant, Content: msg.Text})
 		case messagestore.RoleTool:
 			out = append(out, provider.Message{Role: provider.RoleTool, Content: msg.Text, ToolCallID: msg.ToolCallID})
+		}
+	}
+	return out
+}
+
+func excludeRunMessages(messages []messagestore.Message, runID string) []messagestore.Message {
+	if runID == "" {
+		return messages
+	}
+	out := messages[:0]
+	for _, msg := range messages {
+		if msg.RunID != runID {
+			out = append(out, msg)
 		}
 	}
 	return out
@@ -354,15 +377,68 @@ func (r *Runner) providerToolSpecs() []provider.ToolSpec {
 	return out
 }
 
+func (r *Runner) toolLoopError(req RunRequest, maxTurns int, toolTurns int, toolCalls int, lastTool string, lastToolCallID string) error {
+	lines := []string{
+		"agent stopped without final text after tool loop",
+		"",
+		"debug:",
+		"session_id: " + req.SessionID,
+		"run_id: " + req.RunID,
+		fmt.Sprintf("max_turns: %d", maxTurns),
+		fmt.Sprintf("tool_turns: %d", toolTurns),
+		fmt.Sprintf("tool_calls: %d", toolCalls),
+		"provider: " + r.providerName(),
+	}
+	if lastTool != "" {
+		lines = append(lines, "last_tool: "+lastTool)
+	}
+	if lastToolCallID != "" {
+		lines = append(lines, "last_tool_call_id: "+lastToolCallID)
+	}
+	if r.journal != nil && r.journal.Path() != "" {
+		lines = append(lines, "event_journal: "+r.journal.Path())
+	}
+	if r.messages != nil {
+		if path := r.messages.SessionPath(req.SessionID); path != "" {
+			lines = append(lines, "message_log: "+path)
+		}
+	}
+	lines = append(lines,
+		"",
+		"reason: the model kept requesting tools until the tool-turn budget was exhausted, then returned an empty assistant completion.",
+		"next: inspect the event journal for this run or retry with a narrower prompt.",
+	)
+	return fmt.Errorf("%s", strings.Join(lines, "\n"))
+}
+
+func (r *Runner) providerName() string {
+	if r.provider == nil {
+		return ""
+	}
+	return r.provider.Name()
+}
+
 func (r *Runner) fail(ctx context.Context, req RunRequest, err error) error {
+	detail := strings.TrimSpace(err.Error())
+	summary := firstLine(detail)
 	r.emit(ctx, eventbus.Event{
 		Kind:      eventbus.KindRunFailed,
 		Source:    eventbus.SourceAgent,
 		SessionID: req.SessionID,
 		RunID:     req.RunID,
-		Payload:   map[string]any{"error": err.Error()},
+		Payload:   map[string]any{"error": summary, "detail": detail},
 	})
 	return err
+}
+
+func firstLine(text string) string {
+	for _, line := range strings.Split(text, "\n") {
+		line = strings.TrimSpace(line)
+		if line != "" {
+			return line
+		}
+	}
+	return text
 }
 
 func (r *Runner) emit(ctx context.Context, ev eventbus.Event) eventbus.Event {
