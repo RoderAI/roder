@@ -22,3 +22,10 @@ func TestModelAppendsAssistantDeltaEvents(t *testing.T) {
 		t.Fatalf("lines = %#v", got.lines)
 	}
 }
+
+func TestNewModelFocusesComposer(t *testing.T) {
+	model := New(nil)
+	if !model.input.Focused() {
+		t.Fatal("composer should be focused")
+	}
+}
