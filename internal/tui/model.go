@@ -9,7 +9,6 @@ import (
 	tea "charm.land/bubbletea/v2"
 	zone "github.com/lrstanley/bubblezone/v2"
 	"github.com/pandelisz/gode/internal/godex"
-	"github.com/pandelisz/gode/internal/godex/agent"
 	"github.com/pandelisz/gode/internal/godex/codexauth"
 	"github.com/pandelisz/gode/internal/godex/eventbus"
 	"github.com/pandelisz/gode/internal/tui/attachments"
@@ -22,32 +21,6 @@ import (
 
 const maxErrorLogEntries = 200
 const wheelScrollLines = 3
-
-type eventMsg struct {
-	Event eventbus.Event
-}
-
-type runDoneMsg struct {
-	Result agent.RunResult
-	Err    error
-}
-
-type steerDoneMsg struct {
-	RunID string
-	Err   error
-}
-
-type codexAuthDoneMsg struct {
-	AccountID string
-	Err       error
-}
-
-type skillsInstallDoneMsg struct {
-	Installed int
-	Source    string
-	Output    string
-	Err       error
-}
 
 type Model struct {
 	app                 *godex.App
@@ -86,6 +59,8 @@ type Model struct {
 	transcriptSelection selection.Range
 	transcriptMouseDown bool
 	transcriptLineRefs  []selection.TranscriptLineRef
+	composerSelection   selection.OffsetRange
+	composerMouseDown   bool
 
 	transcriptLineWidth int
 	transcriptLineTotal int
@@ -263,12 +238,18 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.handleWheel(msg)
 		return m, nil
 	case tea.MouseMotionMsg:
+		if m.updateComposerSelectionDrag(msg) {
+			return m, nil
+		}
 		if m.updateTranscriptSelectionDrag(msg) {
 			return m, nil
 		}
 		m.updateHover(msg)
 		return m, nil
 	case tea.MouseReleaseMsg:
+		if m.finishComposerSelection(msg) {
+			return m, nil
+		}
 		if m.finishTranscriptSelection(msg) {
 			return m, nil
 		}
@@ -290,6 +271,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		if m.inlineSlashMenuOpen() {
 			return m.updateSlashMenuMouse(msg)
+		}
+		if m.startComposerSelection(msg) {
+			return m, nil
 		}
 		if m.startTranscriptSelection(msg) {
 			return m, nil

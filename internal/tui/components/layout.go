@@ -39,7 +39,10 @@ func RenderWithCache(vm viewmodel.Model, zones *zone.Manager, transcriptCache *T
 	if attachmentHeight > 0 {
 		parts = append(parts, AttachmentBar(width, vm.Attachments))
 	}
-	parts = append(parts, Composer(width, vm.Input))
+	parts = append(parts, ComposerWithSelection(width, vm.Input, ComposerOptions{
+		Value:     vm.ComposerValue,
+		Selection: vm.ComposerSelection,
+	}, zones))
 	if vm.SlashMenu != nil {
 		parts = append(parts, InlineListDialog(width, *vm.SlashMenu, zones))
 	}
