@@ -103,6 +103,23 @@ func providerMessagesFromSessionItems(items []session.Item) []provider.Message {
 	return out
 }
 
+func providerItemsFromSessionItems(items []session.Item) []provider.Item {
+	items = canonicalProviderItems(items)
+	out := make([]provider.Item, 0, len(items))
+	for _, item := range items {
+		out = append(out, provider.Item{
+			ID:         item.ID,
+			Kind:       providerItemKind(item.Kind),
+			Role:       item.Role,
+			ToolName:   item.ToolName,
+			ToolCallID: item.ToolCallID,
+			Text:       item.Text,
+			RawJSON:    append([]byte(nil), item.RawJSON...),
+		})
+	}
+	return out
+}
+
 func providerMessagesFromProviderItems(items []provider.Item) []provider.Message {
 	out := make([]provider.Message, 0, len(items))
 	for _, item := range items {
@@ -116,6 +133,33 @@ func providerMessagesFromProviderItems(items []provider.Item) []provider.Message
 		})
 	}
 	return out
+}
+
+func providerItemsFromProviderMessages(messages []provider.Message) []provider.Item {
+	out := make([]provider.Item, 0, len(messages))
+	for _, message := range messages {
+		item := providerItemFromProviderMessage(message)
+		if item.Kind != "" {
+			out = append(out, item)
+		}
+	}
+	return out
+}
+
+func providerItemFromProviderMessage(message provider.Message) provider.Item {
+	if len(message.RawJSON) > 0 {
+		return provider.Item{Kind: provider.ItemRaw, RawJSON: append([]byte(nil), message.RawJSON...)}
+	}
+	switch {
+	case message.Role == provider.RoleAssistant && message.ToolCallID != "" && message.ToolName != "":
+		return provider.Item{Kind: provider.ItemFunctionCall, ToolName: message.ToolName, ToolCallID: message.ToolCallID, Text: message.ToolArguments}
+	case message.Role == provider.RoleTool && message.ToolCallID != "":
+		return provider.Item{Kind: provider.ItemFunctionOut, Role: string(provider.RoleTool), ToolName: message.ToolName, ToolCallID: message.ToolCallID, Text: message.Content}
+	case message.Role != "":
+		return provider.Item{Kind: provider.ItemMessage, Role: string(message.Role), Text: message.Content}
+	default:
+		return provider.Item{}
+	}
 }
 
 func canonicalProviderItems(items []session.Item) []session.Item {
@@ -195,5 +239,22 @@ func sessionItemKind(kind provider.ItemKind) session.ItemKind {
 		return session.ItemCompaction
 	default:
 		return session.ItemRaw
+	}
+}
+
+func providerItemKind(kind session.ItemKind) provider.ItemKind {
+	switch kind {
+	case session.ItemMessage:
+		return provider.ItemMessage
+	case session.ItemFunctionCall:
+		return provider.ItemFunctionCall
+	case session.ItemFunctionOut:
+		return provider.ItemFunctionOut
+	case session.ItemReasoning:
+		return provider.ItemReasoning
+	case session.ItemCompaction:
+		return provider.ItemCompaction
+	default:
+		return provider.ItemRaw
 	}
 }

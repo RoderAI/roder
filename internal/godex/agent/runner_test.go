@@ -598,7 +598,7 @@ func TestRunnerFeedsToolFailureBackToModel(t *testing.T) {
 	}
 }
 
-func TestRunnerResumeLoadsPriorMessages(t *testing.T) {
+func TestRunnerResumeIgnoresProjectedMessages(t *testing.T) {
 	messageStore := messagestore.Open(t.TempDir())
 	if _, err := messageStore.Append(context.Background(), messagestore.Message{SessionID: "s1", RunID: "old", Role: messagestore.RoleUser, Text: "previous prompt"}); err != nil {
 		t.Fatalf("append prior user: %v", err)
@@ -621,21 +621,15 @@ func TestRunnerResumeLoadsPriorMessages(t *testing.T) {
 		t.Fatalf("run: %v", err)
 	}
 	got := script.requests[0].Messages
-	if len(got) != 3 {
+	if len(got) != 1 {
 		t.Fatalf("messages = %#v", got)
 	}
-	if got[0].Role != provider.RoleUser || got[0].Content != "previous prompt" {
-		t.Fatalf("prior user = %#v", got[0])
-	}
-	if got[1].Role != provider.RoleAssistant || got[1].Content != "previous answer" {
-		t.Fatalf("prior assistant = %#v", got[1])
-	}
-	if got[2].Role != provider.RoleUser || got[2].Content != "next prompt" {
-		t.Fatalf("new prompt = %#v", got[2])
+	if got[0].Role != provider.RoleUser || got[0].Content != "next prompt" {
+		t.Fatalf("new prompt = %#v", got[0])
 	}
 }
 
-func TestRunnerResumeUsesCanonicalCompactedWindow(t *testing.T) {
+func TestRunnerResumeIgnoresProjectedCompactionMessages(t *testing.T) {
 	messageStore := messagestore.Open(t.TempDir())
 	if _, err := messageStore.Append(context.Background(), messagestore.Message{SessionID: "s1", RunID: "old", Role: messagestore.RoleUser, Text: "old prompt"}); err != nil {
 		t.Fatalf("append prior user: %v", err)
@@ -656,14 +650,11 @@ func TestRunnerResumeUsesCanonicalCompactedWindow(t *testing.T) {
 		t.Fatalf("run: %v", err)
 	}
 	got := capture.request.Messages
-	if len(got) != 2 {
+	if len(got) != 1 {
 		t.Fatalf("messages = %#v", got)
 	}
-	if len(got[0].RawJSON) == 0 || !strings.Contains(string(got[0].RawJSON), `"encrypted_content":"opaque"`) {
-		t.Fatalf("first message should be compacted raw item, got %#v", got[0])
-	}
-	if got[1].Role != provider.RoleUser || got[1].Content != "next prompt" {
-		t.Fatalf("new prompt = %#v", got[1])
+	if got[0].Role != provider.RoleUser || got[0].Content != "next prompt" {
+		t.Fatalf("new prompt = %#v", got[0])
 	}
 }
 

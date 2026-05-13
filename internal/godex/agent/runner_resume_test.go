@@ -47,6 +47,66 @@ func TestRunnerResumeLoadsPriorItemsFromDisk(t *testing.T) {
 	if got[2].Role != provider.RoleUser || got[2].Content != "next prompt" {
 		t.Fatalf("new prompt = %#v", got[2])
 	}
+	items := script.requests[0].InputItems
+	if len(items) != 3 {
+		t.Fatalf("input items = %#v", items)
+	}
+	if items[0].Kind != provider.ItemMessage || items[0].Role != "user" || items[0].Text != "previous prompt" {
+		t.Fatalf("prior user item = %#v", items[0])
+	}
+	if items[2].Kind != provider.ItemMessage || items[2].Role != "user" || items[2].Text != "next prompt" {
+		t.Fatalf("new prompt item = %#v", items[2])
+	}
+}
+
+func TestRunnerResumeSendsCanonicalToolItemsToProvider(t *testing.T) {
+	dataDir := t.TempDir()
+	itemStore := openItemStore(t, dataDir)
+	if _, err := itemStore.AppendMany(context.Background(), []session.Item{
+		{SessionID: "s-cross", TurnID: "old", Kind: session.ItemMessage, Role: "user", Text: "read README"},
+		{SessionID: "s-cross", TurnID: "old", Kind: session.ItemMessage, Role: "assistant", Text: "I'll inspect it."},
+		{SessionID: "s-cross", TurnID: "old", Kind: session.ItemFunctionCall, ToolName: "read_file", ToolCallID: "toolu_01", Text: `{"path":"README.md"}`},
+		{SessionID: "s-cross", TurnID: "old", Kind: session.ItemFunctionOut, ToolCallID: "toolu_01", Text: "contents"},
+		{SessionID: "s-cross", TurnID: "old", Kind: session.ItemMessage, Role: "assistant", Text: "README describes gode."},
+	}); err != nil {
+		t.Fatalf("append prior items: %v", err)
+	}
+	script := &scriptedProvider{streams: [][]provider.Event{{
+		{Kind: provider.EventCompleted, Text: "done"},
+	}}}
+	runner := NewRunner(Config{
+		Bus:      eventbus.New(eventbus.WithSubscriberBuffer(16)),
+		Items:    itemStore,
+		Provider: script,
+	})
+	defer runner.bus.Close()
+
+	if _, err := runner.Run(context.Background(), RunRequest{SessionID: "s-cross", RunID: "new", Prompt: "continue", Resume: true}); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	items := script.requests[0].InputItems
+	if len(items) != 6 {
+		t.Fatalf("input items = %#v", items)
+	}
+	wantKinds := []provider.ItemKind{
+		provider.ItemMessage,
+		provider.ItemMessage,
+		provider.ItemFunctionCall,
+		provider.ItemFunctionOut,
+		provider.ItemMessage,
+		provider.ItemMessage,
+	}
+	for i, want := range wantKinds {
+		if items[i].Kind != want {
+			t.Fatalf("item %d = %#v, want kind %s", i, items[i], want)
+		}
+	}
+	if items[2].ToolCallID != "toolu_01" || items[2].ToolName != "read_file" || items[2].Text != `{"path":"README.md"}` {
+		t.Fatalf("function call item = %#v", items[2])
+	}
+	if items[3].ToolCallID != "toolu_01" || items[3].Text != "contents" {
+		t.Fatalf("function output item = %#v", items[3])
+	}
 }
 
 func TestRunnerWithoutResumeIgnoresPriorItems(t *testing.T) {

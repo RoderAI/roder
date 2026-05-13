@@ -24,7 +24,7 @@ func TestAnthropicLiveSmoke(t *testing.T) {
 		APIKey:    apiKey,
 	})
 	events, errs := anthropicProvider.Stream(ctx, Request{
-		Messages: []Message{{Role: RoleUser, Content: "Reply with the word gode."}},
+		InputItems: []Item{{Kind: ItemMessage, Role: "user", Text: "Reply with the word gode."}},
 	})
 	var final string
 	for events != nil || errs != nil {

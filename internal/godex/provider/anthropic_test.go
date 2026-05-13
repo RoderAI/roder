@@ -51,10 +51,15 @@ func TestAnthropicParamsFromCanonicalItems(t *testing.T) {
 	}
 }
 
-func TestAnthropicParamsUsesLegacyMessagesDuringTransition(t *testing.T) {
+func TestAnthropicParamsUseCanonicalItemsOnly(t *testing.T) {
 	anthropicProvider := NewAnthropic("")
 	params, err := anthropicProvider.messageParams(Request{
-		Messages: []Message{{Role: RoleUser, Content: "hello"}},
+		Messages: []Message{{Role: RoleUser, Content: "legacy should be ignored"}},
+		InputItems: []Item{{
+			Kind: ItemMessage,
+			Role: "user",
+			Text: "hello",
+		}},
 	})
 	if err != nil {
 		t.Fatalf("params: %v", err)
@@ -65,5 +70,8 @@ func TestAnthropicParamsUsesLegacyMessagesDuringTransition(t *testing.T) {
 	}
 	if !strings.Contains(string(data), "hello") {
 		t.Fatalf("messages JSON = %s", data)
+	}
+	if strings.Contains(string(data), "legacy should be ignored") {
+		t.Fatalf("legacy message fallback leaked into Anthropic params: %s", data)
 	}
 }

@@ -172,10 +172,12 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (RunResult, error) {
 	invocation := godeskills.ApplyInvocationsFiltered(commandExpansion.Prompt, godeskills.Catalog{Skills: r.skills}, activeSkills)
 	runMessages := append([]provider.Message{}, invocation.Messages...)
 	runMessages = append(runMessages, skillDiagnosticMessages(invocation.Diagnostics)...)
-	messages, err := r.initialMessages(ctx, req, runMessages, invocation.Prompt)
+	contextWindow, err := r.initialContext(ctx, req, runMessages, invocation.Prompt)
 	if err != nil {
 		return RunResult{}, r.fail(ctx, req, err)
 	}
+	messages := contextWindow.Messages
+	inputItems := contextWindow.InputItems
 	final := ""
 	stats := runStats{}
 	for {
@@ -190,6 +192,7 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (RunResult, error) {
 			Instructions:   firstNonEmpty(req.Instructions, GodeInstructions),
 			ResponseFormat: req.ResponseFormat,
 			Messages:       messages,
+			InputItems:     inputItems,
 			Tools:          r.providerToolSpecs(),
 			Compaction:     compaction,
 		}
@@ -200,6 +203,7 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (RunResult, error) {
 		}
 		r.recordGoalUsage(ctx, req, providerReq.Messages, time.Since(started))
 		messages = outcome.Messages
+		inputItems = providerItemsFromProviderMessages(messages)
 		if outcome.HadToolCall {
 			stats.ToolTurns++
 			final = ""
@@ -227,42 +231,42 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (RunResult, error) {
 	return RunResult{SessionID: req.SessionID, RunID: req.RunID, FinalText: final}, nil
 }
 
-func (r *Runner) initialMessages(ctx context.Context, req RunRequest, runMessages []provider.Message, prompt string) ([]provider.Message, error) {
+type initialContext struct {
+	Messages   []provider.Message
+	InputItems []provider.Item
+}
+
+func (r *Runner) initialContext(ctx context.Context, req RunRequest, runMessages []provider.Message, prompt string) (initialContext, error) {
 	messages := append([]provider.Message(nil), r.contextMessages...)
 	messages = append(messages, runMessages...)
 	messages = append(messages, req.Messages...)
+	inputItems := providerItemsFromProviderMessages(messages)
 	if len(req.InputItems) > 0 {
 		messages = append(providerMessagesFromProviderItems(req.InputItems), messages...)
+		inputItems = append(append([]provider.Item(nil), req.InputItems...), inputItems...)
 	}
 	if req.Resume && r.items != nil {
 		priorItems, err := r.items.ListBySession(ctx, req.SessionID)
 		if err != nil {
-			return nil, err
+			return initialContext{}, err
 		}
-		prior := providerMessagesFromSessionItems(excludeRunItems(priorItems, req.RunID))
+		priorSessionItems := excludeRunItems(priorItems, req.RunID)
+		prior := providerMessagesFromSessionItems(priorSessionItems)
 		if len(prior) > 0 {
 			messages = append(prior, messages...)
-		} else if r.messages != nil {
-			priorMessages, err := r.messages.ListBySession(ctx, req.SessionID)
-			if err != nil {
-				return nil, err
-			}
-			messages = append(providerMessages(excludeRunMessages(priorMessages, req.RunID)), messages...)
+			inputItems = append(providerItemsFromSessionItems(priorSessionItems), inputItems...)
 		}
-	} else if req.Resume && r.messages != nil {
-		prior, err := r.messages.ListBySession(ctx, req.SessionID)
-		if err != nil {
-			return nil, err
-		}
-		messages = append(providerMessages(excludeRunMessages(prior, req.RunID)), messages...)
 	}
 	if goalMessage, ok, err := r.goalContextMessage(ctx, req.SessionID); err != nil {
-		return nil, err
+		return initialContext{}, err
 	} else if ok {
 		messages = append(messages, goalMessage)
+		inputItems = append(inputItems, providerItemFromProviderMessage(goalMessage))
 	}
-	messages = append(messages, provider.Message{Role: provider.RoleUser, Content: prompt})
-	return messages, nil
+	userMessage := provider.Message{Role: provider.RoleUser, Content: prompt}
+	messages = append(messages, userMessage)
+	inputItems = append(inputItems, providerItemFromProviderMessage(userMessage))
+	return initialContext{Messages: messages, InputItems: inputItems}, nil
 }
 
 func firstNonEmpty(values ...string) string {
