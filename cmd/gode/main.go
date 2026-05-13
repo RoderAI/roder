@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/pandelisz/gode/internal/godex"
+	"github.com/pandelisz/gode/internal/godex/appserver"
 	"github.com/pandelisz/gode/internal/tui"
 )
 
@@ -30,6 +31,10 @@ func run(ctx context.Context, args []string) error {
 		return runPrompt(ctx, args[1:])
 	}
 
+	if len(args) > 0 && args[0] == "app-server" {
+		return runAppServer(ctx, args[1:])
+	}
+
 	cfg, err := parseConfig(args)
 	if err != nil {
 		return err
@@ -40,6 +45,38 @@ func run(ctx context.Context, args []string) error {
 	}
 	defer app.Close(ctx)
 	return tui.Run(ctx, app)
+}
+
+func runAppServer(ctx context.Context, args []string) error {
+	cfg, listen, err := parseAppServerConfig(args)
+	if err != nil {
+		return err
+	}
+	if listen.Kind == appserver.TransportOff {
+		return nil
+	}
+	app, err := godex.New(ctx, cfg)
+	if err != nil {
+		return err
+	}
+	defer app.Close(ctx)
+
+	server := appserver.New(app, appserver.Options{Version: version})
+	switch listen.Kind {
+	case appserver.TransportStdio:
+		return server.ServeStdio(ctx, os.Stdin, os.Stdout)
+	case appserver.TransportWebSocket:
+		listener, err := server.ListenWebSocket(ctx, listen.Address)
+		if err != nil {
+			return err
+		}
+		defer listener.Close(context.Background())
+		fmt.Fprintf(os.Stderr, "gode app-server listening on %s\n", listener.WebSocketURL())
+		<-ctx.Done()
+		return ctx.Err()
+	default:
+		return fmt.Errorf("unsupported app-server transport")
+	}
 }
 
 func runPrompt(ctx context.Context, args []string) error {
@@ -71,6 +108,22 @@ func parseConfig(args []string) (godex.Config, error) {
 	cfg := godex.DefaultConfig()
 	bindConfigFlags(flags, &cfg)
 	return cfg, flags.Parse(args)
+}
+
+func parseAppServerConfig(args []string) (godex.Config, appserver.ListenConfig, error) {
+	flags := newFlagSet("gode app-server")
+	cfg := godex.DefaultConfig()
+	listenRaw := "stdio://"
+	flags.StringVar(&listenRaw, "listen", listenRaw, "transport endpoint: stdio://, ws://IP:PORT, or off")
+	bindConfigFlags(flags, &cfg)
+	if err := flags.Parse(args); err != nil {
+		return cfg, appserver.ListenConfig{}, err
+	}
+	listen, err := appserver.ParseListenURL(listenRaw)
+	if err != nil {
+		return cfg, appserver.ListenConfig{}, err
+	}
+	return cfg, listen, nil
 }
 
 func bindConfigFlags(flags *flag.FlagSet, cfg *godex.Config) {
