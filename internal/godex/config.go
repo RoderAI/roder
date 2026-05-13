@@ -10,6 +10,7 @@ type Config struct {
 	DataDir     string
 	Provider    string
 	Model       string
+	Reasoning   string
 	AutoApprove bool
 	MCP         map[string]any
 }
@@ -21,7 +22,8 @@ func DefaultConfig() Config {
 		Workspace:   wd,
 		DataDir:     filepath.Join(home, ".gode"),
 		Provider:    "mock",
-		Model:       "gpt-5.1-codex",
+		Model:       "gpt-5.4-mini",
+		Reasoning:   "low",
 		AutoApprove: false,
 		MCP:         map[string]any{},
 	}
@@ -40,6 +42,9 @@ func (c Config) withDefaults() Config {
 	}
 	if c.Model == "" {
 		c.Model = defaults.Model
+	}
+	if c.Reasoning == "" {
+		c.Reasoning = defaults.Reasoning
 	}
 	if c.MCP == nil {
 		c.MCP = defaults.MCP
