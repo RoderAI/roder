@@ -48,10 +48,6 @@ func run(ctx context.Context, args []string) error {
 		return runServe(ctx, "gode serve", args[1:])
 	}
 
-	if len(args) > 0 && args[0] == "remote-runtime" {
-		return runRemoteRuntime(ctx, args[1:])
-	}
-
 	if len(args) > 0 && args[0] == "app-server" {
 		return runAppServer(ctx, args[1:])
 	}
@@ -74,6 +70,10 @@ func run(ctx context.Context, args []string) error {
 
 	if len(args) > 0 && args[0] == "skills" {
 		return runSkills(ctx, args[1:])
+	}
+
+	if len(args) > 0 && !strings.HasPrefix(args[0], "-") {
+		return fmt.Errorf("unknown command %q", args[0])
 	}
 
 	cfg, err := parseConfig(args)

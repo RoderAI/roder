@@ -13,20 +13,20 @@ import (
 	"github.com/pandelisz/gode/internal/godex/appserver"
 )
 
-func TestRemoteRuntimeServeOffPinsCWDAndDocumentsLocalBoundary(t *testing.T) {
+func TestAppServerServeOffUsesWorkspaceFlag(t *testing.T) {
 	root := t.TempDir()
 	workspace := filepath.Join(root, "workspace")
 	dataDir := filepath.Join(root, "data")
-	cfg, listen, err := parseRemoteRuntimeConfig([]string{
+	cfg, listen, err := parseAppServerConfig([]string{
 		"--listen", "off",
-		"--cwd", workspace,
+		"--workspace", workspace,
 		"--data-dir", dataDir,
 		"--provider", "mock",
 		"--model", "mock",
 		"--reasoning", "none",
 	})
 	if err != nil {
-		t.Fatalf("parse remote runtime: %v", err)
+		t.Fatalf("parse app-server: %v", err)
 	}
 	if listen.Kind != appserver.TransportOff {
 		t.Fatalf("listen kind = %v", listen.Kind)
@@ -35,19 +35,19 @@ func TestRemoteRuntimeServeOffPinsCWDAndDocumentsLocalBoundary(t *testing.T) {
 		t.Fatalf("workspace = %q", cfg.Workspace)
 	}
 	if err := run(context.Background(), []string{
-		"remote-runtime",
+		"app-server",
 		"--listen", "off",
-		"--cwd", workspace,
+		"--workspace", workspace,
 		"--data-dir", dataDir,
 		"--provider", "mock",
 		"--model", "mock",
 		"--reasoning", "none",
 	}); err != nil {
-		t.Fatalf("remote-runtime off: %v", err)
+		t.Fatalf("app-server off: %v", err)
 	}
 }
 
-func TestRemoteRuntimeStdioRunsFullPromptWithMockProvider(t *testing.T) {
+func TestAppServerStdioRunsFullPromptWithMockProvider(t *testing.T) {
 	root := t.TempDir()
 	workspace := filepath.Join(root, "workspace")
 	dataDir := filepath.Join(root, "data")
@@ -59,14 +59,19 @@ func TestRemoteRuntimeStdioRunsFullPromptWithMockProvider(t *testing.T) {
 
 	errCh := make(chan error, 1)
 	go func() {
-		errCh <- runRemoteRuntimeWithIO(ctx, []string{
+		cfg, listen, err := parseAppServerConfig([]string{
 			"--listen", "stdio://",
-			"--cwd", workspace,
+			"--workspace", workspace,
 			"--data-dir", dataDir,
 			"--provider", "mock",
 			"--model", "mock",
 			"--reasoning", "none",
-		}, serveIO{stdin: inputReader, stdout: outputWriter, stderr: &stderr})
+		})
+		if err != nil {
+			errCh <- err
+			return
+		}
+		errCh <- serveWithConfig(ctx, "gode app-server", cfg, listen, serveIO{stdin: inputReader, stdout: outputWriter, stderr: &stderr})
 	}()
 
 	encoder := json.NewEncoder(inputWriter)
@@ -74,7 +79,7 @@ func TestRemoteRuntimeStdioRunsFullPromptWithMockProvider(t *testing.T) {
 	mustEncode(t, encoder, map[string]any{
 		"id":     1,
 		"method": "initialize",
-		"params": map[string]any{"clientInfo": map[string]any{"name": "remote-runtime-test"}},
+		"params": map[string]any{"clientInfo": map[string]any{"name": "app-server-test"}},
 	})
 	initMsg := readMessage(t, decoder, func(msg appserver.Message) bool { return messageID(msg.ID) == "1" })
 	if initMsg.Error != nil {
@@ -98,7 +103,7 @@ func TestRemoteRuntimeStdioRunsFullPromptWithMockProvider(t *testing.T) {
 		"params": map[string]any{
 			"threadId": threadID,
 			"input": []map[string]any{
-				{"type": "text", "text": "hello from remote runtime"},
+				{"type": "text", "text": "hello from app server"},
 			},
 		},
 	})
@@ -115,7 +120,7 @@ func TestRemoteRuntimeStdioRunsFullPromptWithMockProvider(t *testing.T) {
 		t.Fatalf("close input: %v", err)
 	}
 	if err := <-errCh; err != nil {
-		t.Fatalf("remote runtime: %v\nstderr:\n%s", err, stderr.String())
+		t.Fatalf("app-server: %v\nstderr:\n%s", err, stderr.String())
 	}
 	_ = outputWriter.Close()
 }
