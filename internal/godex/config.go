@@ -18,6 +18,7 @@ type Config struct {
 	Reasoning             string
 	FastMode              bool
 	AutoApprove           bool
+	TimelineStyle         string
 	DisableAutoCompaction bool
 	AutoCompactTokenLimit int
 	GoalsEnabled          bool
@@ -42,6 +43,7 @@ func DefaultConfig() Config {
 		Model:             defaultModel.ID,
 		Reasoning:         defaultModel.DefaultReasoning,
 		AutoApprove:       false,
+		TimelineStyle:     TimelineStyleDetailed,
 		GoalsEnabled:      true,
 		Telemetry:         false,
 		TelemetryEndpoint: "localhost:4317",
@@ -89,6 +91,7 @@ func (c Config) withDefaults() Config {
 	if c.Reasoning == "" {
 		c.Reasoning = ModelConfigFor(c.Model).DefaultReasoning
 	}
+	c.TimelineStyle = NormalizeTimelineStyle(c.TimelineStyle)
 	if c.TelemetryEndpoint == "" {
 		c.TelemetryEndpoint = defaults.TelemetryEndpoint
 	}

@@ -22,6 +22,7 @@ type Settings struct {
 	DefaultReasoning      string            `json:"default_reasoning,omitempty" toml:"default_reasoning,omitempty"`
 	FastMode              bool              `json:"fast_mode,omitempty" toml:"fast_mode,omitempty"`
 	AutoApprove           bool              `json:"auto_approve" toml:"auto_approve"`
+	TimelineStyle         string            `json:"timeline_style,omitempty" toml:"timeline_style,omitempty"`
 	DisableAutoCompaction bool              `json:"disable_auto_compaction,omitempty" toml:"disable_auto_compaction,omitempty"`
 	AutoCompactTokenLimit int               `json:"auto_compact_token_limit,omitempty" toml:"auto_compact_token_limit,omitempty"`
 	ActiveSkills          map[string]bool   `json:"active_skills,omitempty" toml:"active_skills,omitempty"`
@@ -49,6 +50,7 @@ func LoadSettings(dataDir string) (Settings, error) {
 	}
 	settings.DefaultModel = strings.TrimSpace(settings.DefaultModel)
 	settings.DefaultReasoning = strings.TrimSpace(settings.DefaultReasoning)
+	settings.TimelineStyle = NormalizeTimelineStyle(settings.TimelineStyle)
 	return settings, nil
 }
 
@@ -58,6 +60,7 @@ func SaveSettings(dataDir string, settings Settings) error {
 	}
 	settings.DefaultModel = strings.TrimSpace(settings.DefaultModel)
 	settings.DefaultReasoning = strings.TrimSpace(settings.DefaultReasoning)
+	settings.TimelineStyle = NormalizeTimelineStyle(settings.TimelineStyle)
 	if err := os.MkdirAll(dataDir, 0o700); err != nil {
 		return fmt.Errorf("settings dir: %w", err)
 	}
@@ -92,6 +95,7 @@ func loadLegacySettings(dataDir string) (Settings, error) {
 		DefaultReasoning      string            `json:"default_reasoning"`
 		FastMode              bool              `json:"fast_mode"`
 		AutoApprove           bool              `json:"auto_approve"`
+		TimelineStyle         string            `json:"timeline_style"`
 		DisableAutoCompaction bool              `json:"disable_auto_compaction"`
 		AutoCompactTokenLimit int               `json:"auto_compact_token_limit"`
 		ActiveSkills          map[string]bool   `json:"active_skills"`
@@ -105,6 +109,7 @@ func loadLegacySettings(dataDir string) (Settings, error) {
 		DefaultReasoning:      strings.TrimSpace(settings.DefaultReasoning),
 		FastMode:              settings.FastMode,
 		AutoApprove:           settings.AutoApprove,
+		TimelineStyle:         NormalizeTimelineStyle(settings.TimelineStyle),
 		DisableAutoCompaction: settings.DisableAutoCompaction,
 		AutoCompactTokenLimit: settings.AutoCompactTokenLimit,
 		ActiveSkills:          settings.ActiveSkills,

@@ -15,6 +15,11 @@ const (
 	RoleError     Role = "error"
 )
 
+const (
+	TimelineStyleDetailed = "detailed"
+	TimelineStyleMinimal  = "minimal"
+)
+
 type Message struct {
 	ID    string
 	Role  Role
@@ -39,6 +44,7 @@ type Model struct {
 	Reasoning                 string
 	SessionTitle              string
 	Messages                  []Message
+	TimelineStyle             string
 	ReasoningSummary          string
 	Attachments               []Attachment
 	Input                     string
