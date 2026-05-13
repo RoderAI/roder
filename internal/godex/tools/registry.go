@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/google/uuid"
@@ -43,7 +44,7 @@ type Tool struct {
 type Registry struct {
 	tools        map[string]Tool
 	bus          *eventbus.Bus
-	autoApprove  bool
+	autoApprove  atomic.Bool
 	permissions  *permission.Service
 	hooks        *hooks.Runner
 	workspace    string
@@ -60,7 +61,7 @@ func WithEventBus(bus *eventbus.Bus) Option {
 
 func WithAutoApprove(autoApprove bool) Option {
 	return func(r *Registry) {
-		r.autoApprove = autoApprove
+		r.autoApprove.Store(autoApprove)
 	}
 }
 
@@ -96,13 +97,21 @@ func WithAllowedTools(tools ...string) Option {
 func NewRegistry(opts ...Option) *Registry {
 	r := &Registry{
 		tools:        make(map[string]Tool),
-		autoApprove:  true,
 		allowedTools: make(map[string]struct{}),
 	}
+	r.autoApprove.Store(true)
 	for _, opt := range opts {
 		opt(r)
 	}
 	return r
+}
+
+func (r *Registry) SetAutoApprove(autoApprove bool) {
+	r.autoApprove.Store(autoApprove)
+}
+
+func (r *Registry) AutoApprove() bool {
+	return r.autoApprove.Load()
 }
 
 func (r *Registry) Register(tool Tool) {
@@ -177,7 +186,7 @@ func (r *Registry) runHooks(ctx context.Context, tool Tool, call *Call) (hooks.H
 }
 
 func (r *Registry) authorize(ctx context.Context, tool Tool, call Call, hookResult hooks.HookResult) error {
-	if tool.ReadOnly || tool.SkipPermission || r.autoApprove || hookResult.Decision == hooks.DecisionAllow {
+	if tool.ReadOnly || tool.SkipPermission || r.autoApprove.Load() || hookResult.Decision == hooks.DecisionAllow {
 		return nil
 	}
 	if _, ok := r.allowedTools[call.Name]; ok {
