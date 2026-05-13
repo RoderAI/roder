@@ -5,6 +5,7 @@ import (
 
 	"charm.land/lipgloss/v2"
 	zone "github.com/lrstanley/bubblezone/v2"
+	"github.com/pandelisz/gode/internal/tui/diffview"
 	"github.com/pandelisz/gode/internal/tui/viewmodel"
 )
 
@@ -38,6 +39,18 @@ var (
 			Padding(0, 1)
 	bodyStyle = lipgloss.NewStyle().
 			Foreground(lipgloss.Color("252"))
+	toolHeaderStyle = lipgloss.NewStyle().
+			Foreground(lipgloss.Color("16")).
+			Background(lipgloss.Color("111")).
+			Bold(true).
+			Padding(0, 1)
+	toolTitleStyle = lipgloss.NewStyle().
+			Foreground(lipgloss.Color("252")).
+			Bold(true)
+	toolBorderStyle = lipgloss.NewStyle().
+			Foreground(lipgloss.Color("245"))
+	toolMetaStyle = lipgloss.NewStyle().
+			Foreground(lipgloss.Color("244"))
 )
 
 func NewTranscriptCache() TranscriptCache {
@@ -162,6 +175,9 @@ func renderMessageCached(msg viewmodel.Message, width int, cache *TranscriptCach
 }
 
 func renderMessage(msg viewmodel.Message, width int) renderedMessage {
+	if msg.Role == viewmodel.RoleTool {
+		return renderToolMessage(msg, width)
+	}
 	label := roleLabelStyle(msg.Role).Render(strings.ToUpper(string(msg.Role)))
 	if msg.Title != "" {
 		label += " " + lipgloss.NewStyle().Foreground(lipgloss.Color("246")).Render(msg.Title)
@@ -173,6 +189,69 @@ func renderMessage(msg viewmodel.Message, width int) renderedMessage {
 		lines = append(lines, "  "+bodyStyle.Render(line))
 	}
 	return renderedMessage{id: msg.ID, lines: lines}
+}
+
+func renderToolMessage(msg viewmodel.Message, width int) renderedMessage {
+	title := strings.TrimSpace(msg.Title)
+	if title == "" {
+		title = "tool"
+	}
+	contentWidth := max(12, width-6)
+	lines := []string{toolHeaderStyle.Render("TOOL") + " " + toolTitleStyle.Render(title)}
+	lines = append(lines, toolBoxLines(title, msg.Body, contentWidth)...)
+	return renderedMessage{id: msg.ID, lines: lines}
+}
+
+func toolBoxLines(tool string, body string, width int) []string {
+	width = max(12, width)
+	contentWidth := max(8, width-4)
+	var bodyLines []string
+	if diffview.IsDiffTool(tool) && looksLikeDiff(body) {
+		bodyLines = diffview.RenderLines(body, contentWidth, 24)
+	} else {
+		bodyLines = wrapText(body, contentWidth)
+	}
+	if len(bodyLines) == 0 {
+		bodyLines = []string{""}
+	}
+
+	lines := []string{"  " + toolBorderStyle.Render("┌"+strings.Repeat("─", width-2)+"┐")}
+	for _, line := range bodyLines {
+		lines = append(lines, "  "+toolBorderStyle.Render("│")+" "+padVisible(toolBodyLine(line), contentWidth)+" "+toolBorderStyle.Render("│"))
+	}
+	lines = append(lines, "  "+toolBorderStyle.Render("└"+strings.Repeat("─", width-2)+"┘"))
+	return lines
+}
+
+func toolBodyLine(line string) string {
+	key, value, ok := strings.Cut(line, ":")
+	if !ok {
+		return bodyStyle.Render(line)
+	}
+	key = strings.TrimSpace(key)
+	if key == "" || len(key) > 24 {
+		return bodyStyle.Render(line)
+	}
+	return toolMetaStyle.Render(strings.ToUpper(key)+":") + " " + bodyStyle.Render(strings.TrimSpace(value))
+}
+
+func looksLikeDiff(text string) bool {
+	for _, line := range strings.Split(text, "\n") {
+		if strings.HasPrefix(line, "diff --git ") ||
+			strings.HasPrefix(line, "@@") ||
+			strings.HasPrefix(line, "+++") ||
+			strings.HasPrefix(line, "---") {
+			return true
+		}
+	}
+	return false
+}
+
+func padVisible(text string, width int) string {
+	if lipgloss.Width(text) >= width {
+		return text
+	}
+	return text + strings.Repeat(" ", width-lipgloss.Width(text))
 }
 
 func roleLabelStyle(role viewmodel.Role) lipgloss.Style {
