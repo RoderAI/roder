@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/pandelisz/gode/internal/godex"
+	"github.com/pandelisz/gode/internal/godex/acp"
 	"github.com/pandelisz/gode/internal/godex/appserver"
 	"github.com/pandelisz/gode/internal/godex/codexauth"
 	"github.com/pandelisz/gode/internal/tui"
@@ -32,6 +33,14 @@ func run(ctx context.Context, args []string) error {
 		return runPrompt(ctx, args[1:])
 	}
 
+	if len(args) > 0 && args[0] == "auth" {
+		return runAuth(ctx, args[1:])
+	}
+
+	if len(args) > 0 && args[0] == "acp" {
+		return runACP(ctx, args[1:])
+	}
+
 	if len(args) > 0 && args[0] == "app-server" {
 		return runAppServer(ctx, args[1:])
 	}
@@ -46,38 +55,6 @@ func run(ctx context.Context, args []string) error {
 	}
 	defer app.Close(ctx)
 	return tui.Run(ctx, app)
-}
-
-func runAppServer(ctx context.Context, args []string) error {
-	cfg, listen, err := parseAppServerConfig(args)
-	if err != nil {
-		return err
-	}
-	if listen.Kind == appserver.TransportOff {
-		return nil
-	}
-	app, err := godex.New(ctx, cfg)
-	if err != nil {
-		return err
-	}
-	defer app.Close(ctx)
-
-	server := appserver.New(app, appserver.Options{Version: version})
-	switch listen.Kind {
-	case appserver.TransportStdio:
-		return server.ServeStdio(ctx, os.Stdin, os.Stdout)
-	case appserver.TransportWebSocket:
-		listener, err := server.ListenWebSocket(ctx, listen.Address)
-		if err != nil {
-			return err
-		}
-		defer listener.Close(context.Background())
-		fmt.Fprintf(os.Stderr, "gode app-server listening on %s\n", listener.WebSocketURL())
-		<-ctx.Done()
-		return ctx.Err()
-	default:
-		return fmt.Errorf("unsupported app-server transport")
-	}
 }
 
 func runAuth(ctx context.Context, args []string) error {
@@ -141,11 +118,64 @@ func runAuth(ctx context.Context, args []string) error {
 	}
 }
 
+func runACP(ctx context.Context, args []string) error {
+	flags := newFlagSet("gode acp")
+	cfg := godex.DefaultConfig()
+	bindConfigFlags(flags, &cfg)
+	if err := flags.Parse(args); err != nil {
+		return err
+	}
+	if err := applySavedDefaults(&cfg, flags); err != nil {
+		return err
+	}
+	app, err := godex.New(ctx, cfg)
+	if err != nil {
+		return err
+	}
+	defer app.Close(ctx)
+	return acp.New(app, acp.Options{Version: version}).ServeStdio(ctx, os.Stdin, os.Stdout)
+}
+
+func runAppServer(ctx context.Context, args []string) error {
+	cfg, listen, err := parseAppServerConfig(args)
+	if err != nil {
+		return err
+	}
+	if listen.Kind == appserver.TransportOff {
+		return nil
+	}
+	app, err := godex.New(ctx, cfg)
+	if err != nil {
+		return err
+	}
+	defer app.Close(ctx)
+
+	server := appserver.New(app, appserver.Options{Version: version})
+	switch listen.Kind {
+	case appserver.TransportStdio:
+		return server.ServeStdio(ctx, os.Stdin, os.Stdout)
+	case appserver.TransportWebSocket:
+		listener, err := server.ListenWebSocket(ctx, listen.Address)
+		if err != nil {
+			return err
+		}
+		defer listener.Close(context.Background())
+		fmt.Fprintf(os.Stderr, "gode app-server listening on %s\n", listener.WebSocketURL())
+		<-ctx.Done()
+		return ctx.Err()
+	default:
+		return fmt.Errorf("unsupported app-server transport")
+	}
+}
+
 func runPrompt(ctx context.Context, args []string) error {
 	flags := newFlagSet("gode run")
 	cfg := godex.DefaultConfig()
 	bindConfigFlags(flags, &cfg)
 	if err := flags.Parse(args); err != nil {
+		return err
+	}
+	if err := applySavedDefaults(&cfg, flags); err != nil {
 		return err
 	}
 	prompt := strings.TrimSpace(strings.Join(flags.Args(), " "))
@@ -169,7 +199,13 @@ func parseConfig(args []string) (godex.Config, error) {
 	flags := newFlagSet("gode")
 	cfg := godex.DefaultConfig()
 	bindConfigFlags(flags, &cfg)
-	return cfg, flags.Parse(args)
+	if err := flags.Parse(args); err != nil {
+		return cfg, err
+	}
+	if err := applySavedDefaults(&cfg, flags); err != nil {
+		return cfg, err
+	}
+	return cfg, nil
 }
 
 func parseAppServerConfig(args []string) (godex.Config, appserver.ListenConfig, error) {
@@ -179,6 +215,9 @@ func parseAppServerConfig(args []string) (godex.Config, appserver.ListenConfig, 
 	flags.StringVar(&listenRaw, "listen", listenRaw, "transport endpoint: stdio://, ws://IP:PORT, or off")
 	bindConfigFlags(flags, &cfg)
 	if err := flags.Parse(args); err != nil {
+		return cfg, appserver.ListenConfig{}, err
+	}
+	if err := applySavedDefaults(&cfg, flags); err != nil {
 		return cfg, appserver.ListenConfig{}, err
 	}
 	listen, err := appserver.ParseListenURL(listenRaw)
@@ -194,6 +233,7 @@ func bindConfigFlags(flags *flag.FlagSet, cfg *godex.Config) {
 	flags.StringVar(&cfg.Provider, "provider", cfg.Provider, "provider: mock, codex, openai")
 	flags.StringVar(&cfg.Model, "model", cfg.Model, "provider model")
 	flags.StringVar(&cfg.Reasoning, "reasoning", cfg.Reasoning, "reasoning effort: none, minimal, low, medium, high, xhigh")
+	flags.BoolVar(&cfg.FastMode, "fast-mode", cfg.FastMode, "use OpenAI priority processing service tier")
 	flags.BoolVar(&cfg.AutoApprove, "auto-approve", cfg.AutoApprove, "auto approve mutating tool calls")
 	flags.BoolVar(&cfg.Telemetry, "telemetry", cfg.Telemetry, "export OpenTelemetry traces over OTLP/gRPC")
 	flags.StringVar(&cfg.TelemetryEndpoint, "telemetry-endpoint", cfg.TelemetryEndpoint, "OTLP/gRPC endpoint for traces")
@@ -203,4 +243,48 @@ func newFlagSet(name string) *flag.FlagSet {
 	flags := flag.NewFlagSet(name, flag.ContinueOnError)
 	flags.SetOutput(os.Stderr)
 	return flags
+}
+
+func applySavedDefaults(cfg *godex.Config, flags *flag.FlagSet) error {
+	settings, err := godex.LoadSettings(cfg.DataDir)
+	if err != nil {
+		return err
+	}
+	if settings.FastMode && !flagWasSet(flags, "fast-mode") {
+		cfg.FastMode = true
+	}
+	if flagWasSet(flags, "model") {
+		return nil
+	}
+	if settings.DefaultModel != "" {
+		cfg.Model = settings.DefaultModel
+		model := godex.ModelConfigFor(settings.DefaultModel)
+		if !flagWasSet(flags, "provider") {
+			cfg.Provider = model.Provider
+		}
+		if !flagWasSet(flags, "reasoning") {
+			cfg.Reasoning = model.DefaultReasoning
+			if settings.DefaultReasoning != "" && model.SupportsReasoning(settings.DefaultReasoning) {
+				cfg.Reasoning = settings.DefaultReasoning
+			}
+		}
+		return nil
+	}
+	if settings.DefaultReasoning != "" && !flagWasSet(flags, "reasoning") {
+		model := godex.ModelConfigFor(cfg.Model)
+		if model.SupportsReasoning(settings.DefaultReasoning) {
+			cfg.Reasoning = settings.DefaultReasoning
+		}
+	}
+	return nil
+}
+
+func flagWasSet(flags *flag.FlagSet, name string) bool {
+	found := false
+	flags.Visit(func(f *flag.Flag) {
+		if f.Name == name {
+			found = true
+		}
+	})
+	return found
 }

@@ -17,10 +17,10 @@ func TestUsesCodexAuthForGPTModelsWhenSignedIn(t *testing.T) {
 		t.Fatalf("save auth: %v", err)
 	}
 
-	if !usesCodexAuth(Config{DataDir: dataDir, Provider: "openai", Model: "gpt-5.4-mini"}) {
+	if !UsesCodexAuth(Config{DataDir: dataDir, Provider: "openai", Model: "gpt-5.4-mini"}) {
 		t.Fatal("expected signed-in GPT model to use codex auth")
 	}
-	if usesCodexAuth(Config{DataDir: dataDir, Provider: "openai", Model: "o4-mini"}) {
+	if UsesCodexAuth(Config{DataDir: dataDir, Provider: "openai", Model: "o4-mini"}) {
 		t.Fatal("non-GPT model should not use codex auth")
 	}
 }

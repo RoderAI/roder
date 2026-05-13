@@ -1,8 +1,10 @@
 package main
 
 import (
+	"path/filepath"
 	"testing"
 
+	"github.com/pandelisz/gode/internal/godex"
 	"github.com/pandelisz/gode/internal/godex/appserver"
 )
 
@@ -74,5 +76,68 @@ func TestParseAppServerConfigAppliesFlags(t *testing.T) {
 	}
 	if !cfg.AutoApprove {
 		t.Fatal("auto approve = false")
+	}
+}
+
+func TestParseConfigUsesSavedDefaultModel(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	dataDir := filepath.Join(home, ".gode")
+	if err := godex.SaveSettings(dataDir, godex.Settings{DefaultModel: "gpt-5.4-mini", DefaultReasoning: godex.ReasoningHigh, FastMode: true}); err != nil {
+		t.Fatalf("save settings: %v", err)
+	}
+
+	cfg, err := parseConfig(nil)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if cfg.Model != "gpt-5.4-mini" {
+		t.Fatalf("model = %q", cfg.Model)
+	}
+	if cfg.Provider != godex.ProviderOpenAI {
+		t.Fatalf("provider = %q", cfg.Provider)
+	}
+	if cfg.Reasoning != godex.ReasoningHigh {
+		t.Fatalf("reasoning = %q", cfg.Reasoning)
+	}
+	if !cfg.FastMode {
+		t.Fatal("fast mode = false")
+	}
+}
+
+func TestParseConfigModelFlagOverridesSavedDefaultModel(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	dataDir := filepath.Join(home, ".gode")
+	if err := godex.SaveSettings(dataDir, godex.Settings{DefaultModel: "gpt-5.4-mini"}); err != nil {
+		t.Fatalf("save settings: %v", err)
+	}
+
+	cfg, err := parseConfig([]string{"--model", "gpt-flag"})
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if cfg.Model != "gpt-flag" {
+		t.Fatalf("model = %q", cfg.Model)
+	}
+}
+
+func TestParseConfigProviderFlagOverridesSavedDefaultModelProvider(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	dataDir := filepath.Join(home, ".gode")
+	if err := godex.SaveSettings(dataDir, godex.Settings{DefaultModel: "gpt-5.4-mini"}); err != nil {
+		t.Fatalf("save settings: %v", err)
+	}
+
+	cfg, err := parseConfig([]string{"--provider", "mock"})
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if cfg.Model != "gpt-5.4-mini" {
+		t.Fatalf("model = %q", cfg.Model)
+	}
+	if cfg.Provider != "mock" {
+		t.Fatalf("provider = %q", cfg.Provider)
 	}
 }

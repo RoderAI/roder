@@ -1,6 +1,7 @@
 package components
 
 import (
+	"strings"
 	"testing"
 
 	"charm.land/lipgloss/v2"
@@ -29,6 +30,46 @@ func TestRenderFillsRequestedHeight(t *testing.T) {
 
 	if got := lipgloss.Height(out); got != 24 {
 		t.Fatalf("height = %d, want 24\n%s", got, out)
+	}
+}
+
+func TestRenderSettingsDialogOverTimeline(t *testing.T) {
+	zones := zone.New()
+	t.Cleanup(zones.Close)
+
+	out := zones.Scan(Render(viewmodel.Model{
+		Width:       80,
+		Height:      24,
+		Model:       "gpt-test",
+		Provider:    "mock",
+		Input:       "> Ask gode to work on this repo",
+		InputHeight: 1,
+		Messages: []viewmodel.Message{{
+			ID:   "m1",
+			Role: viewmodel.RoleUser,
+			Body: "timeline stays visible",
+		}},
+		Status: "settings",
+		Settings: &viewmodel.SettingsDialog{
+			Title:  "Settings",
+			Screen: viewmodel.SettingsScreenMenu,
+			MenuItems: []viewmodel.SettingsMenuItem{{
+				ID:          "models",
+				Label:       "Models",
+				Description: "Choose default model",
+				Value:       "gpt-next",
+				Selected:    true,
+			}},
+		},
+	}, zones))
+
+	if got := lipgloss.Height(out); got != 24 {
+		t.Fatalf("height = %d, want 24\n%s", got, out)
+	}
+	for _, want := range []string{"Settings", "Models", "gpt-next", "gode", "timeline stays visible"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("rendered output missing %q:\n%s", want, out)
+		}
 	}
 }
 
