@@ -407,6 +407,7 @@ func (m *Model) addOrUpdateMessage(message eventadapter.Message) {
 			} else {
 				m.clampScroll()
 			}
+			m.reconcileTranscriptSelection()
 			return
 		}
 		delete(m.messageKeys, message.Key)
@@ -432,9 +433,11 @@ func (m *Model) addMessage(role viewmodel.Role, title string, body string) {
 	m.markTranscriptLinesDirty()
 	if m.followTail {
 		m.scrollOffset = 0
+		m.reconcileTranscriptSelection()
 		return
 	}
 	m.clampScroll()
+	m.reconcileTranscriptSelection()
 }
 
 func (m *Model) pruneMessageKeys() {
@@ -461,6 +464,7 @@ func (m *Model) appendAssistantDelta(text string) {
 			if m.followTail {
 				m.scrollOffset = 0
 			}
+			m.reconcileTranscriptSelection()
 			return
 		}
 	}
