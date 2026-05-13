@@ -5,9 +5,11 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/google/uuid"
 	"github.com/pandelisz/gode/internal/godex/agent"
+	"github.com/pandelisz/gode/internal/godex/codexauth"
 	"github.com/pandelisz/gode/internal/godex/eventbus"
 	"github.com/pandelisz/gode/internal/godex/journal"
 	"github.com/pandelisz/gode/internal/godex/mcp"
@@ -148,8 +150,22 @@ func buildProvider(cfg Config) (provider.Provider, error) {
 	case "mock":
 		return provider.NewMock("mock response", nil), nil
 	case "codex", "openai":
+		if usesCodexAuth(cfg) {
+			return provider.NewOpenAI(cfg.Model, cfg.Reasoning, codexauth.OpenAIOptions(cfg.DataDir)...), nil
+		}
 		return provider.NewOpenAI(cfg.Model, cfg.Reasoning), nil
 	default:
 		return nil, fmt.Errorf("unknown provider %q", cfg.Provider)
 	}
+}
+
+func usesCodexAuth(cfg Config) bool {
+	cfg = cfg.withDefaults()
+	if !strings.HasPrefix(cfg.Model, "gpt-") {
+		return false
+	}
+	if cfg.Provider == "codex" {
+		return true
+	}
+	return cfg.Provider == "openai" && (codexauth.Store{DataDir: cfg.DataDir}).SignedIn()
 }

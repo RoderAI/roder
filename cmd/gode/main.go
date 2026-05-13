@@ -9,6 +9,7 @@ import (
 
 	"github.com/pandelisz/gode/internal/godex"
 	"github.com/pandelisz/gode/internal/godex/appserver"
+	"github.com/pandelisz/gode/internal/godex/codexauth"
 	"github.com/pandelisz/gode/internal/tui"
 )
 
@@ -76,6 +77,67 @@ func runAppServer(ctx context.Context, args []string) error {
 		return ctx.Err()
 	default:
 		return fmt.Errorf("unsupported app-server transport")
+	}
+}
+
+func runAuth(ctx context.Context, args []string) error {
+	if len(args) == 0 {
+		return fmt.Errorf("usage: gode auth login codex|status|logout")
+	}
+	switch args[0] {
+	case "login":
+		flags := newFlagSet("gode auth login")
+		cfg := godex.DefaultConfig()
+		flags.StringVar(&cfg.DataDir, "data-dir", cfg.DataDir, "gode data directory")
+		if err := flags.Parse(args[1:]); err != nil {
+			return err
+		}
+		provider := "codex"
+		if flags.NArg() > 0 {
+			provider = flags.Arg(0)
+		}
+		if provider != "codex" {
+			return fmt.Errorf("unsupported auth provider %q", provider)
+		}
+		fmt.Fprintln(os.Stderr, "Opening browser for Codex sign-in...")
+		tokens, url, err := codexauth.LoginBrowser(ctx, cfg.DataDir)
+		if err != nil {
+			if url != "" {
+				fmt.Fprintf(os.Stderr, "Codex sign-in URL: %s\n", url)
+			}
+			return err
+		}
+		if tokens.AccountID != "" {
+			fmt.Fprintf(os.Stderr, "Signed in with Codex account %s\n", tokens.AccountID)
+		} else {
+			fmt.Fprintln(os.Stderr, "Signed in with Codex")
+		}
+		return nil
+	case "status":
+		cfg := godex.DefaultConfig()
+		tokens, err := (codexauth.Store{DataDir: cfg.DataDir}).Load()
+		if err != nil {
+			return err
+		}
+		if tokens.Refresh == "" {
+			fmt.Println("codex: signed out")
+			return nil
+		}
+		if tokens.AccountID != "" {
+			fmt.Printf("codex: signed in (%s)\n", tokens.AccountID)
+		} else {
+			fmt.Println("codex: signed in")
+		}
+		return nil
+	case "logout":
+		cfg := godex.DefaultConfig()
+		if err := (codexauth.Store{DataDir: cfg.DataDir}).Delete(); err != nil {
+			return err
+		}
+		fmt.Println("codex: signed out")
+		return nil
+	default:
+		return fmt.Errorf("unknown auth command %q", args[0])
 	}
 }
 
