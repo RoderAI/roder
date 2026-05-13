@@ -7,6 +7,8 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	messagestore "github.com/pandelisz/gode/internal/godex/message"
+	"github.com/pandelisz/gode/internal/godex/session"
 )
 
 type threadStartParams struct {
@@ -23,6 +25,7 @@ func (c *Connection) handleThreadStart(ctx context.Context, raw json.RawMessage)
 	}
 
 	now := time.Now().Unix()
+	threadID := uuid.NewString()
 	cwd := params.CWD
 	if cwd == "" {
 		cwd = c.server.app.Config.Workspace
@@ -37,8 +40,8 @@ func (c *Connection) handleThreadStart(ctx context.Context, raw json.RawMessage)
 	}
 
 	thread := Thread{
-		ID:            uuid.NewString(),
-		SessionID:     uuid.NewString(),
+		ID:            threadID,
+		SessionID:     threadID,
 		Preview:       "",
 		Ephemeral:     params.Ephemeral,
 		ModelProvider: provider,
@@ -49,6 +52,15 @@ func (c *Connection) handleThreadStart(ctx context.Context, raw json.RawMessage)
 		CLIVersion:    c.server.options.Version,
 		Source:        "appServer",
 		Turns:         []Turn{},
+	}
+	if c.server.app.Sessions != nil {
+		if _, err := c.server.app.Sessions.Ensure(ctx, session.Session{
+			ID:        thread.ID,
+			CreatedAt: time.Unix(now, 0).UTC(),
+			UpdatedAt: time.Unix(now, 0).UTC(),
+		}); err != nil {
+			return nil, rpcError(errorInternal, err.Error())
+		}
 	}
 
 	c.server.mu.Lock()
@@ -73,14 +85,20 @@ func (s *Server) handleThreadList(raw json.RawMessage) (any, *RPCError) {
 		return nil, rpcError(errorInvalidParams, err.Error())
 	}
 
-	s.mu.RLock()
-	threads := make([]Thread, 0, len(s.threads))
-	for _, state := range s.threads {
-		thread := state.Thread
-		thread.Turns = []Turn{}
-		threads = append(threads, thread)
+	threads, rpcErr := s.storedThreads(context.Background(), false)
+	if rpcErr != nil {
+		return nil, rpcErr
 	}
-	s.mu.RUnlock()
+	if threads == nil {
+		s.mu.RLock()
+		threads = make([]Thread, 0, len(s.threads))
+		for _, state := range s.threads {
+			thread := state.Thread
+			thread.Turns = []Turn{}
+			threads = append(threads, thread)
+		}
+		s.mu.RUnlock()
+	}
 
 	sort.Slice(threads, func(i, j int) bool {
 		return threads[i].UpdatedAt > threads[j].UpdatedAt
@@ -95,12 +113,24 @@ func (s *Server) handleThreadLoadedList(raw json.RawMessage) (any, *RPCError) {
 	if _, err := decodeParams[map[string]any](raw); err != nil {
 		return nil, rpcError(errorInvalidParams, err.Error())
 	}
-	s.mu.RLock()
-	ids := make([]string, 0, len(s.threads))
-	for id := range s.threads {
-		ids = append(ids, id)
+	var ids []string
+	if s.app != nil && s.app.Sessions != nil {
+		sessions, err := s.app.Sessions.List(context.Background())
+		if err != nil {
+			return nil, rpcError(errorInternal, err.Error())
+		}
+		ids = make([]string, 0, len(sessions))
+		for _, stored := range sessions {
+			ids = append(ids, stored.ID)
+		}
+	} else {
+		s.mu.RLock()
+		ids = make([]string, 0, len(s.threads))
+		for id := range s.threads {
+			ids = append(ids, id)
+		}
+		s.mu.RUnlock()
 	}
-	s.mu.RUnlock()
 	sort.Strings(ids)
 	return map[string]any{"data": ids, "nextCursor": nil}, nil
 }
@@ -116,15 +146,21 @@ func (s *Server) handleThreadRead(raw json.RawMessage) (any, *RPCError) {
 	if params.ThreadID == "" {
 		return nil, rpcError(errorInvalidParams, "threadId is required")
 	}
-	s.mu.RLock()
-	state := s.threads[params.ThreadID]
-	s.mu.RUnlock()
-	if state == nil {
-		return nil, rpcError(errorInvalidParams, "thread not found")
+	thread, found, rpcErr := s.readStoredThread(context.Background(), params.ThreadID, params.IncludeTurns)
+	if rpcErr != nil {
+		return nil, rpcErr
 	}
-	thread := state.Thread
-	if !params.IncludeTurns {
-		thread.Turns = []Turn{}
+	if !found {
+		s.mu.RLock()
+		state := s.threads[params.ThreadID]
+		s.mu.RUnlock()
+		if state == nil {
+			return nil, rpcError(errorInvalidParams, "thread not found")
+		}
+		thread = state.Thread
+		if !params.IncludeTurns {
+			thread.Turns = []Turn{}
+		}
 	}
 	return map[string]any{"thread": thread}, nil
 }
@@ -136,9 +172,7 @@ func (c *Connection) handleThreadUnsubscribe(raw json.RawMessage) (any, *RPCErro
 	if err != nil {
 		return nil, rpcError(errorInvalidParams, err.Error())
 	}
-	c.server.mu.RLock()
-	_, loaded := c.server.threads[params.ThreadID]
-	c.server.mu.RUnlock()
+	loaded := c.server.threadExists(context.Background(), params.ThreadID)
 	if !loaded {
 		return map[string]any{"status": "notLoaded"}, nil
 	}
@@ -146,4 +180,147 @@ func (c *Connection) handleThreadUnsubscribe(raw json.RawMessage) (any, *RPCErro
 		return map[string]any{"status": "notSubscribed"}, nil
 	}
 	return map[string]any{"status": "unsubscribed"}, nil
+}
+
+func (s *Server) storedThreads(ctx context.Context, includeTurns bool) ([]Thread, *RPCError) {
+	if s.app == nil || s.app.Sessions == nil {
+		return nil, nil
+	}
+	sessions, err := s.app.Sessions.List(ctx)
+	if err != nil {
+		return nil, rpcError(errorInternal, err.Error())
+	}
+	threads := make([]Thread, 0, len(sessions))
+	for _, stored := range sessions {
+		thread := s.threadFromSession(ctx, stored, includeTurns)
+		threads = append(threads, thread)
+	}
+	return threads, nil
+}
+
+func (s *Server) readStoredThread(ctx context.Context, threadID string, includeTurns bool) (Thread, bool, *RPCError) {
+	if s.app == nil || s.app.Sessions == nil {
+		return Thread{}, false, nil
+	}
+	stored, ok, err := s.app.Sessions.Get(ctx, threadID)
+	if err != nil {
+		return Thread{}, false, rpcError(errorInternal, err.Error())
+	}
+	if !ok {
+		return Thread{}, false, nil
+	}
+	return s.threadFromSession(ctx, stored, includeTurns), true, nil
+}
+
+func (s *Server) threadFromSession(ctx context.Context, stored session.Session, includeTurns bool) Thread {
+	created := stored.CreatedAt.Unix()
+	updated := stored.UpdatedAt.Unix()
+	name := stored.Title
+	thread := Thread{
+		ID:            stored.ID,
+		SessionID:     stored.ID,
+		Preview:       stored.Title,
+		ModelProvider: s.app.Config.Provider,
+		CreatedAt:     created,
+		UpdatedAt:     updated,
+		Status:        idleStatus(),
+		CWD:           s.app.Config.Workspace,
+		CLIVersion:    s.options.Version,
+		Source:        "appServer",
+		Turns:         []Turn{},
+	}
+	if name != "" {
+		thread.Name = &name
+	}
+
+	s.mu.RLock()
+	active := s.threads[stored.ID]
+	if active != nil {
+		thread.Status = active.Status
+		if active.activeCancel != nil {
+			thread.Turns = append(thread.Turns, active.Turns...)
+		}
+	}
+	s.mu.RUnlock()
+
+	if includeTurns {
+		thread.Turns = append(turnsFromMessages(ctx, s.app.Messages, stored.ID), thread.Turns...)
+	}
+	return thread
+}
+
+func turnsFromMessages(ctx context.Context, store *messagestore.Store, sessionID string) []Turn {
+	if store == nil {
+		return nil
+	}
+	messages, err := store.ListBySession(ctx, sessionID)
+	if err != nil {
+		return nil
+	}
+	turns := make([]Turn, 0)
+	turnIndex := map[string]int{}
+	for _, msg := range messages {
+		if msg.RunID == "" {
+			continue
+		}
+		index, ok := turnIndex[msg.RunID]
+		if !ok {
+			started := msg.CreatedAt.Unix()
+			turnIndex[msg.RunID] = len(turns)
+			turns = append(turns, Turn{
+				ID:        msg.RunID,
+				Items:     []any{},
+				ItemsView: "full",
+				Status:    "completed",
+				StartedAt: &started,
+			})
+			index = len(turns) - 1
+		}
+		completed := msg.CreatedAt.Unix()
+		turns[index].CompletedAt = &completed
+		turns[index].Items = append(turns[index].Items, messageItem(msg))
+	}
+	for i := range turns {
+		if turns[i].StartedAt != nil && turns[i].CompletedAt != nil {
+			duration := (*turns[i].CompletedAt - *turns[i].StartedAt) * 1000
+			turns[i].DurationMs = &duration
+		}
+	}
+	return turns
+}
+
+func messageItem(msg messagestore.Message) map[string]any {
+	itemType := "userMessage"
+	switch msg.Role {
+	case messagestore.RoleAssistant:
+		itemType = "agentMessage"
+	case messagestore.RoleTool:
+		itemType = "toolMessage"
+	case messagestore.RoleError:
+		itemType = "error"
+	}
+	item := map[string]any{
+		"id":   msg.ID,
+		"type": itemType,
+		"text": msg.Text,
+	}
+	if msg.ToolName != "" {
+		item["toolName"] = msg.ToolName
+	}
+	if msg.ToolCallID != "" {
+		item["toolCallId"] = msg.ToolCallID
+	}
+	return item
+}
+
+func (s *Server) threadExists(ctx context.Context, threadID string) bool {
+	if s.app != nil && s.app.Sessions != nil {
+		_, ok, err := s.app.Sessions.Get(ctx, threadID)
+		if err == nil && ok {
+			return true
+		}
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.threads[threadID] != nil
 }
