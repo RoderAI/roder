@@ -28,6 +28,10 @@ func OverlayPermissionDialog(base string, width int, height int, dialog viewmode
 	return overlayDialogBox(base, width, height, PermissionDialogBox(width, dialog, zones))
 }
 
+func OverlayConfirmDialog(base string, width int, height int, dialog viewmodel.ConfirmDialog) string {
+	return overlayDialogBox(base, width, height, ConfirmDialogBox(width, dialog))
+}
+
 func InlineListDialogHeight(dialog *viewmodel.ListDialog) int {
 	if dialog == nil || len(dialog.Items) == 0 {
 		return 0
@@ -145,6 +149,33 @@ func PermissionDialogBox(width int, dialog viewmodel.PermissionDialog, zones *zo
 	}
 	if dialog.Help != "" {
 		lines = append(lines, "", settingsHelpStyle.Render(dialog.Help))
+	}
+	return settingsBoxStyle.Width(dialogWidth).Render(strings.Join(lines, "\n"))
+}
+
+func ConfirmDialogBox(width int, dialog viewmodel.ConfirmDialog) string {
+	dialogWidth := min(60, max(38, width-12))
+	contentWidth := max(24, dialogWidth-6)
+	confirm := strings.TrimSpace(dialog.ConfirmLabel)
+	if confirm == "" {
+		confirm = "Yes"
+	}
+	cancel := strings.TrimSpace(dialog.CancelLabel)
+	if cancel == "" {
+		cancel = "No"
+	}
+	help := strings.TrimSpace(dialog.Help)
+	if help == "" {
+		help = "enter quit  right/esc cancel"
+	}
+	lines := []string{
+		settingsTitleStyle.Render(dialog.Title),
+		"",
+		settingsDescriptionStyle.Render(truncateCell(dialog.Message, contentWidth)),
+		"",
+		settingsSelectedStyle.Render("> "+confirm) + "  " + settingsItemStyle.Render(cancel),
+		"",
+		settingsHelpStyle.Render(help),
 	}
 	return settingsBoxStyle.Width(dialogWidth).Render(strings.Join(lines, "\n"))
 }
