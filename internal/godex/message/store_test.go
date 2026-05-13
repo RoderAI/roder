@@ -68,7 +68,7 @@ func TestProjectionFromEventAndAssistantCoalescing(t *testing.T) {
 			"text":         "file contents",
 		}),
 		event("e7", eventbus.KindToolFailed, map[string]any{"tool": "apply_patch", "tool_call_id": "tc2", "error": "failed"}),
-		event("e8", eventbus.KindRunFailed, map[string]any{"error": "run failed"}),
+		event("e8", eventbus.KindRunFailed, map[string]any{"error": "run failed", "detail": "run failed\nsession_id: s1"}),
 	}
 	for _, ev := range events {
 		if _, err := store.AppendProjected(ctx, ev); err != nil {
@@ -88,7 +88,7 @@ func TestProjectionFromEventAndAssistantCoalescing(t *testing.T) {
 	assertMessage(t, messages[2], RoleTool, "requested", "read_file", "tc1")
 	assertMessage(t, messages[3], RoleTool, "read internal/godex/tools/registry.go", "read_file", "tc1")
 	assertMessage(t, messages[4], RoleTool, "failed", "apply_patch", "tc2")
-	assertMessage(t, messages[5], RoleError, "run failed", "", "")
+	assertMessage(t, messages[5], RoleError, "run failed\nsession_id: s1", "", "")
 }
 
 func TestProjectionIgnoresEmptyAndUntrackedEvents(t *testing.T) {

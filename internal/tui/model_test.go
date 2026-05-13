@@ -427,6 +427,34 @@ func TestRunDoneDoesNotDuplicateRunFailedEventError(t *testing.T) {
 	}
 }
 
+func TestRunFailedEventUsesDetailInErrorLog(t *testing.T) {
+	detail := strings.Join([]string{
+		"agent stopped without final text after tool loop",
+		"",
+		"debug:",
+		"session_id: s1",
+		"run_id: r1",
+		"max_turns: 8",
+		"last_tool: shell",
+	}, "\n")
+	model := New(nil)
+	updated, _ := model.Update(eventMsg{Event: eventbus.Event{Kind: eventbus.KindRunFailed, Payload: map[string]any{
+		"error":  "agent stopped without final text after tool loop",
+		"detail": detail,
+	}}})
+	got := updated.(Model)
+
+	if len(got.messages) != 1 {
+		t.Fatalf("messages length = %d", len(got.messages))
+	}
+	if strings.Contains(got.messages[0].Body, "last_tool") {
+		t.Fatalf("timeline should stay summarized:\n%s", got.messages[0].Body)
+	}
+	if len(got.errorLog) != 1 || got.errorLog[0].Message != detail {
+		t.Fatalf("error log = %#v", got.errorLog)
+	}
+}
+
 func keyCtrlL() tea.KeyPressMsg {
 	return tea.KeyPressMsg{Code: 'l', Mod: tea.ModCtrl}
 }

@@ -3,6 +3,7 @@ package journal
 import (
 	"context"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/pandelisz/gode/internal/godex/eventbus"
@@ -52,5 +53,40 @@ func TestJSONLStoreAppendsAndReplaysSessionEvents(t *testing.T) {
 	}
 	if len(sessions) != 2 || sessions[0] != "s1" || sessions[1] != "s2" {
 		t.Fatalf("sessions = %#v", sessions)
+	}
+}
+
+func TestJSONLStoreReplaysLargeToolEvents(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "events.jsonl")
+	store, err := Open(path)
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	large := strings.Repeat("roadmap item\n", 128*1024)
+	if err := store.Append(context.Background(), eventbus.Event{
+		Seq:       1,
+		ID:        "e-large",
+		SessionID: "s1",
+		RunID:     "r1",
+		Kind:      eventbus.KindToolCompleted,
+		Payload:   map[string]any{"text": large},
+	}); err != nil {
+		t.Fatalf("append: %v", err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatalf("close: %v", err)
+	}
+
+	reopened, err := Open(path)
+	if err != nil {
+		t.Fatalf("reopen: %v", err)
+	}
+	defer reopened.Close()
+	events, err := reopened.Replay(context.Background(), ReplayFilter{SessionID: "s1"})
+	if err != nil {
+		t.Fatalf("replay: %v", err)
+	}
+	if len(events) != 1 {
+		t.Fatalf("events = %d", len(events))
 	}
 }

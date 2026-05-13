@@ -33,6 +33,13 @@ func Open(path string) (*Store, error) {
 	return &Store{path: path, file: file}, nil
 }
 
+func (s *Store) Path() string {
+	if s == nil {
+		return ""
+	}
+	return s.path
+}
+
 func (s *Store) Append(ctx context.Context, event eventbus.Event) error {
 	select {
 	case <-ctx.Done():
@@ -65,6 +72,7 @@ func (s *Store) Replay(ctx context.Context, filter ReplayFilter) ([]eventbus.Eve
 
 	var events []eventbus.Event
 	scanner := bufio.NewScanner(file)
+	scanner.Buffer(make([]byte, 64*1024), 128*1024*1024)
 	for scanner.Scan() {
 		select {
 		case <-ctx.Done():

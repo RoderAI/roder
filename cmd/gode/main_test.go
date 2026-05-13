@@ -322,6 +322,15 @@ func TestSessionCLIListShowRenameDeleteAndRunResume(t *testing.T) {
 		t.Fatalf("show after resume:\n%s", showOut)
 	}
 
+	debugOut := captureStdout(t, func() error {
+		return runSession([]string{"debug", "--data-dir", dataDir, last.ID})
+	})
+	for _, want := range []string{last.ID, "run.started", "run.completed", "user.prompt_submitted"} {
+		if !strings.Contains(debugOut, want) {
+			t.Fatalf("debug output missing %q:\n%s", want, debugOut)
+		}
+	}
+
 	deleteOut := captureStdout(t, func() error {
 		return runSession([]string{"delete", "--data-dir", dataDir, last.ID})
 	})
