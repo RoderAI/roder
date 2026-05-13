@@ -13,6 +13,7 @@ import (
 	"github.com/pandelisz/gode/internal/godex"
 	"github.com/pandelisz/gode/internal/godex/lsp"
 	"github.com/pandelisz/gode/internal/godex/mcp"
+	"github.com/pandelisz/gode/internal/godex/memory"
 	"github.com/pandelisz/gode/internal/godex/provider"
 )
 
@@ -52,6 +53,7 @@ type overlay struct {
 	AutoApprove           *bool                              `json:"auto_approve,omitempty" toml:"auto_approve,omitempty"`
 	TimelineStyle         *string                            `json:"timeline_style,omitempty" toml:"timeline_style,omitempty"`
 	MarkdownRendering     *bool                              `json:"markdown_rendering,omitempty" toml:"markdown_rendering,omitempty"`
+	Memories              memory.Settings                    `json:"memories,omitempty" toml:"memories,omitempty"`
 	DisableAutoCompaction *bool                              `json:"disable_auto_compaction,omitempty" toml:"disable_auto_compaction,omitempty"`
 	AutoCompactTokenLimit *int                               `json:"auto_compact_token_limit,omitempty" toml:"auto_compact_token_limit,omitempty"`
 	Telemetry             *bool                              `json:"telemetry,omitempty" toml:"telemetry,omitempty"`
@@ -172,6 +174,7 @@ func applyOverlay(cfg *godex.Config, patch overlay) error {
 	if patch.MarkdownRendering != nil {
 		cfg.MarkdownRendering = *patch.MarkdownRendering
 	}
+	cfg.Memories = memory.ApplySettings(cfg.Memories, patch.Memories)
 	if patch.DisableAutoCompaction != nil {
 		cfg.DisableAutoCompaction = *patch.DisableAutoCompaction
 	}
@@ -320,6 +323,10 @@ func fillDerivedDefaults(cfg *godex.Config) {
 	if cfg.TelemetryEndpoint == "" {
 		cfg.TelemetryEndpoint = defaults.TelemetryEndpoint
 	}
+	if cfg.Memories.DatabasePath == defaults.Memories.DatabasePath {
+		cfg.Memories.DatabasePath = ""
+	}
+	cfg.Memories = cfg.Memories.WithDefaults(cfg.DataDir)
 	if cfg.MCP == nil {
 		cfg.MCP = map[string]mcp.ServerConfig{}
 	}

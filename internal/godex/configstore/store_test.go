@@ -132,6 +132,30 @@ func TestLoadEmptyConfigKeepsDefaults(t *testing.T) {
 	}
 }
 
+func TestLoadMemorySettingsFromDataConfig(t *testing.T) {
+	dataDir := filepath.Join(t.TempDir(), "data")
+	writeFile(t, filepath.Join(dataDir, "config.toml"), `
+[memories]
+enabled = false
+auto_recall = false
+auto_observe = true
+embedding_model = "custom-embedding"
+recall_limit = 8
+database_path = "custom.sqlite3"
+`)
+
+	loaded, err := Load(LoadOptions{DataDir: dataDir, Env: []string{"HOME=" + t.TempDir()}})
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if loaded.Config.Memories.Enabled || loaded.Config.Memories.AutoRecall || !loaded.Config.Memories.AutoObserve {
+		t.Fatalf("memory bools = %#v", loaded.Config.Memories)
+	}
+	if loaded.Config.Memories.EmbeddingModel != "custom-embedding" || loaded.Config.Memories.RecallLimit != 8 || loaded.Config.Memories.DatabasePath != "custom.sqlite3" {
+		t.Fatalf("memory settings = %#v", loaded.Config.Memories)
+	}
+}
+
 func TestLoadParseErrorIdentifiesPathAndSource(t *testing.T) {
 	root := t.TempDir()
 	workspace := filepath.Join(root, "repo")

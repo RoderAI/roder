@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/pandelisz/gode/internal/godex/memory"
 )
 
 func TestSettingsRoundTripDefaultModel(t *testing.T) {
@@ -17,8 +19,16 @@ func TestSettingsRoundTripDefaultModel(t *testing.T) {
 		AutoApprove:           true,
 		DisableAutoCompaction: true,
 		AutoCompactTokenLimit: 12345,
-		ActiveSkills:          map[string]bool{"go-tests": true, "legacy-disabled": false},
-		SkillSources:          map[string]string{"go-tests": "pandelisz/gode@go-tests"},
+		Memories: memory.Settings{
+			Enabled:        boolPtr(false),
+			AutoRecall:     boolPtr(false),
+			AutoObserve:    boolPtr(true),
+			EmbeddingModel: "custom-embedding",
+			RecallLimit:    7,
+			DatabasePath:   "custom.sqlite3",
+		},
+		ActiveSkills: map[string]bool{"go-tests": true, "legacy-disabled": false},
+		SkillSources: map[string]string{"go-tests": "pandelisz/gode@go-tests"},
 	}); err != nil {
 		t.Fatalf("save settings: %v", err)
 	}
@@ -45,6 +55,18 @@ func TestSettingsRoundTripDefaultModel(t *testing.T) {
 	if settings.AutoCompactTokenLimit != 12345 {
 		t.Fatalf("auto compact token limit = %d", settings.AutoCompactTokenLimit)
 	}
+	if settings.Memories.Enabled == nil || *settings.Memories.Enabled {
+		t.Fatalf("memory enabled = %#v", settings.Memories.Enabled)
+	}
+	if settings.Memories.AutoRecall == nil || *settings.Memories.AutoRecall {
+		t.Fatalf("memory auto recall = %#v", settings.Memories.AutoRecall)
+	}
+	if settings.Memories.AutoObserve == nil || !*settings.Memories.AutoObserve {
+		t.Fatalf("memory auto observe = %#v", settings.Memories.AutoObserve)
+	}
+	if settings.Memories.EmbeddingModel != "custom-embedding" || settings.Memories.RecallLimit != 7 || settings.Memories.DatabasePath != "custom.sqlite3" {
+		t.Fatalf("memory settings = %#v", settings.Memories)
+	}
 	if !settings.ActiveSkills["go-tests"] || settings.ActiveSkills["legacy-disabled"] {
 		t.Fatalf("active skills = %#v", settings.ActiveSkills)
 	}
@@ -61,7 +83,7 @@ func TestSettingsRoundTripDefaultModel(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read config.toml: %v", err)
 	}
-	for _, want := range []string{`default_model = "gpt-5.5"`, `default_reasoning = "high"`, `fast_mode = true`, `auto_approve = true`, `disable_auto_compaction = true`, `auto_compact_token_limit = 12345`, `[active_skills]`, `go-tests = true`, `legacy-disabled = false`, `[skill_sources]`, `go-tests = "pandelisz/gode@go-tests"`} {
+	for _, want := range []string{`default_model = "gpt-5.5"`, `default_reasoning = "high"`, `fast_mode = true`, `auto_approve = true`, `disable_auto_compaction = true`, `auto_compact_token_limit = 12345`, `[memories]`, `enabled = false`, `auto_recall = false`, `auto_observe = true`, `embedding_model = "custom-embedding"`, `recall_limit = 7`, `database_path = "custom.sqlite3"`, `[active_skills]`, `go-tests = true`, `legacy-disabled = false`, `[skill_sources]`, `go-tests = "pandelisz/gode@go-tests"`} {
 		if !strings.Contains(string(data), want) {
 			t.Fatalf("config.toml should contain %q, got:\n%s", want, string(data))
 		}
@@ -72,6 +94,29 @@ func TestSettingsRoundTripDefaultModel(t *testing.T) {
 
 	if _, err := LoadSettings(filepath.Join(dataDir, "missing")); err != nil {
 		t.Fatalf("missing settings should load empty defaults: %v", err)
+	}
+}
+
+func TestDefaultMemoryConfig(t *testing.T) {
+	dataDir := filepath.Join(t.TempDir(), "data")
+	cfg := Config{DataDir: dataDir}.withDefaults()
+	if !cfg.Memories.Enabled {
+		t.Fatal("memories should default to enabled")
+	}
+	if !cfg.Memories.AutoRecall {
+		t.Fatal("memory auto recall should default to enabled")
+	}
+	if cfg.Memories.AutoObserve {
+		t.Fatal("memory auto observe should default to disabled")
+	}
+	if cfg.Memories.EmbeddingModel != memory.DefaultEmbeddingModel {
+		t.Fatalf("embedding model = %q", cfg.Memories.EmbeddingModel)
+	}
+	if cfg.Memories.RecallLimit != 5 {
+		t.Fatalf("recall limit = %d", cfg.Memories.RecallLimit)
+	}
+	if cfg.Memories.DatabasePath != filepath.Join(dataDir, "memories.sqlite3") {
+		t.Fatalf("database path = %q", cfg.Memories.DatabasePath)
 	}
 }
 
@@ -102,4 +147,8 @@ func TestDefaultDataDirUsesWindowsConfigDir(t *testing.T) {
 	if got := defaultDataDirFor("darwin", "/Users/pz", "/tmp/config"); got != filepath.Join("/Users/pz", ".gode") {
 		t.Fatalf("darwin data dir = %q", got)
 	}
+}
+
+func boolPtr(value bool) *bool {
+	return &value
 }

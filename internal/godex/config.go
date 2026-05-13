@@ -6,6 +6,7 @@ import (
 	"runtime"
 
 	"github.com/pandelisz/gode/internal/godex/lsp"
+	"github.com/pandelisz/gode/internal/godex/memory"
 	"github.com/pandelisz/gode/internal/godex/mcp"
 	"github.com/pandelisz/gode/internal/godex/provider"
 )
@@ -20,6 +21,7 @@ type Config struct {
 	AutoApprove           bool
 	TimelineStyle         string
 	MarkdownRendering     bool
+	Memories              memory.Config
 	DisableAutoCompaction bool
 	AutoCompactTokenLimit int
 	GoalsEnabled          bool
@@ -45,6 +47,7 @@ func DefaultConfig() Config {
 		Reasoning:         defaultModel.DefaultReasoning,
 		AutoApprove:       false,
 		TimelineStyle:     TimelineStyleDetailed,
+		Memories:          memory.DefaultConfig(defaultDataDir()),
 		GoalsEnabled:      true,
 		Telemetry:         false,
 		TelemetryEndpoint: "localhost:4317",
@@ -79,6 +82,10 @@ func (c Config) withDefaults() Config {
 	if c.DataDir == "" {
 		c.DataDir = defaults.DataDir
 	}
+	if c.Memories.DatabasePath == defaults.Memories.DatabasePath {
+		c.Memories.DatabasePath = ""
+	}
+	c.Memories = c.Memories.WithDefaults(c.DataDir)
 	if c.Model == "" {
 		if provider, ok := LookupProvider(c.Provider); ok && provider.DefaultModel != "" {
 			c.Model = provider.DefaultModel

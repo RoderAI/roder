@@ -17,11 +17,22 @@ func Schema() map[string]any {
 			"auto_compact_token_limit": map[string]any{"type": "integer"},
 			"telemetry":                map[string]any{"type": "boolean"},
 			"telemetry_endpoint":       map[string]any{"type": "string"},
-			"context_paths":            map[string]any{"type": "array", "items": map[string]any{"type": "string"}},
-			"disabled_tools":           map[string]any{"type": "array", "items": map[string]any{"type": "string"}},
-			"mcp":                      map[string]any{"type": "object"},
-			"provider_config":          map[string]any{"type": "object"},
-			"selected_models":          map[string]any{"type": "object"},
+			"memories": map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"enabled":         map[string]any{"type": "boolean"},
+					"auto_recall":     map[string]any{"type": "boolean"},
+					"auto_observe":    map[string]any{"type": "boolean"},
+					"embedding_model": map[string]any{"type": "string"},
+					"recall_limit":    map[string]any{"type": "integer"},
+					"database_path":   map[string]any{"type": "string"},
+				},
+			},
+			"context_paths":   map[string]any{"type": "array", "items": map[string]any{"type": "string"}},
+			"disabled_tools":  map[string]any{"type": "array", "items": map[string]any{"type": "string"}},
+			"mcp":             map[string]any{"type": "object"},
+			"provider_config": map[string]any{"type": "object"},
+			"selected_models": map[string]any{"type": "object"},
 		},
 	}
 }
