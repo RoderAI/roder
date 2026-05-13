@@ -5,9 +5,11 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"sort"
+	"strings"
 	"sync"
 
 	"github.com/pandelisz/gode/internal/godex/eventbus"
@@ -71,24 +73,39 @@ func (s *Store) Replay(ctx context.Context, filter ReplayFilter) ([]eventbus.Eve
 	defer file.Close()
 
 	var events []eventbus.Event
-	scanner := bufio.NewScanner(file)
-	scanner.Buffer(make([]byte, 64*1024), 128*1024*1024)
-	for scanner.Scan() {
+	reader := bufio.NewReader(file)
+	line := 0
+	for {
+		raw, err := reader.ReadString('\n')
+		if errors.Is(err, io.EOF) && raw == "" {
+			break
+		}
+		if err != nil && !errors.Is(err, io.EOF) {
+			return nil, fmt.Errorf("read journal %s:%d: %w", s.path, line+1, err)
+		}
+		line++
 		select {
 		case <-ctx.Done():
 			return nil, ctx.Err()
 		default:
 		}
+		text := strings.TrimSpace(raw)
+		if text == "" {
+			if errors.Is(err, io.EOF) {
+				break
+			}
+			continue
+		}
 		var ev eventbus.Event
-		if err := json.Unmarshal(scanner.Bytes(), &ev); err != nil {
-			return nil, err
+		if err := json.Unmarshal([]byte(text), &ev); err != nil {
+			return nil, fmt.Errorf("parse journal %s:%d: %w", s.path, line, err)
 		}
 		if match(filter, ev) {
 			events = append(events, ev)
 		}
-	}
-	if err := scanner.Err(); err != nil && !errors.Is(err, io.EOF) {
-		return nil, err
+		if errors.Is(err, io.EOF) {
+			break
+		}
 	}
 	return events, nil
 }

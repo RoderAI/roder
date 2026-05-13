@@ -57,6 +57,8 @@ const (
 	KindLSPDiagnostics  Kind = "lsp.diagnostics"
 	KindPluginLog       Kind = "plugin.log"
 	KindSubscriberDrop  Kind = "subscriber.dropped"
+
+	KindSessionProjected Kind = "session.projected"
 )
 
 type Event struct {
