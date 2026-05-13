@@ -117,3 +117,27 @@ func selectedTranscriptRefs(refs []selection.TranscriptLineRef, selected selecti
 func selectedTranscriptCopyText(refs []selection.TranscriptLineRef, selected selection.Range) string {
 	return strings.TrimSpace(selection.SanitizeTranscriptCopy(selectedTranscriptRefs(refs, selected)))
 }
+
+func (m *Model) reconcileTranscriptSelection() {
+	if !m.transcriptSelection.Active {
+		return
+	}
+	selectedBefore := selectedTranscriptRefs(m.transcriptLineRefs, m.transcriptSelection)
+	if len(selectedBefore) == 0 {
+		return
+	}
+	m.refreshTranscriptLineRefs()
+	selectedAfter := selectedTranscriptRefs(m.transcriptLineRefs, m.transcriptSelection)
+	if len(selectedAfter) != len(selectedBefore) {
+		m.transcriptSelection = selection.Range{}
+		return
+	}
+	for i := range selectedBefore {
+		if selectedBefore[i].MessageIndex != selectedAfter[i].MessageIndex ||
+			selectedBefore[i].LogicalLine != selectedAfter[i].LogicalLine ||
+			selectedBefore[i].Decorative != selectedAfter[i].Decorative {
+			m.transcriptSelection = selection.Range{}
+			return
+		}
+	}
+}
