@@ -1,6 +1,7 @@
 package components
 
 import (
+	"strconv"
 	"strings"
 	"testing"
 
@@ -419,5 +420,21 @@ func TestVisibleMessagesUsesLineScroll(t *testing.T) {
 	}
 	if got[0].id != "m2" || got[1].id != "m3" {
 		t.Fatalf("visible ids = %#v, want m2,m3", got)
+	}
+}
+
+func TestVisibleMessagesCanScrollPastRecentWindow(t *testing.T) {
+	messages := make([]viewmodel.Message, 250)
+	for i := range messages {
+		messages[i] = viewmodel.Message{ID: "m" + strconv.Itoa(i), Role: viewmodel.RoleUser, Body: "message"}
+	}
+	messages[0].ID = "oldest"
+
+	got := visibleMessages(messages, 80, 2, 10000, nil)
+	if len(got) != 1 {
+		t.Fatalf("visible message count = %d, want 1: %#v", len(got), got)
+	}
+	if got[0].id != "oldest" {
+		t.Fatalf("visible id = %q, want oldest", got[0].id)
 	}
 }
