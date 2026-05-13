@@ -6,26 +6,30 @@ import (
 )
 
 type Config struct {
-	Workspace   string
-	DataDir     string
-	Provider    string
-	Model       string
-	Reasoning   string
-	AutoApprove bool
-	MCP         map[string]any
+	Workspace         string
+	DataDir           string
+	Provider          string
+	Model             string
+	Reasoning         string
+	AutoApprove       bool
+	Telemetry         bool
+	TelemetryEndpoint string
+	MCP               map[string]any
 }
 
 func DefaultConfig() Config {
 	wd, _ := os.Getwd()
 	home, _ := os.UserHomeDir()
 	return Config{
-		Workspace:   wd,
-		DataDir:     filepath.Join(home, ".gode"),
-		Provider:    "mock",
-		Model:       "gpt-5.4-mini",
-		Reasoning:   "low",
-		AutoApprove: false,
-		MCP:         map[string]any{},
+		Workspace:         wd,
+		DataDir:           filepath.Join(home, ".gode"),
+		Provider:          "mock",
+		Model:             "gpt-5.4-mini",
+		Reasoning:         "low",
+		AutoApprove:       false,
+		Telemetry:         false,
+		TelemetryEndpoint: "localhost:4317",
+		MCP:               map[string]any{},
 	}
 }
 
@@ -45,6 +49,9 @@ func (c Config) withDefaults() Config {
 	}
 	if c.Reasoning == "" {
 		c.Reasoning = defaults.Reasoning
+	}
+	if c.TelemetryEndpoint == "" {
+		c.TelemetryEndpoint = defaults.TelemetryEndpoint
 	}
 	if c.MCP == nil {
 		c.MCP = defaults.MCP

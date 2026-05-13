@@ -80,6 +80,8 @@ func bindConfigFlags(flags *flag.FlagSet, cfg *godex.Config) {
 	flags.StringVar(&cfg.Model, "model", cfg.Model, "provider model")
 	flags.StringVar(&cfg.Reasoning, "reasoning", cfg.Reasoning, "reasoning effort: none, minimal, low, medium, high, xhigh")
 	flags.BoolVar(&cfg.AutoApprove, "auto-approve", cfg.AutoApprove, "auto approve mutating tool calls")
+	flags.BoolVar(&cfg.Telemetry, "telemetry", cfg.Telemetry, "export OpenTelemetry traces over OTLP/gRPC")
+	flags.StringVar(&cfg.TelemetryEndpoint, "telemetry-endpoint", cfg.TelemetryEndpoint, "OTLP/gRPC endpoint for traces")
 }
 
 func newFlagSet(name string) *flag.FlagSet {
