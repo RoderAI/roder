@@ -111,6 +111,58 @@ func TestOpenAIResponseParamsUsesInputItemList(t *testing.T) {
 	}
 }
 
+func TestOpenAIResponseParamsIncludesServerSideCompaction(t *testing.T) {
+	openaiProvider := NewOpenAI("gpt-5.5", "medium")
+
+	params := openaiProvider.responseParams(Request{
+		Messages: []Message{{Role: RoleUser, Content: "hello"}},
+		Compaction: CompactionOptions{
+			Enabled:          true,
+			Model:            "gpt-5.5",
+			ContextWindow:    1050000,
+			CompactThreshold: 800000,
+		},
+	})
+	data, err := json.Marshal(params)
+	if err != nil {
+		t.Fatalf("marshal params: %v", err)
+	}
+	raw := string(data)
+	for _, want := range []string{
+		`"context_management":[{"type":"compaction","compact_threshold":800000}]`,
+		`"truncation":"disabled"`,
+		`"store":false`,
+	} {
+		if !strings.Contains(raw, want) {
+			t.Fatalf("params JSON missing %q:\n%s", want, raw)
+		}
+	}
+}
+
+func TestOpenAIResponseParamsOmitsCompactionWhenDisabled(t *testing.T) {
+	openaiProvider := NewOpenAI("gpt-5.5", "medium")
+
+	params := openaiProvider.responseParams(Request{
+		Messages: []Message{{Role: RoleUser, Content: "hello"}},
+		Compaction: CompactionOptions{
+			Model:            "gpt-future",
+			ContextWindow:    272000,
+			CompactThreshold: 217600,
+		},
+	})
+	data, err := json.Marshal(params)
+	if err != nil {
+		t.Fatalf("marshal params: %v", err)
+	}
+	raw := string(data)
+	if strings.Contains(raw, "context_management") {
+		t.Fatalf("params JSON should omit compaction:\n%s", raw)
+	}
+	if strings.Contains(raw, `"truncation"`) {
+		t.Fatalf("params JSON should omit truncation:\n%s", raw)
+	}
+}
+
 func TestOpenAIResponseParamsNormalizesNullRequiredToolSchema(t *testing.T) {
 	openaiProvider := NewOpenAI("gpt-5.5", "medium")
 

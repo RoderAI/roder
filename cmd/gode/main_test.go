@@ -107,7 +107,13 @@ func TestParseConfigUsesSavedDefaultModel(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	dataDir := filepath.Join(home, ".gode")
-	if err := godex.SaveSettings(dataDir, godex.Settings{DefaultModel: "gpt-5.4-mini", DefaultReasoning: godex.ReasoningHigh, FastMode: true}); err != nil {
+	if err := godex.SaveSettings(dataDir, godex.Settings{
+		DefaultModel:          "gpt-5.4-mini",
+		DefaultReasoning:      godex.ReasoningHigh,
+		FastMode:              true,
+		DisableAutoCompaction: true,
+		AutoCompactTokenLimit: 12345,
+	}); err != nil {
 		t.Fatalf("save settings: %v", err)
 	}
 
@@ -126,6 +132,12 @@ func TestParseConfigUsesSavedDefaultModel(t *testing.T) {
 	}
 	if !cfg.FastMode {
 		t.Fatal("fast mode = false")
+	}
+	if !cfg.DisableAutoCompaction {
+		t.Fatal("disable auto compaction = false")
+	}
+	if cfg.AutoCompactTokenLimit != 12345 {
+		t.Fatalf("auto compact token limit = %d", cfg.AutoCompactTokenLimit)
 	}
 }
 
@@ -328,6 +340,14 @@ func TestSessionCLIListShowRenameDeleteAndRunResume(t *testing.T) {
 	for _, want := range []string{last.ID, "run.started", "run.completed", "user.prompt_submitted"} {
 		if !strings.Contains(debugOut, want) {
 			t.Fatalf("debug output missing %q:\n%s", want, debugOut)
+		}
+	}
+	contextOut := captureStdout(t, func() error {
+		return runDebug([]string{"context", "--workspace", workspace, "--data-dir", dataDir, "--model", "gpt-5.5", "--session", last.ID})
+	})
+	for _, want := range []string{"session_id\t" + last.ID, "model\tgpt-5.5", "context_window\t1050000", "compact_threshold\t800000", "auto_compaction_enabled\ttrue"} {
+		if !strings.Contains(contextOut, want) {
+			t.Fatalf("debug context output missing %q:\n%s", want, contextOut)
 		}
 	}
 

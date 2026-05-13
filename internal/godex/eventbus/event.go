@@ -29,6 +29,12 @@ const (
 
 	KindProviderDelta Kind = "provider.delta"
 
+	KindContextTokensUpdated        Kind = "context.tokens_updated"
+	KindContextCompactionConfigured Kind = "context.compaction_configured"
+	KindContextCompactionStarted    Kind = "context.compaction_started"
+	KindContextCompactionCompleted  Kind = "context.compaction_completed"
+	KindContextCompactionFailed     Kind = "context.compaction_failed"
+
 	KindAssistantDelta            Kind = "assistant.delta"
 	KindAssistantCompleted        Kind = "assistant.completed"
 	KindReasoningSummaryDelta     Kind = "reasoning_summary.delta"

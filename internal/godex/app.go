@@ -146,7 +146,7 @@ func New(ctx context.Context, cfg Config) (*App, error) {
 		_ = shutdownTelemetry(ctx)
 		return nil, err
 	}
-	runner := agent.NewRunner(agent.Config{Bus: bus, Journal: store, Sessions: sessionStore, Messages: messageStore, Tools: reg, Provider: prov, ContextMessages: repoContext, Skills: skillCatalog.Skills, Commands: commandCatalog.Commands})
+	runner := agent.NewRunner(runnerConfig(cfg, bus, store, sessionStore, messageStore, reg, prov, repoContext, skillCatalog.Skills, commandCatalog.Commands))
 
 	return &App{
 		Config:            cfg,
@@ -207,7 +207,7 @@ func (a *App) SetModelReasoning(model string, reasoning string) error {
 
 	a.Config = cfg
 	a.provider = prov
-	a.runner = agent.NewRunner(agent.Config{Bus: a.Bus, Journal: a.Journal, Sessions: a.Sessions, Messages: a.Messages, Tools: a.Tools, Provider: prov, ContextMessages: a.contextMessages, Skills: a.skills, Commands: a.commands})
+	a.runner = agent.NewRunner(runnerConfig(cfg, a.Bus, a.Journal, a.Sessions, a.Messages, a.Tools, prov, a.contextMessages, a.skills, a.commands))
 	return nil
 }
 
@@ -221,8 +221,25 @@ func (a *App) SetFastMode(fastMode bool) error {
 
 	a.Config = cfg
 	a.provider = prov
-	a.runner = agent.NewRunner(agent.Config{Bus: a.Bus, Journal: a.Journal, Sessions: a.Sessions, Messages: a.Messages, Tools: a.Tools, Provider: prov, ContextMessages: a.contextMessages, Skills: a.skills, Commands: a.commands})
+	a.runner = agent.NewRunner(runnerConfig(cfg, a.Bus, a.Journal, a.Sessions, a.Messages, a.Tools, prov, a.contextMessages, a.skills, a.commands))
 	return nil
+}
+
+func runnerConfig(cfg Config, bus *eventbus.Bus, journalStore *journal.Store, sessionStore *session.Store, messageStore *messagestore.Store, registry *tools.Registry, prov provider.Provider, contextMessages []provider.Message, skills []godeskills.Skill, commands []godecommands.Command) agent.Config {
+	return agent.Config{
+		Bus:                   bus,
+		Journal:               journalStore,
+		Sessions:              sessionStore,
+		Messages:              messageStore,
+		Tools:                 registry,
+		Provider:              prov,
+		Model:                 cfg.Model,
+		DisableAutoCompaction: cfg.DisableAutoCompaction,
+		AutoCompactTokenLimit: cfg.AutoCompactTokenLimit,
+		ContextMessages:       contextMessages,
+		Skills:                skills,
+		Commands:              commands,
+	}
 }
 
 func (a *App) Close(ctx context.Context) error {

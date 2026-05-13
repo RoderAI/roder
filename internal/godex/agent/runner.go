@@ -8,6 +8,7 @@ import (
 
 	"github.com/google/uuid"
 	godecommands "github.com/pandelisz/gode/internal/godex/commands"
+	"github.com/pandelisz/gode/internal/godex/contextwindow"
 	"github.com/pandelisz/gode/internal/godex/eventbus"
 	"github.com/pandelisz/gode/internal/godex/journal"
 	messagestore "github.com/pandelisz/gode/internal/godex/message"
@@ -18,27 +19,33 @@ import (
 )
 
 type Config struct {
-	Bus             *eventbus.Bus
-	Journal         *journal.Store
-	Sessions        *session.Store
-	Messages        *messagestore.Store
-	Tools           *tools.Registry
-	Provider        provider.Provider
-	ContextMessages []provider.Message
-	Skills          []godeskills.Skill
-	Commands        []godecommands.Command
+	Bus                   *eventbus.Bus
+	Journal               *journal.Store
+	Sessions              *session.Store
+	Messages              *messagestore.Store
+	Tools                 *tools.Registry
+	Provider              provider.Provider
+	Model                 string
+	DisableAutoCompaction bool
+	AutoCompactTokenLimit int
+	ContextMessages       []provider.Message
+	Skills                []godeskills.Skill
+	Commands              []godecommands.Command
 }
 
 type Runner struct {
-	bus             *eventbus.Bus
-	journal         *journal.Store
-	sessions        *session.Store
-	messages        *messagestore.Store
-	tools           *tools.Registry
-	provider        provider.Provider
-	contextMessages []provider.Message
-	skills          []godeskills.Skill
-	commands        []godecommands.Command
+	bus                   *eventbus.Bus
+	journal               *journal.Store
+	sessions              *session.Store
+	messages              *messagestore.Store
+	tools                 *tools.Registry
+	provider              provider.Provider
+	model                 string
+	disableAutoCompaction bool
+	autoCompactTokenLimit int
+	contextMessages       []provider.Message
+	skills                []godeskills.Skill
+	commands              []godecommands.Command
 }
 
 type RunRequest struct {
@@ -60,15 +67,18 @@ type RunResult struct {
 
 func NewRunner(cfg Config) *Runner {
 	return &Runner{
-		bus:             cfg.Bus,
-		journal:         cfg.Journal,
-		sessions:        cfg.Sessions,
-		messages:        cfg.Messages,
-		tools:           cfg.Tools,
-		provider:        cfg.Provider,
-		contextMessages: append([]provider.Message(nil), cfg.ContextMessages...),
-		skills:          append([]godeskills.Skill(nil), cfg.Skills...),
-		commands:        append([]godecommands.Command(nil), cfg.Commands...),
+		bus:                   cfg.Bus,
+		journal:               cfg.Journal,
+		sessions:              cfg.Sessions,
+		messages:              cfg.Messages,
+		tools:                 cfg.Tools,
+		provider:              cfg.Provider,
+		model:                 cfg.Model,
+		disableAutoCompaction: cfg.DisableAutoCompaction,
+		autoCompactTokenLimit: cfg.AutoCompactTokenLimit,
+		contextMessages:       append([]provider.Message(nil), cfg.ContextMessages...),
+		skills:                append([]godeskills.Skill(nil), cfg.Skills...),
+		commands:              append([]godecommands.Command(nil), cfg.Commands...),
 	}
 }
 
@@ -139,12 +149,13 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (RunResult, error) {
 	}
 	maxTurns := req.MaxTurns
 	if maxTurns <= 0 {
-		maxTurns = 8
+		maxTurns = 32
 	}
 
 	final := ""
 	stats := runStats{}
 	for turn := 0; turn < maxTurns; turn++ {
+		compaction := r.compactionOptions(ctx, req, messages)
 		providerReq := provider.Request{
 			SessionID:      req.SessionID,
 			RunID:          req.RunID,
@@ -152,6 +163,7 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (RunResult, error) {
 			ResponseFormat: req.ResponseFormat,
 			Messages:       messages,
 			Tools:          r.providerToolSpecs(),
+			Compaction:     compaction,
 		}
 		outcome, err := r.streamProviderTurn(ctx, req, providerReq, messages, final, &stats, true)
 		if err != nil {
@@ -168,12 +180,14 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (RunResult, error) {
 	}
 	if final == "" && stats.ToolCalls > 0 {
 		messages = append(messages, provider.Message{Role: provider.RoleUser, Content: finalAfterToolBudgetPrompt(maxTurns)})
+		compaction := r.compactionOptions(ctx, req, messages)
 		providerReq := provider.Request{
 			SessionID:      req.SessionID,
 			RunID:          req.RunID,
 			Instructions:   firstNonEmpty(req.Instructions, GodeInstructions),
 			ResponseFormat: req.ResponseFormat,
 			Messages:       messages,
+			Compaction:     compaction,
 		}
 		outcome, err := r.streamProviderTurn(ctx, req, providerReq, messages, final, &stats, false)
 		if err != nil {
@@ -259,6 +273,65 @@ func (r *Runner) refreshSessionMessageCount(ctx context.Context, sessionID strin
 	_, _ = r.sessions.UpdateMessageCount(ctx, sessionID, len(messages))
 }
 
+func (r *Runner) compactionOptions(ctx context.Context, req RunRequest, messages []provider.Message) provider.CompactionOptions {
+	model := firstNonEmpty(r.model, "gpt-5.5")
+	window := contextwindow.ForModel(model)
+	estimate := contextwindow.EstimateMessages(contextWindowMessages(messages), window)
+	r.emit(ctx, eventbus.Event{
+		Kind:      eventbus.KindContextTokensUpdated,
+		Source:    eventbus.SourceAgent,
+		SessionID: req.SessionID,
+		RunID:     req.RunID,
+		Payload: map[string]any{
+			"model":          model,
+			"tokens":         estimate.Tokens,
+			"context_window": estimate.ContextWindow,
+			"percent":        estimate.Percent,
+		},
+	})
+
+	options := contextwindow.OptionsForModel(model, r.disableAutoCompaction, r.autoCompactTokenLimit)
+	if !options.Enabled || r.providerName() != "openai" {
+		return provider.CompactionOptions{
+			Model:            options.Model,
+			ContextWindow:    options.ContextWindow,
+			CompactThreshold: options.CompactThreshold,
+		}
+	}
+	r.emit(ctx, eventbus.Event{
+		Kind:      eventbus.KindContextCompactionConfigured,
+		Source:    eventbus.SourceAgent,
+		SessionID: req.SessionID,
+		RunID:     req.RunID,
+		Payload: map[string]any{
+			"model":             model,
+			"tokens":            estimate.Tokens,
+			"context_window":    options.ContextWindow,
+			"compact_threshold": options.CompactThreshold,
+		},
+	})
+	return provider.CompactionOptions{
+		Enabled:          true,
+		Model:            options.Model,
+		ContextWindow:    options.ContextWindow,
+		CompactThreshold: options.CompactThreshold,
+	}
+}
+
+func contextWindowMessages(messages []provider.Message) []contextwindow.Message {
+	out := make([]contextwindow.Message, 0, len(messages))
+	for _, msg := range messages {
+		out = append(out, contextwindow.Message{
+			Role:          string(msg.Role),
+			Content:       msg.Content,
+			ToolCallID:    msg.ToolCallID,
+			ToolName:      msg.ToolName,
+			ToolArguments: msg.ToolArguments,
+		})
+	}
+	return out
+}
+
 func toolResponseContent(name string, result tools.Result) string {
 	text := strings.TrimSpace(result.Text)
 	if text == "" && result.Error != "" {
@@ -290,7 +363,7 @@ func (r *Runner) providerToolSpecs() []provider.ToolSpec {
 }
 
 func finalAfterToolBudgetPrompt(maxTurns int) string {
-	return fmt.Sprintf("Tool-call budget reached after %d tool turns. Do not request more tools. Using only the tool results and context already available, provide the best final answer now. If the task is incomplete, summarize what you found and what remains.", maxTurns)
+	return fmt.Sprintf("The agent hit the %d-turn safety limit while handling tool calls. Do not request more tools. Using only the tool results and context already available, provide the best final answer now. If the task is incomplete, summarize what you found and what remains.", maxTurns)
 }
 
 func (r *Runner) toolLoopError(req RunRequest, maxTurns int, stats runStats) error {
@@ -321,7 +394,7 @@ func (r *Runner) toolLoopError(req RunRequest, maxTurns int, stats runStats) err
 	}
 	lines = append(lines,
 		"",
-		"reason: the model kept requesting tools until the tool-turn budget was exhausted, then returned an empty assistant completion.",
+		"reason: the model kept requesting tools until the safety turn limit was reached, then returned an empty assistant completion.",
 		"next: inspect the event journal for this run or retry with a narrower prompt.",
 	)
 	return fmt.Errorf("%s", strings.Join(lines, "\n"))

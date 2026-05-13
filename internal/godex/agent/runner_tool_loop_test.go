@@ -10,7 +10,7 @@ import (
 	"github.com/pandelisz/gode/internal/godex/tools"
 )
 
-func TestRunnerFinalizesAfterToolTurnBudgetWithoutTools(t *testing.T) {
+func TestRunnerFinalizesAfterToolTurnSafetyLimitWithoutTools(t *testing.T) {
 	reg := tools.NewRegistry(tools.WithAutoApprove(true))
 	reg.Register(tools.Tool{
 		Name:        "echo",
@@ -57,7 +57,7 @@ func TestRunnerFinalizesAfterToolTurnBudgetWithoutTools(t *testing.T) {
 	if len(finalReq.Tools) != 0 {
 		t.Fatalf("finalization request should not expose tools: %#v", finalReq.Tools)
 	}
-	if len(finalReq.Messages) == 0 || !strings.Contains(finalReq.Messages[len(finalReq.Messages)-1].Content, "Tool-call budget reached") {
+	if len(finalReq.Messages) == 0 || !strings.Contains(finalReq.Messages[len(finalReq.Messages)-1].Content, "safety limit") {
 		t.Fatalf("finalization prompt missing:\n%#v", finalReq.Messages)
 	}
 }

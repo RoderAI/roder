@@ -11,21 +11,23 @@ import (
 )
 
 type Config struct {
-	Workspace         string
-	DataDir           string
-	Provider          string
-	Model             string
-	Reasoning         string
-	FastMode          bool
-	AutoApprove       bool
-	Telemetry         bool
-	TelemetryEndpoint string
-	MCP               map[string]mcp.ServerConfig
-	LSP               map[string]lsp.Config
-	ProviderConfig    map[string]provider.ProviderConfig
-	SelectedModels    map[string]provider.SelectedModel
-	ContextPaths      []string
-	DisabledTools     []string
+	Workspace             string
+	DataDir               string
+	Provider              string
+	Model                 string
+	Reasoning             string
+	FastMode              bool
+	AutoApprove           bool
+	DisableAutoCompaction bool
+	AutoCompactTokenLimit int
+	Telemetry             bool
+	TelemetryEndpoint     string
+	MCP                   map[string]mcp.ServerConfig
+	LSP                   map[string]lsp.Config
+	ProviderConfig        map[string]provider.ProviderConfig
+	SelectedModels        map[string]provider.SelectedModel
+	ContextPaths          []string
+	DisabledTools         []string
 }
 
 func DefaultConfig() Config {

@@ -139,7 +139,7 @@ func defaultModels() []ModelMetadata {
 		{ID: "gpt-5.3-codex", DisplayName: "GPT-5.3-Codex", Provider: "openai", ContextWindow: 272000, SupportsImages: true, ReasoningEfforts: standardReasoningEfforts(), DefaultReasoning: "medium"},
 		{ID: "gpt-5.4", DisplayName: "GPT-5.4", Provider: "openai", ContextWindow: 272000, SupportsImages: true, ReasoningEfforts: standardReasoningEfforts(), DefaultReasoning: "medium"},
 		{ID: "gpt-5.4-mini", DisplayName: "GPT-5.4-Mini", Provider: "openai", ContextWindow: 272000, SupportsImages: true, ReasoningEfforts: standardReasoningEfforts(), DefaultReasoning: "medium"},
-		{ID: "gpt-5.5", DisplayName: "GPT-5.5", Provider: "openai", ContextWindow: 272000, SupportsImages: true, ReasoningEfforts: standardReasoningEfforts(), DefaultReasoning: "medium"},
+		{ID: "gpt-5.5", DisplayName: "GPT-5.5", Provider: "openai", ContextWindow: 1050000, SupportsImages: true, ReasoningEfforts: standardReasoningEfforts(), DefaultReasoning: "medium"},
 	}
 }
 

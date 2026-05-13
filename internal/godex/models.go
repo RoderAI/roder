@@ -1,5 +1,7 @@
 package godex
 
+import "github.com/pandelisz/gode/internal/godex/contextwindow"
+
 const (
 	ProviderMock   = "mock"
 	ProviderOpenAI = "openai"
@@ -35,15 +37,17 @@ type ReasoningOption struct {
 }
 
 type ModelConfig struct {
-	ID                 string
-	DisplayName        string
-	Description        string
-	Provider           string
-	DefaultReasoning   string
-	SupportedReasoning []ReasoningOption
-	ContextWindow      int
-	MaxContextWindow   int
-	Hidden             bool
+	ID                    string
+	DisplayName           string
+	Description           string
+	Provider              string
+	DefaultReasoning      string
+	SupportedReasoning    []ReasoningOption
+	ContextWindow         int
+	MaxContextWindow      int
+	AutoCompactTokenLimit int
+	SupportsCompaction    bool
+	Hidden                bool
 }
 
 func (m ModelConfig) ReasoningEfforts() []string {
@@ -126,15 +130,18 @@ func cloneModelConfig(model ModelConfig) ModelConfig {
 }
 
 func fallbackModelConfig(id string) ModelConfig {
+	window := contextwindow.ForModel(id)
 	return ModelConfig{
-		ID:                 id,
-		DisplayName:        id,
-		Provider:           ProviderOpenAI,
-		DefaultReasoning:   ReasoningMedium,
-		SupportedReasoning: standardReasoning(),
-		ContextWindow:      272000,
-		MaxContextWindow:   272000,
-		Hidden:             true,
+		ID:                    id,
+		DisplayName:           id,
+		Provider:              ProviderOpenAI,
+		DefaultReasoning:      ReasoningMedium,
+		SupportedReasoning:    standardReasoning(),
+		ContextWindow:         window.ContextWindow,
+		MaxContextWindow:      window.MaxContextWindow,
+		AutoCompactTokenLimit: window.AutoCompactTokenLimit,
+		SupportsCompaction:    window.SupportsCompaction,
+		Hidden:                true,
 	}
 }
 
@@ -179,47 +186,39 @@ var builtInProviders = []ProviderConfig{
 }
 
 var builtInModels = []ModelConfig{
-	{
+	withContextWindow(ModelConfig{
 		ID:                 "gpt-5.5",
 		DisplayName:        "GPT-5.5",
 		Description:        "Frontier model for complex coding, research, and real-world work.",
 		Provider:           ProviderOpenAI,
 		DefaultReasoning:   ReasoningMedium,
 		SupportedReasoning: standardReasoning(),
-		ContextWindow:      272000,
-		MaxContextWindow:   272000,
-	},
-	{
+	}),
+	withContextWindow(ModelConfig{
 		ID:                 "gpt-5.4-mini",
 		DisplayName:        "GPT-5.4-Mini",
 		Description:        "Small, fast, and cost-efficient model for simpler coding tasks.",
 		Provider:           ProviderOpenAI,
 		DefaultReasoning:   ReasoningMedium,
 		SupportedReasoning: standardReasoning(),
-		ContextWindow:      272000,
-		MaxContextWindow:   272000,
-	},
-	{
+	}),
+	withContextWindow(ModelConfig{
 		ID:                 "gpt-5.4",
 		DisplayName:        "GPT-5.4",
 		Description:        "Strong model for everyday coding.",
 		Provider:           ProviderOpenAI,
 		DefaultReasoning:   ReasoningMedium,
 		SupportedReasoning: standardReasoning(),
-		ContextWindow:      272000,
-		MaxContextWindow:   272000,
-	},
-	{
+	}),
+	withContextWindow(ModelConfig{
 		ID:                 "gpt-5.3-codex",
 		DisplayName:        "GPT-5.3-Codex",
 		Description:        "Coding-optimized model.",
 		Provider:           ProviderOpenAI,
 		DefaultReasoning:   ReasoningMedium,
 		SupportedReasoning: standardReasoning(),
-		ContextWindow:      272000,
-		MaxContextWindow:   272000,
-	},
-	{
+	}),
+	withContextWindow(ModelConfig{
 		ID:               "gpt-5.2",
 		DisplayName:      "GPT-5.2",
 		Description:      "Optimized for professional work and long-running agents.",
@@ -231,20 +230,16 @@ var builtInModels = []ModelConfig{
 			{Effort: ReasoningHigh, Description: "Maximizes reasoning depth for complex or ambiguous problems"},
 			{Effort: ReasoningXHigh, Description: "Extra high reasoning for complex problems"},
 		},
-		ContextWindow:    272000,
-		MaxContextWindow: 272000,
-	},
-	{
+	}),
+	withContextWindow(ModelConfig{
 		ID:                 "codex-auto-review",
 		DisplayName:        "Codex Auto Review",
 		Description:        "Automatic approval review model for Codex.",
 		Provider:           ProviderOpenAI,
 		DefaultReasoning:   ReasoningMedium,
 		SupportedReasoning: standardReasoning(),
-		ContextWindow:      272000,
-		MaxContextWindow:   272000,
 		Hidden:             true,
-	},
+	}),
 	{
 		ID:                 "mock",
 		DisplayName:        "Mock",
@@ -254,4 +249,13 @@ var builtInModels = []ModelConfig{
 		SupportedReasoning: []ReasoningOption{{Effort: ReasoningNone, Description: "No model-side reasoning"}},
 		Hidden:             true,
 	},
+}
+
+func withContextWindow(model ModelConfig) ModelConfig {
+	window := contextwindow.ForModel(model.ID)
+	model.ContextWindow = window.ContextWindow
+	model.MaxContextWindow = window.MaxContextWindow
+	model.AutoCompactTokenLimit = window.AutoCompactTokenLimit
+	model.SupportsCompaction = window.SupportsCompaction
+	return model
 }

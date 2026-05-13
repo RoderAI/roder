@@ -308,9 +308,11 @@ func (s Settings) configRows() []viewmodel.SettingsConfigRow {
 
 func settingsFromConfig(cfg godex.Config) godex.Settings {
 	return godex.Settings{
-		DefaultModel:     cfg.Model,
-		DefaultReasoning: cfg.Reasoning,
-		FastMode:         cfg.FastMode,
+		DefaultModel:          cfg.Model,
+		DefaultReasoning:      cfg.Reasoning,
+		FastMode:              cfg.FastMode,
+		DisableAutoCompaction: cfg.DisableAutoCompaction,
+		AutoCompactTokenLimit: cfg.AutoCompactTokenLimit,
 	}
 }
 
