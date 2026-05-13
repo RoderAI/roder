@@ -37,6 +37,15 @@ type Model struct {
 	HoveredID    string
 	Status       string
 	Settings     *SettingsDialog
+	ErrorLog     []ErrorLogEntry
+	ShowErrorLog bool
+}
+
+type ErrorLogEntry struct {
+	ID      string
+	Time    string
+	Source  string
+	Message string
 }
 
 type SettingsDialog struct {
