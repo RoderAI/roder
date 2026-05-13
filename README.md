@@ -1,27 +1,29 @@
 # gode
 
-Go Code: a lightweight Go-native TUI coding agent.
+Go Code: a Go-native TUI coding agent and event-driven agent harness.
 
-`gode` is intended to become a local coding agent that can talk to Codex and the Anthropic Claude SDK for Go, while also carrying its own harness for sessions, tools, workspace state, and terminal-oriented workflows.
-
-This repository is only a tiny scaffold right now. The real implementation comes next.
+`gode` is built around `godex`, an internal harness for coding-agent sessions, tools, workspace state, MCPs, context management, provider adapters, and event subscriptions. The goal is to provide a solid open-source base that ML labs can use to train, evaluate, and run their own coding agents.
 
 ## Shape
 
 - `cmd/gode`: CLI entrypoint.
-- `internal/harness`: future orchestration layer for sessions, tools, and workspace state.
-- `internal/provider`: shared provider interface plus Codex and Claude placeholders.
+- `internal/godex`: event bus, JSONL journal, runner, provider interface, MCP manager, and tool registry.
+- `internal/godex/tools/builtin`: broad initial coding tool set.
+- `internal/tui`: Bubble Tea UI with composable Lip Gloss components and view models.
+
+Every meaningful state transition flows through the `godex` event bus so the TUI, plugins, logs, tests, and future RL/replay systems can subscribe to the same stream.
 
 ## Try It
 
 ```sh
-go run ./cmd/gode
 go run ./cmd/gode version
+go run ./cmd/gode run --provider mock --auto-approve "summarize this repo"
+go run ./cmd/gode
 ```
 
 ## Near-Term Direction
 
-- Add a small TUI shell.
-- Wire provider adapters for Codex and Claude.
-- Define the harness contracts for tool calls, patches, and session state.
+- Deepen the OpenAI/Codex provider loop with multi-turn tool result continuation.
+- Add the Anthropic Claude SDK Go adapter.
+- Expand MCP connection coverage and external plugin surfaces.
 - Keep files small and split logic when a file starts getting large.
