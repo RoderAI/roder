@@ -4,21 +4,16 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net/http"
 	"os"
 	"os/exec"
 	"strings"
 	"sync"
+	"time"
 
-	"github.com/modelcontextprotocol/go-sdk/mcp"
+	sdkmcp "github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/pandelisz/gode/internal/godex/eventbus"
 )
-
-type ServerConfig struct {
-	Command  string
-	Args     []string
-	Env      map[string]string
-	Disabled bool
-}
 
 type State string
 
@@ -27,6 +22,7 @@ const (
 	StateStarting  State = "starting"
 	StateConnected State = "connected"
 	StateError     State = "error"
+	StateClosed    State = "closed"
 )
 
 type Tool struct {
@@ -38,7 +34,7 @@ type Tool struct {
 
 type server struct {
 	cfg     ServerConfig
-	session *mcp.ClientSession
+	session *sdkmcp.ClientSession
 	tools   []Tool
 	state   State
 	err     error
@@ -50,12 +46,10 @@ type Manager struct {
 	mu      sync.RWMutex
 }
 
-func NewManager(bus *eventbus.Bus, configs map[string]any) *Manager {
+func NewManager(bus *eventbus.Bus, configs map[string]ServerConfig) *Manager {
 	servers := make(map[string]*server)
 	for name, raw := range configs {
-		var cfg ServerConfig
-		data, _ := json.Marshal(raw)
-		_ = json.Unmarshal(data, &cfg)
+		cfg := raw.withDefaults()
 		servers[name] = &server{cfg: cfg, state: StateDisabled}
 	}
 	return &Manager{bus: bus, servers: servers}
@@ -74,6 +68,7 @@ func (m *Manager) AddStdioServer(ctx context.Context, name string, cfg ServerCon
 	if strings.TrimSpace(name) == "" {
 		return fmt.Errorf("mcp server name is required")
 	}
+	cfg = cfg.withDefaults()
 	m.mu.Lock()
 	if existing := m.servers[name]; existing != nil && existing.session != nil {
 		_ = existing.session.Close()
@@ -94,24 +89,26 @@ func (m *Manager) StartServer(ctx context.Context, name string) error {
 		m.setState(ctx, name, StateDisabled, nil)
 		return nil
 	}
-	if srv.cfg.Command == "" {
-		m.setState(ctx, name, StateError, fmt.Errorf("missing command"))
-		return fmt.Errorf("mcp server %q missing command", name)
+	runCtx := ctx
+	cancel := func() {}
+	if srv.cfg.Timeout > 0 {
+		runCtx, cancel = context.WithTimeout(ctx, time.Duration(srv.cfg.Timeout)*time.Second)
 	}
+	defer cancel()
 
 	m.setState(ctx, name, StateStarting, nil)
-	cmd := exec.CommandContext(ctx, srv.cfg.Command, srv.cfg.Args...)
-	cmd.Env = os.Environ()
-	for key, value := range srv.cfg.Env {
-		cmd.Env = append(cmd.Env, key+"="+value)
-	}
-	client := mcp.NewClient(&mcp.Implementation{Name: "gode", Version: "dev"}, nil)
-	session, err := client.Connect(ctx, &mcp.CommandTransport{Command: cmd}, nil)
+	transport, err := srv.transport(runCtx)
 	if err != nil {
 		m.setState(ctx, name, StateError, err)
 		return err
 	}
-	list, err := session.ListTools(ctx, &mcp.ListToolsParams{})
+	client := sdkmcp.NewClient(&sdkmcp.Implementation{Name: "gode", Version: "dev"}, nil)
+	session, err := client.Connect(runCtx, transport, nil)
+	if err != nil {
+		m.setState(ctx, name, StateError, err)
+		return err
+	}
+	list, err := session.ListTools(runCtx, &sdkmcp.ListToolsParams{})
 	if err != nil {
 		_ = session.Close()
 		m.setState(ctx, name, StateError, err)
@@ -119,6 +116,9 @@ func (m *Manager) StartServer(ctx context.Context, name string) error {
 	}
 	tools := make([]Tool, 0, len(list.Tools))
 	for _, remoteTool := range list.Tools {
+		if !srv.cfg.toolEnabled(remoteTool.Name) {
+			continue
+		}
 		schema := map[string]any{}
 		if remoteTool.InputSchema != nil {
 			data, _ := json.Marshal(remoteTool.InputSchema)
@@ -155,7 +155,7 @@ func (m *Manager) Tools() []Tool {
 func (m *Manager) CallTool(ctx context.Context, serverName, toolName string, input map[string]any) (string, error) {
 	m.mu.RLock()
 	srv, ok := m.servers[serverName]
-	session := (*mcp.ClientSession)(nil)
+	session := (*sdkmcp.ClientSession)(nil)
 	if ok {
 		session = srv.session
 	}
@@ -163,13 +163,13 @@ func (m *Manager) CallTool(ctx context.Context, serverName, toolName string, inp
 	if !ok || session == nil {
 		return "", fmt.Errorf("mcp server %q is not connected", serverName)
 	}
-	result, err := session.CallTool(ctx, &mcp.CallToolParams{Name: toolName, Arguments: input})
+	result, err := session.CallTool(ctx, &sdkmcp.CallToolParams{Name: toolName, Arguments: input})
 	if err != nil {
 		return "", err
 	}
 	var parts []string
 	for _, content := range result.Content {
-		if text, ok := content.(*mcp.TextContent); ok {
+		if text, ok := content.(*sdkmcp.TextContent); ok {
 			parts = append(parts, text.Text)
 		}
 	}
@@ -187,10 +187,81 @@ func (m *Manager) Close(ctx context.Context) error {
 		if srv.session != nil {
 			_ = srv.session.Close()
 			srv.session = nil
-			m.publish(ctx, name, StateDisabled, nil, nil)
+			srv.state = StateClosed
+			m.publish(ctx, name, StateClosed, nil, nil)
 		}
 	}
 	return nil
+}
+
+func (s *server) transport(ctx context.Context) (sdkmcp.Transport, error) {
+	switch s.cfg.Type {
+	case "", "stdio":
+		if strings.TrimSpace(s.cfg.Command) == "" {
+			return nil, fmt.Errorf("missing command")
+		}
+		cmd := exec.CommandContext(ctx, s.cfg.Command, s.cfg.Args...)
+		cmd.Env = os.Environ()
+		for key, value := range s.cfg.Env {
+			cmd.Env = append(cmd.Env, key+"="+value)
+		}
+		return &sdkmcp.CommandTransport{Command: cmd}, nil
+	case "http", "streamable_http":
+		if strings.TrimSpace(s.cfg.URL) == "" {
+			return nil, fmt.Errorf("missing url")
+		}
+		return &sdkmcp.StreamableClientTransport{Endpoint: s.cfg.URL, HTTPClient: headerClient(s.cfg.Headers)}, nil
+	case "sse":
+		if strings.TrimSpace(s.cfg.URL) == "" {
+			return nil, fmt.Errorf("missing url")
+		}
+		return &sdkmcp.SSEClientTransport{Endpoint: s.cfg.URL, HTTPClient: headerClient(s.cfg.Headers)}, nil
+	default:
+		return nil, fmt.Errorf("unsupported transport %q", s.cfg.Type)
+	}
+}
+
+func (c ServerConfig) toolEnabled(name string) bool {
+	enabled := stringSet(c.EnabledTools)
+	disabled := stringSet(c.DisabledTools)
+	if _, ok := disabled[name]; ok {
+		return false
+	}
+	if len(enabled) == 0 {
+		return true
+	}
+	_, ok := enabled[name]
+	return ok
+}
+
+func stringSet(values []string) map[string]struct{} {
+	out := map[string]struct{}{}
+	for _, value := range values {
+		if trimmed := strings.TrimSpace(value); trimmed != "" {
+			out[trimmed] = struct{}{}
+		}
+	}
+	return out
+}
+
+func headerClient(headers map[string]string) *http.Client {
+	if len(headers) == 0 {
+		return nil
+	}
+	return &http.Client{Transport: headerRoundTripper{headers: headers, next: http.DefaultTransport}}
+}
+
+type headerRoundTripper struct {
+	headers map[string]string
+	next    http.RoundTripper
+}
+
+func (r headerRoundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
+	clone := req.Clone(req.Context())
+	for key, value := range r.headers {
+		clone.Header.Set(key, value)
+	}
+	return r.next.RoundTrip(clone)
 }
 
 func (m *Manager) setState(ctx context.Context, name string, state State, err error) {

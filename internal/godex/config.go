@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"runtime"
 
+	"github.com/pandelisz/gode/internal/godex/mcp"
 	"github.com/pandelisz/gode/internal/godex/provider"
 )
 
@@ -18,7 +19,7 @@ type Config struct {
 	AutoApprove       bool
 	Telemetry         bool
 	TelemetryEndpoint string
-	MCP               map[string]any
+	MCP               map[string]mcp.ServerConfig
 	ProviderConfig    map[string]provider.ProviderConfig
 	SelectedModels    map[string]provider.SelectedModel
 	ContextPaths      []string
@@ -37,7 +38,7 @@ func DefaultConfig() Config {
 		AutoApprove:       false,
 		Telemetry:         false,
 		TelemetryEndpoint: "localhost:4317",
-		MCP:               map[string]any{},
+		MCP:               map[string]mcp.ServerConfig{},
 		ProviderConfig:    map[string]provider.ProviderConfig{},
 		SelectedModels:    map[string]provider.SelectedModel{},
 	}
