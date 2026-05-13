@@ -5,10 +5,11 @@ func objectSchema(required ...string) map[string]any {
 	for _, name := range required {
 		properties[name] = map[string]any{"type": "string"}
 	}
+	requiredList := append([]string{}, required...)
 	return map[string]any{
 		"type":       "object",
 		"properties": properties,
-		"required":   required,
+		"required":   requiredList,
 	}
 }
 
