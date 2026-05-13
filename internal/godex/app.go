@@ -18,6 +18,7 @@ import (
 	"github.com/pandelisz/gode/internal/godex/journal"
 	"github.com/pandelisz/gode/internal/godex/lsp"
 	"github.com/pandelisz/gode/internal/godex/mcp"
+	"github.com/pandelisz/gode/internal/godex/memory"
 	messagestore "github.com/pandelisz/gode/internal/godex/message"
 	"github.com/pandelisz/gode/internal/godex/permission"
 	"github.com/pandelisz/gode/internal/godex/provider"
@@ -43,6 +44,7 @@ type App struct {
 	Messages     *messagestore.Store
 	Tools        *tools.Registry
 	Goals        *goals.Runtime
+	Memory       *memory.Service
 	SkillManager *godeskills.Manager
 	MCP          *mcp.Manager
 	LSP          *lsp.Manager
@@ -147,39 +149,24 @@ func New(ctx context.Context, cfg Config) (*App, error) {
 		return nil, err
 	}
 
-	permissionService := permission.New(permission.WithEventBus(bus))
-	hookRunner := hooks.New(nil)
-	reg := tools.NewRegistry(
-		tools.WithEventBus(bus),
-		tools.WithAutoApprove(cfg.AutoApprove),
-		tools.WithPermissionService(permissionService),
-		tools.WithHookRunner(hookRunner),
-		tools.WithWorkspace(cfg.Workspace),
-	)
-	builtin.RegisterFilesystem(reg, cfg.Workspace)
-	builtin.RegisterSearch(reg, cfg.Workspace)
-	builtin.RegisterEditing(reg, cfg.Workspace)
-	builtin.RegisterDownload(reg, cfg.Workspace)
-	builtin.RegisterGit(reg, cfg.Workspace)
-	builtin.RegisterTodo(reg)
-	builtin.RegisterMemory(reg, filepath.Join(cfg.DataDir, "memory.jsonl"))
-	builtin.RegisterShell(reg, cfg.Workspace)
-	builtin.RegisterPatch(reg, cfg.Workspace)
-	builtin.RegisterSubagent(reg)
-	if cfg.GoalsEnabled {
-		builtin.RegisterGoal(reg, goalRuntime)
+	memoryService, err := newMemoryService(ctx, cfg, bus)
+	if err != nil {
+		_ = store.Close()
+		recordSpanError(span, err)
+		_ = shutdownTelemetry(ctx)
+		return nil, err
 	}
 
 	mcpManager := mcp.NewManager(bus, cfg.MCP)
 	_ = mcpManager.Start(ctx)
-	builtin.RegisterMCP(reg, mcpManager)
 	lspManager := lsp.NewManager(bus, cfg.Workspace, cfg.LSP)
 	_ = lspManager.Start(ctx)
-	builtin.RegisterLSP(reg, lspManager)
+	reg := buildToolRegistry(cfg, bus, goalRuntime, memoryService, mcpManager, lspManager)
 
 	prov, err := buildProvider(cfg)
 	if err != nil {
 		store.Close()
+		_ = memoryService.Close()
 		recordSpanError(span, err)
 		_ = shutdownTelemetry(ctx)
 		return nil, err
@@ -196,6 +183,7 @@ func New(ctx context.Context, cfg Config) (*App, error) {
 		Messages:          messageStore,
 		Tools:             reg,
 		Goals:             goalRuntime,
+		Memory:            memoryService,
 		SkillManager:      skillManager,
 		MCP:               mcpManager,
 		LSP:               lspManager,
@@ -274,6 +262,75 @@ func (a *App) SetAutoApprove(autoApprove bool) {
 	}
 }
 
+func (a *App) SetMemoriesEnabled(enabled bool) error {
+	cfg := a.Config
+	cfg.Memories.Enabled = enabled
+	cfg = cfg.withDefaults()
+	memoryService, err := newMemoryService(context.Background(), cfg, a.Bus)
+	if err != nil {
+		return err
+	}
+	reg := buildToolRegistry(cfg, a.Bus, a.Goals, memoryService, a.MCP, a.LSP)
+	if a.Memory != nil {
+		_ = a.Memory.Close()
+	}
+	a.Config = cfg
+	a.Memory = memoryService
+	a.Tools = reg
+	a.runner = agent.NewRunner(runnerConfig(cfg, a.Bus, a.Journal, a.Sessions, a.Turns, a.Items, a.Messages, a.Tools, a.Goals, a.provider, a.contextMessages, a.skills, a.commands))
+	return nil
+}
+
+func newMemoryService(ctx context.Context, cfg Config, bus *eventbus.Bus) (*memory.Service, error) {
+	scope, err := memory.NewScope(cfg.Workspace, cfg.Memories.DatabasePath, cfg.DataDir)
+	if err != nil {
+		return nil, err
+	}
+	memCfg := cfg.Memories.WithDefaults(cfg.DataDir)
+	if !memCfg.Enabled {
+		return memory.NewService(nil, nil, scope, memCfg, bus), nil
+	}
+	store, err := memory.OpenStore(ctx, scope.DatabasePath)
+	if err != nil {
+		return nil, err
+	}
+	return memory.NewService(store, memory.NewOpenAIEmbedder(memCfg.EmbeddingModel), scope, memCfg, bus), nil
+}
+
+func buildToolRegistry(cfg Config, bus *eventbus.Bus, goalRuntime *goals.Runtime, memoryService *memory.Service, mcpManager *mcp.Manager, lspManager *lsp.Manager) *tools.Registry {
+	permissionService := permission.New(permission.WithEventBus(bus))
+	hookRunner := hooks.New(nil)
+	reg := tools.NewRegistry(
+		tools.WithEventBus(bus),
+		tools.WithAutoApprove(cfg.AutoApprove),
+		tools.WithPermissionService(permissionService),
+		tools.WithHookRunner(hookRunner),
+		tools.WithWorkspace(cfg.Workspace),
+	)
+	builtin.RegisterFilesystem(reg, cfg.Workspace)
+	builtin.RegisterSearch(reg, cfg.Workspace)
+	builtin.RegisterEditing(reg, cfg.Workspace)
+	builtin.RegisterDownload(reg, cfg.Workspace)
+	builtin.RegisterGit(reg, cfg.Workspace)
+	builtin.RegisterTodo(reg)
+	if memoryService != nil && cfg.Memories.Enabled {
+		memory.RegisterTools(reg, memoryService)
+	}
+	builtin.RegisterShell(reg, cfg.Workspace)
+	builtin.RegisterPatch(reg, cfg.Workspace)
+	builtin.RegisterSubagent(reg)
+	if cfg.GoalsEnabled {
+		builtin.RegisterGoal(reg, goalRuntime)
+	}
+	if mcpManager != nil {
+		builtin.RegisterMCP(reg, mcpManager)
+	}
+	if lspManager != nil {
+		builtin.RegisterLSP(reg, lspManager)
+	}
+	return reg
+}
+
 func runnerConfig(cfg Config, bus *eventbus.Bus, journalStore *journal.Store, sessionStore *session.Store, turnStore *session.TurnStore, itemStore *session.ItemStore, messageStore *messagestore.Store, registry *tools.Registry, goalRuntime *goals.Runtime, prov provider.Provider, contextMessages []provider.Message, skills []godeskills.Skill, commands []godecommands.Command) agent.Config {
 	return agent.Config{
 		Bus:                   bus,
@@ -302,6 +359,9 @@ func (a *App) Close(ctx context.Context) error {
 	}
 	if a.LSP != nil {
 		_ = a.LSP.Close(ctx)
+	}
+	if a.Memory != nil {
+		_ = a.Memory.Close()
 	}
 	if a.Journal != nil {
 		_ = a.Journal.Flush()

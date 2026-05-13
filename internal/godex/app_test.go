@@ -12,6 +12,7 @@ import (
 	"github.com/pandelisz/gode/internal/godex/eventbus"
 	"github.com/pandelisz/gode/internal/godex/goals"
 	"github.com/pandelisz/gode/internal/godex/journal"
+	"github.com/pandelisz/gode/internal/godex/memory"
 	messagestore "github.com/pandelisz/gode/internal/godex/message"
 	"github.com/pandelisz/gode/internal/godex/provider"
 	"github.com/pandelisz/gode/internal/godex/session"
@@ -131,6 +132,70 @@ func TestAppWiresLSPManager(t *testing.T) {
 	defer app.Close(context.Background())
 	if app.LSP == nil {
 		t.Fatal("lsp manager should be wired")
+	}
+}
+
+func TestAppExposesMemoryToolsOnlyWhenEnabled(t *testing.T) {
+	enabled, err := New(context.Background(), Config{
+		Workspace:   filepath.Join(t.TempDir(), "workspace"),
+		DataDir:     t.TempDir(),
+		Provider:    "mock",
+		AutoApprove: true,
+		Memories:    memory.Config{Enabled: true},
+	})
+	if err != nil {
+		t.Fatalf("new enabled app: %v", err)
+	}
+	defer enabled.Close(context.Background())
+	if !appHasTool(enabled, "save_memory") || !appHasTool(enabled, "memory_add") {
+		t.Fatalf("enabled specs = %#v", enabled.Tools.Specs())
+	}
+	if enabled.Memory == nil {
+		t.Fatal("enabled app should have memory service")
+	}
+
+	disabled, err := New(context.Background(), Config{
+		Workspace:   filepath.Join(t.TempDir(), "workspace"),
+		DataDir:     t.TempDir(),
+		Provider:    "mock",
+		AutoApprove: true,
+		Memories:    memory.Config{Enabled: false, EmbeddingModel: memory.DefaultEmbeddingModel},
+	})
+	if err != nil {
+		t.Fatalf("new disabled app: %v", err)
+	}
+	defer disabled.Close(context.Background())
+	if appHasTool(disabled, "save_memory") || appHasTool(disabled, "memory_add") {
+		t.Fatalf("disabled specs = %#v", disabled.Tools.Specs())
+	}
+}
+
+func TestAppSetMemoriesEnabledRebuildsTools(t *testing.T) {
+	app, err := New(context.Background(), Config{
+		Workspace:   filepath.Join(t.TempDir(), "workspace"),
+		DataDir:     t.TempDir(),
+		Provider:    "mock",
+		AutoApprove: true,
+		Memories:    memory.Config{Enabled: false, EmbeddingModel: memory.DefaultEmbeddingModel},
+	})
+	if err != nil {
+		t.Fatalf("new app: %v", err)
+	}
+	defer app.Close(context.Background())
+	if appHasTool(app, "save_memory") {
+		t.Fatalf("save_memory should start disabled: %#v", app.Tools.Specs())
+	}
+	if err := app.SetMemoriesEnabled(true); err != nil {
+		t.Fatalf("enable memories: %v", err)
+	}
+	if !app.Config.Memories.Enabled || app.Memory == nil || !appHasTool(app, "save_memory") {
+		t.Fatalf("enabled config=%#v memory=%v specs=%#v", app.Config.Memories, app.Memory, app.Tools.Specs())
+	}
+	if err := app.SetMemoriesEnabled(false); err != nil {
+		t.Fatalf("disable memories: %v", err)
+	}
+	if app.Config.Memories.Enabled || appHasTool(app, "save_memory") {
+		t.Fatalf("disabled config=%#v specs=%#v", app.Config.Memories, app.Tools.Specs())
 	}
 }
 
@@ -415,4 +480,13 @@ func (f *fakeCompactor) Compact(_ context.Context, req provider.CompactRequest) 
 		return provider.CompactResult{}, f.err
 	}
 	return provider.CompactResult{ID: "cmp_resp", Output: f.output}, nil
+}
+
+func appHasTool(app *App, name string) bool {
+	for _, spec := range app.Tools.Specs() {
+		if spec.Name == name {
+			return true
+		}
+	}
+	return false
 }
