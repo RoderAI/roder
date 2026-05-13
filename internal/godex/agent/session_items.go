@@ -40,18 +40,7 @@ func (r *Runner) failTurn(ctx context.Context, req RunRequest, errorText string)
 }
 
 func (r *Runner) persistUserItem(ctx context.Context, req RunRequest) error {
-	if r.items == nil {
-		return nil
-	}
-	_, err := r.items.Append(ctx, session.Item{
-		ID:        req.RunID + ":user",
-		SessionID: req.SessionID,
-		TurnID:    req.RunID,
-		Kind:      session.ItemMessage,
-		Role:      "user",
-		Text:      req.Prompt,
-	})
-	return err
+	return r.persistUserTextItem(ctx, req, "user", req.Prompt)
 }
 
 func (r *Runner) persistProviderItems(ctx context.Context, req RunRequest, providerItems []provider.Item, final string) error {

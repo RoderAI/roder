@@ -10,6 +10,7 @@ func protocolCapabilities() map[string]any {
 			"thread/read",
 			"thread/unsubscribe",
 			"turn/start",
+			"turn/steer",
 			"turn/interrupt",
 			"model/list",
 			"mcp/state",

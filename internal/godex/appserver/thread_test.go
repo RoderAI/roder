@@ -143,6 +143,30 @@ func TestTurnInterruptCancelsOnlyActiveThread(t *testing.T) {
 	}
 }
 
+func TestTurnSteerRequiresActiveTurn(t *testing.T) {
+	ctx := context.Background()
+	app, err := godex.New(ctx, godex.Config{
+		Workspace:   filepath.Join(t.TempDir(), "workspace"),
+		DataDir:     t.TempDir(),
+		Provider:    "mock",
+		AutoApprove: true,
+	})
+	if err != nil {
+		t.Fatalf("new app: %v", err)
+	}
+	defer app.Close(ctx)
+
+	server := New(app, Options{Version: "test"})
+	_, rpcErr := server.handleTurnSteer(ctx, mustRaw(t, map[string]any{
+		"threadId":       "missing",
+		"expectedTurnId": "turn-1",
+		"input":          []map[string]any{{"type": "text", "text": "steer"}},
+	}))
+	if rpcErr == nil || rpcErr.Message != "no active turn to steer" {
+		t.Fatalf("rpc err = %#v", rpcErr)
+	}
+}
+
 func startTurn(t *testing.T, conn *Connection, messages *[]Message, id int, threadID string, text string) {
 	t.Helper()
 	before := len(*messages)

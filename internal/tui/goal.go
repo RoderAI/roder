@@ -106,11 +106,20 @@ func (m *Model) applyGoalEvent(ev eventbus.Event) {
 }
 
 func (m Model) footerStatus() string {
-	if strings.TrimSpace(m.goalSummary) == "" {
-		return m.status
+	status := m.status
+	if len(m.queuedPrompts) > 0 {
+		queue := queueStatus(len(m.queuedPrompts))
+		if strings.TrimSpace(status) == "" || status == "ready" {
+			status = queue
+		} else {
+			status += " · " + queue
+		}
 	}
-	if strings.TrimSpace(m.status) == "" || m.status == "ready" {
+	if strings.TrimSpace(m.goalSummary) == "" {
+		return status
+	}
+	if strings.TrimSpace(status) == "" || status == "ready" {
 		return m.goalSummary
 	}
-	return m.status + " · " + m.goalSummary
+	return status + " · " + m.goalSummary
 }

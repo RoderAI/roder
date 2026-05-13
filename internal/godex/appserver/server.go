@@ -34,6 +34,7 @@ type Connection struct {
 type threadState struct {
 	Thread
 	activeCancel context.CancelFunc
+	activeTurnID string
 }
 
 func New(app *godex.App, options Options) *Server {

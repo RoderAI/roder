@@ -58,6 +58,9 @@ func TestConnectionRequiresInitializeAndStreamsThreadTurnNotifications(t *testin
 	if !slices.ContainsFunc(methods, func(method any) bool { return method == "thread/start" }) {
 		t.Fatalf("initialize capabilities missing thread/start: %#v", capabilities)
 	}
+	if !slices.ContainsFunc(methods, func(method any) bool { return method == "turn/steer" }) {
+		t.Fatalf("initialize capabilities missing turn/steer: %#v", capabilities)
+	}
 
 	if err := conn.HandleJSON(ctx, []byte(`{"method":"initialized"}`)); err != nil {
 		t.Fatalf("initialized notification: %v", err)

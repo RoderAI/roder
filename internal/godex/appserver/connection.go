@@ -85,6 +85,8 @@ func (c *Connection) dispatch(ctx context.Context, msg inboundMessage) (any, *RP
 		return c.server.handleThreadGoalClear(ctx, msg.Params)
 	case "turn/start":
 		return c.handleTurnStart(ctx, msg.Params)
+	case "turn/steer":
+		return c.server.handleTurnSteer(ctx, msg.Params)
 	case "turn/interrupt":
 		return c.server.handleTurnInterrupt(ctx, msg.Params)
 	case "fs/readFile":
