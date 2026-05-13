@@ -364,6 +364,44 @@ func TestSettingsModelSelectionSavesDefaultAndUpdatesApp(t *testing.T) {
 	}
 }
 
+func TestSettingsModelSelectionPersistsBeforeReasoningConfirmation(t *testing.T) {
+	dataDir := t.TempDir()
+	app, err := godex.New(context.Background(), godex.Config{
+		DataDir:     dataDir,
+		Workspace:   filepath.Join(t.TempDir(), "workspace"),
+		Provider:    "mock",
+		Model:       godex.DefaultModelID,
+		Reasoning:   godex.ReasoningMedium,
+		AutoApprove: true,
+	})
+	if err != nil {
+		t.Fatalf("app: %v", err)
+	}
+	defer app.Close(context.Background())
+
+	model := New(app)
+	model.openSettings()
+	updated, _ := model.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	updated, _ = updated.Update(tea.KeyPressMsg{Code: tea.KeyDown})
+	updated, _ = updated.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	got := updated.(Model)
+
+	wantModel := godex.BuiltInModels(false)[1].ID
+	if got.settings.screen != settingsScreenReasoning {
+		t.Fatalf("settings screen = %v, want reasoning", got.settings.screen)
+	}
+	if app.Config.Model != wantModel {
+		t.Fatalf("app model = %q, want %q", app.Config.Model, wantModel)
+	}
+	settings, err := godex.LoadSettings(dataDir)
+	if err != nil {
+		t.Fatalf("load settings: %v", err)
+	}
+	if settings.DefaultModel != wantModel {
+		t.Fatalf("saved default model = %q, want %q", settings.DefaultModel, wantModel)
+	}
+}
+
 func TestSettingsModelClickOpensReasoningAndReasoningClickSavesDefault(t *testing.T) {
 	dataDir := t.TempDir()
 	app, err := godex.New(context.Background(), godex.Config{
