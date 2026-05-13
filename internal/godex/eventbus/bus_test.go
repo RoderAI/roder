@@ -70,6 +70,7 @@ func TestBusAwaitReturnsCorrelatedEvent(t *testing.T) {
 		result <- ev
 	}()
 
+	time.Sleep(10 * time.Millisecond)
 	bus.Publish(context.Background(), Event{Kind: KindPermissionRequested, CorrelationID: "c1"})
 	bus.Publish(context.Background(), Event{Kind: KindPermissionResponded, CorrelationID: "c1"})
 
