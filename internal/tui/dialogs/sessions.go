@@ -2,6 +2,8 @@ package dialogs
 
 import "fmt"
 
+const NewSessionID = "__new_session__"
+
 type SessionItem struct {
 	ID           string
 	Title        string
@@ -41,6 +43,9 @@ func (s Sessions) SelectedItem() SessionItem {
 }
 
 func (s SessionItem) Value() string {
+	if s.ID == NewSessionID {
+		return "start"
+	}
 	value := fmt.Sprintf("%d msg", s.MessageCount)
 	if s.Current {
 		value += " current"

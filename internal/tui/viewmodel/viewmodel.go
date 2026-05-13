@@ -34,6 +34,7 @@ type Model struct {
 	Provider         string
 	Model            string
 	Reasoning        string
+	SessionTitle     string
 	Messages         []Message
 	ReasoningSummary string
 	Attachments      []Attachment
