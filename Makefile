@@ -6,16 +6,22 @@ MODEL ?= gpt-5.4-mini
 REASONING ?= low
 PROMPT ?= summarize this repo in one sentence
 
-.PHONY: build run mock-run tui test smoke clean
+.PHONY: build run ask mock-run mock-ask tui test smoke clean
 
 build:
 	@mkdir -p $(dir $(BINARY))
 	go build -o $(BINARY) ./cmd/gode
 
 run: build
+	$(BINARY) --workspace "$(WORKSPACE)" --data-dir "$(DATA_DIR)" --provider "$(PROVIDER)" --model "$(MODEL)" --reasoning "$(REASONING)" --auto-approve
+
+ask: build
 	$(BINARY) run --workspace "$(WORKSPACE)" --data-dir "$(DATA_DIR)" --provider "$(PROVIDER)" --model "$(MODEL)" --reasoning "$(REASONING)" --auto-approve "$(PROMPT)"
 
 mock-run: build
+	$(BINARY) --workspace "$(WORKSPACE)" --data-dir "$(DATA_DIR)" --provider "mock" --model "$(MODEL)" --reasoning "$(REASONING)" --auto-approve
+
+mock-ask: build
 	$(BINARY) run --workspace "$(WORKSPACE)" --data-dir "$(DATA_DIR)" --provider "mock" --model "$(MODEL)" --reasoning "$(REASONING)" --auto-approve "$(PROMPT)"
 
 tui: build
@@ -24,7 +30,7 @@ tui: build
 test:
 	go test ./...
 
-smoke: test mock-run
+smoke: test mock-ask
 
 clean:
 	rm -rf bin .gode

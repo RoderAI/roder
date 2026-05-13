@@ -17,8 +17,9 @@ Every meaningful state transition flows through the `godex` event bus so the TUI
 
 ```sh
 go run ./cmd/gode version
-go run ./cmd/gode run --provider mock --auto-approve "summarize this repo"
 go run ./cmd/gode
+make run
+make ask PROMPT="summarize this repo"
 ```
 
 ## Near-Term Direction
