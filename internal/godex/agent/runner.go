@@ -143,10 +143,7 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (RunResult, error) {
 	}
 
 	final := ""
-	toolTurns := 0
-	toolCalls := 0
-	lastTool := ""
-	lastToolCallID := ""
+	stats := runStats{}
 	for turn := 0; turn < maxTurns; turn++ {
 		providerReq := provider.Request{
 			SessionID:      req.SessionID,
@@ -156,122 +153,37 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (RunResult, error) {
 			Messages:       messages,
 			Tools:          r.providerToolSpecs(),
 		}
-		events, errs := r.provider.Stream(ctx, providerReq)
-
-		turnHadToolCall := false
-		turnProducedText := false
-		for events != nil || errs != nil {
-			select {
-			case ev, ok := <-events:
-				if !ok {
-					events = nil
-					continue
-				}
-				switch ev.Kind {
-				case provider.EventDelta:
-					turnProducedText = true
-					final += ev.Text
-					r.emit(ctx, eventbus.Event{
-						Kind:      eventbus.KindAssistantDelta,
-						Source:    eventbus.SourceProvider,
-						SessionID: req.SessionID,
-						RunID:     req.RunID,
-						Payload:   map[string]any{"text": ev.Text},
-					})
-				case provider.EventReasoningSummaryDelta:
-					r.emit(ctx, eventbus.Event{
-						Kind:      eventbus.KindReasoningSummaryDelta,
-						Source:    eventbus.SourceProvider,
-						SessionID: req.SessionID,
-						RunID:     req.RunID,
-						Payload:   map[string]any{"text": ev.Text},
-					})
-				case provider.EventReasoningSummaryDone:
-					r.emit(ctx, eventbus.Event{
-						Kind:      eventbus.KindReasoningSummaryCompleted,
-						Source:    eventbus.SourceProvider,
-						SessionID: req.SessionID,
-						RunID:     req.RunID,
-						Payload:   map[string]any{"text": ev.Text},
-					})
-				case provider.EventToolCall:
-					turnHadToolCall = true
-					if ev.ToolRequest == nil {
-						continue
-					}
-					toolCalls++
-					lastTool = ev.ToolRequest.Name
-					lastToolCallID = ev.ToolRequest.ID
-					r.emit(ctx, eventbus.Event{
-						Kind:      eventbus.KindToolRequested,
-						Source:    eventbus.SourceProvider,
-						SessionID: req.SessionID,
-						RunID:     req.RunID,
-						Payload: map[string]any{
-							"tool_call_id": ev.ToolRequest.ID,
-							"tool":         ev.ToolRequest.Name,
-							"input":        ev.ToolRequest.Input,
-						},
-					})
-					if r.tools != nil {
-						messages = append(messages, provider.Message{
-							Role:          provider.RoleAssistant,
-							ToolCallID:    ev.ToolRequest.ID,
-							ToolName:      ev.ToolRequest.Name,
-							ToolArguments: ev.ToolRequest.Arguments,
-						})
-						result, err := r.tools.Run(ctx, tools.Call{
-							ID:        ev.ToolRequest.ID,
-							Name:      ev.ToolRequest.Name,
-							Input:     ev.ToolRequest.Input,
-							SessionID: req.SessionID,
-							RunID:     req.RunID,
-						})
-						if err != nil {
-							return RunResult{}, r.fail(ctx, req, err)
-						}
-						messages = append(messages, provider.Message{
-							Role:       provider.RoleTool,
-							ToolCallID: ev.ToolRequest.ID,
-							Content:    toolResponseContent(ev.ToolRequest.Name, result),
-						})
-					}
-				case provider.EventCompleted:
-					if final == "" {
-						final = ev.Text
-					}
-					if ev.Text != "" || final != "" {
-						turnProducedText = true
-					}
-					r.emit(ctx, eventbus.Event{
-						Kind:      eventbus.KindAssistantCompleted,
-						Source:    eventbus.SourceProvider,
-						SessionID: req.SessionID,
-						RunID:     req.RunID,
-						Payload:   map[string]any{"text": final},
-					})
-				}
-			case err, ok := <-errs:
-				if !ok {
-					errs = nil
-					continue
-				}
-				if err != nil {
-					return RunResult{}, r.fail(ctx, req, err)
-				}
-			case <-ctx.Done():
-				return RunResult{}, r.fail(ctx, req, ctx.Err())
-			}
+		outcome, err := r.streamProviderTurn(ctx, req, providerReq, messages, final, &stats, true)
+		if err != nil {
+			return RunResult{}, r.fail(ctx, req, err)
 		}
-		if turnHadToolCall {
-			toolTurns++
+		messages = outcome.Messages
+		final = outcome.Final
+		if outcome.HadToolCall {
+			stats.ToolTurns++
 		}
-		if !turnHadToolCall || turnProducedText {
+		if !outcome.HadToolCall || outcome.ProducedText {
 			break
 		}
 	}
+	if final == "" && stats.ToolCalls > 0 {
+		messages = append(messages, provider.Message{Role: provider.RoleUser, Content: finalAfterToolBudgetPrompt(maxTurns)})
+		providerReq := provider.Request{
+			SessionID:      req.SessionID,
+			RunID:          req.RunID,
+			Instructions:   firstNonEmpty(req.Instructions, GodeInstructions),
+			ResponseFormat: req.ResponseFormat,
+			Messages:       messages,
+		}
+		outcome, err := r.streamProviderTurn(ctx, req, providerReq, messages, final, &stats, false)
+		if err != nil {
+			return RunResult{}, r.fail(ctx, req, err)
+		}
+		messages = outcome.Messages
+		final = outcome.Final
+	}
 	if final == "" {
-		return RunResult{}, r.fail(ctx, req, r.toolLoopError(req, maxTurns, toolTurns, toolCalls, lastTool, lastToolCallID))
+		return RunResult{}, r.fail(ctx, req, r.toolLoopError(req, maxTurns, stats))
 	}
 
 	r.emit(ctx, eventbus.Event{
@@ -377,7 +289,11 @@ func (r *Runner) providerToolSpecs() []provider.ToolSpec {
 	return out
 }
 
-func (r *Runner) toolLoopError(req RunRequest, maxTurns int, toolTurns int, toolCalls int, lastTool string, lastToolCallID string) error {
+func finalAfterToolBudgetPrompt(maxTurns int) string {
+	return fmt.Sprintf("Tool-call budget reached after %d tool turns. Do not request more tools. Using only the tool results and context already available, provide the best final answer now. If the task is incomplete, summarize what you found and what remains.", maxTurns)
+}
+
+func (r *Runner) toolLoopError(req RunRequest, maxTurns int, stats runStats) error {
 	lines := []string{
 		"agent stopped without final text after tool loop",
 		"",
@@ -385,15 +301,15 @@ func (r *Runner) toolLoopError(req RunRequest, maxTurns int, toolTurns int, tool
 		"session_id: " + req.SessionID,
 		"run_id: " + req.RunID,
 		fmt.Sprintf("max_turns: %d", maxTurns),
-		fmt.Sprintf("tool_turns: %d", toolTurns),
-		fmt.Sprintf("tool_calls: %d", toolCalls),
+		fmt.Sprintf("tool_turns: %d", stats.ToolTurns),
+		fmt.Sprintf("tool_calls: %d", stats.ToolCalls),
 		"provider: " + r.providerName(),
 	}
-	if lastTool != "" {
-		lines = append(lines, "last_tool: "+lastTool)
+	if stats.LastTool != "" {
+		lines = append(lines, "last_tool: "+stats.LastTool)
 	}
-	if lastToolCallID != "" {
-		lines = append(lines, "last_tool_call_id: "+lastToolCallID)
+	if stats.LastToolCallID != "" {
+		lines = append(lines, "last_tool_call_id: "+stats.LastToolCallID)
 	}
 	if r.journal != nil && r.journal.Path() != "" {
 		lines = append(lines, "event_journal: "+r.journal.Path())
