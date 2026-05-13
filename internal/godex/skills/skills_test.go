@@ -1,6 +1,7 @@
 package skills
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -123,6 +124,78 @@ Run the suite.
 	}
 	if skill.Body != "Run the suite." {
 		t.Fatalf("body = %q", skill.Body)
+	}
+}
+
+func TestInstallCopiesLocalSkillDirectory(t *testing.T) {
+	root := t.TempDir()
+	source := filepath.Join(root, "source", "go-tests")
+	writeSkill(t, source, "go-tests", "Run tests")
+	mustWrite(t, filepath.Join(source, "assets", "note.txt"), "asset")
+	workspace := filepath.Join(root, "workspace")
+
+	result, err := Install(context.Background(), InstallOptions{Source: source, Workspace: workspace, Project: true})
+	if err != nil {
+		t.Fatalf("install: %v", err)
+	}
+	target := filepath.Join(workspace, ".agents", "skills", "go-tests")
+	if len(result.Installed) != 1 || result.Installed[0].Path != target {
+		t.Fatalf("result = %#v", result)
+	}
+	data, err := os.ReadFile(filepath.Join(target, "assets", "note.txt"))
+	if err != nil {
+		t.Fatalf("read copied asset: %v", err)
+	}
+	if string(data) != "asset" {
+		t.Fatalf("asset = %q", string(data))
+	}
+}
+
+func TestInstallMultipleSkillsRequiresFilterOrYes(t *testing.T) {
+	root := t.TempDir()
+	source := filepath.Join(root, "source")
+	writeSkill(t, filepath.Join(source, "go-tests"), "go-tests", "Run tests")
+	writeSkill(t, filepath.Join(source, "review"), "review", "Review")
+	workspace := filepath.Join(root, "workspace")
+
+	if _, err := Install(context.Background(), InstallOptions{Source: source, Workspace: workspace, Project: true}); err == nil {
+		t.Fatal("install should require --skill or --yes for multi-skill sources")
+	}
+	result, err := Install(context.Background(), InstallOptions{Source: source, Workspace: workspace, Project: true, SkillNames: []string{"review"}})
+	if err != nil {
+		t.Fatalf("install filtered: %v", err)
+	}
+	if len(result.Installed) != 1 || result.Installed[0].Name != "review" {
+		t.Fatalf("filtered result = %#v", result)
+	}
+}
+
+func TestInstallClonesGitSourceToTempDir(t *testing.T) {
+	root := t.TempDir()
+	tempClone := filepath.Join(root, "clone")
+	dataDir := filepath.Join(root, "data")
+	result, err := Install(context.Background(), InstallOptions{
+		Source:  "https://example.com/repo.git",
+		DataDir: dataDir,
+		Global:  true,
+		TempDir: tempClone,
+		CloneRunner: func(_ context.Context, source string, target string) error {
+			if source != "https://example.com/repo.git" || target != tempClone {
+				t.Fatalf("clone source=%q target=%q", source, target)
+			}
+			writeSkill(t, filepath.Join(target, "go-tests"), "go-tests", "Run tests")
+			return nil
+		},
+	})
+	if err != nil {
+		t.Fatalf("install git: %v", err)
+	}
+	target := filepath.Join(dataDir, "skills", "go-tests")
+	if len(result.Installed) != 1 || result.Installed[0].Path != target {
+		t.Fatalf("result = %#v", result)
+	}
+	if _, err := os.Stat(filepath.Join(target, "SKILL.md")); err != nil {
+		t.Fatalf("installed skill: %v", err)
 	}
 }
 
