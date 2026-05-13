@@ -2,6 +2,7 @@ package tui
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/pandelisz/gode/internal/godex"
@@ -57,5 +58,13 @@ func TestNewModelFocusesComposer(t *testing.T) {
 	model := New(nil)
 	if !model.input.Focused() {
 		t.Fatal("composer should be focused")
+	}
+}
+
+func TestComposerDoesNotPaintCursorLineBackground(t *testing.T) {
+	model := New(nil)
+	view := model.input.View()
+	if strings.Contains(view, "\x1b[40m") || strings.Contains(view, "\x1b[48;5;0m") {
+		t.Fatalf("composer view contains black background ANSI: %q", view)
 	}
 }
