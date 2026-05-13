@@ -12,7 +12,8 @@ func TestApplySummarizesReadFileToolOutput(t *testing.T) {
 	update := Apply(eventbus.Event{
 		Kind: eventbus.KindToolCompleted,
 		Payload: map[string]any{
-			"tool": "read_file",
+			"tool":         "read_file",
+			"tool_call_id": "call_1",
 			"input": map[string]any{
 				"path": "internal/godex/tools/registry.go",
 			},
@@ -26,6 +27,9 @@ func TestApplySummarizesReadFileToolOutput(t *testing.T) {
 	message := update.Messages[0]
 	if message.Role != viewmodel.RoleTool || message.Title != "read_file" {
 		t.Fatalf("message = %#v", message)
+	}
+	if message.Key != "tool:call_1" {
+		t.Fatalf("message key = %q", message.Key)
 	}
 	if message.Body != "read internal/godex/tools/registry.go" {
 		t.Fatalf("body = %q", message.Body)

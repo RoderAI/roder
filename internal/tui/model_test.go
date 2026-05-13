@@ -97,6 +97,45 @@ func TestModelSummarizesReadFileToolOutput(t *testing.T) {
 	}
 }
 
+func TestModelUpdatesToolTimelineEntryForSameCall(t *testing.T) {
+	model := New(nil)
+	request := eventbus.Event{
+		Kind: eventbus.KindToolRequested,
+		Payload: map[string]any{
+			"tool":         "read_file",
+			"tool_call_id": "call_1",
+			"input": map[string]any{
+				"path": "README.md",
+			},
+		},
+	}
+	completed := eventbus.Event{
+		Kind: eventbus.KindToolCompleted,
+		Payload: map[string]any{
+			"tool":         "read_file",
+			"tool_call_id": "call_1",
+			"input": map[string]any{
+				"path": "README.md",
+			},
+			"text": strings.Repeat("contents\n", 20),
+		},
+	}
+
+	updated, _ := model.Update(eventMsg{Event: request})
+	updated, _ = updated.Update(eventMsg{Event: completed})
+	got := updated.(Model)
+
+	if len(got.messages) != 1 {
+		t.Fatalf("tool request and completion should render one row: %#v", got.messages)
+	}
+	if got.messages[0].Role != viewmodel.RoleTool || got.messages[0].Title != "read_file" || got.messages[0].Body != "read README.md" {
+		t.Fatalf("tool message = %#v", got.messages[0])
+	}
+	if strings.Contains(got.messages[0].Body, "contents") {
+		t.Fatalf("read_file timeline leaked output:\n%s", got.messages[0].Body)
+	}
+}
+
 func TestEventAdapterStateEventsDoNotRenderEmptyTranscriptRows(t *testing.T) {
 	model := New(nil)
 	events := []eventbus.Event{

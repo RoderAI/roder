@@ -14,6 +14,7 @@ const (
 )
 
 type Message struct {
+	Key   string
 	Role  viewmodel.Role
 	Title string
 	Body  string
@@ -55,7 +56,7 @@ func Apply(ev eventbus.Event) Update {
 	case eventbus.KindToolRequested:
 		var payload toolPayload
 		_ = ev.DecodePayload(&payload)
-		return withStatus(withMessage(viewmodel.RoleTool, payload.Tool, "requested"), statusWithName("tool requested", payload.Tool))
+		return withStatus(withMessageKey(payload.MessageKey(), viewmodel.RoleTool, payload.Tool, "requested"), statusWithName("tool requested", payload.Tool))
 	case eventbus.KindToolStarted:
 		var payload toolPayload
 		_ = ev.DecodePayload(&payload)
@@ -64,11 +65,11 @@ func Apply(ev eventbus.Event) Update {
 		var payload toolPayload
 		_ = ev.DecodePayload(&payload)
 		body := summarizeToolTimeline(payload.Tool, payload.Input, payload.Text)
-		return withStatus(withMessage(viewmodel.RoleTool, payload.Tool, appendToolMetadata(body, payload)), statusWithName("tool completed", payload.Tool))
+		return withStatus(withMessageKey(payload.MessageKey(), viewmodel.RoleTool, payload.Tool, appendToolMetadata(body, payload)), statusWithName("tool completed", payload.Tool))
 	case eventbus.KindToolFailed:
 		var payload toolPayload
 		_ = ev.DecodePayload(&payload)
-		return withStatus(withMessage(viewmodel.RoleError, payload.Tool, payload.Error), statusWithName("tool failed", payload.Tool)+" - ctrl+l errors")
+		return withStatus(withMessageKey(payload.MessageKey(), viewmodel.RoleError, payload.Tool, payload.Error), statusWithName("tool failed", payload.Tool)+" - ctrl+l errors")
 	case eventbus.KindPermissionRequested:
 		var payload toolPayload
 		_ = ev.DecodePayload(&payload)
@@ -118,6 +119,8 @@ type textPayload struct {
 }
 
 type toolPayload struct {
+	ToolCallID   string         `json:"tool_call_id"`
+	ToolCallID2  string         `json:"toolCallId"`
 	Tool         string         `json:"tool"`
 	Action       string         `json:"action"`
 	Path         string         `json:"path"`
@@ -161,6 +164,14 @@ type contextTokensPayload struct {
 	Percent float64 `json:"percent"`
 }
 
+func (p toolPayload) MessageKey() string {
+	id := firstNonEmpty(p.ToolCallID, p.ToolCallID2)
+	if id == "" {
+		return ""
+	}
+	return "tool:" + id
+}
+
 func (p errorPayload) Message() string {
 	if strings.TrimSpace(p.Detail) != "" {
 		return p.Detail
@@ -169,12 +180,16 @@ func (p errorPayload) Message() string {
 }
 
 func withMessage(role viewmodel.Role, title string, body string) Update {
+	return withMessageKey("", role, title, body)
+}
+
+func withMessageKey(key string, role viewmodel.Role, title string, body string) Update {
 	title = strings.TrimSpace(title)
 	body = strings.TrimSpace(body)
 	if title == "" && body == "" {
 		return Update{}
 	}
-	return Update{Messages: []Message{{Role: role, Title: title, Body: body}}}
+	return Update{Messages: []Message{{Key: key, Role: role, Title: title, Body: body}}}
 }
 
 func status(text string) Update {
