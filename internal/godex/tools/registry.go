@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -20,8 +21,9 @@ type Call struct {
 }
 
 type Result struct {
-	Text string
-	Data any
+	Text  string
+	Data  any
+	Error string
 }
 
 type Tool struct {
@@ -101,11 +103,29 @@ func (r *Registry) Run(ctx context.Context, call Call) (Result, error) {
 	r.publish(ctx, eventbus.KindToolStarted, call, map[string]any{"tool": call.Name, "tool_call_id": call.ID})
 	result, err := tool.Run(ctx, call)
 	if err != nil {
-		r.publish(ctx, eventbus.KindToolFailed, call, map[string]any{"tool": call.Name, "tool_call_id": call.ID, "error": err.Error()})
-		return Result{}, err
+		result = failedResult(result, err)
+		r.publish(ctx, eventbus.KindToolFailed, call, map[string]any{"tool": call.Name, "tool_call_id": call.ID, "error": result.Error, "text": result.Text})
+		return result, nil
 	}
 	r.publish(ctx, eventbus.KindToolCompleted, call, map[string]any{"tool": call.Name, "tool_call_id": call.ID, "text": result.Text})
 	return result, nil
+}
+
+func failedResult(result Result, err error) Result {
+	message := strings.TrimSpace(err.Error())
+	output := strings.TrimSpace(result.Text)
+	result.Error = message
+	switch {
+	case message == "":
+		result.Text = output
+	case output == "":
+		result.Text = message
+	case strings.Contains(message, output):
+		result.Text = message
+	default:
+		result.Text = message + "\n" + output
+	}
+	return result
 }
 
 func (r *Registry) requestPermission(ctx context.Context, tool Tool, call Call) (bool, error) {
@@ -113,6 +133,14 @@ func (r *Registry) requestPermission(ctx context.Context, tool Tool, call Call) 
 		return false, errors.New("permission required but event bus is nil")
 	}
 	correlationID := uuid.NewString()
+
+	awaitCtx, cancel := context.WithTimeout(ctx, 24*time.Hour)
+	defer cancel()
+	responses := r.bus.Subscribe(awaitCtx, eventbus.Filter{
+		CorrelationID: correlationID,
+		Kinds:         []eventbus.Kind{eventbus.KindPermissionResponded},
+	})
+
 	r.bus.Publish(ctx, eventbus.Event{
 		Source:        eventbus.SourceTool,
 		Kind:          eventbus.KindPermissionRequested,
@@ -127,14 +155,15 @@ func (r *Registry) requestPermission(ctx context.Context, tool Tool, call Call) 
 		},
 	})
 
-	awaitCtx, cancel := context.WithTimeout(ctx, 24*time.Hour)
-	defer cancel()
-	response, err := r.bus.Await(awaitCtx, eventbus.Filter{
-		CorrelationID: correlationID,
-		Kinds:         []eventbus.Kind{eventbus.KindPermissionResponded},
-	})
-	if err != nil {
-		return false, err
+	var response eventbus.Event
+	select {
+	case ev, ok := <-responses:
+		if !ok {
+			return false, eventbus.ErrClosed
+		}
+		response = ev
+	case <-awaitCtx.Done():
+		return false, awaitCtx.Err()
 	}
 	var payload struct {
 		Approved bool `json:"approved"`

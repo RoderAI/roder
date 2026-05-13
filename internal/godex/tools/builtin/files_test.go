@@ -115,9 +115,12 @@ func TestFilesystemToolsRejectPathEscape(t *testing.T) {
 	reg := tools.NewRegistry()
 	RegisterFilesystem(reg, root)
 
-	_, err := reg.Run(context.Background(), tools.Call{Name: "read_file", Input: map[string]any{"path": "../secret"}})
-	if err == nil {
-		t.Fatal("expected path escape error")
+	result, err := reg.Run(context.Background(), tools.Call{Name: "read_file", Input: map[string]any{"path": "../secret"}})
+	if err != nil {
+		t.Fatalf("run should return path escape as a failed tool result: %v", err)
+	}
+	if result.Error == "" || !strings.Contains(result.Text, "path escapes workspace") {
+		t.Fatalf("failed result = %#v", result)
 	}
 }
 

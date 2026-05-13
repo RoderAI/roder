@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"fmt"
+	"strings"
 	"sync"
 
 	"github.com/google/uuid"
@@ -182,7 +183,7 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (RunResult, error) {
 						messages = append(messages, provider.Message{
 							Role:       provider.RoleTool,
 							ToolCallID: ev.ToolRequest.ID,
-							Content:    fmt.Sprintf("Tool %s result:\n%s", ev.ToolRequest.Name, result.Text),
+							Content:    toolResponseContent(ev.ToolRequest.Name, result),
 						})
 					}
 				case provider.EventCompleted:
@@ -228,6 +229,20 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (RunResult, error) {
 		Payload:   map[string]any{"final_text": final},
 	})
 	return RunResult{SessionID: req.SessionID, RunID: req.RunID, FinalText: final}, nil
+}
+
+func toolResponseContent(name string, result tools.Result) string {
+	text := strings.TrimSpace(result.Text)
+	if text == "" && result.Error != "" {
+		text = strings.TrimSpace(result.Error)
+	}
+	if text == "" {
+		text = "(no output)"
+	}
+	if result.Error != "" {
+		return fmt.Sprintf("Tool %s failed:\n%s", name, text)
+	}
+	return fmt.Sprintf("Tool %s result:\n%s", name, text)
 }
 
 func (r *Runner) providerToolSpecs() []provider.ToolSpec {
