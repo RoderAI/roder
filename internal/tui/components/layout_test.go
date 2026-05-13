@@ -169,6 +169,46 @@ func TestRenderClipsTallToolTranscriptBeforeComposer(t *testing.T) {
 	}
 }
 
+func TestRenderKeepsBottomGutterWhenScrolled(t *testing.T) {
+	zones := zone.New()
+	t.Cleanup(zones.Close)
+
+	messages := make([]viewmodel.Message, 0, 12)
+	for i := 0; i < 12; i++ {
+		messages = append(messages, viewmodel.Message{
+			ID:   "m" + string(rune('a'+i)),
+			Role: viewmodel.RoleTool,
+			Body: strings.Repeat("scrolling tool output ", 10),
+		})
+	}
+
+	out := zones.Scan(Render(viewmodel.Model{
+		Width:        80,
+		Height:       18,
+		Model:        "gpt-test",
+		Provider:     "codex",
+		Input:        "> Ask gode to work on this repo",
+		InputHeight:  1,
+		Messages:     messages,
+		ScrollOffset: 4,
+		Status:       "tool completed: search_files",
+	}, zones))
+
+	if got := lipgloss.Height(out); got != 18 {
+		t.Fatalf("height = %d, want 18\n%s", got, out)
+	}
+	lines := strings.Split(out, "\n")
+	if len(lines) != 18 {
+		t.Fatalf("line count = %d, want 18\n%s", len(lines), out)
+	}
+	if strings.TrimSpace(lines[len(lines)-1]) != "" {
+		t.Fatalf("last line should be reserved bottom gutter, got %q\n%s", lines[len(lines)-1], out)
+	}
+	if !strings.Contains(lines[len(lines)-2], "scroll 4") {
+		t.Fatalf("footer should stay above bottom gutter, got %q\n%s", lines[len(lines)-2], out)
+	}
+}
+
 func TestErrorConsoleIsBorderlessAndShowsMultilineDetails(t *testing.T) {
 	out := ErrorConsole(80, 8, []viewmodel.ErrorLogEntry{{
 		Time:   "10:02:20",
