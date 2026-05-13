@@ -23,6 +23,7 @@ Every meaningful state transition flows through the `godex` event bus so the TUI
 ```sh
 go run ./cmd/gode version
 go run ./cmd/gode
+go run ./cmd/gode resume
 go run ./cmd/gode acp --provider mock --auto-approve
 go run ./cmd/gode app-server --listen ws://127.0.0.1:0
 make run

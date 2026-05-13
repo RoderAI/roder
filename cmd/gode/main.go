@@ -18,6 +18,7 @@ import (
 )
 
 var version = "dev"
+var runResumeTUI = tui.RunResume
 
 func main() {
 	if err := run(context.Background(), os.Args[1:]); err != nil {
@@ -72,6 +73,10 @@ func run(ctx context.Context, args []string) error {
 		return runSession(args[1:])
 	}
 
+	if len(args) > 0 && args[0] == "resume" {
+		return runResume(ctx, args[1:])
+	}
+
 	if len(args) > 0 && args[0] == "goal" {
 		return runGoal(ctx, args[1:])
 	}
@@ -94,6 +99,19 @@ func run(ctx context.Context, args []string) error {
 	}
 	defer app.Close(ctx)
 	return tui.Run(ctx, app)
+}
+
+func runResume(ctx context.Context, args []string) error {
+	cfg, err := parseConfigWithName("gode resume", args)
+	if err != nil {
+		return err
+	}
+	app, err := godex.New(ctx, cfg)
+	if err != nil {
+		return err
+	}
+	defer app.Close(ctx)
+	return runResumeTUI(ctx, app)
 }
 
 func runAuth(ctx context.Context, args []string) error {
