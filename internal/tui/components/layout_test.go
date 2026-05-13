@@ -133,6 +133,42 @@ func TestRenderReasoningSummaryAboveComposer(t *testing.T) {
 	}
 }
 
+func TestRenderClipsTallToolTranscriptBeforeComposer(t *testing.T) {
+	zones := zone.New()
+	t.Cleanup(zones.Close)
+
+	messages := make([]viewmodel.Message, 0, 12)
+	for i := 0; i < 12; i++ {
+		messages = append(messages, viewmodel.Message{
+			ID:    "tool-" + string(rune('a'+i)),
+			Role:  viewmodel.RoleTool,
+			Title: "search_files",
+			Body:  strings.Repeat("long tool output line with matches and context ", 16),
+		})
+	}
+
+	out := zones.Scan(Render(viewmodel.Model{
+		Width:       80,
+		Height:      18,
+		Model:       "gpt-test",
+		Provider:    "codex",
+		Input:       "> Ask gode to work on this repo",
+		InputHeight: 1,
+		Messages:    messages,
+		Status:      "tool completed: search_files",
+	}, zones))
+
+	if got := lipgloss.Height(out); got != 18 {
+		t.Fatalf("height = %d, want 18\n%s", got, out)
+	}
+	if !strings.Contains(out, "> Ask gode to work on this repo") {
+		t.Fatalf("composer should stay visible below tall tool output:\n%s", out)
+	}
+	if !strings.Contains(out, "tool completed: search_files") {
+		t.Fatalf("footer should stay visible below tall tool output:\n%s", out)
+	}
+}
+
 func TestErrorConsoleIsBorderlessAndShowsMultilineDetails(t *testing.T) {
 	out := ErrorConsole(80, 8, []viewmodel.ErrorLogEntry{{
 		Time:   "10:02:20",
