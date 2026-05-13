@@ -16,24 +16,31 @@ import (
 	"github.com/pandelisz/gode/internal/godex/tools"
 )
 
+const (
+	defaultReadFileLineLimit = 200
+	maxReadFileLineLimit     = 400
+	maxReadFileLineBytes     = 4096
+)
+
 func RegisterFilesystem(reg *tools.Registry, root string) {
 	reg.Register(tools.Tool{
-		Name:          "read_file",
-		Description:   "Read a UTF-8 text file inside the workspace.",
+		Name: "read_file",
+		Description: "Read a UTF-8 text file inside the workspace by line range. " +
+			"Always request a focused range with start_line and limit; output is capped at 400 lines.",
 		ReadOnly:      true,
 		Action:        permission.ActionRead,
 		PathFromInput: pathInput,
-		Schema:        objectSchema("path"),
+		Schema:        readFileSchema(),
 		Run: func(ctx context.Context, call tools.Call) (tools.Result, error) {
 			path, err := cleanWorkspacePath(root, stringInput(call.Input, "path"))
 			if err != nil {
 				return tools.Result{}, err
 			}
-			data, err := os.ReadFile(path)
+			result, err := readFileRange(path, stringInput(call.Input, "path"), intInputDefault(call.Input, "start_line", 1), intInputDefault(call.Input, "limit", defaultReadFileLineLimit))
 			if err != nil {
 				return tools.Result{}, err
 			}
-			return tools.Result{Text: string(data)}, nil
+			return tools.Result{Text: result}, nil
 		},
 	})
 
@@ -127,6 +134,112 @@ func RegisterFilesystem(reg *tools.Registry, root string) {
 			return tools.Result{Text: strings.Join(matches, "\n")}, nil
 		},
 	})
+}
+
+func readFileSchema() map[string]any {
+	return map[string]any{
+		"type": "object",
+		"properties": map[string]any{
+			"path": map[string]any{
+				"type":        "string",
+				"description": "Workspace-relative path to read.",
+			},
+			"start_line": map[string]any{
+				"type":        "integer",
+				"minimum":     1,
+				"description": "1-based first line to return. Defaults to 1.",
+			},
+			"limit": map[string]any{
+				"type":        "integer",
+				"minimum":     1,
+				"maximum":     maxReadFileLineLimit,
+				"description": "Maximum lines to return. Defaults to 200 and is capped at 400.",
+			},
+		},
+		"required": []string{"path"},
+	}
+}
+
+func readFileRange(path, displayPath string, startLine, limit int) (string, error) {
+	if startLine < 1 {
+		return "", fmt.Errorf("start_line must be >= 1")
+	}
+	if limit < 1 {
+		return "", fmt.Errorf("limit must be >= 1")
+	}
+	if limit > maxReadFileLineLimit {
+		limit = maxReadFileLineLimit
+	}
+	file, err := os.Open(path)
+	if err != nil {
+		return "", err
+	}
+	defer file.Close()
+	text, err := looksLikeText(file)
+	if err != nil {
+		return "", err
+	}
+	if !text {
+		return "", fmt.Errorf("read_file only supports text files: %s", displayPath)
+	}
+
+	scanner := bufio.NewScanner(file)
+	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
+	lineNo := 0
+	endLine := startLine + limit - 1
+	var lines []string
+	for scanner.Scan() {
+		lineNo++
+		if lineNo < startLine {
+			continue
+		}
+		if lineNo > endLine {
+			continue
+		}
+		lines = append(lines, fmt.Sprintf("%6d | %s", lineNo, truncateReadFileLine(scanner.Text())))
+	}
+	if err := scanner.Err(); err != nil {
+		return "", err
+	}
+
+	return formatReadFileRange(displayPath, startLine, limit, lineNo, lines), nil
+}
+
+func truncateReadFileLine(line string) string {
+	if len(line) <= maxReadFileLineBytes {
+		return line
+	}
+	return strings.ToValidUTF8(line[:maxReadFileLineBytes], "") + " ... line truncated"
+}
+
+func formatReadFileRange(path string, startLine, limit, totalLines int, lines []string) string {
+	if path == "" {
+		path = "."
+	}
+	lastLine := startLine + len(lines) - 1
+	if len(lines) == 0 {
+		lastLine = startLine - 1
+	}
+	truncated := totalLines > startLine+len(lines)-1
+	var b strings.Builder
+	fmt.Fprintf(&b, "path: %s\n", path)
+	if len(lines) == 0 {
+		fmt.Fprintf(&b, "lines: empty range starting at %d of %d\n", startLine, totalLines)
+	} else {
+		fmt.Fprintf(&b, "lines: %d-%d of %d\n", startLine, lastLine, totalLines)
+	}
+	if limit == maxReadFileLineLimit {
+		fmt.Fprintf(&b, "max_line_limit: %d\n", maxReadFileLineLimit)
+	}
+	if truncated {
+		fmt.Fprintf(&b, "truncated: true\nnext_start_line: %d\n", lastLine+1)
+	}
+	b.WriteString("\n")
+	b.WriteString(strings.Join(lines, "\n"))
+	if len(lines) > 0 {
+		b.WriteString("\n")
+	}
+	return b.String()
 }
 
 func newGitIgnoreChecker(root string) func(string, bool) bool {

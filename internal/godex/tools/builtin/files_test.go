@@ -2,6 +2,7 @@ package builtin
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -24,8 +25,11 @@ func TestFilesystemToolsReadListAndSearchWithinRoot(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read: %v", err)
 	}
-	if read.Text != "package main\nfunc main() {}\n" {
+	if !strings.Contains(read.Text, "path: main.go") || !strings.Contains(read.Text, "lines: 1-2 of 2") {
 		t.Fatalf("read text = %q", read.Text)
+	}
+	if !strings.Contains(read.Text, "     1 | package main") || !strings.Contains(read.Text, "     2 | func main() {}") {
+		t.Fatalf("read text should include numbered content, got %q", read.Text)
 	}
 
 	list, err := reg.Run(context.Background(), tools.Call{Name: "list_files", Input: map[string]any{"path": "."}})
@@ -42,6 +46,76 @@ func TestFilesystemToolsReadListAndSearchWithinRoot(t *testing.T) {
 	}
 	if search.Text != "main.go:2:func main() {}" {
 		t.Fatalf("search text = %q", search.Text)
+	}
+}
+
+func TestReadFileRequiresFocusedLineRange(t *testing.T) {
+	root := t.TempDir()
+	var content strings.Builder
+	for i := 1; i <= 450; i++ {
+		content.WriteString(fmt.Sprintf("line %03d\n", i))
+	}
+	if err := os.WriteFile(filepath.Join(root, "large.txt"), []byte(content.String()), 0o600); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	reg := tools.NewRegistry()
+	RegisterFilesystem(reg, root)
+
+	read, err := reg.Run(context.Background(), tools.Call{Name: "read_file", Input: map[string]any{
+		"path":       "large.txt",
+		"start_line": 10,
+		"limit":      3,
+	}})
+	if err != nil {
+		t.Fatalf("read range: %v", err)
+	}
+	if !strings.Contains(read.Text, "lines: 10-12 of 450") {
+		t.Fatalf("read range should report requested lines, got:\n%s", read.Text)
+	}
+	if strings.Contains(read.Text, "     9 |") || strings.Contains(read.Text, "    13 |") {
+		t.Fatalf("read range leaked lines outside requested range:\n%s", read.Text)
+	}
+
+	defaultRead, err := reg.Run(context.Background(), tools.Call{Name: "read_file", Input: map[string]any{"path": "large.txt"}})
+	if err != nil {
+		t.Fatalf("read default range: %v", err)
+	}
+	if !strings.Contains(defaultRead.Text, "lines: 1-200 of 450") || !strings.Contains(defaultRead.Text, "truncated: true") || !strings.Contains(defaultRead.Text, "next_start_line: 201") {
+		t.Fatalf("default read should be capped with continuation hint, got:\n%s", defaultRead.Text)
+	}
+	if strings.Contains(defaultRead.Text, "   201 |") {
+		t.Fatalf("default read should not include line 201:\n%s", defaultRead.Text)
+	}
+
+	clamped, err := reg.Run(context.Background(), tools.Call{Name: "read_file", Input: map[string]any{
+		"path":  "large.txt",
+		"limit": 999,
+	}})
+	if err != nil {
+		t.Fatalf("read clamped range: %v", err)
+	}
+	if !strings.Contains(clamped.Text, "lines: 1-400 of 450") || !strings.Contains(clamped.Text, "max_line_limit: 400") {
+		t.Fatalf("read should clamp large limits, got:\n%s", clamped.Text)
+	}
+}
+
+func TestReadFileRejectsInvalidRange(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "main.go"), []byte("package main\n"), 0o600); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	reg := tools.NewRegistry()
+	RegisterFilesystem(reg, root)
+
+	result, err := reg.Run(context.Background(), tools.Call{Name: "read_file", Input: map[string]any{
+		"path":       "main.go",
+		"start_line": 0,
+	}})
+	if err != nil {
+		t.Fatalf("run should return invalid range as a failed tool result: %v", err)
+	}
+	if result.Error == "" || !strings.Contains(result.Text, "start_line must be >= 1") {
+		t.Fatalf("failed result = %#v", result)
 	}
 }
 
