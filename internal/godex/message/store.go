@@ -138,14 +138,15 @@ func ProjectionFromEvent(ev eventbus.Event) []Message {
 		return single(base, RoleTool, "requested")
 	case eventbus.KindToolCompleted:
 		var payload struct {
-			Tool       string `json:"tool"`
-			ToolCallID string `json:"tool_call_id"`
-			Text       string `json:"text"`
+			Tool       string         `json:"tool"`
+			ToolCallID string         `json:"tool_call_id"`
+			Input      map[string]any `json:"input"`
+			Text       string         `json:"text"`
 		}
 		_ = ev.DecodePayload(&payload)
 		base.ToolName = payload.Tool
 		base.ToolCallID = payload.ToolCallID
-		return single(base, RoleTool, payload.Text)
+		return single(base, RoleTool, summarizeToolProjection(payload.Tool, payload.Input, payload.Text))
 	case eventbus.KindToolFailed:
 		var payload struct {
 			Tool       string `json:"tool"`
@@ -169,6 +170,33 @@ func ProjectionFromEvent(ev eventbus.Event) []Message {
 		return single(base, RoleError, payload.Error)
 	default:
 		return nil
+	}
+}
+
+func summarizeToolProjection(tool string, input map[string]any, output string) string {
+	switch tool {
+	case "read_file":
+		path := strings.TrimSpace(inputString(input, "path"))
+		if path == "" {
+			return "read file"
+		}
+		return "read " + path
+	default:
+		return output
+	}
+}
+
+func inputString(input map[string]any, key string) string {
+	if input == nil {
+		return ""
+	}
+	switch value := input[key].(type) {
+	case string:
+		return value
+	case []byte:
+		return string(value)
+	default:
+		return ""
 	}
 }
 

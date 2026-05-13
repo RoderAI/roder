@@ -61,7 +61,12 @@ func TestProjectionFromEventAndAssistantCoalescing(t *testing.T) {
 		event("e3", eventbus.KindAssistantDelta, map[string]any{"text": "lo"}),
 		event("e4", eventbus.KindAssistantCompleted, map[string]any{"text": "hello"}),
 		event("e5", eventbus.KindToolRequested, map[string]any{"tool": "read_file", "tool_call_id": "tc1"}),
-		event("e6", eventbus.KindToolCompleted, map[string]any{"tool": "read_file", "tool_call_id": "tc1", "text": "file contents"}),
+		event("e6", eventbus.KindToolCompleted, map[string]any{
+			"tool":         "read_file",
+			"tool_call_id": "tc1",
+			"input":        map[string]any{"path": "internal/godex/tools/registry.go"},
+			"text":         "file contents",
+		}),
 		event("e7", eventbus.KindToolFailed, map[string]any{"tool": "apply_patch", "tool_call_id": "tc2", "error": "failed"}),
 		event("e8", eventbus.KindRunFailed, map[string]any{"error": "run failed"}),
 	}
@@ -81,7 +86,7 @@ func TestProjectionFromEventAndAssistantCoalescing(t *testing.T) {
 	assertMessage(t, messages[0], RoleUser, "hi", "", "")
 	assertMessage(t, messages[1], RoleAssistant, "hello", "", "")
 	assertMessage(t, messages[2], RoleTool, "requested", "read_file", "tc1")
-	assertMessage(t, messages[3], RoleTool, "file contents", "read_file", "tc1")
+	assertMessage(t, messages[3], RoleTool, "read internal/godex/tools/registry.go", "read_file", "tc1")
 	assertMessage(t, messages[4], RoleTool, "failed", "apply_patch", "tc2")
 	assertMessage(t, messages[5], RoleError, "run failed", "", "")
 }
