@@ -199,8 +199,17 @@ func TestSlashOpensCommandsDialogAndSelectionInsertsCommand(t *testing.T) {
 	model := New(nil)
 	updated, _ := model.Update(tea.KeyPressMsg{Code: '/', Text: "/"})
 	got := updated.(Model)
+	if got.commands.Open {
+		t.Fatal("slash key should stay in the composer until it is submitted bare")
+	}
+	if got.input.Value() != "/" {
+		t.Fatalf("input = %q", got.input.Value())
+	}
+
+	updated, _ = got.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	got = updated.(Model)
 	if !got.commands.Open {
-		t.Fatal("commands dialog should open for bare slash")
+		t.Fatal("commands dialog should open when bare slash is submitted")
 	}
 
 	got.commands = dialogs.NewCommands([]dialogs.CommandItem{{ID: "project:test", Title: "/project:test", Source: "project"}})
@@ -215,6 +224,20 @@ func TestSlashOpensCommandsDialogAndSelectionInsertsCommand(t *testing.T) {
 	}
 	if !got.input.Focused() {
 		t.Fatal("composer should refocus after command selection")
+	}
+}
+
+func TestAbsolutePathDoesNotOpenSlashCommandDialog(t *testing.T) {
+	model := New(nil)
+	for _, key := range []string{"/", "U", "s", "e", "r", "s"} {
+		updated, _ := model.Update(tea.KeyPressMsg{Code: []rune(key)[0], Text: key})
+		model = updated.(Model)
+	}
+	if model.commands.Open {
+		t.Fatal("absolute path text should not open commands dialog")
+	}
+	if model.input.Value() != "/Users" {
+		t.Fatalf("input = %q", model.input.Value())
 	}
 }
 

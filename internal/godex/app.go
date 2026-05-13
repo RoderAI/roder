@@ -174,6 +174,10 @@ func (a *App) Commands() []godecommands.Command {
 	return append([]godecommands.Command(nil), a.commands...)
 }
 
+func (a *App) Skills() []godeskills.Skill {
+	return append([]godeskills.Skill(nil), a.skills...)
+}
+
 func (a *App) SetModel(model string) error {
 	return a.SetModelReasoning(model, "")
 }

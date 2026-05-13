@@ -14,6 +14,7 @@ import (
 	"github.com/pandelisz/gode/internal/godex/agent"
 	"github.com/pandelisz/gode/internal/godex/codexauth"
 	"github.com/pandelisz/gode/internal/godex/eventbus"
+	"github.com/pandelisz/gode/internal/tui/attachments"
 	"github.com/pandelisz/gode/internal/tui/components"
 	"github.com/pandelisz/gode/internal/tui/dialogs"
 	"github.com/pandelisz/gode/internal/tui/eventadapter"
@@ -57,8 +58,11 @@ type Model struct {
 	settings         dialogs.Settings
 	commands         dialogs.Commands
 	sessions         dialogs.Sessions
+	completions      dialogs.Commands
+	completionMode   string
 	permissions      dialogs.Permissions
 	currentSessionID string
+	attachments      []attachments.Attachment
 	codexLogin       func(context.Context, string) (codexauth.Tokens, string, error)
 	errorLog         []viewmodel.ErrorLogEntry
 	showErrorLog     bool
@@ -137,6 +141,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.permissions.Open {
 			return m.updatePermissions(msg)
 		}
+		if m.completions.Open {
+			return m.updateCompletions(msg)
+		}
 		if m.commands.Open {
 			return m.updateCommands(msg)
 		}
@@ -179,15 +186,37 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if prompt == "" {
 				return m, nil
 			}
+			if prompt == "/" {
+				m.input.Reset()
+				m.openCommands()
+				return m, nil
+			}
+			runPrompt := prompt
+			if len(m.attachments) > 0 {
+				withAttachments, err := m.promptWithAttachments(prompt)
+				if err != nil {
+					m.addMessage(viewmodel.RoleError, "attachments", err.Error())
+					m.status = "attachment failed - ctrl+l errors"
+					return m, nil
+				}
+				runPrompt = withAttachments
+			}
 			m.addMessage(viewmodel.RoleUser, "", prompt)
 			m.reasoningSummary = ""
+			m.attachments = nil
 			m.input.Reset()
 			m.running = true
 			m.status = "waiting for model"
-			return m, m.runPrompt(prompt)
+			return m, m.runPrompt(runPrompt)
 		}
-		if msg.String() == "/" && strings.TrimSpace(m.input.Value()) == "" {
-			m.openCommands()
+		if msg.String() == "tab" && m.openCompletionForCurrentToken() {
+			return m, nil
+		}
+		if msg.Text == "@" || msg.Text == "$" {
+			m.input.InsertString(msg.Text)
+			if m.openCompletionForCurrentToken() {
+				return m, nil
+			}
 			return m, nil
 		}
 	case tea.MouseWheelMsg:
@@ -202,6 +231,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		if m.permissions.Open {
 			return m.updatePermissionsMouse(msg)
+		}
+		if m.completions.Open {
+			return m.updateCompletionsMouse(msg)
 		}
 		if m.commands.Open {
 			return m.updateCommandsMouse(msg)
@@ -245,45 +277,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	var cmd tea.Cmd
 	m.input, cmd = m.input.Update(msg)
 	return m, cmd
-}
-
-func (m Model) View() tea.View {
-	settings := m.settings.ViewModel()
-	commands := m.commandsViewModel()
-	sessions := m.sessionsViewModel()
-	permissions := m.permissionsViewModel()
-	vm := viewmodel.Model{
-		Width:            m.width,
-		Height:           m.height,
-		Messages:         m.messages,
-		ReasoningSummary: m.reasoningSummary,
-		Input:            m.input.View(),
-		InputHeight:      m.input.Height(),
-		ScrollOffset:     m.scrollOffset,
-		FollowTail:       m.followTail,
-		Running:          m.running,
-		HoveredID:        m.hoveredID,
-		Status:           m.status,
-		Dialogs: viewmodel.DialogStack{
-			Settings:    settings,
-			Commands:    commands,
-			Sessions:    sessions,
-			Permissions: permissions,
-		},
-		Settings:     settings,
-		ErrorLog:     m.errorLog,
-		ShowErrorLog: m.showErrorLog,
-	}
-	if m.app != nil {
-		vm.Provider = godex.DisplayProvider(m.app.Config)
-		vm.Model = m.app.Config.Model
-		vm.Reasoning = m.app.Config.Reasoning
-	}
-	view := tea.NewView(m.zones.Scan(components.RenderWithCache(vm, m.zones, &m.transcript)))
-	view.AltScreen = true
-	view.MouseMode = tea.MouseModeAllMotion
-	view.WindowTitle = "gode"
-	return view
 }
 
 func (m *Model) applyEvent(update eventadapter.Update) {

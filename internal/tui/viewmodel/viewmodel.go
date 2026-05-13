@@ -19,6 +19,11 @@ type Message struct {
 	Body  string
 }
 
+type Attachment struct {
+	Path string
+	Kind string
+}
+
 func MessageZoneID(id string) string {
 	return "message:" + id
 }
@@ -31,6 +36,7 @@ type Model struct {
 	Reasoning        string
 	Messages         []Message
 	ReasoningSummary string
+	Attachments      []Attachment
 	Input            string
 	InputHeight      int
 	ScrollOffset     int
@@ -46,6 +52,7 @@ type Model struct {
 
 type DialogStack struct {
 	Settings    *SettingsDialog
+	Completions *ListDialog
 	Commands    *ListDialog
 	Sessions    *ListDialog
 	Permissions *PermissionDialog
@@ -60,6 +67,8 @@ func (m Model) ActiveSettingsDialog() *SettingsDialog {
 
 func (m Model) ActiveListDialog() *ListDialog {
 	switch {
+	case m.Dialogs.Completions != nil:
+		return m.Dialogs.Completions
 	case m.Dialogs.Commands != nil:
 		return m.Dialogs.Commands
 	case m.Dialogs.Sessions != nil:
