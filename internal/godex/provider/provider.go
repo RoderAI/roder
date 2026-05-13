@@ -3,6 +3,7 @@ package provider
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 )
 
 type Role string
@@ -55,6 +56,17 @@ type Item struct {
 	ToolCallID string
 	Text       string
 	RawJSON    json.RawMessage
+}
+
+type NonPortableItemError struct {
+	ItemID   string
+	Kind     string
+	Provider string
+	Reason   string
+}
+
+func (e NonPortableItemError) Error() string {
+	return fmt.Sprintf("cannot replay %s item %s with %s: %s", e.Kind, e.ItemID, e.Provider, e.Reason)
 }
 
 type EventKind string
