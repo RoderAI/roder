@@ -54,6 +54,7 @@ type Model struct {
 	ComposerSelection         selection.OffsetRange
 	ComposerSelectionHint     string
 	ComposerSelectionActive   bool
+	AutoApprove               bool
 	Running                   bool
 	HoveredID                 string
 	Status                    string
