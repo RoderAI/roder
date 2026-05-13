@@ -45,15 +45,15 @@ const (
 )
 
 type Event struct {
-	ID            string          `json:"id"`
-	Seq           uint64          `json:"seq"`
-	Time          time.Time       `json:"time"`
-	SessionID     string          `json:"session_id,omitempty"`
-	RunID         string          `json:"run_id,omitempty"`
-	Source        Source          `json:"source"`
-	Kind          Kind            `json:"kind"`
-	CorrelationID string          `json:"correlation_id,omitempty"`
-	Payload       json.RawMessage `json:"payload,omitempty"`
+	ID            string    `json:"id"`
+	Seq           uint64    `json:"seq"`
+	Time          time.Time `json:"time"`
+	SessionID     string    `json:"session_id,omitempty"`
+	RunID         string    `json:"run_id,omitempty"`
+	Source        Source    `json:"source"`
+	Kind          Kind      `json:"kind"`
+	CorrelationID string    `json:"correlation_id,omitempty"`
+	Payload       any       `json:"payload,omitempty"`
 }
 
 func NewEvent(kind Kind, source Source, payload any) Event {
@@ -67,22 +67,21 @@ func (e *Event) SetPayload(payload any) {
 		e.Payload = nil
 		return
 	}
-	if raw, ok := payload.(json.RawMessage); ok {
-		e.Payload = raw
-		return
-	}
-	data, err := json.Marshal(payload)
-	if err != nil {
-		data, _ = json.Marshal(map[string]string{"marshal_error": err.Error()})
-	}
-	e.Payload = data
+	e.Payload = payload
 }
 
 func (e Event) DecodePayload(dst any) error {
-	if len(e.Payload) == 0 {
+	if e.Payload == nil {
 		return nil
 	}
-	return json.Unmarshal(e.Payload, dst)
+	if raw, ok := e.Payload.(json.RawMessage); ok {
+		return json.Unmarshal(raw, dst)
+	}
+	data, err := json.Marshal(e.Payload)
+	if err != nil {
+		return err
+	}
+	return json.Unmarshal(data, dst)
 }
 
 type Filter struct {
