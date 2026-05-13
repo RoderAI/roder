@@ -244,9 +244,104 @@ func (s *Server) threadFromSession(ctx context.Context, stored session.Session, 
 	s.mu.RUnlock()
 
 	if includeTurns {
-		thread.Turns = append(turnsFromMessages(ctx, s.app.Messages, stored.ID), thread.Turns...)
+		storedTurns := turnsFromSessionStores(ctx, s.app.Turns, s.app.Items, stored.ID)
+		if len(storedTurns) == 0 {
+			storedTurns = turnsFromMessages(ctx, s.app.Messages, stored.ID)
+		}
+		thread.Turns = append(storedTurns, thread.Turns...)
 	}
 	return thread
+}
+
+func turnsFromSessionStores(ctx context.Context, turnStore *session.TurnStore, itemStore *session.ItemStore, sessionID string) []Turn {
+	if turnStore == nil || itemStore == nil {
+		return nil
+	}
+	storedTurns, err := turnStore.ListBySession(ctx, sessionID)
+	if err != nil {
+		return nil
+	}
+	turns := make([]Turn, 0, len(storedTurns))
+	for _, stored := range storedTurns {
+		turn := Turn{
+			ID:        stored.ID,
+			Items:     []any{},
+			ItemsView: "full",
+			Status:    appServerTurnStatus(stored.Status),
+		}
+		if !stored.StartedAt.IsZero() {
+			started := stored.StartedAt.Unix()
+			turn.StartedAt = &started
+		}
+		if !stored.CompletedAt.IsZero() {
+			completed := stored.CompletedAt.Unix()
+			turn.CompletedAt = &completed
+		}
+		if turn.StartedAt != nil && turn.CompletedAt != nil {
+			duration := (*turn.CompletedAt - *turn.StartedAt) * 1000
+			turn.DurationMs = &duration
+		}
+		if stored.Error != "" {
+			turn.Error = &TurnError{Message: stored.Error}
+		}
+		items, err := itemStore.ListByTurn(ctx, sessionID, stored.ID)
+		if err == nil {
+			for _, item := range items {
+				turn.Items = append(turn.Items, sessionItem(item))
+			}
+		}
+		turns = append(turns, turn)
+	}
+	return turns
+}
+
+func appServerTurnStatus(status string) string {
+	switch status {
+	case session.TurnStatusRunning:
+		return "inProgress"
+	case session.TurnStatusFailed:
+		return "failed"
+	default:
+		return "completed"
+	}
+}
+
+func sessionItem(item session.Item) map[string]any {
+	itemType := "raw"
+	switch item.Kind {
+	case session.ItemMessage:
+		if item.Role == "user" {
+			itemType = "userMessage"
+		} else {
+			itemType = "agentMessage"
+		}
+	case session.ItemFunctionCall:
+		itemType = "toolCall"
+	case session.ItemFunctionOut:
+		itemType = "toolMessage"
+	case session.ItemReasoning:
+		itemType = "reasoning"
+	case session.ItemCompaction:
+		itemType = "compaction"
+	}
+	out := map[string]any{
+		"id":   item.ID,
+		"type": itemType,
+		"text": item.Text,
+	}
+	if item.ToolName != "" {
+		out["toolName"] = item.ToolName
+	}
+	if item.ToolCallID != "" {
+		out["toolCallId"] = item.ToolCallID
+	}
+	if len(item.RawJSON) > 0 {
+		var raw any
+		if err := json.Unmarshal(item.RawJSON, &raw); err == nil {
+			out["raw"] = raw
+		}
+	}
+	return out
 }
 
 func turnsFromMessages(ctx context.Context, store *messagestore.Store, sessionID string) []Turn {
