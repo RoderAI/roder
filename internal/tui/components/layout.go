@@ -29,7 +29,9 @@ func RenderWithCache(vm viewmodel.Model, zones *zone.Manager, transcriptCache *T
 
 	parts := []string{
 		Header(width, vm.Provider, vm.Model, vm.Reasoning, vm.SessionTitle, vm.Running),
-		TranscriptWithCache(width, bodyHeight, vm.Messages, vm.ScrollOffset, vm.HoveredID, zones, transcriptCache),
+		TranscriptDetailedWithCache(width, bodyHeight, vm.Messages, vm.ScrollOffset, vm.HoveredID, zones, transcriptCache, TranscriptOptions{
+			Selection: vm.TranscriptSelection,
+		}).View,
 	}
 	if reasoningHeight > 0 {
 		parts = append(parts, ReasoningSummary(width, reasoningHeight, vm.ReasoningSummary))

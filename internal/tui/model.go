@@ -7,7 +7,6 @@ import (
 
 	"charm.land/bubbles/v2/textarea"
 	tea "charm.land/bubbletea/v2"
-	"charm.land/lipgloss/v2"
 	zone "github.com/lrstanley/bubblezone/v2"
 	"github.com/pandelisz/gode/internal/godex"
 	"github.com/pandelisz/gode/internal/godex/agent"
@@ -17,6 +16,7 @@ import (
 	"github.com/pandelisz/gode/internal/tui/components"
 	"github.com/pandelisz/gode/internal/tui/dialogs"
 	"github.com/pandelisz/gode/internal/tui/eventadapter"
+	"github.com/pandelisz/gode/internal/tui/selection"
 	"github.com/pandelisz/gode/internal/tui/viewmodel"
 )
 
@@ -50,39 +50,42 @@ type skillsInstallDoneMsg struct {
 }
 
 type Model struct {
-	app              *godex.App
-	zones            *zone.Manager
-	eventCancel      context.CancelFunc
-	eventCh          <-chan eventbus.Event
-	transcript       components.TranscriptCache
-	input            textarea.Model
-	messages         []viewmodel.Message
-	messageKeys      map[string]string
-	nextID           int
-	width            int
-	height           int
-	scrollOffset     int
-	followTail       bool
-	running          bool
-	hoveredID        string
-	status           string
-	settings         dialogs.Settings
-	commands         dialogs.Commands
-	sessions         dialogs.Sessions
-	completions      dialogs.Commands
-	completionMode   string
-	permissions      dialogs.Permissions
-	currentSessionID string
-	currentSession   string
-	attachments      []attachments.Attachment
-	codexLogin       func(context.Context, string) (codexauth.Tokens, string, error)
-	errorLog         []viewmodel.ErrorLogEntry
-	showErrorLog     bool
-	reasoningSummary string
-	contextLeft      string
-	slashSelected    int
-	goalSummary      string
-	queuedPrompts    []pendingPrompt
+	app                 *godex.App
+	zones               *zone.Manager
+	eventCancel         context.CancelFunc
+	eventCh             <-chan eventbus.Event
+	transcript          components.TranscriptCache
+	input               textarea.Model
+	messages            []viewmodel.Message
+	messageKeys         map[string]string
+	nextID              int
+	width               int
+	height              int
+	scrollOffset        int
+	followTail          bool
+	running             bool
+	hoveredID           string
+	status              string
+	settings            dialogs.Settings
+	commands            dialogs.Commands
+	sessions            dialogs.Sessions
+	completions         dialogs.Commands
+	completionMode      string
+	permissions         dialogs.Permissions
+	currentSessionID    string
+	currentSession      string
+	attachments         []attachments.Attachment
+	codexLogin          func(context.Context, string) (codexauth.Tokens, string, error)
+	errorLog            []viewmodel.ErrorLogEntry
+	showErrorLog        bool
+	reasoningSummary    string
+	contextLeft         string
+	slashSelected       int
+	goalSummary         string
+	queuedPrompts       []pendingPrompt
+	transcriptSelection selection.Range
+	transcriptMouseDown bool
+	transcriptLineRefs  []selection.TranscriptLineRef
 
 	transcriptLineWidth int
 	transcriptLineTotal int
@@ -120,19 +123,6 @@ func New(app *godex.App) Model {
 		model.eventCh = app.Bus.Subscribe(ctx, eventbus.Filter{})
 	}
 	return model
-}
-
-func applyComposerStyles(input *textarea.Model) {
-	styles := input.Styles()
-	styles.Focused.CursorLine = lipgloss.NewStyle()
-	styles.Focused.Prompt = lipgloss.NewStyle().Foreground(lipgloss.Color("252"))
-	styles.Focused.Placeholder = lipgloss.NewStyle().Foreground(lipgloss.Color("244"))
-	styles.Focused.Text = lipgloss.NewStyle().Foreground(lipgloss.Color("252"))
-	styles.Blurred.CursorLine = lipgloss.NewStyle()
-	styles.Blurred.Prompt = lipgloss.NewStyle().Foreground(lipgloss.Color("246"))
-	styles.Blurred.Placeholder = lipgloss.NewStyle().Foreground(lipgloss.Color("240"))
-	styles.Blurred.Text = lipgloss.NewStyle().Foreground(lipgloss.Color("246"))
-	input.SetStyles(styles)
 }
 
 func (m Model) Init() tea.Cmd {
@@ -273,8 +263,15 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.handleWheel(msg)
 		return m, nil
 	case tea.MouseMotionMsg:
+		if m.updateTranscriptSelectionDrag(msg) {
+			return m, nil
+		}
 		m.updateHover(msg)
 		return m, nil
+	case tea.MouseReleaseMsg:
+		if m.finishTranscriptSelection(msg) {
+			return m, nil
+		}
 	case tea.MouseClickMsg:
 		if m.settings.Open {
 			return m.updateSettingsMouse(msg)
@@ -293,6 +290,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		if m.inlineSlashMenuOpen() {
 			return m.updateSlashMenuMouse(msg)
+		}
+		if m.startTranscriptSelection(msg) {
+			return m, nil
 		}
 		m.updateHover(msg)
 	case eventMsg:
@@ -492,31 +492,4 @@ func (m *Model) updateHover(msg tea.MouseMsg) {
 		}
 	}
 	m.hoveredID = ""
-}
-
-func truncate(text string, limit int) string {
-	if len(text) <= limit {
-		return text
-	}
-	return text[:limit] + "\n... truncated in TUI; full result is in the event journal"
-}
-
-func max(a, b int) int {
-	if a > b {
-		return a
-	}
-	return b
-}
-
-func clamp(v int, low int, high int) int {
-	if high < low {
-		return low
-	}
-	if v < low {
-		return low
-	}
-	if v > high {
-		return high
-	}
-	return v
 }
