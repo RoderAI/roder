@@ -9,8 +9,6 @@ import (
 
 var (
 	errorConsoleStyle = lipgloss.NewStyle().
-				Border(lipgloss.NormalBorder(), true).
-				BorderForeground(lipgloss.Color("160")).
 				Padding(0, 1)
 	errorConsoleTitleStyle = lipgloss.NewStyle().
 				Bold(true).
@@ -24,8 +22,8 @@ var (
 )
 
 func ErrorConsole(width int, height int, entries []viewmodel.ErrorLogEntry) string {
-	contentWidth := max(20, width-4)
-	contentHeight := max(1, height-2)
+	contentWidth := max(20, width-2)
+	contentHeight := max(1, height)
 	lines := []string{errorConsoleTitleStyle.Render("ERROR LOG") + " " + errorConsoleMetaStyle.Render("ctrl+l close")}
 	if len(entries) == 0 {
 		lines = append(lines, errorConsoleTextStyle.Render("No errors recorded."))
@@ -33,7 +31,7 @@ func ErrorConsole(width int, height int, entries []viewmodel.ErrorLogEntry) stri
 		lines = append(lines, errorConsoleLines(entries, contentWidth, max(0, contentHeight-1))...)
 	}
 	lines = fitLines(lines, contentWidth, contentHeight)
-	return errorConsoleStyle.Width(max(20, width-2)).Height(max(1, height-2)).Render(strings.Join(lines, "\n"))
+	return errorConsoleStyle.Width(max(20, width-2)).Height(max(1, height)).Render(strings.Join(lines, "\n"))
 }
 
 func errorConsoleLines(entries []viewmodel.ErrorLogEntry, width int, maxLines int) []string {

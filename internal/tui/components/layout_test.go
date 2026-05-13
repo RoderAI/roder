@@ -103,6 +103,29 @@ func TestRenderErrorLogBelowComposer(t *testing.T) {
 	}
 }
 
+func TestErrorConsoleIsBorderlessAndShowsMultilineDetails(t *testing.T) {
+	out := ErrorConsole(80, 8, []viewmodel.ErrorLogEntry{{
+		Time:   "10:02:20",
+		Source: "run",
+		Message: strings.Join([]string{
+			"OpenAI stream request failed",
+			"request: POST https://chatgpt.com/backend-api/codex/responses",
+			"status: 400 Bad Request",
+			"response_body:",
+			`{"detail":"unsupported model"}`,
+		}, "\n"),
+	}})
+
+	if strings.ContainsAny(out, "┌┐└┘│─") {
+		t.Fatalf("error console should not render a border:\n%s", out)
+	}
+	for _, want := range []string{"ERROR LOG", "request: POST", "status: 400 Bad Request", "unsupported model"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("error console missing %q:\n%s", want, out)
+		}
+	}
+}
+
 func TestVisibleMessagesUsesLineScroll(t *testing.T) {
 	messages := []viewmodel.Message{
 		{ID: "m1", Role: viewmodel.RoleUser, Body: "one"},
