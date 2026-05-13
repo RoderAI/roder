@@ -43,11 +43,19 @@ func (c *Connection) handleTurnStart(ctx context.Context, raw json.RawMessage) (
 		StartedAt: &now,
 	}
 
+	storedThread, storedFound, rpcErr := c.server.readStoredThread(context.Background(), params.ThreadID, false)
+	if rpcErr != nil {
+		return nil, rpcErr
+	}
 	c.server.mu.Lock()
 	state := c.server.threads[params.ThreadID]
 	if state == nil {
-		c.server.mu.Unlock()
-		return nil, rpcError(errorInvalidParams, "thread not found")
+		if !storedFound {
+			c.server.mu.Unlock()
+			return nil, rpcError(errorInvalidParams, "thread not found")
+		}
+		state = &threadState{Thread: storedThread}
+		c.server.threads[params.ThreadID] = state
 	}
 	state.Status = activeStatus()
 	state.UpdatedAt = now
@@ -119,7 +127,7 @@ func (s *Server) runTurn(ctx context.Context, threadID, turnID, prompt string) {
 	resultCh := make(chan agent.RunResult, 1)
 	errCh := make(chan error, 1)
 	go func() {
-		result, err := s.app.Run(ctx, agent.RunRequest{SessionID: threadID, RunID: turnID, Prompt: prompt})
+		result, err := s.app.Run(ctx, agent.RunRequest{SessionID: threadID, RunID: turnID, Prompt: prompt, Resume: true})
 		if err != nil {
 			errCh <- err
 			return
