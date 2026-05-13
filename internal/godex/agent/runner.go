@@ -206,11 +206,13 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (RunResult, error) {
 		}
 		r.recordGoalUsage(ctx, req, providerReq.Messages, time.Since(started))
 		messages = outcome.Messages
-		final = outcome.Final
 		if outcome.HadToolCall {
 			stats.ToolTurns++
+			final = ""
+		} else {
+			final = outcome.Final
 		}
-		if !outcome.HadToolCall || outcome.ProducedText {
+		if !outcome.HadToolCall {
 			break
 		}
 	}
