@@ -4,6 +4,7 @@ import (
 	"strings"
 
 	"charm.land/lipgloss/v2"
+	"github.com/charmbracelet/x/ansi"
 	zone "github.com/lrstanley/bubblezone/v2"
 	"github.com/pandelisz/gode/internal/tui/viewmodel"
 )
@@ -193,8 +194,15 @@ func overlayDialogBox(base string, width int, height int, box string) string {
 		if y >= len(baseLines) {
 			break
 		}
-		baseLines[y] = strings.Repeat(" ", startX) + line
-		baseLines[y] = padLine(baseLines[y], width)
+		baseLines[y] = overlayLine(baseLines[y], line, startX, boxWidth, width)
 	}
 	return strings.Join(baseLines, "\n")
+}
+
+func overlayLine(base string, overlay string, startX int, overlayWidth int, width int) string {
+	base = padLine(base, width)
+	prefix := ansi.Cut(base, 0, startX)
+	suffixStart := min(width, startX+overlayWidth)
+	suffix := ansi.Cut(base, suffixStart, width)
+	return padLine(prefix+padLine(overlay, overlayWidth)+suffix, width)
 }
