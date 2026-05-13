@@ -42,7 +42,7 @@ func RenderWithCache(vm viewmodel.Model, zones *zone.Manager, transcriptCache *T
 }
 
 func errorConsoleHeight(totalHeight int) int {
-	return min(8, max(3, totalHeight/4))
+	return min(14, max(5, totalHeight/3))
 }
 
 func max(a, b int) int {
