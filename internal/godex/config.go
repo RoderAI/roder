@@ -4,6 +4,8 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+
+	"github.com/pandelisz/gode/internal/godex/provider"
 )
 
 type Config struct {
@@ -17,6 +19,10 @@ type Config struct {
 	Telemetry         bool
 	TelemetryEndpoint string
 	MCP               map[string]any
+	ProviderConfig    map[string]provider.ProviderConfig
+	SelectedModels    map[string]provider.SelectedModel
+	ContextPaths      []string
+	DisabledTools     []string
 }
 
 func DefaultConfig() Config {
@@ -32,6 +38,8 @@ func DefaultConfig() Config {
 		Telemetry:         false,
 		TelemetryEndpoint: "localhost:4317",
 		MCP:               map[string]any{},
+		ProviderConfig:    map[string]provider.ProviderConfig{},
+		SelectedModels:    map[string]provider.SelectedModel{},
 	}
 }
 
@@ -77,6 +85,12 @@ func (c Config) withDefaults() Config {
 	}
 	if c.MCP == nil {
 		c.MCP = defaults.MCP
+	}
+	if c.ProviderConfig == nil {
+		c.ProviderConfig = defaults.ProviderConfig
+	}
+	if c.SelectedModels == nil {
+		c.SelectedModels = defaults.SelectedModels
 	}
 	return c
 }
