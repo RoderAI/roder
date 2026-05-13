@@ -70,6 +70,19 @@ func (m *Manager) Start(ctx context.Context) error {
 	return nil
 }
 
+func (m *Manager) AddStdioServer(ctx context.Context, name string, cfg ServerConfig) error {
+	if strings.TrimSpace(name) == "" {
+		return fmt.Errorf("mcp server name is required")
+	}
+	m.mu.Lock()
+	if existing := m.servers[name]; existing != nil && existing.session != nil {
+		_ = existing.session.Close()
+	}
+	m.servers[name] = &server{cfg: cfg, state: StateDisabled}
+	m.mu.Unlock()
+	return m.StartServer(ctx, name)
+}
+
 func (m *Manager) StartServer(ctx context.Context, name string) error {
 	m.mu.Lock()
 	srv, ok := m.servers[name]

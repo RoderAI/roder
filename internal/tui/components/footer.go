@@ -12,9 +12,9 @@ var footerStyle = lipgloss.NewStyle().
 	Padding(0, 1)
 
 func Footer(width int, scrollOffset int, status string) string {
-	left := "enter send  pgup/pgdn scroll  end follow  esc quit"
+	left := "enter send  ctrl+p settings  pgup/pgdn scroll  end follow  esc quit"
 	if width < 72 {
-		left = "enter send  wheel scroll  esc quit"
+		left = "enter send  ctrl+p settings  wheel scroll  esc quit"
 	}
 	if status != "" {
 		left = status

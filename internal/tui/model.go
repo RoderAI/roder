@@ -10,6 +10,7 @@ import (
 	"charm.land/lipgloss/v2"
 	zone "github.com/lrstanley/bubblezone/v2"
 	"github.com/pandelisz/gode/internal/godex"
+	"github.com/pandelisz/gode/internal/godex/codexauth"
 	"github.com/pandelisz/gode/internal/godex/eventbus"
 	"github.com/pandelisz/gode/internal/tui/components"
 	"github.com/pandelisz/gode/internal/tui/viewmodel"
@@ -26,6 +27,11 @@ type runDoneMsg struct {
 	Err error
 }
 
+type codexAuthDoneMsg struct {
+	AccountID string
+	Err       error
+}
+
 type Model struct {
 	app          *godex.App
 	zones        *zone.Manager
@@ -40,6 +46,8 @@ type Model struct {
 	running      bool
 	hoveredID    string
 	status       string
+	settings     settingsDialog
+	codexLogin   func(context.Context, string) (codexauth.Tokens, string, error)
 
 	transcriptLineWidth int
 	transcriptLineTotal int
@@ -47,6 +55,8 @@ type Model struct {
 }
 
 func New(app *godex.App) Model {
+	zones := zone.New()
+	zones.SetEnabled(true)
 	input := textarea.New()
 	input.Placeholder = "Ask gode to work on this repo"
 	input.Prompt = "> "
@@ -59,11 +69,12 @@ func New(app *godex.App) Model {
 	input.Focus()
 	return Model{
 		app:                 app,
-		zones:               zone.New(),
+		zones:               zones,
 		transcript:          components.NewTranscriptCache(),
 		input:               input,
 		followTail:          true,
 		status:              "ready",
+		codexLogin:          codexauth.LoginBrowser,
 		transcriptLineDirty: true,
 	}
 }
@@ -95,12 +106,19 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.transcriptWrapWidth() != oldWrapWidth {
 			m.markTranscriptLinesDirty()
 		}
+		m.resizeSettings()
 		m.clampScroll()
 		return m, nil
 	case tea.KeyPressMsg:
+		if m.settings.open {
+			return m.updateSettings(msg)
+		}
 		switch msg.String() {
 		case "ctrl+c", "esc":
 			return m, tea.Quit
+		case "ctrl+p":
+			m.openSettings()
+			return m, nil
 		case "pgup":
 			m.scrollBy(max(4, m.visibleTranscriptLines()-1))
 			return m, nil
@@ -131,6 +149,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.updateHover(msg)
 		return m, nil
 	case tea.MouseClickMsg:
+		if m.settings.open {
+			return m.updateSettingsMouse(msg)
+		}
 		m.updateHover(msg)
 	case eventMsg:
 		m.appendEvent(msg.Event)
@@ -142,6 +163,18 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.status = "run failed"
 		} else {
 			m.status = "ready"
+		}
+		return m, nil
+	case codexAuthDoneMsg:
+		if msg.Err != nil {
+			m.status = "codex sign-in failed"
+			m.addMessage(viewmodel.RoleError, "codex sign-in", msg.Err.Error())
+			return m, nil
+		}
+		if msg.AccountID != "" {
+			m.status = "signed in to codex: " + msg.AccountID
+		} else {
+			m.status = "signed in to codex"
 		}
 		return m, nil
 	}
@@ -163,9 +196,10 @@ func (m Model) View() tea.View {
 		Running:      m.running,
 		HoveredID:    m.hoveredID,
 		Status:       m.status,
+		Settings:     m.settings.viewModel(),
 	}
 	if m.app != nil {
-		vm.Provider = m.app.Config.Provider
+		vm.Provider = godex.DisplayProvider(m.app.Config)
 		vm.Model = m.app.Config.Model
 	}
 	view := tea.NewView(m.zones.Scan(components.RenderWithCache(vm, m.zones, &m.transcript)))

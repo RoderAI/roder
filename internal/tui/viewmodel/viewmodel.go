@@ -36,4 +36,66 @@ type Model struct {
 	Running      bool
 	HoveredID    string
 	Status       string
+	Settings     *SettingsDialog
+}
+
+type SettingsDialog struct {
+	Title      string
+	Screen     string
+	MenuItems  []SettingsMenuItem
+	Models     []SettingsModelItem
+	Reasoning  []SettingsReasoningItem
+	ConfigRows []SettingsConfigRow
+	Selected   int
+	Error      string
+}
+
+type SettingsMenuItem struct {
+	ID          string
+	Label       string
+	Description string
+	Value       string
+	Selected    bool
+}
+
+type SettingsModelItem struct {
+	ID               string
+	DisplayName      string
+	Description      string
+	Provider         string
+	DefaultReasoning string
+	Current          bool
+	Selected         bool
+}
+
+type SettingsConfigRow struct {
+	Label string
+	Value string
+}
+
+type SettingsReasoningItem struct {
+	Effort      string
+	Label       string
+	Description string
+	Current     bool
+	Selected    bool
+}
+
+const (
+	SettingsScreenMenu      = "menu"
+	SettingsScreenModels    = "models"
+	SettingsScreenReasoning = "reasoning"
+	SettingsScreenConfig    = "config"
+)
+
+func SettingsMenuItemZoneID(id string) string {
+	return "settings:menu:" + id
+}
+
+func SettingsModelZoneID(id string) string {
+	return "settings:model:" + id
+}
+
+func SettingsReasoningZoneID(effort string) string {
+	return "settings:reasoning:" + effort
 }

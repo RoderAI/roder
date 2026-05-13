@@ -108,19 +108,54 @@ func New(ctx context.Context, cfg Config) (*App, error) {
 }
 
 func (a *App) RunPrompt(ctx context.Context, prompt string) (agent.RunResult, error) {
-	ctx, span := tracer.Start(ctx, "godex.run_prompt",
-		trace.WithAttributes(
-			attribute.String("gode.provider", a.Config.Provider),
-			attribute.String("gode.model", a.Config.Model),
-		),
-	)
-	defer span.End()
+	return a.runner.Run(ctx, agent.RunRequest{SessionID: uuid.NewString(), Prompt: prompt})
+}
 
-	result, err := a.runner.Run(ctx, agent.RunRequest{SessionID: uuid.NewString(), Prompt: prompt})
-	if err != nil {
-		recordSpanError(span, err)
+func (a *App) SetModel(model string) error {
+	return a.SetModelReasoning(model, "")
+}
+
+func (a *App) SetModelReasoning(model string, reasoning string) error {
+	model = strings.TrimSpace(model)
+	if model == "" {
+		return fmt.Errorf("model is required")
 	}
-	return result, err
+
+	cfg := a.Config
+	cfg.Model = model
+	modelConfig := ModelConfigFor(model)
+	reasoning = strings.TrimSpace(reasoning)
+	if reasoning == "" {
+		reasoning = modelConfig.DefaultReasoning
+	}
+	if !modelConfig.SupportsReasoning(reasoning) {
+		return fmt.Errorf("model %q does not support reasoning %q", model, reasoning)
+	}
+	cfg.Provider = modelConfig.Provider
+	cfg.Reasoning = reasoning
+	prov, err := buildProvider(cfg)
+	if err != nil {
+		return err
+	}
+
+	a.Config = cfg
+	a.provider = prov
+	a.runner = agent.NewRunner(agent.Config{Bus: a.Bus, Journal: a.Journal, Tools: a.Tools, Provider: prov})
+	return nil
+}
+
+func (a *App) SetFastMode(fastMode bool) error {
+	cfg := a.Config
+	cfg.FastMode = fastMode
+	prov, err := buildProvider(cfg)
+	if err != nil {
+		return err
+	}
+
+	a.Config = cfg
+	a.provider = prov
+	a.runner = agent.NewRunner(agent.Config{Bus: a.Bus, Journal: a.Journal, Tools: a.Tools, Provider: prov})
+	return nil
 }
 
 func (a *App) Close(ctx context.Context) error {
@@ -146,26 +181,62 @@ func recordSpanError(span trace.Span, err error) {
 }
 
 func buildProvider(cfg Config) (provider.Provider, error) {
-	switch cfg.Provider {
-	case "mock":
-		return provider.NewMock("mock response", nil), nil
-	case "codex", "openai":
-		if usesCodexAuth(cfg) {
-			return provider.NewOpenAI(cfg.Model, cfg.Reasoning, codexauth.OpenAIOptions(cfg.DataDir)...), nil
-		}
-		return provider.NewOpenAI(cfg.Model, cfg.Reasoning), nil
-	default:
+	providerConfig, ok := LookupProvider(cfg.Provider)
+	if !ok {
 		return nil, fmt.Errorf("unknown provider %q", cfg.Provider)
+	}
+	switch providerConfig.Kind {
+	case ProviderKindMock:
+		return provider.NewMock("mock response", nil), nil
+	case ProviderKindOpenAI:
+		openAIConfig := provider.OpenAIConfig{
+			Model:       cfg.Model,
+			Reasoning:   cfg.Reasoning,
+			ServiceTier: openAIServiceTier(cfg),
+		}
+		if UsesCodexAuth(cfg) {
+			return provider.NewOpenAIWithConfig(openAIConfig, codexauth.OpenAIOptions(cfg.DataDir)...), nil
+		}
+		return provider.NewOpenAIWithConfig(openAIConfig), nil
+	default:
+		return nil, fmt.Errorf("unknown provider kind %q for %q", providerConfig.Kind, cfg.Provider)
 	}
 }
 
-func usesCodexAuth(cfg Config) bool {
+func openAIServiceTier(cfg Config) string {
+	if cfg.FastMode {
+		return "priority"
+	}
+	return ""
+}
+
+func DisplayProvider(cfg Config) string {
+	cfg = cfg.withDefaults()
+	if UsesCodexAuth(cfg) {
+		return ProviderCodex
+	}
+	return cfg.Provider
+}
+
+func DisplayModelLabel(cfg Config) string {
+	cfg = cfg.withDefaults()
+	provider := DisplayProvider(cfg)
+	if provider == "" {
+		return cfg.Model
+	}
+	if cfg.Model == "" {
+		return provider
+	}
+	return provider + "/" + cfg.Model
+}
+
+func UsesCodexAuth(cfg Config) bool {
 	cfg = cfg.withDefaults()
 	if !strings.HasPrefix(cfg.Model, "gpt-") {
 		return false
 	}
-	if cfg.Provider == "codex" {
+	if cfg.Provider == ProviderCodex {
 		return true
 	}
-	return cfg.Provider == "openai" && (codexauth.Store{DataDir: cfg.DataDir}).SignedIn()
+	return cfg.Provider == ProviderOpenAI && (codexauth.Store{DataDir: cfg.DataDir}).SignedIn()
 }
