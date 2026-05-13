@@ -13,6 +13,7 @@ const (
 	SourceTool     Source = "tool"
 	SourceTUI      Source = "tui"
 	SourceMCP      Source = "mcp"
+	SourceLSP      Source = "lsp"
 	SourcePlugin   Source = "plugin"
 	SourceSystem   Source = "system"
 )
@@ -42,6 +43,8 @@ const (
 	KindPermissionResponded Kind = "permission.responded"
 
 	KindMCPStateChanged Kind = "mcp.state_changed"
+	KindLSPStateChanged Kind = "lsp.state_changed"
+	KindLSPDiagnostics  Kind = "lsp.diagnostics"
 	KindPluginLog       Kind = "plugin.log"
 	KindSubscriberDrop  Kind = "subscriber.dropped"
 )

@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"runtime"
 
+	"github.com/pandelisz/gode/internal/godex/lsp"
 	"github.com/pandelisz/gode/internal/godex/mcp"
 	"github.com/pandelisz/gode/internal/godex/provider"
 )
@@ -20,6 +21,7 @@ type Config struct {
 	Telemetry         bool
 	TelemetryEndpoint string
 	MCP               map[string]mcp.ServerConfig
+	LSP               map[string]lsp.Config
 	ProviderConfig    map[string]provider.ProviderConfig
 	SelectedModels    map[string]provider.SelectedModel
 	ContextPaths      []string
@@ -39,6 +41,7 @@ func DefaultConfig() Config {
 		Telemetry:         false,
 		TelemetryEndpoint: "localhost:4317",
 		MCP:               map[string]mcp.ServerConfig{},
+		LSP:               map[string]lsp.Config{},
 		ProviderConfig:    map[string]provider.ProviderConfig{},
 		SelectedModels:    map[string]provider.SelectedModel{},
 	}
@@ -86,6 +89,9 @@ func (c Config) withDefaults() Config {
 	}
 	if c.MCP == nil {
 		c.MCP = defaults.MCP
+	}
+	if c.LSP == nil {
+		c.LSP = defaults.LSP
 	}
 	if c.ProviderConfig == nil {
 		c.ProviderConfig = defaults.ProviderConfig
