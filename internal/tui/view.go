@@ -29,6 +29,7 @@ func (m Model) viewModel() viewmodel.Model {
 		Height:                    m.height,
 		Messages:                  m.messages,
 		ReasoningSummary:          m.reasoningSummary,
+		QueuedPrompts:             m.queuedPromptDisplays(),
 		Attachments:               m.attachmentViewModels(),
 		Input:                     m.input.View(),
 		ComposerValue:             m.input.Value(),

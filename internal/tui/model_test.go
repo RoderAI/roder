@@ -262,8 +262,11 @@ func TestModelTabWhileRunningQueuesPrompt(t *testing.T) {
 	if strings.TrimSpace(got.input.Value()) != "" {
 		t.Fatalf("input should clear after queue, got %q", got.input.Value())
 	}
-	if !strings.Contains(got.footerStatus(), "queued 1 prompt") {
+	if got.footerStatus() != "queued 1 prompt" {
 		t.Fatalf("footer status = %q", got.footerStatus())
+	}
+	if !strings.Contains(got.View().Content, "Queued follow-up inputs") || !strings.Contains(got.View().Content, "run after this") {
+		t.Fatalf("view missing queued prompt block:\n%s", got.View().Content)
 	}
 }
 

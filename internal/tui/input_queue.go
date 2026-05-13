@@ -69,6 +69,16 @@ func (m *Model) queuePreparedPrompt(pending pendingPrompt) tea.Cmd {
 	return nil
 }
 
+func (m Model) queuedPromptDisplays() []string {
+	out := make([]string, 0, len(m.queuedPrompts))
+	for _, pending := range m.queuedPrompts {
+		if display := strings.TrimSpace(pending.Display); display != "" {
+			out = append(out, display)
+		}
+	}
+	return out
+}
+
 func (m *Model) submitNextQueuedPrompt() tea.Cmd {
 	if len(m.queuedPrompts) == 0 {
 		return nil
