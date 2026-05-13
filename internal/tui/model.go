@@ -53,6 +53,7 @@ type Model struct {
 	transcript       components.TranscriptCache
 	input            textarea.Model
 	messages         []viewmodel.Message
+	messageKeys      map[string]string
 	nextID           int
 	width            int
 	height           int
@@ -106,6 +107,7 @@ func New(app *godex.App) Model {
 		codexLogin:          codexauth.LoginBrowser,
 		contextLeft:         defaultContextLeft(app),
 		transcriptLineDirty: true,
+		messageKeys:         map[string]string{},
 	}
 	if app != nil && app.Bus != nil {
 		ctx, cancel := context.WithCancel(context.Background())
@@ -328,7 +330,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 func (m *Model) applyEvent(update eventadapter.Update) {
 	for _, message := range update.Messages {
-		m.addMessage(message.Role, message.Title, message.Body)
+		m.addOrUpdateMessage(message)
 	}
 	if update.AssistantDelta != "" {
 		m.appendAssistantDelta(update.AssistantDelta)
@@ -350,6 +352,42 @@ func (m *Model) applyEvent(update eventadapter.Update) {
 	}
 }
 
+func (m *Model) addOrUpdateMessage(message eventadapter.Message) {
+	if strings.TrimSpace(message.Key) == "" {
+		m.addMessage(message.Role, message.Title, message.Body)
+		return
+	}
+	if m.messageKeys == nil {
+		m.messageKeys = map[string]string{}
+	}
+	if id := m.messageKeys[message.Key]; id != "" {
+		for i := range m.messages {
+			if m.messages[i].ID != id {
+				continue
+			}
+			if message.Role == viewmodel.RoleError {
+				m.addErrorLog(message.Title, message.Body)
+				message.Body = summarizeTimelineError(message.Body)
+			}
+			m.messages[i].Role = message.Role
+			m.messages[i].Title = message.Title
+			m.messages[i].Body = message.Body
+			m.markTranscriptLinesDirty()
+			if m.followTail {
+				m.scrollOffset = 0
+			} else {
+				m.clampScroll()
+			}
+			return
+		}
+		delete(m.messageKeys, message.Key)
+	}
+	m.addMessage(message.Role, message.Title, message.Body)
+	if len(m.messages) > 0 {
+		m.messageKeys[message.Key] = m.messages[len(m.messages)-1].ID
+	}
+}
+
 func (m *Model) addMessage(role viewmodel.Role, title string, body string) {
 	if role == viewmodel.RoleError {
 		m.addErrorLog(title, body)
@@ -366,6 +404,7 @@ func (m *Model) addMessage(role viewmodel.Role, title string, body string) {
 		m.messages = m.messages[overflow:]
 		m.scrollOffset = max(0, m.scrollOffset-overflow)
 		m.transcript.Prune(m.messages)
+		m.pruneMessageKeys()
 		m.markTranscriptLinesDirty()
 	}
 	m.markTranscriptLinesDirty()
@@ -374,6 +413,21 @@ func (m *Model) addMessage(role viewmodel.Role, title string, body string) {
 		return
 	}
 	m.clampScroll()
+}
+
+func (m *Model) pruneMessageKeys() {
+	if len(m.messageKeys) == 0 {
+		return
+	}
+	seen := make(map[string]struct{}, len(m.messages))
+	for _, message := range m.messages {
+		seen[message.ID] = struct{}{}
+	}
+	for key, id := range m.messageKeys {
+		if _, ok := seen[id]; !ok {
+			delete(m.messageKeys, key)
+		}
+	}
 }
 
 func (m *Model) appendAssistantDelta(text string) {
