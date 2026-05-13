@@ -159,17 +159,24 @@ func (o *OpenAI) Compact(ctx context.Context, req CompactRequest) (CompactResult
 }
 
 func (o *OpenAI) responseParams(req Request) responses.ResponseNewParams {
+	input := responseInputItems(req.Messages)
+	if len(req.InputItems) > 0 {
+		input = providerInputItems(req.InputItems)
+	}
 	params := responses.ResponseNewParams{
 		Model: responses.ResponsesModel(o.model),
 		Input: responses.ResponseNewParamsInputUnion{
-			OfInputItemList: responseInputItems(req.Messages),
+			OfInputItemList: input,
 		},
 		Reasoning: shared.ReasoningParam{
 			Effort:  shared.ReasoningEffort(o.reasoning),
 			Summary: shared.ReasoningSummaryAuto,
 		},
-		Store: param.NewOpt(false),
+		Store: param.NewOpt(req.Store),
 		Tools: openAITools(req.Tools),
+	}
+	if req.PreviousResponseID != "" {
+		params.PreviousResponseID = param.NewOpt(req.PreviousResponseID)
 	}
 	if len(req.Tools) > 0 {
 		params.ParallelToolCalls = param.NewOpt(true)

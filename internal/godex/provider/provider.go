@@ -83,13 +83,16 @@ type CompactionOptions struct {
 }
 
 type Request struct {
-	SessionID      string
-	RunID          string
-	Instructions   string
-	ResponseFormat string
-	Messages       []Message
-	Tools          []ToolSpec
-	Compaction     CompactionOptions
+	SessionID          string
+	RunID              string
+	Instructions       string
+	ResponseFormat     string
+	Messages           []Message
+	PreviousResponseID string
+	InputItems         []Item
+	Store              bool
+	Tools              []ToolSpec
+	Compaction         CompactionOptions
 }
 
 type Provider interface {

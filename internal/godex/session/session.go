@@ -2,6 +2,14 @@ package session
 
 import "time"
 
+type ResumeMode string
+
+const (
+	ResumeModeLocalItems         ResumeMode = "local_items"
+	ResumeModePreviousResponseID ResumeMode = "previous_response_id"
+	ResumeModeHybrid             ResumeMode = "hybrid"
+)
+
 type Session struct {
 	ID               string    `json:"id"`
 	Title            string    `json:"title"`
