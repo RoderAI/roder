@@ -349,7 +349,7 @@ func TestSessionNewConnectsStdioMCPServerAndRegistersTools(t *testing.T) {
 	waitForResponse(t, messages, float64(40))
 
 	for _, spec := range app.Tools.Specs() {
-		if spec.Name == "mcp.helper.echo" {
+		if spec.Name == "mcp_helper_echo" {
 			return
 		}
 	}
