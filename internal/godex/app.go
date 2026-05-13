@@ -15,6 +15,7 @@ import (
 	"github.com/pandelisz/gode/internal/godex/eventbus"
 	"github.com/pandelisz/gode/internal/godex/hooks"
 	"github.com/pandelisz/gode/internal/godex/journal"
+	"github.com/pandelisz/gode/internal/godex/lsp"
 	"github.com/pandelisz/gode/internal/godex/mcp"
 	messagestore "github.com/pandelisz/gode/internal/godex/message"
 	"github.com/pandelisz/gode/internal/godex/permission"
@@ -39,6 +40,7 @@ type App struct {
 	Messages *messagestore.Store
 	Tools    *tools.Registry
 	MCP      *mcp.Manager
+	LSP      *lsp.Manager
 
 	provider          provider.Provider
 	runner            *agent.Runner
@@ -133,6 +135,9 @@ func New(ctx context.Context, cfg Config) (*App, error) {
 	mcpManager := mcp.NewManager(bus, cfg.MCP)
 	_ = mcpManager.Start(ctx)
 	builtin.RegisterMCP(reg, mcpManager)
+	lspManager := lsp.NewManager(bus, cfg.Workspace, cfg.LSP)
+	_ = lspManager.Start(ctx)
+	builtin.RegisterLSP(reg, lspManager)
 
 	prov, err := buildProvider(cfg)
 	if err != nil {
@@ -151,6 +156,7 @@ func New(ctx context.Context, cfg Config) (*App, error) {
 		Messages:          messageStore,
 		Tools:             reg,
 		MCP:               mcpManager,
+		LSP:               lspManager,
 		provider:          prov,
 		runner:            runner,
 		contextMessages:   repoContext,
@@ -214,6 +220,9 @@ func (a *App) SetFastMode(fastMode bool) error {
 func (a *App) Close(ctx context.Context) error {
 	if a.MCP != nil {
 		_ = a.MCP.Close(ctx)
+	}
+	if a.LSP != nil {
+		_ = a.LSP.Close(ctx)
 	}
 	if a.Journal != nil {
 		_ = a.Journal.Flush()
