@@ -1,6 +1,8 @@
 package dialogs
 
 import (
+	"fmt"
+
 	"github.com/pandelisz/gode/internal/godex"
 	"github.com/pandelisz/gode/internal/godex/codexauth"
 	"github.com/pandelisz/gode/internal/tui/viewmodel"
@@ -13,17 +15,25 @@ const (
 	ScreenModels
 	ScreenReasoning
 	ScreenConfig
+	ScreenSkills
+	ScreenSkillRecommendations
 )
 
 type Settings struct {
-	Open           bool
-	Screen         Screen
-	Config         godex.Config
-	Models         []godex.ModelConfig
-	MenuIndex      int
-	ModelIndex     int
-	ReasoningIndex int
-	Err            string
+	Open                bool
+	Screen              Screen
+	Config              godex.Config
+	Models              []godex.ModelConfig
+	MenuIndex           int
+	ModelIndex          int
+	ReasoningIndex      int
+	SkillIndex          int
+	RecommendedIndex    int
+	Skills              []viewmodel.SettingsSkillItem
+	RecommendedSkills   []viewmodel.SettingsRecommendedSkillItem
+	SkillInstalledCount int
+	SkillEnabledCount   int
+	Err                 string
 }
 
 func NewSettings(cfg godex.Config) Settings {
@@ -64,6 +74,22 @@ func (s *Settings) OpenConfig() {
 	s.Err = ""
 }
 
+func (s *Settings) OpenSkills() {
+	s.Screen = ScreenSkills
+	s.Err = ""
+	if s.SkillIndex >= len(s.Skills) {
+		s.SkillIndex = 0
+	}
+}
+
+func (s *Settings) OpenSkillRecommendations() {
+	s.Screen = ScreenSkillRecommendations
+	s.Err = ""
+	if s.RecommendedIndex >= len(s.RecommendedSkills) {
+		s.RecommendedIndex = 0
+	}
+}
+
 func (s *Settings) Move(delta int) {
 	count := s.SelectionCount()
 	if count == 0 {
@@ -76,6 +102,10 @@ func (s *Settings) Move(delta int) {
 		s.ModelIndex = wrapIndex(s.ModelIndex+delta, count)
 	case ScreenReasoning:
 		s.ReasoningIndex = wrapIndex(s.ReasoningIndex+delta, count)
+	case ScreenSkills:
+		s.SkillIndex = wrapIndex(s.SkillIndex+delta, count)
+	case ScreenSkillRecommendations:
+		s.RecommendedIndex = wrapIndex(s.RecommendedIndex+delta, count)
 	}
 }
 
@@ -87,6 +117,10 @@ func (s Settings) SelectionCount() int {
 		return len(s.Models)
 	case ScreenReasoning:
 		return len(s.ReasoningOptions())
+	case ScreenSkills:
+		return len(s.Skills)
+	case ScreenSkillRecommendations:
+		return len(s.RecommendedSkills)
 	default:
 		return 0
 	}
@@ -163,6 +197,14 @@ func (s Settings) SelectedReasoningEffort() string {
 	return options[index].Effort
 }
 
+func (s Settings) SelectedSkill() viewmodel.SettingsSkillItem {
+	if len(s.Skills) == 0 {
+		return viewmodel.SettingsSkillItem{}
+	}
+	index := clamp(s.SkillIndex, 0, len(s.Skills)-1)
+	return s.Skills[index]
+}
+
 func (s Settings) MenuItems() []viewmodel.SettingsMenuItem {
 	codexStatus := "signed out"
 	if (codexauth.Store{DataDir: s.Config.DataDir}).SignedIn() {
@@ -188,6 +230,12 @@ func (s Settings) MenuItems() []viewmodel.SettingsMenuItem {
 			Value:       codexStatus,
 		},
 		{
+			ID:          "skills",
+			Label:       "Skills",
+			Description: "View, enable, disable, and install agent skills.",
+			Value:       skillCountValue(s.SkillEnabledCount, s.SkillInstalledCount),
+		},
+		{
 			ID:          "config",
 			Label:       "Config",
 			Description: "Review provider, reasoning, workspace, and data paths.",
@@ -202,14 +250,16 @@ func (s Settings) ViewModel() *viewmodel.SettingsDialog {
 	}
 
 	vm := &viewmodel.SettingsDialog{
-		Title:      s.title(),
-		Screen:     s.ScreenName(),
-		MenuItems:  s.viewMenuItems(),
-		Models:     s.viewModels(),
-		Reasoning:  s.viewReasoning(),
-		ConfigRows: s.configRows(),
-		Selected:   s.selectedIndex(),
-		Error:      s.Err,
+		Title:             s.title(),
+		Screen:            s.ScreenName(),
+		MenuItems:         s.viewMenuItems(),
+		Models:            s.viewModels(),
+		Reasoning:         s.viewReasoning(),
+		ConfigRows:        s.configRows(),
+		Skills:            s.viewSkills(),
+		RecommendedSkills: s.viewRecommendedSkills(),
+		Selected:          s.selectedIndex(),
+		Error:             s.Err,
 	}
 	return vm
 }
@@ -222,6 +272,10 @@ func (s Settings) title() string {
 		return "Reasoning"
 	case ScreenConfig:
 		return "Config"
+	case ScreenSkills:
+		return "Installed Skills"
+	case ScreenSkillRecommendations:
+		return "Recommended Skills"
 	default:
 		return "Settings"
 	}
@@ -235,6 +289,10 @@ func (s Settings) ScreenName() string {
 		return viewmodel.SettingsScreenReasoning
 	case ScreenConfig:
 		return viewmodel.SettingsScreenConfig
+	case ScreenSkills:
+		return viewmodel.SettingsScreenSkills
+	case ScreenSkillRecommendations:
+		return viewmodel.SettingsScreenSkillRecs
 	default:
 		return viewmodel.SettingsScreenMenu
 	}
@@ -246,6 +304,10 @@ func (s Settings) selectedIndex() int {
 		return s.ModelIndex
 	case ScreenReasoning:
 		return s.ReasoningIndex
+	case ScreenSkills:
+		return s.SkillIndex
+	case ScreenSkillRecommendations:
+		return s.RecommendedIndex
 	default:
 		return s.MenuIndex
 	}
@@ -295,6 +357,22 @@ func (s Settings) viewReasoning() []viewmodel.SettingsReasoningItem {
 	return items
 }
 
+func (s Settings) viewSkills() []viewmodel.SettingsSkillItem {
+	items := append([]viewmodel.SettingsSkillItem(nil), s.Skills...)
+	for i := range items {
+		items[i].Selected = i == s.SkillIndex
+	}
+	return items
+}
+
+func (s Settings) viewRecommendedSkills() []viewmodel.SettingsRecommendedSkillItem {
+	items := append([]viewmodel.SettingsRecommendedSkillItem(nil), s.RecommendedSkills...)
+	for i := range items {
+		items[i].Selected = i == s.RecommendedIndex
+	}
+	return items
+}
+
 func (s Settings) configRows() []viewmodel.SettingsConfigRow {
 	return []viewmodel.SettingsConfigRow{
 		{Label: "Model", Value: s.Config.Model},
@@ -304,6 +382,10 @@ func (s Settings) configRows() []viewmodel.SettingsConfigRow {
 		{Label: "Workspace", Value: s.Config.Workspace},
 		{Label: "Data dir", Value: s.Config.DataDir},
 	}
+}
+
+func skillCountValue(enabled int, installed int) string {
+	return fmt.Sprintf("%d/%d enabled", enabled, installed)
 }
 
 func settingsFromConfig(cfg godex.Config) godex.Settings {

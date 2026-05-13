@@ -38,6 +38,11 @@ type codexAuthDoneMsg struct {
 	Err       error
 }
 
+type skillsInstallDoneMsg struct {
+	Installed int
+	Err       error
+}
+
 type Model struct {
 	app              *godex.App
 	zones            *zone.Manager
@@ -295,6 +300,17 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		} else {
 			m.status = "signed in to codex"
 		}
+		return m, nil
+	case skillsInstallDoneMsg:
+		if msg.Err != nil {
+			m.settings.Err = msg.Err.Error()
+			m.status = "skill install failed"
+			return m, nil
+		}
+		if m.settings.Open {
+			m.refreshSettingsSkills()
+		}
+		m.status = fmt.Sprintf("installed %d skills", msg.Installed)
 		return m, nil
 	}
 
