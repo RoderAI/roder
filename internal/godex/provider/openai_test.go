@@ -57,6 +57,34 @@ func TestOpenAIResponseParamsIncludesInstructions(t *testing.T) {
 	}
 }
 
+func TestOpenAIResponseParamsSupportsLocalItemsPreviousResponseIDAndStoreFalse(t *testing.T) {
+	openaiProvider := NewOpenAI("gpt-5.5", "medium")
+
+	params := openaiProvider.responseParams(Request{
+		PreviousResponseID: "resp_123",
+		InputItems: []Item{{
+			ID:      "msg_1",
+			Kind:    ItemMessage,
+			Role:    "user",
+			Text:    "hello from item",
+			RawJSON: json.RawMessage(`{"id":"msg_1","type":"message","role":"user","content":[{"type":"input_text","text":"hello from item"}]}`),
+		}},
+	})
+	if !params.PreviousResponseID.Valid() || params.PreviousResponseID.Value != "resp_123" {
+		t.Fatalf("previous response id = %#v", params.PreviousResponseID)
+	}
+	if !params.Store.Valid() || params.Store.Value {
+		t.Fatalf("store should default false: %#v", params.Store)
+	}
+	data, err := json.Marshal(params.Input)
+	if err != nil {
+		t.Fatalf("marshal input: %v", err)
+	}
+	if !strings.Contains(string(data), `"hello from item"`) {
+		t.Fatalf("input items not used:\n%s", data)
+	}
+}
+
 func TestOpenAIResponseParamsIncludesResponseFormat(t *testing.T) {
 	openaiProvider := NewOpenAI("gpt-5.5", "medium")
 

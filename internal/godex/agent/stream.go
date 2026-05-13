@@ -14,11 +14,13 @@ type runStats struct {
 	ToolCalls      int
 	LastTool       string
 	LastToolCallID string
+	LastResponseID string
 }
 
 type turnOutcome struct {
 	Messages     []provider.Message
 	Final        string
+	ResponseID   string
 	HadToolCall  bool
 	ProducedText bool
 }
@@ -84,6 +86,10 @@ func (r *Runner) streamProviderTurn(ctx context.Context, req RunRequest, provide
 					pendingTools = append(pendingTools, ev.ToolRequest)
 				}
 			case provider.EventCompleted:
+				outcome.ResponseID = ev.ResponseID
+				if ev.ResponseID != "" {
+					stats.LastResponseID = ev.ResponseID
+				}
 				if outcome.Final == "" {
 					outcome.Final = ev.Text
 				}
@@ -95,8 +101,15 @@ func (r *Runner) streamProviderTurn(ctx context.Context, req RunRequest, provide
 					Source:    eventbus.SourceProvider,
 					SessionID: req.SessionID,
 					RunID:     req.RunID,
-					Payload:   map[string]any{"text": outcome.Final},
+					Payload: map[string]any{
+						"text":        outcome.Final,
+						"response_id": ev.ResponseID,
+						"items":       r.sessionItemsFromProviderItems(req, ev.Items),
+					},
 				})
+				if err := r.persistProviderItems(ctx, req, ev.Items, outcome.Final); err != nil {
+					return outcome, err
+				}
 			}
 		case err, ok := <-errs:
 			if !ok {

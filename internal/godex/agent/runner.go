@@ -23,6 +23,8 @@ type Config struct {
 	Bus                   *eventbus.Bus
 	Journal               *journal.Store
 	Sessions              *session.Store
+	Turns                 *session.TurnStore
+	Items                 *session.ItemStore
 	Messages              *messagestore.Store
 	Tools                 *tools.Registry
 	Provider              provider.Provider
@@ -41,6 +43,8 @@ type Runner struct {
 	bus                   *eventbus.Bus
 	journal               *journal.Store
 	sessions              *session.Store
+	turns                 *session.TurnStore
+	items                 *session.ItemStore
 	messages              *messagestore.Store
 	tools                 *tools.Registry
 	provider              provider.Provider
@@ -60,9 +64,11 @@ type RunRequest struct {
 	RunID          string
 	Prompt         string
 	Resume         bool
+	ResumeMode     session.ResumeMode
 	Instructions   string
 	ResponseFormat string
 	Messages       []provider.Message
+	InputItems     []provider.Item
 	MaxTurns       int
 }
 
@@ -77,6 +83,8 @@ func NewRunner(cfg Config) *Runner {
 		bus:                   cfg.Bus,
 		journal:               cfg.Journal,
 		sessions:              cfg.Sessions,
+		turns:                 cfg.Turns,
+		items:                 cfg.Items,
 		messages:              cfg.Messages,
 		tools:                 cfg.Tools,
 		provider:              cfg.Provider,
@@ -140,6 +148,9 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (RunResult, error) {
 		RunID:     req.RunID,
 		Payload:   map[string]any{"prompt": req.Prompt},
 	})
+	if err := r.persistUserItem(ctx, req); err != nil {
+		return RunResult{}, r.fail(ctx, req, err)
+	}
 	r.emit(ctx, eventbus.Event{
 		Kind:      eventbus.KindRunStarted,
 		Source:    eventbus.SourceAgent,
@@ -147,6 +158,9 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (RunResult, error) {
 		RunID:     req.RunID,
 		Payload:   map[string]any{"provider": r.provider.Name()},
 	})
+	if err := r.startTurn(ctx, req); err != nil {
+		return RunResult{}, r.fail(ctx, req, err)
+	}
 
 	commandExpansion, err := godecommands.Expand(ctx, req.Prompt, godecommands.Catalog{Commands: r.commands})
 	if err != nil {
@@ -227,6 +241,9 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (RunResult, error) {
 	if final == "" {
 		return RunResult{}, r.fail(ctx, req, r.toolLoopError(req, maxTurns, stats))
 	}
+	if err := r.completeTurn(ctx, req, final, stats.LastResponseID); err != nil {
+		return RunResult{}, r.fail(ctx, req, err)
+	}
 
 	r.emit(ctx, eventbus.Event{
 		Kind:      eventbus.KindRunCompleted,
@@ -242,7 +259,25 @@ func (r *Runner) initialMessages(ctx context.Context, req RunRequest, runMessage
 	messages := append([]provider.Message(nil), r.contextMessages...)
 	messages = append(messages, runMessages...)
 	messages = append(messages, req.Messages...)
-	if req.Resume && r.messages != nil {
+	if len(req.InputItems) > 0 {
+		messages = append(providerMessagesFromProviderItems(req.InputItems), messages...)
+	}
+	if req.Resume && r.items != nil {
+		priorItems, err := r.items.ListBySession(ctx, req.SessionID)
+		if err != nil {
+			return nil, err
+		}
+		prior := providerMessagesFromSessionItems(excludeRunItems(priorItems, req.RunID))
+		if len(prior) > 0 {
+			messages = append(prior, messages...)
+		} else if r.messages != nil {
+			priorMessages, err := r.messages.ListBySession(ctx, req.SessionID)
+			if err != nil {
+				return nil, err
+			}
+			messages = append(providerMessages(excludeRunMessages(priorMessages, req.RunID)), messages...)
+		}
+	} else if req.Resume && r.messages != nil {
 		prior, err := r.messages.ListBySession(ctx, req.SessionID)
 		if err != nil {
 			return nil, err
@@ -417,6 +452,7 @@ func (r *Runner) providerName() string {
 func (r *Runner) fail(ctx context.Context, req RunRequest, err error) error {
 	detail := strings.TrimSpace(err.Error())
 	summary := firstLine(detail)
+	_ = r.failTurn(ctx, req, detail)
 	r.emit(ctx, eventbus.Event{
 		Kind:      eventbus.KindRunFailed,
 		Source:    eventbus.SourceAgent,

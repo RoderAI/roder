@@ -36,6 +36,36 @@ func responseInputItems(messages []Message) responses.ResponseInputParam {
 	return items
 }
 
+func providerInputItems(providerItems []Item) responses.ResponseInputParam {
+	items := make(responses.ResponseInputParam, 0, len(providerItems))
+	for _, item := range providerItems {
+		if len(item.RawJSON) > 0 {
+			items = append(items, param.Override[responses.ResponseInputItemUnionParam](json.RawMessage(item.RawJSON)))
+			continue
+		}
+		switch item.Kind {
+		case ItemMessage:
+			content := strings.TrimSpace(item.Text)
+			if content != "" {
+				items = append(items, responses.ResponseInputItemParamOfMessage(content, easyInputRole(Role(item.Role))))
+			}
+		case ItemFunctionCall:
+			arguments := strings.TrimSpace(item.Text)
+			if arguments == "" {
+				arguments = "{}"
+			}
+			if item.ToolCallID != "" && item.ToolName != "" {
+				items = append(items, responses.ResponseInputItemParamOfFunctionCall(arguments, item.ToolCallID, item.ToolName))
+			}
+		case ItemFunctionOut:
+			if item.ToolCallID != "" {
+				items = append(items, responses.ResponseInputItemParamOfFunctionCallOutput(item.ToolCallID, strings.TrimSpace(item.Text)))
+			}
+		}
+	}
+	return items
+}
+
 func rawResponseOutputItems(items []responses.ResponseOutputItemUnion) []json.RawMessage {
 	out := make([]json.RawMessage, 0, len(items))
 	for _, item := range items {

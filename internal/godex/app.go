@@ -38,6 +38,8 @@ type App struct {
 	Bus          *eventbus.Bus
 	Journal      *journal.Store
 	Sessions     *session.Store
+	Turns        *session.TurnStore
+	Items        *session.ItemStore
 	Messages     *messagestore.Store
 	Tools        *tools.Registry
 	Goals        *goals.Runtime
@@ -106,6 +108,20 @@ func New(ctx context.Context, cfg Config) (*App, error) {
 		return nil, err
 	}
 	messageStore := messagestore.Open(cfg.DataDir)
+	turnStore, err := session.OpenTurnStore(cfg.DataDir)
+	if err != nil {
+		_ = store.Close()
+		recordSpanError(span, err)
+		_ = shutdownTelemetry(ctx)
+		return nil, err
+	}
+	itemStore, err := session.OpenItemStore(cfg.DataDir)
+	if err != nil {
+		_ = store.Close()
+		recordSpanError(span, err)
+		_ = shutdownTelemetry(ctx)
+		return nil, err
+	}
 	goalStore, err := goals.Open(cfg.DataDir)
 	if err != nil {
 		_ = store.Close()
@@ -168,13 +184,15 @@ func New(ctx context.Context, cfg Config) (*App, error) {
 		_ = shutdownTelemetry(ctx)
 		return nil, err
 	}
-	runner := agent.NewRunner(runnerConfig(cfg, bus, store, sessionStore, messageStore, reg, goalRuntime, prov, repoContext, skillCatalog.Skills, commandCatalog.Commands))
+	runner := agent.NewRunner(runnerConfig(cfg, bus, store, sessionStore, turnStore, itemStore, messageStore, reg, goalRuntime, prov, repoContext, skillCatalog.Skills, commandCatalog.Commands))
 
 	return &App{
 		Config:            cfg,
 		Bus:               bus,
 		Journal:           store,
 		Sessions:          sessionStore,
+		Turns:             turnStore,
+		Items:             itemStore,
 		Messages:          messageStore,
 		Tools:             reg,
 		Goals:             goalRuntime,
@@ -231,7 +249,7 @@ func (a *App) SetModelReasoning(model string, reasoning string) error {
 
 	a.Config = cfg
 	a.provider = prov
-	a.runner = agent.NewRunner(runnerConfig(cfg, a.Bus, a.Journal, a.Sessions, a.Messages, a.Tools, a.Goals, prov, a.contextMessages, a.skills, a.commands))
+	a.runner = agent.NewRunner(runnerConfig(cfg, a.Bus, a.Journal, a.Sessions, a.Turns, a.Items, a.Messages, a.Tools, a.Goals, prov, a.contextMessages, a.skills, a.commands))
 	return nil
 }
 
@@ -245,15 +263,17 @@ func (a *App) SetFastMode(fastMode bool) error {
 
 	a.Config = cfg
 	a.provider = prov
-	a.runner = agent.NewRunner(runnerConfig(cfg, a.Bus, a.Journal, a.Sessions, a.Messages, a.Tools, a.Goals, prov, a.contextMessages, a.skills, a.commands))
+	a.runner = agent.NewRunner(runnerConfig(cfg, a.Bus, a.Journal, a.Sessions, a.Turns, a.Items, a.Messages, a.Tools, a.Goals, prov, a.contextMessages, a.skills, a.commands))
 	return nil
 }
 
-func runnerConfig(cfg Config, bus *eventbus.Bus, journalStore *journal.Store, sessionStore *session.Store, messageStore *messagestore.Store, registry *tools.Registry, goalRuntime *goals.Runtime, prov provider.Provider, contextMessages []provider.Message, skills []godeskills.Skill, commands []godecommands.Command) agent.Config {
+func runnerConfig(cfg Config, bus *eventbus.Bus, journalStore *journal.Store, sessionStore *session.Store, turnStore *session.TurnStore, itemStore *session.ItemStore, messageStore *messagestore.Store, registry *tools.Registry, goalRuntime *goals.Runtime, prov provider.Provider, contextMessages []provider.Message, skills []godeskills.Skill, commands []godecommands.Command) agent.Config {
 	return agent.Config{
 		Bus:                   bus,
 		Journal:               journalStore,
 		Sessions:              sessionStore,
+		Turns:                 turnStore,
+		Items:                 itemStore,
 		Messages:              messageStore,
 		Tools:                 registry,
 		Provider:              prov,
