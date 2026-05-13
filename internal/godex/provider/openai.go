@@ -412,7 +412,7 @@ func openAITools(specs []ToolSpec) []responses.ToolUnionParam {
 		})
 	}
 	return []responses.ToolUnionParam{
-		responses.ToolParamOfNamespace("Gode coding-agent tools for reading, searching, editing, and inspecting the current workspace.", "gode", namespaceTools),
+		responses.ToolParamOfNamespace("Gode coding-agent tools for reading files, searching, editing, and inspecting the current workspace.", "gode", namespaceTools),
 		{OfToolSearch: &responses.ToolSearchToolParam{Execution: responses.ToolSearchToolExecutionServer}},
 	}
 }
