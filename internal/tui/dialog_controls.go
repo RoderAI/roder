@@ -105,11 +105,16 @@ func (m Model) acceptSessionSelection() (tea.Model, tea.Cmd) {
 		m.sessions.Err = "no session selected"
 		return m, nil
 	}
+	if item.ID == dialogs.NewSessionID {
+		m.startNewSession()
+		return m, m.input.Focus()
+	}
 	if err := m.loadSessionMessages(item.ID); err != nil {
 		m.sessions.Err = err.Error()
 		return m, nil
 	}
 	m.currentSessionID = item.ID
+	m.currentSession = item.Title
 	m.sessions = dialogs.Sessions{}
 	m.status = "session loaded"
 	return m, m.input.Focus()
@@ -307,14 +312,17 @@ func (m Model) commandItems() []dialogs.CommandItem {
 }
 
 func (m Model) sessionItems() []dialogs.SessionItem {
+	items := []dialogs.SessionItem{{
+		ID:    dialogs.NewSessionID,
+		Title: "New Session",
+	}}
 	if m.app == nil || m.app.Sessions == nil {
-		return nil
+		return items
 	}
 	sessions, err := m.app.Sessions.List(context.Background())
 	if err != nil {
-		return nil
+		return items
 	}
-	items := make([]dialogs.SessionItem, 0, len(sessions))
 	for _, session := range sessions {
 		title := strings.TrimSpace(session.Title)
 		if title == "" {
@@ -328,6 +336,41 @@ func (m Model) sessionItems() []dialogs.SessionItem {
 		})
 	}
 	return items
+}
+
+func (m *Model) startNewSession() {
+	m.currentSessionID = ""
+	m.currentSession = ""
+	m.messages = nil
+	m.nextID = 0
+	m.input.Reset()
+	m.attachments = nil
+	m.reasoningSummary = ""
+	m.scrollOffset = 0
+	m.followTail = true
+	m.transcript.Prune(m.messages)
+	m.markTranscriptLinesDirty()
+	m.sessions = dialogs.Sessions{}
+	m.status = "new session"
+}
+
+func (m *Model) setCurrentSession(sessionID string) {
+	m.currentSessionID = sessionID
+	m.currentSession = m.sessionTitle(sessionID)
+}
+
+func (m Model) sessionTitle(sessionID string) string {
+	if m.app == nil || m.app.Sessions == nil || strings.TrimSpace(sessionID) == "" {
+		return ""
+	}
+	session, ok, err := m.app.Sessions.Get(context.Background(), sessionID)
+	if err != nil || !ok {
+		return ""
+	}
+	if title := strings.TrimSpace(session.Title); title != "" {
+		return title
+	}
+	return session.ID
 }
 
 func (m *Model) loadSessionMessages(sessionID string) error {

@@ -29,7 +29,7 @@ func RenderWithCache(vm viewmodel.Model, zones *zone.Manager, transcriptCache *T
 	bodyHeight := max(1, height-composerHeight-reasoningHeight-attachmentHeight-errorHeight-3)
 
 	parts := []string{
-		Header(width, vm.Provider, vm.Model, vm.Reasoning, vm.Running),
+		Header(width, vm.Provider, vm.Model, vm.Reasoning, vm.SessionTitle, vm.Running),
 		TranscriptWithCache(width, bodyHeight, vm.Messages, vm.ScrollOffset, vm.HoveredID, zones, transcriptCache),
 	}
 	if reasoningHeight > 0 {

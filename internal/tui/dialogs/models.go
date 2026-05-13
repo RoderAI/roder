@@ -125,6 +125,9 @@ func (s *Settings) selectCurrentReasoning() {
 }
 
 func (s Settings) PreferredReasoning(model godex.ModelConfig) string {
+	if len(model.SupportedReasoning) == 0 {
+		return ""
+	}
 	preferred := s.Config.Reasoning
 	if preferred == "" || !model.SupportsReasoning(preferred) {
 		preferred = model.DefaultReasoning
@@ -146,7 +149,7 @@ func (s Settings) SelectedModel() godex.ModelConfig {
 func (s Settings) ReasoningOptions() []godex.ReasoningOption {
 	model := s.SelectedModel()
 	if len(model.SupportedReasoning) == 0 {
-		return []godex.ReasoningOption{{Effort: model.DefaultReasoning}}
+		return nil
 	}
 	return model.SupportedReasoning
 }

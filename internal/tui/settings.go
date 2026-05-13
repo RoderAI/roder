@@ -131,7 +131,8 @@ func (m Model) selectSettingsModel() (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	reasoning := m.settings.PreferredReasoning(selected)
-	if reasoning == "" {
+	hasReasoning := len(selected.SupportedReasoning) > 0
+	if hasReasoning && reasoning == "" {
 		m.settings.Err = "reasoning is required"
 		return m, nil
 	}
@@ -149,6 +150,9 @@ func (m Model) selectSettingsModel() (tea.Model, tea.Cmd) {
 		m.settings.Config.Model = selected.ID
 		m.settings.Config.Provider = selected.Provider
 		m.settings.Config.Reasoning = reasoning
+	}
+	if !hasReasoning {
+		return m, m.closeSettings("default model saved")
 	}
 	m.settings.OpenReasoning()
 	m.status = "default model selected"
@@ -189,6 +193,9 @@ func (m *Model) saveSelectedModelReasoning() tea.Cmd {
 	if m.running {
 		m.settings.Err = "finish the current run before changing models"
 		return nil
+	}
+	if len(selected.SupportedReasoning) == 0 {
+		return m.closeSettings("default model saved")
 	}
 	reasoning := m.settings.SelectedReasoningEffort()
 	if reasoning == "" {

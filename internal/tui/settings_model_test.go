@@ -404,6 +404,62 @@ func TestSettingsDialogSavesModelAndUpdatesApp(t *testing.T) {
 	}
 }
 
+func TestSettingsModelSelectionPreservesSessionContext(t *testing.T) {
+	app, err := godex.New(context.Background(), godex.Config{
+		DataDir:     t.TempDir(),
+		Workspace:   filepath.Join(t.TempDir(), "workspace"),
+		Provider:    godex.ProviderOpenAI,
+		Model:       godex.DefaultModelID,
+		Reasoning:   godex.ReasoningMedium,
+		AutoApprove: true,
+	})
+	if err != nil {
+		t.Fatalf("app: %v", err)
+	}
+	defer app.Close(context.Background())
+
+	model := New(app)
+	model.currentSessionID = "session-1"
+	model.currentSession = "Existing session"
+	model.addMessage(viewmodel.RoleUser, "", "keep me")
+	model.openSettings()
+	model.settings.OpenModels()
+	model.settings.ModelIndex = 1
+
+	updated, _ := model.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	got := updated.(Model)
+	if got.currentSessionID != "session-1" || got.currentSession != "Existing session" {
+		t.Fatalf("session changed to %q title %q", got.currentSessionID, got.currentSession)
+	}
+	if len(got.messages) != 1 || got.messages[0].Body != "keep me" {
+		t.Fatalf("messages changed: %#v", got.messages)
+	}
+	if app.Config.Model != godex.BuiltInModels(false)[1].ID {
+		t.Fatalf("app model = %q", app.Config.Model)
+	}
+}
+
+func TestSettingsModelWithoutReasoningSkipsReasoningPicker(t *testing.T) {
+	model := New(nil)
+	model.settings = dialogs.NewSettings(godex.Config{Provider: "mock", Model: "plain"})
+	model.settings.Open = true
+	model.settings.OpenModels()
+	model.settings.Models = []godex.ModelConfig{{
+		ID:          "plain",
+		DisplayName: "Plain Model",
+		Provider:    "mock",
+	}}
+
+	updated, _ := model.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	got := updated.(Model)
+	if got.settings.Open {
+		t.Fatalf("settings should close instead of opening reasoning picker: %#v", got.settings)
+	}
+	if got.status != "default model saved" {
+		t.Fatalf("status = %q", got.status)
+	}
+}
+
 func clickZone(t *testing.T, model Model, id string) tea.MouseClickMsg {
 	t.Helper()
 	deadline := time.Now().Add(100 * time.Millisecond)

@@ -13,6 +13,7 @@ import (
 	messagestore "github.com/pandelisz/gode/internal/godex/message"
 	"github.com/pandelisz/gode/internal/tui/dialogs"
 	"github.com/pandelisz/gode/internal/tui/eventadapter"
+	"github.com/pandelisz/gode/internal/tui/viewmodel"
 )
 
 func TestModelAppendsAssistantDeltaEvents(t *testing.T) {
@@ -279,17 +280,57 @@ func TestCtrlSOpensSessionsDialogAndLoadsMessages(t *testing.T) {
 	if !got.sessions.Open {
 		t.Fatal("sessions dialog should open")
 	}
-	if len(got.sessions.Items) != 1 || got.sessions.Items[0].ID != session.ID {
+	if len(got.sessions.Items) != 2 || got.sessions.Items[0].ID != dialogs.NewSessionID || got.sessions.Items[1].ID != session.ID {
 		t.Fatalf("session items = %#v", got.sessions.Items)
 	}
 
+	got.sessions.Move(1)
 	updated, _ = got.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 	got = updated.(Model)
 	if got.currentSessionID != session.ID {
 		t.Fatalf("current session = %q", got.currentSessionID)
 	}
+	if got.currentSession != "Earlier work" {
+		t.Fatalf("current session title = %q", got.currentSession)
+	}
 	if len(got.messages) != 2 || got.messages[0].Body != "hello" || got.messages[1].Body != "world" {
 		t.Fatalf("messages = %#v", got.messages)
+	}
+}
+
+func TestNewSessionActionClearsViewWithoutDeletingHistory(t *testing.T) {
+	app, err := godex.New(context.Background(), godex.Config{DataDir: t.TempDir(), Workspace: t.TempDir(), Provider: "mock", AutoApprove: true})
+	if err != nil {
+		t.Fatalf("app: %v", err)
+	}
+	defer app.Close(context.Background())
+	session, err := app.Sessions.Create(context.Background(), "Earlier work", "")
+	if err != nil {
+		t.Fatalf("create session: %v", err)
+	}
+
+	model := New(app)
+	defer model.cancelEvents()
+	model.currentSessionID = session.ID
+	model.currentSession = "Earlier work"
+	model.input.SetValue("draft prompt")
+	model.addMessage(viewmodel.RoleUser, "", "hello")
+	model.sessions = dialogs.NewSessions(model.sessionItems())
+
+	updated, _ := model.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	got := updated.(Model)
+	if got.currentSessionID != "" || got.currentSession != "" {
+		t.Fatalf("current session = %q title %q", got.currentSessionID, got.currentSession)
+	}
+	if len(got.messages) != 0 || strings.TrimSpace(got.input.Value()) != "" {
+		t.Fatalf("view not cleared: messages=%#v input=%q", got.messages, got.input.Value())
+	}
+	sessions, err := app.Sessions.List(context.Background())
+	if err != nil {
+		t.Fatalf("list sessions: %v", err)
+	}
+	if len(sessions) != 1 || sessions[0].ID != session.ID {
+		t.Fatalf("history was deleted: %#v", sessions)
 	}
 }
 

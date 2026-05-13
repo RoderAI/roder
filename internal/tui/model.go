@@ -62,6 +62,7 @@ type Model struct {
 	completionMode   string
 	permissions      dialogs.Permissions
 	currentSessionID string
+	currentSession   string
 	attachments      []attachments.Attachment
 	codexLogin       func(context.Context, string) (codexauth.Tokens, string, error)
 	errorLog         []viewmodel.ErrorLogEntry
@@ -249,7 +250,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case runDoneMsg:
 		m.running = false
 		if msg.Result.SessionID != "" {
-			m.currentSessionID = msg.Result.SessionID
+			m.setCurrentSession(msg.Result.SessionID)
 		}
 		if msg.Err != nil {
 			if !m.hasRecentError(msg.Err.Error()) {

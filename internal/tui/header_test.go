@@ -29,3 +29,18 @@ func TestHeaderShowsReasoningWithModel(t *testing.T) {
 		t.Fatalf("header should show model and reasoning:\n%s", view)
 	}
 }
+
+func TestHeaderShowsSessionTitleAndRunningState(t *testing.T) {
+	model := New(nil)
+	model.width = 100
+	model.height = 24
+	model.currentSession = "Implement parser"
+	model.running = true
+
+	view := model.View().Content
+	for _, want := range []string{"Implement parser", "running"} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("header missing %q:\n%s", want, view)
+		}
+	}
+}
