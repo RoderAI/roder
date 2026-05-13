@@ -16,21 +16,23 @@ import (
 )
 
 type Config struct {
-	Bus      *eventbus.Bus
-	Journal  *journal.Store
-	Sessions *session.Store
-	Messages *messagestore.Store
-	Tools    *tools.Registry
-	Provider provider.Provider
+	Bus             *eventbus.Bus
+	Journal         *journal.Store
+	Sessions        *session.Store
+	Messages        *messagestore.Store
+	Tools           *tools.Registry
+	Provider        provider.Provider
+	ContextMessages []provider.Message
 }
 
 type Runner struct {
-	bus      *eventbus.Bus
-	journal  *journal.Store
-	sessions *session.Store
-	messages *messagestore.Store
-	tools    *tools.Registry
-	provider provider.Provider
+	bus             *eventbus.Bus
+	journal         *journal.Store
+	sessions        *session.Store
+	messages        *messagestore.Store
+	tools           *tools.Registry
+	provider        provider.Provider
+	contextMessages []provider.Message
 }
 
 type RunRequest struct {
@@ -50,12 +52,13 @@ type RunResult struct {
 
 func NewRunner(cfg Config) *Runner {
 	return &Runner{
-		bus:      cfg.Bus,
-		journal:  cfg.Journal,
-		sessions: cfg.Sessions,
-		messages: cfg.Messages,
-		tools:    cfg.Tools,
-		provider: cfg.Provider,
+		bus:             cfg.Bus,
+		journal:         cfg.Journal,
+		sessions:        cfg.Sessions,
+		messages:        cfg.Messages,
+		tools:           cfg.Tools,
+		provider:        cfg.Provider,
+		contextMessages: append([]provider.Message(nil), cfg.ContextMessages...),
 	}
 }
 
@@ -256,7 +259,8 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (RunResult, error) {
 }
 
 func (r *Runner) initialMessages(ctx context.Context, req RunRequest) ([]provider.Message, error) {
-	messages := append([]provider.Message(nil), req.Messages...)
+	messages := append([]provider.Message(nil), r.contextMessages...)
+	messages = append(messages, req.Messages...)
 	if req.Resume && r.messages != nil {
 		prior, err := r.messages.ListBySession(ctx, req.SessionID)
 		if err != nil {

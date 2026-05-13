@@ -10,6 +10,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/pandelisz/gode/internal/godex/agent"
 	"github.com/pandelisz/gode/internal/godex/codexauth"
+	"github.com/pandelisz/gode/internal/godex/contextpack"
 	"github.com/pandelisz/gode/internal/godex/eventbus"
 	"github.com/pandelisz/gode/internal/godex/hooks"
 	"github.com/pandelisz/gode/internal/godex/journal"
@@ -17,6 +18,7 @@ import (
 	messagestore "github.com/pandelisz/gode/internal/godex/message"
 	"github.com/pandelisz/gode/internal/godex/permission"
 	"github.com/pandelisz/gode/internal/godex/provider"
+	"github.com/pandelisz/gode/internal/godex/repoconfig"
 	"github.com/pandelisz/gode/internal/godex/session"
 	godetelemetry "github.com/pandelisz/gode/internal/godex/telemetry"
 	"github.com/pandelisz/gode/internal/godex/tools"
@@ -38,6 +40,7 @@ type App struct {
 
 	provider          provider.Provider
 	runner            *agent.Runner
+	contextMessages   []provider.Message
 	shutdownTelemetry func(context.Context) error
 }
 
@@ -87,6 +90,13 @@ func New(ctx context.Context, cfg Config) (*App, error) {
 		return nil, err
 	}
 	messageStore := messagestore.Open(cfg.DataDir)
+	repoContext, err := loadContextMessages(cfg.Workspace)
+	if err != nil {
+		_ = store.Close()
+		recordSpanError(span, err)
+		_ = shutdownTelemetry(ctx)
+		return nil, err
+	}
 
 	permissionService := permission.New(permission.WithEventBus(bus))
 	hookRunner := hooks.New(nil)
@@ -119,7 +129,7 @@ func New(ctx context.Context, cfg Config) (*App, error) {
 		_ = shutdownTelemetry(ctx)
 		return nil, err
 	}
-	runner := agent.NewRunner(agent.Config{Bus: bus, Journal: store, Sessions: sessionStore, Messages: messageStore, Tools: reg, Provider: prov})
+	runner := agent.NewRunner(agent.Config{Bus: bus, Journal: store, Sessions: sessionStore, Messages: messageStore, Tools: reg, Provider: prov, ContextMessages: repoContext})
 
 	return &App{
 		Config:            cfg,
@@ -131,6 +141,7 @@ func New(ctx context.Context, cfg Config) (*App, error) {
 		MCP:               mcpManager,
 		provider:          prov,
 		runner:            runner,
+		contextMessages:   repoContext,
 		shutdownTelemetry: shutdownTelemetry,
 	}, nil
 }
@@ -168,7 +179,7 @@ func (a *App) SetModelReasoning(model string, reasoning string) error {
 
 	a.Config = cfg
 	a.provider = prov
-	a.runner = agent.NewRunner(agent.Config{Bus: a.Bus, Journal: a.Journal, Sessions: a.Sessions, Messages: a.Messages, Tools: a.Tools, Provider: prov})
+	a.runner = agent.NewRunner(agent.Config{Bus: a.Bus, Journal: a.Journal, Sessions: a.Sessions, Messages: a.Messages, Tools: a.Tools, Provider: prov, ContextMessages: a.contextMessages})
 	return nil
 }
 
@@ -182,7 +193,7 @@ func (a *App) SetFastMode(fastMode bool) error {
 
 	a.Config = cfg
 	a.provider = prov
-	a.runner = agent.NewRunner(agent.Config{Bus: a.Bus, Journal: a.Journal, Sessions: a.Sessions, Messages: a.Messages, Tools: a.Tools, Provider: prov})
+	a.runner = agent.NewRunner(agent.Config{Bus: a.Bus, Journal: a.Journal, Sessions: a.Sessions, Messages: a.Messages, Tools: a.Tools, Provider: prov, ContextMessages: a.contextMessages})
 	return nil
 }
 
@@ -229,6 +240,18 @@ func buildProvider(cfg Config) (provider.Provider, error) {
 	default:
 		return nil, fmt.Errorf("unknown provider kind %q for %q", providerConfig.Kind, cfg.Provider)
 	}
+}
+
+func loadContextMessages(workspace string) ([]provider.Message, error) {
+	repo, err := repoconfig.Load(workspace)
+	if err != nil {
+		return nil, err
+	}
+	pack, err := contextpack.Load(contextpack.LoadOptions{Workspace: workspace, Repo: repo})
+	if err != nil {
+		return nil, err
+	}
+	return pack.Messages(), nil
 }
 
 func openAIServiceTier(cfg Config) string {
