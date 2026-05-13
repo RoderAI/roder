@@ -7,6 +7,7 @@ import (
 	"sync"
 
 	"github.com/google/uuid"
+	godecommands "github.com/pandelisz/gode/internal/godex/commands"
 	"github.com/pandelisz/gode/internal/godex/eventbus"
 	"github.com/pandelisz/gode/internal/godex/journal"
 	messagestore "github.com/pandelisz/gode/internal/godex/message"
@@ -25,6 +26,7 @@ type Config struct {
 	Provider        provider.Provider
 	ContextMessages []provider.Message
 	Skills          []godeskills.Skill
+	Commands        []godecommands.Command
 }
 
 type Runner struct {
@@ -36,6 +38,7 @@ type Runner struct {
 	provider        provider.Provider
 	contextMessages []provider.Message
 	skills          []godeskills.Skill
+	commands        []godecommands.Command
 }
 
 type RunRequest struct {
@@ -63,6 +66,7 @@ func NewRunner(cfg Config) *Runner {
 		provider:        cfg.Provider,
 		contextMessages: append([]provider.Message(nil), cfg.ContextMessages...),
 		skills:          append([]godeskills.Skill(nil), cfg.Skills...),
+		commands:        append([]godecommands.Command(nil), cfg.Commands...),
 	}
 }
 
@@ -122,7 +126,11 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (RunResult, error) {
 		Payload:   map[string]any{"provider": r.provider.Name()},
 	})
 
-	invocation := godeskills.ApplyInvocations(req.Prompt, godeskills.Catalog{Skills: r.skills})
+	commandExpansion, err := godecommands.Expand(ctx, req.Prompt, godecommands.Catalog{Commands: r.commands})
+	if err != nil {
+		return RunResult{}, r.fail(ctx, req, err)
+	}
+	invocation := godeskills.ApplyInvocations(commandExpansion.Prompt, godeskills.Catalog{Skills: r.skills})
 	messages, err := r.initialMessages(ctx, req, invocation.Messages, invocation.Prompt)
 	if err != nil {
 		return RunResult{}, r.fail(ctx, req, err)
