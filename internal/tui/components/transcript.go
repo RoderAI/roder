@@ -4,18 +4,189 @@ import (
 	"strings"
 
 	"charm.land/lipgloss/v2"
+	zone "github.com/lrstanley/bubblezone/v2"
+	"github.com/pandelisz/gode/internal/tui/viewmodel"
 )
 
-func Transcript(width int, height int, lines []string) string {
-	return lipgloss.NewStyle().
-		Width(width).
-		Height(height).
-		Render(strings.Join(tail(lines, height), "\n"))
+type renderedMessage struct {
+	id    string
+	lines []string
 }
 
-func tail(lines []string, limit int) []string {
-	if len(lines) <= limit {
-		return lines
+var (
+	transcriptStyle = lipgloss.NewStyle().
+			Background(lipgloss.Color("232")).
+			Padding(1, 1)
+	emptyStyle = lipgloss.NewStyle().
+			Foreground(lipgloss.Color("244")).
+			Italic(true)
+	messageHoverStyle = lipgloss.NewStyle().
+				Background(lipgloss.Color("236"))
+	labelStyle = lipgloss.NewStyle().
+			Bold(true).
+			Padding(0, 1)
+	bodyStyle = lipgloss.NewStyle().
+			Foreground(lipgloss.Color("252"))
+)
+
+func Transcript(width int, height int, messages []viewmodel.Message, scrollOffset int, hoveredID string, zones *zone.Manager) string {
+	innerWidth := max(20, width-2)
+	innerHeight := max(4, height-2)
+	visible := visibleMessages(messages, innerWidth, innerHeight, scrollOffset)
+
+	var body string
+	if len(visible) == 0 {
+		body = emptyStyle.Render("No transcript yet. Ask gode to inspect, edit, or run something.")
+	} else {
+		parts := make([]string, 0, len(visible))
+		for _, item := range visible {
+			block := strings.Join(item.lines, "\n")
+			if item.id == hoveredID {
+				block = messageHoverStyle.Width(innerWidth).Render(block)
+			}
+			parts = append(parts, zones.Mark(viewmodel.MessageZoneID(item.id), block))
+		}
+		body = strings.Join(parts, "\n")
 	}
-	return lines[len(lines)-limit:]
+
+	panel := transcriptStyle.
+		Width(innerWidth).
+		Height(innerHeight).
+		Render(body)
+	return zones.Mark(viewmodel.TranscriptZoneID, panel)
+}
+
+func visibleMessages(messages []viewmodel.Message, width int, height int, scrollOffset int) []renderedMessage {
+	if len(messages) == 0 || height <= 0 {
+		return nil
+	}
+
+	end := len(messages) - clamp(scrollOffset, 0, len(messages)-1)
+	if end < 1 {
+		end = 1
+	}
+
+	rendered := make([]renderedMessage, 0, min(end, 200))
+	for i := max(0, end-200); i < end; i++ {
+		rendered = append(rendered, renderMessage(messages[i], width))
+	}
+
+	var total int
+	start := len(rendered)
+	for start > 0 && total < height {
+		start--
+		total += len(rendered[start].lines)
+	}
+	return rendered[start:]
+}
+
+func renderMessage(msg viewmodel.Message, width int) renderedMessage {
+	label := roleLabelStyle(msg.Role).Render(strings.ToUpper(string(msg.Role)))
+	if msg.Title != "" {
+		label += " " + lipgloss.NewStyle().Foreground(lipgloss.Color("246")).Render(msg.Title)
+	}
+
+	bodyWidth := max(12, width-2)
+	lines := []string{label}
+	for _, line := range wrapText(msg.Body, bodyWidth) {
+		lines = append(lines, "  "+bodyStyle.Render(line))
+	}
+	return renderedMessage{id: msg.ID, lines: lines}
+}
+
+func roleLabelStyle(role viewmodel.Role) lipgloss.Style {
+	style := labelStyle.Copy()
+	switch role {
+	case viewmodel.RoleUser:
+		return style.Foreground(lipgloss.Color("16")).Background(lipgloss.Color("212"))
+	case viewmodel.RoleAssistant:
+		return style.Foreground(lipgloss.Color("16")).Background(lipgloss.Color("86"))
+	case viewmodel.RoleTool:
+		return style.Foreground(lipgloss.Color("16")).Background(lipgloss.Color("111"))
+	case viewmodel.RoleError:
+		return style.Foreground(lipgloss.Color("231")).Background(lipgloss.Color("160"))
+	default:
+		return style.Foreground(lipgloss.Color("231")).Background(lipgloss.Color("240"))
+	}
+}
+
+func wrapText(text string, width int) []string {
+	text = strings.TrimSpace(text)
+	if text == "" {
+		return []string{""}
+	}
+
+	var out []string
+	for _, raw := range strings.Split(text, "\n") {
+		words := strings.Fields(raw)
+		if len(words) == 0 {
+			out = append(out, "")
+			continue
+		}
+
+		line := ""
+		for _, word := range words {
+			if lipgloss.Width(word) > width {
+				if line != "" {
+					out = append(out, line)
+					line = ""
+				}
+				out = append(out, splitLongWord(word, width)...)
+				continue
+			}
+			if line == "" {
+				line = word
+				continue
+			}
+			next := line + " " + word
+			if lipgloss.Width(next) > width {
+				out = append(out, line)
+				line = word
+				continue
+			}
+			line = next
+		}
+		if line != "" {
+			out = append(out, line)
+		}
+	}
+	return out
+}
+
+func splitLongWord(word string, width int) []string {
+	var out []string
+	var line string
+	for _, r := range word {
+		next := line + string(r)
+		if line != "" && lipgloss.Width(next) > width {
+			out = append(out, line)
+			line = string(r)
+			continue
+		}
+		line = next
+	}
+	if line != "" {
+		out = append(out, line)
+	}
+	return out
+}
+
+func clamp(v int, low int, high int) int {
+	if high < low {
+		return low
+	}
+	if v < low {
+		return low
+	}
+	if v > high {
+		return high
+	}
+	return v
+}
+
+func min(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
 }

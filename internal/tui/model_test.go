@@ -18,8 +18,36 @@ func TestModelAppendsAssistantDeltaEvents(t *testing.T) {
 	model := New(app)
 	updated, _ := model.Update(eventMsg{Event: eventbus.Event{Kind: eventbus.KindAssistantDelta, Payload: map[string]any{"text": "hello"}}})
 	got := updated.(Model)
-	if len(got.lines) != 1 || got.lines[0] != "assistant: hello" {
-		t.Fatalf("lines = %#v", got.lines)
+	if len(got.messages) != 1 || got.messages[0].Body != "hello" {
+		t.Fatalf("messages = %#v", got.messages)
+	}
+}
+
+func TestModelCoalescesAssistantDeltaEvents(t *testing.T) {
+	model := New(nil)
+	updated, _ := model.Update(eventMsg{Event: eventbus.Event{Kind: eventbus.KindAssistantDelta, Payload: map[string]any{"text": "hel"}}})
+	updated, _ = updated.Update(eventMsg{Event: eventbus.Event{Kind: eventbus.KindAssistantDelta, Payload: map[string]any{"text": "lo"}}})
+
+	got := updated.(Model)
+	if len(got.messages) != 1 || got.messages[0].Body != "hello" {
+		t.Fatalf("messages = %#v", got.messages)
+	}
+}
+
+func TestModelScrollState(t *testing.T) {
+	model := New(nil)
+	for i := 0; i < 8; i++ {
+		model.addMessage("user", "", "message")
+	}
+
+	model.scrollBy(3)
+	if model.scrollOffset != 3 || model.followTail {
+		t.Fatalf("scrollOffset=%d followTail=%v", model.scrollOffset, model.followTail)
+	}
+
+	model.follow()
+	if model.scrollOffset != 0 || !model.followTail {
+		t.Fatalf("scrollOffset=%d followTail=%v", model.scrollOffset, model.followTail)
 	}
 }
 
