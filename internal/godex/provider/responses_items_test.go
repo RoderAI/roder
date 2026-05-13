@@ -77,3 +77,52 @@ func TestOpenAIItemConversionPreservesOutputShapes(t *testing.T) {
 		t.Fatalf("raw item = %#v", items[5])
 	}
 }
+
+func TestCrossProviderOpenAISerializationUsesCanonicalFields(t *testing.T) {
+	items := providerInputItems([]Item{
+		{
+			ID:      "anthropic_text",
+			Kind:    ItemMessage,
+			Role:    "assistant",
+			Text:    "I read it.",
+			RawJSON: json.RawMessage(`{"type":"text","text":"anthropic raw should not be replayed"}`),
+		},
+		{
+			ID:         "toolu_01",
+			Kind:       ItemFunctionCall,
+			ToolName:   "read_file",
+			ToolCallID: "toolu_01",
+			Text:       `{"path":"README.md"}`,
+			RawJSON:    json.RawMessage(`{"type":"tool_use","id":"toolu_01","name":"read_file","input":{"path":"README.md"}}`),
+		},
+		{
+			ID:         "out_01",
+			Kind:       ItemFunctionOut,
+			ToolCallID: "toolu_01",
+			Text:       "contents",
+			RawJSON:    json.RawMessage(`{"type":"tool_result","tool_use_id":"toolu_01","content":"contents"}`),
+		},
+	})
+	data, err := json.Marshal(items)
+	if err != nil {
+		t.Fatalf("marshal input: %v", err)
+	}
+	raw := string(data)
+	for _, want := range []string{
+		`"role":"assistant"`,
+		`"type":"function_call"`,
+		`"type":"function_call_output"`,
+		`"call_id":"toolu_01"`,
+		`"name":"read_file"`,
+		`"output":"contents"`,
+	} {
+		if !strings.Contains(raw, want) {
+			t.Fatalf("input JSON missing %q:\n%s", want, raw)
+		}
+	}
+	for _, notWant := range []string{"tool_use", "tool_result", "anthropic raw should not be replayed"} {
+		if strings.Contains(raw, notWant) {
+			t.Fatalf("OpenAI input should use canonical fields, found %q in:\n%s", notWant, raw)
+		}
+	}
+}

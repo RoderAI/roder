@@ -93,11 +93,7 @@ func (a *Anthropic) Stream(ctx context.Context, req Request) (<-chan Event, <-ch
 }
 
 func (a *Anthropic) messageParams(req Request) (anthropic.MessageNewParams, error) {
-	items := req.InputItems
-	if len(items) == 0 {
-		items = itemsFromMessages(req.Messages)
-	}
-	input, err := AnthropicInputFromResponsesItems(items, req.Tools)
+	input, err := AnthropicInputFromResponsesItems(req.InputItems, req.Tools)
 	if err != nil {
 		return anthropic.MessageNewParams{}, err
 	}
@@ -108,27 +104,6 @@ func (a *Anthropic) messageParams(req Request) (anthropic.MessageNewParams, erro
 		Messages:  anthropicMessages(input.Messages),
 		Tools:     anthropicSDKTools(input.Tools),
 	}, nil
-}
-
-func itemsFromMessages(messages []Message) []Item {
-	items := make([]Item, 0, len(messages))
-	for i, msg := range messages {
-		id := fmt.Sprintf("message_%d", i)
-		if len(msg.RawJSON) > 0 {
-			items = append(items, Item{ID: id, Kind: ItemRaw, RawJSON: append([]byte(nil), msg.RawJSON...)})
-			continue
-		}
-		if msg.Role == RoleAssistant && msg.ToolCallID != "" && msg.ToolName != "" {
-			items = append(items, Item{ID: id, Kind: ItemFunctionCall, ToolName: msg.ToolName, ToolCallID: msg.ToolCallID, Text: msg.ToolArguments})
-			continue
-		}
-		if msg.Role == RoleTool && msg.ToolCallID != "" {
-			items = append(items, Item{ID: id, Kind: ItemFunctionOut, ToolCallID: msg.ToolCallID, Text: msg.Content})
-			continue
-		}
-		items = append(items, Item{ID: id, Kind: ItemMessage, Role: string(msg.Role), Text: msg.Content})
-	}
-	return items
 }
 
 func anthropicSystemBlocks(blocks []AnthropicBlock) []anthropic.TextBlockParam {

@@ -100,6 +100,64 @@ func TestAnthropicInputFromResponsesItemsConvertsTools(t *testing.T) {
 	}
 }
 
+func TestAnthropicResumeMaterializesStoredCanonicalItems(t *testing.T) {
+	input, err := AnthropicInputFromResponsesItems([]Item{
+		{ID: "u1", Kind: ItemMessage, Role: "user", Text: "Inspect README.md"},
+		{ID: "a1", Kind: ItemMessage, Role: "assistant", Text: "I'll read it."},
+		{ID: "fc1", Kind: ItemFunctionCall, ToolName: "read_file", ToolCallID: "toolu_01", Text: `{"path":"README.md"}`},
+		{ID: "out1", Kind: ItemFunctionOut, ToolCallID: "toolu_01", Text: "README contents"},
+		{ID: "a2", Kind: ItemMessage, Role: "assistant", Text: "It documents gode."},
+	}, nil)
+	if err != nil {
+		t.Fatalf("convert: %v", err)
+	}
+	if len(input.Messages) != 4 {
+		t.Fatalf("messages = %#v", input.Messages)
+	}
+	if input.Messages[0].Role != "user" || input.Messages[0].Content[0].Text != "Inspect README.md" {
+		t.Fatalf("user message = %#v", input.Messages[0])
+	}
+	assistant := input.Messages[1]
+	if assistant.Role != "assistant" || len(assistant.Content) != 2 {
+		t.Fatalf("assistant message = %#v", assistant)
+	}
+	if assistant.Content[0].Type != "text" || assistant.Content[1].Type != "tool_use" || assistant.Content[1].ID != "toolu_01" || assistant.Content[1].Name != "read_file" {
+		t.Fatalf("assistant content = %#v", assistant.Content)
+	}
+	if input.Messages[2].Role != "user" || input.Messages[2].Content[0].Type != "tool_result" || input.Messages[2].Content[0].ToolUseID != "toolu_01" {
+		t.Fatalf("tool result message = %#v", input.Messages[2])
+	}
+	if input.Messages[3].Role != "assistant" || input.Messages[3].Content[0].Text != "It documents gode." {
+		t.Fatalf("final assistant = %#v", input.Messages[3])
+	}
+}
+
+func TestAnthropicResumeRejectsNonPortableRawCompaction(t *testing.T) {
+	_, err := AnthropicInputFromResponsesItems([]Item{{
+		ID:      "cmp_openai",
+		Kind:    ItemCompaction,
+		RawJSON: json.RawMessage(`{"type":"compaction","encrypted_content":"opaque"}`),
+	}}, nil)
+	var portable NonPortableItemError
+	if !errors.As(err, &portable) || portable.ItemID != "cmp_openai" || portable.Provider != "anthropic" {
+		t.Fatalf("error = %#v", err)
+	}
+}
+
+func TestAnthropicResumeAcceptsProviderNeutralCompaction(t *testing.T) {
+	input, err := AnthropicInputFromResponsesItems([]Item{{
+		ID:   "cmp_text",
+		Kind: ItemCompaction,
+		Text: "Earlier context summary...",
+	}}, nil)
+	if err != nil {
+		t.Fatalf("convert: %v", err)
+	}
+	if len(input.Messages) != 1 || input.Messages[0].Content[0].Text != "Earlier context summary..." {
+		t.Fatalf("messages = %#v", input.Messages)
+	}
+}
+
 func TestAnthropicToolsConvertsSchema(t *testing.T) {
 	tools, err := anthropicTools([]ToolSpec{{
 		Name:        "read_file",
