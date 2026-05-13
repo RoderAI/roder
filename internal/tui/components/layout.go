@@ -2,19 +2,21 @@ package components
 
 import (
 	"charm.land/lipgloss/v2"
+	zone "github.com/lrstanley/bubblezone/v2"
 	"github.com/pandelisz/gode/internal/tui/viewmodel"
 )
 
-func Render(vm viewmodel.Model) string {
+func Render(vm viewmodel.Model, zones *zone.Manager) string {
 	width := max(40, vm.Width)
-	bodyHeight := max(4, vm.Height-vm.InputHeight-5)
+	composerHeight := max(3, vm.InputHeight+2)
+	bodyHeight := max(6, vm.Height-composerHeight-2)
 
 	return lipgloss.JoinVertical(
 		lipgloss.Left,
-		Header(width, vm.Provider, vm.Model),
-		Transcript(width, bodyHeight, vm.Lines),
+		Header(width, vm.Provider, vm.Model, vm.Running),
+		Transcript(width, bodyHeight, vm.Messages, vm.ScrollOffset, vm.HoveredID, zones),
 		Composer(width, vm.Input),
-		Footer(width),
+		Footer(width, vm.ScrollOffset, vm.Status),
 	)
 }
 
