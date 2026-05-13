@@ -2,10 +2,13 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/pandelisz/gode/internal/godex"
 )
 
 func TestRunSkillsListShowsScopeNameDescriptionAndPath(t *testing.T) {
@@ -26,6 +29,47 @@ func TestRunSkillsListShowsScopeNameDescriptionAndPath(t *testing.T) {
 	}
 }
 
+func TestRunSkillsListJSONAndEnableDisable(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("HOME", filepath.Join(root, "home"))
+	workspace := filepath.Join(root, "workspace")
+	dataDir := filepath.Join(root, "data")
+	writeSkillFixture(t, filepath.Join(workspace, ".agents", "skills", "go-tests"), "go-tests", "Run Go tests")
+
+	disableOut := captureStdout(t, func() error {
+		return runSkills(context.Background(), []string{"disable", "go-tests", "--workspace", workspace, "--data-dir", dataDir})
+	})
+	if !strings.Contains(disableOut, "disabled\tgo-tests") {
+		t.Fatalf("disable output = %q", disableOut)
+	}
+	out := captureStdout(t, func() error {
+		return runSkills(context.Background(), []string{"list", "--json", "--workspace", workspace, "--data-dir", dataDir})
+	})
+	var items []struct {
+		Name  string `json:"Name"`
+		State string `json:"State"`
+	}
+	if err := json.Unmarshal([]byte(out), &items); err != nil {
+		t.Fatalf("json: %v\n%s", err, out)
+	}
+	if len(items) != 1 || items[0].Name != "go-tests" || items[0].State != "disabled" {
+		t.Fatalf("items = %#v", items)
+	}
+	enableOut := captureStdout(t, func() error {
+		return runSkills(context.Background(), []string{"enable", "go-tests", "--workspace", workspace, "--data-dir", dataDir})
+	})
+	if !strings.Contains(enableOut, "enabled\tgo-tests") {
+		t.Fatalf("enable output = %q", enableOut)
+	}
+	settings, err := godex.LoadSettings(dataDir)
+	if err != nil {
+		t.Fatalf("load settings: %v", err)
+	}
+	if !settings.ActiveSkills["go-tests"] {
+		t.Fatalf("active skills = %#v", settings.ActiveSkills)
+	}
+}
+
 func TestRunSkillsAddInstallsProjectSkill(t *testing.T) {
 	root := t.TempDir()
 	t.Setenv("HOME", filepath.Join(root, "home"))
@@ -43,6 +87,44 @@ func TestRunSkillsAddInstallsProjectSkill(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(target, "SKILL.md")); err != nil {
 		t.Fatalf("installed skill: %v", err)
+	}
+}
+
+func TestRunSkillsRecommendedJSONAndDryRun(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("HOME", filepath.Join(root, "home"))
+	workspace := filepath.Join(root, "workspace")
+	dataDir := filepath.Join(root, "data")
+
+	recommended := captureStdout(t, func() error {
+		return runSkills(context.Background(), []string{"recommended", "--json", "--workspace", workspace, "--data-dir", dataDir})
+	})
+	if !json.Valid([]byte(recommended)) || !strings.Contains(recommended, `"Name":"go-development"`) {
+		t.Fatalf("recommended json:\n%s", recommended)
+	}
+
+	dryRun := captureStdout(t, func() error {
+		return runSkills(context.Background(), []string{"install-recommended", "--all", "--dry-run", "--workspace", workspace, "--data-dir", dataDir})
+	})
+	for _, want := range []string{
+		"npx --yes skills add pandelisz/gode@go-development --global",
+		"npx --yes skills add pandelisz/gode@terminal-debugging --global",
+	} {
+		if !strings.Contains(dryRun, want) {
+			t.Fatalf("dry-run missing %q:\n%s", want, dryRun)
+		}
+	}
+}
+
+func TestRunSkillsAddDryRunPrintsNPXCommand(t *testing.T) {
+	root := t.TempDir()
+	workspace := filepath.Join(root, "workspace with spaces")
+	dataDir := filepath.Join(root, "data")
+	out := captureStdout(t, func() error {
+		return runSkills(context.Background(), []string{"add", "pandelisz/gode@go-development", "--project", "--dry-run", "--workspace", workspace, "--data-dir", dataDir})
+	})
+	if !strings.Contains(out, "npx --yes skills add pandelisz/gode@go-development --project --cwd '"+workspace+"'") {
+		t.Fatalf("dry-run output = %q", out)
 	}
 }
 
