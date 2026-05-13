@@ -157,7 +157,7 @@ func (r *Registry) Run(ctx context.Context, call Call) (Result, error) {
 }
 
 func (r *Registry) runHooks(ctx context.Context, tool Tool, call *Call) (hooks.HookResult, error) {
-	if r.hooks == nil || strings.HasPrefix(call.Name, "mcp.") {
+	if r.hooks == nil || strings.HasPrefix(call.Name, "mcp.") || strings.HasPrefix(call.Name, "mcp_") {
 		return hooks.HookResult{Decision: hooks.DecisionNone, UpdatedInput: call.Input}, nil
 	}
 	result, err := r.hooks.Run(ctx, hooks.HookInput{

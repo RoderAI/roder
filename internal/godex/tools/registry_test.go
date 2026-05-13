@@ -282,14 +282,14 @@ func TestRegistryDoesNotRunHooksForMCPTools(t *testing.T) {
 	}})
 	reg := NewRegistry(WithHookRunner(runner), WithWorkspace(t.TempDir()))
 	reg.Register(Tool{
-		Name:     "mcp.server.tool",
+		Name:     "mcp_server_tool",
 		ReadOnly: true,
 		Run: func(context.Context, Call) (Result, error) {
 			return Result{Text: "mcp ran"}, nil
 		},
 	})
 
-	result, err := reg.Run(context.Background(), Call{Name: "mcp.server.tool", SessionID: "s1"})
+	result, err := reg.Run(context.Background(), Call{Name: "mcp_server_tool", SessionID: "s1"})
 	if err != nil {
 		t.Fatalf("run: %v", err)
 	}

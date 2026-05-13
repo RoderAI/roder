@@ -89,6 +89,40 @@ func TestManagerWithNoEnabledToolsRegistersNone(t *testing.T) {
 	}
 }
 
+func TestManagerCachesResourcesAndPrompts(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	manager := NewManager(nil, map[string]ServerConfig{"helper": helperConfig(nil)})
+	if err := manager.Start(ctx); err != nil {
+		t.Fatalf("start: %v", err)
+	}
+	defer manager.Close(context.Background())
+
+	resources := manager.Resources()
+	if len(resources) != 1 || resources[0].Server != "helper" || resources[0].URI != "file:///notes.txt" {
+		t.Fatalf("resources = %#v", resources)
+	}
+	text, err := manager.ReadResource(ctx, "helper", "file:///notes.txt")
+	if err != nil {
+		t.Fatalf("read resource: %v", err)
+	}
+	if text != "resource notes" {
+		t.Fatalf("resource text = %q", text)
+	}
+
+	prompts := manager.Prompts()
+	if len(prompts) != 1 || prompts[0].Server != "helper" || prompts[0].Name != "greet" {
+		t.Fatalf("prompts = %#v", prompts)
+	}
+	prompt, err := manager.GetPrompt(ctx, "helper", "greet", map[string]string{"name": "Pat"})
+	if err != nil {
+		t.Fatalf("get prompt: %v", err)
+	}
+	if !strings.Contains(prompt, "assistant: hello Pat") {
+		t.Fatalf("prompt = %q", prompt)
+	}
+}
+
 func TestManagerTransportSupportAndUnsupportedTransportError(t *testing.T) {
 	for _, cfg := range []ServerConfig{
 		{Type: "http", URL: "http://127.0.0.1/mcp"},
@@ -136,6 +170,13 @@ func TestMCPHelperProcess(t *testing.T) {
 	})
 	sdkmcp.AddTool(server, &sdkmcp.Tool{Name: "danger", Description: "danger"}, func(_ context.Context, _ *sdkmcp.CallToolRequest, args echoArgs) (*sdkmcp.CallToolResult, any, error) {
 		return &sdkmcp.CallToolResult{Content: []sdkmcp.Content{&sdkmcp.TextContent{Text: "danger"}}}, nil, nil
+	})
+	server.AddResource(&sdkmcp.Resource{URI: "file:///notes.txt", Name: "notes", MIMEType: "text/plain"}, func(_ context.Context, _ *sdkmcp.ReadResourceRequest) (*sdkmcp.ReadResourceResult, error) {
+		return &sdkmcp.ReadResourceResult{Contents: []*sdkmcp.ResourceContents{{URI: "file:///notes.txt", MIMEType: "text/plain", Text: "resource notes"}}}, nil
+	})
+	server.AddPrompt(&sdkmcp.Prompt{Name: "greet", Description: "greet by name", Arguments: []*sdkmcp.PromptArgument{{Name: "name", Required: true}}}, func(_ context.Context, req *sdkmcp.GetPromptRequest) (*sdkmcp.GetPromptResult, error) {
+		name := req.Params.Arguments["name"]
+		return &sdkmcp.GetPromptResult{Messages: []*sdkmcp.PromptMessage{{Role: sdkmcp.Role("assistant"), Content: &sdkmcp.TextContent{Text: "hello " + name}}}}, nil
 	})
 	if err := server.Run(context.Background(), &sdkmcp.StdioTransport{}); err != nil {
 		os.Exit(1)
