@@ -6,17 +6,13 @@ import (
 	"flag"
 	"fmt"
 	"os"
-	"path/filepath"
 	"strings"
 
-	"github.com/BurntSushi/toml"
 	"github.com/pandelisz/gode/internal/godex"
 	"github.com/pandelisz/gode/internal/godex/acp"
 	"github.com/pandelisz/gode/internal/godex/agent"
-	"github.com/pandelisz/gode/internal/godex/appserver"
 	"github.com/pandelisz/gode/internal/godex/codexauth"
 	"github.com/pandelisz/gode/internal/godex/configstore"
-	"github.com/pandelisz/gode/internal/godex/mcp"
 	"github.com/pandelisz/gode/internal/godex/provider"
 	"github.com/pandelisz/gode/internal/tui"
 )
@@ -50,6 +46,10 @@ func run(ctx context.Context, args []string) error {
 
 	if len(args) > 0 && args[0] == "serve" {
 		return runServe(ctx, "gode serve", args[1:])
+	}
+
+	if len(args) > 0 && args[0] == "remote-runtime" {
+		return runRemoteRuntime(ctx, args[1:])
 	}
 
 	if len(args) > 0 && args[0] == "app-server" {
@@ -162,42 +162,6 @@ func runACP(ctx context.Context, args []string) error {
 	return acp.New(app, acp.Options{Version: version}).ServeStdio(ctx, os.Stdin, os.Stdout)
 }
 
-func runAppServer(ctx context.Context, args []string) error {
-	return runServe(ctx, "gode app-server", args)
-}
-
-func runServe(ctx context.Context, command string, args []string) error {
-	cfg, listen, err := parseServeConfig(command, args)
-	if err != nil {
-		return err
-	}
-	app, err := godex.New(ctx, cfg)
-	if err != nil {
-		return err
-	}
-	defer app.Close(ctx)
-	if listen.Kind == appserver.TransportOff {
-		return nil
-	}
-
-	server := appserver.New(app, appserver.Options{Version: version})
-	switch listen.Kind {
-	case appserver.TransportStdio:
-		return server.ServeStdio(ctx, os.Stdin, os.Stdout)
-	case appserver.TransportWebSocket:
-		listener, err := server.ListenWebSocket(ctx, listen.Address)
-		if err != nil {
-			return err
-		}
-		defer listener.Close(context.Background())
-		fmt.Fprintf(os.Stderr, "%s listening on %s\n", command, listener.WebSocketURL())
-		<-ctx.Done()
-		return ctx.Err()
-	default:
-		return fmt.Errorf("unsupported serve transport")
-	}
-}
-
 func runPrompt(ctx context.Context, args []string) error {
 	flags := newFlagSet("gode run")
 	cfg := godex.DefaultConfig()
@@ -306,92 +270,6 @@ func parseConfigWithName(name string, args []string) (godex.Config, error) {
 		return cfg, err
 	}
 	return loaded.Config, nil
-}
-
-func parseAppServerConfig(args []string) (godex.Config, appserver.ListenConfig, error) {
-	return parseServeConfig("gode app-server", args)
-}
-
-func parseServeConfig(command string, args []string) (godex.Config, appserver.ListenConfig, error) {
-	flags := newFlagSet(command)
-	cfg := godex.DefaultConfig()
-	listenRaw := "stdio://"
-	mcpConfigPath := ""
-	flags.StringVar(&listenRaw, "listen", listenRaw, "transport endpoint: stdio://, ws://IP:PORT, or off")
-	flags.StringVar(&mcpConfigPath, "mcp-config", mcpConfigPath, "path to an MCP config file")
-	bindConfigFlags(flags, &cfg)
-	if err := flags.Parse(args); err != nil {
-		return cfg, appserver.ListenConfig{}, err
-	}
-	loaded, err := loadConfigFromFlags(cfg, flags)
-	if err != nil {
-		return cfg, appserver.ListenConfig{}, err
-	}
-	cfg = loaded.Config
-	if mcpConfigPath != "" {
-		if err := applyMCPConfigPath(&cfg, mcpConfigPath); err != nil {
-			return cfg, appserver.ListenConfig{}, err
-		}
-	}
-	listen, err := appserver.ParseListenURL(listenRaw)
-	if err != nil {
-		return cfg, appserver.ListenConfig{}, err
-	}
-	return cfg, listen, nil
-}
-
-func applyMCPConfigPath(cfg *godex.Config, path string) error {
-	servers, err := loadMCPConfigFile(path)
-	if err != nil {
-		return err
-	}
-	if cfg.MCP == nil {
-		cfg.MCP = map[string]mcp.ServerConfig{}
-	}
-	for name, server := range servers {
-		cfg.MCP[name] = server
-	}
-	return nil
-}
-
-type mcpConfigFile struct {
-	MCP map[string]any `json:"mcp" toml:"mcp"`
-}
-
-func loadMCPConfigFile(path string) (map[string]mcp.ServerConfig, error) {
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return nil, fmt.Errorf("read mcp config: %w", err)
-	}
-	ext := strings.ToLower(filepath.Ext(path))
-	var wrapper mcpConfigFile
-	var raw map[string]any
-	switch ext {
-	case ".json":
-		if err := json.Unmarshal(data, &wrapper); err != nil {
-			return nil, fmt.Errorf("parse mcp config: %w", err)
-		}
-		if wrapper.MCP == nil {
-			if err := json.Unmarshal(data, &raw); err != nil {
-				return nil, fmt.Errorf("parse mcp config: %w", err)
-			}
-		}
-	case ".toml":
-		if err := toml.Unmarshal(data, &wrapper); err != nil {
-			return nil, fmt.Errorf("parse mcp config: %w", err)
-		}
-		if wrapper.MCP == nil {
-			if err := toml.Unmarshal(data, &raw); err != nil {
-				return nil, fmt.Errorf("parse mcp config: %w", err)
-			}
-		}
-	default:
-		return nil, fmt.Errorf("parse mcp config: unsupported extension")
-	}
-	if wrapper.MCP != nil {
-		raw = wrapper.MCP
-	}
-	return mcp.ParseConfigMap(raw)
 }
 
 func bindConfigFlags(flags *flag.FlagSet, cfg *godex.Config) {
