@@ -2,12 +2,16 @@ package main
 
 import (
 	"context"
+	"flag"
 	"fmt"
 	"os"
+	"strings"
 
-	"github.com/pandelisz/gode/internal/harness"
-	"github.com/pandelisz/gode/internal/provider"
+	"github.com/pandelisz/gode/internal/godex"
+	"github.com/pandelisz/gode/internal/tui"
 )
+
+var version = "dev"
 
 func main() {
 	if err := run(context.Background(), os.Args[1:]); err != nil {
@@ -18,14 +22,67 @@ func main() {
 
 func run(ctx context.Context, args []string) error {
 	if len(args) > 0 && args[0] == "version" {
-		fmt.Println("gode dev")
+		fmt.Println("gode " + version)
 		return nil
 	}
 
-	agent := harness.New(provider.Registry{
-		provider.CodexName:  provider.Placeholder(provider.CodexName),
-		provider.ClaudeName: provider.Placeholder(provider.ClaudeName),
-	})
+	if len(args) > 0 && args[0] == "run" {
+		return runPrompt(ctx, args[1:])
+	}
 
-	return agent.Start(ctx)
+	cfg, err := parseConfig(args)
+	if err != nil {
+		return err
+	}
+	app, err := godex.New(ctx, cfg)
+	if err != nil {
+		return err
+	}
+	defer app.Close(ctx)
+	return tui.Run(ctx, app)
+}
+
+func runPrompt(ctx context.Context, args []string) error {
+	flags := newFlagSet("gode run")
+	cfg := bindConfigFlags(flags)
+	if err := flags.Parse(args); err != nil {
+		return err
+	}
+	prompt := strings.TrimSpace(strings.Join(flags.Args(), " "))
+	if prompt == "" {
+		return fmt.Errorf("prompt is required")
+	}
+	app, err := godex.New(ctx, cfg)
+	if err != nil {
+		return err
+	}
+	defer app.Close(ctx)
+	result, err := app.RunPrompt(ctx, prompt)
+	if err != nil {
+		return err
+	}
+	fmt.Println(result.FinalText)
+	return nil
+}
+
+func parseConfig(args []string) (godex.Config, error) {
+	flags := newFlagSet("gode")
+	cfg := bindConfigFlags(flags)
+	return cfg, flags.Parse(args)
+}
+
+func bindConfigFlags(flags *flag.FlagSet) godex.Config {
+	cfg := godex.DefaultConfig()
+	flags.StringVar(&cfg.Workspace, "workspace", cfg.Workspace, "workspace root")
+	flags.StringVar(&cfg.DataDir, "data-dir", cfg.DataDir, "gode data directory")
+	flags.StringVar(&cfg.Provider, "provider", cfg.Provider, "provider: mock, codex, openai")
+	flags.StringVar(&cfg.Model, "model", cfg.Model, "provider model")
+	flags.BoolVar(&cfg.AutoApprove, "auto-approve", cfg.AutoApprove, "auto approve mutating tool calls")
+	return cfg
+}
+
+func newFlagSet(name string) *flag.FlagSet {
+	flags := flag.NewFlagSet(name, flag.ContinueOnError)
+	flags.SetOutput(os.Stderr)
+	return flags
 }
