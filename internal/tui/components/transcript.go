@@ -34,21 +34,21 @@ var (
 			Italic(true)
 	messageHoverStyle = lipgloss.NewStyle().
 				Foreground(lipgloss.Color("231"))
-	labelStyle = lipgloss.NewStyle().
-			Bold(true).
-			Padding(0, 1)
 	bodyStyle = lipgloss.NewStyle().
 			Foreground(lipgloss.Color("252"))
-	toolHeaderStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("16")).
-			Background(lipgloss.Color("111")).
-			Bold(true).
-			Padding(0, 1)
-	toolTitleStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("252")).
-			Bold(true)
-	toolBorderStyle = lipgloss.NewStyle().
+	userRailStyle = lipgloss.NewStyle().
+			Foreground(lipgloss.Color("212"))
+	metaPrefixStyle = lipgloss.NewStyle().
 			Foreground(lipgloss.Color("245"))
+	metaTitleStyle = lipgloss.NewStyle().
+			Foreground(lipgloss.Color("183")).
+			Bold(true)
+	errorPrefixStyle = lipgloss.NewStyle().
+				Foreground(lipgloss.Color("196")).
+				Bold(true)
+	toolTitleStyle = lipgloss.NewStyle().
+			Foreground(lipgloss.Color("214")).
+			Bold(true)
 	toolMetaStyle = lipgloss.NewStyle().
 			Foreground(lipgloss.Color("244"))
 )
@@ -174,18 +174,49 @@ func renderMessageCached(msg viewmodel.Message, width int, cache *TranscriptCach
 }
 
 func renderMessage(msg viewmodel.Message, width int) renderedMessage {
-	if msg.Role == viewmodel.RoleTool {
+	switch msg.Role {
+	case viewmodel.RoleTool:
 		return renderToolMessage(msg, width)
+	case viewmodel.RoleUser:
+		return renderUserMessage(msg, width)
+	case viewmodel.RoleAssistant:
+		return renderAssistantMessage(msg, width)
+	case viewmodel.RoleError:
+		return renderMetaMessage(msg, width, errorPrefixStyle.Render("!"), msg.Title)
+	case viewmodel.RoleSystem:
+		return renderMetaMessage(msg, width, metaPrefixStyle.Render("·"), msg.Title)
+	default:
+		return renderMetaMessage(msg, width, metaPrefixStyle.Render("·"), string(msg.Role))
 	}
-	label := roleLabelStyle(msg.Role).Render(strings.ToUpper(string(msg.Role)))
-	if msg.Title != "" {
-		label += " " + lipgloss.NewStyle().Foreground(lipgloss.Color("246")).Render(msg.Title)
-	}
+}
 
-	bodyWidth := max(12, width-2)
-	lines := []string{label}
-	for _, line := range wrapText(msg.Body, bodyWidth) {
-		lines = append(lines, "  "+bodyStyle.Render(line))
+func renderUserMessage(msg viewmodel.Message, width int) renderedMessage {
+	prefix := userRailStyle.Render("▌") + " "
+	lines := prefixedWrappedLines(msg.Body, prefix, max(12, width-lipgloss.Width(prefix)))
+	if msg.Title != "" {
+		title := metaPrefixStyle.Render(strings.TrimSpace(msg.Title))
+		lines = append([]string{prefix + title}, lines...)
+	}
+	return renderedMessage{id: msg.ID, lines: lines}
+}
+
+func renderAssistantMessage(msg viewmodel.Message, width int) renderedMessage {
+	lines := wrappedBodyLines(msg.Body, max(12, width))
+	if msg.Title != "" {
+		lines = append([]string{metaPrefixStyle.Render("· ") + metaTitleStyle.Render(strings.TrimSpace(msg.Title))}, lines...)
+	}
+	return renderedMessage{id: msg.ID, lines: lines}
+}
+
+func renderMetaMessage(msg viewmodel.Message, width int, prefix string, title string) renderedMessage {
+	title = strings.TrimSpace(title)
+	if title == "" {
+		title = string(msg.Role)
+	}
+	header := prefix + " " + metaTitleStyle.Render(title)
+	lines := []string{header}
+	for _, line := range wrappedBodyLines(msg.Body, max(12, width-2)) {
+		lines = append(lines, "  "+line)
 	}
 	return renderedMessage{id: msg.ID, lines: lines}
 }
@@ -195,30 +226,27 @@ func renderToolMessage(msg viewmodel.Message, width int) renderedMessage {
 	if title == "" {
 		title = "tool"
 	}
-	contentWidth := max(12, width-6)
-	lines := []string{toolHeaderStyle.Render("TOOL") + " " + toolTitleStyle.Render(title)}
-	lines = append(lines, toolBoxLines(title, msg.Body, contentWidth)...)
+	prefix := toolTitleStyle.Render("› " + title)
+	lines := []string{prefix}
+	lines = append(lines, toolBodyLines(title, msg.Body, max(12, width-2))...)
 	return renderedMessage{id: msg.ID, lines: lines}
 }
 
-func toolBoxLines(tool string, body string, width int) []string {
-	width = max(12, width)
-	contentWidth := max(8, width-4)
+func toolBodyLines(tool string, body string, width int) []string {
 	var bodyLines []string
 	if diffview.IsDiffTool(tool) && looksLikeDiff(body) {
-		bodyLines = diffview.RenderLines(body, contentWidth, 24)
+		bodyLines = diffview.RenderLines(body, width, 24)
 	} else {
-		bodyLines = wrapText(body, contentWidth)
+		bodyLines = wrapText(body, width)
 	}
 	if len(bodyLines) == 0 {
-		bodyLines = []string{""}
+		return []string{"  " + bodyStyle.Render("")}
 	}
 
-	lines := []string{"  " + toolBorderStyle.Render("┌"+strings.Repeat("─", width-2)+"┐")}
+	lines := make([]string, 0, len(bodyLines))
 	for _, line := range bodyLines {
-		lines = append(lines, "  "+toolBorderStyle.Render("│")+" "+padVisible(toolBodyLine(line), contentWidth)+" "+toolBorderStyle.Render("│"))
+		lines = append(lines, "  "+toolBodyLine(line))
 	}
-	lines = append(lines, "  "+toolBorderStyle.Render("└"+strings.Repeat("─", width-2)+"┘"))
 	return lines
 }
 
@@ -231,7 +259,7 @@ func toolBodyLine(line string) string {
 	if key == "" || len(key) > 24 {
 		return bodyStyle.Render(line)
 	}
-	return toolMetaStyle.Render(strings.ToUpper(key)+":") + " " + bodyStyle.Render(strings.TrimSpace(value))
+	return toolMetaStyle.Render(strings.ToLower(key)+":") + " " + bodyStyle.Render(strings.TrimSpace(value))
 }
 
 func looksLikeDiff(text string) bool {
@@ -246,27 +274,21 @@ func looksLikeDiff(text string) bool {
 	return false
 }
 
-func padVisible(text string, width int) string {
-	if lipgloss.Width(text) >= width {
-		return text
+func wrappedBodyLines(text string, width int) []string {
+	lines := wrapText(text, width)
+	for i := range lines {
+		lines[i] = bodyStyle.Render(lines[i])
 	}
-	return text + strings.Repeat(" ", width-lipgloss.Width(text))
+	return lines
 }
 
-func roleLabelStyle(role viewmodel.Role) lipgloss.Style {
-	style := labelStyle.Copy()
-	switch role {
-	case viewmodel.RoleUser:
-		return style.Foreground(lipgloss.Color("16")).Background(lipgloss.Color("212"))
-	case viewmodel.RoleAssistant:
-		return style.Foreground(lipgloss.Color("16")).Background(lipgloss.Color("86"))
-	case viewmodel.RoleTool:
-		return style.Foreground(lipgloss.Color("16")).Background(lipgloss.Color("111"))
-	case viewmodel.RoleError:
-		return style.Foreground(lipgloss.Color("231")).Background(lipgloss.Color("160"))
-	default:
-		return style.Foreground(lipgloss.Color("231")).Background(lipgloss.Color("240"))
+func prefixedWrappedLines(text string, prefix string, width int) []string {
+	wrapped := wrapText(text, width)
+	lines := make([]string, 0, len(wrapped))
+	for _, line := range wrapped {
+		lines = append(lines, prefix+bodyStyle.Render(line))
 	}
+	return lines
 }
 
 func wrapText(text string, width int) []string {

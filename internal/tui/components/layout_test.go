@@ -300,7 +300,7 @@ func TestRenderToolCardWithDiffAndMetadata(t *testing.T) {
 		Status: "tool completed: git_diff",
 	}, zones))
 
-	for _, want := range []string{"TOOL", "git_diff", "diff --git", "-old", "+new"} {
+	for _, want := range []string{"› git_diff", "diff --git", "-old", "+new"} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("rendered output missing %q:\n%s", want, out)
 		}
@@ -330,9 +330,40 @@ func TestRenderToolCardShowsHookAndPermissionMetadata(t *testing.T) {
 		Status: "permission requested",
 	}, zones))
 
-	for _, want := range []string{"TOOL", "shell", "HOOK:", "allow", "write_file", "ACTION:", "README.md"} {
+	for _, want := range []string{"› shell", "hook:", "allow", "› write_file", "action:", "README.md"} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("rendered output missing %q:\n%s", want, out)
+		}
+	}
+}
+
+func TestRenderTimelineUsesCompactLabels(t *testing.T) {
+	zones := zone.New()
+	t.Cleanup(zones.Close)
+
+	out := zones.Scan(Render(viewmodel.Model{
+		Width:       80,
+		Height:      24,
+		Model:       "gpt-test",
+		Provider:    "codex",
+		Input:       "Ask gode to work on this repo",
+		InputHeight: 1,
+		Messages: []viewmodel.Message{
+			{ID: "user", Role: viewmodel.RoleUser, Body: "whats in this folder?"},
+			{ID: "assistant", Role: viewmodel.RoleAssistant, Body: "This is your home folder."},
+			{ID: "tool", Role: viewmodel.RoleTool, Title: "shell", Body: "ls -la\nDesktop\nDocuments"},
+		},
+		Status: "ready",
+	}, zones))
+
+	for _, want := range []string{"▌", "whats in this folder?", "This is your home folder.", "› shell", "Desktop"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("rendered output missing %q:\n%s", want, out)
+		}
+	}
+	for _, unwanted := range []string{"USER", "ASSISTANT", "TOOL"} {
+		if strings.Contains(out, unwanted) {
+			t.Fatalf("rendered output should not use large %q label:\n%s", unwanted, out)
 		}
 	}
 }
@@ -414,7 +445,7 @@ func TestVisibleMessagesUsesLineScroll(t *testing.T) {
 		{ID: "m3", Role: viewmodel.RoleSystem, Body: "three"},
 	}
 
-	got := visibleMessages(messages, 80, 3, 1, nil)
+	got := visibleMessages(messages, 80, 2, 1, nil)
 	if len(got) != 2 {
 		t.Fatalf("visible message count = %d, want 2: %#v", len(got), got)
 	}
@@ -430,7 +461,7 @@ func TestVisibleMessagesCanScrollPastRecentWindow(t *testing.T) {
 	}
 	messages[0].ID = "oldest"
 
-	got := visibleMessages(messages, 80, 2, 10000, nil)
+	got := visibleMessages(messages, 80, 1, 10000, nil)
 	if len(got) != 1 {
 		t.Fatalf("visible message count = %d, want 1: %#v", len(got), got)
 	}
