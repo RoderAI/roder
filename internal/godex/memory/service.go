@@ -166,6 +166,13 @@ func (s *Service) Read(ctx context.Context, id string) (Entry, error) {
 	return s.store.Read(ctx, s.scope.WorkspaceID, id)
 }
 
+func (s *Service) List(ctx context.Context, limit int) ([]Entry, error) {
+	if err := s.ready(); err != nil {
+		return nil, err
+	}
+	return s.store.ListWorkspace(ctx, s.scope.WorkspaceID, s.queryLimit(limit))
+}
+
 func (s *Service) Stats(ctx context.Context) (Stats, error) {
 	if s == nil {
 		return Stats{}, errors.New("memory service is required")
@@ -183,6 +190,13 @@ func (s *Service) Stats(ctx context.Context) (Stats, error) {
 	}
 	_ = s.store.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM memories WHERE workspace_id = ? AND deleted_at IS NULL`, s.scope.WorkspaceID).Scan(&stats.Count)
 	return stats, nil
+}
+
+func (s *Service) Close() error {
+	if s == nil || s.store == nil {
+		return nil
+	}
+	return s.store.Close()
 }
 
 func (s *Service) ready() error {
