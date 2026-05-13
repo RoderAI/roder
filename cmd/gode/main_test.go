@@ -440,6 +440,59 @@ func TestServeListenOffValidatesApp(t *testing.T) {
 	}
 }
 
+func TestGoalCommandLifecycle(t *testing.T) {
+	dataDir := filepath.Join(t.TempDir(), "data")
+	workspace := filepath.Join(t.TempDir(), "workspace")
+	sessionID := "s-goal"
+	setOut := captureStdout(t, func() error {
+		return runGoal(context.Background(), []string{"set", "--workspace", workspace, "--data-dir", dataDir, "--provider", "mock", "--session", sessionID, "--objective", "ship it", "--token-budget", "10000"})
+	})
+	for _, want := range []string{"goal\tactive\tship it", "budget\t0/10K"} {
+		if !strings.Contains(setOut, want) {
+			t.Fatalf("set output missing %q:\n%s", want, setOut)
+		}
+	}
+	getOut := captureStdout(t, func() error {
+		return runGoal(context.Background(), []string{"get", "--workspace", workspace, "--data-dir", dataDir, "--provider", "mock", "--session", sessionID})
+	})
+	if !strings.Contains(getOut, "ship it") {
+		t.Fatalf("get output:\n%s", getOut)
+	}
+	pauseOut := captureStdout(t, func() error {
+		return runGoal(context.Background(), []string{"pause", "--workspace", workspace, "--data-dir", dataDir, "--provider", "mock", "--session", sessionID})
+	})
+	if !strings.Contains(pauseOut, "goal\tpaused\tship it") {
+		t.Fatalf("pause output:\n%s", pauseOut)
+	}
+	resumeOut := captureStdout(t, func() error {
+		return runGoal(context.Background(), []string{"resume", "--workspace", workspace, "--data-dir", dataDir, "--provider", "mock", "--session", sessionID})
+	})
+	if !strings.Contains(resumeOut, "goal\tactive\tship it") {
+		t.Fatalf("resume output:\n%s", resumeOut)
+	}
+	jsonOut := captureStdout(t, func() error {
+		return runGoal(context.Background(), []string{"get", "--workspace", workspace, "--data-dir", dataDir, "--provider", "mock", "--session", sessionID, "--json"})
+	})
+	if !json.Valid([]byte(jsonOut)) || !strings.Contains(jsonOut, `"objective":"ship it"`) {
+		t.Fatalf("json output:\n%s", jsonOut)
+	}
+	clearOut := captureStdout(t, func() error {
+		return runGoal(context.Background(), []string{"clear", "--workspace", workspace, "--data-dir", dataDir, "--provider", "mock", "--session", sessionID})
+	})
+	if !strings.Contains(clearOut, "cleared\t"+sessionID) {
+		t.Fatalf("clear output:\n%s", clearOut)
+	}
+}
+
+func TestGoalCommandRejectsInvalidArguments(t *testing.T) {
+	if err := runGoal(context.Background(), []string{"get"}); err == nil || !strings.Contains(err.Error(), "--session is required") {
+		t.Fatalf("get err = %v", err)
+	}
+	if err := runGoal(context.Background(), []string{"set", "--session", "s1"}); err == nil || !strings.Contains(err.Error(), "--objective is required") {
+		t.Fatalf("set err = %v", err)
+	}
+}
+
 func captureStdout(t *testing.T, fn func() error) string {
 	t.Helper()
 	old := os.Stdout
