@@ -11,8 +11,12 @@ import (
 
 var composerStyle = lipgloss.NewStyle().
 	Border(lipgloss.NormalBorder(), true).
-	BorderForeground(lipgloss.Color("212")).
 	Padding(0, 1)
+
+const (
+	composerBorderNormal      = "244"
+	composerBorderAutoApprove = "212"
+)
 
 func Composer(width int, input string) string {
 	return ComposerWithSelection(width, input, ComposerOptions{}, nil)
@@ -22,6 +26,7 @@ type ComposerOptions struct {
 	Value          string
 	Selection      selection.OffsetRange
 	SelectionStyle lipgloss.Style
+	AutoApprove    bool
 }
 
 func ComposerWithSelection(width int, input string, options ComposerOptions, zones *zone.Manager) string {
@@ -30,6 +35,7 @@ func ComposerWithSelection(width int, input string, options ComposerOptions, zon
 		body = renderSelectedComposerValue(options.Value, options.Selection, options.SelectionStyle)
 	}
 	out := composerStyle.
+		BorderForeground(lipgloss.Color(composerBorderColor(options.AutoApprove))).
 		Width(max(20, width-2)).
 		Render(body)
 	if zones != nil {
@@ -61,6 +67,13 @@ func renderSelectedComposerValue(value string, selected selection.OffsetRange, s
 	out.WriteString(style.Render(string(runes[start:end])))
 	out.WriteString(string(runes[end:]))
 	return out.String()
+}
+
+func composerBorderColor(autoApprove bool) string {
+	if autoApprove {
+		return composerBorderAutoApprove
+	}
+	return composerBorderNormal
 }
 
 func ComposerVisualLines(value string, width int) []string {

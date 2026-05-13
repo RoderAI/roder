@@ -35,9 +35,43 @@ func TestComposerSelectionHighlightsWithoutChangingValue(t *testing.T) {
 	}
 }
 
+func TestComposerBorderUsesNormalModeColorByDefault(t *testing.T) {
+	zones := zone.New()
+	t.Cleanup(zones.Close)
+
+	out := ComposerWithSelection(60, "hello", ComposerOptions{}, zones)
+
+	assertANSIColor(t, out, "38;5;244")
+	assertNoANSIColor(t, out, "38;5;212")
+}
+
+func TestComposerBorderUsesAutoApproveColor(t *testing.T) {
+	zones := zone.New()
+	t.Cleanup(zones.Close)
+
+	out := ComposerWithSelection(60, "hello", ComposerOptions{AutoApprove: true}, zones)
+
+	assertANSIColor(t, out, "38;5;212")
+	assertNoANSIColor(t, out, "38;5;244")
+}
+
 func TestComposerSelectionDoesNotCopyPlaceholder(t *testing.T) {
 	got := ComposerSelectionText("", selection.OffsetRange{Anchor: 0, Focus: 10, Active: true})
 	if got != "" {
 		t.Fatalf("empty composer selection copied placeholder-like text: %q", got)
+	}
+}
+
+func assertANSIColor(t *testing.T, out string, color string) {
+	t.Helper()
+	if !strings.Contains(out, color) {
+		t.Fatalf("rendered output missing ANSI color %s:\n%q", color, out)
+	}
+}
+
+func assertNoANSIColor(t *testing.T, out string, color string) {
+	t.Helper()
+	if strings.Contains(out, color) {
+		t.Fatalf("rendered output should not include ANSI color %s:\n%q", color, out)
 	}
 }
