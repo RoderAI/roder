@@ -56,6 +56,7 @@ func (m Model) viewModel() viewmodel.Model {
 			Permissions: permissions,
 		},
 		Settings:     settings,
+		QuitDialog:   m.quitConfirmViewModel(),
 		ErrorLog:     m.errorLog,
 		ShowErrorLog: m.showErrorLog,
 	}

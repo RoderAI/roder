@@ -67,6 +67,7 @@ type Model struct {
 	ContextLeft               string
 	Dialogs                   DialogStack
 	Settings                  *SettingsDialog
+	QuitDialog                *ConfirmDialog
 	ErrorLog                  []ErrorLogEntry
 	ShowErrorLog              bool
 }
@@ -132,6 +133,14 @@ type PermissionDialogRequest struct {
 	Action   string
 	Input    string
 	Selected bool
+}
+
+type ConfirmDialog struct {
+	Title        string
+	Message      string
+	ConfirmLabel string
+	CancelLabel  string
+	Help         string
 }
 
 type ErrorLogEntry struct {

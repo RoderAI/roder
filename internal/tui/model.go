@@ -46,6 +46,7 @@ type Model struct {
 	completions             dialogs.Commands
 	completionMode          string
 	permissions             dialogs.Permissions
+	quitConfirmOpen         bool
 	currentSessionID        string
 	currentSession          string
 	attachments             []attachments.Attachment
@@ -126,6 +127,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.clampScroll()
 		return m, nil
 	case tea.KeyPressMsg:
+		if m.quitConfirmOpen {
+			return m.updateQuitConfirm(msg)
+		}
 		if m.settings.Open {
 			return m.updateSettings(msg)
 		}
@@ -163,8 +167,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		switch msg.String() {
 		case "ctrl+c", "esc":
-			m.cancelEvents()
-			return m, tea.Quit
+			m.quitConfirmOpen = true
+			m.status = "confirm quit"
+			m.input.Blur()
+			return m, nil
 		case "ctrl+p":
 			m.openSettings()
 			return m, nil
