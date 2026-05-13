@@ -39,7 +39,7 @@ func TestVisibleMessagesUsesLineScroll(t *testing.T) {
 		{ID: "m3", Role: viewmodel.RoleTool, Body: "three"},
 	}
 
-	got := visibleMessages(messages, 80, 3, 1)
+	got := visibleMessages(messages, 80, 3, 1, nil)
 	if len(got) != 2 {
 		t.Fatalf("visible message count = %d, want 2: %#v", len(got), got)
 	}
