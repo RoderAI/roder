@@ -40,11 +40,13 @@ type Model struct {
 	Attachments      []Attachment
 	Input            string
 	InputHeight      int
+	SlashMenu        *ListDialog
 	ScrollOffset     int
 	FollowTail       bool
 	Running          bool
 	HoveredID        string
 	Status           string
+	ContextLeft      string
 	Dialogs          DialogStack
 	Settings         *SettingsDialog
 	ErrorLog         []ErrorLogEntry

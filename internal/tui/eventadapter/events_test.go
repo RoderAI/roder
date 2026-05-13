@@ -55,6 +55,24 @@ func TestApplyStateEventsDoNotRenderTranscriptRows(t *testing.T) {
 	}
 }
 
+func TestApplyContextTokensUpdatedExposesUsageWithoutTranscriptRows(t *testing.T) {
+	update := Apply(eventbus.Event{
+		Kind: eventbus.KindContextTokensUpdated,
+		Payload: map[string]any{
+			"tokens":         1250,
+			"context_window": 10000,
+			"percent":        12.5,
+		},
+	})
+
+	if len(update.Messages) != 0 {
+		t.Fatalf("context token event rendered transcript rows: %#v", update.Messages)
+	}
+	if !update.HasContextTokens || update.ContextUsedPercent != 12.5 {
+		t.Fatalf("context update = %#v", update)
+	}
+}
+
 func TestApplyPermissionRequestRendersToolMetadata(t *testing.T) {
 	update := Apply(eventbus.Event{
 		Kind: eventbus.KindPermissionRequested,
