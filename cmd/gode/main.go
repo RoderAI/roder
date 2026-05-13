@@ -72,6 +72,10 @@ func run(ctx context.Context, args []string) error {
 		return runSession(args[1:])
 	}
 
+	if len(args) > 0 && args[0] == "goal" {
+		return runGoal(ctx, args[1:])
+	}
+
 	if len(args) > 0 && args[0] == "skills" {
 		return runSkills(ctx, args[1:])
 	}
