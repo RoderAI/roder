@@ -200,6 +200,53 @@ Run Go tests.
 	}
 }
 
+func TestNewAppWiresSkillManager(t *testing.T) {
+	workspace := filepath.Join(t.TempDir(), "workspace")
+	skillDir := filepath.Join(workspace, ".agents", "skills", "go-tests")
+	if err := os.MkdirAll(skillDir, 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(skillDir, "SKILL.md"), []byte(`---
+name: go-tests
+description: Run tests
+---
+Run Go tests.
+`), 0o644); err != nil {
+		t.Fatalf("write skill: %v", err)
+	}
+	dataDir := t.TempDir()
+	app, err := New(context.Background(), Config{
+		Workspace:   workspace,
+		DataDir:     dataDir,
+		Provider:    "mock",
+		AutoApprove: true,
+	})
+	if err != nil {
+		t.Fatalf("new app: %v", err)
+	}
+	defer app.Close(context.Background())
+	if app.SkillManager == nil {
+		t.Fatal("skill manager should be wired")
+	}
+	items, err := app.SkillManager.List(context.Background())
+	if err != nil {
+		t.Fatalf("list skills: %v", err)
+	}
+	if len(items) != 1 || items[0].Name != "go-tests" || items[0].State != "enabled" {
+		t.Fatalf("items = %#v", items)
+	}
+	if err := app.SkillManager.SetEnabled(context.Background(), "go-tests", false); err != nil {
+		t.Fatalf("disable skill: %v", err)
+	}
+	settings, err := LoadSettings(dataDir)
+	if err != nil {
+		t.Fatalf("load settings: %v", err)
+	}
+	if settings.ActiveSkills["go-tests"] {
+		t.Fatalf("active skills = %#v", settings.ActiveSkills)
+	}
+}
+
 func TestNewAppLoadsProjectCommands(t *testing.T) {
 	workspace := filepath.Join(t.TempDir(), "workspace")
 	commandPath := filepath.Join(workspace, ".gode", "commands", "test.md")

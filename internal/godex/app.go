@@ -34,15 +34,16 @@ import (
 )
 
 type App struct {
-	Config   Config
-	Bus      *eventbus.Bus
-	Journal  *journal.Store
-	Sessions *session.Store
-	Messages *messagestore.Store
-	Tools    *tools.Registry
-	Goals    *goals.Runtime
-	MCP      *mcp.Manager
-	LSP      *lsp.Manager
+	Config       Config
+	Bus          *eventbus.Bus
+	Journal      *journal.Store
+	Sessions     *session.Store
+	Messages     *messagestore.Store
+	Tools        *tools.Registry
+	Goals        *goals.Runtime
+	SkillManager *godeskills.Manager
+	MCP          *mcp.Manager
+	LSP          *lsp.Manager
 
 	provider          provider.Provider
 	runner            *agent.Runner
@@ -121,6 +122,7 @@ func New(ctx context.Context, cfg Config) (*App, error) {
 		return nil, err
 	}
 	skillCatalog := godeskills.Discover(godeskills.DiscoverOptions{Workspace: cfg.Workspace, DataDir: cfg.DataDir})
+	skillManager := newSkillManager(cfg)
 	commandCatalog, err := godecommands.Load(godecommands.LoadOptions{Workspace: cfg.Workspace})
 	if err != nil {
 		_ = store.Close()
@@ -176,6 +178,7 @@ func New(ctx context.Context, cfg Config) (*App, error) {
 		Messages:          messageStore,
 		Tools:             reg,
 		Goals:             goalRuntime,
+		SkillManager:      skillManager,
 		MCP:               mcpManager,
 		LSP:               lspManager,
 		provider:          prov,
