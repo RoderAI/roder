@@ -95,6 +95,7 @@ func settingsContent(width int, settings viewmodel.SettingsDialog, zones *zone.M
 
 func menuSettingsContent(width int, items []viewmodel.SettingsMenuItem, zones *zone.Manager) []string {
 	lines := make([]string, 0, len(items)*2)
+	showDescriptions := len(items) <= 7
 	for _, item := range items {
 		prefix := "  "
 		style := settingsItemStyle
@@ -104,7 +105,7 @@ func menuSettingsContent(width int, items []viewmodel.SettingsMenuItem, zones *z
 		}
 		main := prefix + settingsLabelValue(width-2, item.Label, item.Value)
 		block := markSettingsZone(zones, viewmodel.SettingsMenuItemZoneID(item.ID), style.Render(main))
-		if item.Selected && item.Description != "" {
+		if showDescriptions && item.Selected && item.Description != "" {
 			desc := "  " + settingsDescriptionStyle.Render(truncateCell(item.Description, width-2))
 			block += "\n" + desc
 		}

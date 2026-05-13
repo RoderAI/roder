@@ -19,6 +19,7 @@ type Config struct {
 	FastMode              bool
 	AutoApprove           bool
 	TimelineStyle         string
+	MarkdownRendering     bool
 	DisableAutoCompaction bool
 	AutoCompactTokenLimit int
 	GoalsEnabled          bool

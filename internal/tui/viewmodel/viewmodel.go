@@ -45,6 +45,7 @@ type Model struct {
 	SessionTitle              string
 	Messages                  []Message
 	TimelineStyle             string
+	MarkdownRendering         bool
 	ReasoningSummary          string
 	Attachments               []Attachment
 	Input                     string

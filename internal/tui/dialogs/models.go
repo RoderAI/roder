@@ -244,6 +244,12 @@ func (s Settings) MenuItems() []viewmodel.SettingsMenuItem {
 			Value:       timelineStyleLabel(s.Config.TimelineStyle),
 		},
 		{
+			ID:          "markdown-rendering",
+			Label:       "Markdown Rendering",
+			Description: "Render assistant and system markdown with Glamour.",
+			Value:       onOff(s.Config.MarkdownRendering),
+		},
+		{
 			ID:          "codex-auth",
 			Label:       "Codex Sign In",
 			Description: "Connect ChatGPT Codex so GPT models use Codex auth.",
@@ -406,6 +412,7 @@ func (s Settings) configRows() []viewmodel.SettingsConfigRow {
 		{Label: "Fast mode", Value: onOff(s.Config.FastMode)},
 		{Label: "Permission mode", Value: permissionModeLabel(s.Config.AutoApprove)},
 		{Label: "Timeline style", Value: timelineStyleLabel(s.Config.TimelineStyle)},
+		{Label: "Markdown rendering", Value: onOff(s.Config.MarkdownRendering)},
 		{Label: "Workspace", Value: s.Config.Workspace},
 		{Label: "Data dir", Value: s.Config.DataDir},
 	}
@@ -422,6 +429,7 @@ func settingsFromConfig(cfg godex.Config) godex.Settings {
 		FastMode:              cfg.FastMode,
 		AutoApprove:           cfg.AutoApprove,
 		TimelineStyle:         cfg.TimelineStyle,
+		MarkdownRendering:     cfg.MarkdownRendering,
 		DisableAutoCompaction: cfg.DisableAutoCompaction,
 		AutoCompactTokenLimit: cfg.AutoCompactTokenLimit,
 	}

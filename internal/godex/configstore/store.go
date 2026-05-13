@@ -51,6 +51,7 @@ type overlay struct {
 	FastMode              *bool                              `json:"fast_mode,omitempty" toml:"fast_mode,omitempty"`
 	AutoApprove           *bool                              `json:"auto_approve,omitempty" toml:"auto_approve,omitempty"`
 	TimelineStyle         *string                            `json:"timeline_style,omitempty" toml:"timeline_style,omitempty"`
+	MarkdownRendering     *bool                              `json:"markdown_rendering,omitempty" toml:"markdown_rendering,omitempty"`
 	DisableAutoCompaction *bool                              `json:"disable_auto_compaction,omitempty" toml:"disable_auto_compaction,omitempty"`
 	AutoCompactTokenLimit *int                               `json:"auto_compact_token_limit,omitempty" toml:"auto_compact_token_limit,omitempty"`
 	Telemetry             *bool                              `json:"telemetry,omitempty" toml:"telemetry,omitempty"`
@@ -168,6 +169,9 @@ func applyOverlay(cfg *godex.Config, patch overlay) error {
 	if patch.TimelineStyle != nil {
 		cfg.TimelineStyle = godex.NormalizeTimelineStyle(*patch.TimelineStyle)
 	}
+	if patch.MarkdownRendering != nil {
+		cfg.MarkdownRendering = *patch.MarkdownRendering
+	}
 	if patch.DisableAutoCompaction != nil {
 		cfg.DisableAutoCompaction = *patch.DisableAutoCompaction
 	}
@@ -225,6 +229,13 @@ func applyEnv(cfg *godex.Config, env map[string]string) error {
 	if value := strings.TrimSpace(env["GODE_TIMELINE_STYLE"]); value != "" {
 		cfg.TimelineStyle = godex.NormalizeTimelineStyle(value)
 	}
+	if value := strings.TrimSpace(env["GODE_MARKDOWN_RENDERING"]); value != "" {
+		parsed, err := strconv.ParseBool(value)
+		if err != nil {
+			return fmt.Errorf("parse env GODE_MARKDOWN_RENDERING: %w", err)
+		}
+		cfg.MarkdownRendering = parsed
+	}
 	if value := strings.TrimSpace(env["GODE_DISABLE_AUTO_COMPACTION"]); value != "" {
 		parsed, err := strconv.ParseBool(value)
 		if err != nil {
@@ -266,6 +277,9 @@ func applyFlags(cfg *godex.Config, flags godex.Config, set map[string]bool) {
 	}
 	if isSet(set, "timeline-style") || isSet(set, "timeline_style") {
 		cfg.TimelineStyle = godex.NormalizeTimelineStyle(flags.TimelineStyle)
+	}
+	if isSet(set, "markdown-rendering") || isSet(set, "markdown_rendering") {
+		cfg.MarkdownRendering = flags.MarkdownRendering
 	}
 	if isSet(set, "disable-auto-compaction") || isSet(set, "disable_auto_compaction") {
 		cfg.DisableAutoCompaction = flags.DisableAutoCompaction
