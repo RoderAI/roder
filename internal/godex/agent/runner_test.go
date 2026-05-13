@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	godecommands "github.com/pandelisz/gode/internal/godex/commands"
 	"github.com/pandelisz/gode/internal/godex/eventbus"
 	"github.com/pandelisz/gode/internal/godex/journal"
 	messagestore "github.com/pandelisz/gode/internal/godex/message"
@@ -149,6 +150,53 @@ func TestRunnerInjectsInvokedSkillsAndCleansPrompt(t *testing.T) {
 	}
 	if capture.request.Messages[1].Role != provider.RoleUser || capture.request.Messages[1].Content != "please check this" {
 		t.Fatalf("user message = %#v", capture.request.Messages[1])
+	}
+}
+
+func TestRunnerExpandsSlashCommandsBeforeProviderRequest(t *testing.T) {
+	capture := &captureProvider{finalText: "done"}
+	runner := NewRunner(Config{
+		Bus:      eventbus.New(eventbus.WithSubscriberBuffer(16)),
+		Provider: capture,
+		Commands: []godecommands.Command{{
+			ID:           "project:test",
+			Scope:        "project",
+			Prompt:       "Run $TARGET tests",
+			Placeholders: []string{"TARGET"},
+		}},
+	})
+	defer runner.bus.Close()
+
+	if _, err := runner.Run(context.Background(), RunRequest{Prompt: "/test TARGET=api with coverage"}); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	if len(capture.request.Messages) != 1 {
+		t.Fatalf("messages = %#v", capture.request.Messages)
+	}
+	if capture.request.Messages[0].Content != "Run api tests\n\nwith coverage" {
+		t.Fatalf("prompt = %q", capture.request.Messages[0].Content)
+	}
+}
+
+func TestRunnerDoesNotTreatAbsolutePathAsSlashCommand(t *testing.T) {
+	capture := &captureProvider{finalText: "done"}
+	runner := NewRunner(Config{
+		Bus:      eventbus.New(eventbus.WithSubscriberBuffer(16)),
+		Provider: capture,
+		Commands: []godecommands.Command{{
+			ID:     "project:Users",
+			Scope:  "project",
+			Prompt: "wrong",
+		}},
+	})
+	defer runner.bus.Close()
+
+	prompt := "/Users/pz/file.go is a path"
+	if _, err := runner.Run(context.Background(), RunRequest{Prompt: prompt}); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	if len(capture.request.Messages) != 1 || capture.request.Messages[0].Content != prompt {
+		t.Fatalf("messages = %#v", capture.request.Messages)
 	}
 }
 

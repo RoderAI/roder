@@ -192,8 +192,10 @@ func runPrompt(ctx context.Context, args []string) error {
 	cfg := godex.DefaultConfig()
 	sessionID := ""
 	resume := false
+	promptFlag := ""
 	flags.StringVar(&sessionID, "session", sessionID, "session id to use")
 	flags.BoolVar(&resume, "resume", resume, "resume prior session messages")
+	flags.StringVar(&promptFlag, "prompt", promptFlag, "prompt to run")
 	bindConfigFlags(flags, &cfg)
 	if err := flags.Parse(args); err != nil {
 		return err
@@ -203,7 +205,12 @@ func runPrompt(ctx context.Context, args []string) error {
 		return err
 	}
 	cfg = loaded.Config
-	prompt := strings.TrimSpace(strings.Join(flags.Args(), " "))
+	prompt := strings.TrimSpace(promptFlag)
+	if prompt == "" {
+		prompt = strings.TrimSpace(strings.Join(flags.Args(), " "))
+	} else if flags.NArg() > 0 {
+		prompt = strings.TrimSpace(prompt + " " + strings.Join(flags.Args(), " "))
+	}
 	if prompt == "" {
 		return fmt.Errorf("prompt is required")
 	}

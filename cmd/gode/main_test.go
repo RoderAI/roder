@@ -311,6 +311,18 @@ func TestSessionCLIListShowRenameDeleteAndRunResume(t *testing.T) {
 	}
 }
 
+func TestRunPromptSupportsPromptFlag(t *testing.T) {
+	root := t.TempDir()
+	workspace := filepath.Join(root, "workspace")
+	dataDir := filepath.Join(root, "data")
+	out := captureStdout(t, func() error {
+		return runPrompt(context.Background(), []string{"--workspace", workspace, "--data-dir", dataDir, "--provider", "mock", "--model", "mock", "--reasoning", "none", "--prompt", "hello from flag"})
+	})
+	if !strings.Contains(out, "mock response") {
+		t.Fatalf("output = %q", out)
+	}
+}
+
 func captureStdout(t *testing.T, fn func() error) string {
 	t.Helper()
 	old := os.Stdout

@@ -121,3 +121,28 @@ Run Go tests.
 		t.Fatalf("skills = %#v", app.skills)
 	}
 }
+
+func TestNewAppLoadsProjectCommands(t *testing.T) {
+	workspace := filepath.Join(t.TempDir(), "workspace")
+	commandPath := filepath.Join(workspace, ".gode", "commands", "test.md")
+	if err := os.MkdirAll(filepath.Dir(commandPath), 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	if err := os.WriteFile(commandPath, []byte("Run tests"), 0o644); err != nil {
+		t.Fatalf("write command: %v", err)
+	}
+	app, err := New(context.Background(), Config{
+		Workspace:   workspace,
+		DataDir:     t.TempDir(),
+		Provider:    "mock",
+		AutoApprove: true,
+	})
+	if err != nil {
+		t.Fatalf("new app: %v", err)
+	}
+	defer app.Close(context.Background())
+
+	if len(app.commands) != 1 || app.commands[0].ID != "project:test" {
+		t.Fatalf("commands = %#v", app.commands)
+	}
+}

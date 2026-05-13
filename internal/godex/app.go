@@ -10,6 +10,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/pandelisz/gode/internal/godex/agent"
 	"github.com/pandelisz/gode/internal/godex/codexauth"
+	godecommands "github.com/pandelisz/gode/internal/godex/commands"
 	"github.com/pandelisz/gode/internal/godex/contextpack"
 	"github.com/pandelisz/gode/internal/godex/eventbus"
 	"github.com/pandelisz/gode/internal/godex/hooks"
@@ -43,6 +44,7 @@ type App struct {
 	runner            *agent.Runner
 	contextMessages   []provider.Message
 	skills            []godeskills.Skill
+	commands          []godecommands.Command
 	shutdownTelemetry func(context.Context) error
 }
 
@@ -100,6 +102,13 @@ func New(ctx context.Context, cfg Config) (*App, error) {
 		return nil, err
 	}
 	skillCatalog := godeskills.Discover(godeskills.DiscoverOptions{Workspace: cfg.Workspace, DataDir: cfg.DataDir})
+	commandCatalog, err := godecommands.Load(godecommands.LoadOptions{Workspace: cfg.Workspace})
+	if err != nil {
+		_ = store.Close()
+		recordSpanError(span, err)
+		_ = shutdownTelemetry(ctx)
+		return nil, err
+	}
 
 	permissionService := permission.New(permission.WithEventBus(bus))
 	hookRunner := hooks.New(nil)
@@ -132,7 +141,7 @@ func New(ctx context.Context, cfg Config) (*App, error) {
 		_ = shutdownTelemetry(ctx)
 		return nil, err
 	}
-	runner := agent.NewRunner(agent.Config{Bus: bus, Journal: store, Sessions: sessionStore, Messages: messageStore, Tools: reg, Provider: prov, ContextMessages: repoContext, Skills: skillCatalog.Skills})
+	runner := agent.NewRunner(agent.Config{Bus: bus, Journal: store, Sessions: sessionStore, Messages: messageStore, Tools: reg, Provider: prov, ContextMessages: repoContext, Skills: skillCatalog.Skills, Commands: commandCatalog.Commands})
 
 	return &App{
 		Config:            cfg,
@@ -146,6 +155,7 @@ func New(ctx context.Context, cfg Config) (*App, error) {
 		runner:            runner,
 		contextMessages:   repoContext,
 		skills:            skillCatalog.Skills,
+		commands:          commandCatalog.Commands,
 		shutdownTelemetry: shutdownTelemetry,
 	}, nil
 }
@@ -183,7 +193,7 @@ func (a *App) SetModelReasoning(model string, reasoning string) error {
 
 	a.Config = cfg
 	a.provider = prov
-	a.runner = agent.NewRunner(agent.Config{Bus: a.Bus, Journal: a.Journal, Sessions: a.Sessions, Messages: a.Messages, Tools: a.Tools, Provider: prov, ContextMessages: a.contextMessages, Skills: a.skills})
+	a.runner = agent.NewRunner(agent.Config{Bus: a.Bus, Journal: a.Journal, Sessions: a.Sessions, Messages: a.Messages, Tools: a.Tools, Provider: prov, ContextMessages: a.contextMessages, Skills: a.skills, Commands: a.commands})
 	return nil
 }
 
@@ -197,7 +207,7 @@ func (a *App) SetFastMode(fastMode bool) error {
 
 	a.Config = cfg
 	a.provider = prov
-	a.runner = agent.NewRunner(agent.Config{Bus: a.Bus, Journal: a.Journal, Sessions: a.Sessions, Messages: a.Messages, Tools: a.Tools, Provider: prov, ContextMessages: a.contextMessages, Skills: a.skills})
+	a.runner = agent.NewRunner(agent.Config{Bus: a.Bus, Journal: a.Journal, Sessions: a.Sessions, Messages: a.Messages, Tools: a.Tools, Provider: prov, ContextMessages: a.contextMessages, Skills: a.skills, Commands: a.commands})
 	return nil
 }
 
