@@ -164,6 +164,10 @@ func (s *Store) Last(ctx context.Context) (Session, bool, error) {
 	return sessions[0], true, nil
 }
 
+func (s *Store) LastSession(ctx context.Context) (Session, bool, error) {
+	return s.Last(ctx)
+}
+
 func (s *Store) Rename(ctx context.Context, id string, title string) (Session, error) {
 	if err := ctx.Err(); err != nil {
 		return Session{}, err
@@ -254,13 +258,29 @@ func (s *Store) saveLocked() error {
 		_ = tmp.Close()
 		return fmt.Errorf("write session index newline: %w", err)
 	}
+	if err := tmp.Sync(); err != nil {
+		_ = tmp.Close()
+		return fmt.Errorf("sync session index temp: %w", err)
+	}
 	if err := tmp.Close(); err != nil {
 		return fmt.Errorf("close session index temp: %w", err)
 	}
 	if err := os.Rename(tmpName, s.index); err != nil {
 		return fmt.Errorf("replace session index: %w", err)
 	}
+	if err := syncDir(s.dir); err != nil {
+		return fmt.Errorf("sync session dir: %w", err)
+	}
 	return nil
+}
+
+func syncDir(dir string) error {
+	handle, err := os.Open(dir)
+	if err != nil {
+		return err
+	}
+	defer handle.Close()
+	return handle.Sync()
 }
 
 func sortSessions(sessions []Session) {
