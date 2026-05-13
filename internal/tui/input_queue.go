@@ -8,12 +8,15 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"github.com/google/uuid"
 	"github.com/pandelisz/gode/internal/godex/agent"
+	"github.com/pandelisz/gode/internal/godex/provider"
 	"github.com/pandelisz/gode/internal/tui/viewmodel"
 )
 
 type pendingPrompt struct {
-	Display string
-	Prompt  string
+	Display       string
+	Prompt        string
+	InputItems    []provider.Item
+	ReplacePrompt bool
 }
 
 func (m *Model) preparePrompt(prompt string) (pendingPrompt, error) {
@@ -21,11 +24,13 @@ func (m *Model) preparePrompt(prompt string) (pendingPrompt, error) {
 	if len(m.attachments) == 0 {
 		return pending, nil
 	}
-	withAttachments, err := m.promptWithAttachments(prompt)
+	withAttachments, err := m.promptInputWithAttachments(prompt)
 	if err != nil {
 		return pendingPrompt{}, err
 	}
-	pending.Prompt = withAttachments
+	pending.Prompt = withAttachments.Prompt
+	pending.InputItems = withAttachments.Items
+	pending.ReplacePrompt = withAttachments.ReplacePrompt
 	return pending, nil
 }
 
@@ -48,10 +53,13 @@ func (m *Model) submitPreparedPrompt(pending pendingPrompt) tea.Cmd {
 	m.input.Reset()
 	m.running = true
 	m.status = "waiting for model"
-	return m.runPrompt(pending.Prompt)
+	return m.runPreparedPrompt(pending)
 }
 
 func (m *Model) steerPreparedPrompt(pending pendingPrompt) tea.Cmd {
+	if pending.ReplacePrompt {
+		return m.queuePreparedPrompt(pending)
+	}
 	m.ensureSessionID()
 	m.addMessage(viewmodel.RoleUser, "steer", pending.Display)
 	m.reasoningSummary = ""

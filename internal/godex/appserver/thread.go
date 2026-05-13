@@ -56,6 +56,9 @@ func (c *Connection) handleThreadStart(ctx context.Context, raw json.RawMessage)
 	if c.server.app.Sessions != nil {
 		if _, err := c.server.app.Sessions.Ensure(ctx, session.Session{
 			ID:        thread.ID,
+			Workspace: cwd,
+			Model:     model,
+			Provider:  provider,
 			CreatedAt: time.Unix(now, 0).UTC(),
 			UpdatedAt: time.Unix(now, 0).UTC(),
 		}); err != nil {
@@ -216,15 +219,23 @@ func (s *Server) threadFromSession(ctx context.Context, stored session.Session, 
 	created := stored.CreatedAt.Unix()
 	updated := stored.UpdatedAt.Unix()
 	name := stored.Title
+	provider := stored.Provider
+	if provider == "" {
+		provider = s.app.Config.Provider
+	}
+	cwd := stored.Workspace
+	if cwd == "" {
+		cwd = s.app.Config.Workspace
+	}
 	thread := Thread{
 		ID:            stored.ID,
 		SessionID:     stored.ID,
 		Preview:       stored.Title,
-		ModelProvider: s.app.Config.Provider,
+		ModelProvider: provider,
 		CreatedAt:     created,
 		UpdatedAt:     updated,
 		Status:        idleStatus(),
-		CWD:           s.app.Config.Workspace,
+		CWD:           cwd,
 		CLIVersion:    s.options.Version,
 		Source:        "appServer",
 		Turns:         []Turn{},

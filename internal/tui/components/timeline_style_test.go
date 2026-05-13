@@ -28,6 +28,23 @@ func TestTranscriptMinimalSummarizesToolCalls(t *testing.T) {
 	}
 }
 
+func TestTranscriptDefaultsToMinimalTimeline(t *testing.T) {
+	result := TranscriptDetailedWithCache(100, 10, []viewmodel.Message{{
+		ID:    "tool-grep",
+		Role:  viewmodel.RoleTool,
+		Title: "grep",
+		Body:  "first match\nsecond match",
+	}}, 0, "", zone.New(), nil, TranscriptOptions{})
+
+	visible := ansi.Strip(result.View)
+	if !strings.Contains(visible, "grep") || !strings.Contains(visible, "first match") {
+		t.Fatalf("default timeline missing tool summary:\n%s", visible)
+	}
+	if strings.Contains(visible, "second match") {
+		t.Fatalf("default timeline should hide detailed tool output:\n%s", visible)
+	}
+}
+
 func TestTranscriptDetailedKeepsToolOutput(t *testing.T) {
 	result := TranscriptDetailedWithCache(100, 10, []viewmodel.Message{{
 		ID:    "tool-grep",

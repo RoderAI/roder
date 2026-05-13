@@ -250,10 +250,10 @@ func (s Settings) MenuItems() []viewmodel.SettingsMenuItem {
 			Value:       onOff(s.Config.MarkdownRendering),
 		},
 		{
-			ID:          "codex-auth",
-			Label:       "Codex Sign In",
-			Description: "Connect ChatGPT Codex so GPT models use Codex auth.",
-			Value:       codexStatus,
+			ID:          "config",
+			Label:       "Config",
+			Description: "Review provider, reasoning, workspace, and data paths.",
+			Value:       godex.DisplayProvider(s.Config),
 		},
 		{
 			ID:          "skills",
@@ -262,10 +262,10 @@ func (s Settings) MenuItems() []viewmodel.SettingsMenuItem {
 			Value:       skillCountValue(s.SkillEnabledCount, s.SkillInstalledCount),
 		},
 		{
-			ID:          "config",
-			Label:       "Config",
-			Description: "Review provider, reasoning, workspace, and data paths.",
-			Value:       godex.DisplayProvider(s.Config),
+			ID:          "codex-auth",
+			Label:       "Codex Sign In",
+			Description: "Connect ChatGPT Codex so GPT models use Codex auth.",
+			Value:       codexStatus,
 		},
 	}
 }

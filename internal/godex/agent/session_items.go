@@ -40,6 +40,9 @@ func (r *Runner) failTurn(ctx context.Context, req RunRequest, errorText string)
 }
 
 func (r *Runner) persistUserItem(ctx context.Context, req RunRequest) error {
+	if req.ReplacePrompt && len(req.InputItems) > 0 {
+		return r.persistProviderItems(ctx, req, req.InputItems, "")
+	}
 	return r.persistUserTextItem(ctx, req, "user", req.Prompt)
 }
 
@@ -78,6 +81,7 @@ func (r *Runner) sessionItemsFromProviderItems(req RunRequest, providerItems []p
 			ToolName:   item.ToolName,
 			ToolCallID: item.ToolCallID,
 			Text:       item.Text,
+			Images:     sessionImagesFromProviderImages(item.Images),
 			RawJSON:    append([]byte(nil), item.RawJSON...),
 		})
 	}
@@ -105,6 +109,7 @@ func providerItemsFromSessionItems(items []session.Item) []provider.Item {
 			ToolName:   item.ToolName,
 			ToolCallID: item.ToolCallID,
 			Text:       item.Text,
+			Images:     providerImagesFromSessionImages(item.Images),
 			RawJSON:    append([]byte(nil), item.RawJSON...),
 		})
 	}
@@ -121,6 +126,7 @@ func providerMessagesFromProviderItems(items []provider.Item) []provider.Message
 			ToolName:   item.ToolName,
 			ToolCallID: item.ToolCallID,
 			Text:       item.Text,
+			Images:     sessionImagesFromProviderImages(item.Images),
 			RawJSON:    item.RawJSON,
 		})
 	}
@@ -148,7 +154,7 @@ func providerItemFromProviderMessage(message provider.Message) provider.Item {
 	case message.Role == provider.RoleTool && message.ToolCallID != "":
 		return provider.Item{Kind: provider.ItemFunctionOut, Role: string(provider.RoleTool), ToolName: message.ToolName, ToolCallID: message.ToolCallID, Text: message.Content}
 	case message.Role != "":
-		return provider.Item{Kind: provider.ItemMessage, Role: string(message.Role), Phase: message.Phase, Text: message.Content}
+		return provider.Item{Kind: provider.ItemMessage, Role: string(message.Role), Phase: message.Phase, Text: message.Content, Images: append([]provider.Image(nil), message.Images...)}
 	default:
 		return provider.Item{}
 	}
@@ -186,7 +192,7 @@ func appendProviderMessageFromSessionItem(out []provider.Message, item session.I
 	}
 	switch item.Kind {
 	case session.ItemMessage:
-		out = append(out, provider.Message{Role: provider.Role(item.Role), Phase: item.Phase, Content: item.Text})
+		out = append(out, provider.Message{Role: provider.Role(item.Role), Phase: item.Phase, Content: item.Text, Images: providerImagesFromSessionImages(item.Images)})
 	case session.ItemFunctionCall:
 		out = append(out, provider.Message{
 			Role:          provider.RoleAssistant,
@@ -200,6 +206,28 @@ func appendProviderMessageFromSessionItem(out []provider.Message, item session.I
 		if len(item.RawJSON) > 0 {
 			out = append(out, provider.Message{RawJSON: append([]byte(nil), item.RawJSON...)})
 		}
+	}
+	return out
+}
+
+func sessionImagesFromProviderImages(images []provider.Image) []session.Image {
+	if len(images) == 0 {
+		return nil
+	}
+	out := make([]session.Image, 0, len(images))
+	for _, image := range images {
+		out = append(out, session.Image{URL: image.URL, Detail: image.Detail})
+	}
+	return out
+}
+
+func providerImagesFromSessionImages(images []session.Image) []provider.Image {
+	if len(images) == 0 {
+		return nil
+	}
+	out := make([]provider.Image, 0, len(images))
+	for _, image := range images {
+		out = append(out, provider.Image{URL: image.URL, Detail: image.Detail})
 	}
 	return out
 }

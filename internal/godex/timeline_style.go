@@ -11,9 +11,9 @@ func NormalizeTimelineStyle(style string) string {
 	switch strings.ToLower(strings.TrimSpace(style)) {
 	case TimelineStyleMinimal:
 		return TimelineStyleMinimal
-	case TimelineStyleDetailed, "":
+	case TimelineStyleDetailed:
 		return TimelineStyleDetailed
 	default:
-		return TimelineStyleDetailed
+		return TimelineStyleMinimal
 	}
 }

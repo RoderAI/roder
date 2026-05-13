@@ -46,6 +46,31 @@ func TestResponsesItemConversionPreservesRawCompactionItems(t *testing.T) {
 	}
 }
 
+func TestResponsesItemConversionSerializesInputImages(t *testing.T) {
+	items := responseInputItems([]Message{{
+		Role:    RoleUser,
+		Content: "what is in this image?",
+		Images:  []Image{{URL: "data:image/png;base64,abc", Detail: "high"}},
+	}})
+	data, err := json.Marshal(items)
+	if err != nil {
+		t.Fatalf("marshal input: %v", err)
+	}
+	raw := string(data)
+	for _, want := range []string{
+		`"role":"user"`,
+		`"type":"input_text"`,
+		`"text":"what is in this image?"`,
+		`"type":"input_image"`,
+		`"image_url":"data:image/png;base64,abc"`,
+		`"detail":"high"`,
+	} {
+		if !strings.Contains(raw, want) {
+			t.Fatalf("input JSON missing %q:\n%s", want, raw)
+		}
+	}
+}
+
 func TestOpenAIItemConversionPreservesOutputShapes(t *testing.T) {
 	items := providerItemsFromRaw([]json.RawMessage{
 		json.RawMessage(`{"id":"msg_1","type":"message","role":"assistant","phase":"commentary","content":[{"type":"output_text","text":"hello"}]}`),

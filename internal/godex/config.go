@@ -6,8 +6,8 @@ import (
 	"runtime"
 
 	"github.com/pandelisz/gode/internal/godex/lsp"
-	"github.com/pandelisz/gode/internal/godex/memory"
 	"github.com/pandelisz/gode/internal/godex/mcp"
+	"github.com/pandelisz/gode/internal/godex/memory"
 	"github.com/pandelisz/gode/internal/godex/provider"
 )
 
@@ -37,16 +37,16 @@ type Config struct {
 }
 
 func DefaultConfig() Config {
-	wd, _ := os.Getwd()
 	defaultModel := DefaultModelConfig()
 	return Config{
-		Workspace:         wd,
+		Workspace:         ".",
 		DataDir:           defaultDataDir(),
 		Provider:          defaultModel.Provider,
 		Model:             defaultModel.ID,
 		Reasoning:         defaultModel.DefaultReasoning,
 		AutoApprove:       false,
-		TimelineStyle:     TimelineStyleDetailed,
+		TimelineStyle:     TimelineStyleMinimal,
+		MarkdownRendering: true,
 		Memories:          memory.DefaultConfig(defaultDataDir()),
 		GoalsEnabled:      true,
 		Telemetry:         false,

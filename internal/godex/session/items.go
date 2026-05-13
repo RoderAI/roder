@@ -26,6 +26,12 @@ type Item struct {
 	ToolName   string          `json:"tool_name,omitempty"`
 	ToolCallID string          `json:"tool_call_id,omitempty"`
 	Text       string          `json:"text,omitempty"`
+	Images     []Image         `json:"images,omitempty"`
 	RawJSON    json.RawMessage `json:"raw_json,omitempty"`
 	CreatedAt  time.Time       `json:"created_at"`
+}
+
+type Image struct {
+	URL    string `json:"url"`
+	Detail string `json:"detail,omitempty"`
 }

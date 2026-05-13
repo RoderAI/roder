@@ -1,25 +1,108 @@
 package completions
 
 import (
+	"context"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
+	"time"
 )
+
+const fileCompletionCacheTTL = 2 * time.Second
 
 type FileItem struct {
 	Path  string
 	IsDir bool
 }
 
+type fileCompletionCacheEntry struct {
+	workspace string
+	items     []FileItem
+	expires   time.Time
+}
+
+var fileCompletionCache struct {
+	sync.Mutex
+	entry fileCompletionCacheEntry
+}
+
 func Files(workspace string, query string, limit int) []FileItem {
 	workspace = absOrDefault(workspace, ".")
 	query = strings.TrimPrefix(strings.TrimSpace(filepath.ToSlash(query)), "@")
+	query = strings.ToLower(query)
 	if limit <= 0 {
 		limit = 50
 	}
-	ignored := gitIgnoreChecker(workspace)
+
+	all := cachedWorkspaceFiles(workspace)
+	items := make([]FileItem, 0, min(limit, len(all)))
+	for _, item := range all {
+		if query != "" && !strings.Contains(strings.ToLower(item.Path), query) {
+			continue
+		}
+		items = append(items, item)
+		if len(items) >= limit {
+			break
+		}
+	}
+	return items
+}
+
+func cachedWorkspaceFiles(workspace string) []FileItem {
+	now := time.Now()
+	fileCompletionCache.Lock()
+	if fileCompletionCache.entry.workspace == workspace && now.Before(fileCompletionCache.entry.expires) {
+		items := cloneFileItems(fileCompletionCache.entry.items)
+		fileCompletionCache.Unlock()
+		return items
+	}
+	fileCompletionCache.Unlock()
+
+	items := listWorkspaceFiles(workspace)
+
+	fileCompletionCache.Lock()
+	fileCompletionCache.entry = fileCompletionCacheEntry{
+		workspace: workspace,
+		items:     cloneFileItems(items),
+		expires:   now.Add(fileCompletionCacheTTL),
+	}
+	fileCompletionCache.Unlock()
+	return items
+}
+
+func listWorkspaceFiles(workspace string) []FileItem {
+	if items, ok := gitFiles(workspace); ok {
+		return items
+	}
+	return walkFiles(workspace)
+}
+
+func gitFiles(workspace string) ([]FileItem, bool) {
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	cmd := exec.CommandContext(ctx, "git", "-C", workspace, "ls-files", "-co", "--exclude-standard", "-z")
+	out, err := cmd.Output()
+	if err != nil || ctx.Err() != nil {
+		return nil, false
+	}
+
+	paths := strings.Split(string(out), "\x00")
+	items := make([]FileItem, 0, len(paths))
+	for _, path := range paths {
+		if path == "" {
+			continue
+		}
+		items = append(items, FileItem{Path: filepath.ToSlash(path)})
+	}
+	sort.Slice(items, func(i, j int) bool { return items[i].Path < items[j].Path })
+	return items, true
+}
+
+func walkFiles(workspace string) []FileItem {
 	var items []FileItem
 	_ = filepath.WalkDir(workspace, func(path string, entry os.DirEntry, err error) error {
 		if err != nil {
@@ -28,37 +111,39 @@ func Files(workspace string, query string, limit int) []FileItem {
 		if path == workspace {
 			return nil
 		}
-		rel, err := filepath.Rel(workspace, path)
-		if err != nil {
-			return nil
-		}
-		rel = filepath.ToSlash(rel)
 		if entry.IsDir() {
-			if entry.Name() == ".git" || ignored(rel+"/") {
+			if shouldSkipCompletionDir(entry.Name()) {
 				return filepath.SkipDir
 			}
 			return nil
 		}
-		if ignored(rel) || query != "" && !strings.Contains(strings.ToLower(rel), strings.ToLower(query)) {
+		rel, err := filepath.Rel(workspace, path)
+		if err != nil {
 			return nil
 		}
-		items = append(items, FileItem{Path: rel})
+		items = append(items, FileItem{Path: filepath.ToSlash(rel)})
 		return nil
 	})
 	sort.Slice(items, func(i, j int) bool { return items[i].Path < items[j].Path })
-	if len(items) > limit {
-		return items[:limit]
-	}
 	return items
 }
 
-func gitIgnoreChecker(workspace string) func(string) bool {
-	if err := exec.Command("git", "-C", workspace, "rev-parse", "--is-inside-work-tree").Run(); err != nil {
-		return func(string) bool { return false }
+func shouldSkipCompletionDir(name string) bool {
+	switch name {
+	case ".git", "node_modules", "vendor", ".idea", ".vscode", ".cache", "dist", "build":
+		return true
+	default:
+		return false
 	}
-	return func(rel string) bool {
-		return exec.Command("git", "-C", workspace, "check-ignore", "-q", "--", rel).Run() == nil
+}
+
+func cloneFileItems(items []FileItem) []FileItem {
+	if len(items) == 0 {
+		return nil
 	}
+	out := make([]FileItem, len(items))
+	copy(out, items)
+	return out
 }
 
 func absOrDefault(path string, fallback string) string {

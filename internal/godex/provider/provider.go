@@ -24,10 +24,16 @@ type Message struct {
 	Role          Role
 	Content       string
 	Phase         string
+	Images        []Image
 	ToolCallID    string
 	ToolName      string
 	ToolArguments string
 	RawJSON       json.RawMessage
+}
+
+type Image struct {
+	URL    string
+	Detail string
 }
 
 type ToolSpec struct {
@@ -62,6 +68,7 @@ type Item struct {
 	ToolName   string
 	ToolCallID string
 	Text       string
+	Images     []Image
 	RawJSON    json.RawMessage
 }
 

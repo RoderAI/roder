@@ -37,9 +37,6 @@ func ReasoningSummary(width int, height int, text string) string {
 	}
 	if len(lines) > height {
 		lines = lines[len(lines)-height:]
-		if len(lines) > 0 {
-			lines[0] = truncateCell("... "+strings.TrimSpace(lines[0]), innerWidth)
-		}
 	}
 	return reasoningSummaryStyle.Width(width).Height(height).Render(strings.Join(lines, "\n"))
 }
