@@ -30,8 +30,9 @@ func RenderWithCache(vm viewmodel.Model, zones *zone.Manager, transcriptCache *T
 	parts := []string{
 		Header(width, vm.Provider, vm.Model, vm.Reasoning, vm.SessionTitle, vm.Running),
 		TranscriptDetailedWithCache(width, bodyHeight, vm.Messages, vm.ScrollOffset, vm.HoveredID, zones, transcriptCache, TranscriptOptions{
-			Selection:     vm.TranscriptSelection,
-			TimelineStyle: vm.TimelineStyle,
+			Selection:         vm.TranscriptSelection,
+			TimelineStyle:     vm.TimelineStyle,
+			MarkdownRendering: vm.MarkdownRendering,
 		}).View,
 	}
 	if reasoningHeight > 0 {

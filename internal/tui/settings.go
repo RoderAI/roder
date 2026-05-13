@@ -173,6 +173,8 @@ func (m Model) activateSettingsSelection() (tea.Model, tea.Cmd) {
 			return m, m.togglePermissionMode(true)
 		case "timeline-style":
 			return m, m.toggleTimelineStyle()
+		case "markdown-rendering":
+			return m, m.toggleMarkdownRendering()
 		case "config":
 			m.settings.OpenConfig()
 		case "codex-auth":
@@ -335,6 +337,22 @@ func (m *Model) toggleTimelineStyle() tea.Cmd {
 	return nil
 }
 
+func (m *Model) toggleMarkdownRendering() tea.Cmd {
+	next := !m.settings.Config.MarkdownRendering
+	if m.app != nil {
+		m.app.Config.MarkdownRendering = next
+		if err := saveSettingsFromConfig(m.app.Config.DataDir, m.app.Config); err != nil {
+			m.settings.Err = fmt.Sprintf("save settings: %v", err)
+			return nil
+		}
+		m.settings.Config = m.app.Config
+	} else {
+		m.settings.Config.MarkdownRendering = next
+	}
+	m.status = "markdown rendering " + onOff(next)
+	return nil
+}
+
 func settingsFromConfig(cfg godex.Config) godex.Settings {
 	return godex.Settings{
 		DefaultModel:          cfg.Model,
@@ -342,6 +360,7 @@ func settingsFromConfig(cfg godex.Config) godex.Settings {
 		FastMode:              cfg.FastMode,
 		AutoApprove:           cfg.AutoApprove,
 		TimelineStyle:         cfg.TimelineStyle,
+		MarkdownRendering:     cfg.MarkdownRendering,
 		DisableAutoCompaction: cfg.DisableAutoCompaction,
 		AutoCompactTokenLimit: cfg.AutoCompactTokenLimit,
 	}
@@ -357,6 +376,7 @@ func saveSettingsFromConfig(dataDir string, cfg godex.Config) error {
 	settings.FastMode = cfg.FastMode
 	settings.AutoApprove = cfg.AutoApprove
 	settings.TimelineStyle = cfg.TimelineStyle
+	settings.MarkdownRendering = cfg.MarkdownRendering
 	settings.DisableAutoCompaction = cfg.DisableAutoCompaction
 	settings.AutoCompactTokenLimit = cfg.AutoCompactTokenLimit
 	return godex.SaveSettings(dataDir, settings)

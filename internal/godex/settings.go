@@ -23,6 +23,7 @@ type Settings struct {
 	FastMode              bool              `json:"fast_mode,omitempty" toml:"fast_mode,omitempty"`
 	AutoApprove           bool              `json:"auto_approve" toml:"auto_approve"`
 	TimelineStyle         string            `json:"timeline_style,omitempty" toml:"timeline_style,omitempty"`
+	MarkdownRendering     bool              `json:"markdown_rendering,omitempty" toml:"markdown_rendering,omitempty"`
 	DisableAutoCompaction bool              `json:"disable_auto_compaction,omitempty" toml:"disable_auto_compaction,omitempty"`
 	AutoCompactTokenLimit int               `json:"auto_compact_token_limit,omitempty" toml:"auto_compact_token_limit,omitempty"`
 	ActiveSkills          map[string]bool   `json:"active_skills,omitempty" toml:"active_skills,omitempty"`
@@ -96,6 +97,7 @@ func loadLegacySettings(dataDir string) (Settings, error) {
 		FastMode              bool              `json:"fast_mode"`
 		AutoApprove           bool              `json:"auto_approve"`
 		TimelineStyle         string            `json:"timeline_style"`
+		MarkdownRendering     bool              `json:"markdown_rendering"`
 		DisableAutoCompaction bool              `json:"disable_auto_compaction"`
 		AutoCompactTokenLimit int               `json:"auto_compact_token_limit"`
 		ActiveSkills          map[string]bool   `json:"active_skills"`
@@ -110,6 +112,7 @@ func loadLegacySettings(dataDir string) (Settings, error) {
 		FastMode:              settings.FastMode,
 		AutoApprove:           settings.AutoApprove,
 		TimelineStyle:         NormalizeTimelineStyle(settings.TimelineStyle),
+		MarkdownRendering:     settings.MarkdownRendering,
 		DisableAutoCompaction: settings.DisableAutoCompaction,
 		AutoCompactTokenLimit: settings.AutoCompactTokenLimit,
 		ActiveSkills:          settings.ActiveSkills,

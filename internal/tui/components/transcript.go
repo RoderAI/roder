@@ -23,9 +23,10 @@ type renderedLine struct {
 }
 
 type TranscriptOptions struct {
-	Selection      selection.Range
-	SelectionStyle lipgloss.Style
-	TimelineStyle  string
+	Selection         selection.Range
+	SelectionStyle    lipgloss.Style
+	TimelineStyle     string
+	MarkdownRendering bool
 }
 
 type TranscriptRenderResult struct {
@@ -40,6 +41,7 @@ type TranscriptCache struct {
 type cachedMessage struct {
 	width         int
 	timelineStyle string
+	markdown      bool
 	role          viewmodel.Role
 	title         string
 	body          string
@@ -91,7 +93,7 @@ func TranscriptDetailedWithCache(width int, height int, messages []viewmodel.Mes
 	contentWidth := max(12, innerWidth-2)
 	innerHeight := max(1, panelHeight-2)
 	timelineStyle := normalizeTimelineStyle(options.TimelineStyle)
-	visible := visibleMessages(messages, contentWidth, innerHeight, scrollOffset, cache, timelineStyle)
+	visible := visibleMessagesWithOptions(messages, contentWidth, innerHeight, scrollOffset, cache, timelineStyle, options.MarkdownRendering)
 	refs := visibleLineRefs(visible)
 
 	var body string
@@ -144,19 +146,23 @@ func (c *TranscriptCache) Prune(messages []viewmodel.Message) {
 }
 
 func visibleMessages(messages []viewmodel.Message, width int, height int, scrollOffset int, cache *TranscriptCache, styles ...string) []renderedMessage {
-	if len(messages) == 0 || height <= 0 {
-		return nil
-	}
 	timelineStyle := viewmodel.TimelineStyleDetailed
 	if len(styles) > 0 {
 		timelineStyle = normalizeTimelineStyle(styles[0])
 	}
+	return visibleMessagesWithOptions(messages, width, height, scrollOffset, cache, timelineStyle, false)
+}
 
+func visibleMessagesWithOptions(messages []viewmodel.Message, width int, height int, scrollOffset int, cache *TranscriptCache, timelineStyle string, markdown bool) []renderedMessage {
+	if len(messages) == 0 || height <= 0 {
+		return nil
+	}
+	timelineStyle = normalizeTimelineStyle(timelineStyle)
 	lineBudget := max(height, height+max(0, scrollOffset))
 	reversed := make([]renderedMessage, 0, min(len(messages), height))
 	total := 0
 	for i := len(messages) - 1; i >= 0 && total < lineBudget; i-- {
-		item := renderMessageCached(messages[i], width, timelineStyle, cache)
+		item := renderMessageCached(messages[i], width, timelineStyle, markdown, cache)
 		item.messageIndex = i
 		reversed = append(reversed, item)
 		total += len(item.lines)
@@ -198,9 +204,9 @@ func visibleMessages(messages []viewmodel.Message, width int, height int, scroll
 	return visible
 }
 
-func renderMessageCached(msg viewmodel.Message, width int, timelineStyle string, cache *TranscriptCache) renderedMessage {
+func renderMessageCached(msg viewmodel.Message, width int, timelineStyle string, markdown bool, cache *TranscriptCache) renderedMessage {
 	if cache == nil {
-		return renderMessage(msg, width, timelineStyle)
+		return renderMessage(msg, width, timelineStyle, markdown)
 	}
 	if cache.entries == nil {
 		cache.entries = make(map[string]cachedMessage)
@@ -208,15 +214,17 @@ func renderMessageCached(msg viewmodel.Message, width int, timelineStyle string,
 	if entry, ok := cache.entries[msg.ID]; ok &&
 		entry.width == width &&
 		entry.timelineStyle == timelineStyle &&
+		entry.markdown == markdown &&
 		entry.role == msg.Role &&
 		entry.title == msg.Title &&
 		entry.body == msg.Body {
 		return entry.item
 	}
-	item := renderMessage(msg, width, timelineStyle)
+	item := renderMessage(msg, width, timelineStyle, markdown)
 	cache.entries[msg.ID] = cachedMessage{
 		width:         width,
 		timelineStyle: timelineStyle,
+		markdown:      markdown,
 		role:          msg.Role,
 		title:         msg.Title,
 		body:          msg.Body,
@@ -225,7 +233,7 @@ func renderMessageCached(msg viewmodel.Message, width int, timelineStyle string,
 	return item
 }
 
-func renderMessage(msg viewmodel.Message, width int, timelineStyle string) renderedMessage {
+func renderMessage(msg viewmodel.Message, width int, timelineStyle string, markdown bool) renderedMessage {
 	item := renderedMessage{}
 	switch msg.Role {
 	case viewmodel.RoleTool:
@@ -233,13 +241,13 @@ func renderMessage(msg viewmodel.Message, width int, timelineStyle string) rende
 	case viewmodel.RoleUser:
 		item = renderUserMessage(msg, width)
 	case viewmodel.RoleAssistant:
-		item = renderAssistantMessage(msg, width)
+		item = renderAssistantMessage(msg, width, markdown)
 	case viewmodel.RoleError:
-		item = renderMetaMessage(msg, width, errorPrefixStyle.Render("!"), msg.Title)
+		item = renderMetaMessage(msg, width, errorPrefixStyle.Render("!"), msg.Title, markdown)
 	case viewmodel.RoleSystem:
-		item = renderMetaMessage(msg, width, metaPrefixStyle.Render("·"), msg.Title)
+		item = renderMetaMessage(msg, width, metaPrefixStyle.Render("·"), msg.Title, markdown)
 	default:
-		item = renderMetaMessage(msg, width, metaPrefixStyle.Render("·"), string(msg.Role))
+		item = renderMetaMessage(msg, width, metaPrefixStyle.Render("·"), string(msg.Role), markdown)
 	}
 	for i := range item.lines {
 		item.lines[i].ref.LogicalLine = i
@@ -262,8 +270,8 @@ func renderUserMessage(msg viewmodel.Message, width int) renderedMessage {
 	return renderedMessage{id: msg.ID, lines: lines}
 }
 
-func renderAssistantMessage(msg viewmodel.Message, width int) renderedMessage {
-	lines := wrappedBodyLines(msg.Body, max(12, width))
+func renderAssistantMessage(msg viewmodel.Message, width int, markdown bool) renderedMessage {
+	lines := bodyLines(msg.Body, max(12, width), markdown)
 	if msg.Title != "" {
 		headerText := metaPrefixStyle.Render("· ") + metaTitleStyle.Render(strings.TrimSpace(msg.Title))
 		header := renderedLine{
@@ -275,7 +283,7 @@ func renderAssistantMessage(msg viewmodel.Message, width int) renderedMessage {
 	return renderedMessage{id: msg.ID, lines: lines}
 }
 
-func renderMetaMessage(msg viewmodel.Message, width int, prefix string, title string) renderedMessage {
+func renderMetaMessage(msg viewmodel.Message, width int, prefix string, title string, markdown bool) renderedMessage {
 	title = strings.TrimSpace(title)
 	if title == "" {
 		title = string(msg.Role)
@@ -285,7 +293,7 @@ func renderMetaMessage(msg viewmodel.Message, width int, prefix string, title st
 		text: header,
 		ref:  selection.TranscriptLineRef{Text: header, Decorative: true},
 	}}
-	for _, line := range wrappedBodyLines(msg.Body, max(12, width-2)) {
+	for _, line := range bodyLines(msg.Body, max(12, width-2), markdown) {
 		line.text = "  " + line.text
 		line.ref.Text = line.text
 		lines = append(lines, line)
@@ -445,6 +453,13 @@ func wrappedBodyLines(text string, width int) []renderedLine {
 		out = append(out, bodyRenderedLine(bodyStyle.Render(lines[i]), lines[i]))
 	}
 	return out
+}
+
+func bodyLines(text string, width int, markdown bool) []renderedLine {
+	if markdown {
+		return markdownBodyLines(text, width)
+	}
+	return wrappedBodyLines(text, width)
 }
 
 func prefixedWrappedLines(text string, prefix string, width int) []renderedLine {
