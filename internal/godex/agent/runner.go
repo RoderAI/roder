@@ -9,13 +9,17 @@ import (
 	"github.com/google/uuid"
 	"github.com/pandelisz/gode/internal/godex/eventbus"
 	"github.com/pandelisz/gode/internal/godex/journal"
+	messagestore "github.com/pandelisz/gode/internal/godex/message"
 	"github.com/pandelisz/gode/internal/godex/provider"
+	"github.com/pandelisz/gode/internal/godex/session"
 	"github.com/pandelisz/gode/internal/godex/tools"
 )
 
 type Config struct {
 	Bus      *eventbus.Bus
 	Journal  *journal.Store
+	Sessions *session.Store
+	Messages *messagestore.Store
 	Tools    *tools.Registry
 	Provider provider.Provider
 }
@@ -23,6 +27,8 @@ type Config struct {
 type Runner struct {
 	bus      *eventbus.Bus
 	journal  *journal.Store
+	sessions *session.Store
+	messages *messagestore.Store
 	tools    *tools.Registry
 	provider provider.Provider
 }
@@ -31,6 +37,8 @@ type RunRequest struct {
 	SessionID string
 	RunID     string
 	Prompt    string
+	Resume    bool
+	Messages  []provider.Message
 	MaxTurns  int
 }
 
@@ -44,6 +52,8 @@ func NewRunner(cfg Config) *Runner {
 	return &Runner{
 		bus:      cfg.Bus,
 		journal:  cfg.Journal,
+		sessions: cfg.Sessions,
+		messages: cfg.Messages,
 		tools:    cfg.Tools,
 		provider: cfg.Provider,
 	}
@@ -62,19 +72,30 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (RunResult, error) {
 	if r.provider == nil {
 		return RunResult{}, fmt.Errorf("provider is required")
 	}
-	var journalWG sync.WaitGroup
-	if r.journal != nil {
-		journalCtx, cancelJournal := context.WithCancel(context.Background())
+	if r.sessions != nil {
+		if _, err := r.sessions.Ensure(ctx, session.Session{ID: req.SessionID, Title: req.Prompt}); err != nil {
+			return RunResult{}, r.fail(ctx, req, err)
+		}
+	}
+	var eventWG sync.WaitGroup
+	if r.journal != nil || r.messages != nil {
+		eventCtx, cancelEvents := context.WithCancel(context.Background())
 		defer func() {
-			cancelJournal()
-			journalWG.Wait()
+			cancelEvents()
+			eventWG.Wait()
+			r.refreshSessionMessageCount(context.Background(), req.SessionID)
 		}()
-		ch := r.bus.Subscribe(journalCtx, eventbus.Filter{SessionID: req.SessionID, RunID: req.RunID})
-		journalWG.Add(1)
+		ch := r.bus.Subscribe(eventCtx, eventbus.Filter{SessionID: req.SessionID, RunID: req.RunID})
+		eventWG.Add(1)
 		go func() {
-			defer journalWG.Done()
+			defer eventWG.Done()
 			for ev := range ch {
-				_ = r.journal.Append(context.Background(), ev)
+				if r.journal != nil {
+					_ = r.journal.Append(context.Background(), ev)
+				}
+				if r.messages != nil {
+					_, _ = r.messages.AppendProjected(context.Background(), ev)
+				}
 			}
 		}()
 	}
@@ -94,7 +115,10 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (RunResult, error) {
 		Payload:   map[string]any{"provider": r.provider.Name()},
 	})
 
-	messages := []provider.Message{{Role: provider.RoleUser, Content: req.Prompt}}
+	messages, err := r.initialMessages(ctx, req)
+	if err != nil {
+		return RunResult{}, r.fail(ctx, req, err)
+	}
 	maxTurns := req.MaxTurns
 	if maxTurns <= 0 {
 		maxTurns = 8
@@ -229,6 +253,45 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (RunResult, error) {
 		Payload:   map[string]any{"final_text": final},
 	})
 	return RunResult{SessionID: req.SessionID, RunID: req.RunID, FinalText: final}, nil
+}
+
+func (r *Runner) initialMessages(ctx context.Context, req RunRequest) ([]provider.Message, error) {
+	messages := append([]provider.Message(nil), req.Messages...)
+	if req.Resume && r.messages != nil {
+		prior, err := r.messages.ListBySession(ctx, req.SessionID)
+		if err != nil {
+			return nil, err
+		}
+		messages = append(providerMessages(prior), messages...)
+	}
+	messages = append(messages, provider.Message{Role: provider.RoleUser, Content: req.Prompt})
+	return messages, nil
+}
+
+func providerMessages(messages []messagestore.Message) []provider.Message {
+	out := make([]provider.Message, 0, len(messages))
+	for _, msg := range messages {
+		switch msg.Role {
+		case messagestore.RoleUser:
+			out = append(out, provider.Message{Role: provider.RoleUser, Content: msg.Text})
+		case messagestore.RoleAssistant:
+			out = append(out, provider.Message{Role: provider.RoleAssistant, Content: msg.Text})
+		case messagestore.RoleTool:
+			out = append(out, provider.Message{Role: provider.RoleTool, Content: msg.Text, ToolCallID: msg.ToolCallID})
+		}
+	}
+	return out
+}
+
+func (r *Runner) refreshSessionMessageCount(ctx context.Context, sessionID string) {
+	if r.sessions == nil || r.messages == nil || sessionID == "" {
+		return
+	}
+	messages, err := r.messages.ListBySession(ctx, sessionID)
+	if err != nil {
+		return
+	}
+	_, _ = r.sessions.UpdateMessageCount(ctx, sessionID, len(messages))
 }
 
 func toolResponseContent(name string, result tools.Result) string {

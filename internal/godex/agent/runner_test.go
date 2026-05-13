@@ -9,7 +9,9 @@ import (
 
 	"github.com/pandelisz/gode/internal/godex/eventbus"
 	"github.com/pandelisz/gode/internal/godex/journal"
+	messagestore "github.com/pandelisz/gode/internal/godex/message"
 	"github.com/pandelisz/gode/internal/godex/provider"
+	"github.com/pandelisz/gode/internal/godex/session"
 	"github.com/pandelisz/gode/internal/godex/tools"
 )
 
@@ -213,6 +215,102 @@ func TestRunnerFeedsToolFailureBackToModel(t *testing.T) {
 	}
 }
 
+func TestRunnerResumeLoadsPriorMessages(t *testing.T) {
+	messageStore := messagestore.Open(t.TempDir())
+	if _, err := messageStore.Append(context.Background(), messagestore.Message{SessionID: "s1", RunID: "old", Role: messagestore.RoleUser, Text: "previous prompt"}); err != nil {
+		t.Fatalf("append prior user: %v", err)
+	}
+	if _, err := messageStore.Append(context.Background(), messagestore.Message{SessionID: "s1", RunID: "old", Role: messagestore.RoleAssistant, Text: "previous answer"}); err != nil {
+		t.Fatalf("append prior assistant: %v", err)
+	}
+	script := &scriptedProvider{streams: [][]provider.Event{{
+		{Kind: provider.EventDelta, Text: "done"},
+		{Kind: provider.EventCompleted, Text: "done"},
+	}}}
+	runner := NewRunner(Config{
+		Bus:      eventbus.New(eventbus.WithSubscriberBuffer(16)),
+		Messages: messageStore,
+		Provider: script,
+	})
+	defer runner.bus.Close()
+
+	if _, err := runner.Run(context.Background(), RunRequest{SessionID: "s1", Prompt: "next prompt", Resume: true}); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	got := script.requests[0].Messages
+	if len(got) != 3 {
+		t.Fatalf("messages = %#v", got)
+	}
+	if got[0].Role != provider.RoleUser || got[0].Content != "previous prompt" {
+		t.Fatalf("prior user = %#v", got[0])
+	}
+	if got[1].Role != provider.RoleAssistant || got[1].Content != "previous answer" {
+		t.Fatalf("prior assistant = %#v", got[1])
+	}
+	if got[2].Role != provider.RoleUser || got[2].Content != "next prompt" {
+		t.Fatalf("new prompt = %#v", got[2])
+	}
+}
+
+func TestRunnerWithoutResumeIgnoresPriorMessages(t *testing.T) {
+	messageStore := messagestore.Open(t.TempDir())
+	if _, err := messageStore.Append(context.Background(), messagestore.Message{SessionID: "s1", Role: messagestore.RoleUser, Text: "previous prompt"}); err != nil {
+		t.Fatalf("append prior: %v", err)
+	}
+	script := &scriptedProvider{streams: [][]provider.Event{{
+		{Kind: provider.EventDelta, Text: "done"},
+		{Kind: provider.EventCompleted, Text: "done"},
+	}}}
+	runner := NewRunner(Config{
+		Bus:      eventbus.New(eventbus.WithSubscriberBuffer(16)),
+		Messages: messageStore,
+		Provider: script,
+	})
+	defer runner.bus.Close()
+
+	if _, err := runner.Run(context.Background(), RunRequest{SessionID: "s1", Prompt: "fresh prompt"}); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	got := script.requests[0].Messages
+	if len(got) != 1 || got[0].Content != "fresh prompt" {
+		t.Fatalf("messages = %#v", got)
+	}
+}
+
+func TestRunnerPersistsSessionAndMessages(t *testing.T) {
+	dataDir := t.TempDir()
+	sessionStore := openSessionStore(t, dataDir)
+	messageStore := messagestore.Open(dataDir)
+	runner := NewRunner(Config{
+		Bus:      eventbus.New(eventbus.WithSubscriberBuffer(16)),
+		Sessions: sessionStore,
+		Messages: messageStore,
+		Provider: &scriptedProvider{streams: [][]provider.Event{{
+			{Kind: provider.EventDelta, Text: "done"},
+			{Kind: provider.EventCompleted, Text: "done"},
+		}}},
+	})
+	defer runner.bus.Close()
+
+	if _, err := runner.Run(context.Background(), RunRequest{SessionID: "s-persist", Prompt: "hello"}); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	messages, err := messageStore.ListBySession(context.Background(), "s-persist")
+	if err != nil {
+		t.Fatalf("list messages: %v", err)
+	}
+	if len(messages) != 2 || messages[0].Text != "hello" || messages[1].Text != "done" {
+		t.Fatalf("messages = %#v", messages)
+	}
+	stored, ok, err := sessionStore.Get(context.Background(), "s-persist")
+	if err != nil {
+		t.Fatalf("get session: %v", err)
+	}
+	if !ok || stored.Title != "hello" || stored.MessageCount != 2 {
+		t.Fatalf("session = %#v ok=%v", stored, ok)
+	}
+}
+
 func TestRunnerPublishesReasoningSummaryEvents(t *testing.T) {
 	bus := eventbus.New(eventbus.WithSubscriberBuffer(16))
 	defer bus.Close()
@@ -256,6 +354,15 @@ func TestRunnerPublishesReasoningSummaryEvents(t *testing.T) {
 	if kinds[eventbus.KindReasoningSummaryCompleted] != "Checking files before editing." {
 		t.Fatalf("reasoning completed = %q", kinds[eventbus.KindReasoningSummaryCompleted])
 	}
+}
+
+func openSessionStore(t *testing.T, dataDir string) *session.Store {
+	t.Helper()
+	store, err := session.Open(dataDir)
+	if err != nil {
+		t.Fatalf("session store: %v", err)
+	}
+	return store
 }
 
 type captureProvider struct {

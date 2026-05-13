@@ -71,6 +71,64 @@ func (s *Store) Create(ctx context.Context, title string, parentSessionID string
 	return session, nil
 }
 
+func (s *Store) Ensure(ctx context.Context, session Session) (Session, error) {
+	if err := ctx.Err(); err != nil {
+		return Session{}, err
+	}
+	if strings.TrimSpace(session.ID) == "" {
+		return Session{}, errors.New("session id is required")
+	}
+	now := s.now()
+	session.Title = strings.TrimSpace(session.Title)
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if existing, ok := s.sessions[session.ID]; ok {
+		if session.Title != "" && existing.Title == "" {
+			existing.Title = session.Title
+		}
+		existing.UpdatedAt = now
+		s.sessions[session.ID] = existing
+		if err := s.saveLocked(); err != nil {
+			return Session{}, err
+		}
+		return existing, nil
+	}
+	if session.CreatedAt.IsZero() {
+		session.CreatedAt = now
+	}
+	if session.UpdatedAt.IsZero() {
+		session.UpdatedAt = now
+	}
+	s.sessions[session.ID] = session
+	if err := s.saveLocked(); err != nil {
+		delete(s.sessions, session.ID)
+		return Session{}, err
+	}
+	return session, nil
+}
+
+func (s *Store) UpdateMessageCount(ctx context.Context, id string, count int) (Session, error) {
+	if err := ctx.Err(); err != nil {
+		return Session{}, err
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	session, ok := s.sessions[id]
+	if !ok {
+		return Session{}, ErrNotFound
+	}
+	previous := session
+	session.MessageCount = count
+	session.UpdatedAt = s.now()
+	s.sessions[id] = session
+	if err := s.saveLocked(); err != nil {
+		s.sessions[id] = previous
+		return Session{}, err
+	}
+	return session, nil
+}
+
 func (s *Store) Get(ctx context.Context, id string) (Session, bool, error) {
 	if err := ctx.Err(); err != nil {
 		return Session{}, false, err

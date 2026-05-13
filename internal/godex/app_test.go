@@ -24,7 +24,8 @@ func TestNewAppWiresBroadCoreWithMockProvider(t *testing.T) {
 	defer cancel()
 	events := app.Bus.Subscribe(ctx, eventbus.Filter{Kinds: []eventbus.Kind{eventbus.KindRunCompleted}})
 
-	if _, err := app.RunPrompt(context.Background(), "hello"); err != nil {
+	result, err := app.RunPrompt(context.Background(), "hello")
+	if err != nil {
 		t.Fatalf("run: %v", err)
 	}
 
@@ -35,5 +36,20 @@ func TestNewAppWiresBroadCoreWithMockProvider(t *testing.T) {
 		}
 	default:
 		t.Fatal("expected run completed event")
+	}
+
+	messages, err := app.Messages.ListBySession(context.Background(), result.SessionID)
+	if err != nil {
+		t.Fatalf("messages: %v", err)
+	}
+	if len(messages) != 2 || messages[0].Text != "hello" || messages[1].Text != "mock response" {
+		t.Fatalf("messages = %#v", messages)
+	}
+	session, ok, err := app.Sessions.Get(context.Background(), result.SessionID)
+	if err != nil {
+		t.Fatalf("session: %v", err)
+	}
+	if !ok || session.MessageCount != 2 {
+		t.Fatalf("session = %#v ok=%v", session, ok)
 	}
 }
