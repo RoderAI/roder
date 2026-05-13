@@ -10,6 +10,8 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/pandelisz/gode/internal/godex/eventbus"
+	"github.com/pandelisz/gode/internal/godex/hooks"
+	"github.com/pandelisz/gode/internal/godex/permission"
 )
 
 type Call struct {
@@ -27,17 +29,24 @@ type Result struct {
 }
 
 type Tool struct {
-	Name        string
-	Description string
-	Schema      map[string]any
-	ReadOnly    bool
-	Run         func(context.Context, Call) (Result, error)
+	Name          string
+	Description   string
+	Schema        map[string]any
+	ReadOnly      bool
+	Action        permission.Action
+	PathFromInput func(map[string]any) string
+	Network       bool
+	Run           func(context.Context, Call) (Result, error)
 }
 
 type Registry struct {
-	tools       map[string]Tool
-	bus         *eventbus.Bus
-	autoApprove bool
+	tools        map[string]Tool
+	bus          *eventbus.Bus
+	autoApprove  bool
+	permissions  *permission.Service
+	hooks        *hooks.Runner
+	workspace    string
+	allowedTools map[string]struct{}
 }
 
 type Option func(*Registry)
@@ -54,10 +63,40 @@ func WithAutoApprove(autoApprove bool) Option {
 	}
 }
 
+func WithPermissionService(service *permission.Service) Option {
+	return func(r *Registry) {
+		r.permissions = service
+	}
+}
+
+func WithHookRunner(runner *hooks.Runner) Option {
+	return func(r *Registry) {
+		r.hooks = runner
+	}
+}
+
+func WithWorkspace(workspace string) Option {
+	return func(r *Registry) {
+		r.workspace = workspace
+	}
+}
+
+func WithAllowedTools(tools ...string) Option {
+	return func(r *Registry) {
+		for _, tool := range tools {
+			tool = strings.TrimSpace(tool)
+			if tool != "" {
+				r.allowedTools[tool] = struct{}{}
+			}
+		}
+	}
+}
+
 func NewRegistry(opts ...Option) *Registry {
 	r := &Registry{
-		tools:       make(map[string]Tool),
-		autoApprove: true,
+		tools:        make(map[string]Tool),
+		autoApprove:  true,
+		allowedTools: make(map[string]struct{}),
 	}
 	for _, opt := range opts {
 		opt(r)
@@ -90,25 +129,90 @@ func (r *Registry) Run(ctx context.Context, call Call) (Result, error) {
 		call.ID = uuid.NewString()
 	}
 
-	if !tool.ReadOnly && !r.autoApprove {
-		approved, err := r.requestPermission(ctx, tool, call)
-		if err != nil {
-			return Result{}, err
-		}
-		if !approved {
-			return Result{}, errors.New("permission denied")
-		}
+	hookResult, err := r.runHooks(ctx, tool, &call)
+	if err != nil {
+		return Result{}, err
+	}
+	if hookResult.Decision == hooks.DecisionDeny || hookResult.Decision == hooks.DecisionHalt {
+		result := failedResult(Result{}, fmt.Errorf("tool %s blocked by hook: %s", call.Name, hookResult.Decision))
+		r.publish(ctx, eventbus.KindToolFailed, call, toolPayload(tool, call, map[string]any{"error": result.Error, "text": result.Text, "hook_decision": string(hookResult.Decision), "hook_context": hookResult.Context, "hook_warnings": hookResult.Warnings}))
+		return result, nil
 	}
 
-	r.publish(ctx, eventbus.KindToolStarted, call, map[string]any{"tool": call.Name, "tool_call_id": call.ID})
+	if err := r.authorize(ctx, tool, call, hookResult); err != nil {
+		result := failedResult(Result{}, err)
+		r.publish(ctx, eventbus.KindToolFailed, call, toolPayload(tool, call, map[string]any{"error": result.Error, "text": result.Text}))
+		return result, nil
+	}
+
+	r.publish(ctx, eventbus.KindToolStarted, call, toolPayload(tool, call, map[string]any{"hook_decision": string(hookResult.Decision), "hook_context": hookResult.Context, "hook_warnings": hookResult.Warnings}))
 	result, err := tool.Run(ctx, call)
 	if err != nil {
 		result = failedResult(result, err)
-		r.publish(ctx, eventbus.KindToolFailed, call, map[string]any{"tool": call.Name, "tool_call_id": call.ID, "error": result.Error, "text": result.Text})
+		r.publish(ctx, eventbus.KindToolFailed, call, toolPayload(tool, call, map[string]any{"error": result.Error, "text": result.Text}))
 		return result, nil
 	}
-	r.publish(ctx, eventbus.KindToolCompleted, call, map[string]any{"tool": call.Name, "tool_call_id": call.ID, "input": call.Input, "text": result.Text})
+	r.publish(ctx, eventbus.KindToolCompleted, call, toolPayload(tool, call, map[string]any{"text": result.Text}))
 	return result, nil
+}
+
+func (r *Registry) runHooks(ctx context.Context, tool Tool, call *Call) (hooks.HookResult, error) {
+	if r.hooks == nil {
+		return hooks.HookResult{Decision: hooks.DecisionNone, UpdatedInput: call.Input}, nil
+	}
+	result, err := r.hooks.Run(ctx, hooks.HookInput{
+		Tool:      call.Name,
+		SessionID: call.SessionID,
+		Workspace: r.workspace,
+		Input:     call.Input,
+	})
+	if err != nil {
+		return hooks.HookResult{}, err
+	}
+	if result.UpdatedInput != nil {
+		call.Input = result.UpdatedInput
+	}
+	return result, nil
+}
+
+func (r *Registry) authorize(ctx context.Context, tool Tool, call Call, hookResult hooks.HookResult) error {
+	if tool.ReadOnly || r.autoApprove || hookResult.Decision == hooks.DecisionAllow {
+		return nil
+	}
+	if _, ok := r.allowedTools[call.Name]; ok {
+		return nil
+	}
+	action := toolAction(tool)
+	path := toolPath(tool, call.Input)
+	if r.permissions != nil {
+		result, err := r.permissions.Authorize(ctx, permission.Request{
+			SessionID:   call.SessionID,
+			RunID:       call.RunID,
+			Tool:        call.Name,
+			Action:      action,
+			Path:        path,
+			Description: tool.Description,
+			Input:       call.Input,
+		})
+		if err != nil {
+			return err
+		}
+		if !result.Approved {
+			if result.Reason != "" {
+				return fmt.Errorf("permission denied: %s", result.Reason)
+			}
+			return errors.New("permission denied")
+		}
+		return nil
+	}
+	approved, err := r.requestPermission(ctx, tool, call)
+	if err != nil {
+		return err
+	}
+	if !approved {
+		return errors.New("permission denied")
+	}
+	return nil
 }
 
 func failedResult(result Result, err error) Result {
@@ -150,6 +254,8 @@ func (r *Registry) requestPermission(ctx context.Context, tool Tool, call Call) 
 		Payload: map[string]any{
 			"tool":         tool.Name,
 			"tool_call_id": call.ID,
+			"action":       string(toolAction(tool)),
+			"path":         toolPath(tool, call.Input),
 			"description":  tool.Description,
 			"input":        call.Input,
 		},
@@ -191,4 +297,45 @@ type Spec struct {
 	Name        string
 	Description string
 	Schema      map[string]any
+}
+
+func toolAction(tool Tool) permission.Action {
+	if tool.Action != "" {
+		return tool.Action
+	}
+	if tool.Network {
+		return permission.ActionNetwork
+	}
+	if tool.ReadOnly {
+		return permission.ActionRead
+	}
+	return permission.ActionWrite
+}
+
+func toolPath(tool Tool, input map[string]any) string {
+	if tool.PathFromInput != nil {
+		return strings.TrimSpace(tool.PathFromInput(input))
+	}
+	for _, key := range []string{"path", "file", "target"} {
+		if value, ok := input[key].(string); ok {
+			return strings.TrimSpace(value)
+		}
+	}
+	return ""
+}
+
+func toolPayload(tool Tool, call Call, extra map[string]any) map[string]any {
+	payload := map[string]any{
+		"tool":         call.Name,
+		"tool_call_id": call.ID,
+		"input":        call.Input,
+		"action":       string(toolAction(tool)),
+		"path":         toolPath(tool, call.Input),
+	}
+	for key, value := range extra {
+		if value != nil {
+			payload[key] = value
+		}
+	}
+	return payload
 }
