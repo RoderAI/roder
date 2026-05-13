@@ -124,14 +124,17 @@ type ErrorLogEntry struct {
 }
 
 type SettingsDialog struct {
-	Title      string
-	Screen     string
-	MenuItems  []SettingsMenuItem
-	Models     []SettingsModelItem
-	Reasoning  []SettingsReasoningItem
-	ConfigRows []SettingsConfigRow
-	Selected   int
-	Error      string
+	Title             string
+	Screen            string
+	MenuItems         []SettingsMenuItem
+	Models            []SettingsModelItem
+	Reasoning         []SettingsReasoningItem
+	ConfigRows        []SettingsConfigRow
+	Skills            []SettingsSkillItem
+	RecommendedSkills []SettingsRecommendedSkillItem
+	InstallPrompt     SettingsInstallPrompt
+	Selected          int
+	Error             string
 }
 
 type SettingsMenuItem struct {
@@ -165,11 +168,39 @@ type SettingsReasoningItem struct {
 	Selected    bool
 }
 
+type SettingsSkillItem struct {
+	Name        string
+	Description string
+	Path        string
+	Source      string
+	Scope       string
+	State       string
+	Diagnostic  string
+	Enabled     bool
+	Selected    bool
+}
+
+type SettingsRecommendedSkillItem struct {
+	Name     string
+	Source   string
+	State    string
+	Selected bool
+}
+
+type SettingsInstallPrompt struct {
+	Open       bool
+	Source     string
+	Installing bool
+	Error      string
+}
+
 const (
 	SettingsScreenMenu      = "menu"
 	SettingsScreenModels    = "models"
 	SettingsScreenReasoning = "reasoning"
 	SettingsScreenConfig    = "config"
+	SettingsScreenSkills    = "skills"
+	SettingsScreenSkillRecs = "skill-recommendations"
 )
 
 func SettingsMenuItemZoneID(id string) string {
@@ -182,6 +213,14 @@ func SettingsModelZoneID(id string) string {
 
 func SettingsReasoningZoneID(effort string) string {
 	return "settings:reasoning:" + effort
+}
+
+func SettingsSkillZoneID(name string) string {
+	return "settings:skill:" + name
+}
+
+func SettingsRecommendedSkillZoneID(name string) string {
+	return "settings:recommended-skill:" + name
 }
 
 func DialogItemZoneID(kind string, id string) string {

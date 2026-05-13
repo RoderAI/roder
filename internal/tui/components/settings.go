@@ -82,6 +82,10 @@ func settingsContent(width int, settings viewmodel.SettingsDialog, zones *zone.M
 		return reasoningSettingsContent(width, settings.Reasoning, zones)
 	case viewmodel.SettingsScreenConfig:
 		return configSettingsContent(width, settings.ConfigRows)
+	case viewmodel.SettingsScreenSkills:
+		return skillSettingsContent(width, settings.Skills, zones)
+	case viewmodel.SettingsScreenSkillRecs:
+		return recommendedSkillSettingsContent(width, settings.RecommendedSkills, zones)
 	default:
 		return menuSettingsContent(width, settings.MenuItems, zones)
 	}
@@ -97,8 +101,11 @@ func menuSettingsContent(width int, items []viewmodel.SettingsMenuItem, zones *z
 			style = settingsSelectedStyle
 		}
 		main := prefix + settingsLabelValue(width-2, item.Label, item.Value)
-		desc := "  " + settingsDescriptionStyle.Render(truncateCell(item.Description, width-2))
-		block := markSettingsZone(zones, viewmodel.SettingsMenuItemZoneID(item.ID), style.Render(main)) + "\n" + desc
+		block := markSettingsZone(zones, viewmodel.SettingsMenuItemZoneID(item.ID), style.Render(main))
+		if item.Selected && item.Description != "" {
+			desc := "  " + settingsDescriptionStyle.Render(truncateCell(item.Description, width-2))
+			block += "\n" + desc
+		}
 		lines = append(lines, block)
 	}
 	return lines
@@ -159,6 +166,62 @@ func configSettingsContent(width int, rows []viewmodel.SettingsConfigRow) []stri
 	return lines
 }
 
+func skillSettingsContent(width int, items []viewmodel.SettingsSkillItem, zones *zone.Manager) []string {
+	if len(items) == 0 {
+		return []string{settingsDescriptionStyle.Render("No skills installed. Press i to install one or r for recommended skills.")}
+	}
+	lines := make([]string, 0, len(items)*2)
+	for _, item := range items {
+		prefix := "  "
+		style := settingsItemStyle
+		if item.Selected {
+			prefix = "> "
+			style = settingsSelectedStyle
+		}
+		name := item.Name
+		if name == "" {
+			name = "diagnostic"
+		}
+		value := item.State
+		if item.Scope != "" {
+			value += " " + item.Scope
+		}
+		main := prefix + settingsLabelValue(width-2, name, value)
+		detail := item.Description
+		if detail == "" {
+			detail = item.Diagnostic
+		}
+		if detail == "" {
+			detail = item.Path
+		}
+		block := markSettingsZone(zones, viewmodel.SettingsSkillZoneID(item.Name), style.Render(main))
+		if detail != "" {
+			block += "\n" + "  " + settingsDescriptionStyle.Render(truncateCell(detail, width-2))
+		}
+		lines = append(lines, block)
+	}
+	return lines
+}
+
+func recommendedSkillSettingsContent(width int, items []viewmodel.SettingsRecommendedSkillItem, zones *zone.Manager) []string {
+	lines := make([]string, 0, len(items)*2)
+	for _, item := range items {
+		prefix := "  "
+		style := settingsItemStyle
+		if item.Selected {
+			prefix = "> "
+			style = settingsSelectedStyle
+		}
+		main := prefix + settingsLabelValue(width-2, item.Name, item.State)
+		block := markSettingsZone(zones, viewmodel.SettingsRecommendedSkillZoneID(item.Name), style.Render(main))
+		if item.Source != "" {
+			block += "\n" + "  " + settingsDescriptionStyle.Render(truncateCell(item.Source, width-2))
+		}
+		lines = append(lines, block)
+	}
+	return lines
+}
+
 func settingsLabelValue(width int, label string, value string) string {
 	if value == "" {
 		return truncateCell(label, width)
@@ -178,6 +241,10 @@ func settingsHelp(screen string) string {
 		return "enter save default  esc back  up/down navigate  ctrl+p close"
 	case viewmodel.SettingsScreenConfig:
 		return "esc back  ctrl+p close"
+	case viewmodel.SettingsScreenSkills:
+		return "space toggle  i install  r recommended  esc back"
+	case viewmodel.SettingsScreenSkillRecs:
+		return "a install missing  esc back  up/down navigate"
 	default:
 		return "enter open  esc close  up/down navigate"
 	}
