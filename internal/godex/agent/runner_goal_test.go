@@ -83,7 +83,7 @@ func TestRunnerGoalUsageCanBudgetLimit(t *testing.T) {
 	runner := NewRunner(Config{
 		Bus:      bus,
 		Journal:  store,
-		Provider: &captureProvider{finalText: "done"},
+		Provider: &captureProvider{finalText: "done", usage: provider.TokenUsage{InputTokens: 3, OutputTokens: 4, TotalTokens: 7}},
 		Goals:    goalRuntime,
 	})
 
@@ -103,6 +103,31 @@ func TestRunnerGoalUsageCanBudgetLimit(t *testing.T) {
 	}
 	if len(events) == 0 {
 		t.Fatalf("missing budget limited event")
+	}
+}
+
+func TestRunnerGoalUsageUsesProviderTokenUsage(t *testing.T) {
+	goalRuntime := testGoalRuntime(t, nil, nil)
+	budget := int64(1000)
+	if _, err := goalRuntime.Set(context.Background(), goals.SetRequest{SessionID: "s-goal", Objective: "ship", TokenBudget: &budget}); err != nil {
+		t.Fatalf("set goal: %v", err)
+	}
+	runner := NewRunner(Config{
+		Bus:      eventbus.New(eventbus.WithSubscriberBuffer(16)),
+		Provider: &captureProvider{finalText: "done", usage: provider.TokenUsage{InputTokens: 19, OutputTokens: 23, TotalTokens: 42}},
+		Goals:    goalRuntime,
+	})
+	defer runner.bus.Close()
+
+	if _, err := runner.Run(context.Background(), RunRequest{SessionID: "s-goal", Prompt: strings.Repeat("x", 900)}); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	goal, err := goalRuntime.Get(context.Background(), "s-goal")
+	if err != nil {
+		t.Fatalf("get goal: %v", err)
+	}
+	if goal == nil || goal.TokensUsed != 42 {
+		t.Fatalf("goal = %#v, want exact response usage 42", goal)
 	}
 }
 

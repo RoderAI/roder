@@ -165,6 +165,49 @@ func TestRunnerConfiguresOpenAICompactionAndTokenEvents(t *testing.T) {
 	}
 }
 
+func TestRunnerEmitsActualTokenUsageAfterCompletion(t *testing.T) {
+	bus := eventbus.New(eventbus.WithSubscriberBuffer(16))
+	defer bus.Close()
+	store, err := journal.Open(filepath.Join(t.TempDir(), "events.jsonl"))
+	if err != nil {
+		t.Fatalf("journal: %v", err)
+	}
+	defer store.Close()
+	runner := NewRunner(Config{
+		Bus:      bus,
+		Journal:  store,
+		Provider: &captureProvider{name: "openai", finalText: "done", usage: provider.TokenUsage{InputTokens: 25, OutputTokens: 17, TotalTokens: 42}},
+		Model:    "gpt-5.5",
+	})
+
+	if _, err := runner.Run(context.Background(), RunRequest{SessionID: "s-usage", RunID: "r-usage", Prompt: strings.Repeat("long prompt ", 100)}); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	events, err := store.Replay(context.Background(), journal.ReplayFilter{SessionID: "s-usage", RunID: "r-usage", Kinds: []eventbus.Kind{eventbus.KindContextTokensUpdated}})
+	if err != nil {
+		t.Fatalf("replay: %v", err)
+	}
+	var actual struct {
+		Tokens         int    `json:"tokens"`
+		InputTokens    int64  `json:"input_tokens"`
+		OutputTokens   int64  `json:"output_tokens"`
+		TotalTokens    int64  `json:"total_tokens"`
+		CountSource    string `json:"count_source"`
+		UsageIncrement bool   `json:"usage_increment"`
+	}
+	for _, ev := range events {
+		if ev.Source != eventbus.SourceProvider {
+			continue
+		}
+		if err := ev.DecodePayload(&actual); err != nil {
+			t.Fatalf("decode payload: %v", err)
+		}
+	}
+	if actual.CountSource != "response" || !actual.UsageIncrement || actual.Tokens != 42 || actual.InputTokens != 25 || actual.OutputTokens != 17 || actual.TotalTokens != 42 {
+		t.Fatalf("actual usage payload = %#v", actual)
+	}
+}
+
 func TestRunnerOmitsCompactionWhenDisabled(t *testing.T) {
 	capture := &captureProvider{name: "openai", finalText: "done"}
 	runner := NewRunner(Config{
@@ -545,7 +588,11 @@ func TestRunnerPersistsSessionAndMessages(t *testing.T) {
 		Messages: messageStore,
 		Provider: &scriptedProvider{streams: [][]provider.Event{{
 			{Kind: provider.EventDelta, Text: "done"},
-			{Kind: provider.EventCompleted, Text: "done"},
+			{
+				Kind:  provider.EventCompleted,
+				Text:  "done",
+				Usage: provider.TokenUsage{InputTokens: 12, OutputTokens: 8, TotalTokens: 20},
+			},
 		}}},
 	})
 	defer runner.bus.Close()
@@ -566,6 +613,9 @@ func TestRunnerPersistsSessionAndMessages(t *testing.T) {
 	}
 	if !ok || stored.Title != "hello" || stored.MessageCount != 2 {
 		t.Fatalf("session = %#v ok=%v", stored, ok)
+	}
+	if stored.PromptTokens != 12 || stored.CompletionTokens != 8 {
+		t.Fatalf("session token usage = %#v", stored)
 	}
 }
 
@@ -627,6 +677,7 @@ type captureProvider struct {
 	name      string
 	request   provider.Request
 	finalText string
+	usage     provider.TokenUsage
 }
 
 func (p *captureProvider) Name() string {
@@ -641,7 +692,7 @@ func (p *captureProvider) Stream(_ context.Context, req provider.Request) (<-cha
 	events := make(chan provider.Event, 2)
 	errs := make(chan error)
 	events <- provider.Event{Kind: provider.EventDelta, Text: p.finalText}
-	events <- provider.Event{Kind: provider.EventCompleted, Text: p.finalText}
+	events <- provider.Event{Kind: provider.EventCompleted, Text: p.finalText, Usage: p.usage}
 	close(events)
 	close(errs)
 	return events, errs

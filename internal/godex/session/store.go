@@ -129,6 +129,48 @@ func (s *Store) UpdateMessageCount(ctx context.Context, id string, count int) (S
 	return session, nil
 }
 
+func (s *Store) AddTokenUsage(ctx context.Context, id string, promptTokens int64, completionTokens int64) (Session, error) {
+	if err := ctx.Err(); err != nil {
+		return Session{}, err
+	}
+	if promptTokens < 0 {
+		promptTokens = 0
+	}
+	if completionTokens < 0 {
+		completionTokens = 0
+	}
+	if promptTokens == 0 && completionTokens == 0 {
+		return s.GetExisting(ctx, id)
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	session, ok := s.sessions[id]
+	if !ok {
+		return Session{}, ErrNotFound
+	}
+	previous := session
+	session.PromptTokens += promptTokens
+	session.CompletionTokens += completionTokens
+	session.UpdatedAt = s.now()
+	s.sessions[id] = session
+	if err := s.saveLocked(); err != nil {
+		s.sessions[id] = previous
+		return Session{}, err
+	}
+	return session, nil
+}
+
+func (s *Store) GetExisting(ctx context.Context, id string) (Session, error) {
+	session, ok, err := s.Get(ctx, id)
+	if err != nil {
+		return Session{}, err
+	}
+	if !ok {
+		return Session{}, ErrNotFound
+	}
+	return session, nil
+}
+
 func (s *Store) Get(ctx context.Context, id string) (Session, bool, error) {
 	if err := ctx.Err(); err != nil {
 		return Session{}, false, err

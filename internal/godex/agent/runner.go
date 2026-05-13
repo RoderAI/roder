@@ -201,7 +201,7 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (RunResult, error) {
 		if err != nil {
 			return RunResult{}, r.fail(ctx, req, err)
 		}
-		r.recordGoalUsage(ctx, req, providerReq.Messages, time.Since(started))
+		r.recordGoalUsage(ctx, req, outcome.Usage, time.Since(started))
 		messages = outcome.Messages
 		inputItems = providerItemsFromProviderMessages(messages)
 		if outcome.HadToolCall {
@@ -389,6 +389,7 @@ func (r *Runner) emptyCompletionError(req RunRequest, stats runStats) error {
 		"run_id: " + req.RunID,
 		fmt.Sprintf("tool_turns: %d", stats.ToolTurns),
 		fmt.Sprintf("tool_calls: %d", stats.ToolCalls),
+		fmt.Sprintf("tokens_used: %d", stats.TokenUsage.Total()),
 		"provider: " + r.providerName(),
 	}
 	if stats.LastTool != "" {

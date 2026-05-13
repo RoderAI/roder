@@ -85,6 +85,17 @@ func TestOpenAIResponseParamsSupportsLocalItemsPreviousResponseIDAndStoreFalse(t
 	}
 }
 
+func TestOpenAITokenUsageUsesResponseUsageFields(t *testing.T) {
+	usage := openAITokenUsage(responses.ResponseUsage{
+		InputTokens:  11,
+		OutputTokens: 7,
+		TotalTokens:  18,
+	})
+	if usage.InputTokens != 11 || usage.OutputTokens != 7 || usage.Total() != 18 {
+		t.Fatalf("usage = %#v", usage)
+	}
+}
+
 func TestOpenAIResponseParamsIncludesResponseFormat(t *testing.T) {
 	openaiProvider := NewOpenAI("gpt-5.5", "medium")
 

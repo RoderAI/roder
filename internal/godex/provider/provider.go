@@ -85,6 +85,24 @@ type Event struct {
 	ToolRequest *ToolRequest
 	ResponseID  string
 	Items       []Item
+	Usage       TokenUsage
+}
+
+type TokenUsage struct {
+	InputTokens  int64
+	OutputTokens int64
+	TotalTokens  int64
+}
+
+func (u TokenUsage) IsZero() bool {
+	return u.InputTokens == 0 && u.OutputTokens == 0 && u.Total() == 0
+}
+
+func (u TokenUsage) Total() int64 {
+	if u.TotalTokens > 0 {
+		return u.TotalTokens
+	}
+	return u.InputTokens + u.OutputTokens
 }
 
 type CompactionOptions struct {
