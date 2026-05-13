@@ -57,7 +57,8 @@ func Apply(ev eventbus.Event) Update {
 	case eventbus.KindToolCompleted:
 		var payload toolPayload
 		_ = ev.DecodePayload(&payload)
-		return withStatus(withMessage(viewmodel.RoleTool, payload.Tool, summarizeToolTimeline(payload.Tool, payload.Input, payload.Text)), statusWithName("tool completed", payload.Tool))
+		body := summarizeToolTimeline(payload.Tool, payload.Input, payload.Text)
+		return withStatus(withMessage(viewmodel.RoleTool, payload.Tool, appendToolMetadata(body, payload)), statusWithName("tool completed", payload.Tool))
 	case eventbus.KindToolFailed:
 		var payload toolPayload
 		_ = ev.DecodePayload(&payload)
@@ -65,7 +66,7 @@ func Apply(ev eventbus.Event) Update {
 	case eventbus.KindPermissionRequested:
 		var payload toolPayload
 		_ = ev.DecodePayload(&payload)
-		return withStatus(withMessage(viewmodel.RoleSystem, "permission", payload.Tool), "permission requested")
+		return withStatus(withMessage(viewmodel.RoleTool, payload.Tool, permissionSummary(payload)), "permission requested")
 	case eventbus.KindPermissionResponded:
 		var payload permissionPayload
 		_ = ev.DecodePayload(&payload)
@@ -111,10 +112,14 @@ type textPayload struct {
 }
 
 type toolPayload struct {
-	Tool  string         `json:"tool"`
-	Input map[string]any `json:"input"`
-	Text  string         `json:"text"`
-	Error string         `json:"error"`
+	Tool         string         `json:"tool"`
+	Action       string         `json:"action"`
+	Path         string         `json:"path"`
+	Input        map[string]any `json:"input"`
+	Text         string         `json:"text"`
+	Error        string         `json:"error"`
+	HookDecision string         `json:"hook_decision"`
+	HookWarnings []string       `json:"hook_warnings"`
 }
 
 type permissionPayload struct {
@@ -224,6 +229,38 @@ func summarizeToolTimeline(tool string, input map[string]any, output string) str
 	default:
 		return truncate(output, 1600)
 	}
+}
+
+func appendToolMetadata(summary string, payload toolPayload) string {
+	lines := []string{strings.TrimSpace(summary)}
+	if payload.HookDecision != "" {
+		lines = append(lines, "hook: "+payload.HookDecision)
+	}
+	if len(payload.HookWarnings) > 0 {
+		lines = append(lines, "hook warnings: "+strings.Join(payload.HookWarnings, "; "))
+	}
+	return strings.TrimSpace(strings.Join(nonEmpty(lines), "\n"))
+}
+
+func permissionSummary(payload toolPayload) string {
+	lines := []string{"permission requested"}
+	if payload.Action != "" {
+		lines = append(lines, "action: "+payload.Action)
+	}
+	if payload.Path != "" {
+		lines = append(lines, "path: "+payload.Path)
+	}
+	return strings.Join(lines, "\n")
+}
+
+func nonEmpty(lines []string) []string {
+	out := lines[:0]
+	for _, line := range lines {
+		if strings.TrimSpace(line) != "" {
+			out = append(out, line)
+		}
+	}
+	return out
 }
 
 func inputString(input map[string]any, key string) string {

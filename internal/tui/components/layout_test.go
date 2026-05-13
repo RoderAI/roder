@@ -234,6 +234,69 @@ func TestRenderClipsTallToolTranscriptBeforeComposer(t *testing.T) {
 	}
 }
 
+func TestRenderToolCardWithDiffAndMetadata(t *testing.T) {
+	zones := zone.New()
+	t.Cleanup(zones.Close)
+
+	out := zones.Scan(Render(viewmodel.Model{
+		Width:       80,
+		Height:      24,
+		Model:       "gpt-test",
+		Provider:    "codex",
+		Input:       "> Ask gode to work on this repo",
+		InputHeight: 1,
+		Messages: []viewmodel.Message{{
+			ID:    "tool-diff",
+			Role:  viewmodel.RoleTool,
+			Title: "git_diff",
+			Body: strings.Join([]string{
+				"diff --git a/main.go b/main.go",
+				"@@ -1 +1 @@",
+				"-old",
+				"+new",
+				"hook: allow",
+			}, "\n"),
+		}},
+		Status: "tool completed: git_diff",
+	}, zones))
+
+	for _, want := range []string{"TOOL", "git_diff", "diff --git", "-old", "+new"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("rendered output missing %q:\n%s", want, out)
+		}
+	}
+	for i, line := range strings.Split(out, "\n") {
+		if lipgloss.Width(line) > 80 {
+			t.Fatalf("line %d width %d exceeds viewport:\n%s", i, lipgloss.Width(line), out)
+		}
+	}
+}
+
+func TestRenderToolCardShowsHookAndPermissionMetadata(t *testing.T) {
+	zones := zone.New()
+	t.Cleanup(zones.Close)
+
+	out := zones.Scan(Render(viewmodel.Model{
+		Width:       80,
+		Height:      24,
+		Model:       "gpt-test",
+		Provider:    "codex",
+		Input:       "> Ask gode to work on this repo",
+		InputHeight: 1,
+		Messages: []viewmodel.Message{
+			{ID: "tool-shell", Role: viewmodel.RoleTool, Title: "shell", Body: "ok\nhook: allow"},
+			{ID: "tool-perm", Role: viewmodel.RoleTool, Title: "write_file", Body: "permission requested\naction: write\npath: README.md"},
+		},
+		Status: "permission requested",
+	}, zones))
+
+	for _, want := range []string{"TOOL", "shell", "HOOK:", "allow", "write_file", "ACTION:", "README.md"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("rendered output missing %q:\n%s", want, out)
+		}
+	}
+}
+
 func TestRenderKeepsBottomGutterWhenScrolled(t *testing.T) {
 	zones := zone.New()
 	t.Cleanup(zones.Close)
@@ -301,7 +364,7 @@ func TestVisibleMessagesUsesLineScroll(t *testing.T) {
 	messages := []viewmodel.Message{
 		{ID: "m1", Role: viewmodel.RoleUser, Body: "one"},
 		{ID: "m2", Role: viewmodel.RoleAssistant, Body: "two"},
-		{ID: "m3", Role: viewmodel.RoleTool, Body: "three"},
+		{ID: "m3", Role: viewmodel.RoleSystem, Body: "three"},
 	}
 
 	got := visibleMessages(messages, 80, 3, 1, nil)

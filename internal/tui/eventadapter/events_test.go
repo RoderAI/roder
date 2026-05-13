@@ -54,3 +54,47 @@ func TestApplyStateEventsDoNotRenderTranscriptRows(t *testing.T) {
 		}
 	}
 }
+
+func TestApplyPermissionRequestRendersToolMetadata(t *testing.T) {
+	update := Apply(eventbus.Event{
+		Kind: eventbus.KindPermissionRequested,
+		Payload: map[string]any{
+			"tool":   "write_file",
+			"action": "write",
+			"path":   "README.md",
+		},
+	})
+	if len(update.Messages) != 1 {
+		t.Fatalf("messages = %#v", update.Messages)
+	}
+	message := update.Messages[0]
+	if message.Role != viewmodel.RoleTool || message.Title != "write_file" {
+		t.Fatalf("message = %#v", message)
+	}
+	for _, want := range []string{"permission requested", "action: write", "path: README.md"} {
+		if !strings.Contains(message.Body, want) {
+			t.Fatalf("body missing %q:\n%s", want, message.Body)
+		}
+	}
+}
+
+func TestApplyToolCompletedIncludesHookMetadata(t *testing.T) {
+	update := Apply(eventbus.Event{
+		Kind: eventbus.KindToolCompleted,
+		Payload: map[string]any{
+			"tool":          "shell",
+			"text":          "ok",
+			"hook_decision": "allow",
+			"hook_warnings": []string{"checked policy"},
+		},
+	})
+	if len(update.Messages) != 1 {
+		t.Fatalf("messages = %#v", update.Messages)
+	}
+	body := update.Messages[0].Body
+	for _, want := range []string{"ok", "hook: allow", "hook warnings: checked policy"} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("body missing %q:\n%s", want, body)
+		}
+	}
+}
