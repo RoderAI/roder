@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"os"
@@ -11,6 +12,8 @@ import (
 	"github.com/pandelisz/gode/internal/godex/acp"
 	"github.com/pandelisz/gode/internal/godex/appserver"
 	"github.com/pandelisz/gode/internal/godex/codexauth"
+	"github.com/pandelisz/gode/internal/godex/configstore"
+	"github.com/pandelisz/gode/internal/godex/provider"
 	"github.com/pandelisz/gode/internal/tui"
 )
 
@@ -43,6 +46,18 @@ func run(ctx context.Context, args []string) error {
 
 	if len(args) > 0 && args[0] == "app-server" {
 		return runAppServer(ctx, args[1:])
+	}
+
+	if len(args) > 0 && args[0] == "dirs" {
+		return runDirs(args[1:])
+	}
+
+	if len(args) > 0 && args[0] == "models" {
+		return runModels(args[1:])
+	}
+
+	if len(args) > 0 && args[0] == "config" {
+		return runConfig(args[1:])
 	}
 
 	cfg, err := parseConfig(args)
@@ -119,13 +134,8 @@ func runAuth(ctx context.Context, args []string) error {
 }
 
 func runACP(ctx context.Context, args []string) error {
-	flags := newFlagSet("gode acp")
-	cfg := godex.DefaultConfig()
-	bindConfigFlags(flags, &cfg)
-	if err := flags.Parse(args); err != nil {
-		return err
-	}
-	if err := applySavedDefaults(&cfg, flags); err != nil {
+	cfg, err := parseConfigWithName("gode acp", args)
+	if err != nil {
 		return err
 	}
 	app, err := godex.New(ctx, cfg)
@@ -175,9 +185,11 @@ func runPrompt(ctx context.Context, args []string) error {
 	if err := flags.Parse(args); err != nil {
 		return err
 	}
-	if err := applySavedDefaults(&cfg, flags); err != nil {
+	loaded, err := loadConfigFromFlags(cfg, flags)
+	if err != nil {
 		return err
 	}
+	cfg = loaded.Config
 	prompt := strings.TrimSpace(strings.Join(flags.Args(), " "))
 	if prompt == "" {
 		return fmt.Errorf("prompt is required")
@@ -196,16 +208,24 @@ func runPrompt(ctx context.Context, args []string) error {
 }
 
 func parseConfig(args []string) (godex.Config, error) {
+	return parseConfigWithName("gode", args)
+}
+
+func parseConfigWithName(name string, args []string) (godex.Config, error) {
 	flags := newFlagSet("gode")
+	if name != "" {
+		flags = newFlagSet(name)
+	}
 	cfg := godex.DefaultConfig()
 	bindConfigFlags(flags, &cfg)
 	if err := flags.Parse(args); err != nil {
 		return cfg, err
 	}
-	if err := applySavedDefaults(&cfg, flags); err != nil {
+	loaded, err := loadConfigFromFlags(cfg, flags)
+	if err != nil {
 		return cfg, err
 	}
-	return cfg, nil
+	return loaded.Config, nil
 }
 
 func parseAppServerConfig(args []string) (godex.Config, appserver.ListenConfig, error) {
@@ -217,9 +237,11 @@ func parseAppServerConfig(args []string) (godex.Config, appserver.ListenConfig, 
 	if err := flags.Parse(args); err != nil {
 		return cfg, appserver.ListenConfig{}, err
 	}
-	if err := applySavedDefaults(&cfg, flags); err != nil {
+	loaded, err := loadConfigFromFlags(cfg, flags)
+	if err != nil {
 		return cfg, appserver.ListenConfig{}, err
 	}
+	cfg = loaded.Config
 	listen, err := appserver.ParseListenURL(listenRaw)
 	if err != nil {
 		return cfg, appserver.ListenConfig{}, err
@@ -245,46 +267,63 @@ func newFlagSet(name string) *flag.FlagSet {
 	return flags
 }
 
-func applySavedDefaults(cfg *godex.Config, flags *flag.FlagSet) error {
-	settings, err := godex.LoadSettings(cfg.DataDir)
+func loadConfigFromFlags(cfg godex.Config, flags *flag.FlagSet) (configstore.Loaded, error) {
+	return configstore.Load(configstore.LoadOptions{
+		Workspace: cfg.Workspace,
+		DataDir:   cfg.DataDir,
+		Flags:     cfg,
+		FlagSet:   visitedFlags(flags),
+	})
+}
+
+func visitedFlags(flags *flag.FlagSet) map[string]bool {
+	out := map[string]bool{}
+	flags.Visit(func(f *flag.Flag) {
+		out[f.Name] = true
+	})
+	return out
+}
+
+func runDirs(args []string) error {
+	flags := newFlagSet("gode dirs")
+	cfg := godex.DefaultConfig()
+	bindConfigFlags(flags, &cfg)
+	if err := flags.Parse(args); err != nil {
+		return err
+	}
+	loaded, err := loadConfigFromFlags(cfg, flags)
 	if err != nil {
 		return err
 	}
-	if settings.FastMode && !flagWasSet(flags, "fast-mode") {
-		cfg.FastMode = true
-	}
-	if flagWasSet(flags, "model") {
-		return nil
-	}
-	if settings.DefaultModel != "" {
-		cfg.Model = settings.DefaultModel
-		model := godex.ModelConfigFor(settings.DefaultModel)
-		if !flagWasSet(flags, "provider") {
-			cfg.Provider = model.Provider
-		}
-		if !flagWasSet(flags, "reasoning") {
-			cfg.Reasoning = model.DefaultReasoning
-			if settings.DefaultReasoning != "" && model.SupportsReasoning(settings.DefaultReasoning) {
-				cfg.Reasoning = settings.DefaultReasoning
-			}
-		}
-		return nil
-	}
-	if settings.DefaultReasoning != "" && !flagWasSet(flags, "reasoning") {
-		model := godex.ModelConfigFor(cfg.Model)
-		if model.SupportsReasoning(settings.DefaultReasoning) {
-			cfg.Reasoning = settings.DefaultReasoning
-		}
+	fmt.Printf("workspace\t%s\n", loaded.Config.Workspace)
+	fmt.Printf("data_dir\t%s\n", loaded.Config.DataDir)
+	for _, path := range loaded.Paths {
+		fmt.Printf("config\t%s\n", path)
 	}
 	return nil
 }
 
-func flagWasSet(flags *flag.FlagSet, name string) bool {
-	found := false
-	flags.Visit(func(f *flag.Flag) {
-		if f.Name == name {
-			found = true
-		}
-	})
-	return found
+func runModels(args []string) error {
+	flags := newFlagSet("gode models")
+	cfg := godex.DefaultConfig()
+	bindConfigFlags(flags, &cfg)
+	if err := flags.Parse(args); err != nil {
+		return err
+	}
+	if _, err := loadConfigFromFlags(cfg, flags); err != nil {
+		return err
+	}
+	for _, model := range provider.Catalog.Models(false) {
+		fmt.Printf("%s\t%s\t%s\t%s\n", model.Provider, model.ID, model.DisplayName, model.DefaultReasoning)
+	}
+	return nil
+}
+
+func runConfig(args []string) error {
+	if len(args) == 0 || args[0] != "schema" {
+		return fmt.Errorf("usage: gode config schema")
+	}
+	encoder := json.NewEncoder(os.Stdout)
+	encoder.SetIndent("", "  ")
+	return encoder.Encode(configstore.Schema())
 }

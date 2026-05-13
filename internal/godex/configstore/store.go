@@ -82,6 +82,9 @@ func Load(opts LoadOptions) (Loaded, error) {
 			paths = append(paths, path)
 		}
 	}
+	if isSet(opts.FlagSet, "data-dir") || isSet(opts.FlagSet, "data_dir") {
+		cfg.DataDir = opts.Flags.DataDir
+	}
 	for _, path := range dataConfigPaths(cfg.DataDir) {
 		if loaded, err := applyFile(&cfg, SourceData, path); err != nil {
 			return Loaded{}, err
