@@ -111,6 +111,24 @@ func TestOpenAIResponseParamsUsesInputItemList(t *testing.T) {
 	}
 }
 
+func TestOpenAIResponseParamsPreservesRawCompactionItems(t *testing.T) {
+	openaiProvider := NewOpenAI("gpt-5.5", "medium")
+	rawItem := json.RawMessage(`{"type":"compaction","encrypted_content":"opaque","id":"cmp_123"}`)
+
+	params := openaiProvider.responseParams(Request{
+		Messages: []Message{{RawJSON: rawItem}},
+	})
+	data, err := json.Marshal(params.Input)
+	if err != nil {
+		t.Fatalf("marshal input: %v", err)
+	}
+	for _, want := range []string{`"type":"compaction"`, `"encrypted_content":"opaque"`, `"id":"cmp_123"`} {
+		if !strings.Contains(string(data), want) {
+			t.Fatalf("input JSON missing %q:\n%s", want, data)
+		}
+	}
+}
+
 func TestOpenAIResponseParamsIncludesServerSideCompaction(t *testing.T) {
 	openaiProvider := NewOpenAI("gpt-5.5", "medium")
 
@@ -130,12 +148,14 @@ func TestOpenAIResponseParamsIncludesServerSideCompaction(t *testing.T) {
 	raw := string(data)
 	for _, want := range []string{
 		`"context_management":[{"type":"compaction","compact_threshold":800000}]`,
-		`"truncation":"disabled"`,
 		`"store":false`,
 	} {
 		if !strings.Contains(raw, want) {
 			t.Fatalf("params JSON missing %q:\n%s", want, raw)
 		}
+	}
+	if strings.Contains(raw, `"truncation"`) {
+		t.Fatalf("params JSON should omit truncation for Codex backend compatibility:\n%s", raw)
 	}
 }
 

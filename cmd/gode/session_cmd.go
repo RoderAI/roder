@@ -16,7 +16,7 @@ import (
 
 func runSession(args []string) error {
 	if len(args) == 0 {
-		return fmt.Errorf("usage: gode session list|show|debug|last|rename|delete")
+		return fmt.Errorf("usage: gode session list|show|debug|compact|last|rename|delete")
 	}
 	command := args[0]
 	flags := newFlagSet("gode session " + command)
@@ -32,7 +32,7 @@ func runSession(args []string) error {
 		if err := flags.Parse(args[1:]); err != nil {
 			return err
 		}
-	case "show", "delete":
+	case "show", "delete", "compact":
 		if err := flags.Parse(args[1:]); err != nil {
 			return err
 		}
@@ -135,6 +135,17 @@ func runSession(args []string) error {
 			return err
 		}
 		fmt.Println("deleted\t" + flags.Arg(0))
+	case "compact":
+		app, err := godex.New(ctx, loaded.Config)
+		if err != nil {
+			return err
+		}
+		defer app.Close(ctx)
+		result, err := app.CompactSession(ctx, flags.Arg(0))
+		if err != nil {
+			return err
+		}
+		fmt.Printf("compacted\t%s\t%s\titems=%d\n", result.SessionID, result.ResponseID, result.OutputItems)
 	}
 	return nil
 }

@@ -132,6 +132,23 @@ func (o *OpenAI) Stream(ctx context.Context, req Request) (<-chan Event, <-chan 
 	return events, errs
 }
 
+func (o *OpenAI) Compact(ctx context.Context, req CompactRequest) (CompactResult, error) {
+	params := responses.ResponseCompactParams{
+		Model: responses.ResponseCompactParamsModel(firstNonEmpty(req.Model, o.model)),
+		Input: responses.ResponseCompactParamsInputUnion{
+			OfResponseInputItemArray: responseInputItems(req.Messages),
+		},
+	}
+	if strings.TrimSpace(req.Instructions) != "" {
+		params.Instructions = param.NewOpt(req.Instructions)
+	}
+	result, err := o.client.Responses.Compact(ctx, params)
+	if err != nil {
+		return CompactResult{}, err
+	}
+	return CompactResult{ID: result.ID, Output: rawResponseOutputItems(result.Output)}, nil
+}
+
 func (o *OpenAI) responseParams(req Request) responses.ResponseNewParams {
 	params := responses.ResponseNewParams{
 		Model: responses.ResponsesModel(o.model),
@@ -159,7 +176,6 @@ func (o *OpenAI) responseParams(req Request) responses.ResponseNewParams {
 			Type:             "compaction",
 			CompactThreshold: param.NewOpt(int64(req.Compaction.CompactThreshold)),
 		}}
-		params.Truncation = responses.ResponseNewParamsTruncationDisabled
 	}
 	return params
 }
@@ -284,6 +300,10 @@ func toolNames(tools []ToolSpec) string {
 func responseInputItems(messages []Message) responses.ResponseInputParam {
 	items := make(responses.ResponseInputParam, 0, len(messages))
 	for _, msg := range messages {
+		if len(msg.RawJSON) > 0 {
+			items = append(items, param.Override[responses.ResponseInputItemUnionParam](json.RawMessage(msg.RawJSON)))
+			continue
+		}
 		if msg.Role == RoleAssistant && msg.ToolCallID != "" && msg.ToolName != "" {
 			arguments := strings.TrimSpace(msg.ToolArguments)
 			if arguments == "" {
@@ -303,6 +323,22 @@ func responseInputItems(messages []Message) responses.ResponseInputParam {
 		items = append(items, responses.ResponseInputItemParamOfMessage(content, easyInputRole(msg.Role)))
 	}
 	return items
+}
+
+func rawResponseOutputItems(items []responses.ResponseOutputItemUnion) []json.RawMessage {
+	out := make([]json.RawMessage, 0, len(items))
+	for _, item := range items {
+		if item.AsAny() != nil {
+			if data, err := json.Marshal(item.AsAny()); err == nil {
+				out = append(out, data)
+				continue
+			}
+		}
+		if data, err := json.Marshal(item); err == nil {
+			out = append(out, data)
+		}
+	}
+	return out
 }
 
 func easyInputRole(role Role) responses.EasyInputMessageRole {

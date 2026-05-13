@@ -2,12 +2,17 @@ package godex
 
 import (
 	"context"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/pandelisz/gode/internal/godex/eventbus"
+	"github.com/pandelisz/gode/internal/godex/journal"
+	messagestore "github.com/pandelisz/gode/internal/godex/message"
+	"github.com/pandelisz/gode/internal/godex/provider"
+	"github.com/pandelisz/gode/internal/godex/session"
 )
 
 func TestNewAppWiresBroadCoreWithMockProvider(t *testing.T) {
@@ -164,4 +169,98 @@ func TestNewAppLoadsProjectCommands(t *testing.T) {
 	if len(app.commands) != 1 || app.commands[0].ID != "project:test" {
 		t.Fatalf("commands = %#v", app.commands)
 	}
+}
+
+func TestCompactSessionPersistsRawCompactionItems(t *testing.T) {
+	dataDir := t.TempDir()
+	sessionStore, err := session.Open(dataDir)
+	if err != nil {
+		t.Fatalf("session store: %v", err)
+	}
+	if _, err := sessionStore.Ensure(context.Background(), session.Session{ID: "s1", Title: "hello"}); err != nil {
+		t.Fatalf("ensure session: %v", err)
+	}
+	messageStore := messagestore.Open(dataDir)
+	if _, err := messageStore.Append(context.Background(), messagestore.Message{SessionID: "s1", Role: messagestore.RoleUser, Text: "hello"}); err != nil {
+		t.Fatalf("append message: %v", err)
+	}
+	journalStore, err := journal.Open(filepath.Join(dataDir, "events.jsonl"))
+	if err != nil {
+		t.Fatalf("journal: %v", err)
+	}
+	defer journalStore.Close()
+	compactor := &fakeCompactor{
+		output: []json.RawMessage{
+			json.RawMessage(`{"type":"message","role":"assistant","content":[{"type":"output_text","text":"summary"}]}`),
+			json.RawMessage(`{"type":"compaction","encrypted_content":"opaque","id":"cmp_123"}`),
+		},
+	}
+	app := &App{
+		Config:   Config{Model: "gpt-5.5"},
+		Bus:      eventbus.New(),
+		Journal:  journalStore,
+		Sessions: sessionStore,
+		Messages: messageStore,
+		provider: compactor,
+	}
+	defer app.Bus.Close()
+
+	result, err := app.CompactSession(context.Background(), "s1")
+	if err != nil {
+		t.Fatalf("compact: %v", err)
+	}
+	if result.ResponseID != "cmp_resp" || result.OutputItems != 2 {
+		t.Fatalf("result = %#v", result)
+	}
+	if len(compactor.request.Messages) != 1 || compactor.request.Messages[0].Content != "hello" {
+		t.Fatalf("compact request messages = %#v", compactor.request.Messages)
+	}
+	messages, err := messageStore.ListBySession(context.Background(), "s1")
+	if err != nil {
+		t.Fatalf("list messages: %v", err)
+	}
+	if len(messages) != 3 {
+		t.Fatalf("messages = %#v", messages)
+	}
+	last := messages[len(messages)-1]
+	if last.Role != messagestore.RoleCompaction || !strings.Contains(string(last.RawJSON), `"encrypted_content":"opaque"`) {
+		t.Fatalf("last message = %#v", last)
+	}
+	next := providerMessagesFromStored(messages)
+	if len(next) != 2 || len(next[0].RawJSON) == 0 || len(next[1].RawJSON) == 0 {
+		t.Fatalf("provider messages should preserve raw compaction item: %#v", next)
+	}
+	events, err := journalStore.Replay(context.Background(), journal.ReplayFilter{SessionID: "s1"})
+	if err != nil {
+		t.Fatalf("replay: %v", err)
+	}
+	kinds := map[eventbus.Kind]bool{}
+	for _, ev := range events {
+		kinds[ev.Kind] = true
+	}
+	if !kinds[eventbus.KindContextCompactionStarted] || !kinds[eventbus.KindContextCompactionCompleted] {
+		t.Fatalf("missing compaction events: %#v", kinds)
+	}
+}
+
+type fakeCompactor struct {
+	request provider.CompactRequest
+	output  []json.RawMessage
+}
+
+func (f *fakeCompactor) Name() string {
+	return "openai"
+}
+
+func (f *fakeCompactor) Stream(context.Context, provider.Request) (<-chan provider.Event, <-chan error) {
+	events := make(chan provider.Event)
+	errs := make(chan error)
+	close(events)
+	close(errs)
+	return events, errs
+}
+
+func (f *fakeCompactor) Compact(_ context.Context, req provider.CompactRequest) (provider.CompactResult, error) {
+	f.request = req
+	return provider.CompactResult{ID: "cmp_resp", Output: f.output}, nil
 }
