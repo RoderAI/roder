@@ -18,7 +18,8 @@ import (
 )
 
 var version = "dev"
-var runResumeTUI = tui.RunResume
+var pickResumeSession = tui.PickResumeSession
+var runResumeTUI = tui.RunSession
 
 func main() {
 	if err := run(context.Background(), os.Args[1:]); err != nil {
@@ -111,7 +112,14 @@ func runResume(ctx context.Context, args []string) error {
 		return err
 	}
 	defer app.Close(ctx)
-	return runResumeTUI(ctx, app)
+	sessionID, err := pickResumeSession(ctx, app)
+	if err != nil {
+		return err
+	}
+	if sessionID == "" {
+		return nil
+	}
+	return runResumeTUI(ctx, app, sessionID)
 }
 
 func runAuth(ctx context.Context, args []string) error {
