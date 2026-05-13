@@ -2,7 +2,9 @@ package godex
 
 import (
 	"context"
+	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/pandelisz/gode/internal/godex/eventbus"
@@ -51,5 +53,41 @@ func TestNewAppWiresBroadCoreWithMockProvider(t *testing.T) {
 	}
 	if !ok || session.MessageCount != 2 {
 		t.Fatalf("session = %#v ok=%v", session, ok)
+	}
+}
+
+func TestNewAppLoadsRepoContextMessages(t *testing.T) {
+	workspace := filepath.Join(t.TempDir(), "workspace")
+	if err := os.MkdirAll(workspace, 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(workspace, "AGENTS.md"), []byte("repo rules"), 0o644); err != nil {
+		t.Fatalf("write agents: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(workspace, ".gode.toml"), []byte(`[agent]
+extra_context = "inline repo context"
+`), 0o644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+
+	app, err := New(context.Background(), Config{
+		Workspace:   workspace,
+		DataDir:     t.TempDir(),
+		Provider:    "mock",
+		AutoApprove: true,
+	})
+	if err != nil {
+		t.Fatalf("new app: %v", err)
+	}
+	defer app.Close(context.Background())
+
+	joined := ""
+	for _, msg := range app.contextMessages {
+		joined += msg.Content + "\n"
+	}
+	for _, want := range []string{"repo rules", "AGENTS.md", "inline repo context"} {
+		if !strings.Contains(joined, want) {
+			t.Fatalf("context messages missing %q:\n%s", want, joined)
+		}
 	}
 }

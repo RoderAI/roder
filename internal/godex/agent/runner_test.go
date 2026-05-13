@@ -99,6 +99,32 @@ func TestRunnerSendsGodeInstructions(t *testing.T) {
 	}
 }
 
+func TestRunnerPrependsContextMessages(t *testing.T) {
+	capture := &captureProvider{finalText: "done"}
+	runner := NewRunner(Config{
+		Bus:      eventbus.New(eventbus.WithSubscriberBuffer(16)),
+		Provider: capture,
+		ContextMessages: []provider.Message{{
+			Role:    provider.RoleSystem,
+			Content: "<repo-context-file path=\"AGENTS.md\">rules</repo-context-file>",
+		}},
+	})
+	defer runner.bus.Close()
+
+	if _, err := runner.Run(context.Background(), RunRequest{Prompt: "hello"}); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	if len(capture.request.Messages) != 2 {
+		t.Fatalf("messages = %#v", capture.request.Messages)
+	}
+	if capture.request.Messages[0].Role != provider.RoleSystem || !strings.Contains(capture.request.Messages[0].Content, "AGENTS.md") {
+		t.Fatalf("context message = %#v", capture.request.Messages[0])
+	}
+	if capture.request.Messages[1].Role != provider.RoleUser || capture.request.Messages[1].Content != "hello" {
+		t.Fatalf("user message = %#v", capture.request.Messages[1])
+	}
+}
+
 func TestRunnerCarriesFunctionCallBeforeToolOutput(t *testing.T) {
 	reg := tools.NewRegistry(tools.WithAutoApprove(true))
 	reg.Register(tools.Tool{
