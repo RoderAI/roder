@@ -1,6 +1,9 @@
 package provider
 
-import "context"
+import (
+	"context"
+	"encoding/json"
+)
 
 type Mock struct {
 	finalText string
@@ -46,4 +49,18 @@ func (m *Mock) Stream(ctx context.Context, _ Request) (<-chan Event, <-chan erro
 		}
 	}()
 	return events, errs
+}
+
+func (m *Mock) Compact(ctx context.Context, _ CompactRequest) (CompactResult, error) {
+	select {
+	case <-ctx.Done():
+		return CompactResult{}, ctx.Err()
+	default:
+	}
+	return CompactResult{
+		ID: "mock_compaction",
+		Output: []json.RawMessage{
+			json.RawMessage(`{"type":"compaction","encrypted_content":"mock","id":"cmp_mock"}`),
+		},
+	}, nil
 }

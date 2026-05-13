@@ -13,6 +13,9 @@ import (
 )
 
 func (m *Model) handleGoalInput(prompt string) (bool, tea.Cmd) {
+	if handled, cmd := m.handleCompactInput(prompt); handled {
+		return true, cmd
+	}
 	cmd, ok, err := tuigoals.Parse(prompt)
 	if !ok {
 		return false, nil

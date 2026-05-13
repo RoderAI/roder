@@ -43,6 +43,11 @@ func (m Model) slashMenuItems() []dialogs.CommandItem {
 		return nil
 	}
 	query = strings.ToLower(query)
+	for _, item := range m.commandItems() {
+		if slashCommandExact(item, query) {
+			return nil
+		}
+	}
 	items := make([]dialogs.CommandItem, 0, maxSlashMenuItems)
 	for _, item := range m.commandItems() {
 		if slashCommandMatches(item, query) {
@@ -80,6 +85,12 @@ func slashCommandMatches(item dialogs.CommandItem, query string) bool {
 	title := strings.ToLower(strings.TrimPrefix(item.Title, "/"))
 	id := strings.ToLower(item.ID)
 	return strings.HasPrefix(title, query) || strings.HasPrefix(id, query)
+}
+
+func slashCommandExact(item dialogs.CommandItem, query string) bool {
+	title := strings.ToLower(strings.TrimPrefix(item.Title, "/"))
+	id := strings.ToLower(item.ID)
+	return title == query || id == query
 }
 
 func (m *Model) moveSlashSelection(delta int) {

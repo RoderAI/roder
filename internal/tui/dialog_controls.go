@@ -342,6 +342,11 @@ func builtinCommandItems() []dialogs.CommandItem {
 		Title:       "/goal",
 		Description: "set, show, pause, resume, clear, or budget the current goal",
 		Source:      "builtin",
+	}, {
+		ID:          "compact",
+		Title:       "/compact",
+		Description: "force compaction for the current session",
+		Source:      "builtin",
 	}}
 }
 
