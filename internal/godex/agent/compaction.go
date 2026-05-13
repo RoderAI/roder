@@ -45,11 +45,12 @@ func (r *Runner) compactMessagesIfNeeded(ctx context.Context, req RunRequest, me
 	})
 
 	result, err := compactor.Compact(ctx, provider.CompactRequest{
-		SessionID:    req.SessionID,
-		RunID:        req.RunID,
-		Model:        options.Model,
-		Instructions: firstNonEmpty(req.Instructions, GodeInstructions),
-		Messages:     compactable,
+		SessionID:      req.SessionID,
+		RunID:          req.RunID,
+		Model:          options.Model,
+		PromptCacheKey: r.promptCacheKey(),
+		Instructions:   firstNonEmpty(req.Instructions, GodeInstructions),
+		Messages:       compactable,
 	})
 	if err != nil {
 		r.emit(ctx, eventbus.Event{

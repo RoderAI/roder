@@ -203,6 +203,7 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (RunResult, error) {
 		providerReq := provider.Request{
 			SessionID:      req.SessionID,
 			RunID:          req.RunID,
+			PromptCacheKey: r.promptCacheKey(),
 			Instructions:   firstNonEmpty(req.Instructions, GodeInstructions),
 			ResponseFormat: req.ResponseFormat,
 			Messages:       messages,

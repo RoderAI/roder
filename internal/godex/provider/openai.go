@@ -169,6 +169,15 @@ func openAITokenUsage(usage responses.ResponseUsage) TokenUsage {
 }
 
 func (o *OpenAI) Compact(ctx context.Context, req CompactRequest) (CompactResult, error) {
+	params := o.compactParams(req)
+	result, err := o.client.Responses.Compact(ctx, params)
+	if err != nil {
+		return CompactResult{}, err
+	}
+	return CompactResult{ID: result.ID, Output: rawResponseOutputItems(result.Output)}, nil
+}
+
+func (o *OpenAI) compactParams(req CompactRequest) responses.ResponseCompactParams {
 	params := responses.ResponseCompactParams{
 		Model: responses.ResponseCompactParamsModel(firstNonEmpty(req.Model, o.model)),
 		Input: responses.ResponseCompactParamsInputUnion{
@@ -178,11 +187,10 @@ func (o *OpenAI) Compact(ctx context.Context, req CompactRequest) (CompactResult
 	if strings.TrimSpace(req.Instructions) != "" {
 		params.Instructions = param.NewOpt(req.Instructions)
 	}
-	result, err := o.client.Responses.Compact(ctx, params)
-	if err != nil {
-		return CompactResult{}, err
+	if req.PromptCacheKey != "" {
+		params.PromptCacheKey = param.NewOpt(req.PromptCacheKey)
 	}
-	return CompactResult{ID: result.ID, Output: rawResponseOutputItems(result.Output)}, nil
+	return params
 }
 
 func (o *OpenAI) responseParams(req Request) responses.ResponseNewParams {
@@ -204,6 +212,9 @@ func (o *OpenAI) responseParams(req Request) responses.ResponseNewParams {
 	}
 	if req.PreviousResponseID != "" {
 		params.PreviousResponseID = param.NewOpt(req.PreviousResponseID)
+	}
+	if req.PromptCacheKey != "" {
+		params.PromptCacheKey = param.NewOpt(req.PromptCacheKey)
 	}
 	if len(req.Tools) > 0 {
 		params.ParallelToolCalls = param.NewOpt(true)

@@ -123,6 +123,7 @@ type CompactionOptions struct {
 type Request struct {
 	SessionID          string
 	RunID              string
+	PromptCacheKey     string
 	Instructions       string
 	ResponseFormat     string
 	Messages           []Message
@@ -139,11 +140,12 @@ type Provider interface {
 }
 
 type CompactRequest struct {
-	SessionID    string
-	RunID        string
-	Model        string
-	Instructions string
-	Messages     []Message
+	SessionID      string
+	RunID          string
+	Model          string
+	PromptCacheKey string
+	Instructions   string
+	Messages       []Message
 }
 
 type CompactResult struct {

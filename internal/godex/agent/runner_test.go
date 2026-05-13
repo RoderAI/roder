@@ -113,6 +113,38 @@ func TestRunnerSendsGodeInstructions(t *testing.T) {
 	}
 }
 
+func TestRunnerSetsStablePromptCacheKey(t *testing.T) {
+	workspace := filepath.Join(t.TempDir(), "repo")
+	capture := &captureProvider{name: "openai", finalText: "done"}
+	runner := NewRunner(Config{
+		Bus:       eventbus.New(eventbus.WithSubscriberBuffer(16)),
+		Provider:  capture,
+		Model:     "gpt-5.5",
+		Workspace: workspace,
+	})
+	defer runner.bus.Close()
+
+	if _, err := runner.Run(context.Background(), RunRequest{Prompt: "hello"}); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	first := capture.request.PromptCacheKey
+	if first == "" {
+		t.Fatal("prompt cache key should be set")
+	}
+	if !strings.HasPrefix(first, "gode:openai:gpt-5-5:") {
+		t.Fatalf("prompt cache key = %q", first)
+	}
+	if strings.Contains(first, workspace) {
+		t.Fatalf("prompt cache key should not expose workspace path: %q", first)
+	}
+	if _, err := runner.Run(context.Background(), RunRequest{Prompt: "different prompt"}); err != nil {
+		t.Fatalf("second run: %v", err)
+	}
+	if capture.request.PromptCacheKey != first {
+		t.Fatalf("prompt cache key changed across same workspace/model: %q != %q", capture.request.PromptCacheKey, first)
+	}
+}
+
 func TestRunnerConfiguresOpenAICompactionAndTokenEvents(t *testing.T) {
 	bus := eventbus.New(eventbus.WithSubscriberBuffer(16))
 	defer bus.Close()

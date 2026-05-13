@@ -57,6 +57,31 @@ func TestOpenAIResponseParamsIncludesInstructions(t *testing.T) {
 	}
 }
 
+func TestOpenAIResponseParamsIncludesPromptCacheKey(t *testing.T) {
+	openaiProvider := NewOpenAI("gpt-5.5", "medium")
+
+	params := openaiProvider.responseParams(Request{
+		PromptCacheKey: "gode:openai:gpt-5-5:abc123",
+		Messages:       []Message{{Role: RoleUser, Content: "hello"}},
+	})
+	if !params.PromptCacheKey.Valid() || params.PromptCacheKey.Value != "gode:openai:gpt-5-5:abc123" {
+		t.Fatalf("prompt cache key = %#v", params.PromptCacheKey)
+	}
+}
+
+func TestOpenAICompactParamsIncludesPromptCacheKey(t *testing.T) {
+	openaiProvider := NewOpenAI("gpt-5.5", "medium")
+
+	params := openaiProvider.compactParams(CompactRequest{
+		Model:          "gpt-5.5",
+		PromptCacheKey: "gode:openai:gpt-5-5:abc123",
+		Messages:       []Message{{Role: RoleUser, Content: "hello"}},
+	})
+	if !params.PromptCacheKey.Valid() || params.PromptCacheKey.Value != "gode:openai:gpt-5-5:abc123" {
+		t.Fatalf("prompt cache key = %#v", params.PromptCacheKey)
+	}
+}
+
 func TestOpenAIResponseParamsSupportsLocalItemsPreviousResponseIDAndStoreFalse(t *testing.T) {
 	openaiProvider := NewOpenAI("gpt-5.5", "medium")
 
