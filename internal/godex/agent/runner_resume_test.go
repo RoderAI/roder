@@ -3,10 +3,13 @@ package agent
 import (
 	"context"
 	"encoding/json"
+	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/pandelisz/gode/internal/godex/eventbus"
+	"github.com/pandelisz/gode/internal/godex/journal"
+	messagestore "github.com/pandelisz/gode/internal/godex/message"
 	"github.com/pandelisz/gode/internal/godex/provider"
 	"github.com/pandelisz/gode/internal/godex/session"
 )
@@ -135,6 +138,91 @@ func TestRunnerWithoutResumeIgnoresPriorItems(t *testing.T) {
 	}
 }
 
+func TestRunnerResumeIgnoresProjectedMessages(t *testing.T) {
+	messageStore := messagestore.Open(t.TempDir())
+	if _, err := messageStore.Append(context.Background(), messagestore.Message{SessionID: "s1", RunID: "old", Role: messagestore.RoleUser, Text: "previous prompt"}); err != nil {
+		t.Fatalf("append prior user: %v", err)
+	}
+	if _, err := messageStore.Append(context.Background(), messagestore.Message{SessionID: "s1", RunID: "old", Role: messagestore.RoleAssistant, Text: "previous answer"}); err != nil {
+		t.Fatalf("append prior assistant: %v", err)
+	}
+	script := &scriptedProvider{streams: [][]provider.Event{{
+		{Kind: provider.EventDelta, Text: "done"},
+		{Kind: provider.EventCompleted, Text: "done"},
+	}}}
+	runner := NewRunner(Config{
+		Bus:      eventbus.New(eventbus.WithSubscriberBuffer(16)),
+		Messages: messageStore,
+		Provider: script,
+	})
+	defer runner.bus.Close()
+
+	if _, err := runner.Run(context.Background(), RunRequest{SessionID: "s1", Prompt: "next prompt", Resume: true}); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	got := script.requests[0].Messages
+	if len(got) != 1 {
+		t.Fatalf("messages = %#v", got)
+	}
+	if got[0].Role != provider.RoleUser || got[0].Content != "next prompt" {
+		t.Fatalf("new prompt = %#v", got[0])
+	}
+}
+
+func TestRunnerResumeIgnoresProjectedCompactionMessages(t *testing.T) {
+	messageStore := messagestore.Open(t.TempDir())
+	if _, err := messageStore.Append(context.Background(), messagestore.Message{SessionID: "s1", RunID: "old", Role: messagestore.RoleUser, Text: "old prompt"}); err != nil {
+		t.Fatalf("append prior user: %v", err)
+	}
+	raw := json.RawMessage(`{"type":"compaction","encrypted_content":"opaque","id":"cmp_123"}`)
+	if _, err := messageStore.Append(context.Background(), messagestore.Message{SessionID: "s1", RunID: "compact", Role: messagestore.RoleCompaction, Text: "canonical compacted context", RawJSON: raw}); err != nil {
+		t.Fatalf("append compaction: %v", err)
+	}
+	capture := &captureProvider{finalText: "done"}
+	runner := NewRunner(Config{
+		Bus:      eventbus.New(eventbus.WithSubscriberBuffer(16)),
+		Messages: messageStore,
+		Provider: capture,
+	})
+	defer runner.bus.Close()
+
+	if _, err := runner.Run(context.Background(), RunRequest{SessionID: "s1", Prompt: "next prompt", Resume: true}); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	got := capture.request.Messages
+	if len(got) != 1 {
+		t.Fatalf("messages = %#v", got)
+	}
+	if got[0].Role != provider.RoleUser || got[0].Content != "next prompt" {
+		t.Fatalf("new prompt = %#v", got[0])
+	}
+}
+
+func TestRunnerWithoutResumeIgnoresPriorMessages(t *testing.T) {
+	messageStore := messagestore.Open(t.TempDir())
+	if _, err := messageStore.Append(context.Background(), messagestore.Message{SessionID: "s1", Role: messagestore.RoleUser, Text: "previous prompt"}); err != nil {
+		t.Fatalf("append prior: %v", err)
+	}
+	script := &scriptedProvider{streams: [][]provider.Event{{
+		{Kind: provider.EventDelta, Text: "done"},
+		{Kind: provider.EventCompleted, Text: "done"},
+	}}}
+	runner := NewRunner(Config{
+		Bus:      eventbus.New(eventbus.WithSubscriberBuffer(16)),
+		Messages: messageStore,
+		Provider: script,
+	})
+	defer runner.bus.Close()
+
+	if _, err := runner.Run(context.Background(), RunRequest{SessionID: "s1", Prompt: "fresh prompt"}); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	got := script.requests[0].Messages
+	if len(got) != 1 || got[0].Content != "fresh prompt" {
+		t.Fatalf("messages = %#v", got)
+	}
+}
+
 func TestRunnerPersistsTurnResponseIDAndProviderItems(t *testing.T) {
 	dataDir := t.TempDir()
 	turnStore := openTurnStore(t, dataDir)
@@ -183,6 +271,71 @@ func TestRunnerPersistsTurnResponseIDAndProviderItems(t *testing.T) {
 	}
 	if items[1].ID != "msg_123" || items[1].Role != "assistant" || !strings.Contains(string(items[1].RawJSON), `"type":"message"`) {
 		t.Fatalf("assistant item = %#v", items[1])
+	}
+}
+
+func TestRunnerPrecompactsOversizedResumeBeforeProviderRequest(t *testing.T) {
+	bus := eventbus.New(eventbus.WithSubscriberBuffer(32))
+	defer bus.Close()
+	dataDir := t.TempDir()
+	store, err := journal.Open(filepath.Join(dataDir, "events.jsonl"))
+	if err != nil {
+		t.Fatalf("journal: %v", err)
+	}
+	defer store.Close()
+	itemStore := openItemStore(t, dataDir)
+	messageStore := messagestore.Open(dataDir)
+	if _, err := itemStore.Append(context.Background(), session.Item{SessionID: "s-compact", TurnID: "old", Kind: session.ItemMessage, Role: "user", Text: strings.Repeat("large context ", 80)}); err != nil {
+		t.Fatalf("append prior: %v", err)
+	}
+	compactProvider := &compactingCaptureProvider{
+		captureProvider: captureProvider{name: "openai", finalText: "done"},
+		output:          []json.RawMessage{json.RawMessage(`{"type":"compaction","encrypted_content":"opaque"}`)},
+	}
+	runner := NewRunner(Config{
+		Bus:                   bus,
+		Journal:               store,
+		Items:                 itemStore,
+		Messages:              messageStore,
+		Provider:              compactProvider,
+		Model:                 "gpt-5.5",
+		AutoCompactTokenLimit: 50,
+	})
+
+	if _, err := runner.Run(context.Background(), RunRequest{SessionID: "s-compact", RunID: "r-compact", Prompt: "continue", Resume: true}); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	if len(compactProvider.compactRequest.Messages) != 1 || !strings.Contains(compactProvider.compactRequest.Messages[0].Content, "large context") {
+		t.Fatalf("compaction request = %#v", compactProvider.compactRequest.Messages)
+	}
+	got := compactProvider.request.Messages
+	if len(got) != 2 {
+		t.Fatalf("provider messages = %#v", got)
+	}
+	if len(got[0].RawJSON) == 0 || !strings.Contains(string(got[0].RawJSON), `"encrypted_content":"opaque"`) {
+		t.Fatalf("first provider message should be raw compaction item: %#v", got[0])
+	}
+	if got[1].Role != provider.RoleUser || got[1].Content != "continue" {
+		t.Fatalf("current prompt should be preserved after compaction: %#v", got[1])
+	}
+	events, err := store.Replay(context.Background(), journal.ReplayFilter{SessionID: "s-compact", RunID: "r-compact"})
+	if err != nil {
+		t.Fatalf("replay: %v", err)
+	}
+	kinds := map[eventbus.Kind]bool{}
+	for _, ev := range events {
+		kinds[ev.Kind] = true
+	}
+	if !kinds[eventbus.KindContextCompactionStarted] || !kinds[eventbus.KindContextCompactionCompleted] {
+		t.Fatalf("missing compaction events: %#v", kinds)
+	}
+	stored, err := itemStore.ListBySession(context.Background(), "s-compact")
+	if err != nil {
+		t.Fatalf("stored items: %v", err)
+	}
+	canonical := providerItemsFromSessionItems(stored)
+	if len(canonical) < 2 || canonical[0].Kind != provider.ItemCompaction || len(canonical[0].RawJSON) == 0 || canonical[1].Role != "user" || canonical[1].Text != "continue" {
+		t.Fatalf("canonical stored items = %#v", canonical)
 	}
 }
 
