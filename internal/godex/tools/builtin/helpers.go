@@ -1,9 +1,13 @@
 package builtin
 
 func objectSchema(required ...string) map[string]any {
+	properties := map[string]any{}
+	for _, name := range required {
+		properties[name] = map[string]any{"type": "string"}
+	}
 	return map[string]any{
 		"type":       "object",
-		"properties": map[string]any{},
+		"properties": properties,
 		"required":   required,
 	}
 }
