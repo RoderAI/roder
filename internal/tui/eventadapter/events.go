@@ -52,6 +52,19 @@ func Apply(ev eventbus.Event) Update {
 		var payload contextTokensPayload
 		_ = ev.DecodePayload(&payload)
 		return Update{ContextUsedPercent: payload.Percent, HasContextTokens: true}
+	case eventbus.KindContextCompactionStarted:
+		return status("compacting context")
+	case eventbus.KindContextCompactionCompleted:
+		var payload compactionPayload
+		_ = ev.DecodePayload(&payload)
+		if payload.OutputItems > 0 {
+			return status("context compacted")
+		}
+		return status("context compacted")
+	case eventbus.KindContextCompactionFailed:
+		var payload errorPayload
+		_ = ev.DecodePayload(&payload)
+		return withStatus(withMessage(viewmodel.RoleError, "compact", payload.Message()), "compact failed - ctrl+l errors")
 	case eventbus.KindUserSteerSubmitted:
 		return status("steer queued for active run")
 	case eventbus.KindUserSteerApplied:
@@ -168,6 +181,10 @@ type errorPayload struct {
 
 type contextTokensPayload struct {
 	Percent float64 `json:"percent"`
+}
+
+type compactionPayload struct {
+	OutputItems int `json:"output_items"`
 }
 
 func (p toolPayload) MessageKey() string {
