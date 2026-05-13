@@ -35,6 +35,10 @@ const (
 	KindContextCompactionCompleted  Kind = "context.compaction_completed"
 	KindContextCompactionFailed     Kind = "context.compaction_failed"
 
+	KindGoalUpdated Kind = "goal.updated"
+	KindGoalCleared Kind = "goal.cleared"
+	KindGoalLimited Kind = "goal.budget_limited"
+
 	KindAssistantDelta            Kind = "assistant.delta"
 	KindAssistantCompleted        Kind = "assistant.completed"
 	KindReasoningSummaryDelta     Kind = "reasoning_summary.delta"

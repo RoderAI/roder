@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/pandelisz/gode/internal/godex/eventbus"
+	"github.com/pandelisz/gode/internal/godex/goals"
 	"github.com/pandelisz/gode/internal/godex/journal"
 	messagestore "github.com/pandelisz/gode/internal/godex/message"
 	"github.com/pandelisz/gode/internal/godex/provider"
@@ -62,6 +63,58 @@ func TestNewAppWiresBroadCoreWithMockProvider(t *testing.T) {
 	}
 	if app.LSP == nil {
 		t.Fatal("lsp manager should be wired")
+	}
+	if app.Goals == nil {
+		t.Fatal("goal runtime should be wired")
+	}
+}
+
+func TestAppGoalMethodsPublishEvents(t *testing.T) {
+	app, err := New(context.Background(), Config{
+		Workspace:   filepath.Join(t.TempDir(), "workspace"),
+		DataDir:     t.TempDir(),
+		Provider:    "mock",
+		AutoApprove: true,
+	})
+	if err != nil {
+		t.Fatalf("new app: %v", err)
+	}
+	defer app.Close(context.Background())
+
+	events := app.Bus.Subscribe(context.Background(), eventbus.Filter{SessionID: "s1"})
+	goal, err := app.SetGoal(context.Background(), goals.SetRequest{SessionID: "s1", Objective: "ship it"})
+	if err != nil {
+		t.Fatalf("set goal: %v", err)
+	}
+	if goal.Status != goals.StatusActive {
+		t.Fatalf("goal = %#v", goal)
+	}
+	ev := <-events
+	if ev.Kind != eventbus.KindGoalUpdated {
+		t.Fatalf("event = %#v", ev)
+	}
+	var payload struct {
+		SessionID       string `json:"session_id"`
+		GoalID          string `json:"goal_id"`
+		Status          string `json:"status"`
+		TokensUsed      int64  `json:"tokens_used"`
+		TimeUsedSeconds int64  `json:"time_used_seconds"`
+	}
+	if err := ev.DecodePayload(&payload); err != nil {
+		t.Fatalf("decode payload: %v", err)
+	}
+	if payload.SessionID != "s1" || payload.GoalID == "" || payload.Status != "active" {
+		t.Fatalf("payload = %#v", payload)
+	}
+	if _, err := app.SetGoal(context.Background(), goals.SetRequest{SessionID: "s1", Objective: "replace"}); !errors.Is(err, goals.ErrActiveGoalExists) {
+		t.Fatalf("replace err = %v", err)
+	}
+	if err := app.ClearGoal(context.Background(), "s1"); err != nil {
+		t.Fatalf("clear goal: %v", err)
+	}
+	ev = <-events
+	if ev.Kind != eventbus.KindGoalCleared {
+		t.Fatalf("clear event = %#v", ev)
 	}
 }
 
