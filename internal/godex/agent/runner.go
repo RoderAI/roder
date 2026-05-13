@@ -9,7 +9,6 @@ import (
 
 	"github.com/google/uuid"
 	godecommands "github.com/pandelisz/gode/internal/godex/commands"
-	"github.com/pandelisz/gode/internal/godex/contextwindow"
 	"github.com/pandelisz/gode/internal/godex/eventbus"
 	"github.com/pandelisz/gode/internal/godex/goals"
 	"github.com/pandelisz/gode/internal/godex/journal"
@@ -172,6 +171,10 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (RunResult, error) {
 	final := ""
 	stats := runStats{}
 	for turn := 0; turn < maxTurns; turn++ {
+		messages, err = r.compactMessagesIfNeeded(ctx, req, messages)
+		if err != nil {
+			return RunResult{}, r.fail(ctx, req, err)
+		}
 		compaction := r.compactionOptions(ctx, req, messages)
 		providerReq := provider.Request{
 			SessionID:      req.SessionID,
@@ -199,6 +202,10 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (RunResult, error) {
 	}
 	if final == "" && stats.ToolCalls > 0 {
 		messages = append(messages, provider.Message{Role: provider.RoleUser, Content: finalAfterToolBudgetPrompt(maxTurns)})
+		messages, err = r.compactMessagesIfNeeded(ctx, req, messages)
+		if err != nil {
+			return RunResult{}, r.fail(ctx, req, err)
+		}
 		compaction := r.compactionOptions(ctx, req, messages)
 		providerReq := provider.Request{
 			SessionID:      req.SessionID,
@@ -330,66 +337,6 @@ func (r *Runner) refreshSessionMessageCount(ctx context.Context, sessionID strin
 		return
 	}
 	_, _ = r.sessions.UpdateMessageCount(ctx, sessionID, len(messages))
-}
-
-func (r *Runner) compactionOptions(ctx context.Context, req RunRequest, messages []provider.Message) provider.CompactionOptions {
-	model := firstNonEmpty(r.model, "gpt-5.5")
-	window := contextwindow.ForModel(model)
-	estimate := contextwindow.EstimateMessages(contextWindowMessages(messages), window)
-	r.emit(ctx, eventbus.Event{
-		Kind:      eventbus.KindContextTokensUpdated,
-		Source:    eventbus.SourceAgent,
-		SessionID: req.SessionID,
-		RunID:     req.RunID,
-		Payload: map[string]any{
-			"model":          model,
-			"tokens":         estimate.Tokens,
-			"context_window": estimate.ContextWindow,
-			"percent":        estimate.Percent,
-		},
-	})
-
-	options := contextwindow.OptionsForModel(model, r.disableAutoCompaction, r.autoCompactTokenLimit)
-	if !options.Enabled || r.providerName() != "openai" {
-		return provider.CompactionOptions{
-			Model:            options.Model,
-			ContextWindow:    options.ContextWindow,
-			CompactThreshold: options.CompactThreshold,
-		}
-	}
-	r.emit(ctx, eventbus.Event{
-		Kind:      eventbus.KindContextCompactionConfigured,
-		Source:    eventbus.SourceAgent,
-		SessionID: req.SessionID,
-		RunID:     req.RunID,
-		Payload: map[string]any{
-			"model":             model,
-			"tokens":            estimate.Tokens,
-			"context_window":    options.ContextWindow,
-			"compact_threshold": options.CompactThreshold,
-		},
-	})
-	return provider.CompactionOptions{
-		Enabled:          true,
-		Model:            options.Model,
-		ContextWindow:    options.ContextWindow,
-		CompactThreshold: options.CompactThreshold,
-	}
-}
-
-func contextWindowMessages(messages []provider.Message) []contextwindow.Message {
-	out := make([]contextwindow.Message, 0, len(messages))
-	for _, msg := range messages {
-		out = append(out, contextwindow.Message{
-			Role:          string(msg.Role),
-			Content:       msg.Content,
-			ToolCallID:    msg.ToolCallID,
-			ToolName:      msg.ToolName,
-			ToolArguments: msg.ToolArguments,
-			RawJSON:       msg.RawJSON,
-		})
-	}
-	return out
 }
 
 func toolResponseContent(name string, result tools.Result) string {

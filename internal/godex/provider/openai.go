@@ -162,6 +162,9 @@ func (o *OpenAI) responseParams(req Request) responses.ResponseNewParams {
 		Store: param.NewOpt(false),
 		Tools: openAITools(req.Tools),
 	}
+	if len(req.Tools) > 0 {
+		params.ParallelToolCalls = param.NewOpt(true)
+	}
 	if req.Instructions != "" {
 		params.Instructions = param.NewOpt(req.Instructions)
 	}
