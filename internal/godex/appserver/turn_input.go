@@ -3,11 +3,18 @@ package appserver
 import (
 	"encoding/json"
 	"fmt"
+	"io"
+	"net/http"
+	"os"
+	"path/filepath"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/pandelisz/gode/internal/godex/imageinput"
 	"github.com/pandelisz/gode/internal/godex/provider"
 )
+
+const maxLocalFileInputBytes = 512 * 1024
 
 type builtTurnInput struct {
 	Prompt        string
@@ -56,6 +63,22 @@ func buildTurnInput(prompt string, input []json.RawMessage) (builtTurnInput, err
 				return builtTurnInput{}, err
 			}
 			images = append(images, provider.Image{URL: encoded.URL, Detail: firstTurnInputNonEmpty(item.Detail, "high")})
+		case "file", "local_file", "localFile":
+			if item.Path == "" {
+				return builtTurnInput{}, fmt.Errorf("local file input requires path")
+			}
+			fileInput, err := buildLocalFileInput(item.Path)
+			if err != nil {
+				return builtTurnInput{}, err
+			}
+			if fileInput.Image != nil {
+				images = append(images, provider.Image{URL: fileInput.Image.URL, Detail: firstTurnInputNonEmpty(item.Detail, "high")})
+				if fileInput.Text != "" {
+					parts = append(parts, fileInput.Text)
+				}
+				continue
+			}
+			parts = append(parts, fileInput.Text)
 		default:
 			return builtTurnInput{}, fmt.Errorf("unsupported input type %q", item.Type)
 		}
@@ -91,4 +114,88 @@ func turnInputPrompt(prompt string, input []json.RawMessage) (string, error) {
 		return "", err
 	}
 	return built.Prompt, nil
+}
+
+type localFileInput struct {
+	Text  string
+	Image *imageinput.Image
+}
+
+func buildLocalFileInput(path string) (localFileInput, error) {
+	if strings.TrimSpace(path) == "" {
+		return localFileInput{}, fmt.Errorf("local file input requires path")
+	}
+	if encoded, err := imageinput.EncodeFile(path); err == nil {
+		text := fmt.Sprintf("Attached image: %s", path)
+		return localFileInput{Text: text, Image: &encoded}, nil
+	}
+
+	info, err := os.Stat(path)
+	if err != nil {
+		return localFileInput{}, err
+	}
+	if info.IsDir() {
+		return localFileInput{}, fmt.Errorf("local file input must be a file: %s", path)
+	}
+
+	data, truncated, err := readLocalFilePrefix(path, maxLocalFileInputBytes)
+	if err != nil {
+		return localFileInput{}, err
+	}
+	mime := http.DetectContentType(data)
+	name := filepath.Base(path)
+	if isBinaryContent(data) {
+		return localFileInput{Text: fmt.Sprintf("Attached file: %s\nPath: %s\nMIME: %s\nSize: %d bytes\nContent omitted because the file appears to be binary.", name, path, mime, info.Size())}, nil
+	}
+
+	truncation := ""
+	if truncated {
+		truncation = fmt.Sprintf("\n\n[File truncated after %d bytes; original size %d bytes.]", maxLocalFileInputBytes, info.Size())
+	}
+	text := fmt.Sprintf("Attached file: %s\nPath: %s\nMIME: %s\nSize: %d bytes\n\n```%s\n%s%s\n```", name, path, mime, info.Size(), codeFenceLanguage(name), string(data), truncation)
+	return localFileInput{Text: text}, nil
+}
+
+func readLocalFilePrefix(path string, limit int64) ([]byte, bool, error) {
+	file, err := os.Open(path)
+	if err != nil {
+		return nil, false, err
+	}
+	defer file.Close()
+
+	data := make([]byte, limit+1)
+	n, err := io.ReadFull(file, data)
+	if err != nil && err != io.ErrUnexpectedEOF && err != io.EOF {
+		return nil, false, err
+	}
+	truncated := int64(n) > limit
+	if truncated {
+		n = int(limit)
+	}
+	return data[:n], truncated, nil
+}
+
+func isBinaryContent(data []byte) bool {
+	if len(data) == 0 {
+		return false
+	}
+	if !utf8.Valid(data) {
+		return true
+	}
+	for _, b := range data {
+		if b == 0 {
+			return true
+		}
+	}
+	return false
+}
+
+func codeFenceLanguage(name string) string {
+	ext := strings.TrimPrefix(strings.ToLower(filepath.Ext(name)), ".")
+	switch ext {
+	case "go", "ts", "tsx", "js", "jsx", "json", "md", "py", "rs", "toml", "yaml", "yml", "sh", "css", "html":
+		return ext
+	default:
+		return ""
+	}
 }

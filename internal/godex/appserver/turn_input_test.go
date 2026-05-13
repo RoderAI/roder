@@ -48,6 +48,76 @@ func TestBuildTurnInputCombinesTextAndImages(t *testing.T) {
 	}
 }
 
+func TestBuildTurnInputAddsLocalFileContent(t *testing.T) {
+	dir := t.TempDir()
+	filePath := filepath.Join(dir, "notes.md")
+	if err := os.WriteFile(filePath, []byte("# Notes\n\nship attachments\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	input := rawInput(t,
+		map[string]any{"type": "text", "text": "review this"},
+		map[string]any{"type": "local_file", "path": filePath},
+	)
+	built, err := buildTurnInput("", input)
+	if err != nil {
+		t.Fatalf("build: %v", err)
+	}
+	if built.ReplacePrompt {
+		t.Fatalf("ReplacePrompt = true")
+	}
+	for _, want := range []string{"review this", "Attached file: notes.md", "Path: " + filePath, "ship attachments"} {
+		if !strings.Contains(built.Prompt, want) {
+			t.Fatalf("prompt missing %q:\n%s", want, built.Prompt)
+		}
+	}
+}
+
+func TestBuildTurnInputUsesLocalFileImagesAsImageInput(t *testing.T) {
+	dir := t.TempDir()
+	imagePath := filepath.Join(dir, "shot.png")
+	if err := os.WriteFile(imagePath, tinyPNG, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	input := rawInput(t, map[string]any{"type": "local_file", "path": imagePath})
+	built, err := buildTurnInput("", input)
+	if err != nil {
+		t.Fatalf("build: %v", err)
+	}
+	if !built.ReplacePrompt {
+		t.Fatalf("ReplacePrompt = false")
+	}
+	if len(built.InputItems) != 1 || len(built.InputItems[0].Images) != 1 {
+		t.Fatalf("items = %#v", built.InputItems)
+	}
+	if !strings.Contains(built.Prompt, "Attached image: "+imagePath) {
+		t.Fatalf("prompt = %q", built.Prompt)
+	}
+	if !strings.HasPrefix(built.InputItems[0].Images[0].URL, "data:image/png;base64,") {
+		t.Fatalf("image url = %q", built.InputItems[0].Images[0].URL)
+	}
+}
+
+func TestBuildTurnInputAddsBinaryLocalFileMetadata(t *testing.T) {
+	dir := t.TempDir()
+	filePath := filepath.Join(dir, "archive.bin")
+	if err := os.WriteFile(filePath, []byte{0, 1, 2, 3}, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	input := rawInput(t, map[string]any{"type": "local_file", "path": filePath})
+	built, err := buildTurnInput("", input)
+	if err != nil {
+		t.Fatalf("build: %v", err)
+	}
+	for _, want := range []string{"Attached file: archive.bin", "Content omitted because the file appears to be binary."} {
+		if !strings.Contains(built.Prompt, want) {
+			t.Fatalf("prompt missing %q:\n%s", want, built.Prompt)
+		}
+	}
+}
+
 func rawInput(t *testing.T, values ...map[string]any) []json.RawMessage {
 	t.Helper()
 	out := make([]json.RawMessage, 0, len(values))

@@ -61,6 +61,13 @@ func TestConnectionRequiresInitializeAndStreamsThreadTurnNotifications(t *testin
 	if !slices.ContainsFunc(methods, func(method any) bool { return method == "turn/steer" }) {
 		t.Fatalf("initialize capabilities missing turn/steer: %#v", capabilities)
 	}
+	turnInput := objectField(t, capabilities, "turnInput")
+	inputTypes := sliceField(t, turnInput, "types")
+	for _, want := range []string{"local_image", "local_file"} {
+		if !slices.ContainsFunc(inputTypes, func(inputType any) bool { return inputType == want }) {
+			t.Fatalf("initialize capabilities missing input type %s: %#v", want, capabilities)
+		}
+	}
 
 	if err := conn.HandleJSON(ctx, []byte(`{"method":"initialized"}`)); err != nil {
 		t.Fatalf("initialized notification: %v", err)
