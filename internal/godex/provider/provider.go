@@ -12,9 +12,11 @@ const (
 )
 
 type Message struct {
-	Role       Role
-	Content    string
-	ToolCallID string
+	Role          Role
+	Content       string
+	ToolCallID    string
+	ToolName      string
+	ToolArguments string
 }
 
 type ToolSpec struct {
@@ -24,9 +26,10 @@ type ToolSpec struct {
 }
 
 type ToolRequest struct {
-	ID    string
-	Name  string
-	Input map[string]any
+	ID        string
+	Name      string
+	Input     map[string]any
+	Arguments string
 }
 
 type EventKind string

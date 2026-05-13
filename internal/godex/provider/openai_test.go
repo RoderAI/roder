@@ -1,6 +1,7 @@
 package provider
 
 import (
+	"encoding/json"
 	"io"
 	"net/http"
 	"strings"
@@ -44,6 +45,44 @@ func TestOpenAIResponseParamsIncludesInstructions(t *testing.T) {
 	}
 	if params.Instructions.Value != "You are gode." {
 		t.Fatalf("instructions = %q", params.Instructions.Value)
+	}
+}
+
+func TestOpenAIResponseParamsUsesInputItemList(t *testing.T) {
+	openaiProvider := NewOpenAI("gpt-5.5", "medium")
+
+	params := openaiProvider.responseParams(Request{
+		Messages: []Message{
+			{Role: RoleUser, Content: "hello"},
+			{Role: RoleAssistant, Content: "hi"},
+			{Role: RoleAssistant, ToolCallID: "call_123", ToolName: "read_file", ToolArguments: `{"path":"README.md"}`},
+			{Role: RoleTool, ToolCallID: "call_123", Content: "tool result"},
+		},
+	})
+	if params.Input.OfString.Valid() {
+		t.Fatalf("input should not use string form: %#v", params.Input.OfString)
+	}
+	if len(params.Input.OfInputItemList) != 4 {
+		t.Fatalf("input list length = %d", len(params.Input.OfInputItemList))
+	}
+	data, err := json.Marshal(params.Input)
+	if err != nil {
+		t.Fatalf("marshal input: %v", err)
+	}
+	raw := string(data)
+	for _, want := range []string{
+		`"role":"user"`,
+		`"role":"assistant"`,
+		`"type":"function_call"`,
+		`"type":"function_call_output"`,
+		`"call_id":"call_123"`,
+		`"name":"read_file"`,
+		`"arguments":"{\"path\":\"README.md\"}"`,
+		`"output":"tool result"`,
+	} {
+		if !strings.Contains(raw, want) {
+			t.Fatalf("input JSON missing %q:\n%s", want, raw)
+		}
 	}
 }
 

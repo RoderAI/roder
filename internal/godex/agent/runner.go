@@ -147,6 +147,12 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (RunResult, error) {
 						},
 					})
 					if r.tools != nil {
+						messages = append(messages, provider.Message{
+							Role:          provider.RoleAssistant,
+							ToolCallID:    ev.ToolRequest.ID,
+							ToolName:      ev.ToolRequest.Name,
+							ToolArguments: ev.ToolRequest.Arguments,
+						})
 						result, err := r.tools.Run(ctx, tools.Call{
 							ID:        ev.ToolRequest.ID,
 							Name:      ev.ToolRequest.Name,
