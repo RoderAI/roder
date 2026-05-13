@@ -14,6 +14,7 @@ type anthropicStreamState struct {
 	pendingTools      map[int64]*anthropicPendingTool
 	emittedTools      map[int64]bool
 	malformedToolJSON bool
+	usage             TokenUsage
 }
 
 type anthropicPendingTool struct {
@@ -38,15 +39,20 @@ func (s *anthropicStreamState) Handle(ev anthropic.MessageStreamEventUnion) ([]E
 		s.malformedToolJSON = true
 	}
 	switch ev.Type {
+	case "message_start":
+		s.usage = anthropicTokenUsage(ev.AsMessageStart().Message.Usage)
 	case "content_block_start":
 		return s.handleContentBlockStart(ev.AsContentBlockStart())
 	case "content_block_delta":
 		return s.handleContentBlockDelta(ev.AsContentBlockDelta())
 	case "content_block_stop":
 		return s.handleContentBlockStop(ev.AsContentBlockStop())
+	case "message_delta":
+		s.mergeAnthropicDeltaUsage(ev.AsMessageDelta().Usage)
 	default:
 		return nil, nil
 	}
+	return nil, nil
 }
 
 func (s *anthropicStreamState) canContinueAfterAccumulateError(ev anthropic.MessageStreamEventUnion) bool {
@@ -127,6 +133,27 @@ func (s *anthropicStreamState) CompletedEvent() Event {
 		Kind:  EventCompleted,
 		Text:  s.text.String(),
 		Items: anthropicItemsFromMessage(s.message),
+		Usage: s.usage,
+	}
+}
+
+func (s *anthropicStreamState) mergeAnthropicDeltaUsage(usage anthropic.MessageDeltaUsage) {
+	if usage.InputTokens > 0 || usage.CacheCreationInputTokens > 0 || usage.CacheReadInputTokens > 0 {
+		s.usage.InputTokens = usage.InputTokens + usage.CacheCreationInputTokens + usage.CacheReadInputTokens
+	}
+	if usage.OutputTokens > 0 {
+		s.usage.OutputTokens = usage.OutputTokens
+	}
+	s.usage.TotalTokens = s.usage.InputTokens + s.usage.OutputTokens
+}
+
+func anthropicTokenUsage(usage anthropic.Usage) TokenUsage {
+	input := usage.InputTokens + usage.CacheCreationInputTokens + usage.CacheReadInputTokens
+	output := usage.OutputTokens
+	return TokenUsage{
+		InputTokens:  input,
+		OutputTokens: output,
+		TotalTokens:  input + output,
 	}
 }
 

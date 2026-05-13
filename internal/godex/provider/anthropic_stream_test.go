@@ -24,6 +24,9 @@ func TestAnthropicStreamTextOnly(t *testing.T) {
 	if len(events[2].Items) != 1 || events[2].Items[0].Kind != ItemMessage || events[2].Items[0].Text != "Hello there" {
 		t.Fatalf("completed items = %#v", events[2].Items)
 	}
+	if events[2].Usage.InputTokens != 1 || events[2].Usage.OutputTokens != 1 || events[2].Usage.Total() != 2 {
+		t.Fatalf("usage = %#v", events[2].Usage)
+	}
 }
 
 func TestAnthropicStreamTextThenTool(t *testing.T) {
@@ -49,6 +52,9 @@ func TestAnthropicStreamTextThenTool(t *testing.T) {
 	}
 	if len(events[2].Items) != 2 || events[2].Items[0].Kind != ItemMessage || events[2].Items[1].Kind != ItemFunctionCall {
 		t.Fatalf("completed items = %#v", events[2].Items)
+	}
+	if events[2].Usage.InputTokens != 1 || events[2].Usage.OutputTokens != 12 || events[2].Usage.Total() != 13 {
+		t.Fatalf("usage = %#v", events[2].Usage)
 	}
 }
 

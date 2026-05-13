@@ -5,7 +5,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/pandelisz/gode/internal/godex/contextwindow"
 	"github.com/pandelisz/gode/internal/godex/goals"
 	"github.com/pandelisz/gode/internal/godex/provider"
 )
@@ -25,12 +24,9 @@ func (r *Runner) goalContextMessage(ctx context.Context, sessionID string) (prov
 	return provider.Message{Role: provider.RoleSystem, Content: goals.ContinuationPrompt(*goal, remaining)}, true, nil
 }
 
-func (r *Runner) recordGoalUsage(ctx context.Context, req RunRequest, messages []provider.Message, elapsed time.Duration) {
-	if r.goals == nil {
+func (r *Runner) recordGoalUsage(ctx context.Context, req RunRequest, usage provider.TokenUsage, elapsed time.Duration) {
+	if r.goals == nil || usage.IsZero() {
 		return
 	}
-	model := firstNonEmpty(r.model, "gpt-5.5")
-	window := contextwindow.ForModel(model)
-	estimate := contextwindow.EstimateMessages(contextWindowMessages(messages), window)
-	_, _ = r.goals.AddUsage(ctx, req.SessionID, int64(estimate.Tokens), elapsed)
+	_, _ = r.goals.AddUsage(ctx, req.SessionID, usage.Total(), elapsed)
 }

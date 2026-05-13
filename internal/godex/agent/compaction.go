@@ -240,6 +240,35 @@ func (r *Runner) compactionOptions(ctx context.Context, req RunRequest, messages
 	}
 }
 
+func (r *Runner) emitActualTokenUsage(ctx context.Context, req RunRequest, usage provider.TokenUsage) {
+	if usage.IsZero() {
+		return
+	}
+	model := firstNonEmpty(r.model, "gpt-5.5")
+	window := contextwindow.ForModel(model)
+	percent := 0.0
+	if window.ContextWindow > 0 {
+		percent = float64(usage.Total()) / float64(window.ContextWindow) * 100
+	}
+	r.emit(ctx, eventbus.Event{
+		Kind:      eventbus.KindContextTokensUpdated,
+		Source:    eventbus.SourceProvider,
+		SessionID: req.SessionID,
+		RunID:     req.RunID,
+		Payload: map[string]any{
+			"model":           model,
+			"tokens":          usage.Total(),
+			"input_tokens":    usage.InputTokens,
+			"output_tokens":   usage.OutputTokens,
+			"total_tokens":    usage.Total(),
+			"context_window":  window.ContextWindow,
+			"percent":         percent,
+			"count_source":    "response",
+			"usage_increment": true,
+		},
+	})
+}
+
 func contextWindowMessages(messages []provider.Message) []contextwindow.Message {
 	out := make([]contextwindow.Message, 0, len(messages))
 	for _, msg := range messages {

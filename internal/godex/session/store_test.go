@@ -136,6 +136,46 @@ func TestSessionStoreEnsureAndUpdateMessageCount(t *testing.T) {
 	}
 }
 
+func TestSessionStoreAddTokenUsageIncrementsAndPersists(t *testing.T) {
+	ctx := context.Background()
+	dataDir := t.TempDir()
+	store := openTestStore(t, dataDir, time.Date(2026, 5, 13, 10, 0, 0, 0, time.UTC))
+
+	created, err := store.Ensure(ctx, Session{ID: "session-id", Title: "Initial"})
+	if err != nil {
+		t.Fatalf("ensure create: %v", err)
+	}
+
+	store.now = fixedClock(time.Date(2026, 5, 13, 11, 0, 0, 0, time.UTC))
+	updated, err := store.AddTokenUsage(ctx, "session-id", 11, 7)
+	if err != nil {
+		t.Fatalf("add usage: %v", err)
+	}
+	if updated.PromptTokens != 11 || updated.CompletionTokens != 7 || !updated.UpdatedAt.After(created.UpdatedAt) {
+		t.Fatalf("updated = %#v", updated)
+	}
+
+	updated, err = store.AddTokenUsage(ctx, "session-id", 5, 3)
+	if err != nil {
+		t.Fatalf("add second usage: %v", err)
+	}
+	if updated.PromptTokens != 16 || updated.CompletionTokens != 10 {
+		t.Fatalf("incremented usage = %#v", updated)
+	}
+
+	reopened, err := Open(dataDir)
+	if err != nil {
+		t.Fatalf("reopen: %v", err)
+	}
+	persisted, ok, err := reopened.Get(ctx, "session-id")
+	if err != nil {
+		t.Fatalf("get persisted: %v", err)
+	}
+	if !ok || persisted.PromptTokens != 16 || persisted.CompletionTokens != 10 {
+		t.Fatalf("persisted = %#v ok=%v", persisted, ok)
+	}
+}
+
 func TestSessionStoreLastEmpty(t *testing.T) {
 	store := openTestStore(t, t.TempDir(), time.Now())
 	last, ok, err := store.Last(context.Background())

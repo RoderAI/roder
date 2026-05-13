@@ -127,6 +127,7 @@ func (o *OpenAI) Stream(ctx context.Context, req Request) (<-chan Event, <-chan 
 					Text:       final,
 					ResponseID: ev.Response.ID,
 					Items:      providerItemsFromRaw(rawResponseOutputItems(ev.Response.Output)),
+					Usage:      openAITokenUsage(ev.Response.Usage),
 				}
 			case "response.failed", "error":
 				errs <- &ProviderError{Message: ev.Message}
@@ -139,6 +140,18 @@ func (o *OpenAI) Stream(ctx context.Context, req Request) (<-chan Event, <-chan 
 		}
 	}()
 	return events, errs
+}
+
+func openAITokenUsage(usage responses.ResponseUsage) TokenUsage {
+	out := TokenUsage{
+		InputTokens:  usage.InputTokens,
+		OutputTokens: usage.OutputTokens,
+		TotalTokens:  usage.TotalTokens,
+	}
+	if out.TotalTokens == 0 {
+		out.TotalTokens = out.InputTokens + out.OutputTokens
+	}
+	return out
 }
 
 func (o *OpenAI) Compact(ctx context.Context, req CompactRequest) (CompactResult, error) {

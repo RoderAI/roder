@@ -15,6 +15,7 @@ type runStats struct {
 	LastTool       string
 	LastToolCallID string
 	LastResponseID string
+	TokenUsage     provider.TokenUsage
 }
 
 type turnOutcome struct {
@@ -23,6 +24,7 @@ type turnOutcome struct {
 	ResponseID   string
 	HadToolCall  bool
 	ProducedText bool
+	Usage        provider.TokenUsage
 }
 
 func (r *Runner) streamProviderTurn(ctx context.Context, req RunRequest, providerReq provider.Request, messages []provider.Message, final string, stats *runStats, allowTools bool) (turnOutcome, error) {
@@ -90,6 +92,8 @@ func (r *Runner) streamProviderTurn(ctx context.Context, req RunRequest, provide
 				if ev.ResponseID != "" {
 					stats.LastResponseID = ev.ResponseID
 				}
+				outcome.Usage = ev.Usage
+				stats.TokenUsage = addTokenUsage(stats.TokenUsage, ev.Usage)
 				if outcome.Final == "" {
 					outcome.Final = ev.Text
 				}
@@ -105,8 +109,11 @@ func (r *Runner) streamProviderTurn(ctx context.Context, req RunRequest, provide
 						"text":        outcome.Final,
 						"response_id": ev.ResponseID,
 						"items":       r.sessionItemsFromProviderItems(req, ev.Items),
+						"usage":       ev.Usage,
 					},
 				})
+				r.emitActualTokenUsage(ctx, req, ev.Usage)
+				r.addSessionTokenUsage(ctx, req, ev.Usage)
 				if err := r.persistProviderItems(ctx, req, ev.Items, outcome.Final); err != nil {
 					return outcome, err
 				}
@@ -131,6 +138,21 @@ func (r *Runner) streamProviderTurn(ctx context.Context, req RunRequest, provide
 		outcome.Messages = nextMessages
 	}
 	return outcome, nil
+}
+
+func addTokenUsage(a provider.TokenUsage, b provider.TokenUsage) provider.TokenUsage {
+	return provider.TokenUsage{
+		InputTokens:  a.InputTokens + b.InputTokens,
+		OutputTokens: a.OutputTokens + b.OutputTokens,
+		TotalTokens:  a.Total() + b.Total(),
+	}
+}
+
+func (r *Runner) addSessionTokenUsage(ctx context.Context, req RunRequest, usage provider.TokenUsage) {
+	if r.sessions == nil || usage.IsZero() {
+		return
+	}
+	_, _ = r.sessions.AddTokenUsage(ctx, req.SessionID, usage.InputTokens, usage.OutputTokens)
 }
 
 func (r *Runner) runToolCalls(ctx context.Context, req RunRequest, messages []provider.Message, toolRequests []*provider.ToolRequest) ([]provider.Message, error) {
