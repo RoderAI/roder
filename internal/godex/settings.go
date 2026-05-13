@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/BurntSushi/toml"
+	"github.com/pandelisz/gode/internal/godex/memory"
 )
 
 const (
@@ -24,6 +25,7 @@ type Settings struct {
 	AutoApprove           bool              `json:"auto_approve" toml:"auto_approve"`
 	TimelineStyle         string            `json:"timeline_style,omitempty" toml:"timeline_style,omitempty"`
 	MarkdownRendering     bool              `json:"markdown_rendering,omitempty" toml:"markdown_rendering,omitempty"`
+	Memories              memory.Settings   `json:"memories,omitempty" toml:"memories,omitempty"`
 	DisableAutoCompaction bool              `json:"disable_auto_compaction,omitempty" toml:"disable_auto_compaction,omitempty"`
 	AutoCompactTokenLimit int               `json:"auto_compact_token_limit,omitempty" toml:"auto_compact_token_limit,omitempty"`
 	ActiveSkills          map[string]bool   `json:"active_skills,omitempty" toml:"active_skills,omitempty"`
@@ -52,6 +54,8 @@ func LoadSettings(dataDir string) (Settings, error) {
 	settings.DefaultModel = strings.TrimSpace(settings.DefaultModel)
 	settings.DefaultReasoning = strings.TrimSpace(settings.DefaultReasoning)
 	settings.TimelineStyle = NormalizeTimelineStyle(settings.TimelineStyle)
+	settings.Memories.EmbeddingModel = strings.TrimSpace(settings.Memories.EmbeddingModel)
+	settings.Memories.DatabasePath = strings.TrimSpace(settings.Memories.DatabasePath)
 	return settings, nil
 }
 
@@ -62,6 +66,8 @@ func SaveSettings(dataDir string, settings Settings) error {
 	settings.DefaultModel = strings.TrimSpace(settings.DefaultModel)
 	settings.DefaultReasoning = strings.TrimSpace(settings.DefaultReasoning)
 	settings.TimelineStyle = NormalizeTimelineStyle(settings.TimelineStyle)
+	settings.Memories.EmbeddingModel = strings.TrimSpace(settings.Memories.EmbeddingModel)
+	settings.Memories.DatabasePath = strings.TrimSpace(settings.Memories.DatabasePath)
 	if err := os.MkdirAll(dataDir, 0o700); err != nil {
 		return fmt.Errorf("settings dir: %w", err)
 	}
@@ -98,6 +104,7 @@ func loadLegacySettings(dataDir string) (Settings, error) {
 		AutoApprove           bool              `json:"auto_approve"`
 		TimelineStyle         string            `json:"timeline_style"`
 		MarkdownRendering     bool              `json:"markdown_rendering"`
+		Memories              memory.Settings   `json:"memories"`
 		DisableAutoCompaction bool              `json:"disable_auto_compaction"`
 		AutoCompactTokenLimit int               `json:"auto_compact_token_limit"`
 		ActiveSkills          map[string]bool   `json:"active_skills"`
@@ -113,6 +120,7 @@ func loadLegacySettings(dataDir string) (Settings, error) {
 		AutoApprove:           settings.AutoApprove,
 		TimelineStyle:         NormalizeTimelineStyle(settings.TimelineStyle),
 		MarkdownRendering:     settings.MarkdownRendering,
+		Memories:              settings.Memories,
 		DisableAutoCompaction: settings.DisableAutoCompaction,
 		AutoCompactTokenLimit: settings.AutoCompactTokenLimit,
 		ActiveSkills:          settings.ActiveSkills,
