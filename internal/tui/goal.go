@@ -107,6 +107,9 @@ func (m *Model) applyGoalEvent(ev eventbus.Event) {
 
 func (m Model) footerStatus() string {
 	status := m.status
+	if notice := m.copyNotice(); notice != "" {
+		status = notice
+	}
 	if len(m.queuedPrompts) > 0 {
 		queue := queueStatus(len(m.queuedPrompts))
 		if strings.TrimSpace(status) == "" || status == "ready" {

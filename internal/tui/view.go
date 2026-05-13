@@ -37,6 +37,7 @@ func (m Model) viewModel() viewmodel.Model {
 		TranscriptSelection:       m.transcriptSelection,
 		TranscriptSelectionActive: m.transcriptSelection.Active,
 		TranscriptSelectionHint:   m.transcriptSelectionHint(),
+		CopyNotice:                m.copyNotice(),
 		ComposerSelection:         m.composerSelection,
 		ComposerSelectionActive:   m.composerSelection.Active,
 		ComposerSelectionHint:     m.composerSelectionHint(),
