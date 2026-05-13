@@ -280,7 +280,7 @@ func TestSlashMenuFiltersProjectCommands(t *testing.T) {
 	}
 }
 
-func TestGoalCommandCreatesGoalWithoutSubmittingPrompt(t *testing.T) {
+func TestGoalCommandCreatesGoalAndStartsModelTurn(t *testing.T) {
 	app, err := godex.New(context.Background(), godex.Config{DataDir: t.TempDir(), Workspace: t.TempDir(), Provider: "mock", AutoApprove: true})
 	if err != nil {
 		t.Fatalf("app: %v", err)
@@ -292,11 +292,11 @@ func TestGoalCommandCreatesGoalWithoutSubmittingPrompt(t *testing.T) {
 
 	updated, cmd := model.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 	got := updated.(Model)
-	if cmd != nil {
-		t.Fatal("goal command should not submit a model turn")
+	if cmd == nil {
+		t.Fatal("goal command should submit a model turn")
 	}
-	if got.running {
-		t.Fatal("goal command should not start a run")
+	if !got.running {
+		t.Fatal("goal command should start a run")
 	}
 	goal, err := app.GetGoal(context.Background(), got.currentSessionID)
 	if err != nil {
@@ -305,7 +305,7 @@ func TestGoalCommandCreatesGoalWithoutSubmittingPrompt(t *testing.T) {
 	if goal == nil || goal.Objective != "ship the release" {
 		t.Fatalf("goal = %#v", goal)
 	}
-	if len(got.messages) != 1 || got.messages[0].Role != viewmodel.RoleSystem || !strings.Contains(got.messages[0].Body, "ship the release") {
+	if len(got.messages) != 2 || got.messages[0].Role != viewmodel.RoleSystem || got.messages[1].Role != viewmodel.RoleUser || !strings.Contains(got.messages[0].Body, "ship the release") || got.messages[1].Body != "ship the release" {
 		t.Fatalf("messages = %#v", got.messages)
 	}
 	if !strings.Contains(got.View().Content, "goal active") {
@@ -325,6 +325,7 @@ func TestGoalPauseResumeAndClearCommands(t *testing.T) {
 	got.input.SetValue("/goal ship")
 	updated, _ = got.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 	got = updated.(Model)
+	got.running = false
 	sessionID := got.currentSessionID
 
 	for _, input := range []string{"/goal pause", "/goal resume", "/goal budget 50000"} {

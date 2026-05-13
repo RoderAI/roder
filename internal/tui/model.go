@@ -207,9 +207,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if prompt == "" {
 				return m, nil
 			}
-			if m.handleGoalInput(prompt) {
+			if handled, cmd := m.handleGoalInput(prompt); handled {
 				m.input.Reset()
-				return m, nil
+				return m, cmd
 			}
 			runPrompt := prompt
 			if len(m.attachments) > 0 {

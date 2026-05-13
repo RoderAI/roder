@@ -6,7 +6,7 @@ const (
 	messageTokenOverhead    = 6
 	toolTokenOverhead       = 12
 	rawItemTokenOverhead    = 24
-	charactersPerTokenGuess = 4
+	charactersPerTokenGuess = 3
 )
 
 type Message struct {

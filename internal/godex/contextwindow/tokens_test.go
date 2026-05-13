@@ -33,13 +33,13 @@ func TestEstimateMessagesPercentUsesSelectedWindow(t *testing.T) {
 	}
 }
 
-func TestGPT55CanRepresentNineHundredThousandTokenEstimate(t *testing.T) {
+func TestGPT55FlagsMultiMillionCharacterInputAsOverContext(t *testing.T) {
 	window := ForModel("gpt-5.5")
-	estimate := EstimateMessages([]Message{{Role: "user", Content: strings.Repeat("abcd", 900000)}}, window)
-	if estimate.Tokens < 900000 {
+	estimate := EstimateMessages([]Message{{Role: "user", Content: strings.Repeat("x", 3_956_050)}}, window)
+	if estimate.Tokens < window.ContextWindow {
 		t.Fatalf("tokens = %d", estimate.Tokens)
 	}
-	if estimate.Tokens >= window.ContextWindow {
-		t.Fatalf("estimate should fit gpt-5.5 context, tokens=%d window=%d", estimate.Tokens, window.ContextWindow)
+	if estimate.Percent <= 100 {
+		t.Fatalf("estimate should exceed gpt-5.5 context, tokens=%d window=%d percent=%f", estimate.Tokens, window.ContextWindow, estimate.Percent)
 	}
 }

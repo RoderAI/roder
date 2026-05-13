@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"sync"
 
 	"github.com/pandelisz/gode/internal/godex/eventbus"
 	"github.com/pandelisz/gode/internal/godex/provider"
@@ -25,6 +26,7 @@ type turnOutcome struct {
 func (r *Runner) streamProviderTurn(ctx context.Context, req RunRequest, providerReq provider.Request, messages []provider.Message, final string, stats *runStats, allowTools bool) (turnOutcome, error) {
 	events, errs := r.provider.Stream(ctx, providerReq)
 	outcome := turnOutcome{Messages: messages, Final: final}
+	var pendingTools []*provider.ToolRequest
 	for events != nil || errs != nil {
 		select {
 		case ev, ok := <-events:
@@ -79,11 +81,7 @@ func (r *Runner) streamProviderTurn(ctx context.Context, req RunRequest, provide
 					},
 				})
 				if allowTools && r.tools != nil {
-					var err error
-					outcome.Messages, err = r.runToolCall(ctx, req, outcome.Messages, ev.ToolRequest)
-					if err != nil {
-						return outcome, err
-					}
+					pendingTools = append(pendingTools, ev.ToolRequest)
 				}
 			case provider.EventCompleted:
 				if outcome.Final == "" {
@@ -112,30 +110,54 @@ func (r *Runner) streamProviderTurn(ctx context.Context, req RunRequest, provide
 			return outcome, ctx.Err()
 		}
 	}
+	if len(pendingTools) > 0 {
+		nextMessages, err := r.runToolCalls(ctx, req, outcome.Messages, pendingTools)
+		if err != nil {
+			return outcome, err
+		}
+		outcome.Messages = nextMessages
+	}
 	return outcome, nil
 }
 
-func (r *Runner) runToolCall(ctx context.Context, req RunRequest, messages []provider.Message, toolRequest *provider.ToolRequest) ([]provider.Message, error) {
-	messages = append(messages, provider.Message{
-		Role:          provider.RoleAssistant,
-		ToolCallID:    toolRequest.ID,
-		ToolName:      toolRequest.Name,
-		ToolArguments: toolRequest.Arguments,
-	})
-	result, err := r.tools.Run(ctx, tools.Call{
-		ID:        toolRequest.ID,
-		Name:      toolRequest.Name,
-		Input:     toolRequest.Input,
-		SessionID: req.SessionID,
-		RunID:     req.RunID,
-	})
-	if err != nil {
-		return messages, err
+func (r *Runner) runToolCalls(ctx context.Context, req RunRequest, messages []provider.Message, toolRequests []*provider.ToolRequest) ([]provider.Message, error) {
+	for _, toolRequest := range toolRequests {
+		messages = append(messages, provider.Message{
+			Role:          provider.RoleAssistant,
+			ToolCallID:    toolRequest.ID,
+			ToolName:      toolRequest.Name,
+			ToolArguments: toolRequest.Arguments,
+		})
 	}
-	messages = append(messages, provider.Message{
-		Role:       provider.RoleTool,
-		ToolCallID: toolRequest.ID,
-		Content:    toolResponseContent(toolRequest.Name, result),
-	})
+
+	results := make([]tools.Result, len(toolRequests))
+	errs := make([]error, len(toolRequests))
+	var wg sync.WaitGroup
+	for i, toolRequest := range toolRequests {
+		wg.Add(1)
+		go func(i int, toolRequest *provider.ToolRequest) {
+			defer wg.Done()
+			results[i], errs[i] = r.tools.Run(ctx, tools.Call{
+				ID:        toolRequest.ID,
+				Name:      toolRequest.Name,
+				Input:     toolRequest.Input,
+				SessionID: req.SessionID,
+				RunID:     req.RunID,
+			})
+		}(i, toolRequest)
+	}
+	wg.Wait()
+	for _, err := range errs {
+		if err != nil {
+			return messages, err
+		}
+	}
+	for i, toolRequest := range toolRequests {
+		messages = append(messages, provider.Message{
+			Role:       provider.RoleTool,
+			ToolCallID: toolRequest.ID,
+			Content:    toolResponseContent(toolRequest.Name, results[i]),
+		})
+	}
 	return messages, nil
 }

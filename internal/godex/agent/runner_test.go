@@ -6,7 +6,9 @@ import (
 	"errors"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	godecommands "github.com/pandelisz/gode/internal/godex/commands"
 	"github.com/pandelisz/gode/internal/godex/eventbus"
@@ -151,6 +153,69 @@ func TestRunnerConfiguresOpenAICompactionAndTokenEvents(t *testing.T) {
 	}
 	if payload.Model != "gpt-5.5" || payload.ContextWindow != 1050000 || payload.CompactThreshold != 800000 || payload.Tokens <= 0 {
 		t.Fatalf("payload = %#v", payload)
+	}
+}
+
+func TestRunnerPrecompactsOversizedResumeBeforeProviderRequest(t *testing.T) {
+	bus := eventbus.New(eventbus.WithSubscriberBuffer(32))
+	defer bus.Close()
+	dataDir := t.TempDir()
+	store, err := journal.Open(filepath.Join(dataDir, "events.jsonl"))
+	if err != nil {
+		t.Fatalf("journal: %v", err)
+	}
+	defer store.Close()
+	messageStore := messagestore.Open(dataDir)
+	if _, err := messageStore.Append(context.Background(), messagestore.Message{SessionID: "s-compact", RunID: "old", Role: messagestore.RoleUser, Text: strings.Repeat("large context ", 80)}); err != nil {
+		t.Fatalf("append prior: %v", err)
+	}
+	compactProvider := &compactingCaptureProvider{
+		captureProvider: captureProvider{name: "openai", finalText: "done"},
+		output:          []json.RawMessage{json.RawMessage(`{"type":"compaction","encrypted_content":"opaque"}`)},
+	}
+	runner := NewRunner(Config{
+		Bus:                   bus,
+		Journal:               store,
+		Messages:              messageStore,
+		Provider:              compactProvider,
+		Model:                 "gpt-5.5",
+		AutoCompactTokenLimit: 50,
+	})
+
+	if _, err := runner.Run(context.Background(), RunRequest{SessionID: "s-compact", RunID: "r-compact", Prompt: "continue", Resume: true}); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	if len(compactProvider.compactRequest.Messages) != 1 || !strings.Contains(compactProvider.compactRequest.Messages[0].Content, "large context") {
+		t.Fatalf("compaction request = %#v", compactProvider.compactRequest.Messages)
+	}
+	got := compactProvider.request.Messages
+	if len(got) != 2 {
+		t.Fatalf("provider messages = %#v", got)
+	}
+	if len(got[0].RawJSON) == 0 || !strings.Contains(string(got[0].RawJSON), `"encrypted_content":"opaque"`) {
+		t.Fatalf("first provider message should be raw compaction item: %#v", got[0])
+	}
+	if got[1].Role != provider.RoleUser || got[1].Content != "continue" {
+		t.Fatalf("current prompt should be preserved after compaction: %#v", got[1])
+	}
+	events, err := store.Replay(context.Background(), journal.ReplayFilter{SessionID: "s-compact", RunID: "r-compact"})
+	if err != nil {
+		t.Fatalf("replay: %v", err)
+	}
+	kinds := map[eventbus.Kind]bool{}
+	for _, ev := range events {
+		kinds[ev.Kind] = true
+	}
+	if !kinds[eventbus.KindContextCompactionStarted] || !kinds[eventbus.KindContextCompactionCompleted] {
+		t.Fatalf("missing compaction events: %#v", kinds)
+	}
+	stored, err := messageStore.ListBySession(context.Background(), "s-compact")
+	if err != nil {
+		t.Fatalf("stored messages: %v", err)
+	}
+	canonical := canonicalProviderWindow(stored)
+	if len(canonical) < 2 || len(canonical[0].RawJSON) == 0 || canonical[1].Role != messagestore.RoleUser || canonical[1].Text != "continue" {
+		t.Fatalf("canonical stored window = %#v", canonical)
 	}
 }
 
@@ -388,6 +453,78 @@ func TestRunnerCarriesFunctionCallBeforeToolOutput(t *testing.T) {
 	}
 	if messages[2].Role != provider.RoleTool || messages[2].ToolCallID != "call_abc" || !strings.Contains(messages[2].Content, "echoed") {
 		t.Fatalf("tool output message = %#v", messages[2])
+	}
+}
+
+func TestRunnerRunsParallelToolCallsAndPreservesResponseOrder(t *testing.T) {
+	var running int32
+	var maxRunning int32
+	reg := tools.NewRegistry(tools.WithAutoApprove(true))
+	for _, name := range []string{"first", "second"} {
+		name := name
+		reg.Register(tools.Tool{
+			Name:        name,
+			Description: name,
+			ReadOnly:    true,
+			Run: func(context.Context, tools.Call) (tools.Result, error) {
+				now := atomic.AddInt32(&running, 1)
+				for {
+					seen := atomic.LoadInt32(&maxRunning)
+					if now <= seen || atomic.CompareAndSwapInt32(&maxRunning, seen, now) {
+						break
+					}
+				}
+				time.Sleep(50 * time.Millisecond)
+				atomic.AddInt32(&running, -1)
+				return tools.Result{Text: name + " output"}, nil
+			},
+		})
+	}
+	script := &scriptedProvider{
+		streams: [][]provider.Event{
+			{
+				{Kind: provider.EventToolCall, ToolRequest: &provider.ToolRequest{ID: "call_1", Name: "first", Arguments: `{}`}},
+				{Kind: provider.EventToolCall, ToolRequest: &provider.ToolRequest{ID: "call_2", Name: "second", Arguments: `{}`}},
+				{Kind: provider.EventCompleted},
+			},
+			{
+				{Kind: provider.EventDelta, Text: "done"},
+				{Kind: provider.EventCompleted, Text: "done"},
+			},
+		},
+	}
+	runner := NewRunner(Config{
+		Bus:      eventbus.New(eventbus.WithSubscriberBuffer(16)),
+		Tools:    reg,
+		Provider: script,
+	})
+	defer runner.bus.Close()
+
+	if _, err := runner.Run(context.Background(), RunRequest{Prompt: "hello"}); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	if maxRunning < 2 {
+		t.Fatalf("tool calls did not overlap, max running = %d", maxRunning)
+	}
+	messages := script.requests[1].Messages
+	if len(messages) != 5 {
+		t.Fatalf("second request messages = %#v", messages)
+	}
+	want := []struct {
+		role provider.Role
+		id   string
+		name string
+	}{
+		{provider.RoleUser, "", ""},
+		{provider.RoleAssistant, "call_1", "first"},
+		{provider.RoleAssistant, "call_2", "second"},
+		{provider.RoleTool, "call_1", ""},
+		{provider.RoleTool, "call_2", ""},
+	}
+	for i, want := range want {
+		if messages[i].Role != want.role || messages[i].ToolCallID != want.id || messages[i].ToolName != want.name {
+			t.Fatalf("message %d = %#v, want role=%s id=%s name=%s", i, messages[i], want.role, want.id, want.name)
+		}
 	}
 }
 
@@ -736,6 +873,17 @@ func (p *captureProvider) Stream(_ context.Context, req provider.Request) (<-cha
 	close(events)
 	close(errs)
 	return events, errs
+}
+
+type compactingCaptureProvider struct {
+	captureProvider
+	compactRequest provider.CompactRequest
+	output         []json.RawMessage
+}
+
+func (p *compactingCaptureProvider) Compact(_ context.Context, req provider.CompactRequest) (provider.CompactResult, error) {
+	p.compactRequest = req
+	return provider.CompactResult{ID: "resp_compact", Output: p.output}, nil
 }
 
 type scriptedProvider struct {

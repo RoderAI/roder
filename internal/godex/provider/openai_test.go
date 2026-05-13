@@ -211,6 +211,22 @@ func TestOpenAIResponseParamsNormalizesNullRequiredToolSchema(t *testing.T) {
 	}
 }
 
+func TestOpenAIResponseParamsAllowsParallelToolCalls(t *testing.T) {
+	openaiProvider := NewOpenAI("gpt-5.5", "medium")
+
+	params := openaiProvider.responseParams(Request{
+		Messages: []Message{{Role: RoleUser, Content: "hello"}},
+		Tools: []ToolSpec{{
+			Name:        "read_file",
+			Description: "Read a file",
+			Schema:      map[string]any{"type": "object", "properties": map[string]any{}, "required": []string{}},
+		}},
+	})
+	if !params.ParallelToolCalls.Valid() || !params.ParallelToolCalls.Value {
+		t.Fatalf("parallel tool calls = %#v", params.ParallelToolCalls)
+	}
+}
+
 func TestOpenAIStreamErrorIncludesHTTPDebugDetails(t *testing.T) {
 	openaiProvider := NewOpenAIWithConfig(OpenAIConfig{
 		Model:       "gpt-5.5",
