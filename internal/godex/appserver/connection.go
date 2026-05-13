@@ -77,6 +77,12 @@ func (c *Connection) dispatch(ctx context.Context, msg inboundMessage) (any, *RP
 		return c.server.handleThreadRead(msg.Params)
 	case "thread/unsubscribe":
 		return c.handleThreadUnsubscribe(msg.Params)
+	case "thread/goal/get":
+		return c.server.handleThreadGoalGet(ctx, msg.Params)
+	case "thread/goal/set":
+		return c.server.handleThreadGoalSet(ctx, msg.Params)
+	case "thread/goal/clear":
+		return c.server.handleThreadGoalClear(ctx, msg.Params)
 	case "turn/start":
 		return c.handleTurnStart(ctx, msg.Params)
 	case "turn/interrupt":

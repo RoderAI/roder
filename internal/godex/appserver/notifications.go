@@ -17,11 +17,18 @@ func (s *Server) startEventBridge(ctx context.Context) {
 		eventbus.KindLSPDiagnostics,
 		eventbus.KindPermissionRequested,
 		eventbus.KindPermissionResponded,
+		eventbus.KindGoalUpdated,
+		eventbus.KindGoalCleared,
+		eventbus.KindGoalLimited,
 	}})
 	go func() {
 		for ev := range events {
 			method := notificationMethod(ev.Kind)
 			if method == "" {
+				continue
+			}
+			if ev.Kind == eventbus.KindGoalUpdated || ev.Kind == eventbus.KindGoalLimited || ev.Kind == eventbus.KindGoalCleared {
+				s.notifyThread(context.Background(), ev.SessionID, method, eventNotificationParams(ev))
 				continue
 			}
 			s.notifyAll(context.Background(), method, eventNotificationParams(ev))
@@ -73,6 +80,10 @@ func notificationMethod(kind eventbus.Kind) string {
 		return "permission/requested"
 	case eventbus.KindPermissionResponded:
 		return "permission/responded"
+	case eventbus.KindGoalUpdated, eventbus.KindGoalLimited:
+		return "thread/goal/updated"
+	case eventbus.KindGoalCleared:
+		return "thread/goal/cleared"
 	default:
 		return ""
 	}
