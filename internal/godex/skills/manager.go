@@ -52,9 +52,10 @@ type InstallRequest struct {
 }
 
 type ManagerInstallResult struct {
-	Source string
-	Stdout string
-	Stderr string
+	Source    string
+	Installed []InstalledSkill
+	Stdout    string
+	Stderr    string
 }
 
 func (m *Manager) List(ctx context.Context) ([]ManagedSkill, error) {
@@ -131,6 +132,7 @@ func (m *Manager) Install(ctx context.Context, req InstallRequest) (ManagerInsta
 		if err != nil {
 			return result, err
 		}
+		result.Installed = installResult.Installed
 		settings, err := m.load(ctx)
 		if err != nil {
 			return result, err
@@ -160,6 +162,7 @@ func (m *Manager) Install(ctx context.Context, req InstallRequest) (ManagerInsta
 	}
 	name := recommendedNameForSource(source)
 	if name != "" {
+		result.Installed = append(result.Installed, InstalledSkill{Name: name})
 		SetSkillEnabled(&settings.ActiveSkills, name, true)
 		if settings.SkillSources == nil {
 			settings.SkillSources = map[string]string{}
