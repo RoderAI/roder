@@ -42,12 +42,14 @@ type Runner struct {
 }
 
 type RunRequest struct {
-	SessionID string
-	RunID     string
-	Prompt    string
-	Resume    bool
-	Messages  []provider.Message
-	MaxTurns  int
+	SessionID      string
+	RunID          string
+	Prompt         string
+	Resume         bool
+	Instructions   string
+	ResponseFormat string
+	Messages       []provider.Message
+	MaxTurns       int
 }
 
 type RunResult struct {
@@ -143,11 +145,12 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (RunResult, error) {
 	final := ""
 	for turn := 0; turn < maxTurns; turn++ {
 		providerReq := provider.Request{
-			SessionID:    req.SessionID,
-			RunID:        req.RunID,
-			Instructions: GodeInstructions,
-			Messages:     messages,
-			Tools:        r.providerToolSpecs(),
+			SessionID:      req.SessionID,
+			RunID:          req.RunID,
+			Instructions:   firstNonEmpty(req.Instructions, GodeInstructions),
+			ResponseFormat: req.ResponseFormat,
+			Messages:       messages,
+			Tools:          r.providerToolSpecs(),
 		}
 		events, errs := r.provider.Stream(ctx, providerReq)
 
@@ -284,6 +287,15 @@ func (r *Runner) initialMessages(ctx context.Context, req RunRequest, runMessage
 	}
 	messages = append(messages, provider.Message{Role: provider.RoleUser, Content: prompt})
 	return messages, nil
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			return value
+		}
+	}
+	return ""
 }
 
 func providerMessages(messages []messagestore.Message) []provider.Message {

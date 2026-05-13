@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"io"
 	"os"
 	"path/filepath"
@@ -46,8 +47,13 @@ func TestParseConfigAppliesFlags(t *testing.T) {
 }
 
 func TestParseAppServerConfigAppliesFlags(t *testing.T) {
+	mcpConfig := filepath.Join(t.TempDir(), "mcp.json")
+	if err := os.WriteFile(mcpConfig, []byte(`{"mcp":{"helper":{"command":"/bin/echo","args":["hi"]}}}`), 0o600); err != nil {
+		t.Fatalf("write mcp config: %v", err)
+	}
 	cfg, listen, err := parseAppServerConfig([]string{
 		"--listen", "ws://127.0.0.1:0",
+		"--mcp-config", mcpConfig,
 		"--workspace", "/tmp/workspace",
 		"--data-dir", "/tmp/data",
 		"--provider", "mock",
@@ -81,6 +87,9 @@ func TestParseAppServerConfigAppliesFlags(t *testing.T) {
 	}
 	if !cfg.AutoApprove {
 		t.Fatal("auto approve = false")
+	}
+	if cfg.MCP["helper"].Command != "/bin/echo" {
+		t.Fatalf("mcp helper = %#v", cfg.MCP["helper"])
 	}
 }
 
@@ -320,6 +329,75 @@ func TestRunPromptSupportsPromptFlag(t *testing.T) {
 	})
 	if !strings.Contains(out, "mock response") {
 		t.Fatalf("output = %q", out)
+	}
+}
+
+func TestRunPromptJSONIncludesContractFields(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("HOME", root)
+	workspace := filepath.Join(root, "workspace")
+	dataDir := filepath.Join(root, "data")
+	systemPrompt := filepath.Join(root, "system.txt")
+	if err := os.WriteFile(systemPrompt, []byte("You are gode in a headless test."), 0o600); err != nil {
+		t.Fatalf("write system prompt: %v", err)
+	}
+	out := captureStdout(t, func() error {
+		return runPrompt(context.Background(), []string{
+			"--workspace", workspace,
+			"--data-dir", dataDir,
+			"--provider", "mock",
+			"--model", "mock",
+			"--reasoning", "none",
+			"--json",
+			"--session", "test-session",
+			"--resume",
+			"--system-prompt-file", systemPrompt,
+			"--response-format", `{"type":"json_object"}`,
+			"hello",
+		})
+	})
+	var payload runJSONOutput
+	if err := json.Unmarshal([]byte(out), &payload); err != nil {
+		t.Fatalf("json output: %v\n%s", err, out)
+	}
+	if payload.SessionID != "test-session" {
+		t.Fatalf("session_id = %q", payload.SessionID)
+	}
+	if payload.RunID == "" {
+		t.Fatal("run_id is empty")
+	}
+	if payload.FinalText != "mock response" {
+		t.Fatalf("final_text = %q", payload.FinalText)
+	}
+	if payload.Model != "mock" || payload.Provider != "mock" {
+		t.Fatalf("model/provider = %q/%q", payload.Model, payload.Provider)
+	}
+}
+
+func TestServeListenOffValidatesApp(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("HOME", root)
+	workspace := filepath.Join(root, "workspace")
+	dataDir := filepath.Join(root, "data")
+	if err := run(context.Background(), []string{
+		"serve",
+		"--listen", "off",
+		"--workspace", workspace,
+		"--data-dir", dataDir,
+		"--provider", "mock",
+		"--model", "mock",
+		"--reasoning", "none",
+	}); err != nil {
+		t.Fatalf("serve off: %v", err)
+	}
+	if err := run(context.Background(), []string{
+		"serve",
+		"--listen", "off",
+		"--workspace", workspace,
+		"--data-dir", dataDir,
+		"--provider", "missing",
+	}); err == nil {
+		t.Fatal("expected invalid provider to fail")
 	}
 }
 
