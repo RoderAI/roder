@@ -8,27 +8,39 @@ import (
 )
 
 func (m Model) View() tea.View {
+	vm := m.viewModel()
+	view := tea.NewView(m.zones.Scan(components.RenderWithCache(vm, m.zones, &m.transcript)))
+	view.AltScreen = true
+	view.MouseMode = tea.MouseModeAllMotion
+	view.WindowTitle = "gode"
+	return view
+}
+
+func (m Model) viewModel() viewmodel.Model {
 	settings := m.settings.ViewModel()
 	commands := m.commandsViewModel()
 	sessions := m.sessionsViewModel()
 	completions := m.completionsViewModel()
 	permissions := m.permissionsViewModel()
 	vm := viewmodel.Model{
-		Width:            m.width,
-		Height:           m.height,
-		Messages:         m.messages,
-		ReasoningSummary: m.reasoningSummary,
-		Attachments:      m.attachmentViewModels(),
-		Input:            m.input.View(),
-		InputHeight:      m.input.Height(),
-		SlashMenu:        m.slashMenuViewModel(),
-		ScrollOffset:     m.scrollOffset,
-		FollowTail:       m.followTail,
-		Running:          m.running,
-		HoveredID:        m.hoveredID,
-		Status:           m.footerStatus(),
-		ContextLeft:      m.contextLeft,
-		SessionTitle:     m.currentSession,
+		Width:                     m.width,
+		Height:                    m.height,
+		Messages:                  m.messages,
+		ReasoningSummary:          m.reasoningSummary,
+		Attachments:               m.attachmentViewModels(),
+		Input:                     m.input.View(),
+		InputHeight:               m.input.Height(),
+		SlashMenu:                 m.slashMenuViewModel(),
+		ScrollOffset:              m.scrollOffset,
+		FollowTail:                m.followTail,
+		TranscriptSelection:       m.transcriptSelection,
+		TranscriptSelectionActive: m.transcriptSelection.Active,
+		TranscriptSelectionHint:   m.transcriptSelectionHint(),
+		Running:                   m.running,
+		HoveredID:                 m.hoveredID,
+		Status:                    m.footerStatus(),
+		ContextLeft:               m.contextLeft,
+		SessionTitle:              m.currentSession,
 		Dialogs: viewmodel.DialogStack{
 			Settings:    settings,
 			Completions: completions,
@@ -45,9 +57,5 @@ func (m Model) View() tea.View {
 		vm.Model = m.app.Config.Model
 		vm.Reasoning = m.app.Config.Reasoning
 	}
-	view := tea.NewView(m.zones.Scan(components.RenderWithCache(vm, m.zones, &m.transcript)))
-	view.AltScreen = true
-	view.MouseMode = tea.MouseModeAllMotion
-	view.WindowTitle = "gode"
-	return view
+	return vm
 }

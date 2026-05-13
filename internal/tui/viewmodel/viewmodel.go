@@ -1,5 +1,7 @@
 package viewmodel
 
+import "github.com/pandelisz/gode/internal/tui/selection"
+
 const TranscriptZoneID = "transcript"
 
 type Role string
@@ -29,28 +31,32 @@ func MessageZoneID(id string) string {
 }
 
 type Model struct {
-	Width            int
-	Height           int
-	Provider         string
-	Model            string
-	Reasoning        string
-	SessionTitle     string
-	Messages         []Message
-	ReasoningSummary string
-	Attachments      []Attachment
-	Input            string
-	InputHeight      int
-	SlashMenu        *ListDialog
-	ScrollOffset     int
-	FollowTail       bool
-	Running          bool
-	HoveredID        string
-	Status           string
-	ContextLeft      string
-	Dialogs          DialogStack
-	Settings         *SettingsDialog
-	ErrorLog         []ErrorLogEntry
-	ShowErrorLog     bool
+	Width                     int
+	Height                    int
+	Provider                  string
+	Model                     string
+	Reasoning                 string
+	SessionTitle              string
+	Messages                  []Message
+	ReasoningSummary          string
+	Attachments               []Attachment
+	Input                     string
+	InputHeight               int
+	SlashMenu                 *ListDialog
+	ScrollOffset              int
+	FollowTail                bool
+	TranscriptSelection       selection.Range
+	TranscriptSelectionHint   string
+	TranscriptSelectionActive bool
+	CopyNotice                string
+	Running                   bool
+	HoveredID                 string
+	Status                    string
+	ContextLeft               string
+	Dialogs                   DialogStack
+	Settings                  *SettingsDialog
+	ErrorLog                  []ErrorLogEntry
+	ShowErrorLog              bool
 }
 
 type DialogStack struct {
