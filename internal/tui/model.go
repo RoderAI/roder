@@ -68,6 +68,7 @@ type Model struct {
 	errorLog         []viewmodel.ErrorLogEntry
 	showErrorLog     bool
 	reasoningSummary string
+	goalSummary      string
 
 	transcriptLineWidth int
 	transcriptLineTotal int
@@ -192,6 +193,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.openCommands()
 				return m, nil
 			}
+			if m.handleGoalInput(prompt) {
+				m.input.Reset()
+				return m, nil
+			}
 			runPrompt := prompt
 			if len(m.attachments) > 0 {
 				withAttachments, err := m.promptWithAttachments(prompt)
@@ -245,6 +250,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.updateHover(msg)
 	case eventMsg:
 		m.capturePermissionRequest(msg.Event)
+		m.applyGoalEvent(msg.Event)
 		m.applyEvent(eventadapter.Apply(msg.Event))
 		return m, m.waitForEvent()
 	case runDoneMsg:

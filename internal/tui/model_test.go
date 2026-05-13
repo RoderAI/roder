@@ -228,6 +228,77 @@ func TestSlashOpensCommandsDialogAndSelectionInsertsCommand(t *testing.T) {
 	}
 }
 
+func TestGoalCommandCreatesGoalWithoutSubmittingPrompt(t *testing.T) {
+	app, err := godex.New(context.Background(), godex.Config{DataDir: t.TempDir(), Workspace: t.TempDir(), Provider: "mock", AutoApprove: true})
+	if err != nil {
+		t.Fatalf("app: %v", err)
+	}
+	defer app.Close(context.Background())
+	model := New(app)
+	defer model.cancelEvents()
+	model.input.SetValue("/goal ship the release")
+
+	updated, cmd := model.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	got := updated.(Model)
+	if cmd != nil {
+		t.Fatal("goal command should not submit a model turn")
+	}
+	if got.running {
+		t.Fatal("goal command should not start a run")
+	}
+	goal, err := app.GetGoal(context.Background(), got.currentSessionID)
+	if err != nil {
+		t.Fatalf("get goal: %v", err)
+	}
+	if goal == nil || goal.Objective != "ship the release" {
+		t.Fatalf("goal = %#v", goal)
+	}
+	if len(got.messages) != 1 || got.messages[0].Role != viewmodel.RoleSystem || !strings.Contains(got.messages[0].Body, "ship the release") {
+		t.Fatalf("messages = %#v", got.messages)
+	}
+	if !strings.Contains(got.View().Content, "goal active") {
+		t.Fatalf("view missing goal footer:\n%s", got.View().Content)
+	}
+}
+
+func TestGoalPauseResumeAndClearCommands(t *testing.T) {
+	app, err := godex.New(context.Background(), godex.Config{DataDir: t.TempDir(), Workspace: t.TempDir(), Provider: "mock", AutoApprove: true})
+	if err != nil {
+		t.Fatalf("app: %v", err)
+	}
+	defer app.Close(context.Background())
+	var updated tea.Model = New(app)
+	got := updated.(Model)
+	defer got.cancelEvents()
+	got.input.SetValue("/goal ship")
+	updated, _ = got.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	got = updated.(Model)
+	sessionID := got.currentSessionID
+
+	for _, input := range []string{"/goal pause", "/goal resume", "/goal budget 50000"} {
+		got.input.SetValue(input)
+		updated, _ = got.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+		got = updated.(Model)
+	}
+	goal, err := app.GetGoal(context.Background(), sessionID)
+	if err != nil {
+		t.Fatalf("get goal: %v", err)
+	}
+	if goal == nil || goal.Status != "active" || goal.TokenBudget == nil || *goal.TokenBudget != 50000 {
+		t.Fatalf("goal = %#v", goal)
+	}
+	got.input.SetValue("/goal clear")
+	updated, _ = got.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	got = updated.(Model)
+	goal, err = app.GetGoal(context.Background(), sessionID)
+	if err != nil {
+		t.Fatalf("get cleared goal: %v", err)
+	}
+	if goal != nil {
+		t.Fatalf("goal should be cleared: %#v", goal)
+	}
+}
+
 func TestAbsolutePathDoesNotOpenSlashCommandDialog(t *testing.T) {
 	model := New(nil)
 	for _, key := range []string{"/", "U", "s", "e", "r", "s"} {
