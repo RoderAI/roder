@@ -2,6 +2,7 @@ package builtin
 
 import (
 	"context"
+	"fmt"
 	"os/exec"
 	"strings"
 
@@ -20,7 +21,11 @@ func RegisterPatch(reg *tools.Registry, root string) {
 			cmd.Dir = root
 			cmd.Stdin = strings.NewReader(patch)
 			out, err := cmd.CombinedOutput()
-			return tools.Result{Text: strings.TrimSpace(string(out))}, err
+			result := tools.Result{Text: strings.TrimSpace(string(out))}
+			if err != nil {
+				return result, fmt.Errorf("failed to apply patch: %w", err)
+			}
+			return result, nil
 		},
 	})
 }

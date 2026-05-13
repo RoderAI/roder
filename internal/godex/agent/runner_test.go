@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"errors"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -148,6 +149,67 @@ func TestRunnerCarriesFunctionCallBeforeToolOutput(t *testing.T) {
 	}
 	if messages[2].Role != provider.RoleTool || messages[2].ToolCallID != "call_abc" || !strings.Contains(messages[2].Content, "echoed") {
 		t.Fatalf("tool output message = %#v", messages[2])
+	}
+}
+
+func TestRunnerFeedsToolFailureBackToModel(t *testing.T) {
+	reg := tools.NewRegistry(tools.WithAutoApprove(true))
+	reg.Register(tools.Tool{
+		Name:        "apply_patch",
+		Description: "patch",
+		ReadOnly:    false,
+		Run: func(context.Context, tools.Call) (tools.Result, error) {
+			return tools.Result{Text: "error: corrupt patch at line 4"}, errors.New("failed to apply patch: exit status 128")
+		},
+	})
+	script := &scriptedProvider{
+		streams: [][]provider.Event{
+			{
+				{
+					Kind: provider.EventToolCall,
+					ToolRequest: &provider.ToolRequest{
+						ID:        "call_patch",
+						Name:      "apply_patch",
+						Input:     map[string]any{"patch": "bad"},
+						Arguments: `{"patch":"bad"}`,
+					},
+				},
+				{Kind: provider.EventCompleted},
+			},
+			{
+				{Kind: provider.EventDelta, Text: "recovered"},
+				{Kind: provider.EventCompleted, Text: "recovered"},
+			},
+		},
+	}
+	runner := NewRunner(Config{
+		Bus:      eventbus.New(eventbus.WithSubscriberBuffer(16)),
+		Tools:    reg,
+		Provider: script,
+	})
+	defer runner.bus.Close()
+
+	result, err := runner.Run(context.Background(), RunRequest{Prompt: "patch this"})
+	if err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	if result.FinalText != "recovered" {
+		t.Fatalf("final = %q", result.FinalText)
+	}
+	if len(script.requests) != 2 {
+		t.Fatalf("requests = %d, want 2", len(script.requests))
+	}
+	messages := script.requests[1].Messages
+	if len(messages) != 3 {
+		t.Fatalf("second request messages = %#v", messages)
+	}
+	if messages[2].Role != provider.RoleTool || messages[2].ToolCallID != "call_patch" {
+		t.Fatalf("tool output message = %#v", messages[2])
+	}
+	for _, want := range []string{"Tool apply_patch failed", "failed to apply patch: exit status 128", "error: corrupt patch at line 4"} {
+		if !strings.Contains(messages[2].Content, want) {
+			t.Fatalf("tool output missing %q:\n%s", want, messages[2].Content)
+		}
 	}
 }
 

@@ -2,6 +2,8 @@ package tools
 
 import (
 	"context"
+	"errors"
+	"strings"
 	"testing"
 
 	"github.com/pandelisz/gode/internal/godex/eventbus"
@@ -24,6 +26,31 @@ func TestRegistryExecutesReadOnlyTool(t *testing.T) {
 	}
 	if result.Text != "ok" {
 		t.Fatalf("text = %q", result.Text)
+	}
+}
+
+func TestRegistryReturnsToolFailureAsResult(t *testing.T) {
+	reg := NewRegistry()
+	reg.Register(Tool{
+		Name:        "apply_patch",
+		Description: "patch",
+		ReadOnly:    false,
+		Run: func(context.Context, Call) (Result, error) {
+			return Result{Text: "error: corrupt patch at line 4"}, errors.New("failed to apply patch: exit status 128")
+		},
+	})
+
+	result, err := reg.Run(context.Background(), Call{Name: "apply_patch"})
+	if err != nil {
+		t.Fatalf("run should feed tool failure back as a result: %v", err)
+	}
+	if result.Error != "failed to apply patch: exit status 128" {
+		t.Fatalf("error = %q", result.Error)
+	}
+	for _, want := range []string{"failed to apply patch: exit status 128", "error: corrupt patch at line 4"} {
+		if !strings.Contains(result.Text, want) {
+			t.Fatalf("result text missing %q:\n%s", want, result.Text)
+		}
 	}
 }
 

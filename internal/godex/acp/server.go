@@ -476,7 +476,10 @@ func (s *Server) handleRunEvent(ctx context.Context, conn *Connection, sessionID
 		_ = conn.sendNotification(ctx, "session/update", map[string]any{"sessionId": sessionID, "update": update})
 	case eventbus.KindToolFailed:
 		payload := decodeToolPayload(ev)
-		text := payload.Error
+		text := payload.Text
+		if text == "" {
+			text = payload.Error
+		}
 		if text == "" {
 			text = "Tool failed"
 		}
