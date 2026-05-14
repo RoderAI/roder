@@ -274,7 +274,7 @@ func projectItems(ctx context.Context, store *ItemStore, cache map[string]map[st
 			existing := assistant[key]
 			if existing.ID == "" {
 				existing = item
-				existing.ID = firstNonEmpty(ev.RunID, ev.ID) + ":assistant"
+				existing.ID = assistantProjectedItemID(firstNonEmpty(ev.RunID, ev.ID), item.Phase)
 			} else if ev.Kind == eventbus.KindAssistantCompleted && item.Text != "" {
 				existing.Text = item.Text
 			} else {
@@ -295,6 +295,13 @@ func projectItems(ctx context.Context, store *ItemStore, cache map[string]map[st
 		}
 	}
 	return nil
+}
+
+func assistantProjectedItemID(base string, phase string) string {
+	if phase == "" || phase == "final_answer" {
+		return base + ":assistant"
+	}
+	return base + ":assistant:" + phase
 }
 
 func appendProjectedItem(ctx context.Context, store *ItemStore, cache map[string]map[string]bool, item Item) (bool, error) {

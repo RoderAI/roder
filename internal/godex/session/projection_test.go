@@ -115,6 +115,67 @@ func TestBackfillProjectsJournalAndCoalescesAssistantDeltas(t *testing.T) {
 	}
 }
 
+func TestBackfillKeepsAssistantPhaseMessagesSeparate(t *testing.T) {
+	ctx := context.Background()
+	dataDir := t.TempDir()
+	journalStore := openProjectionJournal(t, filepath.Join(dataDir, "events.jsonl"))
+	events := []eventbus.Event{
+		projectionEvent("run", eventbus.KindRunStarted, nil),
+		projectionEvent("commentary", eventbus.KindAssistantDelta, map[string]any{"text": "I will inspect.", "phase": "commentary"}),
+		projectionEvent("final", eventbus.KindAssistantCompleted, map[string]any{"text": "Done.", "phase": "final_answer"}),
+		projectionEvent("done", eventbus.KindRunCompleted, nil),
+	}
+	for _, ev := range events {
+		if err := journalStore.Append(ctx, ev); err != nil {
+			t.Fatalf("append journal: %v", err)
+		}
+	}
+	if err := journalStore.Flush(); err != nil {
+		t.Fatalf("flush journal: %v", err)
+	}
+
+	sessionStore, err := Open(dataDir)
+	if err != nil {
+		t.Fatalf("open sessions: %v", err)
+	}
+	turnStore, err := OpenTurnStore(dataDir)
+	if err != nil {
+		t.Fatalf("open turns: %v", err)
+	}
+	itemStore, err := OpenItemStore(dataDir)
+	if err != nil {
+		t.Fatalf("open items: %v", err)
+	}
+
+	result, err := Backfill(ctx, journalStore, BackfillStores{Sessions: sessionStore, Turns: turnStore, Items: itemStore})
+	if err != nil {
+		t.Fatalf("backfill: %v", err)
+	}
+	if result.Items != 2 {
+		t.Fatalf("result = %#v", result)
+	}
+	items, err := itemStore.ListBySession(ctx, "s1")
+	if err != nil {
+		t.Fatalf("list items: %v", err)
+	}
+	if len(items) != 2 {
+		t.Fatalf("items = %#v", items)
+	}
+	byPhase := map[string]Item{}
+	for _, item := range items {
+		byPhase[item.Phase] = item
+	}
+	if byPhase["commentary"].Text != "I will inspect." {
+		t.Fatalf("commentary item = %#v", byPhase["commentary"])
+	}
+	if byPhase["final_answer"].Text != "Done." {
+		t.Fatalf("final item = %#v", byPhase["final_answer"])
+	}
+	if byPhase["commentary"].ID == byPhase["final_answer"].ID {
+		t.Fatalf("phase items should have distinct ids: %#v", items)
+	}
+}
+
 func TestBackfillReportsCorruptJournalPathAndLine(t *testing.T) {
 	ctx := context.Background()
 	dataDir := t.TempDir()
