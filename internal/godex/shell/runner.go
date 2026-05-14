@@ -60,6 +60,9 @@ func (runnerConfig Runner) Run(ctx context.Context, req RunRequest) (RunResult, 
 	if runnerConfig.Builtins != nil {
 		execHandlers = append(execHandlers, builtinExecHandler(runnerConfig.Builtins))
 	}
+	if req.Policy != nil {
+		execHandlers = append(execHandlers, policyExecHandler(req.Policy))
+	}
 	options := []interp.RunnerOption{
 		interp.StdIO(req.Stdin, outWriter, errWriter),
 		interp.Dir(req.Dir),
