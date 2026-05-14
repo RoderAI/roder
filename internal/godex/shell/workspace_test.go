@@ -1,16 +1,18 @@
-package shell
+package shell_test
 
 import (
-	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"testing"
 
+	godexshell "github.com/pandelisz/gode/internal/godex/shell"
 	"github.com/pandelisz/gode/internal/godex/tools"
-	toolbuiltin "github.com/pandelisz/gode/internal/godex/tools/builtin"
+	"github.com/pandelisz/gode/internal/godex/workspacepath"
 )
 
 func TestWorkspaceBuiltinReadFileAndAllowsOutsideReads(t *testing.T) {
@@ -25,10 +27,10 @@ func TestWorkspaceBuiltinReadFileAndAllowsOutsideReads(t *testing.T) {
 	}
 
 	reg := workspaceBuiltinRegistry(t, root)
-	result, err := Runner{Builtins: reg}.Run(context.Background(), RunRequest{
+	result, err := godexshell.Runner{Builtins: reg}.Run(context.Background(), godexshell.RunRequest{
 		Command: "gode_read_file main.go 2 1",
 		Dir:     root,
-		Policy:  &Policy{AllowExternal: false},
+		Policy:  &godexshell.Policy{AllowExternal: false},
 	})
 	if err != nil {
 		t.Fatalf("run read: %v", err)
@@ -37,10 +39,10 @@ func TestWorkspaceBuiltinReadFileAndAllowsOutsideReads(t *testing.T) {
 		t.Fatalf("read result = %#v", result)
 	}
 
-	result, err = Runner{Builtins: reg}.Run(context.Background(), RunRequest{
+	result, err = godexshell.Runner{Builtins: reg}.Run(context.Background(), godexshell.RunRequest{
 		Command: "gode_read_file " + shellQuoteForTest(outsidePath),
 		Dir:     root,
-		Policy:  &Policy{AllowExternal: false},
+		Policy:  &godexshell.Policy{AllowExternal: false},
 	})
 	if err != nil {
 		t.Fatalf("run outside read: %v", err)
@@ -60,10 +62,10 @@ func TestWorkspaceBuiltinListFilesSortedAndRejectsEscapes(t *testing.T) {
 	}
 
 	reg := workspaceBuiltinRegistry(t, root)
-	result, err := Runner{Builtins: reg}.Run(context.Background(), RunRequest{
+	result, err := godexshell.Runner{Builtins: reg}.Run(context.Background(), godexshell.RunRequest{
 		Command: "gode_list_files .",
 		Dir:     root,
-		Policy:  &Policy{AllowExternal: false},
+		Policy:  &godexshell.Policy{AllowExternal: false},
 	})
 	if err != nil {
 		t.Fatalf("run list: %v", err)
@@ -72,10 +74,10 @@ func TestWorkspaceBuiltinListFilesSortedAndRejectsEscapes(t *testing.T) {
 		t.Fatalf("list result = %#v", result)
 	}
 
-	result, err = Runner{Builtins: reg}.Run(context.Background(), RunRequest{
+	result, err = godexshell.Runner{Builtins: reg}.Run(context.Background(), godexshell.RunRequest{
 		Command: "gode_list_files ..",
 		Dir:     root,
-		Policy:  &Policy{AllowExternal: false},
+		Policy:  &godexshell.Policy{AllowExternal: false},
 	})
 	if err != nil {
 		t.Fatalf("run list escape: %v", err)
@@ -95,10 +97,10 @@ func TestWorkspaceBuiltinSearchFilesSkipsBinary(t *testing.T) {
 	}
 
 	reg := workspaceBuiltinRegistry(t, root)
-	result, err := Runner{Builtins: reg}.Run(context.Background(), RunRequest{
+	result, err := godexshell.Runner{Builtins: reg}.Run(context.Background(), godexshell.RunRequest{
 		Command: "gode_search_files needle",
 		Dir:     root,
-		Policy:  &Policy{AllowExternal: false},
+		Policy:  &godexshell.Policy{AllowExternal: false},
 	})
 	if err != nil {
 		t.Fatalf("run search: %v", err)
@@ -127,10 +129,10 @@ func TestWorkspaceBuiltinApplyPatchUsesPatchTool(t *testing.T) {
 	}
 
 	reg := workspaceBuiltinRegistry(t, root)
-	result, err := Runner{Builtins: reg}.Run(context.Background(), RunRequest{
+	result, err := godexshell.Runner{Builtins: reg}.Run(context.Background(), godexshell.RunRequest{
 		Command: "gode_apply_patch < change.patch",
 		Dir:     root,
-		Policy:  &Policy{AllowExternal: false},
+		Policy:  &godexshell.Policy{AllowExternal: false},
 	})
 	if err != nil {
 		t.Fatalf("run patch: %v", err)
@@ -152,43 +154,35 @@ func TestWorkspaceBuiltinsReturnContextCancellation(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(root, "main.txt"), []byte("hello\n"), 0o600); err != nil {
 		t.Fatalf("write file: %v", err)
 	}
-	toolReg := tools.NewRegistry()
-	toolbuiltin.RegisterFilesystem(toolReg, root)
-	toolbuiltin.RegisterPatch(toolReg, root)
+	reg := workspaceBuiltinRegistry(t, root)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
-	var stdout bytes.Buffer
-	var stderr bytes.Buffer
-	checks := map[string]func() error{
-		"gode_read_file": func() error {
-			return handleWorkspaceReadFile(ctx, root, toolReg, []string{"gode_read_file", "main.txt"}, &stdout, &stderr)
-		},
-		"gode_list_files": func() error {
-			return handleWorkspaceListFiles(ctx, root, toolReg, []string{"gode_list_files", "."}, &stdout, &stderr)
-		},
-		"gode_search_files": func() error {
-			return handleWorkspaceSearchFiles(ctx, toolReg, []string{"gode_search_files", "hello"}, &stdout, &stderr)
-		},
-		"gode_apply_patch": func() error {
-			return handleWorkspaceApplyPatch(ctx, toolReg, strings.NewReader("*** Begin Patch\n*** End Patch\n"), &stdout, &stderr)
-		},
+	checks := map[string][]string{
+		"gode_read_file":    {"gode_read_file", "main.txt"},
+		"gode_list_files":   {"gode_list_files", "."},
+		"gode_search_files": {"gode_search_files", "hello"},
+		"gode_apply_patch":  {"gode_apply_patch"},
 	}
-	for name, check := range checks {
-		if err := check(); !errors.Is(err, context.Canceled) {
+	for name, args := range checks {
+		builtin, ok := reg.Lookup(name)
+		if !ok {
+			t.Fatalf("missing builtin %s", name)
+		}
+		err := builtin.Run(ctx, args, strings.NewReader("*** Begin Patch\n*** End Patch\n"), nilWriter{}, nilWriter{})
+		if !errors.Is(err, context.Canceled) {
 			t.Fatalf("%s err = %v", name, err)
 		}
 	}
 }
 
-func workspaceBuiltinRegistry(t *testing.T, root string) *BuiltinRegistry {
+func workspaceBuiltinRegistry(t *testing.T, root string) *godexshell.BuiltinRegistry {
 	t.Helper()
 	toolReg := tools.NewRegistry()
-	toolbuiltin.RegisterFilesystem(toolReg, root)
-	toolbuiltin.RegisterPatch(toolReg, root)
-	reg := NewBuiltinRegistry()
-	if err := RegisterWorkspaceBuiltins(reg, root, toolReg); err != nil {
+	registerFakeWorkspaceTools(t, toolReg, root)
+	reg := godexshell.NewBuiltinRegistry()
+	if err := godexshell.RegisterWorkspaceBuiltins(reg, root, toolReg); err != nil {
 		t.Fatalf("register workspace builtins: %v", err)
 	}
 	return reg
@@ -197,3 +191,133 @@ func workspaceBuiltinRegistry(t *testing.T, root string) *BuiltinRegistry {
 func shellQuoteForTest(path string) string {
 	return "'" + strings.ReplaceAll(path, "'", "'\\''") + "'"
 }
+
+func registerFakeWorkspaceTools(t *testing.T, reg *tools.Registry, root string) {
+	t.Helper()
+	reg.Register(tools.Tool{
+		Name:     "read_file",
+		ReadOnly: true,
+		Run: func(ctx context.Context, call tools.Call) (tools.Result, error) {
+			path := stringValue(call.Input, "path")
+			cleaned, err := workspacepath.CleanReadPath(root, path)
+			if err != nil {
+				return tools.Result{}, err
+			}
+			data, err := os.ReadFile(cleaned)
+			if err != nil {
+				return tools.Result{}, err
+			}
+			lines := strings.Split(strings.TrimRight(string(data), "\n"), "\n")
+			start := intValue(call.Input, "start_line", 1)
+			limit := intValue(call.Input, "limit", len(lines))
+			if start < 1 {
+				start = 1
+			}
+			from := start - 1
+			if from > len(lines) {
+				from = len(lines)
+			}
+			to := from + limit
+			if to > len(lines) {
+				to = len(lines)
+			}
+			return tools.Result{Text: strings.Join(lines[from:to], "\n")}, nil
+		},
+	})
+	reg.Register(tools.Tool{
+		Name:     "list_files",
+		ReadOnly: true,
+		Run: func(ctx context.Context, call tools.Call) (tools.Result, error) {
+			path, err := workspacepath.CleanWorkspacePath(root, stringValueDefault(call.Input, "path", "."))
+			if err != nil {
+				return tools.Result{}, err
+			}
+			entries, err := os.ReadDir(path)
+			if err != nil {
+				return tools.Result{}, err
+			}
+			names := make([]string, 0, len(entries))
+			for _, entry := range entries {
+				name := entry.Name()
+				if entry.IsDir() {
+					name += "/"
+				}
+				names = append(names, name)
+			}
+			sort.Strings(names)
+			return tools.Result{Text: strings.Join(names, "\n")}, nil
+		},
+	})
+	reg.Register(tools.Tool{
+		Name:     "search_files",
+		ReadOnly: true,
+		Run: func(ctx context.Context, call tools.Call) (tools.Result, error) {
+			query := stringValue(call.Input, "query")
+			var matches []string
+			err := filepath.WalkDir(root, func(path string, entry os.DirEntry, err error) error {
+				if err != nil {
+					return err
+				}
+				if entry.IsDir() {
+					return nil
+				}
+				data, err := os.ReadFile(path)
+				if err != nil || strings.ContainsRune(string(data), '\x00') {
+					return nil
+				}
+				rel, _ := filepath.Rel(root, path)
+				for index, line := range strings.Split(strings.TrimRight(string(data), "\n"), "\n") {
+					if strings.Contains(line, query) {
+						matches = append(matches, fmt.Sprintf("%s:%d:%s", filepath.ToSlash(rel), index+1, line))
+					}
+				}
+				return nil
+			})
+			if err != nil {
+				return tools.Result{}, err
+			}
+			return tools.Result{Text: strings.Join(matches, "\n")}, nil
+		},
+	})
+	reg.Register(tools.Tool{
+		Name:     "apply_patch",
+		ReadOnly: false,
+		Run: func(ctx context.Context, call tools.Call) (tools.Result, error) {
+			patch := stringValue(call.Input, "patch")
+			if !strings.Contains(patch, "-old\n+new") {
+				return tools.Result{}, fmt.Errorf("unexpected patch")
+			}
+			if err := os.WriteFile(filepath.Join(root, "main.txt"), []byte("new\n"), 0o600); err != nil {
+				return tools.Result{}, err
+			}
+			return tools.Result{Text: "Updated main.txt"}, nil
+		},
+	})
+}
+
+func stringValue(input map[string]any, key string) string {
+	value, _ := input[key].(string)
+	return value
+}
+
+func stringValueDefault(input map[string]any, key string, fallback string) string {
+	if value := stringValue(input, key); value != "" {
+		return value
+	}
+	return fallback
+}
+
+func intValue(input map[string]any, key string, fallback int) int {
+	switch value := input[key].(type) {
+	case int:
+		return value
+	case float64:
+		return int(value)
+	default:
+		return fallback
+	}
+}
+
+type nilWriter struct{}
+
+func (nilWriter) Write(p []byte) (int, error) { return len(p), nil }

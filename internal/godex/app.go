@@ -24,6 +24,7 @@ import (
 	"github.com/pandelisz/gode/internal/godex/provider"
 	"github.com/pandelisz/gode/internal/godex/repoconfig"
 	"github.com/pandelisz/gode/internal/godex/session"
+	godexshell "github.com/pandelisz/gode/internal/godex/shell"
 	godeskills "github.com/pandelisz/gode/internal/godex/skills"
 	godetelemetry "github.com/pandelisz/gode/internal/godex/telemetry"
 	"github.com/pandelisz/gode/internal/godex/tools"
@@ -320,7 +321,10 @@ func buildToolRegistry(cfg Config, bus *eventbus.Bus, goalRuntime *goals.Runtime
 	if memoryService != nil && cfg.Memories.Enabled {
 		memory.RegisterTools(reg, memoryService)
 	}
-	builtin.RegisterShell(reg, cfg.Workspace)
+	shellBuiltins := godexshell.NewBuiltinRegistry()
+	_ = godexshell.RegisterJSONBuiltins(shellBuiltins)
+	_ = godexshell.RegisterWorkspaceBuiltins(shellBuiltins, cfg.Workspace, reg)
+	builtin.RegisterShell(reg, cfg.Workspace, godexshell.Runner{Builtins: shellBuiltins})
 	builtin.RegisterPatch(reg, cfg.Workspace)
 	builtin.RegisterSubagent(reg)
 	if cfg.GoalsEnabled {
