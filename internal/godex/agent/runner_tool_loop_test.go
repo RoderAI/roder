@@ -130,3 +130,78 @@ func TestRunnerContinuesToolTurnsUntilProviderStopsRequestingTools(t *testing.T)
 		}
 	}
 }
+
+func TestRunnerCancellationDuringToolStillProducesToolOutput(t *testing.T) {
+	reg := tools.NewRegistry(tools.WithAutoApprove(true))
+	started := make(chan struct{})
+	reg.Register(tools.Tool{
+		Name:        "slow",
+		Description: "slow",
+		ReadOnly:    true,
+		Run: func(ctx context.Context, call tools.Call) (tools.Result, error) {
+			close(started)
+			<-ctx.Done()
+			return tools.Result{}, ctx.Err()
+		},
+	})
+	runner := NewRunner(Config{
+		Bus:   eventbus.New(eventbus.WithSubscriberBuffer(16)),
+		Tools: reg,
+	})
+	defer runner.bus.Close()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	var (
+		messages  []provider.Message
+		items     []provider.Item
+		persisted []provider.Item
+		runErr    error
+	)
+	done := make(chan struct{})
+	go func() {
+		messages, items, runErr = runner.runToolCalls(ctx, RunRequest{SessionID: "s-cancel-tool", RunID: "r-cancel-tool"}, nil, nil, []pendingToolCall{
+			{request: &provider.ToolRequest{ID: "call_cancel", Name: "slow", Arguments: `{}`}},
+		}, func(output []provider.Item, final string) error {
+			persisted = append(persisted, output...)
+			return nil
+		})
+		close(done)
+	}()
+
+	<-started
+	cancel()
+	<-done
+
+	if runErr != nil {
+		t.Fatalf("runToolCalls: %v", runErr)
+	}
+	if !hasToolMessage(messages, "call_cancel", "context canceled") {
+		t.Fatalf("missing canceled tool output message: %#v", messages)
+	}
+	if !hasFunctionOut(items, "call_cancel") {
+		t.Fatalf("missing function_call_output in input items: %#v", items)
+	}
+	if !hasFunctionOut(persisted, "call_cancel") {
+		t.Fatalf("missing persisted function_call_output: %#v", persisted)
+	}
+}
+
+func hasToolMessage(messages []provider.Message, callID string, text string) bool {
+	for _, message := range messages {
+		if message.Role == provider.RoleTool && message.ToolCallID == callID && strings.Contains(message.Content, text) {
+			return true
+		}
+	}
+	return false
+}
+
+func hasFunctionOut(items []provider.Item, callID string) bool {
+	for _, item := range items {
+		if item.Kind == provider.ItemFunctionOut && item.ToolCallID == callID {
+			return true
+		}
+	}
+	return false
+}

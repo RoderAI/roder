@@ -302,6 +302,7 @@ func (r *Registry) publish(ctx context.Context, kind eventbus.Kind, call Call, p
 	if r.bus == nil {
 		return
 	}
+	ctx = context.WithoutCancel(ctx)
 	r.bus.Publish(ctx, eventbus.Event{
 		Source:    eventbus.SourceTool,
 		Kind:      kind,

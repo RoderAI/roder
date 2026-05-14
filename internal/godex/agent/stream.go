@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"strings"
 	"sync"
 
 	"github.com/pandelisz/gode/internal/godex/eventbus"
@@ -43,6 +44,10 @@ func (r *Runner) streamProviderTurn(ctx context.Context, req RunRequest, provide
 	storedItemKeys := map[string]bool{}
 	var pendingTools []pendingToolCall
 	persistItemsOnce := func(items []provider.Item, final string) error {
+		persistCtx := ctx
+		if ctx.Err() != nil {
+			persistCtx = context.WithoutCancel(ctx)
+		}
 		filtered := make([]provider.Item, 0, len(items))
 		for _, item := range items {
 			key := providerItemStorageKey(item)
@@ -54,7 +59,7 @@ func (r *Runner) streamProviderTurn(ctx context.Context, req RunRequest, provide
 			}
 			filtered = append(filtered, item)
 		}
-		return r.persistProviderItems(ctx, req, filtered, final)
+		return r.persistProviderItems(persistCtx, req, filtered, final)
 	}
 	for events != nil || errs != nil {
 		select {
@@ -160,6 +165,14 @@ func (r *Runner) streamProviderTurn(ctx context.Context, req RunRequest, provide
 				return outcome, err
 			}
 		case <-ctx.Done():
+			if len(pendingTools) > 0 {
+				nextMessages, nextInputItems, err := r.cancelPendingToolCalls(ctx, req, outcome.Messages, outcome.InputItems, pendingTools, persistItemsOnce, ctx.Err())
+				if err != nil {
+					return outcome, err
+				}
+				outcome.Messages = nextMessages
+				outcome.InputItems = nextInputItems
+			}
 			return outcome, ctx.Err()
 		}
 	}
@@ -224,9 +237,22 @@ func (r *Runner) runToolCalls(ctx context.Context, req RunRequest, messages []pr
 		}(i, toolRequest)
 	}
 	wg.Wait()
-	for _, err := range errs {
+	for i, err := range errs {
 		if err != nil {
-			return messages, inputItems, err
+			results[i] = failedToolCallResult(results[i], err)
+			toolRequest := toolRequests[i].request
+			r.emit(context.WithoutCancel(ctx), eventbus.Event{
+				Kind:      eventbus.KindToolFailed,
+				Source:    eventbus.SourceTool,
+				SessionID: req.SessionID,
+				RunID:     req.RunID,
+				Payload: map[string]any{
+					"tool_call_id": toolRequest.ID,
+					"tool":         toolRequest.Name,
+					"error":        results[i].Error,
+					"text":         results[i].Text,
+				},
+			})
 		}
 	}
 	var outputItems []provider.Item
@@ -261,6 +287,75 @@ func (r *Runner) runToolCalls(ctx context.Context, req RunRequest, messages []pr
 		inputItems = append(inputItems, outputItems...)
 	}
 	return messages, inputItems, nil
+}
+
+func (r *Runner) cancelPendingToolCalls(ctx context.Context, req RunRequest, messages []provider.Message, inputItems []provider.Item, toolRequests []pendingToolCall, persistItems func([]provider.Item, string) error, cause error) ([]provider.Message, []provider.Item, error) {
+	inputItems = append([]provider.Item(nil), inputItems...)
+	outputItems := make([]provider.Item, 0, len(toolRequests))
+	for _, toolCall := range toolRequests {
+		toolRequest := toolCall.request
+		messages = append(messages, provider.Message{
+			Role:          provider.RoleAssistant,
+			ToolCallID:    toolRequest.ID,
+			ToolName:      toolRequest.Name,
+			ToolArguments: toolRequest.Arguments,
+		})
+		if len(toolCall.items) > 0 {
+			inputItems = append(inputItems, toolCall.items...)
+		} else {
+			inputItems = append(inputItems, providerItemFromToolRequest(toolRequest))
+		}
+		result := failedToolCallResult(tools.Result{}, cause)
+		content := toolResponseContent(toolRequest.Name, result)
+		messages = append(messages, provider.Message{
+			Role:       provider.RoleTool,
+			ToolCallID: toolRequest.ID,
+			Content:    content,
+		})
+		outputItems = append(outputItems, provider.Item{
+			Kind:       provider.ItemFunctionOut,
+			Role:       string(provider.RoleTool),
+			ToolName:   toolRequest.Name,
+			ToolCallID: toolRequest.ID,
+			Text:       content,
+		})
+		r.emit(context.WithoutCancel(ctx), eventbus.Event{
+			Kind:      eventbus.KindToolFailed,
+			Source:    eventbus.SourceTool,
+			SessionID: req.SessionID,
+			RunID:     req.RunID,
+			Payload: map[string]any{
+				"tool_call_id": toolRequest.ID,
+				"tool":         toolRequest.Name,
+				"error":        result.Error,
+				"text":         result.Text,
+			},
+		})
+	}
+	if len(outputItems) > 0 {
+		if err := persistItems(outputItems, ""); err != nil {
+			return messages, inputItems, err
+		}
+		inputItems = append(inputItems, outputItems...)
+	}
+	return messages, inputItems, nil
+}
+
+func failedToolCallResult(result tools.Result, err error) tools.Result {
+	message := strings.TrimSpace(err.Error())
+	output := strings.TrimSpace(result.Text)
+	result.Error = message
+	switch {
+	case message == "":
+		result.Text = output
+	case output == "":
+		result.Text = message
+	case strings.Contains(message, output):
+		result.Text = message
+	default:
+		result.Text = message + "\n" + output
+	}
+	return result
 }
 
 func providerItemFromToolRequest(toolRequest *provider.ToolRequest) provider.Item {
