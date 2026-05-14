@@ -1,6 +1,7 @@
 package components
 
 import (
+	"reflect"
 	"strings"
 	"testing"
 
@@ -92,6 +93,47 @@ func TestTranscriptUserMessageUsesCompactRail(t *testing.T) {
 	}
 	if len(result.Lines) != 1 {
 		t.Fatalf("expected only user body row, got %#v", result.Lines)
+	}
+}
+
+func TestTranscriptInsertsConsistentMessageGaps(t *testing.T) {
+	got := visibleMessages([]viewmodel.Message{
+		{ID: "m1", Role: viewmodel.RoleUser, Body: "hi"},
+		{ID: "m2", Role: viewmodel.RoleAssistant, Body: "hello"},
+		{ID: "m3", Role: viewmodel.RoleUser, Body: "again"},
+	}, 80, 10, 0, nil)
+
+	var lines []string
+	for _, item := range got {
+		for _, line := range item.lines {
+			lines = append(lines, ansi.Strip(line.text))
+		}
+	}
+	want := []string{"▌ hi", "", "hello", "", "▌ again"}
+	if !reflect.DeepEqual(lines, want) {
+		t.Fatalf("transcript lines = %#v, want %#v", lines, want)
+	}
+	if !got[1].lines[0].ref.Decorative || got[1].lines[0].ref.LogicalLine != -1 {
+		t.Fatalf("message gap should be decorative metadata: %#v", got[1].lines[0].ref)
+	}
+}
+
+func TestTranscriptTrimsBodyEdgeBlanksBeforeMessageGaps(t *testing.T) {
+	got := visibleMessagesWithOptions([]viewmodel.Message{
+		{ID: "m1", Role: viewmodel.RoleUser, Body: "hi"},
+		{ID: "m2", Role: viewmodel.RoleAssistant, Body: "\n\nHi! What would you like help with?\n\n"},
+		{ID: "m3", Role: viewmodel.RoleUser, Body: "what are you capable of"},
+	}, 80, 10, 0, nil, viewmodel.TimelineStyleMinimal, true)
+
+	var lines []string
+	for _, item := range got {
+		for _, line := range item.lines {
+			lines = append(lines, strings.TrimSpace(ansi.Strip(line.text)))
+		}
+	}
+	want := []string{"▌ hi", "", "Hi! What would you like help with?", "", "▌ what are you capable of"}
+	if !reflect.DeepEqual(lines, want) {
+		t.Fatalf("transcript lines = %#v, want %#v", lines, want)
 	}
 }
 
