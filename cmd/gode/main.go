@@ -13,7 +13,6 @@ import (
 	"github.com/pandelisz/gode/internal/godex/agent"
 	"github.com/pandelisz/gode/internal/godex/codexauth"
 	"github.com/pandelisz/gode/internal/godex/configstore"
-	"github.com/pandelisz/gode/internal/godex/provider"
 	"github.com/pandelisz/gode/internal/tui"
 )
 
@@ -373,12 +372,12 @@ func runModels(args []string) error {
 	if err := flags.Parse(args); err != nil {
 		return err
 	}
-	if _, err := loadConfigFromFlags(cfg, flags); err != nil {
+	loaded, err := loadConfigFromFlags(cfg, flags)
+	if err != nil {
 		return err
 	}
-	for _, model := range provider.Catalog.Models(false) {
-		cfg := godex.ModelConfigFor(model.ID)
-		fmt.Printf("%s\t%s\t%s\t%s\tcontext=%d\tauto_compact=%d\n", model.Provider, model.ID, model.DisplayName, model.DefaultReasoning, cfg.ContextWindow, cfg.AutoCompactTokenLimit)
+	for _, model := range godex.ModelsForConfig(loaded.Config, false) {
+		fmt.Printf("%s\t%s\t%s\t%s\tcontext=%d\tauto_compact=%d\n", model.Provider, model.ID, model.DisplayName, model.DefaultReasoning, model.ContextWindow, model.AutoCompactTokenLimit)
 	}
 	return nil
 }

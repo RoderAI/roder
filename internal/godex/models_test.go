@@ -1,10 +1,12 @@
 package godex
 
 import (
+	"reflect"
 	"strings"
 	"testing"
 
 	"github.com/pandelisz/gode/internal/godex/codexauth"
+	"github.com/pandelisz/gode/internal/godex/provider"
 )
 
 func TestBuiltInModelCatalogHasDefaultModelConfig(t *testing.T) {
@@ -242,5 +244,136 @@ func TestEmbeddingModelIsHiddenFromChatModelPickers(t *testing.T) {
 		if visible.ID == "text-embedding-3-large" {
 			t.Fatal("embedding model leaked into visible model picker")
 		}
+	}
+}
+
+func TestModelsForConfigIncludesCustomUserModels(t *testing.T) {
+	cfg := Config{UserModels: map[string]provider.UserModelConfig{
+		"deepseek-chat": {
+			Type:          string(provider.APITypeChatCompletions),
+			Provider:      "deepseek",
+			Model:         "deepseek-chat",
+			DisplayName:   "DeepSeek Chat",
+			ContextWindow: 128000,
+		},
+	}}
+
+	model, ok := LookupModelForConfig(cfg, "deepseek-chat")
+	if !ok {
+		t.Fatal("custom model missing")
+	}
+	if model.ID != "deepseek-chat" || model.Provider != "deepseek" || model.DisplayName != "DeepSeek Chat" || model.ContextWindow != 128000 {
+		t.Fatalf("custom model = %#v", model)
+	}
+	found := false
+	for _, visible := range ModelsForConfig(cfg, false) {
+		if visible.ID == "deepseek-chat" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("custom model missing from visible list: %#v", ModelsForConfig(cfg, false))
+	}
+}
+
+func TestModelsForConfigHidesDisabledCustomModels(t *testing.T) {
+	cfg := Config{UserModels: map[string]provider.UserModelConfig{
+		"disabled-custom": {
+			Type:     string(provider.APITypeChatCompletions),
+			Provider: "custom",
+			Disabled: true,
+		},
+	}}
+
+	for _, visible := range ModelsForConfig(cfg, false) {
+		if visible.ID == "disabled-custom" {
+			t.Fatal("disabled custom model leaked into visible list")
+		}
+	}
+	if _, ok := LookupModelForConfig(cfg, "disabled-custom"); !ok {
+		t.Fatal("disabled custom model should still be addressable directly")
+	}
+}
+
+func TestCustomModelOverridesMetadata(t *testing.T) {
+	cfg := Config{UserModels: map[string]provider.UserModelConfig{
+		"kimi": {
+			Type:             string(provider.APITypeChatCompletions),
+			Provider:         "moonshot",
+			Model:            "kimi-k2.6",
+			DisplayName:      "Kimi K2.6",
+			ContextWindow:    262144,
+			DefaultReasoning: ReasoningNone,
+			ReasoningEfforts: []string{ReasoningNone},
+		},
+	}}
+
+	model, ok := LookupModelForConfig(cfg, "kimi")
+	if !ok {
+		t.Fatal("custom model missing")
+	}
+	if model.DisplayName != "Kimi K2.6" || model.ContextWindow != 262144 || model.DefaultReasoning != ReasoningNone {
+		t.Fatalf("custom metadata = %#v", model)
+	}
+	if got := model.ReasoningEfforts(); len(got) != 1 || got[0] != ReasoningNone {
+		t.Fatalf("reasoning efforts = %#v", got)
+	}
+	if resolved, err := ResolveSelectedModel(Config{Model: "kimi", UserModels: cfg.UserModels}); err != nil {
+		t.Fatalf("resolve selected model: %v", err)
+	} else if resolved.UpstreamModel != "kimi-k2.6" || resolved.APIType != provider.APITypeChatCompletions {
+		t.Fatalf("resolved = %#v", resolved)
+	}
+}
+
+func TestCustomModelsDoNotChangeBuiltInDefaults(t *testing.T) {
+	cfg := Config{UserModels: map[string]provider.UserModelConfig{
+		"deepseek-chat": {
+			Type:     string(provider.APITypeChatCompletions),
+			Provider: "deepseek",
+		},
+	}}
+
+	builtIn := ModelConfigForConfig(cfg, DefaultModelID)
+	if builtIn.Provider != ProviderOpenAI || builtIn.DefaultReasoning != ReasoningMedium {
+		t.Fatalf("built-in default changed = %#v", builtIn)
+	}
+}
+
+func TestBuildProviderUsesCustomUpstreamModelID(t *testing.T) {
+	cfg := (Config{
+		Model: "local-gpt",
+		UserModels: map[string]provider.UserModelConfig{
+			"local-gpt": {
+				Type:     string(provider.APITypeResponses),
+				Provider: "router",
+				Model:    "upstream-gpt",
+			},
+		},
+	}).withDefaults()
+	prov, err := buildProvider(cfg)
+	if err != nil {
+		t.Fatalf("build provider: %v", err)
+	}
+	if got := reflect.ValueOf(prov).Elem().FieldByName("model").String(); got != "upstream-gpt" {
+		t.Fatalf("provider model = %q", got)
+	}
+}
+
+func TestBuildProviderRejectsChatCompletionsUntilRuntimeExists(t *testing.T) {
+	cfg := (Config{
+		Model: "deepseek-chat",
+		UserModels: map[string]provider.UserModelConfig{
+			"deepseek-chat": {
+				Type:     string(provider.APITypeChatCompletions),
+				Provider: "deepseek",
+			},
+		},
+	}).withDefaults()
+	_, err := buildProvider(cfg)
+	if err == nil {
+		t.Fatal("expected chat completions runtime error")
+	}
+	if !strings.Contains(err.Error(), "chat_completions") || !strings.Contains(err.Error(), "deepseek-chat") {
+		t.Fatalf("error = %v", err)
 	}
 }

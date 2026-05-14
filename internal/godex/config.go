@@ -89,17 +89,18 @@ func (c Config) withDefaults() Config {
 	}
 	c.Memories = c.Memories.WithDefaults(c.DataDir)
 	if c.Model == "" {
-		if provider, ok := LookupProvider(c.Provider); ok && provider.DefaultModel != "" {
+		if provider, ok := LookupProviderForConfig(c, c.Provider); ok && provider.DefaultModel != "" {
 			c.Model = provider.DefaultModel
 		} else {
 			c.Model = defaults.Model
 		}
 	}
-	if c.Provider == "" {
-		c.Provider = ModelConfigFor(c.Model).Provider
+	modelConfig := ModelConfigForConfig(c, c.Model)
+	if c.Provider == "" || c.Provider == defaults.Provider {
+		c.Provider = modelConfig.Provider
 	}
 	if c.Reasoning == "" {
-		c.Reasoning = ModelConfigFor(c.Model).DefaultReasoning
+		c.Reasoning = modelConfig.DefaultReasoning
 	}
 	c.TimelineStyle = NormalizeTimelineStyle(c.TimelineStyle)
 	if c.TelemetryEndpoint == "" {

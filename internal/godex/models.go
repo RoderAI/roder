@@ -10,6 +10,7 @@ const (
 
 	ProviderKindMock      = "mock"
 	ProviderKindOpenAI    = "openai"
+	ProviderKindChat      = "chat_completions"
 	ProviderKindAnthropic = "anthropic"
 
 	ReasoningNone    = "none"
@@ -31,6 +32,7 @@ type ProviderConfig struct {
 	EnvKey             string
 	RequiresAuth       bool
 	SupportsWebSockets bool
+	Disabled           bool
 }
 
 type ReasoningOption struct {

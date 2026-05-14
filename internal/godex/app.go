@@ -225,7 +225,7 @@ func (a *App) SetModelReasoning(model string, reasoning string) error {
 
 	cfg := a.Config
 	cfg.Model = model
-	modelConfig := ModelConfigFor(model)
+	modelConfig := ModelConfigForConfig(cfg, model)
 	reasoning = strings.TrimSpace(reasoning)
 	if reasoning == "" {
 		reasoning = modelConfig.DefaultReasoning
@@ -405,7 +405,11 @@ func (a *App) appendJournal(ctx context.Context, ev eventbus.Event) {
 }
 
 func buildProvider(cfg Config) (provider.Provider, error) {
-	providerConfig, ok := LookupProvider(cfg.Provider)
+	resolvedModel, err := ResolveSelectedModel(cfg)
+	if err != nil {
+		return nil, err
+	}
+	providerConfig, ok := LookupProviderForConfig(cfg, cfg.Provider)
 	if !ok {
 		return nil, fmt.Errorf("unknown provider %q", cfg.Provider)
 	}
@@ -414,7 +418,7 @@ func buildProvider(cfg Config) (provider.Provider, error) {
 		return provider.NewMock("mock response", nil), nil
 	case ProviderKindOpenAI:
 		openAIConfig := provider.OpenAIConfig{
-			Model:       cfg.Model,
+			Model:       resolvedModel.UpstreamModel,
 			Reasoning:   cfg.Reasoning,
 			ServiceTier: openAIServiceTier(cfg),
 		}
@@ -422,9 +426,11 @@ func buildProvider(cfg Config) (provider.Provider, error) {
 			return provider.NewOpenAIWithConfig(openAIConfig, codexauth.OpenAIOptions(cfg.DataDir)...), nil
 		}
 		return provider.NewOpenAIWithConfig(openAIConfig), nil
+	case ProviderKindChat:
+		return nil, fmt.Errorf("model %q uses provider type %q, but chat completions runtime is not implemented yet", cfg.Model, ProviderKindChat)
 	case ProviderKindAnthropic:
 		return provider.NewAnthropicWithConfig(provider.AnthropicConfig{
-			Model:   cfg.Model,
+			Model:   resolvedModel.UpstreamModel,
 			BaseURL: providerConfig.BaseURL,
 			APIKey:  os.Getenv(providerConfig.EnvKey),
 		}), nil
