@@ -31,6 +31,7 @@ type Config struct {
 	MCP                   map[string]mcp.ServerConfig
 	LSP                   map[string]lsp.Config
 	ProviderConfig        map[string]provider.ProviderConfig
+	UserModels            map[string]provider.UserModelConfig
 	SelectedModels        map[string]provider.SelectedModel
 	ContextPaths          []string
 	DisabledTools         []string
@@ -54,6 +55,7 @@ func DefaultConfig() Config {
 		MCP:               map[string]mcp.ServerConfig{},
 		LSP:               map[string]lsp.Config{},
 		ProviderConfig:    map[string]provider.ProviderConfig{},
+		UserModels:        map[string]provider.UserModelConfig{},
 		SelectedModels:    map[string]provider.SelectedModel{},
 	}
 }
@@ -114,6 +116,9 @@ func (c Config) withDefaults() Config {
 	}
 	if c.ProviderConfig == nil {
 		c.ProviderConfig = defaults.ProviderConfig
+	}
+	if c.UserModels == nil {
+		c.UserModels = defaults.UserModels
 	}
 	if c.SelectedModels == nil {
 		c.SelectedModels = defaults.SelectedModels
