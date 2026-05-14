@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/pandelisz/gode/internal/godex"
+	godeskills "github.com/pandelisz/gode/internal/godex/skills"
 )
 
 func TestRunSkillsListShowsScopeNameDescriptionAndPath(t *testing.T) {
@@ -65,8 +66,8 @@ func TestRunSkillsListJSONAndEnableDisable(t *testing.T) {
 	if err != nil {
 		t.Fatalf("load settings: %v", err)
 	}
-	if !settings.ActiveSkills["go-tests"] {
-		t.Fatalf("active skills = %#v", settings.ActiveSkills)
+	if !godeskills.IsSkillEnabled(settings.Skills, godeskills.Skill{Name: "go-tests", Path: filepath.Join(workspace, ".agents", "skills", "go-tests", "SKILL.md")}) {
+		t.Fatalf("skills config = %#v", settings.Skills)
 	}
 }
 

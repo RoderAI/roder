@@ -33,11 +33,11 @@ func TestDiscoverFindsSkillsInConfiguredOrder(t *testing.T) {
 		Env:       []string{"CODEX_HOME=" + codexHome},
 	})
 
-	if got := skillNames(catalog.Skills); !reflect.DeepEqual(got, []string{"go-tests", "api-skill", "repo-skill", "data-skill", "global-skill", "codex-skill"}) {
+	if got := skillNames(catalog.Skills); !reflect.DeepEqual(got, []string{"api-skill", "go-tests", "repo-skill", "codex-skill", "data-skill", "global-skill", "go-tests"}) {
 		t.Fatalf("skills = %#v diagnostics=%#v", got, catalog.Diagnostics)
 	}
-	if catalog.Skills[0].Description != "project go tests" {
-		t.Fatalf("shadowing did not preserve first skill: %#v", catalog.Skills[0])
+	if catalog.Skills[1].Description != "project go tests" || catalog.Skills[6].Description != "shadowed" {
+		t.Fatalf("same-name skills were not preserved by path: %#v", catalog.Skills)
 	}
 }
 
@@ -76,14 +76,14 @@ func TestApplyInvocationsInjectsFoundSkillsOnceAndLeavesUnknownText(t *testing.T
 		t.Fatalf("messages = %#v", result.Messages)
 	}
 	for _, msg := range result.Messages {
-		if msg.Role != provider.RoleSystem {
+		if msg.Role != provider.RoleUser {
 			t.Fatalf("message role = %q", msg.Role)
 		}
 	}
-	if !strings.Contains(result.Messages[0].Content, `<skill name="go-tests">`) || strings.Count(result.Messages[0].Content, "Run Go tests.") != 1 {
+	if !strings.Contains(result.Messages[0].Content, `<name>go-tests</name>`) || strings.Count(result.Messages[0].Content, "Run Go tests.") != 1 {
 		t.Fatalf("first skill message = %q", result.Messages[0].Content)
 	}
-	if !strings.Contains(result.Messages[1].Content, `<skill name="review">`) {
+	if !strings.Contains(result.Messages[1].Content, `<name>review</name>`) {
 		t.Fatalf("second skill message = %q", result.Messages[1].Content)
 	}
 }
@@ -99,12 +99,15 @@ func TestApplyInvocationsLeavesPromptUnchangedWhenNoSkillFound(t *testing.T) {
 	}
 }
 
-func TestApplyInvocationsFilteredReportsDisabledSkill(t *testing.T) {
-	result := ApplyInvocationsFiltered("use $go-tests and $unknown", Catalog{Skills: []Skill{{
+func TestApplyInvocationsReportsDisabledSkill(t *testing.T) {
+	catalog := Catalog{Skills: []Skill{{
 		Name: "go-tests",
 		Path: "/skills/go-tests/SKILL.md",
 		Body: "Run Go tests.",
-	}}}, map[string]bool{"go-tests": false})
+	}}}
+	config := Config{Rules: []ConfigRule{{Name: "go-tests", Enabled: false}}}
+	result := ApplyInvocationsWithConfig("use $go-tests and $unknown", catalog, config)
+	result.Diagnostics = append(result.Diagnostics, DisabledMentionDiagnostics("use $go-tests and $unknown", catalog, config)...)
 
 	if result.Prompt != "use $go-tests and $unknown" {
 		t.Fatalf("prompt = %q", result.Prompt)
@@ -140,7 +143,7 @@ Run the suite.
 	if skill.Metadata["owner"] != "ml-labs" {
 		t.Fatalf("metadata = %#v", skill.Metadata)
 	}
-	if skill.Body != "Run the suite." {
+	if skill.Body != "Run the suite." || !strings.Contains(skill.Content, "description: Run tests") {
 		t.Fatalf("body = %q", skill.Body)
 	}
 }

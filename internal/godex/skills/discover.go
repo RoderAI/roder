@@ -3,6 +3,7 @@ package skills
 import (
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 )
 
@@ -11,14 +12,46 @@ type DiscoverOptions struct {
 	DataDir   string
 	HomeDir   string
 	Env       []string
+	Roots     []Root
+}
+
+type Root struct {
+	Path     string
+	Scope    SkillScope
+	PluginID string
 }
 
 type Catalog struct {
 	Skills      []Skill
 	Diagnostics []Diagnostic
+	Roots       []Root
 }
 
 func Discover(opts DiscoverOptions) Catalog {
+	roots := discoverRoots(opts)
+	seenRoots := map[string]struct{}{}
+	seenSkills := map[string]struct{}{}
+	var catalog Catalog
+	for _, root := range roots {
+		root.Path = canonicalPath(root.Path)
+		if root.Path == "" {
+			continue
+		}
+		if _, ok := seenRoots[root.Path]; ok {
+			continue
+		}
+		seenRoots[root.Path] = struct{}{}
+		before := len(catalog.Skills)
+		discoverRoot(root, &catalog, seenSkills)
+		if len(catalog.Skills) > before {
+			catalog.Roots = append(catalog.Roots, root)
+		}
+	}
+	sortCatalog(&catalog)
+	return catalog
+}
+
+func discoverRoots(opts DiscoverOptions) []Root {
 	workspace := absOrDefault(opts.Workspace, ".")
 	dataDir := strings.TrimSpace(opts.DataDir)
 	homeDir := strings.TrimSpace(opts.HomeDir)
@@ -26,60 +59,134 @@ func Discover(opts DiscoverOptions) Catalog {
 		homeDir, _ = os.UserHomeDir()
 	}
 
-	roots := []string{filepath.Join(workspace, ".agents", "skills")}
-	roots = append(roots, nestedAgentSkillRoots(workspace)...)
-	roots = append(roots, filepath.Join(workspace, ".gode", "skills"))
+	roots := []Root{{Path: filepath.Join(workspace, ".agents", "skills"), Scope: SkillScopeRepo}}
+	for _, nested := range nestedAgentSkillRoots(workspace) {
+		roots = append(roots, Root{Path: nested, Scope: SkillScopeRepo})
+	}
+	roots = append(roots, Root{Path: filepath.Join(workspace, ".gode", "skills"), Scope: SkillScopeRepo})
 	if dataDir != "" {
-		roots = append(roots, filepath.Join(dataDir, "skills"))
+		roots = append(roots, Root{Path: filepath.Join(dataDir, "skills"), Scope: SkillScopeUser})
 	}
 	if homeDir != "" {
-		roots = append(roots, filepath.Join(homeDir, ".gode", "skills"))
+		roots = append(roots, Root{Path: filepath.Join(homeDir, ".gode", "skills"), Scope: SkillScopeUser})
 	}
 	if codexHome := envValue(opts.Env, "CODEX_HOME"); codexHome != "" {
-		roots = append(roots, filepath.Join(codexHome, "skills"))
+		roots = append(roots, Root{Path: filepath.Join(codexHome, "skills"), Scope: SkillScopeUser})
 	}
-
-	seenRoots := map[string]struct{}{}
-	seenSkills := map[string]struct{}{}
-	var catalog Catalog
-	for _, root := range roots {
-		abs := absOrDefault(root, root)
-		if _, ok := seenRoots[abs]; ok {
-			continue
+	for _, path := range filepath.SplitList(envValue(opts.Env, "GODE_SYSTEM_SKILLS")) {
+		if strings.TrimSpace(path) != "" {
+			roots = append(roots, Root{Path: path, Scope: SkillScopeSystem})
 		}
-		seenRoots[abs] = struct{}{}
-		discoverRoot(abs, &catalog, seenSkills)
 	}
-	return catalog
+	for _, path := range filepath.SplitList(envValue(opts.Env, "GODE_ADMIN_SKILLS")) {
+		if strings.TrimSpace(path) != "" {
+			roots = append(roots, Root{Path: path, Scope: SkillScopeAdmin})
+		}
+	}
+	roots = append(roots, opts.Roots...)
+	return roots
 }
 
-func discoverRoot(root string, catalog *Catalog, seenSkills map[string]struct{}) {
-	entries, err := os.ReadDir(root)
+func discoverRoot(root Root, catalog *Catalog, seenSkills map[string]struct{}) {
+	info, err := os.Stat(root.Path)
 	if os.IsNotExist(err) {
 		return
 	}
 	if err != nil {
-		catalog.Diagnostics = append(catalog.Diagnostics, Diagnostic{Path: root, Message: err.Error()})
+		catalog.Diagnostics = append(catalog.Diagnostics, Diagnostic{Path: root.Path, Message: err.Error()})
+		return
+	}
+	if !info.IsDir() {
+		return
+	}
+	visited := 0
+	walk(root.Path, root.Path, root, catalog, seenSkills, 0, &visited)
+}
+
+func walk(rootPath, dir string, root Root, catalog *Catalog, seenSkills map[string]struct{}, depth int, visited *int) {
+	if depth > defaultMaxScanDepth || *visited >= defaultMaxSkillDirsPerRoot {
+		return
+	}
+	*visited++
+	if depth > 0 && strings.HasPrefix(filepath.Base(dir), ".") {
+		return
+	}
+	skillPath := filepath.Join(dir, skillFileName)
+	if info, err := os.Stat(skillPath); err == nil && !info.IsDir() {
+		addSkill(rootPath, skillPath, root, catalog, seenSkills)
+		return
+	}
+
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		catalog.Diagnostics = append(catalog.Diagnostics, Diagnostic{Path: dir, Message: err.Error()})
 		return
 	}
 	for _, entry := range entries {
-		if !entry.IsDir() {
+		name := entry.Name()
+		if strings.HasPrefix(name, ".") {
 			continue
 		}
-		skillPath := filepath.Join(root, entry.Name(), "SKILL.md")
-		skill, err := ParseFile(skillPath)
-		if os.IsNotExist(err) {
+		path := filepath.Join(dir, name)
+		isDir := entry.IsDir()
+		if !isDir && entry.Type()&os.ModeSymlink != 0 && root.Scope != SkillScopeSystem {
+			if info, err := os.Stat(path); err == nil && info.IsDir() {
+				isDir = true
+			}
+		}
+		if !isDir {
 			continue
 		}
-		if err != nil {
-			catalog.Diagnostics = append(catalog.Diagnostics, Diagnostic{Path: skillPath, Message: err.Error()})
-			continue
+		walk(rootPath, path, root, catalog, seenSkills, depth+1, visited)
+	}
+}
+
+func addSkill(rootPath, skillPath string, root Root, catalog *Catalog, seenSkills map[string]struct{}) {
+	key := canonicalPath(skillPath)
+	if _, exists := seenSkills[key]; exists {
+		return
+	}
+	skill, err := ParseFile(skillPath)
+	if err != nil {
+		catalog.Diagnostics = append(catalog.Diagnostics, Diagnostic{Path: skillPath, Message: err.Error()})
+		return
+	}
+	seenSkills[key] = struct{}{}
+	skill.Path = key
+	skill.Scope = root.Scope
+	skill.PluginID = root.PluginID
+	skill.Root = canonicalPath(rootPath)
+	catalog.Skills = append(catalog.Skills, skill)
+}
+
+func sortCatalog(catalog *Catalog) {
+	sort.Slice(catalog.Skills, func(i, j int) bool {
+		a, b := catalog.Skills[i], catalog.Skills[j]
+		if rank := scopeRank(a.Scope) - scopeRank(b.Scope); rank != 0 {
+			return rank < 0
 		}
-		if _, exists := seenSkills[skill.Name]; exists {
-			continue
+		if a.Name != b.Name {
+			return a.Name < b.Name
 		}
-		seenSkills[skill.Name] = struct{}{}
-		catalog.Skills = append(catalog.Skills, skill)
+		return a.Path < b.Path
+	})
+	sort.Slice(catalog.Diagnostics, func(i, j int) bool {
+		return catalog.Diagnostics[i].Path < catalog.Diagnostics[j].Path
+	})
+}
+
+func scopeRank(scope SkillScope) int {
+	switch scope {
+	case SkillScopeRepo:
+		return 0
+	case SkillScopeUser:
+		return 1
+	case SkillScopeSystem:
+		return 2
+	case SkillScopeAdmin:
+		return 3
+	default:
+		return 4
 	}
 }
 
@@ -92,12 +199,15 @@ func nestedAgentSkillRoots(workspace string) []string {
 		if err != nil || !entry.IsDir() {
 			return nil
 		}
+		if path != workspace && strings.HasPrefix(entry.Name(), ".") && entry.Name() != ".agents" {
+			return filepath.SkipDir
+		}
 		rel, err := filepath.Rel(workspace, path)
 		if err != nil || rel == "." {
 			return nil
 		}
 		depth := len(strings.Split(filepath.ToSlash(rel), "/"))
-		if depth > 5 {
+		if depth > defaultMaxScanDepth {
 			return filepath.SkipDir
 		}
 		if filepath.Base(path) == "skills" && filepath.Base(filepath.Dir(path)) == ".agents" {

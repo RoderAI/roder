@@ -222,14 +222,14 @@ func skillsManagerFromFlags(cfg godex.Config, flags *flag.FlagSet) (*godeskills.
 			if err != nil {
 				return godeskills.ActivationSettings{}, err
 			}
-			return godeskills.ActivationSettings{ActiveSkills: settings.ActiveSkills, SkillSources: settings.SkillSources}, nil
+			return godeskills.ActivationSettings{Skills: settings.Skills, SkillSources: settings.SkillSources}, nil
 		},
 		SaveSettings: func(_ context.Context, activation godeskills.ActivationSettings) error {
 			settings, err := godex.LoadSettings(cfg.DataDir)
 			if err != nil {
 				return err
 			}
-			settings.ActiveSkills = activation.ActiveSkills
+			settings.Skills = activation.Skills
 			settings.SkillSources = activation.SkillSources
 			return godex.SaveSettings(cfg.DataDir, settings)
 		},

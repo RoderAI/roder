@@ -9,6 +9,7 @@ import (
 	"github.com/pandelisz/gode/internal/godex/mcp"
 	"github.com/pandelisz/gode/internal/godex/memory"
 	"github.com/pandelisz/gode/internal/godex/provider"
+	godeskills "github.com/pandelisz/gode/internal/godex/skills"
 )
 
 type Config struct {
@@ -22,6 +23,7 @@ type Config struct {
 	TimelineStyle         string
 	MarkdownRendering     bool
 	Memories              memory.Config
+	Skills                godeskills.Config
 	DisableAutoCompaction bool
 	AutoCompactTokenLimit int
 	GoalsEnabled          bool

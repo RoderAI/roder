@@ -16,6 +16,7 @@ import (
 	messagestore "github.com/pandelisz/gode/internal/godex/message"
 	"github.com/pandelisz/gode/internal/godex/provider"
 	"github.com/pandelisz/gode/internal/godex/session"
+	godeskills "github.com/pandelisz/gode/internal/godex/skills"
 	"github.com/pandelisz/gode/internal/godex/tools"
 )
 
@@ -444,8 +445,8 @@ Run Go tests.
 	if err != nil {
 		t.Fatalf("load settings: %v", err)
 	}
-	if settings.ActiveSkills["go-tests"] {
-		t.Fatalf("active skills = %#v", settings.ActiveSkills)
+	if godeskills.IsSkillEnabled(settings.Skills, godeskills.Skill{Name: "go-tests", Path: filepath.Join(workspace, ".agents", "skills", "go-tests", "SKILL.md")}) {
+		t.Fatalf("skills config = %#v", settings.Skills)
 	}
 }
 

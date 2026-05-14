@@ -9,7 +9,10 @@ import (
 	"github.com/pandelisz/gode/internal/godex/provider"
 )
 
-var invocationPattern = regexp.MustCompile(`\$([a-zA-Z0-9]+(?:-[a-zA-Z0-9]+)*)`)
+var (
+	invocationPattern = regexp.MustCompile(`\$([a-zA-Z0-9]+(?:-[a-zA-Z0-9]+)*)`)
+	skillLinkPattern  = regexp.MustCompile(`\[\$([a-zA-Z0-9]+(?:-[a-zA-Z0-9]+)*)\]\(([^)]+)\)`)
+)
 
 type InvocationResult struct {
 	Prompt      string
@@ -19,31 +22,43 @@ type InvocationResult struct {
 }
 
 func ApplyInvocations(prompt string, catalog Catalog) InvocationResult {
-	return ApplyInvocationsFiltered(prompt, catalog, nil)
+	return ApplyInvocationsWithConfig(prompt, catalog, Config{})
 }
 
-func ApplyInvocationsFiltered(prompt string, catalog Catalog, activeSkills map[string]bool) InvocationResult {
-	byName := map[string]Skill{}
+func ApplyInvocationsWithConfig(prompt string, catalog Catalog, config Config) InvocationResult {
+	disabled := DisabledSkillPaths(catalog.Skills, config)
+	byName := map[string][]Skill{}
+	byPath := map[string]Skill{}
 	for _, skill := range catalog.Skills {
-		byName[skill.Name] = skill
+		path := skillIdentity(skill)
+		if _, ok := disabled[path]; ok {
+			continue
+		}
+		byName[skill.Name] = append(byName[skill.Name], skill)
+		byPath[path] = skill
 	}
-	invoked := map[string]Skill{}
-	found := false
-	cleaned := invocationPattern.ReplaceAllStringFunc(prompt, func(match string) string {
-		name := strings.TrimPrefix(match, "$")
-		skill, ok := byName[name]
+
+	selected := map[string]Skill{}
+	cleaned := skillLinkPattern.ReplaceAllStringFunc(prompt, func(match string) string {
+		parts := skillLinkPattern.FindStringSubmatch(match)
+		if len(parts) != 3 {
+			return match
+		}
+		path := strings.TrimPrefix(strings.TrimSpace(parts[2]), "skill://")
+		skill, ok := byPath[canonicalPath(path)]
 		if !ok {
 			return match
 		}
-		if !IsSkillEnabled(activeSkills, name) {
-			catalog.Diagnostics = append(catalog.Diagnostics, Diagnostic{
-				Path:    skill.Path,
-				Message: fmt.Sprintf("skill %q is disabled; enable it in settings before invoking", name),
-			})
+		selected[skillIdentity(skill)] = skill
+		return ""
+	})
+	cleaned = invocationPattern.ReplaceAllStringFunc(cleaned, func(match string) string {
+		name := strings.TrimPrefix(match, "$")
+		matches := byName[name]
+		if len(matches) != 1 {
 			return match
 		}
-		found = true
-		invoked[name] = skill
+		selected[skillIdentity(matches[0])] = matches[0]
 		return ""
 	})
 
@@ -51,28 +66,55 @@ func ApplyInvocationsFiltered(prompt string, catalog Catalog, activeSkills map[s
 		Prompt:      prompt,
 		Diagnostics: append([]Diagnostic(nil), catalog.Diagnostics...),
 	}
-	if found {
+	if len(selected) > 0 {
 		result.Prompt = strings.Join(strings.Fields(cleaned), " ")
 		if strings.TrimSpace(result.Prompt) == "" {
 			result.Prompt = strings.TrimSpace(cleaned)
 		}
 	}
 	for _, skill := range catalog.Skills {
-		if invokedSkill, ok := invoked[skill.Name]; ok {
-			result.Invoked = append(result.Invoked, invokedSkill)
-			result.Messages = append(result.Messages, skillMessage(invokedSkill))
+		if invoked, ok := selected[skillIdentity(skill)]; ok {
+			result.Invoked = append(result.Invoked, invoked)
+			result.Messages = append(result.Messages, skillMessage(invoked))
 		}
 	}
 	return result
 }
 
+func DisabledMentionDiagnostics(prompt string, catalog Catalog, config Config) []Diagnostic {
+	disabled := DisabledSkillPaths(catalog.Skills, config)
+	var diagnostics []Diagnostic
+	for _, match := range invocationPattern.FindAllStringSubmatch(prompt, -1) {
+		if len(match) != 2 {
+			continue
+		}
+		for _, skill := range catalog.Skills {
+			if skill.Name != match[1] {
+				continue
+			}
+			if _, ok := disabled[skillIdentity(skill)]; ok {
+				diagnostics = append(diagnostics, Diagnostic{
+					Path:    skill.Path,
+					Message: fmt.Sprintf("skill %q is disabled; enable it in settings before invoking", skill.Name),
+				})
+			}
+		}
+	}
+	return diagnostics
+}
+
 func skillMessage(skill Skill) provider.Message {
+	content := skill.Content
+	if strings.TrimSpace(content) == "" {
+		content = skill.Body
+	}
 	return provider.Message{
-		Role: provider.RoleSystem,
+		Role: provider.RoleUser,
 		Content: fmt.Sprintf(
-			"<skill name=\"%s\">\n%s\n</skill>",
+			"<skill>\n<name>%s</name>\n<path>%s</path>\n%s\n</skill>",
 			html.EscapeString(skill.Name),
-			strings.TrimSpace(skill.Body),
+			html.EscapeString(skill.Path),
+			strings.TrimSpace(content),
 		),
 	}
 }

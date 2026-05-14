@@ -358,7 +358,8 @@ func runnerConfig(cfg Config, bus *eventbus.Bus, journalStore *journal.Store, se
 		MemoryObserver:        memory.NewObserver(memoryService, prov),
 		ContextMessages:       contextMessages,
 		Skills:                skills,
-		LoadActiveSkills:      loadActiveSkills(cfg.DataDir),
+		SkillsConfig:          cfg.Skills,
+		LoadSkillsConfig:      loadSkillsConfig(cfg.DataDir),
 		Commands:              commands,
 	}
 }

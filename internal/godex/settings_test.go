@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/pandelisz/gode/internal/godex/memory"
+	godeskills "github.com/pandelisz/gode/internal/godex/skills"
 )
 
 func TestSettingsRoundTripDefaultModel(t *testing.T) {
@@ -27,7 +28,10 @@ func TestSettingsRoundTripDefaultModel(t *testing.T) {
 			RecallLimit:    7,
 			DatabasePath:   "custom.sqlite3",
 		},
-		ActiveSkills: map[string]bool{"go-tests": true, "disabled-skill": false},
+		Skills: godeskills.Config{Rules: []godeskills.ConfigRule{
+			{Name: "go-tests", Enabled: true},
+			{Name: "disabled-skill", Enabled: false},
+		}},
 		SkillSources: map[string]string{"go-tests": "pandelisz/gode@go-tests"},
 	}); err != nil {
 		t.Fatalf("save settings: %v", err)
@@ -67,8 +71,8 @@ func TestSettingsRoundTripDefaultModel(t *testing.T) {
 	if settings.Memories.EmbeddingModel != "custom-embedding" || settings.Memories.RecallLimit != 7 || settings.Memories.DatabasePath != "custom.sqlite3" {
 		t.Fatalf("memory settings = %#v", settings.Memories)
 	}
-	if !settings.ActiveSkills["go-tests"] || settings.ActiveSkills["disabled-skill"] {
-		t.Fatalf("active skills = %#v", settings.ActiveSkills)
+	if len(settings.Skills.Rules) != 2 || settings.Skills.Rules[0].Name != "go-tests" || !settings.Skills.Rules[0].Enabled || settings.Skills.Rules[1].Name != "disabled-skill" || settings.Skills.Rules[1].Enabled {
+		t.Fatalf("skills config = %#v", settings.Skills)
 	}
 	if settings.SkillSources["go-tests"] != "pandelisz/gode@go-tests" {
 		t.Fatalf("skill sources = %#v", settings.SkillSources)
@@ -80,7 +84,7 @@ func TestSettingsRoundTripDefaultModel(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read config.toml: %v", err)
 	}
-	for _, want := range []string{`default_model = "gpt-5.5"`, `default_reasoning = "high"`, `fast_mode = true`, `auto_approve = true`, `disable_auto_compaction = true`, `auto_compact_token_limit = 12345`, `[memories]`, `enabled = false`, `auto_recall = false`, `auto_observe = true`, `embedding_model = "custom-embedding"`, `recall_limit = 7`, `database_path = "custom.sqlite3"`, `[active_skills]`, `go-tests = true`, `disabled-skill = false`, `[skill_sources]`, `go-tests = "pandelisz/gode@go-tests"`} {
+	for _, want := range []string{`default_model = "gpt-5.5"`, `default_reasoning = "high"`, `fast_mode = true`, `auto_approve = true`, `disable_auto_compaction = true`, `auto_compact_token_limit = 12345`, `[memories]`, `enabled = false`, `auto_recall = false`, `auto_observe = true`, `embedding_model = "custom-embedding"`, `recall_limit = 7`, `database_path = "custom.sqlite3"`, `[[skills.config]]`, `name = "go-tests"`, `name = "disabled-skill"`, `enabled = false`, `[skill_sources]`, `go-tests = "pandelisz/gode@go-tests"`} {
 		if !strings.Contains(string(data), want) {
 			t.Fatalf("config.toml should contain %q, got:\n%s", want, string(data))
 		}

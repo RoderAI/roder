@@ -8,26 +8,15 @@ import (
 	godeskills "github.com/pandelisz/gode/internal/godex/skills"
 )
 
-func (r *Runner) activeSkillSettings(ctx context.Context) (map[string]bool, error) {
-	if r.loadActiveSkills != nil {
-		settings, err := r.loadActiveSkills(ctx)
+func (r *Runner) activeSkillSettings(ctx context.Context) (godeskills.Config, error) {
+	if r.loadSkillsConfig != nil {
+		settings, err := r.loadSkillsConfig(ctx)
 		if err != nil {
-			return nil, err
+			return godeskills.Config{}, err
 		}
-		return cloneActiveSkills(settings), nil
+		return settings, nil
 	}
-	return cloneActiveSkills(r.activeSkills), nil
-}
-
-func cloneActiveSkills(activeSkills map[string]bool) map[string]bool {
-	if activeSkills == nil {
-		return nil
-	}
-	out := make(map[string]bool, len(activeSkills))
-	for name, enabled := range activeSkills {
-		out[name] = enabled
-	}
-	return out
+	return r.skillsConfig, nil
 }
 
 func skillDiagnosticMessages(diagnostics []godeskills.Diagnostic) []provider.Message {

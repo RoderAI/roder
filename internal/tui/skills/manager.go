@@ -26,7 +26,7 @@ func ViewState(installed []godeskills.ManagedSkill, recommended []godeskills.Rec
 			Description: skill.Description,
 			Path:        skill.Path,
 			Source:      skill.Source,
-			Scope:       skillScope(skill.Path),
+			Scope:       firstNonEmpty(string(skill.Scope), skillScope(skill.Path)),
 			State:       string(skill.State),
 			Diagnostic:  skill.Diagnostic,
 			Enabled:     skill.State == godeskills.ActivationEnabled,
@@ -47,6 +47,15 @@ func ViewState(installed []godeskills.ManagedSkill, recommended []godeskills.Rec
 		})
 	}
 	return state
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			return value
+		}
+	}
+	return ""
 }
 
 func SelectedSkill(items []viewmodel.SettingsSkillItem, index int) (viewmodel.SettingsSkillItem, bool) {

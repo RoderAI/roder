@@ -113,6 +113,12 @@ func (c *Connection) dispatch(ctx context.Context, msg inboundMessage) (any, *RP
 		return map[string]any{}, nil
 	case "model/list":
 		return c.server.handleModelList(), nil
+	case "skills/list":
+		return c.server.handleSkillsList(msg.Params)
+	case "skill/read":
+		return c.server.handleSkillRead(msg.Params)
+	case "skill/setEnabled":
+		return c.server.handleSkillSetEnabled(ctx, msg.Params)
 	case "mcp/state":
 		return c.server.handleMCPState(), nil
 	case "mcp/resources/list":
