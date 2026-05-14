@@ -66,6 +66,10 @@ func run(ctx context.Context, args []string) error {
 		return runModels(args[1:])
 	}
 
+	if len(args) > 0 && args[0] == "memory" {
+		return runMemory(ctx, args[1:])
+	}
+
 	if len(args) > 0 && args[0] == "config" {
 		return runConfig(args[1:])
 	}
