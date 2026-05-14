@@ -12,7 +12,7 @@ type RunRequest struct {
 	Env           []string
 	Stdin         io.Reader
 	Timeout       time.Duration
-	Policy        Policy
+	Policy        *Policy
 	CombineOutput bool
 }
 
