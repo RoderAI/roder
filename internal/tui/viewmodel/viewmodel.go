@@ -70,6 +70,7 @@ type Model struct {
 	ContextLeft               string
 	Dialogs                   DialogStack
 	Settings                  *SettingsDialog
+	Remote                    *RemoteDialog
 	QuitDialog                *ConfirmDialog
 	ErrorLog                  []ErrorLogEntry
 	ShowErrorLog              bool
@@ -81,6 +82,7 @@ type DialogStack struct {
 	Commands    *ListDialog
 	Sessions    *ListDialog
 	Permissions *PermissionDialog
+	Remote      *RemoteDialog
 }
 
 func (m Model) ActiveSettingsDialog() *SettingsDialog {
@@ -103,6 +105,27 @@ func (m Model) ActiveListDialog() *ListDialog {
 
 func (m Model) ActivePermissionDialog() *PermissionDialog {
 	return m.Dialogs.Permissions
+}
+
+func (m Model) ActiveRemoteDialog() *RemoteDialog {
+	if m.Dialogs.Remote != nil {
+		return m.Dialogs.Remote
+	}
+	return m.Remote
+}
+
+type RemoteDialog struct {
+	Title            string
+	Running          bool
+	URLs             []string
+	TokenPreview     string
+	QR               string
+	AuthHeaderHint   string
+	SubprotocolHint  string
+	ConnectedClients int
+	Warning          string
+	Error            string
+	Help             string
 }
 
 type ListDialog struct {

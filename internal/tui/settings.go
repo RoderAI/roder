@@ -189,6 +189,9 @@ func (m Model) activateSettingsSelection() (tea.Model, tea.Cmd) {
 			return m, m.toggleMarkdownRendering()
 		case "memories":
 			m.settings.OpenMemories()
+		case "remote-control":
+			m.settings = dialogs.Settings{}
+			m.openRemotePanel()
 		case "config":
 			m.settings.OpenConfig()
 		case "codex-auth":

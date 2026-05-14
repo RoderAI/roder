@@ -347,6 +347,11 @@ func builtinCommandItems() []dialogs.CommandItem {
 		Title:       "/compact",
 		Description: "force compaction for the current session",
 		Source:      "builtin",
+	}, {
+		ID:          "remote",
+		Title:       "/remote",
+		Description: "open remote WebSocket app-server controls",
+		Source:      "builtin",
 	}}
 }
 
