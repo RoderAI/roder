@@ -295,8 +295,8 @@ Inside the TUI, run `/remote` or open `ctrl+p` -> `Remote Control` to start and 
 
 Remote connection patterns:
 
-- Same-network phone: start `gode app-server --remote --listen ws://0.0.0.0:0`, scan the QR, and use one of the rendered `192.168.x.x` or `10.x.x.x` URLs.
-- Tailscale: bind or connect to the rendered `100.x.y.z` URL when available; it is preferred in the displayed list.
+- Same-network phone: start `gode app-server --remote --listen ws://0.0.0.0:0`, scan the QR, and use one of the rendered `192.168.x.x` or `10.x.x.x` URLs. The QR prefers these private LAN URLs by default.
+- Tailscale: bind explicitly with `--listen ws://100.x.y.z:0` when you want the QR to advertise a Tailscale address.
 - Native clients: set `Authorization: Bearer <token>` during the WebSocket handshake.
 - Browser-constrained clients: request subprotocols `gode.remote.v1` and `bearer.<token>` instead of sending a custom header.
 

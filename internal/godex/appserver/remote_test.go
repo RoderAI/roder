@@ -1,8 +1,6 @@
 package appserver
 
 import (
-	"encoding/base64"
-	"encoding/json"
 	"net/netip"
 	"net/url"
 	"strings"
@@ -25,19 +23,17 @@ func TestRemotePairingPayloadAndDeepLink(t *testing.T) {
 	if err != nil {
 		t.Fatalf("parse deep link: %v", err)
 	}
-	encoded := parsed.Query().Get("payload")
-	data, err := base64.RawURLEncoding.DecodeString(encoded)
-	if err != nil {
-		t.Fatalf("decode payload: %v", err)
+	if parsed.Scheme != "gode" || parsed.Host != "192.168.1.12:43210" {
+		t.Fatalf("deep link target = %s://%s", parsed.Scheme, parsed.Host)
 	}
-	var decoded compactRemotePairingPayload
-	if err := json.Unmarshal(data, &decoded); err != nil {
-		t.Fatalf("unmarshal payload: %v", err)
+	query := parsed.Query()
+	if query.Get("auth") != "secret-token" {
+		t.Fatalf("decoded query mismatch: %#v", query)
 	}
-	if decoded.URL != payload.URL || decoded.Token != "secret-token" || decoded.Type != remoteSubprotocol {
-		t.Fatalf("decoded payload mismatch: %#v", decoded)
+	if strings.Contains(link, "ws://") {
+		t.Fatalf("deep link should imply websocket scheme, got %s", link)
 	}
-	if len(link) >= 220 {
+	if len(link) >= 80 {
 		t.Fatalf("deep link should stay compact, length = %d: %s", len(link), link)
 	}
 }
@@ -49,7 +45,7 @@ func TestRemoteConnectURLsSortsUsableHosts(t *testing.T) {
 		netip.MustParseAddr("100.99.1.2"),
 	}
 	got := RemoteConnectURLs("0.0.0.0:43210", addrs)
-	want := []string{"ws://100.99.1.2:43210", "ws://192.168.1.20:43210", "ws://127.0.0.1:43210"}
+	want := []string{"ws://192.168.1.20:43210", "ws://100.99.1.2:43210", "ws://127.0.0.1:43210"}
 	if strings.Join(got, "\n") != strings.Join(want, "\n") {
 		t.Fatalf("urls = %#v, want %#v", got, want)
 	}

@@ -1,8 +1,6 @@
 package appserver
 
 import (
-	"encoding/base64"
-	"encoding/json"
 	"fmt"
 	"net"
 	"net/netip"
@@ -18,14 +16,6 @@ type RemotePairingPayload struct {
 	Headers      map[string]string `json:"headers"`
 	Subprotocols []string          `json:"subprotocols"`
 	Workspace    string            `json:"workspace"`
-}
-
-type compactRemotePairingPayload struct {
-	Type      string `json:"t"`
-	Name      string `json:"n,omitempty"`
-	URL       string `json:"u"`
-	Token     string `json:"b"`
-	Workspace string `json:"w,omitempty"`
 }
 
 func BuildRemotePairingPayload(name, wsURL, token, workspace string) RemotePairingPayload {
@@ -50,18 +40,17 @@ func RemoteDeepLink(payload RemotePairingPayload) (string, error) {
 	if token == "" {
 		return "", fmt.Errorf("remote pairing payload is missing bearer token")
 	}
-	data, err := json.Marshal(compactRemotePairingPayload{
-		Type:      payload.Type,
-		Name:      payload.Name,
-		URL:       payload.URL,
-		Token:     token,
-		Workspace: payload.Workspace,
-	})
+	wsURL, err := url.Parse(payload.URL)
 	if err != nil {
-		return "", fmt.Errorf("encode remote pairing payload: %w", err)
+		return "", fmt.Errorf("parse remote websocket url: %w", err)
 	}
-	encoded := base64.RawURLEncoding.EncodeToString(data)
-	return "gode://connect?payload=" + url.QueryEscape(encoded), nil
+	if wsURL.Host == "" {
+		return "", fmt.Errorf("remote websocket url is missing host")
+	}
+	values := url.Values{}
+	values.Set("auth", token)
+	link := url.URL{Scheme: "gode", Host: wsURL.Host, RawQuery: values.Encode()}
+	return link.String(), nil
 }
 
 func remotePairingBearerToken(payload RemotePairingPayload) string {
@@ -162,9 +151,9 @@ func sortedRemoteHosts(addrs []netip.Addr) []netip.Addr {
 func remoteAddrRank(addr netip.Addr) int {
 	tailscale := netip.MustParsePrefix("100.64.0.0/10")
 	switch {
-	case tailscale.Contains(addr):
-		return 0
 	case addr.IsPrivate():
+		return 0
+	case tailscale.Contains(addr):
 		return 1
 	case addr.IsLoopback():
 		return 3
