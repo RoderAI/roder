@@ -71,6 +71,36 @@ func TestNewAppWiresBroadCoreWithMockProvider(t *testing.T) {
 	}
 }
 
+func TestNewAppShellToolHasDefaultBuiltins(t *testing.T) {
+	workspace := filepath.Join(t.TempDir(), "workspace")
+	if err := os.MkdirAll(workspace, 0o700); err != nil {
+		t.Fatalf("mkdir workspace: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(workspace, "file.json"), []byte(`{"name":"gode"}`+"\n"), 0o600); err != nil {
+		t.Fatalf("write json: %v", err)
+	}
+	app, err := New(context.Background(), Config{
+		Workspace:   workspace,
+		DataDir:     t.TempDir(),
+		Provider:    "mock",
+		AutoApprove: true,
+	})
+	if err != nil {
+		t.Fatalf("new app: %v", err)
+	}
+	defer app.Close(context.Background())
+
+	result, err := app.Tools.Run(context.Background(), tools.Call{Name: "shell", Input: map[string]any{
+		"command": "jq -r .name file.json; gode_list_files .",
+	}})
+	if err != nil {
+		t.Fatalf("run shell: %v", err)
+	}
+	if result.Error != "" || !strings.Contains(result.Text, "gode") || !strings.Contains(result.Text, "file.json") {
+		t.Fatalf("shell result = %#v", result)
+	}
+}
+
 func TestAppGoalMethodsPublishEvents(t *testing.T) {
 	app, err := New(context.Background(), Config{
 		Workspace:   filepath.Join(t.TempDir(), "workspace"),
