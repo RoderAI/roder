@@ -8,8 +8,11 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"sync"
 	"time"
+
+	godexshell "github.com/pandelisz/gode/internal/godex/shell"
 )
 
 type activeCommand struct {
@@ -68,17 +71,50 @@ func (s *Server) handleCommandExec(ctx context.Context, conn *Connection, raw js
 	}
 	defer cancel()
 
+	cwd, rpcErr := commandWorkingDir(params, s.app.Config.Workspace)
+	if rpcErr != nil {
+		return nil, rpcErr
+	}
+	if script, ok := isShellInvocation(params.Command); ok && params.ProcessID == "" && !params.StreamStdin && !params.StreamStdoutStderr {
+		return s.runEmbeddedShellCommand(runCtx, params, cwd, script)
+	}
+
 	cmd := exec.CommandContext(runCtx, params.Command[0], params.Command[1:]...)
+	cmd.Dir = cwd
+	cmd.Env = mergedEnv(params.Env)
+	return s.runOSCommand(ctx, runCtx, conn, params, cmd, cancel)
+}
+
+func commandWorkingDir(params commandExecParams, workspace string) (string, *RPCError) {
 	if params.CWD != "" {
 		if err := requireAbsolutePath(params.CWD); err != nil {
-			return nil, rpcError(errorInvalidParams, err.Error())
+			return "", rpcError(errorInvalidParams, err.Error())
 		}
-		cmd.Dir = params.CWD
-	} else {
-		cmd.Dir = s.app.Config.Workspace
+		return params.CWD, nil
 	}
-	cmd.Env = mergedEnv(params.Env)
+	return workspace, nil
+}
 
+func (s *Server) runEmbeddedShellCommand(ctx context.Context, params commandExecParams, cwd string, script string) (any, *RPCError) {
+	builtins := godexshell.NewBuiltinRegistry()
+	_ = godexshell.RegisterJSONBuiltins(builtins)
+	_ = godexshell.RegisterWorkspaceBuiltins(builtins, s.app.Config.Workspace, s.app.Tools)
+	result, err := (godexshell.Runner{Builtins: builtins}).Run(ctx, godexshell.RunRequest{
+		Command: script,
+		Dir:     cwd,
+		Env:     mergedEnv(params.Env),
+	})
+	if err != nil {
+		return nil, rpcError(errorInternal, err.Error())
+	}
+	return map[string]any{
+		"exitCode": result.ExitCode,
+		"stdout":   result.Stdout,
+		"stderr":   result.Stderr,
+	}, nil
+}
+
+func (s *Server) runOSCommand(ctx context.Context, runCtx context.Context, conn *Connection, params commandExecParams, cmd *exec.Cmd, cancel context.CancelFunc) (any, *RPCError) {
 	stdoutPipe, err := cmd.StdoutPipe()
 	if err != nil {
 		return nil, rpcError(errorInternal, err.Error())
@@ -140,6 +176,20 @@ func (s *Server) handleCommandExec(ctx context.Context, conn *Connection, raw js
 		"stdout":   stdout.String(),
 		"stderr":   stderr.String(),
 	}, nil
+}
+
+func isShellInvocation(command []string) (string, bool) {
+	if len(command) != 3 {
+		return "", false
+	}
+	name := filepath.Base(command[0])
+	if name != "sh" {
+		return "", false
+	}
+	if command[1] != "-c" && command[1] != "-lc" {
+		return "", false
+	}
+	return command[2], true
 }
 
 func (s *Server) handleCommandWrite(raw json.RawMessage) (any, *RPCError) {
