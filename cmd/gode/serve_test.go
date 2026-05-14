@@ -80,7 +80,7 @@ func TestAppServerRemoteRejectsEmptyEnvToken(t *testing.T) {
 	}
 }
 
-func TestPrintRemoteServerInfoDoesNotPrintFullToken(t *testing.T) {
+func TestPrintRemoteServerInfoPrintsSensitivePairingURL(t *testing.T) {
 	auth, err := appserver.NewRemoteAuth("full-secret-token-value", time.Unix(10, 0))
 	if err != nil {
 		t.Fatalf("new auth: %v", err)
@@ -91,11 +91,14 @@ func TestPrintRemoteServerInfoDoesNotPrintFullToken(t *testing.T) {
 	if err != nil {
 		t.Fatalf("print remote info: %v", err)
 	}
-	if bytes.Contains(stderr.Bytes(), []byte("full-secret-token-value")) {
-		t.Fatalf("stderr exposed full token:\n%s", stderr.String())
-	}
 	if !bytes.Contains(stderr.Bytes(), []byte(auth.TokenPreview)) {
 		t.Fatalf("stderr missing token preview:\n%s", stderr.String())
+	}
+	if !bytes.Contains(stderr.Bytes(), []byte("pairing url (sensitive): gode://")) {
+		t.Fatalf("stderr missing pairing url:\n%s", stderr.String())
+	}
+	if !bytes.Contains(stderr.Bytes(), []byte("auth=full-secret-token-value")) {
+		t.Fatalf("stderr missing full token in sensitive pairing url:\n%s", stderr.String())
 	}
 }
 

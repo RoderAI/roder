@@ -141,7 +141,7 @@ func (l *WebSocketListener) WebSocketURL() string {
 
 func (l *WebSocketListener) Address() string {
 	if l == nil || l.listener == nil {
-		return ""
+		return strings.TrimPrefix(l.wsURL, "ws://")
 	}
 	return l.listener.Addr().String()
 }
