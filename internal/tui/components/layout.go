@@ -102,6 +102,9 @@ func RenderWithCache(vm viewmodel.Model, zones *zone.Manager, transcriptCache *T
 	if list := vm.ActiveListDialog(); list != nil {
 		return OverlayListDialog(view, width, height, *list, zones)
 	}
+	if vm.StopDialog != nil {
+		return OverlayConfirmDialog(view, width, height, *vm.StopDialog)
+	}
 	if vm.QuitDialog != nil {
 		return OverlayConfirmDialog(view, width, height, *vm.QuitDialog)
 	}

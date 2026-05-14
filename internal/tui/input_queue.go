@@ -47,13 +47,16 @@ func uuidString() string {
 
 func (m *Model) submitPreparedPrompt(pending pendingPrompt) tea.Cmd {
 	m.ensureSessionID()
+	runCtx, cancel := context.WithCancel(context.Background())
+	m.runCancel = cancel
+	m.currentRunID = uuidString()
 	m.addMessage(viewmodel.RoleUser, "", pending.Display)
 	m.reasoningSummary = ""
 	m.attachments = nil
 	m.input.Reset()
 	m.running = true
 	m.status = "waiting for model"
-	return m.runPreparedPrompt(pending)
+	return m.runPreparedPrompt(runCtx, pending)
 }
 
 func (m *Model) steerPreparedPrompt(pending pendingPrompt) tea.Cmd {

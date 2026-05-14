@@ -2,6 +2,7 @@ package tui
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -51,6 +52,9 @@ type Model struct {
 	completionMode          string
 	permissions             dialogs.Permissions
 	quitConfirmOpen         bool
+	stopConfirmOpen         bool
+	runCancel               context.CancelFunc
+	currentRunID            string
 	currentSessionID        string
 	currentSession          string
 	attachments             []attachments.Attachment
@@ -135,6 +139,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.clampScroll()
 		return m, nil
 	case tea.KeyPressMsg:
+		if m.stopConfirmOpen {
+			return m.updateStopConfirm(msg)
+		}
 		if m.quitConfirmOpen {
 			return m.updateQuitConfirm(msg)
 		}
@@ -178,6 +185,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		switch msg.String() {
 		case "ctrl+c", "esc":
+			if m.running {
+				m.stopConfirmOpen = true
+				m.status = "confirm stop"
+				m.input.Blur()
+				return m, nil
+			}
 			m.quitConfirmOpen = true
 			m.status = "confirm quit"
 			m.input.Blur()
@@ -333,10 +346,17 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, m.waitForEvent()
 	case runDoneMsg:
 		m.running = false
+		m.stopConfirmOpen = false
+		m.currentRunID = ""
+		m.runCancel = nil
 		if msg.Result.SessionID != "" {
 			m.setCurrentSession(msg.Result.SessionID)
 		}
 		if msg.Err != nil {
+			if errors.Is(msg.Err, context.Canceled) {
+				m.status = "run stopped"
+				return m, nil
+			}
 			if !m.hasRecentError(msg.Err.Error()) {
 				m.addMessage(viewmodel.RoleError, "", msg.Err.Error())
 			}

@@ -62,6 +62,7 @@ func (m Model) viewModel() viewmodel.Model {
 		Settings:     settings,
 		Remote:       remote,
 		QuitDialog:   m.quitConfirmViewModel(),
+		StopDialog:   m.stopConfirmViewModel(),
 		ErrorLog:     m.errorLog,
 		ShowErrorLog: m.showErrorLog,
 	}

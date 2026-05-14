@@ -72,6 +72,7 @@ type Model struct {
 	Settings                  *SettingsDialog
 	Remote                    *RemoteDialog
 	QuitDialog                *ConfirmDialog
+	StopDialog                *ConfirmDialog
 	ErrorLog                  []ErrorLogEntry
 	ShowErrorLog              bool
 }
