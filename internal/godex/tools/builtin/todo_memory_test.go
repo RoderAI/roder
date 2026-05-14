@@ -28,12 +28,12 @@ func TestTodoAndMemoryTools(t *testing.T) {
 		t.Fatalf("todo text = %q", todo.Text)
 	}
 
-	if _, err := reg.Run(context.Background(), tools.Call{Name: "memory_add", Input: map[string]any{"note": "prefer event bus"}}); err != nil {
-		t.Fatalf("memory add: %v", err)
+	if _, err := reg.Run(context.Background(), tools.Call{Name: "memory_save", Input: map[string]any{"content": "prefer event bus"}}); err != nil {
+		t.Fatalf("memory save: %v", err)
 	}
-	mem, err := reg.Run(context.Background(), tools.Call{Name: "memory_list"})
+	mem, err := reg.Run(context.Background(), tools.Call{Name: "memory_find", Input: map[string]any{"query": "event bus"}})
 	if err != nil {
-		t.Fatalf("memory list: %v", err)
+		t.Fatalf("memory find: %v", err)
 	}
 	if !strings.Contains(mem.Text, "prefer event bus") {
 		t.Fatalf("memory text = %q", mem.Text)

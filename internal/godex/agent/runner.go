@@ -35,6 +35,7 @@ type Config struct {
 	AutoCompactTokenLimit int
 	Goals                 *goals.Runtime
 	Memory                *memory.Service
+	MemoryObserver        *memory.Observer
 	ContextMessages       []provider.Message
 	Skills                []godeskills.Skill
 	ActiveSkills          map[string]bool
@@ -57,6 +58,7 @@ type Runner struct {
 	autoCompactTokenLimit int
 	goals                 *goals.Runtime
 	memory                *memory.Service
+	memoryObserver        *memory.Observer
 	contextMessages       []provider.Message
 	skills                []godeskills.Skill
 	activeSkills          map[string]bool
@@ -101,6 +103,7 @@ func NewRunner(cfg Config) *Runner {
 		autoCompactTokenLimit: cfg.AutoCompactTokenLimit,
 		goals:                 cfg.Goals,
 		memory:                cfg.Memory,
+		memoryObserver:        cfg.MemoryObserver,
 		contextMessages:       append([]provider.Message(nil), cfg.ContextMessages...),
 		skills:                append([]godeskills.Skill(nil), cfg.Skills...),
 		activeSkills:          cloneActiveSkills(cfg.ActiveSkills),
@@ -233,6 +236,7 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (RunResult, error) {
 		if outcome.HadToolCall {
 			stats.ToolTurns++
 			final = ""
+			r.maybeStartMemoryObserver(req, active, messages, stats.ToolCalls)
 		} else {
 			final = outcome.Final
 		}

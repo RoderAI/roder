@@ -54,13 +54,13 @@ func FormatRecallSnippets(entries []Entry) string {
 			continue
 		}
 		next := strconv.Itoa(i+1) + ". [" + id + "] " + preview
-		if b.Len()+len(next)+2+len("\nUse read_memory with the memory ID if full detail is needed.") > MaxRecallSnippetBytes {
+		if b.Len()+len(next)+2+len("\nUse memory_read with the memory ID if full detail is needed.") > MaxRecallSnippetBytes {
 			break
 		}
 		b.WriteString(next)
 		b.WriteByte('\n')
 	}
-	b.WriteString("\nUse read_memory with the memory ID if full detail is needed.")
+	b.WriteString("\nUse memory_read with the memory ID if full detail is needed.")
 	text := b.String()
 	if len(text) > MaxRecallSnippetBytes {
 		return text[:MaxRecallSnippetBytes]

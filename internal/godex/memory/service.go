@@ -57,6 +57,10 @@ func NewService(store *Store, embedder Embedder, scope Scope, cfg Config, bus *e
 }
 
 func (s *Service) Save(ctx context.Context, content string, source string) (Entry, error) {
+	return s.SaveWithMetadata(ctx, content, source, nil)
+}
+
+func (s *Service) SaveWithMetadata(ctx context.Context, content string, source string, metadata map[string]string) (Entry, error) {
 	if err := s.ready(); err != nil {
 		return Entry{}, err
 	}
@@ -76,6 +80,7 @@ func (s *Service) Save(ctx context.Context, content string, source string) (Entr
 		WorkspaceRoot: s.scope.WorkspaceRoot,
 		Content:       content,
 		Source:        source,
+		Metadata:      cloneMetadata(metadata),
 	}, vector)
 	if err != nil {
 		return Entry{}, err
@@ -244,4 +249,15 @@ func (s *Service) emit(ctx context.Context, kind eventbus.Kind, payload any) {
 		Source:  eventbus.SourceSystem,
 		Payload: payload,
 	})
+}
+
+func cloneMetadata(metadata map[string]string) map[string]string {
+	if len(metadata) == 0 {
+		return nil
+	}
+	clone := make(map[string]string, len(metadata))
+	for key, value := range metadata {
+		clone[key] = value
+	}
+	return clone
 }

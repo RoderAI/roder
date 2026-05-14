@@ -21,7 +21,7 @@ func TestMemoryRecallFormatCapsPreviewAndTotalText(t *testing.T) {
 	if !strings.Contains(text, "Relevant local memories for this workspace:") {
 		t.Fatalf("text = %q", text)
 	}
-	if !strings.Contains(text, "Use read_memory with the memory ID") {
+	if !strings.Contains(text, "Use memory_read with the memory ID") {
 		t.Fatalf("text = %q", text)
 	}
 	if len(text) > MaxRecallSnippetBytes {

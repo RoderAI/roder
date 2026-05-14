@@ -16,7 +16,7 @@ func TestRegisterToolsExposesMemoryToolSet(t *testing.T) {
 	RegisterTools(reg, service)
 
 	names := specNames(reg)
-	for _, want := range []string{"delete_memory", "memory_add", "memory_list", "query_memories", "read_memory", "save_memory", "update_memory"} {
+	for _, want := range []string{"memory_delete", "memory_find", "memory_read", "memory_save", "memory_update"} {
 		if !names[want] {
 			t.Fatalf("tool %q missing from specs %#v", want, names)
 		}
@@ -34,18 +34,18 @@ func TestMemoryToolsSaveQueryReadUpdateDelete(t *testing.T) {
 	reg := tools.NewRegistry()
 	RegisterTools(reg, service)
 
-	saved, err := reg.Run(ctx, tools.Call{Name: "save_memory", Input: map[string]any{"content": " prefer   event bus "}})
+	saved, err := reg.Run(ctx, tools.Call{Name: "memory_save", Input: map[string]any{"content": " prefer   event bus "}})
 	if err != nil {
-		t.Fatalf("save_memory: %v", err)
+		t.Fatalf("memory_save: %v", err)
 	}
 	savedData, ok := saved.Data.(ToolEntry)
 	if !ok || savedData.ID == "" || savedData.Content != "prefer event bus" {
 		t.Fatalf("saved data = %#v", saved.Data)
 	}
 
-	queried, err := reg.Run(ctx, tools.Call{Name: "query_memories", Input: map[string]any{"query": "event bus", "limit": 5}})
+	queried, err := reg.Run(ctx, tools.Call{Name: "memory_find", Input: map[string]any{"query": "event bus", "limit": 5}})
 	if err != nil {
-		t.Fatalf("query_memories: %v", err)
+		t.Fatalf("memory_find: %v", err)
 	}
 	rows, ok := queried.Data.([]ToolEntry)
 	if !ok || len(rows) != 1 {
@@ -59,25 +59,25 @@ func TestMemoryToolsSaveQueryReadUpdateDelete(t *testing.T) {
 		t.Fatalf("query text should be json: %v\n%s", err, queried.Text)
 	}
 
-	read, err := reg.Run(ctx, tools.Call{Name: "read_memory", Input: map[string]any{"id": savedData.ID}})
+	read, err := reg.Run(ctx, tools.Call{Name: "memory_read", Input: map[string]any{"id": savedData.ID}})
 	if err != nil {
-		t.Fatalf("read_memory: %v", err)
+		t.Fatalf("memory_read: %v", err)
 	}
 	if read.Text != "prefer event bus" {
 		t.Fatalf("read text = %q", read.Text)
 	}
 
-	updated, err := reg.Run(ctx, tools.Call{Name: "update_memory", Input: map[string]any{"id": savedData.ID, "content": "prefer event bus plugins"}})
+	updated, err := reg.Run(ctx, tools.Call{Name: "memory_update", Input: map[string]any{"id": savedData.ID, "content": "prefer event bus plugins"}})
 	if err != nil {
-		t.Fatalf("update_memory: %v", err)
+		t.Fatalf("memory_update: %v", err)
 	}
 	if updated.Data.(ToolEntry).Content != "prefer event bus plugins" {
 		t.Fatalf("updated data = %#v", updated.Data)
 	}
 
-	deleted, err := reg.Run(ctx, tools.Call{Name: "delete_memory", Input: map[string]any{"id": savedData.ID}})
+	deleted, err := reg.Run(ctx, tools.Call{Name: "memory_delete", Input: map[string]any{"id": savedData.ID}})
 	if err != nil {
-		t.Fatalf("delete_memory: %v", err)
+		t.Fatalf("memory_delete: %v", err)
 	}
 	if !strings.Contains(deleted.Text, savedData.ID) {
 		t.Fatalf("delete text = %q", deleted.Text)
@@ -87,25 +87,25 @@ func TestMemoryToolsSaveQueryReadUpdateDelete(t *testing.T) {
 	}
 }
 
-func TestCompatibilityMemoryAliasesUseService(t *testing.T) {
+func TestMemoryFindCanListSavedMemories(t *testing.T) {
 	ctx := context.Background()
 	service := newTestService(t, Config{Enabled: true})
 	reg := tools.NewRegistry()
 	RegisterTools(reg, service)
 
-	added, err := reg.Run(ctx, tools.Call{Name: "memory_add", Input: map[string]any{"note": "prefer sqlite memories"}})
+	added, err := reg.Run(ctx, tools.Call{Name: "memory_save", Input: map[string]any{"content": "prefer sqlite memories"}})
 	if err != nil {
-		t.Fatalf("memory_add: %v", err)
+		t.Fatalf("memory_save: %v", err)
 	}
 	if added.Data.(ToolEntry).ID == "" {
 		t.Fatalf("added data = %#v", added.Data)
 	}
-	listed, err := reg.Run(ctx, tools.Call{Name: "memory_list"})
+	listed, err := reg.Run(ctx, tools.Call{Name: "memory_find", Input: map[string]any{"query": "sqlite memories"}})
 	if err != nil {
-		t.Fatalf("memory_list: %v", err)
+		t.Fatalf("memory_find: %v", err)
 	}
 	if !strings.Contains(listed.Text, "prefer sqlite memories") {
-		t.Fatalf("memory_list text = %q", listed.Text)
+		t.Fatalf("memory_find text = %q", listed.Text)
 	}
 }
 
@@ -123,9 +123,9 @@ func TestReadMemoryRespectsWorkspaceScope(t *testing.T) {
 	reg := tools.NewRegistry()
 	RegisterTools(reg, other)
 
-	result, err := reg.Run(ctx, tools.Call{Name: "read_memory", Input: map[string]any{"id": saved.ID}})
+	result, err := reg.Run(ctx, tools.Call{Name: "memory_read", Input: map[string]any{"id": saved.ID}})
 	if err != nil {
-		t.Fatalf("read_memory run: %v", err)
+		t.Fatalf("memory_read run: %v", err)
 	}
 	if result.Error == "" || !strings.Contains(result.Error, ErrNotFound.Error()) {
 		t.Fatalf("result = %#v", result)

@@ -347,6 +347,7 @@ func runnerConfig(cfg Config, bus *eventbus.Bus, journalStore *journal.Store, se
 		AutoCompactTokenLimit: cfg.AutoCompactTokenLimit,
 		Goals:                 goalRuntime,
 		Memory:                memoryService,
+		MemoryObserver:        memory.NewObserver(memoryService, prov),
 		ContextMessages:       contextMessages,
 		Skills:                skills,
 		LoadActiveSkills:      loadActiveSkills(cfg.DataDir),
