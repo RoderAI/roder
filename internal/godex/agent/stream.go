@@ -20,6 +20,7 @@ type runStats struct {
 
 type turnOutcome struct {
 	Messages     []provider.Message
+	InputItems   []provider.Item
 	Final        string
 	ResponseID   string
 	HadToolCall  bool
@@ -27,10 +28,34 @@ type turnOutcome struct {
 	Usage        provider.TokenUsage
 }
 
-func (r *Runner) streamProviderTurn(ctx context.Context, req RunRequest, providerReq provider.Request, messages []provider.Message, final string, stats *runStats, allowTools bool) (turnOutcome, error) {
+type pendingToolCall struct {
+	request *provider.ToolRequest
+	items   []provider.Item
+}
+
+func (r *Runner) streamProviderTurn(ctx context.Context, req RunRequest, providerReq provider.Request, messages []provider.Message, inputItems []provider.Item, final string, stats *runStats, allowTools bool) (turnOutcome, error) {
 	events, errs := r.provider.Stream(ctx, providerReq)
-	outcome := turnOutcome{Messages: messages, Final: final}
-	var pendingTools []*provider.ToolRequest
+	outcome := turnOutcome{
+		Messages:   messages,
+		InputItems: append([]provider.Item(nil), inputItems...),
+		Final:      final,
+	}
+	storedItemKeys := map[string]bool{}
+	var pendingTools []pendingToolCall
+	persistItemsOnce := func(items []provider.Item, final string) error {
+		filtered := make([]provider.Item, 0, len(items))
+		for _, item := range items {
+			key := providerItemStorageKey(item)
+			if key != "" {
+				if storedItemKeys[key] {
+					continue
+				}
+				storedItemKeys[key] = true
+			}
+			filtered = append(filtered, item)
+		}
+		return r.persistProviderItems(ctx, req, filtered, final)
+	}
 	for events != nil || errs != nil {
 		select {
 		case ev, ok := <-events:
@@ -85,7 +110,14 @@ func (r *Runner) streamProviderTurn(ctx context.Context, req RunRequest, provide
 					},
 				})
 				if allowTools && r.tools != nil {
-					pendingTools = append(pendingTools, ev.ToolRequest)
+					items := ev.Items
+					if len(items) == 0 {
+						items = []provider.Item{providerItemFromToolRequest(ev.ToolRequest)}
+					}
+					if err := persistItemsOnce(items, ""); err != nil {
+						return outcome, err
+					}
+					pendingTools = append(pendingTools, pendingToolCall{request: ev.ToolRequest, items: items})
 				}
 			case provider.EventCompleted:
 				outcome.ResponseID = ev.ResponseID
@@ -115,7 +147,7 @@ func (r *Runner) streamProviderTurn(ctx context.Context, req RunRequest, provide
 				})
 				r.emitActualTokenUsage(ctx, req, ev.Usage)
 				r.addSessionTokenUsage(ctx, req, ev.Usage)
-				if err := r.persistProviderItems(ctx, req, ev.Items, outcome.Final); err != nil {
+				if err := persistItemsOnce(ev.Items, outcome.Final); err != nil {
 					return outcome, err
 				}
 			}
@@ -132,11 +164,12 @@ func (r *Runner) streamProviderTurn(ctx context.Context, req RunRequest, provide
 		}
 	}
 	if len(pendingTools) > 0 {
-		nextMessages, err := r.runToolCalls(ctx, req, outcome.Messages, pendingTools)
+		nextMessages, nextInputItems, err := r.runToolCalls(ctx, req, outcome.Messages, outcome.InputItems, pendingTools, persistItemsOnce)
 		if err != nil {
 			return outcome, err
 		}
 		outcome.Messages = nextMessages
+		outcome.InputItems = nextInputItems
 	}
 	return outcome, nil
 }
@@ -156,20 +189,28 @@ func (r *Runner) addSessionTokenUsage(ctx context.Context, req RunRequest, usage
 	_, _ = r.sessions.AddTokenUsage(ctx, req.SessionID, usage.InputTokens, usage.OutputTokens)
 }
 
-func (r *Runner) runToolCalls(ctx context.Context, req RunRequest, messages []provider.Message, toolRequests []*provider.ToolRequest) ([]provider.Message, error) {
-	for _, toolRequest := range toolRequests {
+func (r *Runner) runToolCalls(ctx context.Context, req RunRequest, messages []provider.Message, inputItems []provider.Item, toolRequests []pendingToolCall, persistItems func([]provider.Item, string) error) ([]provider.Message, []provider.Item, error) {
+	inputItems = append([]provider.Item(nil), inputItems...)
+	for _, toolCall := range toolRequests {
+		toolRequest := toolCall.request
 		messages = append(messages, provider.Message{
 			Role:          provider.RoleAssistant,
 			ToolCallID:    toolRequest.ID,
 			ToolName:      toolRequest.Name,
 			ToolArguments: toolRequest.Arguments,
 		})
+		if len(toolCall.items) > 0 {
+			inputItems = append(inputItems, toolCall.items...)
+		} else {
+			inputItems = append(inputItems, providerItemFromToolRequest(toolRequest))
+		}
 	}
 
 	results := make([]tools.Result, len(toolRequests))
 	errs := make([]error, len(toolRequests))
 	var wg sync.WaitGroup
-	for i, toolRequest := range toolRequests {
+	for i, toolCall := range toolRequests {
+		toolRequest := toolCall.request
 		wg.Add(1)
 		go func(i int, toolRequest *provider.ToolRequest) {
 			defer wg.Done()
@@ -185,15 +226,56 @@ func (r *Runner) runToolCalls(ctx context.Context, req RunRequest, messages []pr
 	wg.Wait()
 	for _, err := range errs {
 		if err != nil {
-			return messages, err
+			return messages, inputItems, err
 		}
 	}
-	for i, toolRequest := range toolRequests {
+	var outputItems []provider.Item
+	for i, toolCall := range toolRequests {
+		toolRequest := toolCall.request
+		content := toolResponseContent(toolRequest.Name, results[i])
 		messages = append(messages, provider.Message{
 			Role:       provider.RoleTool,
 			ToolCallID: toolRequest.ID,
-			Content:    toolResponseContent(toolRequest.Name, results[i]),
+			Content:    content,
+		})
+		outputItems = append(outputItems, provider.Item{
+			Kind:       provider.ItemFunctionOut,
+			Role:       string(provider.RoleTool),
+			ToolName:   toolRequest.Name,
+			ToolCallID: toolRequest.ID,
+			Text:       content,
 		})
 	}
-	return messages, nil
+	if len(outputItems) > 0 {
+		if err := persistItems(outputItems, ""); err != nil {
+			return messages, inputItems, err
+		}
+		inputItems = append(inputItems, outputItems...)
+	}
+	return messages, inputItems, nil
+}
+
+func providerItemFromToolRequest(toolRequest *provider.ToolRequest) provider.Item {
+	if toolRequest == nil {
+		return provider.Item{}
+	}
+	return provider.Item{
+		Kind:       provider.ItemFunctionCall,
+		ToolName:   toolRequest.Name,
+		ToolCallID: toolRequest.ID,
+		Text:       toolRequest.Arguments,
+	}
+}
+
+func providerItemStorageKey(item provider.Item) string {
+	if item.ID != "" {
+		return string(item.Kind) + ":id:" + item.ID
+	}
+	if item.ToolCallID != "" {
+		return string(item.Kind) + ":tool:" + item.ToolCallID
+	}
+	if item.Kind == provider.ItemMessage && item.Role != "" && item.Text != "" {
+		return string(item.Kind) + ":message:" + item.Role + ":" + item.Text
+	}
+	return ""
 }

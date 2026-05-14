@@ -12,24 +12,24 @@ import (
 	"github.com/pandelisz/gode/internal/godex/session"
 )
 
-func (r *Runner) compactMessagesIfNeeded(ctx context.Context, req RunRequest, messages []provider.Message) ([]provider.Message, error) {
+func (r *Runner) compactContextIfNeeded(ctx context.Context, req RunRequest, messages []provider.Message, inputItems []provider.Item) ([]provider.Message, []provider.Item, error) {
 	model := firstNonEmpty(r.model, "gpt-5.5")
 	options := contextwindow.OptionsForModel(model, r.disableAutoCompaction, r.autoCompactTokenLimit)
 	if !options.Enabled || r.providerName() != "openai" {
-		return messages, nil
+		return messages, inputItems, nil
 	}
 	estimate := contextwindow.EstimateMessages(contextWindowMessages(messages), contextwindow.ForModel(model))
 	if estimate.Tokens < options.CompactThreshold {
-		return messages, nil
+		return messages, inputItems, nil
 	}
 	compactor, ok := r.provider.(provider.Compactor)
 	if !ok {
-		return messages, nil
+		return messages, inputItems, nil
 	}
 
 	compactable, suffix := splitCompactionWindow(messages)
 	if len(compactable) == 0 {
-		return messages, nil
+		return messages, inputItems, nil
 	}
 	r.emit(ctx, eventbus.Event{
 		Kind:      eventbus.KindContextCompactionStarted,
@@ -60,7 +60,7 @@ func (r *Runner) compactMessagesIfNeeded(ctx context.Context, req RunRequest, me
 			RunID:     req.RunID,
 			Payload:   map[string]any{"model": model, "error": err.Error()},
 		})
-		return nil, err
+		return nil, nil, err
 	}
 	compacted := rawCompactionMessages(result.Output)
 	if len(compacted) == 0 {
@@ -72,7 +72,7 @@ func (r *Runner) compactMessagesIfNeeded(ctx context.Context, req RunRequest, me
 			RunID:     req.RunID,
 			Payload:   map[string]any{"model": model, "error": err.Error()},
 		})
-		return nil, err
+		return nil, nil, err
 	}
 	r.persistCompactedWindow(ctx, req, result.Output, suffix)
 	r.emit(ctx, eventbus.Event{
@@ -88,7 +88,7 @@ func (r *Runner) compactMessagesIfNeeded(ctx context.Context, req RunRequest, me
 	})
 	next := append([]provider.Message{}, compacted...)
 	next = append(next, suffix...)
-	return next, nil
+	return next, providerItemsFromProviderMessages(next), nil
 }
 
 func splitCompactionWindow(messages []provider.Message) ([]provider.Message, []provider.Message) {

@@ -164,7 +164,7 @@ func canonicalProviderItems(items []session.Item) []session.Item {
 	latestCompaction := -1
 	latestTurnID := ""
 	for i, item := range items {
-		if item.Kind == session.ItemCompaction && len(item.RawJSON) > 0 {
+		if item.Kind == session.ItemCompaction {
 			latestCompaction = i
 			latestTurnID = item.TurnID
 		}
@@ -175,7 +175,7 @@ func canonicalProviderItems(items []session.Item) []session.Item {
 	start := latestCompaction
 	for i := latestCompaction; i >= 0; i-- {
 		item := items[i]
-		if item.Kind != session.ItemCompaction || len(item.RawJSON) == 0 {
+		if item.Kind != session.ItemCompaction {
 			break
 		}
 		if latestTurnID != "" && item.TurnID != latestTurnID {
@@ -205,6 +205,8 @@ func appendProviderMessageFromSessionItem(out []provider.Message, item session.I
 	case session.ItemCompaction, session.ItemRaw:
 		if len(item.RawJSON) > 0 {
 			out = append(out, provider.Message{RawJSON: append([]byte(nil), item.RawJSON...)})
+		} else if item.Text != "" {
+			out = append(out, provider.Message{Role: provider.RoleUser, Content: item.Text})
 		}
 	}
 	return out

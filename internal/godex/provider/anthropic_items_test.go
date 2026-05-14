@@ -81,7 +81,7 @@ func TestAnthropicInputFromResponsesItemsReasoningRawAndCompactionPortability(t 
 
 	_, err = AnthropicInputFromResponsesItems([]Item{{ID: "cmp_raw", Kind: ItemCompaction, RawJSON: json.RawMessage(`{"type":"compaction","encrypted_content":"opaque"}`)}}, nil)
 	var portable NonPortableItemError
-	if !errors.As(err, &portable) || !strings.Contains(err.Error(), "cannot replay compaction item cmp_raw with anthropic") {
+	if !errors.As(err, &portable) || !strings.Contains(err.Error(), "cannot replay nonportable compaction item cmp_raw with anthropic") {
 		t.Fatalf("error = %v", err)
 	}
 }
