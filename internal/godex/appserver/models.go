@@ -3,7 +3,7 @@ package appserver
 import "github.com/pandelisz/gode/internal/godex"
 
 func (s *Server) handleModelList() any {
-	models := godex.BuiltInModels(false)
+	models := godex.ModelsForConfig(s.app.Config, false)
 	out := make([]map[string]any, 0, len(models))
 	for _, model := range models {
 		out = append(out, map[string]any{

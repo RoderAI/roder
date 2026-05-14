@@ -270,6 +270,34 @@ func TestRunModelsPrintsLocalCatalog(t *testing.T) {
 	}
 }
 
+func TestRunModelsPrintsCustomConfigCatalog(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	dataDir := filepath.Join(home, ".gode")
+	if err := os.MkdirAll(dataDir, 0o700); err != nil {
+		t.Fatalf("mkdir data dir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dataDir, "config.toml"), []byte(`
+[model.deepseek-chat]
+type = "chat_completions"
+provider = "deepseek"
+model = "deepseek-chat"
+display_name = "DeepSeek Chat"
+context_window = 128000
+default_reasoning = "none"
+reasoning_efforts = ["none"]
+`), 0o600); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+
+	out := captureStdout(t, func() error {
+		return runModels([]string{"--data-dir", dataDir})
+	})
+	if !strings.Contains(out, "deepseek\tdeepseek-chat\tDeepSeek Chat\tnone\tcontext=128000") {
+		t.Fatalf("models output missing custom model:\n%s", out)
+	}
+}
+
 func TestRunConfigSchemaPrintsJSON(t *testing.T) {
 	out := captureStdout(t, func() error {
 		return runConfig([]string{"schema"})

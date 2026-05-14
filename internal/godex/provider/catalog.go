@@ -1,6 +1,9 @@
 package provider
 
-import "sort"
+import (
+	"sort"
+	"strings"
+)
 
 type ProviderConfig struct {
 	ID                 string `json:"id,omitempty" toml:"id,omitempty"`
@@ -75,6 +78,61 @@ func (c ModelCatalog) Models(includeDisabled bool) []ModelMetadata {
 		return out[i].Provider < out[j].Provider
 	})
 	return out
+}
+
+func (c ModelCatalog) WithConfig(providerConfigs map[string]ProviderConfig, userModels map[string]UserModelConfig, env map[string]string) (ModelCatalog, error) {
+	providers := map[string]ProviderConfig{}
+	for _, cfg := range c.providers {
+		providers[cfg.ID] = cfg
+	}
+	providerIDs := make([]string, 0, len(providerConfigs))
+	for id := range providerConfigs {
+		providerIDs = append(providerIDs, id)
+	}
+	sort.Strings(providerIDs)
+	for _, id := range providerIDs {
+		cfg := providerConfigs[id]
+		if strings.TrimSpace(cfg.ID) == "" {
+			cfg.ID = id
+		}
+		providers[cfg.ID] = cfg
+	}
+
+	models := map[string]ModelMetadata{}
+	for _, model := range c.models {
+		models[model.ID] = cloneModel(model)
+	}
+	modelIDs := make([]string, 0, len(userModels))
+	for id := range userModels {
+		modelIDs = append(modelIDs, id)
+	}
+	sort.Strings(modelIDs)
+	for _, id := range modelIDs {
+		cfg := userModels[id]
+		resolved, err := ResolveUserModel(id, cfg, env)
+		if err != nil {
+			return ModelCatalog{}, err
+		}
+		base, hadBase := models[id]
+		if hadBase && strings.TrimSpace(cfg.Provider) == "" {
+			continue
+		}
+		metadata := mergeModelMetadata(base, resolved.Metadata)
+		models[id] = metadata
+		if _, ok := providers[resolved.ProviderID]; !ok {
+			providers[resolved.ProviderID] = ProviderConfig{
+				ID:           resolved.ProviderID,
+				Name:         resolved.ProviderID,
+				Kind:         string(resolved.APIType),
+				DefaultModel: id,
+				BaseURL:      resolved.BaseURL,
+				EnvKey:       resolved.APIKeyEnv,
+				RequiresAuth: resolved.APIKey != "" || resolved.APIKeyEnv != "",
+			}
+		}
+	}
+
+	return NewCatalog(providerMapValues(providers), modelMapValues(models)), nil
 }
 
 func (c ModelCatalog) Provider(id string) (ProviderConfig, bool) {
@@ -164,4 +222,50 @@ func cloneModels(models []ModelMetadata) []ModelMetadata {
 func cloneModel(model ModelMetadata) ModelMetadata {
 	model.ReasoningEfforts = append([]string(nil), model.ReasoningEfforts...)
 	return model
+}
+
+func mergeModelMetadata(base ModelMetadata, override ModelMetadata) ModelMetadata {
+	out := cloneModel(base)
+	if override.ID != "" {
+		out.ID = override.ID
+	}
+	if override.DisplayName != "" {
+		out.DisplayName = override.DisplayName
+	}
+	if override.Provider != "" {
+		out.Provider = override.Provider
+	}
+	if override.ContextWindow > 0 {
+		out.ContextWindow = override.ContextWindow
+	}
+	if override.SupportsImages {
+		out.SupportsImages = true
+	}
+	if len(override.ReasoningEfforts) > 0 {
+		out.ReasoningEfforts = append([]string(nil), override.ReasoningEfforts...)
+	}
+	if override.DefaultReasoning != "" {
+		out.DefaultReasoning = override.DefaultReasoning
+	}
+	out.Disabled = override.Disabled
+	if out.DisplayName == "" {
+		out.DisplayName = out.ID
+	}
+	return out
+}
+
+func providerMapValues(in map[string]ProviderConfig) []ProviderConfig {
+	out := make([]ProviderConfig, 0, len(in))
+	for _, cfg := range in {
+		out = append(out, cfg)
+	}
+	return out
+}
+
+func modelMapValues(in map[string]ModelMetadata) []ModelMetadata {
+	out := make([]ModelMetadata, 0, len(in))
+	for _, model := range in {
+		out = append(out, model)
+	}
+	return out
 }

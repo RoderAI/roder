@@ -107,6 +107,12 @@ func Load(opts LoadOptions) (Loaded, error) {
 		return Loaded{}, err
 	}
 	applyFlags(&cfg, opts.Flags, opts.FlagSet)
+	if isSet(opts.FlagSet, "model") && !isSet(opts.FlagSet, "provider") {
+		cfg.Provider = ""
+	}
+	if isSet(opts.FlagSet, "model") && !isSet(opts.FlagSet, "reasoning") && cfg.Reasoning == godex.DefaultConfig().Reasoning {
+		cfg.Reasoning = ""
+	}
 	fillDerivedDefaults(&cfg)
 	return Loaded{Config: cfg, Paths: paths}, nil
 }
@@ -354,18 +360,19 @@ func fillDerivedDefaults(cfg *godex.Config) {
 	if cfg.DataDir == "" {
 		cfg.DataDir = defaults.DataDir
 	}
-	if cfg.Provider == "" {
-		cfg.Provider = godex.ModelConfigFor(cfg.Model).Provider
-	}
 	if cfg.Model == "" {
-		if providerConfig, ok := godex.LookupProvider(cfg.Provider); ok && providerConfig.DefaultModel != "" {
+		if providerConfig, ok := godex.LookupProviderForConfig(*cfg, cfg.Provider); ok && providerConfig.DefaultModel != "" {
 			cfg.Model = providerConfig.DefaultModel
 		} else {
 			cfg.Model = defaults.Model
 		}
 	}
+	modelConfig := godex.ModelConfigForConfig(*cfg, cfg.Model)
+	if cfg.Provider == "" || cfg.Provider == defaults.Provider {
+		cfg.Provider = modelConfig.Provider
+	}
 	if cfg.Reasoning == "" {
-		cfg.Reasoning = godex.ModelConfigFor(cfg.Model).DefaultReasoning
+		cfg.Reasoning = modelConfig.DefaultReasoning
 	}
 	cfg.TimelineStyle = godex.NormalizeTimelineStyle(cfg.TimelineStyle)
 	if cfg.TelemetryEndpoint == "" {
