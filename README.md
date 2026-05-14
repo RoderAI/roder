@@ -125,7 +125,7 @@ Initial in-process builtins are available before PATH lookup:
 - `gode_read_file path [start_line] [limit]`: reads text files through the same ranged read path as the `read_file` tool.
 - `gode_list_files [path]`: lists sorted direct children through the `list_files` tool.
 - `gode_search_files query`: searches workspace text files through the `search_files` tool.
-- `gode_apply_patch`: reads a patch from stdin and applies it through the existing `apply_patch` tool.
+- `gode_apply_patch`: in patch-mode sessions, reads a patch from stdin and applies it through the existing `apply_patch` tool.
 
 The app-server keeps direct process execution for array commands such as `["/bin/echo","hi"]`. Non-streaming shell invocations like `["sh","-c","jq -r .name file.json"]` and `["/bin/sh","-lc","gode_list_files ."]` route through the embedded shell runner so app-server clients get the same builtins as agent shell tool calls.
 
@@ -158,7 +158,7 @@ Gode registers a small in-process builtin set before OS command lookup:
 - `gode_read_file path [start_line] [limit]`: read focused file ranges through the existing `read_file` tool.
 - `gode_list_files [path]`: list sorted direct children through the existing `list_files` tool.
 - `gode_search_files query`: search text files through the existing `search_files` tool.
-- `gode_apply_patch`: read a patch from stdin and apply it through the existing `apply_patch` tool.
+- `gode_apply_patch`: in patch-mode sessions, read a patch from stdin and apply it through the existing `apply_patch` tool.
 
 `gode app-server` routes non-TTY `["sh", "-c", "..."]` and `["/bin/sh", "-lc", "..."]` command invocations through the same embedded shell runner when stdin/stdout streaming is not requested. Direct array commands and streamed app-server commands still use normal OS process execution.
 
