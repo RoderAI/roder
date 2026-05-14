@@ -105,6 +105,7 @@ func (s *Server) ListenWebSocket(ctx context.Context, address string) (*WebSocke
 	mux := http.NewServeMux()
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		if !s.allowOrigin(r.Header.Get("Origin")) {
+			s.logRemote("origin_forbidden origin=%q path=%s remote_addr=%s", r.Header.Get("Origin"), r.URL.Path, r.RemoteAddr)
 			http.Error(w, "Origin header is not allowed", http.StatusForbidden)
 			return
 		}
@@ -210,6 +211,9 @@ func (s *Server) handleWebSocket(ctx context.Context, w http.ResponseWriter, r *
 
 func (s *Server) allowOrigin(origin string) bool {
 	if origin == "" {
+		return true
+	}
+	if s.options.Remote.Enabled && len(s.options.Remote.AllowedOrigins) == 0 {
 		return true
 	}
 	for _, allowed := range s.options.Remote.AllowedOrigins {

@@ -141,6 +141,41 @@ func TestRemoteWebSocketSubprotocolAuth(t *testing.T) {
 	assertInitializeHasRemote(t, ctx, ws)
 }
 
+func TestRemoteWebSocketAllowsExpoOriginByDefault(t *testing.T) {
+	ctx := context.Background()
+	app, err := godex.New(ctx, godex.Config{
+		Workspace:   filepath.Join(t.TempDir(), "workspace"),
+		DataDir:     t.TempDir(),
+		Provider:    "mock",
+		AutoApprove: true,
+	})
+	if err != nil {
+		t.Fatalf("new app: %v", err)
+	}
+	defer app.Close(ctx)
+
+	auth, err := NewRemoteAuth("remote-secret", time.Unix(10, 0))
+	if err != nil {
+		t.Fatalf("new auth: %v", err)
+	}
+	server := New(app, Options{Version: "test", Remote: RemoteOptions{Enabled: true, Auth: auth}})
+	listener, err := server.ListenWebSocket(ctx, "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen websocket: %v", err)
+	}
+	defer listener.Close(ctx)
+
+	ws, _, err := websocket.Dial(ctx, listener.WebSocketURL(), &websocket.DialOptions{
+		HTTPHeader:   http.Header{"Origin": []string{"http://10.13.37.30:8081"}},
+		Subprotocols: []string{remoteSubprotocol, "bearer.remote-secret"},
+	})
+	if err != nil {
+		t.Fatalf("expo-origin dial: %v", err)
+	}
+	defer ws.Close(websocket.StatusNormalClosure, "")
+	assertInitializeHasRemote(t, ctx, ws)
+}
+
 func TestRemoteWebSocketLogsConnectionLifecycle(t *testing.T) {
 	ctx := context.Background()
 	app, err := godex.New(ctx, godex.Config{
