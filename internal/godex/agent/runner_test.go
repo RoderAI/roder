@@ -290,6 +290,82 @@ func TestRunnerRepairsOrphanToolOutputCompactionAndRetries(t *testing.T) {
 	}
 }
 
+func TestRunnerLocallyPrunesWhenRemoteCompactionDecodeFails(t *testing.T) {
+	capture := &compactingCaptureProvider{
+		captureProvider: captureProvider{name: "openai", finalText: "done"},
+		compactErrors: []error{
+			errors.New("expected destination type of 'string' or '[]byte' for responses with content-type '' that is not 'application/json'"),
+		},
+	}
+	runner := NewRunner(Config{
+		Bus:                   eventbus.New(eventbus.WithSubscriberBuffer(16)),
+		Provider:              capture,
+		Model:                 "gpt-5.5",
+		AutoCompactTokenLimit: 50,
+	})
+	defer runner.bus.Close()
+
+	result, err := runner.Run(context.Background(), RunRequest{
+		SessionID: "s-local-prune",
+		RunID:     "r-local-prune",
+		Messages: []provider.Message{
+			{Role: provider.RoleUser, Content: strings.Repeat("old context ", 2000)},
+			{Role: provider.RoleAssistant, Content: strings.Repeat("old answer ", 2000)},
+		},
+		Prompt: "continue",
+	})
+	if err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	if result.FinalText != "done" {
+		t.Fatalf("final = %q", result.FinalText)
+	}
+	if len(capture.compactRequests) != 1 {
+		t.Fatalf("compact requests = %d", len(capture.compactRequests))
+	}
+	if len(capture.request.Messages) != 2 {
+		t.Fatalf("provider messages after local prune = %#v", capture.request.Messages)
+	}
+	if !strings.Contains(string(capture.request.Messages[0].RawJSON), provider.LocalPruneMarkerText) {
+		t.Fatalf("missing local prune marker: %#v", capture.request.Messages[0])
+	}
+	if capture.request.Messages[1].Content != "continue" {
+		t.Fatalf("latest prompt should be retained: %#v", capture.request.Messages[1])
+	}
+}
+
+func TestRunnerRepairsOrphanInputItemsBeforeStreaming(t *testing.T) {
+	capture := &captureProvider{name: "openai", finalText: "done"}
+	runner := NewRunner(Config{
+		Bus:      eventbus.New(eventbus.WithSubscriberBuffer(16)),
+		Provider: capture,
+		Model:    "gpt-5.5",
+	})
+	defer runner.bus.Close()
+
+	_, err := runner.Run(context.Background(), RunRequest{
+		SessionID:     "s-input-repair",
+		RunID:         "r-input-repair",
+		ReplacePrompt: true,
+		InputItems: []provider.Item{
+			{Kind: provider.ItemFunctionOut, ToolCallID: "call_missing", Text: "orphan"},
+			{Kind: provider.ItemMessage, Role: "user", Text: "continue"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	if len(capture.request.InputItems) != 1 {
+		t.Fatalf("input items = %#v", capture.request.InputItems)
+	}
+	if capture.request.InputItems[0].Kind != provider.ItemMessage || capture.request.InputItems[0].Text != "continue" {
+		t.Fatalf("orphan function output should be removed: %#v", capture.request.InputItems)
+	}
+	if hasFunctionCallOutput(capture.request.Messages, "call_missing") {
+		t.Fatalf("messages still contain orphan output: %#v", capture.request.Messages)
+	}
+}
+
 func TestRunnerEmitsActualTokenUsageAfterCompletion(t *testing.T) {
 	bus := eventbus.New(eventbus.WithSubscriberBuffer(16))
 	defer bus.Close()

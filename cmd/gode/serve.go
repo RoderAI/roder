@@ -69,7 +69,7 @@ func serveWithConfig(ctx context.Context, command string, cfg godex.Config, list
 		}
 	}
 
-	server := appserver.New(app, appserver.Options{Version: version, Remote: remoteOptions})
+	server := appserver.New(app, appserver.Options{Version: version, Remote: remoteOptions, Log: ioStreams.stderr})
 	switch listen.Kind {
 	case appserver.TransportStdio:
 		return server.ServeStdio(ctx, ioStreams.stdin, ioStreams.stdout)

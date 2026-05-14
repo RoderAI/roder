@@ -704,6 +704,86 @@ func TestCompactSessionRepairsOrphanToolOutputAndRetries(t *testing.T) {
 	}
 }
 
+func TestCompactSessionLocallyPrunesWhenRemoteCompactionDecodeFails(t *testing.T) {
+	dataDir := t.TempDir()
+	sessionStore, err := session.Open(dataDir)
+	if err != nil {
+		t.Fatalf("session store: %v", err)
+	}
+	if _, err := sessionStore.Ensure(context.Background(), session.Session{ID: "s1", Title: "hello"}); err != nil {
+		t.Fatalf("ensure session: %v", err)
+	}
+	messageStore := messagestore.Open(dataDir)
+	itemStore, err := session.OpenItemStore(dataDir)
+	if err != nil {
+		t.Fatalf("item store: %v", err)
+	}
+	oldText := strings.Repeat("old context ", 2000)
+	if _, err := messageStore.Append(context.Background(), messagestore.Message{SessionID: "s1", Role: messagestore.RoleUser, Text: oldText}); err != nil {
+		t.Fatalf("append old message: %v", err)
+	}
+	if _, err := messageStore.Append(context.Background(), messagestore.Message{SessionID: "s1", Role: messagestore.RoleUser, Text: "recent prompt"}); err != nil {
+		t.Fatalf("append recent message: %v", err)
+	}
+	if _, err := itemStore.AppendMany(context.Background(), []session.Item{
+		{SessionID: "s1", TurnID: "old", Kind: session.ItemMessage, Role: "user", Text: oldText},
+		{SessionID: "s1", TurnID: "old", Kind: session.ItemMessage, Role: "user", Text: "recent prompt"},
+	}); err != nil {
+		t.Fatalf("append items: %v", err)
+	}
+	journalStore, err := journal.Open(filepath.Join(dataDir, "events.jsonl"))
+	if err != nil {
+		t.Fatalf("journal: %v", err)
+	}
+	defer journalStore.Close()
+	app := &App{
+		Config:   Config{Model: "gpt-5.5", AutoCompactTokenLimit: 50},
+		Bus:      eventbus.New(),
+		Journal:  journalStore,
+		Sessions: sessionStore,
+		Messages: messageStore,
+		Items:    itemStore,
+		provider: &fakeCompactor{err: errors.New("expected destination type of 'string' or '[]byte' for responses with content-type '' that is not 'application/json'")},
+	}
+	defer app.Bus.Close()
+
+	result, err := app.CompactSession(context.Background(), "s1")
+	if err != nil {
+		t.Fatalf("compact: %v", err)
+	}
+	if result.ResponseID != "local_prune" {
+		t.Fatalf("response id = %q", result.ResponseID)
+	}
+	items, err := itemStore.ListBySession(context.Background(), "s1")
+	if err != nil {
+		t.Fatalf("list items: %v", err)
+	}
+	canonical := providerMessagesFromSessionItems(items)
+	if len(canonical) != 2 {
+		t.Fatalf("canonical items = %#v", canonical)
+	}
+	if !strings.Contains(string(canonical[0].RawJSON), provider.LocalPruneMarkerText) {
+		t.Fatalf("missing local prune marker: %#v", canonical[0])
+	}
+	if canonical[1].Content != "recent prompt" {
+		t.Fatalf("recent prompt should be retained: %#v", canonical[1])
+	}
+	events, err := journalStore.Replay(context.Background(), journal.ReplayFilter{SessionID: "s1"})
+	if err != nil {
+		t.Fatalf("replay: %v", err)
+	}
+	kinds := map[eventbus.Kind]bool{}
+	for _, ev := range events {
+		kinds[ev.Kind] = true
+	}
+	if !kinds[eventbus.KindContextCompactionRepaired] || !kinds[eventbus.KindContextCompactionCompleted] {
+		t.Fatalf("missing repair/completed events: %#v", kinds)
+	}
+	if kinds[eventbus.KindContextCompactionFailed] {
+		t.Fatalf("should not publish failed event after local prune: %#v", kinds)
+	}
+}
+
 func TestCompactSessionFailureLeavesMessagesUntouched(t *testing.T) {
 	dataDir := t.TempDir()
 	sessionStore, err := session.Open(dataDir)

@@ -30,12 +30,15 @@ func TestRemotePairingPayloadAndDeepLink(t *testing.T) {
 	if err != nil {
 		t.Fatalf("decode payload: %v", err)
 	}
-	var decoded RemotePairingPayload
+	var decoded compactRemotePairingPayload
 	if err := json.Unmarshal(data, &decoded); err != nil {
 		t.Fatalf("unmarshal payload: %v", err)
 	}
-	if decoded.URL != payload.URL || decoded.Headers["Authorization"] != payload.Headers["Authorization"] {
+	if decoded.URL != payload.URL || decoded.Token != "secret-token" || decoded.Type != remoteSubprotocol {
 		t.Fatalf("decoded payload mismatch: %#v", decoded)
+	}
+	if len(link) >= 220 {
+		t.Fatalf("deep link should stay compact, length = %d: %s", len(link), link)
 	}
 }
 
