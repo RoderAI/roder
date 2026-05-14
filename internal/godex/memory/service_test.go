@@ -146,6 +146,23 @@ func TestServiceQueryCapsLimitAboveMaximum(t *testing.T) {
 	}
 }
 
+func TestServiceQueryWithNoCandidatesDoesNotEmbed(t *testing.T) {
+	ctx := context.Background()
+	embedder := &countingEmbedder{model: "embed"}
+	service := newTestServiceWithEmbedder(t, Config{Enabled: true}, embedder)
+
+	results, err := service.Query(ctx, "nothing stored", 5)
+	if err != nil {
+		t.Fatalf("query: %v", err)
+	}
+	if len(results) != 0 {
+		t.Fatalf("results = %#v", results)
+	}
+	if len(embedder.calls) != 0 {
+		t.Fatalf("embed calls = %#v", embedder.calls)
+	}
+}
+
 func TestServiceQueryOnlyUsesActiveWorkspace(t *testing.T) {
 	ctx := context.Background()
 	store := openTestStore(t)
