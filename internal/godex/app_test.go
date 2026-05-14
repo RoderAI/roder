@@ -16,6 +16,7 @@ import (
 	messagestore "github.com/pandelisz/gode/internal/godex/message"
 	"github.com/pandelisz/gode/internal/godex/provider"
 	"github.com/pandelisz/gode/internal/godex/session"
+	"github.com/pandelisz/gode/internal/godex/tools"
 )
 
 func TestNewAppWiresBroadCoreWithMockProvider(t *testing.T) {
@@ -196,6 +197,112 @@ func TestAppSetMemoriesEnabledRebuildsTools(t *testing.T) {
 	}
 	if app.Config.Memories.Enabled || appHasTool(app, "memory_save") {
 		t.Fatalf("disabled config=%#v specs=%#v", app.Config.Memories, app.Tools.Specs())
+	}
+}
+
+func TestAppMemoryIntegrationSaveQueryRecallAndDisable(t *testing.T) {
+	useTestMemoryEmbedder(t, map[string][]float32{
+		"prefer event bus plugins": {1, 0, 0},
+		"event bus":                {1, 0, 0},
+	})
+	ctx := context.Background()
+	app, err := New(ctx, Config{
+		Workspace:   filepath.Join(t.TempDir(), "workspace"),
+		DataDir:     t.TempDir(),
+		Provider:    "mock",
+		Model:       "mock",
+		Reasoning:   "none",
+		AutoApprove: true,
+		Memories:    memory.Config{Enabled: true, AutoRecall: true, EmbeddingModel: memory.DefaultEmbeddingModel},
+	})
+	if err != nil {
+		t.Fatalf("new app: %v", err)
+	}
+	defer app.Close(ctx)
+
+	saved, err := app.Tools.Run(ctx, tools.Call{Name: "memory_save", Input: map[string]any{"content": "prefer event bus plugins"}})
+	if err != nil {
+		t.Fatalf("memory_save: %v", err)
+	}
+	savedData, ok := saved.Data.(memory.ToolEntry)
+	if saved.Error != "" || !ok || savedData.Content != "prefer event bus plugins" {
+		t.Fatalf("save result = %#v", saved)
+	}
+	found, err := app.Tools.Run(ctx, tools.Call{Name: "memory_find", Input: map[string]any{"query": "event bus", "limit": 1}})
+	if err != nil {
+		t.Fatalf("memory_find: %v", err)
+	}
+	if found.Error != "" || !strings.Contains(found.Text, "prefer event bus plugins") {
+		t.Fatalf("find result = %#v", found)
+	}
+
+	events := app.Bus.Subscribe(ctx, eventbus.Filter{Kinds: []eventbus.Kind{eventbus.KindMemoryRecalled}})
+	if _, err := app.RunPrompt(ctx, "event bus"); err != nil {
+		t.Fatalf("run prompt: %v", err)
+	}
+	select {
+	case ev := <-events:
+		if ev.Kind != eventbus.KindMemoryRecalled {
+			t.Fatalf("memory event = %#v", ev)
+		}
+	default:
+		t.Fatal("expected prompt-time memory recall event")
+	}
+
+	if err := app.SetMemoriesEnabled(false); err != nil {
+		t.Fatalf("disable memories: %v", err)
+	}
+	if appHasTool(app, "memory_save") || appHasTool(app, "memory_find") {
+		t.Fatalf("memory tools should be absent after disable: %#v", app.Tools.Specs())
+	}
+}
+
+func TestAppMemoryScopesSharedDataDirByWorkspace(t *testing.T) {
+	useTestMemoryEmbedder(t, map[string][]float32{
+		"local workspace memory": {1, 0, 0},
+		"local":                  {1, 0, 0},
+	})
+	ctx := context.Background()
+	dataDir := t.TempDir()
+	first, err := New(ctx, Config{
+		Workspace:   filepath.Join(t.TempDir(), "repo-a"),
+		DataDir:     dataDir,
+		Provider:    "mock",
+		AutoApprove: true,
+		Memories:    memory.Config{Enabled: true, EmbeddingModel: memory.DefaultEmbeddingModel},
+	})
+	if err != nil {
+		t.Fatalf("new first app: %v", err)
+	}
+	defer first.Close(ctx)
+	second, err := New(ctx, Config{
+		Workspace:   filepath.Join(t.TempDir(), "repo-b"),
+		DataDir:     dataDir,
+		Provider:    "mock",
+		AutoApprove: true,
+		Memories:    memory.Config{Enabled: true, EmbeddingModel: memory.DefaultEmbeddingModel},
+	})
+	if err != nil {
+		t.Fatalf("new second app: %v", err)
+	}
+	defer second.Close(ctx)
+
+	if _, err := first.Memory.Save(ctx, "local workspace memory", "test"); err != nil {
+		t.Fatalf("save first memory: %v", err)
+	}
+	firstResults, err := first.Memory.Query(ctx, "local", 5)
+	if err != nil {
+		t.Fatalf("query first: %v", err)
+	}
+	if len(firstResults) != 1 {
+		t.Fatalf("first results = %#v", firstResults)
+	}
+	secondResults, err := second.Memory.Query(ctx, "local", 5)
+	if err != nil {
+		t.Fatalf("query second: %v", err)
+	}
+	if len(secondResults) != 0 {
+		t.Fatalf("second workspace saw first memory: %#v", secondResults)
 	}
 }
 
@@ -489,4 +596,35 @@ func appHasTool(app *App, name string) bool {
 		}
 	}
 	return false
+}
+
+func useTestMemoryEmbedder(t *testing.T, values map[string][]float32) {
+	t.Helper()
+	previous := memoryEmbedderFactory
+	memoryEmbedderFactory = func(model string) memory.Embedder {
+		return appTestMemoryEmbedder{model: model, values: values}
+	}
+	t.Cleanup(func() {
+		memoryEmbedderFactory = previous
+	})
+}
+
+type appTestMemoryEmbedder struct {
+	model  string
+	values map[string][]float32
+}
+
+func (e appTestMemoryEmbedder) Model() string {
+	if strings.TrimSpace(e.model) == "" {
+		return memory.DefaultEmbeddingModel
+	}
+	return e.model
+}
+
+func (e appTestMemoryEmbedder) Embed(_ context.Context, input string) (memory.Vector, error) {
+	values := e.values[strings.TrimSpace(input)]
+	if len(values) == 0 {
+		values = []float32{1, 0, 0}
+	}
+	return memory.Vector{Model: e.Model(), Dimensions: len(values), Values: append([]float32(nil), values...)}, nil
 }

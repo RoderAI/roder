@@ -51,7 +51,7 @@ func ProjectionFromEvent(ev eventbus.Event) []Item {
 			Phase string `json:"phase"`
 		}
 		_ = ev.DecodePayload(&payload)
-		base.Phase = strings.TrimSpace(payload.Phase)
+		base.Phase = normalizeAssistantPhase(strings.TrimSpace(payload.Phase), ev.Kind)
 		return itemSingle(base, ItemMessage, "assistant", strings.TrimSpace(payload.Text))
 	case eventbus.KindReasoningSummaryDelta, eventbus.KindReasoningSummaryCompleted:
 		var payload struct {
@@ -379,6 +379,16 @@ func itemSingle(base Item, kind ItemKind, role string, text string) []Item {
 	base.Role = role
 	base.Text = text
 	return []Item{base}
+}
+
+func normalizeAssistantPhase(phase string, kind eventbus.Kind) string {
+	if phase != "" {
+		return phase
+	}
+	if kind == eventbus.KindAssistantDelta || kind == eventbus.KindAssistantCompleted {
+		return "final_answer"
+	}
+	return ""
 }
 
 func titleFromEvent(ev eventbus.Event) string {
