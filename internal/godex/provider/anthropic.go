@@ -99,11 +99,12 @@ func (a *Anthropic) messageParams(req Request) (anthropic.MessageNewParams, erro
 		return anthropic.MessageNewParams{}, err
 	}
 	return anthropic.MessageNewParams{
-		Model:     anthropic.Model(a.model),
-		MaxTokens: a.maxTokens,
-		System:    anthropicSystemBlocks(input.System),
-		Messages:  anthropicMessages(input.Messages),
-		Tools:     anthropicSDKTools(input.Tools),
+		Model:        anthropic.Model(a.model),
+		MaxTokens:    a.maxTokens,
+		CacheControl: anthropic.NewCacheControlEphemeralParam(),
+		System:       anthropicSystemBlocks(input.System),
+		Messages:     anthropicMessages(input.Messages),
+		Tools:        anthropicSDKTools(input.Tools),
 	}, nil
 }
 

@@ -2,6 +2,7 @@ package provider
 
 import (
 	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -84,5 +85,16 @@ func TestCatalogListsAreStableSortedCopies(t *testing.T) {
 	again, _ := catalog.Model("a-model")
 	if again.ReasoningEfforts[0] != "low" {
 		t.Fatalf("catalog returned aliased model: %#v", again)
+	}
+}
+
+func TestDefaultCatalogSonnetAndOpusModelsUseMillionTokenContext(t *testing.T) {
+	for _, model := range Catalog.Models(false) {
+		if !strings.Contains(model.ID, "claude-sonnet") && !strings.Contains(model.ID, "claude-opus") {
+			continue
+		}
+		if model.ContextWindow != 1000000 {
+			t.Fatalf("%s context = %d", model.ID, model.ContextWindow)
+		}
 	}
 }

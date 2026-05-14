@@ -263,7 +263,7 @@ func TestRunModelsPrintsLocalCatalog(t *testing.T) {
 	out := captureStdout(t, func() error {
 		return runModels(nil)
 	})
-	for _, want := range []string{"openai\tgpt-5.4-mini", "anthropic-compatible\tclaude-sonnet-4.5"} {
+	for _, want := range []string{"openai\tgpt-5.4-mini", "anthropic\tclaude-sonnet-4-6"} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("models output missing %q:\n%s", want, out)
 		}

@@ -1,6 +1,7 @@
 package godex
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/pandelisz/gode/internal/godex/codexauth"
@@ -145,6 +146,20 @@ func TestAnthropicProviderAndModels(t *testing.T) {
 	haiku := ModelConfigFor("claude-haiku-4-5-20251001")
 	if haiku.ContextWindow != 200000 || haiku.DefaultReasoning != ReasoningLow {
 		t.Fatalf("haiku config = %#v", haiku)
+	}
+}
+
+func TestAnthropicSonnetAndOpusModelsUseMillionTokenContext(t *testing.T) {
+	for _, model := range BuiltInModels(true) {
+		if model.Provider != ProviderAnthropic {
+			continue
+		}
+		if !strings.Contains(model.ID, "sonnet") && !strings.Contains(model.ID, "opus") {
+			continue
+		}
+		if model.ContextWindow != 1000000 || model.MaxContextWindow != 1000000 {
+			t.Fatalf("%s context = %d/%d", model.ID, model.ContextWindow, model.MaxContextWindow)
+		}
 	}
 }
 
