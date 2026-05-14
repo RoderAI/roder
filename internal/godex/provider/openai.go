@@ -201,7 +201,7 @@ func (o *OpenAI) compactParams(req CompactRequest) responses.ResponseCompactPara
 	params := responses.ResponseCompactParams{
 		Model: responses.ResponseCompactParamsModel(firstNonEmpty(req.Model, o.model)),
 		Input: responses.ResponseCompactParamsInputUnion{
-			OfResponseInputItemArray: responseInputItems(req.Messages),
+			OfResponseInputItemArray: compactResponseInputItems(req.Messages),
 		},
 	}
 	if strings.TrimSpace(req.Instructions) != "" {

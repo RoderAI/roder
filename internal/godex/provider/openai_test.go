@@ -82,6 +82,58 @@ func TestOpenAICompactParamsIncludesPromptCacheKey(t *testing.T) {
 	}
 }
 
+func TestOpenAICompactParamsTruncatesHugeFunctionCallOutputs(t *testing.T) {
+	openaiProvider := NewOpenAI("gpt-5.5", "medium")
+	huge := strings.Repeat("a", compactFunctionOutputLimitBytes+4096) + "TAIL_SENTINEL"
+
+	params := openaiProvider.compactParams(CompactRequest{
+		Model: "gpt-5.5",
+		Messages: []Message{
+			{Role: RoleAssistant, ToolCallID: "call_123", ToolName: "shell", ToolArguments: `{"command":"cat huge.log"}`},
+			{Role: RoleTool, ToolCallID: "call_123", Content: huge},
+		},
+	})
+
+	output := compactFunctionOutputFromParams(t, params.Input)
+	if len(output) > compactFunctionOutputLimitBytes {
+		t.Fatalf("compacted output length = %d, want <= %d", len(output), compactFunctionOutputLimitBytes)
+	}
+	for _, want := range []string{"gode truncated this tool output for compaction", "TAIL_SENTINEL"} {
+		if !strings.Contains(output, want) {
+			t.Fatalf("compacted output missing %q", want)
+		}
+	}
+	if strings.Contains(output, strings.Repeat("a", compactFunctionOutputLimitBytes)) {
+		t.Fatal("compacted output still contains the full oversized body")
+	}
+}
+
+func TestOpenAICompactParamsTruncatesHugeRawFunctionCallOutputs(t *testing.T) {
+	openaiProvider := NewOpenAI("gpt-5.5", "medium")
+	huge := strings.Repeat("b", compactFunctionOutputLimitBytes+4096) + "RAW_TAIL_SENTINEL"
+	rawOutput, err := json.Marshal(huge)
+	if err != nil {
+		t.Fatalf("marshal raw output: %v", err)
+	}
+
+	params := openaiProvider.compactParams(CompactRequest{
+		Model: "gpt-5.5",
+		Messages: []Message{{
+			RawJSON: json.RawMessage(`{"type":"function_call_output","call_id":"call_raw","output":` + string(rawOutput) + `}`),
+		}},
+	})
+
+	output := compactFunctionOutputFromParams(t, params.Input)
+	if len(output) > compactFunctionOutputLimitBytes {
+		t.Fatalf("compacted raw output length = %d, want <= %d", len(output), compactFunctionOutputLimitBytes)
+	}
+	for _, want := range []string{"gode truncated this tool output for compaction", "RAW_TAIL_SENTINEL"} {
+		if !strings.Contains(output, want) {
+			t.Fatalf("compacted raw output missing %q", want)
+		}
+	}
+}
+
 func TestOpenAIResponseParamsSupportsLocalItemsPreviousResponseIDAndStoreFalse(t *testing.T) {
 	openaiProvider := NewOpenAI("gpt-5.5", "medium")
 
@@ -386,4 +438,28 @@ func TestOpenAIStreamErrorIncludesHTTPDebugDetails(t *testing.T) {
 			t.Fatalf("debug detail missing %q:\n%s", want, detail)
 		}
 	}
+}
+
+func compactFunctionOutputFromParams(t *testing.T, input responses.ResponseCompactParamsInputUnion) string {
+	t.Helper()
+	data, err := json.Marshal(input)
+	if err != nil {
+		t.Fatalf("marshal compact input: %v", err)
+	}
+	var items []map[string]any
+	if err := json.Unmarshal(data, &items); err != nil {
+		t.Fatalf("unmarshal compact input %s: %v", data, err)
+	}
+	for _, item := range items {
+		if item["type"] != "function_call_output" {
+			continue
+		}
+		output, ok := item["output"].(string)
+		if !ok {
+			t.Fatalf("function_call_output output is %T, want string", item["output"])
+		}
+		return output
+	}
+	t.Fatalf("compact input has no function_call_output: %s", data)
+	return ""
 }
