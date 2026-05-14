@@ -267,7 +267,7 @@ func TestOpenAIResponseParamsPreservesRawCompactionItems(t *testing.T) {
 	}
 }
 
-func TestOpenAIResponseParamsUsesHostedToolSearchForDeferredTools(t *testing.T) {
+func TestOpenAIResponseParamsKeepsCoreToolsEagerAndDefersUnknownTools(t *testing.T) {
 	openaiProvider := NewOpenAI("gpt-5.5", "medium")
 
 	params := openaiProvider.responseParams(Request{
@@ -275,6 +275,14 @@ func TestOpenAIResponseParamsUsesHostedToolSearchForDeferredTools(t *testing.T) 
 		Tools: []ToolSpec{{
 			Name:        "read_file",
 			Description: "Read a file",
+			Schema:      map[string]any{"type": "object", "properties": map[string]any{}, "required": []string{}},
+		}, {
+			Name:        "shell",
+			Description: "Run a shell command",
+			Schema:      map[string]any{"type": "object", "properties": map[string]any{}, "required": []string{}},
+		}, {
+			Name:        "mcp_helper_echo",
+			Description: "Remote MCP echo",
 			Schema:      map[string]any{"type": "object", "properties": map[string]any{}, "required": []string{}},
 		}},
 	})
@@ -288,12 +296,17 @@ func TestOpenAIResponseParamsUsesHostedToolSearchForDeferredTools(t *testing.T) 
 		`"name":"gode"`,
 		`"type":"tool_search"`,
 		`"execution":"server"`,
-		`"defer_loading":true`,
 		`"name":"read_file"`,
+		`"name":"shell"`,
+		`"name":"mcp_helper_echo"`,
+		`"defer_loading":true`,
 	} {
 		if !strings.Contains(raw, want) {
 			t.Fatalf("tools JSON missing %q:\n%s", want, raw)
 		}
+	}
+	if got := strings.Count(raw, `"defer_loading":true`); got != 1 {
+		t.Fatalf("deferred tool count = %d, want only the unknown tool deferred:\n%s", got, raw)
 	}
 }
 

@@ -19,6 +19,7 @@ gode is inspired by OpenAI Codex. Within this context, "gode" refers to this ope
 - Read relevant files before making assumptions about the codebase.
 - Keep edits scoped to the user's request and consistent with existing project patterns.
 - The available tool set depends on how this gode session is configured. Do not claim access to tools that are not exposed in the current turn.
+- Gode exposes tools through its Responses namespace and tool search. Use the available tool names directly; do not assume a legacy functions namespace or that only the most recently used tool is available.
 
 ## Editing Constraints
 
