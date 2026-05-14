@@ -1,6 +1,10 @@
 package godex
 
-import "github.com/pandelisz/gode/internal/godex/contextwindow"
+import (
+	"strings"
+
+	"github.com/pandelisz/gode/internal/godex/contextwindow"
+)
 
 const (
 	ProviderMock      = "mock"
@@ -21,6 +25,9 @@ const (
 	ReasoningXHigh   = "xhigh"
 
 	DefaultModelID = "gpt-5.5"
+
+	EditToolPatch = "patch"
+	EditToolEdit  = "edit"
 )
 
 type ProviderConfig struct {
@@ -51,6 +58,7 @@ type ModelConfig struct {
 	MaxContextWindow      int
 	AutoCompactTokenLimit int
 	SupportsCompaction    bool
+	EditTool              string
 	Hidden                bool
 }
 
@@ -145,6 +153,7 @@ func fallbackModelConfig(id string) ModelConfig {
 		MaxContextWindow:      window.MaxContextWindow,
 		AutoCompactTokenLimit: window.AutoCompactTokenLimit,
 		SupportsCompaction:    window.SupportsCompaction,
+		EditTool:              defaultEditToolForModel(id),
 		Hidden:                true,
 	}
 }
@@ -307,5 +316,22 @@ func withContextWindow(model ModelConfig) ModelConfig {
 	model.MaxContextWindow = window.MaxContextWindow
 	model.AutoCompactTokenLimit = window.AutoCompactTokenLimit
 	model.SupportsCompaction = window.SupportsCompaction
+	model.EditTool = normalizeEditTool(firstNonEmpty(model.EditTool, defaultEditToolForModel(model.ID)))
 	return model
+}
+
+func normalizeEditTool(value string) string {
+	switch value {
+	case EditToolPatch, EditToolEdit:
+		return value
+	default:
+		return ""
+	}
+}
+
+func defaultEditToolForModel(model string) string {
+	if strings.HasPrefix(strings.ToLower(strings.TrimSpace(model)), "gpt") {
+		return EditToolPatch
+	}
+	return EditToolEdit
 }

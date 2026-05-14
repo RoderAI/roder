@@ -29,6 +29,31 @@ func TestResolveUserModelChatCompletionsConfig(t *testing.T) {
 	}
 }
 
+func TestResolveUserModelPreservesEditTool(t *testing.T) {
+	resolved, err := ResolveUserModel("router-gpt", UserModelConfig{
+		Type:     string(APITypeResponses),
+		Provider: "router",
+		Model:    "gpt-5.5",
+		EditTool: "patch",
+	}, nil)
+	if err != nil {
+		t.Fatalf("resolve: %v", err)
+	}
+	if resolved.EditTool != "patch" || resolved.Metadata.EditTool != "patch" {
+		t.Fatalf("edit tool = %#v metadata=%#v", resolved.EditTool, resolved.Metadata.EditTool)
+	}
+}
+
+func TestResolveUserModelRejectsInvalidEditTool(t *testing.T) {
+	_, err := ResolveUserModel("bad-edit-tool", UserModelConfig{EditTool: "rewrite"}, nil)
+	if err == nil {
+		t.Fatal("expected invalid edit_tool error")
+	}
+	if !strings.Contains(err.Error(), "patch, edit") {
+		t.Fatalf("error should list allowed edit tools, got %v", err)
+	}
+}
+
 func TestResolveUserModelEnvAPIKeyDoesNotMutateConfig(t *testing.T) {
 	cfg := UserModelConfig{
 		Type:     "chat_completions",

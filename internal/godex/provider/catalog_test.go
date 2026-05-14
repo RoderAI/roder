@@ -28,7 +28,7 @@ func TestCatalogLookup(t *testing.T) {
 	if !ok {
 		t.Fatal("gpt-5.5 model missing")
 	}
-	if model.Provider != "openai" || model.ContextWindow == 0 || !model.SupportsImages {
+	if model.Provider != "openai" || model.ContextWindow == 0 || !model.SupportsImages || model.EditTool != "patch" {
 		t.Fatalf("gpt-5.5 model = %#v", model)
 	}
 }
@@ -109,6 +109,7 @@ func TestCatalogWithUserModelsAddsCustomEntries(t *testing.T) {
 			BaseURL:       "https://api.deepseek.example/v1",
 			APIKeyEnv:     "DEEPSEEK_API_KEY",
 			ContextWindow: 128000,
+			EditTool:      "edit",
 		},
 		"kimi-k2-6": {
 			Type:          string(APITypeChatCompletions),
@@ -126,7 +127,7 @@ func TestCatalogWithUserModelsAddsCustomEntries(t *testing.T) {
 	if !ok {
 		t.Fatal("deepseek-chat missing")
 	}
-	if deepseek.Provider != "deepseek" || deepseek.DisplayName != "DeepSeek Chat" || deepseek.ContextWindow != 128000 {
+	if deepseek.Provider != "deepseek" || deepseek.DisplayName != "DeepSeek Chat" || deepseek.ContextWindow != 128000 || deepseek.EditTool != "edit" {
 		t.Fatalf("deepseek metadata = %#v", deepseek)
 	}
 	kimi, ok := catalog.Model("kimi-k2-6")

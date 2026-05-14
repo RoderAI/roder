@@ -103,6 +103,75 @@ func TestNewAppShellToolHasDefaultBuiltins(t *testing.T) {
 	}
 }
 
+func TestAppLoadsPatchToolOnlyForGPTModels(t *testing.T) {
+	app, err := New(context.Background(), Config{
+		Workspace:   filepath.Join(t.TempDir(), "workspace"),
+		DataDir:     t.TempDir(),
+		HomeDir:     t.TempDir(),
+		Model:       "gpt-5.5",
+		AutoApprove: true,
+	})
+	if err != nil {
+		t.Fatalf("new gpt app: %v", err)
+	}
+	defer app.Close(context.Background())
+	if !appHasTool(app, "apply_patch") {
+		t.Fatalf("gpt tools should include apply_patch: %#v", app.Tools.Specs())
+	}
+	for _, name := range []string{"edit", "multi_edit", "write_file"} {
+		if appHasTool(app, name) {
+			t.Fatalf("gpt tools should not include %s: %#v", name, app.Tools.Specs())
+		}
+	}
+}
+
+func TestAppLoadsEditToolsOnlyForNonGPTModels(t *testing.T) {
+	app, err := New(context.Background(), Config{
+		Workspace:   filepath.Join(t.TempDir(), "workspace"),
+		DataDir:     t.TempDir(),
+		HomeDir:     t.TempDir(),
+		Provider:    ProviderAnthropic,
+		Model:       "claude-sonnet-4-6",
+		AutoApprove: true,
+	})
+	if err != nil {
+		t.Fatalf("new claude app: %v", err)
+	}
+	defer app.Close(context.Background())
+	for _, name := range []string{"edit", "multi_edit", "write_file"} {
+		if !appHasTool(app, name) {
+			t.Fatalf("non-gpt tools should include %s: %#v", name, app.Tools.Specs())
+		}
+	}
+	if appHasTool(app, "apply_patch") {
+		t.Fatalf("non-gpt tools should not include apply_patch: %#v", app.Tools.Specs())
+	}
+}
+
+func TestSetModelReasoningRebuildsEditToolSurface(t *testing.T) {
+	app, err := New(context.Background(), Config{
+		Workspace:   filepath.Join(t.TempDir(), "workspace"),
+		DataDir:     t.TempDir(),
+		HomeDir:     t.TempDir(),
+		Provider:    ProviderAnthropic,
+		Model:       "claude-sonnet-4-6",
+		AutoApprove: true,
+	})
+	if err != nil {
+		t.Fatalf("new app: %v", err)
+	}
+	defer app.Close(context.Background())
+	if !appHasTool(app, "edit") || appHasTool(app, "apply_patch") {
+		t.Fatalf("initial edit surface = %#v", app.Tools.Specs())
+	}
+	if err := app.SetModelReasoning("gpt-5.5", ReasoningMedium); err != nil {
+		t.Fatalf("set model: %v", err)
+	}
+	if !appHasTool(app, "apply_patch") || appHasTool(app, "edit") || appHasTool(app, "multi_edit") || appHasTool(app, "write_file") {
+		t.Fatalf("updated edit surface = %#v", app.Tools.Specs())
+	}
+}
+
 func TestAppGoalMethodsPublishEvents(t *testing.T) {
 	app, err := New(context.Background(), Config{
 		Workspace:   filepath.Join(t.TempDir(), "workspace"),

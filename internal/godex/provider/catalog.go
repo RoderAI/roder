@@ -31,6 +31,7 @@ type ModelMetadata struct {
 	SupportsImages   bool     `json:"supports_images,omitempty" toml:"supports_images,omitempty"`
 	ReasoningEfforts []string `json:"reasoning_efforts,omitempty" toml:"reasoning_efforts,omitempty"`
 	DefaultReasoning string   `json:"default_reasoning,omitempty" toml:"default_reasoning,omitempty"`
+	EditTool         string   `json:"edit_tool,omitempty" toml:"edit_tool,omitempty"`
 	Disabled         bool     `json:"disabled,omitempty" toml:"disabled,omitempty"`
 }
 
@@ -193,13 +194,13 @@ func defaultProviders() []ProviderConfig {
 
 func defaultModels() []ModelMetadata {
 	return []ModelMetadata{
-		{ID: "claude-opus-4-7", DisplayName: "Claude Opus 4.7", Provider: "anthropic", ContextWindow: 1000000, SupportsImages: true, ReasoningEfforts: standardReasoningEfforts(), DefaultReasoning: "high"},
-		{ID: "claude-sonnet-4-6", DisplayName: "Claude Sonnet 4.6", Provider: "anthropic", ContextWindow: 1000000, SupportsImages: true, ReasoningEfforts: standardReasoningEfforts(), DefaultReasoning: "medium"},
-		{ID: "claude-haiku-4-5-20251001", DisplayName: "Claude Haiku 4.5", Provider: "anthropic", ContextWindow: 200000, SupportsImages: true, ReasoningEfforts: []string{"low", "medium"}, DefaultReasoning: "low"},
-		{ID: "gpt-5.3-codex", DisplayName: "GPT-5.3-Codex", Provider: "openai", ContextWindow: 272000, SupportsImages: true, ReasoningEfforts: standardReasoningEfforts(), DefaultReasoning: "medium"},
-		{ID: "gpt-5.4", DisplayName: "GPT-5.4", Provider: "openai", ContextWindow: 272000, SupportsImages: true, ReasoningEfforts: standardReasoningEfforts(), DefaultReasoning: "medium"},
-		{ID: "gpt-5.4-mini", DisplayName: "GPT-5.4-Mini", Provider: "openai", ContextWindow: 272000, SupportsImages: true, ReasoningEfforts: standardReasoningEfforts(), DefaultReasoning: "medium"},
-		{ID: "gpt-5.5", DisplayName: "GPT-5.5", Provider: "openai", ContextWindow: 1050000, SupportsImages: true, ReasoningEfforts: standardReasoningEfforts(), DefaultReasoning: "medium"},
+		{ID: "claude-opus-4-7", DisplayName: "Claude Opus 4.7", Provider: "anthropic", ContextWindow: 1000000, SupportsImages: true, ReasoningEfforts: standardReasoningEfforts(), DefaultReasoning: "high", EditTool: "edit"},
+		{ID: "claude-sonnet-4-6", DisplayName: "Claude Sonnet 4.6", Provider: "anthropic", ContextWindow: 1000000, SupportsImages: true, ReasoningEfforts: standardReasoningEfforts(), DefaultReasoning: "medium", EditTool: "edit"},
+		{ID: "claude-haiku-4-5-20251001", DisplayName: "Claude Haiku 4.5", Provider: "anthropic", ContextWindow: 200000, SupportsImages: true, ReasoningEfforts: []string{"low", "medium"}, DefaultReasoning: "low", EditTool: "edit"},
+		{ID: "gpt-5.3-codex", DisplayName: "GPT-5.3-Codex", Provider: "openai", ContextWindow: 272000, SupportsImages: true, ReasoningEfforts: standardReasoningEfforts(), DefaultReasoning: "medium", EditTool: "patch"},
+		{ID: "gpt-5.4", DisplayName: "GPT-5.4", Provider: "openai", ContextWindow: 272000, SupportsImages: true, ReasoningEfforts: standardReasoningEfforts(), DefaultReasoning: "medium", EditTool: "patch"},
+		{ID: "gpt-5.4-mini", DisplayName: "GPT-5.4-Mini", Provider: "openai", ContextWindow: 272000, SupportsImages: true, ReasoningEfforts: standardReasoningEfforts(), DefaultReasoning: "medium", EditTool: "patch"},
+		{ID: "gpt-5.5", DisplayName: "GPT-5.5", Provider: "openai", ContextWindow: 1050000, SupportsImages: true, ReasoningEfforts: standardReasoningEfforts(), DefaultReasoning: "medium", EditTool: "patch"},
 	}
 }
 
@@ -246,6 +247,9 @@ func mergeModelMetadata(base ModelMetadata, override ModelMetadata) ModelMetadat
 	}
 	if override.DefaultReasoning != "" {
 		out.DefaultReasoning = override.DefaultReasoning
+	}
+	if override.EditTool != "" {
+		out.EditTool = override.EditTool
 	}
 	out.Disabled = override.Disabled
 	if out.DisplayName == "" {

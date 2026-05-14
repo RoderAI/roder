@@ -18,6 +18,7 @@ model = "deepseek-chat"
 base_url = "https://api.deepseek.example/v1"
 api_key_env = "DEEPSEEK_API_KEY"
 context_window = 128000
+edit_tool = "edit"
 `)
 
 	loaded, err := Load(LoadOptions{DataDir: dataDir, Env: []string{"HOME=" + t.TempDir()}})
@@ -31,7 +32,7 @@ context_window = 128000
 	if cfg.Type != string(provider.APITypeChatCompletions) || cfg.Provider != "deepseek" || cfg.Model != "deepseek-chat" {
 		t.Fatalf("model identity = %#v", cfg)
 	}
-	if cfg.BaseURL != "https://api.deepseek.example/v1" || cfg.APIKeyEnv != "DEEPSEEK_API_KEY" || cfg.ContextWindow != 128000 {
+	if cfg.BaseURL != "https://api.deepseek.example/v1" || cfg.APIKeyEnv != "DEEPSEEK_API_KEY" || cfg.ContextWindow != 128000 || cfg.EditTool != "edit" {
 		t.Fatalf("model endpoint = %#v", cfg)
 	}
 }

@@ -377,7 +377,7 @@ func runModels(args []string) error {
 		return err
 	}
 	for _, model := range godex.ModelsForConfig(loaded.Config, false) {
-		fmt.Printf("%s\t%s\t%s\t%s\tcontext=%d\tauto_compact=%d\n", model.Provider, model.ID, model.DisplayName, model.DefaultReasoning, model.ContextWindow, model.AutoCompactTokenLimit)
+		fmt.Printf("%s\t%s\t%s\t%s\tedit=%s\tcontext=%d\tauto_compact=%d\n", model.Provider, model.ID, model.DisplayName, model.DefaultReasoning, model.EditTool, model.ContextWindow, model.AutoCompactTokenLimit)
 	}
 	return nil
 }

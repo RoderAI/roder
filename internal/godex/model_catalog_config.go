@@ -127,6 +127,7 @@ func ResolveSelectedModelWithEnv(cfg Config, env map[string]string) (provider.Re
 			DefaultReasoning: model.DefaultReasoning,
 			Disabled:         model.Hidden,
 		},
+		EditTool: model.EditTool,
 	}, nil
 }
 
@@ -244,6 +245,7 @@ func modelConfigFromUserModel(id string, cfg provider.UserModelConfig) (ModelCon
 		MaxContextWindow:      window.MaxContextWindow,
 		AutoCompactTokenLimit: window.AutoCompactTokenLimit,
 		SupportsCompaction:    cfg.SupportsCompaction,
+		EditTool:              normalizeEditTool(firstNonEmpty(resolved.EditTool, defaultEditToolForModel(resolved.UpstreamModel))),
 		Hidden:                cfg.Disabled,
 	}, nil
 }

@@ -15,6 +15,7 @@ func (s *Server) handleModelList() any {
 			"defaultReasoningEffort": model.DefaultReasoning,
 			"contextWindow":          model.ContextWindow,
 			"maxContextWindow":       model.MaxContextWindow,
+			"editTool":               model.EditTool,
 			"isDefault":              model.ID == godex.DefaultModelID,
 		})
 	}
