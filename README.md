@@ -40,6 +40,76 @@ make run
 
 Then open Jaeger at <http://localhost:16686>.
 
+## Custom Models
+
+Add custom models to `$HOME/.gode/config.toml` or a workspace `.gode.toml` with `[model.<local-id>]` tables. The table key is the model ID you select in the TUI, CLI, and `gode models`; the `model` field is the upstream model name sent to the provider.
+
+OpenAI-compatible Chat Completions endpoints:
+
+```toml
+[model.deepseek-chat]
+type = "chat_completions"
+provider = "deepseek"
+model = "deepseek-chat"
+display_name = "DeepSeek Chat"
+base_url = "https://api.deepseek.com/v1"
+api_key_env = "DEEPSEEK_API_KEY"
+context_window = 128000
+default_reasoning = "none"
+reasoning_efforts = ["none"]
+
+[model.kimi-k2-6]
+type = "chat_completions"
+provider = "moonshot"
+model = "kimi-k2.6"
+display_name = "Kimi K2.6"
+base_url = "https://api.moonshot.ai/v1"
+api_key_env = "MOONSHOT_API_KEY"
+context_window = 262144
+default_reasoning = "none"
+reasoning_efforts = ["none"]
+```
+
+Responses-compatible and Anthropic-compatible routers:
+
+```toml
+[model.my-responses-model]
+type = "responses"
+provider = "openai-compatible"
+model = "my-responses-model"
+display_name = "My Responses Model"
+base_url = "https://router.example.com/v1"
+api_key = "env:MY_RESPONSES_API_KEY"
+context_window = 200000
+
+[model.my-claude-router]
+type = "anthropic"
+provider = "anthropic-compatible"
+model = "claude-compatible-model"
+display_name = "My Claude Router"
+base_url = "https://router.example.com"
+api_key_env = "ROUTER_API_KEY"
+context_window = 200000
+default_reasoning = "medium"
+reasoning_efforts = ["low", "medium", "high"]
+```
+
+Inspect the active catalog with:
+
+```sh
+gode models
+```
+
+Optional live Chat Completions smoke tests are skipped by default:
+
+```sh
+GODE_LIVE_CHAT_COMPLETIONS=1 \
+GODE_MODEL=deepseek-chat \
+GODE_LIVE_CHAT_COMPLETIONS_BASE_URL=https://api.deepseek.com/v1 \
+GODE_LIVE_CHAT_COMPLETIONS_API_KEY="$DEEPSEEK_API_KEY" \
+go test ./internal/godex/provider -run TestChatCompletionsLive -v
+```
+
 ## Shell Tooling
 
 The `shell` tool runs POSIX shell strings through the embedded `mvdan.cc/sh/v3` runner instead of spawning `/bin/sh -lc`. Standard shell behavior such as variables, pipelines, redirections, and exit statuses is handled in-process, while unknown external commands still fall through to OS command lookup and return command-not-found failures.
