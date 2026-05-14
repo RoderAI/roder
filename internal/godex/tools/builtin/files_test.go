@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/pandelisz/gode/internal/godex/tools"
+	"github.com/pandelisz/gode/internal/godex/workspacepath"
 )
 
 func TestFilesystemToolsReadListAndSearchWithinRoot(t *testing.T) {
@@ -212,6 +213,23 @@ func TestReadFileAllowsPathsOutsideWorkspace(t *testing.T) {
 	}
 	if result.Error != "" || !strings.Contains(result.Text, "outside workspace") || !strings.Contains(result.Text, "path: "+outsidePath) {
 		t.Fatalf("read absolute outside workspace result = %#v", result)
+	}
+}
+
+func TestCleanWorkspacePathRejectsEscapeAndReadPathAllowsOutside(t *testing.T) {
+	root := t.TempDir()
+	if _, err := workspacepath.CleanWorkspacePath(root, "../outside.txt"); err == nil {
+		t.Fatal("expected workspace path escape to be rejected")
+	}
+
+	outside := t.TempDir()
+	outsidePath := filepath.Join(outside, "note.txt")
+	readPath, err := workspacepath.CleanReadPath(root, outsidePath)
+	if err != nil {
+		t.Fatalf("clean read path: %v", err)
+	}
+	if readPath != outsidePath {
+		t.Fatalf("read path = %q, want %q", readPath, outsidePath)
 	}
 }
 

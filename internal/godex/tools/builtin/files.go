@@ -14,6 +14,7 @@ import (
 
 	"github.com/pandelisz/gode/internal/godex/permission"
 	"github.com/pandelisz/gode/internal/godex/tools"
+	"github.com/pandelisz/gode/internal/godex/workspacepath"
 )
 
 const (
@@ -32,7 +33,7 @@ func RegisterFilesystem(reg *tools.Registry, root string) {
 		PathFromInput: pathInput,
 		Schema:        readFileSchema(),
 		Run: func(ctx context.Context, call tools.Call) (tools.Result, error) {
-			path, err := cleanReadPath(root, stringInput(call.Input, "path"))
+			path, err := workspacepath.CleanReadPath(root, stringInput(call.Input, "path"))
 			if err != nil {
 				return tools.Result{}, err
 			}
@@ -52,7 +53,7 @@ func RegisterFilesystem(reg *tools.Registry, root string) {
 		PathFromInput: pathInput,
 		Schema:        objectSchema("path"),
 		Run: func(ctx context.Context, call tools.Call) (tools.Result, error) {
-			path, err := cleanWorkspacePath(root, stringInputDefault(call.Input, "path", "."))
+			path, err := workspacepath.CleanWorkspacePath(root, stringInputDefault(call.Input, "path", "."))
 			if err != nil {
 				return tools.Result{}, err
 			}
@@ -280,48 +281,4 @@ func looksLikeText(file *os.File) (bool, error) {
 		}
 	}
 	return true, nil
-}
-
-func cleanWorkspacePath(root, input string) (string, error) {
-	if input == "" {
-		input = "."
-	}
-	rootAbs, err := filepath.Abs(root)
-	if err != nil {
-		return "", err
-	}
-	joined := filepath.Join(rootAbs, input)
-	abs, err := filepath.Abs(joined)
-	if err != nil {
-		return "", err
-	}
-	rel, err := filepath.Rel(rootAbs, abs)
-	if err != nil {
-		return "", err
-	}
-	if rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
-		return "", fmt.Errorf("path escapes workspace: %s", input)
-	}
-	return abs, nil
-}
-
-func cleanReadPath(root, input string) (string, error) {
-	if input == "" {
-		input = "."
-	}
-	var path string
-	if filepath.IsAbs(input) {
-		path = filepath.Clean(input)
-	} else {
-		rootAbs, err := filepath.Abs(root)
-		if err != nil {
-			return "", err
-		}
-		path = filepath.Join(rootAbs, input)
-	}
-	abs, err := filepath.Abs(path)
-	if err != nil {
-		return "", err
-	}
-	return abs, nil
 }

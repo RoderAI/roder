@@ -10,6 +10,7 @@ import (
 
 	"github.com/pandelisz/gode/internal/godex/permission"
 	"github.com/pandelisz/gode/internal/godex/tools"
+	"github.com/pandelisz/gode/internal/godex/workspacepath"
 )
 
 func RegisterPatch(reg *tools.Registry, root string) {
@@ -173,7 +174,7 @@ func parseCodexPatchHunk(lines []string, start int) (codexPatchHunk, int, error)
 }
 
 func applyCodexPatchChange(root string, change codexPatchChange) (string, error) {
-	path, err := cleanWorkspacePath(root, change.path)
+	path, err := workspacepath.CleanWorkspacePath(root, change.path)
 	if err != nil {
 		return "", err
 	}
@@ -203,7 +204,7 @@ func applyCodexPatchChange(root string, change codexPatchChange) (string, error)
 		}
 		targetPath := path
 		if change.moveTo != "" {
-			targetPath, err = cleanWorkspacePath(root, change.moveTo)
+			targetPath, err = workspacepath.CleanWorkspacePath(root, change.moveTo)
 			if err != nil {
 				return "", err
 			}
