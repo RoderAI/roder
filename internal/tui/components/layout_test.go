@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"charm.land/lipgloss/v2"
+	"github.com/charmbracelet/x/ansi"
 	zone "github.com/lrstanley/bubblezone/v2"
 	"github.com/pandelisz/gode/internal/tui/viewmodel"
 )
@@ -507,8 +508,9 @@ func TestRenderToolCardWithDiffAndMetadata(t *testing.T) {
 		TimelineStyle: viewmodel.TimelineStyleDetailed,
 	}, zones))
 
+	visible := ansi.Strip(out)
 	for _, want := range []string{"› git_diff", "diff --git", "-old", "+new"} {
-		if !strings.Contains(out, want) {
+		if !strings.Contains(visible, want) {
 			t.Fatalf("rendered output missing %q:\n%s", want, out)
 		}
 	}
@@ -538,8 +540,9 @@ func TestRenderToolCardShowsHookAndPermissionMetadata(t *testing.T) {
 		TimelineStyle: viewmodel.TimelineStyleDetailed,
 	}, zones))
 
+	visible := ansi.Strip(out)
 	for _, want := range []string{"› shell", "hook:", "allow", "› write_file", "action:", "README.md"} {
-		if !strings.Contains(out, want) {
+		if !strings.Contains(visible, want) {
 			t.Fatalf("rendered output missing %q:\n%s", want, out)
 		}
 	}
@@ -564,17 +567,18 @@ func TestRenderTimelineUsesCompactLabels(t *testing.T) {
 		Status: "ready",
 	}, zones))
 
+	visible := ansi.Strip(out)
 	for _, want := range []string{"whats in this folder?", "This is your home folder.", "└ ● shell", "ls -la"} {
-		if !strings.Contains(out, want) {
+		if !strings.Contains(visible, want) {
 			t.Fatalf("rendered output missing %q:\n%s", want, out)
 		}
 	}
 	for _, unwanted := range []string{"USER", "ASSISTANT", "TOOL"} {
-		if strings.Contains(out, unwanted) {
+		if strings.Contains(visible, unwanted) {
 			t.Fatalf("rendered output should not use large %q label:\n%s", unwanted, out)
 		}
 	}
-	if strings.Contains(out, "Desktop") || strings.Contains(out, "Documents") {
+	if strings.Contains(visible, "Desktop") || strings.Contains(visible, "Documents") {
 		t.Fatalf("default timeline should hide detailed tool output:\n%s", out)
 	}
 }

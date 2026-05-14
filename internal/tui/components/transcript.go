@@ -145,7 +145,7 @@ func visibleMessagesWithOptions(messages []viewmodel.Message, width int, height 
 	for i := len(messages) - 1; i >= 0 && total < lineBudget; i-- {
 		item := renderMessageCached(messages[i], width, timelineStyle, markdown, cache)
 		item.messageIndex = i
-		item.lines = normalizedMessageLines(item)
+		item.lines = normalizedMessageLines(messages, i, item)
 		reversed = append(reversed, item)
 		total += len(item.lines)
 	}
@@ -191,15 +191,26 @@ func visibleMessagesWithOptions(messages []viewmodel.Message, width int, height 
 	return visible
 }
 
-func normalizedMessageLines(item renderedMessage) []renderedLine {
+func normalizedMessageLines(messages []viewmodel.Message, index int, item renderedMessage) []renderedLine {
 	lines := trimEdgeBlankLines(item.lines)
-	if item.messageIndex <= 0 {
+	if item.messageIndex <= 0 || consecutiveToolMessages(messages, index) {
 		return lines
 	}
 	out := make([]renderedLine, 0, len(lines)+1)
 	out = append(out, messageGapLine())
 	out = append(out, lines...)
 	return out
+}
+
+func consecutiveToolMessages(messages []viewmodel.Message, index int) bool {
+	if index <= 0 || index >= len(messages) {
+		return false
+	}
+	return isToolTimelineMessage(messages[index-1]) && isToolTimelineMessage(messages[index])
+}
+
+func isToolTimelineMessage(msg viewmodel.Message) bool {
+	return msg.Role == viewmodel.RoleTool
 }
 
 func messageGapLine() renderedLine {
@@ -363,7 +374,7 @@ func renderToolMessage(msg viewmodel.Message, width int, timelineStyle string) r
 	if timelineStyle == viewmodel.TimelineStyleMinimal {
 		return renderMinimalToolMessage(msg, title, width)
 	}
-	prefix := toolTitleStyle.Render("› " + title)
+	prefix := toolRailStyle.Render("› ") + toolStatusStyle(msg).Render(title)
 	lines := []renderedLine{{
 		text: prefix,
 		ref:  selection.TranscriptLineRef{Text: prefix, Decorative: true},
@@ -373,10 +384,10 @@ func renderToolMessage(msg viewmodel.Message, width int, timelineStyle string) r
 }
 
 func renderMinimalToolMessage(msg viewmodel.Message, title string, width int) renderedMessage {
-	summary := firstToolSummaryLine(msg.Body)
-	label := toolTitleStyle.Render("└ ● " + title)
+	summary := toolDisplaySummary(firstToolSummaryLine(msg.Body))
+	label := toolRailStyle.Render("└ ") + toolStatusStyle(msg).Render("● "+title)
 	if summary != "" {
-		label += toolMetaStyle.Render(" (" + truncateCell(summary, max(8, width-lipgloss.Width("└ ● "+title)-3)) + ")")
+		label += toolMetaStyle.Render(" " + truncateCell(summary, max(8, width-lipgloss.Width("└ ● "+title)-1)))
 	}
 	return renderedMessage{id: msg.ID, lines: []renderedLine{{
 		text: label,
@@ -385,6 +396,41 @@ func renderMinimalToolMessage(msg viewmodel.Message, title string, width int) re
 			CopyText: strings.TrimSpace(title + " " + summary),
 		},
 	}}}
+}
+
+func toolStatusStyle(msg viewmodel.Message) lipgloss.Style {
+	switch toolStatus(msg) {
+	case "failed":
+		return toolErrorStyle
+	case "completed":
+		return toolSuccessStyle
+	default:
+		return toolTitleStyle
+	}
+}
+
+func toolStatus(msg viewmodel.Message) string {
+	summary := strings.ToLower(firstToolSummaryLine(msg.Body))
+	switch {
+	case strings.HasPrefix(summary, "failed:"):
+		return "failed"
+	case summary == "requested", summary == "permission requested":
+		return "running"
+	default:
+		return "completed"
+	}
+}
+
+func toolDisplaySummary(summary string) string {
+	summary = strings.TrimSpace(summary)
+	switch strings.ToLower(summary) {
+	case "", "requested", "success", "succeeded":
+		return ""
+	}
+	if rest, ok := strings.CutPrefix(summary, "read "); ok {
+		return strings.TrimSpace(rest)
+	}
+	return summary
 }
 
 func firstToolSummaryLine(body string) string {

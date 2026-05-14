@@ -14,6 +14,9 @@ var (
 	metaTitleStyle     lipgloss.Style
 	errorPrefixStyle   lipgloss.Style
 	toolTitleStyle     lipgloss.Style
+	toolSuccessStyle   lipgloss.Style
+	toolErrorStyle     lipgloss.Style
+	toolRailStyle      lipgloss.Style
 	toolMetaStyle      lipgloss.Style
 )
 
@@ -44,6 +47,14 @@ func resetTranscriptStyles() {
 	toolTitleStyle = lipgloss.NewStyle().
 		Foreground(ThemeColor(ColorTool)).
 		Bold(true)
+	toolSuccessStyle = lipgloss.NewStyle().
+		Foreground(ThemeColor(ColorAccentSoft)).
+		Bold(true)
+	toolErrorStyle = lipgloss.NewStyle().
+		Foreground(ThemeColor(ColorError)).
+		Bold(true)
+	toolRailStyle = lipgloss.NewStyle().
+		Foreground(ThemeColor(ColorSubtle))
 	toolMetaStyle = lipgloss.NewStyle().
 		Foreground(ThemeColor(ColorMuted))
 }
