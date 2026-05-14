@@ -18,7 +18,7 @@ func NewRunner() Runner {
 	return Runner{}
 }
 
-func (Runner) Run(ctx context.Context, req RunRequest) (RunResult, error) {
+func (runnerConfig Runner) Run(ctx context.Context, req RunRequest) (RunResult, error) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -56,11 +56,15 @@ func (Runner) Run(ctx context.Context, req RunRequest) (RunResult, error) {
 	if env == nil {
 		env = os.Environ()
 	}
+	execHandlers := []func(next interp.ExecHandlerFunc) interp.ExecHandlerFunc{}
+	if runnerConfig.Builtins != nil {
+		execHandlers = append(execHandlers, builtinExecHandler(runnerConfig.Builtins))
+	}
 	options := []interp.RunnerOption{
 		interp.StdIO(req.Stdin, outWriter, errWriter),
 		interp.Dir(req.Dir),
 		interp.Env(expand.ListEnviron(env...)),
-		interp.ExecHandlers(),
+		interp.ExecHandlers(execHandlers...),
 	}
 	if len(req.Args) > 0 {
 		options = append(options, interp.Params(req.Args...))
