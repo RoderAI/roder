@@ -4,9 +4,11 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"os"
 	"path/filepath"
 	"slices"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -212,6 +214,180 @@ func TestConnectionExposesFilesystemAndCommandExec(t *testing.T) {
 	}
 }
 
+func TestCommandExecDirectArrayStillUsesOSExec(t *testing.T) {
+	ctx := context.Background()
+	workspace := filepath.Join(t.TempDir(), "workspace")
+	app, err := godex.New(ctx, godex.Config{
+		Workspace:   workspace,
+		DataDir:     t.TempDir(),
+		Provider:    "mock",
+		AutoApprove: true,
+	})
+	if err != nil {
+		t.Fatalf("new app: %v", err)
+	}
+	defer app.Close(ctx)
+
+	var messages []Message
+	conn := New(app, Options{Version: "test"}).NewConnection(func(_ context.Context, msg Message) error {
+		messages = append(messages, msg)
+		return nil
+	})
+	initializeTestConnection(t, conn)
+
+	sendJSONRequest(t, conn, map[string]any{
+		"id":     20,
+		"method": "command/exec",
+		"params": map[string]any{
+			"command": []string{"/bin/echo", "direct"},
+			"cwd":     workspace,
+		},
+	})
+	result := responseResult(t, messages, 20)
+	if result["exitCode"] != float64(0) || result["stdout"] != "direct\n" || result["stderr"] != "" {
+		t.Fatalf("direct exec result = %#v", result)
+	}
+}
+
+func TestCommandExecShellInvocationUsesEmbeddedBuiltins(t *testing.T) {
+	ctx := context.Background()
+	workspace := filepath.Join(t.TempDir(), "workspace")
+	if err := os.MkdirAll(workspace, 0o700); err != nil {
+		t.Fatalf("mkdir workspace: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(workspace, "file.txt"), []byte("hello\n"), 0o600); err != nil {
+		t.Fatalf("write file: %v", err)
+	}
+	app, err := godex.New(ctx, godex.Config{
+		Workspace:   workspace,
+		DataDir:     t.TempDir(),
+		Provider:    "mock",
+		AutoApprove: true,
+	})
+	if err != nil {
+		t.Fatalf("new app: %v", err)
+	}
+	defer app.Close(ctx)
+
+	var messages []Message
+	conn := New(app, Options{Version: "test"}).NewConnection(func(_ context.Context, msg Message) error {
+		messages = append(messages, msg)
+		return nil
+	})
+	initializeTestConnection(t, conn)
+
+	sendJSONRequest(t, conn, map[string]any{
+		"id":     21,
+		"method": "command/exec",
+		"params": map[string]any{
+			"command": []string{"sh", "-c", "gode_read_file file.txt 1 1"},
+			"cwd":     workspace,
+		},
+	})
+	result := responseResult(t, messages, 21)
+	if result["exitCode"] != float64(0) || !strings.Contains(result["stdout"].(string), "hello") || result["stderr"] != "" {
+		t.Fatalf("embedded shell result = %#v", result)
+	}
+}
+
+func TestCommandExecBinShLoginShellUsesEmbeddedJQ(t *testing.T) {
+	ctx := context.Background()
+	workspace := filepath.Join(t.TempDir(), "workspace")
+	if err := os.MkdirAll(workspace, 0o700); err != nil {
+		t.Fatalf("mkdir workspace: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(workspace, "file.json"), []byte(`{"name":"gode"}`+"\n"), 0o600); err != nil {
+		t.Fatalf("write json: %v", err)
+	}
+	app, err := godex.New(ctx, godex.Config{
+		Workspace:   workspace,
+		DataDir:     t.TempDir(),
+		Provider:    "mock",
+		AutoApprove: true,
+	})
+	if err != nil {
+		t.Fatalf("new app: %v", err)
+	}
+	defer app.Close(ctx)
+
+	var messages []Message
+	conn := New(app, Options{Version: "test"}).NewConnection(func(_ context.Context, msg Message) error {
+		messages = append(messages, msg)
+		return nil
+	})
+	initializeTestConnection(t, conn)
+
+	sendJSONRequest(t, conn, map[string]any{
+		"id":     22,
+		"method": "command/exec",
+		"params": map[string]any{
+			"command": []string{"/bin/sh", "-lc", "jq -r .name file.json"},
+			"cwd":     workspace,
+		},
+	})
+	result := responseResult(t, messages, 22)
+	if result["exitCode"] != float64(0) || result["stdout"] != "gode\n" || result["stderr"] != "" {
+		t.Fatalf("embedded jq result = %#v", result)
+	}
+}
+
+func TestCommandExecStreamingKeepsOSExecPath(t *testing.T) {
+	ctx := context.Background()
+	app, err := godex.New(ctx, godex.Config{
+		Workspace:   filepath.Join(t.TempDir(), "workspace"),
+		DataDir:     t.TempDir(),
+		Provider:    "mock",
+		AutoApprove: true,
+	})
+	if err != nil {
+		t.Fatalf("new app: %v", err)
+	}
+	defer app.Close(ctx)
+
+	var messages []Message
+	conn := New(app, Options{Version: "test"}).NewConnection(func(_ context.Context, msg Message) error {
+		messages = append(messages, msg)
+		return nil
+	})
+	initializeTestConnection(t, conn)
+
+	sendJSONRequest(t, conn, map[string]any{
+		"id":     23,
+		"method": "command/exec",
+		"params": map[string]any{
+			"command":            []string{"sh", "-c", "printf stdout; printf stderr >&2"},
+			"processId":          "stream-test",
+			"streamStdoutStderr": true,
+		},
+	})
+	result := responseResult(t, messages, 23)
+	if result["exitCode"] != float64(0) {
+		t.Fatalf("stream exec result = %#v", result)
+	}
+	if !hasCommandOutputDelta(messages, "stdout", "stdout") || !hasCommandOutputDelta(messages, "stderr", "stderr") {
+		t.Fatalf("missing output deltas: %#v", messages)
+	}
+}
+
+func TestIsShellInvocation(t *testing.T) {
+	for _, tc := range []struct {
+		command []string
+		script  string
+		ok      bool
+	}{
+		{[]string{"sh", "-c", "echo ok"}, "echo ok", true},
+		{[]string{"/bin/sh", "-lc", "echo ok"}, "echo ok", true},
+		{[]string{"printf", "ok"}, "", false},
+		{[]string{"sh", "-c", "echo ok", "arg0"}, "", false},
+		{[]string{"bash", "-c", "echo ok"}, "", false},
+	} {
+		script, ok := isShellInvocation(tc.command)
+		if script != tc.script || ok != tc.ok {
+			t.Fatalf("isShellInvocation(%#v) = %q, %v", tc.command, script, ok)
+		}
+	}
+}
+
 func TestModelListUsesBuiltInCatalog(t *testing.T) {
 	ctx := context.Background()
 	app, err := godex.New(ctx, godex.Config{
@@ -304,6 +480,27 @@ func responseByID(messages []Message, id any) *Message {
 func hasNotification(messages []Message, method string) bool {
 	for _, msg := range messages {
 		if msg.Method == method && msg.ID == nil {
+			return true
+		}
+	}
+	return false
+}
+
+func hasCommandOutputDelta(messages []Message, stream string, text string) bool {
+	for _, msg := range messages {
+		if msg.Method != "command/exec/outputDelta" || msg.ID != nil {
+			continue
+		}
+		params, ok := msg.Params.(map[string]any)
+		if !ok || params["stream"] != stream {
+			continue
+		}
+		encoded, ok := params["deltaBase64"].(string)
+		if !ok {
+			continue
+		}
+		data, err := base64.StdEncoding.DecodeString(encoded)
+		if err == nil && strings.Contains(string(data), text) {
 			return true
 		}
 	}
