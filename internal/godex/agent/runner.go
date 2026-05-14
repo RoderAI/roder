@@ -199,12 +199,14 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (RunResult, error) {
 	inputItems := contextWindow.InputItems
 	final := ""
 	stats := runStats{}
+	contextLengthRetries := 0
 	for {
-		messages, inputItems, err = r.compactContextIfNeeded(ctx, req, messages, inputItems)
+		toolSpecs := r.providerToolSpecs()
+		messages, inputItems, err = r.compactContextIfNeeded(ctx, req, messages, inputItems, toolSpecs)
 		if err != nil {
 			return RunResult{}, r.fail(ctx, req, err)
 		}
-		compaction := r.compactionOptions(ctx, req, messages)
+		compaction := r.compactionOptions(ctx, req, messages, inputItems, toolSpecs)
 		providerReq := provider.Request{
 			SessionID:      req.SessionID,
 			RunID:          req.RunID,
@@ -213,14 +215,24 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (RunResult, error) {
 			ResponseFormat: req.ResponseFormat,
 			Messages:       messages,
 			InputItems:     inputItems,
-			Tools:          r.providerToolSpecs(),
+			Tools:          toolSpecs,
 			Compaction:     compaction,
 		}
 		started := time.Now()
 		outcome, err := r.streamProviderTurn(ctx, req, providerReq, messages, inputItems, final, &stats, true)
 		if err != nil {
+			if provider.IsContextLengthExceeded(err) && contextLengthRetries < 2 {
+				contextLengthRetries++
+				messages, inputItems, err = r.forceCompactContext(ctx, req, messages, inputItems, toolSpecs, "context_length_exceeded")
+				if err != nil {
+					return RunResult{}, r.fail(ctx, req, err)
+				}
+				final = ""
+				continue
+			}
 			return RunResult{}, r.fail(ctx, req, err)
 		}
+		contextLengthRetries = 0
 		r.recordGoalUsage(ctx, req, outcome.Usage, time.Since(started))
 		messages = outcome.Messages
 		inputItems = outcome.InputItems

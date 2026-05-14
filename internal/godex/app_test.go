@@ -561,6 +561,13 @@ func TestCompactSessionPersistsRawCompactionItems(t *testing.T) {
 	if _, err := messageStore.Append(context.Background(), messagestore.Message{SessionID: "s1", Role: messagestore.RoleUser, Text: "hello"}); err != nil {
 		t.Fatalf("append message: %v", err)
 	}
+	itemStore, err := session.OpenItemStore(dataDir)
+	if err != nil {
+		t.Fatalf("item store: %v", err)
+	}
+	if _, err := itemStore.Append(context.Background(), session.Item{SessionID: "s1", TurnID: "old", Kind: session.ItemMessage, Role: "user", Text: "hello"}); err != nil {
+		t.Fatalf("append item: %v", err)
+	}
 	journalStore, err := journal.Open(filepath.Join(dataDir, "events.jsonl"))
 	if err != nil {
 		t.Fatalf("journal: %v", err)
@@ -578,6 +585,7 @@ func TestCompactSessionPersistsRawCompactionItems(t *testing.T) {
 		Journal:  journalStore,
 		Sessions: sessionStore,
 		Messages: messageStore,
+		Items:    itemStore,
 		provider: compactor,
 	}
 	defer app.Bus.Close()
@@ -591,6 +599,19 @@ func TestCompactSessionPersistsRawCompactionItems(t *testing.T) {
 	}
 	if len(compactor.request.Messages) != 1 || compactor.request.Messages[0].Content != "hello" {
 		t.Fatalf("compact request messages = %#v", compactor.request.Messages)
+	}
+	items, err := itemStore.ListBySession(context.Background(), "s1")
+	if err != nil {
+		t.Fatalf("list items: %v", err)
+	}
+	if len(items) != 3 {
+		t.Fatalf("items = %#v", items)
+	}
+	if items[1].Kind != session.ItemCompaction || !strings.Contains(string(items[1].RawJSON), `"output_text","text":"summary"`) {
+		t.Fatalf("first compaction item = %#v", items[1])
+	}
+	if items[2].Kind != session.ItemCompaction || !strings.Contains(string(items[2].RawJSON), `"encrypted_content":"opaque"`) {
+		t.Fatalf("last compaction item = %#v", items[2])
 	}
 	messages, err := messageStore.ListBySession(context.Background(), "s1")
 	if err != nil {
@@ -617,6 +638,69 @@ func TestCompactSessionPersistsRawCompactionItems(t *testing.T) {
 	}
 	if !kinds[eventbus.KindContextCompactionStarted] || !kinds[eventbus.KindContextCompactionCompleted] {
 		t.Fatalf("missing compaction events: %#v", kinds)
+	}
+}
+
+func TestCompactSessionRepairsOrphanToolOutputAndRetries(t *testing.T) {
+	dataDir := t.TempDir()
+	sessionStore, err := session.Open(dataDir)
+	if err != nil {
+		t.Fatalf("session store: %v", err)
+	}
+	if _, err := sessionStore.Ensure(context.Background(), session.Session{ID: "s1", Title: "hello"}); err != nil {
+		t.Fatalf("ensure session: %v", err)
+	}
+	messageStore := messagestore.Open(dataDir)
+	if _, err := messageStore.Append(context.Background(), messagestore.Message{
+		SessionID: "s1",
+		Role:      messagestore.RoleCompaction,
+		RawJSON:   json.RawMessage(`{"type":"function_call_output","call_id":"call_missing","output":"orphan output"}`),
+	}); err != nil {
+		t.Fatalf("append orphan output: %v", err)
+	}
+	if _, err := messageStore.Append(context.Background(), messagestore.Message{SessionID: "s1", Role: messagestore.RoleUser, Text: "hello"}); err != nil {
+		t.Fatalf("append message: %v", err)
+	}
+	journalStore, err := journal.Open(filepath.Join(dataDir, "events.jsonl"))
+	if err != nil {
+		t.Fatalf("journal: %v", err)
+	}
+	defer journalStore.Close()
+	compactor := &fakeCompactor{
+		output: []json.RawMessage{json.RawMessage(`{"type":"message","role":"assistant","content":[{"type":"output_text","text":"summary"}]}`)},
+	}
+	app := &App{
+		Config:   Config{Model: "gpt-5.5"},
+		Bus:      eventbus.New(),
+		Journal:  journalStore,
+		Sessions: sessionStore,
+		Messages: messageStore,
+		provider: compactor,
+	}
+	defer app.Bus.Close()
+
+	if _, err := app.CompactSession(context.Background(), "s1"); err != nil {
+		t.Fatalf("compact: %v", err)
+	}
+	if len(compactor.requests) != 1 {
+		t.Fatalf("compact requests = %d", len(compactor.requests))
+	}
+	if messagesHaveCallOutput(compactor.requests[0].Messages, "call_missing") {
+		t.Fatalf("compact request should remove orphan output: %#v", compactor.requests[0].Messages)
+	}
+	events, err := journalStore.Replay(context.Background(), journal.ReplayFilter{SessionID: "s1"})
+	if err != nil {
+		t.Fatalf("replay: %v", err)
+	}
+	kinds := map[eventbus.Kind]bool{}
+	for _, ev := range events {
+		kinds[ev.Kind] = true
+	}
+	if !kinds[eventbus.KindContextCompactionRepaired] || !kinds[eventbus.KindContextCompactionCompleted] {
+		t.Fatalf("missing repaired/completed events: %#v", kinds)
+	}
+	if kinds[eventbus.KindContextCompactionFailed] {
+		t.Fatalf("should not publish failed event after repair: %#v", kinds)
 	}
 }
 
@@ -668,9 +752,11 @@ func TestCompactSessionFailureLeavesMessagesUntouched(t *testing.T) {
 }
 
 type fakeCompactor struct {
-	request provider.CompactRequest
-	output  []json.RawMessage
-	err     error
+	request  provider.CompactRequest
+	requests []provider.CompactRequest
+	output   []json.RawMessage
+	err      error
+	errs     []error
 }
 
 func (f *fakeCompactor) Name() string {
@@ -687,10 +773,37 @@ func (f *fakeCompactor) Stream(context.Context, provider.Request) (<-chan provid
 
 func (f *fakeCompactor) Compact(_ context.Context, req provider.CompactRequest) (provider.CompactResult, error) {
 	f.request = req
+	f.requests = append(f.requests, req)
+	if index := len(f.requests) - 1; index < len(f.errs) && f.errs[index] != nil {
+		return provider.CompactResult{}, f.errs[index]
+	}
 	if f.err != nil {
 		return provider.CompactResult{}, f.err
 	}
 	return provider.CompactResult{ID: "cmp_resp", Output: f.output}, nil
+}
+
+func messagesHaveCallOutput(messages []provider.Message, callID string) bool {
+	for _, msg := range messages {
+		if msg.Role == provider.RoleTool && msg.ToolCallID == callID {
+			return true
+		}
+		if len(msg.RawJSON) == 0 {
+			continue
+		}
+		var object map[string]json.RawMessage
+		if err := json.Unmarshal(msg.RawJSON, &object); err != nil {
+			continue
+		}
+		var typ string
+		_ = json.Unmarshal(object["type"], &typ)
+		var gotCallID string
+		_ = json.Unmarshal(object["call_id"], &gotCallID)
+		if typ == "function_call_output" && gotCallID == callID {
+			return true
+		}
+	}
+	return false
 }
 
 func appHasTool(app *App, name string) bool {

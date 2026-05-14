@@ -480,6 +480,9 @@ func TestOpenAIStreamErrorIncludesHTTPDebugDetails(t *testing.T) {
 		"response_body:",
 		"unsupported model for codex subscription",
 		"model: gpt-5.5",
+		"input_items: 0",
+		"input_chars:",
+		"estimated_input_tokens:",
 		"service_tier: priority",
 		"tool_names: read_file",
 	} {

@@ -51,9 +51,14 @@ func Apply(ev eventbus.Event) Update {
 	case eventbus.KindContextTokensUpdated:
 		var payload contextTokensPayload
 		_ = ev.DecodePayload(&payload)
+		if payload.UsageIncrement {
+			return Update{}
+		}
 		return Update{ContextUsedPercent: payload.Percent, HasContextTokens: true}
 	case eventbus.KindContextCompactionStarted:
 		return status("compacting context")
+	case eventbus.KindContextCompactionRepaired:
+		return status("repaired context; retrying compact")
 	case eventbus.KindContextCompactionCompleted:
 		var payload compactionPayload
 		_ = ev.DecodePayload(&payload)
@@ -180,7 +185,8 @@ type errorPayload struct {
 }
 
 type contextTokensPayload struct {
-	Percent float64 `json:"percent"`
+	Percent        float64 `json:"percent"`
+	UsageIncrement bool    `json:"usage_increment"`
 }
 
 type compactionPayload struct {

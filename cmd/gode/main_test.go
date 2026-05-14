@@ -360,7 +360,7 @@ func TestSessionCLIListShowRenameDeleteAndRunResume(t *testing.T) {
 	contextOut := captureStdout(t, func() error {
 		return runDebug([]string{"context", "--workspace", workspace, "--data-dir", dataDir, "--model", "gpt-5.5", "--session", last.ID})
 	})
-	for _, want := range []string{"session_id\t" + last.ID, "model\tgpt-5.5", "context_window\t1050000", "compact_threshold\t800000", "auto_compaction_enabled\ttrue"} {
+	for _, want := range []string{"session_id\t" + last.ID, "model\tgpt-5.5", "context_window\t1050000", "compact_threshold\t600000", "auto_compaction_enabled\ttrue"} {
 		if !strings.Contains(contextOut, want) {
 			t.Fatalf("debug context output missing %q:\n%s", want, contextOut)
 		}

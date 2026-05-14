@@ -34,6 +34,7 @@ const (
 	KindContextTokensUpdated        Kind = "context.tokens_updated"
 	KindContextCompactionConfigured Kind = "context.compaction_configured"
 	KindContextCompactionStarted    Kind = "context.compaction_started"
+	KindContextCompactionRepaired   Kind = "context.compaction_repaired"
 	KindContextCompactionCompleted  Kind = "context.compaction_completed"
 	KindContextCompactionFailed     Kind = "context.compaction_failed"
 
@@ -59,6 +60,7 @@ const (
 
 	KindPermissionRequested Kind = "permission.requested"
 	KindPermissionResponded Kind = "permission.responded"
+	KindSettingsChanged     Kind = "settings.changed"
 
 	KindMCPStateChanged Kind = "mcp.state_changed"
 	KindLSPStateChanged Kind = "lsp.state_changed"

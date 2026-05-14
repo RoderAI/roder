@@ -167,7 +167,7 @@ func TestRunnerConfiguresOpenAICompactionAndTokenEvents(t *testing.T) {
 	if !capture.request.Compaction.Enabled {
 		t.Fatal("compaction should be enabled for OpenAI gpt-5.5")
 	}
-	if capture.request.Compaction.CompactThreshold != 800000 {
+	if capture.request.Compaction.CompactThreshold != 600000 {
 		t.Fatalf("threshold = %d", capture.request.Compaction.CompactThreshold)
 	}
 	events, err := store.Replay(context.Background(), journal.ReplayFilter{SessionID: "s-context", RunID: "r-context"})
@@ -192,8 +192,101 @@ func TestRunnerConfiguresOpenAICompactionAndTokenEvents(t *testing.T) {
 	if err := kinds[eventbus.KindContextCompactionConfigured].DecodePayload(&payload); err != nil {
 		t.Fatalf("decode payload: %v", err)
 	}
-	if payload.Model != "gpt-5.5" || payload.ContextWindow != 1050000 || payload.CompactThreshold != 800000 || payload.Tokens <= 0 {
+	if payload.Model != "gpt-5.5" || payload.ContextWindow != 1050000 || payload.CompactThreshold != 600000 || payload.Tokens <= 0 {
 		t.Fatalf("payload = %#v", payload)
+	}
+}
+
+func TestRunnerForceCompactsAndRetriesContextLengthExceeded(t *testing.T) {
+	capture := &contextLengthRetryProvider{
+		compactingCaptureProvider: compactingCaptureProvider{
+			captureProvider: captureProvider{name: "openai", finalText: "done"},
+			output:          []json.RawMessage{json.RawMessage(`{"id":"msg_compacted","type":"message","role":"user","content":[{"type":"input_text","text":"compacted context"}]}`)},
+		},
+	}
+	runner := NewRunner(Config{
+		Bus:      eventbus.New(eventbus.WithSubscriberBuffer(16)),
+		Provider: capture,
+		Model:    "gpt-5.5",
+	})
+	defer runner.bus.Close()
+
+	result, err := runner.Run(context.Background(), RunRequest{
+		SessionID: "s-context-length",
+		RunID:     "r-context-length",
+		Messages:  []provider.Message{{Role: provider.RoleUser, Content: "existing context"}},
+		Prompt:    "continue",
+	})
+	if err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	if result.FinalText != "done" {
+		t.Fatalf("final = %q", result.FinalText)
+	}
+	if capture.streamCalls != 2 {
+		t.Fatalf("stream calls = %d", capture.streamCalls)
+	}
+	if len(capture.compactRequests) != 1 {
+		t.Fatalf("compact requests = %d", len(capture.compactRequests))
+	}
+	if len(capture.request.InputItems) == 0 || !strings.Contains(string(capture.request.InputItems[0].RawJSON), "compacted context") {
+		t.Fatalf("retry did not use compacted input items: %#v", capture.request.InputItems)
+	}
+}
+
+func TestRunnerRepairsOrphanToolOutputCompactionAndRetries(t *testing.T) {
+	bus := eventbus.New(eventbus.WithSubscriberBuffer(32))
+	defer bus.Close()
+	store, err := journal.Open(filepath.Join(t.TempDir(), "events.jsonl"))
+	if err != nil {
+		t.Fatalf("journal: %v", err)
+	}
+	defer store.Close()
+	capture := &compactingCaptureProvider{
+		captureProvider: captureProvider{name: "openai", finalText: "done"},
+		output:          []json.RawMessage{json.RawMessage(`{"id":"msg_compacted","type":"message","role":"user","content":[{"type":"input_text","text":"compacted context"}]}`)},
+	}
+	runner := NewRunner(Config{
+		Bus:                   bus,
+		Journal:               store,
+		Provider:              capture,
+		Model:                 "gpt-5.5",
+		AutoCompactTokenLimit: 1,
+	})
+
+	_, err = runner.Run(context.Background(), RunRequest{
+		SessionID: "s-repair-compact",
+		RunID:     "r-repair-compact",
+		Messages: []provider.Message{
+			{RawJSON: json.RawMessage(`{"type":"function_call_output","call_id":"call_missing","output":"orphan output"}`)},
+			{Role: provider.RoleUser, Content: "safe context"},
+		},
+		Prompt: "continue",
+	})
+	if err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	if len(capture.compactRequests) != 1 {
+		t.Fatalf("compact requests = %d", len(capture.compactRequests))
+	}
+	if hasFunctionCallOutput(capture.compactRequests[0].Messages, "call_missing") {
+		t.Fatalf("compact request still contains orphan output: %#v", capture.compactRequests[0].Messages)
+	}
+	events, err := store.Replay(context.Background(), journal.ReplayFilter{SessionID: "s-repair-compact", RunID: "r-repair-compact"})
+	if err != nil {
+		t.Fatalf("replay: %v", err)
+	}
+	foundRepair := false
+	for _, ev := range events {
+		if ev.Kind == eventbus.KindContextCompactionRepaired {
+			foundRepair = true
+		}
+		if ev.Kind == eventbus.KindContextCompactionFailed {
+			t.Fatalf("compaction should not publish failure after repair: %#v", ev)
+		}
+	}
+	if !foundRepair {
+		t.Fatalf("missing repair event in %#v", events)
 	}
 }
 
@@ -256,7 +349,7 @@ func TestRunnerOmitsCompactionWhenDisabled(t *testing.T) {
 	if capture.request.Compaction.Enabled {
 		t.Fatalf("compaction should be disabled: %#v", capture.request.Compaction)
 	}
-	if capture.request.Compaction.CompactThreshold != 800000 {
+	if capture.request.Compaction.CompactThreshold != 600000 {
 		t.Fatalf("threshold should still be discoverable, got %d", capture.request.Compaction.CompactThreshold)
 	}
 }
@@ -735,13 +828,62 @@ func (p *captureProvider) Stream(_ context.Context, req provider.Request) (<-cha
 
 type compactingCaptureProvider struct {
 	captureProvider
-	compactRequest provider.CompactRequest
-	output         []json.RawMessage
+	compactRequest  provider.CompactRequest
+	compactRequests []provider.CompactRequest
+	compactErrors   []error
+	output          []json.RawMessage
 }
 
 func (p *compactingCaptureProvider) Compact(_ context.Context, req provider.CompactRequest) (provider.CompactResult, error) {
 	p.compactRequest = req
+	p.compactRequests = append(p.compactRequests, req)
+	if index := len(p.compactRequests) - 1; index < len(p.compactErrors) && p.compactErrors[index] != nil {
+		return provider.CompactResult{}, p.compactErrors[index]
+	}
 	return provider.CompactResult{ID: "resp_compact", Output: p.output}, nil
+}
+
+type contextLengthRetryProvider struct {
+	compactingCaptureProvider
+	streamCalls int
+}
+
+func (p *contextLengthRetryProvider) Stream(ctx context.Context, req provider.Request) (<-chan provider.Event, <-chan error) {
+	p.streamCalls++
+	if p.streamCalls == 1 {
+		p.request = req
+		events := make(chan provider.Event)
+		errs := make(chan error, 1)
+		close(events)
+		errs <- errors.New(`OpenAI stream request failed
+error: received error while streaming: {"type":"invalid_request_error","code":"context_length_exceeded","message":"Your input exceeds the context window of this model. Please adjust your input and try again.","param":"input"}`)
+		close(errs)
+		return events, errs
+	}
+	return p.compactingCaptureProvider.Stream(ctx, req)
+}
+
+func hasFunctionCallOutput(messages []provider.Message, callID string) bool {
+	for _, msg := range messages {
+		if msg.Role == provider.RoleTool && msg.ToolCallID == callID {
+			return true
+		}
+		if len(msg.RawJSON) == 0 {
+			continue
+		}
+		var object map[string]json.RawMessage
+		if err := json.Unmarshal(msg.RawJSON, &object); err != nil {
+			continue
+		}
+		var typ string
+		_ = json.Unmarshal(object["type"], &typ)
+		var gotCallID string
+		_ = json.Unmarshal(object["call_id"], &gotCallID)
+		if typ == "function_call_output" && gotCallID == callID {
+			return true
+		}
+	}
+	return false
 }
 
 type scriptedProvider struct {

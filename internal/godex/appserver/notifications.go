@@ -17,6 +17,7 @@ func (s *Server) startEventBridge(ctx context.Context) {
 		eventbus.KindLSPDiagnostics,
 		eventbus.KindPermissionRequested,
 		eventbus.KindPermissionResponded,
+		eventbus.KindSettingsChanged,
 		eventbus.KindGoalUpdated,
 		eventbus.KindGoalCleared,
 		eventbus.KindGoalLimited,
@@ -80,6 +81,8 @@ func notificationMethod(kind eventbus.Kind) string {
 		return "permission/requested"
 	case eventbus.KindPermissionResponded:
 		return "permission/responded"
+	case eventbus.KindSettingsChanged:
+		return "settings/changed"
 	case eventbus.KindGoalUpdated, eventbus.KindGoalLimited:
 		return "thread/goal/updated"
 	case eventbus.KindGoalCleared:
