@@ -23,6 +23,19 @@ type BuiltinRegistry struct {
 	items map[string]Builtin
 }
 
+type builtinContextKey struct{}
+
+type BuiltinContext struct {
+	Dir string
+}
+
+func ContextInfo(ctx context.Context) BuiltinContext {
+	if value, ok := ctx.Value(builtinContextKey{}).(BuiltinContext); ok {
+		return value
+	}
+	return BuiltinContext{}
+}
+
 func NewBuiltinRegistry() *BuiltinRegistry {
 	return &BuiltinRegistry{items: map[string]Builtin{}}
 }
@@ -84,6 +97,7 @@ func builtinExecHandler(reg *BuiltinRegistry) func(next interp.ExecHandlerFunc) 
 				return next(ctx, args)
 			}
 			hc := interp.HandlerCtx(ctx)
+			ctx = context.WithValue(ctx, builtinContextKey{}, BuiltinContext{Dir: hc.Dir})
 			return builtin.Run(ctx, args, hc.Stdin, hc.Stdout, hc.Stderr)
 		}
 	}
