@@ -68,7 +68,7 @@ func TestGPT55ModelConfigUsesOneMillionClassWindow(t *testing.T) {
 	if model.MaxContextWindow != 1050000 {
 		t.Fatalf("max context window = %d", model.MaxContextWindow)
 	}
-	if model.AutoCompactTokenLimit != 800000 {
+	if model.AutoCompactTokenLimit != 600000 {
 		t.Fatalf("auto compact limit = %d", model.AutoCompactTokenLimit)
 	}
 	if !model.SupportsCompaction {

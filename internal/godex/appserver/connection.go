@@ -103,6 +103,14 @@ func (c *Connection) dispatch(ctx context.Context, msg inboundMessage) (any, *RP
 		return handleFSRemove(msg.Params)
 	case "fs/copy":
 		return handleFSCopy(msg.Params)
+	case "fs/upload/start":
+		return c.server.handleFSUploadStart(msg.Params)
+	case "fs/upload/chunk":
+		return c.server.handleFSUploadChunk(msg.Params)
+	case "fs/upload/finish":
+		return c.server.handleFSUploadFinish(msg.Params)
+	case "fs/upload/cancel":
+		return c.server.handleFSUploadCancel(msg.Params)
 	case "command/exec":
 		return c.server.handleCommandExec(ctx, c, msg.Params)
 	case "command/exec/write":
@@ -113,6 +121,10 @@ func (c *Connection) dispatch(ctx context.Context, msg inboundMessage) (any, *RP
 		return map[string]any{}, nil
 	case "model/list":
 		return c.server.handleModelList(), nil
+	case "settings/get":
+		return c.server.handleSettingsGet(), nil
+	case "settings/update":
+		return c.server.handleSettingsUpdate(ctx, msg.Params)
 	case "skills/list":
 		return c.server.handleSkillsList(msg.Params)
 	case "skill/read":

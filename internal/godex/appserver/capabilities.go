@@ -13,6 +13,8 @@ func protocolCapabilities() map[string]any {
 			"turn/steer",
 			"turn/interrupt",
 			"model/list",
+			"settings/get",
+			"settings/update",
 			"skills/list",
 			"skill/read",
 			"skill/setEnabled",
@@ -29,6 +31,10 @@ func protocolCapabilities() map[string]any {
 			"fs/readDirectory",
 			"fs/remove",
 			"fs/copy",
+			"fs/upload/start",
+			"fs/upload/chunk",
+			"fs/upload/finish",
+			"fs/upload/cancel",
 			"command/exec",
 			"command/exec/write",
 			"command/exec/terminate",
@@ -38,6 +44,23 @@ func protocolCapabilities() map[string]any {
 			"types":                 []string{"text", "image", "local_image", "file", "local_file"},
 			"maxLocalFileBytes":     maxLocalFileInputBytes,
 			"localFileBinaryPolicy": "metadata",
+		},
+		"settings": map[string]any{
+			"runtime": true,
+			"fields": []string{
+				"defaultModel",
+				"defaultReasoning",
+				"fastMode",
+				"autoApprove",
+				"markdownRendering",
+				"disableAutoCompaction",
+				"autoCompactTokenLimit",
+				"memories",
+			},
+		},
+		"fileUpload": map[string]any{
+			"chunkEncoding": "base64",
+			"defaultRoot":   "workspace/.gode/uploads",
 		},
 	}
 }

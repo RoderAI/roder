@@ -10,7 +10,7 @@ func TestGPT55ContextWindow(t *testing.T) {
 	if window.MaxContextWindow != 1050000 {
 		t.Fatalf("max context window = %d", window.MaxContextWindow)
 	}
-	if window.AutoCompactTokenLimit != 800000 {
+	if window.AutoCompactTokenLimit != 600000 {
 		t.Fatalf("auto compact limit = %d", window.AutoCompactTokenLimit)
 	}
 	if !window.SupportsCompaction {

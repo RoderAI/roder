@@ -16,6 +16,7 @@ type Server struct {
 	mu       sync.RWMutex
 	threads  map[string]*threadState
 	commands map[string]*activeCommand
+	uploads  map[string]*activeUpload
 	conns    map[*Connection]struct{}
 }
 
@@ -46,6 +47,7 @@ func New(app *godex.App, options Options) *Server {
 		options:  options,
 		threads:  make(map[string]*threadState),
 		commands: make(map[string]*activeCommand),
+		uploads:  make(map[string]*activeUpload),
 		conns:    make(map[*Connection]struct{}),
 	}
 	server.startEventBridge(context.Background())

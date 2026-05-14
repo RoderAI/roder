@@ -7,7 +7,7 @@ func TestCompactionOptionsForGPT55(t *testing.T) {
 	if !options.Enabled {
 		t.Fatal("compaction should be enabled")
 	}
-	if options.CompactThreshold != 800000 {
+	if options.CompactThreshold != 600000 {
 		t.Fatalf("threshold = %d", options.CompactThreshold)
 	}
 	if options.ContextWindow != 1050000 {

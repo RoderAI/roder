@@ -4,10 +4,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"errors"
-	"fmt"
-	"io"
-	"net/http"
 	"strings"
 
 	openai "github.com/openai/openai-go/v3"
@@ -267,101 +263,6 @@ func responseTextConfig(raw string) responses.ResponseTextConfigParam {
 	}
 	wrapped, _ := json.Marshal(map[string]json.RawMessage{"format": trimmed})
 	return param.Override[responses.ResponseTextConfigParam](json.RawMessage(wrapped))
-}
-
-func (o *OpenAI) detailedStreamError(err error, req Request) error {
-	detail := o.formatStreamError(err, req)
-	if detail == "" {
-		return err
-	}
-	return &ProviderError{Message: detail}
-}
-
-func (o *OpenAI) formatStreamError(err error, req Request) string {
-	lines := []string{"OpenAI stream request failed"}
-	var apiErr *openai.Error
-	if errors.As(err, &apiErr) {
-		if apiErr.Request != nil {
-			lines = append(lines, "request: "+apiErr.Request.Method+" "+apiErr.Request.URL.String())
-		}
-		statusCode := apiErr.StatusCode
-		if statusCode == 0 && apiErr.Response != nil {
-			statusCode = apiErr.Response.StatusCode
-		}
-		if statusCode != 0 {
-			lines = append(lines, fmt.Sprintf("status: %d %s", statusCode, http.StatusText(statusCode)))
-		}
-		if apiErr.Response != nil {
-			for _, name := range []string{"x-request-id", "openai-request-id", "cf-ray"} {
-				if value := apiErr.Response.Header.Get(name); value != "" {
-					lines = append(lines, name+": "+value)
-				}
-			}
-		}
-		if apiErr.Type != "" {
-			lines = append(lines, "error_type: "+apiErr.Type)
-		}
-		if apiErr.Code != "" {
-			lines = append(lines, "error_code: "+apiErr.Code)
-		}
-		if apiErr.Param != "" {
-			lines = append(lines, "error_param: "+apiErr.Param)
-		}
-		if apiErr.Message != "" {
-			lines = append(lines, "error_message: "+apiErr.Message)
-		}
-		if raw := strings.TrimSpace(apiErr.RawJSON()); raw != "" {
-			lines = append(lines, "raw_error_json: "+raw)
-		}
-		if body := readAPIErrorBody(apiErr); body != "" {
-			lines = append(lines, "response_body:", body)
-		}
-	} else {
-		lines = append(lines, "error: "+err.Error())
-	}
-	lines = append(lines,
-		"model: "+o.model,
-		"reasoning: "+o.reasoning,
-		fmt.Sprintf("messages: %d", len(req.Messages)),
-		fmt.Sprintf("input_chars: %d", inputChars(req.Messages)),
-		fmt.Sprintf("tools: %d", len(req.Tools)),
-	)
-	if req.Compaction.Enabled {
-		lines = append(lines,
-			fmt.Sprintf("compaction_threshold: %d", req.Compaction.CompactThreshold),
-			fmt.Sprintf("context_window: %d", req.Compaction.ContextWindow),
-		)
-	}
-	if o.serviceTier != "" {
-		lines = append(lines, "service_tier: "+o.serviceTier)
-	}
-	if len(req.Tools) > 0 {
-		lines = append(lines, "tool_names: "+toolNames(req.Tools))
-	}
-	lines = append(lines, "sdk_error: "+err.Error())
-	return strings.Join(lines, "\n")
-}
-
-func readAPIErrorBody(apiErr *openai.Error) string {
-	if apiErr == nil || apiErr.Response == nil || apiErr.Response.Body == nil {
-		return ""
-	}
-	const maxBody = 64 * 1024
-	data, _ := io.ReadAll(io.LimitReader(apiErr.Response.Body, maxBody+1))
-	apiErr.Response.Body = io.NopCloser(bytes.NewBuffer(data))
-	text := strings.TrimSpace(string(data))
-	if len(data) > maxBody {
-		text = strings.TrimSpace(string(data[:maxBody])) + "\n... truncated"
-	}
-	return text
-}
-
-func inputChars(messages []Message) int {
-	total := 0
-	for _, msg := range messages {
-		total += len(msg.Content)
-	}
-	return total
 }
 
 func toolNames(tools []ToolSpec) string {

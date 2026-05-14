@@ -12,14 +12,22 @@ import (
 	"github.com/pandelisz/gode/internal/godex/session"
 )
 
-func (r *Runner) compactContextIfNeeded(ctx context.Context, req RunRequest, messages []provider.Message, inputItems []provider.Item) ([]provider.Message, []provider.Item, error) {
+func (r *Runner) compactContextIfNeeded(ctx context.Context, req RunRequest, messages []provider.Message, inputItems []provider.Item, tools []provider.ToolSpec) ([]provider.Message, []provider.Item, error) {
+	return r.compactContext(ctx, req, messages, inputItems, tools, false, "")
+}
+
+func (r *Runner) forceCompactContext(ctx context.Context, req RunRequest, messages []provider.Message, inputItems []provider.Item, tools []provider.ToolSpec, reason string) ([]provider.Message, []provider.Item, error) {
+	return r.compactContext(ctx, req, messages, inputItems, tools, true, reason)
+}
+
+func (r *Runner) compactContext(ctx context.Context, req RunRequest, messages []provider.Message, inputItems []provider.Item, tools []provider.ToolSpec, force bool, reason string) ([]provider.Message, []provider.Item, error) {
 	model := firstNonEmpty(r.model, "gpt-5.5")
 	options := contextwindow.OptionsForModel(model, r.disableAutoCompaction, r.autoCompactTokenLimit)
 	if !options.Enabled || r.providerName() != "openai" {
 		return messages, inputItems, nil
 	}
-	estimate := contextwindow.EstimateMessages(contextWindowMessages(messages), contextwindow.ForModel(model))
-	if estimate.Tokens < options.CompactThreshold {
+	estimate := r.requestTokenEstimate(req, messages, inputItems, tools)
+	if !force && estimate.Tokens < options.CompactThreshold {
 		return messages, inputItems, nil
 	}
 	compactor, ok := r.provider.(provider.Compactor)
@@ -43,15 +51,49 @@ func (r *Runner) compactContextIfNeeded(ctx context.Context, req RunRequest, mes
 			"compact_threshold": options.CompactThreshold,
 		},
 	})
+	if force && reason != "" {
+		payload := map[string]any{"reason": reason}
+		r.emit(ctx, eventbus.Event{
+			Kind:      eventbus.KindContextCompactionRepaired,
+			Source:    eventbus.SourceAgent,
+			SessionID: req.SessionID,
+			RunID:     req.RunID,
+			Payload:   payload,
+		})
+	}
 
-	result, err := compactor.Compact(ctx, provider.CompactRequest{
-		SessionID:      req.SessionID,
-		RunID:          req.RunID,
-		Model:          options.Model,
-		PromptCacheKey: r.promptCacheKey(),
-		Instructions:   firstNonEmpty(req.Instructions, GodeInstructions),
-		Messages:       compactable,
-	})
+	attemptMessages := compactable
+	var result provider.CompactResult
+	var err error
+	for repairs := 0; ; repairs++ {
+		if repaired, callIDs, ok := provider.RepairAllOrphanFunctionCallOutputs(attemptMessages); ok {
+			r.emitCompactionRepair(ctx, req, model, callIDs, len(attemptMessages)-len(repaired), "", false)
+			attemptMessages = repaired
+		}
+		result, err = compactor.Compact(ctx, provider.CompactRequest{
+			SessionID:      req.SessionID,
+			RunID:          req.RunID,
+			Model:          options.Model,
+			PromptCacheKey: r.promptCacheKey(),
+			Instructions:   firstNonEmpty(req.Instructions, GodeInstructions),
+			Messages:       attemptMessages,
+		})
+		if err == nil {
+			compactable = attemptMessages
+			break
+		}
+		repaired, callID, ok := provider.RepairOrphanFunctionCallOutput(attemptMessages, err)
+		if !ok || repairs >= 8 {
+			break
+		}
+		if len(repaired) == 0 {
+			r.emitCompactionRepair(ctx, req, model, []string{callID}, len(attemptMessages)-len(repaired), err.Error(), true)
+			next := append([]provider.Message{}, suffix...)
+			return next, providerItemsFromProviderMessages(next), nil
+		}
+		r.emitCompactionRepair(ctx, req, model, []string{callID}, len(attemptMessages)-len(repaired), err.Error(), true)
+		attemptMessages = repaired
+	}
 	if err != nil {
 		r.emit(ctx, eventbus.Event{
 			Kind:      eventbus.KindContextCompactionFailed,
@@ -89,6 +131,29 @@ func (r *Runner) compactContextIfNeeded(ctx context.Context, req RunRequest, mes
 	next := append([]provider.Message{}, compacted...)
 	next = append(next, suffix...)
 	return next, providerItemsFromProviderMessages(next), nil
+}
+
+func (r *Runner) emitCompactionRepair(ctx context.Context, req RunRequest, model string, callIDs []string, removed int, originalErr string, retry bool) {
+	payload := map[string]any{
+		"model":    model,
+		"call_ids": callIDs,
+		"removed":  removed,
+		"repair":   "removed_orphan_function_call_output",
+		"retry":    retry,
+	}
+	if len(callIDs) == 1 {
+		payload["call_id"] = callIDs[0]
+	}
+	if originalErr != "" {
+		payload["original_err"] = originalErr
+	}
+	r.emit(ctx, eventbus.Event{
+		Kind:      eventbus.KindContextCompactionRepaired,
+		Source:    eventbus.SourceAgent,
+		SessionID: req.SessionID,
+		RunID:     req.RunID,
+		Payload:   payload,
+	})
 }
 
 func splitCompactionWindow(messages []provider.Message) ([]provider.Message, []provider.Message) {
@@ -196,10 +261,9 @@ func appendProviderSuffix(ctx context.Context, store *messagestore.Store, req Ru
 	}
 }
 
-func (r *Runner) compactionOptions(ctx context.Context, req RunRequest, messages []provider.Message) provider.CompactionOptions {
+func (r *Runner) compactionOptions(ctx context.Context, req RunRequest, messages []provider.Message, inputItems []provider.Item, tools []provider.ToolSpec) provider.CompactionOptions {
 	model := firstNonEmpty(r.model, "gpt-5.5")
-	window := contextwindow.ForModel(model)
-	estimate := contextwindow.EstimateMessages(contextWindowMessages(messages), window)
+	estimate := r.requestTokenEstimate(req, messages, inputItems, tools)
 	r.emit(ctx, eventbus.Event{
 		Kind:      eventbus.KindContextTokensUpdated,
 		Source:    eventbus.SourceAgent,
@@ -270,17 +334,68 @@ func (r *Runner) emitActualTokenUsage(ctx context.Context, req RunRequest, usage
 	})
 }
 
+func (r *Runner) requestTokenEstimate(req RunRequest, messages []provider.Message, inputItems []provider.Item, tools []provider.ToolSpec) contextwindow.TokenEstimate {
+	model := firstNonEmpty(r.model, "gpt-5.5")
+	return contextwindow.EstimateRequest(contextwindow.Request{
+		Model:          model,
+		Instructions:   firstNonEmpty(req.Instructions, GodeInstructions),
+		ResponseFormat: req.ResponseFormat,
+		Messages:       contextWindowMessages(messages),
+		InputItems:     contextWindowItems(inputItems),
+		Tools:          contextWindowToolSpecs(tools),
+	}, contextwindow.ForModel(model))
+}
+
 func contextWindowMessages(messages []provider.Message) []contextwindow.Message {
 	out := make([]contextwindow.Message, 0, len(messages))
 	for _, msg := range messages {
 		out = append(out, contextwindow.Message{
 			Role:          string(msg.Role),
 			Content:       msg.Content,
+			Phase:         msg.Phase,
+			Images:        contextWindowImages(msg.Images),
 			ToolCallID:    msg.ToolCallID,
 			ToolName:      msg.ToolName,
 			ToolArguments: msg.ToolArguments,
 			RawJSON:       msg.RawJSON,
 		})
+	}
+	return out
+}
+
+func contextWindowItems(items []provider.Item) []contextwindow.Item {
+	out := make([]contextwindow.Item, 0, len(items))
+	for _, item := range items {
+		out = append(out, contextwindow.Item{
+			Kind:       string(item.Kind),
+			Role:       item.Role,
+			Phase:      item.Phase,
+			ToolName:   item.ToolName,
+			ToolCallID: item.ToolCallID,
+			Text:       item.Text,
+			Images:     contextWindowImages(item.Images),
+			RawJSON:    item.RawJSON,
+		})
+	}
+	return out
+}
+
+func contextWindowToolSpecs(tools []provider.ToolSpec) []contextwindow.ToolSpec {
+	out := make([]contextwindow.ToolSpec, 0, len(tools))
+	for _, tool := range tools {
+		out = append(out, contextwindow.ToolSpec{
+			Name:        tool.Name,
+			Description: tool.Description,
+			Schema:      tool.Schema,
+		})
+	}
+	return out
+}
+
+func contextWindowImages(images []provider.Image) []contextwindow.Image {
+	out := make([]contextwindow.Image, 0, len(images))
+	for _, image := range images {
+		out = append(out, contextwindow.Image{URL: image.URL, Detail: image.Detail})
 	}
 	return out
 }

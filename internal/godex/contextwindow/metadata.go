@@ -34,7 +34,7 @@ var modelWindows = map[string]ModelWindow{
 	"gpt-5.5": {
 		ContextWindow:         1050000,
 		MaxContextWindow:      1050000,
-		AutoCompactTokenLimit: 800000,
+		AutoCompactTokenLimit: 600000,
 		SupportsCompaction:    true,
 	},
 	"gpt-5.4": openAIWindow(DefaultOpenAIContextWindow),

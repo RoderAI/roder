@@ -33,9 +33,34 @@ func TestEstimateMessagesPercentUsesSelectedWindow(t *testing.T) {
 	}
 }
 
-func TestGPT55FlagsMultiMillionCharacterInputAsOverContext(t *testing.T) {
+func TestEstimateRequestCountsInputItemsInstructionsAndTools(t *testing.T) {
+	window := ModelWindow{ContextWindow: 100_000}
+	estimate := EstimateRequest(Request{
+		Model:        "gpt-5.5",
+		Instructions: strings.Repeat("system ", 100),
+		Messages:     []Message{{Role: "user", Content: "short fallback message"}},
+		InputItems: []Item{{
+			Kind: "function_call_output",
+			Text: strings.Repeat("0123456789abcdef", 2000),
+		}},
+		Tools: []ToolSpec{{
+			Name:        "read_file",
+			Description: strings.Repeat("read workspace files ", 50),
+			Schema: map[string]any{
+				"type":       "object",
+				"properties": map[string]any{"path": map[string]any{"type": "string"}},
+			},
+		}},
+	}, window)
+	messagesOnly := EstimateMessages([]Message{{Role: "user", Content: "short fallback message"}}, window)
+	if estimate.Tokens <= messagesOnly.Tokens {
+		t.Fatalf("request estimate did not include input items/instructions/tools: request=%d messages=%d", estimate.Tokens, messagesOnly.Tokens)
+	}
+}
+
+func TestGPT55FlagsTokenDenseInputAsOverContext(t *testing.T) {
 	window := ForModel("gpt-5.5")
-	estimate := EstimateMessages([]Message{{Role: "user", Content: strings.Repeat("x", 3_956_050)}}, window)
+	estimate := EstimateMessages([]Message{{Role: "user", Content: strings.Repeat("😀", 1_060_000)}}, window)
 	if estimate.Tokens < window.ContextWindow {
 		t.Fatalf("tokens = %d", estimate.Tokens)
 	}

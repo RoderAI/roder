@@ -77,6 +77,29 @@ func TestApplyContextTokensUpdatedExposesUsageWithoutTranscriptRows(t *testing.T
 	}
 }
 
+func TestApplyContextTokensUpdatedIgnoresResponseUsageIncrement(t *testing.T) {
+	update := Apply(eventbus.Event{
+		Kind: eventbus.KindContextTokensUpdated,
+		Payload: map[string]any{
+			"tokens":          42,
+			"context_window":  10000,
+			"percent":         0.42,
+			"usage_increment": true,
+		},
+	})
+
+	if update.HasContextTokens {
+		t.Fatalf("response usage increment should not update context meter: %#v", update)
+	}
+}
+
+func TestApplyContextCompactionRepairedShowsRetryStatus(t *testing.T) {
+	update := Apply(eventbus.Event{Kind: eventbus.KindContextCompactionRepaired})
+	if !update.HasStatus || update.Status != "repaired context; retrying compact" {
+		t.Fatalf("repair update = %#v", update)
+	}
+}
+
 func TestApplyPermissionRequestRendersToolMetadata(t *testing.T) {
 	update := Apply(eventbus.Event{
 		Kind: eventbus.KindPermissionRequested,
