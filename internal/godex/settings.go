@@ -2,7 +2,6 @@ package godex
 
 import (
 	"bytes"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -13,10 +12,7 @@ import (
 	"github.com/pandelisz/gode/internal/godex/memory"
 )
 
-const (
-	settingsFileName       = "config.toml"
-	legacySettingsJSONName = "settings.json"
-)
+const settingsFileName = "config.toml"
 
 type Settings struct {
 	DefaultModel          string            `json:"default_model,omitempty" toml:"default_model,omitempty"`
@@ -38,7 +34,7 @@ func LoadSettings(dataDir string) (Settings, error) {
 	}
 	data, err := os.ReadFile(settingsPath(dataDir))
 	if errors.Is(err, os.ErrNotExist) {
-		return loadLegacySettings(dataDir)
+		return Settings{}, nil
 	}
 	if err != nil {
 		return Settings{}, fmt.Errorf("read settings: %w", err)
@@ -83,47 +79,4 @@ func SaveSettings(dataDir string, settings Settings) error {
 
 func settingsPath(dataDir string) string {
 	return filepath.Join(dataDir, settingsFileName)
-}
-
-func legacySettingsPath(dataDir string) string {
-	return filepath.Join(dataDir, legacySettingsJSONName)
-}
-
-func loadLegacySettings(dataDir string) (Settings, error) {
-	data, err := os.ReadFile(legacySettingsPath(dataDir))
-	if errors.Is(err, os.ErrNotExist) {
-		return Settings{}, nil
-	}
-	if err != nil {
-		return Settings{}, fmt.Errorf("read legacy settings: %w", err)
-	}
-	var settings struct {
-		DefaultModel          string            `json:"default_model"`
-		DefaultReasoning      string            `json:"default_reasoning"`
-		FastMode              bool              `json:"fast_mode"`
-		AutoApprove           bool              `json:"auto_approve"`
-		TimelineStyle         string            `json:"timeline_style"`
-		MarkdownRendering     bool              `json:"markdown_rendering"`
-		Memories              memory.Settings   `json:"memories"`
-		DisableAutoCompaction bool              `json:"disable_auto_compaction"`
-		AutoCompactTokenLimit int               `json:"auto_compact_token_limit"`
-		ActiveSkills          map[string]bool   `json:"active_skills"`
-		SkillSources          map[string]string `json:"skill_sources"`
-	}
-	if err := json.Unmarshal(data, &settings); err != nil {
-		return Settings{}, fmt.Errorf("parse legacy settings: %w", err)
-	}
-	return Settings{
-		DefaultModel:          strings.TrimSpace(settings.DefaultModel),
-		DefaultReasoning:      strings.TrimSpace(settings.DefaultReasoning),
-		FastMode:              settings.FastMode,
-		AutoApprove:           settings.AutoApprove,
-		TimelineStyle:         NormalizeTimelineStyle(settings.TimelineStyle),
-		MarkdownRendering:     settings.MarkdownRendering,
-		Memories:              settings.Memories,
-		DisableAutoCompaction: settings.DisableAutoCompaction,
-		AutoCompactTokenLimit: settings.AutoCompactTokenLimit,
-		ActiveSkills:          settings.ActiveSkills,
-		SkillSources:          settings.SkillSources,
-	}, nil
 }

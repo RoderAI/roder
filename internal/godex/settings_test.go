@@ -120,23 +120,6 @@ func TestDefaultMemoryConfig(t *testing.T) {
 	}
 }
 
-func TestSettingsLoadsLegacyDefaultModelOnly(t *testing.T) {
-	dataDir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(dataDir, "settings.json"), []byte(`{"default_model":"gpt-5.5"}`), 0o600); err != nil {
-		t.Fatalf("write legacy settings: %v", err)
-	}
-	settings, err := LoadSettings(dataDir)
-	if err != nil {
-		t.Fatalf("load settings: %v", err)
-	}
-	if settings.DefaultModel != "gpt-5.5" {
-		t.Fatalf("default model = %q", settings.DefaultModel)
-	}
-	if settings.ActiveSkills != nil || settings.SkillSources != nil {
-		t.Fatalf("legacy skills should be nil: %#v %#v", settings.ActiveSkills, settings.SkillSources)
-	}
-}
-
 func TestDefaultDataDirUsesWindowsConfigDir(t *testing.T) {
 	if got := defaultDataDirFor("windows", "C:/Users/pz", "C:/Users/pz/AppData/Roaming"); got != filepath.Join("C:/Users/pz/AppData/Roaming", "gode") {
 		t.Fatalf("windows data dir = %q", got)
