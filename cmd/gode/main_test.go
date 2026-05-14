@@ -151,29 +151,6 @@ func TestParseConfigUsesSavedDefaultModel(t *testing.T) {
 	}
 }
 
-func TestParseConfigUsesLegacySettingsJSON(t *testing.T) {
-	home := t.TempDir()
-	t.Setenv("HOME", home)
-	dataDir := filepath.Join(home, ".gode")
-	if err := os.MkdirAll(dataDir, 0o700); err != nil {
-		t.Fatalf("mkdir data dir: %v", err)
-	}
-	if err := os.WriteFile(filepath.Join(dataDir, "settings.json"), []byte(`{"default_model":"gpt-5.4-mini","default_reasoning":"high"}`), 0o600); err != nil {
-		t.Fatalf("write settings.json: %v", err)
-	}
-
-	cfg, err := parseConfig(nil)
-	if err != nil {
-		t.Fatalf("parse: %v", err)
-	}
-	if cfg.Model != "gpt-5.4-mini" {
-		t.Fatalf("model = %q", cfg.Model)
-	}
-	if cfg.Reasoning != godex.ReasoningHigh {
-		t.Fatalf("reasoning = %q", cfg.Reasoning)
-	}
-}
-
 func TestParseConfigModelFlagOverridesSavedDefaultModel(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)

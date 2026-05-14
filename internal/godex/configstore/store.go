@@ -446,7 +446,6 @@ func dataConfigPaths(dataDir string) []string {
 	}
 	return []string{
 		filepath.Join(dataDir, "config.toml"),
-		filepath.Join(dataDir, "settings.json"),
 	}
 }
 
