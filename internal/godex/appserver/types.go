@@ -2,6 +2,21 @@ package appserver
 
 type Options struct {
 	Version string
+	Remote  RemoteOptions
+}
+
+type RemoteOptions struct {
+	Enabled        bool
+	Auth           RemoteAuth
+	AllowedOrigins []string
+	ServerName     string
+}
+
+type RemoteListenConfig struct {
+	Enabled        bool
+	AuthToken      string
+	PrintQR        bool
+	AllowedOrigins []string
 }
 
 type ClientInfo struct {

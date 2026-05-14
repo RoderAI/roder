@@ -166,6 +166,18 @@ func (c *Connection) handleInitialize(ctx context.Context, msg inboundMessage) e
 		"platformOs":     runtime.GOOS,
 		"capabilities":   protocolCapabilities(),
 	}
+	if c.server.options.Remote.Enabled {
+		serverName := c.server.options.Remote.ServerName
+		if serverName == "" {
+			serverName = "Gode Remote"
+		}
+		result["remote"] = map[string]any{
+			"authenticated": true,
+			"authSchemes":   []string{"authorization_bearer", "websocket_subprotocol_bearer"},
+			"serverName":    serverName,
+			"workspace":     c.server.app.Config.Workspace,
+		}
+	}
 	return c.send(ctx, Message{ID: msg.ID, Result: jsonValue(result)})
 }
 

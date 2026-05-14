@@ -281,6 +281,16 @@ Supported transports:
 - `--listen ws://IP:PORT` for WebSocket frames plus `/readyz` and `/healthz`.
 - `--listen off` to disable the local control transport.
 
+Remote WebSocket mode is explicit and token-authenticated:
+
+```sh
+gode app-server --remote
+gode app-server --remote --listen ws://0.0.0.0:0
+gode app-server --remote --listen ws://100.x.y.z:0 --auth-token env:GODE_REMOTE_TOKEN
+```
+
+Remote mode defaults to `ws://0.0.0.0:0`, generates a high-entropy bearer token, stores only its hash in memory, and prints connect URLs plus a terminal QR code to stderr. Remote clients authenticate with `Authorization: Bearer <token>` or the WebSocket subprotocol pair `gode.remote.v1, bearer.<token>`. The token is not accepted in query parameters.
+
 ## Near-Term Direction
 
 - Deepen the OpenAI/Codex provider loop with multi-turn tool result continuation.
