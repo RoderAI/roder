@@ -10,6 +10,7 @@ import (
 
 	"github.com/BurntSushi/toml"
 	"github.com/pandelisz/gode/internal/godex/memory"
+	godeskills "github.com/pandelisz/gode/internal/godex/skills"
 )
 
 const settingsFileName = "config.toml"
@@ -24,7 +25,7 @@ type Settings struct {
 	Memories              memory.Settings   `json:"memories,omitempty" toml:"memories,omitempty"`
 	DisableAutoCompaction bool              `json:"disable_auto_compaction,omitempty" toml:"disable_auto_compaction,omitempty"`
 	AutoCompactTokenLimit int               `json:"auto_compact_token_limit,omitempty" toml:"auto_compact_token_limit,omitempty"`
-	ActiveSkills          map[string]bool   `json:"active_skills,omitempty" toml:"active_skills,omitempty"`
+	Skills                godeskills.Config `json:"skills,omitempty" toml:"skills,omitempty"`
 	SkillSources          map[string]string `json:"skill_sources,omitempty" toml:"skill_sources,omitempty"`
 }
 

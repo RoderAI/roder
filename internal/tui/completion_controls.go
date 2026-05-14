@@ -111,7 +111,11 @@ func (m Model) acceptCompletionSelection() (tea.Model, tea.Cmd) {
 	}
 	switch m.completionMode {
 	case completionModeSkill:
-		m.replaceCompletionToken("$" + item.ID + " ")
+		insert := item.Insert
+		if insert == "" {
+			insert = "$" + item.ID
+		}
+		m.replaceCompletionToken(insert + " ")
 		m.status = "skill inserted"
 	case completionModeFile:
 		m.replaceCompletionToken("@" + item.ID + " ")
@@ -176,11 +180,16 @@ func (m Model) skillCompletionItems(query string) []dialogs.CommandItem {
 	skills := completions.Skills(m.app.Skills(), query, 50)
 	items := make([]dialogs.CommandItem, 0, len(skills))
 	for _, skill := range skills {
+		insert := skill.Insert
+		if insert == "" {
+			insert = "$" + skill.Name
+		}
 		items = append(items, dialogs.CommandItem{
 			ID:          skill.Name,
-			Title:       "$" + skill.Name,
+			Title:       insert,
 			Description: skill.Description,
 			Source:      "skill",
+			Insert:      insert,
 		})
 	}
 	return items

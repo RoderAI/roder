@@ -16,7 +16,7 @@ func newSkillManager(cfg Config) *godeskills.Manager {
 				return godeskills.ActivationSettings{}, err
 			}
 			return godeskills.ActivationSettings{
-				ActiveSkills: settings.ActiveSkills,
+				Skills:       settings.Skills,
 				SkillSources: settings.SkillSources,
 			}, nil
 		},
@@ -25,19 +25,19 @@ func newSkillManager(cfg Config) *godeskills.Manager {
 			if err != nil {
 				return err
 			}
-			settings.ActiveSkills = activation.ActiveSkills
+			settings.Skills = activation.Skills
 			settings.SkillSources = activation.SkillSources
 			return SaveSettings(cfg.DataDir, settings)
 		},
 	}
 }
 
-func loadActiveSkills(dataDir string) func(context.Context) (map[string]bool, error) {
-	return func(context.Context) (map[string]bool, error) {
+func loadSkillsConfig(dataDir string) func(context.Context) (godeskills.Config, error) {
+	return func(context.Context) (godeskills.Config, error) {
 		settings, err := LoadSettings(dataDir)
 		if err != nil {
-			return nil, err
+			return godeskills.Config{}, err
 		}
-		return settings.ActiveSkills, nil
+		return settings.Skills, nil
 	}
 }

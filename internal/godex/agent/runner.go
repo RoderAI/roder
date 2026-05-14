@@ -38,8 +38,8 @@ type Config struct {
 	MemoryObserver        *memory.Observer
 	ContextMessages       []provider.Message
 	Skills                []godeskills.Skill
-	ActiveSkills          map[string]bool
-	LoadActiveSkills      func(context.Context) (map[string]bool, error)
+	SkillsConfig          godeskills.Config
+	LoadSkillsConfig      func(context.Context) (godeskills.Config, error)
 	Commands              []godecommands.Command
 }
 
@@ -61,8 +61,8 @@ type Runner struct {
 	memoryObserver        *memory.Observer
 	contextMessages       []provider.Message
 	skills                []godeskills.Skill
-	activeSkills          map[string]bool
-	loadActiveSkills      func(context.Context) (map[string]bool, error)
+	skillsConfig          godeskills.Config
+	loadSkillsConfig      func(context.Context) (godeskills.Config, error)
 	commands              []godecommands.Command
 	activeMu              sync.RWMutex
 	activeRuns            map[string]*activeRun
@@ -106,8 +106,8 @@ func NewRunner(cfg Config) *Runner {
 		memoryObserver:        cfg.MemoryObserver,
 		contextMessages:       append([]provider.Message(nil), cfg.ContextMessages...),
 		skills:                append([]godeskills.Skill(nil), cfg.Skills...),
-		activeSkills:          cloneActiveSkills(cfg.ActiveSkills),
-		loadActiveSkills:      cfg.LoadActiveSkills,
+		skillsConfig:          cfg.SkillsConfig,
+		loadSkillsConfig:      cfg.LoadSkillsConfig,
 		commands:              append([]godecommands.Command(nil), cfg.Commands...),
 		activeRuns:            map[string]*activeRun{},
 	}
@@ -187,14 +187,11 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (RunResult, error) {
 	if err != nil {
 		return RunResult{}, r.fail(ctx, req, err)
 	}
-	activeSkills, err := r.activeSkillSettings(ctx)
+	runMessages, prompt, err := r.skillContextMessages(ctx, commandExpansion.Prompt)
 	if err != nil {
 		return RunResult{}, r.fail(ctx, req, err)
 	}
-	invocation := godeskills.ApplyInvocationsFiltered(commandExpansion.Prompt, godeskills.Catalog{Skills: r.skills}, activeSkills)
-	runMessages := append([]provider.Message{}, invocation.Messages...)
-	runMessages = append(runMessages, skillDiagnosticMessages(invocation.Diagnostics)...)
-	contextWindow, err := r.initialContext(ctx, req, runMessages, invocation.Prompt)
+	contextWindow, err := r.initialContext(ctx, req, runMessages, prompt)
 	if err != nil {
 		return RunResult{}, r.fail(ctx, req, err)
 	}

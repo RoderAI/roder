@@ -246,6 +246,14 @@ func (r *Runner) runToolCalls(ctx context.Context, req RunRequest, messages []pr
 			Text:       content,
 		})
 	}
+	implicitMessages, implicitItems, err := r.implicitSkillMessages(ctx, toolRequests)
+	if err != nil {
+		return messages, inputItems, err
+	}
+	if len(implicitMessages) > 0 {
+		messages = append(messages, implicitMessages...)
+		outputItems = append(outputItems, implicitItems...)
+	}
 	if len(outputItems) > 0 {
 		if err := persistItems(outputItems, ""); err != nil {
 			return messages, inputItems, err

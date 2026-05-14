@@ -381,6 +381,9 @@ func saveSettingsFromConfig(dataDir string, cfg godex.Config) error {
 	settings.TimelineStyle = cfg.TimelineStyle
 	settings.MarkdownRendering = cfg.MarkdownRendering
 	settings.Memories = memorySettingsFromConfig(cfg.Memories)
+	if len(cfg.Skills.Rules) > 0 {
+		settings.Skills = cfg.Skills
+	}
 	settings.DisableAutoCompaction = cfg.DisableAutoCompaction
 	settings.AutoCompactTokenLimit = cfg.AutoCompactTokenLimit
 	return godex.SaveSettings(dataDir, settings)

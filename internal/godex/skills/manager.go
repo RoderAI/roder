@@ -17,7 +17,7 @@ const (
 )
 
 type ActivationSettings struct {
-	ActiveSkills map[string]bool
+	Skills       Config
 	SkillSources map[string]string
 }
 
@@ -32,12 +32,15 @@ type Manager struct {
 }
 
 type ManagedSkill struct {
-	Name        string
-	Description string
-	Path        string
-	Source      string
-	State       ActivationState
-	Diagnostic  string
+	Name         string
+	Description  string
+	Path         string
+	Scope        SkillScope
+	Interface    *SkillInterface
+	Dependencies *SkillDependencies
+	Source       string
+	State        ActivationState
+	Diagnostic   string
 }
 
 type RecommendedSkillState struct {
@@ -67,15 +70,18 @@ func (m *Manager) List(ctx context.Context) ([]ManagedSkill, error) {
 	items := make([]ManagedSkill, 0, len(catalog.Skills)+len(catalog.Diagnostics))
 	for _, skill := range catalog.Skills {
 		state := ActivationEnabled
-		if !IsSkillEnabled(settings.ActiveSkills, skill.Name) {
+		if !IsSkillEnabled(settings.Skills, skill) {
 			state = ActivationDisabled
 		}
 		items = append(items, ManagedSkill{
-			Name:        skill.Name,
-			Description: skill.Description,
-			Path:        skill.Path,
-			Source:      settings.SkillSources[skill.Name],
-			State:       state,
+			Name:         skill.Name,
+			Description:  skill.Description,
+			Path:         skill.Path,
+			Scope:        skill.Scope,
+			Interface:    skill.Interface,
+			Dependencies: skill.Dependencies,
+			Source:       settings.SkillSources[skill.Name],
+			State:        state,
 		})
 	}
 	for _, diagnostic := range catalog.Diagnostics {
@@ -84,12 +90,17 @@ func (m *Manager) List(ctx context.Context) ([]ManagedSkill, error) {
 	return items, nil
 }
 
-func (m *Manager) SetEnabled(ctx context.Context, name string, enabled bool) error {
+func (m *Manager) SetEnabled(ctx context.Context, selector string, enabled bool) error {
 	settings, err := m.load(ctx)
 	if err != nil {
 		return err
 	}
-	SetSkillEnabled(&settings.ActiveSkills, strings.TrimSpace(name), enabled)
+	catalog := Discover(DiscoverOptions{Workspace: m.Workspace, DataDir: m.DataDir, HomeDir: m.HomeDir, Env: m.Env})
+	skill, err := resolveManagedSkillSelector(catalog.Skills, selector)
+	if err != nil {
+		return err
+	}
+	SetSkillEnabled(&settings.Skills, skill, enabled)
 	return m.save(ctx, settings)
 }
 
@@ -100,15 +111,17 @@ func (m *Manager) Recommended(ctx context.Context) ([]RecommendedSkillState, err
 	}
 	catalog := Discover(DiscoverOptions{Workspace: m.Workspace, DataDir: m.DataDir, HomeDir: m.HomeDir, Env: m.Env})
 	installed := map[string]struct{}{}
+	installedSkill := map[string]Skill{}
 	for _, skill := range catalog.Skills {
 		installed[skill.Name] = struct{}{}
+		installedSkill[skill.Name] = skill
 	}
 	out := make([]RecommendedSkillState, 0, len(RecommendedDefaultSkills))
 	for _, skill := range RecommendedDefaultSkills {
 		state := ActivationMissing
 		if _, ok := installed[skill.Name]; ok {
 			state = ActivationEnabled
-			if !IsSkillEnabled(settings.ActiveSkills, skill.Name) {
+			if !IsSkillEnabled(settings.Skills, installedSkill[skill.Name]) {
 				state = ActivationDisabled
 			}
 		}
@@ -138,7 +151,7 @@ func (m *Manager) Install(ctx context.Context, req InstallRequest) (ManagerInsta
 			return result, err
 		}
 		for _, installed := range installResult.Installed {
-			SetSkillEnabled(&settings.ActiveSkills, installed.Name, true)
+			SetSkillEnabled(&settings.Skills, Skill{Name: installed.Name, Path: filepath.Join(installed.Path, skillFileName)}, true)
 			if settings.SkillSources == nil {
 				settings.SkillSources = map[string]string{}
 			}
@@ -163,7 +176,7 @@ func (m *Manager) Install(ctx context.Context, req InstallRequest) (ManagerInsta
 	name := recommendedNameForSource(source)
 	if name != "" {
 		result.Installed = append(result.Installed, InstalledSkill{Name: name})
-		SetSkillEnabled(&settings.ActiveSkills, name, true)
+		SetSkillEnabled(&settings.Skills, Skill{Name: name, Path: filepath.Join(m.DataDir, "skills", name, skillFileName)}, true)
 		if settings.SkillSources == nil {
 			settings.SkillSources = map[string]string{}
 		}
@@ -207,6 +220,35 @@ func (m *Manager) save(ctx context.Context, settings ActivationSettings) error {
 		return nil
 	}
 	return m.SaveSettings(ctx, settings)
+}
+
+func resolveManagedSkillSelector(skills []Skill, selector string) (Skill, error) {
+	selector = strings.TrimSpace(selector)
+	if selector == "" {
+		return Skill{}, fmt.Errorf("skill selector is required")
+	}
+	if filepath.IsAbs(selector) || strings.Contains(selector, string(filepath.Separator)) {
+		path := canonicalPath(selector)
+		for _, skill := range skills {
+			if canonicalPath(skill.Path) == path {
+				return skill, nil
+			}
+		}
+		return Skill{}, fmt.Errorf("skill path %q not found", selector)
+	}
+	var matches []Skill
+	for _, skill := range skills {
+		if skill.Name == selector {
+			matches = append(matches, skill)
+		}
+	}
+	if len(matches) == 0 {
+		return Skill{}, fmt.Errorf("skill %q not found", selector)
+	}
+	if len(matches) > 1 {
+		return Skill{}, fmt.Errorf("skill %q is ambiguous; select by path", selector)
+	}
+	return matches[0], nil
 }
 
 func isLocalSource(source string) bool {

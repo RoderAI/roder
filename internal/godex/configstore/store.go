@@ -15,6 +15,7 @@ import (
 	"github.com/pandelisz/gode/internal/godex/mcp"
 	"github.com/pandelisz/gode/internal/godex/memory"
 	"github.com/pandelisz/gode/internal/godex/provider"
+	godeskills "github.com/pandelisz/gode/internal/godex/skills"
 )
 
 type Source string
@@ -54,6 +55,7 @@ type overlay struct {
 	TimelineStyle         *string                             `json:"timeline_style,omitempty" toml:"timeline_style,omitempty"`
 	MarkdownRendering     *bool                               `json:"markdown_rendering,omitempty" toml:"markdown_rendering,omitempty"`
 	Memories              memory.Settings                     `json:"memories,omitempty" toml:"memories,omitempty"`
+	Skills                godeskills.Config                   `json:"skills,omitempty" toml:"skills,omitempty"`
 	DisableAutoCompaction *bool                               `json:"disable_auto_compaction,omitempty" toml:"disable_auto_compaction,omitempty"`
 	AutoCompactTokenLimit *int                                `json:"auto_compact_token_limit,omitempty" toml:"auto_compact_token_limit,omitempty"`
 	Telemetry             *bool                               `json:"telemetry,omitempty" toml:"telemetry,omitempty"`
@@ -187,6 +189,9 @@ func applyOverlay(cfg *godex.Config, patch overlay) error {
 		cfg.MarkdownRendering = *patch.MarkdownRendering
 	}
 	cfg.Memories = memory.ApplySettings(cfg.Memories, patch.Memories)
+	if patch.Skills.Rules != nil {
+		cfg.Skills = patch.Skills
+	}
 	if patch.DisableAutoCompaction != nil {
 		cfg.DisableAutoCompaction = *patch.DisableAutoCompaction
 	}

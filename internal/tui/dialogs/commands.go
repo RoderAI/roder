@@ -5,6 +5,7 @@ type CommandItem struct {
 	Title       string
 	Description string
 	Source      string
+	Insert      string
 	Selected    bool
 }
 

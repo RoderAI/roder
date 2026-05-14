@@ -20,7 +20,7 @@ func TestManagerListSetEnabledAndRecommended(t *testing.T) {
 		t.Fatalf("write broken skill: %v", err)
 	}
 	settings := ActivationSettings{
-		ActiveSkills: map[string]bool{"go-development": false},
+		Skills:       Config{Rules: []ConfigRule{{Name: "go-development", Enabled: false}}},
 		SkillSources: map[string]string{"go-development": "local"},
 	}
 	manager := &Manager{
@@ -53,7 +53,7 @@ func TestManagerListSetEnabledAndRecommended(t *testing.T) {
 	if err := manager.SetEnabled(context.Background(), "go-development", true); err != nil {
 		t.Fatalf("enable: %v", err)
 	}
-	if !settings.ActiveSkills["go-development"] {
+	if !IsSkillEnabled(settings.Skills, Skill{Name: "go-development", Path: filepath.Join(root, ".agents", "skills", "go-development", "SKILL.md")}) {
 		t.Fatalf("settings = %#v", settings)
 	}
 	recommended, err = manager.Recommended(context.Background())
@@ -90,7 +90,7 @@ func TestManagerInstallLocalSourceRecordsSourceAndEnables(t *testing.T) {
 	if result.Source != source {
 		t.Fatalf("result = %#v", result)
 	}
-	if !settings.ActiveSkills["local-skill"] || settings.SkillSources["local-skill"] != source {
+	if !IsSkillEnabled(settings.Skills, Skill{Name: "local-skill", Path: filepath.Join(dataDir, "skills", "local-skill", "SKILL.md")}) || settings.SkillSources["local-skill"] != source {
 		t.Fatalf("settings = %#v", settings)
 	}
 	if _, err := os.Stat(filepath.Join(dataDir, "skills", "local-skill", "SKILL.md")); err != nil {
@@ -126,7 +126,7 @@ func TestManagerInstallRecommendedUsesFakeRunner(t *testing.T) {
 	if !reflect.DeepEqual(commands[0], want) {
 		t.Fatalf("commands = %#v", commands)
 	}
-	if !settings.ActiveSkills["go-development"] || settings.SkillSources["go-development"] != "pandelisz/gode@go-development" {
+	if !IsSkillEnabled(settings.Skills, Skill{Name: "go-development", Path: filepath.Join("/data", "skills", "go-development", "SKILL.md")}) || settings.SkillSources["go-development"] != "pandelisz/gode@go-development" {
 		t.Fatalf("settings = %#v", settings)
 	}
 }

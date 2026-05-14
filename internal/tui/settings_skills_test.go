@@ -67,8 +67,8 @@ func TestSettingsSpaceTogglesInstalledSkill(t *testing.T) {
 	if err != nil {
 		t.Fatalf("load settings: %v", err)
 	}
-	if settings.ActiveSkills["go-development"] {
-		t.Fatalf("active skills = %#v", settings.ActiveSkills)
+	if godeskills.IsSkillEnabled(settings.Skills, godeskills.Skill{Name: "go-development", Path: filepath.Join(app.Config.Workspace, ".agents", "skills", "go-development", "SKILL.md")}) {
+		t.Fatalf("skills config = %#v", settings.Skills)
 	}
 }
 
@@ -112,7 +112,7 @@ func TestSettingsRecommendedScreenAndInstallAllCommand(t *testing.T) {
 	if err != nil {
 		t.Fatalf("load settings: %v", err)
 	}
-	if !settings.ActiveSkills["repo-navigation"] || settings.SkillSources["repo-navigation"] != "pandelisz/gode@repo-navigation" {
+	if !godeskills.IsSkillEnabled(settings.Skills, godeskills.Skill{Name: "repo-navigation", Path: filepath.Join(app.Config.DataDir, "skills", "repo-navigation", "SKILL.md")}) || settings.SkillSources["repo-navigation"] != "pandelisz/gode@repo-navigation" {
 		t.Fatalf("settings = %#v", settings)
 	}
 }
@@ -175,8 +175,8 @@ func TestSettingsInstallPromptRunsInstallAndRefreshesSkills(t *testing.T) {
 	if err != nil {
 		t.Fatalf("load settings: %v", err)
 	}
-	if !settings.ActiveSkills["repo-navigation"] {
-		t.Fatalf("active skills = %#v", settings.ActiveSkills)
+	if !godeskills.IsSkillEnabled(settings.Skills, godeskills.Skill{Name: "repo-navigation", Path: filepath.Join(app.Config.DataDir, "skills", "repo-navigation", "SKILL.md")}) {
+		t.Fatalf("skills config = %#v", settings.Skills)
 	}
 	if len(got.messages) == 0 || !strings.Contains(got.messages[len(got.messages)-1].Body, "installed repo-navigation") {
 		t.Fatalf("messages = %#v", got.messages)
@@ -215,7 +215,7 @@ func TestSettingsInstallFailureShowsStderrAndKeepsFullTranscript(t *testing.T) {
 	}
 }
 
-func TestSavingModelSettingsPreservesActiveSkills(t *testing.T) {
+func TestSavingModelSettingsPreservesSkillsConfig(t *testing.T) {
 	app := newSkillsTestApp(t)
 	defer app.Close(context.Background())
 	if err := app.SkillManager.SetEnabled(context.Background(), "go-development", false); err != nil {
@@ -234,8 +234,8 @@ func TestSavingModelSettingsPreservesActiveSkills(t *testing.T) {
 	if err != nil {
 		t.Fatalf("load settings: %v", err)
 	}
-	if settings.ActiveSkills["go-development"] {
-		t.Fatalf("active skills were not preserved: %#v", settings.ActiveSkills)
+	if godeskills.IsSkillEnabled(settings.Skills, godeskills.Skill{Name: "go-development", Path: filepath.Join(app.Config.Workspace, ".agents", "skills", "go-development", "SKILL.md")}) {
+		t.Fatalf("skills config was not preserved: %#v", settings.Skills)
 	}
 }
 
