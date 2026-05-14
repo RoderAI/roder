@@ -20,6 +20,48 @@ func (r *Runner) forceCompactContext(ctx context.Context, req RunRequest, messag
 	return r.compactContext(ctx, req, messages, inputItems, tools, true, reason)
 }
 
+func (r *Runner) repairOrphanToolOutputs(ctx context.Context, req RunRequest, messages []provider.Message, inputItems []provider.Item, err error, retry bool) ([]provider.Message, []provider.Item, bool) {
+	model := firstNonEmpty(r.model, "gpt-5.5")
+	repairedMessages := messages
+	repairedInputItems := inputItems
+	var callIDs []string
+	removed := 0
+	if err != nil {
+		if repaired, callID, ok := provider.RepairOrphanFunctionCallOutput(messages, err); ok {
+			removed += len(messages) - len(repaired)
+			repairedMessages = repaired
+			callIDs = append(callIDs, callID)
+		}
+		if repaired, callID, ok := provider.RepairOrphanFunctionCallOutputItems(inputItems, err); ok {
+			removed += len(inputItems) - len(repaired)
+			repairedInputItems = repaired
+			callIDs = append(callIDs, callID)
+		}
+	} else {
+		if repaired, ids, ok := provider.RepairAllOrphanFunctionCallOutputs(messages); ok {
+			removed += len(messages) - len(repaired)
+			repairedMessages = repaired
+			callIDs = append(callIDs, ids...)
+		}
+		if repaired, ids, ok := provider.RepairAllOrphanFunctionCallOutputItems(inputItems); ok {
+			removed += len(inputItems) - len(repaired)
+			repairedInputItems = repaired
+			callIDs = append(callIDs, ids...)
+		}
+	}
+	callIDs = uniqueStrings(callIDs)
+	if removed == 0 {
+		return messages, inputItems, false
+	}
+	originalErr := ""
+	if err != nil {
+		originalErr = err.Error()
+	}
+	r.emitCompactionRepair(ctx, req, model, callIDs, removed, originalErr, retry)
+	r.persistPrunedWindow(ctx, req, append([]provider.Message{provider.LocalPruneMarkerMessage()}, repairedMessages...))
+	return repairedMessages, repairedInputItems, true
+}
+
 func (r *Runner) compactContext(ctx context.Context, req RunRequest, messages []provider.Message, inputItems []provider.Item, tools []provider.ToolSpec, force bool, reason string) ([]provider.Message, []provider.Item, error) {
 	model := firstNonEmpty(r.model, "gpt-5.5")
 	options := contextwindow.OptionsForModel(model, r.disableAutoCompaction, r.autoCompactTokenLimit)
@@ -95,6 +137,20 @@ func (r *Runner) compactContext(ctx context.Context, req RunRequest, messages []
 		attemptMessages = repaired
 	}
 	if err != nil {
+		if provider.ShouldPruneAfterCompactionError(err) {
+			pruned, dropped, ok := provider.LocalPrunedMessages(provider.LocalPruneRequest{
+				Model:        model,
+				Instructions: firstNonEmpty(req.Instructions, GodeInstructions),
+				Messages:     append(append([]provider.Message{}, attemptMessages...), suffix...),
+				Tools:        tools,
+				TargetTokens: options.CompactThreshold,
+			})
+			if ok {
+				r.emitLocalPruneRepair(ctx, req, model, dropped, err)
+				r.persistPrunedWindow(ctx, req, pruned)
+				return pruned, providerItemsFromProviderMessages(pruned), nil
+			}
+		}
 		r.emit(ctx, eventbus.Event{
 			Kind:      eventbus.KindContextCompactionFailed,
 			Source:    eventbus.SourceAgent,
@@ -131,6 +187,34 @@ func (r *Runner) compactContext(ctx context.Context, req RunRequest, messages []
 	next := append([]provider.Message{}, compacted...)
 	next = append(next, suffix...)
 	return next, providerItemsFromProviderMessages(next), nil
+}
+
+func uniqueStrings(values []string) []string {
+	seen := map[string]bool{}
+	out := make([]string, 0, len(values))
+	for _, value := range values {
+		if value == "" || seen[value] {
+			continue
+		}
+		seen[value] = true
+		out = append(out, value)
+	}
+	return out
+}
+
+func (r *Runner) emitLocalPruneRepair(ctx context.Context, req RunRequest, model string, dropped int, originalErr error) {
+	r.emit(ctx, eventbus.Event{
+		Kind:      eventbus.KindContextCompactionRepaired,
+		Source:    eventbus.SourceAgent,
+		SessionID: req.SessionID,
+		RunID:     req.RunID,
+		Payload: map[string]any{
+			"model":        model,
+			"dropped":      dropped,
+			"repair":       "local_prune_after_compaction_failed",
+			"original_err": originalErr.Error(),
+		},
+	})
 }
 
 func (r *Runner) emitCompactionRepair(ctx context.Context, req RunRequest, model string, callIDs []string, removed int, originalErr string, retry bool) {
@@ -176,6 +260,43 @@ func rawCompactionMessages(items []json.RawMessage) []provider.Message {
 		out = append(out, provider.Message{RawJSON: append([]byte(nil), item...)})
 	}
 	return out
+}
+
+func (r *Runner) persistPrunedWindow(ctx context.Context, req RunRequest, messages []provider.Message) {
+	if len(messages) == 0 {
+		return
+	}
+	if r.items != nil {
+		items := []session.Item{{
+			ID:        req.RunID + ":local-prune",
+			SessionID: req.SessionID,
+			TurnID:    req.RunID,
+			Kind:      session.ItemCompaction,
+			Text:      provider.LocalPruneMarkerText,
+			RawJSON:   append([]byte(nil), messages[0].RawJSON...),
+		}}
+		for i, msg := range messages[1:] {
+			if item, ok := providerSuffixItem(req, msg, i); ok {
+				items = append(items, item)
+			}
+		}
+		if len(items) > 0 {
+			_, _ = r.items.AppendMany(ctx, items)
+		}
+	}
+	if r.messages != nil {
+		_, _ = r.messages.Append(ctx, messagestore.Message{
+			SessionID:  req.SessionID,
+			RunID:      req.RunID,
+			Role:       messagestore.RoleCompaction,
+			Text:       "local pruned context",
+			RawJSON:    append([]byte(nil), messages[0].RawJSON...),
+			SourceKind: "compacted",
+		})
+		for _, msg := range messages[1:] {
+			_ = appendProviderSuffix(ctx, r.messages, req, msg)
+		}
+	}
 }
 
 func (r *Runner) persistCompactedWindow(ctx context.Context, req RunRequest, items []json.RawMessage, suffix []provider.Message) {
@@ -227,6 +348,11 @@ func providerSuffixItem(req RunRequest, msg provider.Message, index int) (sessio
 		TurnID:    req.RunID,
 		Text:      msg.Content,
 	}
+	if len(msg.RawJSON) > 0 {
+		item.Kind = session.ItemRaw
+		item.RawJSON = append([]byte(nil), msg.RawJSON...)
+		return item, true
+	}
 	switch msg.Role {
 	case provider.RoleUser:
 		item.Kind = session.ItemMessage
@@ -246,6 +372,10 @@ func providerSuffixItem(req RunRequest, msg provider.Message, index int) (sessio
 }
 
 func appendProviderSuffix(ctx context.Context, store *messagestore.Store, req RunRequest, msg provider.Message) error {
+	if len(msg.RawJSON) > 0 {
+		_, err := store.Append(ctx, messagestore.Message{SessionID: req.SessionID, RunID: req.RunID, Role: messagestore.RoleCompaction, Text: "raw context item", RawJSON: append([]byte(nil), msg.RawJSON...), SourceKind: "compaction_suffix"})
+		return err
+	}
 	switch msg.Role {
 	case provider.RoleUser:
 		_, err := store.Append(ctx, messagestore.Message{SessionID: req.SessionID, RunID: req.RunID, Role: messagestore.RoleUser, Text: msg.Content, SourceKind: "compaction_suffix"})

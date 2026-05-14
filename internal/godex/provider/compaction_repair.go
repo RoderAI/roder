@@ -30,6 +30,29 @@ func RepairOrphanFunctionCallOutput(messages []Message, err error) ([]Message, s
 	return repaired, callID, true
 }
 
+func RepairOrphanFunctionCallOutputItems(items []Item, err error) ([]Item, string, bool) {
+	if err == nil {
+		return nil, "", false
+	}
+	callID := OrphanFunctionCallOutputID(err.Error())
+	if callID == "" {
+		return nil, "", false
+	}
+	repaired := make([]Item, 0, len(items))
+	removed := 0
+	for _, item := range items {
+		if functionCallOutputItemID(item) == callID {
+			removed++
+			continue
+		}
+		repaired = append(repaired, item)
+	}
+	if removed == 0 {
+		return nil, "", false
+	}
+	return repaired, callID, true
+}
+
 func RepairAllOrphanFunctionCallOutputs(messages []Message) ([]Message, []string, bool) {
 	seenCalls := map[string]bool{}
 	repaired := make([]Message, 0, len(messages))
@@ -49,6 +72,32 @@ func RepairAllOrphanFunctionCallOutputs(messages []Message) ([]Message, []string
 			continue
 		}
 		repaired = append(repaired, msg)
+	}
+	if len(removed) == 0 {
+		return nil, nil, false
+	}
+	return repaired, removed, true
+}
+
+func RepairAllOrphanFunctionCallOutputItems(items []Item) ([]Item, []string, bool) {
+	seenCalls := map[string]bool{}
+	repaired := make([]Item, 0, len(items))
+	var removed []string
+	for _, item := range items {
+		if callID := functionCallItemID(item); callID != "" {
+			seenCalls[callID] = true
+			repaired = append(repaired, item)
+			continue
+		}
+		if callID := functionCallOutputItemID(item); callID != "" {
+			if seenCalls[callID] {
+				repaired = append(repaired, item)
+				continue
+			}
+			removed = append(removed, callID)
+			continue
+		}
+		repaired = append(repaired, item)
 	}
 	if len(removed) == 0 {
 		return nil, nil, false
@@ -97,6 +146,43 @@ func functionCallOutputID(msg Message) string {
 	}
 	var object map[string]json.RawMessage
 	if err := json.Unmarshal(msg.RawJSON, &object); err != nil {
+		return ""
+	}
+	if rawString(object["type"]) != "function_call_output" {
+		return ""
+	}
+	return rawString(object["call_id"])
+}
+
+func functionCallItemID(item Item) string {
+	if item.Kind == ItemFunctionCall && item.ToolCallID != "" {
+		return item.ToolCallID
+	}
+	if len(item.RawJSON) == 0 {
+		return ""
+	}
+	var object map[string]json.RawMessage
+	if err := json.Unmarshal(item.RawJSON, &object); err != nil {
+		return ""
+	}
+	if rawString(object["type"]) != "function_call" {
+		return ""
+	}
+	if callID := rawString(object["call_id"]); callID != "" {
+		return callID
+	}
+	return rawString(object["id"])
+}
+
+func functionCallOutputItemID(item Item) string {
+	if item.Kind == ItemFunctionOut && item.ToolCallID != "" {
+		return item.ToolCallID
+	}
+	if len(item.RawJSON) == 0 {
+		return ""
+	}
+	var object map[string]json.RawMessage
+	if err := json.Unmarshal(item.RawJSON, &object); err != nil {
 		return ""
 	}
 	if rawString(object["type"]) != "function_call_output" {

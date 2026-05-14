@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -138,6 +139,51 @@ func TestRemoteWebSocketSubprotocolAuth(t *testing.T) {
 		t.Fatalf("subprotocol = %q", ws.Subprotocol())
 	}
 	assertInitializeHasRemote(t, ctx, ws)
+}
+
+func TestRemoteWebSocketLogsConnectionLifecycle(t *testing.T) {
+	ctx := context.Background()
+	app, err := godex.New(ctx, godex.Config{
+		Workspace:   filepath.Join(t.TempDir(), "workspace"),
+		DataDir:     t.TempDir(),
+		Provider:    "mock",
+		AutoApprove: true,
+	})
+	if err != nil {
+		t.Fatalf("new app: %v", err)
+	}
+	defer app.Close(ctx)
+
+	auth, err := NewRemoteAuth("remote-secret", time.Unix(10, 0))
+	if err != nil {
+		t.Fatalf("new auth: %v", err)
+	}
+	var logs bytes.Buffer
+	server := New(app, Options{Version: "test", Remote: RemoteOptions{Enabled: true, Auth: auth}, Log: &logs})
+	listener, err := server.ListenWebSocket(ctx, "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen websocket: %v", err)
+	}
+	defer listener.Close(ctx)
+
+	_, _, _ = websocket.Dial(ctx, listener.WebSocketURL(), nil)
+	ws, _, err := websocket.Dial(ctx, listener.WebSocketURL(), &websocket.DialOptions{
+		Subprotocols: []string{remoteSubprotocol, "bearer.remote-secret"},
+	})
+	if err != nil {
+		t.Fatalf("subprotocol dial: %v", err)
+	}
+	_ = ws.Close(websocket.StatusNormalClosure, "test done")
+
+	got := logs.String()
+	for _, want := range []string{"remote ", "dial ", "auth_failed", "connected", "disconnected", "auth=subprotocol"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("logs missing %q:\n%s", want, got)
+		}
+	}
+	if strings.Contains(got, "remote-secret") {
+		t.Fatalf("logs leaked token:\n%s", got)
+	}
 }
 
 func TestRemoteWebSocketMockTurn(t *testing.T) {

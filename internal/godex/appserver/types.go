@@ -1,8 +1,11 @@
 package appserver
 
+import "io"
+
 type Options struct {
 	Version string
 	Remote  RemoteOptions
+	Log     io.Writer
 }
 
 type RemoteOptions struct {

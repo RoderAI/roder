@@ -8,6 +8,7 @@ import (
 	"net/netip"
 	"net/url"
 	"sort"
+	"strings"
 )
 
 type RemotePairingPayload struct {
@@ -17,6 +18,14 @@ type RemotePairingPayload struct {
 	Headers      map[string]string `json:"headers"`
 	Subprotocols []string          `json:"subprotocols"`
 	Workspace    string            `json:"workspace"`
+}
+
+type compactRemotePairingPayload struct {
+	Type      string `json:"t"`
+	Name      string `json:"n,omitempty"`
+	URL       string `json:"u"`
+	Token     string `json:"b"`
+	Workspace string `json:"w,omitempty"`
 }
 
 func BuildRemotePairingPayload(name, wsURL, token, workspace string) RemotePairingPayload {
@@ -37,12 +46,38 @@ func BuildRemotePairingPayload(name, wsURL, token, workspace string) RemotePairi
 }
 
 func RemoteDeepLink(payload RemotePairingPayload) (string, error) {
-	data, err := json.Marshal(payload)
+	token := remotePairingBearerToken(payload)
+	if token == "" {
+		return "", fmt.Errorf("remote pairing payload is missing bearer token")
+	}
+	data, err := json.Marshal(compactRemotePairingPayload{
+		Type:      payload.Type,
+		Name:      payload.Name,
+		URL:       payload.URL,
+		Token:     token,
+		Workspace: payload.Workspace,
+	})
 	if err != nil {
 		return "", fmt.Errorf("encode remote pairing payload: %w", err)
 	}
 	encoded := base64.RawURLEncoding.EncodeToString(data)
 	return "gode://connect?payload=" + url.QueryEscape(encoded), nil
+}
+
+func remotePairingBearerToken(payload RemotePairingPayload) string {
+	const prefix = "Bearer "
+	for key, value := range payload.Headers {
+		if strings.EqualFold(key, "authorization") && strings.HasPrefix(value, prefix) {
+			return strings.TrimSpace(strings.TrimPrefix(value, prefix))
+		}
+	}
+	for _, subprotocol := range payload.Subprotocols {
+		token, ok := strings.CutPrefix(subprotocol, "bearer.")
+		if ok {
+			return token
+		}
+	}
+	return ""
 }
 
 func DiscoverRemoteConnectURLs(listenerAddress string) []string {

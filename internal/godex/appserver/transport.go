@@ -157,8 +157,13 @@ func (l *WebSocketListener) Close(ctx context.Context) error {
 }
 
 func (s *Server) handleWebSocket(ctx context.Context, w http.ResponseWriter, r *http.Request) {
+	requestInfo := remoteRequestInfoFromRequest(r)
+	if s.options.Remote.Enabled {
+		s.logRemote("dial %s", remoteRequestSummary(requestInfo))
+	}
 	if s.options.Remote.Enabled && !s.options.Remote.Auth.VerifyRequest(r) {
-		s.publishRemoteEvent(ctx, KindRemoteAuthFailed, redactedRemoteRequestPayload(r))
+		s.logRemote("auth_failed %s", remoteRequestSummary(requestInfo))
+		s.publishRemoteEvent(ctx, KindRemoteAuthFailed, requestInfo.Payload())
 		http.Error(w, "remote authentication required", http.StatusUnauthorized)
 		return
 	}
@@ -168,11 +173,13 @@ func (s *Server) handleWebSocket(ctx context.Context, w http.ResponseWriter, r *
 	}
 	ws, err := websocket.Accept(w, r, acceptOptions)
 	if err != nil {
+		s.logRemote("accept_failed %s error=%q", remoteRequestSummary(requestInfo), err.Error())
 		return
 	}
 	if s.options.Remote.Enabled {
-		s.publishRemoteEvent(ctx, KindRemoteClientConnected, redactedRemoteRequestPayload(r))
-		defer s.publishRemoteEvent(ctx, KindRemoteClientDisconnected, redactedRemoteRequestPayload(r))
+		s.logRemote("connected %s selected_subprotocol=%q", remoteRequestSummary(requestInfo), ws.Subprotocol())
+		s.publishRemoteEvent(ctx, KindRemoteClientConnected, requestInfo.Payload())
+		defer s.publishRemoteEvent(ctx, KindRemoteClientDisconnected, requestInfo.Payload())
 	}
 	conn := s.NewConnection(func(sendCtx context.Context, msg Message) error {
 		data, err := json.Marshal(msg)
@@ -187,12 +194,15 @@ func (s *Server) handleWebSocket(ctx context.Context, w http.ResponseWriter, r *
 	for {
 		typ, data, err := ws.Read(ctx)
 		if err != nil {
+			s.logRemote("disconnected %s error=%q close_status=%s", remoteRequestSummary(requestInfo), err.Error(), websocket.CloseStatus(err))
 			return
 		}
 		if typ != websocket.MessageText {
+			s.logRemote("ignored_non_text_message %s type=%d", remoteRequestSummary(requestInfo), typ)
 			continue
 		}
 		if err := conn.HandleJSON(ctx, data); err != nil {
+			s.logRemote("message_error %s error=%q", remoteRequestSummary(requestInfo), err.Error())
 			return
 		}
 	}

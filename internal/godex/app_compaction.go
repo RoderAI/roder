@@ -7,6 +7,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/pandelisz/gode/internal/godex/agent"
+	"github.com/pandelisz/gode/internal/godex/contextwindow"
 	"github.com/pandelisz/gode/internal/godex/eventbus"
 	messagestore "github.com/pandelisz/gode/internal/godex/message"
 	"github.com/pandelisz/gode/internal/godex/provider"
@@ -39,6 +40,12 @@ func (a *App) CompactSession(ctx context.Context, sessionID string) (CompactSess
 	}
 	result, err := a.compactWithOrphanRepair(ctx, compactor, sessionID, runID, messages)
 	if err != nil {
+		if provider.ShouldPruneAfterCompactionError(err) {
+			if result, pruneErr := a.persistLocalPrunedCompaction(ctx, sessionID, runID, messages, err); pruneErr == nil {
+				a.publishCompactionCompleted(ctx, sessionID, runID, result.ResponseID, result.OutputItems)
+				return result, nil
+			}
+		}
 		a.recordCompactionFailure(ctx, sessionID, runID, err)
 		return CompactSessionResult{}, err
 	}
@@ -79,6 +86,11 @@ func (a *App) CompactSession(ctx context.Context, sessionID string) (CompactSess
 		messages, _ := a.Messages.ListBySession(ctx, sessionID)
 		_, _ = a.Sessions.UpdateMessageCount(ctx, sessionID, len(messages))
 	}
+	a.publishCompactionCompleted(ctx, sessionID, runID, result.ID, len(result.Output))
+	return CompactSessionResult{SessionID: sessionID, RunID: runID, ResponseID: result.ID, OutputItems: len(result.Output)}, nil
+}
+
+func (a *App) publishCompactionCompleted(ctx context.Context, sessionID string, runID string, responseID string, outputItems int) {
 	completed := a.publish(ctx, eventbus.Event{
 		Kind:      eventbus.KindContextCompactionCompleted,
 		Source:    eventbus.SourceAgent,
@@ -86,12 +98,11 @@ func (a *App) CompactSession(ctx context.Context, sessionID string) (CompactSess
 		RunID:     runID,
 		Payload: map[string]any{
 			"model":        a.Config.Model,
-			"response_id":  result.ID,
-			"output_items": len(result.Output),
+			"response_id":  responseID,
+			"output_items": outputItems,
 		},
 	})
 	a.appendJournal(ctx, completed)
-	return CompactSessionResult{SessionID: sessionID, RunID: runID, ResponseID: result.ID, OutputItems: len(result.Output)}, nil
 }
 
 func (a *App) compactionSourceMessages(ctx context.Context, sessionID string) ([]provider.Message, error) {
@@ -109,6 +120,74 @@ func (a *App) compactionSourceMessages(ctx context.Context, sessionID string) ([
 		return nil, err
 	}
 	return providerMessagesFromStored(stored), nil
+}
+
+func (a *App) persistLocalPrunedCompaction(ctx context.Context, sessionID string, runID string, messages []provider.Message, originalErr error) (CompactSessionResult, error) {
+	options := contextwindow.OptionsForModel(a.Config.Model, a.Config.DisableAutoCompaction, a.Config.AutoCompactTokenLimit)
+	pruned, dropped, ok := provider.LocalPrunedMessages(provider.LocalPruneRequest{
+		Model:        a.Config.Model,
+		Instructions: agent.GodeInstructions,
+		Messages:     messages,
+		TargetTokens: options.CompactThreshold,
+	})
+	if !ok {
+		return CompactSessionResult{}, originalErr
+	}
+	a.recordLocalPruneRepair(ctx, sessionID, runID, dropped, originalErr)
+	if err := a.appendPrunedMessages(ctx, sessionID, runID, pruned); err != nil {
+		return CompactSessionResult{}, err
+	}
+	if err := a.appendPrunedItems(ctx, sessionID, runID, pruned); err != nil {
+		return CompactSessionResult{}, err
+	}
+	if a.Sessions != nil {
+		messages, _ := a.Messages.ListBySession(ctx, sessionID)
+		_, _ = a.Sessions.UpdateMessageCount(ctx, sessionID, len(messages))
+	}
+	return CompactSessionResult{SessionID: sessionID, RunID: runID, ResponseID: "local_prune", OutputItems: len(pruned)}, nil
+}
+
+func (a *App) appendPrunedMessages(ctx context.Context, sessionID string, runID string, messages []provider.Message) error {
+	if len(messages) == 0 {
+		return nil
+	}
+	if _, err := a.Messages.Append(ctx, messagestore.Message{
+		SessionID:  sessionID,
+		RunID:      runID,
+		Role:       messagestore.RoleCompaction,
+		Text:       "local pruned context",
+		RawJSON:    append([]byte(nil), messages[0].RawJSON...),
+		SourceKind: "compacted",
+	}); err != nil {
+		return err
+	}
+	for _, msg := range messages[1:] {
+		if err := appendStoredProviderMessage(ctx, a.Messages, sessionID, runID, msg); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (a *App) appendPrunedItems(ctx context.Context, sessionID string, runID string, messages []provider.Message) error {
+	if a.Items == nil || len(messages) == 0 {
+		return nil
+	}
+	items := []session.Item{{
+		ID:        runID + ":local-prune",
+		SessionID: sessionID,
+		TurnID:    runID,
+		Kind:      session.ItemCompaction,
+		Text:      provider.LocalPruneMarkerText,
+		RawJSON:   append([]byte(nil), messages[0].RawJSON...),
+	}}
+	for i, msg := range messages[1:] {
+		if item, ok := sessionItemFromProviderMessage(sessionID, runID, i, msg); ok {
+			items = append(items, item)
+		}
+	}
+	_, err := a.Items.AppendMany(ctx, items)
+	return err
 }
 
 func (a *App) compactWithOrphanRepair(ctx context.Context, compactor provider.Compactor, sessionID string, runID string, messages []provider.Message) (provider.CompactResult, error) {
@@ -157,6 +236,22 @@ func (a *App) recordCompactionRepair(ctx context.Context, sessionID string, runI
 		SessionID: sessionID,
 		RunID:     runID,
 		Payload:   payload,
+	})
+	a.appendJournal(ctx, ev)
+}
+
+func (a *App) recordLocalPruneRepair(ctx context.Context, sessionID string, runID string, dropped int, originalErr error) {
+	ev := a.publish(ctx, eventbus.Event{
+		Kind:      eventbus.KindContextCompactionRepaired,
+		Source:    eventbus.SourceAgent,
+		SessionID: sessionID,
+		RunID:     runID,
+		Payload: map[string]any{
+			"model":        a.Config.Model,
+			"dropped":      dropped,
+			"repair":       "local_prune_after_compaction_failed",
+			"original_err": originalErr.Error(),
+		},
 	})
 	a.appendJournal(ctx, ev)
 }
@@ -216,6 +311,56 @@ func canonicalStoredWindow(messages []messagestore.Message) []messagestore.Messa
 		start = i
 	}
 	return messages[start:]
+}
+
+func appendStoredProviderMessage(ctx context.Context, store *messagestore.Store, sessionID string, runID string, msg provider.Message) error {
+	if len(msg.RawJSON) > 0 {
+		_, err := store.Append(ctx, messagestore.Message{SessionID: sessionID, RunID: runID, Role: messagestore.RoleCompaction, Text: "raw context item", RawJSON: append([]byte(nil), msg.RawJSON...), SourceKind: "compaction_suffix"})
+		return err
+	}
+	switch msg.Role {
+	case provider.RoleUser:
+		_, err := store.Append(ctx, messagestore.Message{SessionID: sessionID, RunID: runID, Role: messagestore.RoleUser, Text: msg.Content, SourceKind: "compaction_suffix"})
+		return err
+	case provider.RoleAssistant:
+		_, err := store.Append(ctx, messagestore.Message{SessionID: sessionID, RunID: runID, Role: messagestore.RoleAssistant, Text: msg.Content, SourceKind: "compaction_suffix"})
+		return err
+	case provider.RoleTool:
+		_, err := store.Append(ctx, messagestore.Message{SessionID: sessionID, RunID: runID, Role: messagestore.RoleTool, Text: msg.Content, ToolCallID: msg.ToolCallID, ToolName: msg.ToolName, SourceKind: "compaction_suffix"})
+		return err
+	default:
+		return nil
+	}
+}
+
+func sessionItemFromProviderMessage(sessionID string, runID string, index int, msg provider.Message) (session.Item, bool) {
+	item := session.Item{
+		ID:        fmt.Sprintf("%s:local-prune:%d", runID, index),
+		SessionID: sessionID,
+		TurnID:    runID,
+		Text:      msg.Content,
+	}
+	if len(msg.RawJSON) > 0 {
+		item.Kind = session.ItemRaw
+		item.RawJSON = append([]byte(nil), msg.RawJSON...)
+		return item, true
+	}
+	switch msg.Role {
+	case provider.RoleUser:
+		item.Kind = session.ItemMessage
+		item.Role = "user"
+	case provider.RoleAssistant:
+		item.Kind = session.ItemMessage
+		item.Role = "assistant"
+	case provider.RoleTool:
+		item.Kind = session.ItemFunctionOut
+		item.Role = "tool"
+		item.ToolCallID = msg.ToolCallID
+		item.ToolName = msg.ToolName
+	default:
+		return session.Item{}, false
+	}
+	return item, true
 }
 
 func providerMessagesFromSessionItems(items []session.Item) []provider.Message {
