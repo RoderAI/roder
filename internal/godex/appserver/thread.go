@@ -340,6 +340,9 @@ func sessionItem(item session.Item) map[string]any {
 		"type": itemType,
 		"text": item.Text,
 	}
+	if item.Phase != "" {
+		out["phase"] = item.Phase
+	}
 	if item.ToolName != "" {
 		out["toolName"] = item.ToolName
 	}
@@ -409,6 +412,9 @@ func messageItem(msg messagestore.Message) map[string]any {
 		"id":   msg.ID,
 		"type": itemType,
 		"text": msg.Text,
+	}
+	if msg.Phase != "" {
+		item["phase"] = msg.Phase
 	}
 	if msg.ToolName != "" {
 		item["toolName"] = msg.ToolName

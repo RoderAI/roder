@@ -234,7 +234,8 @@ func (s *Server) handleRunEvent(ctx context.Context, threadID, turnID, itemID st
 	switch ev.Kind {
 	case eventbus.KindAssistantDelta:
 		var payload struct {
-			Text string `json:"text"`
+			Text  string `json:"text"`
+			Phase string `json:"phase"`
 		}
 		_ = ev.DecodePayload(&payload)
 		if payload.Text != "" {
@@ -243,6 +244,7 @@ func (s *Server) handleRunEvent(ctx context.Context, threadID, turnID, itemID st
 				"turnId":   turnID,
 				"itemId":   itemID,
 				"delta":    payload.Text,
+				"phase":    payload.Phase,
 			})
 		}
 		return payload.Text
@@ -264,7 +266,7 @@ func (s *Server) handleRunEvent(ctx context.Context, threadID, turnID, itemID st
 func (s *Server) completeTurn(threadID, turnID, itemID, finalText, status string, turnErr *TurnError, start time.Time) {
 	completed := time.Now().Unix()
 	duration := time.Since(start).Milliseconds()
-	item := map[string]any{"id": itemID, "type": "agentMessage", "text": finalText}
+	item := map[string]any{"id": itemID, "type": "agentMessage", "text": finalText, "phase": "final_answer"}
 
 	s.mu.Lock()
 	state := s.threads[threadID]
