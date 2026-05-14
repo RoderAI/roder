@@ -17,6 +17,7 @@ func TestSkillsHandlersListReadAndToggle(t *testing.T) {
 	app, err := godex.New(ctx, godex.Config{
 		Workspace:   workspace,
 		DataDir:     t.TempDir(),
+		HomeDir:     t.TempDir(),
 		Provider:    "mock",
 		AutoApprove: true,
 	})

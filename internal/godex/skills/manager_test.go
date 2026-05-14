@@ -25,6 +25,7 @@ func TestManagerListSetEnabledAndRecommended(t *testing.T) {
 	}
 	manager := &Manager{
 		Workspace: root,
+		HomeDir:   filepath.Join(root, "home"),
 		LoadSettings: func(context.Context) (ActivationSettings, error) {
 			return settings, nil
 		},

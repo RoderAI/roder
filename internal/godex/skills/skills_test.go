@@ -22,6 +22,8 @@ func TestDiscoverFindsSkillsInConfiguredOrder(t *testing.T) {
 	writeSkill(t, filepath.Join(workspace, "pkg", "api", ".agents", "skills", "api-skill"), "api-skill", "api skill")
 	writeSkill(t, filepath.Join(workspace, ".gode", "skills", "repo-skill"), "repo-skill", "repo skill")
 	writeSkill(t, filepath.Join(dataDir, "skills", "data-skill"), "data-skill", "data skill")
+	writeSkill(t, filepath.Join(homeDir, ".agents", "skills", "agents-global"), "agents-global", "agents global skill")
+	writeSkill(t, filepath.Join(homeDir, ".codex", "skills", "codex-global"), "codex-global", "codex global skill")
 	writeSkill(t, filepath.Join(homeDir, ".gode", "skills", "global-skill"), "global-skill", "global skill")
 	writeSkill(t, filepath.Join(codexHome, "skills", "codex-skill"), "codex-skill", "codex skill")
 	writeSkill(t, filepath.Join(dataDir, "skills", "go-tests"), "go-tests", "shadowed")
@@ -33,10 +35,10 @@ func TestDiscoverFindsSkillsInConfiguredOrder(t *testing.T) {
 		Env:       []string{"CODEX_HOME=" + codexHome},
 	})
 
-	if got := skillNames(catalog.Skills); !reflect.DeepEqual(got, []string{"api-skill", "go-tests", "repo-skill", "codex-skill", "data-skill", "global-skill", "go-tests"}) {
+	if got := skillNames(catalog.Skills); !reflect.DeepEqual(got, []string{"api-skill", "go-tests", "repo-skill", "agents-global", "codex-global", "codex-skill", "data-skill", "global-skill", "go-tests"}) {
 		t.Fatalf("skills = %#v diagnostics=%#v", got, catalog.Diagnostics)
 	}
-	if catalog.Skills[1].Description != "project go tests" || catalog.Skills[6].Description != "shadowed" {
+	if catalog.Skills[1].Description != "project go tests" || catalog.Skills[8].Description != "shadowed" {
 		t.Fatalf("same-name skills were not preserved by path: %#v", catalog.Skills)
 	}
 }

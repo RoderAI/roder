@@ -144,7 +144,7 @@ func New(ctx context.Context, cfg Config) (*App, error) {
 		_ = shutdownTelemetry(ctx)
 		return nil, err
 	}
-	skillCatalog := godeskills.Discover(godeskills.DiscoverOptions{Workspace: cfg.Workspace, DataDir: cfg.DataDir})
+	skillCatalog := godeskills.Discover(godeskills.DiscoverOptions{Workspace: cfg.Workspace, DataDir: cfg.DataDir, HomeDir: cfg.HomeDir})
 	skillManager := newSkillManager(cfg)
 	commandCatalog, err := godecommands.Load(godecommands.LoadOptions{Workspace: cfg.Workspace})
 	if err != nil {

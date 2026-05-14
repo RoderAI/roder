@@ -267,6 +267,7 @@ func newSkillsTestApp(t *testing.T) *godex.App {
 	writeTUISkill(t, filepath.Join(root, ".agents", "skills", "go-development"), "go-development", "Go development")
 	app, err := godex.New(context.Background(), godex.Config{
 		DataDir:     filepath.Join(t.TempDir(), "data"),
+		HomeDir:     filepath.Join(t.TempDir(), "home"),
 		Workspace:   root,
 		Provider:    "mock",
 		Model:       "mock",

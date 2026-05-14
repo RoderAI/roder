@@ -10,6 +10,7 @@ func newSkillManager(cfg Config) *godeskills.Manager {
 	return &godeskills.Manager{
 		Workspace: cfg.Workspace,
 		DataDir:   cfg.DataDir,
+		HomeDir:   cfg.HomeDir,
 		LoadSettings: func(context.Context) (godeskills.ActivationSettings, error) {
 			settings, err := LoadSettings(cfg.DataDir)
 			if err != nil {

@@ -16,7 +16,7 @@ func TestAtOpensFileCompletionAndAttachesFile(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(workspace, "README.md"), []byte("hello\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	app, err := godex.New(context.Background(), godex.Config{DataDir: t.TempDir(), Workspace: workspace, Provider: "mock", AutoApprove: true})
+	app, err := godex.New(context.Background(), godex.Config{DataDir: t.TempDir(), HomeDir: t.TempDir(), Workspace: workspace, Provider: "mock", AutoApprove: true})
 	if err != nil {
 		t.Fatalf("app: %v", err)
 	}
@@ -64,7 +64,7 @@ func TestDollarOpensSkillCompletionAndInsertsSkill(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(skillDir, "SKILL.md"), []byte("---\nname: some-skill\ndescription: does work\n---\nUse it.\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	app, err := godex.New(context.Background(), godex.Config{DataDir: t.TempDir(), Workspace: workspace, Provider: "mock", AutoApprove: true})
+	app, err := godex.New(context.Background(), godex.Config{DataDir: t.TempDir(), HomeDir: t.TempDir(), Workspace: workspace, Provider: "mock", AutoApprove: true})
 	if err != nil {
 		t.Fatalf("app: %v", err)
 	}
@@ -95,7 +95,7 @@ func TestTokenCompletionFiltersFileAndReplacesMention(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	app, err := godex.New(context.Background(), godex.Config{DataDir: t.TempDir(), Workspace: workspace, Provider: "mock", AutoApprove: true})
+	app, err := godex.New(context.Background(), godex.Config{DataDir: t.TempDir(), HomeDir: t.TempDir(), Workspace: workspace, Provider: "mock", AutoApprove: true})
 	if err != nil {
 		t.Fatalf("app: %v", err)
 	}
@@ -131,7 +131,7 @@ func TestCompletionDialogAcceptsTypedSkillQuery(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	app, err := godex.New(context.Background(), godex.Config{DataDir: t.TempDir(), Workspace: workspace, Provider: "mock", AutoApprove: true})
+	app, err := godex.New(context.Background(), godex.Config{DataDir: t.TempDir(), HomeDir: t.TempDir(), Workspace: workspace, Provider: "mock", AutoApprove: true})
 	if err != nil {
 		t.Fatalf("app: %v", err)
 	}
