@@ -55,7 +55,7 @@ func TestAnthropicParamsFromCanonicalItems(t *testing.T) {
 func TestAnthropicParamsUseCanonicalItemsOnly(t *testing.T) {
 	anthropicProvider := NewAnthropic("")
 	params, err := anthropicProvider.messageParams(Request{
-		Messages: []Message{{Role: RoleUser, Content: "legacy should be ignored"}},
+		Messages: []Message{{Role: RoleUser, Content: "flattened transcript should be ignored"}},
 		InputItems: []Item{{
 			Kind: ItemMessage,
 			Role: "user",
@@ -72,8 +72,8 @@ func TestAnthropicParamsUseCanonicalItemsOnly(t *testing.T) {
 	if !strings.Contains(string(data), "hello") {
 		t.Fatalf("messages JSON = %s", data)
 	}
-	if strings.Contains(string(data), "legacy should be ignored") {
-		t.Fatalf("legacy message fallback leaked into Anthropic params: %s", data)
+	if strings.Contains(string(data), "flattened transcript should be ignored") {
+		t.Fatalf("flattened message fallback leaked into Anthropic params: %s", data)
 	}
 }
 
