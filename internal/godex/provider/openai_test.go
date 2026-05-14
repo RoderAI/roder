@@ -1,9 +1,11 @@
 package provider
 
 import (
+	"context"
 	"encoding/json"
 	"io"
 	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 
@@ -131,6 +133,35 @@ func TestOpenAICompactParamsTruncatesHugeRawFunctionCallOutputs(t *testing.T) {
 		if !strings.Contains(output, want) {
 			t.Fatalf("compacted raw output missing %q", want)
 		}
+	}
+}
+
+func TestOpenAICompactAcceptsJSONResponseWithoutContentType(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.URL.Path != "/responses/compact" {
+			t.Fatalf("request = %s %s", r.Method, r.URL.Path)
+		}
+		w.Header().Set("Content-Type", "")
+		_, _ = w.Write([]byte(`{"id":"resp_compact","object":"response.compaction","output":[{"id":"cmp_1","type":"compaction","encrypted_content":"opaque"}]}`))
+	}))
+	defer server.Close()
+
+	openaiProvider := NewOpenAIWithConfig(OpenAIConfig{
+		Model:   "gpt-5.5",
+		BaseURL: server.URL,
+		APIKey:  "test-key",
+	})
+	result, err := openaiProvider.Compact(context.Background(), CompactRequest{
+		Messages: []Message{{Role: RoleUser, Content: "hello"}},
+	})
+	if err != nil {
+		t.Fatalf("compact: %v", err)
+	}
+	if result.ID != "resp_compact" || len(result.Output) != 1 {
+		t.Fatalf("result = %#v", result)
+	}
+	if !strings.Contains(string(result.Output[0]), `"type":"compaction"`) {
+		t.Fatalf("output = %s", result.Output[0])
 	}
 }
 

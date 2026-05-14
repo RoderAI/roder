@@ -11,11 +11,13 @@ const (
 	ProviderOpenAI    = "openai"
 	ProviderCodex     = "codex"
 	ProviderAnthropic = "anthropic"
+	ProviderGemini    = "gemini"
 
 	ProviderKindMock      = "mock"
 	ProviderKindOpenAI    = "openai"
 	ProviderKindChat      = "chat_completions"
 	ProviderKindAnthropic = "anthropic"
+	ProviderKindGemini    = "gemini"
 
 	ReasoningNone    = "none"
 	ReasoningMinimal = "minimal"
@@ -37,6 +39,7 @@ type ProviderConfig struct {
 	DefaultModel       string
 	BaseURL            string
 	EnvKey             string
+	EnvAliases         []string
 	RequiresAuth       bool
 	SupportsWebSockets bool
 	Disabled           bool
@@ -58,6 +61,9 @@ type ModelConfig struct {
 	MaxContextWindow      int
 	AutoCompactTokenLimit int
 	SupportsCompaction    bool
+	SupportsImages        bool
+	SupportsTools         bool
+	SupportsStructured    bool
 	EditTool              string
 	Hidden                bool
 }
@@ -206,6 +212,16 @@ var builtInProviders = []ProviderConfig{
 		RequiresAuth:       true,
 		SupportsWebSockets: false,
 	},
+	{
+		ID:                 ProviderGemini,
+		Name:               "Gemini",
+		Kind:               ProviderKindGemini,
+		DefaultModel:       "gemini-3.1-pro-preview",
+		EnvKey:             "GEMINI_API_TOKEN",
+		EnvAliases:         geminiEnvAliases(),
+		RequiresAuth:       true,
+		SupportsWebSockets: false,
+	},
 }
 
 var builtInModels = []ModelConfig{
@@ -290,6 +306,50 @@ var builtInModels = []ModelConfig{
 			{Effort: ReasoningMedium, Description: "Balances speed and reasoning depth for everyday tasks"},
 		},
 	}),
+	withContextWindow(ModelConfig{
+		ID:                 "gemini-3.1-pro-preview",
+		DisplayName:        "Gemini 3.1 Pro Preview",
+		Description:        "Gemini model for complex coding, long context, and tool-heavy agent workflows.",
+		Provider:           ProviderGemini,
+		DefaultReasoning:   ReasoningHigh,
+		SupportedReasoning: geminiReasoning(),
+		SupportsImages:     true,
+		SupportsTools:      true,
+		SupportsStructured: true,
+	}),
+	withContextWindow(ModelConfig{
+		ID:                 "gemini-3.1-pro-preview-customtools",
+		DisplayName:        "Gemini 3.1 Pro Preview Custom Tools",
+		Description:        "Gemini preview variant exposed for custom tool validation and tool-heavy coding workflows.",
+		Provider:           ProviderGemini,
+		DefaultReasoning:   ReasoningHigh,
+		SupportedReasoning: geminiReasoning(),
+		SupportsImages:     true,
+		SupportsTools:      true,
+		SupportsStructured: true,
+	}),
+	withContextWindow(ModelConfig{
+		ID:                 "gemini-3-flash-preview",
+		DisplayName:        "Gemini 3 Flash Preview",
+		Description:        "Fast Gemini model for everyday coding, tool use, and multimodal prompts.",
+		Provider:           ProviderGemini,
+		DefaultReasoning:   ReasoningMedium,
+		SupportedReasoning: geminiReasoning(),
+		SupportsImages:     true,
+		SupportsTools:      true,
+		SupportsStructured: true,
+	}),
+	withContextWindow(ModelConfig{
+		ID:                 "gemini-3.1-flash-lite",
+		DisplayName:        "Gemini 3.1 Flash-Lite",
+		Description:        "Lightweight Gemini model for low-latency coding and agent interactions.",
+		Provider:           ProviderGemini,
+		DefaultReasoning:   ReasoningLow,
+		SupportedReasoning: geminiReasoning(),
+		SupportsImages:     true,
+		SupportsTools:      true,
+		SupportsStructured: true,
+	}),
 	{
 		ID:                 "text-embedding-3-large",
 		DisplayName:        "Text Embedding 3 Large",
@@ -318,6 +378,21 @@ func withContextWindow(model ModelConfig) ModelConfig {
 	model.SupportsCompaction = window.SupportsCompaction
 	model.EditTool = normalizeEditTool(firstNonEmpty(model.EditTool, defaultEditToolForModel(model.ID)))
 	return model
+}
+
+func geminiEnvAliases() []string {
+	return []string{"GEMINI_API_KEY", "GOOGLE_API_KEY", "GOOGLE_GENAI_API_KEY", "GOOGLE_AI_API_KEY"}
+}
+
+func geminiReasoning() []ReasoningOption {
+	return []ReasoningOption{
+		{Effort: ReasoningNone, Description: "No explicit Gemini thinking configuration"},
+		{Effort: ReasoningMinimal, Description: "Minimal Gemini thinking"},
+		{Effort: ReasoningLow, Description: "Low Gemini thinking"},
+		{Effort: ReasoningMedium, Description: "Medium Gemini thinking"},
+		{Effort: ReasoningHigh, Description: "High Gemini thinking"},
+		{Effort: ReasoningXHigh, Description: "High Gemini thinking with extra budget where supported"},
+	}
 }
 
 func normalizeEditTool(value string) string {

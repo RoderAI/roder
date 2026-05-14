@@ -509,7 +509,7 @@ func TestRenderToolCardWithDiffAndMetadata(t *testing.T) {
 	}, zones))
 
 	visible := ansi.Strip(out)
-	for _, want := range []string{"› git_diff", "diff --git", "-old", "+new"} {
+	for _, want := range []string{"› ● git_diff", "diff --git", "-old", "+new"} {
 		if !strings.Contains(visible, want) {
 			t.Fatalf("rendered output missing %q:\n%s", want, out)
 		}
@@ -541,7 +541,7 @@ func TestRenderToolCardShowsHookAndPermissionMetadata(t *testing.T) {
 	}, zones))
 
 	visible := ansi.Strip(out)
-	for _, want := range []string{"› shell", "hook:", "allow", "› write_file", "action:", "README.md"} {
+	for _, want := range []string{"› ● shell", "hook:", "allow", "› ○ write_file", "action:", "README.md"} {
 		if !strings.Contains(visible, want) {
 			t.Fatalf("rendered output missing %q:\n%s", want, out)
 		}

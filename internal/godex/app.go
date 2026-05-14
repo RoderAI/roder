@@ -459,6 +459,19 @@ func buildProvider(cfg Config) (provider.Provider, error) {
 			BaseURL: firstNonEmpty(resolvedModel.BaseURL, providerConfig.BaseURL),
 			APIKey:  apiKeyForResolvedModel(resolvedModel),
 		}), nil
+	case provider.APITypeGemini:
+		return provider.NewGeminiWithConfig(context.TODO(), provider.GeminiConfig{
+			Model:       resolvedModel.UpstreamModel,
+			Reasoning:   cfg.Reasoning,
+			Backend:     resolvedModel.Backend,
+			BaseURL:     firstNonEmpty(resolvedModel.BaseURL, providerConfig.BaseURL),
+			APIKey:      apiKeyForResolvedModel(resolvedModel),
+			Headers:     resolvedModel.Headers,
+			Project:     resolvedModel.Project,
+			ProjectEnv:  resolvedModel.ProjectEnv,
+			Location:    resolvedModel.Location,
+			LocationEnv: resolvedModel.LocationEnv,
+		})
 	default:
 		return nil, fmt.Errorf("unsupported provider type %q for model %q", resolvedModel.APIType, cfg.Model)
 	}

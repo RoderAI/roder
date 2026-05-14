@@ -97,6 +97,41 @@ reasoning_efforts = ["low", "medium", "high"]
 edit_tool = "edit"
 ```
 
+Native Gemini models use the official Go GenAI SDK (`google.golang.org/genai`) rather than a Chat Completions compatibility endpoint. Prefer `GEMINI_API_TOKEN` for Developer API keys; Gode also checks `GEMINI_API_KEY`, `GOOGLE_API_KEY`, `GOOGLE_GENAI_API_KEY`, and `GOOGLE_AI_API_KEY` when no model-specific key is configured.
+
+```sh
+export GEMINI_API_TOKEN="..."
+```
+
+`gemini-3.1-pro-preview-customtools` is also built in. It uses the same native Gemini provider path as Pro Preview, but targets Google's custom-tools endpoint for agentic workflows that rely heavily on Gode tools and shell commands.
+
+```toml
+[model.gemini-pro]
+type = "gemini"
+provider = "gemini"
+model = "gemini-3.1-pro-preview"
+display_name = "Gemini 3.1 Pro"
+api_key_env = "GEMINI_API_TOKEN"
+context_window = 1048576
+max_context_window = 1048576
+default_reasoning = "high"
+reasoning_efforts = ["minimal", "low", "medium", "high"]
+supports_images = true
+supports_tools = true
+
+[model.gemini-enterprise]
+type = "gemini"
+provider = "gemini-enterprise"
+model = "gemini-3.1-pro-preview"
+display_name = "Gemini Enterprise"
+backend = "enterprise"
+project_env = "GOOGLE_CLOUD_PROJECT"
+location_env = "GOOGLE_CLOUD_LOCATION"
+context_window = 1048576
+```
+
+Enterprise mode uses `GOOGLE_GENAI_USE_ENTERPRISE`, `GOOGLE_CLOUD_PROJECT`, `GOOGLE_CLOUD_LOCATION`, and Application Default Credentials/`GOOGLE_APPLICATION_CREDENTIALS` as supported by the SDK, but those settings are not required for normal Gemini Developer API usage. Sessions remain stored as provider-neutral Responses-shaped items; Gode rebuilds Gemini SDK content at request time and does not persist Gemini SDK objects.
+
 `edit_tool` controls which write primitive is loaded and exposed to the model. Use `patch` for GPT-style models so they only get `apply_patch`; use `edit` for non-GPT models so they get `write_file`, `edit`, and `multi_edit` instead. When omitted, models whose upstream name starts with `gpt` default to `patch`; all other models default to `edit`.
 
 Inspect the active catalog with:
@@ -113,6 +148,13 @@ GODE_MODEL=deepseek-chat \
 GODE_LIVE_CHAT_COMPLETIONS_BASE_URL=https://api.deepseek.com/v1 \
 GODE_LIVE_CHAT_COMPLETIONS_API_KEY="$DEEPSEEK_API_KEY" \
 go test ./internal/godex/provider -run TestChatCompletionsLive -v
+```
+
+Optional live Gemini smoke tests are also skipped by default:
+
+```sh
+GEMINI_LIVE=1 GEMINI_API_TOKEN="$GEMINI_API_TOKEN" \
+  go test ./internal/godex/provider -run TestGeminiLive -v
 ```
 
 ## Shell Tooling
