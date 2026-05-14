@@ -20,7 +20,7 @@ func (s *Server) handleSkillsList(raw json.RawMessage) (any, *RPCError) {
 	if strings.TrimSpace(params.CWD) != "" {
 		workspace = params.CWD
 	}
-	catalog := godeskills.Discover(godeskills.DiscoverOptions{Workspace: workspace, DataDir: s.app.Config.DataDir})
+	catalog := godeskills.Discover(godeskills.DiscoverOptions{Workspace: workspace, DataDir: s.app.Config.DataDir, HomeDir: s.app.Config.HomeDir})
 	settings, err := s.app.SkillManager.LoadSettings(context.Background())
 	if err != nil {
 		return nil, rpcError(errorInternal, err.Error())

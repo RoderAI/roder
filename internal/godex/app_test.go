@@ -83,6 +83,7 @@ func TestNewAppShellToolHasDefaultBuiltins(t *testing.T) {
 	app, err := New(context.Background(), Config{
 		Workspace:   workspace,
 		DataDir:     t.TempDir(),
+		HomeDir:     t.TempDir(),
 		Provider:    "mock",
 		AutoApprove: true,
 	})
@@ -354,6 +355,7 @@ extra_context = "inline repo context"
 	app, err := New(context.Background(), Config{
 		Workspace:   workspace,
 		DataDir:     t.TempDir(),
+		HomeDir:     t.TempDir(),
 		Provider:    "mock",
 		AutoApprove: true,
 	})
@@ -390,6 +392,7 @@ Run Go tests.
 	app, err := New(context.Background(), Config{
 		Workspace:   workspace,
 		DataDir:     t.TempDir(),
+		HomeDir:     t.TempDir(),
 		Provider:    "mock",
 		AutoApprove: true,
 	})
@@ -421,6 +424,7 @@ Run Go tests.
 	app, err := New(context.Background(), Config{
 		Workspace:   workspace,
 		DataDir:     dataDir,
+		HomeDir:     t.TempDir(),
 		Provider:    "mock",
 		AutoApprove: true,
 	})

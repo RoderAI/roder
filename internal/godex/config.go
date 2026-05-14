@@ -15,6 +15,7 @@ import (
 type Config struct {
 	Workspace             string
 	DataDir               string
+	HomeDir               string
 	Provider              string
 	Model                 string
 	Reasoning             string

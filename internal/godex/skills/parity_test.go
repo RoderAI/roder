@@ -16,7 +16,7 @@ func TestCodexParityFixturesCoverCoreContracts(t *testing.T) {
 	catalog := Discover(DiscoverOptions{Roots: []Root{
 		{Path: filepath.Join(root, "repo"), Scope: SkillScopeRepo},
 		{Path: filepath.Join(root, "user"), Scope: SkillScopeUser},
-	}})
+	}, HomeDir: filepath.Join(root, "home")})
 	if got := skillNames(catalog.Skills); len(got) != 2 || got[0] != "duplicate" || got[1] != "duplicate" {
 		t.Fatalf("skills = %#v diagnostics=%#v", got, catalog.Diagnostics)
 	}

@@ -68,6 +68,8 @@ func discoverRoots(opts DiscoverOptions) []Root {
 		roots = append(roots, Root{Path: filepath.Join(dataDir, "skills"), Scope: SkillScopeUser})
 	}
 	if homeDir != "" {
+		roots = append(roots, Root{Path: filepath.Join(homeDir, ".agents", "skills"), Scope: SkillScopeUser})
+		roots = append(roots, Root{Path: filepath.Join(homeDir, ".codex", "skills"), Scope: SkillScopeUser})
 		roots = append(roots, Root{Path: filepath.Join(homeDir, ".gode", "skills"), Scope: SkillScopeUser})
 	}
 	if codexHome := envValue(opts.Env, "CODEX_HOME"); codexHome != "" {

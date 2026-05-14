@@ -37,8 +37,8 @@ type skillFrontmatter struct {
 }
 
 type skillFrontmatterMetadata struct {
-	ShortDescription string            `yaml:"short-description"`
-	Extra            map[string]string `yaml:",inline"`
+	ShortDescription string         `yaml:"short-description"`
+	Extra            map[string]any `yaml:",inline"`
 }
 
 type openAIMetadata struct {
@@ -79,7 +79,11 @@ func parseSkillFrontmatter(frontmatter string) (Skill, error) {
 		if key == "short-description" {
 			continue
 		}
-		if cleaned := cleanSingleLine(value, maxDescriptionLen); cleaned != "" {
+		text, ok := value.(string)
+		if !ok {
+			continue
+		}
+		if cleaned := cleanSingleLine(text, maxDescriptionLen); cleaned != "" {
 			metadata[key] = cleaned
 		}
 	}
