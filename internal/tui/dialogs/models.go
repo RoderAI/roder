@@ -15,6 +15,7 @@ const (
 	ScreenModels
 	ScreenReasoning
 	ScreenConfig
+	ScreenMemories
 	ScreenSkills
 	ScreenSkillRecommendations
 	ScreenSkillInstall
@@ -28,6 +29,7 @@ type Settings struct {
 	MenuIndex           int
 	ModelIndex          int
 	ReasoningIndex      int
+	MemoryIndex         int
 	SkillIndex          int
 	RecommendedIndex    int
 	Skills              []viewmodel.SettingsSkillItem
@@ -35,6 +37,7 @@ type Settings struct {
 	InstallPrompt       viewmodel.SettingsInstallPrompt
 	SkillInstalledCount int
 	SkillEnabledCount   int
+	MemoryCount         int
 	Err                 string
 }
 
@@ -110,6 +113,8 @@ func (s *Settings) Move(delta int) {
 		s.ModelIndex = wrapIndex(s.ModelIndex+delta, count)
 	case ScreenReasoning:
 		s.ReasoningIndex = wrapIndex(s.ReasoningIndex+delta, count)
+	case ScreenMemories:
+		s.MemoryIndex = wrapIndex(s.MemoryIndex+delta, count)
 	case ScreenSkills:
 		s.SkillIndex = wrapIndex(s.SkillIndex+delta, count)
 	case ScreenSkillRecommendations:
@@ -125,6 +130,8 @@ func (s Settings) SelectionCount() int {
 		return len(s.Models)
 	case ScreenReasoning:
 		return len(s.ReasoningOptions())
+	case ScreenMemories:
+		return len(s.memoryRows())
 	case ScreenSkills:
 		return len(s.Skills)
 	case ScreenSkillRecommendations:
@@ -250,6 +257,12 @@ func (s Settings) MenuItems() []viewmodel.SettingsMenuItem {
 			Value:       onOff(s.Config.MarkdownRendering),
 		},
 		{
+			ID:          "memories",
+			Label:       "Memories",
+			Description: "Enable local workspace semantic memories and prompt recall.",
+			Value:       onOff(s.Config.Memories.Enabled),
+		},
+		{
 			ID:          "config",
 			Label:       "Config",
 			Description: "Review provider, reasoning, workspace, and data paths.",
@@ -282,6 +295,7 @@ func (s Settings) ViewModel() *viewmodel.SettingsDialog {
 		Models:            s.viewModels(),
 		Reasoning:         s.viewReasoning(),
 		ConfigRows:        s.configRows(),
+		Memory:            s.viewMemory(),
 		Skills:            s.viewSkills(),
 		RecommendedSkills: s.viewRecommendedSkills(),
 		InstallPrompt:     s.InstallPrompt,
@@ -299,6 +313,8 @@ func (s Settings) title() string {
 		return "Reasoning"
 	case ScreenConfig:
 		return "Config"
+	case ScreenMemories:
+		return "Memories"
 	case ScreenSkills:
 		return "Installed Skills"
 	case ScreenSkillRecommendations:
@@ -318,6 +334,8 @@ func (s Settings) ScreenName() string {
 		return viewmodel.SettingsScreenReasoning
 	case ScreenConfig:
 		return viewmodel.SettingsScreenConfig
+	case ScreenMemories:
+		return viewmodel.SettingsScreenMemories
 	case ScreenSkills:
 		return viewmodel.SettingsScreenSkills
 	case ScreenSkillRecommendations:
@@ -335,6 +353,8 @@ func (s Settings) selectedIndex() int {
 		return s.ModelIndex
 	case ScreenReasoning:
 		return s.ReasoningIndex
+	case ScreenMemories:
+		return s.MemoryIndex
 	case ScreenSkills:
 		return s.SkillIndex
 	case ScreenSkillRecommendations:
@@ -413,6 +433,10 @@ func (s Settings) configRows() []viewmodel.SettingsConfigRow {
 		{Label: "Permission mode", Value: permissionModeLabel(s.Config.AutoApprove)},
 		{Label: "Timeline style", Value: timelineStyleLabel(s.Config.TimelineStyle)},
 		{Label: "Markdown rendering", Value: onOff(s.Config.MarkdownRendering)},
+		{Label: "Memories", Value: onOff(s.Config.Memories.Enabled)},
+		{Label: "Memory auto recall", Value: onOff(s.Config.Memories.AutoRecall)},
+		{Label: "Memory auto observe", Value: onOff(s.Config.Memories.AutoObserve)},
+		{Label: "Memory database", Value: s.Config.Memories.DatabasePath},
 		{Label: "Workspace", Value: s.Config.Workspace},
 		{Label: "Data dir", Value: s.Config.DataDir},
 	}
@@ -420,19 +444,6 @@ func (s Settings) configRows() []viewmodel.SettingsConfigRow {
 
 func skillCountValue(enabled int, installed int) string {
 	return fmt.Sprintf("%d/%d enabled", enabled, installed)
-}
-
-func settingsFromConfig(cfg godex.Config) godex.Settings {
-	return godex.Settings{
-		DefaultModel:          cfg.Model,
-		DefaultReasoning:      cfg.Reasoning,
-		FastMode:              cfg.FastMode,
-		AutoApprove:           cfg.AutoApprove,
-		TimelineStyle:         cfg.TimelineStyle,
-		MarkdownRendering:     cfg.MarkdownRendering,
-		DisableAutoCompaction: cfg.DisableAutoCompaction,
-		AutoCompactTokenLimit: cfg.AutoCompactTokenLimit,
-	}
 }
 
 func onOff(enabled bool) string {

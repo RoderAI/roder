@@ -90,6 +90,8 @@ func New(app *godex.App) Model {
 	input.Focus()
 	model := Model{
 		app:                     app,
+		width:                   100,
+		height:                  30,
 		zones:                   zones,
 		transcript:              components.NewTranscriptCache(),
 		input:                   input,
