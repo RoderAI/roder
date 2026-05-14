@@ -37,6 +37,7 @@ func TestAnthropicParamsFromCanonicalItems(t *testing.T) {
 	for _, want := range []string{
 		`"model":"claude-sonnet-4-6"`,
 		`"max_tokens":1234`,
+		`"cache_control":{"type":"ephemeral"}`,
 		`"system":[{"text":"You are gode.","type":"text"}]`,
 		`"messages":[{"content":[{"text":"Read the file.","type":"text"}],"role":"user"}]`,
 		`"name":"read_file"`,
