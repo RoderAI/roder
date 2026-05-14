@@ -421,20 +421,58 @@ func openAITools(specs []ToolSpec) []responses.ToolUnionParam {
 	namespaceTools := make([]responses.NamespaceToolToolUnionParam, 0, len(specs))
 	for _, spec := range specs {
 		schema := normalizeToolSchema(spec.Schema)
+		function := responses.NamespaceToolToolFunctionParam{
+			Name:        spec.Name,
+			Description: param.NewOpt(spec.Description),
+			Parameters:  schema,
+			Strict:      param.NewOpt(false),
+		}
+		if openAIToolShouldDefer(spec.Name) {
+			function.DeferLoading = param.NewOpt(true)
+		}
 		namespaceTools = append(namespaceTools, responses.NamespaceToolToolUnionParam{
-			OfFunction: &responses.NamespaceToolToolFunctionParam{
-				Name:         spec.Name,
-				Description:  param.NewOpt(spec.Description),
-				Parameters:   schema,
-				Strict:       param.NewOpt(false),
-				DeferLoading: param.NewOpt(true),
-			},
+			OfFunction: &function,
 		})
 	}
 	return []responses.ToolUnionParam{
 		responses.ToolParamOfNamespace("Gode coding-agent tools for reading files, searching, editing, and inspecting the current workspace.", "gode", namespaceTools),
 		{OfToolSearch: &responses.ToolSearchToolParam{Execution: responses.ToolSearchToolExecutionServer}},
 	}
+}
+
+func openAIToolShouldDefer(name string) bool {
+	if strings.HasPrefix(name, "memory_") {
+		return false
+	}
+	_, eager := openAIEagerToolNames[name]
+	return !eager
+}
+
+var openAIEagerToolNames = map[string]struct{}{
+	"apply_patch":        {},
+	"create_goal":        {},
+	"download":           {},
+	"edit":               {},
+	"get_goal":           {},
+	"git_diff":           {},
+	"git_status":         {},
+	"glob":               {},
+	"grep":               {},
+	"list_files":         {},
+	"list_mcp_prompts":   {},
+	"list_mcp_resources": {},
+	"lsp_diagnostics":    {},
+	"lsp_restart":        {},
+	"multi_edit":         {},
+	"read_file":          {},
+	"read_mcp_resource":  {},
+	"run_mcp_prompt":     {},
+	"search_files":       {},
+	"shell":              {},
+	"subagent":           {},
+	"todo_update":        {},
+	"update_goal":        {},
+	"write_file":         {},
 }
 
 func normalizeToolSchema(schema map[string]any) map[string]any {
