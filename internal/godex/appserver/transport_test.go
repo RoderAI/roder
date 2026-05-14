@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/pandelisz/gode/internal/godex"
 	"nhooyr.io/websocket"
@@ -32,6 +33,123 @@ func TestParseListenURL(t *testing.T) {
 	if _, err := ParseListenURL("http://127.0.0.1:1"); err == nil {
 		t.Fatal("ParseListenURL accepted unsupported scheme")
 	}
+}
+
+func TestRemoteWebSocketRequiresAuth(t *testing.T) {
+	ctx := context.Background()
+	app, err := godex.New(ctx, godex.Config{
+		Workspace:   filepath.Join(t.TempDir(), "workspace"),
+		DataDir:     t.TempDir(),
+		Provider:    "mock",
+		AutoApprove: true,
+	})
+	if err != nil {
+		t.Fatalf("new app: %v", err)
+	}
+	defer app.Close(ctx)
+
+	auth, err := NewRemoteAuth("remote-secret", time.Unix(10, 0))
+	if err != nil {
+		t.Fatalf("new auth: %v", err)
+	}
+	server := New(app, Options{Version: "test", Remote: RemoteOptions{Enabled: true, Auth: auth}})
+	listener, err := server.ListenWebSocket(ctx, "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen websocket: %v", err)
+	}
+	defer listener.Close(ctx)
+
+	resp, err := http.Get(listener.HTTPURL() + "/readyz")
+	if err != nil {
+		t.Fatalf("readyz: %v", err)
+	}
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("readyz status = %d", resp.StatusCode)
+	}
+	_ = resp.Body.Close()
+
+	_, resp, err = websocket.Dial(ctx, listener.WebSocketURL(), nil)
+	if err == nil {
+		t.Fatal("unauthenticated dial succeeded")
+	}
+	if resp == nil || resp.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("unauthenticated status = %v err=%v", statusCode(resp), err)
+	}
+
+	ws, _, err := websocket.Dial(ctx, listener.WebSocketURL(), &websocket.DialOptions{
+		HTTPHeader: http.Header{"Authorization": []string{"Bearer remote-secret"}},
+	})
+	if err != nil {
+		t.Fatalf("authorized dial: %v", err)
+	}
+	defer ws.Close(websocket.StatusNormalClosure, "")
+	assertInitializeHasRemote(t, ctx, ws)
+}
+
+func TestRemoteWebSocketSubprotocolAuth(t *testing.T) {
+	ctx := context.Background()
+	app, err := godex.New(ctx, godex.Config{
+		Workspace:   filepath.Join(t.TempDir(), "workspace"),
+		DataDir:     t.TempDir(),
+		Provider:    "mock",
+		AutoApprove: true,
+	})
+	if err != nil {
+		t.Fatalf("new app: %v", err)
+	}
+	defer app.Close(ctx)
+
+	auth, err := NewRemoteAuth("remote-secret", time.Unix(10, 0))
+	if err != nil {
+		t.Fatalf("new auth: %v", err)
+	}
+	server := New(app, Options{Version: "test", Remote: RemoteOptions{Enabled: true, Auth: auth}})
+	listener, err := server.ListenWebSocket(ctx, "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen websocket: %v", err)
+	}
+	defer listener.Close(ctx)
+
+	ws, _, err := websocket.Dial(ctx, listener.WebSocketURL(), &websocket.DialOptions{
+		Subprotocols: []string{remoteSubprotocol, "bearer.remote-secret"},
+	})
+	if err != nil {
+		t.Fatalf("subprotocol dial: %v", err)
+	}
+	defer ws.Close(websocket.StatusNormalClosure, "")
+	if ws.Subprotocol() != remoteSubprotocol {
+		t.Fatalf("subprotocol = %q", ws.Subprotocol())
+	}
+	assertInitializeHasRemote(t, ctx, ws)
+}
+
+func assertInitializeHasRemote(t *testing.T, ctx context.Context, ws *websocket.Conn) {
+	t.Helper()
+	if err := ws.Write(ctx, websocket.MessageText, []byte(`{"id":1,"method":"initialize","params":{"clientInfo":{"name":"gode_ws_test"}}}`)); err != nil {
+		t.Fatalf("write initialize: %v", err)
+	}
+	_, data, err := ws.Read(ctx)
+	if err != nil {
+		t.Fatalf("read initialize response: %v", err)
+	}
+	var msg Message
+	if err := json.Unmarshal(data, &msg); err != nil {
+		t.Fatalf("unmarshal response: %v", err)
+	}
+	if msg.Error != nil {
+		t.Fatalf("initialize error: %#v", msg.Error)
+	}
+	result := msg.Result.(map[string]any)
+	if result["remote"] == nil {
+		t.Fatalf("remote capability missing: %#v", result)
+	}
+}
+
+func statusCode(resp *http.Response) int {
+	if resp == nil {
+		return 0
+	}
+	return resp.StatusCode
 }
 
 func TestWebSocketTransportHealthOriginAndInitialize(t *testing.T) {

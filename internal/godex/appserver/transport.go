@@ -25,6 +25,7 @@ const (
 type ListenConfig struct {
 	Kind    TransportKind
 	Address string
+	Remote  RemoteListenConfig
 }
 
 func ParseListenURL(raw string) (ListenConfig, error) {
@@ -99,7 +100,7 @@ func (s *Server) ListenWebSocket(ctx context.Context, address string) (*WebSocke
 	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-		if r.Header.Get("Origin") != "" {
+		if !s.allowOrigin(r.Header.Get("Origin")) {
 			http.Error(w, "Origin header is not allowed", http.StatusForbidden)
 			return
 		}
@@ -127,6 +128,13 @@ func (l *WebSocketListener) WebSocketURL() string {
 	return l.wsURL
 }
 
+func (l *WebSocketListener) Address() string {
+	if l == nil || l.listener == nil {
+		return ""
+	}
+	return l.listener.Addr().String()
+}
+
 func (l *WebSocketListener) Close(ctx context.Context) error {
 	if l == nil || l.server == nil {
 		return nil
@@ -135,7 +143,15 @@ func (l *WebSocketListener) Close(ctx context.Context) error {
 }
 
 func (s *Server) handleWebSocket(ctx context.Context, w http.ResponseWriter, r *http.Request) {
-	ws, err := websocket.Accept(w, r, &websocket.AcceptOptions{InsecureSkipVerify: true})
+	if s.options.Remote.Enabled && !s.options.Remote.Auth.VerifyRequest(r) {
+		http.Error(w, "remote authentication required", http.StatusUnauthorized)
+		return
+	}
+	acceptOptions := &websocket.AcceptOptions{InsecureSkipVerify: true}
+	if s.options.Remote.Enabled {
+		acceptOptions.Subprotocols = []string{remoteSubprotocol}
+	}
+	ws, err := websocket.Accept(w, r, acceptOptions)
 	if err != nil {
 		return
 	}
@@ -161,4 +177,16 @@ func (s *Server) handleWebSocket(ctx context.Context, w http.ResponseWriter, r *
 			return
 		}
 	}
+}
+
+func (s *Server) allowOrigin(origin string) bool {
+	if origin == "" {
+		return true
+	}
+	for _, allowed := range s.options.Remote.AllowedOrigins {
+		if strings.EqualFold(strings.TrimSpace(allowed), origin) {
+			return true
+		}
+	}
+	return false
 }

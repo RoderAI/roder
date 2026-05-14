@@ -13,6 +13,92 @@ import (
 	"github.com/pandelisz/gode/internal/godex/appserver"
 )
 
+func TestAppServerRemoteParseDefaultsToWebSocket(t *testing.T) {
+	root := t.TempDir()
+	workspace := filepath.Join(root, "workspace")
+	dataDir := filepath.Join(root, "data")
+	cfg, listen, err := parseAppServerConfig([]string{
+		"--remote",
+		"--workspace", workspace,
+		"--data-dir", dataDir,
+		"--provider", "mock",
+		"--model", "mock",
+		"--reasoning", "none",
+	})
+	if err != nil {
+		t.Fatalf("parse remote app-server: %v", err)
+	}
+	if cfg.Workspace != workspace {
+		t.Fatalf("workspace = %q", cfg.Workspace)
+	}
+	if listen.Kind != appserver.TransportWebSocket || listen.Address != "0.0.0.0:0" {
+		t.Fatalf("listen = %#v", listen)
+	}
+	if !listen.Remote.Enabled || !listen.Remote.PrintQR {
+		t.Fatalf("remote config = %#v", listen.Remote)
+	}
+}
+
+func TestAppServerRemoteParseAuthTokenEnv(t *testing.T) {
+	t.Setenv("GODE_REMOTE_TOKEN", "env-secret")
+	_, listen, err := parseAppServerConfig([]string{
+		"--remote",
+		"--listen", "ws://127.0.0.1:0",
+		"--auth-token", "env:GODE_REMOTE_TOKEN",
+		"--print-qr=false",
+		"--allowed-origin", "https://phone.example",
+		"--allowed-origin", "https://other.example,https://third.example",
+		"--provider", "mock",
+		"--model", "mock",
+		"--reasoning", "none",
+	})
+	if err != nil {
+		t.Fatalf("parse remote app-server: %v", err)
+	}
+	if listen.Remote.AuthToken != "env-secret" {
+		t.Fatalf("auth token = %q", listen.Remote.AuthToken)
+	}
+	if listen.Remote.PrintQR {
+		t.Fatalf("print qr should be false")
+	}
+	if got := fmt.Sprint(listen.Remote.AllowedOrigins); got != "[https://phone.example https://other.example https://third.example]" {
+		t.Fatalf("allowed origins = %s", got)
+	}
+}
+
+func TestAppServerRemoteRejectsEmptyEnvToken(t *testing.T) {
+	t.Setenv("GODE_REMOTE_TOKEN", "")
+	_, _, err := parseAppServerConfig([]string{
+		"--remote",
+		"--auth-token", "env:GODE_REMOTE_TOKEN",
+		"--provider", "mock",
+		"--model", "mock",
+		"--reasoning", "none",
+	})
+	if err == nil {
+		t.Fatal("expected empty env token error")
+	}
+}
+
+func TestPrintRemoteServerInfoDoesNotPrintFullToken(t *testing.T) {
+	auth, err := appserver.NewRemoteAuth("full-secret-token-value", time.Unix(10, 0))
+	if err != nil {
+		t.Fatalf("new auth: %v", err)
+	}
+	var stderr bytes.Buffer
+	listener := &appserver.WebSocketListener{}
+	err = printRemoteServerInfo(&stderr, "gode app-server", "/repo", listener, auth, "full-secret-token-value", false)
+	if err != nil {
+		t.Fatalf("print remote info: %v", err)
+	}
+	if bytes.Contains(stderr.Bytes(), []byte("full-secret-token-value")) {
+		t.Fatalf("stderr exposed full token:\n%s", stderr.String())
+	}
+	if !bytes.Contains(stderr.Bytes(), []byte(auth.TokenPreview)) {
+		t.Fatalf("stderr missing token preview:\n%s", stderr.String())
+	}
+}
+
 func TestAppServerServeOffUsesWorkspaceFlag(t *testing.T) {
 	root := t.TempDir()
 	workspace := filepath.Join(root, "workspace")
