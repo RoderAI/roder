@@ -37,6 +37,45 @@ edit_tool = "edit"
 	}
 }
 
+func TestLoadGeminiUserModelTOMLIntoConfig(t *testing.T) {
+	dataDir := filepath.Join(t.TempDir(), "data")
+	writeFile(t, filepath.Join(dataDir, "config.toml"), `
+[model.gemini-pro]
+type = "gemini"
+provider = "gemini"
+model = "gemini-3.1-pro-preview"
+display_name = "Gemini Pro"
+api_key = "env:GEMINI_API_TOKEN"
+context_window = 1048576
+max_context_window = 1048576
+default_reasoning = "high"
+reasoning_efforts = ["minimal", "low", "medium", "high"]
+supports_images = true
+supports_tools = true
+
+[model.gemini-enterprise]
+type = "gemini"
+provider = "gemini-enterprise"
+model = "gemini-3.1-pro-preview"
+backend = "enterprise"
+project_env = "GOOGLE_CLOUD_PROJECT"
+location_env = "GOOGLE_CLOUD_LOCATION"
+`)
+
+	loaded, err := Load(LoadOptions{DataDir: dataDir, Env: []string{"HOME=" + t.TempDir()}})
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	cfg := loaded.Config.UserModels["gemini-pro"]
+	if cfg.Type != string(provider.APITypeGemini) || cfg.APIKey != "env:GEMINI_API_TOKEN" || cfg.ContextWindow != 1048576 || cfg.MaxContextWindow != 1048576 {
+		t.Fatalf("gemini config = %#v", cfg)
+	}
+	enterprise := loaded.Config.UserModels["gemini-enterprise"]
+	if enterprise.Backend != "enterprise" || enterprise.ProjectEnv != "GOOGLE_CLOUD_PROJECT" || enterprise.LocationEnv != "GOOGLE_CLOUD_LOCATION" {
+		t.Fatalf("enterprise = %#v", enterprise)
+	}
+}
+
 func TestLoadUserModelInvalidTypeFails(t *testing.T) {
 	dataDir := filepath.Join(t.TempDir(), "data")
 	writeFile(t, filepath.Join(dataDir, "config.toml"), `

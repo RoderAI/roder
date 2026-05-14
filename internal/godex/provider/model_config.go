@@ -12,6 +12,7 @@ const (
 	APITypeResponses       APIType = "responses"
 	APITypeChatCompletions APIType = "chat_completions"
 	APITypeAnthropic       APIType = "anthropic"
+	APITypeGemini          APIType = "gemini"
 )
 
 type UserModelConfig struct {
@@ -33,6 +34,11 @@ type UserModelConfig struct {
 	SupportsImages     bool              `json:"supports_images,omitempty" toml:"supports_images,omitempty"`
 	SupportsTools      *bool             `json:"supports_tools,omitempty" toml:"supports_tools,omitempty"`
 	SupportsCompaction bool              `json:"supports_compaction,omitempty" toml:"supports_compaction,omitempty"`
+	Backend            string            `json:"backend,omitempty" toml:"backend,omitempty"`
+	Project            string            `json:"project,omitempty" toml:"project,omitempty"`
+	ProjectEnv         string            `json:"project_env,omitempty" toml:"project_env,omitempty"`
+	Location           string            `json:"location,omitempty" toml:"location,omitempty"`
+	LocationEnv        string            `json:"location_env,omitempty" toml:"location_env,omitempty"`
 	Disabled           bool              `json:"disabled,omitempty" toml:"disabled,omitempty"`
 }
 
@@ -50,7 +56,14 @@ type ResolvedModel struct {
 	EditTool      string
 	Metadata      ModelMetadata
 	SupportsTools *bool
+	Backend       string
+	Project       string
+	ProjectEnv    string
+	Location      string
+	LocationEnv   string
 }
+
+var DefaultGeminiEnvAliases = []string{"GEMINI_API_TOKEN", "GEMINI_API_KEY", "GOOGLE_API_KEY", "GOOGLE_GENAI_API_KEY", "GOOGLE_AI_API_KEY"}
 
 func ResolveUserModel(id string, cfg UserModelConfig, env map[string]string) (ResolvedModel, error) {
 	id = strings.TrimSpace(id)
@@ -70,6 +83,9 @@ func ResolveUserModel(id string, cfg UserModelConfig, env map[string]string) (Re
 		providerID = string(apiType)
 	}
 	apiKey, apiKeyEnv, hasAPIKey := resolveAPIKey(cfg, env)
+	if apiType == APITypeGemini && apiKey == "" && apiKeyEnv == "" {
+		apiKeyEnv, hasAPIKey = resolveAPIKeyFromEnvAliases(env, DefaultGeminiEnvAliases)
+	}
 	editTool, err := parseEditTool(cfg.EditTool)
 	if err != nil {
 		return ResolvedModel{}, err
@@ -98,6 +114,11 @@ func ResolveUserModel(id string, cfg UserModelConfig, env map[string]string) (Re
 			Disabled:         cfg.Disabled,
 		},
 		SupportsTools: cfg.SupportsTools,
+		Backend:       strings.TrimSpace(cfg.Backend),
+		Project:       strings.TrimSpace(cfg.Project),
+		ProjectEnv:    strings.TrimSpace(cfg.ProjectEnv),
+		Location:      strings.TrimSpace(cfg.Location),
+		LocationEnv:   strings.TrimSpace(cfg.LocationEnv),
 	}, nil
 }
 
@@ -134,8 +155,10 @@ func parseAPIType(value string) (APIType, error) {
 		return APITypeChatCompletions, nil
 	case APITypeAnthropic:
 		return APITypeAnthropic, nil
+	case APITypeGemini:
+		return APITypeGemini, nil
 	default:
-		return "", fmt.Errorf("unsupported model type %q; allowed values: %s, %s, %s", value, APITypeResponses, APITypeChatCompletions, APITypeAnthropic)
+		return "", fmt.Errorf("unsupported model type %q; allowed values: %s, %s, %s, %s", value, APITypeResponses, APITypeChatCompletions, APITypeAnthropic, APITypeGemini)
 	}
 }
 
@@ -153,6 +176,19 @@ func resolveAPIKey(cfg UserModelConfig, env map[string]string) (apiKey string, a
 	}
 	_, hasAPIKey = env[apiKeyEnv]
 	return "", apiKeyEnv, hasAPIKey
+}
+
+func resolveAPIKeyFromEnvAliases(env map[string]string, aliases []string) (string, bool) {
+	for _, alias := range aliases {
+		alias = strings.TrimSpace(alias)
+		if alias == "" {
+			continue
+		}
+		if _, ok := env[alias]; ok {
+			return alias, true
+		}
+	}
+	return "", false
 }
 
 func (cfg UserModelConfig) RedactForLog() string {
@@ -180,6 +216,21 @@ func (cfg UserModelConfig) RedactForLog() string {
 	}
 	if cfg.Disabled {
 		parts = append(parts, "disabled=true")
+	}
+	if cfg.Backend != "" {
+		parts = append(parts, "backend="+cfg.Backend)
+	}
+	if cfg.Project != "" {
+		parts = append(parts, "project=<redacted>")
+	}
+	if cfg.ProjectEnv != "" {
+		parts = append(parts, "project_env=<redacted>")
+	}
+	if cfg.Location != "" {
+		parts = append(parts, "location=<redacted>")
+	}
+	if cfg.LocationEnv != "" {
+		parts = append(parts, "location_env=<redacted>")
 	}
 	return strings.Join(parts, " ")
 }

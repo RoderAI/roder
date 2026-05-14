@@ -117,12 +117,16 @@ func ResolveSelectedModelWithEnv(cfg Config, env map[string]string) (provider.Re
 		APIType:       apiTypeForProviderKind(providerConfig.Kind),
 		ProviderID:    providerConfig.ID,
 		BaseURL:       providerConfig.BaseURL,
-		APIKeyEnv:     providerConfig.EnvKey,
+		APIKeyEnv:     resolveProviderAPIKeyEnv(providerConfig, env),
+		HasAPIKey:     envHasAny(env, append([]string{providerConfig.EnvKey}, providerConfig.EnvAliases...)),
 		Metadata: provider.ModelMetadata{
 			ID:               model.ID,
 			DisplayName:      model.DisplayName,
 			Provider:         model.Provider,
 			ContextWindow:    model.ContextWindow,
+			SupportsImages:   model.SupportsImages,
+			SupportsTools:    model.SupportsTools,
+			SupportsJSON:     model.SupportsStructured,
 			ReasoningEfforts: model.ReasoningEfforts(),
 			DefaultReasoning: model.DefaultReasoning,
 			Disabled:         model.Hidden,
@@ -140,6 +144,32 @@ func envMapFromOS() map[string]string {
 		}
 	}
 	return out
+}
+
+func envHasAny(env map[string]string, names []string) bool {
+	for _, name := range names {
+		if strings.TrimSpace(name) == "" {
+			continue
+		}
+		if _, ok := env[name]; ok {
+			return true
+		}
+	}
+	return false
+}
+
+func resolveProviderAPIKeyEnv(providerConfig ProviderConfig, env map[string]string) string {
+	names := append([]string{providerConfig.EnvKey}, providerConfig.EnvAliases...)
+	for _, name := range names {
+		name = strings.TrimSpace(name)
+		if name == "" {
+			continue
+		}
+		if _, ok := env[name]; ok {
+			return name
+		}
+	}
+	return strings.TrimSpace(providerConfig.EnvKey)
 }
 
 func modelConfigsForConfig(cfg Config) map[string]ModelConfig {
@@ -188,6 +218,7 @@ func providerConfigsForConfig(cfg Config) map[string]ProviderConfig {
 			BaseURL:      resolved.BaseURL,
 			EnvKey:       resolved.APIKeyEnv,
 			RequiresAuth: resolved.APIKey != "" || resolved.APIKeyEnv != "",
+			EnvAliases:   nil,
 		}
 	}
 	return out
@@ -209,6 +240,7 @@ func providerConfigFromProviderPackage(id string, cfg provider.ProviderConfig) P
 		DefaultModel:       strings.TrimSpace(cfg.DefaultModel),
 		BaseURL:            strings.TrimSpace(cfg.BaseURL),
 		EnvKey:             strings.TrimSpace(cfg.EnvKey),
+		EnvAliases:         append([]string(nil), cfg.EnvAliases...),
 		RequiresAuth:       cfg.RequiresAuth,
 		SupportsWebSockets: cfg.SupportsWebSockets,
 		Disabled:           cfg.Disabled,
@@ -245,6 +277,9 @@ func modelConfigFromUserModel(id string, cfg provider.UserModelConfig) (ModelCon
 		MaxContextWindow:      window.MaxContextWindow,
 		AutoCompactTokenLimit: window.AutoCompactTokenLimit,
 		SupportsCompaction:    cfg.SupportsCompaction,
+		SupportsImages:        cfg.SupportsImages,
+		SupportsTools:         boolPtrValue(cfg.SupportsTools),
+		SupportsStructured:    resolved.APIType == provider.APITypeGemini,
 		EditTool:              normalizeEditTool(firstNonEmpty(resolved.EditTool, defaultEditToolForModel(resolved.UpstreamModel))),
 		Hidden:                cfg.Disabled,
 	}, nil
@@ -272,6 +307,8 @@ func providerKindForAPIType(apiType provider.APIType) string {
 	switch apiType {
 	case provider.APITypeAnthropic:
 		return ProviderKindAnthropic
+	case provider.APITypeGemini:
+		return ProviderKindGemini
 	case provider.APITypeChatCompletions:
 		return ProviderKindChat
 	case provider.APITypeResponses:
@@ -285,6 +322,8 @@ func apiTypeForProviderKind(kind string) provider.APIType {
 	switch kind {
 	case ProviderKindAnthropic:
 		return provider.APITypeAnthropic
+	case ProviderKindGemini:
+		return provider.APITypeGemini
 	case ProviderKindChat:
 		return provider.APITypeChatCompletions
 	case ProviderKindOpenAI:
@@ -292,6 +331,10 @@ func apiTypeForProviderKind(kind string) provider.APIType {
 	default:
 		return provider.APITypeResponses
 	}
+}
+
+func boolPtrValue(value *bool) bool {
+	return value != nil && *value
 }
 
 func displayName(id string) string {

@@ -456,6 +456,18 @@ func TestModelListUsesBuiltInCatalog(t *testing.T) {
 	if models[0]["defaultReasoningEffort"] != godex.ReasoningMedium {
 		t.Fatalf("first model default reasoning = %#v", models[0]["defaultReasoningEffort"])
 	}
+	foundGemini := false
+	for _, model := range models {
+		if model["id"] == "gemini-3.1-pro-preview" {
+			foundGemini = true
+			if model["modelProvider"] != godex.ProviderGemini || model["contextWindow"] != 1048576 || model["supportsImages"] != true || model["supportsTools"] != true || model["supportsStructured"] != true {
+				t.Fatalf("gemini model metadata = %#v", model)
+			}
+		}
+	}
+	if !foundGemini {
+		t.Fatal("gemini model missing from app-server model list")
+	}
 }
 
 func initializeTestConnection(t *testing.T, conn *Connection) {

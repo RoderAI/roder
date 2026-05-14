@@ -64,12 +64,25 @@ var modelWindows = map[string]ModelWindow{
 		AutoCompactTokenLimit: 160000,
 		SupportsCompaction:    false,
 	},
+	"gemini-3.1-pro-preview":             geminiWindow(),
+	"gemini-3.1-pro-preview-customtools": geminiWindow(),
+	"gemini-3-flash-preview":             geminiWindow(),
+	"gemini-3.1-flash-lite":              geminiWindow(),
 	"codex-auto-review": {
 		ContextWindow:         DefaultOpenAIContextWindow,
 		MaxContextWindow:      DefaultOpenAIContextWindow,
 		AutoCompactTokenLimit: DefaultOpenAICompactLimit,
 		SupportsCompaction:    false,
 	},
+}
+
+func geminiWindow() ModelWindow {
+	return ModelWindow{
+		ContextWindow:         1048576,
+		MaxContextWindow:      1048576,
+		AutoCompactTokenLimit: 838860,
+		SupportsCompaction:    false,
+	}
 }
 
 func openAIWindow(contextWindow int) ModelWindow {

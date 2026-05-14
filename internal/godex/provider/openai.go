@@ -186,7 +186,16 @@ func openAITokenUsage(usage responses.ResponseUsage) TokenUsage {
 
 func (o *OpenAI) Compact(ctx context.Context, req CompactRequest) (CompactResult, error) {
 	params := o.compactParams(req)
-	result, err := o.client.Responses.Compact(ctx, params)
+	var raw []byte
+	if err := o.client.Post(ctx, "responses/compact", params, &raw); err != nil {
+		return CompactResult{}, err
+	}
+	raw = bytes.TrimSpace(raw)
+	if len(raw) == 0 {
+		return CompactResult{}, &ProviderError{Message: "OpenAI compact response was empty"}
+	}
+	var result responses.CompactedResponse
+	err := json.Unmarshal(raw, &result)
 	if err != nil {
 		return CompactResult{}, err
 	}

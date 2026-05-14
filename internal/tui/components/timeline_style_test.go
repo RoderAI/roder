@@ -44,7 +44,7 @@ func TestTranscriptMinimalToolRowsAreContiguousAndStatusColored(t *testing.T) {
 	if strings.Contains(visible, "\n\n") {
 		t.Fatalf("tool rows should not have blank gaps:\n%s", visible)
 	}
-	if strings.Contains(visible, "requested") || strings.Contains(visible, "read src/App.tsx") {
+	if strings.Contains(visible, "requested") || strings.Contains(visible, "read src/App.tsx") || strings.Contains(visible, "running") {
 		t.Fatalf("tool summaries should omit requested/read filler:\n%s", visible)
 	}
 	for _, want := range []string{"read_file", "src/App.tsx", "apply_patch", "failed: status 128"} {
@@ -52,10 +52,13 @@ func TestTranscriptMinimalToolRowsAreContiguousAndStatusColored(t *testing.T) {
 			t.Fatalf("tool timeline missing %q:\n%s", want, visible)
 		}
 	}
-	for _, colorCode := range []string{"38;5;214", "38;5;183", "38;5;196"} {
+	for _, colorCode := range []string{"38;5;75", "38;5;183", "38;5;196"} {
 		if !strings.Contains(result.View, colorCode) {
 			t.Fatalf("tool timeline missing status color %s:\n%s", colorCode, result.View)
 		}
+	}
+	if !strings.Contains(visible, "○ read_file") || !strings.Contains(visible, "● apply_patch") {
+		t.Fatalf("tool timeline missing running/succeeded markers:\n%s", visible)
 	}
 }
 

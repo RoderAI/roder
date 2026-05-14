@@ -18,6 +18,7 @@ const (
 	ColorAccent      ColorRole = "accent"
 	ColorAccentSoft  ColorRole = "accent-soft"
 	ColorTool        ColorRole = "tool"
+	ColorToolRunning ColorRole = "tool-running"
 	ColorError       ColorRole = "error"
 	ColorErrorLabel  ColorRole = "error-label"
 	ColorBorder      ColorRole = "border"
@@ -66,6 +67,7 @@ func ThemeForDarkBackground(dark bool) Theme {
 				ColorAccent:      "198",
 				ColorAccentSoft:  "96",
 				ColorTool:        "172",
+				ColorToolRunning: "25",
 				ColorError:       "160",
 				ColorErrorLabel:  "231",
 				ColorBorder:      "240",
@@ -86,6 +88,7 @@ func ThemeForDarkBackground(dark bool) Theme {
 			ColorAccent:      "212",
 			ColorAccentSoft:  "183",
 			ColorTool:        "214",
+			ColorToolRunning: "75",
 			ColorError:       "196",
 			ColorErrorLabel:  "231",
 			ColorBorder:      "244",

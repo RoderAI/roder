@@ -141,6 +141,10 @@ func TestModelUpdatesToolTimelineEntryForSameCall(t *testing.T) {
 	}
 
 	updated, _ := model.Update(eventMsg{Event: request})
+	running := updated.(Model)
+	if len(running.messages) != 1 || running.messages[0].Body != "running" {
+		t.Fatalf("tool request should render running row immediately: %#v", running.messages)
+	}
 	updated, _ = updated.Update(eventMsg{Event: completed})
 	got := updated.(Model)
 

@@ -94,9 +94,48 @@ func TestResolveUserModelInvalidTypeListsAllowedValues(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected invalid type error")
 	}
-	for _, want := range []string{"responses", "chat_completions", "anthropic"} {
+	for _, want := range []string{"responses", "chat_completions", "anthropic", "gemini"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Fatalf("error should list %q, got %v", want, err)
+		}
+	}
+}
+
+func TestResolveUserModelGeminiAuthAndEnterpriseFields(t *testing.T) {
+	resolved, err := ResolveUserModel("gemini-local", UserModelConfig{
+		Type:        "gemini",
+		Provider:    "gemini-enterprise",
+		Model:       "gemini-3.1-pro-preview",
+		Backend:     "enterprise",
+		ProjectEnv:  "GOOGLE_CLOUD_PROJECT",
+		LocationEnv: "GOOGLE_CLOUD_LOCATION",
+	}, map[string]string{"GEMINI_API_TOKEN": "token", "GOOGLE_CLOUD_PROJECT": "project", "GOOGLE_CLOUD_LOCATION": "us"})
+	if err != nil {
+		t.Fatalf("resolve: %v", err)
+	}
+	if resolved.APIType != APITypeGemini || resolved.ProviderID != "gemini-enterprise" || resolved.APIKeyEnv != "GEMINI_API_TOKEN" || !resolved.HasAPIKey {
+		t.Fatalf("resolved = %#v", resolved)
+	}
+	if resolved.Backend != "enterprise" || resolved.ProjectEnv != "GOOGLE_CLOUD_PROJECT" || resolved.LocationEnv != "GOOGLE_CLOUD_LOCATION" {
+		t.Fatalf("enterprise fields = %#v", resolved)
+	}
+}
+
+func TestResolveUserModelGeminiExplicitEnvWinsOverProviderAlias(t *testing.T) {
+	resolved, err := ResolveUserModel("gemini-local", UserModelConfig{Type: "gemini", APIKeyEnv: "GEMINI_API_KEY"}, map[string]string{"GEMINI_API_TOKEN": "preferred", "GEMINI_API_KEY": "explicit"})
+	if err != nil {
+		t.Fatalf("resolve: %v", err)
+	}
+	if resolved.APIKeyEnv != "GEMINI_API_KEY" || !resolved.HasAPIKey {
+		t.Fatalf("auth = %#v", resolved)
+	}
+}
+
+func TestUserModelRedactForLogHidesGeminiProjectLocation(t *testing.T) {
+	redacted := (UserModelConfig{Type: "gemini", Project: "secret-project", Location: "secret-location", ProjectEnv: "PROJECT_ENV", LocationEnv: "LOCATION_ENV"}).RedactForLog()
+	for _, leaked := range []string{"secret-project", "secret-location", "PROJECT_ENV", "LOCATION_ENV"} {
+		if strings.Contains(redacted, leaked) {
+			t.Fatalf("redacted leaked %q: %s", leaked, redacted)
 		}
 	}
 }

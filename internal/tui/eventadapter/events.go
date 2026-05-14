@@ -79,11 +79,11 @@ func Apply(ev eventbus.Event) Update {
 	case eventbus.KindToolRequested:
 		var payload toolPayload
 		_ = ev.DecodePayload(&payload)
-		return withStatus(withMessageKey(payload.MessageKey(), viewmodel.RoleTool, payload.Tool, "requested"), statusWithName("tool requested", payload.Tool))
+		return withStatus(withMessageKey(payload.MessageKey(), viewmodel.RoleTool, payload.Tool, "running"), statusWithName("tool running", payload.Tool))
 	case eventbus.KindToolStarted:
 		var payload toolPayload
 		_ = ev.DecodePayload(&payload)
-		return status(statusWithName("tool running", payload.Tool))
+		return withStatus(withMessageKey(payload.MessageKey(), viewmodel.RoleTool, payload.Tool, appendToolMetadata("running", payload)), statusWithName("tool running", payload.Tool))
 	case eventbus.KindToolCompleted:
 		var payload toolPayload
 		_ = ev.DecodePayload(&payload)
@@ -288,6 +288,12 @@ func summarizeToolTimeline(tool string, input map[string]any, output string) str
 			return "read file"
 		}
 		return "read " + path
+	case "shell":
+		command := strings.TrimSpace(inputString(input, "command"))
+		if command != "" {
+			return command
+		}
+		return truncate(output, 1600)
 	default:
 		return truncate(output, 1600)
 	}

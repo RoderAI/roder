@@ -39,6 +39,31 @@ func TestApplySummarizesReadFileToolOutput(t *testing.T) {
 	}
 }
 
+func TestApplySummarizesShellToolWithCommandNotOutput(t *testing.T) {
+	update := Apply(eventbus.Event{
+		Kind: eventbus.KindToolCompleted,
+		Payload: map[string]any{
+			"tool":         "shell",
+			"tool_call_id": "call_1",
+			"input": map[string]any{
+				"command": "go test ./internal/tui -count=1",
+			},
+			"text": "ok\nPASS\n",
+		},
+	})
+
+	if len(update.Messages) != 1 {
+		t.Fatalf("messages = %#v", update.Messages)
+	}
+	message := update.Messages[0]
+	if message.Body != "go test ./internal/tui -count=1" {
+		t.Fatalf("body = %q", message.Body)
+	}
+	if strings.Contains(message.Body, "PASS") {
+		t.Fatalf("shell summary leaked output:\n%s", message.Body)
+	}
+}
+
 func TestApplyStateEventsDoNotRenderTranscriptRows(t *testing.T) {
 	events := []eventbus.Event{
 		{Kind: eventbus.KindPermissionResponded, Payload: map[string]any{"decision": "allow"}},
@@ -56,6 +81,30 @@ func TestApplyStateEventsDoNotRenderTranscriptRows(t *testing.T) {
 		if !update.HasStatus || strings.TrimSpace(update.Status) == "" {
 			t.Fatalf("%s did not expose a useful status: %#v", ev.Kind, update)
 		}
+	}
+}
+
+func TestApplyToolRequestedShowsRunningTimelineRow(t *testing.T) {
+	update := Apply(eventbus.Event{
+		Kind: eventbus.KindToolRequested,
+		Payload: map[string]any{
+			"tool":         "apply_patch",
+			"tool_call_id": "call_1",
+		},
+	})
+
+	if len(update.Messages) != 1 {
+		t.Fatalf("messages = %#v", update.Messages)
+	}
+	message := update.Messages[0]
+	if message.Key != "tool:call_1" || message.Role != viewmodel.RoleTool || message.Title != "apply_patch" {
+		t.Fatalf("message = %#v", message)
+	}
+	if message.Body != "running" {
+		t.Fatalf("body = %q", message.Body)
+	}
+	if !update.HasStatus || update.Status != "tool running: apply_patch" {
+		t.Fatalf("status = %#v", update)
 	}
 }
 

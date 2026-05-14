@@ -15,6 +15,28 @@ func TestCatalogDefaultModel(t *testing.T) {
 	}
 }
 
+func TestCatalogGeminiProviderAndModels(t *testing.T) {
+	providerConfig, ok := Catalog.Provider("gemini")
+	if !ok {
+		t.Fatal("gemini provider missing")
+	}
+	if providerConfig.Kind != "gemini" || providerConfig.EnvKey != "GEMINI_API_TOKEN" || providerConfig.DefaultModel != "gemini-3.1-pro-preview" {
+		t.Fatalf("gemini provider = %#v", providerConfig)
+	}
+	if !reflect.DeepEqual(providerConfig.EnvAliases, []string{"GEMINI_API_KEY", "GOOGLE_API_KEY", "GOOGLE_GENAI_API_KEY", "GOOGLE_AI_API_KEY"}) {
+		t.Fatalf("gemini aliases = %#v", providerConfig.EnvAliases)
+	}
+	for _, id := range []string{"gemini-3.1-pro-preview", "gemini-3.1-pro-preview-customtools", "gemini-3-flash-preview", "gemini-3.1-flash-lite"} {
+		model, ok := Catalog.Model(id)
+		if !ok {
+			t.Fatalf("%s missing", id)
+		}
+		if model.Provider != "gemini" || model.ContextWindow != 1048576 || !model.SupportsImages || !model.SupportsTools || !model.SupportsJSON || model.EditTool != "edit" {
+			t.Fatalf("%s model = %#v", id, model)
+		}
+	}
+}
+
 func TestCatalogLookup(t *testing.T) {
 	providerConfig, ok := Catalog.Provider("openai")
 	if !ok {
