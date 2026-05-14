@@ -270,7 +270,7 @@ reasoning_efforts = ["none"]
 	out := captureStdout(t, func() error {
 		return runModels([]string{"--data-dir", dataDir})
 	})
-	if !strings.Contains(out, "deepseek\tdeepseek-chat\tDeepSeek Chat\tnone\tcontext=128000") {
+	if !strings.Contains(out, "deepseek\tdeepseek-chat\tDeepSeek Chat\tnone\tedit=edit\tcontext=128000") {
 		t.Fatalf("models output missing custom model:\n%s", out)
 	}
 }

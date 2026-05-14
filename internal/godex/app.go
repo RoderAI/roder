@@ -239,10 +239,12 @@ func (a *App) SetModelReasoning(model string, reasoning string) error {
 	if err != nil {
 		return err
 	}
+	reg := buildToolRegistry(cfg, a.Bus, a.Goals, a.Memory, a.MCP, a.LSP)
 
 	a.Config = cfg
+	a.Tools = reg
 	a.provider = prov
-	a.runner = agent.NewRunner(runnerConfig(cfg, a.Bus, a.Journal, a.Sessions, a.Turns, a.Items, a.Messages, a.Tools, a.Goals, a.Memory, prov, a.contextMessages, a.skills, a.commands))
+	a.runner = agent.NewRunner(runnerConfig(cfg, a.Bus, a.Journal, a.Sessions, a.Turns, a.Items, a.Messages, reg, a.Goals, a.Memory, prov, a.contextMessages, a.skills, a.commands))
 	return nil
 }
 
@@ -314,7 +316,12 @@ func buildToolRegistry(cfg Config, bus *eventbus.Bus, goalRuntime *goals.Runtime
 	)
 	builtin.RegisterFilesystem(reg, cfg.Workspace)
 	builtin.RegisterSearch(reg, cfg.Workspace)
-	builtin.RegisterEditing(reg, cfg.Workspace)
+	switch editToolForConfig(cfg) {
+	case EditToolPatch:
+		builtin.RegisterPatch(reg, cfg.Workspace)
+	default:
+		builtin.RegisterEditing(reg, cfg.Workspace)
+	}
 	builtin.RegisterDownload(reg, cfg.Workspace)
 	builtin.RegisterGit(reg, cfg.Workspace)
 	builtin.RegisterTodo(reg)
@@ -325,7 +332,6 @@ func buildToolRegistry(cfg Config, bus *eventbus.Bus, goalRuntime *goals.Runtime
 	_ = godexshell.RegisterJSONBuiltins(shellBuiltins)
 	_ = godexshell.RegisterWorkspaceBuiltins(shellBuiltins, cfg.Workspace, reg)
 	builtin.RegisterShell(reg, cfg.Workspace, godexshell.Runner{Builtins: shellBuiltins})
-	builtin.RegisterPatch(reg, cfg.Workspace)
 	builtin.RegisterSubagent(reg)
 	if cfg.GoalsEnabled {
 		builtin.RegisterGoal(reg, goalRuntime)
@@ -337,6 +343,14 @@ func buildToolRegistry(cfg Config, bus *eventbus.Bus, goalRuntime *goals.Runtime
 		builtin.RegisterLSP(reg, lspManager)
 	}
 	return reg
+}
+
+func editToolForConfig(cfg Config) string {
+	model := ModelConfigForConfig(cfg, cfg.Model)
+	if tool := normalizeEditTool(model.EditTool); tool != "" {
+		return tool
+	}
+	return defaultEditToolForModel(model.ID)
 }
 
 func runnerConfig(cfg Config, bus *eventbus.Bus, journalStore *journal.Store, sessionStore *session.Store, turnStore *session.TurnStore, itemStore *session.ItemStore, messageStore *messagestore.Store, registry *tools.Registry, goalRuntime *goals.Runtime, memoryService *memory.Service, prov provider.Provider, contextMessages []provider.Message, skills []godeskills.Skill, commands []godecommands.Command) agent.Config {

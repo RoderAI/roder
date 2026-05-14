@@ -57,6 +57,7 @@ api_key_env = "DEEPSEEK_API_KEY"
 context_window = 128000
 default_reasoning = "none"
 reasoning_efforts = ["none"]
+edit_tool = "edit"
 
 [model.kimi-k2-6]
 type = "chat_completions"
@@ -81,6 +82,7 @@ display_name = "My Responses Model"
 base_url = "https://router.example.com/v1"
 api_key = "env:MY_RESPONSES_API_KEY"
 context_window = 200000
+edit_tool = "patch"
 
 [model.my-claude-router]
 type = "anthropic"
@@ -92,7 +94,10 @@ api_key_env = "ROUTER_API_KEY"
 context_window = 200000
 default_reasoning = "medium"
 reasoning_efforts = ["low", "medium", "high"]
+edit_tool = "edit"
 ```
+
+`edit_tool` controls which write primitive is loaded and exposed to the model. Use `patch` for GPT-style models so they only get `apply_patch`; use `edit` for non-GPT models so they get `write_file`, `edit`, and `multi_edit` instead. When omitted, models whose upstream name starts with `gpt` default to `patch`; all other models default to `edit`.
 
 Inspect the active catalog with:
 

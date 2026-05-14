@@ -29,6 +29,7 @@ type UserModelConfig struct {
 	MaxContextWindow   int               `json:"max_context_window,omitempty" toml:"max_context_window,omitempty"`
 	DefaultReasoning   string            `json:"default_reasoning,omitempty" toml:"default_reasoning,omitempty"`
 	ReasoningEfforts   []string          `json:"reasoning_efforts,omitempty" toml:"reasoning_efforts,omitempty"`
+	EditTool           string            `json:"edit_tool,omitempty" toml:"edit_tool,omitempty"`
 	SupportsImages     bool              `json:"supports_images,omitempty" toml:"supports_images,omitempty"`
 	SupportsTools      *bool             `json:"supports_tools,omitempty" toml:"supports_tools,omitempty"`
 	SupportsCompaction bool              `json:"supports_compaction,omitempty" toml:"supports_compaction,omitempty"`
@@ -46,6 +47,7 @@ type ResolvedModel struct {
 	HasAPIKey     bool
 	Headers       map[string]string
 	HeaderEnv     map[string]string
+	EditTool      string
 	Metadata      ModelMetadata
 	SupportsTools *bool
 }
@@ -68,6 +70,10 @@ func ResolveUserModel(id string, cfg UserModelConfig, env map[string]string) (Re
 		providerID = string(apiType)
 	}
 	apiKey, apiKeyEnv, hasAPIKey := resolveAPIKey(cfg, env)
+	editTool, err := parseEditTool(cfg.EditTool)
+	if err != nil {
+		return ResolvedModel{}, err
+	}
 	return ResolvedModel{
 		ID:            id,
 		UpstreamModel: upstreamModel,
@@ -79,6 +85,7 @@ func ResolveUserModel(id string, cfg UserModelConfig, env map[string]string) (Re
 		HasAPIKey:     hasAPIKey,
 		Headers:       resolveHeaders(cfg, env),
 		HeaderEnv:     cloneStringMap(cfg.HeaderEnv),
+		EditTool:      editTool,
 		Metadata: ModelMetadata{
 			ID:               id,
 			DisplayName:      firstNonEmptyTrimmed(cfg.DisplayName, id),
@@ -87,10 +94,20 @@ func ResolveUserModel(id string, cfg UserModelConfig, env map[string]string) (Re
 			SupportsImages:   cfg.SupportsImages,
 			ReasoningEfforts: append([]string(nil), cfg.ReasoningEfforts...),
 			DefaultReasoning: cfg.DefaultReasoning,
+			EditTool:         editTool,
 			Disabled:         cfg.Disabled,
 		},
 		SupportsTools: cfg.SupportsTools,
 	}, nil
+}
+
+func parseEditTool(value string) (string, error) {
+	switch strings.TrimSpace(value) {
+	case "", "patch", "edit":
+		return strings.TrimSpace(value), nil
+	default:
+		return "", fmt.Errorf("unsupported edit_tool %q; allowed values: patch, edit", value)
+	}
 }
 
 func resolveHeaders(cfg UserModelConfig, env map[string]string) map[string]string {
