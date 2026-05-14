@@ -40,6 +40,7 @@ type TranscriptCache struct {
 
 type cachedMessage struct {
 	width         int
+	themeVersion  int
 	timelineStyle string
 	markdown      bool
 	role          viewmodel.Role
@@ -47,37 +48,6 @@ type cachedMessage struct {
 	body          string
 	item          renderedMessage
 }
-
-var (
-	transcriptStyle = lipgloss.NewStyle().
-			Padding(1, 1)
-	emptyStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("244")).
-			Italic(true)
-	messageHoverStyle = lipgloss.NewStyle().
-				Foreground(lipgloss.Color("231"))
-	bodyStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("252"))
-	assistantBodyStyle = lipgloss.NewStyle().
-				Foreground(lipgloss.Color("231"))
-	userMessageStyle = lipgloss.NewStyle().
-				Foreground(lipgloss.Color("252"))
-	userRailStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("212"))
-	metaPrefixStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("245"))
-	metaTitleStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("183")).
-			Bold(true)
-	errorPrefixStyle = lipgloss.NewStyle().
-				Foreground(lipgloss.Color("196")).
-				Bold(true)
-	toolTitleStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("214")).
-			Bold(true)
-	toolMetaStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("244"))
-)
 
 func NewTranscriptCache() TranscriptCache {
 	return TranscriptCache{entries: make(map[string]cachedMessage)}
@@ -224,6 +194,7 @@ func renderMessageCached(msg viewmodel.Message, width int, timelineStyle string,
 	}
 	if entry, ok := cache.entries[msg.ID]; ok &&
 		entry.width == width &&
+		entry.themeVersion == ThemeVersion() &&
 		entry.timelineStyle == timelineStyle &&
 		entry.markdown == markdown &&
 		entry.role == msg.Role &&
@@ -234,6 +205,7 @@ func renderMessageCached(msg viewmodel.Message, width int, timelineStyle string,
 	item := renderMessage(msg, width, timelineStyle, markdown)
 	cache.entries[msg.ID] = cachedMessage{
 		width:         width,
+		themeVersion:  ThemeVersion(),
 		timelineStyle: timelineStyle,
 		markdown:      markdown,
 		role:          msg.Role,
@@ -387,9 +359,7 @@ func renderTranscriptLines(lines []renderedLine, options TranscriptOptions) []st
 	out := make([]string, 0, len(lines))
 	style := options.SelectionStyle
 	if style.GetBackground() == nil && style.GetForeground() == nil {
-		style = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("16")).
-			Background(lipgloss.Color("212"))
+		style = ThemeSelectionStyle()
 	}
 	start, end, ok := options.Selection.Normalize()
 	for _, line := range lines {
@@ -472,14 +442,14 @@ func styledWrappedBodyLines(text string, width int, style lipgloss.Style) []rend
 
 func assistantBodyLines(text string, width int, markdown bool) []renderedLine {
 	if markdown {
-		return markdownBodyLinesWithBaseColor(text, width, "231")
+		return markdownBodyLinesWithBaseColor(text, width, string(themeColor(ColorTextStrong)))
 	}
 	return styledWrappedBodyLines(text, width, assistantBodyStyle)
 }
 
 func bodyLines(text string, width int, markdown bool) []renderedLine {
 	if markdown {
-		return markdownBodyLines(text, width)
+		return markdownBodyLinesWithBaseColor(text, width, string(themeColor(ColorText)))
 	}
 	return wrappedBodyLines(text, width)
 }

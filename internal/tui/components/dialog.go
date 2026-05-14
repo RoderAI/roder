@@ -10,16 +10,23 @@ import (
 )
 
 var (
-	inlineListStyle = lipgloss.NewStyle().
-			Padding(0, 2)
-	inlineListLabelStyle = lipgloss.NewStyle().
-				Foreground(lipgloss.Color("231"))
-	inlineListSelectedLabelStyle = lipgloss.NewStyle().
-					Bold(true).
-					Foreground(lipgloss.Color("152"))
-	inlineListDescriptionStyle = lipgloss.NewStyle().
-					Foreground(lipgloss.Color("244"))
+	inlineListStyle              lipgloss.Style
+	inlineListLabelStyle         lipgloss.Style
+	inlineListSelectedLabelStyle lipgloss.Style
+	inlineListDescriptionStyle   lipgloss.Style
 )
+
+func resetDialogStyles() {
+	inlineListStyle = lipgloss.NewStyle().
+		Padding(0, 2)
+	inlineListLabelStyle = lipgloss.NewStyle().
+		Foreground(ThemeColor(ColorTextStrong))
+	inlineListSelectedLabelStyle = lipgloss.NewStyle().
+		Bold(true).
+		Foreground(ThemeColor(ColorAccentSoft))
+	inlineListDescriptionStyle = lipgloss.NewStyle().
+		Foreground(ThemeColor(ColorMuted))
+}
 
 func OverlayListDialog(base string, width int, height int, dialog viewmodel.ListDialog, zones *zone.Manager) string {
 	return overlayDialogBox(base, width, height, ListDialogBox(width, dialog, zones))

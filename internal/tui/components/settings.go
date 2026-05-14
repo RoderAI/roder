@@ -9,29 +9,41 @@ import (
 )
 
 var (
-	settingsBackdropStyle = lipgloss.NewStyle().
-				Foreground(lipgloss.Color("252"))
-	settingsBoxStyle = lipgloss.NewStyle().
-				Border(lipgloss.RoundedBorder()).
-				BorderForeground(lipgloss.Color("62")).
-				Padding(1, 2)
-	settingsTitleStyle = lipgloss.NewStyle().
-				Bold(true).
-				Foreground(lipgloss.Color("231"))
-	settingsItemStyle = lipgloss.NewStyle().
-				Foreground(lipgloss.Color("252"))
-	settingsSelectedStyle = lipgloss.NewStyle().
-				Bold(true).
-				Foreground(lipgloss.Color("231"))
-	settingsDescriptionStyle = lipgloss.NewStyle().
-					Foreground(lipgloss.Color("244"))
-	settingsValueStyle = lipgloss.NewStyle().
-				Foreground(lipgloss.Color("111"))
-	settingsHelpStyle = lipgloss.NewStyle().
-				Foreground(lipgloss.Color("244"))
-	settingsErrorStyle = lipgloss.NewStyle().
-				Foreground(lipgloss.Color("203"))
+	settingsBackdropStyle    lipgloss.Style
+	settingsBoxStyle         lipgloss.Style
+	settingsTitleStyle       lipgloss.Style
+	settingsItemStyle        lipgloss.Style
+	settingsSelectedStyle    lipgloss.Style
+	settingsDescriptionStyle lipgloss.Style
+	settingsValueStyle       lipgloss.Style
+	settingsHelpStyle        lipgloss.Style
+	settingsErrorStyle       lipgloss.Style
 )
+
+func resetSettingsStyles() {
+	settingsBackdropStyle = lipgloss.NewStyle().
+		Foreground(ThemeColor(ColorText))
+	settingsBoxStyle = lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(ThemeColor(ColorDialog)).
+		Padding(1, 2)
+	settingsTitleStyle = lipgloss.NewStyle().
+		Bold(true).
+		Foreground(ThemeColor(ColorTextStrong))
+	settingsItemStyle = lipgloss.NewStyle().
+		Foreground(ThemeColor(ColorText))
+	settingsSelectedStyle = lipgloss.NewStyle().
+		Bold(true).
+		Foreground(ThemeColor(ColorTextStrong))
+	settingsDescriptionStyle = lipgloss.NewStyle().
+		Foreground(ThemeColor(ColorMuted))
+	settingsValueStyle = lipgloss.NewStyle().
+		Foreground(ThemeColor(ColorValue))
+	settingsHelpStyle = lipgloss.NewStyle().
+		Foreground(ThemeColor(ColorMuted))
+	settingsErrorStyle = lipgloss.NewStyle().
+		Foreground(ThemeColor(ColorError))
+}
 
 func SettingsDialog(width int, height int, settings viewmodel.SettingsDialog, zones *zone.Manager) string {
 	box := SettingsDialogBox(width, settings, zones)
