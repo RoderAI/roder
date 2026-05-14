@@ -81,10 +81,12 @@ func (s *Server) ServeStdio(ctx context.Context, input io.Reader, output io.Writ
 }
 
 type WebSocketListener struct {
-	server   *http.Server
-	listener net.Listener
-	httpURL  string
-	wsURL    string
+	owner      *Server
+	server     *http.Server
+	listener   net.Listener
+	httpURL    string
+	wsURL      string
+	remoteMode bool
 }
 
 func (s *Server) ListenWebSocket(ctx context.Context, address string) (*WebSocketListener, error) {
@@ -94,9 +96,11 @@ func (s *Server) ListenWebSocket(ctx context.Context, address string) (*WebSocke
 	}
 	actual := listener.Addr().String()
 	wsListener := &WebSocketListener{
-		listener: listener,
-		httpURL:  "http://" + actual,
-		wsURL:    "ws://" + actual,
+		owner:      s,
+		listener:   listener,
+		httpURL:    "http://" + actual,
+		wsURL:      "ws://" + actual,
+		remoteMode: s.options.Remote.Enabled,
 	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
@@ -117,6 +121,12 @@ func (s *Server) ListenWebSocket(ctx context.Context, address string) (*WebSocke
 	go func() {
 		_ = wsListener.server.Serve(listener)
 	}()
+	if s.options.Remote.Enabled {
+		s.publishRemoteEvent(ctx, KindRemoteServerStarted, map[string]any{
+			"address":       actual,
+			"token_preview": s.options.Remote.Auth.TokenPreview,
+		})
+	}
 	return wsListener, nil
 }
 
@@ -139,11 +149,16 @@ func (l *WebSocketListener) Close(ctx context.Context) error {
 	if l == nil || l.server == nil {
 		return nil
 	}
-	return l.server.Shutdown(ctx)
+	err := l.server.Shutdown(ctx)
+	if l.remoteMode && l.owner != nil {
+		l.owner.publishRemoteEvent(ctx, KindRemoteServerStopped, map[string]any{"address": l.Address()})
+	}
+	return err
 }
 
 func (s *Server) handleWebSocket(ctx context.Context, w http.ResponseWriter, r *http.Request) {
 	if s.options.Remote.Enabled && !s.options.Remote.Auth.VerifyRequest(r) {
+		s.publishRemoteEvent(ctx, KindRemoteAuthFailed, redactedRemoteRequestPayload(r))
 		http.Error(w, "remote authentication required", http.StatusUnauthorized)
 		return
 	}
@@ -154,6 +169,10 @@ func (s *Server) handleWebSocket(ctx context.Context, w http.ResponseWriter, r *
 	ws, err := websocket.Accept(w, r, acceptOptions)
 	if err != nil {
 		return
+	}
+	if s.options.Remote.Enabled {
+		s.publishRemoteEvent(ctx, KindRemoteClientConnected, redactedRemoteRequestPayload(r))
+		defer s.publishRemoteEvent(ctx, KindRemoteClientDisconnected, redactedRemoteRequestPayload(r))
 	}
 	conn := s.NewConnection(func(sendCtx context.Context, msg Message) error {
 		data, err := json.Marshal(msg)

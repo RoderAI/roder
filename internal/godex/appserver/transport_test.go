@@ -1,6 +1,7 @@
 package appserver
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -10,6 +11,7 @@ import (
 	"time"
 
 	"github.com/pandelisz/gode/internal/godex"
+	"github.com/pandelisz/gode/internal/godex/eventbus"
 	"nhooyr.io/websocket"
 )
 
@@ -69,6 +71,7 @@ func TestRemoteWebSocketRequiresAuth(t *testing.T) {
 	}
 	_ = resp.Body.Close()
 
+	authFailedCh := app.Bus.Subscribe(ctx, eventbus.Filter{Kinds: []eventbus.Kind{KindRemoteAuthFailed}})
 	_, resp, err = websocket.Dial(ctx, listener.WebSocketURL(), nil)
 	if err == nil {
 		t.Fatal("unauthenticated dial succeeded")
@@ -76,7 +79,19 @@ func TestRemoteWebSocketRequiresAuth(t *testing.T) {
 	if resp == nil || resp.StatusCode != http.StatusUnauthorized {
 		t.Fatalf("unauthenticated status = %v err=%v", statusCode(resp), err)
 	}
+	authFailed := awaitRemoteEvent(t, ctx, authFailedCh)
+	payload, err := json.Marshal(authFailed.Payload)
+	if err != nil {
+		t.Fatalf("marshal auth failed payload: %v", err)
+	}
+	if string(payload) == "" || string(payload) == "null" {
+		t.Fatalf("auth failed payload missing: %#v", authFailed)
+	}
+	if bytes.Contains(payload, []byte("remote-secret")) {
+		t.Fatalf("auth failed payload leaked token: %s", payload)
+	}
 
+	connectedCh := app.Bus.Subscribe(ctx, eventbus.Filter{Kinds: []eventbus.Kind{KindRemoteClientConnected}})
 	ws, _, err := websocket.Dial(ctx, listener.WebSocketURL(), &websocket.DialOptions{
 		HTTPHeader: http.Header{"Authorization": []string{"Bearer remote-secret"}},
 	})
@@ -84,6 +99,7 @@ func TestRemoteWebSocketRequiresAuth(t *testing.T) {
 		t.Fatalf("authorized dial: %v", err)
 	}
 	defer ws.Close(websocket.StatusNormalClosure, "")
+	_ = awaitRemoteEvent(t, ctx, connectedCh)
 	assertInitializeHasRemote(t, ctx, ws)
 }
 
@@ -225,6 +241,19 @@ func statusCode(resp *http.Response) int {
 		return 0
 	}
 	return resp.StatusCode
+}
+
+func awaitRemoteEvent(t *testing.T, ctx context.Context, ch <-chan eventbus.Event) eventbus.Event {
+	t.Helper()
+	deadline, cancel := context.WithTimeout(ctx, 2*time.Second)
+	defer cancel()
+	select {
+	case ev := <-ch:
+		return ev
+	case <-deadline.Done():
+		t.Fatalf("timed out waiting for remote event: %v", deadline.Err())
+		return eventbus.Event{}
+	}
 }
 
 func writeWS(t *testing.T, ctx context.Context, ws *websocket.Conn, value any) {
