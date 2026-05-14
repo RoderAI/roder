@@ -118,6 +118,14 @@ func (r *Registry) Register(tool Tool) {
 	r.tools[tool.Name] = tool
 }
 
+func (r *Registry) Has(name string) bool {
+	if r == nil {
+		return false
+	}
+	_, ok := r.tools[name]
+	return ok
+}
+
 func (r *Registry) Specs() []Spec {
 	specs := make([]Spec, 0, len(r.tools))
 	for _, tool := range r.tools {
