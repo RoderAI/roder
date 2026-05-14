@@ -167,7 +167,11 @@ func prepareRemoteAuth(authToken string) (string, appserver.RemoteAuth, error) {
 func printRemoteServerInfo(stderr io.Writer, command, workspace string, listener *appserver.WebSocketListener, auth appserver.RemoteAuth, token string, printQR bool) error {
 	urls := appserver.DiscoverRemoteConnectURLs(listener.Address())
 	if len(urls) == 0 {
-		urls = []string{listener.WebSocketURL()}
+		fallbackURL := listener.WebSocketURL()
+		if fallbackURL == "" {
+			fallbackURL = "ws://127.0.0.1:0"
+		}
+		urls = []string{fallbackURL}
 	}
 	fmt.Fprintf(stderr, "%s remote app-server listening\n", command)
 	for _, remoteURL := range urls {
@@ -175,13 +179,14 @@ func printRemoteServerInfo(stderr io.Writer, command, workspace string, listener
 	}
 	fmt.Fprintf(stderr, "token preview: %s\n", auth.TokenPreview)
 	fmt.Fprintln(stderr, "auth: Authorization: Bearer <token> or websocket subprotocol bearer.<token>")
-	if !printQR {
-		return nil
-	}
 	payload := appserver.BuildRemotePairingPayload("Gode Remote", urls[0], token, workspace)
 	link, err := appserver.RemoteDeepLink(payload)
 	if err != nil {
 		return err
+	}
+	fmt.Fprintf(stderr, "pairing url (sensitive): %s\n", link)
+	if !printQR {
+		return nil
 	}
 	qr, err := appserver.RenderTerminalQR(link)
 	if err != nil {
