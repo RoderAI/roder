@@ -416,6 +416,15 @@ func messageItem(msg messagestore.Message) map[string]any {
 	if msg.ToolCallID != "" {
 		item["toolCallId"] = msg.ToolCallID
 	}
+	if msg.SourceKind != "" {
+		item["sourceKind"] = msg.SourceKind
+	}
+	if len(msg.RawJSON) > 0 {
+		var raw any
+		if err := json.Unmarshal(msg.RawJSON, &raw); err == nil {
+			item["raw"] = raw
+		}
+	}
 	return item
 }
 

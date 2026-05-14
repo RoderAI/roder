@@ -85,8 +85,8 @@ func TestProjectionFromEventAndAssistantCoalescing(t *testing.T) {
 	}
 	assertMessage(t, messages[0], RoleUser, "hi", "", "")
 	assertMessage(t, messages[1], RoleAssistant, "hello", "", "")
-	assertMessage(t, messages[2], RoleTool, "requested", "read_file", "tc1")
-	assertMessage(t, messages[3], RoleTool, "read internal/godex/tools/registry.go", "read_file", "tc1")
+	assertMessage(t, messages[2], RoleTool, "read file", "read_file", "tc1")
+	assertMessage(t, messages[3], RoleTool, "internal/godex/tools/registry.go", "read_file", "tc1")
 	assertMessage(t, messages[4], RoleTool, "failed", "apply_patch", "tc2")
 	assertMessage(t, messages[5], RoleError, "run failed\nsession_id: s1", "", "")
 }

@@ -138,13 +138,15 @@ func ProjectionFromEvent(ev eventbus.Event) []Message {
 		return single(base, RoleAssistant, payload.Text)
 	case eventbus.KindToolRequested:
 		var payload struct {
-			Tool       string `json:"tool"`
-			ToolCallID string `json:"tool_call_id"`
+			Tool       string         `json:"tool"`
+			ToolCallID string         `json:"tool_call_id"`
+			Input      map[string]any `json:"input"`
 		}
 		_ = ev.DecodePayload(&payload)
 		base.ToolName = payload.Tool
 		base.ToolCallID = payload.ToolCallID
-		return single(base, RoleTool, "requested")
+		base.RawJSON = rawObject(map[string]any{"tool": payload.Tool, "tool_call_id": payload.ToolCallID, "input": payload.Input})
+		return single(base, RoleTool, summarizeToolProjection(payload.Tool, payload.Input, ""))
 	case eventbus.KindToolCompleted:
 		var payload struct {
 			Tool       string         `json:"tool"`
@@ -155,6 +157,7 @@ func ProjectionFromEvent(ev eventbus.Event) []Message {
 		_ = ev.DecodePayload(&payload)
 		base.ToolName = payload.Tool
 		base.ToolCallID = payload.ToolCallID
+		base.RawJSON = rawObject(map[string]any{"tool": payload.Tool, "tool_call_id": payload.ToolCallID, "input": payload.Input})
 		return single(base, RoleTool, summarizeToolProjection(payload.Tool, payload.Input, payload.Text))
 	case eventbus.KindToolFailed:
 		var payload struct {
@@ -194,10 +197,39 @@ func summarizeToolProjection(tool string, input map[string]any, output string) s
 		if path == "" {
 			return "read file"
 		}
-		return "read " + path
+		return path
+	case "list_files":
+		if path := firstInputString(input, "path", "dir", "directory"); path != "" {
+			return path
+		}
+		return "."
+	case "grep", "search_files":
+		if query := firstInputString(input, "query", "pattern", "regex"); query != "" {
+			return query
+		}
+		return "search"
+	case "glob":
+		if pattern := firstInputString(input, "pattern", "glob"); pattern != "" {
+			return pattern
+		}
+		return "glob"
+	case "edit", "multi_edit", "apply_patch":
+		if path := firstInputString(input, "path", "file"); path != "" {
+			return path
+		}
+		return ""
 	default:
 		return output
 	}
+}
+
+func firstInputString(input map[string]any, keys ...string) string {
+	for _, key := range keys {
+		if value := strings.TrimSpace(inputString(input, key)); value != "" {
+			return value
+		}
+	}
+	return ""
 }
 
 func inputString(input map[string]any, key string) string {
@@ -222,6 +254,14 @@ func single(base Message, role string, text string) []Message {
 	base.Role = role
 	base.Text = text
 	return []Message{base}
+}
+
+func rawObject(value map[string]any) json.RawMessage {
+	raw, err := json.Marshal(value)
+	if err != nil {
+		return nil
+	}
+	return raw
 }
 
 func normalizeAssistantPhase(phase string, kind eventbus.Kind) string {
