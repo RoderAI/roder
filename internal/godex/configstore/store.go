@@ -42,28 +42,29 @@ type LoadOptions struct {
 }
 
 type overlay struct {
-	Workspace             *string                            `json:"workspace,omitempty" toml:"workspace,omitempty"`
-	DataDir               *string                            `json:"data_dir,omitempty" toml:"data_dir,omitempty"`
-	Provider              *string                            `json:"provider,omitempty" toml:"provider,omitempty"`
-	Model                 *string                            `json:"model,omitempty" toml:"model,omitempty"`
-	Reasoning             *string                            `json:"reasoning,omitempty" toml:"reasoning,omitempty"`
-	DefaultModel          *string                            `json:"default_model,omitempty" toml:"default_model,omitempty"`
-	DefaultReasoning      *string                            `json:"default_reasoning,omitempty" toml:"default_reasoning,omitempty"`
-	FastMode              *bool                              `json:"fast_mode,omitempty" toml:"fast_mode,omitempty"`
-	AutoApprove           *bool                              `json:"auto_approve,omitempty" toml:"auto_approve,omitempty"`
-	TimelineStyle         *string                            `json:"timeline_style,omitempty" toml:"timeline_style,omitempty"`
-	MarkdownRendering     *bool                              `json:"markdown_rendering,omitempty" toml:"markdown_rendering,omitempty"`
-	Memories              memory.Settings                    `json:"memories,omitempty" toml:"memories,omitempty"`
-	DisableAutoCompaction *bool                              `json:"disable_auto_compaction,omitempty" toml:"disable_auto_compaction,omitempty"`
-	AutoCompactTokenLimit *int                               `json:"auto_compact_token_limit,omitempty" toml:"auto_compact_token_limit,omitempty"`
-	Telemetry             *bool                              `json:"telemetry,omitempty" toml:"telemetry,omitempty"`
-	TelemetryEndpoint     *string                            `json:"telemetry_endpoint,omitempty" toml:"telemetry_endpoint,omitempty"`
-	MCP                   map[string]any                     `json:"mcp,omitempty" toml:"mcp,omitempty"`
-	LSP                   map[string]lsp.Config              `json:"lsp,omitempty" toml:"lsp,omitempty"`
-	ProviderConfig        map[string]provider.ProviderConfig `json:"provider_config,omitempty" toml:"provider_config,omitempty"`
-	SelectedModels        map[string]provider.SelectedModel  `json:"selected_models,omitempty" toml:"selected_models,omitempty"`
-	ContextPaths          []string                           `json:"context_paths,omitempty" toml:"context_paths,omitempty"`
-	DisabledTools         []string                           `json:"disabled_tools,omitempty" toml:"disabled_tools,omitempty"`
+	Workspace             *string                             `json:"workspace,omitempty" toml:"workspace,omitempty"`
+	DataDir               *string                             `json:"data_dir,omitempty" toml:"data_dir,omitempty"`
+	Provider              *string                             `json:"provider,omitempty" toml:"provider,omitempty"`
+	Model                 any                                 `json:"model,omitempty" toml:"model,omitempty"`
+	Reasoning             *string                             `json:"reasoning,omitempty" toml:"reasoning,omitempty"`
+	DefaultModel          *string                             `json:"default_model,omitempty" toml:"default_model,omitempty"`
+	DefaultReasoning      *string                             `json:"default_reasoning,omitempty" toml:"default_reasoning,omitempty"`
+	FastMode              *bool                               `json:"fast_mode,omitempty" toml:"fast_mode,omitempty"`
+	AutoApprove           *bool                               `json:"auto_approve,omitempty" toml:"auto_approve,omitempty"`
+	TimelineStyle         *string                             `json:"timeline_style,omitempty" toml:"timeline_style,omitempty"`
+	MarkdownRendering     *bool                               `json:"markdown_rendering,omitempty" toml:"markdown_rendering,omitempty"`
+	Memories              memory.Settings                     `json:"memories,omitempty" toml:"memories,omitempty"`
+	DisableAutoCompaction *bool                               `json:"disable_auto_compaction,omitempty" toml:"disable_auto_compaction,omitempty"`
+	AutoCompactTokenLimit *int                                `json:"auto_compact_token_limit,omitempty" toml:"auto_compact_token_limit,omitempty"`
+	Telemetry             *bool                               `json:"telemetry,omitempty" toml:"telemetry,omitempty"`
+	TelemetryEndpoint     *string                             `json:"telemetry_endpoint,omitempty" toml:"telemetry_endpoint,omitempty"`
+	UserModels            map[string]provider.UserModelConfig `json:"user_models,omitempty" toml:"-"`
+	MCP                   map[string]any                      `json:"mcp,omitempty" toml:"mcp,omitempty"`
+	LSP                   map[string]lsp.Config               `json:"lsp,omitempty" toml:"lsp,omitempty"`
+	ProviderConfig        map[string]provider.ProviderConfig  `json:"provider_config,omitempty" toml:"provider_config,omitempty"`
+	SelectedModels        map[string]provider.SelectedModel   `json:"selected_models,omitempty" toml:"selected_models,omitempty"`
+	ContextPaths          []string                            `json:"context_paths,omitempty" toml:"context_paths,omitempty"`
+	DisabledTools         []string                            `json:"disabled_tools,omitempty" toml:"disabled_tools,omitempty"`
 }
 
 func Load(opts LoadOptions) (Loaded, error) {
@@ -131,6 +132,11 @@ func applyFile(cfg *godex.Config, source Source, path string) (bool, error) {
 		if err := toml.Unmarshal(data, &patch); err != nil {
 			return false, fmt.Errorf("parse %s config %s: %w", source, path, err)
 		}
+		models, err := parseTOMLUserModels(data)
+		if err != nil {
+			return false, fmt.Errorf("parse %s config %s: %w", source, path, err)
+		}
+		patch.UserModels = models
 	default:
 		return false, fmt.Errorf("parse %s config %s: unsupported extension", source, path)
 	}
@@ -150,8 +156,8 @@ func applyOverlay(cfg *godex.Config, patch overlay) error {
 	if patch.Provider != nil {
 		cfg.Provider = strings.TrimSpace(*patch.Provider)
 	}
-	if patch.Model != nil {
-		cfg.Model = strings.TrimSpace(*patch.Model)
+	if model, ok := patch.Model.(string); ok {
+		cfg.Model = strings.TrimSpace(model)
 	}
 	if patch.DefaultModel != nil {
 		cfg.Model = strings.TrimSpace(*patch.DefaultModel)
@@ -200,6 +206,9 @@ func applyOverlay(cfg *godex.Config, patch overlay) error {
 	if patch.ProviderConfig != nil {
 		cfg.ProviderConfig = mergeMap(cfg.ProviderConfig, patch.ProviderConfig)
 	}
+	if patch.UserModels != nil {
+		cfg.UserModels = mergeMap(cfg.UserModels, patch.UserModels)
+	}
 	if patch.SelectedModels != nil {
 		cfg.SelectedModels = mergeMap(cfg.SelectedModels, patch.SelectedModels)
 	}
@@ -210,6 +219,45 @@ func applyOverlay(cfg *godex.Config, patch overlay) error {
 		cfg.DisabledTools = append([]string(nil), patch.DisabledTools...)
 	}
 	return nil
+}
+
+func parseTOMLUserModels(data []byte) (map[string]provider.UserModelConfig, error) {
+	var raw map[string]any
+	if err := toml.Unmarshal(data, &raw); err != nil {
+		return nil, err
+	}
+	modelRaw, ok := raw["model"]
+	if !ok {
+		return nil, nil
+	}
+	models, ok := modelRaw.(map[string]any)
+	if !ok {
+		return nil, nil
+	}
+	out := make(map[string]provider.UserModelConfig, len(models))
+	for id, value := range models {
+		object, ok := value.(map[string]any)
+		if !ok {
+			continue
+		}
+		data, err := json.Marshal(object)
+		if err != nil {
+			return nil, err
+		}
+		var cfg provider.UserModelConfig
+		if err := json.Unmarshal(data, &cfg); err != nil {
+			return nil, fmt.Errorf("model.%s: %w", id, err)
+		}
+		cfg.ID = id
+		if _, err := provider.ResolveUserModel(id, cfg, nil); err != nil {
+			return nil, fmt.Errorf("model.%s: %w", id, err)
+		}
+		out[id] = cfg
+	}
+	if len(out) == 0 {
+		return nil, nil
+	}
+	return out, nil
 }
 
 func applyEnv(cfg *godex.Config, env map[string]string) error {
@@ -335,6 +383,9 @@ func fillDerivedDefaults(cfg *godex.Config) {
 	}
 	if cfg.ProviderConfig == nil {
 		cfg.ProviderConfig = map[string]provider.ProviderConfig{}
+	}
+	if cfg.UserModels == nil {
+		cfg.UserModels = map[string]provider.UserModelConfig{}
 	}
 	if cfg.SelectedModels == nil {
 		cfg.SelectedModels = map[string]provider.SelectedModel{}
