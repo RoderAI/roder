@@ -50,8 +50,14 @@ func simplifiedMarkdownStyle() glamouransi.StyleConfig {
 	style.Heading.StylePrimitive.Color = ptr(markdownDefaultColor)
 	style.Heading.StylePrimitive.Bold = ptr(true)
 	style.Strong.Bold = ptr(true)
+	style.Strong.BlockPrefix = ""
+	style.Strong.BlockSuffix = ""
 	style.Emph.Italic = ptr(true)
+	style.Emph.BlockPrefix = ""
+	style.Emph.BlockSuffix = ""
 	style.Strikethrough.CrossedOut = ptr(true)
+	style.Strikethrough.BlockPrefix = ""
+	style.Strikethrough.BlockSuffix = ""
 	style.Link.Color = ptr(markdownDefaultColor)
 	style.Link.Underline = ptr(true)
 	style.LinkText.Color = ptr(markdownDefaultColor)

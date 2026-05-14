@@ -66,6 +66,10 @@ type CompactSessionResult struct {
 
 var tracer = otel.Tracer("github.com/pandelisz/gode/internal/godex")
 
+var memoryEmbedderFactory = func(model string) memory.Embedder {
+	return memory.NewOpenAIEmbedder(model)
+}
+
 func New(ctx context.Context, cfg Config) (*App, error) {
 	cfg = cfg.withDefaults()
 	shutdownTelemetry, err := godetelemetry.Setup(ctx, godetelemetry.Config{
@@ -294,7 +298,7 @@ func newMemoryService(ctx context.Context, cfg Config, bus *eventbus.Bus) (*memo
 	if err != nil {
 		return nil, err
 	}
-	return memory.NewService(store, memory.NewOpenAIEmbedder(memCfg.EmbeddingModel), scope, memCfg, bus), nil
+	return memory.NewService(store, memoryEmbedderFactory(memCfg.EmbeddingModel), scope, memCfg, bus), nil
 }
 
 func buildToolRegistry(cfg Config, bus *eventbus.Bus, goalRuntime *goals.Runtime, memoryService *memory.Service, mcpManager *mcp.Manager, lspManager *lsp.Manager) *tools.Registry {

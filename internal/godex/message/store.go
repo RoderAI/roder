@@ -134,7 +134,7 @@ func ProjectionFromEvent(ev eventbus.Event) []Message {
 			Phase string `json:"phase"`
 		}
 		_ = ev.DecodePayload(&payload)
-		base.Phase = strings.TrimSpace(payload.Phase)
+		base.Phase = normalizeAssistantPhase(strings.TrimSpace(payload.Phase), ev.Kind)
 		return single(base, RoleAssistant, payload.Text)
 	case eventbus.KindToolRequested:
 		var payload struct {
@@ -224,6 +224,16 @@ func single(base Message, role string, text string) []Message {
 	return []Message{base}
 }
 
+func normalizeAssistantPhase(phase string, kind eventbus.Kind) string {
+	if phase != "" {
+		return phase
+	}
+	if kind == eventbus.KindAssistantDelta || kind == eventbus.KindAssistantCompleted {
+		return "final_answer"
+	}
+	return ""
+}
+
 func (s *Store) readSession(sessionID string) ([]Message, error) {
 	path := s.path(sessionID)
 	file, err := os.Open(path)
@@ -264,6 +274,11 @@ func coalesceAssistant(messages []Message) []Message {
 			continue
 		}
 		key := msg.RunID + "\x00" + msg.Phase
+		if msg.SourceKind == string(eventbus.KindAssistantCompleted) && msg.Phase == "final_answer" {
+			if _, ok := assistantByRun[msg.RunID+"\x00"]; ok {
+				key = msg.RunID + "\x00"
+			}
+		}
 		index, ok := assistantByRun[key]
 		if !ok {
 			assistantByRun[key] = len(out)
@@ -273,6 +288,8 @@ func coalesceAssistant(messages []Message) []Message {
 		existing := out[index]
 		if msg.SourceKind == string(eventbus.KindAssistantCompleted) {
 			existing.Text = msg.Text
+			existing.Phase = msg.Phase
+			existing.SourceKind = msg.SourceKind
 		} else {
 			existing.Text += msg.Text
 		}
