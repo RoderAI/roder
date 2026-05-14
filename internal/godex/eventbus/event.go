@@ -41,6 +41,9 @@ const (
 	KindGoalCleared Kind = "goal.cleared"
 	KindGoalLimited Kind = "goal.budget_limited"
 
+	KindMemoryRecalled     Kind = "memory.recalled"
+	KindMemoryRecallFailed Kind = "memory.recall_failed"
+
 	KindAssistantDelta            Kind = "assistant.delta"
 	KindAssistantCompleted        Kind = "assistant.completed"
 	KindReasoningSummaryDelta     Kind = "reasoning_summary.delta"

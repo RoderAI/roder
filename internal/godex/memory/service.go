@@ -130,11 +130,15 @@ func (s *Service) Query(ctx context.Context, query string, limit int) ([]Entry, 
 		return nil, errors.New("memory query is required")
 	}
 	limit = s.queryLimit(limit)
-	queryVector, err := s.embedder.Embed(ctx, query)
+	entries, vectors, err := s.store.Candidates(ctx, s.scope.WorkspaceID, s.embedder.Model(), MaxRecallLimit)
 	if err != nil {
 		return nil, err
 	}
-	entries, vectors, err := s.store.Candidates(ctx, s.scope.WorkspaceID, s.embedder.Model(), MaxRecallLimit)
+	if len(entries) == 0 {
+		s.emit(ctx, KindMemoryQueried, map[string]any{"query": query, "count": 0, "model": s.embedder.Model(), "memory_ids": []string{}})
+		return nil, nil
+	}
+	queryVector, err := s.embedder.Embed(ctx, query)
 	if err != nil {
 		return nil, err
 	}

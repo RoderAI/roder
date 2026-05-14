@@ -12,6 +12,7 @@ import (
 	"github.com/pandelisz/gode/internal/godex/eventbus"
 	"github.com/pandelisz/gode/internal/godex/goals"
 	"github.com/pandelisz/gode/internal/godex/journal"
+	"github.com/pandelisz/gode/internal/godex/memory"
 	messagestore "github.com/pandelisz/gode/internal/godex/message"
 	"github.com/pandelisz/gode/internal/godex/provider"
 	"github.com/pandelisz/gode/internal/godex/session"
@@ -33,6 +34,7 @@ type Config struct {
 	DisableAutoCompaction bool
 	AutoCompactTokenLimit int
 	Goals                 *goals.Runtime
+	Memory                *memory.Service
 	ContextMessages       []provider.Message
 	Skills                []godeskills.Skill
 	ActiveSkills          map[string]bool
@@ -54,6 +56,7 @@ type Runner struct {
 	disableAutoCompaction bool
 	autoCompactTokenLimit int
 	goals                 *goals.Runtime
+	memory                *memory.Service
 	contextMessages       []provider.Message
 	skills                []godeskills.Skill
 	activeSkills          map[string]bool
@@ -97,6 +100,7 @@ func NewRunner(cfg Config) *Runner {
 		disableAutoCompaction: cfg.DisableAutoCompaction,
 		autoCompactTokenLimit: cfg.AutoCompactTokenLimit,
 		goals:                 cfg.Goals,
+		memory:                cfg.Memory,
 		contextMessages:       append([]provider.Message(nil), cfg.ContextMessages...),
 		skills:                append([]godeskills.Skill(nil), cfg.Skills...),
 		activeSkills:          cloneActiveSkills(cfg.ActiveSkills),
@@ -289,6 +293,10 @@ func (r *Runner) initialContext(ctx context.Context, req RunRequest, runMessages
 	} else if ok {
 		messages = append(messages, goalMessage)
 		inputItems = append(inputItems, providerItemFromProviderMessage(goalMessage))
+	}
+	if recallMessage, ok := r.memoryRecallMessage(ctx, req, prompt); ok {
+		messages = append(messages, recallMessage)
+		inputItems = append(inputItems, providerItemFromProviderMessage(recallMessage))
 	}
 	if !req.ReplacePrompt {
 		userMessage := provider.Message{Role: provider.RoleUser, Content: prompt}
