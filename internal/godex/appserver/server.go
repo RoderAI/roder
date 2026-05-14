@@ -51,3 +51,9 @@ func New(app *godex.App, options Options) *Server {
 	server.startEventBridge(context.Background())
 	return server
 }
+
+func (s *Server) ConnectionCount() int {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return len(s.conns)
+}

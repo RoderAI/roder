@@ -16,6 +16,7 @@ import (
 	"github.com/pandelisz/gode/internal/tui/components"
 	"github.com/pandelisz/gode/internal/tui/dialogs"
 	"github.com/pandelisz/gode/internal/tui/eventadapter"
+	tuiremote "github.com/pandelisz/gode/internal/tui/remote"
 	"github.com/pandelisz/gode/internal/tui/selection"
 	"github.com/pandelisz/gode/internal/tui/viewmodel"
 )
@@ -41,6 +42,9 @@ type Model struct {
 	hoveredID               string
 	status                  string
 	settings                dialogs.Settings
+	remote                  *tuiremote.Controller
+	remoteOpen              bool
+	remoteState             tuiremote.State
 	commands                dialogs.Commands
 	sessions                dialogs.Sessions
 	completions             dialogs.Commands
@@ -137,6 +141,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.settings.Open {
 			return m.updateSettings(msg)
 		}
+		if m.remoteOpen {
+			return m.updateRemotePanel(msg)
+		}
 		if m.permissions.Open {
 			return m.updatePermissions(msg)
 		}
@@ -224,6 +231,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.input.Reset()
 				return m, cmd
 			}
+			if handled, cmd := m.handleRemoteInput(prompt); handled {
+				return m, cmd
+			}
 			pending, err := m.preparePrompt(prompt)
 			if err != nil {
 				m.addMessage(viewmodel.RoleError, "attachments", err.Error())
@@ -290,6 +300,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.MouseClickMsg:
 		if m.settings.Open {
 			return m.updateSettingsMouse(msg)
+		}
+		if m.remoteOpen {
+			return m, nil
 		}
 		if m.permissions.Open {
 			return m.updatePermissionsMouse(msg)
@@ -369,6 +382,16 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.addMessage(viewmodel.RoleSystem, "skill install", skillInstallTranscript(msg))
 		m.status = fmt.Sprintf("installed %d skills", msg.Installed)
+		return m, nil
+	case remoteStateMsg:
+		m.remoteState = msg.State
+		if msg.Err != nil {
+			m.status = "remote failed"
+		} else if msg.State.Running {
+			m.status = "remote running"
+		} else {
+			m.status = "remote stopped"
+		}
 		return m, nil
 	case mouseCaptureRestoreMsg:
 		m.restoreMouseCapture(msg)

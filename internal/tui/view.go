@@ -24,6 +24,7 @@ func (m Model) viewModel() viewmodel.Model {
 	sessions := m.sessionsViewModel()
 	completions := m.completionsViewModel()
 	permissions := m.permissionsViewModel()
+	remote := m.remoteViewModel()
 	vm := viewmodel.Model{
 		Width:                     m.width,
 		Height:                    m.height,
@@ -56,8 +57,10 @@ func (m Model) viewModel() viewmodel.Model {
 			Commands:    commands,
 			Sessions:    sessions,
 			Permissions: permissions,
+			Remote:      remote,
 		},
 		Settings:     settings,
+		Remote:       remote,
 		QuitDialog:   m.quitConfirmViewModel(),
 		ErrorLog:     m.errorLog,
 		ShowErrorLog: m.showErrorLog,

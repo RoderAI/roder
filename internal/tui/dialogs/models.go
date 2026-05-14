@@ -263,6 +263,12 @@ func (s Settings) MenuItems() []viewmodel.SettingsMenuItem {
 			Value:       onOff(s.Config.Memories.Enabled),
 		},
 		{
+			ID:          "remote-control",
+			Label:       "Remote Control",
+			Description: "Start a token-authenticated WebSocket app-server and show pairing QR.",
+			Value:       "panel",
+		},
+		{
 			ID:          "config",
 			Label:       "Config",
 			Description: "Review provider, reasoning, workspace, and data paths.",

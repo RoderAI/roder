@@ -291,6 +291,8 @@ gode app-server --remote --listen ws://100.x.y.z:0 --auth-token env:GODE_REMOTE_
 
 Remote mode defaults to `ws://0.0.0.0:0`, generates a high-entropy bearer token, stores only its hash in memory, and prints connect URLs plus a terminal QR code to stderr. Remote clients authenticate with `Authorization: Bearer <token>` or the WebSocket subprotocol pair `gode.remote.v1, bearer.<token>`. The token is not accepted in query parameters.
 
+Inside the TUI, run `/remote` or open `ctrl+p` -> `Remote Control` to start and stop the same remote app-server sidecar. The panel shows connection URLs, a token preview, QR pairing, auth hints, connected-client count, and a LAN-without-TLS warning when relevant.
+
 ## Near-Term Direction
 
 - Deepen the OpenAI/Codex provider loop with multi-turn tool result continuation.
