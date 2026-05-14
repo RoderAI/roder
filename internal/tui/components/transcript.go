@@ -255,7 +255,7 @@ func renderUserMessage(msg viewmodel.Message, width int) renderedMessage {
 
 func renderAssistantMessage(msg viewmodel.Message, width int, markdown bool) renderedMessage {
 	lines := assistantBodyLines(msg.Body, max(12, width), markdown)
-	if msg.Title != "" {
+	if shouldRenderAssistantTitle(msg.Title) {
 		headerText := metaPrefixStyle.Render("· ") + metaTitleStyle.Render(strings.TrimSpace(msg.Title))
 		header := renderedLine{
 			text: headerText,
@@ -264,6 +264,10 @@ func renderAssistantMessage(msg viewmodel.Message, width int, markdown bool) ren
 		lines = append([]renderedLine{header}, lines...)
 	}
 	return renderedMessage{id: msg.ID, lines: lines}
+}
+
+func shouldRenderAssistantTitle(title string) bool {
+	return strings.TrimSpace(title) != "" && strings.TrimSpace(title) != "commentary"
 }
 
 func renderMetaMessage(msg viewmodel.Message, width int, prefix string, title string, markdown bool) renderedMessage {

@@ -579,6 +579,31 @@ func TestRenderTimelineUsesCompactLabels(t *testing.T) {
 	}
 }
 
+func TestRenderAssistantCommentaryOmitsVisiblePhaseLabel(t *testing.T) {
+	zones := zone.New()
+	t.Cleanup(zones.Close)
+
+	out := zones.Scan(Render(viewmodel.Model{
+		Width:       80,
+		Height:      16,
+		Model:       "gpt-test",
+		Provider:    "codex",
+		Input:       "Ask gode to work on this repo",
+		InputHeight: 1,
+		Messages: []viewmodel.Message{
+			{ID: "assistant", Role: viewmodel.RoleAssistant, Title: "commentary", Body: "Using the design-taste-frontend skill for this."},
+		},
+		Status: "running",
+	}, zones))
+
+	if !strings.Contains(out, "Using the design-taste-frontend skill for this.") {
+		t.Fatalf("rendered output missing commentary body:\n%s", out)
+	}
+	if strings.Contains(out, "commentary") {
+		t.Fatalf("rendered output should not show commentary label:\n%s", out)
+	}
+}
+
 func TestRenderFooterUsesBottomRowWhenScrolled(t *testing.T) {
 	zones := zone.New()
 	t.Cleanup(zones.Close)
