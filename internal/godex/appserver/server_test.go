@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/pandelisz/gode/internal/godex"
+	"github.com/pandelisz/gode/internal/godex/tools"
 )
 
 func TestConnectionRequiresInitializeAndStreamsThreadTurnNotifications(t *testing.T) {
@@ -366,6 +367,45 @@ func TestCommandExecStreamingKeepsOSExecPath(t *testing.T) {
 	}
 	if !hasCommandOutputDelta(messages, "stdout", "stdout") || !hasCommandOutputDelta(messages, "stderr", "stderr") {
 		t.Fatalf("missing output deltas: %#v", messages)
+	}
+}
+
+func TestCommandExecShellMatchesShellToolForPrintf(t *testing.T) {
+	ctx := context.Background()
+	workspace := filepath.Join(t.TempDir(), "workspace")
+	app, err := godex.New(ctx, godex.Config{
+		Workspace:   workspace,
+		DataDir:     t.TempDir(),
+		Provider:    "mock",
+		AutoApprove: true,
+	})
+	if err != nil {
+		t.Fatalf("new app: %v", err)
+	}
+	defer app.Close(ctx)
+
+	toolResult, err := app.Tools.Run(ctx, tools.Call{Name: "shell", Input: map[string]any{"command": "printf hi"}})
+	if err != nil {
+		t.Fatalf("shell tool: %v", err)
+	}
+
+	var messages []Message
+	conn := New(app, Options{Version: "test"}).NewConnection(func(_ context.Context, msg Message) error {
+		messages = append(messages, msg)
+		return nil
+	})
+	initializeTestConnection(t, conn)
+	sendJSONRequest(t, conn, map[string]any{
+		"id":     24,
+		"method": "command/exec",
+		"params": map[string]any{
+			"command": []string{"sh", "-c", "printf hi"},
+			"cwd":     workspace,
+		},
+	})
+	execResult := responseResult(t, messages, 24)
+	if toolResult.Text != "hi" || execResult["stdout"] != "hi" || execResult["stderr"] != "" || execResult["exitCode"] != float64(0) {
+		t.Fatalf("tool=%#v appserver=%#v", toolResult, execResult)
 	}
 }
 

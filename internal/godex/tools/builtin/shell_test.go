@@ -138,6 +138,43 @@ func TestShellToolReturnsNonZeroExitAsFailedResult(t *testing.T) {
 	}
 }
 
+func TestShellToolMissingExternalCommandFails(t *testing.T) {
+	root := t.TempDir()
+	reg := tools.NewRegistry()
+	RegisterShell(reg, root, godexshell.NewRunner())
+
+	result, err := reg.Run(context.Background(), tools.Call{Name: "shell", Input: map[string]any{"command": "definitely_missing_gode_command"}})
+	if err != nil {
+		t.Fatalf("run should return missing command as tool result: %v", err)
+	}
+	if result.Error == "" || !strings.Contains(result.Text, "shell exited with status 127") {
+		t.Fatalf("missing command result = %#v", result)
+	}
+}
+
+func TestShellToolCancellationStopsInProcessBuiltin(t *testing.T) {
+	root := t.TempDir()
+	builtins := mustBuiltinRegistry(t, godexshell.Builtin{
+		Name: "wait_cancel",
+		Run: func(ctx context.Context, args []string, stdin io.Reader, stdout io.Writer, stderr io.Writer) error {
+			<-ctx.Done()
+			return ctx.Err()
+		},
+	})
+	reg := tools.NewRegistry()
+	RegisterShell(reg, root, godexshell.Runner{Builtins: builtins})
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Millisecond)
+	defer cancel()
+
+	result, err := reg.Run(ctx, tools.Call{Name: "shell", Input: map[string]any{"command": "wait_cancel"}})
+	if err != nil {
+		t.Fatalf("run should return cancellation as tool result: %v", err)
+	}
+	if result.Error == "" || !strings.Contains(result.Text, "shell exited with status -1") {
+		t.Fatalf("cancel result = %#v", result)
+	}
+}
+
 type recordingShellRunner struct {
 	requests []godexshell.RunRequest
 	result   godexshell.RunResult
