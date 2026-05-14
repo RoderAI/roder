@@ -3,6 +3,7 @@ package appserver
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"path/filepath"
 	"testing"
@@ -123,6 +124,80 @@ func TestRemoteWebSocketSubprotocolAuth(t *testing.T) {
 	assertInitializeHasRemote(t, ctx, ws)
 }
 
+func TestRemoteWebSocketMockTurn(t *testing.T) {
+	ctx := context.Background()
+	workspace := filepath.Join(t.TempDir(), "workspace")
+	app, err := godex.New(ctx, godex.Config{
+		Workspace:   workspace,
+		DataDir:     t.TempDir(),
+		Provider:    "mock",
+		Model:       "mock",
+		AutoApprove: true,
+	})
+	if err != nil {
+		t.Fatalf("new app: %v", err)
+	}
+	defer app.Close(ctx)
+
+	auth, err := NewRemoteAuth("remote-secret", time.Unix(10, 0))
+	if err != nil {
+		t.Fatalf("new auth: %v", err)
+	}
+	server := New(app, Options{Version: "test", Remote: RemoteOptions{Enabled: true, Auth: auth}})
+	listener, err := server.ListenWebSocket(ctx, "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen websocket: %v", err)
+	}
+	defer listener.Close(ctx)
+
+	ws, _, err := websocket.Dial(ctx, listener.WebSocketURL(), &websocket.DialOptions{
+		HTTPHeader: http.Header{"Authorization": []string{"Bearer remote-secret"}},
+	})
+	if err != nil {
+		t.Fatalf("authorized dial: %v", err)
+	}
+	defer ws.Close(websocket.StatusNormalClosure, "")
+
+	writeWS(t, ctx, ws, map[string]any{
+		"id":     1,
+		"method": "initialize",
+		"params": map[string]any{"clientInfo": map[string]any{"name": "remote-smoke"}},
+	})
+	initMsg := readWSMessage(t, ctx, ws, func(msg Message) bool { return messageID(msg.ID) == "1" })
+	if initMsg.Error != nil {
+		t.Fatalf("initialize error: %#v", initMsg.Error)
+	}
+	writeWS(t, ctx, ws, map[string]any{"method": "initialized"})
+	writeWS(t, ctx, ws, map[string]any{
+		"id":     2,
+		"method": "thread/start",
+		"params": map[string]any{"cwd": workspace, "model": "mock"},
+	})
+	threadMsg := readWSMessage(t, ctx, ws, func(msg Message) bool { return messageID(msg.ID) == "2" })
+	if threadMsg.Error != nil {
+		t.Fatalf("thread/start error: %#v", threadMsg.Error)
+	}
+	threadID := threadMsg.Result.(map[string]any)["thread"].(map[string]any)["id"].(string)
+	writeWS(t, ctx, ws, map[string]any{
+		"id":     3,
+		"method": "turn/start",
+		"params": map[string]any{
+			"threadId": threadID,
+			"input": []map[string]any{
+				{"type": "text", "text": "hello remote"},
+			},
+		},
+	})
+	turnMsg := readWSMessage(t, ctx, ws, func(msg Message) bool { return messageID(msg.ID) == "3" })
+	if turnMsg.Error != nil {
+		t.Fatalf("turn/start error: %#v", turnMsg.Error)
+	}
+	completed := readWSMessage(t, ctx, ws, func(msg Message) bool { return msg.Method == "turn/completed" })
+	if completed.Params == nil {
+		t.Fatalf("turn/completed params missing: %#v", completed)
+	}
+}
+
 func assertInitializeHasRemote(t *testing.T, ctx context.Context, ws *websocket.Conn) {
 	t.Helper()
 	if err := ws.Write(ctx, websocket.MessageText, []byte(`{"id":1,"method":"initialize","params":{"clientInfo":{"name":"gode_ws_test"}}}`)); err != nil {
@@ -150,6 +225,49 @@ func statusCode(resp *http.Response) int {
 		return 0
 	}
 	return resp.StatusCode
+}
+
+func writeWS(t *testing.T, ctx context.Context, ws *websocket.Conn, value any) {
+	t.Helper()
+	data, err := json.Marshal(value)
+	if err != nil {
+		t.Fatalf("marshal websocket message: %v", err)
+	}
+	if err := ws.Write(ctx, websocket.MessageText, data); err != nil {
+		t.Fatalf("write websocket message: %v", err)
+	}
+}
+
+func readWSMessage(t *testing.T, ctx context.Context, ws *websocket.Conn, match func(Message) bool) Message {
+	t.Helper()
+	deadline, cancel := context.WithTimeout(ctx, 2*time.Second)
+	defer cancel()
+	for {
+		_, data, err := ws.Read(deadline)
+		if err != nil {
+			t.Fatalf("read websocket message: %v", err)
+		}
+		var msg Message
+		if err := json.Unmarshal(data, &msg); err != nil {
+			t.Fatalf("unmarshal websocket message: %v", err)
+		}
+		if match(msg) {
+			return msg
+		}
+	}
+}
+
+func messageID(id any) string {
+	switch value := id.(type) {
+	case json.Number:
+		return value.String()
+	case float64:
+		return fmt.Sprintf("%.0f", value)
+	case string:
+		return value
+	default:
+		return ""
+	}
 }
 
 func TestWebSocketTransportHealthOriginAndInitialize(t *testing.T) {
