@@ -147,7 +147,7 @@ func TestAppExposesMemoryToolsOnlyWhenEnabled(t *testing.T) {
 		t.Fatalf("new enabled app: %v", err)
 	}
 	defer enabled.Close(context.Background())
-	if !appHasTool(enabled, "save_memory") || !appHasTool(enabled, "memory_add") {
+	if !appHasTool(enabled, "memory_save") || !appHasTool(enabled, "memory_find") {
 		t.Fatalf("enabled specs = %#v", enabled.Tools.Specs())
 	}
 	if enabled.Memory == nil {
@@ -165,7 +165,7 @@ func TestAppExposesMemoryToolsOnlyWhenEnabled(t *testing.T) {
 		t.Fatalf("new disabled app: %v", err)
 	}
 	defer disabled.Close(context.Background())
-	if appHasTool(disabled, "save_memory") || appHasTool(disabled, "memory_add") {
+	if appHasTool(disabled, "memory_save") || appHasTool(disabled, "memory_find") {
 		t.Fatalf("disabled specs = %#v", disabled.Tools.Specs())
 	}
 }
@@ -182,19 +182,19 @@ func TestAppSetMemoriesEnabledRebuildsTools(t *testing.T) {
 		t.Fatalf("new app: %v", err)
 	}
 	defer app.Close(context.Background())
-	if appHasTool(app, "save_memory") {
-		t.Fatalf("save_memory should start disabled: %#v", app.Tools.Specs())
+	if appHasTool(app, "memory_save") {
+		t.Fatalf("memory_save should start disabled: %#v", app.Tools.Specs())
 	}
 	if err := app.SetMemoriesEnabled(true); err != nil {
 		t.Fatalf("enable memories: %v", err)
 	}
-	if !app.Config.Memories.Enabled || app.Memory == nil || !appHasTool(app, "save_memory") {
+	if !app.Config.Memories.Enabled || app.Memory == nil || !appHasTool(app, "memory_save") {
 		t.Fatalf("enabled config=%#v memory=%v specs=%#v", app.Config.Memories, app.Memory, app.Tools.Specs())
 	}
 	if err := app.SetMemoriesEnabled(false); err != nil {
 		t.Fatalf("disable memories: %v", err)
 	}
-	if app.Config.Memories.Enabled || appHasTool(app, "save_memory") {
+	if app.Config.Memories.Enabled || appHasTool(app, "memory_save") {
 		t.Fatalf("disabled config=%#v specs=%#v", app.Config.Memories, app.Tools.Specs())
 	}
 }

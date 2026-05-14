@@ -3,7 +3,6 @@ package memory
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"strings"
 
@@ -19,7 +18,7 @@ type ToolEntry struct {
 
 func RegisterTools(reg *tools.Registry, service *Service) {
 	reg.Register(tools.Tool{
-		Name:        "save_memory",
+		Name:        "memory_save",
 		Description: "Save a durable semantic memory for the current workspace.",
 		Schema:      objectSchema("content"),
 		Run: func(ctx context.Context, call tools.Call) (tools.Result, error) {
@@ -32,7 +31,7 @@ func RegisterTools(reg *tools.Registry, service *Service) {
 		},
 	})
 	reg.Register(tools.Tool{
-		Name:        "update_memory",
+		Name:        "memory_update",
 		Description: "Update a durable semantic memory by ID.",
 		Schema:      objectSchema("id", "content"),
 		Run: func(ctx context.Context, call tools.Call) (tools.Result, error) {
@@ -45,7 +44,7 @@ func RegisterTools(reg *tools.Registry, service *Service) {
 		},
 	})
 	reg.Register(tools.Tool{
-		Name:        "delete_memory",
+		Name:        "memory_delete",
 		Description: "Delete a durable semantic memory by ID.",
 		Schema:      objectSchema("id"),
 		Run: func(ctx context.Context, call tools.Call) (tools.Result, error) {
@@ -57,7 +56,7 @@ func RegisterTools(reg *tools.Registry, service *Service) {
 		},
 	})
 	reg.Register(tools.Tool{
-		Name:        "query_memories",
+		Name:        "memory_find",
 		Description: "Search durable semantic memories for the current workspace.",
 		Schema:      objectSchema("query"),
 		ReadOnly:    true,
@@ -75,7 +74,7 @@ func RegisterTools(reg *tools.Registry, service *Service) {
 		},
 	})
 	reg.Register(tools.Tool{
-		Name:        "read_memory",
+		Name:        "memory_read",
 		Description: "Read a durable semantic memory by ID.",
 		Schema:      objectSchema("id"),
 		ReadOnly:    true,
@@ -85,47 +84,6 @@ func RegisterTools(reg *tools.Registry, service *Service) {
 				return tools.Result{}, err
 			}
 			return tools.Result{Text: entry.Content, Data: toolEntry(entry)}, nil
-		},
-	})
-	registerCompatibilityAliases(reg, service)
-}
-
-func registerCompatibilityAliases(reg *tools.Registry, service *Service) {
-	reg.Register(tools.Tool{
-		Name:        "memory_add",
-		Description: "Compatibility alias for save_memory.",
-		Schema:      objectSchema("note"),
-		Run: func(ctx context.Context, call tools.Call) (tools.Result, error) {
-			content := stringInput(call.Input, "note")
-			if strings.TrimSpace(content) == "" {
-				content = stringInput(call.Input, "content")
-			}
-			entry, err := service.Save(ctx, content, "tool")
-			if err != nil {
-				return tools.Result{}, err
-			}
-			row := toolEntry(entry)
-			return tools.Result{Text: "memory added", Data: row}, nil
-		},
-	})
-	reg.Register(tools.Tool{
-		Name:        "memory_list",
-		Description: "Compatibility alias for listing current workspace memories.",
-		ReadOnly:    true,
-		Run: func(ctx context.Context, call tools.Call) (tools.Result, error) {
-			entries, err := service.List(ctx, intInputDefault(call.Input, "limit", service.cfg.RecallLimit))
-			if err != nil {
-				if errors.Is(err, ErrNotFound) {
-					return tools.Result{Text: ""}, nil
-				}
-				return tools.Result{}, err
-			}
-			rows := toolEntries(entries)
-			lines := make([]string, 0, len(rows))
-			for _, row := range rows {
-				lines = append(lines, row.Content)
-			}
-			return tools.Result{Text: strings.Join(lines, "\n"), Data: rows}, nil
 		},
 	})
 }

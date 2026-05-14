@@ -25,10 +25,11 @@ type SteerRequest struct {
 }
 
 type activeRun struct {
-	sessionID string
-	runID     string
-	mu        sync.Mutex
-	steers    []string
+	sessionID       string
+	runID           string
+	mu              sync.Mutex
+	steers          []string
+	observerStarted bool
 }
 
 func (r *Runner) registerActiveRun(req RunRequest) *activeRun {
@@ -103,6 +104,19 @@ func (r *Runner) drainSteers(control *activeRun) []string {
 	steers := append([]string(nil), control.steers...)
 	control.steers = nil
 	return steers
+}
+
+func (r *Runner) markMemoryObserverStarted(control *activeRun) bool {
+	if control == nil {
+		return false
+	}
+	control.mu.Lock()
+	defer control.mu.Unlock()
+	if control.observerStarted {
+		return false
+	}
+	control.observerStarted = true
+	return true
 }
 
 func (r *Runner) appendSteers(ctx context.Context, req RunRequest, messages []provider.Message, steers []string) []provider.Message {

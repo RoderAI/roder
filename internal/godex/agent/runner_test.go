@@ -752,9 +752,13 @@ func (p *scriptedProvider) Name() string {
 
 func (p *scriptedProvider) Stream(_ context.Context, req provider.Request) (<-chan provider.Event, <-chan error) {
 	p.requests = append(p.requests, req)
-	events := make(chan provider.Event, 8)
-	errs := make(chan error)
 	index := len(p.requests) - 1
+	buffer := 8
+	if index < len(p.streams) && len(p.streams[index]) > buffer {
+		buffer = len(p.streams[index])
+	}
+	events := make(chan provider.Event, buffer)
+	errs := make(chan error)
 	if index < len(p.streams) {
 		for _, ev := range p.streams[index] {
 			events <- ev

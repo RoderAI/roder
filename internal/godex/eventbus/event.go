@@ -41,8 +41,11 @@ const (
 	KindGoalCleared Kind = "goal.cleared"
 	KindGoalLimited Kind = "goal.budget_limited"
 
-	KindMemoryRecalled     Kind = "memory.recalled"
-	KindMemoryRecallFailed Kind = "memory.recall_failed"
+	KindMemoryRecalled          Kind = "memory.recalled"
+	KindMemoryRecallFailed      Kind = "memory.recall_failed"
+	KindMemoryObserverStarted   Kind = "memory.observer_started"
+	KindMemoryObserverCompleted Kind = "memory.observer_completed"
+	KindMemoryObserverFailed    Kind = "memory.observer_failed"
 
 	KindAssistantDelta            Kind = "assistant.delta"
 	KindAssistantCompleted        Kind = "assistant.completed"
