@@ -145,6 +145,7 @@ func visibleMessagesWithOptions(messages []viewmodel.Message, width int, height 
 	for i := len(messages) - 1; i >= 0 && total < lineBudget; i-- {
 		item := renderMessageCached(messages[i], width, timelineStyle, markdown, cache)
 		item.messageIndex = i
+		item.lines = normalizedMessageLines(item)
 		reversed = append(reversed, item)
 		total += len(item.lines)
 	}
@@ -177,12 +178,78 @@ func visibleMessagesWithOptions(messages []viewmodel.Message, width int, height 
 		lines := cloneRenderedLines(item.lines[from:to])
 		for i := range lines {
 			lines[i].ref.MessageIndex = item.messageIndex
-			lines[i].ref.DisplayLine = visibleLine
-			visibleLine++
 		}
 		visible = append(visible, renderedMessage{id: item.id, messageIndex: item.messageIndex, lines: lines})
 	}
+	visible = trimLeadingMessageGaps(visible)
+	for itemIndex := range visible {
+		for lineIndex := range visible[itemIndex].lines {
+			visible[itemIndex].lines[lineIndex].ref.DisplayLine = visibleLine
+			visibleLine++
+		}
+	}
 	return visible
+}
+
+func normalizedMessageLines(item renderedMessage) []renderedLine {
+	lines := trimEdgeBlankLines(item.lines)
+	if item.messageIndex <= 0 {
+		return lines
+	}
+	out := make([]renderedLine, 0, len(lines)+1)
+	out = append(out, messageGapLine())
+	out = append(out, lines...)
+	return out
+}
+
+func messageGapLine() renderedLine {
+	return renderedLine{
+		text: "",
+		ref: selection.TranscriptLineRef{
+			LogicalLine: -1,
+			Text:        "",
+			Decorative:  true,
+		},
+	}
+}
+
+func trimLeadingMessageGaps(messages []renderedMessage) []renderedMessage {
+	for len(messages) > 0 {
+		for len(messages[0].lines) > 0 && isMessageGapLine(messages[0].lines[0]) {
+			messages[0].lines = messages[0].lines[1:]
+		}
+		if len(messages[0].lines) > 0 {
+			return messages
+		}
+		messages = messages[1:]
+	}
+	return messages
+}
+
+func isMessageGapLine(line renderedLine) bool {
+	return line.ref.Decorative && line.ref.LogicalLine == -1 && line.text == ""
+}
+
+func trimEdgeBlankLines(lines []renderedLine) []renderedLine {
+	start := 0
+	for start < len(lines) && isBlankRenderedLine(lines[start]) {
+		start++
+	}
+	if start == len(lines) {
+		return lines[:1]
+	}
+	end := len(lines)
+	for end > start && isBlankRenderedLine(lines[end-1]) {
+		end--
+	}
+	if start == 0 && end == len(lines) {
+		return lines
+	}
+	return lines[start:end]
+}
+
+func isBlankRenderedLine(line renderedLine) bool {
+	return strings.TrimSpace(ansi.Strip(line.text)) == ""
 }
 
 func renderMessageCached(msg viewmodel.Message, width int, timelineStyle string, markdown bool, cache *TranscriptCache) renderedMessage {
