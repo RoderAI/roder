@@ -46,7 +46,7 @@ func NewSettings(cfg godex.Config) Settings {
 		Open:   true,
 		Screen: ScreenMenu,
 		Config: cfg,
-		Models: godex.BuiltInModels(false),
+		Models: godex.ModelsForConfig(cfg, false),
 	}
 	settings.selectCurrentModel()
 	return settings

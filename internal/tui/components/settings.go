@@ -131,6 +131,9 @@ func modelSettingsContent(width int, models []viewmodel.SettingsModelItem, zones
 			name = model.ID
 		}
 		value := model.ID
+		if model.Provider != "" {
+			value = model.Provider + "/" + model.ID
+		}
 		if model.Current {
 			value += " current"
 		}
