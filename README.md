@@ -40,6 +40,20 @@ make run
 
 Then open Jaeger at <http://localhost:16686>.
 
+## Shell Tooling
+
+The `shell` tool runs POSIX shell strings through the embedded `mvdan.cc/sh/v3` runner instead of spawning `/bin/sh -lc`. Standard shell behavior such as variables, pipelines, redirections, and exit statuses is handled in-process, while unknown external commands still fall through to OS command lookup and return command-not-found failures.
+
+Initial in-process builtins are available before PATH lookup:
+
+- `jq`: a small `gojq`-backed JSON builtin with `-r`, stdin input, and file input.
+- `gode_read_file path [start_line] [limit]`: reads text files through the same ranged read path as the `read_file` tool.
+- `gode_list_files [path]`: lists sorted direct children through the `list_files` tool.
+- `gode_search_files query`: searches workspace text files through the `search_files` tool.
+- `gode_apply_patch`: reads a patch from stdin and applies it through the existing `apply_patch` tool.
+
+The app-server keeps direct process execution for array commands such as `["/bin/echo","hi"]`. Non-streaming shell invocations like `["sh","-c","jq -r .name file.json"]` and `["/bin/sh","-lc","gode_list_files ."]` route through the embedded shell runner so app-server clients get the same builtins as agent shell tool calls.
+
 ## Homebrew Release
 
 The formula builds `gode` from source, so local installs do not need a signed binary artifact.
@@ -58,6 +72,20 @@ VERSION=0.1.0 PUBLISH=1 make release-brew
 ```
 
 `PUBLISH=1` creates tag `v0.1.0`, rewrites the formula to use the git tag and revision, commits `Formula/gode.rb`, and pushes the tag plus the current branch to `origin`.
+
+## Shell And Builtins
+
+The `shell` tool parses commands with `mvdan.cc/sh/v3` in POSIX mode instead of wrapping every command in `/bin/sh -lc`. Pipelines, redirections, variable assignments, command substitutions, and shell functions are interpreted by the embedded runner. External commands still run through the OS path unless a caller explicitly disables them.
+
+Gode registers a small in-process builtin set before OS command lookup:
+
+- `jq`: JSON queries from stdin or file args, including `-r` raw string output.
+- `gode_read_file path [start_line] [limit]`: read focused file ranges through the existing `read_file` tool.
+- `gode_list_files [path]`: list sorted direct children through the existing `list_files` tool.
+- `gode_search_files query`: search text files through the existing `search_files` tool.
+- `gode_apply_patch`: read a patch from stdin and apply it through the existing `apply_patch` tool.
+
+`gode app-server` routes non-TTY `["sh", "-c", "..."]` and `["/bin/sh", "-lc", "..."]` command invocations through the same embedded shell runner when stdin/stdout streaming is not requested. Direct array commands and streamed app-server commands still use normal OS process execution.
 
 ## Agent Client Protocol
 
