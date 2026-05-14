@@ -7,13 +7,18 @@ import (
 )
 
 var (
-	reasoningSummaryStyle = lipgloss.NewStyle().
-				Foreground(lipgloss.Color("245")).
-				Padding(0, 1)
-	reasoningSummaryLabelStyle = lipgloss.NewStyle().
-					Bold(true).
-					Foreground(lipgloss.Color("212"))
+	reasoningSummaryStyle      lipgloss.Style
+	reasoningSummaryLabelStyle lipgloss.Style
 )
+
+func resetReasoningSummaryStyles() {
+	reasoningSummaryStyle = lipgloss.NewStyle().
+		Foreground(ThemeColor(ColorSubtle)).
+		Padding(0, 1)
+	reasoningSummaryLabelStyle = lipgloss.NewStyle().
+		Bold(true).
+		Foreground(ThemeColor(ColorAccent))
+}
 
 func ReasoningSummaryHeight(text string, totalHeight int) int {
 	if strings.TrimSpace(text) == "" {

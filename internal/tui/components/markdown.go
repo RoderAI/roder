@@ -9,16 +9,14 @@ import (
 	"github.com/charmbracelet/x/ansi"
 )
 
-const markdownDefaultColor = "252"
-
 func markdownBodyLines(text string, width int) []renderedLine {
-	return markdownBodyLinesWithBaseColor(text, width, "252")
+	return markdownBodyLinesWithBaseColor(text, width, themeColor(ColorText))
 }
 
 func markdownBodyLinesWithBaseColor(text string, width int, color string) []renderedLine {
 	rendered, err := renderMarkdown(text, width)
 	if err != nil || strings.TrimSpace(rendered) == "" {
-		if color == "231" {
+		if color == themeColor(ColorTextStrong) {
 			return styledWrappedBodyLines(text, width, assistantBodyStyle)
 		}
 		return wrappedBodyLines(text, width)
@@ -46,8 +44,9 @@ func renderMarkdown(text string, width int) (string, error) {
 
 func simplifiedMarkdownStyle() glamouransi.StyleConfig {
 	style := styles.ASCIIStyleConfig
-	style.Document.StylePrimitive.Color = ptr(markdownDefaultColor)
-	style.Heading.StylePrimitive.Color = ptr(markdownDefaultColor)
+	baseColor := themeColor(ColorText)
+	style.Document.StylePrimitive.Color = ptr(baseColor)
+	style.Heading.StylePrimitive.Color = ptr(baseColor)
 	style.Heading.StylePrimitive.Bold = ptr(true)
 	style.Strong.Bold = ptr(true)
 	style.Strong.BlockPrefix = ""
@@ -58,22 +57,23 @@ func simplifiedMarkdownStyle() glamouransi.StyleConfig {
 	style.Strikethrough.CrossedOut = ptr(true)
 	style.Strikethrough.BlockPrefix = ""
 	style.Strikethrough.BlockSuffix = ""
-	style.Link.Color = ptr(markdownDefaultColor)
+	style.Link.Color = ptr(baseColor)
 	style.Link.Underline = ptr(true)
-	style.LinkText.Color = ptr(markdownDefaultColor)
+	style.LinkText.Color = ptr(baseColor)
 	style.LinkText.Underline = ptr(true)
-	style.Code.StylePrimitive.Color = ptr(markdownDefaultColor)
+	style.Code.StylePrimitive.Color = ptr(baseColor)
 	style.Code.StylePrimitive.BackgroundColor = nil
-	style.CodeBlock.StylePrimitive.Color = ptr(markdownDefaultColor)
+	style.CodeBlock.StylePrimitive.Color = ptr(baseColor)
 	style.CodeBlock.Chroma = nil
 	return style
 }
 
 func forceMarkdownBaseColor(rendered string, color string) string {
-	if color == markdownDefaultColor {
+	defaultColor := themeColor(ColorText)
+	if color == defaultColor {
 		return rendered
 	}
-	return strings.ReplaceAll(rendered, "\x1b[38;5;"+markdownDefaultColor+"m", "\x1b[38;5;"+color+"m")
+	return strings.ReplaceAll(rendered, "\x1b[38;5;"+defaultColor+"m", "\x1b[38;5;"+color+"m")
 }
 
 func ptr[T any](v T) *T {

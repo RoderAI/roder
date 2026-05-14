@@ -11,24 +11,37 @@ import (
 	"charm.land/lipgloss/v2"
 	"github.com/pandelisz/gode/internal/godex"
 	"github.com/pandelisz/gode/internal/godex/session"
+	"github.com/pandelisz/gode/internal/tui/components"
 )
 
 const resumePickerMaxRows = 8
 
 var (
-	resumePickerTitleStyle = lipgloss.NewStyle().
-				Bold(true).
-				Foreground(lipgloss.Color("212"))
-	resumePickerHelpStyle = lipgloss.NewStyle().
-				Foreground(lipgloss.Color("244"))
-	resumePickerMetaStyle = lipgloss.NewStyle().
-				Foreground(lipgloss.Color("246"))
-	resumePickerDimStyle = lipgloss.NewStyle().
-				Foreground(lipgloss.Color("240"))
-	resumePickerSelectedStyle = lipgloss.NewStyle().
-					Bold(true).
-					Foreground(lipgloss.Color("152"))
+	resumePickerTitleStyle    lipgloss.Style
+	resumePickerHelpStyle     lipgloss.Style
+	resumePickerMetaStyle     lipgloss.Style
+	resumePickerDimStyle      lipgloss.Style
+	resumePickerSelectedStyle lipgloss.Style
 )
+
+func resetResumePickerStyles() {
+	resumePickerTitleStyle = lipgloss.NewStyle().
+		Bold(true).
+		Foreground(components.ThemeColor(components.ColorAccent))
+	resumePickerHelpStyle = lipgloss.NewStyle().
+		Foreground(components.ThemeColor(components.ColorMuted))
+	resumePickerMetaStyle = lipgloss.NewStyle().
+		Foreground(components.ThemeColor(components.ColorSubtle))
+	resumePickerDimStyle = lipgloss.NewStyle().
+		Foreground(components.ThemeColor(components.ColorMuted))
+	resumePickerSelectedStyle = lipgloss.NewStyle().
+		Bold(true).
+		Foreground(components.ThemeColor(components.ColorAccentSoft))
+}
+
+func init() {
+	resetResumePickerStyles()
+}
 
 type resumePickerModel struct {
 	sessions     []session.Session
@@ -41,6 +54,8 @@ type resumePickerModel struct {
 }
 
 func PickResumeSession(ctx context.Context, app *godex.App) (string, error) {
+	components.DetectAndSetTheme()
+	resetResumePickerStyles()
 	model := newResumePickerModel(app)
 	program := tea.NewProgram(model, tea.WithContext(ctx))
 	finalModel, err := program.Run()

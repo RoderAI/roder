@@ -7,9 +7,13 @@ import (
 	"charm.land/lipgloss/v2"
 )
 
-var footerStyle = lipgloss.NewStyle().
-	Foreground(lipgloss.Color("248")).
-	Padding(0, 1)
+var footerStyle lipgloss.Style
+
+func resetFooterStyles() {
+	footerStyle = lipgloss.NewStyle().
+		Foreground(ThemeColor(ColorSubtle)).
+		Padding(0, 1)
+}
 
 func Footer(width int, scrollOffset int, status string, showErrorLog bool, errorCount int, contextLeft string) string {
 	left := "enter send  shift+tab permissions  ctrl+p settings  ctrl+l errors  pgup/pgdn scroll  end follow  esc quit"

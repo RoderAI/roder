@@ -1,6 +1,7 @@
 package components
 
 import (
+	"image/color"
 	"strings"
 
 	"charm.land/lipgloss/v2"
@@ -9,14 +10,13 @@ import (
 	"github.com/pandelisz/gode/internal/tui/viewmodel"
 )
 
-var composerStyle = lipgloss.NewStyle().
-	Border(lipgloss.NormalBorder(), true).
-	Padding(0, 1)
+var composerStyle lipgloss.Style
 
-const (
-	composerBorderNormal      = "244"
-	composerBorderAutoApprove = "212"
-)
+func resetComposerStyles() {
+	composerStyle = lipgloss.NewStyle().
+		Border(lipgloss.NormalBorder(), true).
+		Padding(0, 1)
+}
 
 func Composer(width int, input string) string {
 	return ComposerWithSelection(width, input, ComposerOptions{}, nil)
@@ -35,7 +35,7 @@ func ComposerWithSelection(width int, input string, options ComposerOptions, zon
 		body = renderSelectedComposerValue(options.Value, options.Selection, options.SelectionStyle)
 	}
 	out := composerStyle.
-		BorderForeground(lipgloss.Color(composerBorderColor(options.AutoApprove))).
+		BorderForeground(composerBorderColor(options.AutoApprove)).
 		Width(max(20, width-2)).
 		Render(body)
 	if zones != nil {
@@ -53,9 +53,7 @@ func renderSelectedComposerValue(value string, selected selection.OffsetRange, s
 		return ""
 	}
 	if style.GetBackground() == nil && style.GetForeground() == nil {
-		style = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("16")).
-			Background(lipgloss.Color("212"))
+		style = ThemeSelectionStyle()
 	}
 	start, end, ok := selected.Normalize(value)
 	if !ok {
@@ -69,11 +67,11 @@ func renderSelectedComposerValue(value string, selected selection.OffsetRange, s
 	return out.String()
 }
 
-func composerBorderColor(autoApprove bool) string {
+func composerBorderColor(autoApprove bool) color.Color {
 	if autoApprove {
-		return composerBorderAutoApprove
+		return ThemeColor(ColorAccent)
 	}
-	return composerBorderNormal
+	return ThemeColor(ColorBorder)
 }
 
 func ComposerVisualLines(value string, width int) []string {

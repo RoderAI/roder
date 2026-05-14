@@ -8,18 +8,25 @@ import (
 )
 
 var (
-	errorConsoleStyle = lipgloss.NewStyle().
-				Padding(0, 1)
-	errorConsoleTitleStyle = lipgloss.NewStyle().
-				Bold(true).
-				Foreground(lipgloss.Color("231")).
-				Background(lipgloss.Color("160")).
-				Padding(0, 1)
-	errorConsoleMetaStyle = lipgloss.NewStyle().
-				Foreground(lipgloss.Color("244"))
-	errorConsoleTextStyle = lipgloss.NewStyle().
-				Foreground(lipgloss.Color("252"))
+	errorConsoleStyle      lipgloss.Style
+	errorConsoleTitleStyle lipgloss.Style
+	errorConsoleMetaStyle  lipgloss.Style
+	errorConsoleTextStyle  lipgloss.Style
 )
+
+func resetErrorConsoleStyles() {
+	errorConsoleStyle = lipgloss.NewStyle().
+		Padding(0, 1)
+	errorConsoleTitleStyle = lipgloss.NewStyle().
+		Bold(true).
+		Foreground(ThemeColor(ColorErrorLabel)).
+		Background(ThemeColor(ColorError)).
+		Padding(0, 1)
+	errorConsoleMetaStyle = lipgloss.NewStyle().
+		Foreground(ThemeColor(ColorMuted))
+	errorConsoleTextStyle = lipgloss.NewStyle().
+		Foreground(ThemeColor(ColorText))
+}
 
 func ErrorConsole(width int, height int, entries []viewmodel.ErrorLogEntry) string {
 	contentWidth := max(20, width-2)

@@ -7,9 +7,13 @@ import (
 	"github.com/pandelisz/gode/internal/tui/viewmodel"
 )
 
-var attachmentStyle = lipgloss.NewStyle().
-	Foreground(lipgloss.Color("252")).
-	Padding(0, 2)
+var attachmentStyle lipgloss.Style
+
+func resetAttachmentStyles() {
+	attachmentStyle = lipgloss.NewStyle().
+		Foreground(ThemeColor(ColorText)).
+		Padding(0, 2)
+}
 
 func AttachmentBar(width int, attachments []viewmodel.Attachment) string {
 	if len(attachments) == 0 {

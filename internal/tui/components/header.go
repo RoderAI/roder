@@ -7,16 +7,22 @@ import (
 )
 
 var (
-	headerBarStyle = lipgloss.NewStyle().
-			Bold(true).
-			Foreground(lipgloss.Color("231")).
-			Padding(0, 1)
-	headerAccentStyle = lipgloss.NewStyle().
-				Bold(true).
-				Foreground(lipgloss.Color("212"))
-	headerMetaStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("252"))
+	headerBarStyle    lipgloss.Style
+	headerAccentStyle lipgloss.Style
+	headerMetaStyle   lipgloss.Style
 )
+
+func resetHeaderStyles() {
+	headerBarStyle = lipgloss.NewStyle().
+		Bold(true).
+		Foreground(ThemeColor(ColorTextStrong)).
+		Padding(0, 1)
+	headerAccentStyle = lipgloss.NewStyle().
+		Bold(true).
+		Foreground(ThemeColor(ColorAccent))
+	headerMetaStyle = lipgloss.NewStyle().
+		Foreground(ThemeColor(ColorText))
+}
 
 func Header(width int, provider string, model string, reasoning string, sessionTitle string, running bool) string {
 	left := headerAccentStyle.Render("gode")

@@ -10,13 +10,18 @@ import (
 const maxQueuedPromptRows = 6
 
 var (
-	queuedTitleStyle = lipgloss.NewStyle().
-				Foreground(lipgloss.Color("231")).
-				Bold(true)
-	queuedItemStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("245")).
-			Italic(true)
+	queuedTitleStyle lipgloss.Style
+	queuedItemStyle  lipgloss.Style
 )
+
+func resetQueuedPromptStyles() {
+	queuedTitleStyle = lipgloss.NewStyle().
+		Foreground(ThemeColor(ColorTextStrong)).
+		Bold(true)
+	queuedItemStyle = lipgloss.NewStyle().
+		Foreground(ThemeColor(ColorSubtle)).
+		Italic(true)
+}
 
 func QueuedPromptsHeight(prompts []string) int {
 	if len(prompts) == 0 {
