@@ -20,6 +20,7 @@ func (m *Model) openSettings() {
 		cfg = m.app.Config
 	}
 	m.settings = dialogs.NewSettings(cfg)
+	m.refreshSettingsMemory()
 	m.refreshSettingsSkills()
 	m.input.Blur()
 	m.status = "settings"
@@ -62,6 +63,9 @@ func (m Model) updateSettings(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	case "right", "enter":
 		return m.activateSettingsSelection()
 	case " ", "space":
+		if m.settings.Screen == dialogs.ScreenMemories {
+			return m.toggleSelectedMemorySetting()
+		}
 		if m.settings.Screen == dialogs.ScreenSkills {
 			return m.toggleSelectedSkill()
 		}
@@ -141,6 +145,14 @@ func (m Model) updateSettingsMouse(msg tea.MouseClickMsg) (tea.Model, tea.Cmd) {
 				return m, m.saveSelectedModelReasoning()
 			}
 		}
+	case dialogs.ScreenMemories:
+		for i, row := range m.settings.MemoryRows() {
+			z := m.zones.Get(viewmodel.SettingsMemoryZoneID(row.ID))
+			if z != nil && z.InBounds(msg) {
+				m.settings.MemoryIndex = i
+				return m.toggleSelectedMemorySetting()
+			}
+		}
 	case dialogs.ScreenSkills:
 		for i, item := range m.settings.Skills {
 			z := m.zones.Get(viewmodel.SettingsSkillZoneID(item.Name))
@@ -175,6 +187,8 @@ func (m Model) activateSettingsSelection() (tea.Model, tea.Cmd) {
 			return m, m.toggleTimelineStyle()
 		case "markdown-rendering":
 			return m, m.toggleMarkdownRendering()
+		case "memories":
+			m.settings.OpenMemories()
 		case "config":
 			m.settings.OpenConfig()
 		case "codex-auth":
@@ -190,6 +204,8 @@ func (m Model) activateSettingsSelection() (tea.Model, tea.Cmd) {
 	case dialogs.ScreenConfig:
 		m.settings.OpenMenu()
 		return m, nil
+	case dialogs.ScreenMemories:
+		return m.toggleSelectedMemorySetting()
 	case dialogs.ScreenSkills:
 		return m.toggleSelectedSkill()
 	case dialogs.ScreenSkillRecommendations:
@@ -353,19 +369,6 @@ func (m *Model) toggleMarkdownRendering() tea.Cmd {
 	return nil
 }
 
-func settingsFromConfig(cfg godex.Config) godex.Settings {
-	return godex.Settings{
-		DefaultModel:          cfg.Model,
-		DefaultReasoning:      cfg.Reasoning,
-		FastMode:              cfg.FastMode,
-		AutoApprove:           cfg.AutoApprove,
-		TimelineStyle:         cfg.TimelineStyle,
-		MarkdownRendering:     cfg.MarkdownRendering,
-		DisableAutoCompaction: cfg.DisableAutoCompaction,
-		AutoCompactTokenLimit: cfg.AutoCompactTokenLimit,
-	}
-}
-
 func saveSettingsFromConfig(dataDir string, cfg godex.Config) error {
 	settings, err := godex.LoadSettings(dataDir)
 	if err != nil {
@@ -377,6 +380,7 @@ func saveSettingsFromConfig(dataDir string, cfg godex.Config) error {
 	settings.AutoApprove = cfg.AutoApprove
 	settings.TimelineStyle = cfg.TimelineStyle
 	settings.MarkdownRendering = cfg.MarkdownRendering
+	settings.Memories = memorySettingsFromConfig(cfg.Memories)
 	settings.DisableAutoCompaction = cfg.DisableAutoCompaction
 	settings.AutoCompactTokenLimit = cfg.AutoCompactTokenLimit
 	return godex.SaveSettings(dataDir, settings)

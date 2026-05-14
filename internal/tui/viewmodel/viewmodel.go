@@ -158,6 +158,7 @@ type SettingsDialog struct {
 	Models            []SettingsModelItem
 	Reasoning         []SettingsReasoningItem
 	ConfigRows        []SettingsConfigRow
+	Memory            SettingsMemoryState
 	Skills            []SettingsSkillItem
 	RecommendedSkills []SettingsRecommendedSkillItem
 	InstallPrompt     SettingsInstallPrompt
@@ -196,6 +197,18 @@ type SettingsReasoningItem struct {
 	Selected    bool
 }
 
+type SettingsMemoryState struct {
+	Rows []SettingsMemoryRow
+}
+
+type SettingsMemoryRow struct {
+	ID          string
+	Label       string
+	Value       string
+	Description string
+	Selected    bool
+}
+
 type SettingsSkillItem struct {
 	Name        string
 	Description string
@@ -227,6 +240,7 @@ const (
 	SettingsScreenModels       = "models"
 	SettingsScreenReasoning    = "reasoning"
 	SettingsScreenConfig       = "config"
+	SettingsScreenMemories     = "memories"
 	SettingsScreenSkills       = "skills"
 	SettingsScreenSkillRecs    = "skill-recommendations"
 	SettingsScreenSkillInstall = "skill-install"
@@ -242,6 +256,10 @@ func SettingsModelZoneID(id string) string {
 
 func SettingsReasoningZoneID(effort string) string {
 	return "settings:reasoning:" + effort
+}
+
+func SettingsMemoryZoneID(id string) string {
+	return "settings:memory:" + id
 }
 
 func SettingsSkillZoneID(name string) string {

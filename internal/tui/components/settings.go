@@ -82,6 +82,8 @@ func settingsContent(width int, settings viewmodel.SettingsDialog, zones *zone.M
 		return reasoningSettingsContent(width, settings.Reasoning, zones)
 	case viewmodel.SettingsScreenConfig:
 		return configSettingsContent(width, settings.ConfigRows)
+	case viewmodel.SettingsScreenMemories:
+		return memorySettingsContent(width, settings.Memory, zones)
 	case viewmodel.SettingsScreenSkills:
 		return skillSettingsContent(width, settings.Skills, zones)
 	case viewmodel.SettingsScreenSkillRecs:
@@ -165,6 +167,25 @@ func configSettingsContent(width int, rows []viewmodel.SettingsConfigRow) []stri
 	lines := make([]string, 0, len(rows))
 	for _, row := range rows {
 		lines = append(lines, settingsLabelValue(width, row.Label, row.Value))
+	}
+	return lines
+}
+
+func memorySettingsContent(width int, state viewmodel.SettingsMemoryState, zones *zone.Manager) []string {
+	lines := make([]string, 0, len(state.Rows)*2)
+	for _, row := range state.Rows {
+		prefix := "  "
+		style := settingsItemStyle
+		if row.Selected {
+			prefix = "> "
+			style = settingsSelectedStyle
+		}
+		main := prefix + settingsLabelValue(width-2, row.Label, row.Value)
+		block := markSettingsZone(zones, viewmodel.SettingsMemoryZoneID(row.ID), style.Render(main))
+		if row.Selected && row.Description != "" {
+			block += "\n" + "  " + settingsDescriptionStyle.Render(truncateCell(row.Description, width-2))
+		}
+		lines = append(lines, block)
 	}
 	return lines
 }
@@ -261,6 +282,8 @@ func settingsHelp(screen string) string {
 		return "enter save default  esc back  up/down navigate  ctrl+p close"
 	case viewmodel.SettingsScreenConfig:
 		return "esc back  ctrl+p close"
+	case viewmodel.SettingsScreenMemories:
+		return "space toggle  enter toggle  esc back  up/down navigate"
 	case viewmodel.SettingsScreenSkills:
 		return "space toggle  i install  r recommended  esc back"
 	case viewmodel.SettingsScreenSkillRecs:
