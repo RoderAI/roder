@@ -164,6 +164,14 @@ Reply with the selected outcome:
 
 `gode app-server` mirrors Codex's app-server naming and wire style: JSON-RPC-shaped messages without the `jsonrpc` field, an `initialize` handshake before requests, and Codex-like method names such as `thread/start`, `turn/start`, `turn/steer`, `fs/readFile`, and `command/exec`. Use `turn/steer` with `threadId`, `expectedTurnId`, and text `input` to add steering instructions to the active turn.
 
+The `initialize` response includes `capabilities.turnInput` so clients can discover supported `turn/start` input blocks. `turn/start` accepts text, remote images, local images, and local files:
+
+```json
+{"id":2,"method":"turn/start","params":{"threadId":"THREAD_ID","input":[{"type":"text","text":"Review these attachments"},{"type":"local_file","path":"/Users/pz/Desktop/spec.md"},{"type":"local_file","path":"/Users/pz/Desktop/screenshot.png"}]}}
+```
+
+Local images are encoded as model image input. Text files are included in the prompt up to the advertised `maxLocalFileBytes`; binary files are represented by metadata so the agent can still reason about the attachment path.
+
 Supported transports:
 
 - `--listen stdio://` for JSONL over stdin/stdout.
