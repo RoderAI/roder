@@ -10,6 +10,7 @@ import (
 
 	"github.com/pandelisz/gode/internal/godex/permission"
 	"github.com/pandelisz/gode/internal/godex/tools"
+	"github.com/pandelisz/gode/internal/godex/workspacepath"
 )
 
 func RegisterEditing(reg *tools.Registry, root string) {
@@ -23,7 +24,7 @@ func RegisterEditing(reg *tools.Registry, root string) {
 			if err := ctx.Err(); err != nil {
 				return tools.Result{}, err
 			}
-			path, err := cleanWorkspacePath(root, stringInput(call.Input, "path"))
+			path, err := workspacepath.CleanWorkspacePath(root, stringInput(call.Input, "path"))
 			if err != nil {
 				return tools.Result{}, err
 			}
@@ -47,7 +48,7 @@ func RegisterEditing(reg *tools.Registry, root string) {
 			if err := ctx.Err(); err != nil {
 				return tools.Result{}, err
 			}
-			path, err := cleanWorkspacePath(root, stringInput(call.Input, "path"))
+			path, err := workspacepath.CleanWorkspacePath(root, stringInput(call.Input, "path"))
 			if err != nil {
 				return tools.Result{}, err
 			}
@@ -82,7 +83,7 @@ func RegisterEditing(reg *tools.Registry, root string) {
 			if err := ctx.Err(); err != nil {
 				return tools.Result{}, err
 			}
-			path, err := cleanWorkspacePath(root, stringInput(call.Input, "path"))
+			path, err := workspacepath.CleanWorkspacePath(root, stringInput(call.Input, "path"))
 			if err != nil {
 				return tools.Result{}, err
 			}

@@ -13,6 +13,7 @@ import (
 
 	"github.com/pandelisz/gode/internal/godex/permission"
 	"github.com/pandelisz/gode/internal/godex/tools"
+	"github.com/pandelisz/gode/internal/godex/workspacepath"
 )
 
 func RegisterSearch(reg *tools.Registry, root string) {
@@ -27,7 +28,7 @@ func RegisterSearch(reg *tools.Registry, root string) {
 			if query == "" {
 				return tools.Result{}, errors.New("query is required")
 			}
-			path, err := cleanWorkspacePath(root, stringInputDefault(call.Input, "path", "."))
+			path, err := workspacepath.CleanWorkspacePath(root, stringInputDefault(call.Input, "path", "."))
 			if err != nil {
 				return tools.Result{}, err
 			}
