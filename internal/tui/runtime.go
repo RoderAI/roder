@@ -28,25 +28,31 @@ func (m *Model) cancelEvents() {
 	}
 }
 
-func (m Model) runPrompt(prompt string) tea.Cmd {
-	return m.runPreparedPrompt(pendingPrompt{Prompt: prompt, Display: prompt})
+func (m *Model) runPrompt(prompt string) tea.Cmd {
+	runCtx, cancel := context.WithCancel(context.Background())
+	m.runCancel = cancel
+	if m.currentRunID == "" {
+		m.currentRunID = uuidString()
+	}
+	return m.runPreparedPrompt(runCtx, pendingPrompt{Prompt: prompt, Display: prompt})
 }
 
-func (m Model) runPreparedPrompt(pending pendingPrompt) tea.Cmd {
+func (m Model) runPreparedPrompt(ctx context.Context, pending pendingPrompt) tea.Cmd {
 	return func() tea.Msg {
 		var result agent.RunResult
 		var err error
 		req := agent.RunRequest{
 			SessionID:     m.currentSessionID,
+			RunID:         m.currentRunID,
 			Prompt:        pending.Prompt,
 			Resume:        true,
 			InputItems:    pending.InputItems,
 			ReplacePrompt: pending.ReplacePrompt,
 		}
 		if m.currentSessionID != "" {
-			result, err = m.app.Run(context.Background(), req)
+			result, err = m.app.Run(ctx, req)
 		} else {
-			result, err = m.app.RunPrompt(context.Background(), pending.Prompt)
+			result, err = m.app.RunPrompt(ctx, pending.Prompt)
 		}
 		return runDoneMsg{Result: result, Err: err}
 	}
