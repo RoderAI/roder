@@ -293,6 +293,13 @@ Remote mode defaults to `ws://0.0.0.0:0`, generates a high-entropy bearer token,
 
 Inside the TUI, run `/remote` or open `ctrl+p` -> `Remote Control` to start and stop the same remote app-server sidecar. The panel shows connection URLs, a token preview, QR pairing, auth hints, connected-client count, and a LAN-without-TLS warning when relevant.
 
+Remote connection patterns:
+
+- Same-network phone: start `gode app-server --remote --listen ws://0.0.0.0:0`, scan the QR, and use one of the rendered `192.168.x.x` or `10.x.x.x` URLs.
+- Tailscale: bind or connect to the rendered `100.x.y.z` URL when available; it is preferred in the displayed list.
+- Native clients: set `Authorization: Bearer <token>` during the WebSocket handshake.
+- Browser-constrained clients: request subprotocols `gode.remote.v1` and `bearer.<token>` instead of sending a custom header.
+
 ## Near-Term Direction
 
 - Deepen the OpenAI/Codex provider loop with multi-turn tool result continuation.

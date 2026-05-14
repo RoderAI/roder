@@ -20,7 +20,7 @@ func (m *Model) ensureRemoteController() *tuiremote.Controller {
 	return m.remote
 }
 
-func (m Model) handleRemoteInput(prompt string) (bool, tea.Cmd) {
+func (m *Model) handleRemoteInput(prompt string) (bool, tea.Cmd) {
 	if prompt != "/remote" {
 		return false, nil
 	}
