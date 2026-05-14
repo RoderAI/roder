@@ -419,6 +419,7 @@ func openAITools(specs []ToolSpec) []responses.ToolUnionParam {
 		return nil
 	}
 	namespaceTools := make([]responses.NamespaceToolToolUnionParam, 0, len(specs))
+	hasDeferredTool := false
 	for _, spec := range specs {
 		schema := normalizeToolSchema(spec.Schema)
 		function := responses.NamespaceToolToolFunctionParam{
@@ -429,15 +430,19 @@ func openAITools(specs []ToolSpec) []responses.ToolUnionParam {
 		}
 		if openAIToolShouldDefer(spec.Name) {
 			function.DeferLoading = param.NewOpt(true)
+			hasDeferredTool = true
 		}
 		namespaceTools = append(namespaceTools, responses.NamespaceToolToolUnionParam{
 			OfFunction: &function,
 		})
 	}
-	return []responses.ToolUnionParam{
+	tools := []responses.ToolUnionParam{
 		responses.ToolParamOfNamespace("Gode coding-agent tools for reading files, searching, editing, and inspecting the current workspace.", "gode", namespaceTools),
-		{OfToolSearch: &responses.ToolSearchToolParam{Execution: responses.ToolSearchToolExecutionServer}},
 	}
+	if hasDeferredTool {
+		tools = append(tools, responses.ToolUnionParam{OfToolSearch: &responses.ToolSearchToolParam{Execution: responses.ToolSearchToolExecutionServer}})
+	}
+	return tools
 }
 
 func openAIToolShouldDefer(name string) bool {

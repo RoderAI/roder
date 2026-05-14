@@ -310,6 +310,42 @@ func TestOpenAIResponseParamsKeepsCoreToolsEagerAndDefersUnknownTools(t *testing
 	}
 }
 
+func TestOpenAIResponseParamsOmitsToolSearchWhenAllToolsAreEager(t *testing.T) {
+	openaiProvider := NewOpenAI("gpt-5.5", "medium")
+
+	params := openaiProvider.responseParams(Request{
+		Messages: []Message{{Role: RoleUser, Content: "hello"}},
+		Tools: []ToolSpec{{
+			Name:        "read_file",
+			Description: "Read a file",
+			Schema:      map[string]any{"type": "object", "properties": map[string]any{}, "required": []string{}},
+		}, {
+			Name:        "apply_patch",
+			Description: "Apply a patch",
+			Schema:      map[string]any{"type": "object", "properties": map[string]any{}, "required": []string{}},
+		}, {
+			Name:        "shell",
+			Description: "Run a shell command",
+			Schema:      map[string]any{"type": "object", "properties": map[string]any{}, "required": []string{}},
+		}},
+	})
+	data, err := json.Marshal(params.Tools)
+	if err != nil {
+		t.Fatalf("marshal tools: %v", err)
+	}
+	raw := string(data)
+	for _, unwanted := range []string{`"type":"tool_search"`, `"defer_loading":true`} {
+		if strings.Contains(raw, unwanted) {
+			t.Fatalf("eager-only tools JSON should not contain %q:\n%s", unwanted, raw)
+		}
+	}
+	for _, want := range []string{`"type":"namespace"`, `"name":"read_file"`, `"name":"apply_patch"`, `"name":"shell"`} {
+		if !strings.Contains(raw, want) {
+			t.Fatalf("tools JSON missing %q:\n%s", want, raw)
+		}
+	}
+}
+
 func TestOpenAIResponseParamsIncludesServerSideCompaction(t *testing.T) {
 	openaiProvider := NewOpenAI("gpt-5.5", "medium")
 
