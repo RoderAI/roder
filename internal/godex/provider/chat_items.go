@@ -74,7 +74,7 @@ func ChatInputFromResponsesItems(items []Item, tools []ToolSpec) (ChatInput, err
 		case ItemCompaction:
 			text := strings.TrimSpace(item.Text)
 			if text == "" {
-				return ChatInput{}, NonPortableItemError{ItemID: item.ID, Kind: string(item.Kind), Provider: "chat_completions", Reason: "provider-neutral compaction text is required"}
+				return ChatInput{}, NonPortableItemError{ItemID: item.ID, Kind: string(item.Kind), Provider: "chat_completions", Reason: "provider-specific compaction is nonportable; provider-neutral compaction text is required"}
 			}
 			input.Messages = append(input.Messages, ChatMessage{Role: string(RoleUser), Content: text})
 		case ItemRaw:

@@ -80,7 +80,7 @@ type NonPortableItemError struct {
 }
 
 func (e NonPortableItemError) Error() string {
-	return fmt.Sprintf("cannot replay %s item %s with %s: %s", e.Kind, e.ItemID, e.Provider, e.Reason)
+	return fmt.Sprintf("cannot replay nonportable %s item %s with %s: %s", e.Kind, e.ItemID, e.Provider, e.Reason)
 }
 
 type EventKind string

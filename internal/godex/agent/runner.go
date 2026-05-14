@@ -203,11 +203,10 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (RunResult, error) {
 	final := ""
 	stats := runStats{}
 	for {
-		messages, err = r.compactMessagesIfNeeded(ctx, req, messages)
+		messages, inputItems, err = r.compactContextIfNeeded(ctx, req, messages, inputItems)
 		if err != nil {
 			return RunResult{}, r.fail(ctx, req, err)
 		}
-		inputItems = providerItemsFromProviderMessages(messages)
 		compaction := r.compactionOptions(ctx, req, messages)
 		providerReq := provider.Request{
 			SessionID:      req.SessionID,
@@ -221,18 +220,18 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (RunResult, error) {
 			Compaction:     compaction,
 		}
 		started := time.Now()
-		outcome, err := r.streamProviderTurn(ctx, req, providerReq, messages, final, &stats, true)
+		outcome, err := r.streamProviderTurn(ctx, req, providerReq, messages, inputItems, final, &stats, true)
 		if err != nil {
 			return RunResult{}, r.fail(ctx, req, err)
 		}
 		r.recordGoalUsage(ctx, req, outcome.Usage, time.Since(started))
 		messages = outcome.Messages
+		inputItems = outcome.InputItems
 		appliedSteers := false
 		if steers := r.drainSteers(active); len(steers) > 0 {
-			messages = r.appendSteers(ctx, req, messages, steers)
+			messages, inputItems = r.appendSteers(ctx, req, messages, inputItems, steers)
 			appliedSteers = true
 		}
-		inputItems = providerItemsFromProviderMessages(messages)
 		if outcome.HadToolCall {
 			stats.ToolTurns++
 			final = ""
@@ -289,7 +288,9 @@ func (r *Runner) initialContext(ctx context.Context, req RunRequest, runMessages
 		prior := providerMessagesFromSessionItems(priorSessionItems)
 		if len(prior) > 0 {
 			messages = append(prior, messages...)
-			inputItems = append(providerItemsFromSessionItems(priorSessionItems), inputItems...)
+		}
+		if priorInputItems := providerItemsFromSessionItems(priorSessionItems); len(priorInputItems) > 0 {
+			inputItems = append(priorInputItems, inputItems...)
 		}
 	}
 	if goalMessage, ok, err := r.goalContextMessage(ctx, req.SessionID); err != nil {

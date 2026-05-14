@@ -119,7 +119,7 @@ func (r *Runner) markMemoryObserverStarted(control *activeRun) bool {
 	return true
 }
 
-func (r *Runner) appendSteers(ctx context.Context, req RunRequest, messages []provider.Message, steers []string) []provider.Message {
+func (r *Runner) appendSteers(ctx context.Context, req RunRequest, messages []provider.Message, inputItems []provider.Item, steers []string) ([]provider.Message, []provider.Item) {
 	for _, steer := range steers {
 		steer = strings.TrimSpace(steer)
 		if steer == "" {
@@ -145,9 +145,11 @@ func (r *Runner) appendSteers(ctx context.Context, req RunRequest, messages []pr
 			},
 		})
 		_ = r.persistUserTextItem(ctx, req, "steer:"+uuid.NewString(), steer)
-		messages = append(messages, provider.Message{Role: provider.RoleUser, Content: steer})
+		message := provider.Message{Role: provider.RoleUser, Content: steer}
+		messages = append(messages, message)
+		inputItems = append(inputItems, providerItemFromProviderMessage(message))
 	}
-	return messages
+	return messages, inputItems
 }
 
 func (r *Runner) persistUserTextItem(ctx context.Context, req RunRequest, id string, text string) error {
