@@ -137,6 +137,25 @@ func TestTranscriptTrimsBodyEdgeBlanksBeforeMessageGaps(t *testing.T) {
 	}
 }
 
+func TestTranscriptAssistantPhaseMessagesStartFlushLeft(t *testing.T) {
+	result := TranscriptDetailedWithCache(50, 8, []viewmodel.Message{{
+		ID:    "m1",
+		Role:  viewmodel.RoleAssistant,
+		Title: "commentary",
+		Body:  "phase message",
+	}}, 0, "", zone.New(), nil, TranscriptOptions{})
+
+	for _, line := range strings.Split(ansi.Strip(result.View), "\n") {
+		if strings.Contains(line, "phase message") {
+			if strings.HasPrefix(line, " ") {
+				t.Fatalf("assistant phase message should start flush left, got %q\n%s", line, result.View)
+			}
+			return
+		}
+	}
+	t.Fatalf("assistant phase message missing:\n%s", result.View)
+}
+
 func TestTranscriptAssistantMessageUsesWhiteText(t *testing.T) {
 	result := TranscriptDetailedWithCache(50, 8, []viewmodel.Message{{
 		ID:   "m1",

@@ -66,8 +66,8 @@ func TranscriptDetailedWithCache(width int, height int, messages []viewmodel.Mes
 	if panelHeight == 0 {
 		return TranscriptRenderResult{}
 	}
-	innerWidth := max(20, width-2)
-	contentWidth := max(12, innerWidth-2)
+	innerWidth := max(20, width)
+	contentWidth := max(12, innerWidth)
 	innerHeight := max(1, panelHeight-2)
 	timelineStyle := normalizeTimelineStyle(options.TimelineStyle)
 	visible := visibleMessagesWithOptions(messages, contentWidth, innerHeight, scrollOffset, cache, timelineStyle, options.MarkdownRendering)
@@ -105,8 +105,8 @@ func TranscriptDetailedWithCache(width int, height int, messages []viewmodel.Mes
 
 func TranscriptLineRefs(width int, height int, messages []viewmodel.Message, scrollOffset int, cache *TranscriptCache, styles ...string) []selection.TranscriptLineRef {
 	panelHeight := max(4, height)
-	innerWidth := max(20, width-2)
-	contentWidth := max(12, innerWidth-2)
+	innerWidth := max(20, width)
+	contentWidth := max(12, innerWidth)
 	innerHeight := max(1, panelHeight-2)
 	return visibleLineRefs(visibleMessages(messages, contentWidth, innerHeight, scrollOffset, cache, styles...))
 }
@@ -374,7 +374,9 @@ func renderToolMessage(msg viewmodel.Message, width int, timelineStyle string) r
 	if timelineStyle == viewmodel.TimelineStyleMinimal {
 		return renderMinimalToolMessage(msg, title, width)
 	}
-	prefix := toolRailStyle.Render("› ") + toolStatusStyle(msg).Render(title)
+	status := toolStatus(msg)
+	marker := toolStatusMarker(status)
+	prefix := toolRailStyle.Render("› ") + toolStatusStyleForStatus(status).Render(marker+" "+title)
 	lines := []renderedLine{{
 		text: prefix,
 		ref:  selection.TranscriptLineRef{Text: prefix, Decorative: true},
@@ -384,10 +386,12 @@ func renderToolMessage(msg viewmodel.Message, width int, timelineStyle string) r
 }
 
 func renderMinimalToolMessage(msg viewmodel.Message, title string, width int) renderedMessage {
+	status := toolStatus(msg)
+	marker := toolStatusMarker(status)
 	summary := toolDisplaySummary(firstToolSummaryLine(msg.Body))
-	label := toolRailStyle.Render("└ ") + toolStatusStyle(msg).Render("● "+title)
+	label := toolRailStyle.Render("└ ") + toolStatusStyleForStatus(status).Render(marker+" "+title)
 	if summary != "" {
-		label += toolMetaStyle.Render(" " + truncateCell(summary, max(8, width-lipgloss.Width("└ ● "+title)-1)))
+		label += toolMetaStyle.Render(" " + truncateCell(summary, max(8, width-lipgloss.Width("└ "+marker+" "+title)-1)))
 	}
 	return renderedMessage{id: msg.ID, lines: []renderedLine{{
 		text: label,
@@ -399,14 +403,27 @@ func renderMinimalToolMessage(msg viewmodel.Message, title string, width int) re
 }
 
 func toolStatusStyle(msg viewmodel.Message) lipgloss.Style {
-	switch toolStatus(msg) {
+	return toolStatusStyleForStatus(toolStatus(msg))
+}
+
+func toolStatusStyleForStatus(status string) lipgloss.Style {
+	switch status {
 	case "failed":
 		return toolErrorStyle
 	case "completed":
 		return toolSuccessStyle
+	case "running":
+		return toolRunningStyle
 	default:
 		return toolTitleStyle
 	}
+}
+
+func toolStatusMarker(status string) string {
+	if status == "running" {
+		return "○"
+	}
+	return "●"
 }
 
 func toolStatus(msg viewmodel.Message) string {
@@ -414,7 +431,7 @@ func toolStatus(msg viewmodel.Message) string {
 	switch {
 	case strings.HasPrefix(summary, "failed:"):
 		return "failed"
-	case summary == "requested", summary == "permission requested":
+	case summary == "requested", summary == "running", summary == "permission requested":
 		return "running"
 	default:
 		return "completed"
@@ -424,7 +441,7 @@ func toolStatus(msg viewmodel.Message) string {
 func toolDisplaySummary(summary string) string {
 	summary = strings.TrimSpace(summary)
 	switch strings.ToLower(summary) {
-	case "", "requested", "success", "succeeded":
+	case "", "requested", "running", "success", "succeeded":
 		return ""
 	}
 	if rest, ok := strings.CutPrefix(summary, "read "); ok {
