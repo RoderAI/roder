@@ -2,6 +2,7 @@ package godex
 
 import (
 	"fmt"
+	"os"
 	"sort"
 	"strings"
 
@@ -94,10 +95,14 @@ func ModelConfigForConfig(cfg Config, id string) ModelConfig {
 }
 
 func ResolveSelectedModel(cfg Config) (provider.ResolvedModel, error) {
+	return ResolveSelectedModelWithEnv(cfg, envMapFromOS())
+}
+
+func ResolveSelectedModelWithEnv(cfg Config, env map[string]string) (provider.ResolvedModel, error) {
 	if userModel, ok := cfg.UserModels[cfg.Model]; ok {
-		resolved, err := provider.ResolveUserModel(cfg.Model, userModel, nil)
+		resolved, err := provider.ResolveUserModel(cfg.Model, userModel, env)
 		if err != nil {
-			return provider.ResolvedModel{}, err
+			return provider.ResolvedModel{}, fmt.Errorf("resolve model %q: %w", cfg.Model, err)
 		}
 		return resolved, nil
 	}
@@ -123,6 +128,17 @@ func ResolveSelectedModel(cfg Config) (provider.ResolvedModel, error) {
 			Disabled:         model.Hidden,
 		},
 	}, nil
+}
+
+func envMapFromOS() map[string]string {
+	out := map[string]string{}
+	for _, pair := range os.Environ() {
+		key, value, ok := strings.Cut(pair, "=")
+		if ok {
+			out[key] = value
+		}
+	}
+	return out
 }
 
 func modelConfigsForConfig(cfg Config) map[string]ModelConfig {

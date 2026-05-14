@@ -405,6 +405,7 @@ func (a *App) appendJournal(ctx context.Context, ev eventbus.Event) {
 }
 
 func buildProvider(cfg Config) (provider.Provider, error) {
+	cfg = cfg.withDefaults()
 	resolvedModel, err := ResolveSelectedModel(cfg)
 	if err != nil {
 		return nil, err
@@ -413,30 +414,49 @@ func buildProvider(cfg Config) (provider.Provider, error) {
 	if !ok {
 		return nil, fmt.Errorf("unknown provider %q", cfg.Provider)
 	}
-	switch providerConfig.Kind {
-	case ProviderKindMock:
+	if providerConfig.Kind == ProviderKindMock {
 		return provider.NewMock("mock response", nil), nil
-	case ProviderKindOpenAI:
+	}
+	switch resolvedModel.APIType {
+	case provider.APITypeResponses:
 		openAIConfig := provider.OpenAIConfig{
 			Model:       resolvedModel.UpstreamModel,
 			Reasoning:   cfg.Reasoning,
 			ServiceTier: openAIServiceTier(cfg),
+			BaseURL:     firstNonEmpty(resolvedModel.BaseURL, providerConfig.BaseURL),
+			APIKey:      apiKeyForResolvedModel(resolvedModel),
+			Headers:     resolvedModel.Headers,
 		}
 		if UsesCodexAuth(cfg) {
 			return provider.NewOpenAIWithConfig(openAIConfig, codexauth.OpenAIOptions(cfg.DataDir)...), nil
 		}
 		return provider.NewOpenAIWithConfig(openAIConfig), nil
-	case ProviderKindChat:
-		return nil, fmt.Errorf("model %q uses provider type %q, but chat completions runtime is not implemented yet", cfg.Model, ProviderKindChat)
-	case ProviderKindAnthropic:
+	case provider.APITypeChatCompletions:
+		return provider.NewChatCompletionsWithConfig(provider.ChatCompletionsConfig{
+			Model:   resolvedModel.UpstreamModel,
+			BaseURL: firstNonEmpty(resolvedModel.BaseURL, providerConfig.BaseURL),
+			APIKey:  apiKeyForResolvedModel(resolvedModel),
+			Headers: resolvedModel.Headers,
+		}), nil
+	case provider.APITypeAnthropic:
 		return provider.NewAnthropicWithConfig(provider.AnthropicConfig{
 			Model:   resolvedModel.UpstreamModel,
-			BaseURL: providerConfig.BaseURL,
-			APIKey:  os.Getenv(providerConfig.EnvKey),
+			BaseURL: firstNonEmpty(resolvedModel.BaseURL, providerConfig.BaseURL),
+			APIKey:  apiKeyForResolvedModel(resolvedModel),
 		}), nil
 	default:
-		return nil, fmt.Errorf("unknown provider kind %q for %q", providerConfig.Kind, cfg.Provider)
+		return nil, fmt.Errorf("unsupported provider type %q for model %q", resolvedModel.APIType, cfg.Model)
 	}
+}
+
+func apiKeyForResolvedModel(resolved provider.ResolvedModel) string {
+	if resolved.APIKey != "" {
+		return resolved.APIKey
+	}
+	if resolved.APIKeyEnv != "" {
+		return os.Getenv(resolved.APIKeyEnv)
+	}
+	return ""
 }
 
 func loadContextMessages(workspace string) ([]provider.Message, error) {

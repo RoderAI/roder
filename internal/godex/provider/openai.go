@@ -22,12 +22,18 @@ type OpenAI struct {
 	model       string
 	reasoning   string
 	serviceTier string
+	baseURL     string
+	apiKey      string
+	headers     map[string]string
 }
 
 type OpenAIConfig struct {
 	Model       string
 	Reasoning   string
 	ServiceTier string
+	BaseURL     string
+	APIKey      string
+	Headers     map[string]string
 }
 
 func NewOpenAI(model string, reasoning string, opts ...option.RequestOption) *OpenAI {
@@ -41,11 +47,25 @@ func NewOpenAIWithConfig(cfg OpenAIConfig, opts ...option.RequestOption) *OpenAI
 	if cfg.Reasoning == "" {
 		cfg.Reasoning = "medium"
 	}
+	if cfg.BaseURL != "" {
+		opts = append([]option.RequestOption{option.WithBaseURL(cfg.BaseURL)}, opts...)
+	}
+	if cfg.APIKey != "" {
+		opts = append([]option.RequestOption{option.WithAPIKey(cfg.APIKey)}, opts...)
+	}
+	for key, value := range cfg.Headers {
+		if strings.TrimSpace(key) != "" {
+			opts = append(opts, option.WithHeader(key, value))
+		}
+	}
 	return &OpenAI{
 		client:      openai.NewClient(opts...),
 		model:       cfg.Model,
 		reasoning:   cfg.Reasoning,
 		serviceTier: cfg.ServiceTier,
+		baseURL:     cfg.BaseURL,
+		apiKey:      cfg.APIKey,
+		headers:     cloneStringMap(cfg.Headers),
 	}
 }
 

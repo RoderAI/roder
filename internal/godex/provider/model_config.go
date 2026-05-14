@@ -77,7 +77,7 @@ func ResolveUserModel(id string, cfg UserModelConfig, env map[string]string) (Re
 		APIKey:        apiKey,
 		APIKeyEnv:     apiKeyEnv,
 		HasAPIKey:     hasAPIKey,
-		Headers:       cloneStringMap(cfg.Headers),
+		Headers:       resolveHeaders(cfg, env),
 		HeaderEnv:     cloneStringMap(cfg.HeaderEnv),
 		Metadata: ModelMetadata{
 			ID:               id,
@@ -91,6 +91,22 @@ func ResolveUserModel(id string, cfg UserModelConfig, env map[string]string) (Re
 		},
 		SupportsTools: cfg.SupportsTools,
 	}, nil
+}
+
+func resolveHeaders(cfg UserModelConfig, env map[string]string) map[string]string {
+	headers := cloneStringMap(cfg.Headers)
+	for header, envKey := range cfg.HeaderEnv {
+		header = strings.TrimSpace(header)
+		envKey = strings.TrimSpace(envKey)
+		if header == "" || envKey == "" {
+			continue
+		}
+		if headers == nil {
+			headers = map[string]string{}
+		}
+		headers[header] = env[envKey]
+	}
+	return headers
 }
 
 func parseAPIType(value string) (APIType, error) {

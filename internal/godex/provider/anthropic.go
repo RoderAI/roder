@@ -23,6 +23,8 @@ type Anthropic struct {
 	client    anthropic.Client
 	model     string
 	maxTokens int64
+	baseURL   string
+	apiKey    string
 }
 
 func NewAnthropic(model string, opts ...option.RequestOption) *Anthropic {
@@ -46,6 +48,8 @@ func NewAnthropicWithConfig(cfg AnthropicConfig, opts ...option.RequestOption) *
 		client:    anthropic.NewClient(opts...),
 		model:     cfg.Model,
 		maxTokens: cfg.MaxTokens,
+		baseURL:   cfg.BaseURL,
+		apiKey:    cfg.APIKey,
 	}
 }
 

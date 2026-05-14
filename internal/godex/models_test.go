@@ -340,13 +340,18 @@ func TestCustomModelsDoNotChangeBuiltInDefaults(t *testing.T) {
 }
 
 func TestBuildProviderUsesCustomUpstreamModelID(t *testing.T) {
+	t.Setenv("ROUTER_API_KEY", "router-secret")
 	cfg := (Config{
 		Model: "local-gpt",
 		UserModels: map[string]provider.UserModelConfig{
 			"local-gpt": {
-				Type:     string(provider.APITypeResponses),
-				Provider: "router",
-				Model:    "upstream-gpt",
+				Type:      string(provider.APITypeResponses),
+				Provider:  "router",
+				Model:     "upstream-gpt",
+				BaseURL:   "https://router.example/v1",
+				APIKeyEnv: "ROUTER_API_KEY",
+				HeaderEnv: map[string]string{"X-Router": "ROUTER_API_KEY"},
+				Headers:   map[string]string{"X-Static": "static"},
 			},
 		},
 	}).withDefaults()
@@ -357,23 +362,91 @@ func TestBuildProviderUsesCustomUpstreamModelID(t *testing.T) {
 	if got := reflect.ValueOf(prov).Elem().FieldByName("model").String(); got != "upstream-gpt" {
 		t.Fatalf("provider model = %q", got)
 	}
+	if got := reflect.ValueOf(prov).Elem().FieldByName("baseURL").String(); got != "https://router.example/v1" {
+		t.Fatalf("provider baseURL = %q", got)
+	}
+	if got := reflect.ValueOf(prov).Elem().FieldByName("apiKey").String(); got != "router-secret" {
+		t.Fatalf("provider apiKey = %q", got)
+	}
 }
 
-func TestBuildProviderRejectsChatCompletionsUntilRuntimeExists(t *testing.T) {
+func TestBuildProviderConstructsChatCompletionsProvider(t *testing.T) {
 	cfg := (Config{
 		Model: "deepseek-chat",
 		UserModels: map[string]provider.UserModelConfig{
 			"deepseek-chat": {
 				Type:     string(provider.APITypeChatCompletions),
 				Provider: "deepseek",
+				Model:    "deepseek-upstream",
+				BaseURL:  "https://deepseek.example/v1",
+				APIKey:   "literal-secret",
 			},
 		},
 	}).withDefaults()
+	prov, err := buildProvider(cfg)
+	if err != nil {
+		t.Fatalf("build provider: %v", err)
+	}
+	if prov.Name() != "chat_completions" {
+		t.Fatalf("provider name = %q", prov.Name())
+	}
+	value := reflect.ValueOf(prov).Elem()
+	if got := value.FieldByName("model").String(); got != "deepseek-upstream" {
+		t.Fatalf("chat model = %q", got)
+	}
+	if got := value.FieldByName("baseURL").String(); got != "https://deepseek.example/v1" {
+		t.Fatalf("chat baseURL = %q", got)
+	}
+	if got := value.FieldByName("apiKey").String(); got != "literal-secret" {
+		t.Fatalf("chat apiKey = %q", got)
+	}
+}
+
+func TestBuildProviderConstructsAnthropicCustomProvider(t *testing.T) {
+	t.Setenv("ROUTER_API_KEY", "anthropic-secret")
+	cfg := (Config{
+		Model: "claude-router",
+		UserModels: map[string]provider.UserModelConfig{
+			"claude-router": {
+				Type:      string(provider.APITypeAnthropic),
+				Provider:  "anthropic-router",
+				Model:     "claude-compatible",
+				BaseURL:   "https://anthropic-router.example",
+				APIKeyEnv: "ROUTER_API_KEY",
+			},
+		},
+	}).withDefaults()
+	prov, err := buildProvider(cfg)
+	if err != nil {
+		t.Fatalf("build provider: %v", err)
+	}
+	if prov.Name() != "anthropic" {
+		t.Fatalf("provider name = %q", prov.Name())
+	}
+	value := reflect.ValueOf(prov).Elem()
+	if got := value.FieldByName("model").String(); got != "claude-compatible" {
+		t.Fatalf("anthropic model = %q", got)
+	}
+	if got := value.FieldByName("baseURL").String(); got != "https://anthropic-router.example" {
+		t.Fatalf("anthropic baseURL = %q", got)
+	}
+	if got := value.FieldByName("apiKey").String(); got != "anthropic-secret" {
+		t.Fatalf("anthropic apiKey = %q", got)
+	}
+}
+
+func TestBuildProviderUnsupportedCustomTypeIncludesModelID(t *testing.T) {
+	cfg := Config{
+		Model: "bad-model",
+		UserModels: map[string]provider.UserModelConfig{
+			"bad-model": {Type: "unsupported", Provider: "bad"},
+		},
+	}
 	_, err := buildProvider(cfg)
 	if err == nil {
-		t.Fatal("expected chat completions runtime error")
+		t.Fatal("expected unsupported type error")
 	}
-	if !strings.Contains(err.Error(), "chat_completions") || !strings.Contains(err.Error(), "deepseek-chat") {
+	if !strings.Contains(err.Error(), "bad-model") || !strings.Contains(err.Error(), "unsupported") {
 		t.Fatalf("error = %v", err)
 	}
 }
