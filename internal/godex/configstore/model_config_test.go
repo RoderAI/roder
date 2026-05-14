@@ -40,7 +40,7 @@ func TestLoadUserModelInvalidTypeFails(t *testing.T) {
 	dataDir := filepath.Join(t.TempDir(), "data")
 	writeFile(t, filepath.Join(dataDir, "config.toml"), `
 [model.bad]
-type = "legacy"
+type = "old_api"
 provider = "custom"
 `)
 

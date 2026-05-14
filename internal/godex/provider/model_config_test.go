@@ -65,7 +65,7 @@ func TestUserModelRedactForLogHidesLiteralSecrets(t *testing.T) {
 }
 
 func TestResolveUserModelInvalidTypeListsAllowedValues(t *testing.T) {
-	_, err := ResolveUserModel("bad", UserModelConfig{Type: "legacy", Provider: "x"}, nil)
+	_, err := ResolveUserModel("bad", UserModelConfig{Type: "old_api", Provider: "x"}, nil)
 	if err == nil {
 		t.Fatal("expected invalid type error")
 	}
