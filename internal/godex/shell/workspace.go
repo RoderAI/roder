@@ -20,7 +20,7 @@ func RegisterWorkspaceBuiltins(reg *BuiltinRegistry, root string, toolReg *tools
 	if root == "" {
 		root = "."
 	}
-	for _, builtin := range []Builtin{
+	builtins := []Builtin{
 		{
 			Name:        "gode_read_file",
 			Description: "read a text file through gode's read_file tool",
@@ -45,15 +45,18 @@ func RegisterWorkspaceBuiltins(reg *BuiltinRegistry, root string, toolReg *tools
 				return handleWorkspaceSearchFiles(ctx, toolReg, args, stdout, stderr)
 			},
 		},
-		{
+	}
+	if toolReg.Has("apply_patch") {
+		builtins = append(builtins, Builtin{
 			Name:        "gode_apply_patch",
 			Description: "apply a patch from stdin through gode's apply_patch tool",
 			ReadOnly:    false,
 			Run: func(ctx context.Context, args []string, stdin io.Reader, stdout io.Writer, stderr io.Writer) error {
 				return handleWorkspaceApplyPatch(ctx, toolReg, stdin, stdout, stderr)
 			},
-		},
-	} {
+		})
+	}
+	for _, builtin := range builtins {
 		if err := reg.Register(builtin); err != nil {
 			return err
 		}

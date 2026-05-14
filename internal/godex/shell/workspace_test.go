@@ -149,6 +149,56 @@ func TestWorkspaceBuiltinApplyPatchUsesPatchTool(t *testing.T) {
 	}
 }
 
+func TestWorkspaceBuiltinApplyPatchOnlyRegistersWhenPatchToolExists(t *testing.T) {
+	root := t.TempDir()
+	toolReg := tools.NewRegistry()
+	registerFakeWorkspaceReadTools(t, toolReg, root)
+
+	reg := godexshell.NewBuiltinRegistry()
+	if err := godexshell.RegisterWorkspaceBuiltins(reg, root, toolReg); err != nil {
+		t.Fatalf("register workspace builtins: %v", err)
+	}
+	if _, ok := reg.Lookup("gode_apply_patch"); ok {
+		t.Fatalf("gode_apply_patch should not be registered without apply_patch tool")
+	}
+
+	toolReg.Register(tools.Tool{Name: "apply_patch", Run: func(context.Context, tools.Call) (tools.Result, error) {
+		return tools.Result{Text: "patched"}, nil
+	}})
+	reg = godexshell.NewBuiltinRegistry()
+	if err := godexshell.RegisterWorkspaceBuiltins(reg, root, toolReg); err != nil {
+		t.Fatalf("register workspace builtins with patch: %v", err)
+	}
+	if _, ok := reg.Lookup("gode_apply_patch"); !ok {
+		t.Fatalf("gode_apply_patch should be registered when apply_patch tool exists")
+	}
+}
+
+func TestWorkspaceBuiltinsWithoutPatchStillReturnContextCancellation(t *testing.T) {
+	root := t.TempDir()
+	toolReg := tools.NewRegistry()
+	registerFakeWorkspaceReadTools(t, toolReg, root)
+	reg := godexshell.NewBuiltinRegistry()
+	if err := godexshell.RegisterWorkspaceBuiltins(reg, root, toolReg); err != nil {
+		t.Fatalf("register workspace builtins: %v", err)
+	}
+	if _, ok := reg.Lookup("gode_apply_patch"); ok {
+		t.Fatalf("gode_apply_patch should not be registered")
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	for _, name := range []string{"gode_read_file", "gode_list_files", "gode_search_files"} {
+		builtin, ok := reg.Lookup(name)
+		if !ok {
+			t.Fatalf("missing builtin %s", name)
+		}
+		err := builtin.Run(ctx, []string{name, "main.txt"}, strings.NewReader(""), nilWriter{}, nilWriter{})
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("%s err = %v", name, err)
+		}
+	}
+}
+
 func TestWorkspaceBuiltinsReturnContextCancellation(t *testing.T) {
 	root := t.TempDir()
 	if err := os.WriteFile(filepath.Join(root, "main.txt"), []byte("hello\n"), 0o600); err != nil {
@@ -193,6 +243,25 @@ func shellQuoteForTest(path string) string {
 }
 
 func registerFakeWorkspaceTools(t *testing.T, reg *tools.Registry, root string) {
+	t.Helper()
+	registerFakeWorkspaceReadTools(t, reg, root)
+	reg.Register(tools.Tool{
+		Name:     "apply_patch",
+		ReadOnly: false,
+		Run: func(ctx context.Context, call tools.Call) (tools.Result, error) {
+			patch := stringValue(call.Input, "patch")
+			if !strings.Contains(patch, "-old\n+new") {
+				return tools.Result{}, fmt.Errorf("unexpected patch")
+			}
+			if err := os.WriteFile(filepath.Join(root, "main.txt"), []byte("new\n"), 0o600); err != nil {
+				return tools.Result{}, err
+			}
+			return tools.Result{Text: "Updated main.txt"}, nil
+		},
+	})
+}
+
+func registerFakeWorkspaceReadTools(t *testing.T, reg *tools.Registry, root string) {
 	t.Helper()
 	reg.Register(tools.Tool{
 		Name:     "read_file",
@@ -277,20 +346,6 @@ func registerFakeWorkspaceTools(t *testing.T, reg *tools.Registry, root string) 
 				return tools.Result{}, err
 			}
 			return tools.Result{Text: strings.Join(matches, "\n")}, nil
-		},
-	})
-	reg.Register(tools.Tool{
-		Name:     "apply_patch",
-		ReadOnly: false,
-		Run: func(ctx context.Context, call tools.Call) (tools.Result, error) {
-			patch := stringValue(call.Input, "patch")
-			if !strings.Contains(patch, "-old\n+new") {
-				return tools.Result{}, fmt.Errorf("unexpected patch")
-			}
-			if err := os.WriteFile(filepath.Join(root, "main.txt"), []byte("new\n"), 0o600); err != nil {
-				return tools.Result{}, err
-			}
-			return tools.Result{Text: "Updated main.txt"}, nil
 		},
 	})
 }
