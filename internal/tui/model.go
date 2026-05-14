@@ -451,6 +451,8 @@ func (m *Model) addOrUpdateMessage(message eventadapter.Message) {
 			if message.Role == viewmodel.RoleError {
 				m.addErrorLog(message.Title, message.Body)
 				message.Body = summarizeTimelineError(message.Body)
+			} else if message.Role == viewmodel.RoleTool && isFailedToolBody(message.Body) {
+				m.addErrorLog(message.Title, failedToolError(message.Body))
 			}
 			m.messages[i].Role = message.Role
 			m.messages[i].Title = message.Title
@@ -476,6 +478,8 @@ func (m *Model) addMessage(role viewmodel.Role, title string, body string) {
 	if role == viewmodel.RoleError {
 		m.addErrorLog(title, body)
 		body = summarizeTimelineError(body)
+	} else if role == viewmodel.RoleTool && isFailedToolBody(body) {
+		m.addErrorLog(title, failedToolError(body))
 	}
 	m.nextID++
 	m.messages = append(m.messages, viewmodel.Message{
@@ -507,6 +511,14 @@ func (m *Model) pruneMessageKeys() {
 			delete(m.messageKeys, key)
 		}
 	}
+}
+
+func isFailedToolBody(body string) bool {
+	return strings.HasPrefix(strings.TrimSpace(body), "failed:")
+}
+
+func failedToolError(body string) string {
+	return strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(body), "failed:"))
 }
 
 func (m *Model) appendAssistantDelta(text string, phase ...string) {

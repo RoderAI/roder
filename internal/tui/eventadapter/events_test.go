@@ -143,3 +143,24 @@ func TestApplyToolCompletedIncludesHookMetadata(t *testing.T) {
 		}
 	}
 }
+
+func TestApplyToolFailedKeepsToolTimelineRole(t *testing.T) {
+	update := Apply(eventbus.Event{
+		Kind: eventbus.KindToolFailed,
+		Payload: map[string]any{
+			"tool":         "apply_patch",
+			"tool_call_id": "call_1",
+			"error":        "status 128",
+		},
+	})
+	if len(update.Messages) != 1 {
+		t.Fatalf("messages = %#v", update.Messages)
+	}
+	message := update.Messages[0]
+	if message.Role != viewmodel.RoleTool || message.Title != "apply_patch" {
+		t.Fatalf("message = %#v", message)
+	}
+	if message.Body != "failed: status 128" {
+		t.Fatalf("body = %q", message.Body)
+	}
+}

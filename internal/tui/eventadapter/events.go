@@ -92,7 +92,7 @@ func Apply(ev eventbus.Event) Update {
 	case eventbus.KindToolFailed:
 		var payload toolPayload
 		_ = ev.DecodePayload(&payload)
-		return withStatus(withMessageKey(payload.MessageKey(), viewmodel.RoleError, payload.Tool, payload.Error), statusWithName("tool failed", payload.Tool)+" - ctrl+l errors")
+		return withStatus(withMessageKey(payload.MessageKey(), viewmodel.RoleTool, payload.Tool, "failed: "+payload.Error), statusWithName("tool failed", payload.Tool)+" - ctrl+l errors")
 	case eventbus.KindPermissionRequested:
 		var payload toolPayload
 		_ = ev.DecodePayload(&payload)
