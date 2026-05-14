@@ -27,4 +27,6 @@ type Policy struct {
 	Blocked       map[string]string
 }
 
-type Runner struct{}
+type Runner struct {
+	Builtins *BuiltinRegistry
+}
