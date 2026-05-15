@@ -23,6 +23,8 @@ roder-ext-memory.workspace = true
 roder-ext-openai-responses.workspace = true
 roder-ext-subagents.workspace = true
 roder-extension-host.workspace = true
+roder-protocol.workspace = true
+roder-tasks.workspace = true
 roder-tui.workspace = true
 roder-web-search.workspace = true
 serde = { workspace = true, features = ["derive"] }

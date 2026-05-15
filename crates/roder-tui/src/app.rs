@@ -34,7 +34,7 @@ use roder_protocol::{
     ProviderSelectParams, ProviderSelectResult, ProvidersListResult, SessionExitPlanParams,
     SessionExitPlanResult, SessionGetResult, SessionLoadParams, SessionLoadResult,
     SessionResolveApprovalParams, SessionResolveApprovalResult, SessionSetModeParams,
-    SessionSetModeResult, SessionsListResult, StartTurnParams,
+    SessionSetModeResult, SessionsListResult, StartTurnParams, TasksListResult,
 };
 use tokio::process::Command;
 use tui_textarea::TextArea;
@@ -776,6 +776,10 @@ impl TuiApp {
     }
 
     async fn try_run_slash_command(&mut self, text: &str) -> bool {
+        if text.trim() == "/tasks" {
+            self.show_tasks().await;
+            return true;
+        }
         let Some((name, arguments)) = commands::command_invocation(text, &self.command_catalog)
         else {
             return false;
@@ -798,6 +802,36 @@ impl TuiApp {
             Err(err) => self.record_error(format!("slash command failed: {err}")),
         }
         true
+    }
+
+    async fn show_tasks(&mut self) {
+        let res = self
+            .client
+            .send_request(JsonRpcRequest {
+                jsonrpc: "2.0".to_string(),
+                id: Some(serde_json::json!("tasks/list")),
+                method: "tasks/list".to_string(),
+                params: None,
+            })
+            .await;
+        match decode_response::<TasksListResult>(res) {
+            Ok(result) if result.tasks.is_empty() => {
+                self.messages
+                    .push("system: no background tasks.".to_string());
+            }
+            Ok(result) => {
+                self.messages.push("system: background tasks".to_string());
+                for task in result.tasks.iter().rev().take(6).rev() {
+                    self.messages.push(format!(
+                        "task {} {} {:?}",
+                        short_id(&task.task_id),
+                        task.spec.kind,
+                        task.state
+                    ));
+                }
+            }
+            Err(err) => self.record_error(format!("tasks/list failed: {err}")),
+        }
     }
 
     async fn submit_user_text(&mut self, text: String) {

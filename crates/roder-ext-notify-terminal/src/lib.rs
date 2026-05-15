@@ -103,7 +103,15 @@ impl NotificationSink for CapturedNotificationSink {
     }
 }
 
-pub struct TerminalNotifyExtension;
+pub struct TerminalNotifyExtension {
+    enabled_kinds: Vec<NotificationKind>,
+}
+
+impl TerminalNotifyExtension {
+    pub fn new(enabled_kinds: Vec<NotificationKind>) -> Self {
+        Self { enabled_kinds }
+    }
+}
 
 impl RoderExtension for TerminalNotifyExtension {
     fn manifest(&self) -> ExtensionManifest {
@@ -123,7 +131,7 @@ impl RoderExtension for TerminalNotifyExtension {
     fn install(&self, registry: &mut ExtensionRegistryBuilder) -> anyhow::Result<()> {
         registry.notification_sink(Arc::new(TerminalBellSink::new(
             Arc::new(StderrBellWriter),
-            TerminalBellSink::default_kinds(),
+            self.enabled_kinds.clone(),
         )));
         Ok(())
     }

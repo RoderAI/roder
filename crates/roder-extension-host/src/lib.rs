@@ -7,13 +7,18 @@ use roder_api::extension::{
     ExtensionManifest, ExtensionRegistry, ExtensionRegistryBuilder, ProvidedService, RoderExtension,
 };
 use roder_api::inference::*;
+use roder_api::notifications::NotificationKind;
 use roder_api::policy_mode::PolicyMode;
 use roder_api::tui_status::{PaletteSourceDescriptor, built_in_status_segments};
 use roder_ext_anthropic::AnthropicExtension;
 use roder_ext_gemini::GeminiExtension;
 use roder_ext_jsonl_session::JsonlSessionExtension;
 use roder_ext_memory::MemoryExtension;
+use roder_ext_notify_desktop::DesktopNotifyExtension;
+use roder_ext_notify_terminal::TerminalNotifyExtension;
 use roder_ext_openai_responses::{OpenAiResponsesEngine, OpenAiResponsesExtension};
+use roder_ext_task_process::ProcessTaskExtension;
+use roder_ext_task_subagent::SubagentTaskExtension;
 use semver::Version;
 
 mod subagents;
@@ -32,6 +37,7 @@ pub struct DefaultRegistryConfig {
     pub web_search: Option<DefaultWebSearchConfig>,
     pub subagents: Option<DefaultSubagentsConfig>,
     pub policy_mode: PolicyMode,
+    pub disabled_notification_kinds: Vec<String>,
 }
 
 impl Default for DefaultRegistryConfig {
@@ -45,6 +51,7 @@ impl Default for DefaultRegistryConfig {
             web_search: None,
             subagents: None,
             policy_mode: PolicyMode::Default,
+            disabled_notification_kinds: Vec::new(),
         }
     }
 }
@@ -69,6 +76,10 @@ pub fn build_default_registry(config: DefaultRegistryConfig) -> anyhow::Result<E
         config.policy_mode,
     ))?;
     builder.install(DefaultTuiExtension)?;
+    builder.install(ProcessTaskExtension)?;
+    let notification_kinds = enabled_notification_kinds(&config.disabled_notification_kinds);
+    builder.install(TerminalNotifyExtension::new(notification_kinds.clone()))?;
+    builder.install(DesktopNotifyExtension::new(notification_kinds))?;
 
     if let Some(web_search) = config.web_search {
         web_search::install_web_search(&mut builder, web_search)?;
@@ -83,6 +94,7 @@ pub fn build_default_registry(config: DefaultRegistryConfig) -> anyhow::Result<E
     if let Some(subagents) = config.subagents {
         subagents::install_subagents(&mut builder, subagents)?;
     }
+    builder.install(SubagentTaskExtension)?;
 
     let session_dir = config
         .session_dir
@@ -91,6 +103,20 @@ pub fn build_default_registry(config: DefaultRegistryConfig) -> anyhow::Result<E
     builder.install(MemoryExtension::new(PathBuf::from(".roder").join("memory")))?;
 
     builder.build()
+}
+
+fn enabled_notification_kinds(disabled: &[String]) -> Vec<NotificationKind> {
+    let defaults = [
+        ("needs_input", NotificationKind::NeedsInput),
+        ("turn_idle", NotificationKind::TurnIdle),
+        ("task_completed", NotificationKind::TaskCompleted),
+        ("task_failed", NotificationKind::TaskFailed),
+    ];
+    defaults
+        .into_iter()
+        .filter(|(id, _)| !disabled.iter().any(|disabled| disabled == id))
+        .map(|(_, kind)| kind)
+        .collect()
 }
 
 struct FakeProviderExtension;
@@ -325,6 +351,20 @@ mod tests {
     }
 
     #[test]
+    fn default_registry_can_disable_notification_kinds() {
+        let registry = build_default_registry(DefaultRegistryConfig {
+            disabled_notification_kinds: vec![
+                "task_completed".to_string(),
+                "task_failed".to_string(),
+            ],
+            ..DefaultRegistryConfig::default()
+        })
+        .unwrap();
+
+        assert_eq!(registry.notification_sinks.len(), 2);
+    }
+
+    #[test]
     fn default_registry_with_keys_has_gode_provider_ids() {
         let registry = build_default_registry(DefaultRegistryConfig {
             openai_api_key: Some("openai".to_string()),
@@ -335,6 +375,7 @@ mod tests {
             web_search: None,
             subagents: None,
             policy_mode: PolicyMode::Default,
+            disabled_notification_kinds: Vec::new(),
         })
         .unwrap();
         for provider in [
