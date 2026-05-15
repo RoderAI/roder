@@ -1,9 +1,10 @@
 use roder_api::catalog::PROVIDER_MOCK;
 use roder_api::extension::{ExtensionRegistryBuilder, InferenceEngineId};
 use roder_api::inference::*;
+use roder_api::policy_mode::PolicyMode;
 use roder_api::subagents::{SubagentDefinition, SubagentPermissionMode};
 use roder_app_server::{AppServer, LocalAppClient};
-use roder_core::{Runtime, fake_provider::FakeInferenceEngine};
+use roder_core::{PendingPlanExit, Runtime, fake_provider::FakeInferenceEngine};
 use roder_ext_subagents::{
     InProcessDispatcher, InProcessDispatcherConfig, InferenceEngineRegistry, SubagentsExtension,
 };
@@ -13,8 +14,9 @@ use roder_extension_host::{
 };
 use roder_protocol::{
     AgentsListResult, CreateSessionResult, ExtensionsListResult, JsonRpcRequest,
-    ProviderSelectParams, ProviderSelectResult, ProvidersListResult, SessionsListResult,
-    StartTurnParams, StartTurnResult, SystemStatusResult, ToolsListResult,
+    ProviderSelectParams, ProviderSelectResult, ProvidersListResult, SessionExitPlanParams,
+    SessionExitPlanResult, SessionGetResult, SessionSetModeParams, SessionSetModeResult,
+    SessionsListResult, StartTurnParams, StartTurnResult, SystemStatusResult, ToolsListResult,
 };
 use std::sync::Arc;
 use std::time::Duration;
@@ -260,6 +262,109 @@ async fn tools_list_discovers_configured_web_search_without_secret_material() {
     assert!(!protocol_text.contains("Authorization"));
     assert!(!protocol_text.contains("x-api-key"));
     assert!(!protocol_text.contains("api_key"));
+}
+
+#[tokio::test]
+async fn session_policy_mode_can_be_set_and_observed() {
+    let runtime = Arc::new(Runtime::fake().unwrap());
+    let server = Arc::new(AppServer::new(runtime));
+    let client = LocalAppClient::new(server);
+    let mut events = client.subscribe_events();
+
+    let state: SessionGetResult = request(&client, "session/get", None).await;
+    assert_eq!(state.mode, PolicyMode::Default);
+
+    let changed: SessionSetModeResult = request(
+        &client,
+        "session/set_mode",
+        Some(
+            serde_json::to_value(SessionSetModeParams {
+                mode: PolicyMode::Plan,
+                reason: Some("test".to_string()),
+            })
+            .unwrap(),
+        ),
+    )
+    .await;
+    assert_eq!(changed.mode, PolicyMode::Plan);
+
+    let state: SessionGetResult = request(&client, "session/get", None).await;
+    assert_eq!(state.mode, PolicyMode::Plan);
+
+    let mut saw_mode_changed = false;
+    for _ in 0..8 {
+        let envelope = tokio::time::timeout(Duration::from_secs(2), events.recv())
+            .await
+            .unwrap()
+            .unwrap();
+        if let roder_api::events::RoderEvent::PolicyModeChanged(event) = envelope.event {
+            saw_mode_changed = event.new_mode == PolicyMode::Plan;
+            break;
+        }
+    }
+    assert!(saw_mode_changed);
+}
+
+#[tokio::test]
+async fn session_exit_plan_resolves_pending_request() {
+    let runtime = Arc::new(Runtime::fake().unwrap());
+    runtime
+        .set_policy_mode(PolicyMode::Plan, Some("test setup".to_string()))
+        .await
+        .unwrap();
+    runtime
+        .record_pending_plan_exit(PendingPlanExit {
+            thread_id: "thread-plan".to_string(),
+            turn_id: "turn-plan".to_string(),
+            request_id: "exit-plan-1".to_string(),
+            target_mode: PolicyMode::Default,
+            plan_summary: Some("Implement approved edits".to_string()),
+        })
+        .await;
+    let server = Arc::new(AppServer::new(runtime));
+    let client = LocalAppClient::new(server);
+    let mut events = client.subscribe_events();
+
+    let state: SessionGetResult = request(&client, "session/get", None).await;
+    assert_eq!(
+        state
+            .pending_plan_exit
+            .as_ref()
+            .map(|pending| pending.request_id.as_str()),
+        Some("exit-plan-1")
+    );
+
+    let resolved: SessionExitPlanResult = request(
+        &client,
+        "session/exit_plan",
+        Some(
+            serde_json::to_value(SessionExitPlanParams {
+                request_id: "exit-plan-1".to_string(),
+                approved: true,
+            })
+            .unwrap(),
+        ),
+    )
+    .await;
+    assert!(resolved.resolved);
+    assert_eq!(resolved.mode, PolicyMode::Default);
+
+    let state: SessionGetResult = request(&client, "session/get", None).await;
+    assert_eq!(state.mode, PolicyMode::Default);
+    assert!(state.pending_plan_exit.is_none());
+
+    let mut saw_resolved = false;
+    for _ in 0..8 {
+        let envelope = tokio::time::timeout(Duration::from_secs(2), events.recv())
+            .await
+            .unwrap()
+            .unwrap();
+        if let roder_api::events::RoderEvent::PolicyExitPlanResolved(event) = envelope.event {
+            saw_resolved = event.request_id == "exit-plan-1" && event.approved;
+            break;
+        }
+    }
+    assert!(saw_resolved);
 }
 
 #[tokio::test]

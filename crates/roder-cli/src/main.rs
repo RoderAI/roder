@@ -2,6 +2,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use roder_api::catalog::{DEFAULT_MODEL_ID, PROVIDER_MOCK};
+use roder_api::policy_mode::PolicyMode;
 use roder_app_server::{AppServer, LocalAppClient};
 use roder_core::{Runtime, RuntimeConfig};
 use roder_ext_subagents::{AgentLoadConfig, load_agent_definitions};
@@ -19,7 +20,8 @@ async fn main() -> anyhow::Result<()> {
         return run_auth(&args[1..]).await;
     }
 
-    let (runtime, default_model) = build_runtime_from_config().await?;
+    let cli_options = parse_cli_options(&args)?;
+    let (runtime, default_model) = build_runtime_from_config(cli_options).await?;
     let app_server = Arc::new(AppServer::new(runtime).with_user_config_persistence());
     let client = LocalAppClient::new(app_server);
 
@@ -28,7 +30,12 @@ async fn main() -> anyhow::Result<()> {
     Ok(())
 }
 
-async fn build_runtime_from_config() -> anyhow::Result<(Arc<Runtime>, String)> {
+#[derive(Debug, Clone, Default)]
+struct CliOptions {
+    policy_mode: Option<PolicyMode>,
+}
+
+async fn build_runtime_from_config(options: CliOptions) -> anyhow::Result<(Arc<Runtime>, String)> {
     let cfg = roder_config::load_config()?;
     let keys = provider_keys(&cfg);
     let web_search = cfg
@@ -36,6 +43,7 @@ async fn build_runtime_from_config() -> anyhow::Result<(Arc<Runtime>, String)> {
         .as_ref()
         .map(resolve_web_search_config)
         .transpose()?;
+    let policy_mode = resolve_policy_mode(&options, &cfg)?;
     let (default_provider, configured_model) = resolve_provider_model(cfg.provider, cfg.model);
     let default_model = configured_model.clone().unwrap_or_else(|| {
         if default_provider == PROVIDER_MOCK {
@@ -50,6 +58,15 @@ async fn build_runtime_from_config() -> anyhow::Result<(Arc<Runtime>, String)> {
         default_model.clone(),
     )
     .await?;
+    if policy_mode == PolicyMode::Bypass
+        && cfg
+            .policy_modes
+            .as_ref()
+            .and_then(|policy| policy.warn_on_bypass)
+            .unwrap_or(true)
+    {
+        eprintln!("warning: bypass policy mode is active; tool approvals are auto-approved");
+    }
 
     let registry = build_default_registry(DefaultRegistryConfig {
         openai_api_key: keys.openai,
@@ -58,6 +75,7 @@ async fn build_runtime_from_config() -> anyhow::Result<(Arc<Runtime>, String)> {
         session_dir: None,
         web_search,
         subagents,
+        policy_mode,
     })?;
 
     let runtime = Arc::new(Runtime::new(
@@ -70,11 +88,61 @@ async fn build_runtime_from_config() -> anyhow::Result<(Arc<Runtime>, String)> {
             workspace: std::env::current_dir()
                 .ok()
                 .map(|p| p.display().to_string()),
-            policy_mode: roder_api::policy_mode::PolicyMode::Default,
+            policy_mode,
         },
     )?);
 
     Ok((runtime, default_model))
+}
+
+fn parse_cli_options(args: &[String]) -> anyhow::Result<CliOptions> {
+    let mut options = CliOptions::default();
+    let mut i = 0;
+    while i < args.len() {
+        match args[i].as_str() {
+            "--yolo" => options.policy_mode = Some(PolicyMode::Bypass),
+            "--mode" => {
+                let Some(mode) = args.get(i + 1) else {
+                    anyhow::bail!("--mode requires a value");
+                };
+                options.policy_mode = Some(parse_policy_mode(mode)?);
+                i += 1;
+            }
+            arg if arg.starts_with("--mode=") => {
+                options.policy_mode = Some(parse_policy_mode(&arg["--mode=".len()..])?);
+            }
+            _ => {}
+        }
+        i += 1;
+    }
+    Ok(options)
+}
+
+fn parse_policy_mode(mode: &str) -> anyhow::Result<PolicyMode> {
+    match mode.trim() {
+        "default" => Ok(PolicyMode::Default),
+        "accept_edits" | "accept-edits" => Ok(PolicyMode::AcceptEdits),
+        "plan" => Ok(PolicyMode::Plan),
+        "bypass" | "yolo" => Ok(PolicyMode::Bypass),
+        other => anyhow::bail!(
+            "unsupported policy mode {other:?}; expected default, accept_edits, plan, or bypass"
+        ),
+    }
+}
+
+fn resolve_policy_mode(
+    options: &CliOptions,
+    cfg: &roder_config::Config,
+) -> anyhow::Result<PolicyMode> {
+    if let Some(mode) = options.policy_mode {
+        return Ok(mode);
+    }
+    cfg.policy_modes
+        .as_ref()
+        .and_then(|policy| policy.default.as_deref())
+        .map(parse_policy_mode)
+        .transpose()
+        .map(|mode| mode.unwrap_or_default())
 }
 
 async fn resolve_subagents_config(
@@ -342,6 +410,32 @@ mod tests {
         );
         assert_eq!(provider, "codex");
         assert_eq!(model.as_deref(), Some("gpt-5.5"));
+    }
+
+    #[test]
+    fn parses_policy_mode_cli_flags() {
+        let options = parse_cli_options(&["--mode".to_string(), "plan".to_string()]).unwrap();
+        assert_eq!(options.policy_mode, Some(PolicyMode::Plan));
+
+        let options = parse_cli_options(&["--mode=accept-edits".to_string()]).unwrap();
+        assert_eq!(options.policy_mode, Some(PolicyMode::AcceptEdits));
+
+        let options = parse_cli_options(&["--yolo".to_string()]).unwrap();
+        assert_eq!(options.policy_mode, Some(PolicyMode::Bypass));
+    }
+
+    #[test]
+    fn config_policy_mode_is_validated() {
+        let cfg = roder_config::Config {
+            policy_modes: Some(roder_config::PolicyModesConfig {
+                default: Some("plna".to_string()),
+                ..roder_config::PolicyModesConfig::default()
+            }),
+            ..roder_config::Config::default()
+        };
+
+        let err = resolve_policy_mode(&CliOptions::default(), &cfg).unwrap_err();
+        assert!(err.to_string().contains("unsupported policy mode"));
     }
 
     #[tokio::test]

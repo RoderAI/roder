@@ -9,7 +9,7 @@ use serde_json::Value;
 use time::OffsetDateTime;
 
 use crate::policy_gate::DefaultPolicyGate;
-use crate::runtime::Runtime;
+use crate::runtime::{PendingPlanExit, Runtime};
 
 impl Runtime {
     pub(crate) async fn route_tool_call(
@@ -258,16 +258,13 @@ impl Runtime {
             .get("summary")
             .and_then(Value::as_str)
             .map(str::to_string);
-        self.emit(RoderEvent::PolicyExitPlanRequested(
-            PolicyExitPlanRequested {
-                thread_id: thread_id.clone(),
-                turn_id: turn_id.clone(),
-                request_id: request_id.to_string(),
-                target_mode,
-                plan_summary,
-                timestamp: OffsetDateTime::now_utc(),
-            },
-        ))
+        self.record_pending_plan_exit(PendingPlanExit {
+            thread_id: thread_id.clone(),
+            turn_id: turn_id.clone(),
+            request_id: request_id.to_string(),
+            target_mode,
+            plan_summary,
+        })
         .await;
     }
 }
