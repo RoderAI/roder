@@ -68,11 +68,13 @@ async fn build_runtime_from_config(options: CliOptions) -> anyhow::Result<(Arc<R
         eprintln!("warning: bypass policy mode is active; tool approvals are auto-approved");
     }
 
+    let workspace = std::env::current_dir().ok();
     let registry = build_default_registry(DefaultRegistryConfig {
         openai_api_key: keys.openai,
         anthropic_api_key: keys.anthropic,
         gemini_api_key: keys.gemini,
         session_dir: None,
+        workspace: workspace.clone(),
         web_search,
         subagents,
         policy_mode,
@@ -85,9 +87,7 @@ async fn build_runtime_from_config(options: CliOptions) -> anyhow::Result<(Arc<R
             default_model: default_model.clone(),
             reasoning: cfg.reasoning,
             auto_compact_token_limit: cfg.auto_compact_token_limit,
-            workspace: std::env::current_dir()
-                .ok()
-                .map(|p| p.display().to_string()),
+            workspace: workspace.map(|p| p.display().to_string()),
             policy_mode,
         },
     )?);

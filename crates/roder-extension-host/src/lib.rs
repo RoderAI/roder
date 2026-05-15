@@ -27,6 +27,7 @@ pub struct DefaultRegistryConfig {
     pub anthropic_api_key: Option<String>,
     pub gemini_api_key: Option<String>,
     pub session_dir: Option<PathBuf>,
+    pub workspace: Option<PathBuf>,
     pub web_search: Option<DefaultWebSearchConfig>,
     pub subagents: Option<DefaultSubagentsConfig>,
     pub policy_mode: PolicyMode,
@@ -39,6 +40,7 @@ impl Default for DefaultRegistryConfig {
             anthropic_api_key: None,
             gemini_api_key: None,
             session_dir: None,
+            workspace: None,
             web_search: None,
             subagents: None,
             policy_mode: PolicyMode::Default,
@@ -71,6 +73,10 @@ pub fn build_default_registry(config: DefaultRegistryConfig) -> anyhow::Result<E
     }
 
     builder.tool_contributor(roder_tools::echo_tool_contributor());
+    let workspace = config
+        .workspace
+        .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
+    builder.tool_contributor(roder_tools::builtin_coding_tools_contributor(workspace)?);
 
     if let Some(subagents) = config.subagents {
         subagents::install_subagents(&mut builder, subagents)?;
@@ -268,6 +274,7 @@ mod tests {
             anthropic_api_key: Some("anthropic".to_string()),
             gemini_api_key: Some("gemini".to_string()),
             session_dir: None,
+            workspace: None,
             web_search: None,
             subagents: None,
             policy_mode: PolicyMode::Default,
@@ -283,6 +290,35 @@ mod tests {
             assert!(
                 registry.inference_engine(provider).is_some(),
                 "missing {provider}"
+            );
+        }
+    }
+
+    #[test]
+    fn default_registry_installs_builtin_coding_tools() {
+        let registry = build_default_registry(DefaultRegistryConfig::default()).unwrap();
+        let mut tool_registry = roder_api::tools::ToolRegistry::default();
+        for contributor in &registry.tools {
+            contributor.contribute(&mut tool_registry).unwrap();
+        }
+        let names = tool_registry
+            .specs()
+            .into_iter()
+            .map(|spec| spec.name)
+            .collect::<Vec<_>>();
+
+        for expected in [
+            "read_file",
+            "list_files",
+            "grep",
+            "glob",
+            "write_file",
+            "edit",
+            "multi_edit",
+        ] {
+            assert!(
+                names.contains(&expected.to_string()),
+                "missing builtin coding tool {expected}: {names:?}"
             );
         }
     }

@@ -265,6 +265,35 @@ async fn tools_list_discovers_configured_web_search_without_secret_material() {
 }
 
 #[tokio::test]
+async fn tools_list_exposes_default_coding_tools() {
+    let registry = build_default_registry(DefaultRegistryConfig::default()).unwrap();
+    let runtime = Arc::new(Runtime::new(registry, Default::default()).unwrap());
+    let server = Arc::new(AppServer::new(runtime));
+    let client = LocalAppClient::new(server);
+
+    let tools: ToolsListResult = request(&client, "tools/list", None).await;
+    let names = tools
+        .tools
+        .into_iter()
+        .map(|tool| tool.name)
+        .collect::<Vec<_>>();
+    for expected in [
+        "read_file",
+        "list_files",
+        "grep",
+        "glob",
+        "write_file",
+        "edit",
+        "multi_edit",
+    ] {
+        assert!(
+            names.contains(&expected.to_string()),
+            "tools/list should expose {expected}: {names:?}"
+        );
+    }
+}
+
+#[tokio::test]
 async fn session_policy_mode_can_be_set_and_observed() {
     let runtime = Arc::new(Runtime::fake().unwrap());
     let server = Arc::new(AppServer::new(runtime));
