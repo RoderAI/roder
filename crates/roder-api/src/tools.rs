@@ -5,6 +5,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::events::{ThreadId, TurnId};
 use crate::extension::ToolProviderId;
+use crate::policy_mode::PolicyMode;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct ToolSpec {
@@ -44,6 +45,7 @@ pub struct ToolResult {
 pub struct ToolExecutionContext {
     pub thread_id: ThreadId,
     pub turn_id: TurnId,
+    pub effective_mode: PolicyMode,
 }
 
 #[async_trait::async_trait]

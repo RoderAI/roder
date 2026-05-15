@@ -3,6 +3,7 @@ use std::sync::{Arc, Mutex};
 use anyhow::anyhow;
 use roder_api::events::{ThreadId, TurnId};
 use roder_api::inference::TokenUsage;
+use roder_api::policy_mode::PolicyMode;
 use roder_api::subagents::{
     SubagentDefinition, SubagentDispatcher, SubagentExitReason, SubagentPermissionMode,
     SubagentRequest, SubagentResult,
@@ -191,6 +192,7 @@ fn context() -> ToolExecutionContext {
     ToolExecutionContext {
         thread_id: "parent-thread".to_string(),
         turn_id: "parent-turn".to_string(),
+        effective_mode: PolicyMode::Default,
     }
 }
 

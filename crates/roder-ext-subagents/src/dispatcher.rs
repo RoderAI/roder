@@ -14,6 +14,7 @@ use roder_api::inference::{
     InferenceTurnContext, InstructionBundle, ModelSelection, OutputConfig, ReasoningConfig,
     RuntimeHints,
 };
+use roder_api::policy_mode::PolicyMode;
 use roder_api::subagents::{
     SubagentDefinition, SubagentDispatcher, SubagentExitReason, SubagentRequest, SubagentResult,
 };
@@ -403,6 +404,7 @@ async fn execute_tool(
             ToolExecutionContext {
                 thread_id: thread_id.clone(),
                 turn_id: turn_id.clone(),
+                effective_mode: PolicyMode::Default,
             },
             ToolCall {
                 id: call.id,

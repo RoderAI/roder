@@ -150,6 +150,7 @@ async fn usage_and_request_id_are_available_in_tool_result_data() {
         roder_api::tools::ToolExecutionContext {
             thread_id: "thread-1".to_string(),
             turn_id: "turn-1".to_string(),
+            effective_mode: roder_api::policy_mode::PolicyMode::Default,
         },
         call,
     )

@@ -1,5 +1,6 @@
 use roder_api::conversation::ToolResultRecord;
 use roder_api::events::*;
+use roder_api::policy_mode::PolicyMode;
 use roder_api::subagents::SubagentExitReason;
 use roder_api::tools::ToolResult;
 use roder_api::tools::{ToolCall, ToolExecutionContext};
@@ -52,6 +53,7 @@ impl Runtime {
                 ToolExecutionContext {
                     thread_id: thread_id.clone(),
                     turn_id: turn_id.clone(),
+                    effective_mode: PolicyMode::Default,
                 },
                 ToolCall {
                     id: call.id.clone(),
