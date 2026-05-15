@@ -26,6 +26,9 @@ impl AppServer {
                 })
                 .await
             }
+            "auth/codex/login" => self.handle_codex_auth_login().await,
+            "auth/codex/status" => self.handle_codex_auth_status().await,
+            "auth/codex/logout" => self.handle_codex_auth_logout().await,
             "sessions/create" => {
                 let params = req
                     .params
@@ -161,6 +164,33 @@ impl AppServer {
         .unwrap())
     }
 
+    async fn handle_codex_auth_login(&self) -> Result<serde_json::Value, JsonRpcError> {
+        let tokens = roder_codex_auth::login().await.map_err(internal_error)?;
+        Ok(serde_json::to_value(CodexAuthResult {
+            signed_in: true,
+            account_id: non_empty(tokens.account_id),
+        })
+        .unwrap())
+    }
+
+    async fn handle_codex_auth_status(&self) -> Result<serde_json::Value, JsonRpcError> {
+        let signed_in = roder_codex_auth::status().await.map_err(internal_error)?;
+        Ok(serde_json::to_value(CodexAuthResult {
+            signed_in: signed_in.is_some(),
+            account_id: signed_in.and_then(|tokens| non_empty(tokens.account_id)),
+        })
+        .unwrap())
+    }
+
+    async fn handle_codex_auth_logout(&self) -> Result<serde_json::Value, JsonRpcError> {
+        roder_codex_auth::logout().map_err(internal_error)?;
+        Ok(serde_json::to_value(CodexAuthResult {
+            signed_in: false,
+            account_id: None,
+        })
+        .unwrap())
+    }
+
     async fn handle_create_session(
         &self,
         params: CreateSessionParams,
@@ -251,4 +281,9 @@ fn internal_error(err: impl std::fmt::Display) -> JsonRpcError {
         message: err.to_string(),
         data: None,
     }
+}
+
+fn non_empty(value: String) -> Option<String> {
+    let value = value.trim().to_string();
+    (!value.is_empty()).then_some(value)
 }

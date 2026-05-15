@@ -17,7 +17,7 @@ use ratatui::{
 use roder_api::events::RoderEvent;
 use roder_app_server::LocalAppClient;
 use roder_protocol::{
-    CreateSessionResult, InterruptTurnParams, JsonRpcRequest, JsonRpcResponse,
+    CodexAuthResult, CreateSessionResult, InterruptTurnParams, JsonRpcRequest, JsonRpcResponse,
     ProviderSelectParams, ProviderSelectResult, ProvidersListResult, StartTurnParams,
 };
 
@@ -149,6 +149,35 @@ struct ProviderOption {
     label: String,
 }
 
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+enum ProviderPopupScreen {
+    Main,
+    Models,
+}
+
+#[derive(Debug, Clone)]
+enum ProviderMenuItem {
+    Models,
+    Model(ProviderOption),
+    CodexLogin,
+    CodexStatus,
+    CodexLogout,
+    Back,
+}
+
+impl ProviderMenuItem {
+    fn label(&self) -> String {
+        match self {
+            Self::Models => "Models".to_string(),
+            Self::Model(option) => option.label.clone(),
+            Self::CodexLogin => "Sign in with Codex".to_string(),
+            Self::CodexStatus => "Codex auth status".to_string(),
+            Self::CodexLogout => "Sign out of Codex".to_string(),
+            Self::Back => "Back".to_string(),
+        }
+    }
+}
+
 pub struct TuiApp {
     client: LocalAppClient,
     thread_id: String,
@@ -161,7 +190,9 @@ pub struct TuiApp {
     animation_frame: u64,
     show_event_log: bool,
     show_provider_popup: bool,
-    provider_options: Vec<ProviderOption>,
+    provider_popup_screen: ProviderPopupScreen,
+    model_options: Vec<ProviderOption>,
+    provider_menu_items: Vec<ProviderMenuItem>,
     provider_state: ListState,
     theme: Theme,
 }
@@ -201,7 +232,9 @@ impl TuiApp {
             animation_frame: 0,
             show_event_log: false,
             show_provider_popup: false,
-            provider_options: Vec::new(),
+            provider_popup_screen: ProviderPopupScreen::Main,
+            model_options: Vec::new(),
+            provider_menu_items: Vec::new(),
             provider_state,
             theme: Theme::for_terminal(),
         })
@@ -258,10 +291,10 @@ impl TuiApp {
                     }
                 } else if self.show_provider_popup {
                     match key.code {
-                        KeyCode::Esc => self.show_provider_popup = false,
-                        KeyCode::Up => self.select_previous_provider_option(),
-                        KeyCode::Down => self.select_next_provider_option(),
-                        KeyCode::Enter => self.select_current_provider_option().await,
+                        KeyCode::Esc => self.close_or_back_provider_popup(),
+                        KeyCode::Up => self.select_previous_provider_menu_item(),
+                        KeyCode::Down => self.select_next_provider_menu_item(),
+                        KeyCode::Enter => self.select_current_provider_menu_item().await,
                         _ => {}
                     }
                 } else {
@@ -349,7 +382,7 @@ impl TuiApp {
     }
 
     fn render(&mut self, f: &mut Frame<'_>) {
-        let area = f.size();
+        let area = f.area();
         let event_height = event_log_height(self.show_event_log, self.events.len());
         let mut constraints = vec![
             Constraint::Length(1),
@@ -520,21 +553,25 @@ impl TuiApp {
 
     fn render_provider_popup(&mut self, f: &mut Frame<'_>, area: Rect) {
         let menu_area = centered_rect(area, area.width.min(72), area.height.min(16));
-        let items: Vec<ListItem> = if self.provider_options.is_empty() {
+        let items: Vec<ListItem> = if self.provider_menu_items.is_empty() {
             vec![ListItem::new(Line::from(Span::styled(
-                "No providers/models available",
+                "No menu items available",
                 self.theme.muted(),
             )))]
         } else {
-            self.provider_options
+            self.provider_menu_items
                 .iter()
-                .map(|option| {
+                .map(|item| {
                     ListItem::new(Line::from(vec![
                         Span::styled("• ", self.theme.subtle()),
-                        Span::styled(option.label.clone(), self.theme.text()),
+                        Span::styled(item.label(), self.theme.text()),
                     ]))
                 })
                 .collect()
+        };
+        let title = match self.provider_popup_screen {
+            ProviderPopupScreen::Main => " Provider (Enter select, Esc close) ",
+            ProviderPopupScreen::Models => " Models (Enter select, Esc back) ",
         };
         let menu = List::new(items)
             .block(
@@ -542,10 +579,7 @@ impl TuiApp {
                     .borders(Borders::ALL)
                     .border_type(BorderType::Rounded)
                     .border_style(self.theme.dialog())
-                    .title(Span::styled(
-                        " Provider / Model (Enter select, Esc close) ",
-                        self.theme.accent(),
-                    )),
+                    .title(Span::styled(title, self.theme.accent())),
             )
             .highlight_style(self.theme.selected())
             .highlight_symbol("› ");
@@ -558,20 +592,13 @@ impl TuiApp {
             Ok(list) => {
                 self.provider = list.active_provider.clone();
                 self.model = list.active_model.clone();
-                self.provider_options = provider_options_from_list(&list);
-                let selected = self
-                    .provider_options
-                    .iter()
-                    .position(|option| {
-                        option.provider_id == list.active_provider
-                            && option.model_id == list.active_model
-                    })
-                    .unwrap_or(0);
-                if self.provider_options.is_empty() {
+                self.model_options = provider_options_from_list(&list);
+                self.provider_popup_screen = ProviderPopupScreen::Main;
+                self.provider_menu_items = main_provider_menu_items();
+                if self.provider_menu_items.is_empty() {
                     self.provider_state.select(None);
-                    self.push_event("providers/list returned no providers".to_string());
                 } else {
-                    self.provider_state.select(Some(selected));
+                    self.provider_state.select(Some(0));
                 }
                 self.show_provider_popup = true;
             }
@@ -595,11 +622,21 @@ impl TuiApp {
         decode_response(res)
     }
 
-    fn select_previous_provider_option(&mut self) {
-        if self.provider_options.is_empty() {
+    fn close_or_back_provider_popup(&mut self) {
+        if self.provider_popup_screen == ProviderPopupScreen::Models {
+            self.provider_popup_screen = ProviderPopupScreen::Main;
+            self.provider_menu_items = main_provider_menu_items();
+            self.provider_state.select(Some(0));
+        } else {
+            self.show_provider_popup = false;
+        }
+    }
+
+    fn select_previous_provider_menu_item(&mut self) {
+        if self.provider_menu_items.is_empty() {
             return;
         }
-        let last = self.provider_options.len() - 1;
+        let last = self.provider_menu_items.len() - 1;
         let i = match self.provider_state.selected() {
             Some(0) | None => last,
             Some(i) => i - 1,
@@ -607,11 +644,11 @@ impl TuiApp {
         self.provider_state.select(Some(i));
     }
 
-    fn select_next_provider_option(&mut self) {
-        if self.provider_options.is_empty() {
+    fn select_next_provider_menu_item(&mut self) {
+        if self.provider_menu_items.is_empty() {
             return;
         }
-        let last = self.provider_options.len() - 1;
+        let last = self.provider_menu_items.len() - 1;
         let i = match self.provider_state.selected() {
             Some(i) if i >= last => 0,
             Some(i) => i + 1,
@@ -620,16 +657,62 @@ impl TuiApp {
         self.provider_state.select(Some(i));
     }
 
-    async fn select_current_provider_option(&mut self) {
+    async fn select_current_provider_menu_item(&mut self) {
         let Some(selected) = self.provider_state.selected() else {
             self.show_provider_popup = false;
             return;
         };
-        let Some(option) = self.provider_options.get(selected).cloned() else {
+        let Some(item) = self.provider_menu_items.get(selected).cloned() else {
             self.show_provider_popup = false;
             return;
         };
 
+        match item {
+            ProviderMenuItem::Models => {
+                self.open_models_submenu();
+            }
+            ProviderMenuItem::Model(option) => {
+                self.select_provider_model(option).await;
+            }
+            ProviderMenuItem::CodexLogin => {
+                self.run_codex_auth("auth/codex/login").await;
+            }
+            ProviderMenuItem::CodexStatus => {
+                self.run_codex_auth("auth/codex/status").await;
+            }
+            ProviderMenuItem::CodexLogout => {
+                self.run_codex_auth("auth/codex/logout").await;
+            }
+            ProviderMenuItem::Back => {
+                self.provider_popup_screen = ProviderPopupScreen::Main;
+                self.provider_menu_items = main_provider_menu_items();
+                self.provider_state.select(Some(0));
+            }
+        }
+    }
+
+    fn open_models_submenu(&mut self) {
+        self.provider_popup_screen = ProviderPopupScreen::Models;
+        self.provider_menu_items = self
+            .model_options
+            .iter()
+            .cloned()
+            .map(ProviderMenuItem::Model)
+            .chain(std::iter::once(ProviderMenuItem::Back))
+            .collect();
+        let selected = self
+            .model_options
+            .iter()
+            .position(|option| option.provider_id == self.provider && option.model_id == self.model)
+            .unwrap_or(0);
+        if self.provider_menu_items.is_empty() {
+            self.provider_state.select(None);
+        } else {
+            self.provider_state.select(Some(selected));
+        }
+    }
+
+    async fn select_provider_model(&mut self, option: ProviderOption) {
         let params = ProviderSelectParams {
             provider: option.provider_id,
             model: Some(option.model_id),
@@ -660,6 +743,33 @@ impl TuiApp {
             }
             Err(err) => {
                 self.record_error(format!("providers/select failed: {err}"));
+                self.show_provider_popup = false;
+            }
+        }
+    }
+
+    async fn run_codex_auth(&mut self, method: &str) {
+        if method == "auth/codex/login" {
+            self.messages
+                .push("system: opening browser for Codex sign-in.".to_string());
+        }
+        let res = self
+            .client
+            .send_request(JsonRpcRequest {
+                jsonrpc: "2.0".to_string(),
+                id: Some(serde_json::json!(method)),
+                method: method.to_string(),
+                params: None,
+            })
+            .await;
+        match decode_response::<CodexAuthResult>(res) {
+            Ok(result) => {
+                self.messages.push(codex_auth_message(method, &result));
+                self.push_event(format!("codex auth: {}", codex_auth_event(&result)));
+                self.show_provider_popup = false;
+            }
+            Err(err) => {
+                self.record_error(format!("codex auth failed: {err}"));
                 self.show_provider_popup = false;
             }
         }
@@ -752,6 +862,34 @@ fn provider_options_from_list(list: &ProvidersListResult) -> Vec<ProviderOption>
         }
     }
     options
+}
+
+fn main_provider_menu_items() -> Vec<ProviderMenuItem> {
+    vec![
+        ProviderMenuItem::Models,
+        ProviderMenuItem::CodexLogin,
+        ProviderMenuItem::CodexStatus,
+        ProviderMenuItem::CodexLogout,
+    ]
+}
+
+fn codex_auth_message(method: &str, result: &CodexAuthResult) -> String {
+    match (method, result.signed_in, result.account_id.as_deref()) {
+        ("auth/codex/logout", _, _) => "system: signed out of Codex.".to_string(),
+        (_, true, Some(account_id)) => {
+            format!("system: signed in with Codex account {account_id}.")
+        }
+        (_, true, None) => "system: signed in with Codex.".to_string(),
+        _ => "system: signed out of Codex.".to_string(),
+    }
+}
+
+fn codex_auth_event(result: &CodexAuthResult) -> &'static str {
+    if result.signed_in {
+        "signed in"
+    } else {
+        "signed out"
+    }
 }
 
 fn decode_response<T: serde::de::DeserializeOwned>(res: JsonRpcResponse) -> anyhow::Result<T> {
@@ -957,5 +1095,32 @@ mod tests {
         assert_eq!(options.len(), 1);
         assert_eq!(options[0].provider_id, "mock");
         assert_eq!(options[0].model_id, "mock");
+    }
+
+    #[test]
+    fn provider_menu_starts_with_models_submenu() {
+        let items = main_provider_menu_items();
+        assert!(matches!(items.first(), Some(ProviderMenuItem::Models)));
+    }
+
+    #[test]
+    fn codex_auth_messages_reflect_status() {
+        let signed_in = CodexAuthResult {
+            signed_in: true,
+            account_id: Some("acct".to_string()),
+        };
+        assert_eq!(
+            codex_auth_message("auth/codex/status", &signed_in),
+            "system: signed in with Codex account acct."
+        );
+
+        let signed_out = CodexAuthResult {
+            signed_in: false,
+            account_id: None,
+        };
+        assert_eq!(
+            codex_auth_message("auth/codex/status", &signed_out),
+            "system: signed out of Codex."
+        );
     }
 }

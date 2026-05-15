@@ -3,13 +3,15 @@ use roder_api::extension::InferenceEngineId;
 use roder_api::inference::{
     AgentInferenceRequest, CompletionMetadata, InferenceCapabilities, InferenceEngine,
     InferenceEvent, InferenceEventStream, InferenceProviderContext, InferenceTurnContext,
-    MessageDelta, ModelDescriptor, TokenUsage,
+    MessageDelta, ModelDescriptor, TokenUsage, ToolCallCompleted,
 };
 use serde_json::{Value, json};
 
 pub struct OpenAiResponsesEngine {
     api_key: String,
     provider_id: String,
+    base_url: String,
+    headers: Vec<(String, String)>,
 }
 
 impl OpenAiResponsesEngine {
@@ -18,9 +20,25 @@ impl OpenAiResponsesEngine {
     }
 
     pub fn new_with_provider_id(api_key: String, provider_id: impl Into<String>) -> Self {
+        Self::new_with_config(
+            api_key,
+            provider_id,
+            "https://api.openai.com/v1",
+            Vec::new(),
+        )
+    }
+
+    pub fn new_with_config(
+        api_key: String,
+        provider_id: impl Into<String>,
+        base_url: impl Into<String>,
+        headers: Vec<(String, String)>,
+    ) -> Self {
         Self {
             api_key,
             provider_id: provider_id.into(),
+            base_url: base_url.into().trim_end_matches('/').to_string(),
+            headers,
         }
     }
 
@@ -50,6 +68,31 @@ impl OpenAiResponsesEngine {
                 None => json!({}),
             };
         }
+        if !request.tools.is_empty() {
+            body["tools"] = json!(
+                request
+                    .tools
+                    .iter()
+                    .map(|tool| {
+                        json!({
+                            "type": "function",
+                            "name": tool.name,
+                            "description": tool.description,
+                            "parameters": tool.parameters,
+                        })
+                    })
+                    .collect::<Vec<_>>()
+            );
+            body["tool_choice"] = match &request.tool_choice {
+                roder_api::tools::ToolChoice::None => json!("none"),
+                roder_api::tools::ToolChoice::Specific(name) => {
+                    json!({ "type": "function", "name": name })
+                }
+                roder_api::tools::ToolChoice::Auto | roder_api::tools::ToolChoice::Any => {
+                    json!("auto")
+                }
+            };
+        }
         if let Some(prompt_cache_key) = request.runtime.prompt_cache_key.as_deref() {
             body["prompt_cache_key"] = json!(prompt_cache_key);
         }
@@ -66,7 +109,7 @@ impl InferenceEngine for OpenAiResponsesEngine {
     fn capabilities(&self) -> InferenceCapabilities {
         InferenceCapabilities {
             streaming: false,
-            tool_calls: false,
+            tool_calls: true,
             parallel_tool_calls: false,
             reasoning_summaries: true,
             structured_output: true,
@@ -89,12 +132,14 @@ impl InferenceEngine for OpenAiResponsesEngine {
         request: AgentInferenceRequest,
     ) -> anyhow::Result<InferenceEventStream> {
         let body = Self::map_request(&request);
-        let response = reqwest::Client::new()
-            .post("https://api.openai.com/v1/responses")
-            .bearer_auth(&self.api_key)
-            .json(&body)
-            .send()
-            .await?;
+        let client = reqwest::Client::new();
+        let mut request = client
+            .post(format!("{}/responses", self.base_url))
+            .bearer_auth(&self.api_key);
+        for (key, value) in &self.headers {
+            request = request.header(key, value);
+        }
+        let response = request.json(&body).send().await?;
         if !response.status().is_success() {
             anyhow::bail!(
                 "OpenAI Responses error {}: {}",
@@ -104,7 +149,13 @@ impl InferenceEngine for OpenAiResponsesEngine {
         }
         let value: Value = response.json().await?;
         let text = extract_response_text(&value);
-        let mut events = vec![Ok(InferenceEvent::MessageDelta(MessageDelta { text }))];
+        let mut events = Vec::new();
+        if !text.is_empty() {
+            events.push(Ok(InferenceEvent::MessageDelta(MessageDelta { text })));
+        }
+        for call in extract_tool_calls(&value) {
+            events.push(Ok(InferenceEvent::ToolCallCompleted(call)));
+        }
         if let Some(usage) = extract_usage(&value) {
             events.push(Ok(InferenceEvent::Usage(usage)));
         }
@@ -150,6 +201,11 @@ fn response_input_items(request: &AgentInferenceRequest) -> Vec<Value> {
                 "call_id": result.id,
                 "output": result.result
             })),
+            roder_api::conversation::ConversationItem::ContextCompaction(compaction) => Some(json!({
+                "type": "message",
+                "role": "user",
+                "content": [{ "type": "input_text", "text": format!("Context summary:\n{}", compaction.summary) }]
+            })),
             _ => None,
         })
         .collect()
@@ -162,6 +218,34 @@ fn extract_response_text(value: &Value) -> String {
         .map(str::to_string)
         .or_else(|| extract_output_text(value))
         .unwrap_or_default()
+}
+
+fn extract_tool_calls(value: &Value) -> Vec<ToolCallCompleted> {
+    let Some(output) = value.get("output").and_then(|v| v.as_array()) else {
+        return Vec::new();
+    };
+    output
+        .iter()
+        .filter(|item| item.get("type").and_then(|v| v.as_str()) == Some("function_call"))
+        .filter_map(|item| {
+            let id = item
+                .get("call_id")
+                .or_else(|| item.get("id"))
+                .and_then(|v| v.as_str())?
+                .to_string();
+            let name = item.get("name").and_then(|v| v.as_str())?.to_string();
+            let arguments = item
+                .get("arguments")
+                .and_then(|v| v.as_str())
+                .unwrap_or("{}")
+                .to_string();
+            Some(ToolCallCompleted {
+                id,
+                name,
+                arguments,
+            })
+        })
+        .collect()
 }
 
 fn extract_output_text(value: &Value) -> Option<String> {
@@ -233,7 +317,11 @@ mod tests {
                     text: "Hi".to_string(),
                 }),
             ],
-            tools: vec![],
+            tools: vec![roder_api::tools::ToolSpec {
+                name: "echo".to_string(),
+                description: "echo text".to_string(),
+                parameters: json!({ "type": "object" }),
+            }],
             tool_choice: roder_api::tools::ToolChoice::Auto,
             reasoning: ReasoningConfig {
                 enabled: true,
@@ -263,6 +351,8 @@ mod tests {
         assert_eq!(body["reasoning"]["effort"], "medium");
         assert_eq!(body["prompt_cache_key"], "cache-key");
         assert_eq!(body["text"]["format"]["type"], "json_object");
+        assert_eq!(body["tools"][0]["name"], "echo");
+        assert_eq!(body["tool_choice"], "auto");
         assert_eq!(body["input"][0]["role"], "user");
         assert_eq!(body["input"][1]["role"], "assistant");
     }
@@ -297,5 +387,22 @@ mod tests {
                 total_tokens: 7,
             })
         );
+    }
+
+    #[test]
+    fn extracts_responses_tool_calls() {
+        let value = json!({
+            "output": [{
+                "type": "function_call",
+                "call_id": "call_1",
+                "name": "echo",
+                "arguments": "{\"text\":\"hello\"}"
+            }]
+        });
+        let calls = extract_tool_calls(&value);
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].id, "call_1");
+        assert_eq!(calls[0].name, "echo");
+        assert_eq!(calls[0].arguments, "{\"text\":\"hello\"}");
     }
 }

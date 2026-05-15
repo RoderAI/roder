@@ -22,7 +22,9 @@ pub struct MemoryRecord {
     pub scope: MemoryScope,
     pub text: String,
     pub metadata: serde_json::Value,
+    #[serde(with = "time::serde::rfc3339")]
     pub created_at: OffsetDateTime,
+    #[serde(with = "time::serde::rfc3339")]
     pub updated_at: OffsetDateTime,
 }
 

@@ -22,24 +22,28 @@ pub enum EventSource {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RuntimeStarted {
+    #[serde(with = "time::serde::rfc3339")]
     pub timestamp: OffsetDateTime,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ExtensionRegistered {
     pub extension_id: ExtensionId,
+    #[serde(with = "time::serde::rfc3339")]
     pub timestamp: OffsetDateTime,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SessionCreated {
     pub thread_id: ThreadId,
+    #[serde(with = "time::serde::rfc3339")]
     pub timestamp: OffsetDateTime,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SessionLoaded {
     pub thread_id: ThreadId,
+    #[serde(with = "time::serde::rfc3339")]
     pub timestamp: OffsetDateTime,
 }
 
@@ -47,6 +51,7 @@ pub struct SessionLoaded {
 pub struct TurnStarted {
     pub thread_id: ThreadId,
     pub turn_id: TurnId,
+    #[serde(with = "time::serde::rfc3339")]
     pub timestamp: OffsetDateTime,
 }
 
@@ -54,6 +59,7 @@ pub struct TurnStarted {
 pub struct ContextAssemblyStarted {
     pub thread_id: ThreadId,
     pub turn_id: TurnId,
+    #[serde(with = "time::serde::rfc3339")]
     pub timestamp: OffsetDateTime,
 }
 
@@ -62,6 +68,7 @@ pub struct ContextBlockAdded {
     pub thread_id: ThreadId,
     pub turn_id: TurnId,
     pub block_type: String,
+    #[serde(with = "time::serde::rfc3339")]
     pub timestamp: OffsetDateTime,
 }
 
@@ -69,6 +76,7 @@ pub struct ContextBlockAdded {
 pub struct ContextAssemblyCompleted {
     pub thread_id: ThreadId,
     pub turn_id: TurnId,
+    #[serde(with = "time::serde::rfc3339")]
     pub timestamp: OffsetDateTime,
 }
 
@@ -77,6 +85,7 @@ pub struct InferenceStarted {
     pub thread_id: ThreadId,
     pub turn_id: TurnId,
     pub engine_id: InferenceEngineId,
+    #[serde(with = "time::serde::rfc3339")]
     pub timestamp: OffsetDateTime,
 }
 
@@ -85,6 +94,7 @@ pub struct InferenceEventReceived {
     pub thread_id: ThreadId,
     pub turn_id: TurnId,
     pub event: InferenceEvent,
+    #[serde(with = "time::serde::rfc3339")]
     pub timestamp: OffsetDateTime,
 }
 
@@ -94,6 +104,7 @@ pub struct ToolCallRequested {
     pub turn_id: TurnId,
     pub tool_id: String,
     pub tool_name: String,
+    #[serde(with = "time::serde::rfc3339")]
     pub timestamp: OffsetDateTime,
 }
 
@@ -102,6 +113,7 @@ pub struct ApprovalRequested {
     pub thread_id: ThreadId,
     pub turn_id: TurnId,
     pub approval_id: String,
+    #[serde(with = "time::serde::rfc3339")]
     pub timestamp: OffsetDateTime,
 }
 
@@ -111,6 +123,7 @@ pub struct ApprovalResolved {
     pub turn_id: TurnId,
     pub approval_id: String,
     pub approved: bool,
+    #[serde(with = "time::serde::rfc3339")]
     pub timestamp: OffsetDateTime,
 }
 
@@ -119,6 +132,7 @@ pub struct ToolCallStarted {
     pub thread_id: ThreadId,
     pub turn_id: TurnId,
     pub tool_id: String,
+    #[serde(with = "time::serde::rfc3339")]
     pub timestamp: OffsetDateTime,
 }
 
@@ -127,6 +141,7 @@ pub struct ToolCallCompleted {
     pub thread_id: ThreadId,
     pub turn_id: TurnId,
     pub tool_id: String,
+    #[serde(with = "time::serde::rfc3339")]
     pub timestamp: OffsetDateTime,
 }
 
@@ -136,6 +151,7 @@ pub struct FileChanged {
     pub turn_id: TurnId,
     pub path: String,
     pub change_type: String,
+    #[serde(with = "time::serde::rfc3339")]
     pub timestamp: OffsetDateTime,
 }
 
@@ -144,6 +160,7 @@ pub struct TurnItemAppended {
     pub thread_id: ThreadId,
     pub turn_id: TurnId,
     pub item_type: String,
+    #[serde(with = "time::serde::rfc3339")]
     pub timestamp: OffsetDateTime,
 }
 
@@ -151,6 +168,7 @@ pub struct TurnItemAppended {
 pub struct TurnCompleted {
     pub thread_id: ThreadId,
     pub turn_id: TurnId,
+    #[serde(with = "time::serde::rfc3339")]
     pub timestamp: OffsetDateTime,
 }
 
@@ -159,6 +177,7 @@ pub struct TurnFailed {
     pub thread_id: ThreadId,
     pub turn_id: TurnId,
     pub error: String,
+    #[serde(with = "time::serde::rfc3339")]
     pub timestamp: OffsetDateTime,
 }
 
@@ -166,6 +185,7 @@ pub struct TurnFailed {
 pub struct TurnInterrupted {
     pub thread_id: ThreadId,
     pub turn_id: TurnId,
+    #[serde(with = "time::serde::rfc3339")]
     pub timestamp: OffsetDateTime,
 }
 
@@ -286,6 +306,7 @@ impl RoderEvent {
 pub struct EventEnvelope {
     pub event_id: EventId,
     pub seq: u64,
+    #[serde(with = "time::serde::rfc3339")]
     pub timestamp: OffsetDateTime,
     pub source: EventSource,
     pub kind: String,
@@ -395,16 +416,33 @@ mod tests {
         assert!(envelope.matches_filter(&filter));
         assert!(!EventFilter::for_thread("thread-b").matches(&envelope));
         assert!(!EventFilter::for_turn("thread-a", "turn-b").matches(&envelope));
-        assert!(!EventFilter::default()
-            .with_source(EventSource::Provider)
-            .matches(&envelope));
-        assert!(!EventFilter::default()
-            .with_kind("turn.completed")
-            .matches(&envelope));
+        assert!(
+            !EventFilter::default()
+                .with_source(EventSource::Provider)
+                .matches(&envelope)
+        );
+        assert!(
+            !EventFilter::default()
+                .with_kind("turn.completed")
+                .matches(&envelope)
+        );
     }
 
     #[test]
     fn empty_event_filter_matches_everything() {
         assert!(EventFilter::default().matches(&envelope(None, None, "runtime.started")));
+    }
+
+    #[test]
+    fn event_timestamps_serialize_as_rfc3339_strings() {
+        let value =
+            serde_json::to_value(envelope(Some("thread-a"), Some("turn-a"), "turn.started"))
+                .unwrap();
+
+        assert_eq!(value["timestamp"], "1970-01-01T00:00:00Z");
+        assert_eq!(
+            value["event"]["TurnStarted"]["timestamp"],
+            "1970-01-01T00:00:00Z"
+        );
     }
 }

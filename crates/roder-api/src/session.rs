@@ -14,7 +14,9 @@ pub struct SessionMetadata {
     pub workspace: Option<String>,
     pub provider: Option<String>,
     pub model: Option<String>,
+    #[serde(with = "time::serde::rfc3339")]
     pub created_at: OffsetDateTime,
+    #[serde(with = "time::serde::rfc3339")]
     pub updated_at: OffsetDateTime,
     pub message_count: u32,
 }
@@ -24,7 +26,9 @@ pub struct TurnRecord {
     pub thread_id: ThreadId,
     pub turn_id: TurnId,
     pub items: Vec<TurnItem>,
+    #[serde(with = "time::serde::rfc3339")]
     pub created_at: OffsetDateTime,
+    #[serde(with = "time::serde::rfc3339::option")]
     pub completed_at: Option<OffsetDateTime>,
 }
 
@@ -70,4 +74,27 @@ pub trait CheckpointStore: Send + Sync {
 pub trait CheckpointStoreFactory: Send + Sync + 'static {
     fn id(&self) -> CheckpointStoreId;
     fn create(&self) -> Arc<dyn CheckpointStore>;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn session_metadata_timestamps_serialize_as_rfc3339_strings() {
+        let value = serde_json::to_value(SessionMetadata {
+            thread_id: "thread-a".to_string(),
+            title: None,
+            workspace: None,
+            provider: None,
+            model: None,
+            created_at: OffsetDateTime::UNIX_EPOCH,
+            updated_at: OffsetDateTime::UNIX_EPOCH,
+            message_count: 0,
+        })
+        .unwrap();
+
+        assert_eq!(value["created_at"], "1970-01-01T00:00:00Z");
+        assert_eq!(value["updated_at"], "1970-01-01T00:00:00Z");
+    }
 }

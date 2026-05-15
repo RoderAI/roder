@@ -1,15 +1,15 @@
 [package]
 name = "roder-ext-jsonl-session"
-version = "0.1.0"
-edition = "2024"
+version.workspace = true
+edition.workspace = true
 
 [dependencies]
-anyhow = "1.0"
-serde = { version = "1.0", features = ["derive"] }
-serde_json = "1.0"
-tokio = { version = "1.0", features = ["full", "fs"] }
-roder-api = { path = "../roder-api" }
-uuid = { version = "1.10", features = ["v4"] }
-time = { version = "0.3" }
-async-trait = "0.1"
-semver = "1.0"
+anyhow.workspace = true
+async-trait.workspace = true
+roder-api.workspace = true
+semver.workspace = true
+serde = { workspace = true, features = ["derive"] }
+serde_json.workspace = true
+time = { workspace = true, features = ["serde-well-known"] }
+tokio = { workspace = true, features = ["full", "fs"] }
+uuid = { workspace = true, features = ["v4"] }

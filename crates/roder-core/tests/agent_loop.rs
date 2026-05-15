@@ -1,0 +1,177 @@
+use std::sync::{Arc, Mutex};
+use std::time::Duration;
+
+use futures::stream;
+use roder_api::catalog::PROVIDER_MOCK;
+use roder_api::conversation::ConversationItem;
+use roder_api::extension::{ExtensionRegistryBuilder, InferenceEngineId, ToolProviderId};
+use roder_api::inference::*;
+use roder_api::tools::{
+    ToolCall, ToolContributor, ToolExecutionContext, ToolExecutor, ToolResult, ToolSpec,
+};
+use roder_core::{Runtime, RuntimeConfig, StartTurnRequest};
+use serde_json::json;
+
+struct ToolLoopEngine {
+    requests: Mutex<Vec<AgentInferenceRequest>>,
+}
+
+struct EchoContributor;
+
+impl ToolContributor for EchoContributor {
+    fn id(&self) -> ToolProviderId {
+        "test-echo".to_string()
+    }
+
+    fn contribute(&self, registry: &mut roder_api::tools::ToolRegistry) -> anyhow::Result<()> {
+        registry.register(Arc::new(EchoTool));
+        Ok(())
+    }
+}
+
+struct EchoTool;
+
+#[async_trait::async_trait]
+impl ToolExecutor for EchoTool {
+    fn spec(&self) -> ToolSpec {
+        ToolSpec {
+            name: "echo".to_string(),
+            description: "Echo text".to_string(),
+            parameters: json!({
+                "type": "object",
+                "properties": { "text": { "type": "string" } },
+                "required": ["text"]
+            }),
+        }
+    }
+
+    async fn execute(
+        &self,
+        _ctx: ToolExecutionContext,
+        call: ToolCall,
+    ) -> anyhow::Result<ToolResult> {
+        let text = call
+            .arguments
+            .get("text")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or("")
+            .to_string();
+        Ok(ToolResult {
+            id: call.id,
+            name: call.name,
+            text: text.clone(),
+            data: json!({ "text": text }),
+            is_error: false,
+        })
+    }
+}
+
+#[async_trait::async_trait]
+impl InferenceEngine for ToolLoopEngine {
+    fn id(&self) -> InferenceEngineId {
+        PROVIDER_MOCK.to_string()
+    }
+
+    fn capabilities(&self) -> InferenceCapabilities {
+        InferenceCapabilities::coding_agent_default()
+    }
+
+    async fn list_models(
+        &self,
+        _ctx: InferenceProviderContext<'_>,
+    ) -> anyhow::Result<Vec<ModelDescriptor>> {
+        Ok(Vec::new())
+    }
+
+    async fn stream_turn(
+        &self,
+        _ctx: InferenceTurnContext<'_>,
+        request: AgentInferenceRequest,
+    ) -> anyhow::Result<InferenceEventStream> {
+        let mut requests = self.requests.lock().unwrap();
+        requests.push(request);
+        let turn = requests.len();
+        drop(requests);
+        let events = if turn == 1 {
+            vec![
+                Ok(InferenceEvent::ToolCallCompleted(ToolCallCompleted {
+                    id: "call_1".to_string(),
+                    name: "echo".to_string(),
+                    arguments: r#"{"text":"from tool"}"#.to_string(),
+                })),
+                Ok(InferenceEvent::Completed(CompletionMetadata {
+                    stop_reason: Some("tool_calls".to_string()),
+                    provider_response_id: Some("resp_1".to_string()),
+                })),
+            ]
+        } else {
+            vec![
+                Ok(InferenceEvent::MessageDelta(MessageDelta {
+                    text: "final after tool".to_string(),
+                })),
+                Ok(InferenceEvent::Completed(CompletionMetadata {
+                    stop_reason: Some("stop".to_string()),
+                    provider_response_id: Some("resp_2".to_string()),
+                })),
+            ]
+        };
+        Ok(Box::pin(stream::iter(events)))
+    }
+}
+
+#[tokio::test]
+async fn run_turn_continues_after_tool_result() {
+    let engine = Arc::new(ToolLoopEngine {
+        requests: Mutex::new(Vec::new()),
+    });
+    let mut builder = ExtensionRegistryBuilder::new();
+    builder.inference_engine(engine.clone());
+    builder.tool_contributor(Arc::new(EchoContributor));
+    let runtime = Arc::new(
+        Runtime::new(
+            builder.build().unwrap(),
+            RuntimeConfig {
+                default_provider: PROVIDER_MOCK.to_string(),
+                default_model: "mock".to_string(),
+                reasoning: Some("low".to_string()),
+                auto_compact_token_limit: Some(10_000),
+                workspace: None,
+            },
+        )
+        .unwrap(),
+    );
+    let mut events = runtime.subscribe_events();
+
+    runtime
+        .start_turn(StartTurnRequest {
+            thread_id: "thread_1".to_string(),
+            message: "echo please".to_string(),
+            provider_override: None,
+            model_override: None,
+            instructions: InstructionBundle::default(),
+        })
+        .await
+        .unwrap();
+
+    loop {
+        let event = tokio::time::timeout(Duration::from_secs(2), events.recv())
+            .await
+            .unwrap()
+            .unwrap();
+        if event.kind == "turn.completed" && event.thread_id.as_deref() == Some("thread_1") {
+            break;
+        }
+    }
+
+    let requests = engine.requests.lock().unwrap();
+    assert_eq!(requests.len(), 2);
+    assert_eq!(requests[0].reasoning.level.as_deref(), Some("low"));
+    assert!(
+        requests[1]
+            .conversation
+            .iter()
+            .any(|item| matches!(item, ConversationItem::ToolResult(result) if result.result == "from tool")),
+        "second request should include the tool result: {:?}",
+        requests[1].conversation
+    );
+}

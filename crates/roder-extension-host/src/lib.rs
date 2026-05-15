@@ -12,7 +12,7 @@ use roder_ext_gemini::GeminiExtension;
 use roder_ext_jsonl_session::JsonlSessionExtension;
 use roder_ext_memory::MemoryExtension;
 use roder_ext_openai_chat_completions::OpenAiChatCompletionsExtension;
-use roder_ext_openai_responses::OpenAiResponsesExtension;
+use roder_ext_openai_responses::{OpenAiResponsesEngine, OpenAiResponsesExtension};
 use semver::Version;
 
 #[derive(Debug, Clone, Default)]
@@ -27,13 +27,10 @@ pub fn build_default_registry(config: DefaultRegistryConfig) -> anyhow::Result<E
     let mut builder = ExtensionRegistryBuilder::new();
 
     builder.install(FakeProviderExtension)?;
+    builder.install(CodexOAuthProviderExtension)?;
 
     if let Some(openai_key) = config.openai_api_key {
         builder.install(OpenAiResponsesExtension::new(openai_key.clone()))?;
-        builder.install(OpenAiResponsesExtension::new_with_provider_id(
-            openai_key.clone(),
-            PROVIDER_CODEX,
-        ))?;
         builder.install(OpenAiChatCompletionsExtension::new(openai_key))?;
     }
     if let Some(anthropic_key) = config.anthropic_api_key {
@@ -42,6 +39,8 @@ pub fn build_default_registry(config: DefaultRegistryConfig) -> anyhow::Result<E
     if let Some(gemini_key) = config.gemini_api_key {
         builder.install(GeminiExtension::new(gemini_key))?;
     }
+
+    builder.tool_contributor(roder_tools::echo_tool_contributor());
 
     let session_dir = config
         .session_dir
@@ -72,6 +71,84 @@ impl RoderExtension for FakeProviderExtension {
     fn install(&self, registry: &mut ExtensionRegistryBuilder) -> anyhow::Result<()> {
         registry.inference_engine(Arc::new(FakeInferenceEngine));
         Ok(())
+    }
+}
+
+struct CodexOAuthProviderExtension;
+
+impl RoderExtension for CodexOAuthProviderExtension {
+    fn manifest(&self) -> ExtensionManifest {
+        ExtensionManifest {
+            id: "roder-ext-codex-oauth-provider".to_string(),
+            name: "Codex OAuth Provider".to_string(),
+            version: Version::new(0, 1, 0),
+            api_version: "0.1.0".to_string(),
+            description: Some("Codex provider backed by ChatGPT OAuth".to_string()),
+            provides: vec![ProvidedService::InferenceEngine(PROVIDER_CODEX.to_string())],
+            required_capabilities: vec![],
+        }
+    }
+
+    fn install(&self, registry: &mut ExtensionRegistryBuilder) -> anyhow::Result<()> {
+        registry.inference_engine(Arc::new(CodexOAuthInferenceEngine));
+        Ok(())
+    }
+}
+
+struct CodexOAuthInferenceEngine;
+
+#[async_trait::async_trait]
+impl InferenceEngine for CodexOAuthInferenceEngine {
+    fn id(&self) -> roder_api::extension::InferenceEngineId {
+        PROVIDER_CODEX.to_string()
+    }
+
+    fn capabilities(&self) -> InferenceCapabilities {
+        InferenceCapabilities {
+            streaming: false,
+            tool_calls: false,
+            parallel_tool_calls: false,
+            reasoning_summaries: true,
+            structured_output: true,
+            image_input: false,
+            prompt_cache: true,
+            provider_metadata: true,
+        }
+    }
+
+    async fn list_models(
+        &self,
+        _ctx: InferenceProviderContext<'_>,
+    ) -> anyhow::Result<Vec<ModelDescriptor>> {
+        Ok(models_for_provider(
+            roder_api::catalog::PROVIDER_OPENAI,
+            false,
+        ))
+    }
+
+    async fn stream_turn(
+        &self,
+        ctx: InferenceTurnContext<'_>,
+        request: AgentInferenceRequest,
+    ) -> anyhow::Result<InferenceEventStream> {
+        let Some((access_token, account_id)) = roder_codex_auth::access_token().await? else {
+            anyhow::bail!("codex auth is missing; run `roder auth login codex`")
+        };
+        let mut headers = vec![
+            ("originator".to_string(), "gode".to_string()),
+            ("User-Agent".to_string(), "roder".to_string()),
+        ];
+        if let Some(account_id) = account_id {
+            headers.push(("ChatGPT-Account-Id".to_string(), account_id));
+        }
+        OpenAiResponsesEngine::new_with_config(
+            access_token,
+            PROVIDER_CODEX,
+            "https://chatgpt.com/backend-api/codex",
+            headers,
+        )
+        .stream_turn(ctx, request)
+        .await
     }
 }
 
