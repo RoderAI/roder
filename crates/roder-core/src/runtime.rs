@@ -13,6 +13,7 @@ use roder_api::inference::{
     InstructionBundle, ModelSelection, OutputConfig, ReasoningConfig, RuntimeHints,
 };
 use roder_api::session::{SessionMetadata, SessionStore, ThreadSnapshot};
+use roder_api::subagents::SubagentDefinition;
 use roder_api::tools::{ToolChoice, ToolRegistry};
 use time::OffsetDateTime;
 use tokio::sync::RwLock;
@@ -225,6 +226,14 @@ impl Runtime {
 
     pub fn tool_specs(&self) -> Vec<roder_api::tools::ToolSpec> {
         self.tool_registry.specs()
+    }
+
+    pub fn subagent_definitions(&self) -> Vec<SubagentDefinition> {
+        self.registry
+            .subagent_dispatchers
+            .iter()
+            .flat_map(|dispatcher| dispatcher.definitions())
+            .collect()
     }
 
     async fn run_turn(&self, req: StartTurnRequest, turn_id: TurnId) -> anyhow::Result<()> {

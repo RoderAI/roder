@@ -2,6 +2,7 @@ use roder_api::events::{ThreadId, TurnId};
 use roder_api::extension::ExtensionManifest;
 use roder_api::inference::{InferenceCapabilities, ModelDescriptor, ProviderAuthType};
 use roder_api::session::{SessionMetadata, ThreadSnapshot};
+use roder_api::subagents::SubagentPermissionMode;
 use roder_api::tools::ToolSpec;
 use serde::{Deserialize, Serialize};
 
@@ -133,4 +134,20 @@ pub struct InterruptTurnParams {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ToolsListResult {
     pub tools: Vec<ToolSpec>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AgentsListResult {
+    pub agents: Vec<AgentDescriptor>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AgentDescriptor {
+    pub agent_type: String,
+    pub description: String,
+    pub tools: Vec<String>,
+    pub model: Option<String>,
+    pub permission_mode: SubagentPermissionMode,
+    pub max_turns: Option<u32>,
+    pub max_result_chars: Option<usize>,
 }
