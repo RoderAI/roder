@@ -293,3 +293,118 @@ pub struct EventEnvelope {
     pub turn_id: Option<TurnId>,
     pub event: RoderEvent,
 }
+
+impl EventEnvelope {
+    pub fn matches_filter(&self, filter: &EventFilter) -> bool {
+        filter.matches(self)
+    }
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct EventFilter {
+    pub thread_id: Option<ThreadId>,
+    pub turn_id: Option<TurnId>,
+    pub source: Option<EventSource>,
+    pub kinds: Vec<String>,
+}
+
+impl EventFilter {
+    pub fn for_thread(thread_id: impl Into<ThreadId>) -> Self {
+        Self {
+            thread_id: Some(thread_id.into()),
+            ..Self::default()
+        }
+    }
+
+    pub fn for_turn(thread_id: impl Into<ThreadId>, turn_id: impl Into<TurnId>) -> Self {
+        Self {
+            thread_id: Some(thread_id.into()),
+            turn_id: Some(turn_id.into()),
+            ..Self::default()
+        }
+    }
+
+    pub fn with_source(mut self, source: EventSource) -> Self {
+        self.source = Some(source);
+        self
+    }
+
+    pub fn with_kind(mut self, kind: impl Into<String>) -> Self {
+        self.kinds.push(kind.into());
+        self
+    }
+
+    pub fn matches(&self, envelope: &EventEnvelope) -> bool {
+        if self
+            .thread_id
+            .as_ref()
+            .is_some_and(|thread_id| envelope.thread_id.as_ref() != Some(thread_id))
+        {
+            return false;
+        }
+        if self
+            .turn_id
+            .as_ref()
+            .is_some_and(|turn_id| envelope.turn_id.as_ref() != Some(turn_id))
+        {
+            return false;
+        }
+        if self
+            .source
+            .as_ref()
+            .is_some_and(|source| &envelope.source != source)
+        {
+            return false;
+        }
+        if !self.kinds.is_empty() && !self.kinds.iter().any(|kind| kind == &envelope.kind) {
+            return false;
+        }
+        true
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn envelope(thread_id: Option<&str>, turn_id: Option<&str>, kind: &str) -> EventEnvelope {
+        EventEnvelope {
+            event_id: "event-1".to_string(),
+            seq: 1,
+            timestamp: OffsetDateTime::UNIX_EPOCH,
+            source: EventSource::Core,
+            kind: kind.to_string(),
+            thread_id: thread_id.map(str::to_string),
+            turn_id: turn_id.map(str::to_string),
+            event: RoderEvent::TurnStarted(TurnStarted {
+                thread_id: thread_id.unwrap_or("thread-a").to_string(),
+                turn_id: turn_id.unwrap_or("turn-a").to_string(),
+                timestamp: OffsetDateTime::UNIX_EPOCH,
+            }),
+        }
+    }
+
+    #[test]
+    fn event_filter_matches_thread_turn_source_and_kind() {
+        let envelope = envelope(Some("thread-a"), Some("turn-a"), "turn.started");
+        let filter = EventFilter::for_turn("thread-a", "turn-a")
+            .with_source(EventSource::Core)
+            .with_kind("turn.started");
+
+        assert!(filter.matches(&envelope));
+        assert!(envelope.matches_filter(&filter));
+        assert!(!EventFilter::for_thread("thread-b").matches(&envelope));
+        assert!(!EventFilter::for_turn("thread-a", "turn-b").matches(&envelope));
+        assert!(!EventFilter::default()
+            .with_source(EventSource::Provider)
+            .matches(&envelope));
+        assert!(!EventFilter::default()
+            .with_kind("turn.completed")
+            .matches(&envelope));
+    }
+
+    #[test]
+    fn empty_event_filter_matches_everything() {
+        assert!(EventFilter::default().matches(&envelope(None, None, "runtime.started")));
+    }
+}

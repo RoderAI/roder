@@ -30,8 +30,8 @@ pub struct RuntimeConfig {
 impl Default for RuntimeConfig {
     fn default() -> Self {
         Self {
-            default_provider: "fake-provider".to_string(),
-            default_model: "fake-model".to_string(),
+            default_provider: roder_api::catalog::PROVIDER_MOCK.to_string(),
+            default_model: "mock".to_string(),
             workspace: None,
         }
     }

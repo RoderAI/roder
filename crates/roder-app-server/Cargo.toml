@@ -12,3 +12,6 @@ roder-api = { path = "../roder-api" }
 roder-protocol = { path = "../roder-protocol" }
 roder-core = { path = "../roder-core" }
 uuid = { version = "1.10", features = ["v4"] }
+
+[dev-dependencies]
+roder-tools = { path = "../roder-tools" }

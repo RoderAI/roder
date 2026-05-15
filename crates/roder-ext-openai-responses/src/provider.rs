@@ -1,44 +1,66 @@
+use roder_api::catalog::{PROVIDER_OPENAI, models_for_provider};
 use roder_api::extension::InferenceEngineId;
 use roder_api::inference::{
     AgentInferenceRequest, CompletionMetadata, InferenceCapabilities, InferenceEngine,
     InferenceEvent, InferenceEventStream, InferenceProviderContext, InferenceTurnContext,
-    MessageDelta, ModelDescriptor,
+    MessageDelta, ModelDescriptor, TokenUsage,
 };
-use serde_json::json;
+use serde_json::{Value, json};
 
 pub struct OpenAiResponsesEngine {
     api_key: String,
+    provider_id: String,
 }
 
 impl OpenAiResponsesEngine {
     pub fn new(api_key: String) -> Self {
-        Self { api_key }
+        Self::new_with_provider_id(api_key, PROVIDER_OPENAI)
     }
 
-    fn input_text(req: &AgentInferenceRequest) -> String {
-        req.conversation
-            .iter()
-            .filter_map(|item| match item {
-                roder_api::conversation::ConversationItem::UserMessage(m) => {
-                    Some(format!("user: {}", m.text))
-                }
-                roder_api::conversation::ConversationItem::AssistantMessage(m) => {
-                    Some(format!("assistant: {}", m.text))
-                }
-                roder_api::conversation::ConversationItem::ToolResult(m) => {
-                    Some(format!("tool: {}", m.result))
-                }
-                _ => None,
-            })
-            .collect::<Vec<_>>()
-            .join("\n")
+    pub fn new_with_provider_id(api_key: String, provider_id: impl Into<String>) -> Self {
+        Self {
+            api_key,
+            provider_id: provider_id.into(),
+        }
+    }
+
+    fn map_request(request: &AgentInferenceRequest) -> Value {
+        let mut body = json!({
+            "model": request.model.model,
+            "input": response_input_items(request),
+        });
+        if let Some(system) = request.instructions.system.as_deref() {
+            body["instructions"] = json!(system);
+        }
+        if let Some(max_tokens) = request.output.max_tokens {
+            body["max_output_tokens"] = json!(max_tokens);
+        }
+        if let Some(temperature) = request.output.temperature {
+            body["temperature"] = json!(temperature);
+        }
+        if let Some(top_p) = request.output.top_p {
+            body["top_p"] = json!(top_p);
+        }
+        if let Some(format) = request.output.response_format.as_ref() {
+            body["text"] = json!({ "format": format });
+        }
+        if request.reasoning.enabled {
+            body["reasoning"] = match request.reasoning.level.as_deref() {
+                Some(level) => json!({ "effort": level }),
+                None => json!({}),
+            };
+        }
+        if let Some(prompt_cache_key) = request.runtime.prompt_cache_key.as_deref() {
+            body["prompt_cache_key"] = json!(prompt_cache_key);
+        }
+        body
     }
 }
 
 #[async_trait::async_trait]
 impl InferenceEngine for OpenAiResponsesEngine {
     fn id(&self) -> InferenceEngineId {
-        "openai-responses".to_string()
+        self.provider_id.clone()
     }
 
     fn capabilities(&self) -> InferenceCapabilities {
@@ -48,8 +70,8 @@ impl InferenceEngine for OpenAiResponsesEngine {
             parallel_tool_calls: false,
             reasoning_summaries: true,
             structured_output: true,
-            image_input: true,
-            prompt_cache: false,
+            image_input: false,
+            prompt_cache: true,
             provider_metadata: true,
         }
     }
@@ -58,18 +80,7 @@ impl InferenceEngine for OpenAiResponsesEngine {
         &self,
         _ctx: InferenceProviderContext<'_>,
     ) -> anyhow::Result<Vec<ModelDescriptor>> {
-        Ok(vec![
-            ModelDescriptor {
-                id: "gpt-4o".to_string(),
-                name: "GPT-4o".to_string(),
-                context_window: None,
-            },
-            ModelDescriptor {
-                id: "gpt-5.5".to_string(),
-                name: "GPT-5.5".to_string(),
-                context_window: None,
-            },
-        ])
+        Ok(models_for_provider(PROVIDER_OPENAI, false))
     }
 
     async fn stream_turn(
@@ -77,16 +88,7 @@ impl InferenceEngine for OpenAiResponsesEngine {
         _ctx: InferenceTurnContext<'_>,
         request: AgentInferenceRequest,
     ) -> anyhow::Result<InferenceEventStream> {
-        let mut body = json!({
-            "model": request.model.model,
-            "input": Self::input_text(&request),
-        });
-        if let Some(system) = request.instructions.system {
-            body["instructions"] = json!(system);
-        }
-        if let Some(max_tokens) = request.output.max_tokens {
-            body["max_output_tokens"] = json!(max_tokens);
-        }
+        let body = Self::map_request(&request);
         let response = reqwest::Client::new()
             .post("https://api.openai.com/v1/responses")
             .bearer_auth(&self.api_key)
@@ -100,35 +102,86 @@ impl InferenceEngine for OpenAiResponsesEngine {
                 response.text().await.unwrap_or_default()
             );
         }
-        let value: serde_json::Value = response.json().await?;
-        let text = value
-            .get("output_text")
-            .and_then(|v| v.as_str())
-            .map(str::to_string)
-            .or_else(|| extract_output_text(&value))
-            .unwrap_or_default();
-        let stream = futures::stream::iter(vec![
-            Ok(InferenceEvent::MessageDelta(MessageDelta { text })),
-            Ok(InferenceEvent::ProviderMetadata(value.clone())),
-            Ok(InferenceEvent::Completed(CompletionMetadata {
-                stop_reason: value
-                    .get("status")
-                    .and_then(|v| v.as_str())
-                    .map(str::to_string),
-                provider_response_id: value.get("id").and_then(|v| v.as_str()).map(str::to_string),
-            })),
-        ]);
-        Ok(Box::pin(stream))
+        let value: Value = response.json().await?;
+        let text = extract_response_text(&value);
+        let mut events = vec![Ok(InferenceEvent::MessageDelta(MessageDelta { text }))];
+        if let Some(usage) = extract_usage(&value) {
+            events.push(Ok(InferenceEvent::Usage(usage)));
+        }
+        events.push(Ok(InferenceEvent::ProviderMetadata(value.clone())));
+        events.push(Ok(InferenceEvent::Completed(CompletionMetadata {
+            stop_reason: value
+                .get("status")
+                .and_then(|v| v.as_str())
+                .map(str::to_string),
+            provider_response_id: value.get("id").and_then(|v| v.as_str()).map(str::to_string),
+        })));
+        Ok(Box::pin(futures::stream::iter(events)))
     }
 }
 
-fn extract_output_text(value: &serde_json::Value) -> Option<String> {
+fn response_input_items(request: &AgentInferenceRequest) -> Vec<Value> {
+    request
+        .conversation
+        .iter()
+        .filter_map(|item| match item {
+            roder_api::conversation::ConversationItem::UserMessage(message) => Some(json!({
+                "type": "message",
+                "role": "user",
+                "content": [{ "type": "input_text", "text": message.text }]
+            })),
+            roder_api::conversation::ConversationItem::AssistantMessage(message) => Some(json!({
+                "type": "message",
+                "role": "assistant",
+                "content": [{ "type": "output_text", "text": message.text }]
+            })),
+            roder_api::conversation::ConversationItem::ReasoningSummary(summary) => Some(json!({
+                "type": "reasoning",
+                "summary": [{ "type": "summary_text", "text": summary.text }]
+            })),
+            roder_api::conversation::ConversationItem::ToolCall(call) => Some(json!({
+                "type": "function_call",
+                "call_id": call.id,
+                "name": call.name,
+                "arguments": call.arguments
+            })),
+            roder_api::conversation::ConversationItem::ToolResult(result) => Some(json!({
+                "type": "function_call_output",
+                "call_id": result.id,
+                "output": result.result
+            })),
+            _ => None,
+        })
+        .collect()
+}
+
+fn extract_response_text(value: &Value) -> String {
+    value
+        .get("output_text")
+        .and_then(|v| v.as_str())
+        .map(str::to_string)
+        .or_else(|| extract_output_text(value))
+        .unwrap_or_default()
+}
+
+fn extract_output_text(value: &Value) -> Option<String> {
     let output = value.get("output")?.as_array()?;
     let mut parts = Vec::new();
     for item in output {
+        let is_final_answer = item
+            .get("phase")
+            .and_then(|v| v.as_str())
+            .is_none_or(|phase| phase == "final_answer");
+        if !is_final_answer {
+            continue;
+        }
         if let Some(content) = item.get("content").and_then(|v| v.as_array()) {
             for block in content {
-                if let Some(text) = block.get("text").and_then(|v| v.as_str()) {
+                if let Some(text) = block
+                    .get("text")
+                    .or_else(|| block.get("output_text"))
+                    .and_then(|v| v.as_str())
+                {
                     parts.push(text.to_string());
                 }
             }
@@ -137,15 +190,112 @@ fn extract_output_text(value: &serde_json::Value) -> Option<String> {
     (!parts.is_empty()).then(|| parts.join(""))
 }
 
+fn extract_usage(value: &Value) -> Option<TokenUsage> {
+    let usage = value.get("usage")?;
+    let prompt_tokens = number_to_u32(usage.get("input_tokens"));
+    let completion_tokens = number_to_u32(usage.get("output_tokens"));
+    let total_tokens = number_to_u32(usage.get("total_tokens"))
+        .or_else(|| Some(prompt_tokens? + completion_tokens?));
+    Some(TokenUsage {
+        prompt_tokens: prompt_tokens.unwrap_or_default(),
+        completion_tokens: completion_tokens.unwrap_or_default(),
+        total_tokens: total_tokens.unwrap_or_default(),
+    })
+}
+
+fn number_to_u32(value: Option<&Value>) -> Option<u32> {
+    value?.as_u64().and_then(|n| u32::try_from(n).ok())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use roder_api::conversation::{AssistantMessage, ConversationItem, UserMessage};
+    use roder_api::inference::{
+        InstructionBundle, ModelSelection, OutputConfig, ReasoningConfig, RuntimeHints,
+    };
+
+    fn request() -> AgentInferenceRequest {
+        AgentInferenceRequest {
+            model: ModelSelection {
+                provider: "openai".to_string(),
+                model: "gpt-5.5".to_string(),
+            },
+            instructions: InstructionBundle {
+                system: Some("be helpful".to_string()),
+                developer: None,
+            },
+            conversation: vec![
+                ConversationItem::UserMessage(UserMessage {
+                    text: "Hello".to_string(),
+                }),
+                ConversationItem::AssistantMessage(AssistantMessage {
+                    text: "Hi".to_string(),
+                }),
+            ],
+            tools: vec![],
+            tool_choice: roder_api::tools::ToolChoice::Auto,
+            reasoning: ReasoningConfig {
+                enabled: true,
+                level: Some("medium".to_string()),
+            },
+            output: OutputConfig {
+                max_tokens: Some(200),
+                temperature: Some(0.2),
+                top_p: None,
+                response_format: Some(json!({ "type": "json_object" })),
+            },
+            runtime: RuntimeHints {
+                trace_id: None,
+                prompt_cache_key: Some("cache-key".to_string()),
+            },
+            metadata: json!({}),
+        }
+    }
+
+    #[test]
+    fn maps_responses_request_options_and_input_items() {
+        let body = OpenAiResponsesEngine::map_request(&request());
+        assert_eq!(body["model"], "gpt-5.5");
+        assert_eq!(body["instructions"], "be helpful");
+        assert_eq!(body["max_output_tokens"], 200);
+        assert!((body["temperature"].as_f64().unwrap() - 0.2).abs() < 1e-6);
+        assert_eq!(body["reasoning"]["effort"], "medium");
+        assert_eq!(body["prompt_cache_key"], "cache-key");
+        assert_eq!(body["text"]["format"]["type"], "json_object");
+        assert_eq!(body["input"][0]["role"], "user");
+        assert_eq!(body["input"][1]["role"], "assistant");
+    }
 
     #[test]
     fn extracts_responses_output_text() {
-        let value = serde_json::json!({
-            "output": [{ "content": [{ "text": "hello" }, { "text": " world" }] }]
+        let value = json!({
+            "output": [{ "content": [{ "text": "hello" }, { "output_text": " world" }] }]
         });
         assert_eq!(extract_output_text(&value).unwrap(), "hello world");
+    }
+
+    #[test]
+    fn ignores_non_final_responses_output_text() {
+        let value = json!({
+            "output": [
+                { "phase": "analysis", "content": [{ "text": "hidden" }] },
+                { "phase": "final_answer", "content": [{ "text": "shown" }] }
+            ]
+        });
+        assert_eq!(extract_response_text(&value), "shown");
+    }
+
+    #[test]
+    fn extracts_responses_usage() {
+        let value = json!({ "usage": { "input_tokens": 3, "output_tokens": 4 } });
+        assert_eq!(
+            extract_usage(&value),
+            Some(TokenUsage {
+                prompt_tokens: 3,
+                completion_tokens: 4,
+                total_tokens: 7,
+            })
+        );
     }
 }
