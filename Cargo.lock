@@ -1953,6 +1953,7 @@ dependencies = [
  "roder-api",
  "roder-app-server",
  "roder-codex-auth",
+ "roder-commands",
  "roder-config",
  "roder-core",
  "roder-ext-anthropic",

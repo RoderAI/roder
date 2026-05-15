@@ -1,3 +1,5 @@
+mod commands;
+
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -18,6 +20,10 @@ async fn main() -> anyhow::Result<()> {
     let args = std::env::args().skip(1).collect::<Vec<_>>();
     if matches!(args.first().map(String::as_str), Some("auth")) {
         return run_auth(&args[1..]).await;
+    }
+    if matches!(args.first().map(String::as_str), Some("commands")) {
+        let cfg = roder_config::load_config()?;
+        return commands::run_commands_cli(&args[1..], &cfg);
     }
 
     let cli_options = parse_cli_options(&args)?;
