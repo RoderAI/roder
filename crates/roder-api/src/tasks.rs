@@ -55,6 +55,23 @@ pub struct TaskExecutionContext {
     pub output: TaskOutputSink,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct TaskExecutionResult {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub exit_code: Option<i32>,
+    #[serde(default)]
+    pub payload: serde_json::Value,
+}
+
+impl TaskExecutionResult {
+    pub fn success(payload: serde_json::Value) -> Self {
+        Self {
+            exit_code: None,
+            payload,
+        }
+    }
+}
+
 impl fmt::Debug for TaskExecutionContext {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("TaskExecutionContext")
@@ -203,7 +220,7 @@ pub trait TaskExecutor: Send + Sync + 'static {
         &self,
         ctx: TaskExecutionContext,
         input: serde_json::Value,
-    ) -> anyhow::Result<serde_json::Value>;
+    ) -> anyhow::Result<TaskExecutionResult>;
 }
 
 #[cfg(test)]
@@ -234,11 +251,11 @@ mod tests {
             &self,
             ctx: TaskExecutionContext,
             input: serde_json::Value,
-        ) -> anyhow::Result<serde_json::Value> {
-            Ok(serde_json::json!({
+        ) -> anyhow::Result<TaskExecutionResult> {
+            Ok(TaskExecutionResult::success(serde_json::json!({
                 "task_id": ctx.task_id,
                 "input": input,
-            }))
+            })))
         }
     }
 
@@ -318,6 +335,6 @@ mod tests {
 
         assert_eq!(executor.id(), "noop-task");
         assert_eq!(executor.spec().kind, "noop");
-        assert_eq!(result["task_id"], "task-1");
+        assert_eq!(result.payload["task_id"], "task-1");
     }
 }

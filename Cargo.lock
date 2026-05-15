@@ -2212,6 +2212,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "roder-ext-task-process"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "roder-api",
+ "roder-tasks",
+ "semver",
+ "serde",
+ "serde_json",
+ "tokio",
+ "uuid",
+]
+
+[[package]]
 name = "roder-ext-tavily-search"
 version = "0.1.0"
 dependencies = [
@@ -2355,6 +2370,19 @@ dependencies = [
  "similar",
  "tokio",
  "tui-textarea-2",
+]
+
+[[package]]
+name = "roder-tasks"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "roder-api",
+ "serde_json",
+ "time",
+ "tokio",
+ "uuid",
 ]
 
 [[package]]

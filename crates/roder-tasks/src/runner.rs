@@ -306,8 +306,8 @@ impl BackgroundRunner {
                 self.finish_task(&task_id, TaskState::Completed).await;
                 self.emit(RoderEvent::TaskCompleted(TaskCompleted {
                     task_id,
-                    exit_code: None,
-                    payload,
+                    exit_code: payload.exit_code,
+                    payload: payload.payload,
                     thread_id: options.thread_id,
                     turn_id: options.turn_id,
                     timestamp: OffsetDateTime::now_utc(),
