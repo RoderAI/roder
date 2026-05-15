@@ -23,6 +23,7 @@ use ratatui::{
 };
 use roder_api::events::RoderEvent;
 use roder_api::inference::ProviderAuthType;
+use roder_api::interactive::{InteractiveEvent, MouseButton};
 use roder_api::policy_mode::PolicyMode;
 use roder_api::tui_status::{
     GitSnapshot, McpServerStatus, SessionSummary, StatusContext, StatusSegment,
@@ -42,9 +43,14 @@ use tui_textarea::TextArea;
 
 use crate::config::TuiAppConfig;
 use crate::diff::{DiffViewerState, render::DiffTheme};
+use crate::mouse::region_rect_from_ratatui;
 use crate::palette::{PaletteEntry, render::PaletteTheme};
 use crate::status_line::{
     StatusLineConfig, StatusLineTheme, built_in_status_segments, render_status_line,
+};
+use crate::transcript::{
+    TranscriptAction, TranscriptContextMenu, TranscriptFoldState, action_for_region,
+    context_menu_region, link_spans, transcript_regions,
 };
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -337,6 +343,9 @@ pub struct TuiApp {
     policy_mode: PolicyMode,
     pending_plan_exit: Option<PendingPlanExitDescriptor>,
     mouse_feedback: mouse_ui::MouseFeedbackState,
+    transcript_fold: TranscriptFoldState,
+    transcript_context_menu: Option<TranscriptContextMenu>,
+    terminal_area: roder_api::interactive::RegionRect,
     theme: Theme,
 }
 
@@ -419,6 +428,14 @@ impl TuiApp {
                 .unwrap_or_default(),
             pending_plan_exit: policy_state.and_then(|state| state.pending_plan_exit),
             mouse_feedback: mouse_ui::MouseFeedbackState::default(),
+            transcript_fold: TranscriptFoldState::default(),
+            transcript_context_menu: None,
+            terminal_area: roder_api::interactive::RegionRect {
+                x: 0,
+                y: 0,
+                width: 0,
+                height: 0,
+            },
             theme,
         })
     }
@@ -561,8 +578,11 @@ impl TuiApp {
                         }
                     }
                     Event::Mouse(mouse) => {
-                        self.mouse_feedback
+                        let at = (mouse.column, mouse.row);
+                        let events = self
+                            .mouse_feedback
                             .handle_mouse_event(mouse, Instant::now());
+                        self.handle_interactive_events(events, at);
                     }
                     _ => {}
                 }
@@ -583,9 +603,8 @@ impl TuiApp {
                     {
                         self.active_turn_id = None;
                     }
-                    RoderEvent::InferenceEventReceived(ev) => {
-                        if let roder_api::inference::InferenceEvent::MessageDelta(delta) = ev.event
-                        {
+                    RoderEvent::InferenceEventReceived(ev) => match ev.event {
+                        roder_api::inference::InferenceEvent::MessageDelta(delta) => {
                             if let Some(last) = self.messages.last_mut()
                                 && last.starts_with("assistant: ")
                             {
@@ -594,7 +613,16 @@ impl TuiApp {
                             }
                             self.messages.push(format!("assistant: {}", delta.text));
                         }
-                    }
+                        roder_api::inference::InferenceEvent::ToolCallStarted(tool) => {
+                            self.messages
+                                .push(format!("tool call: {} {}", tool.id, tool.name));
+                        }
+                        roder_api::inference::InferenceEvent::ToolCallCompleted(tool) => {
+                            self.messages
+                                .push(format!("tool call: {} {} completed", tool.id, tool.name));
+                        }
+                        _ => {}
+                    },
                     RoderEvent::TurnFailed(ev) => {
                         self.messages.push(format!("error: {}", ev.error))
                     }
@@ -933,6 +961,7 @@ impl TuiApp {
 
     fn render(&mut self, f: &mut Frame<'_>) {
         let area = f.area();
+        self.terminal_area = region_rect_from_ratatui(area);
         let event_height = event_log_height(self.show_event_log, self.events.len());
         let loader_height = if self.active_turn_id.is_some() { 1 } else { 0 };
         let command_height = command_menu_height(self.command_menu_open());
@@ -961,6 +990,7 @@ impl TuiApp {
             0
         };
         let transcript_index = header_index + 1;
+        let transcript_area = chunks[transcript_index];
         f.render_widget(self.header(area.width), chunks[header_index]);
         f.render_widget(self.transcript(), chunks[transcript_index]);
 
@@ -976,8 +1006,15 @@ impl TuiApp {
         }
         let composer_area = chunks[composer_index];
         let footer_area = chunks[composer_index + 1];
+        let transcript_regions = transcript_regions(
+            &self.visible_transcript_messages(),
+            &self.thread_id,
+            self.active_turn_id.as_deref().unwrap_or("tui"),
+            region_rect_from_ratatui(transcript_area),
+            &self.transcript_fold,
+        );
         self.mouse_feedback
-            .set_frame_regions(composer_area, footer_area);
+            .set_frame_regions(composer_area, footer_area, transcript_regions);
         let composer_border_style = self
             .mouse_feedback
             .style_for_region(mouse_ui::COMPOSER_REGION_ID, self.theme.border());
@@ -994,6 +1031,9 @@ impl TuiApp {
         }
         if self.diff_viewer.is_some() {
             self.render_diff_viewer(f, area);
+        }
+        if let Some(menu) = &self.transcript_context_menu {
+            self.render_transcript_context_menu(f, menu);
         }
         if let Some(dialog) = self.confirm_dialog {
             self.render_confirm_dialog(f, area, dialog);
@@ -1038,7 +1078,8 @@ impl TuiApp {
     }
 
     fn transcript(&self) -> Paragraph<'static> {
-        let text = if self.messages.is_empty() {
+        let visible_messages = self.visible_transcript_messages();
+        let text = if visible_messages.is_empty() {
             Text::from(vec![
                 Line::raw(""),
                 Line::from(Span::styled(
@@ -1048,7 +1089,7 @@ impl TuiApp {
             ])
         } else {
             Text::from(
-                self.messages
+                visible_messages
                     .iter()
                     .flat_map(|message| [message_line(message, self.theme), Line::raw("")])
                     .collect::<Vec<_>>(),
@@ -1056,6 +1097,14 @@ impl TuiApp {
         };
 
         Paragraph::new(text).style(self.theme.text())
+    }
+
+    fn visible_transcript_messages(&self) -> Vec<String> {
+        self.messages
+            .iter()
+            .enumerate()
+            .map(|(idx, message)| self.transcript_fold.visible_message(idx, message))
+            .collect()
     }
 
     fn event_log(&self) -> Paragraph<'static> {
@@ -1211,6 +1260,88 @@ impl TuiApp {
 
     fn render_confirm_dialog(&self, f: &mut Frame<'_>, area: Rect, dialog: ConfirmDialog) {
         dialog::render_confirm_dialog(f, area, dialog, self.theme);
+    }
+
+    fn render_transcript_context_menu(&self, f: &mut Frame<'_>, menu: &TranscriptContextMenu) {
+        let area = Rect::new(menu.area.x, menu.area.y, menu.area.width, menu.area.height);
+        let text = Text::from(vec![
+            Line::from(Span::styled("copy", self.theme.text())),
+            Line::from(Span::styled("fold", self.theme.text())),
+            Line::from(Span::styled("jump", self.theme.text())),
+        ]);
+        let widget = Paragraph::new(text)
+            .style(self.theme.dialog_surface())
+            .block(
+                Block::default()
+                    .borders(Borders::ALL)
+                    .border_type(BorderType::Rounded)
+                    .border_style(self.theme.dialog())
+                    .title(Span::styled(
+                        format!(" msg {} ", menu.message_idx),
+                        self.theme.accent(),
+                    )),
+            );
+        f.render_widget(Clear, area);
+        f.render_widget(widget, area);
+    }
+
+    fn handle_interactive_events(&mut self, events: Vec<InteractiveEvent>, at: (u16, u16)) {
+        for event in events {
+            match event {
+                InteractiveEvent::Click {
+                    region,
+                    button: MouseButton::Left,
+                    ..
+                }
+                | InteractiveEvent::DoubleClick { region, .. } => {
+                    self.transcript_context_menu = None;
+                    self.handle_region_action(&region, None);
+                }
+                InteractiveEvent::RightClick { region, .. } => {
+                    self.handle_region_action(&region, Some(at));
+                }
+                _ => {}
+            }
+        }
+    }
+
+    fn handle_region_action(&mut self, region_id: &str, right_click_at: Option<(u16, u16)>) {
+        let Some(region) = self.mouse_feedback.region(region_id).cloned() else {
+            return;
+        };
+        let Some(action) = action_for_region(&region, right_click_at) else {
+            return;
+        };
+        match action {
+            TranscriptAction::ToggleToolCall { call_id } => {
+                let expanded = self.transcript_fold.toggle_tool_call(call_id.clone());
+                self.push_event(format!(
+                    "tool call {}: {call_id}",
+                    if expanded { "expanded" } else { "collapsed" }
+                ));
+            }
+            TranscriptAction::ToggleMessage { message_idx } => {
+                let expanded = self.transcript_fold.toggle_message(message_idx);
+                self.push_event(format!(
+                    "message {}: {message_idx}",
+                    if expanded { "expanded" } else { "folded" }
+                ));
+            }
+            TranscriptAction::OpenUrl { url } => {
+                self.messages.push(format!("system: selected URL {url}."));
+                self.push_event(format!("url selected: {url}"));
+            }
+            TranscriptAction::OpenFile { path, line } => {
+                let suffix = line.map(|line| format!(":{line}")).unwrap_or_default();
+                self.messages
+                    .push(format!("system: selected file {path}{suffix}."));
+                self.push_event(format!("file selected: {path}{suffix}"));
+            }
+            TranscriptAction::OpenContextMenu { message_idx, at } => {
+                self.transcript_context_menu =
+                    Some(context_menu_region(message_idx, at, self.terminal_area));
+            }
+        }
     }
 
     async fn open_provider_popup(&mut self) {
@@ -1781,18 +1912,20 @@ fn truncate(value: &str, max_chars: usize) -> String {
 
 fn message_line(message: &str, theme: Theme) -> Line<'static> {
     if let Some(body) = message.strip_prefix("user: ") {
-        return Line::from(vec![
+        let mut spans = vec![
             Span::styled("│ ", theme.accent()),
             Span::styled("you ", theme.accent()),
-            Span::styled(body.to_string(), theme.text()),
-        ]);
+        ];
+        spans.extend(linked_body_spans(body, theme.text(), theme.accent_soft()));
+        return Line::from(spans);
     }
     if let Some(body) = message.strip_prefix("assistant: ") {
-        return Line::from(vec![
+        let mut spans = vec![
             Span::styled("│ ", theme.accent_soft()),
             Span::styled("roder ", theme.strong()),
-            Span::styled(body.to_string(), theme.text()),
-        ]);
+        ];
+        spans.extend(linked_body_spans(body, theme.text(), theme.accent_soft()));
+        return Line::from(spans);
     }
     if let Some(body) = message.strip_prefix("error: ") {
         return Line::from(vec![
@@ -1813,16 +1946,14 @@ fn message_line(message: &str, theme: Theme) -> Line<'static> {
         ]);
     }
     if let Some(body) = message.strip_prefix("shell: ") {
-        return Line::from(vec![
-            Span::styled("$ ", theme.tool()),
-            Span::styled(body.to_string(), theme.text()),
-        ]);
+        let mut spans = vec![Span::styled("$ ", theme.tool())];
+        spans.extend(linked_body_spans(body, theme.text(), theme.tool()));
+        return Line::from(spans);
     }
     if let Some(body) = message.strip_prefix("shell output: ") {
-        return Line::from(vec![
-            Span::styled("↳ ", theme.subtle()),
-            Span::styled(body.to_string(), theme.muted()),
-        ]);
+        let mut spans = vec![Span::styled("↳ ", theme.subtle())];
+        spans.extend(linked_body_spans(body, theme.muted(), theme.tool()));
+        return Line::from(spans);
     }
     if let Some(body) = message.strip_prefix("system: ") {
         return Line::from(vec![
@@ -1831,6 +1962,36 @@ fn message_line(message: &str, theme: Theme) -> Line<'static> {
         ]);
     }
     Line::from(Span::styled(message.to_string(), theme.text()))
+}
+
+fn linked_body_spans(body: &str, default_style: Style, link_style: Style) -> Vec<Span<'static>> {
+    let mut spans = Vec::new();
+    let mut cursor = 0usize;
+    for link in link_spans(body) {
+        if link.start > body.len()
+            || link.end > body.len()
+            || link.start >= link.end
+            || !body.is_char_boundary(link.start)
+            || !body.is_char_boundary(link.end)
+        {
+            continue;
+        }
+        if cursor < link.start {
+            spans.push(Span::styled(
+                body[cursor..link.start].to_string(),
+                default_style,
+            ));
+        }
+        spans.push(Span::styled(
+            body[link.start..link.end].to_string(),
+            link_style.add_modifier(Modifier::UNDERLINED),
+        ));
+        cursor = link.end;
+    }
+    if cursor < body.len() {
+        spans.push(Span::styled(body[cursor..].to_string(), default_style));
+    }
+    spans
 }
 
 fn line_with_gap(
