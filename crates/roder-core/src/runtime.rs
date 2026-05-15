@@ -54,10 +54,20 @@ pub struct StartTurnRequest {
     pub instructions: InstructionBundle,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PendingPlanExit {
+    pub thread_id: ThreadId,
+    pub turn_id: TurnId,
+    pub request_id: String,
+    pub target_mode: PolicyMode,
+    pub plan_summary: Option<String>,
+}
+
 pub struct Runtime {
     pub bus: EventBus,
     pub registry: ExtensionRegistry,
     config: RwLock<RuntimeConfig>,
+    pending_plan_exit: RwLock<Option<PendingPlanExit>>,
     pub(crate) session_store: Option<Arc<dyn SessionStore>>,
     pub(crate) tool_registry: ToolRegistry,
 }
@@ -84,6 +94,7 @@ impl Runtime {
             bus,
             registry,
             config: RwLock::new(config),
+            pending_plan_exit: RwLock::new(None),
             session_store,
             tool_registry,
         };
@@ -121,6 +132,93 @@ impl Runtime {
 
     pub async fn status(&self) -> RuntimeConfig {
         self.config.read().await.clone()
+    }
+
+    pub async fn pending_plan_exit(&self) -> Option<PendingPlanExit> {
+        self.pending_plan_exit.read().await.clone()
+    }
+
+    pub async fn set_policy_mode(
+        &self,
+        mode: PolicyMode,
+        reason: Option<String>,
+    ) -> anyhow::Result<RuntimeConfig> {
+        let mut cfg = self.config.write().await;
+        let previous_mode = cfg.policy_mode;
+        cfg.policy_mode = mode;
+        let next = cfg.clone();
+        drop(cfg);
+        self.emit(RoderEvent::PolicyModeChanged(PolicyModeChanged {
+            thread_id: "runtime".to_string(),
+            turn_id: None,
+            previous_mode,
+            new_mode: mode,
+            reason,
+            timestamp: OffsetDateTime::now_utc(),
+        }))
+        .await;
+        Ok(next)
+    }
+
+    pub async fn record_pending_plan_exit(&self, pending: PendingPlanExit) {
+        *self.pending_plan_exit.write().await = Some(pending.clone());
+        self.emit(RoderEvent::PolicyExitPlanRequested(
+            PolicyExitPlanRequested {
+                thread_id: pending.thread_id,
+                turn_id: pending.turn_id,
+                request_id: pending.request_id,
+                target_mode: pending.target_mode,
+                plan_summary: pending.plan_summary,
+                timestamp: OffsetDateTime::now_utc(),
+            },
+        ))
+        .await;
+    }
+
+    pub async fn resolve_pending_plan_exit(
+        &self,
+        request_id: &str,
+        approved: bool,
+    ) -> anyhow::Result<Option<PendingPlanExit>> {
+        let mut pending = self.pending_plan_exit.write().await;
+        let Some(current) = pending.clone() else {
+            return Ok(None);
+        };
+        if current.request_id != request_id {
+            anyhow::bail!("pending plan exit request {request_id:?} was not found");
+        }
+        *pending = None;
+        drop(pending);
+
+        let resolved_mode = if approved {
+            let mut cfg = self.config.write().await;
+            let previous_mode = cfg.policy_mode;
+            cfg.policy_mode = current.target_mode;
+            drop(cfg);
+            self.emit(RoderEvent::PolicyModeChanged(PolicyModeChanged {
+                thread_id: current.thread_id.clone(),
+                turn_id: Some(current.turn_id.clone()),
+                previous_mode,
+                new_mode: current.target_mode,
+                reason: Some("approved plan exit".to_string()),
+                timestamp: OffsetDateTime::now_utc(),
+            }))
+            .await;
+            current.target_mode
+        } else {
+            self.status().await.policy_mode
+        };
+        self.emit(RoderEvent::PolicyExitPlanResolved(PolicyExitPlanResolved {
+            thread_id: current.thread_id.clone(),
+            turn_id: current.turn_id.clone(),
+            request_id: current.request_id.clone(),
+            approved,
+            target_mode: current.target_mode,
+            resolved_mode,
+            timestamp: OffsetDateTime::now_utc(),
+        }))
+        .await;
+        Ok(Some(current))
     }
 
     pub async fn select_provider(

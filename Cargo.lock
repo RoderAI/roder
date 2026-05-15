@@ -2244,6 +2244,7 @@ dependencies = [
  "roder-ext-openai-responses",
  "roder-ext-parallel-search",
  "roder-ext-perplexity-search",
+ "roder-ext-plan-mode",
  "roder-ext-subagents",
  "roder-ext-tavily-search",
  "roder-ext-web-search",

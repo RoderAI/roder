@@ -51,6 +51,19 @@ impl AppServer {
                 }
             }
             "sessions/list" => self.handle_sessions_list().await,
+            "session/get" => self.handle_session_get().await,
+            "session/set_mode" => {
+                self.decode_and(req.params, |p| async move {
+                    self.handle_session_set_mode(p).await
+                })
+                .await
+            }
+            "session/exit_plan" => {
+                self.decode_and(req.params, |p| async move {
+                    self.handle_session_exit_plan(p).await
+                })
+                .await
+            }
             "sessions/load" | "sessions/resume" => {
                 self.decode_and(
                     req.params,
@@ -241,6 +254,59 @@ impl AppServer {
     async fn handle_sessions_list(&self) -> Result<serde_json::Value, JsonRpcError> {
         let sessions = self.runtime.list_sessions().await.map_err(internal_error)?;
         Ok(serde_json::to_value(SessionsListResult { sessions }).unwrap())
+    }
+
+    async fn handle_session_get(&self) -> Result<serde_json::Value, JsonRpcError> {
+        let cfg = self.runtime.status().await;
+        let pending =
+            self.runtime
+                .pending_plan_exit()
+                .await
+                .map(|pending| PendingPlanExitDescriptor {
+                    thread_id: pending.thread_id,
+                    turn_id: pending.turn_id,
+                    request_id: pending.request_id,
+                    target_mode: pending.target_mode,
+                    plan_summary: pending.plan_summary,
+                });
+        Ok(serde_json::to_value(SessionGetResult {
+            mode: cfg.policy_mode,
+            pending_plan_exit: pending,
+        })
+        .unwrap())
+    }
+
+    async fn handle_session_set_mode(
+        &self,
+        params: SessionSetModeParams,
+    ) -> Result<serde_json::Value, JsonRpcError> {
+        let cfg = self
+            .runtime
+            .set_policy_mode(params.mode, params.reason)
+            .await
+            .map_err(internal_error)?;
+        Ok(serde_json::to_value(SessionSetModeResult {
+            mode: cfg.policy_mode,
+        })
+        .unwrap())
+    }
+
+    async fn handle_session_exit_plan(
+        &self,
+        params: SessionExitPlanParams,
+    ) -> Result<serde_json::Value, JsonRpcError> {
+        let resolved = self
+            .runtime
+            .resolve_pending_plan_exit(&params.request_id, params.approved)
+            .await
+            .map_err(internal_error)?
+            .is_some();
+        let cfg = self.runtime.status().await;
+        Ok(serde_json::to_value(SessionExitPlanResult {
+            resolved,
+            mode: cfg.policy_mode,
+        })
+        .unwrap())
     }
 
     async fn handle_session_load(

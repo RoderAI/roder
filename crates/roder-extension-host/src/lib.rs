@@ -7,6 +7,7 @@ use roder_api::extension::{
     ExtensionManifest, ExtensionRegistry, ExtensionRegistryBuilder, ProvidedService, RoderExtension,
 };
 use roder_api::inference::*;
+use roder_api::policy_mode::PolicyMode;
 use roder_ext_anthropic::AnthropicExtension;
 use roder_ext_gemini::GeminiExtension;
 use roder_ext_jsonl_session::JsonlSessionExtension;
@@ -20,7 +21,7 @@ mod web_search;
 pub use subagents::DefaultSubagentsConfig;
 pub use web_search::{DefaultWebSearchConfig, DefaultWebSearchProviderConfig};
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone)]
 pub struct DefaultRegistryConfig {
     pub openai_api_key: Option<String>,
     pub anthropic_api_key: Option<String>,
@@ -28,6 +29,21 @@ pub struct DefaultRegistryConfig {
     pub session_dir: Option<PathBuf>,
     pub web_search: Option<DefaultWebSearchConfig>,
     pub subagents: Option<DefaultSubagentsConfig>,
+    pub policy_mode: PolicyMode,
+}
+
+impl Default for DefaultRegistryConfig {
+    fn default() -> Self {
+        Self {
+            openai_api_key: None,
+            anthropic_api_key: None,
+            gemini_api_key: None,
+            session_dir: None,
+            web_search: None,
+            subagents: None,
+            policy_mode: PolicyMode::Default,
+        }
+    }
 }
 
 pub fn build_default_registry(config: DefaultRegistryConfig) -> anyhow::Result<ExtensionRegistry> {
@@ -45,6 +61,10 @@ pub fn build_default_registry(config: DefaultRegistryConfig) -> anyhow::Result<E
     if let Some(gemini_key) = config.gemini_api_key {
         builder.install(GeminiExtension::new(gemini_key))?;
     }
+
+    builder.install(roder_ext_plan_mode::PlanModeExtension::new(
+        config.policy_mode,
+    ))?;
 
     if let Some(web_search) = config.web_search {
         web_search::install_web_search(&mut builder, web_search)?;
@@ -250,6 +270,7 @@ mod tests {
             session_dir: None,
             web_search: None,
             subagents: None,
+            policy_mode: PolicyMode::Default,
         })
         .unwrap();
         for provider in [

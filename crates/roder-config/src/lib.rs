@@ -11,6 +11,7 @@ pub struct Config {
     pub auto_compact_token_limit: Option<u32>,
     pub web_search: Option<WebSearchConfig>,
     pub subagents: Option<SubagentsConfig>,
+    pub policy_modes: Option<PolicyModesConfig>,
     #[serde(default)]
     pub providers: HashMap<String, ProviderConfig>,
 }
@@ -97,6 +98,40 @@ pub struct SubagentsConfig {
 pub struct SubagentsDiskConfig {
     pub user_dir: Option<PathBuf>,
     pub workspace_dir: Option<PathBuf>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct PolicyModesConfig {
+    pub default: Option<String>,
+    pub warn_on_bypass: Option<bool>,
+    pub plan_blocks_network: Option<bool>,
+    pub exit_plan_requires_summary: Option<bool>,
+    #[serde(default)]
+    pub auto_approve: PolicyAutoApproveConfig,
+}
+
+impl Default for PolicyModesConfig {
+    fn default() -> Self {
+        Self {
+            default: Some("default".to_string()),
+            warn_on_bypass: Some(true),
+            plan_blocks_network: Some(false),
+            exit_plan_requires_summary: Some(true),
+            auto_approve: PolicyAutoApproveConfig::default(),
+        }
+    }
+}
+
+#[derive(Debug, Default, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct PolicyAutoApproveConfig {
+    #[serde(default)]
+    pub default: Vec<String>,
+    #[serde(default)]
+    pub accept_edits: Vec<String>,
+    #[serde(default)]
+    pub plan: Vec<String>,
+    #[serde(default)]
+    pub bypass: Vec<String>,
 }
 
 pub fn load_config() -> anyhow::Result<Config> {
@@ -202,6 +237,22 @@ fn apply_env_overrides_with(config: &mut Config, mut env: impl FnMut(&str) -> Op
             .get_or_insert_with(Default::default)
             .live_test = true;
     }
+    if let Some(mode) = env("RODER_POLICY_MODE")
+        && !mode.trim().is_empty()
+    {
+        config
+            .policy_modes
+            .get_or_insert_with(Default::default)
+            .default = Some(mode);
+    }
+    if let Some(warn) = env("RODER_WARN_ON_BYPASS")
+        && let Some(warn) = parse_bool(&warn)
+    {
+        config
+            .policy_modes
+            .get_or_insert_with(Default::default)
+            .warn_on_bypass = Some(warn);
+    }
 }
 
 fn parse_bool(value: &str) -> Option<bool> {
@@ -225,6 +276,7 @@ mod tests {
             auto_compact_token_limit: None,
             web_search: None,
             subagents: None,
+            policy_modes: None,
             providers: HashMap::new(),
         };
         config.providers.insert(
@@ -290,6 +342,48 @@ mod tests {
         assert_eq!(subagents.default_agent.as_deref(), Some("review"));
         assert_eq!(subagents.max_depth, Some(4));
         assert!(subagents.live_test);
+    }
+
+    #[test]
+    fn deserializes_policy_modes_config() {
+        let config: Config = toml::from_str(
+            r#"
+            [policy_modes]
+            default = "plan"
+            warn_on_bypass = false
+            plan_blocks_network = true
+            exit_plan_requires_summary = true
+
+            [policy_modes.auto_approve]
+            accept_edits = ["fs.write", "fs.edit"]
+            bypass = ["*"]
+            "#,
+        )
+        .unwrap();
+
+        let policy_modes = config.policy_modes.unwrap();
+        assert_eq!(policy_modes.default.as_deref(), Some("plan"));
+        assert_eq!(policy_modes.warn_on_bypass, Some(false));
+        assert_eq!(policy_modes.plan_blocks_network, Some(true));
+        assert_eq!(
+            policy_modes.auto_approve.accept_edits,
+            vec!["fs.write".to_string(), "fs.edit".to_string()]
+        );
+    }
+
+    #[test]
+    fn policy_mode_env_overrides_apply_without_mutating_process_env() {
+        let mut config = Config::default();
+
+        apply_env_overrides_with(&mut config, |key| match key {
+            "RODER_POLICY_MODE" => Some("bypass".to_string()),
+            "RODER_WARN_ON_BYPASS" => Some("false".to_string()),
+            _ => None,
+        });
+
+        let policy_modes = config.policy_modes.unwrap();
+        assert_eq!(policy_modes.default.as_deref(), Some("bypass"));
+        assert_eq!(policy_modes.warn_on_bypass, Some(false));
     }
 
     #[test]

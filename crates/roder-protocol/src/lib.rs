@@ -1,6 +1,7 @@
 use roder_api::events::{ThreadId, TurnId};
 use roder_api::extension::ExtensionManifest;
 use roder_api::inference::{InferenceCapabilities, ModelDescriptor, ProviderAuthType};
+use roder_api::policy_mode::PolicyMode;
 use roder_api::session::{SessionMetadata, ThreadSnapshot};
 use roder_api::subagents::SubagentPermissionMode;
 use roder_api::tools::ToolSpec;
@@ -110,6 +111,44 @@ pub struct SessionLoadParams {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SessionLoadResult {
     pub snapshot: Option<ThreadSnapshot>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SessionGetResult {
+    pub mode: PolicyMode,
+    pub pending_plan_exit: Option<PendingPlanExitDescriptor>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PendingPlanExitDescriptor {
+    pub thread_id: ThreadId,
+    pub turn_id: TurnId,
+    pub request_id: String,
+    pub target_mode: PolicyMode,
+    pub plan_summary: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SessionSetModeParams {
+    pub mode: PolicyMode,
+    pub reason: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SessionSetModeResult {
+    pub mode: PolicyMode,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SessionExitPlanParams {
+    pub request_id: String,
+    pub approved: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SessionExitPlanResult {
+    pub resolved: bool,
+    pub mode: PolicyMode,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

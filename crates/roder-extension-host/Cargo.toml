@@ -17,6 +17,7 @@ roder-ext-memory.workspace = true
 roder-ext-openai-responses.workspace = true
 roder-ext-parallel-search.workspace = true
 roder-ext-perplexity-search.workspace = true
+roder-ext-plan-mode.workspace = true
 roder-ext-subagents.workspace = true
 roder-ext-tavily-search.workspace = true
 roder-ext-web-search.workspace = true
