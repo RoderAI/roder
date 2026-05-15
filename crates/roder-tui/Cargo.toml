@@ -1,0 +1,17 @@
+[package]
+name = "roder-tui"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+anyhow = "1.0"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+tokio = { version = "1.0", features = ["full", "sync"] }
+roder-api = { path = "../roder-api" }
+roder-protocol = { path = "../roder-protocol" }
+roder-app-server = { path = "../roder-app-server" }
+ratatui = "0.26"
+crossterm = "0.27"
+futures = "0.3"
+

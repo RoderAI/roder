@@ -1,0 +1,29 @@
+[package]
+name = "roder-cli"
+version = "0.1.0"
+edition = "2024"
+
+[[bin]]
+name = "rode"
+path = "src/main.rs"
+
+[dependencies]
+anyhow = "1.0"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+tokio = { version = "1.0", features = ["full"] }
+roder-api = { path = "../roder-api" }
+roder-core = { path = "../roder-core" }
+roder-app-server = { path = "../roder-app-server" }
+roder-tui = { path = "../roder-tui" }
+roder-extension-host = { path = "../roder-extension-host" }
+roder-ext-jsonl-session = { path = "../roder-ext-jsonl-session" }
+roder-ext-openai-responses = { path = "../roder-ext-openai-responses" }
+roder-ext-openai-chat-completions = { path = "../roder-ext-openai-chat-completions" }
+roder-ext-anthropic = { path = "../roder-ext-anthropic" }
+roder-ext-gemini = { path = "../roder-ext-gemini" }
+roder-ext-disk-context = { path = "../roder-ext-disk-context" }
+roder-ext-memory = { path = "../roder-ext-memory" }
+toml = "1.1.2"
+dirs = "6.0.0"
+
