@@ -1,5 +1,6 @@
 use std::sync::Arc;
 
+use anyhow::Context;
 use futures::StreamExt;
 use roder_api::catalog::{REASONING_NONE, lookup_model};
 use roder_api::conversation::{
@@ -70,7 +71,9 @@ impl Runtime {
             .map(|factory| factory.create());
         let mut tool_registry = ToolRegistry::default();
         for contributor in &registry.tools {
-            contributor.contribute(&mut tool_registry)?;
+            contributor
+                .contribute(&mut tool_registry)
+                .with_context(|| format!("tool contributor {} failed", contributor.id()))?;
         }
 
         let runtime = Self {
