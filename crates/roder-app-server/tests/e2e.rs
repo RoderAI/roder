@@ -4,7 +4,7 @@ use roder_api::inference::*;
 use roder_api::policy_mode::PolicyMode;
 use roder_api::subagents::{SubagentDefinition, SubagentPermissionMode};
 use roder_app_server::{AppServer, LocalAppClient};
-use roder_core::{PendingPlanExit, Runtime, fake_provider::FakeInferenceEngine};
+use roder_core::{PendingPlanExit, Runtime, RuntimeConfig, fake_provider::FakeInferenceEngine};
 use roder_ext_subagents::{
     InProcessDispatcher, InProcessDispatcherConfig, InferenceEngineRegistry, SubagentsExtension,
 };
@@ -13,13 +13,13 @@ use roder_extension_host::{
     build_default_registry,
 };
 use roder_protocol::{
-    AgentsListResult, CreateSessionResult, ExtensionsListResult, JsonRpcRequest,
-    ProviderSelectParams, ProviderSelectResult, ProvidersListResult, SessionExitPlanParams,
-    SessionExitPlanResult, SessionGetResult, SessionSetModeParams, SessionSetModeResult,
-    SessionsListResult, StartTurnParams, StartTurnResult, SystemStatusResult, ToolsListResult,
+    AgentsListResult, CommandsExpandParams, CommandsExpandResult, CommandsListResult,
+    CreateSessionResult, ExtensionsListResult, JsonRpcRequest, ProviderSelectParams,
+    ProviderSelectResult, ProvidersListResult, SessionExitPlanParams, SessionExitPlanResult,
+    SessionGetResult, SessionSetModeParams, SessionSetModeResult, SessionsListResult,
+    StartTurnParams, StartTurnResult, SystemStatusResult, ToolsListResult,
 };
-use std::sync::Arc;
-use std::time::Duration;
+use std::{path::PathBuf, sync::Arc, time::Duration};
 use time::OffsetDateTime;
 use tokio::sync::Mutex;
 
@@ -263,6 +263,84 @@ async fn tools_list_discovers_configured_web_search_without_secret_material() {
     assert!(!protocol_text.contains("Authorization"));
     assert!(!protocol_text.contains("x-api-key"));
     assert!(!protocol_text.contains("api_key"));
+}
+
+#[tokio::test]
+async fn commands_list_and_expand_use_workspace_registry_without_leaking_include_body() {
+    let workspace = temp_workspace("commands_list_and_expand");
+    std::fs::create_dir_all(workspace.join(".roder").join("commands")).unwrap();
+    std::fs::write(workspace.join("notes.txt"), "abcdef".repeat(12_000)).unwrap();
+    std::fs::write(
+        workspace.join(".roder").join("commands").join("review.md"),
+        r#"---
+description: Review the selected area.
+argument-hint: "[area]"
+include:
+  files:
+    - id: notes
+      path: notes.txt
+---
+Review {{arguments|default("the workspace")}}.
+
+Notes: {{include.files.notes}}
+"#,
+    )
+    .unwrap();
+
+    let mut builder = ExtensionRegistryBuilder::new();
+    builder.inference_engine(Arc::new(FakeInferenceEngine));
+    let runtime = Arc::new(
+        Runtime::new(
+            builder.build().unwrap(),
+            RuntimeConfig {
+                workspace: Some(workspace.display().to_string()),
+                ..RuntimeConfig::default()
+            },
+        )
+        .unwrap(),
+    );
+    let client = LocalAppClient::new(Arc::new(AppServer::new(runtime)));
+
+    let listed: CommandsListResult = request(&client, "commands/list", None).await;
+    let review = listed
+        .commands
+        .iter()
+        .find(|command| command.name == "review")
+        .expect("missing workspace command");
+    assert_eq!(
+        review.description.as_deref(),
+        Some("Review the selected area.")
+    );
+    assert_eq!(review.argument_hint.as_deref(), Some("[area]"));
+    assert_eq!(review.source, "workspace");
+    let serialized_list = serde_json::to_string(&listed).unwrap();
+    assert!(!serialized_list.contains("abcdefabcdef"));
+
+    let expanded: CommandsExpandResult = request(
+        &client,
+        "commands/expand",
+        Some(
+            serde_json::to_value(CommandsExpandParams {
+                name: "review".to_string(),
+                arguments: Some("api".to_string()),
+            })
+            .unwrap(),
+        ),
+    )
+    .await;
+    assert_eq!(expanded.name, "review");
+    assert!(expanded.message.contains("Review api."));
+    assert!(
+        expanded
+            .message
+            .contains("[context:command.review.files.notes]")
+    );
+    assert_eq!(expanded.context_blocks.len(), 1);
+    assert_eq!(expanded.context_blocks[0].text.len(), 65_536);
+    assert_eq!(
+        expanded.context_blocks[0].metadata["truncated"].as_bool(),
+        Some(true)
+    );
 }
 
 #[tokio::test]
@@ -624,6 +702,13 @@ fn position(kinds: &[String], kind: &str) -> usize {
         .iter()
         .position(|candidate| candidate == kind)
         .unwrap_or_else(|| panic!("missing {kind}: {kinds:?}"))
+}
+
+fn temp_workspace(name: &str) -> PathBuf {
+    let path =
+        std::env::temp_dir().join(format!("roder-app-server-{name}-{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir_all(&path).unwrap();
+    path
 }
 
 async fn request<T: serde::de::DeserializeOwned>(

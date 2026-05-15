@@ -1,3 +1,4 @@
+use roder_api::context::ContextBlock;
 use roder_api::events::{ThreadId, TurnId};
 use roder_api::extension::ExtensionManifest;
 use roder_api::inference::{InferenceCapabilities, ModelDescriptor, ProviderAuthType};
@@ -192,4 +193,46 @@ pub struct AgentDescriptor {
     pub permission_mode: SubagentPermissionMode,
     pub max_turns: Option<u32>,
     pub max_result_chars: Option<usize>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CommandsListResult {
+    pub commands: Vec<CommandDescriptor>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CommandDescriptor {
+    pub name: String,
+    pub description: Option<String>,
+    pub argument_hint: Option<String>,
+    pub source: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CommandsExpandParams {
+    pub name: String,
+    pub arguments: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CommandsExpandResult {
+    pub name: String,
+    pub message: String,
+    pub context_blocks: Vec<ContextBlock>,
+    pub allowed_tools: Vec<String>,
+    pub model: Option<String>,
+    pub agent: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CommandsRunParams {
+    pub thread_id: ThreadId,
+    pub name: String,
+    pub arguments: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CommandsRunResult {
+    pub turn_id: TurnId,
+    pub expanded: CommandsExpandResult,
 }
