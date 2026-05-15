@@ -10,6 +10,7 @@ use time::OffsetDateTime;
 
 use crate::policy_gate::DefaultPolicyGate;
 use crate::runtime::{PendingPlanExit, Runtime};
+use crate::tool_preview::file_change_preview;
 
 impl Runtime {
     pub(crate) async fn route_tool_call(
@@ -41,7 +42,8 @@ impl Runtime {
             .await?;
             return Ok(item);
         };
-        let mode = self.status().await.policy_mode;
+        let runtime_config = self.status().await;
+        let mode = runtime_config.policy_mode;
         let parsed_args = serde_json::from_str(&call.arguments)
             .unwrap_or_else(|_| serde_json::json!({ "raw": call.arguments }));
         let tool_call = ToolCall {
@@ -91,6 +93,11 @@ impl Runtime {
             }))
             .await;
             return Ok(item);
+        }
+
+        if let Some(preview) = file_change_preview(&tool_call, runtime_config.workspace.as_deref())
+        {
+            self.emit(RoderEvent::FileChangePreviewReady(preview)).await;
         }
 
         self.emit(RoderEvent::ToolCallStarted(ToolCallStarted {

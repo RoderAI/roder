@@ -1,5 +1,6 @@
 mod commands;
 mod dialog;
+mod diff_ui;
 mod palette_ui;
 
 use std::io;
@@ -36,6 +37,7 @@ use roder_protocol::{
 use tokio::process::Command;
 use tui_textarea::TextArea;
 
+use crate::diff::{DiffViewerState, render::DiffTheme};
 use crate::palette::{PaletteEntry, render::PaletteTheme};
 use crate::status_line::{
     StatusLineConfig, StatusLineTheme, built_in_status_segments, render_status_line,
@@ -207,6 +209,19 @@ impl Theme {
             surface_bg: self.dialog_bg,
         }
     }
+
+    fn diff(self) -> DiffTheme {
+        DiffTheme {
+            text: self.text,
+            muted: self.muted,
+            accent: self.accent,
+            added: self.tool_running,
+            removed: self.error,
+            warning: self.tool,
+            border: self.border,
+            surface_bg: self.dialog_bg,
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -309,6 +324,7 @@ pub struct TuiApp {
     palette_query: String,
     palette_source_filter: Option<String>,
     palette_state: ListState,
+    diff_viewer: Option<DiffViewerState>,
     status_segments: Vec<StatusSegment>,
     status_git: Option<GitSnapshot>,
     policy_mode: PolicyMode,
@@ -369,6 +385,7 @@ impl TuiApp {
             palette_query: String::new(),
             palette_source_filter: None,
             palette_state: ListState::default(),
+            diff_viewer: None,
             status_segments: built_in_status_segments(),
             status_git,
             policy_mode: policy_state
@@ -400,6 +417,8 @@ impl TuiApp {
                     if self.handle_confirm_key(key).await {
                         break;
                     }
+                } else if self.diff_viewer.is_some() {
+                    self.handle_diff_key(key);
                 } else if self.show_palette {
                     self.handle_palette_key(key).await;
                 } else if palette_ui::is_palette_open_key(key) {
@@ -554,6 +573,9 @@ impl TuiApp {
                     }
                     RoderEvent::PolicyExitPlanResolved(_) => {
                         self.refresh_session_state().await;
+                    }
+                    RoderEvent::FileChangePreviewReady(ev) => {
+                        self.open_diff_preview(ev);
                     }
                     _ => {}
                 }
@@ -882,6 +904,9 @@ impl TuiApp {
         }
         if self.show_palette {
             self.render_palette_popup(f, area);
+        }
+        if self.diff_viewer.is_some() {
+            self.render_diff_viewer(f, area);
         }
         if let Some(dialog) = self.confirm_dialog {
             self.render_confirm_dialog(f, area, dialog);
