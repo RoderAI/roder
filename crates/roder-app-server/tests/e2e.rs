@@ -1,8 +1,11 @@
+use roder_api::catalog::PROVIDER_MOCK;
+use roder_api::extension::ExtensionRegistryBuilder;
 use roder_app_server::{AppServer, LocalAppClient};
 use roder_core::{Runtime, fake_provider::FakeInferenceEngine};
 use roder_protocol::{
-    CreateSessionResult, ExtensionsListResult, JsonRpcRequest, ProvidersListResult,
-    SessionsListResult, StartTurnParams, StartTurnResult, SystemStatusResult,
+    CreateSessionResult, ExtensionsListResult, JsonRpcRequest, ProviderSelectParams,
+    ProviderSelectResult, ProvidersListResult, SessionsListResult, StartTurnParams,
+    StartTurnResult, SystemStatusResult, ToolsListResult,
 };
 use std::sync::Arc;
 use std::time::Duration;
@@ -10,23 +13,72 @@ use std::time::Duration;
 #[tokio::test]
 async fn test_app_server_e2e() {
     let engine = Arc::new(FakeInferenceEngine);
-    let runtime = Arc::new(Runtime::from_engine(engine).unwrap());
+    let mut builder = ExtensionRegistryBuilder::new();
+    builder.inference_engine(engine);
+    builder.tool_contributor(roder_tools::echo_tool_contributor());
+    let runtime = Arc::new(Runtime::new(builder.build().unwrap(), Default::default()).unwrap());
     let server = Arc::new(AppServer::new(runtime));
     let client = LocalAppClient::new(server);
     let mut events = client.subscribe_events();
 
     let status: SystemStatusResult = request(&client, "system/status", None).await;
-    assert_eq!(status.provider, "fake-provider");
-    assert_eq!(status.model, "fake-model");
+    assert_eq!(status.provider, PROVIDER_MOCK);
+    assert_eq!(status.model, "mock");
 
     let extensions: ExtensionsListResult = request(&client, "extensions/list", None).await;
     assert!(extensions.extensions.is_empty());
 
     let providers: ProvidersListResult = request(&client, "providers/list", None).await;
     assert_eq!(providers.providers.len(), 1);
-    assert_eq!(providers.providers[0].id, "fake-provider");
+    assert_eq!(providers.providers[0].id, PROVIDER_MOCK);
+
+    let tools: ToolsListResult = request(&client, "tools/list", None).await;
+    assert_eq!(tools.tools.len(), 1);
+    assert_eq!(tools.tools[0].name, "echo");
+
+    let selected: ProviderSelectResult = request(
+        &client,
+        "providers/select",
+        Some(
+            serde_json::to_value(ProviderSelectParams {
+                provider: PROVIDER_MOCK.to_string(),
+                model: Some("alternate-mock-model".to_string()),
+            })
+            .unwrap(),
+        ),
+    )
+    .await;
+    assert_eq!(selected.provider, PROVIDER_MOCK);
+    assert_eq!(selected.model, "alternate-mock-model");
+
+    let status: SystemStatusResult = request(&client, "system/status", None).await;
+    assert_eq!(status.provider, PROVIDER_MOCK);
+    assert_eq!(status.model, "alternate-mock-model");
+
+    let invalid_provider = client
+        .send_request(JsonRpcRequest {
+            jsonrpc: "2.0".to_string(),
+            id: Some(serde_json::json!("providers/select-invalid")),
+            method: "providers/select".to_string(),
+            params: Some(
+                serde_json::to_value(ProviderSelectParams {
+                    provider: "missing-provider".to_string(),
+                    model: Some("missing-model".to_string()),
+                })
+                .unwrap(),
+            ),
+        })
+        .await;
+    assert!(invalid_provider.result.is_none());
+    let error = invalid_provider
+        .error
+        .expect("missing invalid provider error");
+    assert_eq!(error.code, -32000);
+    assert!(error.message.contains("missing-provider"));
 
     let session: CreateSessionResult = request(&client, "sessions/create", None).await;
+    assert_eq!(session.provider, PROVIDER_MOCK);
+    assert_eq!(session.model, "alternate-mock-model");
     assert!(!session.thread_id.is_empty());
 
     let sessions: SessionsListResult = request(&client, "sessions/list", None).await;

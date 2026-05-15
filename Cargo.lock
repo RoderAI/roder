@@ -1160,6 +1160,7 @@ dependencies = [
  "roder-api",
  "roder-core",
  "roder-protocol",
+ "roder-tools",
  "serde",
  "serde_json",
  "tokio",
@@ -1399,6 +1400,7 @@ name = "roder-tools"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "async-trait",
  "roder-api",
  "serde",
  "serde_json",

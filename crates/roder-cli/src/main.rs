@@ -2,6 +2,7 @@ pub mod config;
 
 use std::sync::Arc;
 
+use roder_api::catalog::{DEFAULT_MODEL_ID, PROVIDER_MOCK};
 use roder_app_server::{AppServer, LocalAppClient};
 use roder_core::{Runtime, RuntimeConfig};
 use roder_extension_host::{DefaultRegistryConfig, build_default_registry};
@@ -24,10 +25,12 @@ async fn main() -> anyhow::Result<()> {
             .get("anthropic")
             .and_then(|p| p.api_key.clone())
     });
-    let gemini_key = std::env::var("GEMINI_API_KEY")
+    let gemini_key = std::env::var("GEMINI_API_TOKEN")
         .ok()
+        .or_else(|| std::env::var("GEMINI_API_KEY").ok())
         .or_else(|| std::env::var("GOOGLE_API_KEY").ok())
         .or_else(|| std::env::var("GOOGLE_GENAI_API_KEY").ok())
+        .or_else(|| std::env::var("GOOGLE_AI_API_KEY").ok())
         .or_else(|| cfg.providers.get("gemini").and_then(|p| p.api_key.clone()));
 
     let registry = build_default_registry(DefaultRegistryConfig {
@@ -37,12 +40,12 @@ async fn main() -> anyhow::Result<()> {
         session_dir: None,
     })?;
 
-    let default_provider = cfg.provider.unwrap_or_else(|| "fake-provider".to_string());
+    let default_provider = cfg.provider.unwrap_or_else(|| PROVIDER_MOCK.to_string());
     let default_model = cfg.model.unwrap_or_else(|| {
-        if default_provider == "fake-provider" {
-            "fake-model".to_string()
+        if default_provider == PROVIDER_MOCK {
+            "mock".to_string()
         } else {
-            "default".to_string()
+            DEFAULT_MODEL_ID.to_string()
         }
     });
 
