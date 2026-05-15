@@ -18,11 +18,13 @@ use ratatui::{
 };
 use roder_api::events::RoderEvent;
 use roder_api::inference::ProviderAuthType;
+use roder_api::policy_mode::PolicyMode;
 use roder_app_server::LocalAppClient;
 use roder_protocol::{
     CodexAuthResult, CreateSessionResult, InterruptTurnParams, JsonRpcRequest, JsonRpcResponse,
-    ProviderDescriptor, ProviderSelectParams, ProviderSelectResult, ProvidersListResult,
-    StartTurnParams,
+    PendingPlanExitDescriptor, ProviderDescriptor, ProviderSelectParams, ProviderSelectResult,
+    ProvidersListResult, SessionExitPlanParams, SessionExitPlanResult, SessionGetResult,
+    SessionSetModeParams, SessionSetModeResult, StartTurnParams,
 };
 use tokio::process::Command;
 use tui_textarea::TextArea;
@@ -265,6 +267,8 @@ pub struct TuiApp {
     provider_menu_filter: String,
     provider_state: ListState,
     confirm_dialog: Option<ConfirmDialog>,
+    policy_mode: PolicyMode,
+    pending_plan_exit: Option<PendingPlanExitDescriptor>,
     theme: Theme,
 }
 
@@ -287,6 +291,7 @@ impl TuiApp {
         let mut provider_state = ListState::default();
         provider_state.select(Some(0));
         let theme = Theme::for_terminal();
+        let policy_state = session_get(&client).await.ok();
 
         Ok(Self {
             client,
@@ -311,6 +316,11 @@ impl TuiApp {
             provider_menu_filter: String::new(),
             provider_state,
             confirm_dialog: None,
+            policy_mode: policy_state
+                .as_ref()
+                .map(|state| state.mode)
+                .unwrap_or_default(),
+            pending_plan_exit: policy_state.and_then(|state| state.pending_plan_exit),
             theme,
         })
     }
@@ -356,6 +366,16 @@ impl TuiApp {
                     && key.code == KeyCode::Char('c')
                 {
                     self.confirm_dialog = Some(ConfirmDialog::Exit);
+                } else if key.code == KeyCode::BackTab {
+                    self.cycle_policy_mode().await;
+                } else if self.pending_plan_exit.is_some()
+                    && matches!(key.code, KeyCode::Char('y') | KeyCode::Char('Y'))
+                {
+                    self.resolve_pending_plan_exit(true).await;
+                } else if self.pending_plan_exit.is_some()
+                    && matches!(key.code, KeyCode::Char('n') | KeyCode::Char('N'))
+                {
+                    self.resolve_pending_plan_exit(false).await;
                 } else if self.show_provider_popup {
                     match key.code {
                         KeyCode::Esc => self.close_or_back_provider_popup(),
@@ -456,6 +476,19 @@ impl TuiApp {
                     RoderEvent::TurnFailed(ev) => {
                         self.messages.push(format!("error: {}", ev.error))
                     }
+                    RoderEvent::PolicyModeChanged(ev) => {
+                        self.policy_mode = ev.new_mode;
+                        self.push_event(format!(
+                            "policy mode changed: {}",
+                            policy_mode_label(ev.new_mode)
+                        ));
+                    }
+                    RoderEvent::PolicyExitPlanRequested(_) => {
+                        self.refresh_session_state().await;
+                    }
+                    RoderEvent::PolicyExitPlanResolved(_) => {
+                        self.refresh_session_state().await;
+                    }
                     _ => {}
                 }
             }
@@ -511,6 +544,78 @@ impl TuiApp {
             self.record_error(format!("interrupt failed: {}", err.message));
         } else {
             self.push_event("interrupt requested".to_string());
+        }
+    }
+
+    async fn refresh_session_state(&mut self) {
+        match session_get(&self.client).await {
+            Ok(state) => {
+                self.policy_mode = state.mode;
+                self.pending_plan_exit = state.pending_plan_exit;
+            }
+            Err(err) => self.record_error(format!("session/get failed: {err}")),
+        }
+    }
+
+    async fn cycle_policy_mode(&mut self) {
+        let next = next_policy_mode(self.policy_mode);
+        let params = SessionSetModeParams {
+            mode: next,
+            reason: Some("tui mode switcher".to_string()),
+        };
+        let res = self
+            .client
+            .send_request(JsonRpcRequest {
+                jsonrpc: "2.0".to_string(),
+                id: Some(serde_json::json!("session/set_mode")),
+                method: "session/set_mode".to_string(),
+                params: Some(serde_json::to_value(params).unwrap()),
+            })
+            .await;
+        match decode_response::<SessionSetModeResult>(res) {
+            Ok(result) => {
+                self.policy_mode = result.mode;
+                self.messages.push(format!(
+                    "system: policy mode set to {}.",
+                    policy_mode_label(result.mode)
+                ));
+                self.push_event(format!(
+                    "policy mode selected: {}",
+                    policy_mode_label(result.mode)
+                ));
+            }
+            Err(err) => self.record_error(format!("session/set_mode failed: {err}")),
+        }
+    }
+
+    async fn resolve_pending_plan_exit(&mut self, approved: bool) {
+        let Some(pending) = self.pending_plan_exit.clone() else {
+            return;
+        };
+        let params = SessionExitPlanParams {
+            request_id: pending.request_id.clone(),
+            approved,
+        };
+        let res = self
+            .client
+            .send_request(JsonRpcRequest {
+                jsonrpc: "2.0".to_string(),
+                id: Some(serde_json::json!("session/exit_plan")),
+                method: "session/exit_plan".to_string(),
+                params: Some(serde_json::to_value(params).unwrap()),
+            })
+            .await;
+        match decode_response::<SessionExitPlanResult>(res) {
+            Ok(result) => {
+                self.policy_mode = result.mode;
+                self.pending_plan_exit = None;
+                self.messages.push(format!(
+                    "system: {} plan exit request {}.",
+                    if approved { "approved" } else { "rejected" },
+                    short_id(&pending.request_id)
+                ));
+            }
+            Err(err) => self.record_error(format!("session/exit_plan failed: {err}")),
         }
     }
 
@@ -670,6 +775,17 @@ impl TuiApp {
         } else {
             "ready"
         };
+        let pending_hint = self
+            .pending_plan_exit
+            .as_ref()
+            .map(|pending| {
+                let summary = pending.plan_summary.as_deref().unwrap_or("plan exit");
+                format!(
+                    "  exit plan? y approve / n reject: {}",
+                    truncate(summary, 36)
+                )
+            })
+            .unwrap_or_default();
         let shell_hint = if composer_text(&self.composer).starts_with('!') {
             "  shell mode"
         } else {
@@ -678,7 +794,8 @@ impl TuiApp {
         Paragraph::new(line_with_gap(
             vec![Span::styled(
                 format!(
-                    " {status}{shell_hint}  enter send  ! shell  ctrl+p provider/model  ctrl+l events  esc interrupt  ctrl+c exit"
+                    " {status}  mode:{}{pending_hint}{shell_hint}  enter send  shift+tab mode  ! shell  ctrl+p provider/model  ctrl+l events  esc interrupt  ctrl+c exit",
+                    policy_mode_label(self.policy_mode)
                 ),
                 self.theme.subtle(),
             )],
@@ -1206,6 +1323,43 @@ fn decode_response<T: serde::de::DeserializeOwned>(res: JsonRpcResponse) -> anyh
     Ok(serde_json::from_value(result)?)
 }
 
+async fn session_get(client: &LocalAppClient) -> anyhow::Result<SessionGetResult> {
+    let res = client
+        .send_request(JsonRpcRequest {
+            jsonrpc: "2.0".to_string(),
+            id: Some(serde_json::json!("session/get")),
+            method: "session/get".to_string(),
+            params: None,
+        })
+        .await;
+    decode_response(res)
+}
+
+fn next_policy_mode(mode: PolicyMode) -> PolicyMode {
+    match mode {
+        PolicyMode::Default => PolicyMode::AcceptEdits,
+        PolicyMode::AcceptEdits => PolicyMode::Plan,
+        PolicyMode::Plan | PolicyMode::Bypass => PolicyMode::Default,
+    }
+}
+
+fn policy_mode_label(mode: PolicyMode) -> &'static str {
+    match mode {
+        PolicyMode::Default => "default",
+        PolicyMode::AcceptEdits => "accept_edits",
+        PolicyMode::Plan => "plan",
+        PolicyMode::Bypass => "bypass",
+    }
+}
+
+fn truncate(value: &str, max_chars: usize) -> String {
+    let mut out = value.chars().take(max_chars).collect::<String>();
+    if out.len() < value.len() {
+        out.push_str("...");
+    }
+    out
+}
+
 fn message_line(message: &str, theme: Theme) -> Line<'static> {
     if let Some(body) = message.strip_prefix("user: ") {
         return Line::from(vec![
@@ -1392,6 +1546,25 @@ mod tests {
         assert_eq!(event_log_height(true, 0), 3);
         assert_eq!(event_log_height(true, 3), 5);
         assert_eq!(event_log_height(true, 100), 8);
+    }
+
+    #[test]
+    fn policy_mode_switcher_cycles_non_bypass_modes() {
+        assert_eq!(
+            next_policy_mode(PolicyMode::Default),
+            PolicyMode::AcceptEdits
+        );
+        assert_eq!(next_policy_mode(PolicyMode::AcceptEdits), PolicyMode::Plan);
+        assert_eq!(next_policy_mode(PolicyMode::Plan), PolicyMode::Default);
+        assert_eq!(next_policy_mode(PolicyMode::Bypass), PolicyMode::Default);
+    }
+
+    #[test]
+    fn policy_mode_labels_match_protocol_values() {
+        assert_eq!(policy_mode_label(PolicyMode::Default), "default");
+        assert_eq!(policy_mode_label(PolicyMode::AcceptEdits), "accept_edits");
+        assert_eq!(policy_mode_label(PolicyMode::Plan), "plan");
+        assert_eq!(policy_mode_label(PolicyMode::Bypass), "bypass");
     }
 
     #[test]
