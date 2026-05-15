@@ -44,6 +44,24 @@ func TestLightThemeRendersTranscriptWithDarkBodyText(t *testing.T) {
 	}
 }
 
+func TestLightThemeRendersToolStatesWithReadableColors(t *testing.T) {
+	withTheme(t, ThemeForDarkBackground(false))
+
+	result := TranscriptDetailedWithCache(80, 8, []viewmodel.Message{
+		{ID: "tool-1", Role: viewmodel.RoleTool, Title: "shell", Body: "requested\nsleep 8"},
+		{ID: "tool-2", Role: viewmodel.RoleTool, Title: "shell", Body: "succeeded\nsleep 8"},
+	}, 0, "", zone.New(), nil, TranscriptOptions{})
+
+	if strings.Contains(result.View, "38;5;231") || strings.Contains(result.View, "38;5;252") {
+		t.Fatalf("light tool states should not render white-ish text:\n%s", result.View)
+	}
+	for _, colorCode := range []string{"38;5;25", "38;5;96"} {
+		if !strings.Contains(result.View, colorCode) {
+			t.Fatalf("light tool state missing color %s:\n%s", colorCode, result.View)
+		}
+	}
+}
+
 func TestThemeChangeInvalidatesTranscriptCache(t *testing.T) {
 	cache := NewTranscriptCache()
 	messages := []viewmodel.Message{{

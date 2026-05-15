@@ -62,6 +62,33 @@ func TestTranscriptMinimalToolRowsAreContiguousAndStatusColored(t *testing.T) {
 	}
 }
 
+func TestTranscriptMinimalShowsPendingToolSummaryInRunningColor(t *testing.T) {
+	withTheme(t, ThemeForDarkBackground(true))
+
+	result := TranscriptDetailedWithCache(100, 10, []viewmodel.Message{
+		{ID: "tool-1", Role: viewmodel.RoleTool, Title: "shell", Body: "requested\nsleep 8; printf done"},
+		{ID: "tool-2", Role: viewmodel.RoleTool, Title: "shell", Body: "succeeded\nsleep 8; printf done"},
+	}, 0, "", zone.New(), nil, TranscriptOptions{
+		TimelineStyle: viewmodel.TimelineStyleMinimal,
+	})
+
+	visible := ansi.Strip(result.View)
+	if strings.Contains(visible, "requested") || strings.Contains(visible, "succeeded") {
+		t.Fatalf("tool state labels should not be visible in minimal timeline:\n%s", visible)
+	}
+	if strings.Count(visible, "sleep 8; printf done") != 2 {
+		t.Fatalf("pending and completed rows should both show requested command:\n%s", visible)
+	}
+	for _, colorCode := range []string{"38;5;75", "38;5;183"} {
+		if !strings.Contains(result.View, colorCode) {
+			t.Fatalf("tool timeline missing status color %s:\n%s", colorCode, result.View)
+		}
+	}
+	if !strings.Contains(visible, "○ shell") || !strings.Contains(visible, "● shell") {
+		t.Fatalf("tool timeline missing pending/completed markers:\n%s", visible)
+	}
+}
+
 func TestTranscriptDefaultsToMinimalTimeline(t *testing.T) {
 	result := TranscriptDetailedWithCache(100, 10, []viewmodel.Message{{
 		ID:    "tool-grep",
