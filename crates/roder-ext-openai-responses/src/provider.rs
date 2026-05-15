@@ -1,20 +1,10 @@
-use futures::{stream, Stream, StreamExt};
-use reqwest_eventsource::{Event, EventSource, RequestBuilderExt};
 use roder_api::extension::InferenceEngineId;
 use roder_api::inference::{
     AgentInferenceRequest, CompletionMetadata, InferenceCapabilities, InferenceEngine,
     InferenceEvent, InferenceEventStream, InferenceProviderContext, InferenceTurnContext,
     MessageDelta, ModelDescriptor,
 };
-use serde::{Deserialize, Serialize};
 use serde_json::json;
-use std::pin::Pin;
-
-#[derive(Debug, Serialize, Deserialize)]
-pub struct ChatMessage {
-    pub role: String,
-    pub content: String,
-}
 
 pub struct OpenAiResponsesEngine {
     api_key: String,
@@ -23,6 +13,25 @@ pub struct OpenAiResponsesEngine {
 impl OpenAiResponsesEngine {
     pub fn new(api_key: String) -> Self {
         Self { api_key }
+    }
+
+    fn input_text(req: &AgentInferenceRequest) -> String {
+        req.conversation
+            .iter()
+            .filter_map(|item| match item {
+                roder_api::conversation::ConversationItem::UserMessage(m) => {
+                    Some(format!("user: {}", m.text))
+                }
+                roder_api::conversation::ConversationItem::AssistantMessage(m) => {
+                    Some(format!("assistant: {}", m.text))
+                }
+                roder_api::conversation::ConversationItem::ToolResult(m) => {
+                    Some(format!("tool: {}", m.result))
+                }
+                _ => None,
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
     }
 }
 
@@ -34,9 +43,14 @@ impl InferenceEngine for OpenAiResponsesEngine {
 
     fn capabilities(&self) -> InferenceCapabilities {
         InferenceCapabilities {
-            supports_tools: true,
-            supports_vision: true,
-            supports_reasoning: false,
+            streaming: false,
+            tool_calls: false,
+            parallel_tool_calls: false,
+            reasoning_summaries: true,
+            structured_output: true,
+            image_input: true,
+            prompt_cache: false,
+            provider_metadata: true,
         }
     }
 
@@ -48,10 +62,12 @@ impl InferenceEngine for OpenAiResponsesEngine {
             ModelDescriptor {
                 id: "gpt-4o".to_string(),
                 name: "GPT-4o".to_string(),
+                context_window: None,
             },
             ModelDescriptor {
                 id: "gpt-5.5".to_string(),
                 name: "GPT-5.5".to_string(),
+                context_window: None,
             },
         ])
     }
@@ -61,68 +77,75 @@ impl InferenceEngine for OpenAiResponsesEngine {
         _ctx: InferenceTurnContext<'_>,
         request: AgentInferenceRequest,
     ) -> anyhow::Result<InferenceEventStream> {
-        let mut messages = Vec::new();
-        if let Some(sys) = &request.instructions.system {
-            messages.push(json!({ "role": "system", "content": sys }));
-        }
-        for item in &request.conversation {
-            match item {
-                roder_api::conversation::ConversationItem::UserMessage(m) => {
-                    messages.push(json!({ "role": "user", "content": m.text }));
-                }
-                roder_api::conversation::ConversationItem::AssistantMessage(m) => {
-                    messages.push(json!({ "role": "assistant", "content": m.text }));
-                }
-                _ => {}
-            }
-        }
-
-        let body = json!({
+        let mut body = json!({
             "model": request.model.model,
-            "messages": messages,
-            "stream": true,
+            "input": Self::input_text(&request),
         });
-
-        let client = reqwest::Client::new();
-        let mut es = client
-            .post("https://api.openai.com/v1/chat/completions")
-            .header("Authorization", format!("Bearer {}", self.api_key))
+        if let Some(system) = request.instructions.system {
+            body["instructions"] = json!(system);
+        }
+        if let Some(max_tokens) = request.output.max_tokens {
+            body["max_output_tokens"] = json!(max_tokens);
+        }
+        let response = reqwest::Client::new()
+            .post("https://api.openai.com/v1/responses")
+            .bearer_auth(&self.api_key)
             .json(&body)
-            .eventsource()?;
+            .send()
+            .await?;
+        if !response.status().is_success() {
+            anyhow::bail!(
+                "OpenAI Responses error {}: {}",
+                response.status(),
+                response.text().await.unwrap_or_default()
+            );
+        }
+        let value: serde_json::Value = response.json().await?;
+        let text = value
+            .get("output_text")
+            .and_then(|v| v.as_str())
+            .map(str::to_string)
+            .or_else(|| extract_output_text(&value))
+            .unwrap_or_default();
+        let stream = futures::stream::iter(vec![
+            Ok(InferenceEvent::MessageDelta(MessageDelta { text })),
+            Ok(InferenceEvent::ProviderMetadata(value.clone())),
+            Ok(InferenceEvent::Completed(CompletionMetadata {
+                stop_reason: value
+                    .get("status")
+                    .and_then(|v| v.as_str())
+                    .map(str::to_string),
+                provider_response_id: value.get("id").and_then(|v| v.as_str()).map(str::to_string),
+            })),
+        ]);
+        Ok(Box::pin(stream))
+    }
+}
 
-        let stream = async_stream::stream! {
-            while let Some(event) = es.next().await {
-                match event {
-                    Ok(Event::Open) => continue,
-                    Ok(Event::Message(msg)) => {
-                        if msg.data == "[DONE]" {
-                            yield Ok(InferenceEvent::Completed(CompletionMetadata {
-                                stop_reason: Some("stop".to_string()),
-                            }));
-                            break;
-                        }
-                        if let Ok(v) = serde_json::from_str::<serde_json::Value>(&msg.data) {
-                            if let Some(choices) = v.get("choices").and_then(|c| c.as_array()) {
-                                if let Some(choice) = choices.first() {
-                                    if let Some(delta) = choice.get("delta") {
-                                        if let Some(content) = delta.get("content").and_then(|c| c.as_str()) {
-                                            yield Ok(InferenceEvent::MessageDelta(MessageDelta {
-                                                text: content.to_string(),
-                                            }));
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                    Err(e) => {
-                        yield Err(anyhow::anyhow!("Stream error: {}", e));
-                        break;
-                    }
+fn extract_output_text(value: &serde_json::Value) -> Option<String> {
+    let output = value.get("output")?.as_array()?;
+    let mut parts = Vec::new();
+    for item in output {
+        if let Some(content) = item.get("content").and_then(|v| v.as_array()) {
+            for block in content {
+                if let Some(text) = block.get("text").and_then(|v| v.as_str()) {
+                    parts.push(text.to_string());
                 }
             }
-        };
+        }
+    }
+    (!parts.is_empty()).then(|| parts.join(""))
+}
 
-        Ok(Box::pin(stream))
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn extracts_responses_output_text() {
+        let value = serde_json::json!({
+            "output": [{ "content": [{ "text": "hello" }, { "text": " world" }] }]
+        });
+        assert_eq!(extract_output_text(&value).unwrap(), "hello world");
     }
 }

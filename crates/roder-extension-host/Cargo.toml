@@ -12,5 +12,9 @@ roder-api = { path = "../roder-api" }
 roder-ext-anthropic = { path = "../roder-ext-anthropic" }
 roder-ext-gemini = { path = "../roder-ext-gemini" }
 roder-ext-jsonl-session = { path = "../roder-ext-jsonl-session" }
+roder-ext-memory = { path = "../roder-ext-memory" }
 roder-ext-openai-chat-completions = { path = "../roder-ext-openai-chat-completions" }
 roder-ext-openai-responses = { path = "../roder-ext-openai-responses" }
+async-trait = "0.1"
+futures = "0.3"
+semver = "1.0"
