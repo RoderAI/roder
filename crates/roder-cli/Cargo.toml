@@ -20,6 +20,7 @@ roder-ext-gemini.workspace = true
 roder-ext-jsonl-session.workspace = true
 roder-ext-memory.workspace = true
 roder-ext-openai-responses.workspace = true
+roder-ext-subagents.workspace = true
 roder-extension-host.workspace = true
 roder-tui.workspace = true
 roder-web-search.workspace = true

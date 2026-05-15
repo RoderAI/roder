@@ -14,8 +14,10 @@ use roder_ext_memory::MemoryExtension;
 use roder_ext_openai_responses::{OpenAiResponsesEngine, OpenAiResponsesExtension};
 use semver::Version;
 
+mod subagents;
 mod web_search;
 
+pub use subagents::DefaultSubagentsConfig;
 pub use web_search::{DefaultWebSearchConfig, DefaultWebSearchProviderConfig};
 
 #[derive(Debug, Clone, Default)]
@@ -25,6 +27,7 @@ pub struct DefaultRegistryConfig {
     pub gemini_api_key: Option<String>,
     pub session_dir: Option<PathBuf>,
     pub web_search: Option<DefaultWebSearchConfig>,
+    pub subagents: Option<DefaultSubagentsConfig>,
 }
 
 pub fn build_default_registry(config: DefaultRegistryConfig) -> anyhow::Result<ExtensionRegistry> {
@@ -48,6 +51,10 @@ pub fn build_default_registry(config: DefaultRegistryConfig) -> anyhow::Result<E
     }
 
     builder.tool_contributor(roder_tools::echo_tool_contributor());
+
+    if let Some(subagents) = config.subagents {
+        subagents::install_subagents(&mut builder, subagents)?;
+    }
 
     let session_dir = config
         .session_dir
@@ -242,6 +249,7 @@ mod tests {
             gemini_api_key: Some("gemini".to_string()),
             session_dir: None,
             web_search: None,
+            subagents: None,
         })
         .unwrap();
         for provider in [
