@@ -22,6 +22,7 @@ roder-ext-memory.workspace = true
 roder-ext-openai-responses.workspace = true
 roder-extension-host.workspace = true
 roder-tui.workspace = true
+roder-web-search.workspace = true
 serde = { workspace = true, features = ["derive"] }
 serde_json.workspace = true
 tokio = { workspace = true, features = ["full"] }

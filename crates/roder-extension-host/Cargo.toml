@@ -10,10 +10,16 @@ futures.workspace = true
 roder-api.workspace = true
 roder-codex-auth.workspace = true
 roder-ext-anthropic.workspace = true
+roder-ext-firecrawl-search.workspace = true
 roder-ext-gemini.workspace = true
 roder-ext-jsonl-session.workspace = true
 roder-ext-memory.workspace = true
 roder-ext-openai-responses.workspace = true
+roder-ext-parallel-search.workspace = true
+roder-ext-perplexity-search.workspace = true
+roder-ext-tavily-search.workspace = true
+roder-ext-web-search.workspace = true
+roder-web-search.workspace = true
 roder-tools.workspace = true
 semver.workspace = true
 serde = { workspace = true, features = ["derive"] }
