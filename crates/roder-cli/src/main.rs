@@ -70,6 +70,7 @@ async fn build_runtime_from_config() -> anyhow::Result<(Arc<Runtime>, String)> {
             workspace: std::env::current_dir()
                 .ok()
                 .map(|p| p.display().to_string()),
+            policy_mode: roder_api::policy_mode::PolicyMode::Default,
         },
     )?);
 

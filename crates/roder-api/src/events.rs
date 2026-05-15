@@ -5,7 +5,10 @@ use crate::extension::{ExtensionId, InferenceEngineId};
 use crate::inference::InferenceEvent;
 use crate::subagents::SubagentExitReason;
 
-pub use crate::policy_mode::{PolicyExitPlanRequested, PolicyExitPlanResolved, PolicyModeChanged};
+pub use crate::policy_mode::{
+    PolicyBypassActive, PolicyDecisionRecorded, PolicyExitPlanRequested, PolicyExitPlanResolved,
+    PolicyModeChanged,
+};
 
 pub type ThreadId = String;
 pub type TurnId = String;
@@ -269,6 +272,8 @@ pub enum RoderEvent {
     ToolCallRequested(ToolCallRequested),
     ApprovalRequested(ApprovalRequested),
     ApprovalResolved(ApprovalResolved),
+    PolicyDecisionRecorded(PolicyDecisionRecorded),
+    PolicyBypassActive(PolicyBypassActive),
     PolicyModeChanged(PolicyModeChanged),
     PolicyExitPlanRequested(PolicyExitPlanRequested),
     PolicyExitPlanResolved(PolicyExitPlanResolved),
@@ -302,6 +307,8 @@ impl RoderEvent {
             RoderEvent::ToolCallRequested(_) => "tool.call_requested",
             RoderEvent::ApprovalRequested(_) => "approval.requested",
             RoderEvent::ApprovalResolved(_) => "approval.resolved",
+            RoderEvent::PolicyDecisionRecorded(_) => "policy.decision",
+            RoderEvent::PolicyBypassActive(_) => "policy.bypass_active",
             RoderEvent::PolicyModeChanged(_) => "policy.mode_changed",
             RoderEvent::PolicyExitPlanRequested(_) => "policy.exit_plan_requested",
             RoderEvent::PolicyExitPlanResolved(_) => "policy.exit_plan_resolved",
@@ -351,6 +358,8 @@ impl RoderEvent {
             RoderEvent::ToolCallRequested(e) => Some(&e.thread_id),
             RoderEvent::ApprovalRequested(e) => Some(&e.thread_id),
             RoderEvent::ApprovalResolved(e) => Some(&e.thread_id),
+            RoderEvent::PolicyDecisionRecorded(e) => Some(&e.thread_id),
+            RoderEvent::PolicyBypassActive(e) => Some(&e.thread_id),
             RoderEvent::PolicyModeChanged(e) => Some(&e.thread_id),
             RoderEvent::PolicyExitPlanRequested(e) => Some(&e.thread_id),
             RoderEvent::PolicyExitPlanResolved(e) => Some(&e.thread_id),
@@ -381,6 +390,8 @@ impl RoderEvent {
             RoderEvent::ToolCallRequested(e) => Some(&e.turn_id),
             RoderEvent::ApprovalRequested(e) => Some(&e.turn_id),
             RoderEvent::ApprovalResolved(e) => Some(&e.turn_id),
+            RoderEvent::PolicyDecisionRecorded(e) => Some(&e.turn_id),
+            RoderEvent::PolicyBypassActive(e) => Some(&e.turn_id),
             RoderEvent::PolicyModeChanged(e) => e.turn_id.as_ref(),
             RoderEvent::PolicyExitPlanRequested(e) => Some(&e.turn_id),
             RoderEvent::PolicyExitPlanResolved(e) => Some(&e.turn_id),

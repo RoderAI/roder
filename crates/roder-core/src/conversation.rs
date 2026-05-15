@@ -216,6 +216,7 @@ mod tests {
                 reasoning: None,
                 auto_compact_token_limit: Some(1),
                 workspace: None,
+                policy_mode: roder_api::policy_mode::PolicyMode::Default,
             },
         )
         .unwrap();

@@ -1,12 +1,14 @@
+use roder_api::context::PolicyGate;
 use roder_api::conversation::ToolResultRecord;
 use roder_api::events::*;
-use roder_api::policy_mode::PolicyMode;
+use roder_api::policy_mode::{PolicyDecision, PolicyMode};
 use roder_api::subagents::SubagentExitReason;
 use roder_api::tools::ToolResult;
 use roder_api::tools::{ToolCall, ToolExecutionContext};
 use serde_json::Value;
 use time::OffsetDateTime;
 
+use crate::policy_gate::DefaultPolicyGate;
 use crate::runtime::Runtime;
 
 impl Runtime {
@@ -39,32 +41,66 @@ impl Runtime {
             .await?;
             return Ok(item);
         };
+        let mode = self.status().await.policy_mode;
+        let parsed_args = serde_json::from_str(&call.arguments)
+            .unwrap_or_else(|_| serde_json::json!({ "raw": call.arguments }));
+        let tool_call = ToolCall {
+            id: call.id.clone(),
+            name: call.name.clone(),
+            arguments: parsed_args.clone(),
+            raw_arguments: call.arguments,
+            thread_id: thread_id.clone(),
+            turn_id: turn_id.clone(),
+        };
+        let ctx = ToolExecutionContext {
+            thread_id: thread_id.clone(),
+            turn_id: turn_id.clone(),
+            effective_mode: mode,
+        };
+        let decision = DefaultPolicyGate::new().decide(&tool_call, mode, &ctx);
+        self.emit_policy_decision(thread_id, turn_id, &tool_call, mode, decision.clone())
+            .await;
+        if matches!(decision, PolicyDecision::AutoApproved { .. }) && mode == PolicyMode::Bypass {
+            self.emit(RoderEvent::PolicyBypassActive(PolicyBypassActive {
+                thread_id: thread_id.clone(),
+                turn_id: turn_id.clone(),
+                tool_id: tool_call.id.clone(),
+                tool_name: tool_call.name.clone(),
+                timestamp: OffsetDateTime::now_utc(),
+            }))
+            .await;
+        }
+        if let PolicyDecision::Denied { reason } = decision {
+            let item = ToolResultRecord {
+                id: tool_call.id.clone(),
+                name: Some(tool_call.name.clone()),
+                result: format!("policy denied tool call: {reason}"),
+                is_error: true,
+            };
+            self.persist_turn_item(
+                thread_id,
+                turn_id,
+                &roder_api::conversation::ConversationItem::ToolResult(item.clone()),
+            )
+            .await?;
+            self.emit(RoderEvent::ToolCallCompleted(ToolCallCompleted {
+                thread_id: thread_id.clone(),
+                turn_id: turn_id.clone(),
+                tool_id: tool_call.id,
+                timestamp: OffsetDateTime::now_utc(),
+            }))
+            .await;
+            return Ok(item);
+        }
+
         self.emit(RoderEvent::ToolCallStarted(ToolCallStarted {
             thread_id: thread_id.clone(),
             turn_id: turn_id.clone(),
-            tool_id: call.id.clone(),
+            tool_id: tool_call.id.clone(),
             timestamp: OffsetDateTime::now_utc(),
         }))
         .await;
-        let parsed_args = serde_json::from_str(&call.arguments)
-            .unwrap_or_else(|_| serde_json::json!({ "raw": call.arguments }));
-        let result = executor
-            .execute(
-                ToolExecutionContext {
-                    thread_id: thread_id.clone(),
-                    turn_id: turn_id.clone(),
-                    effective_mode: PolicyMode::Default,
-                },
-                ToolCall {
-                    id: call.id.clone(),
-                    name: call.name.clone(),
-                    arguments: parsed_args.clone(),
-                    raw_arguments: call.arguments,
-                    thread_id: thread_id.clone(),
-                    turn_id: turn_id.clone(),
-                },
-            )
-            .await?;
+        let result = executor.execute(ctx, tool_call).await?;
         self.emit_subagent_events(thread_id, turn_id, &parsed_args, &result)
             .await;
         let item = ToolResultRecord {
@@ -87,6 +123,26 @@ impl Runtime {
         }))
         .await;
         Ok(item)
+    }
+
+    async fn emit_policy_decision(
+        &self,
+        thread_id: &ThreadId,
+        turn_id: &TurnId,
+        call: &ToolCall,
+        mode: PolicyMode,
+        decision: PolicyDecision,
+    ) {
+        self.emit(RoderEvent::PolicyDecisionRecorded(PolicyDecisionRecorded {
+            thread_id: thread_id.clone(),
+            turn_id: turn_id.clone(),
+            tool_id: call.id.clone(),
+            tool_name: call.name.clone(),
+            mode,
+            decision,
+            timestamp: OffsetDateTime::now_utc(),
+        }))
+        .await;
     }
 
     async fn emit_subagent_events(

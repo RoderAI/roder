@@ -130,6 +130,28 @@ pub enum PolicyDecision {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PolicyDecisionRecorded {
+    pub thread_id: ThreadId,
+    pub turn_id: TurnId,
+    pub tool_id: String,
+    pub tool_name: String,
+    pub mode: PolicyMode,
+    pub decision: PolicyDecision,
+    #[serde(with = "time::serde::rfc3339")]
+    pub timestamp: OffsetDateTime,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PolicyBypassActive {
+    pub thread_id: ThreadId,
+    pub turn_id: TurnId,
+    pub tool_id: String,
+    pub tool_name: String,
+    #[serde(with = "time::serde::rfc3339")]
+    pub timestamp: OffsetDateTime,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PolicyModeChanged {
     pub thread_id: ThreadId,
     pub turn_id: Option<TurnId>,

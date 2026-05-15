@@ -12,6 +12,7 @@ use roder_api::inference::{
     AgentInferenceRequest, InferenceEngine, InferenceEvent, InferenceTurnContext,
     InstructionBundle, ModelSelection, OutputConfig, ReasoningConfig, RuntimeHints,
 };
+use roder_api::policy_mode::PolicyMode;
 use roder_api::session::{SessionMetadata, SessionStore, ThreadSnapshot};
 use roder_api::subagents::SubagentDefinition;
 use roder_api::tools::{ToolChoice, ToolRegistry};
@@ -28,6 +29,7 @@ pub struct RuntimeConfig {
     pub reasoning: Option<String>,
     pub auto_compact_token_limit: Option<u32>,
     pub workspace: Option<String>,
+    pub policy_mode: PolicyMode,
 }
 
 impl Default for RuntimeConfig {
@@ -38,6 +40,7 @@ impl Default for RuntimeConfig {
             reasoning: None,
             auto_compact_token_limit: None,
             workspace: None,
+            policy_mode: PolicyMode::Default,
         }
     }
 }
