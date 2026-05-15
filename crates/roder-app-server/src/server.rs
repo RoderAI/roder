@@ -407,6 +407,10 @@ impl AppServer {
                     description: spec.description.clone(),
                     argument_hint: spec.argument_hint.clone(),
                     source: spec.display_source(),
+                    model: spec.model.clone(),
+                    agent: spec.agent.clone(),
+                    has_shell_includes: !spec.include.shell.is_empty(),
+                    has_url_includes: !spec.include.urls.is_empty(),
                 })
                 .collect(),
         })

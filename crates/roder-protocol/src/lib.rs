@@ -206,6 +206,10 @@ pub struct CommandDescriptor {
     pub description: Option<String>,
     pub argument_hint: Option<String>,
     pub source: String,
+    pub model: Option<String>,
+    pub agent: Option<String>,
+    pub has_shell_includes: bool,
+    pub has_url_includes: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
