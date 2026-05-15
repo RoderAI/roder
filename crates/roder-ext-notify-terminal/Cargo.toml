@@ -1,0 +1,15 @@
+[package]
+name = "roder-ext-notify-terminal"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+async-trait.workspace = true
+roder-api.workspace = true
+semver.workspace = true
+tokio = { workspace = true, features = ["full"] }
+
+[dev-dependencies]
+serde_json.workspace = true
+time.workspace = true
