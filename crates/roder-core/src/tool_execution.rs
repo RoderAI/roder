@@ -103,6 +103,8 @@ impl Runtime {
         let result = executor.execute(ctx, tool_call).await?;
         self.emit_subagent_events(thread_id, turn_id, &parsed_args, &result)
             .await;
+        self.emit_policy_exit_plan_request(thread_id, turn_id, &result)
+            .await;
         let item = ToolResultRecord {
             id: result.id.clone(),
             name: Some(result.name.clone()),
@@ -233,6 +235,40 @@ impl Runtime {
             }))
             .await;
         }
+    }
+
+    async fn emit_policy_exit_plan_request(
+        &self,
+        thread_id: &ThreadId,
+        turn_id: &TurnId,
+        result: &ToolResult,
+    ) {
+        let Some(request) = result.data.get("policy_exit_plan_request") else {
+            return;
+        };
+        let Some(request_id) = request.get("request_id").and_then(Value::as_str) else {
+            return;
+        };
+        let target_mode = request
+            .get("target_mode")
+            .cloned()
+            .and_then(|value| serde_json::from_value(value).ok())
+            .unwrap_or(PolicyMode::Default);
+        let plan_summary = request
+            .get("summary")
+            .and_then(Value::as_str)
+            .map(str::to_string);
+        self.emit(RoderEvent::PolicyExitPlanRequested(
+            PolicyExitPlanRequested {
+                thread_id: thread_id.clone(),
+                turn_id: turn_id.clone(),
+                request_id: request_id.to_string(),
+                target_mode,
+                plan_summary,
+                timestamp: OffsetDateTime::now_utc(),
+            },
+        ))
+        .await;
     }
 }
 

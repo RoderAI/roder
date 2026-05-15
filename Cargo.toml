@@ -43,6 +43,7 @@ roder-ext-memory = { path = "crates/roder-ext-memory" }
 roder-ext-openai-responses = { path = "crates/roder-ext-openai-responses" }
 roder-ext-parallel-search = { path = "crates/roder-ext-parallel-search" }
 roder-ext-perplexity-search = { path = "crates/roder-ext-perplexity-search" }
+roder-ext-plan-mode = { path = "crates/roder-ext-plan-mode" }
 roder-ext-subagents = { path = "crates/roder-ext-subagents" }
 roder-ext-tavily-search = { path = "crates/roder-ext-tavily-search" }
 roder-ext-web-search = { path = "crates/roder-ext-web-search" }

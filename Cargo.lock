@@ -2167,6 +2167,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "roder-ext-plan-mode"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "roder-api",
+ "semver",
+ "serde",
+ "serde_json",
+ "tokio",
+ "uuid",
+]
+
+[[package]]
 name = "roder-ext-subagents"
 version = "0.1.0"
 dependencies = [
