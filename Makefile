@@ -29,6 +29,8 @@ build:
 install: build
 	$(INSTALL) -d "$(BINDIR)"
 	$(INSTALL) -m 0755 "$(BINARY)" "$(BINDIR)/gode"
+	cargo build --release -p roder-cli
+	$(INSTALL) -m 0755 "target/release/rode" "$(BINDIR)/rode"
 
 run: build
 	$(BINARY) $(CONFIG_FLAGS) --auto-approve --telemetry=$(TELEMETRY) --telemetry-endpoint "$(TELEMETRY_ENDPOINT)"

@@ -1,0 +1,14 @@
+[package]
+name = "roder-app-server"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+anyhow = "1.0"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+tokio = { version = "1.0", features = ["full"] }
+roder-api = { path = "../roder-api" }
+roder-protocol = { path = "../roder-protocol" }
+roder-core = { path = "../roder-core" }
+uuid = { version = "1.10", features = ["v4"] }
