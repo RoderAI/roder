@@ -168,6 +168,7 @@ mod runtime_tests {
     use roder_api::events::{EventEnvelope, RoderEvent};
     use roder_api::extension::{ExtensionRegistryBuilder, ToolProviderId};
     use roder_api::inference::ToolCallCompleted as InferenceToolCallCompleted;
+    use roder_api::policy_mode::PolicyMode;
     use roder_api::tools::{
         ToolCall, ToolContributor, ToolExecutionContext, ToolExecutor, ToolRegistry, ToolResult,
         ToolSpec,
@@ -190,6 +191,7 @@ mod runtime_tests {
             builder.build().unwrap(),
             RuntimeConfig {
                 workspace: Some(root.to_string_lossy().into_owned()),
+                policy_mode: PolicyMode::AcceptEdits,
                 ..RuntimeConfig::default()
             },
         )

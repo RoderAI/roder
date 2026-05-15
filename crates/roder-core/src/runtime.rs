@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::{collections::HashMap, sync::Arc};
 
 use anyhow::Context;
 use futures::StreamExt;
@@ -15,9 +15,9 @@ use roder_api::inference::{
 use roder_api::policy_mode::PolicyMode;
 use roder_api::session::{SessionMetadata, SessionStore, ThreadSnapshot};
 use roder_api::subagents::SubagentDefinition;
-use roder_api::tools::{ToolChoice, ToolRegistry};
+use roder_api::tools::{ToolCall, ToolChoice, ToolRegistry};
 use time::{Duration, OffsetDateTime};
-use tokio::sync::RwLock;
+use tokio::sync::{RwLock, oneshot};
 
 use crate::bus::EventBus;
 use crate::fake_provider::FakeInferenceEngine;
@@ -65,6 +65,22 @@ pub struct PendingPlanExit {
     pub expires_at: Option<OffsetDateTime>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PendingToolApproval {
+    pub thread_id: ThreadId,
+    pub turn_id: TurnId,
+    pub approval_id: String,
+    pub tool_id: String,
+    pub tool_name: String,
+    pub reason: Option<String>,
+    pub requested_at: OffsetDateTime,
+}
+
+struct PendingToolApprovalWaiter {
+    descriptor: PendingToolApproval,
+    sender: oneshot::Sender<bool>,
+}
+
 impl PendingPlanExit {
     pub fn new(
         thread_id: ThreadId,
@@ -99,6 +115,7 @@ pub struct Runtime {
     pub registry: ExtensionRegistry,
     config: RwLock<RuntimeConfig>,
     pending_plan_exit: RwLock<Option<PendingPlanExit>>,
+    pending_tool_approvals: RwLock<HashMap<String, PendingToolApprovalWaiter>>,
     pub(crate) session_store: Option<Arc<dyn SessionStore>>,
     pub(crate) tool_registry: ToolRegistry,
 }
@@ -126,6 +143,7 @@ impl Runtime {
             registry,
             config: RwLock::new(config),
             pending_plan_exit: RwLock::new(None),
+            pending_tool_approvals: RwLock::new(HashMap::new()),
             session_store,
             tool_registry,
         };
@@ -176,6 +194,82 @@ impl Runtime {
         self.emit_plan_exit_resolved(&current, false, self.status().await.policy_mode)
             .await;
         None
+    }
+
+    pub async fn pending_tool_approval(&self) -> Option<PendingToolApproval> {
+        self.pending_tool_approvals
+            .read()
+            .await
+            .values()
+            .next()
+            .map(|waiter| waiter.descriptor.clone())
+    }
+
+    pub async fn resolve_pending_tool_approval(
+        &self,
+        approval_id: &str,
+        approved: bool,
+    ) -> anyhow::Result<Option<PendingToolApproval>> {
+        let Some(waiter) = self
+            .pending_tool_approvals
+            .write()
+            .await
+            .remove(approval_id)
+        else {
+            return Ok(None);
+        };
+        let descriptor = waiter.descriptor;
+        let _ = waiter.sender.send(approved);
+        self.emit(RoderEvent::ApprovalResolved(ApprovalResolved {
+            thread_id: descriptor.thread_id.clone(),
+            turn_id: descriptor.turn_id.clone(),
+            approval_id: descriptor.approval_id.clone(),
+            tool_id: descriptor.tool_id.clone(),
+            tool_name: descriptor.tool_name.clone(),
+            approved,
+            timestamp: OffsetDateTime::now_utc(),
+        }))
+        .await;
+        Ok(Some(descriptor))
+    }
+
+    pub(crate) async fn request_tool_approval(
+        &self,
+        thread_id: &ThreadId,
+        turn_id: &TurnId,
+        call: &ToolCall,
+        reason: Option<String>,
+    ) -> anyhow::Result<bool> {
+        let approval_id = call.id.clone();
+        let requested_at = OffsetDateTime::now_utc();
+        let (sender, receiver) = oneshot::channel();
+        let descriptor = PendingToolApproval {
+            thread_id: thread_id.clone(),
+            turn_id: turn_id.clone(),
+            approval_id: approval_id.clone(),
+            tool_id: call.id.clone(),
+            tool_name: call.name.clone(),
+            reason: reason.clone(),
+            requested_at,
+        };
+        self.pending_tool_approvals.write().await.insert(
+            approval_id.clone(),
+            PendingToolApprovalWaiter {
+                descriptor: descriptor.clone(),
+                sender,
+            },
+        );
+        self.emit(RoderEvent::ApprovalRequested(ApprovalRequested {
+            thread_id: thread_id.clone(),
+            turn_id: turn_id.clone(),
+            approval_id,
+            tool_id: call.id.clone(),
+            tool_name: call.name.clone(),
+            reason,
+            timestamp: requested_at,
+        }))
+        .await;
+        Ok(receiver.await.unwrap_or(false))
     }
 
     pub async fn set_policy_mode(

@@ -68,6 +68,12 @@ impl AppServer {
                 })
                 .await
             }
+            "session/resolve_approval" => {
+                self.decode_and(req.params, |p| async move {
+                    self.handle_session_resolve_approval(p).await
+                })
+                .await
+            }
             "sessions/load" | "sessions/resume" => {
                 self.decode_and(
                     req.params,
@@ -289,9 +295,21 @@ impl AppServer {
                     requested_at: pending.requested_at,
                     expires_at: pending.expires_at,
                 });
+        let pending_tool_approval = self.runtime.pending_tool_approval().await.map(|pending| {
+            PendingToolApprovalDescriptor {
+                thread_id: pending.thread_id,
+                turn_id: pending.turn_id,
+                approval_id: pending.approval_id,
+                tool_id: pending.tool_id,
+                tool_name: pending.tool_name,
+                reason: pending.reason,
+                requested_at: pending.requested_at,
+            }
+        });
         Ok(serde_json::to_value(SessionGetResult {
             mode: cfg.policy_mode,
             pending_plan_exit: pending,
+            pending_tool_approval,
         })
         .unwrap())
     }
@@ -327,6 +345,19 @@ impl AppServer {
             mode: cfg.policy_mode,
         })
         .unwrap())
+    }
+
+    async fn handle_session_resolve_approval(
+        &self,
+        params: SessionResolveApprovalParams,
+    ) -> Result<serde_json::Value, JsonRpcError> {
+        let resolved = self
+            .runtime
+            .resolve_pending_tool_approval(&params.approval_id, params.approved)
+            .await
+            .map_err(internal_error)?
+            .is_some();
+        Ok(serde_json::to_value(SessionResolveApprovalResult { resolved }).unwrap())
     }
 
     async fn handle_session_load(

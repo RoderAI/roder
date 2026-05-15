@@ -119,6 +119,7 @@ pub struct SessionLoadResult {
 pub struct SessionGetResult {
     pub mode: PolicyMode,
     pub pending_plan_exit: Option<PendingPlanExitDescriptor>,
+    pub pending_tool_approval: Option<PendingToolApprovalDescriptor>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -130,6 +131,17 @@ pub struct PendingPlanExitDescriptor {
     pub plan_summary: Option<String>,
     pub requested_at: OffsetDateTime,
     pub expires_at: Option<OffsetDateTime>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PendingToolApprovalDescriptor {
+    pub thread_id: ThreadId,
+    pub turn_id: TurnId,
+    pub approval_id: String,
+    pub tool_id: String,
+    pub tool_name: String,
+    pub reason: Option<String>,
+    pub requested_at: OffsetDateTime,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -153,6 +165,17 @@ pub struct SessionExitPlanParams {
 pub struct SessionExitPlanResult {
     pub resolved: bool,
     pub mode: PolicyMode,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SessionResolveApprovalParams {
+    pub approval_id: String,
+    pub approved: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SessionResolveApprovalResult {
+    pub resolved: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

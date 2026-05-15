@@ -32,7 +32,8 @@ use roder_protocol::{
     JsonRpcRequest, JsonRpcResponse, PendingPlanExitDescriptor, ProviderDescriptor,
     ProviderSelectParams, ProviderSelectResult, ProvidersListResult, SessionExitPlanParams,
     SessionExitPlanResult, SessionGetResult, SessionLoadParams, SessionLoadResult,
-    SessionSetModeParams, SessionSetModeResult, SessionsListResult, StartTurnParams,
+    SessionResolveApprovalParams, SessionResolveApprovalResult, SessionSetModeParams,
+    SessionSetModeResult, SessionsListResult, StartTurnParams,
 };
 use tokio::process::Command;
 use tui_textarea::TextArea;
@@ -418,7 +419,7 @@ impl TuiApp {
                         break;
                     }
                 } else if self.diff_viewer.is_some() {
-                    self.handle_diff_key(key);
+                    self.handle_diff_key(key).await;
                 } else if self.show_palette {
                     self.handle_palette_key(key).await;
                 } else if palette_ui::is_palette_open_key(key) {
