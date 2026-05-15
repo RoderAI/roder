@@ -2,7 +2,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use roder_api::conversation::TurnItem;
-use roder_api::events::{EventEnvelope, ThreadId, TurnId};
+use roder_api::events::{EventEnvelope, RoderEvent, ThreadId, TurnId};
 use roder_api::session::{
     SessionMetadata, SessionStore, SessionStoreFactory, ThreadSnapshot, TurnRecord,
 };
@@ -99,7 +99,8 @@ impl SessionStore for JsonlSessionStore {
             }
         };
         let events = self.load_events(thread_id).await?;
-        let turns = self.read_turns(thread_id).await?;
+        let mut turns = self.read_turns(thread_id).await?;
+        project_turn_completion(&mut turns, &events);
         Ok(Some(ThreadSnapshot {
             metadata,
             events,
@@ -179,6 +180,20 @@ struct PersistedTurnItem {
     item: TurnItem,
 }
 
+fn project_turn_completion(turns: &mut [TurnRecord], events: &[EventEnvelope]) {
+    for envelope in events {
+        let (turn_id, timestamp) = match &envelope.event {
+            RoderEvent::TurnCompleted(event) => (&event.turn_id, event.timestamp),
+            RoderEvent::TurnFailed(event) => (&event.turn_id, event.timestamp),
+            RoderEvent::TurnInterrupted(event) => (&event.turn_id, event.timestamp),
+            _ => continue,
+        };
+        if let Some(turn) = turns.iter_mut().find(|turn| &turn.turn_id == turn_id) {
+            turn.completed_at = Some(timestamp);
+        }
+    }
+}
+
 pub struct JsonlSessionStoreFactory {
     pub base_path: PathBuf,
 }
@@ -192,5 +207,113 @@ impl SessionStoreFactory for JsonlSessionStoreFactory {
         Arc::new(JsonlSessionStore {
             base_path: self.base_path.clone(),
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use roder_api::conversation::{AssistantMessage, ConversationItem, UserMessage};
+    use roder_api::events::{EventSource, TurnCompleted};
+
+    #[tokio::test]
+    async fn load_session_projects_turn_items_and_completion() {
+        let base_path =
+            std::env::temp_dir().join(format!("roder-jsonl-session-test-{}", uuid::Uuid::new_v4()));
+        let store = JsonlSessionStore {
+            base_path: base_path.clone(),
+        };
+        let thread_id = "thread-a".to_string();
+        let turn_id = "turn-a".to_string();
+        let now = OffsetDateTime::UNIX_EPOCH;
+
+        store
+            .create_session(SessionMetadata {
+                thread_id: thread_id.clone(),
+                title: Some("Resume me".to_string()),
+                workspace: Some("/workspace".to_string()),
+                provider: Some("mock".to_string()),
+                model: Some("mock".to_string()),
+                created_at: now,
+                updated_at: now,
+                message_count: 0,
+            })
+            .await
+            .unwrap();
+        store
+            .append_turn_item(
+                &thread_id,
+                &turn_id,
+                &ConversationItem::UserMessage(UserMessage {
+                    text: "hello".to_string(),
+                }),
+            )
+            .await
+            .unwrap();
+        store
+            .append_turn_item(
+                &thread_id,
+                &turn_id,
+                &ConversationItem::AssistantMessage(AssistantMessage {
+                    text: "world".to_string(),
+                }),
+            )
+            .await
+            .unwrap();
+        store
+            .append_event(
+                &thread_id,
+                &EventEnvelope {
+                    event_id: "event-a".to_string(),
+                    seq: 1,
+                    timestamp: now,
+                    source: EventSource::Core,
+                    kind: "turn.completed".to_string(),
+                    thread_id: Some(thread_id.clone()),
+                    turn_id: Some(turn_id.clone()),
+                    event: RoderEvent::TurnCompleted(TurnCompleted {
+                        thread_id: thread_id.clone(),
+                        turn_id: turn_id.clone(),
+                        timestamp: now,
+                    }),
+                },
+            )
+            .await
+            .unwrap();
+
+        let snapshot = store.load_session(&thread_id).await.unwrap().unwrap();
+
+        assert_eq!(
+            snapshot.metadata.unwrap().title.as_deref(),
+            Some("Resume me")
+        );
+        assert_eq!(snapshot.events.len(), 1);
+        assert_eq!(snapshot.turns.len(), 1);
+        assert_eq!(snapshot.turns[0].turn_id, turn_id);
+        assert_eq!(snapshot.turns[0].items.len(), 2);
+        assert_eq!(snapshot.turns[0].completed_at, Some(now));
+
+        let _ = fs::remove_dir_all(base_path).await;
+    }
+
+    #[tokio::test]
+    async fn load_missing_session_returns_none() {
+        let base_path = std::env::temp_dir().join(format!(
+            "roder-jsonl-missing-session-test-{}",
+            uuid::Uuid::new_v4()
+        ));
+        let store = JsonlSessionStore {
+            base_path: base_path.clone(),
+        };
+
+        assert!(
+            store
+                .load_session(&"missing".to_string())
+                .await
+                .unwrap()
+                .is_none()
+        );
+
+        let _ = fs::remove_dir_all(base_path).await;
     }
 }

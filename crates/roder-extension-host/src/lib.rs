@@ -2,6 +2,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use futures::stream;
+use roder_api::catalog::{PROVIDER_CODEX, PROVIDER_MOCK, models_for_provider};
 use roder_api::extension::{
     ExtensionManifest, ExtensionRegistry, ExtensionRegistryBuilder, ProvidedService, RoderExtension,
 };
@@ -28,8 +29,12 @@ pub fn build_default_registry(config: DefaultRegistryConfig) -> anyhow::Result<E
     builder.install(FakeProviderExtension)?;
 
     if let Some(openai_key) = config.openai_api_key {
-        builder.install(OpenAiChatCompletionsExtension::new(openai_key.clone()))?;
-        builder.install(OpenAiResponsesExtension::new(openai_key))?;
+        builder.install(OpenAiResponsesExtension::new(openai_key.clone()))?;
+        builder.install(OpenAiResponsesExtension::new_with_provider_id(
+            openai_key.clone(),
+            PROVIDER_CODEX,
+        ))?;
+        builder.install(OpenAiChatCompletionsExtension::new(openai_key))?;
     }
     if let Some(anthropic_key) = config.anthropic_api_key {
         builder.install(AnthropicExtension::new(anthropic_key))?;
@@ -52,14 +57,14 @@ struct FakeProviderExtension;
 impl RoderExtension for FakeProviderExtension {
     fn manifest(&self) -> ExtensionManifest {
         ExtensionManifest {
-            id: "roder-ext-fake-provider".to_string(),
-            name: "Fake Provider".to_string(),
+            id: "roder-ext-mock-provider".to_string(),
+            name: "Mock Provider".to_string(),
             version: Version::new(0, 1, 0),
             api_version: "0.1.0".to_string(),
-            description: Some("Deterministic local provider for tests and no-key runs".to_string()),
-            provides: vec![ProvidedService::InferenceEngine(
-                "fake-provider".to_string(),
-            )],
+            description: Some(
+                "Deterministic local provider for tests and offline development".to_string(),
+            ),
+            provides: vec![ProvidedService::InferenceEngine(PROVIDER_MOCK.to_string())],
             required_capabilities: vec![],
         }
     }
@@ -75,7 +80,7 @@ struct FakeInferenceEngine;
 #[async_trait::async_trait]
 impl InferenceEngine for FakeInferenceEngine {
     fn id(&self) -> roder_api::extension::InferenceEngineId {
-        "fake-provider".to_string()
+        PROVIDER_MOCK.to_string()
     }
 
     fn capabilities(&self) -> InferenceCapabilities {
@@ -86,11 +91,7 @@ impl InferenceEngine for FakeInferenceEngine {
         &self,
         _ctx: InferenceProviderContext<'_>,
     ) -> anyhow::Result<Vec<ModelDescriptor>> {
-        Ok(vec![ModelDescriptor {
-            id: "fake-model".to_string(),
-            name: "Fake Model".to_string(),
-            context_window: Some(128_000),
-        }])
+        Ok(models_for_provider(PROVIDER_MOCK, true))
     }
 
     async fn stream_turn(
@@ -113,5 +114,40 @@ impl InferenceEngine for FakeInferenceEngine {
                 provider_response_id: None,
             })),
         ])))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use roder_api::catalog::{PROVIDER_ANTHROPIC, PROVIDER_GEMINI, PROVIDER_OPENAI};
+
+    #[test]
+    fn default_registry_without_keys_has_mock_provider() {
+        let registry = build_default_registry(DefaultRegistryConfig::default()).unwrap();
+        assert!(registry.inference_engine(PROVIDER_MOCK).is_some());
+    }
+
+    #[test]
+    fn default_registry_with_keys_has_gode_provider_ids() {
+        let registry = build_default_registry(DefaultRegistryConfig {
+            openai_api_key: Some("openai".to_string()),
+            anthropic_api_key: Some("anthropic".to_string()),
+            gemini_api_key: Some("gemini".to_string()),
+            session_dir: None,
+        })
+        .unwrap();
+        for provider in [
+            PROVIDER_MOCK,
+            PROVIDER_OPENAI,
+            PROVIDER_CODEX,
+            PROVIDER_ANTHROPIC,
+            PROVIDER_GEMINI,
+        ] {
+            assert!(
+                registry.inference_engine(provider).is_some(),
+                "missing {provider}"
+            );
+        }
     }
 }

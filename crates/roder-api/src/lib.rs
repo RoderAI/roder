@@ -1,3 +1,4 @@
+pub mod catalog;
 pub mod context;
 pub mod conversation;
 pub mod events;
@@ -7,6 +8,7 @@ pub mod memory;
 pub mod session;
 pub mod tools;
 
+pub use catalog::*;
 pub use context::*;
 pub use conversation::*;
 pub use extension::*;

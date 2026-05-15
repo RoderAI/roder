@@ -18,7 +18,7 @@ pub struct ProviderConfig {
 
 pub fn load_config() -> anyhow::Result<Config> {
     let mut config_path = dirs::home_dir().unwrap_or_else(|| PathBuf::from("."));
-    config_path.push(".rode");
+    config_path.push(".roder");
     config_path.push("config.toml");
 
     if !config_path.exists() {

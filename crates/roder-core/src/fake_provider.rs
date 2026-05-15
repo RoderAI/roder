@@ -1,4 +1,5 @@
 use futures::stream;
+use roder_api::catalog::{PROVIDER_MOCK, models_for_provider};
 use roder_api::extension::InferenceEngineId;
 use roder_api::inference::*;
 
@@ -7,7 +8,7 @@ pub struct FakeInferenceEngine;
 #[async_trait::async_trait]
 impl InferenceEngine for FakeInferenceEngine {
     fn id(&self) -> InferenceEngineId {
-        "fake-provider".to_string()
+        PROVIDER_MOCK.to_string()
     }
 
     fn capabilities(&self) -> InferenceCapabilities {
@@ -18,11 +19,7 @@ impl InferenceEngine for FakeInferenceEngine {
         &self,
         _ctx: InferenceProviderContext<'_>,
     ) -> anyhow::Result<Vec<ModelDescriptor>> {
-        Ok(vec![ModelDescriptor {
-            id: "fake-model".to_string(),
-            name: "Fake Model".to_string(),
-            context_window: Some(128_000),
-        }])
+        Ok(models_for_provider(PROVIDER_MOCK, true))
     }
 
     async fn stream_turn(
