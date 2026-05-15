@@ -224,6 +224,21 @@ pub struct FileChanged {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FileChangePreviewReady {
+    pub thread_id: ThreadId,
+    pub turn_id: TurnId,
+    pub tool_id: String,
+    pub tool_name: String,
+    pub path: String,
+    pub change_type: String,
+    pub before: Option<String>,
+    pub after: String,
+    pub supports_partial: bool,
+    #[serde(with = "time::serde::rfc3339")]
+    pub timestamp: OffsetDateTime,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TurnItemAppended {
     pub thread_id: ThreadId,
     pub turn_id: TurnId,
@@ -284,6 +299,7 @@ pub enum RoderEvent {
     SubagentToolCall(SubagentToolCall),
     SubagentCompleted(SubagentCompleted),
     SubagentFailed(SubagentFailed),
+    FileChangePreviewReady(FileChangePreviewReady),
     FileChanged(FileChanged),
     TurnItemAppended(TurnItemAppended),
     TurnCompleted(TurnCompleted),
@@ -319,6 +335,7 @@ impl RoderEvent {
             RoderEvent::SubagentToolCall(_) => "subagent.tool_call",
             RoderEvent::SubagentCompleted(_) => "subagent.completed",
             RoderEvent::SubagentFailed(_) => "subagent.failed",
+            RoderEvent::FileChangePreviewReady(_) => "file.change_preview_ready",
             RoderEvent::FileChanged(_) => "file.changed",
             RoderEvent::TurnItemAppended(_) => "turn.item_appended",
             RoderEvent::TurnCompleted(_) => "turn.completed",
@@ -340,6 +357,7 @@ impl RoderEvent {
             | RoderEvent::SubagentToolCall(_)
             | RoderEvent::SubagentCompleted(_)
             | RoderEvent::SubagentFailed(_) => EventSource::Extension,
+            RoderEvent::FileChangePreviewReady(_) => EventSource::Tool,
             RoderEvent::ExtensionRegistered(_) => EventSource::Extension,
             _ => EventSource::Core,
         }
@@ -370,6 +388,7 @@ impl RoderEvent {
             RoderEvent::SubagentToolCall(e) => Some(&e.thread_id),
             RoderEvent::SubagentCompleted(e) => Some(&e.thread_id),
             RoderEvent::SubagentFailed(e) => Some(&e.thread_id),
+            RoderEvent::FileChangePreviewReady(e) => Some(&e.thread_id),
             RoderEvent::FileChanged(e) => Some(&e.thread_id),
             RoderEvent::TurnItemAppended(e) => Some(&e.thread_id),
             RoderEvent::TurnCompleted(e) => Some(&e.thread_id),
@@ -402,6 +421,7 @@ impl RoderEvent {
             RoderEvent::SubagentToolCall(e) => Some(&e.turn_id),
             RoderEvent::SubagentCompleted(e) => Some(&e.turn_id),
             RoderEvent::SubagentFailed(e) => Some(&e.turn_id),
+            RoderEvent::FileChangePreviewReady(e) => Some(&e.turn_id),
             RoderEvent::FileChanged(e) => Some(&e.turn_id),
             RoderEvent::TurnItemAppended(e) => Some(&e.turn_id),
             RoderEvent::TurnCompleted(e) => Some(&e.turn_id),
@@ -594,6 +614,52 @@ mod tests {
             RoderEvent::SubagentStarted(started) => {
                 assert_eq!(started.parent_thread_id, "parent-thread");
                 assert_eq!(started.parent_turn_id, "parent-turn");
+            }
+            other => panic!("unexpected event: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn file_change_preview_event_round_trips_public_metadata() {
+        let event = RoderEvent::FileChangePreviewReady(FileChangePreviewReady {
+            thread_id: "thread-a".to_string(),
+            turn_id: "turn-a".to_string(),
+            tool_id: "tool-a".to_string(),
+            tool_name: "edit".to_string(),
+            path: "src/lib.rs".to_string(),
+            change_type: "modify".to_string(),
+            before: Some("old\n".to_string()),
+            after: "new\n".to_string(),
+            supports_partial: false,
+            timestamp: OffsetDateTime::UNIX_EPOCH,
+        });
+        let envelope = EventEnvelope {
+            event_id: "event-file-preview".to_string(),
+            seq: 8,
+            timestamp: OffsetDateTime::UNIX_EPOCH,
+            source: event.source(),
+            kind: event.kind().to_string(),
+            thread_id: event.thread_id().cloned(),
+            turn_id: event.turn_id().cloned(),
+            event,
+        };
+
+        let serialized = serde_json::to_string(&envelope).unwrap();
+        let round_trip: EventEnvelope = serde_json::from_str(&serialized).unwrap();
+
+        assert_eq!(round_trip.kind, "file.change_preview_ready");
+        assert_eq!(round_trip.source, EventSource::Tool);
+        assert_eq!(round_trip.thread_id.as_deref(), Some("thread-a"));
+        assert_eq!(round_trip.turn_id.as_deref(), Some("turn-a"));
+        match round_trip.event {
+            RoderEvent::FileChangePreviewReady(preview) => {
+                assert_eq!(preview.tool_id, "tool-a");
+                assert_eq!(preview.tool_name, "edit");
+                assert_eq!(preview.path, "src/lib.rs");
+                assert_eq!(preview.change_type, "modify");
+                assert_eq!(preview.before.as_deref(), Some("old\n"));
+                assert_eq!(preview.after, "new\n");
+                assert!(!preview.supports_partial);
             }
             other => panic!("unexpected event: {other:?}"),
         }
