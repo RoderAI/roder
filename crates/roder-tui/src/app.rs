@@ -44,7 +44,8 @@ use tui_textarea::TextArea;
 use crate::config::TuiAppConfig;
 use crate::diff::{DiffViewerState, render::DiffTheme};
 use crate::mouse::{
-    DragSelectionOutcome, DragSelectionState, SelectedText, region_rect_from_ratatui,
+    DragSelectionOutcome, DragSelectionState, MouseCaptureController, MouseCaptureEvent,
+    ScrollState, ScrollTarget, SelectedText, region_rect_from_ratatui,
 };
 use crate::palette::{PaletteEntry, render::PaletteTheme};
 use crate::status_line::{
@@ -346,6 +347,8 @@ pub struct TuiApp {
     pending_plan_exit: Option<PendingPlanExitDescriptor>,
     mouse_feedback: mouse_ui::MouseFeedbackState,
     drag_selection: DragSelectionState,
+    transcript_scroll: ScrollState,
+    mouse_capture: MouseCaptureController,
     transcript_fold: TranscriptFoldState,
     transcript_context_menu: Option<TranscriptContextMenu>,
     terminal_area: roder_api::interactive::RegionRect,
@@ -432,6 +435,8 @@ impl TuiApp {
             pending_plan_exit: policy_state.and_then(|state| state.pending_plan_exit),
             mouse_feedback: mouse_ui::MouseFeedbackState::default(),
             drag_selection: DragSelectionState::default(),
+            transcript_scroll: ScrollState::default(),
+            mouse_capture: MouseCaptureController::default(),
             transcript_fold: TranscriptFoldState::default(),
             transcript_context_menu: None,
             terminal_area: roder_api::interactive::RegionRect {
@@ -455,6 +460,9 @@ impl TuiApp {
 
         loop {
             self.animation_frame = self.animation_frame.wrapping_add(1);
+            if let Some(event) = self.mouse_capture.tick(self.animation_frame) {
+                self.push_event(mouse_capture_event_label(event).to_string());
+            }
             terminal.draw(|f| self.render(f))?;
 
             if event::poll(Duration::from_millis(50))? {
@@ -995,6 +1003,17 @@ impl TuiApp {
         };
         let transcript_index = header_index + 1;
         let transcript_area = chunks[transcript_index];
+        self.transcript_scroll.set_target(if self.show_palette {
+            ScrollTarget::Palette
+        } else if self.diff_viewer.is_some() {
+            ScrollTarget::Diff
+        } else {
+            ScrollTarget::Transcript
+        });
+        self.transcript_scroll.set_bounds(
+            transcript_content_rows(self.visible_transcript_messages().len()),
+            usize::from(transcript_area.height),
+        );
         f.render_widget(self.header(area.width), chunks[header_index]);
         f.render_widget(self.transcript(), chunks[transcript_index]);
 
@@ -1011,7 +1030,7 @@ impl TuiApp {
         let composer_area = chunks[composer_index];
         let footer_area = chunks[composer_index + 1];
         let transcript_regions = transcript_regions(
-            &self.visible_transcript_messages(),
+            &self.scrolled_transcript_messages(),
             &self.thread_id,
             self.active_turn_id.as_deref().unwrap_or("tui"),
             region_rect_from_ratatui(transcript_area),
@@ -1082,7 +1101,7 @@ impl TuiApp {
     }
 
     fn transcript(&self) -> Paragraph<'static> {
-        let visible_messages = self.visible_transcript_messages();
+        let visible_messages = self.scrolled_transcript_messages();
         let text = if visible_messages.is_empty() {
             Text::from(vec![
                 Line::raw(""),
@@ -1108,6 +1127,14 @@ impl TuiApp {
             .iter()
             .enumerate()
             .map(|(idx, message)| self.transcript_fold.visible_message(idx, message))
+            .collect()
+    }
+
+    fn scrolled_transcript_messages(&self) -> Vec<String> {
+        let skip_messages = self.transcript_scroll.offset() / 2;
+        self.visible_transcript_messages()
+            .into_iter()
+            .skip(skip_messages)
             .collect()
     }
 
@@ -1293,6 +1320,13 @@ impl TuiApp {
         for event in events {
             self.handle_drag_selection_event(&event);
             match event {
+                InteractiveEvent::Scroll {
+                    delta_lines,
+                    modifiers,
+                    ..
+                } => {
+                    self.handle_scroll_event(delta_lines, modifiers);
+                }
                 InteractiveEvent::Click {
                     region,
                     button: MouseButton::Left,
@@ -1307,6 +1341,23 @@ impl TuiApp {
                 }
                 _ => {}
             }
+        }
+    }
+
+    fn handle_scroll_event(
+        &mut self,
+        delta_lines: i16,
+        modifiers: roder_api::interactive::KeyModifiers,
+    ) {
+        let outcome = self.transcript_scroll.scroll(delta_lines, modifiers);
+        if outcome.at_boundary {
+            if let Some(event) = self
+                .mouse_capture
+                .release_for_boundary_scroll(self.animation_frame)
+            {
+                self.push_event(mouse_capture_event_label(event).to_string());
+            }
+            self.push_event(format!("scroll boundary: {:?}", outcome.target));
         }
     }
 
@@ -1677,6 +1728,10 @@ fn event_log_height(show_event_log: bool, event_count: usize) -> u16 {
     } else {
         0
     }
+}
+
+fn transcript_content_rows(message_count: usize) -> usize {
+    message_count.saturating_mul(2)
 }
 
 fn command_menu_height(open: bool) -> u16 {
@@ -2061,6 +2116,13 @@ fn interactive_region_id(event: &InteractiveEvent) -> Option<&str> {
         | InteractiveEvent::DragUpdate { region, .. }
         | InteractiveEvent::DragEnd { region, .. } => Some(region),
         InteractiveEvent::Scroll { region, .. } => region.as_deref(),
+    }
+}
+
+fn mouse_capture_event_label(event: MouseCaptureEvent) -> &'static str {
+    match event {
+        MouseCaptureEvent::CaptureEnabled => "mouse capture enabled",
+        MouseCaptureEvent::CaptureDisabled => "mouse capture disabled",
     }
 }
 
