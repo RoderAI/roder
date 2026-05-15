@@ -1,14 +1,15 @@
 mod commands;
 mod dialog;
 mod diff_ui;
+mod mouse_ui;
 mod palette_ui;
 
 use std::collections::BTreeSet;
 use std::io;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use crossterm::{
-    event::{self, Event, KeyCode, KeyModifiers},
+    event::{self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyModifiers},
     execute,
     terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
 };
@@ -335,6 +336,7 @@ pub struct TuiApp {
     status_git: Option<GitSnapshot>,
     policy_mode: PolicyMode,
     pending_plan_exit: Option<PendingPlanExitDescriptor>,
+    mouse_feedback: mouse_ui::MouseFeedbackState,
     theme: Theme,
 }
 
@@ -416,6 +418,7 @@ impl TuiApp {
                 .map(|state| state.mode)
                 .unwrap_or_default(),
             pending_plan_exit: policy_state.and_then(|state| state.pending_plan_exit),
+            mouse_feedback: mouse_ui::MouseFeedbackState::default(),
             theme,
         })
     }
@@ -423,7 +426,7 @@ impl TuiApp {
     pub async fn run(&mut self) -> anyhow::Result<()> {
         enable_raw_mode()?;
         let mut stdout = io::stdout();
-        execute!(stdout, EnterAlternateScreen)?;
+        execute!(stdout, EnterAlternateScreen, EnableMouseCapture)?;
         let backend = CrosstermBackend::new(stdout);
         let mut terminal = Terminal::new(backend)?;
 
@@ -433,124 +436,135 @@ impl TuiApp {
             self.animation_frame = self.animation_frame.wrapping_add(1);
             terminal.draw(|f| self.render(f))?;
 
-            if event::poll(Duration::from_millis(50))?
-                && let Event::Key(key) = event::read()?
-            {
-                if self.confirm_dialog.is_some() {
-                    if self.handle_confirm_key(key).await {
-                        break;
-                    }
-                } else if self.diff_viewer.is_some() {
-                    self.handle_diff_key(key).await;
-                } else if self.show_palette {
-                    self.handle_palette_key(key).await;
-                } else if palette_ui::is_palette_open_key(key) {
-                    self.open_palette().await;
-                } else if key.modifiers.contains(KeyModifiers::CONTROL)
-                    && key.code == KeyCode::Char('p')
-                {
-                    if self.show_provider_popup {
-                        self.show_provider_popup = false;
-                    } else {
-                        self.open_provider_popup().await;
-                    }
-                } else if key.modifiers.contains(KeyModifiers::CONTROL)
-                    && key.code == KeyCode::Char('l')
-                {
-                    self.show_event_log = !self.show_event_log;
-                    self.push_event(if self.show_event_log {
-                        "event log shown".to_string()
-                    } else {
-                        "event log hidden".to_string()
-                    });
-                } else if key.modifiers.contains(KeyModifiers::CONTROL)
-                    && key.code == KeyCode::Char('c')
-                {
-                    self.confirm_dialog = Some(ConfirmDialog::Exit);
-                } else if key.code == KeyCode::BackTab {
-                    self.cycle_policy_mode().await;
-                } else if self.pending_plan_exit.is_some()
-                    && matches!(key.code, KeyCode::Char('y') | KeyCode::Char('Y'))
-                {
-                    self.resolve_pending_plan_exit(true).await;
-                } else if self.pending_plan_exit.is_some()
-                    && matches!(key.code, KeyCode::Char('n') | KeyCode::Char('N'))
-                {
-                    self.resolve_pending_plan_exit(false).await;
-                } else if self.show_provider_popup {
-                    match key.code {
-                        KeyCode::Esc => self.close_or_back_provider_popup(),
-                        KeyCode::Up => self.select_previous_provider_menu_item(),
-                        KeyCode::Down => self.select_next_provider_menu_item(),
-                        KeyCode::Enter => self.select_current_provider_menu_item().await,
-                        KeyCode::Backspace => {
-                            self.provider_menu_filter.pop();
-                            self.clamp_provider_menu_selection();
-                        }
-                        KeyCode::Char(c) if !key.modifiers.contains(KeyModifiers::CONTROL) => {
-                            self.provider_menu_filter.push(c);
-                            self.clamp_provider_menu_selection();
-                        }
-                        _ => {}
-                    }
-                } else if self.command_menu_open() {
-                    match key.code {
-                        KeyCode::Up => self.move_slash_selection(-1),
-                        KeyCode::Down => self.move_slash_selection(1),
-                        KeyCode::Tab => self.accept_slash_completion(),
-                        KeyCode::Enter => {
-                            if key.modifiers.contains(KeyModifiers::SHIFT) {
-                                self.composer.insert_newline();
-                                continue;
+            if event::poll(Duration::from_millis(50))? {
+                match event::read()? {
+                    Event::Key(key) => {
+                        if self.confirm_dialog.is_some() {
+                            if self.handle_confirm_key(key).await {
+                                break;
                             }
-                            let text = composer_text(&self.composer).trim().to_string();
-                            self.composer = composer_textarea(self.theme);
-                            if text.is_empty() {
-                                continue;
-                            }
-                            if self.try_run_slash_command(&text).await {
-                                continue;
-                            }
-                            self.submit_user_text(text).await;
-                        }
-                        _ => {
-                            self.composer.input(key);
-                            self.clamp_slash_selection();
-                        }
-                    }
-                } else {
-                    match key.code {
-                        KeyCode::Enter => {
-                            if key.modifiers.contains(KeyModifiers::SHIFT) {
-                                self.composer.insert_newline();
-                                continue;
-                            }
-                            let text = composer_text(&self.composer).trim().to_string();
-                            self.composer = composer_textarea(self.theme);
-                            if text.is_empty() {
-                                continue;
-                            }
-                            if text.starts_with('/') && self.try_run_slash_command(&text).await {
-                                continue;
-                            }
-                            if let Some(command) = shell_command_from_input(&text) {
-                                self.run_shell_command(command).await;
-                                continue;
-                            }
-                            self.submit_user_text(text).await;
-                        }
-                        KeyCode::Esc => {
-                            self.confirm_dialog = if self.active_turn_id.is_some() {
-                                Some(ConfirmDialog::Interrupt)
+                        } else if self.diff_viewer.is_some() {
+                            self.handle_diff_key(key).await;
+                        } else if self.show_palette {
+                            self.handle_palette_key(key).await;
+                        } else if palette_ui::is_palette_open_key(key) {
+                            self.open_palette().await;
+                        } else if key.modifiers.contains(KeyModifiers::CONTROL)
+                            && key.code == KeyCode::Char('p')
+                        {
+                            if self.show_provider_popup {
+                                self.show_provider_popup = false;
                             } else {
-                                Some(ConfirmDialog::Exit)
-                            };
-                        }
-                        _ => {
-                            self.composer.input(key);
-                            self.clamp_slash_selection();
+                                self.open_provider_popup().await;
+                            }
+                        } else if key.modifiers.contains(KeyModifiers::CONTROL)
+                            && key.code == KeyCode::Char('l')
+                        {
+                            self.show_event_log = !self.show_event_log;
+                            self.push_event(if self.show_event_log {
+                                "event log shown".to_string()
+                            } else {
+                                "event log hidden".to_string()
+                            });
+                        } else if key.modifiers.contains(KeyModifiers::CONTROL)
+                            && key.code == KeyCode::Char('c')
+                        {
+                            self.confirm_dialog = Some(ConfirmDialog::Exit);
+                        } else if key.code == KeyCode::BackTab {
+                            self.cycle_policy_mode().await;
+                        } else if self.pending_plan_exit.is_some()
+                            && matches!(key.code, KeyCode::Char('y') | KeyCode::Char('Y'))
+                        {
+                            self.resolve_pending_plan_exit(true).await;
+                        } else if self.pending_plan_exit.is_some()
+                            && matches!(key.code, KeyCode::Char('n') | KeyCode::Char('N'))
+                        {
+                            self.resolve_pending_plan_exit(false).await;
+                        } else if self.show_provider_popup {
+                            match key.code {
+                                KeyCode::Esc => self.close_or_back_provider_popup(),
+                                KeyCode::Up => self.select_previous_provider_menu_item(),
+                                KeyCode::Down => self.select_next_provider_menu_item(),
+                                KeyCode::Enter => self.select_current_provider_menu_item().await,
+                                KeyCode::Backspace => {
+                                    self.provider_menu_filter.pop();
+                                    self.clamp_provider_menu_selection();
+                                }
+                                KeyCode::Char(c)
+                                    if !key.modifiers.contains(KeyModifiers::CONTROL) =>
+                                {
+                                    self.provider_menu_filter.push(c);
+                                    self.clamp_provider_menu_selection();
+                                }
+                                _ => {}
+                            }
+                        } else if self.command_menu_open() {
+                            match key.code {
+                                KeyCode::Up => self.move_slash_selection(-1),
+                                KeyCode::Down => self.move_slash_selection(1),
+                                KeyCode::Tab => self.accept_slash_completion(),
+                                KeyCode::Enter => {
+                                    if key.modifiers.contains(KeyModifiers::SHIFT) {
+                                        self.composer.insert_newline();
+                                        continue;
+                                    }
+                                    let text = composer_text(&self.composer).trim().to_string();
+                                    self.composer = composer_textarea(self.theme);
+                                    if text.is_empty() {
+                                        continue;
+                                    }
+                                    if self.try_run_slash_command(&text).await {
+                                        continue;
+                                    }
+                                    self.submit_user_text(text).await;
+                                }
+                                _ => {
+                                    self.composer.input(key);
+                                    self.clamp_slash_selection();
+                                }
+                            }
+                        } else {
+                            match key.code {
+                                KeyCode::Enter => {
+                                    if key.modifiers.contains(KeyModifiers::SHIFT) {
+                                        self.composer.insert_newline();
+                                        continue;
+                                    }
+                                    let text = composer_text(&self.composer).trim().to_string();
+                                    self.composer = composer_textarea(self.theme);
+                                    if text.is_empty() {
+                                        continue;
+                                    }
+                                    if text.starts_with('/')
+                                        && self.try_run_slash_command(&text).await
+                                    {
+                                        continue;
+                                    }
+                                    if let Some(command) = shell_command_from_input(&text) {
+                                        self.run_shell_command(command).await;
+                                        continue;
+                                    }
+                                    self.submit_user_text(text).await;
+                                }
+                                KeyCode::Esc => {
+                                    self.confirm_dialog = if self.active_turn_id.is_some() {
+                                        Some(ConfirmDialog::Interrupt)
+                                    } else {
+                                        Some(ConfirmDialog::Exit)
+                                    };
+                                }
+                                _ => {
+                                    self.composer.input(key);
+                                    self.clamp_slash_selection();
+                                }
+                            }
                         }
                     }
+                    Event::Mouse(mouse) => {
+                        self.mouse_feedback
+                            .handle_mouse_event(mouse, Instant::now());
+                    }
+                    _ => {}
                 }
             }
 
@@ -609,7 +623,11 @@ impl TuiApp {
         }
 
         disable_raw_mode()?;
-        execute!(terminal.backend_mut(), LeaveAlternateScreen)?;
+        execute!(
+            terminal.backend_mut(),
+            DisableMouseCapture,
+            LeaveAlternateScreen
+        )?;
         terminal.show_cursor()?;
 
         Ok(())
@@ -956,6 +974,15 @@ impl TuiApp {
             f.render_widget(self.command_menu(), chunks[composer_index]);
             composer_index += 1;
         }
+        let composer_area = chunks[composer_index];
+        let footer_area = chunks[composer_index + 1];
+        self.mouse_feedback
+            .set_frame_regions(composer_area, footer_area);
+        let composer_border_style = self
+            .mouse_feedback
+            .style_for_region(mouse_ui::COMPOSER_REGION_ID, self.theme.border());
+        self.composer
+            .set_block(composer_block(self.theme, composer_border_style));
         f.render_widget(&self.composer, chunks[composer_index]);
         f.render_widget(self.footer(area.width), chunks[composer_index + 1]);
 
@@ -1121,8 +1148,12 @@ impl TuiApp {
             git: self.status_git.as_ref(),
             mcp,
         };
+        let mut segments = self.status_segments.clone();
+        if let Some(segment) = self.mouse_feedback.status_segment() {
+            segments.push(segment);
+        }
         render_status_line(
-            &self.status_segments,
+            &segments,
             &ctx,
             width,
             &self.status_config,
@@ -1483,13 +1514,7 @@ fn command_menu_height(open: bool) -> u16 {
 
 fn composer_textarea(theme: Theme) -> TextArea<'static> {
     let mut composer = TextArea::default();
-    composer.set_block(
-        Block::default()
-            .borders(Borders::ALL)
-            .border_type(BorderType::Rounded)
-            .border_style(theme.border())
-            .title(Span::styled(" composer ", theme.muted())),
-    );
+    composer.set_block(composer_block(theme, theme.border()));
     composer.set_style(theme.text());
     composer.set_cursor_line_style(theme.text());
     composer.set_cursor_style(
@@ -1500,6 +1525,14 @@ fn composer_textarea(theme: Theme) -> TextArea<'static> {
     composer.set_placeholder_text("Ask Roder to work on this repo");
     composer.set_placeholder_style(theme.muted().add_modifier(Modifier::ITALIC));
     composer
+}
+
+fn composer_block(theme: Theme, border_style: Style) -> Block<'static> {
+    Block::default()
+        .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
+        .border_style(border_style)
+        .title(Span::styled(" composer ", theme.muted()))
 }
 
 fn composer_text(composer: &TextArea<'_>) -> String {
