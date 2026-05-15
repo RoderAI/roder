@@ -2163,6 +2163,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "roder-ext-subagents"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "futures",
+ "roder-api",
+ "semver",
+ "serde",
+ "serde_json",
+ "time",
+ "tokio",
+ "uuid",
+]
+
+[[package]]
 name = "roder-ext-tavily-search"
 version = "0.1.0"
 dependencies = [
