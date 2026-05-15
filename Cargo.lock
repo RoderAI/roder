@@ -1956,6 +1956,7 @@ dependencies = [
  "roder-ext-memory",
  "roder-ext-openai-responses",
  "roder-extension-host",
+ "roder-protocol",
  "roder-tui",
  "serde",
  "serde_json",
@@ -2124,6 +2125,21 @@ dependencies = [
  "futures",
  "reqwest",
  "roder-api",
+ "semver",
+ "serde",
+ "serde_json",
+ "tokio",
+]
+
+[[package]]
+name = "roder-ext-parallel-search"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "reqwest",
+ "roder-api",
+ "roder-web-search",
  "semver",
  "serde",
  "serde_json",
