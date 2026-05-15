@@ -108,7 +108,7 @@ func TestModelSummarizesReadFileToolOutput(t *testing.T) {
 	if len(got.messages) != 1 {
 		t.Fatalf("messages = %#v", got.messages)
 	}
-	if got.messages[0].Body != "read internal/godex/tools/registry.go" {
+	if got.messages[0].Body != "succeeded\nread internal/godex/tools/registry.go" {
 		t.Fatalf("tool body = %q", got.messages[0].Body)
 	}
 	if strings.Contains(got.messages[0].Body, "package main") {
@@ -142,7 +142,7 @@ func TestModelUpdatesToolTimelineEntryForSameCall(t *testing.T) {
 
 	updated, _ := model.Update(eventMsg{Event: request})
 	running := updated.(Model)
-	if len(running.messages) != 1 || running.messages[0].Body != "running" {
+	if len(running.messages) != 1 || running.messages[0].Body != "requested\nread README.md" {
 		t.Fatalf("tool request should render running row immediately: %#v", running.messages)
 	}
 	updated, _ = updated.Update(eventMsg{Event: completed})
@@ -151,7 +151,7 @@ func TestModelUpdatesToolTimelineEntryForSameCall(t *testing.T) {
 	if len(got.messages) != 1 {
 		t.Fatalf("tool request and completion should render one row: %#v", got.messages)
 	}
-	if got.messages[0].Role != viewmodel.RoleTool || got.messages[0].Title != "read_file" || got.messages[0].Body != "read README.md" {
+	if got.messages[0].Role != viewmodel.RoleTool || got.messages[0].Title != "read_file" || got.messages[0].Body != "succeeded\nread README.md" {
 		t.Fatalf("tool message = %#v", got.messages[0])
 	}
 	if strings.Contains(got.messages[0].Body, "contents") {

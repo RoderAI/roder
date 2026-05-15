@@ -79,15 +79,20 @@ func Apply(ev eventbus.Event) Update {
 	case eventbus.KindToolRequested:
 		var payload toolPayload
 		_ = ev.DecodePayload(&payload)
-		return withStatus(withMessageKey(payload.MessageKey(), viewmodel.RoleTool, payload.Tool, "running"), statusWithName("tool running", payload.Tool))
+		body := appendToolMetadata(toolStateSummary("requested", payload), payload)
+		return withStatus(withMessageKey(payload.MessageKey(), viewmodel.RoleTool, payload.Tool, body), statusWithName("tool requested", payload.Tool))
 	case eventbus.KindToolStarted:
 		var payload toolPayload
 		_ = ev.DecodePayload(&payload)
-		return withStatus(withMessageKey(payload.MessageKey(), viewmodel.RoleTool, payload.Tool, appendToolMetadata("running", payload)), statusWithName("tool running", payload.Tool))
+		body := appendToolMetadata(toolStateSummary("running", payload), payload)
+		return withStatus(withMessageKey(payload.MessageKey(), viewmodel.RoleTool, payload.Tool, body), statusWithName("tool running", payload.Tool))
 	case eventbus.KindToolCompleted:
 		var payload toolPayload
 		_ = ev.DecodePayload(&payload)
-		body := summarizeToolTimeline(payload.Tool, payload.Input, payload.Text)
+		body := "succeeded"
+		if summary := summarizeToolTimeline(payload.Tool, payload.Input, payload.Text); strings.TrimSpace(summary) != "" {
+			body += "\n" + summary
+		}
 		return withStatus(withMessageKey(payload.MessageKey(), viewmodel.RoleTool, payload.Tool, appendToolMetadata(body, payload)), statusWithName("tool completed", payload.Tool))
 	case eventbus.KindToolFailed:
 		var payload toolPayload
@@ -297,6 +302,14 @@ func summarizeToolTimeline(tool string, input map[string]any, output string) str
 	default:
 		return truncate(output, 1600)
 	}
+}
+
+func toolStateSummary(state string, payload toolPayload) string {
+	lines := []string{state}
+	if summary := summarizeToolTimeline(payload.Tool, payload.Input, payload.Text); strings.TrimSpace(summary) != "" {
+		lines = append(lines, summary)
+	}
+	return strings.Join(lines, "\n")
 }
 
 func appendToolMetadata(summary string, payload toolPayload) string {

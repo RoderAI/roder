@@ -388,7 +388,7 @@ func renderToolMessage(msg viewmodel.Message, width int, timelineStyle string) r
 func renderMinimalToolMessage(msg viewmodel.Message, title string, width int) renderedMessage {
 	status := toolStatus(msg)
 	marker := toolStatusMarker(status)
-	summary := toolDisplaySummary(firstToolSummaryLine(msg.Body))
+	summary := toolDisplaySummary(toolSummaryLine(msg.Body))
 	label := toolRailStyle.Render("└ ") + toolStatusStyleForStatus(status).Render(marker+" "+title)
 	if summary != "" {
 		label += toolMetaStyle.Render(" " + truncateCell(summary, max(8, width-lipgloss.Width("└ "+marker+" "+title)-1)))
@@ -433,6 +433,8 @@ func toolStatus(msg viewmodel.Message) string {
 		return "failed"
 	case summary == "requested", summary == "running", summary == "permission requested":
 		return "running"
+	case summary == "succeeded", summary == "success", summary == "completed":
+		return "completed"
 	default:
 		return "completed"
 	}
@@ -441,13 +443,29 @@ func toolStatus(msg viewmodel.Message) string {
 func toolDisplaySummary(summary string) string {
 	summary = strings.TrimSpace(summary)
 	switch strings.ToLower(summary) {
-	case "", "requested", "running", "success", "succeeded":
+	case "", "requested", "running", "success", "succeeded", "completed":
 		return ""
 	}
 	if rest, ok := strings.CutPrefix(summary, "read "); ok {
 		return strings.TrimSpace(rest)
 	}
 	return summary
+}
+
+func toolSummaryLine(body string) string {
+	for _, line := range strings.Split(body, "\n") {
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "" {
+			continue
+		}
+		switch strings.ToLower(trimmed) {
+		case "requested", "running", "success", "succeeded", "completed":
+			continue
+		default:
+			return trimmed
+		}
+	}
+	return ""
 }
 
 func firstToolSummaryLine(body string) string {
