@@ -31,7 +31,7 @@ func TestApplySummarizesReadFileToolOutput(t *testing.T) {
 	if message.Key != "tool:call_1" {
 		t.Fatalf("message key = %q", message.Key)
 	}
-	if message.Body != "read internal/godex/tools/registry.go" {
+	if message.Body != "succeeded\nread internal/godex/tools/registry.go" {
 		t.Fatalf("body = %q", message.Body)
 	}
 	if strings.Contains(message.Body, "package main") {
@@ -56,7 +56,7 @@ func TestApplySummarizesShellToolWithCommandNotOutput(t *testing.T) {
 		t.Fatalf("messages = %#v", update.Messages)
 	}
 	message := update.Messages[0]
-	if message.Body != "go test ./internal/tui -count=1" {
+	if message.Body != "succeeded\ngo test ./internal/tui -count=1" {
 		t.Fatalf("body = %q", message.Body)
 	}
 	if strings.Contains(message.Body, "PASS") {
@@ -100,11 +100,35 @@ func TestApplyToolRequestedShowsRunningTimelineRow(t *testing.T) {
 	if message.Key != "tool:call_1" || message.Role != viewmodel.RoleTool || message.Title != "apply_patch" {
 		t.Fatalf("message = %#v", message)
 	}
-	if message.Body != "running" {
+	if message.Body != "requested" {
 		t.Fatalf("body = %q", message.Body)
 	}
-	if !update.HasStatus || update.Status != "tool running: apply_patch" {
+	if !update.HasStatus || update.Status != "tool requested: apply_patch" {
 		t.Fatalf("status = %#v", update)
+	}
+}
+
+func TestApplyToolRequestedIncludesInputSummaryWhilePending(t *testing.T) {
+	update := Apply(eventbus.Event{
+		Kind: eventbus.KindToolRequested,
+		Payload: map[string]any{
+			"tool":         "shell",
+			"tool_call_id": "call_1",
+			"input": map[string]any{
+				"command": "sleep 8; printf done",
+			},
+		},
+	})
+
+	if len(update.Messages) != 1 {
+		t.Fatalf("messages = %#v", update.Messages)
+	}
+	message := update.Messages[0]
+	if message.Key != "tool:call_1" || message.Role != viewmodel.RoleTool || message.Title != "shell" {
+		t.Fatalf("message = %#v", message)
+	}
+	if message.Body != "requested\nsleep 8; printf done" {
+		t.Fatalf("body = %q", message.Body)
 	}
 }
 
