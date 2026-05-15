@@ -7,6 +7,7 @@ use std::{
 use anyhow::{Context, Result, bail};
 
 use crate::{
+    built_in_commands,
     loader::load_command_file,
     spec::{CommandSource, CommandSpec},
 };
@@ -23,9 +24,34 @@ pub struct ExtensionCommandDirectory {
     pub root: PathBuf,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CommandsRegistryOptions {
+    pub include_builtins: bool,
+    pub allow_builtin_override: bool,
+}
+
+impl Default for CommandsRegistryOptions {
+    fn default() -> Self {
+        Self {
+            include_builtins: true,
+            allow_builtin_override: false,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CommandOverrideAudit {
+    pub name: String,
+    pub overridden_source: CommandSource,
+    pub replacement_source: CommandSource,
+    pub replacement_path: Option<PathBuf>,
+}
+
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct CommandsRegistry {
     commands: BTreeMap<String, CommandSpec>,
+    override_audits: Vec<CommandOverrideAudit>,
+    options: CommandsRegistryOptions,
 }
 
 impl CommandsRegistry {
@@ -33,6 +59,20 @@ impl CommandsRegistry {
         user_dir: Option<impl AsRef<Path>>,
         workspace_dir: Option<impl AsRef<Path>>,
         extension_dirs: impl IntoIterator<Item = ExtensionCommandDirectory>,
+    ) -> Result<Self> {
+        Self::load_with_options(
+            user_dir,
+            workspace_dir,
+            extension_dirs,
+            CommandsRegistryOptions::default(),
+        )
+    }
+
+    pub fn load_with_options(
+        user_dir: Option<impl AsRef<Path>>,
+        workspace_dir: Option<impl AsRef<Path>>,
+        extension_dirs: impl IntoIterator<Item = ExtensionCommandDirectory>,
+        options: CommandsRegistryOptions,
     ) -> Result<Self> {
         let mut directories = Vec::new();
         if let Some(user_dir) = user_dir {
@@ -55,13 +95,29 @@ impl CommandsRegistry {
                 },
             });
         }
-        Self::from_directories(directories)
+        Self::from_directories_with_options(directories, options)
     }
 
     pub fn from_directories(
         directories: impl IntoIterator<Item = CommandDirectory>,
     ) -> Result<Self> {
-        let mut registry = CommandsRegistry::default();
+        Self::from_directories_with_options(directories, CommandsRegistryOptions::default())
+    }
+
+    pub fn from_directories_with_options(
+        directories: impl IntoIterator<Item = CommandDirectory>,
+        options: CommandsRegistryOptions,
+    ) -> Result<Self> {
+        let mut registry = CommandsRegistry {
+            commands: BTreeMap::new(),
+            override_audits: Vec::new(),
+            options,
+        };
+        if registry.options.include_builtins {
+            for command in built_in_commands() {
+                registry.insert(command)?;
+            }
+        }
         for directory in directories {
             let commands = scan_directory(&directory.root, directory.source)?;
             for command in commands {
@@ -83,6 +139,10 @@ impl CommandsRegistry {
         self.commands
     }
 
+    pub fn override_audits(&self) -> &[CommandOverrideAudit] {
+        &self.override_audits
+    }
+
     fn insert(&mut self, spec: CommandSpec) -> Result<()> {
         enforce_extension_namespace(&spec)?;
         let name = spec.name.clone();
@@ -91,6 +151,16 @@ impl CommandsRegistry {
             return Ok(());
         };
         if existing.source == CommandSource::User && spec.source == CommandSource::Workspace {
+            self.commands.insert(name, spec);
+            return Ok(());
+        }
+        if existing.source == CommandSource::BuiltIn && self.options.allow_builtin_override {
+            self.override_audits.push(CommandOverrideAudit {
+                name: name.clone(),
+                overridden_source: existing.source.clone(),
+                replacement_source: spec.source.clone(),
+                replacement_path: spec.path.clone(),
+            });
             self.commands.insert(name, spec);
             return Ok(());
         }
@@ -166,4 +236,86 @@ fn describe(spec: &CommandSpec) -> String {
         .map(|path| path.display().to_string())
         .unwrap_or_else(|| "<in-memory>".to_string());
     format!("{} command at {path}", spec.display_source())
+}
+
+#[cfg(test)]
+mod tests {
+    use std::{
+        fs,
+        path::PathBuf,
+        sync::atomic::{AtomicUsize, Ordering},
+        time::{SystemTime, UNIX_EPOCH},
+    };
+
+    use crate::spec::CommandSource;
+
+    use super::{CommandsRegistry, CommandsRegistryOptions};
+
+    static TEMP_COUNTER: AtomicUsize = AtomicUsize::new(0);
+
+    #[test]
+    fn builtin_registry_available_without_command_directories() {
+        let registry = CommandsRegistry::load(None::<&PathBuf>, None::<&PathBuf>, []).unwrap();
+
+        for name in [
+            "init", "clear", "compact", "help", "model", "agents", "memory",
+        ] {
+            let spec = registry
+                .get(name)
+                .unwrap_or_else(|| panic!("missing {name}"));
+            assert_eq!(spec.source, CommandSource::BuiltIn);
+            assert!(!spec.body.is_empty());
+        }
+    }
+
+    #[test]
+    fn builtin_override_requires_explicit_option_and_records_audit() {
+        let dir = tempdir("builtin_override_requires_explicit_option_and_records_audit");
+        write(&dir.join("help.md"), "---\nname: help\n---\n\nProject help");
+
+        let err = CommandsRegistry::load(None::<&PathBuf>, Some(&dir), [])
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("duplicate command `help`"), "{err}");
+        assert!(err.contains("built-in command"), "{err}");
+
+        let registry = CommandsRegistry::load_with_options(
+            None::<&PathBuf>,
+            Some(&dir),
+            [],
+            CommandsRegistryOptions {
+                allow_builtin_override: true,
+                ..CommandsRegistryOptions::default()
+            },
+        )
+        .unwrap();
+        let spec = registry.get("help").unwrap();
+        assert_eq!(spec.source, CommandSource::Workspace);
+        assert_eq!(spec.body, "Project help");
+        assert_eq!(registry.override_audits().len(), 1);
+        assert_eq!(registry.override_audits()[0].name, "help");
+        assert_eq!(
+            registry.override_audits()[0].overridden_source,
+            CommandSource::BuiltIn
+        );
+    }
+
+    fn tempdir(name: &str) -> PathBuf {
+        let unique = TEMP_COUNTER.fetch_add(1, Ordering::SeqCst);
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let path = std::env::temp_dir().join(format!(
+            "roder-commands-{name}-{}-{nanos}-{unique}",
+            std::process::id()
+        ));
+        fs::create_dir_all(&path).unwrap();
+        path
+    }
+
+    fn write(path: &PathBuf, content: &str) {
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(path, content).unwrap();
+    }
 }
