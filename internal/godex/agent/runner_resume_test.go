@@ -349,6 +349,83 @@ func TestRunnerPrecompactsOversizedResumeBeforeProviderRequest(t *testing.T) {
 	}
 }
 
+func TestRunnerProviderNeutralCompactsNonGPTModels(t *testing.T) {
+	bus := eventbus.New(eventbus.WithSubscriberBuffer(32))
+	defer bus.Close()
+	dataDir := t.TempDir()
+	store, err := journal.Open(filepath.Join(dataDir, "events.jsonl"))
+	if err != nil {
+		t.Fatalf("journal: %v", err)
+	}
+	defer store.Close()
+	itemStore := openItemStore(t, dataDir)
+	messageStore := messagestore.Open(dataDir)
+	if _, err := itemStore.Append(context.Background(), session.Item{
+		SessionID: "s-generic-compact",
+		TurnID:    "old",
+		Kind:      session.ItemMessage,
+		Role:      "user",
+		Text:      strings.Repeat("large gemini context ", 100),
+	}); err != nil {
+		t.Fatalf("append prior: %v", err)
+	}
+	script := &scriptedProvider{streams: [][]provider.Event{
+		{{Kind: provider.EventCompleted, Text: "<state_snapshot>draft summary</state_snapshot>"}},
+		{{Kind: provider.EventCompleted, Text: "<state_snapshot>verified summary</state_snapshot>"}},
+		{{Kind: provider.EventCompleted, Text: "done"}},
+	}}
+	runner := NewRunner(Config{
+		Bus:                   bus,
+		Journal:               store,
+		Items:                 itemStore,
+		Messages:              messageStore,
+		Provider:              script,
+		Model:                 "gemini-3.1-pro-preview",
+		AutoCompactTokenLimit: 1,
+	})
+	if _, err := runner.Run(context.Background(), RunRequest{SessionID: "s-generic-compact", RunID: "r-generic-compact", Prompt: "continue", Resume: true}); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	if len(script.requests) != 3 {
+		t.Fatalf("requests = %d", len(script.requests))
+	}
+	if got := script.requests[0].Instructions; !strings.Contains(got, "state_snapshot") {
+		t.Fatalf("compression instructions = %q", got)
+	}
+	main := script.requests[2]
+	if len(main.Messages) < 3 {
+		t.Fatalf("main messages = %#v", main.Messages)
+	}
+	if main.Messages[0].Content != "<state_snapshot>verified summary</state_snapshot>" {
+		t.Fatalf("summary message = %#v", main.Messages[0])
+	}
+	if main.Messages[1].Content != providerNeutralCompressionAck {
+		t.Fatalf("ack message = %#v", main.Messages[1])
+	}
+	if main.Messages[len(main.Messages)-1].Content != "continue" {
+		t.Fatalf("current prompt not preserved: %#v", main.Messages)
+	}
+	stored, err := itemStore.ListBySession(context.Background(), "s-generic-compact")
+	if err != nil {
+		t.Fatalf("stored items: %v", err)
+	}
+	canonical := providerItemsFromSessionItems(stored)
+	if len(canonical) < 2 || canonical[0].Kind != provider.ItemCompaction || canonical[0].Text != "<state_snapshot>verified summary</state_snapshot>" {
+		t.Fatalf("canonical items = %#v", canonical)
+	}
+	events, err := store.Replay(context.Background(), journal.ReplayFilter{SessionID: "s-generic-compact", RunID: "r-generic-compact"})
+	if err != nil {
+		t.Fatalf("replay: %v", err)
+	}
+	kinds := map[eventbus.Kind]bool{}
+	for _, ev := range events {
+		kinds[ev.Kind] = true
+	}
+	if !kinds[eventbus.KindContextCompactionStarted] || !kinds[eventbus.KindContextCompactionCompleted] {
+		t.Fatalf("missing compaction events: %#v", kinds)
+	}
+}
+
 func TestRunnerCompactionWritesCanonicalItemWindow(t *testing.T) {
 	dataDir := t.TempDir()
 	itemStore := openItemStore(t, dataDir)

@@ -65,6 +65,9 @@ func (r *Runner) repairOrphanToolOutputs(ctx context.Context, req RunRequest, me
 func (r *Runner) compactContext(ctx context.Context, req RunRequest, messages []provider.Message, inputItems []provider.Item, tools []provider.ToolSpec, force bool, reason string) ([]provider.Message, []provider.Item, error) {
 	model := firstNonEmpty(r.model, "gpt-5.5")
 	options := contextwindow.OptionsForModel(model, r.disableAutoCompaction, r.autoCompactTokenLimit)
+	if r.shouldUseProviderNeutralCompaction(model, options) {
+		return r.compactContextWithProviderSummary(ctx, req, messages, inputItems, tools, options, force, reason)
+	}
 	if !options.Enabled || r.providerName() != "openai" {
 		return messages, inputItems, nil
 	}
@@ -408,6 +411,26 @@ func (r *Runner) compactionOptions(ctx context.Context, req RunRequest, messages
 	})
 
 	options := contextwindow.OptionsForModel(model, r.disableAutoCompaction, r.autoCompactTokenLimit)
+	if r.shouldUseProviderNeutralCompaction(model, options) {
+		r.emit(ctx, eventbus.Event{
+			Kind:      eventbus.KindContextCompactionConfigured,
+			Source:    eventbus.SourceAgent,
+			SessionID: req.SessionID,
+			RunID:     req.RunID,
+			Payload: map[string]any{
+				"model":             model,
+				"tokens":            estimate.Tokens,
+				"context_window":    options.ContextWindow,
+				"compact_threshold": options.CompactThreshold,
+				"strategy":          "provider_neutral_summary",
+			},
+		})
+		return provider.CompactionOptions{
+			Model:            options.Model,
+			ContextWindow:    options.ContextWindow,
+			CompactThreshold: options.CompactThreshold,
+		}
+	}
 	if !options.Enabled || r.providerName() != "openai" {
 		return provider.CompactionOptions{
 			Model:            options.Model,
