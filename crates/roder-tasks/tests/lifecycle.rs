@@ -3,7 +3,9 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 
 use roder_api::events::{EventEnvelope, EventSource, RoderEvent};
-use roder_api::tasks::{TaskExecutionContext, TaskExecutor, TaskOutputStream, TaskSpec, TaskState};
+use roder_api::tasks::{
+    TaskExecutionContext, TaskExecutionResult, TaskExecutor, TaskOutputStream, TaskSpec, TaskState,
+};
 use roder_tasks::{
     BackgroundRunner, BackgroundRunnerConfig, TaskExecutorRegistry, TaskSubmitOptions,
 };
@@ -39,7 +41,7 @@ impl TaskExecutor for TestExecutor {
         &self,
         ctx: TaskExecutionContext,
         _input: serde_json::Value,
-    ) -> anyhow::Result<serde_json::Value> {
+    ) -> anyhow::Result<TaskExecutionResult> {
         let running = self.running_count.fetch_add(1, Ordering::SeqCst) + 1;
         self.max_running_count.fetch_max(running, Ordering::SeqCst);
         self.notify_started.notify_waiters();
@@ -48,7 +50,9 @@ impl TaskExecutor for TestExecutor {
         }
         tokio::time::sleep(self.delay).await;
         self.running_count.fetch_sub(1, Ordering::SeqCst);
-        Ok(serde_json::json!({ "ok": true }))
+        Ok(TaskExecutionResult::success(
+            serde_json::json!({ "ok": true }),
+        ))
     }
 }
 
