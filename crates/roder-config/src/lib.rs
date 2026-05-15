@@ -9,6 +9,7 @@ pub struct Config {
     pub model: Option<String>,
     pub reasoning: Option<String>,
     pub auto_compact_token_limit: Option<u32>,
+    pub web_search: Option<WebSearchConfig>,
     #[serde(default)]
     pub providers: HashMap<String, ProviderConfig>,
 }
@@ -16,6 +17,59 @@ pub struct Config {
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]
 pub struct ProviderConfig {
     pub api_key: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct WebSearchConfig {
+    #[serde(default)]
+    pub enabled: bool,
+    pub provider: Option<String>,
+    #[serde(default)]
+    pub canonical_tool: bool,
+    #[serde(default)]
+    pub namespaced_tools: bool,
+    pub max_results: Option<u8>,
+    pub timeout_seconds: Option<u64>,
+    #[serde(default)]
+    pub firecrawl: WebSearchProviderConfig,
+    #[serde(default)]
+    pub perplexity: WebSearchProviderConfig,
+    #[serde(default)]
+    pub tavily: WebSearchProviderConfig,
+    #[serde(default)]
+    pub parallel: WebSearchProviderConfig,
+}
+
+impl Default for WebSearchConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            provider: None,
+            canonical_tool: true,
+            namespaced_tools: false,
+            max_results: None,
+            timeout_seconds: None,
+            firecrawl: WebSearchProviderConfig::default(),
+            perplexity: WebSearchProviderConfig::default(),
+            tavily: WebSearchProviderConfig::default(),
+            parallel: WebSearchProviderConfig::default(),
+        }
+    }
+}
+
+#[derive(Debug, Default, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct WebSearchProviderConfig {
+    #[serde(default)]
+    pub enabled: bool,
+    pub api_key: Option<String>,
+    pub api_key_env: Option<String>,
+    pub base_url: Option<String>,
+    pub project: Option<String>,
+    pub project_env: Option<String>,
+    pub search_depth: Option<String>,
+    pub mode: Option<String>,
+    #[serde(default)]
+    pub debug_raw_response: bool,
 }
 
 pub fn load_config() -> anyhow::Result<Config> {
@@ -105,6 +159,7 @@ mod tests {
             model: Some("gpt-5.5".to_string()),
             reasoning: Some("medium".to_string()),
             auto_compact_token_limit: None,
+            web_search: None,
             providers: HashMap::new(),
         };
         config.providers.insert(
@@ -119,6 +174,42 @@ mod tests {
         assert!(encoded.contains("model = \"gpt-5.5\""));
         assert!(encoded.contains("[providers.openai]"));
         assert!(encoded.contains("api_key = \"key\""));
+    }
+
+    #[test]
+    fn deserializes_web_search_config() {
+        let config: Config = toml::from_str(
+            r#"
+            [web_search]
+            enabled = true
+            provider = "tavily"
+            namespaced_tools = true
+            max_results = 8
+            timeout_seconds = 20
+
+            [web_search.tavily]
+            enabled = true
+            api_key_env = "TAVILY_API_KEY"
+            project_env = "TAVILY_PROJECT"
+            base_url = "https://api.tavily.com"
+            search_depth = "basic"
+            "#,
+        )
+        .unwrap();
+
+        let web_search = config.web_search.unwrap();
+        assert!(web_search.enabled);
+        assert_eq!(web_search.provider.as_deref(), Some("tavily"));
+        assert!(web_search.namespaced_tools);
+        assert_eq!(web_search.max_results, Some(8));
+        assert_eq!(
+            web_search.tavily.api_key_env.as_deref(),
+            Some("TAVILY_API_KEY")
+        );
+        assert_eq!(
+            web_search.tavily.project_env.as_deref(),
+            Some("TAVILY_PROJECT")
+        );
     }
 
     #[test]

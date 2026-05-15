@@ -1,0 +1,16 @@
+[package]
+name = "roder-ext-web-search"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+async-trait.workspace = true
+roder-api.workspace = true
+roder-ext-firecrawl-search.workspace = true
+roder-ext-parallel-search.workspace = true
+roder-ext-perplexity-search.workspace = true
+roder-ext-tavily-search.workspace = true
+roder-web-search.workspace = true
+semver.workspace = true
+serde_json.workspace = true

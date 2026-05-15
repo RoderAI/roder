@@ -14,12 +14,17 @@ use roder_ext_memory::MemoryExtension;
 use roder_ext_openai_responses::{OpenAiResponsesEngine, OpenAiResponsesExtension};
 use semver::Version;
 
+mod web_search;
+
+pub use web_search::{DefaultWebSearchConfig, DefaultWebSearchProviderConfig};
+
 #[derive(Debug, Clone, Default)]
 pub struct DefaultRegistryConfig {
     pub openai_api_key: Option<String>,
     pub anthropic_api_key: Option<String>,
     pub gemini_api_key: Option<String>,
     pub session_dir: Option<PathBuf>,
+    pub web_search: Option<DefaultWebSearchConfig>,
 }
 
 pub fn build_default_registry(config: DefaultRegistryConfig) -> anyhow::Result<ExtensionRegistry> {
@@ -36,6 +41,10 @@ pub fn build_default_registry(config: DefaultRegistryConfig) -> anyhow::Result<E
     }
     if let Some(gemini_key) = config.gemini_api_key {
         builder.install(GeminiExtension::new(gemini_key))?;
+    }
+
+    if let Some(web_search) = config.web_search {
+        web_search::install_web_search(&mut builder, web_search)?;
     }
 
     builder.tool_contributor(roder_tools::echo_tool_contributor());
@@ -232,6 +241,7 @@ mod tests {
             anthropic_api_key: Some("anthropic".to_string()),
             gemini_api_key: Some("gemini".to_string()),
             session_dir: None,
+            web_search: None,
         })
         .unwrap();
         for provider in [

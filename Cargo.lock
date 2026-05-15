@@ -1956,8 +1956,8 @@ dependencies = [
  "roder-ext-memory",
  "roder-ext-openai-responses",
  "roder-extension-host",
- "roder-protocol",
  "roder-tui",
+ "roder-web-search",
  "serde",
  "serde_json",
  "tokio",
@@ -2177,6 +2177,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "roder-ext-web-search"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "roder-api",
+ "roder-ext-firecrawl-search",
+ "roder-ext-parallel-search",
+ "roder-ext-perplexity-search",
+ "roder-ext-tavily-search",
+ "roder-web-search",
+ "semver",
+ "serde_json",
+]
+
+[[package]]
 name = "roder-extension-host"
 version = "0.1.0"
 dependencies = [
@@ -2186,11 +2202,17 @@ dependencies = [
  "roder-api",
  "roder-codex-auth",
  "roder-ext-anthropic",
+ "roder-ext-firecrawl-search",
  "roder-ext-gemini",
  "roder-ext-jsonl-session",
  "roder-ext-memory",
  "roder-ext-openai-responses",
+ "roder-ext-parallel-search",
+ "roder-ext-perplexity-search",
+ "roder-ext-tavily-search",
+ "roder-ext-web-search",
  "roder-tools",
+ "roder-web-search",
  "semver",
  "serde",
  "serde_json",
