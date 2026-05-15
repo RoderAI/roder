@@ -1,18 +1,111 @@
 use roder_api::catalog::PROVIDER_MOCK;
-use roder_api::extension::ExtensionRegistryBuilder;
+use roder_api::extension::{ExtensionRegistryBuilder, InferenceEngineId};
+use roder_api::inference::*;
+use roder_api::subagents::{SubagentDefinition, SubagentPermissionMode};
 use roder_app_server::{AppServer, LocalAppClient};
 use roder_core::{Runtime, fake_provider::FakeInferenceEngine};
+use roder_ext_subagents::{
+    InProcessDispatcher, InProcessDispatcherConfig, InferenceEngineRegistry, SubagentsExtension,
+};
 use roder_extension_host::{
     DefaultRegistryConfig, DefaultWebSearchConfig, DefaultWebSearchProviderConfig,
     build_default_registry,
 };
 use roder_protocol::{
-    CreateSessionResult, ExtensionsListResult, JsonRpcRequest, ProviderSelectParams,
-    ProviderSelectResult, ProvidersListResult, SessionsListResult, StartTurnParams,
-    StartTurnResult, SystemStatusResult, ToolsListResult,
+    AgentsListResult, CreateSessionResult, ExtensionsListResult, JsonRpcRequest,
+    ProviderSelectParams, ProviderSelectResult, ProvidersListResult, SessionsListResult,
+    StartTurnParams, StartTurnResult, SystemStatusResult, ToolsListResult,
 };
 use std::sync::Arc;
 use std::time::Duration;
+use tokio::sync::Mutex;
+
+struct TaskCallingEngine {
+    hang_child: bool,
+    parent_calls: Mutex<usize>,
+    requests: Mutex<Vec<AgentInferenceRequest>>,
+}
+
+impl TaskCallingEngine {
+    fn new(hang_child: bool) -> Self {
+        Self {
+            hang_child,
+            parent_calls: Mutex::new(0),
+            requests: Mutex::new(Vec::new()),
+        }
+    }
+}
+
+#[async_trait::async_trait]
+impl InferenceEngine for TaskCallingEngine {
+    fn id(&self) -> InferenceEngineId {
+        PROVIDER_MOCK.to_string()
+    }
+
+    fn capabilities(&self) -> InferenceCapabilities {
+        InferenceCapabilities::coding_agent_default()
+    }
+
+    async fn list_models(
+        &self,
+        _ctx: InferenceProviderContext<'_>,
+    ) -> anyhow::Result<Vec<ModelDescriptor>> {
+        Ok(Vec::new())
+    }
+
+    async fn stream_turn(
+        &self,
+        _ctx: InferenceTurnContext<'_>,
+        request: AgentInferenceRequest,
+    ) -> anyhow::Result<InferenceEventStream> {
+        self.requests.lock().await.push(request.clone());
+        if request.metadata.get("subagent").is_some() {
+            if self.hang_child {
+                std::future::pending::<()>().await;
+            }
+            return Ok(Box::pin(futures::stream::iter(vec![
+                Ok(InferenceEvent::MessageDelta(MessageDelta {
+                    text: "child result".to_string(),
+                })),
+                Ok(InferenceEvent::Completed(CompletionMetadata {
+                    stop_reason: Some("stop".to_string()),
+                    provider_response_id: None,
+                })),
+            ])));
+        }
+
+        let mut parent_calls = self.parent_calls.lock().await;
+        *parent_calls += 1;
+        if *parent_calls == 1 {
+            Ok(Box::pin(futures::stream::iter(vec![
+                Ok(InferenceEvent::ToolCallCompleted(ToolCallCompleted {
+                    id: "task-call-1".to_string(),
+                    name: "task".to_string(),
+                    arguments: serde_json::json!({
+                        "description": "Inspect repository",
+                        "prompt": "Report the relevant finding.",
+                        "subagent_type": "explore"
+                    })
+                    .to_string(),
+                })),
+                Ok(InferenceEvent::Completed(CompletionMetadata {
+                    stop_reason: Some("tool_calls".to_string()),
+                    provider_response_id: None,
+                })),
+            ])))
+        } else {
+            Ok(Box::pin(futures::stream::iter(vec![
+                Ok(InferenceEvent::MessageDelta(MessageDelta {
+                    text: "parent final".to_string(),
+                })),
+                Ok(InferenceEvent::Completed(CompletionMetadata {
+                    stop_reason: Some("stop".to_string()),
+                    provider_response_id: None,
+                })),
+            ])))
+        }
+    }
+}
 
 #[tokio::test]
 async fn test_app_server_e2e() {
@@ -167,6 +260,180 @@ async fn tools_list_discovers_configured_web_search_without_secret_material() {
     assert!(!protocol_text.contains("Authorization"));
     assert!(!protocol_text.contains("x-api-key"));
     assert!(!protocol_text.contains("api_key"));
+}
+
+#[tokio::test]
+async fn task_tool_emits_subagent_events_before_tool_completion() {
+    let runtime = subagent_runtime();
+    let server = Arc::new(AppServer::new(runtime));
+    let client = LocalAppClient::new(server);
+    let mut events = client.subscribe_events();
+
+    let session: CreateSessionResult = request(&client, "sessions/create", None).await;
+    let started: StartTurnResult = request(
+        &client,
+        "turns/start",
+        Some(
+            serde_json::to_value(StartTurnParams {
+                thread_id: session.thread_id.clone(),
+                message: "delegate this".to_string(),
+                provider_override: None,
+                model_override: None,
+            })
+            .unwrap(),
+        ),
+    )
+    .await;
+
+    let mut kinds = Vec::new();
+    let mut child_parent_ids = Vec::new();
+    for _ in 0..40 {
+        let envelope = tokio::time::timeout(Duration::from_secs(2), events.recv())
+            .await
+            .unwrap()
+            .unwrap();
+        kinds.push(envelope.kind.clone());
+        match envelope.event {
+            roder_api::events::RoderEvent::SubagentStarted(started) => {
+                child_parent_ids.push((started.parent_thread_id, started.parent_turn_id));
+            }
+            roder_api::events::RoderEvent::SubagentCompleted(completed) => {
+                child_parent_ids.push((completed.parent_thread_id, completed.parent_turn_id));
+            }
+            _ => {}
+        }
+        if envelope.kind == "turn.completed" {
+            break;
+        }
+    }
+
+    let subagent_started = position(&kinds, "subagent.started");
+    let subagent_completed = position(&kinds, "subagent.completed");
+    let tool_completed = position(&kinds, "tool.call_completed");
+    assert!(subagent_started < subagent_completed, "{kinds:?}");
+    assert!(subagent_completed < tool_completed, "{kinds:?}");
+    assert!(
+        position(&kinds, "turn.completed") > tool_completed,
+        "{kinds:?}"
+    );
+    assert!(
+        child_parent_ids
+            .iter()
+            .all(|(thread_id, turn_id)| thread_id == &session.thread_id
+                && turn_id == &started.turn_id),
+        "subagent events should carry parent ids: {child_parent_ids:?}"
+    );
+}
+
+#[tokio::test]
+async fn agents_list_returns_public_subagent_summaries() {
+    let runtime = subagent_runtime();
+    let server = Arc::new(AppServer::new(runtime));
+    let client = LocalAppClient::new(server);
+
+    let agents: AgentsListResult = request(&client, "agents/list", None).await;
+    assert_eq!(agents.agents.len(), 1);
+    assert_eq!(agents.agents[0].agent_type, "explore");
+    assert_eq!(agents.agents[0].tools, vec!["echo".to_string()]);
+
+    let serialized = serde_json::to_string(&agents).unwrap();
+    assert!(!serialized.contains("SECRET-SYSTEM-PROMPT"));
+}
+
+#[tokio::test]
+async fn subagent_failed_events_redact_private_agent_material() {
+    let runtime = subagent_runtime_with_options(1, true);
+    let server = Arc::new(AppServer::new(runtime));
+    let client = LocalAppClient::new(server);
+    let mut events = client.subscribe_events();
+
+    let session: CreateSessionResult = request(&client, "sessions/create", None).await;
+    let _: StartTurnResult = request(
+        &client,
+        "turns/start",
+        Some(
+            serde_json::to_value(StartTurnParams {
+                thread_id: session.thread_id,
+                message: "delegate this".to_string(),
+                provider_override: None,
+                model_override: None,
+            })
+            .unwrap(),
+        ),
+    )
+    .await;
+
+    let failed = loop {
+        let envelope = tokio::time::timeout(Duration::from_secs(2), events.recv())
+            .await
+            .unwrap()
+            .unwrap();
+        if envelope.kind == "subagent.failed" {
+            break envelope;
+        }
+    };
+    let serialized = serde_json::to_string(&failed).unwrap();
+
+    assert!(serialized.contains("timeout"));
+    assert!(!serialized.contains("SECRET-SYSTEM-PROMPT"));
+    assert!(!serialized.contains("Report the relevant finding"));
+}
+
+fn subagent_runtime() -> Arc<Runtime> {
+    subagent_runtime_with_options(
+        InProcessDispatcherConfig::default().default_timeout_seconds,
+        false,
+    )
+}
+
+fn subagent_runtime_with_options(default_timeout_seconds: u64, hang_child: bool) -> Arc<Runtime> {
+    let engine = Arc::new(TaskCallingEngine::new(hang_child));
+    let mut engines = InferenceEngineRegistry::new();
+    engines.insert(engine.clone());
+    let mut parent_tools = roder_api::tools::ToolRegistry::default();
+    roder_tools::echo_tool_contributor()
+        .contribute(&mut parent_tools)
+        .unwrap();
+    let dispatcher = Arc::new(
+        InProcessDispatcher::new(
+            InProcessDispatcherConfig {
+                default_agent: "explore".to_string(),
+                default_provider: Some(PROVIDER_MOCK.to_string()),
+                default_model: "mock".to_string(),
+                max_depth: 1,
+                default_timeout_seconds,
+                ..InProcessDispatcherConfig::default()
+            },
+            vec![SubagentDefinition {
+                agent_type: "explore".to_string(),
+                description: "Explore the workspace".to_string(),
+                tools: vec!["echo".to_string()],
+                model: None,
+                system_prompt: Some("SECRET-SYSTEM-PROMPT".to_string()),
+                permission_mode: SubagentPermissionMode::ReadOnly,
+                max_turns: Some(1),
+                max_result_chars: Some(1000),
+            }],
+            engines,
+            parent_tools,
+        )
+        .unwrap(),
+    );
+
+    let mut builder = ExtensionRegistryBuilder::new();
+    builder.inference_engine(engine);
+    builder.tool_contributor(roder_tools::echo_tool_contributor());
+    builder
+        .install(SubagentsExtension::new(dispatcher))
+        .unwrap();
+    Arc::new(Runtime::new(builder.build().unwrap(), Default::default()).unwrap())
+}
+
+fn position(kinds: &[String], kind: &str) -> usize {
+    kinds
+        .iter()
+        .position(|candidate| candidate == kind)
+        .unwrap_or_else(|| panic!("missing {kind}: {kinds:?}"))
 }
 
 async fn request<T: serde::de::DeserializeOwned>(

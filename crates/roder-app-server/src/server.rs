@@ -72,6 +72,7 @@ impl AppServer {
                 .await
             }
             "tools/list" => self.handle_tools_list().await,
+            "agents/list" => self.handle_agents_list().await,
             _ => Err(JsonRpcError {
                 code: -32601,
                 message: "Method not found".to_string(),
@@ -286,6 +287,26 @@ impl AppServer {
     async fn handle_tools_list(&self) -> Result<serde_json::Value, JsonRpcError> {
         Ok(serde_json::to_value(ToolsListResult {
             tools: self.runtime.tool_specs(),
+        })
+        .unwrap())
+    }
+
+    async fn handle_agents_list(&self) -> Result<serde_json::Value, JsonRpcError> {
+        Ok(serde_json::to_value(AgentsListResult {
+            agents: self
+                .runtime
+                .subagent_definitions()
+                .into_iter()
+                .map(|definition| AgentDescriptor {
+                    agent_type: definition.agent_type,
+                    description: definition.description,
+                    tools: definition.tools,
+                    model: definition.model,
+                    permission_mode: definition.permission_mode,
+                    max_turns: definition.max_turns,
+                    max_result_chars: definition.max_result_chars,
+                })
+                .collect(),
         })
         .unwrap())
     }
