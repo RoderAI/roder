@@ -1,0 +1,10 @@
+[package]
+name = "roder-config"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+dirs.workspace = true
+serde = { workspace = true, features = ["derive"] }
+toml.workspace = true

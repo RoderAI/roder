@@ -1,350 +1,208 @@
-# gode
+# Roder
 
-Go Code: a Go-native TUI coding agent and event-driven agent harness.
+**Rust Coder.** A Rust-native, extension-first agent harness for coding agents, research systems, reinforcement-learning environments, and AI-native developer tools.
 
-`gode` is built around `godex`, an internal harness for coding-agent sessions, tools, workspace state, MCPs, context management, provider adapters, and event subscriptions. The goal is to provide a solid open-source base that ML labs can use to train, evaluate, and run their own coding agents.
+> Roder is the core harness. Everything else is a distribution, extension, provider, policy, interface, or experiment.
 
-## Alpha Status
+Roder is not just another coding agent. It is the substrate underneath them — a stable, strongly typed Rust runtime that handles inference orchestration, tool execution, capability-scoped filesystem and process access, context assembly, session persistence, checkpointing, policy enforcement, event streaming, and replay, with extension points designed so that new model APIs, storage systems, context engines, sandbox backends, UIs, and training environments can be added without forking the core.
 
-This is alpha software and will change rapidly as it materializes its shape. For the time being, expect no API guarantees: packages, commands, configuration, event formats, and integration points may move, break, or disappear without notice.
+The full mission, design philosophy, and architectural commitments live in [`WHITEPAPER.md`](./WHITEPAPER.md). The phased implementation plan lives in [`roadmap/`](./roadmap/), entry point [`roadmap/00-feature-inventory-and-sequencing.md`](./roadmap/00-feature-inventory-and-sequencing.md).
 
-## Shape
+---
 
-- `cmd/gode`: CLI entrypoint.
-- `internal/godex`: event bus, JSONL journal, runner, provider interface, MCP manager, and tool registry.
-- `internal/godex/appserver`: Codex-style app-server protocol, request handling, and transports for desktop control.
-- `internal/godex/tools/builtin`: broad initial coding tool set.
-- `internal/tui`: Bubble Tea UI with composable Lip Gloss components and view models.
+## What Roder represents
 
-Every meaningful state transition flows through the `godex` event bus so the TUI, plugins, logs, tests, and future RL/replay systems can subscribe to the same stream.
+Most agent systems today are rebuilt repeatedly around the same primitives — model invocation, tool execution, sandboxing, context, session persistence, policy, event streaming, replay — usually in Python or Node.js. That works for fast iteration but fragments the ecosystem: every team re-solves the same harness problems in incompatible ways, and labs end up forking upstream because the architecture cannot express the modifications they need.
 
-## Try It
+Roder's bet is that this is unnecessary. The AI ecosystem should not need to rewrite the same agent harness every time a new model, product, research direction, or interaction paradigm appears.
+
+Roder aims to be that foundation, once, with:
+
+- **A stable core that owns invariants.** Lifecycle ordering, cancellation, event ordering, permission enforcement, tool routing, and capability checks live in `roder-core` and are not extensible — extensions provide behavior, but they cannot corrupt the runtime.
+- **A native extension kernel.** Inference engines, wire dialects, context providers, context planners, session stores, checkpoint stores, memory backends, policy contributors, sandbox backends, event sinks, and tool contributors all install through a single `RoderExtension` trait against `roder-api`.
+- **Canonical internal representations.** Conversations, turns, messages, tool calls, inference events, file changes, context blocks, sessions, checkpoints, and policy decisions are typed Roder concepts. Provider extensions translate to and from these canonical types; the core never sees Responses, Chat Completions, or Anthropic Messages wire formats.
+- **Capability-based access.** Tools and extensions receive `ScopedFilesystem`, `ScopedProcessRunner`, `ScopedNetwork`, `ScopedSecrets`, `ApprovalClient`, and `EventSink` handles. There is no ambient `std::fs` or `std::process::Command` access.
+- **Event-sourced execution.** Every meaningful runtime transition is a typed event on the canonical bus. This makes Roder replayable, auditable, resumable, and usable as an RL trajectory substrate without bespoke instrumentation.
+- **App-server-first control plane.** The TUI is a client of the embedded local app server. IDE plugins, web UIs, headless CI runners, RL harnesses, and IDE extensions all speak the same control-plane protocol.
+
+The whitepaper lays out the long-term aspiration in §27: a maintained, reference-quality, extensible agent harness that labs, builders, researchers, and products can rely on. The core invariant from §26:
+
+> Everything important that happens in an agent run should be represented as a typed event, attached to a session, governed by capabilities, and reproducible through a stable runtime model.
+
+---
+
+## Alpha status
+
+Roder is alpha software. The core types in `roder-api`, the protocol in `roder-protocol`, and the extension surfaces are stabilizing but not frozen. Expect breaking changes during the rewrite from the legacy Go implementation. The roadmap is the source of truth for what is built, what is in flight, and what is queued.
+
+---
+
+## Repository layout
+
+The Rust workspace under `crates/` follows the boundaries laid out in whitepaper §21:
+
+```
+crates/
+  roder-api/              Stable native extension traits and canonical types.
+  roder-core/             Agent loop, lifecycle, cancellation, event ordering, permission enforcement.
+  roder-protocol/         App-server protocol, schemas, generated client surfaces.
+  roder-app-server/       Embedded local control plane.
+  roder-extension-host/   Native extension installation and provider selection.
+  roder-inference/        InferenceEngine + WireDialect surface and model registry.
+  roder-context/          ContextProvider, ContextPlanner, context budgets, context blocks.
+  roder-session/          SessionStore, CheckpointStore, transcript model, replay primitives.
+  roder-memory/           Memory store surface.
+  roder-tools/            ToolSpec, ToolExecutor, tool routing, built-in tools.
+  roder-sandbox/          Filesystem/process/network/secret brokers.
+  roder-cli/              Command entrypoint and distribution wiring.
+  roder-tui/              Reference terminal UI client.
+
+  roder-ext-openai-responses/         Responses-style inference engine.
+  roder-ext-openai-chat-completions/  Chat-Completions-style inference engine.
+  roder-ext-anthropic/                Anthropic Messages-style inference engine.
+  roder-ext-gemini/                   Native Gemini inference engine.
+  roder-ext-jsonl-session/            JSONL session/checkpoint storage.
+  roder-ext-disk-context/             On-disk context persistence.
+  roder-ext-memory/                   Local memory extension.
+```
+
+The dependency direction is strict, per whitepaper §7:
+
+```
+extensions  -> roder-api
+core        -> roder-api
+apps        -> roder-protocol
+roder-cli   -> core + selected extensions
+```
+
+Extensions never depend on `roder-core`; the core never depends on any extension. Distribution binaries compose the core with whichever extensions they choose to install.
+
+---
+
+## The roadmap
+
+The roadmap lives in `roadmap/`. It is organized as phased implementation plans, each scoped tight enough to be assigned to a single agent. The index in [`roadmap/00-feature-inventory-and-sequencing.md`](./roadmap/00-feature-inventory-and-sequencing.md) lists every plan and its dependency gates.
+
+Foundational and architectural plans:
+
+- [`roder_rust_rewrite_plan.md`](./roadmap/roder_rust_rewrite_plan.md) — the overall Rust rewrite plan.
+- [`roder_extensibility_goals_and_foundations.md`](./roadmap/roder_extensibility_goals_and_foundations.md) — the doctrine extension authors must follow.
+
+Phased implementation plans (selected highlights — see the index for the full list):
+
+- 01: Config, provider, and model catalog.
+- 02: Session and message store.
+- 03: Tool permissions and hooks.
+- 04: Context, skills, and commands.
+- 05: MCP and LSP capabilities.
+- 06: TUI chat product.
+- 07: App-server, headless, and remote.
+- 11: Disk session and resume.
+- 12: OpenAI Responses with compaction.
+- 13: Anthropic Messages support.
+- 17: Chat Completions custom models.
+- 21: Native Gemini through Google GenAI SDK.
+- 22: Web search extensions (Firecrawl, Perplexity, Tavily, Parallel).
+- 23: Subagent dispatch (`task` tool, disk-defined agents).
+- 24: Plan mode and permission policy modes.
+- 25: Workspace checkpoint and undo.
+- 26: Custom slash commands.
+- 27: TUI status line, command palette, and diff viewer.
+- 28: Background tasks and notifications.
+- 29: TUI mouse interactions, hover, and clickable elements.
+
+Each plan carries a "Whitepaper Alignment" section mapping its work to the relevant whitepaper chapters and listing the invariants it preserves.
+
+---
+
+## Quick start
+
+The Rust binary is the primary entry point. During the rewrite the legacy Go implementation (see [Relationship to gode](#relationship-to-gode) below) still ships in parallel.
 
 ```sh
-go run ./cmd/gode version
-go run ./cmd/gode
-go run ./cmd/gode resume
-go run ./cmd/gode acp --provider mock --auto-approve
-go run ./cmd/gode app-server --listen ws://127.0.0.1:0
-make run
-make ask PROMPT="summarize this repo"
+cargo build --workspace
+cargo run -p roder-cli -- --help
+cargo test --workspace
 ```
 
-`make run` enables local OpenTelemetry tracing by default and exports OTLP/gRPC spans to `localhost:4317`.
-`gode resume` opens a compact inline session picker. Type to search, press `tab` to toggle between sessions from the current workspace and all sessions, then press `enter` to resume.
+A more complete quick-start (configuration, providers, session resume, app-server transports, MCP) will land alongside the corresponding roadmap phases.
 
-```sh
-./jaeger.sh
-make run
+---
+
+## Extension authoring sketch
+
+The basic shape of a native extension, per whitepaper §8:
+
+```rust
+use roder_api::{
+    ExtensionManifest, ExtensionRegistryBuilder, ProvidedService, RoderExtension,
+};
+
+pub struct MyInferenceExtension;
+
+impl RoderExtension for MyInferenceExtension {
+    fn manifest(&self) -> ExtensionManifest {
+        ExtensionManifest {
+            id: "com.example.my-inference".into(),
+            name: "MyInference".into(),
+            version: semver::Version::new(0, 1, 0),
+            api_version: "v1".into(),
+            description: Some("Example inference engine extension".into()),
+            provides: vec![ProvidedService::InferenceEngine("my-inference".into())],
+            required_capabilities: vec![],
+        }
+    }
+
+    fn install(&self, registry: &mut ExtensionRegistryBuilder) -> anyhow::Result<()> {
+        registry.inference_engine(std::sync::Arc::new(MyInferenceEngine::new()));
+        Ok(())
+    }
+}
 ```
 
-Then open Jaeger at <http://localhost:16686>.
+A distribution binary composes the core with whatever extensions it wants:
 
-## Custom Models
-
-Add custom models to `$HOME/.gode/config.toml` or a workspace `.gode.toml` with `[model.<local-id>]` tables. The table key is the model ID you select in the TUI, CLI, and `gode models`; the `model` field is the upstream model name sent to the provider.
-
-OpenAI-compatible Chat Completions endpoints:
-
-```toml
-[model.deepseek-chat]
-type = "chat_completions"
-provider = "deepseek"
-model = "deepseek-chat"
-display_name = "DeepSeek Chat"
-base_url = "https://api.deepseek.com/v1"
-api_key_env = "DEEPSEEK_API_KEY"
-context_window = 128000
-default_reasoning = "none"
-reasoning_efforts = ["none"]
-edit_tool = "edit"
-
-[model.kimi-k2-6]
-type = "chat_completions"
-provider = "moonshot"
-model = "kimi-k2.6"
-display_name = "Kimi K2.6"
-base_url = "https://api.moonshot.ai/v1"
-api_key_env = "MOONSHOT_API_KEY"
-context_window = 262144
-default_reasoning = "none"
-reasoning_efforts = ["none"]
+```rust
+fn main() -> anyhow::Result<()> {
+    roder_cli::run(|registry| {
+        registry.install(roder_ext_openai_responses::extension())?;
+        registry.install(roder_ext_anthropic::extension())?;
+        registry.install(roder_ext_jsonl_session::extension())?;
+        registry.install(MyInferenceExtension)?;
+        Ok(())
+    })
+}
 ```
 
-Responses-compatible and Anthropic-compatible routers:
+No fork is required. The lab or product builds its own distribution.
 
-```toml
-[model.my-responses-model]
-type = "responses"
-provider = "openai-compatible"
-model = "my-responses-model"
-display_name = "My Responses Model"
-base_url = "https://router.example.com/v1"
-api_key = "env:MY_RESPONSES_API_KEY"
-context_window = 200000
-edit_tool = "patch"
+---
 
-[model.my-claude-router]
-type = "anthropic"
-provider = "anthropic-compatible"
-model = "claude-compatible-model"
-display_name = "My Claude Router"
-base_url = "https://router.example.com"
-api_key_env = "ROUTER_API_KEY"
-context_window = 200000
-default_reasoning = "medium"
-reasoning_efforts = ["low", "medium", "high"]
-edit_tool = "edit"
-```
+## Relationship to `gode`
 
-Native Gemini models use the official Go GenAI SDK (`google.golang.org/genai`) rather than a Chat Completions compatibility endpoint. Prefer `GEMINI_API_TOKEN` for Developer API keys; Gode also checks `GEMINI_API_KEY`, `GOOGLE_API_KEY`, `GOOGLE_GENAI_API_KEY`, and `GOOGLE_AI_API_KEY` when no model-specific key is configured.
+This repository started as `gode` — a Go-native TUI coding agent and event-driven harness in `internal/godex` and `internal/tui`. That implementation proved the core behaviors Roder is built around: event-driven sessions, the provider abstraction, the tool registry, the MCP manager, the JSONL journal, and the app-server protocol with stdio and WebSocket transports.
 
-```sh
-export GEMINI_API_TOKEN="..."
-```
+Roder is the Rust rewrite of that work, re-founded as a harness-first project rather than a coding-agent application. The Go implementation continues to live under `cmd/gode` and `internal/` during the transition and serves as the behavioral oracle while Rust crates fill out. New work should land in `crates/roder-*`; the roadmap calls out plans whose Go counterparts are explicitly being ported.
 
-`gemini-3.1-pro-preview-customtools` is also built in. It uses the same native Gemini provider path as Pro Preview, but targets Google's custom-tools endpoint for agentic workflows that rely heavily on Gode tools and shell commands.
+See [`roadmap/roder_rust_rewrite_plan.md`](./roadmap/roder_rust_rewrite_plan.md) for the rewrite sequence and which Go behaviors are mapped to which Rust crates.
 
-```toml
-[model.gemini-pro]
-type = "gemini"
-provider = "gemini"
-model = "gemini-3.1-pro-preview"
-display_name = "Gemini 3.1 Pro"
-api_key_env = "GEMINI_API_TOKEN"
-context_window = 1048576
-max_context_window = 1048576
-default_reasoning = "high"
-reasoning_efforts = ["minimal", "low", "medium", "high"]
-supports_images = true
-supports_tools = true
+---
 
-[model.gemini-enterprise]
-type = "gemini"
-provider = "gemini-enterprise"
-model = "gemini-3.1-pro-preview"
-display_name = "Gemini Enterprise"
-backend = "enterprise"
-project_env = "GOOGLE_CLOUD_PROJECT"
-location_env = "GOOGLE_CLOUD_LOCATION"
-context_window = 1048576
-```
+## Status, governance, and contributing
 
-Enterprise mode uses `GOOGLE_GENAI_USE_ENTERPRISE`, `GOOGLE_CLOUD_PROJECT`, `GOOGLE_CLOUD_LOCATION`, and Application Default Credentials/`GOOGLE_APPLICATION_CREDENTIALS` as supported by the SDK, but those settings are not required for normal Gemini Developer API usage. Sessions remain stored as provider-neutral Responses-shaped items; Gode rebuilds Gemini SDK content at request time and does not persist Gemini SDK objects.
+Roder is open source and forkable, but designed so that forking is rarely necessary (whitepaper §20). The project favors:
 
-`edit_tool` controls which write primitive is loaded and exposed to the model. Use `patch` for GPT-style models so they only get `apply_patch`; use `edit` for non-GPT models so they get `write_file`, `edit`, and `multi_edit` instead. When omitted, models whose upstream name starts with `gpt` default to `patch`; all other models default to `edit`.
+- stable extension APIs over churn in `roder-api`;
+- canonical internal types over provider-specific shapes in `roder-core`;
+- provider crates outside the core;
+- typed events on the canonical bus over ad hoc logging;
+- capability-scoped brokers over raw filesystem/process access;
+- app-server methods over UI-only behavior.
 
-Inspect the active catalog with:
+The roadmap files are the working contract for in-flight changes. New ideas that affect canonical types or the extension surface should land as a roadmap plan first so dependency gates and invariants are explicit before code moves.
 
-```sh
-gode models
-```
+---
 
-Optional live Chat Completions smoke tests are skipped by default:
+## License
 
-```sh
-GODE_LIVE_CHAT_COMPLETIONS=1 \
-GODE_MODEL=deepseek-chat \
-GODE_LIVE_CHAT_COMPLETIONS_BASE_URL=https://api.deepseek.com/v1 \
-GODE_LIVE_CHAT_COMPLETIONS_API_KEY="$DEEPSEEK_API_KEY" \
-go test ./internal/godex/provider -run TestChatCompletionsLive -v
-```
-
-Optional live Gemini smoke tests are also skipped by default:
-
-```sh
-GEMINI_LIVE=1 GEMINI_API_TOKEN="$GEMINI_API_TOKEN" \
-  go test ./internal/godex/provider -run TestGeminiLive -v
-```
-
-## Shell Tooling
-
-The `shell` tool runs POSIX shell strings through the embedded `mvdan.cc/sh/v3` runner instead of spawning `/bin/sh -lc`. Standard shell behavior such as variables, pipelines, redirections, and exit statuses is handled in-process, while unknown external commands still fall through to OS command lookup and return command-not-found failures.
-
-Initial in-process builtins are available before PATH lookup:
-
-- `jq`: a small `gojq`-backed JSON builtin with `-r`, stdin input, and file input.
-- `gode_read_file path [start_line] [limit]`: reads text files through the same ranged read path as the `read_file` tool.
-- `gode_list_files [path]`: lists sorted direct children through the `list_files` tool.
-- `gode_search_files query`: searches workspace text files through the `search_files` tool.
-- `gode_apply_patch`: in patch-mode sessions, reads a patch from stdin and applies it through the existing `apply_patch` tool.
-
-The app-server keeps direct process execution for array commands such as `["/bin/echo","hi"]`. Non-streaming shell invocations like `["sh","-c","jq -r .name file.json"]` and `["/bin/sh","-lc","gode_list_files ."]` route through the embedded shell runner so app-server clients get the same builtins as agent shell tool calls.
-
-## Homebrew Release
-
-The formula builds `gode` from source, so local installs do not need a signed binary artifact.
-
-Create a local Homebrew release from a clean working tree:
-
-```sh
-VERSION=0.1.0 make release-brew
-brew install --build-from-source ./Formula/gode.rb
-```
-
-That creates `dist/gode-v0.1.0.tar.gz`, computes its checksum, and writes `Formula/gode.rb` with a `file://` URL for local testing. To publish a formula update that points at the git tag instead:
-
-```sh
-VERSION=0.1.0 PUBLISH=1 make release-brew
-```
-
-`PUBLISH=1` creates tag `v0.1.0`, rewrites the formula to use the git tag and revision, commits `Formula/gode.rb`, and pushes the tag plus the current branch to `origin`.
-
-## Shell And Builtins
-
-The `shell` tool parses commands with `mvdan.cc/sh/v3` in POSIX mode instead of wrapping every command in `/bin/sh -lc`. Pipelines, redirections, variable assignments, command substitutions, and shell functions are interpreted by the embedded runner. External commands still run through the OS path unless a caller explicitly disables them.
-
-Gode registers a small in-process builtin set before OS command lookup:
-
-- `jq`: JSON queries from stdin or file args, including `-r` raw string output.
-- `gode_read_file path [start_line] [limit]`: read focused file ranges through the existing `read_file` tool.
-- `gode_list_files [path]`: list sorted direct children through the existing `list_files` tool.
-- `gode_search_files query`: search text files through the existing `search_files` tool.
-- `gode_apply_patch`: in patch-mode sessions, read a patch from stdin and apply it through the existing `apply_patch` tool.
-
-`gode app-server` routes non-TTY `["sh", "-c", "..."]` and `["/bin/sh", "-lc", "..."]` command invocations through the same embedded shell runner when stdin/stdout streaming is not requested. Direct array commands and streamed app-server commands still use normal OS process execution.
-
-## Agent Client Protocol
-
-`gode acp` runs gode as an [Agent Client Protocol](https://agentclientprotocol.com/protocol/overview) agent over stdio. It speaks JSON-RPC 2.0 with one JSON message per line on stdin/stdout, which is the transport expected by ACP clients.
-
-```sh
-go run ./cmd/gode acp \
-  --workspace "$PWD" \
-  --data-dir "$HOME/.gode" \
-  --provider openai \
-  --model gpt-5.5
-```
-
-For offline testing, use the deterministic mock provider:
-
-```sh
-go run ./cmd/gode acp --provider mock --auto-approve
-```
-
-The ACP server advertises only capabilities that gode currently supports:
-
-- `session/new`, `session/prompt`, `session/cancel`, and `session/update`.
-- Optional `session/list` and `session/close`.
-- Text and `resource_link` prompt blocks. Images, audio, and embedded resources are rejected unless those capabilities are added later.
-- Stdio MCP servers passed in `session/new`. HTTP and SSE MCP transports are not advertised.
-- Tool progress through `tool_call` and `tool_call_update` session updates.
-- Permission requests through `session/request_permission` when a tool needs user approval.
-
-### Minimal Client Exchange
-
-Start by sending `initialize`:
-
-```json
-{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":1,"clientInfo":{"name":"example-client","version":"0.1.0"}}}
-```
-
-The response includes the negotiated protocol version, agent info, and the supported capability surface:
-
-```json
-{"jsonrpc":"2.0","id":1,"result":{"protocolVersion":1,"agentInfo":{"name":"gode","title":"Gode","version":"dev"},"agentCapabilities":{"loadSession":false,"mcpCapabilities":{"http":false,"sse":false},"promptCapabilities":{"image":false,"audio":false,"embeddedContext":false},"sessionCapabilities":{"list":{},"close":{}}},"authMethods":[]}}
-```
-
-Create a session with an absolute working directory and an MCP server list, even if it is empty:
-
-```json
-{"jsonrpc":"2.0","id":2,"method":"session/new","params":{"cwd":"/absolute/path/to/workspace","mcpServers":[]}}
-```
-
-Send a prompt using ACP content blocks:
-
-```json
-{"jsonrpc":"2.0","id":3,"method":"session/prompt","params":{"sessionId":"SESSION_ID","prompt":[{"type":"text","text":"summarize this repo"},{"type":"resource_link","name":"README.md","uri":"file:///absolute/path/to/workspace/README.md"}]}}
-```
-
-While the turn runs, gode emits `session/update` notifications. A normal assistant delta looks like this:
-
-```json
-{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"SESSION_ID","update":{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"..."}}}}
-```
-
-When the turn completes, the original `session/prompt` request receives a stop reason:
-
-```json
-{"jsonrpc":"2.0","id":3,"result":{"stopReason":"end_turn"}}
-```
-
-To cancel an active turn, send a notification:
-
-```json
-{"jsonrpc":"2.0","method":"session/cancel","params":{"sessionId":"SESSION_ID"}}
-```
-
-The active prompt request will return:
-
-```json
-{"jsonrpc":"2.0","id":3,"result":{"stopReason":"cancelled"}}
-```
-
-### MCP Servers
-
-ACP `session/new` can attach stdio MCP servers. `command` must be an absolute path:
-
-```json
-{"jsonrpc":"2.0","id":2,"method":"session/new","params":{"cwd":"/absolute/path/to/workspace","mcpServers":[{"name":"tools","command":"/absolute/path/to/mcp-server","args":["--stdio"],"env":[{"name":"EXAMPLE","value":"1"}]}]}}
-```
-
-Tools exposed by that MCP server are registered into gode's tool registry as `mcp.<server-name>.<tool-name>`.
-
-### Permissions
-
-If a tool needs approval, gode sends a JSON-RPC request to the client:
-
-```json
-{"jsonrpc":"2.0","id":"permission-...","method":"session/request_permission","params":{"sessionId":"SESSION_ID","toolCall":{"toolCallId":"call-1","title":"shell.exec","kind":"execute","status":"pending"},"options":[{"optionId":"allow_once","name":"Allow once","kind":"allow_once"},{"optionId":"reject_once","name":"Reject","kind":"reject_once"}]}}
-```
-
-Reply with the selected outcome:
-
-```json
-{"jsonrpc":"2.0","id":"permission-...","result":{"outcome":{"outcome":"selected","optionId":"allow_once"}}}
-```
-
-## App Server
-
-`gode app-server` mirrors Codex's app-server naming and wire style: JSON-RPC-shaped messages without the `jsonrpc` field, an `initialize` handshake before requests, and Codex-like method names such as `thread/start`, `turn/start`, `turn/steer`, `fs/readFile`, and `command/exec`. Use `turn/steer` with `threadId`, `expectedTurnId`, and text `input` to add steering instructions to the active turn.
-
-The `initialize` response includes `capabilities.turnInput` so clients can discover supported `turn/start` input blocks. `turn/start` accepts text, remote images, local images, and local files:
-
-```json
-{"id":2,"method":"turn/start","params":{"threadId":"THREAD_ID","input":[{"type":"text","text":"Review these attachments"},{"type":"local_file","path":"/Users/pz/Desktop/spec.md"},{"type":"local_file","path":"/Users/pz/Desktop/screenshot.png"}]}}
-```
-
-Local images are encoded as model image input. Text files are included in the prompt up to the advertised `maxLocalFileBytes`; binary files are represented by metadata so the agent can still reason about the attachment path.
-
-Supported transports:
-
-- `--listen stdio://` for JSONL over stdin/stdout.
-- `--listen ws://IP:PORT` for WebSocket frames plus `/readyz` and `/healthz`.
-- `--listen off` to disable the local control transport.
-
-Remote WebSocket mode is explicit and token-authenticated:
-
-```sh
-gode app-server --remote
-gode app-server --remote --listen ws://0.0.0.0:0
-gode app-server --remote --listen ws://100.x.y.z:0 --auth-token env:GODE_REMOTE_TOKEN
-```
-
-Remote mode defaults to `ws://0.0.0.0:0`, generates a high-entropy bearer token, stores only its hash in memory, and prints connect URLs plus a terminal QR code to stderr. Remote clients authenticate with `Authorization: Bearer <token>` or the WebSocket subprotocol pair `gode.remote.v1, bearer.<token>`. The token is not accepted in query parameters.
-
-Inside the TUI, run `/remote` or open `ctrl+p` -> `Remote Control` to start and stop the same remote app-server sidecar. The panel shows connection URLs, a token preview, QR pairing, auth hints, connected-client count, and a LAN-without-TLS warning when relevant.
-
-Remote connection patterns:
-
-- Same-network phone: start `gode app-server --remote --listen ws://0.0.0.0:0`, scan the QR, and use one of the rendered `192.168.x.x` or `10.x.x.x` URLs. The QR prefers these private LAN URLs by default.
-- Tailscale: bind explicitly with `--listen ws://100.x.y.z:0` when you want the QR to advertise a Tailscale address.
-- Native clients: set `Authorization: Bearer <token>` during the WebSocket handshake.
-- Browser-constrained clients: request subprotocols `gode.remote.v1` and `bearer.<token>` instead of sending a custom header.
-
-## Near-Term Direction
-
-- Deepen the OpenAI/Codex provider loop with multi-turn tool result continuation.
-- Add the Anthropic Claude SDK Go adapter.
-- Expand MCP connection coverage and external plugin surfaces.
-- Keep files small and split logic when a file starts getting large.
+To be announced. Roder is intended to ship under a permissive open-source license once a `LICENSE` file lands at the repo root.

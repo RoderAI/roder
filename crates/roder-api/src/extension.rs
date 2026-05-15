@@ -12,6 +12,7 @@ pub type SessionStoreId = String;
 pub type CheckpointStoreId = String;
 pub type MemoryStoreId = String;
 pub type ToolProviderId = String;
+pub type SubagentDispatcherId = String;
 pub type PolicyContributorId = String;
 pub type EventSinkId = String;
 
@@ -29,6 +30,7 @@ pub enum ProvidedService {
     CheckpointStore(CheckpointStoreId),
     MemoryStore(MemoryStoreId),
     ToolProvider(ToolProviderId),
+    SubagentDispatcher(SubagentDispatcherId),
     PolicyContributor(PolicyContributorId),
     EventSink(EventSinkId),
 }
@@ -60,6 +62,7 @@ pub struct ExtensionRegistry {
     pub checkpoint_stores: Vec<Arc<dyn crate::session::CheckpointStoreFactory>>,
     pub memory_stores: Vec<Arc<dyn crate::memory::MemoryStoreFactory>>,
     pub tools: Vec<Arc<dyn crate::tools::ToolContributor>>,
+    pub subagent_dispatchers: Vec<Arc<dyn crate::subagents::SubagentDispatcher>>,
     pub policy_contributors: Vec<Arc<dyn crate::context::PolicyContributor>>,
     pub event_sinks: Vec<Arc<dyn crate::extension::EventSink>>,
 }
@@ -82,6 +85,16 @@ impl ExtensionRegistry {
             .flat_map(|manifest| manifest.provides.iter().cloned())
             .collect()
     }
+
+    pub fn subagent_dispatcher(
+        &self,
+        id: &str,
+    ) -> Option<Arc<dyn crate::subagents::SubagentDispatcher>> {
+        self.subagent_dispatchers
+            .iter()
+            .find(|dispatcher| dispatcher.id() == id)
+            .cloned()
+    }
 }
 
 pub struct ExtensionRegistryBuilder {
@@ -93,6 +106,7 @@ pub struct ExtensionRegistryBuilder {
     pub checkpoint_stores: Vec<Arc<dyn crate::session::CheckpointStoreFactory>>,
     pub memory_stores: Vec<Arc<dyn crate::memory::MemoryStoreFactory>>,
     pub tools: Vec<Arc<dyn crate::tools::ToolContributor>>,
+    pub subagent_dispatchers: Vec<Arc<dyn crate::subagents::SubagentDispatcher>>,
     pub policy_contributors: Vec<Arc<dyn crate::context::PolicyContributor>>,
     pub event_sinks: Vec<Arc<dyn crate::extension::EventSink>>,
 }
@@ -114,6 +128,7 @@ impl ExtensionRegistryBuilder {
             checkpoint_stores: Vec::new(),
             memory_stores: Vec::new(),
             tools: Vec::new(),
+            subagent_dispatchers: Vec::new(),
             policy_contributors: Vec::new(),
             event_sinks: Vec::new(),
         }
@@ -143,6 +158,7 @@ impl ExtensionRegistryBuilder {
             checkpoint_stores: self.checkpoint_stores,
             memory_stores: self.memory_stores,
             tools: self.tools,
+            subagent_dispatchers: self.subagent_dispatchers,
             policy_contributors: self.policy_contributors,
             event_sinks: self.event_sinks,
         })
@@ -181,6 +197,13 @@ impl ExtensionRegistryBuilder {
 
     pub fn tool_contributor(&mut self, contributor: Arc<dyn crate::tools::ToolContributor>) {
         self.tools.push(contributor);
+    }
+
+    pub fn subagent_dispatcher(
+        &mut self,
+        dispatcher: Arc<dyn crate::subagents::SubagentDispatcher>,
+    ) {
+        self.subagent_dispatchers.push(dispatcher);
     }
 
     pub fn policy_contributor(&mut self, contributor: Arc<dyn crate::context::PolicyContributor>) {

@@ -2,7 +2,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use futures::stream;
-use roder_api::catalog::{PROVIDER_CODEX, PROVIDER_MOCK, models_for_provider};
+use roder_api::catalog::{PROVIDER_CODEX, PROVIDER_MOCK, models_for_codex, models_for_provider};
 use roder_api::extension::{
     ExtensionManifest, ExtensionRegistry, ExtensionRegistryBuilder, ProvidedService, RoderExtension,
 };
@@ -11,7 +11,6 @@ use roder_ext_anthropic::AnthropicExtension;
 use roder_ext_gemini::GeminiExtension;
 use roder_ext_jsonl_session::JsonlSessionExtension;
 use roder_ext_memory::MemoryExtension;
-use roder_ext_openai_chat_completions::OpenAiChatCompletionsExtension;
 use roder_ext_openai_responses::{OpenAiResponsesEngine, OpenAiResponsesExtension};
 use semver::Version;
 
@@ -30,8 +29,7 @@ pub fn build_default_registry(config: DefaultRegistryConfig) -> anyhow::Result<E
     builder.install(CodexOAuthProviderExtension)?;
 
     if let Some(openai_key) = config.openai_api_key {
-        builder.install(OpenAiResponsesExtension::new(openai_key.clone()))?;
-        builder.install(OpenAiChatCompletionsExtension::new(openai_key))?;
+        builder.install(OpenAiResponsesExtension::new(openai_key))?;
     }
     if let Some(anthropic_key) = config.anthropic_api_key {
         builder.install(AnthropicExtension::new(anthropic_key))?;
@@ -116,14 +114,22 @@ impl InferenceEngine for CodexOAuthInferenceEngine {
         }
     }
 
+    fn metadata(&self) -> InferenceProviderMetadata {
+        InferenceProviderMetadata {
+            name: "Codex".to_string(),
+            description: Some("ChatGPT account provider for Codex models".to_string()),
+            auth_type: ProviderAuthType::OAuth,
+            auth_label: Some("ChatGPT Plus/Pro".to_string()),
+            recommended: true,
+            sort_order: 10,
+        }
+    }
+
     async fn list_models(
         &self,
         _ctx: InferenceProviderContext<'_>,
     ) -> anyhow::Result<Vec<ModelDescriptor>> {
-        Ok(models_for_provider(
-            roder_api::catalog::PROVIDER_OPENAI,
-            false,
-        ))
+        Ok(models_for_codex(false))
     }
 
     async fn stream_turn(
@@ -135,8 +141,11 @@ impl InferenceEngine for CodexOAuthInferenceEngine {
             anyhow::bail!("codex auth is missing; run `roder auth login codex`")
         };
         let mut headers = vec![
-            ("originator".to_string(), "gode".to_string()),
-            ("User-Agent".to_string(), "roder".to_string()),
+            ("originator".to_string(), "codex_cli_rs".to_string()),
+            (
+                "User-Agent".to_string(),
+                "codex_cli_rs/0.1.0 roder".to_string(),
+            ),
         ];
         if let Some(account_id) = account_id {
             headers.push(("ChatGPT-Account-Id".to_string(), account_id));
@@ -162,6 +171,17 @@ impl InferenceEngine for FakeInferenceEngine {
 
     fn capabilities(&self) -> InferenceCapabilities {
         InferenceCapabilities::text_only()
+    }
+
+    fn metadata(&self) -> InferenceProviderMetadata {
+        InferenceProviderMetadata {
+            name: "Mock".to_string(),
+            description: Some("Local deterministic provider for tests".to_string()),
+            auth_type: ProviderAuthType::None,
+            auth_label: None,
+            recommended: false,
+            sort_order: 1_000,
+        }
     }
 
     async fn list_models(

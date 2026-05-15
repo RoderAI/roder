@@ -1,31 +1,31 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-DEFAULT_SESSION="${GODE_TMUX_SESSION:-gode}"
-DEFAULT_OUT_DIR="${GODE_TMUX_OUT_DIR:-.gode/tmux-captures}"
-DEFAULT_LINES="${GODE_TMUX_CAPTURE_LINES:-5000}"
+DEFAULT_SESSION="${RODER_TMUX_SESSION:-roder}"
+DEFAULT_OUT_DIR="${RODER_TMUX_OUT_DIR:-.roder/tmux-captures}"
+DEFAULT_LINES="${RODER_TMUX_CAPTURE_LINES:-5000}"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 usage() {
   cat <<'USAGE'
 Usage:
-  gode_tmux.sh start [-s session] [-d workdir] [-- command...]
-  gode_tmux.sh send [-s session] [--enter] text
-  gode_tmux.sh keys [-s session] key [key...]
-  gode_tmux.sh capture [-s session] [-o out_dir] [-l lines]
-  gode_tmux.sh attach [-s session]
-  gode_tmux.sh stop [-s session]
-  gode_tmux.sh status [-s session]
+  roder_tmux.sh start [-s session] [-d workdir] [-- command...]
+  roder_tmux.sh send [-s session] [--enter] text
+  roder_tmux.sh keys [-s session] key [key...]
+  roder_tmux.sh capture [-s session] [-o out_dir] [-l lines]
+  roder_tmux.sh attach [-s session]
+  roder_tmux.sh stop [-s session]
+  roder_tmux.sh status [-s session]
 
 Defaults:
-  session: gode
-  command: go run ./cmd/gode
-  output:  .gode/tmux-captures/
+  session: roder
+  command: cargo run -p roder-cli --bin roder
+  output:  .roder/tmux-captures/
 USAGE
 }
 
 die() {
-  printf 'gode_tmux: %s\n' "$*" >&2
+  printf 'roder_tmux: %s\n' "$*" >&2
   exit 1
 }
 
@@ -109,7 +109,7 @@ cmd_start() {
 
   local shell_command
   if [[ ${#command[@]} -eq 0 ]]; then
-    shell_command="go run ./cmd/gode"
+    shell_command="cargo run -p roder-cli --bin roder"
   else
     shell_command="$(shell_join "${command[@]}")"
   fi
@@ -152,7 +152,7 @@ cmd_send() {
   session_exists "$session" || die "session not found: $session"
 
   local text="$*"
-  local buffer="gode-send-$$"
+  local buffer="roder-send-$$"
   printf '%s' "$text" | tmux load-buffer -b "$buffer" -
   tmux paste-buffer -d -b "$buffer" -t "$(target_for "$session")"
   if [[ "$press_enter" -eq 1 ]]; then

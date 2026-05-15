@@ -2,8 +2,9 @@ use roder_api::catalog::{PROVIDER_GEMINI, models_for_provider};
 use roder_api::extension::InferenceEngineId;
 use roder_api::inference::{
     AgentInferenceRequest, CompletionMetadata, InferenceCapabilities, InferenceEngine,
-    InferenceEvent, InferenceEventStream, InferenceProviderContext, InferenceTurnContext,
-    MessageDelta, ModelDescriptor, TokenUsage,
+    InferenceEvent, InferenceEventStream, InferenceProviderContext, InferenceProviderMetadata,
+    InferenceTurnContext, MessageDelta, ModelDescriptor, ProviderAuthType, TokenUsage,
+    ToolCallCompleted,
 };
 use serde_json::{Value, json};
 
@@ -37,6 +38,22 @@ impl GeminiEngine {
         {
             body["generationConfig"] = generation_config;
         }
+        if !request.tools.is_empty() {
+            body["tools"] = json!([{
+                "functionDeclarations": request
+                    .tools
+                    .iter()
+                    .map(|tool| {
+                        json!({
+                            "name": tool.name,
+                            "description": tool.description,
+                            "parameters": tool.parameters,
+                        })
+                    })
+                    .collect::<Vec<_>>()
+            }]);
+            body["toolConfig"] = gemini_tool_config(&request.tool_choice);
+        }
         body
     }
 }
@@ -50,13 +67,24 @@ impl InferenceEngine for GeminiEngine {
     fn capabilities(&self) -> InferenceCapabilities {
         InferenceCapabilities {
             streaming: false,
-            tool_calls: false,
+            tool_calls: true,
             parallel_tool_calls: false,
             reasoning_summaries: false,
             structured_output: true,
             image_input: false,
             prompt_cache: false,
             provider_metadata: true,
+        }
+    }
+
+    fn metadata(&self) -> InferenceProviderMetadata {
+        InferenceProviderMetadata {
+            name: "Google".to_string(),
+            description: Some("Gemini API key provider".to_string()),
+            auth_type: ProviderAuthType::ApiKey,
+            auth_label: Some("API key".to_string()),
+            recommended: false,
+            sort_order: 40,
         }
     }
 
@@ -87,7 +115,13 @@ impl InferenceEngine for GeminiEngine {
         }
         let value: Value = response.json().await?;
         let text = extract_candidate_text(&value);
-        let mut events = vec![Ok(InferenceEvent::MessageDelta(MessageDelta { text }))];
+        let mut events = Vec::new();
+        if !text.is_empty() {
+            events.push(Ok(InferenceEvent::MessageDelta(MessageDelta { text })));
+        }
+        for call in extract_tool_calls(&value) {
+            events.push(Ok(InferenceEvent::ToolCallCompleted(call)));
+        }
         if let Some(usage) = extract_usage(&value) {
             events.push(Ok(InferenceEvent::Usage(usage)));
         }
@@ -119,13 +153,43 @@ fn gemini_contents(request: &AgentInferenceRequest) -> Vec<Value> {
                 "role": "model",
                 "parts": [{ "text": message.text }]
             })),
+            roder_api::conversation::ConversationItem::ToolCall(call) => Some(json!({
+                "role": "model",
+                "parts": [{
+                    "functionCall": {
+                        "id": call.id,
+                        "name": call.name,
+                        "args": parse_json_object(&call.arguments)
+                    }
+                }]
+            })),
             roder_api::conversation::ConversationItem::ToolResult(result) => Some(json!({
                 "role": "user",
-                "parts": [{ "text": format!("Tool result: {}", result.result) }]
+                "parts": [{
+                    "functionResponse": {
+                        "id": result.id,
+                        "name": result.name.clone().unwrap_or_default(),
+                        "response": { "result": result.result, "is_error": result.is_error }
+                    }
+                }]
             })),
             _ => None,
         })
         .collect()
+}
+
+fn gemini_tool_config(choice: &roder_api::tools::ToolChoice) -> Value {
+    let mode = match choice {
+        roder_api::tools::ToolChoice::Auto => "AUTO",
+        roder_api::tools::ToolChoice::Any => "ANY",
+        roder_api::tools::ToolChoice::None => "NONE",
+        roder_api::tools::ToolChoice::Specific(_) => "ANY",
+    };
+    let mut function_calling_config = json!({ "mode": mode });
+    if let roder_api::tools::ToolChoice::Specific(name) = choice {
+        function_calling_config["allowedFunctionNames"] = json!([name]);
+    }
+    json!({ "functionCallingConfig": function_calling_config })
 }
 
 fn gemini_generation_config(request: &AgentInferenceRequest) -> Value {
@@ -149,7 +213,30 @@ fn gemini_generation_config(request: &AgentInferenceRequest) -> Value {
             config["responseSchema"] = schema.clone();
         }
     }
+    if request.reasoning.enabled {
+        if let Some(thinking_config) = gemini_thinking_config(request.reasoning.level.as_deref()) {
+            config["thinkingConfig"] = thinking_config;
+        }
+    }
     config
+}
+
+fn gemini_thinking_config(level: Option<&str>) -> Option<Value> {
+    match level {
+        Some("none") => Some(json!({ "thinkingBudget": 0 })),
+        Some("minimal") => Some(json!({ "thinkingLevel": "MINIMAL" })),
+        Some("low") => Some(json!({ "thinkingLevel": "LOW" })),
+        Some("medium") => Some(json!({ "thinkingLevel": "MEDIUM" })),
+        Some("high") | Some("xhigh") | None => Some(json!({ "thinkingLevel": "HIGH" })),
+        Some(_) => None,
+    }
+}
+
+fn parse_json_object(raw: &str) -> Value {
+    serde_json::from_str::<Value>(raw)
+        .ok()
+        .filter(|value| value.is_object())
+        .unwrap_or_else(|| json!({}))
 }
 
 fn extract_candidate_text(value: &Value) -> String {
@@ -166,6 +253,36 @@ fn extract_candidate_text(value: &Value) -> String {
                 .filter_map(|part| part.get("text").and_then(|v| v.as_str()))
                 .collect::<Vec<_>>()
                 .join("")
+        })
+        .unwrap_or_default()
+}
+
+fn extract_tool_calls(value: &Value) -> Vec<ToolCallCompleted> {
+    value
+        .pointer("/candidates/0/content/parts")
+        .and_then(|v| v.as_array())
+        .map(|parts| {
+            parts
+                .iter()
+                .filter_map(|part| part.get("functionCall"))
+                .filter_map(|call| {
+                    let id = call
+                        .get("id")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("")
+                        .to_string();
+                    let name = call.get("name").and_then(|v| v.as_str())?.to_string();
+                    let arguments = call
+                        .get("args")
+                        .map(|args| args.to_string())
+                        .unwrap_or_else(|| "{}".to_string());
+                    Some(ToolCallCompleted {
+                        id,
+                        name,
+                        arguments,
+                    })
+                })
+                .collect()
         })
         .unwrap_or_default()
 }
@@ -187,11 +304,12 @@ fn number_to_u32(value: Option<&Value>) -> Option<u32> {
 mod tests {
     use super::*;
     use roder_api::conversation::{
-        AssistantMessage, ConversationItem, ToolResultRecord, UserMessage,
+        AssistantMessage, ConversationItem, ToolCallRecord, ToolResultRecord, UserMessage,
     };
     use roder_api::inference::{
         InstructionBundle, ModelSelection, OutputConfig, ReasoningConfig, RuntimeHints,
     };
+    use roder_api::tools::{ToolChoice, ToolSpec};
 
     fn request() -> AgentInferenceRequest {
         AgentInferenceRequest {
@@ -210,6 +328,11 @@ mod tests {
                 ConversationItem::AssistantMessage(AssistantMessage {
                     text: "Hi".to_string(),
                 }),
+                ConversationItem::ToolCall(ToolCallRecord {
+                    id: "call_1".to_string(),
+                    name: "shell".to_string(),
+                    arguments: r#"{"cmd":"pwd"}"#.to_string(),
+                }),
                 ConversationItem::ToolResult(ToolResultRecord {
                     id: "call_1".to_string(),
                     name: Some("shell".to_string()),
@@ -217,9 +340,20 @@ mod tests {
                     is_error: false,
                 }),
             ],
-            tools: vec![],
-            tool_choice: roder_api::tools::ToolChoice::Auto,
-            reasoning: ReasoningConfig::default(),
+            tools: vec![ToolSpec {
+                name: "shell".to_string(),
+                description: "Run a shell command".to_string(),
+                parameters: json!({
+                    "type": "object",
+                    "properties": { "cmd": { "type": "string" } },
+                    "required": ["cmd"]
+                }),
+            }],
+            tool_choice: ToolChoice::Specific("shell".to_string()),
+            reasoning: ReasoningConfig {
+                enabled: true,
+                level: Some("medium".to_string()),
+            },
             output: OutputConfig {
                 max_tokens: Some(128),
                 temperature: Some(0.4),
@@ -241,7 +375,14 @@ mod tests {
         assert_eq!(body["systemInstruction"]["parts"][1]["text"], "developer");
         assert_eq!(body["contents"][0]["role"], "user");
         assert_eq!(body["contents"][1]["role"], "model");
-        assert_eq!(body["contents"][2]["parts"][0]["text"], "Tool result: ok");
+        assert_eq!(
+            body["contents"][2]["parts"][0]["functionCall"]["name"],
+            "shell"
+        );
+        assert_eq!(
+            body["contents"][3]["parts"][0]["functionResponse"]["response"]["result"],
+            "ok"
+        );
         assert_eq!(body["generationConfig"]["maxOutputTokens"], 128);
         assert!((body["generationConfig"]["temperature"].as_f64().unwrap() - 0.4).abs() < 1e-6);
         assert!((body["generationConfig"]["topP"].as_f64().unwrap() - 0.95).abs() < 1e-6);
@@ -250,15 +391,28 @@ mod tests {
             "application/json"
         );
         assert_eq!(body["generationConfig"]["responseSchema"]["type"], "object");
+        assert_eq!(
+            body["generationConfig"]["thinkingConfig"]["thinkingLevel"],
+            "MEDIUM"
+        );
+        assert_eq!(body["tools"][0]["functionDeclarations"][0]["name"], "shell");
+        assert_eq!(
+            body["toolConfig"]["functionCallingConfig"]["allowedFunctionNames"][0],
+            "shell"
+        );
     }
 
     #[test]
-    fn extracts_gemini_text_usage_and_metadata() {
+    fn extracts_gemini_text_tool_calls_usage_and_metadata() {
         let value = json!({
             "responseId": "resp_123",
             "candidates": [{
                 "finishReason": "STOP",
-                "content": { "parts": [{ "text": "hello" }, { "text": " world" }] }
+                "content": { "parts": [
+                    { "text": "hello" },
+                    { "functionCall": { "id": "call_2", "name": "shell", "args": { "cmd": "ls" } } },
+                    { "text": " world" }
+                ] }
             }],
             "usageMetadata": {
                 "promptTokenCount": 2,
@@ -267,6 +421,14 @@ mod tests {
             }
         });
         assert_eq!(extract_candidate_text(&value), "hello world");
+        assert_eq!(
+            extract_tool_calls(&value),
+            vec![ToolCallCompleted {
+                id: "call_2".to_string(),
+                name: "shell".to_string(),
+                arguments: r#"{"cmd":"ls"}"#.to_string(),
+            }]
+        );
         assert_eq!(
             extract_usage(&value),
             Some(TokenUsage {

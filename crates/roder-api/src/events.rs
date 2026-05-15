@@ -3,6 +3,7 @@ use time::OffsetDateTime;
 
 use crate::extension::{ExtensionId, InferenceEngineId};
 use crate::inference::InferenceEvent;
+use crate::subagents::SubagentExitReason;
 
 pub type ThreadId = String;
 pub type TurnId = String;
@@ -146,6 +147,68 @@ pub struct ToolCallCompleted {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SubagentStarted {
+    pub thread_id: ThreadId,
+    pub turn_id: TurnId,
+    pub parent_thread_id: ThreadId,
+    pub parent_turn_id: TurnId,
+    pub agent_type: String,
+    pub description: String,
+    pub model: Option<String>,
+    #[serde(with = "time::serde::rfc3339")]
+    pub timestamp: OffsetDateTime,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SubagentMessage {
+    pub thread_id: ThreadId,
+    pub turn_id: TurnId,
+    pub parent_thread_id: ThreadId,
+    pub parent_turn_id: TurnId,
+    pub agent_type: String,
+    pub text: String,
+    #[serde(with = "time::serde::rfc3339")]
+    pub timestamp: OffsetDateTime,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SubagentToolCall {
+    pub thread_id: ThreadId,
+    pub turn_id: TurnId,
+    pub parent_thread_id: ThreadId,
+    pub parent_turn_id: TurnId,
+    pub agent_type: String,
+    pub tool_id: String,
+    pub tool_name: String,
+    #[serde(with = "time::serde::rfc3339")]
+    pub timestamp: OffsetDateTime,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SubagentCompleted {
+    pub thread_id: ThreadId,
+    pub turn_id: TurnId,
+    pub parent_thread_id: ThreadId,
+    pub parent_turn_id: TurnId,
+    pub agent_type: String,
+    pub exit_reason: SubagentExitReason,
+    #[serde(with = "time::serde::rfc3339")]
+    pub timestamp: OffsetDateTime,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SubagentFailed {
+    pub thread_id: ThreadId,
+    pub turn_id: TurnId,
+    pub parent_thread_id: ThreadId,
+    pub parent_turn_id: TurnId,
+    pub agent_type: String,
+    pub error: String,
+    #[serde(with = "time::serde::rfc3339")]
+    pub timestamp: OffsetDateTime,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FileChanged {
     pub thread_id: ThreadId,
     pub turn_id: TurnId,
@@ -206,6 +269,11 @@ pub enum RoderEvent {
     ApprovalResolved(ApprovalResolved),
     ToolCallStarted(ToolCallStarted),
     ToolCallCompleted(ToolCallCompleted),
+    SubagentStarted(SubagentStarted),
+    SubagentMessage(SubagentMessage),
+    SubagentToolCall(SubagentToolCall),
+    SubagentCompleted(SubagentCompleted),
+    SubagentFailed(SubagentFailed),
     FileChanged(FileChanged),
     TurnItemAppended(TurnItemAppended),
     TurnCompleted(TurnCompleted),
@@ -231,6 +299,11 @@ impl RoderEvent {
             RoderEvent::ApprovalResolved(_) => "approval.resolved",
             RoderEvent::ToolCallStarted(_) => "tool.call_started",
             RoderEvent::ToolCallCompleted(_) => "tool.call_completed",
+            RoderEvent::SubagentStarted(_) => "subagent.started",
+            RoderEvent::SubagentMessage(_) => "subagent.message",
+            RoderEvent::SubagentToolCall(_) => "subagent.tool_call",
+            RoderEvent::SubagentCompleted(_) => "subagent.completed",
+            RoderEvent::SubagentFailed(_) => "subagent.failed",
             RoderEvent::FileChanged(_) => "file.changed",
             RoderEvent::TurnItemAppended(_) => "turn.item_appended",
             RoderEvent::TurnCompleted(_) => "turn.completed",
@@ -247,6 +320,11 @@ impl RoderEvent {
             RoderEvent::ToolCallRequested(_)
             | RoderEvent::ToolCallStarted(_)
             | RoderEvent::ToolCallCompleted(_) => EventSource::Tool,
+            RoderEvent::SubagentStarted(_)
+            | RoderEvent::SubagentMessage(_)
+            | RoderEvent::SubagentToolCall(_)
+            | RoderEvent::SubagentCompleted(_)
+            | RoderEvent::SubagentFailed(_) => EventSource::Extension,
             RoderEvent::ExtensionRegistered(_) => EventSource::Extension,
             _ => EventSource::Core,
         }
@@ -267,6 +345,11 @@ impl RoderEvent {
             RoderEvent::ApprovalResolved(e) => Some(&e.thread_id),
             RoderEvent::ToolCallStarted(e) => Some(&e.thread_id),
             RoderEvent::ToolCallCompleted(e) => Some(&e.thread_id),
+            RoderEvent::SubagentStarted(e) => Some(&e.thread_id),
+            RoderEvent::SubagentMessage(e) => Some(&e.thread_id),
+            RoderEvent::SubagentToolCall(e) => Some(&e.thread_id),
+            RoderEvent::SubagentCompleted(e) => Some(&e.thread_id),
+            RoderEvent::SubagentFailed(e) => Some(&e.thread_id),
             RoderEvent::FileChanged(e) => Some(&e.thread_id),
             RoderEvent::TurnItemAppended(e) => Some(&e.thread_id),
             RoderEvent::TurnCompleted(e) => Some(&e.thread_id),
@@ -289,6 +372,11 @@ impl RoderEvent {
             RoderEvent::ApprovalResolved(e) => Some(&e.turn_id),
             RoderEvent::ToolCallStarted(e) => Some(&e.turn_id),
             RoderEvent::ToolCallCompleted(e) => Some(&e.turn_id),
+            RoderEvent::SubagentStarted(e) => Some(&e.turn_id),
+            RoderEvent::SubagentMessage(e) => Some(&e.turn_id),
+            RoderEvent::SubagentToolCall(e) => Some(&e.turn_id),
+            RoderEvent::SubagentCompleted(e) => Some(&e.turn_id),
+            RoderEvent::SubagentFailed(e) => Some(&e.turn_id),
             RoderEvent::FileChanged(e) => Some(&e.turn_id),
             RoderEvent::TurnItemAppended(e) => Some(&e.turn_id),
             RoderEvent::TurnCompleted(e) => Some(&e.turn_id),
@@ -444,5 +532,45 @@ mod tests {
             value["event"]["TurnStarted"]["timestamp"],
             "1970-01-01T00:00:00Z"
         );
+    }
+
+    #[test]
+    fn subagent_event_envelope_round_trips_parent_ids() {
+        let event = RoderEvent::SubagentStarted(SubagentStarted {
+            thread_id: "child-thread".to_string(),
+            turn_id: "child-turn".to_string(),
+            parent_thread_id: "parent-thread".to_string(),
+            parent_turn_id: "parent-turn".to_string(),
+            agent_type: "explore".to_string(),
+            description: "Inspect repository".to_string(),
+            model: Some("test-model".to_string()),
+            timestamp: OffsetDateTime::UNIX_EPOCH,
+        });
+        let envelope = EventEnvelope {
+            event_id: "event-subagent-started".to_string(),
+            seq: 7,
+            timestamp: OffsetDateTime::UNIX_EPOCH,
+            source: event.source(),
+            kind: event.kind().to_string(),
+            thread_id: event.thread_id().cloned(),
+            turn_id: event.turn_id().cloned(),
+            event,
+        };
+
+        let serialized = serde_json::to_string(&envelope).unwrap();
+        let round_trip: EventEnvelope = serde_json::from_str(&serialized).unwrap();
+
+        assert_eq!(round_trip.kind, "subagent.started");
+        assert_eq!(round_trip.source, EventSource::Extension);
+        assert_eq!(round_trip.thread_id.as_deref(), Some("child-thread"));
+        assert_eq!(round_trip.turn_id.as_deref(), Some("child-turn"));
+
+        match round_trip.event {
+            RoderEvent::SubagentStarted(started) => {
+                assert_eq!(started.parent_thread_id, "parent-thread");
+                assert_eq!(started.parent_turn_id, "parent-turn");
+            }
+            other => panic!("unexpected event: {other:?}"),
+        }
     }
 }

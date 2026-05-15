@@ -2,8 +2,9 @@ use roder_api::catalog::{PROVIDER_OPENAI, models_for_provider};
 use roder_api::extension::InferenceEngineId;
 use roder_api::inference::{
     AgentInferenceRequest, CompletionMetadata, InferenceCapabilities, InferenceEngine,
-    InferenceEvent, InferenceEventStream, InferenceProviderContext, InferenceTurnContext,
-    MessageDelta, ModelDescriptor, TokenUsage, ToolCallCompleted,
+    InferenceEvent, InferenceEventStream, InferenceFailure, InferenceProviderContext,
+    InferenceProviderMetadata, InferenceTurnContext, MessageDelta, ModelDescriptor,
+    ProviderAuthType, ReasoningDelta, TokenUsage, ToolCallCompleted,
 };
 use serde_json::{Value, json};
 
@@ -46,8 +47,15 @@ impl OpenAiResponsesEngine {
         let mut body = json!({
             "model": request.model.model,
             "input": response_input_items(request),
+            "store": false,
+            "stream": true,
         });
-        if let Some(system) = request.instructions.system.as_deref() {
+        if let Some(system) = request
+            .instructions
+            .system
+            .as_deref()
+            .filter(|s| !s.is_empty())
+        {
             body["instructions"] = json!(system);
         }
         if let Some(max_tokens) = request.output.max_tokens {
@@ -108,7 +116,7 @@ impl InferenceEngine for OpenAiResponsesEngine {
 
     fn capabilities(&self) -> InferenceCapabilities {
         InferenceCapabilities {
-            streaming: false,
+            streaming: true,
             tool_calls: true,
             parallel_tool_calls: false,
             reasoning_summaries: true,
@@ -116,6 +124,17 @@ impl InferenceEngine for OpenAiResponsesEngine {
             image_input: false,
             prompt_cache: true,
             provider_metadata: true,
+        }
+    }
+
+    fn metadata(&self) -> InferenceProviderMetadata {
+        InferenceProviderMetadata {
+            name: "OpenAI".to_string(),
+            description: Some("OpenAI API key provider".to_string()),
+            auth_type: ProviderAuthType::ApiKey,
+            auth_label: Some("API key".to_string()),
+            recommended: true,
+            sort_order: 20,
         }
     }
 
@@ -147,28 +166,219 @@ impl InferenceEngine for OpenAiResponsesEngine {
                 response.text().await.unwrap_or_default()
             );
         }
-        let value: Value = response.json().await?;
-        let text = extract_response_text(&value);
-        let mut events = Vec::new();
-        if !text.is_empty() {
-            events.push(Ok(InferenceEvent::MessageDelta(MessageDelta { text })));
-        }
-        for call in extract_tool_calls(&value) {
-            events.push(Ok(InferenceEvent::ToolCallCompleted(call)));
-        }
-        if let Some(usage) = extract_usage(&value) {
-            events.push(Ok(InferenceEvent::Usage(usage)));
-        }
-        events.push(Ok(InferenceEvent::ProviderMetadata(value.clone())));
-        events.push(Ok(InferenceEvent::Completed(CompletionMetadata {
-            stop_reason: value
-                .get("status")
-                .and_then(|v| v.as_str())
-                .map(str::to_string),
-            provider_response_id: value.get("id").and_then(|v| v.as_str()).map(str::to_string),
-        })));
-        Ok(Box::pin(futures::stream::iter(events)))
+        Ok(stream_responses_sse(response))
     }
+}
+
+fn stream_responses_sse(response: reqwest::Response) -> InferenceEventStream {
+    Box::pin(async_stream::try_stream! {
+        use futures::StreamExt as _;
+
+        let mut chunks = response.bytes_stream();
+        let mut buffer = String::new();
+        let mut state = ResponsesStreamState::default();
+
+        while let Some(chunk) = chunks.next().await {
+            let chunk = chunk?;
+            buffer.push_str(&String::from_utf8_lossy(&chunk));
+            while let Some((frame, consumed)) = take_sse_frame(&buffer) {
+                buffer.drain(..consumed);
+                let Some(event) = parse_sse_frame(&frame)? else {
+                    continue;
+                };
+                for inference_event in events_from_sse_event(&event, &mut state) {
+                    yield inference_event;
+                }
+            }
+        }
+
+        let trailing_event = if buffer.trim().is_empty() {
+            None
+        } else {
+            parse_sse_frame(&buffer)?
+        };
+        if let Some(event) = trailing_event {
+            for inference_event in events_from_sse_event(&event, &mut state) {
+                yield inference_event;
+            }
+        }
+
+        if !state.terminal {
+            Err(anyhow::anyhow!("stream closed before response.completed"))?;
+        }
+    })
+}
+
+#[derive(Default)]
+struct ResponsesStreamState {
+    terminal: bool,
+    streamed_text: bool,
+}
+
+#[derive(Debug, PartialEq)]
+struct SseEvent {
+    event: Option<String>,
+    data: Value,
+}
+
+fn take_sse_frame(buffer: &str) -> Option<(String, usize)> {
+    let lf = buffer.find("\n\n").map(|idx| (idx, 2));
+    let crlf = buffer.find("\r\n\r\n").map(|idx| (idx, 4));
+    let (idx, delimiter_len) = match (lf, crlf) {
+        (Some(lf), Some(crlf)) => lf.min(crlf),
+        (Some(lf), None) => lf,
+        (None, Some(crlf)) => crlf,
+        (None, None) => return None,
+    };
+    Some((buffer[..idx].to_string(), idx + delimiter_len))
+}
+
+fn parse_sse_frame(frame: &str) -> anyhow::Result<Option<SseEvent>> {
+    let mut event = None;
+    let mut data = Vec::new();
+
+    for raw_line in frame.lines() {
+        let line = raw_line.trim_end_matches('\r');
+        if let Some(value) = line.strip_prefix("event:") {
+            event = Some(value.trim_start().to_string());
+        } else if let Some(value) = line.strip_prefix("data:") {
+            data.push(value.trim_start());
+        }
+    }
+
+    if data.is_empty() {
+        return Ok(None);
+    }
+
+    let data = data.join("\n");
+    if data.trim() == "[DONE]" {
+        return Ok(None);
+    }
+
+    Ok(Some(SseEvent {
+        event,
+        data: serde_json::from_str(&data)?,
+    }))
+}
+
+fn events_from_sse_event(
+    event: &SseEvent,
+    state: &mut ResponsesStreamState,
+) -> Vec<InferenceEvent> {
+    let kind = event
+        .data
+        .get("type")
+        .and_then(|value| value.as_str())
+        .or(event.event.as_deref())
+        .unwrap_or_default();
+
+    match kind {
+        "response.output_text.delta" => event
+            .data
+            .get("delta")
+            .and_then(|value| value.as_str())
+            .map(|text| {
+                state.streamed_text = true;
+                InferenceEvent::MessageDelta(MessageDelta {
+                    text: text.to_string(),
+                })
+            })
+            .into_iter()
+            .collect(),
+        "response.reasoning_summary_text.delta" | "response.reasoning_text.delta" => event
+            .data
+            .get("delta")
+            .and_then(|value| value.as_str())
+            .map(|text| {
+                InferenceEvent::ReasoningDelta(ReasoningDelta {
+                    text: text.to_string(),
+                })
+            })
+            .into_iter()
+            .collect(),
+        "response.output_item.done" => event
+            .data
+            .get("item")
+            .into_iter()
+            .flat_map(extract_tool_calls_from_item)
+            .map(InferenceEvent::ToolCallCompleted)
+            .collect(),
+        "response.completed" => {
+            state.terminal = true;
+            let response = event.data.get("response").unwrap_or(&event.data);
+            let mut events = Vec::new();
+            let text = extract_response_text(response);
+            if !state.streamed_text && !text.is_empty() {
+                events.push(InferenceEvent::MessageDelta(MessageDelta { text }));
+            }
+            for call in extract_tool_calls(response) {
+                events.push(InferenceEvent::ToolCallCompleted(call));
+            }
+            if let Some(usage) = extract_usage(response) {
+                events.push(InferenceEvent::Usage(usage));
+            }
+            events.push(InferenceEvent::ProviderMetadata(response.clone()));
+            events.push(InferenceEvent::Completed(CompletionMetadata {
+                stop_reason: response
+                    .get("status")
+                    .and_then(|value| value.as_str())
+                    .map(str::to_string),
+                provider_response_id: response
+                    .get("id")
+                    .and_then(|value| value.as_str())
+                    .map(str::to_string),
+            }));
+            events
+        }
+        "response.failed" | "response.incomplete" | "error" => {
+            state.terminal = true;
+            vec![InferenceEvent::Failed(InferenceFailure {
+                message: stream_error_message(&event.data, kind),
+            })]
+        }
+        _ => Vec::new(),
+    }
+}
+
+fn extract_tool_calls_from_item(item: &Value) -> Vec<ToolCallCompleted> {
+    if item.get("type").and_then(|value| value.as_str()) != Some("function_call") {
+        return Vec::new();
+    }
+
+    let Some(id) = item
+        .get("call_id")
+        .or_else(|| item.get("id"))
+        .and_then(|value| value.as_str())
+    else {
+        return Vec::new();
+    };
+    let Some(name) = item.get("name").and_then(|value| value.as_str()) else {
+        return Vec::new();
+    };
+    vec![ToolCallCompleted {
+        id: id.to_string(),
+        name: name.to_string(),
+        arguments: item
+            .get("arguments")
+            .and_then(|value| value.as_str())
+            .unwrap_or("{}")
+            .to_string(),
+    }]
+}
+
+fn stream_error_message(data: &Value, fallback: &str) -> String {
+    data.get("response")
+        .and_then(|response| response.get("error"))
+        .or_else(|| data.get("error"))
+        .and_then(|error| {
+            error
+                .get("message")
+                .and_then(|message| message.as_str())
+                .or_else(|| error.as_str())
+        })
+        .or_else(|| data.get("message").and_then(|message| message.as_str()))
+        .unwrap_or(fallback)
+        .to_string()
 }
 
 fn response_input_items(request: &AgentInferenceRequest) -> Vec<Value> {
@@ -345,6 +555,8 @@ mod tests {
     fn maps_responses_request_options_and_input_items() {
         let body = OpenAiResponsesEngine::map_request(&request());
         assert_eq!(body["model"], "gpt-5.5");
+        assert_eq!(body["store"], false);
+        assert_eq!(body["stream"], true);
         assert_eq!(body["instructions"], "be helpful");
         assert_eq!(body["max_output_tokens"], 200);
         assert!((body["temperature"].as_f64().unwrap() - 0.2).abs() < 1e-6);
@@ -404,5 +616,115 @@ mod tests {
         assert_eq!(calls[0].id, "call_1");
         assert_eq!(calls[0].name, "echo");
         assert_eq!(calls[0].arguments, "{\"text\":\"hello\"}");
+    }
+
+    #[test]
+    fn parses_responses_sse_data_frames() {
+        let frame = "event: response.output_text.delta\r\ndata: {\"type\":\"response.output_text.delta\",\"delta\":\"hi\"}\r\n";
+        let event = parse_sse_frame(frame).unwrap().unwrap();
+        assert_eq!(event.event.as_deref(), Some("response.output_text.delta"));
+        assert_eq!(event.data["delta"], "hi");
+        assert_eq!(parse_sse_frame("data: [DONE]\n").unwrap(), None);
+    }
+
+    #[test]
+    fn emits_streaming_text_and_completed_metadata() {
+        let mut state = ResponsesStreamState::default();
+        let delta = SseEvent {
+            event: Some("response.output_text.delta".to_string()),
+            data: json!({ "type": "response.output_text.delta", "delta": "hello" }),
+        };
+        let events = events_from_sse_event(&delta, &mut state);
+        assert_eq!(
+            events,
+            vec![InferenceEvent::MessageDelta(MessageDelta {
+                text: "hello".to_string(),
+            })]
+        );
+
+        let completed = SseEvent {
+            event: Some("response.completed".to_string()),
+            data: json!({
+                "type": "response.completed",
+                "response": {
+                    "id": "resp_1",
+                    "status": "completed",
+                    "output_text": "hello",
+                    "usage": {
+                        "input_tokens": 3,
+                        "output_tokens": 4,
+                        "total_tokens": 7
+                    }
+                }
+            }),
+        };
+        let events = events_from_sse_event(&completed, &mut state);
+        assert!(state.terminal);
+        assert!(
+            !events
+                .iter()
+                .any(|event| matches!(event, InferenceEvent::MessageDelta(_)))
+        );
+        assert!(events.iter().any(|event| {
+            matches!(
+                event,
+                InferenceEvent::Usage(TokenUsage {
+                    prompt_tokens: 3,
+                    completion_tokens: 4,
+                    total_tokens: 7,
+                })
+            )
+        }));
+        assert!(events.iter().any(|event| {
+            matches!(
+                event,
+                InferenceEvent::Completed(CompletionMetadata {
+                    provider_response_id: Some(id),
+                    ..
+                }) if id == "resp_1"
+            )
+        }));
+    }
+
+    #[test]
+    fn emits_completed_text_when_no_delta_was_streamed() {
+        let mut state = ResponsesStreamState::default();
+        let event = SseEvent {
+            event: None,
+            data: json!({
+                "type": "response.completed",
+                "response": {
+                    "id": "resp_1",
+                    "output_text": "fallback"
+                }
+            }),
+        };
+        let events = events_from_sse_event(&event, &mut state);
+        assert!(matches!(
+            events.first(),
+            Some(InferenceEvent::MessageDelta(MessageDelta { text })) if text == "fallback"
+        ));
+    }
+
+    #[test]
+    fn emits_stream_failures() {
+        let mut state = ResponsesStreamState::default();
+        let event = SseEvent {
+            event: None,
+            data: json!({
+                "type": "response.failed",
+                "response": {
+                    "error": { "message": "bad stream" }
+                }
+            }),
+        };
+        let events = events_from_sse_event(&event, &mut state);
+        assert!(state.terminal);
+        assert_eq!(
+            events,
+            vec![InferenceEvent::Failed(InferenceFailure {
+                message: "bad stream".to_string(),
+            })]
+        );
     }
 }

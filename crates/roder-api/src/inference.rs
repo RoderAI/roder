@@ -13,6 +13,37 @@ pub struct ModelSelection {
     pub model: String,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ProviderAuthType {
+    None,
+    ApiKey,
+    OAuth,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct InferenceProviderMetadata {
+    pub name: String,
+    pub description: Option<String>,
+    pub auth_type: ProviderAuthType,
+    pub auth_label: Option<String>,
+    pub recommended: bool,
+    pub sort_order: i32,
+}
+
+impl InferenceProviderMetadata {
+    pub fn local(name: impl Into<String>) -> Self {
+        Self {
+            name: name.into(),
+            description: None,
+            auth_type: ProviderAuthType::None,
+            auth_label: None,
+            recommended: false,
+            sort_order: 100,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
 pub struct InstructionBundle {
     pub system: Option<String>,
@@ -175,6 +206,10 @@ pub struct InferenceTurnContext<'a> {
 pub trait InferenceEngine: Send + Sync + 'static {
     fn id(&self) -> InferenceEngineId;
     fn capabilities(&self) -> InferenceCapabilities;
+
+    fn metadata(&self) -> InferenceProviderMetadata {
+        InferenceProviderMetadata::local(self.id())
+    }
 
     async fn list_models(
         &self,

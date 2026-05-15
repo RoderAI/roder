@@ -1,3 +1,5 @@
+mod dialog;
+
 use std::io;
 use std::time::Duration;
 
@@ -15,11 +17,15 @@ use ratatui::{
     widgets::{Block, BorderType, Borders, Clear, List, ListItem, ListState, Paragraph},
 };
 use roder_api::events::RoderEvent;
+use roder_api::inference::ProviderAuthType;
 use roder_app_server::LocalAppClient;
 use roder_protocol::{
     CodexAuthResult, CreateSessionResult, InterruptTurnParams, JsonRpcRequest, JsonRpcResponse,
-    ProviderSelectParams, ProviderSelectResult, ProvidersListResult, StartTurnParams,
+    ProviderDescriptor, ProviderSelectParams, ProviderSelectResult, ProvidersListResult,
+    StartTurnParams,
 };
+use tokio::process::Command;
+use tui_textarea::TextArea;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 struct Theme {
@@ -34,6 +40,9 @@ struct Theme {
     error: Color,
     border: Color,
     dialog: Color,
+    dialog_bg: Color,
+    dialog_shadow: Color,
+    dialog_key_bg: Color,
     selection_fg: Color,
     selection_bg: Color,
     top_bar_track: Color,
@@ -59,6 +68,9 @@ impl Theme {
                 error: Color::Indexed(196),
                 border: Color::Indexed(244),
                 dialog: Color::Indexed(62),
+                dialog_bg: Color::Indexed(235),
+                dialog_shadow: Color::Indexed(232),
+                dialog_key_bg: Color::Indexed(238),
                 selection_fg: Color::Reset,
                 selection_bg: Color::Indexed(212),
                 top_bar_track: Color::Indexed(236),
@@ -78,6 +90,9 @@ impl Theme {
             error: Color::Indexed(160),
             border: Color::Indexed(240),
             dialog: Color::Indexed(62),
+            dialog_bg: Color::Indexed(255),
+            dialog_shadow: Color::Indexed(250),
+            dialog_key_bg: Color::Indexed(252),
             selection_fg: Color::Reset,
             selection_bg: Color::Indexed(198),
             top_bar_track: Color::Indexed(252),
@@ -137,6 +152,21 @@ impl Theme {
         Style::default().fg(self.dialog)
     }
 
+    fn dialog_surface(self) -> Style {
+        Style::default().fg(self.text).bg(self.dialog_bg)
+    }
+
+    fn dialog_shadow(self) -> Style {
+        Style::default().bg(self.dialog_shadow)
+    }
+
+    fn dialog_key(self) -> Style {
+        Style::default()
+            .fg(self.text_strong)
+            .bg(self.dialog_key_bg)
+            .add_modifier(Modifier::BOLD)
+    }
+
     fn selected(self) -> Style {
         Style::default().fg(self.selection_fg).bg(self.selection_bg)
     }
@@ -149,19 +179,35 @@ struct ProviderOption {
     label: String,
 }
 
+#[derive(Debug, Clone)]
+struct ProviderChoice {
+    provider_id: String,
+    name: String,
+    description: Option<String>,
+    auth_type: ProviderAuthType,
+    authenticated: bool,
+    auth_detail: Option<String>,
+    default_model: Option<String>,
+    recommended: bool,
+}
+
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
 enum ProviderPopupScreen {
     Main,
     Models,
 }
 
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+enum ConfirmDialog {
+    Interrupt,
+    Exit,
+}
+
 #[derive(Debug, Clone)]
 enum ProviderMenuItem {
     Models,
+    Provider(ProviderChoice),
     Model(ProviderOption),
-    CodexLogin,
-    CodexStatus,
-    CodexLogout,
     Back,
 }
 
@@ -169,12 +215,34 @@ impl ProviderMenuItem {
     fn label(&self) -> String {
         match self {
             Self::Models => "Models".to_string(),
+            Self::Provider(provider) => provider.label(),
             Self::Model(option) => option.label.clone(),
-            Self::CodexLogin => "Sign in with Codex".to_string(),
-            Self::CodexStatus => "Codex auth status".to_string(),
-            Self::CodexLogout => "Sign out of Codex".to_string(),
             Self::Back => "Back".to_string(),
         }
+    }
+}
+
+impl ProviderChoice {
+    fn label(&self) -> String {
+        let mut label = self.name.clone();
+        if self.recommended {
+            label.push_str(" (Recommended)");
+        } else if let Some(description) = &self.description {
+            label.push_str(&format!(" ({description})"));
+        }
+        match self.auth_type {
+            ProviderAuthType::OAuth if !self.authenticated => {
+                label.push_str(" - sign in");
+            }
+            ProviderAuthType::OAuth if self.auth_detail.is_some() => {
+                label.push_str(" - signed in");
+            }
+            ProviderAuthType::ApiKey => {
+                label.push_str(" - API key");
+            }
+            _ => {}
+        }
+        label
     }
 }
 
@@ -184,16 +252,19 @@ pub struct TuiApp {
     active_turn_id: Option<String>,
     provider: String,
     model: String,
-    input: String,
+    composer: TextArea<'static>,
     messages: Vec<String>,
     events: Vec<String>,
     animation_frame: u64,
     show_event_log: bool,
     show_provider_popup: bool,
     provider_popup_screen: ProviderPopupScreen,
+    provider_choices: Vec<ProviderChoice>,
     model_options: Vec<ProviderOption>,
     provider_menu_items: Vec<ProviderMenuItem>,
+    provider_menu_filter: String,
     provider_state: ListState,
+    confirm_dialog: Option<ConfirmDialog>,
     theme: Theme,
 }
 
@@ -215,6 +286,7 @@ impl TuiApp {
 
         let mut provider_state = ListState::default();
         provider_state.select(Some(0));
+        let theme = Theme::for_terminal();
 
         Ok(Self {
             client,
@@ -226,17 +298,20 @@ impl TuiApp {
             } else {
                 model
             },
-            input: String::new(),
+            composer: composer_textarea(theme),
             messages: Vec::new(),
             events: Vec::new(),
             animation_frame: 0,
             show_event_log: false,
             show_provider_popup: false,
             provider_popup_screen: ProviderPopupScreen::Main,
+            provider_choices: Vec::new(),
             model_options: Vec::new(),
             provider_menu_items: Vec::new(),
+            provider_menu_filter: String::new(),
             provider_state,
-            theme: Theme::for_terminal(),
+            confirm_dialog: None,
+            theme,
         })
     }
 
@@ -256,7 +331,13 @@ impl TuiApp {
             if event::poll(Duration::from_millis(50))?
                 && let Event::Key(key) = event::read()?
             {
-                if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('p') {
+                if self.confirm_dialog.is_some() {
+                    if self.handle_confirm_key(key).await {
+                        break;
+                    }
+                } else if key.modifiers.contains(KeyModifiers::CONTROL)
+                    && key.code == KeyCode::Char('p')
+                {
                     if self.show_provider_popup {
                         self.show_provider_popup = false;
                     } else {
@@ -274,44 +355,42 @@ impl TuiApp {
                 } else if key.modifiers.contains(KeyModifiers::CONTROL)
                     && key.code == KeyCode::Char('c')
                 {
-                    if let Some(turn_id) = self.active_turn_id.clone() {
-                        let client = self.client.clone();
-                        let thread_id = self.thread_id.clone();
-                        tokio::spawn(async move {
-                            let params = InterruptTurnParams { thread_id, turn_id };
-                            let _ = client
-                                .send_request(JsonRpcRequest {
-                                    jsonrpc: "2.0".to_string(),
-                                    id: Some(serde_json::json!("interrupt")),
-                                    method: "turns/interrupt".to_string(),
-                                    params: Some(serde_json::to_value(params).unwrap()),
-                                })
-                                .await;
-                        });
-                    }
+                    self.confirm_dialog = Some(ConfirmDialog::Exit);
                 } else if self.show_provider_popup {
                     match key.code {
                         KeyCode::Esc => self.close_or_back_provider_popup(),
                         KeyCode::Up => self.select_previous_provider_menu_item(),
                         KeyCode::Down => self.select_next_provider_menu_item(),
                         KeyCode::Enter => self.select_current_provider_menu_item().await,
+                        KeyCode::Backspace => {
+                            self.provider_menu_filter.pop();
+                            self.clamp_provider_menu_selection();
+                        }
+                        KeyCode::Char(c) if !key.modifiers.contains(KeyModifiers::CONTROL) => {
+                            self.provider_menu_filter.push(c);
+                            self.clamp_provider_menu_selection();
+                        }
                         _ => {}
                     }
                 } else {
                     match key.code {
-                        KeyCode::Char(c) => self.input.push(c),
-                        KeyCode::Backspace => {
-                            self.input.pop();
-                        }
                         KeyCode::Enter => {
-                            let text = self.input.trim().to_string();
-                            self.input.clear();
+                            if key.modifiers.contains(KeyModifiers::SHIFT) {
+                                self.composer.insert_newline();
+                                continue;
+                            }
+                            let text = composer_text(&self.composer).trim().to_string();
+                            self.composer = composer_textarea(self.theme);
                             if text.is_empty() {
                                 continue;
                             }
                             if text.starts_with('/') {
                                 self.messages
                                     .push(format!("executed slash command: {text}"));
+                                continue;
+                            }
+                            if let Some(command) = shell_command_from_input(&text) {
+                                self.run_shell_command(command).await;
                                 continue;
                             }
                             self.messages.push(format!("user: {text}"));
@@ -333,8 +412,16 @@ impl TuiApp {
                                     .await;
                             });
                         }
-                        KeyCode::Esc => break,
-                        _ => {}
+                        KeyCode::Esc => {
+                            self.confirm_dialog = if self.active_turn_id.is_some() {
+                                Some(ConfirmDialog::Interrupt)
+                            } else {
+                                Some(ConfirmDialog::Exit)
+                            };
+                        }
+                        _ => {
+                            self.composer.input(key);
+                        }
                     }
                 }
             }
@@ -381,14 +468,75 @@ impl TuiApp {
         Ok(())
     }
 
+    async fn handle_confirm_key(&mut self, key: crossterm::event::KeyEvent) -> bool {
+        let Some(dialog) = self.confirm_dialog else {
+            return false;
+        };
+        match key.code {
+            KeyCode::Enter | KeyCode::Char('y') | KeyCode::Char('Y') => {
+                self.confirm_dialog = None;
+                match dialog {
+                    ConfirmDialog::Interrupt => self.interrupt_active_turn().await,
+                    ConfirmDialog::Exit => return true,
+                }
+            }
+            KeyCode::Esc | KeyCode::Char('n') | KeyCode::Char('N') => {
+                self.confirm_dialog = None;
+            }
+            _ => {}
+        }
+        false
+    }
+
+    async fn interrupt_active_turn(&mut self) {
+        let Some(turn_id) = self.active_turn_id.clone() else {
+            self.messages
+                .push("system: no running turn to interrupt.".to_string());
+            return;
+        };
+        let params = InterruptTurnParams {
+            thread_id: self.thread_id.clone(),
+            turn_id,
+        };
+        let res = self
+            .client
+            .send_request(JsonRpcRequest {
+                jsonrpc: "2.0".to_string(),
+                id: Some(serde_json::json!("interrupt")),
+                method: "turns/interrupt".to_string(),
+                params: Some(serde_json::to_value(params).unwrap()),
+            })
+            .await;
+        if let Some(err) = res.error {
+            self.record_error(format!("interrupt failed: {}", err.message));
+        } else {
+            self.push_event("interrupt requested".to_string());
+        }
+    }
+
+    async fn run_shell_command(&mut self, command: String) {
+        self.messages.push(format!("shell: !{command}"));
+        self.push_event(format!("shell command started: {command}"));
+        match run_shell_command(command.clone()).await {
+            Ok(output) => {
+                self.messages.push(format!("shell output: {output}"));
+                self.push_event(format!("shell command finished: {command}"));
+            }
+            Err(err) => {
+                self.record_error(format!("shell command failed: {err}"));
+            }
+        }
+    }
+
     fn render(&mut self, f: &mut Frame<'_>) {
         let area = f.area();
         let event_height = event_log_height(self.show_event_log, self.events.len());
-        let mut constraints = vec![
-            Constraint::Length(1),
-            Constraint::Length(1),
-            Constraint::Min(5),
-        ];
+        let loader_height = if self.active_turn_id.is_some() { 1 } else { 0 };
+        let mut constraints = Vec::new();
+        if loader_height > 0 {
+            constraints.push(Constraint::Length(loader_height));
+        }
+        constraints.extend([Constraint::Length(1), Constraint::Min(5)]);
         if event_height > 0 {
             constraints.push(Constraint::Length(event_height));
         }
@@ -399,21 +547,30 @@ impl TuiApp {
             .constraints(constraints)
             .split(area);
 
-        f.render_widget(self.animated_top_bar(area.width), chunks[0]);
-        f.render_widget(self.header(area.width), chunks[1]);
-        f.render_widget(self.transcript(), chunks[2]);
+        let header_index = if loader_height > 0 {
+            f.render_widget(self.animated_top_bar(area.width), chunks[0]);
+            1
+        } else {
+            0
+        };
+        let transcript_index = header_index + 1;
+        f.render_widget(self.header(area.width), chunks[header_index]);
+        f.render_widget(self.transcript(), chunks[transcript_index]);
 
         let composer_index = if event_height > 0 {
-            f.render_widget(self.event_log(), chunks[3]);
-            4
+            f.render_widget(self.event_log(), chunks[transcript_index + 1]);
+            transcript_index + 2
         } else {
-            3
+            transcript_index + 1
         };
-        f.render_widget(self.composer(), chunks[composer_index]);
+        f.render_widget(&self.composer, chunks[composer_index]);
         f.render_widget(self.footer(area.width), chunks[composer_index + 1]);
 
         if self.show_provider_popup {
             self.render_provider_popup(f, area);
+        }
+        if let Some(dialog) = self.confirm_dialog {
+            self.render_confirm_dialog(f, area, dialog);
         }
     }
 
@@ -507,38 +664,21 @@ impl TuiApp {
         )
     }
 
-    fn composer(&self) -> Paragraph<'static> {
-        let text = if self.input.is_empty() {
-            Text::from(Line::from(Span::styled(
-                "Ask Roder to work on this repo",
-                self.theme.muted().add_modifier(Modifier::ITALIC),
-            )))
-        } else {
-            Text::from(Line::from(Span::styled(
-                self.input.clone(),
-                self.theme.text(),
-            )))
-        };
-
-        Paragraph::new(text).block(
-            Block::default()
-                .borders(Borders::ALL)
-                .border_type(BorderType::Rounded)
-                .border_style(self.theme.border())
-                .title(Span::styled(" composer ", self.theme.muted())),
-        )
-    }
-
     fn footer(&self, width: u16) -> Paragraph<'static> {
         let status = if self.active_turn_id.is_some() {
             "running"
         } else {
             "ready"
         };
+        let shell_hint = if composer_text(&self.composer).starts_with('!') {
+            "  shell mode"
+        } else {
+            ""
+        };
         Paragraph::new(line_with_gap(
             vec![Span::styled(
                 format!(
-                    " {status}  enter send  ctrl+p provider/model  ctrl+l events  ctrl+c interrupt  esc quit"
+                    " {status}{shell_hint}  enter send  ! shell  ctrl+p provider/model  ctrl+l events  esc interrupt  ctrl+c exit"
                 ),
                 self.theme.subtle(),
             )],
@@ -553,38 +693,54 @@ impl TuiApp {
 
     fn render_provider_popup(&mut self, f: &mut Frame<'_>, area: Rect) {
         let menu_area = centered_rect(area, area.width.min(72), area.height.min(16));
-        let items: Vec<ListItem> = if self.provider_menu_items.is_empty() {
+        let visible_items = self.filtered_provider_menu_items();
+        let items: Vec<ListItem> = if visible_items.is_empty() {
             vec![ListItem::new(Line::from(Span::styled(
-                "No menu items available",
+                "No matches",
                 self.theme.muted(),
             )))]
         } else {
-            self.provider_menu_items
+            visible_items
                 .iter()
                 .map(|item| {
+                    let marker = match item {
+                        ProviderMenuItem::Provider(provider) if provider.authenticated => "✓ ",
+                        _ => "• ",
+                    };
                     ListItem::new(Line::from(vec![
-                        Span::styled("• ", self.theme.subtle()),
+                        Span::styled(marker, self.theme.subtle()),
                         Span::styled(item.label(), self.theme.text()),
                     ]))
                 })
                 .collect()
         };
         let title = match self.provider_popup_screen {
-            ProviderPopupScreen::Main => " Provider (Enter select, Esc close) ",
+            ProviderPopupScreen::Main => " Connect a provider (Enter select, Esc close) ",
             ProviderPopupScreen::Models => " Models (Enter select, Esc back) ",
+        };
+        let title = if self.provider_menu_filter.is_empty() {
+            title.to_string()
+        } else {
+            format!("{} /{} ", title.trim_end(), self.provider_menu_filter)
         };
         let menu = List::new(items)
             .block(
                 Block::default()
                     .borders(Borders::ALL)
                     .border_type(BorderType::Rounded)
+                    .style(self.theme.dialog_surface())
                     .border_style(self.theme.dialog())
                     .title(Span::styled(title, self.theme.accent())),
             )
+            .style(self.theme.dialog_surface())
             .highlight_style(self.theme.selected())
             .highlight_symbol("› ");
         f.render_widget(Clear, menu_area);
         f.render_stateful_widget(menu, menu_area, &mut self.provider_state);
+    }
+
+    fn render_confirm_dialog(&self, f: &mut Frame<'_>, area: Rect, dialog: ConfirmDialog) {
+        dialog::render_confirm_dialog(f, area, dialog, self.theme);
     }
 
     async fn open_provider_popup(&mut self) {
@@ -592,9 +748,11 @@ impl TuiApp {
             Ok(list) => {
                 self.provider = list.active_provider.clone();
                 self.model = list.active_model.clone();
+                self.provider_choices = provider_choices_from_list(&list);
                 self.model_options = provider_options_from_list(&list);
+                self.provider_menu_items = main_provider_menu_items(&self.provider_choices);
                 self.provider_popup_screen = ProviderPopupScreen::Main;
-                self.provider_menu_items = main_provider_menu_items();
+                self.provider_menu_filter.clear();
                 if self.provider_menu_items.is_empty() {
                     self.provider_state.select(None);
                 } else {
@@ -623,9 +781,14 @@ impl TuiApp {
     }
 
     fn close_or_back_provider_popup(&mut self) {
+        if !self.provider_menu_filter.is_empty() {
+            self.provider_menu_filter.clear();
+            self.clamp_provider_menu_selection();
+            return;
+        }
         if self.provider_popup_screen == ProviderPopupScreen::Models {
             self.provider_popup_screen = ProviderPopupScreen::Main;
-            self.provider_menu_items = main_provider_menu_items();
+            self.provider_menu_items = main_provider_menu_items(&self.provider_choices);
             self.provider_state.select(Some(0));
         } else {
             self.show_provider_popup = false;
@@ -633,10 +796,11 @@ impl TuiApp {
     }
 
     fn select_previous_provider_menu_item(&mut self) {
-        if self.provider_menu_items.is_empty() {
+        let visible_len = self.filtered_provider_menu_items().len();
+        if visible_len == 0 {
             return;
         }
-        let last = self.provider_menu_items.len() - 1;
+        let last = visible_len - 1;
         let i = match self.provider_state.selected() {
             Some(0) | None => last,
             Some(i) => i - 1,
@@ -645,10 +809,11 @@ impl TuiApp {
     }
 
     fn select_next_provider_menu_item(&mut self) {
-        if self.provider_menu_items.is_empty() {
+        let visible_len = self.filtered_provider_menu_items().len();
+        if visible_len == 0 {
             return;
         }
-        let last = self.provider_menu_items.len() - 1;
+        let last = visible_len - 1;
         let i = match self.provider_state.selected() {
             Some(i) if i >= last => 0,
             Some(i) => i + 1,
@@ -662,7 +827,7 @@ impl TuiApp {
             self.show_provider_popup = false;
             return;
         };
-        let Some(item) = self.provider_menu_items.get(selected).cloned() else {
+        let Some(item) = self.filtered_provider_menu_items().get(selected).cloned() else {
             self.show_provider_popup = false;
             return;
         };
@@ -671,21 +836,16 @@ impl TuiApp {
             ProviderMenuItem::Models => {
                 self.open_models_submenu();
             }
+            ProviderMenuItem::Provider(provider) => {
+                self.select_provider(provider).await;
+            }
             ProviderMenuItem::Model(option) => {
                 self.select_provider_model(option).await;
             }
-            ProviderMenuItem::CodexLogin => {
-                self.run_codex_auth("auth/codex/login").await;
-            }
-            ProviderMenuItem::CodexStatus => {
-                self.run_codex_auth("auth/codex/status").await;
-            }
-            ProviderMenuItem::CodexLogout => {
-                self.run_codex_auth("auth/codex/logout").await;
-            }
             ProviderMenuItem::Back => {
                 self.provider_popup_screen = ProviderPopupScreen::Main;
-                self.provider_menu_items = main_provider_menu_items();
+                self.provider_menu_filter.clear();
+                self.provider_menu_items = main_provider_menu_items(&self.provider_choices);
                 self.provider_state.select(Some(0));
             }
         }
@@ -693,6 +853,7 @@ impl TuiApp {
 
     fn open_models_submenu(&mut self) {
         self.provider_popup_screen = ProviderPopupScreen::Models;
+        self.provider_menu_filter.clear();
         self.provider_menu_items = self
             .model_options
             .iter()
@@ -712,11 +873,50 @@ impl TuiApp {
         }
     }
 
+    fn filtered_provider_menu_items(&self) -> Vec<ProviderMenuItem> {
+        filter_provider_menu_items(&self.provider_menu_items, &self.provider_menu_filter)
+    }
+
+    fn clamp_provider_menu_selection(&mut self) {
+        let len = self.filtered_provider_menu_items().len();
+        if len == 0 {
+            self.provider_state.select(None);
+            return;
+        }
+        let selected = self.provider_state.selected().unwrap_or(0).min(len - 1);
+        self.provider_state.select(Some(selected));
+    }
+
     async fn select_provider_model(&mut self, option: ProviderOption) {
         let params = ProviderSelectParams {
             provider: option.provider_id,
             model: Some(option.model_id),
         };
+        self.select_provider_model_params(params).await;
+    }
+
+    async fn select_provider(&mut self, provider: ProviderChoice) {
+        if provider.auth_type == ProviderAuthType::OAuth && !provider.authenticated {
+            if provider.provider_id != "codex" {
+                self.record_error(format!(
+                    "provider {} requires OAuth but has no login flow",
+                    provider.provider_id
+                ));
+                self.show_provider_popup = false;
+                return;
+            }
+            if !self.run_codex_auth("auth/codex/login").await {
+                return;
+            }
+        }
+        let params = ProviderSelectParams {
+            provider: provider.provider_id,
+            model: provider.default_model,
+        };
+        self.select_provider_model_params(params).await;
+    }
+
+    async fn select_provider_model_params(&mut self, params: ProviderSelectParams) {
         let res = self
             .client
             .send_request(JsonRpcRequest {
@@ -748,7 +948,7 @@ impl TuiApp {
         }
     }
 
-    async fn run_codex_auth(&mut self, method: &str) {
+    async fn run_codex_auth(&mut self, method: &str) -> bool {
         if method == "auth/codex/login" {
             self.messages
                 .push("system: opening browser for Codex sign-in.".to_string());
@@ -766,11 +966,12 @@ impl TuiApp {
             Ok(result) => {
                 self.messages.push(codex_auth_message(method, &result));
                 self.push_event(format!("codex auth: {}", codex_auth_event(&result)));
-                self.show_provider_popup = false;
+                true
             }
             Err(err) => {
                 self.record_error(format!("codex auth failed: {err}"));
                 self.show_provider_popup = false;
+                false
             }
         }
     }
@@ -798,15 +999,15 @@ fn animated_bar_line(width: u16, frame: u64, track: Color, fill: Color) -> Line<
     let offset = animated_bar_offset(width, highlight_width, frame);
     let mut spans = Vec::new();
     if offset > 0 {
-        spans.push(Span::styled(" ".repeat(offset), Style::default().bg(track)));
+        spans.push(Span::styled("─".repeat(offset), Style::default().fg(track)));
     }
     spans.push(Span::styled(
-        " ".repeat(highlight_width),
-        Style::default().bg(fill),
+        "─".repeat(highlight_width),
+        Style::default().fg(fill),
     ));
     let tail = width.saturating_sub(offset + highlight_width);
     if tail > 0 {
-        spans.push(Span::styled(" ".repeat(tail), Style::default().bg(track)));
+        spans.push(Span::styled("─".repeat(tail), Style::default().fg(track)));
     }
     Line::from(spans)
 }
@@ -837,6 +1038,80 @@ fn event_log_height(show_event_log: bool, event_count: usize) -> u16 {
     }
 }
 
+fn composer_textarea(theme: Theme) -> TextArea<'static> {
+    let mut composer = TextArea::default();
+    composer.set_block(
+        Block::default()
+            .borders(Borders::ALL)
+            .border_type(BorderType::Rounded)
+            .border_style(theme.border())
+            .title(Span::styled(" composer ", theme.muted())),
+    );
+    composer.set_style(theme.text());
+    composer.set_cursor_line_style(theme.text());
+    composer.set_cursor_style(
+        Style::default()
+            .fg(theme.selection_fg)
+            .bg(theme.selection_bg),
+    );
+    composer.set_placeholder_text("Ask Roder to work on this repo");
+    composer.set_placeholder_style(theme.muted().add_modifier(Modifier::ITALIC));
+    composer
+}
+
+fn composer_text(composer: &TextArea<'_>) -> String {
+    composer.lines().join("\n")
+}
+
+fn shell_command_from_input(input: &str) -> Option<String> {
+    let command = input.strip_prefix('!')?.trim();
+    (!command.is_empty()).then(|| command.to_string())
+}
+
+async fn run_shell_command(command: String) -> anyhow::Result<String> {
+    let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".to_string());
+    let output = tokio::time::timeout(
+        Duration::from_secs(120),
+        Command::new(shell).arg("-lc").arg(&command).output(),
+    )
+    .await
+    .map_err(|_| anyhow::anyhow!("timed out after 120s"))??;
+    let mut text = String::new();
+    if !output.stdout.is_empty() {
+        text.push_str(&String::from_utf8_lossy(&output.stdout));
+    }
+    if !output.stderr.is_empty() {
+        if !text.is_empty() && !text.ends_with('\n') {
+            text.push('\n');
+        }
+        text.push_str(&String::from_utf8_lossy(&output.stderr));
+    }
+    let text = text.trim_end();
+    let text = if text.is_empty() { "(no output)" } else { text };
+    let text = truncate_for_transcript(text, 8_000);
+    if output.status.success() {
+        Ok(text)
+    } else {
+        Err(anyhow::anyhow!(
+            "exit status {}: {}",
+            output
+                .status
+                .code()
+                .map(|code| code.to_string())
+                .unwrap_or_else(|| "signal".to_string()),
+            text
+        ))
+    }
+}
+
+fn truncate_for_transcript(text: &str, max_chars: usize) -> String {
+    let mut truncated = text.chars().take(max_chars).collect::<String>();
+    if truncated.len() < text.len() {
+        truncated.push_str("\n... output truncated ...");
+    }
+    truncated
+}
+
 fn provider_options_from_list(list: &ProvidersListResult) -> Vec<ProviderOption> {
     let mut options = Vec::new();
     for provider in &list.providers {
@@ -864,13 +1139,42 @@ fn provider_options_from_list(list: &ProvidersListResult) -> Vec<ProviderOption>
     options
 }
 
-fn main_provider_menu_items() -> Vec<ProviderMenuItem> {
-    vec![
-        ProviderMenuItem::Models,
-        ProviderMenuItem::CodexLogin,
-        ProviderMenuItem::CodexStatus,
-        ProviderMenuItem::CodexLogout,
-    ]
+fn provider_choices_from_list(list: &ProvidersListResult) -> Vec<ProviderChoice> {
+    list.providers
+        .iter()
+        .map(provider_choice_from_descriptor)
+        .collect()
+}
+
+fn provider_choice_from_descriptor(provider: &ProviderDescriptor) -> ProviderChoice {
+    ProviderChoice {
+        provider_id: provider.id.clone(),
+        name: provider.name.clone(),
+        description: provider.description.clone(),
+        auth_type: provider.auth_type.clone(),
+        authenticated: provider.authenticated,
+        auth_detail: provider.auth_detail.clone(),
+        default_model: provider.models.first().map(|model| model.id.clone()),
+        recommended: provider.recommended,
+    }
+}
+
+fn main_provider_menu_items(providers: &[ProviderChoice]) -> Vec<ProviderMenuItem> {
+    std::iter::once(ProviderMenuItem::Models)
+        .chain(providers.iter().cloned().map(ProviderMenuItem::Provider))
+        .collect()
+}
+
+fn filter_provider_menu_items(items: &[ProviderMenuItem], query: &str) -> Vec<ProviderMenuItem> {
+    let query = query.trim().to_lowercase();
+    if query.is_empty() {
+        return items.to_vec();
+    }
+    items
+        .iter()
+        .filter(|item| item.label().to_lowercase().contains(&query))
+        .cloned()
+        .collect()
 }
 
 fn codex_auth_message(method: &str, result: &CodexAuthResult) -> String {
@@ -926,6 +1230,18 @@ fn message_line(message: &str, theme: Theme) -> Line<'static> {
     if let Some(body) = message.strip_prefix("executed slash command: ") {
         return Line::from(vec![
             Span::styled("/ ", theme.tool()),
+            Span::styled(body.to_string(), theme.muted()),
+        ]);
+    }
+    if let Some(body) = message.strip_prefix("shell: ") {
+        return Line::from(vec![
+            Span::styled("$ ", theme.tool()),
+            Span::styled(body.to_string(), theme.text()),
+        ]);
+    }
+    if let Some(body) = message.strip_prefix("shell output: ") {
+        return Line::from(vec![
+            Span::styled("↳ ", theme.subtle()),
             Span::styled(body.to_string(), theme.muted()),
         ]);
     }
@@ -1014,6 +1330,9 @@ mod tests {
                 theme.error,
                 theme.border,
                 theme.dialog,
+                theme.dialog_bg,
+                theme.dialog_shadow,
+                theme.dialog_key_bg,
                 theme.selection_fg,
                 theme.selection_bg,
                 theme.top_bar_track,
@@ -1082,6 +1401,14 @@ mod tests {
             active_model: "mock".to_string(),
             providers: vec![ProviderDescriptor {
                 id: "mock".to_string(),
+                name: "Mock".to_string(),
+                description: Some("Local".to_string()),
+                auth_type: ProviderAuthType::None,
+                auth_label: None,
+                authenticated: true,
+                auth_detail: None,
+                recommended: false,
+                sort_order: 100,
                 capabilities: roder_api::inference::InferenceCapabilities::text_only(),
                 models: vec![roder_api::inference::ModelDescriptor {
                     id: "mock".to_string(),
@@ -1099,8 +1426,70 @@ mod tests {
 
     #[test]
     fn provider_menu_starts_with_models_submenu() {
-        let items = main_provider_menu_items();
+        let items = main_provider_menu_items(&[]);
         assert!(matches!(items.first(), Some(ProviderMenuItem::Models)));
+    }
+
+    #[test]
+    fn provider_menu_filter_matches_labels_case_insensitively() {
+        let items = main_provider_menu_items(&[ProviderChoice {
+            provider_id: "codex".to_string(),
+            name: "Codex".to_string(),
+            description: Some("ChatGPT account provider".to_string()),
+            auth_type: ProviderAuthType::OAuth,
+            authenticated: false,
+            auth_detail: None,
+            default_model: Some("gpt-5.5".to_string()),
+            recommended: true,
+        }]);
+        let filtered = filter_provider_menu_items(&items, "CODEX");
+        assert_eq!(filtered.len(), 1);
+        assert!(
+            filtered
+                .iter()
+                .all(|item| item.label().to_lowercase().contains("codex"))
+        );
+    }
+
+    #[test]
+    fn provider_menu_filter_keeps_models_submenu_searchable() {
+        let items = vec![
+            ProviderMenuItem::Models,
+            ProviderMenuItem::Model(ProviderOption {
+                provider_id: "codex".to_string(),
+                model_id: "gpt-5.5".to_string(),
+                label: "codex / gpt-5.5 (GPT-5.5)".to_string(),
+            }),
+        ];
+        let filtered = filter_provider_menu_items(&items, "5.5");
+        assert_eq!(filtered.len(), 1);
+        assert!(matches!(filtered[0], ProviderMenuItem::Model(_)));
+    }
+
+    #[test]
+    fn shell_command_requires_non_empty_bang_prefix() {
+        assert_eq!(
+            shell_command_from_input("!echo hi").as_deref(),
+            Some("echo hi")
+        );
+        assert_eq!(
+            shell_command_from_input("!  echo hi  ").as_deref(),
+            Some("echo hi")
+        );
+        assert_eq!(shell_command_from_input("!"), None);
+        assert_eq!(shell_command_from_input("echo hi"), None);
+    }
+
+    #[test]
+    fn message_line_formats_shell_messages() {
+        let theme = Theme::for_dark_background(true);
+        let line = message_line("shell: !echo hi", theme);
+        let rendered = line
+            .spans
+            .iter()
+            .map(|span| span.content.as_ref())
+            .collect::<String>();
+        assert_eq!(rendered, "$ !echo hi");
     }
 
     #[test]

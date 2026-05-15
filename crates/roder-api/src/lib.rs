@@ -6,6 +6,7 @@ pub mod extension;
 pub mod inference;
 pub mod memory;
 pub mod session;
+pub mod subagents;
 pub mod tools;
 
 pub use catalog::*;
@@ -15,4 +16,5 @@ pub use extension::*;
 pub use inference::*;
 pub use memory::*;
 pub use session::*;
+pub use subagents::*;
 pub use tools::*;

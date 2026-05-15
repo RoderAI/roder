@@ -32,8 +32,8 @@ install: build
 	cargo build --release -p roder-cli
 	$(INSTALL) -m 0755 "target/release/rode" "$(BINDIR)/rode"
 
-run: build
-	$(BINARY) $(CONFIG_FLAGS) --auto-approve --telemetry=$(TELEMETRY) --telemetry-endpoint "$(TELEMETRY_ENDPOINT)"
+run:
+	cd "$(WORKSPACE)" && RODER_PROVIDER="$(PROVIDER)" RODER_MODEL="$(MODEL)" RODER_REASONING="$(REASONING)" cargo run --manifest-path "$(CURDIR)/Cargo.toml" -p roder-cli
 
 ask: build
 	$(BINARY) run $(CONFIG_FLAGS) --auto-approve "$(PROMPT)"
