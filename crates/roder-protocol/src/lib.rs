@@ -71,6 +71,12 @@ pub struct ProviderSelectResult {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CodexAuthResult {
+    pub signed_in: bool,
+    pub account_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CreateSessionParams {
     pub title: Option<String>,
 }

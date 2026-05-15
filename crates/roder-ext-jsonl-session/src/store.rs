@@ -176,6 +176,7 @@ impl JsonlSessionStore {
 #[derive(serde::Serialize, serde::Deserialize)]
 struct PersistedTurnItem {
     turn_id: TurnId,
+    #[serde(with = "time::serde::rfc3339")]
     timestamp: OffsetDateTime,
     item: TurnItem,
 }

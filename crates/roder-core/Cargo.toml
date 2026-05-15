@@ -1,16 +1,15 @@
 [package]
 name = "roder-core"
-version = "0.1.0"
-edition = "2024"
+version.workspace = true
+edition.workspace = true
 
 [dependencies]
-anyhow = "1.0"
-serde = { version = "1.0", features = ["derive"] }
-serde_json = "1.0"
-tokio = { version = "1.0", features = ["full", "sync"] }
-roder-api = { path = "../roder-api" }
-uuid = { version = "1.10", features = ["v4"] }
-time = { version = "0.3" }
-futures = "0.3"
-async-trait = "0.1"
-
+anyhow.workspace = true
+async-trait.workspace = true
+futures.workspace = true
+roder-api.workspace = true
+serde = { workspace = true, features = ["derive"] }
+serde_json.workspace = true
+time.workspace = true
+tokio = { workspace = true, features = ["full", "sync"] }
+uuid = { workspace = true, features = ["v4"] }

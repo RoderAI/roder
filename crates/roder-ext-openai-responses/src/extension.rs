@@ -9,6 +9,8 @@ use std::sync::Arc;
 pub struct OpenAiResponsesExtension {
     api_key: String,
     provider_id: String,
+    base_url: String,
+    headers: Vec<(String, String)>,
 }
 
 impl OpenAiResponsesExtension {
@@ -17,9 +19,25 @@ impl OpenAiResponsesExtension {
     }
 
     pub fn new_with_provider_id(api_key: String, provider_id: impl Into<String>) -> Self {
+        Self::new_with_config(
+            api_key,
+            provider_id,
+            "https://api.openai.com/v1",
+            Vec::new(),
+        )
+    }
+
+    pub fn new_with_config(
+        api_key: String,
+        provider_id: impl Into<String>,
+        base_url: impl Into<String>,
+        headers: Vec<(String, String)>,
+    ) -> Self {
         Self {
             api_key,
             provider_id: provider_id.into(),
+            base_url: base_url.into(),
+            headers,
         }
     }
 }
@@ -38,9 +56,11 @@ impl RoderExtension for OpenAiResponsesExtension {
     }
 
     fn install(&self, registry: &mut ExtensionRegistryBuilder) -> anyhow::Result<()> {
-        registry.inference_engine(Arc::new(OpenAiResponsesEngine::new_with_provider_id(
+        registry.inference_engine(Arc::new(OpenAiResponsesEngine::new_with_config(
             self.api_key.clone(),
             self.provider_id.clone(),
+            self.base_url.clone(),
+            self.headers.clone(),
         )));
         Ok(())
     }
