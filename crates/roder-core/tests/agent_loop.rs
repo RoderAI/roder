@@ -178,6 +178,7 @@ async fn run_turn_continues_after_tool_result() {
                 reasoning: Some("low".to_string()),
                 auto_compact_token_limit: Some(10_000),
                 workspace: None,
+                policy_mode: roder_api::policy_mode::PolicyMode::Default,
             },
         )
         .unwrap(),
@@ -242,7 +243,10 @@ fn duplicate_tool_contributors_fail_with_contributor_context() {
     };
     let message = format!("{err:#}");
 
-    assert!(message.contains("tool contributor search-b failed"), "{message}");
+    assert!(
+        message.contains("tool contributor search-b failed"),
+        "{message}"
+    );
     assert!(
         message.contains("tool \"web_search\" is already registered"),
         "{message}"
