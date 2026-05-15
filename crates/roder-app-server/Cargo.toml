@@ -16,4 +16,5 @@ tokio = { workspace = true, features = ["full"] }
 uuid = { workspace = true, features = ["v4"] }
 
 [dev-dependencies]
+roder-extension-host.workspace = true
 roder-tools.workspace = true
