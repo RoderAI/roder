@@ -1,6 +1,7 @@
 pub mod app;
 pub mod config;
 pub mod diff;
+pub mod mouse;
 pub mod palette;
 pub mod status_line;
 
