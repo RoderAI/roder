@@ -1,11 +1,14 @@
 use std::sync::Arc;
-use tokio::sync::broadcast;
-use roder_protocol::{JsonRpcRequest, JsonRpcResponse};
+
 use roder_api::events::EventEnvelope;
+use roder_protocol::{JsonRpcRequest, JsonRpcResponse};
+use tokio::sync::broadcast;
+
 use crate::AppServer;
 
+#[derive(Clone)]
 pub struct LocalAppClient {
-    pub server: Arc<AppServer>,
+    server: Arc<AppServer>,
 }
 
 impl LocalAppClient {

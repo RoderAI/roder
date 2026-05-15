@@ -1,7 +1,6 @@
-use std::pin::Pin;
-use futures::{Stream, stream};
-use roder_api::inference::*;
+use futures::stream;
 use roder_api::extension::InferenceEngineId;
+use roder_api::inference::*;
 
 pub struct FakeInferenceEngine;
 
@@ -12,11 +11,7 @@ impl InferenceEngine for FakeInferenceEngine {
     }
 
     fn capabilities(&self) -> InferenceCapabilities {
-        InferenceCapabilities {
-            supports_tools: false,
-            supports_vision: false,
-            supports_reasoning: false,
-        }
+        InferenceCapabilities::text_only()
     }
 
     async fn list_models(
@@ -26,6 +21,7 @@ impl InferenceEngine for FakeInferenceEngine {
         Ok(vec![ModelDescriptor {
             id: "fake-model".to_string(),
             name: "Fake Model".to_string(),
+            context_window: Some(128_000),
         }])
     }
 
@@ -35,10 +31,19 @@ impl InferenceEngine for FakeInferenceEngine {
         _request: AgentInferenceRequest,
     ) -> anyhow::Result<InferenceEventStream> {
         let stream = stream::iter(vec![
-            Ok(InferenceEvent::MessageDelta(MessageDelta { text: "hello".to_string() })),
-            Ok(InferenceEvent::MessageDelta(MessageDelta { text: " from".to_string() })),
-            Ok(InferenceEvent::MessageDelta(MessageDelta { text: " roder".to_string() })),
-            Ok(InferenceEvent::Completed(CompletionMetadata { stop_reason: Some("stop".to_string()) })),
+            Ok(InferenceEvent::MessageDelta(MessageDelta {
+                text: "hello".to_string(),
+            })),
+            Ok(InferenceEvent::MessageDelta(MessageDelta {
+                text: " from".to_string(),
+            })),
+            Ok(InferenceEvent::MessageDelta(MessageDelta {
+                text: " roder".to_string(),
+            })),
+            Ok(InferenceEvent::Completed(CompletionMetadata {
+                stop_reason: Some("stop".to_string()),
+                provider_response_id: None,
+            })),
         ]);
 
         Ok(Box::pin(stream))

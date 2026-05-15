@@ -1,4 +1,9 @@
-use serde::{Serialize, Deserialize};
+use roder_api::events::{ThreadId, TurnId};
+use roder_api::extension::ExtensionManifest;
+use roder_api::inference::{InferenceCapabilities, ModelDescriptor};
+use roder_api::session::{SessionMetadata, ThreadSnapshot};
+use roder_api::tools::ToolSpec;
+use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct JsonRpcRequest {
@@ -26,10 +31,75 @@ pub struct JsonRpcError {
     pub data: Option<serde_json::Value>,
 }
 
-// Sub-methods
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SystemStatusResult {
+    pub provider: String,
+    pub model: String,
+    pub extensions: usize,
+    pub providers: usize,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ExtensionsListResult {
+    pub extensions: Vec<ExtensionManifest>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProviderDescriptor {
+    pub id: String,
+    pub capabilities: InferenceCapabilities,
+    pub models: Vec<ModelDescriptor>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProvidersListResult {
+    pub active_provider: String,
+    pub active_model: String,
+    pub providers: Vec<ProviderDescriptor>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProviderSelectParams {
+    pub provider: String,
+    pub model: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProviderSelectResult {
+    pub provider: String,
+    pub model: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CreateSessionParams {
+    pub title: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CreateSessionResult {
+    pub thread_id: ThreadId,
+    pub provider: String,
+    pub model: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SessionsListResult {
+    pub sessions: Vec<SessionMetadata>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SessionLoadParams {
+    pub thread_id: ThreadId,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SessionLoadResult {
+    pub snapshot: Option<ThreadSnapshot>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StartTurnParams {
-    pub thread_id: String,
+    pub thread_id: ThreadId,
     pub message: String,
     pub provider_override: Option<String>,
     pub model_override: Option<String>,
@@ -37,10 +107,16 @@ pub struct StartTurnParams {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StartTurnResult {
-    pub turn_id: String,
+    pub turn_id: TurnId,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct CreateSessionResult {
-    pub thread_id: String,
+pub struct InterruptTurnParams {
+    pub thread_id: ThreadId,
+    pub turn_id: TurnId,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ToolsListResult {
+    pub tools: Vec<ToolSpec>,
 }

@@ -1,7 +1,9 @@
-use semver::Version;
-use roder_api::extension::{ExtensionManifest, ExtensionRegistryBuilder, RoderExtension};
-use std::sync::Arc;
 use crate::provider::OpenAiResponsesEngine;
+use roder_api::extension::{
+    ExtensionManifest, ExtensionRegistryBuilder, ProvidedService, RoderExtension,
+};
+use semver::Version;
+use std::sync::Arc;
 
 pub struct OpenAiResponsesExtension {
     api_key: String,
@@ -21,15 +23,14 @@ impl RoderExtension for OpenAiResponsesExtension {
             version: Version::new(0, 1, 0),
             api_version: "0.1.0".to_string(),
             description: Some("OpenAI Responses Provider".to_string()),
-            provides: vec![],
+            provides: vec![ProvidedService::InferenceEngine(
+                "openai-responses".to_string(),
+            )],
             required_capabilities: vec![],
         }
     }
 
-    fn install(
-        &self,
-        registry: &mut ExtensionRegistryBuilder,
-    ) -> anyhow::Result<()> {
+    fn install(&self, registry: &mut ExtensionRegistryBuilder) -> anyhow::Result<()> {
         registry.inference_engine(Arc::new(OpenAiResponsesEngine::new(self.api_key.clone())));
         Ok(())
     }
