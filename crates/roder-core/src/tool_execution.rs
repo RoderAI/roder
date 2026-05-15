@@ -95,9 +95,37 @@ impl Runtime {
             return Ok(item);
         }
 
-        if let Some(preview) = file_change_preview(&tool_call, runtime_config.workspace.as_deref())
-        {
+        let preview = file_change_preview(&tool_call, runtime_config.workspace.as_deref());
+        if let Some(preview) = preview.clone() {
             self.emit(RoderEvent::FileChangePreviewReady(preview)).await;
+        }
+
+        if let PolicyDecision::RequiresApproval { reason } = &decision
+            && preview.is_some()
+            && !self
+                .request_tool_approval(thread_id, turn_id, &tool_call, reason.clone())
+                .await?
+        {
+            let item = ToolResultRecord {
+                id: tool_call.id.clone(),
+                name: Some(tool_call.name.clone()),
+                result: "policy rejected tool call: approval denied".to_string(),
+                is_error: true,
+            };
+            self.persist_turn_item(
+                thread_id,
+                turn_id,
+                &roder_api::conversation::ConversationItem::ToolResult(item.clone()),
+            )
+            .await?;
+            self.emit(RoderEvent::ToolCallCompleted(ToolCallCompleted {
+                thread_id: thread_id.clone(),
+                turn_id: turn_id.clone(),
+                tool_id: tool_call.id,
+                timestamp: OffsetDateTime::now_utc(),
+            }))
+            .await;
+            return Ok(item);
         }
 
         self.emit(RoderEvent::ToolCallStarted(ToolCallStarted {

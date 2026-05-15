@@ -12,29 +12,75 @@ impl TuiApp {
         self.push_event(format!("diff preview ready: {path}"));
     }
 
-    pub(super) fn handle_diff_key(&mut self, key: crossterm::event::KeyEvent) {
+    pub(super) async fn handle_diff_key(&mut self, key: crossterm::event::KeyEvent) {
         let Some(diff_key) = diff_key_from_event(key) else {
             return;
         };
-        let Some(state) = self.diff_viewer.as_mut() else {
-            return;
+        let outcome = {
+            let Some(state) = self.diff_viewer.as_mut() else {
+                return;
+            };
+            apply_key(state, diff_key)
         };
-        let outcome = apply_key(state, diff_key);
         match outcome {
             DiffKeyOutcome::Consumed => {}
             DiffKeyOutcome::AcceptedWhole => {
-                let call_id = state.pending.call_id.clone();
+                let Some(call_id) = self
+                    .diff_viewer
+                    .as_ref()
+                    .map(|state| state.pending.call_id.clone())
+                else {
+                    return;
+                };
                 self.diff_viewer = None;
+                self.resolve_diff_approval(call_id.clone(), true).await;
                 self.push_event(format!("diff accepted: {call_id}"));
             }
             DiffKeyOutcome::RejectedWhole => {
-                let call_id = state.pending.call_id.clone();
+                let Some(call_id) = self
+                    .diff_viewer
+                    .as_ref()
+                    .map(|state| state.pending.call_id.clone())
+                else {
+                    return;
+                };
                 self.diff_viewer = None;
+                self.resolve_diff_approval(call_id.clone(), false).await;
                 self.push_event(format!("diff rejected: {call_id}"));
             }
             DiffKeyOutcome::Closed => {
+                let Some(call_id) = self
+                    .diff_viewer
+                    .as_ref()
+                    .map(|state| state.pending.call_id.clone())
+                else {
+                    return;
+                };
                 self.diff_viewer = None;
+                self.resolve_diff_approval(call_id.clone(), false).await;
+                self.push_event(format!("diff closed: {call_id}"));
             }
+        }
+    }
+
+    async fn resolve_diff_approval(&mut self, approval_id: String, approved: bool) {
+        let params = SessionResolveApprovalParams {
+            approval_id: approval_id.clone(),
+            approved,
+        };
+        let res = self
+            .client
+            .send_request(JsonRpcRequest {
+                jsonrpc: "2.0".to_string(),
+                id: Some(serde_json::json!("session/resolve_approval")),
+                method: "session/resolve_approval".to_string(),
+                params: Some(serde_json::to_value(params).unwrap()),
+            })
+            .await;
+        match decode_response::<SessionResolveApprovalResult>(res) {
+            Ok(result) if result.resolved => {}
+            Ok(_) => self.record_error(format!("approval not pending: {}", short_id(&approval_id))),
+            Err(err) => self.record_error(format!("session/resolve_approval failed: {err}")),
         }
     }
 

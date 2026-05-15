@@ -119,6 +119,9 @@ pub struct ApprovalRequested {
     pub thread_id: ThreadId,
     pub turn_id: TurnId,
     pub approval_id: String,
+    pub tool_id: String,
+    pub tool_name: String,
+    pub reason: Option<String>,
     #[serde(with = "time::serde::rfc3339")]
     pub timestamp: OffsetDateTime,
 }
@@ -128,6 +131,8 @@ pub struct ApprovalResolved {
     pub thread_id: ThreadId,
     pub turn_id: TurnId,
     pub approval_id: String,
+    pub tool_id: String,
+    pub tool_name: String,
     pub approved: bool,
     #[serde(with = "time::serde::rfc3339")]
     pub timestamp: OffsetDateTime,
