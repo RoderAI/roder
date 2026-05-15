@@ -3,6 +3,10 @@ use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 
+mod tui;
+
+pub use tui::*;
+
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]
 pub struct Config {
     pub provider: Option<String>,
@@ -13,6 +17,7 @@ pub struct Config {
     pub commands: Option<CommandsConfig>,
     pub subagents: Option<SubagentsConfig>,
     pub policy_modes: Option<PolicyModesConfig>,
+    pub tui: Option<TuiConfig>,
     #[serde(default)]
     pub providers: HashMap<String, ProviderConfig>,
 }
@@ -335,6 +340,7 @@ mod tests {
             commands: None,
             subagents: None,
             policy_modes: None,
+            tui: None,
             providers: HashMap::new(),
         };
         config.providers.insert(

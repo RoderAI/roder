@@ -63,7 +63,7 @@ impl TuiApp {
         }
     }
 
-    async fn resolve_diff_approval(&mut self, approval_id: String, approved: bool) {
+    pub(super) async fn resolve_diff_approval(&mut self, approval_id: String, approved: bool) {
         let params = SessionResolveApprovalParams {
             approval_id: approval_id.clone(),
             approved,

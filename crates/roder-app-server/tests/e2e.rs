@@ -111,12 +111,12 @@ impl InferenceEngine for TaskCallingEngine {
     }
 }
 
-struct WriteFileApprovalEngine {
+struct MultiEditApprovalEngine {
     requests: Mutex<usize>,
 }
 
 #[async_trait::async_trait]
-impl InferenceEngine for WriteFileApprovalEngine {
+impl InferenceEngine for MultiEditApprovalEngine {
     fn id(&self) -> InferenceEngineId {
         PROVIDER_MOCK.to_string()
     }
@@ -142,11 +142,20 @@ impl InferenceEngine for WriteFileApprovalEngine {
         if *requests == 1 {
             Ok(Box::pin(futures::stream::iter(vec![
                 Ok(InferenceEvent::ToolCallCompleted(ToolCallCompleted {
-                    id: "write-approval-1".to_string(),
-                    name: "write_file".to_string(),
+                    id: "multi-edit-approval-1".to_string(),
+                    name: "multi_edit".to_string(),
                     arguments: serde_json::json!({
                         "path": "src/lib.rs",
-                        "content": "new\n"
+                        "edits": [
+                            {
+                                "old_string": "old\n",
+                                "new_string": "new\n"
+                            },
+                            {
+                                "old_string": "middle\n",
+                                "new_string": "changed\n"
+                            }
+                        ]
                     })
                     .to_string(),
                 })),
@@ -590,13 +599,13 @@ async fn session_exit_plan_timeout_rejects_late_approval() {
 }
 
 #[tokio::test]
-async fn file_edit_approval_pauses_tool_until_resolved() {
+async fn tui_integration_multi_edit_approval_pauses_tool_until_resolved() {
     let workspace = temp_workspace("file-approval");
     let file_path = workspace.join("src").join("lib.rs");
     std::fs::create_dir_all(file_path.parent().unwrap()).unwrap();
-    std::fs::write(&file_path, "old\n").unwrap();
+    std::fs::write(&file_path, "old\nmiddle\n").unwrap();
     let mut builder = ExtensionRegistryBuilder::new();
-    builder.inference_engine(Arc::new(WriteFileApprovalEngine {
+    builder.inference_engine(Arc::new(MultiEditApprovalEngine {
         requests: Mutex::new(0),
     }));
     builder.tool_contributor(roder_tools::builtin_coding_tools_contributor(&workspace).unwrap());
@@ -643,13 +652,15 @@ async fn file_edit_approval_pauses_tool_until_resolved() {
             .unwrap();
         match envelope.event {
             roder_api::events::RoderEvent::FileChangePreviewReady(preview) => {
-                saw_preview = preview.tool_id == "write-approval-1"
-                    && preview.before.as_deref() == Some("old\n")
-                    && preview.after == "new\n";
+                saw_preview = preview.tool_id == "multi-edit-approval-1"
+                    && preview.tool_name == "multi_edit"
+                    && preview.before.as_deref() == Some("old\nmiddle\n")
+                    && preview.after == "new\nchanged\n"
+                    && !preview.supports_partial;
             }
             roder_api::events::RoderEvent::ApprovalRequested(requested) => {
-                saw_requested = requested.approval_id == "write-approval-1"
-                    && requested.tool_name == "write_file";
+                saw_requested = requested.approval_id == "multi-edit-approval-1"
+                    && requested.tool_name == "multi_edit";
                 break;
             }
             _ => {}
@@ -657,7 +668,10 @@ async fn file_edit_approval_pauses_tool_until_resolved() {
     }
     assert!(saw_preview);
     assert!(saw_requested);
-    assert_eq!(std::fs::read_to_string(&file_path).unwrap(), "old\n");
+    assert_eq!(
+        std::fs::read_to_string(&file_path).unwrap(),
+        "old\nmiddle\n"
+    );
 
     let state: SessionGetResult = request(&client, "session/get", None).await;
     assert_eq!(
@@ -665,14 +679,14 @@ async fn file_edit_approval_pauses_tool_until_resolved() {
             .pending_tool_approval
             .as_ref()
             .map(|pending| pending.approval_id.as_str()),
-        Some("write-approval-1")
+        Some("multi-edit-approval-1")
     );
     let resolved: SessionResolveApprovalResult = request(
         &client,
         "session/resolve_approval",
         Some(
             serde_json::to_value(SessionResolveApprovalParams {
-                approval_id: "write-approval-1".to_string(),
+                approval_id: "multi-edit-approval-1".to_string(),
                 approved: true,
             })
             .unwrap(),
@@ -683,10 +697,10 @@ async fn file_edit_approval_pauses_tool_until_resolved() {
 
     let mut kinds = Vec::new();
     for _ in 0..20 {
-        let envelope = tokio::time::timeout(Duration::from_secs(2), events.recv())
-            .await
-            .unwrap()
-            .unwrap();
+        let Ok(Ok(envelope)) = tokio::time::timeout(Duration::from_secs(2), events.recv()).await
+        else {
+            break;
+        };
         kinds.push(envelope.kind.clone());
         if envelope.kind == "turn.completed" {
             break;
@@ -701,7 +715,10 @@ async fn file_edit_approval_pauses_tool_until_resolved() {
     );
     let started = start.await.unwrap();
     assert!(!started.turn_id.is_empty());
-    assert_eq!(std::fs::read_to_string(&file_path).unwrap(), "new\n");
+    assert_eq!(
+        std::fs::read_to_string(&file_path).unwrap(),
+        "new\nchanged\n"
+    );
     let _ = std::fs::remove_dir_all(workspace);
 }
 

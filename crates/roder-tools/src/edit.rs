@@ -202,5 +202,11 @@ struct EditArgs {
 #[derive(Deserialize)]
 struct MultiEditArgs {
     path: String,
-    edits: Vec<EditArgs>,
+    edits: Vec<TextEditArgs>,
+}
+
+#[derive(Deserialize)]
+struct TextEditArgs {
+    old_string: String,
+    new_string: String,
 }
