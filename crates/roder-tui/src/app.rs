@@ -20,6 +20,9 @@ use ratatui::{
 use roder_api::events::RoderEvent;
 use roder_api::inference::ProviderAuthType;
 use roder_api::policy_mode::PolicyMode;
+use roder_api::tui_status::{
+    GitSnapshot, McpServerStatus, SessionSummary, StatusContext, StatusSegment,
+};
 use roder_app_server::LocalAppClient;
 use roder_protocol::{
     CodexAuthResult, CommandDescriptor, CommandsExpandParams, CommandsExpandResult,
@@ -30,6 +33,10 @@ use roder_protocol::{
 };
 use tokio::process::Command;
 use tui_textarea::TextArea;
+
+use crate::status_line::{
+    StatusLineConfig, StatusLineTheme, built_in_status_segments, render_status_line,
+};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 struct Theme {
@@ -174,6 +181,17 @@ impl Theme {
     fn selected(self) -> Style {
         Style::default().fg(self.selection_fg).bg(self.selection_bg)
     }
+
+    fn status_line(self) -> StatusLineTheme {
+        StatusLineTheme {
+            text: self.text,
+            muted: self.muted,
+            accent: self.accent,
+            warning: self.tool,
+            error: self.error,
+            separator: self.subtle,
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -271,6 +289,8 @@ pub struct TuiApp {
     confirm_dialog: Option<ConfirmDialog>,
     command_catalog: Vec<CommandDescriptor>,
     slash_selected: usize,
+    status_segments: Vec<StatusSegment>,
+    status_git: Option<GitSnapshot>,
     policy_mode: PolicyMode,
     pending_plan_exit: Option<PendingPlanExitDescriptor>,
     theme: Theme,
@@ -297,6 +317,7 @@ impl TuiApp {
         let theme = Theme::for_terminal();
         let policy_state = session_get(&client).await.ok();
         let command_catalog = commands_list(&client).await.unwrap_or_default();
+        let status_git = current_git_snapshot();
 
         Ok(Self {
             client,
@@ -323,6 +344,8 @@ impl TuiApp {
             confirm_dialog: None,
             command_catalog,
             slash_selected: 0,
+            status_segments: built_in_status_segments(),
+            status_git,
             policy_mode: policy_state
                 .as_ref()
                 .map(|state| state.mode)
@@ -926,47 +949,26 @@ impl TuiApp {
     }
 
     fn footer(&self, width: u16) -> Paragraph<'static> {
-        let status = if self.active_turn_id.is_some() {
-            "running"
-        } else {
-            "ready"
+        let session = SessionSummary {
+            thread_id: self.thread_id.clone(),
+            title: None,
         };
-        let pending_hint = self
-            .pending_plan_exit
-            .as_ref()
-            .map(|pending| {
-                let summary = pending.plan_summary.as_deref().unwrap_or("plan exit");
-                format!(
-                    "  exit plan? y approve / n reject: {}",
-                    truncate(summary, 36)
-                )
-            })
-            .unwrap_or_default();
-        let shell_hint = if composer_text(&self.composer).starts_with('!') {
-            "  shell mode"
-        } else {
-            ""
+        let mcp: &[McpServerStatus] = &[];
+        let ctx = StatusContext {
+            session: &session,
+            policy_mode: self.policy_mode,
+            model: Some(&self.model),
+            usage: None,
+            git: self.status_git.as_ref(),
+            mcp,
         };
-        let command_hint = if self.command_menu_open() {
-            "  / command"
-        } else {
-            ""
-        };
-        Paragraph::new(line_with_gap(
-            vec![Span::styled(
-                format!(
-                    " {status}  mode:{}{pending_hint}{shell_hint}{command_hint}  enter send  tab complete  shift+tab mode  ! shell  ctrl+p provider/model  ctrl+l events  esc interrupt  ctrl+c exit",
-                    policy_mode_label(self.policy_mode)
-                ),
-                self.theme.subtle(),
-            )],
-            vec![Span::styled(
-                format!("events {} ", self.events.len()),
-                self.theme.muted(),
-            )],
+        render_status_line(
+            &self.status_segments,
+            &ctx,
             width,
-            self.theme.subtle(),
-        ))
+            &StatusLineConfig::default(),
+            self.theme.status_line(),
+        )
     }
 
     fn render_provider_popup(&mut self, f: &mut Frame<'_>, area: Rect) {
@@ -1653,6 +1655,20 @@ fn detect_dark_background() -> bool {
         })
         .map(|bg| matches!(bg, 0..=6 | 8))
         .unwrap_or(true)
+}
+
+fn current_git_snapshot() -> Option<GitSnapshot> {
+    let output = std::process::Command::new("git")
+        .args(["branch", "--show-current"])
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let branch = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    Some(GitSnapshot {
+        branch: (!branch.is_empty()).then_some(branch),
+    })
 }
 
 fn short_id(id: &str) -> &str {
