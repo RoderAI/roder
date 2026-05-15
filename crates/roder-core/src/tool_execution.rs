@@ -258,13 +258,13 @@ impl Runtime {
             .get("summary")
             .and_then(Value::as_str)
             .map(str::to_string);
-        self.record_pending_plan_exit(PendingPlanExit {
-            thread_id: thread_id.clone(),
-            turn_id: turn_id.clone(),
-            request_id: request_id.to_string(),
+        self.record_pending_plan_exit(PendingPlanExit::new(
+            thread_id.clone(),
+            turn_id.clone(),
+            request_id.to_string(),
             target_mode,
             plan_summary,
-        })
+        ))
         .await;
     }
 }

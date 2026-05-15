@@ -6,6 +6,7 @@ use roder_api::session::{SessionMetadata, ThreadSnapshot};
 use roder_api::subagents::SubagentPermissionMode;
 use roder_api::tools::ToolSpec;
 use serde::{Deserialize, Serialize};
+use time::OffsetDateTime;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct JsonRpcRequest {
@@ -126,6 +127,8 @@ pub struct PendingPlanExitDescriptor {
     pub request_id: String,
     pub target_mode: PolicyMode,
     pub plan_summary: Option<String>,
+    pub requested_at: OffsetDateTime,
+    pub expires_at: Option<OffsetDateTime>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
