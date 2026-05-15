@@ -43,7 +43,9 @@ use tui_textarea::TextArea;
 
 use crate::config::TuiAppConfig;
 use crate::diff::{DiffViewerState, render::DiffTheme};
-use crate::mouse::region_rect_from_ratatui;
+use crate::mouse::{
+    DragSelectionOutcome, DragSelectionState, SelectedText, region_rect_from_ratatui,
+};
 use crate::palette::{PaletteEntry, render::PaletteTheme};
 use crate::status_line::{
     StatusLineConfig, StatusLineTheme, built_in_status_segments, render_status_line,
@@ -343,6 +345,7 @@ pub struct TuiApp {
     policy_mode: PolicyMode,
     pending_plan_exit: Option<PendingPlanExitDescriptor>,
     mouse_feedback: mouse_ui::MouseFeedbackState,
+    drag_selection: DragSelectionState,
     transcript_fold: TranscriptFoldState,
     transcript_context_menu: Option<TranscriptContextMenu>,
     terminal_area: roder_api::interactive::RegionRect,
@@ -428,6 +431,7 @@ impl TuiApp {
                 .unwrap_or_default(),
             pending_plan_exit: policy_state.and_then(|state| state.pending_plan_exit),
             mouse_feedback: mouse_ui::MouseFeedbackState::default(),
+            drag_selection: DragSelectionState::default(),
             transcript_fold: TranscriptFoldState::default(),
             transcript_context_menu: None,
             terminal_area: roder_api::interactive::RegionRect {
@@ -1287,6 +1291,7 @@ impl TuiApp {
 
     fn handle_interactive_events(&mut self, events: Vec<InteractiveEvent>, at: (u16, u16)) {
         for event in events {
+            self.handle_drag_selection_event(&event);
             match event {
                 InteractiveEvent::Click {
                     region,
@@ -1301,6 +1306,41 @@ impl TuiApp {
                     self.handle_region_action(&region, Some(at));
                 }
                 _ => {}
+            }
+        }
+    }
+
+    fn handle_drag_selection_event(&mut self, event: &InteractiveEvent) {
+        let Some(region_id) = interactive_region_id(event) else {
+            return;
+        };
+        let region = self.mouse_feedback.region(region_id).cloned();
+        let transcript_lines = self.visible_transcript_messages();
+        let composer_value = composer_text(&self.composer);
+        let Some(outcome) = self.drag_selection.apply_event(
+            event,
+            region.as_ref(),
+            &transcript_lines,
+            &composer_value,
+        ) else {
+            return;
+        };
+        match outcome {
+            DragSelectionOutcome::Started(_) | DragSelectionOutcome::Updated => {}
+            DragSelectionOutcome::Finalized(SelectedText::Transcript(text)) => {
+                self.push_event(format!(
+                    "transcript selection finalized: {} chars",
+                    text.chars().count()
+                ));
+            }
+            DragSelectionOutcome::Finalized(SelectedText::Composer(text)) => {
+                self.push_event(format!(
+                    "composer selection finalized: {} chars",
+                    text.chars().count()
+                ));
+            }
+            DragSelectionOutcome::ClearedTooShort => {
+                self.push_event("selection cleared: too short".to_string());
             }
         }
     }
@@ -2008,6 +2048,20 @@ fn line_with_gap(
     left.push(Span::styled(" ".repeat(gap), gap_style));
     left.extend(right);
     Line::from(left)
+}
+
+fn interactive_region_id(event: &InteractiveEvent) -> Option<&str> {
+    match event {
+        InteractiveEvent::HoverEnter { region }
+        | InteractiveEvent::HoverLeave { region }
+        | InteractiveEvent::Click { region, .. }
+        | InteractiveEvent::DoubleClick { region, .. }
+        | InteractiveEvent::RightClick { region, .. }
+        | InteractiveEvent::DragStart { region, .. }
+        | InteractiveEvent::DragUpdate { region, .. }
+        | InteractiveEvent::DragEnd { region, .. } => Some(region),
+        InteractiveEvent::Scroll { region, .. } => region.as_deref(),
+    }
 }
 
 fn spans_width(spans: &[Span<'_>]) -> usize {
