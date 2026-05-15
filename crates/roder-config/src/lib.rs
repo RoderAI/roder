@@ -10,10 +10,42 @@ pub struct Config {
     pub reasoning: Option<String>,
     pub auto_compact_token_limit: Option<u32>,
     pub web_search: Option<WebSearchConfig>,
+    pub commands: Option<CommandsConfig>,
     pub subagents: Option<SubagentsConfig>,
     pub policy_modes: Option<PolicyModesConfig>,
     #[serde(default)]
     pub providers: HashMap<String, ProviderConfig>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct CommandsConfig {
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+    pub user_dir: Option<PathBuf>,
+    pub workspace_dir: Option<PathBuf>,
+    #[serde(default)]
+    pub allow_shell_includes: bool,
+    #[serde(default)]
+    pub allow_url_includes: bool,
+    pub include_timeout_seconds: Option<u64>,
+    pub max_include_bytes: Option<usize>,
+    #[serde(default = "default_true")]
+    pub live_reload: bool,
+}
+
+impl Default for CommandsConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            user_dir: None,
+            workspace_dir: None,
+            allow_shell_includes: false,
+            allow_url_includes: false,
+            include_timeout_seconds: Some(5),
+            max_include_bytes: Some(65_536),
+            live_reload: true,
+        }
+    }
 }
 
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]
@@ -253,6 +285,31 @@ fn apply_env_overrides_with(config: &mut Config, mut env: impl FnMut(&str) -> Op
             .get_or_insert_with(Default::default)
             .warn_on_bypass = Some(warn);
     }
+    if let Some(disabled) = env("RODER_COMMANDS_DISABLED")
+        && parse_bool(&disabled).unwrap_or(false)
+    {
+        config.commands.get_or_insert_with(Default::default).enabled = false;
+    }
+    if let Some(allow_shell) = env("RODER_COMMANDS_ALLOW_SHELL")
+        && let Some(allow_shell) = parse_bool(&allow_shell)
+    {
+        config
+            .commands
+            .get_or_insert_with(Default::default)
+            .allow_shell_includes = allow_shell;
+    }
+    if let Some(allow_url) = env("RODER_COMMANDS_ALLOW_URL")
+        && let Some(allow_url) = parse_bool(&allow_url)
+    {
+        config
+            .commands
+            .get_or_insert_with(Default::default)
+            .allow_url_includes = allow_url;
+    }
+}
+
+fn default_true() -> bool {
+    true
 }
 
 fn parse_bool(value: &str) -> Option<bool> {
@@ -275,6 +332,7 @@ mod tests {
             reasoning: Some("medium".to_string()),
             auto_compact_token_limit: None,
             web_search: None,
+            commands: None,
             subagents: None,
             policy_modes: None,
             providers: HashMap::new(),
@@ -325,6 +383,56 @@ mod tests {
             subagents.disk.workspace_dir.as_deref(),
             Some(Path::new(".roder/agents"))
         );
+    }
+
+    #[test]
+    fn deserializes_commands_config() {
+        let config: Config = toml::from_str(
+            r#"
+            [commands]
+            enabled = true
+            user_dir = "~/.roder/commands"
+            workspace_dir = ".roder/commands"
+            allow_shell_includes = true
+            allow_url_includes = true
+            include_timeout_seconds = 9
+            max_include_bytes = 1234
+            live_reload = false
+            "#,
+        )
+        .unwrap();
+
+        let commands = config.commands.unwrap();
+        assert!(commands.enabled);
+        assert_eq!(
+            commands.user_dir.as_deref(),
+            Some(Path::new("~/.roder/commands"))
+        );
+        assert_eq!(
+            commands.workspace_dir.as_deref(),
+            Some(Path::new(".roder/commands"))
+        );
+        assert!(commands.allow_shell_includes);
+        assert!(commands.allow_url_includes);
+        assert_eq!(commands.include_timeout_seconds, Some(9));
+        assert_eq!(commands.max_include_bytes, Some(1234));
+        assert!(!commands.live_reload);
+    }
+
+    #[test]
+    fn command_env_overrides_apply_without_mutating_process_env() {
+        let mut config = Config::default();
+        apply_env_overrides_with(&mut config, |key| match key {
+            "RODER_COMMANDS_DISABLED" => Some("true".to_string()),
+            "RODER_COMMANDS_ALLOW_SHELL" => Some("true".to_string()),
+            "RODER_COMMANDS_ALLOW_URL" => Some("true".to_string()),
+            _ => None,
+        });
+
+        let commands = config.commands.unwrap();
+        assert!(!commands.enabled);
+        assert!(commands.allow_shell_includes);
+        assert!(commands.allow_url_includes);
     }
 
     #[test]

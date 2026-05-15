@@ -12,6 +12,7 @@ anyhow.workspace = true
 roder-api.workspace = true
 roder-app-server.workspace = true
 roder-codex-auth.workspace = true
+roder-commands.workspace = true
 roder-config.workspace = true
 roder-core.workspace = true
 roder-ext-anthropic.workspace = true
