@@ -44,3 +44,4 @@ roder-extension-host = { path = "crates/roder-extension-host" }
 roder-protocol = { path = "crates/roder-protocol" }
 roder-tools = { path = "crates/roder-tools" }
 roder-tui = { path = "crates/roder-tui" }
+roder-web-search = { path = "crates/roder-web-search" }

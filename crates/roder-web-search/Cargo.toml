@@ -1,0 +1,11 @@
+[package]
+name = "roder-web-search"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+reqwest = { workspace = true, features = ["json"] }
+serde = { workspace = true, features = ["derive"] }
+serde_json.workspace = true
+tokio = { workspace = true, features = ["time"] }
