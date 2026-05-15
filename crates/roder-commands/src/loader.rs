@@ -262,7 +262,16 @@ Review {{arguments}}.
         write(&workspace.join("zeta.md"), "---\nname: zeta\n---\n\nZ");
         write(&workspace.join("alpha.md"), "---\nname: alpha\n---\n\nA");
 
-        let registry = CommandsRegistry::load(None::<&PathBuf>, Some(&workspace), []).unwrap();
+        let registry = CommandsRegistry::load_with_options(
+            None::<&PathBuf>,
+            Some(&workspace),
+            [],
+            crate::registry::CommandsRegistryOptions {
+                include_builtins: false,
+                ..crate::registry::CommandsRegistryOptions::default()
+            },
+        )
+        .unwrap();
         let names = registry
             .iter()
             .map(|(name, _)| name.as_str())
