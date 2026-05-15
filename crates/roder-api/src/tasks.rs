@@ -1,3 +1,6 @@
+use std::fmt;
+use std::sync::Arc;
+
 use serde::{Deserialize, Serialize};
 use time::OffsetDateTime;
 
@@ -41,7 +44,7 @@ pub struct TaskHandle {
     pub finished_at: Option<OffsetDateTime>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct TaskExecutionContext {
     pub task_id: TaskId,
     pub thread_id: Option<ThreadId>,
@@ -49,6 +52,20 @@ pub struct TaskExecutionContext {
     pub workspace_root: Option<String>,
     pub deadline: Option<OffsetDateTime>,
     pub metadata: serde_json::Value,
+    pub output: TaskOutputSink,
+}
+
+impl fmt::Debug for TaskExecutionContext {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("TaskExecutionContext")
+            .field("task_id", &self.task_id)
+            .field("thread_id", &self.thread_id)
+            .field("turn_id", &self.turn_id)
+            .field("workspace_root", &self.workspace_root)
+            .field("deadline", &self.deadline)
+            .field("metadata", &self.metadata)
+            .finish_non_exhaustive()
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -64,6 +81,8 @@ pub struct TaskStarted {
     pub task_id: TaskId,
     pub executor_id: TaskExecutorId,
     pub task_kind: String,
+    #[serde(default)]
+    pub queue_depth: usize,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub thread_id: Option<ThreadId>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -125,6 +144,53 @@ pub struct TaskCancelled {
     pub turn_id: Option<TurnId>,
     #[serde(with = "time::serde::rfc3339")]
     pub timestamp: OffsetDateTime,
+}
+
+#[derive(Clone)]
+pub struct TaskOutputSink {
+    writer: Arc<dyn TaskOutputWriter>,
+}
+
+impl Default for TaskOutputSink {
+    fn default() -> Self {
+        Self {
+            writer: Arc::new(NoopTaskOutputWriter),
+        }
+    }
+}
+
+impl fmt::Debug for TaskOutputSink {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("TaskOutputSink").finish_non_exhaustive()
+    }
+}
+
+impl TaskOutputSink {
+    pub fn new(writer: Arc<dyn TaskOutputWriter>) -> Self {
+        Self { writer }
+    }
+
+    pub async fn write(
+        &self,
+        stream: TaskOutputStream,
+        chunk: impl Into<String>,
+    ) -> anyhow::Result<()> {
+        self.writer.write(stream, chunk.into()).await
+    }
+}
+
+#[async_trait::async_trait]
+pub trait TaskOutputWriter: Send + Sync + 'static {
+    async fn write(&self, stream: TaskOutputStream, chunk: String) -> anyhow::Result<()>;
+}
+
+struct NoopTaskOutputWriter;
+
+#[async_trait::async_trait]
+impl TaskOutputWriter for NoopTaskOutputWriter {
+    async fn write(&self, _stream: TaskOutputStream, _chunk: String) -> anyhow::Result<()> {
+        Ok(())
+    }
 }
 
 #[async_trait::async_trait]
@@ -206,6 +272,7 @@ mod tests {
             task_id: "task-1".to_string(),
             executor_id: "process".to_string(),
             task_kind: "process".to_string(),
+            queue_depth: 0,
             thread_id: Some("thread-a".to_string()),
             turn_id: Some("turn-a".to_string()),
             timestamp: OffsetDateTime::UNIX_EPOCH,
@@ -242,6 +309,7 @@ mod tests {
                     workspace_root: None,
                     deadline: None,
                     metadata: serde_json::json!({}),
+                    output: TaskOutputSink::default(),
                 },
                 serde_json::json!({ "ok": true }),
             )
