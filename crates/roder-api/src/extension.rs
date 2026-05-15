@@ -15,6 +15,8 @@ pub type ToolProviderId = String;
 pub type SubagentDispatcherId = String;
 pub type PolicyContributorId = String;
 pub type EventSinkId = String;
+pub type TaskExecutorId = String;
+pub type NotificationSinkId = String;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct CapabilityRequest {
@@ -33,6 +35,8 @@ pub enum ProvidedService {
     SubagentDispatcher(SubagentDispatcherId),
     PolicyContributor(PolicyContributorId),
     EventSink(EventSinkId),
+    TaskExecutor(TaskExecutorId),
+    NotificationSink(NotificationSinkId),
     StatusSegment(crate::tui_status::StatusSegmentId),
     PaletteSource(crate::tui_status::PaletteSourceId),
 }
@@ -67,6 +71,8 @@ pub struct ExtensionRegistry {
     pub subagent_dispatchers: Vec<Arc<dyn crate::subagents::SubagentDispatcher>>,
     pub policy_contributors: Vec<Arc<dyn crate::context::PolicyContributor>>,
     pub event_sinks: Vec<Arc<dyn crate::extension::EventSink>>,
+    pub task_executors: Vec<Arc<dyn crate::tasks::TaskExecutor>>,
+    pub notification_sinks: Vec<Arc<dyn crate::notifications::NotificationSink>>,
     pub status_segments: Vec<crate::tui_status::StatusSegment>,
     pub palette_sources: Vec<crate::tui_status::PaletteSourceDescriptor>,
 }
@@ -113,6 +119,8 @@ pub struct ExtensionRegistryBuilder {
     pub subagent_dispatchers: Vec<Arc<dyn crate::subagents::SubagentDispatcher>>,
     pub policy_contributors: Vec<Arc<dyn crate::context::PolicyContributor>>,
     pub event_sinks: Vec<Arc<dyn crate::extension::EventSink>>,
+    pub task_executors: Vec<Arc<dyn crate::tasks::TaskExecutor>>,
+    pub notification_sinks: Vec<Arc<dyn crate::notifications::NotificationSink>>,
     pub status_segments: Vec<crate::tui_status::StatusSegment>,
     pub palette_sources: Vec<crate::tui_status::PaletteSourceDescriptor>,
 }
@@ -137,6 +145,8 @@ impl ExtensionRegistryBuilder {
             subagent_dispatchers: Vec::new(),
             policy_contributors: Vec::new(),
             event_sinks: Vec::new(),
+            task_executors: Vec::new(),
+            notification_sinks: Vec::new(),
             status_segments: Vec::new(),
             palette_sources: Vec::new(),
         }
@@ -169,6 +179,8 @@ impl ExtensionRegistryBuilder {
             subagent_dispatchers: self.subagent_dispatchers,
             policy_contributors: self.policy_contributors,
             event_sinks: self.event_sinks,
+            task_executors: self.task_executors,
+            notification_sinks: self.notification_sinks,
             status_segments: self.status_segments,
             palette_sources: self.palette_sources,
         })
@@ -224,6 +236,14 @@ impl ExtensionRegistryBuilder {
         self.event_sinks.push(sink);
     }
 
+    pub fn task_executor(&mut self, executor: Arc<dyn crate::tasks::TaskExecutor>) {
+        self.task_executors.push(executor);
+    }
+
+    pub fn notification_sink(&mut self, sink: Arc<dyn crate::notifications::NotificationSink>) {
+        self.notification_sinks.push(sink);
+    }
+
     pub fn status_segment(&mut self, segment: crate::tui_status::StatusSegment) {
         self.status_segments.push(segment);
     }
@@ -263,6 +283,31 @@ mod tests {
 
         let decoded = serde_json::from_value::<ProvidedService>(encoded)
             .expect("deserialize palette source service");
+        assert_eq!(decoded, service);
+    }
+
+    #[test]
+    fn provided_service_task_executor_round_trips_json() {
+        let service = ProvidedService::TaskExecutor("process".to_string());
+        let encoded = serde_json::to_value(&service).expect("serialize task executor service");
+        assert_eq!(encoded, serde_json::json!({ "TaskExecutor": "process" }));
+
+        let decoded = serde_json::from_value::<ProvidedService>(encoded)
+            .expect("deserialize task executor service");
+        assert_eq!(decoded, service);
+    }
+
+    #[test]
+    fn provided_service_notification_sink_round_trips_json() {
+        let service = ProvidedService::NotificationSink("terminal-bell".to_string());
+        let encoded = serde_json::to_value(&service).expect("serialize notification sink service");
+        assert_eq!(
+            encoded,
+            serde_json::json!({ "NotificationSink": "terminal-bell" })
+        );
+
+        let decoded = serde_json::from_value::<ProvidedService>(encoded)
+            .expect("deserialize notification sink service");
         assert_eq!(decoded, service);
     }
 

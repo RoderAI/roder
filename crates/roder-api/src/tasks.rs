@@ -1,0 +1,255 @@
+use serde::{Deserialize, Serialize};
+use time::OffsetDateTime;
+
+use crate::events::{ThreadId, TurnId};
+use crate::extension::TaskExecutorId;
+
+pub type TaskId = String;
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct TaskSpec {
+    pub kind: String,
+    pub description: String,
+    pub input_schema: serde_json::Value,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub default_timeout_seconds: Option<u64>,
+    #[serde(default)]
+    pub metadata: serde_json::Value,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum TaskState {
+    Queued,
+    Running,
+    Completed,
+    Failed,
+    Cancelled,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct TaskHandle {
+    pub task_id: TaskId,
+    pub executor_id: TaskExecutorId,
+    pub spec: TaskSpec,
+    pub state: TaskState,
+    #[serde(with = "time::serde::rfc3339")]
+    pub created_at: OffsetDateTime,
+    #[serde(default, with = "time::serde::rfc3339::option")]
+    pub started_at: Option<OffsetDateTime>,
+    #[serde(default, with = "time::serde::rfc3339::option")]
+    pub finished_at: Option<OffsetDateTime>,
+}
+
+#[derive(Debug, Clone)]
+pub struct TaskExecutionContext {
+    pub task_id: TaskId,
+    pub thread_id: Option<ThreadId>,
+    pub turn_id: Option<TurnId>,
+    pub workspace_root: Option<String>,
+    pub deadline: Option<OffsetDateTime>,
+    pub metadata: serde_json::Value,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum TaskOutputStream {
+    Stdout,
+    Stderr,
+    Log,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct TaskStarted {
+    pub task_id: TaskId,
+    pub executor_id: TaskExecutorId,
+    pub task_kind: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub thread_id: Option<ThreadId>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub turn_id: Option<TurnId>,
+    #[serde(with = "time::serde::rfc3339")]
+    pub timestamp: OffsetDateTime,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct TaskOutput {
+    pub task_id: TaskId,
+    pub stream: TaskOutputStream,
+    pub chunk: String,
+    #[serde(default)]
+    pub dropped_bytes: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub thread_id: Option<ThreadId>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub turn_id: Option<TurnId>,
+    #[serde(with = "time::serde::rfc3339")]
+    pub timestamp: OffsetDateTime,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct TaskCompleted {
+    pub task_id: TaskId,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub exit_code: Option<i32>,
+    #[serde(default)]
+    pub payload: serde_json::Value,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub thread_id: Option<ThreadId>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub turn_id: Option<TurnId>,
+    #[serde(with = "time::serde::rfc3339")]
+    pub timestamp: OffsetDateTime,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct TaskFailed {
+    pub task_id: TaskId,
+    pub error: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub thread_id: Option<ThreadId>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub turn_id: Option<TurnId>,
+    #[serde(with = "time::serde::rfc3339")]
+    pub timestamp: OffsetDateTime,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct TaskCancelled {
+    pub task_id: TaskId,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub thread_id: Option<ThreadId>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub turn_id: Option<TurnId>,
+    #[serde(with = "time::serde::rfc3339")]
+    pub timestamp: OffsetDateTime,
+}
+
+#[async_trait::async_trait]
+pub trait TaskExecutor: Send + Sync + 'static {
+    fn id(&self) -> TaskExecutorId;
+
+    fn spec(&self) -> TaskSpec;
+
+    async fn execute(
+        &self,
+        ctx: TaskExecutionContext,
+        input: serde_json::Value,
+    ) -> anyhow::Result<serde_json::Value>;
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Arc;
+
+    use super::*;
+
+    struct NoopTaskExecutor;
+
+    #[async_trait::async_trait]
+    impl TaskExecutor for NoopTaskExecutor {
+        fn id(&self) -> TaskExecutorId {
+            "noop-task".to_string()
+        }
+
+        fn spec(&self) -> TaskSpec {
+            TaskSpec {
+                kind: "noop".to_string(),
+                description: "No-op task".to_string(),
+                input_schema: serde_json::json!({ "type": "object" }),
+                default_timeout_seconds: Some(30),
+                metadata: serde_json::json!({ "category": "test" }),
+            }
+        }
+
+        async fn execute(
+            &self,
+            ctx: TaskExecutionContext,
+            input: serde_json::Value,
+        ) -> anyhow::Result<serde_json::Value> {
+            Ok(serde_json::json!({
+                "task_id": ctx.task_id,
+                "input": input,
+            }))
+        }
+    }
+
+    #[test]
+    fn task_handle_round_trips_json() {
+        let handle = TaskHandle {
+            task_id: "task-1".to_string(),
+            executor_id: "process".to_string(),
+            spec: TaskSpec {
+                kind: "process".to_string(),
+                description: "Run a process".to_string(),
+                input_schema: serde_json::json!({ "type": "object" }),
+                default_timeout_seconds: Some(60),
+                metadata: serde_json::json!({}),
+            },
+            state: TaskState::Queued,
+            created_at: OffsetDateTime::UNIX_EPOCH,
+            started_at: None,
+            finished_at: None,
+        };
+
+        let encoded = serde_json::to_string(&handle).expect("serialize task handle");
+        let decoded: TaskHandle = serde_json::from_str(&encoded).expect("deserialize task handle");
+
+        assert_eq!(decoded, handle);
+    }
+
+    #[test]
+    fn task_events_round_trip_json() {
+        let started = TaskStarted {
+            task_id: "task-1".to_string(),
+            executor_id: "process".to_string(),
+            task_kind: "process".to_string(),
+            thread_id: Some("thread-a".to_string()),
+            turn_id: Some("turn-a".to_string()),
+            timestamp: OffsetDateTime::UNIX_EPOCH,
+        };
+        let output = TaskOutput {
+            task_id: "task-1".to_string(),
+            stream: TaskOutputStream::Stdout,
+            chunk: "hello\n".to_string(),
+            dropped_bytes: 0,
+            thread_id: Some("thread-a".to_string()),
+            turn_id: Some("turn-a".to_string()),
+            timestamp: OffsetDateTime::UNIX_EPOCH,
+        };
+
+        assert_eq!(
+            serde_json::from_value::<TaskStarted>(serde_json::to_value(&started).unwrap()).unwrap(),
+            started
+        );
+        assert_eq!(
+            serde_json::from_value::<TaskOutput>(serde_json::to_value(&output).unwrap()).unwrap(),
+            output
+        );
+    }
+
+    #[tokio::test]
+    async fn task_executor_trait_is_object_safe() {
+        let executor: Arc<dyn TaskExecutor> = Arc::new(NoopTaskExecutor);
+        let result = executor
+            .execute(
+                TaskExecutionContext {
+                    task_id: "task-1".to_string(),
+                    thread_id: None,
+                    turn_id: None,
+                    workspace_root: None,
+                    deadline: None,
+                    metadata: serde_json::json!({}),
+                },
+                serde_json::json!({ "ok": true }),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(executor.id(), "noop-task");
+        assert_eq!(executor.spec().kind, "noop");
+        assert_eq!(result["task_id"], "task-1");
+    }
+}

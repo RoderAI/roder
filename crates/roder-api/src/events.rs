@@ -9,6 +9,7 @@ pub use crate::policy_mode::{
     PolicyBypassActive, PolicyDecisionRecorded, PolicyExitPlanRequested, PolicyExitPlanResolved,
     PolicyModeChanged,
 };
+pub use crate::tasks::{TaskCancelled, TaskCompleted, TaskFailed, TaskOutput, TaskStarted};
 
 pub type ThreadId = String;
 pub type TurnId = String;
@@ -304,6 +305,11 @@ pub enum RoderEvent {
     SubagentToolCall(SubagentToolCall),
     SubagentCompleted(SubagentCompleted),
     SubagentFailed(SubagentFailed),
+    TaskStarted(TaskStarted),
+    TaskOutput(TaskOutput),
+    TaskCompleted(TaskCompleted),
+    TaskFailed(TaskFailed),
+    TaskCancelled(TaskCancelled),
     FileChangePreviewReady(FileChangePreviewReady),
     FileChanged(FileChanged),
     TurnItemAppended(TurnItemAppended),
@@ -340,6 +346,11 @@ impl RoderEvent {
             RoderEvent::SubagentToolCall(_) => "subagent.tool_call",
             RoderEvent::SubagentCompleted(_) => "subagent.completed",
             RoderEvent::SubagentFailed(_) => "subagent.failed",
+            RoderEvent::TaskStarted(_) => "task.started",
+            RoderEvent::TaskOutput(_) => "task.output",
+            RoderEvent::TaskCompleted(_) => "task.completed",
+            RoderEvent::TaskFailed(_) => "task.failed",
+            RoderEvent::TaskCancelled(_) => "task.cancelled",
             RoderEvent::FileChangePreviewReady(_) => "file.change_preview_ready",
             RoderEvent::FileChanged(_) => "file.changed",
             RoderEvent::TurnItemAppended(_) => "turn.item_appended",
@@ -361,7 +372,12 @@ impl RoderEvent {
             | RoderEvent::SubagentMessage(_)
             | RoderEvent::SubagentToolCall(_)
             | RoderEvent::SubagentCompleted(_)
-            | RoderEvent::SubagentFailed(_) => EventSource::Extension,
+            | RoderEvent::SubagentFailed(_)
+            | RoderEvent::TaskStarted(_)
+            | RoderEvent::TaskOutput(_)
+            | RoderEvent::TaskCompleted(_)
+            | RoderEvent::TaskFailed(_)
+            | RoderEvent::TaskCancelled(_) => EventSource::Extension,
             RoderEvent::FileChangePreviewReady(_) => EventSource::Tool,
             RoderEvent::ExtensionRegistered(_) => EventSource::Extension,
             _ => EventSource::Core,
@@ -393,6 +409,11 @@ impl RoderEvent {
             RoderEvent::SubagentToolCall(e) => Some(&e.thread_id),
             RoderEvent::SubagentCompleted(e) => Some(&e.thread_id),
             RoderEvent::SubagentFailed(e) => Some(&e.thread_id),
+            RoderEvent::TaskStarted(e) => e.thread_id.as_ref(),
+            RoderEvent::TaskOutput(e) => e.thread_id.as_ref(),
+            RoderEvent::TaskCompleted(e) => e.thread_id.as_ref(),
+            RoderEvent::TaskFailed(e) => e.thread_id.as_ref(),
+            RoderEvent::TaskCancelled(e) => e.thread_id.as_ref(),
             RoderEvent::FileChangePreviewReady(e) => Some(&e.thread_id),
             RoderEvent::FileChanged(e) => Some(&e.thread_id),
             RoderEvent::TurnItemAppended(e) => Some(&e.thread_id),
@@ -426,6 +447,11 @@ impl RoderEvent {
             RoderEvent::SubagentToolCall(e) => Some(&e.turn_id),
             RoderEvent::SubagentCompleted(e) => Some(&e.turn_id),
             RoderEvent::SubagentFailed(e) => Some(&e.turn_id),
+            RoderEvent::TaskStarted(e) => e.turn_id.as_ref(),
+            RoderEvent::TaskOutput(e) => e.turn_id.as_ref(),
+            RoderEvent::TaskCompleted(e) => e.turn_id.as_ref(),
+            RoderEvent::TaskFailed(e) => e.turn_id.as_ref(),
+            RoderEvent::TaskCancelled(e) => e.turn_id.as_ref(),
             RoderEvent::FileChangePreviewReady(e) => Some(&e.turn_id),
             RoderEvent::FileChanged(e) => Some(&e.turn_id),
             RoderEvent::TurnItemAppended(e) => Some(&e.turn_id),
@@ -619,6 +645,45 @@ mod tests {
             RoderEvent::SubagentStarted(started) => {
                 assert_eq!(started.parent_thread_id, "parent-thread");
                 assert_eq!(started.parent_turn_id, "parent-turn");
+            }
+            other => panic!("unexpected event: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn task_events_round_trip_with_replay_ids() {
+        let event = RoderEvent::TaskOutput(TaskOutput {
+            task_id: "task-1".to_string(),
+            stream: crate::tasks::TaskOutputStream::Stdout,
+            chunk: "building\n".to_string(),
+            dropped_bytes: 0,
+            thread_id: Some("thread-a".to_string()),
+            turn_id: Some("turn-a".to_string()),
+            timestamp: OffsetDateTime::UNIX_EPOCH,
+        });
+        let envelope = EventEnvelope {
+            event_id: "event-task-output".to_string(),
+            seq: 9,
+            timestamp: OffsetDateTime::UNIX_EPOCH,
+            source: event.source(),
+            kind: event.kind().to_string(),
+            thread_id: event.thread_id().cloned(),
+            turn_id: event.turn_id().cloned(),
+            event,
+        };
+
+        let serialized = serde_json::to_string(&envelope).unwrap();
+        let round_trip: EventEnvelope = serde_json::from_str(&serialized).unwrap();
+
+        assert_eq!(round_trip.kind, "task.output");
+        assert_eq!(round_trip.source, EventSource::Extension);
+        assert_eq!(round_trip.thread_id.as_deref(), Some("thread-a"));
+        assert_eq!(round_trip.turn_id.as_deref(), Some("turn-a"));
+        match round_trip.event {
+            RoderEvent::TaskOutput(output) => {
+                assert_eq!(output.task_id, "task-1");
+                assert_eq!(output.stream, crate::tasks::TaskOutputStream::Stdout);
+                assert_eq!(output.chunk, "building\n");
             }
             other => panic!("unexpected event: {other:?}"),
         }
