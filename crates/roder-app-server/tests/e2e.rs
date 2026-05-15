@@ -2,6 +2,10 @@ use roder_api::catalog::PROVIDER_MOCK;
 use roder_api::extension::ExtensionRegistryBuilder;
 use roder_app_server::{AppServer, LocalAppClient};
 use roder_core::{Runtime, fake_provider::FakeInferenceEngine};
+use roder_extension_host::{
+    DefaultRegistryConfig, DefaultWebSearchConfig, DefaultWebSearchProviderConfig,
+    build_default_registry,
+};
 use roder_protocol::{
     CreateSessionResult, ExtensionsListResult, JsonRpcRequest, ProviderSelectParams,
     ProviderSelectResult, ProvidersListResult, SessionsListResult, StartTurnParams,
@@ -128,6 +132,41 @@ async fn test_app_server_e2e() {
         kinds.iter().any(|kind| kind == "turn.completed"),
         "missing turn.completed: {kinds:?}"
     );
+}
+
+#[tokio::test]
+async fn tools_list_discovers_configured_web_search_without_secret_material() {
+    let secret = "secret-tavily-key";
+    let registry = build_default_registry(DefaultRegistryConfig {
+        web_search: Some(DefaultWebSearchConfig {
+            enabled: true,
+            tavily: DefaultWebSearchProviderConfig {
+                enabled: true,
+                api_key: Some(secret.to_string()),
+                ..DefaultWebSearchProviderConfig::default()
+            },
+            ..DefaultWebSearchConfig::default()
+        }),
+        ..DefaultRegistryConfig::default()
+    })
+    .unwrap();
+    let runtime = Arc::new(Runtime::new(registry, Default::default()).unwrap());
+    let server = Arc::new(AppServer::new(runtime));
+    let client = LocalAppClient::new(server);
+
+    let tools: ToolsListResult = request(&client, "tools/list", None).await;
+    assert!(
+        tools.tools.iter().any(|tool| tool.name == "web_search"),
+        "tools/list should expose web_search: {:?}",
+        tools.tools
+    );
+
+    let extensions: ExtensionsListResult = request(&client, "extensions/list", None).await;
+    let protocol_text = serde_json::to_string(&(tools, extensions)).unwrap();
+    assert!(!protocol_text.contains(secret));
+    assert!(!protocol_text.contains("Authorization"));
+    assert!(!protocol_text.contains("x-api-key"));
+    assert!(!protocol_text.contains("api_key"));
 }
 
 async fn request<T: serde::de::DeserializeOwned>(

@@ -125,6 +125,8 @@ cargo run -p roder-cli -- --help
 cargo test --workspace
 ```
 
+Web search provider setup is documented in [`docs/roder-web-search-extensions.md`](./docs/roder-web-search-extensions.md).
+
 A more complete quick-start (configuration, providers, session resume, app-server transports, MCP) will land alongside the corresponding roadmap phases.
 
 ---

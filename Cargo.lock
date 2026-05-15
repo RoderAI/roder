@@ -1931,6 +1931,7 @@ dependencies = [
  "roder-codex-auth",
  "roder-config",
  "roder-core",
+ "roder-extension-host",
  "roder-protocol",
  "roder-tools",
  "serde",
