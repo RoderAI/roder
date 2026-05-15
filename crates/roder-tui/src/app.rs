@@ -36,6 +36,8 @@ struct Theme {
     dialog: Color,
     selection_fg: Color,
     selection_bg: Color,
+    top_bar_track: Color,
+    top_bar_fill: Color,
 }
 
 impl Theme {
@@ -59,6 +61,8 @@ impl Theme {
                 dialog: Color::Indexed(62),
                 selection_fg: Color::Reset,
                 selection_bg: Color::Indexed(212),
+                top_bar_track: Color::Indexed(236),
+                top_bar_fill: Color::Indexed(212),
             };
         }
 
@@ -76,6 +80,8 @@ impl Theme {
             dialog: Color::Indexed(62),
             selection_fg: Color::Reset,
             selection_bg: Color::Indexed(198),
+            top_bar_track: Color::Indexed(252),
+            top_bar_fill: Color::Indexed(198),
         }
     }
 
@@ -152,6 +158,7 @@ pub struct TuiApp {
     input: String,
     messages: Vec<String>,
     events: Vec<String>,
+    animation_frame: u64,
     show_event_log: bool,
     show_provider_popup: bool,
     provider_options: Vec<ProviderOption>,
@@ -191,6 +198,7 @@ impl TuiApp {
             input: String::new(),
             messages: Vec::new(),
             events: Vec::new(),
+            animation_frame: 0,
             show_event_log: false,
             show_provider_popup: false,
             provider_options: Vec::new(),
@@ -209,6 +217,7 @@ impl TuiApp {
         let mut rx = self.client.subscribe_events();
 
         loop {
+            self.animation_frame = self.animation_frame.wrapping_add(1);
             terminal.draw(|f| self.render(f))?;
 
             if event::poll(Duration::from_millis(50))?
@@ -342,7 +351,11 @@ impl TuiApp {
     fn render(&mut self, f: &mut Frame<'_>) {
         let area = f.size();
         let event_height = event_log_height(self.show_event_log, self.events.len());
-        let mut constraints = vec![Constraint::Length(1), Constraint::Min(5)];
+        let mut constraints = vec![
+            Constraint::Length(1),
+            Constraint::Length(1),
+            Constraint::Min(5),
+        ];
         if event_height > 0 {
             constraints.push(Constraint::Length(event_height));
         }
@@ -353,14 +366,15 @@ impl TuiApp {
             .constraints(constraints)
             .split(area);
 
-        f.render_widget(self.header(area.width), chunks[0]);
-        f.render_widget(self.transcript(), chunks[1]);
+        f.render_widget(self.animated_top_bar(area.width), chunks[0]);
+        f.render_widget(self.header(area.width), chunks[1]);
+        f.render_widget(self.transcript(), chunks[2]);
 
         let composer_index = if event_height > 0 {
-            f.render_widget(self.event_log(), chunks[2]);
-            3
+            f.render_widget(self.event_log(), chunks[3]);
+            4
         } else {
-            2
+            3
         };
         f.render_widget(self.composer(), chunks[composer_index]);
         f.render_widget(self.footer(area.width), chunks[composer_index + 1]);
@@ -368,6 +382,15 @@ impl TuiApp {
         if self.show_provider_popup {
             self.render_provider_popup(f, area);
         }
+    }
+
+    fn animated_top_bar(&self, width: u16) -> Paragraph<'static> {
+        Paragraph::new(animated_bar_line(
+            width,
+            self.animation_frame,
+            self.theme.top_bar_track,
+            self.theme.top_bar_fill,
+        ))
     }
 
     fn header(&self, width: u16) -> Paragraph<'static> {
@@ -424,7 +447,7 @@ impl TuiApp {
             .events
             .iter()
             .rev()
-            .take(3)
+            .take(6)
             .rev()
             .map(|event| {
                 Line::from(vec![
@@ -434,7 +457,16 @@ impl TuiApp {
             })
             .collect::<Vec<_>>();
 
-        Paragraph::new(Text::from(lines)).block(
+        let text = if lines.is_empty() {
+            Text::from(Line::from(Span::styled(
+                "No events yet.",
+                self.theme.muted().add_modifier(Modifier::ITALIC),
+            )))
+        } else {
+            Text::from(lines)
+        };
+
+        Paragraph::new(text).block(
             Block::default()
                 .borders(Borders::TOP)
                 .border_style(self.theme.border())
@@ -472,7 +504,9 @@ impl TuiApp {
         };
         Paragraph::new(line_with_gap(
             vec![Span::styled(
-                format!(" {status}  enter send  ctrl+p provider/model  ctrl+l events  ctrl+c interrupt  esc quit"),
+                format!(
+                    " {status}  enter send  ctrl+p provider/model  ctrl+l events  ctrl+c interrupt  esc quit"
+                ),
                 self.theme.subtle(),
             )],
             vec![Span::styled(
@@ -644,6 +678,55 @@ impl TuiApp {
     }
 }
 
+fn animated_bar_line(width: u16, frame: u64, track: Color, fill: Color) -> Line<'static> {
+    let width = usize::from(width);
+    if width == 0 {
+        return Line::raw("");
+    }
+
+    let highlight_width = animated_bar_highlight_width(width);
+    let offset = animated_bar_offset(width, highlight_width, frame);
+    let mut spans = Vec::new();
+    if offset > 0 {
+        spans.push(Span::styled(" ".repeat(offset), Style::default().bg(track)));
+    }
+    spans.push(Span::styled(
+        " ".repeat(highlight_width),
+        Style::default().bg(fill),
+    ));
+    let tail = width.saturating_sub(offset + highlight_width);
+    if tail > 0 {
+        spans.push(Span::styled(" ".repeat(tail), Style::default().bg(track)));
+    }
+    Line::from(spans)
+}
+
+fn animated_bar_highlight_width(width: usize) -> usize {
+    (width / 4).clamp(8, 48).min(width)
+}
+
+fn animated_bar_offset(width: usize, highlight_width: usize, frame: u64) -> usize {
+    let travel = width.saturating_sub(highlight_width);
+    if travel == 0 {
+        return 0;
+    }
+    let period = travel * 2;
+    let phase = (frame as usize) % period;
+    if phase <= travel {
+        phase
+    } else {
+        period - phase
+    }
+}
+
+fn event_log_height(show_event_log: bool, event_count: usize) -> u16 {
+    if show_event_log {
+        (event_count as u16 + 2).clamp(3, 8)
+    } else {
+        0
+    }
+}
+
 fn provider_options_from_list(list: &ProvidersListResult) -> Vec<ProviderOption> {
     let mut options = Vec::new();
     for provider in &list.providers {
@@ -795,6 +878,8 @@ mod tests {
                 theme.dialog,
                 theme.selection_fg,
                 theme.selection_bg,
+                theme.top_bar_track,
+                theme.top_bar_fill,
             ];
             assert!(!colors.contains(&Color::White));
             assert!(!colors.contains(&Color::Black));
@@ -826,6 +911,30 @@ mod tests {
             .map(|span| span.content.as_ref())
             .collect::<String>();
         assert_eq!(rendered, "│ roder hello");
+    }
+
+    #[test]
+    fn animated_bar_offset_bounces_between_edges() {
+        assert_eq!(animated_bar_offset(20, 5, 0), 0);
+        assert_eq!(animated_bar_offset(20, 5, 15), 15);
+        assert_eq!(animated_bar_offset(20, 5, 16), 14);
+        assert_eq!(animated_bar_offset(20, 5, 30), 0);
+    }
+
+    #[test]
+    fn animated_bar_highlight_width_stays_within_width() {
+        assert_eq!(animated_bar_highlight_width(0), 0);
+        assert_eq!(animated_bar_highlight_width(4), 4);
+        assert_eq!(animated_bar_highlight_width(80), 20);
+        assert_eq!(animated_bar_highlight_width(400), 48);
+    }
+
+    #[test]
+    fn event_log_height_only_allocates_space_when_toggled_on() {
+        assert_eq!(event_log_height(false, 10), 0);
+        assert_eq!(event_log_height(true, 0), 3);
+        assert_eq!(event_log_height(true, 3), 5);
+        assert_eq!(event_log_height(true, 100), 8);
     }
 
     #[test]
