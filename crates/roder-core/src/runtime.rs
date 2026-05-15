@@ -16,7 +16,7 @@ use roder_api::policy_mode::PolicyMode;
 use roder_api::session::{SessionMetadata, SessionStore, ThreadSnapshot};
 use roder_api::subagents::SubagentDefinition;
 use roder_api::tools::{ToolChoice, ToolRegistry};
-use time::OffsetDateTime;
+use time::{Duration, OffsetDateTime};
 use tokio::sync::RwLock;
 
 use crate::bus::EventBus;
@@ -61,6 +61,37 @@ pub struct PendingPlanExit {
     pub request_id: String,
     pub target_mode: PolicyMode,
     pub plan_summary: Option<String>,
+    pub requested_at: OffsetDateTime,
+    pub expires_at: Option<OffsetDateTime>,
+}
+
+impl PendingPlanExit {
+    pub fn new(
+        thread_id: ThreadId,
+        turn_id: TurnId,
+        request_id: String,
+        target_mode: PolicyMode,
+        plan_summary: Option<String>,
+    ) -> Self {
+        let requested_at = OffsetDateTime::now_utc();
+        Self {
+            thread_id,
+            turn_id,
+            request_id,
+            target_mode,
+            plan_summary,
+            requested_at,
+            expires_at: Some(requested_at + default_plan_exit_timeout()),
+        }
+    }
+
+    pub fn is_expired(&self, now: OffsetDateTime) -> bool {
+        self.expires_at.is_some_and(|expires_at| now >= expires_at)
+    }
+}
+
+pub fn default_plan_exit_timeout() -> Duration {
+    Duration::minutes(10)
 }
 
 pub struct Runtime {
@@ -135,7 +166,16 @@ impl Runtime {
     }
 
     pub async fn pending_plan_exit(&self) -> Option<PendingPlanExit> {
-        self.pending_plan_exit.read().await.clone()
+        let mut pending = self.pending_plan_exit.write().await;
+        let current = pending.clone()?;
+        if !current.is_expired(OffsetDateTime::now_utc()) {
+            return Some(current);
+        }
+        *pending = None;
+        drop(pending);
+        self.emit_plan_exit_resolved(&current, false, self.status().await.policy_mode)
+            .await;
+        None
     }
 
     pub async fn set_policy_mode(
@@ -190,6 +230,7 @@ impl Runtime {
         *pending = None;
         drop(pending);
 
+        let approved = approved && !current.is_expired(OffsetDateTime::now_utc());
         let resolved_mode = if approved {
             let mut cfg = self.config.write().await;
             let previous_mode = cfg.policy_mode;
@@ -208,6 +249,17 @@ impl Runtime {
         } else {
             self.status().await.policy_mode
         };
+        self.emit_plan_exit_resolved(&current, approved, resolved_mode)
+            .await;
+        Ok(Some(current))
+    }
+
+    async fn emit_plan_exit_resolved(
+        &self,
+        current: &PendingPlanExit,
+        approved: bool,
+        resolved_mode: PolicyMode,
+    ) {
         self.emit(RoderEvent::PolicyExitPlanResolved(PolicyExitPlanResolved {
             thread_id: current.thread_id.clone(),
             turn_id: current.turn_id.clone(),
@@ -218,7 +270,6 @@ impl Runtime {
             timestamp: OffsetDateTime::now_utc(),
         }))
         .await;
-        Ok(Some(current))
     }
 
     pub async fn select_provider(

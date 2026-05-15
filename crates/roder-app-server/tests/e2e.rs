@@ -20,6 +20,7 @@ use roder_protocol::{
 };
 use std::sync::Arc;
 use std::time::Duration;
+use time::OffsetDateTime;
 use tokio::sync::Mutex;
 
 struct TaskCallingEngine {
@@ -342,13 +343,13 @@ async fn session_exit_plan_resolves_pending_request() {
         .await
         .unwrap();
     runtime
-        .record_pending_plan_exit(PendingPlanExit {
-            thread_id: "thread-plan".to_string(),
-            turn_id: "turn-plan".to_string(),
-            request_id: "exit-plan-1".to_string(),
-            target_mode: PolicyMode::Default,
-            plan_summary: Some("Implement approved edits".to_string()),
-        })
+        .record_pending_plan_exit(PendingPlanExit::new(
+            "thread-plan".to_string(),
+            "turn-plan".to_string(),
+            "exit-plan-1".to_string(),
+            PolicyMode::Default,
+            Some("Implement approved edits".to_string()),
+        ))
         .await;
     let server = Arc::new(AppServer::new(runtime));
     let client = LocalAppClient::new(server);
@@ -394,6 +395,61 @@ async fn session_exit_plan_resolves_pending_request() {
         }
     }
     assert!(saw_resolved);
+}
+
+#[tokio::test]
+async fn session_exit_plan_timeout_rejects_late_approval() {
+    let runtime = Arc::new(Runtime::fake().unwrap());
+    runtime
+        .set_policy_mode(PolicyMode::Plan, Some("test setup".to_string()))
+        .await
+        .unwrap();
+    runtime
+        .record_pending_plan_exit(PendingPlanExit {
+            thread_id: "thread-plan".to_string(),
+            turn_id: "turn-plan".to_string(),
+            request_id: "exit-plan-expired".to_string(),
+            target_mode: PolicyMode::Default,
+            plan_summary: Some("Expired plan".to_string()),
+            requested_at: OffsetDateTime::now_utc() - time::Duration::minutes(20),
+            expires_at: Some(OffsetDateTime::now_utc() - time::Duration::seconds(1)),
+        })
+        .await;
+    let server = Arc::new(AppServer::new(runtime));
+    let client = LocalAppClient::new(server);
+    let mut events = client.subscribe_events();
+
+    let resolved: SessionExitPlanResult = request(
+        &client,
+        "session/exit_plan",
+        Some(
+            serde_json::to_value(SessionExitPlanParams {
+                request_id: "exit-plan-expired".to_string(),
+                approved: true,
+            })
+            .unwrap(),
+        ),
+    )
+    .await;
+    assert!(resolved.resolved);
+    assert_eq!(resolved.mode, PolicyMode::Plan);
+
+    let state: SessionGetResult = request(&client, "session/get", None).await;
+    assert_eq!(state.mode, PolicyMode::Plan);
+    assert!(state.pending_plan_exit.is_none());
+
+    let mut saw_timeout_rejection = false;
+    for _ in 0..8 {
+        let envelope = tokio::time::timeout(Duration::from_secs(2), events.recv())
+            .await
+            .unwrap()
+            .unwrap();
+        if let roder_api::events::RoderEvent::PolicyExitPlanResolved(event) = envelope.event {
+            saw_timeout_rejection = event.request_id == "exit-plan-expired" && !event.approved;
+            break;
+        }
+    }
+    assert!(saw_timeout_rejection);
 }
 
 #[tokio::test]

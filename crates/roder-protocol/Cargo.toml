@@ -8,4 +8,5 @@ anyhow.workspace = true
 roder-api.workspace = true
 serde = { workspace = true, features = ["derive"] }
 serde_json.workspace = true
+time = { workspace = true, features = ["serde", "serde-well-known"] }
 tokio = { workspace = true, features = ["full"] }
