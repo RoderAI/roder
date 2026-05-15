@@ -1,6 +1,8 @@
 use serde::{Deserialize, Serialize};
 
 use crate::events::{ThreadId, TurnId};
+use crate::policy_mode::{PolicyDecision, PolicyMode};
+use crate::tools::{ToolCall, ToolExecutionContext};
 
 pub use crate::extension::{ContextPlannerId, ContextProviderId};
 
@@ -60,6 +62,15 @@ pub trait ContextPlanner: Send + Sync + 'static {
 }
 
 pub trait PolicyContributor: Send + Sync + 'static {}
+
+pub trait PolicyGate: Send + Sync + 'static {
+    fn decide(
+        &self,
+        call: &ToolCall,
+        mode: PolicyMode,
+        context: &ToolExecutionContext,
+    ) -> PolicyDecision;
+}
 
 pub struct SimpleContextPlanner;
 

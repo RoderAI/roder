@@ -88,6 +88,7 @@ mod tests {
                 ToolExecutionContext {
                     thread_id: "thread-a".to_string(),
                     turn_id: "turn-a".to_string(),
+                    effective_mode: roder_api::policy_mode::PolicyMode::Default,
                 },
                 ToolCall {
                     id: "call-a".to_string(),
