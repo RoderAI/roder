@@ -1,5 +1,6 @@
 mod commands;
 mod dialog;
+mod palette_ui;
 
 use std::io;
 use std::time::Duration;
@@ -25,15 +26,17 @@ use roder_api::tui_status::{
 };
 use roder_app_server::LocalAppClient;
 use roder_protocol::{
-    CodexAuthResult, CommandDescriptor, CommandsExpandParams, CommandsExpandResult,
-    CommandsListResult, CreateSessionResult, InterruptTurnParams, JsonRpcRequest, JsonRpcResponse,
-    PendingPlanExitDescriptor, ProviderDescriptor, ProviderSelectParams, ProviderSelectResult,
-    ProvidersListResult, SessionExitPlanParams, SessionExitPlanResult, SessionGetResult,
-    SessionSetModeParams, SessionSetModeResult, StartTurnParams,
+    AgentDescriptor, AgentsListResult, CodexAuthResult, CommandDescriptor, CommandsExpandParams,
+    CommandsExpandResult, CommandsListResult, CreateSessionResult, InterruptTurnParams,
+    JsonRpcRequest, JsonRpcResponse, PendingPlanExitDescriptor, ProviderDescriptor,
+    ProviderSelectParams, ProviderSelectResult, ProvidersListResult, SessionExitPlanParams,
+    SessionExitPlanResult, SessionGetResult, SessionLoadParams, SessionLoadResult,
+    SessionSetModeParams, SessionSetModeResult, SessionsListResult, StartTurnParams,
 };
 use tokio::process::Command;
 use tui_textarea::TextArea;
 
+use crate::palette::{PaletteEntry, render::PaletteTheme};
 use crate::status_line::{
     StatusLineConfig, StatusLineTheme, built_in_status_segments, render_status_line,
 };
@@ -192,6 +195,18 @@ impl Theme {
             separator: self.subtle,
         }
     }
+
+    fn palette(self) -> PaletteTheme {
+        PaletteTheme {
+            text: self.text,
+            muted: self.muted,
+            accent: self.accent,
+            border: self.border,
+            selection_fg: self.selection_fg,
+            selection_bg: self.selection_bg,
+            surface_bg: self.dialog_bg,
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -289,6 +304,11 @@ pub struct TuiApp {
     confirm_dialog: Option<ConfirmDialog>,
     command_catalog: Vec<CommandDescriptor>,
     slash_selected: usize,
+    show_palette: bool,
+    palette_entries: Vec<PaletteEntry>,
+    palette_query: String,
+    palette_source_filter: Option<String>,
+    palette_state: ListState,
     status_segments: Vec<StatusSegment>,
     status_git: Option<GitSnapshot>,
     policy_mode: PolicyMode,
@@ -344,6 +364,11 @@ impl TuiApp {
             confirm_dialog: None,
             command_catalog,
             slash_selected: 0,
+            show_palette: false,
+            palette_entries: Vec::new(),
+            palette_query: String::new(),
+            palette_source_filter: None,
+            palette_state: ListState::default(),
             status_segments: built_in_status_segments(),
             status_git,
             policy_mode: policy_state
@@ -375,6 +400,10 @@ impl TuiApp {
                     if self.handle_confirm_key(key).await {
                         break;
                     }
+                } else if self.show_palette {
+                    self.handle_palette_key(key).await;
+                } else if palette_ui::is_palette_open_key(key) {
+                    self.open_palette().await;
                 } else if key.modifiers.contains(KeyModifiers::CONTROL)
                     && key.code == KeyCode::Char('p')
                 {
@@ -596,9 +625,13 @@ impl TuiApp {
 
     async fn cycle_policy_mode(&mut self) {
         let next = next_policy_mode(self.policy_mode);
+        self.set_policy_mode(next, "tui mode switcher").await;
+    }
+
+    async fn set_policy_mode(&mut self, mode: PolicyMode, reason: &str) {
         let params = SessionSetModeParams {
-            mode: next,
-            reason: Some("tui mode switcher".to_string()),
+            mode,
+            reason: Some(reason.to_string()),
         };
         let res = self
             .client
@@ -622,6 +655,44 @@ impl TuiApp {
                 ));
             }
             Err(err) => self.record_error(format!("session/set_mode failed: {err}")),
+        }
+    }
+
+    async fn load_session(&mut self, thread_id: String) {
+        let res = self
+            .client
+            .send_request(JsonRpcRequest {
+                jsonrpc: "2.0".to_string(),
+                id: Some(serde_json::json!("sessions/load")),
+                method: "sessions/load".to_string(),
+                params: Some(
+                    serde_json::to_value(SessionLoadParams {
+                        thread_id: thread_id.clone(),
+                    })
+                    .unwrap(),
+                ),
+            })
+            .await;
+        match decode_response::<SessionLoadResult>(res) {
+            Ok(result) => {
+                self.thread_id = thread_id;
+                self.active_turn_id = None;
+                self.messages.clear();
+                if let Some(metadata) = result.snapshot.and_then(|snapshot| snapshot.metadata) {
+                    if let Some(provider) = metadata.provider {
+                        self.provider = provider;
+                    }
+                    if let Some(model) = metadata.model {
+                        self.model = model;
+                    }
+                }
+                self.messages.push(format!(
+                    "system: loaded session {}.",
+                    short_id(&self.thread_id)
+                ));
+                self.push_event(format!("session loaded: {}", short_id(&self.thread_id)));
+            }
+            Err(err) => self.record_error(format!("sessions/load failed: {err}")),
         }
     }
 
@@ -808,6 +879,9 @@ impl TuiApp {
 
         if self.show_provider_popup {
             self.render_provider_popup(f, area);
+        }
+        if self.show_palette {
+            self.render_palette_popup(f, area);
         }
         if let Some(dialog) = self.confirm_dialog {
             self.render_confirm_dialog(f, area, dialog);
@@ -1500,6 +1574,32 @@ async fn session_get(client: &LocalAppClient) -> anyhow::Result<SessionGetResult
         })
         .await;
     decode_response(res)
+}
+
+async fn sessions_list(
+    client: &LocalAppClient,
+) -> anyhow::Result<Vec<roder_api::session::SessionMetadata>> {
+    let res = client
+        .send_request(JsonRpcRequest {
+            jsonrpc: "2.0".to_string(),
+            id: Some(serde_json::json!("sessions/list")),
+            method: "sessions/list".to_string(),
+            params: None,
+        })
+        .await;
+    Ok(decode_response::<SessionsListResult>(res)?.sessions)
+}
+
+async fn agents_list(client: &LocalAppClient) -> anyhow::Result<Vec<AgentDescriptor>> {
+    let res = client
+        .send_request(JsonRpcRequest {
+            jsonrpc: "2.0".to_string(),
+            id: Some(serde_json::json!("agents/list")),
+            method: "agents/list".to_string(),
+            params: None,
+        })
+        .await;
+    Ok(decode_response::<AgentsListResult>(res)?.agents)
 }
 
 async fn commands_list(client: &LocalAppClient) -> anyhow::Result<Vec<CommandDescriptor>> {
