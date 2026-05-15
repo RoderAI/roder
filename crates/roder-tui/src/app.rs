@@ -1,3 +1,4 @@
+mod commands;
 mod dialog;
 
 use std::io;
@@ -21,7 +22,8 @@ use roder_api::inference::ProviderAuthType;
 use roder_api::policy_mode::PolicyMode;
 use roder_app_server::LocalAppClient;
 use roder_protocol::{
-    CodexAuthResult, CreateSessionResult, InterruptTurnParams, JsonRpcRequest, JsonRpcResponse,
+    CodexAuthResult, CommandDescriptor, CommandsExpandParams, CommandsExpandResult,
+    CommandsListResult, CreateSessionResult, InterruptTurnParams, JsonRpcRequest, JsonRpcResponse,
     PendingPlanExitDescriptor, ProviderDescriptor, ProviderSelectParams, ProviderSelectResult,
     ProvidersListResult, SessionExitPlanParams, SessionExitPlanResult, SessionGetResult,
     SessionSetModeParams, SessionSetModeResult, StartTurnParams,
@@ -267,6 +269,8 @@ pub struct TuiApp {
     provider_menu_filter: String,
     provider_state: ListState,
     confirm_dialog: Option<ConfirmDialog>,
+    command_catalog: Vec<CommandDescriptor>,
+    slash_selected: usize,
     policy_mode: PolicyMode,
     pending_plan_exit: Option<PendingPlanExitDescriptor>,
     theme: Theme,
@@ -292,6 +296,7 @@ impl TuiApp {
         provider_state.select(Some(0));
         let theme = Theme::for_terminal();
         let policy_state = session_get(&client).await.ok();
+        let command_catalog = commands_list(&client).await.unwrap_or_default();
 
         Ok(Self {
             client,
@@ -316,6 +321,8 @@ impl TuiApp {
             provider_menu_filter: String::new(),
             provider_state,
             confirm_dialog: None,
+            command_catalog,
+            slash_selected: 0,
             policy_mode: policy_state
                 .as_ref()
                 .map(|state| state.mode)
@@ -392,6 +399,31 @@ impl TuiApp {
                         }
                         _ => {}
                     }
+                } else if self.command_menu_open() {
+                    match key.code {
+                        KeyCode::Up => self.move_slash_selection(-1),
+                        KeyCode::Down => self.move_slash_selection(1),
+                        KeyCode::Tab => self.accept_slash_completion(),
+                        KeyCode::Enter => {
+                            if key.modifiers.contains(KeyModifiers::SHIFT) {
+                                self.composer.insert_newline();
+                                continue;
+                            }
+                            let text = composer_text(&self.composer).trim().to_string();
+                            self.composer = composer_textarea(self.theme);
+                            if text.is_empty() {
+                                continue;
+                            }
+                            if self.try_run_slash_command(&text).await {
+                                continue;
+                            }
+                            self.submit_user_text(text).await;
+                        }
+                        _ => {
+                            self.composer.input(key);
+                            self.clamp_slash_selection();
+                        }
+                    }
                 } else {
                     match key.code {
                         KeyCode::Enter => {
@@ -404,33 +436,14 @@ impl TuiApp {
                             if text.is_empty() {
                                 continue;
                             }
-                            if text.starts_with('/') {
-                                self.messages
-                                    .push(format!("executed slash command: {text}"));
+                            if text.starts_with('/') && self.try_run_slash_command(&text).await {
                                 continue;
                             }
                             if let Some(command) = shell_command_from_input(&text) {
                                 self.run_shell_command(command).await;
                                 continue;
                             }
-                            self.messages.push(format!("user: {text}"));
-                            let params = StartTurnParams {
-                                thread_id: self.thread_id.clone(),
-                                message: text,
-                                provider_override: None,
-                                model_override: Some(self.model.clone()),
-                            };
-                            let client = self.client.clone();
-                            tokio::spawn(async move {
-                                let _ = client
-                                    .send_request(JsonRpcRequest {
-                                        jsonrpc: "2.0".to_string(),
-                                        id: Some(serde_json::json!("turns/start")),
-                                        method: "turns/start".to_string(),
-                                        params: Some(serde_json::to_value(params).unwrap()),
-                                    })
-                                    .await;
-                            });
+                            self.submit_user_text(text).await;
                         }
                         KeyCode::Esc => {
                             self.confirm_dialog = if self.active_turn_id.is_some() {
@@ -441,6 +454,7 @@ impl TuiApp {
                         }
                         _ => {
                             self.composer.input(key);
+                            self.clamp_slash_selection();
                         }
                     }
                 }
@@ -619,6 +633,96 @@ impl TuiApp {
         }
     }
 
+    async fn try_run_slash_command(&mut self, text: &str) -> bool {
+        let Some((name, arguments)) = commands::command_invocation(text, &self.command_catalog)
+        else {
+            return false;
+        };
+
+        match commands_expand(&self.client, &name, &arguments).await {
+            Ok(expanded) => {
+                self.messages
+                    .push(format!("executed slash command: /{name}"));
+                self.messages.push(format!(
+                    "command preview: {}",
+                    truncate(&expanded.message.replace('\n', " "), 120)
+                ));
+                self.submit_user_message(
+                    expanded.message,
+                    expanded.model.or_else(|| Some(self.model.clone())),
+                )
+                .await;
+            }
+            Err(err) => self.record_error(format!("slash command failed: {err}")),
+        }
+        true
+    }
+
+    async fn submit_user_text(&mut self, text: String) {
+        self.messages.push(format!("user: {text}"));
+        self.submit_user_message(text, Some(self.model.clone()))
+            .await;
+    }
+
+    async fn submit_user_message(&self, message: String, model_override: Option<String>) {
+        let params = StartTurnParams {
+            thread_id: self.thread_id.clone(),
+            message,
+            provider_override: None,
+            model_override,
+        };
+        let client = self.client.clone();
+        tokio::spawn(async move {
+            let _ = client
+                .send_request(JsonRpcRequest {
+                    jsonrpc: "2.0".to_string(),
+                    id: Some(serde_json::json!("turns/start")),
+                    method: "turns/start".to_string(),
+                    params: Some(serde_json::to_value(params).unwrap()),
+                })
+                .await;
+        });
+    }
+
+    fn command_menu_open(&self) -> bool {
+        !self.matching_slash_commands().is_empty()
+    }
+
+    fn matching_slash_commands(&self) -> Vec<&CommandDescriptor> {
+        commands::matching_commands(&self.command_catalog, &composer_text(&self.composer))
+    }
+
+    fn move_slash_selection(&mut self, delta: isize) {
+        let count = self.matching_slash_commands().len();
+        if count == 0 {
+            self.slash_selected = 0;
+            return;
+        }
+        self.slash_selected =
+            (self.slash_selected as isize + delta).rem_euclid(count as isize) as usize;
+    }
+
+    fn clamp_slash_selection(&mut self) {
+        let count = self.matching_slash_commands().len();
+        if count == 0 {
+            self.slash_selected = 0;
+        } else {
+            self.slash_selected = self.slash_selected.min(count - 1);
+        }
+    }
+
+    fn accept_slash_completion(&mut self) {
+        if let Some(completed) = commands::accepted_completion(
+            &composer_text(&self.composer),
+            &self.command_catalog,
+            self.slash_selected,
+        ) {
+            self.composer = composer_textarea(self.theme);
+            self.composer.insert_str(completed);
+            self.slash_selected = 0;
+        }
+    }
+
     async fn run_shell_command(&mut self, command: String) {
         self.messages.push(format!("shell: !{command}"));
         self.push_event(format!("shell command started: {command}"));
@@ -637,6 +741,7 @@ impl TuiApp {
         let area = f.area();
         let event_height = event_log_height(self.show_event_log, self.events.len());
         let loader_height = if self.active_turn_id.is_some() { 1 } else { 0 };
+        let command_height = command_menu_height(self.command_menu_open());
         let mut constraints = Vec::new();
         if loader_height > 0 {
             constraints.push(Constraint::Length(loader_height));
@@ -644,6 +749,9 @@ impl TuiApp {
         constraints.extend([Constraint::Length(1), Constraint::Min(5)]);
         if event_height > 0 {
             constraints.push(Constraint::Length(event_height));
+        }
+        if command_height > 0 {
+            constraints.push(Constraint::Length(command_height));
         }
         constraints.extend([Constraint::Length(3), Constraint::Length(1)]);
 
@@ -662,12 +770,16 @@ impl TuiApp {
         f.render_widget(self.header(area.width), chunks[header_index]);
         f.render_widget(self.transcript(), chunks[transcript_index]);
 
-        let composer_index = if event_height > 0 {
+        let mut composer_index = if event_height > 0 {
             f.render_widget(self.event_log(), chunks[transcript_index + 1]);
             transcript_index + 2
         } else {
             transcript_index + 1
         };
+        if command_height > 0 {
+            f.render_widget(self.command_menu(), chunks[composer_index]);
+            composer_index += 1;
+        }
         f.render_widget(&self.composer, chunks[composer_index]);
         f.render_widget(self.footer(area.width), chunks[composer_index + 1]);
 
@@ -769,6 +881,50 @@ impl TuiApp {
         )
     }
 
+    fn command_menu(&self) -> Paragraph<'static> {
+        let matches = self.matching_slash_commands();
+        let selected = self.slash_selected.min(matches.len().saturating_sub(1));
+        let lines = matches
+            .into_iter()
+            .take(4)
+            .enumerate()
+            .map(|(index, command)| {
+                let style = if index == selected {
+                    self.theme.selected()
+                } else {
+                    self.theme.text()
+                };
+                let mut spans = vec![
+                    Span::styled(
+                        if index == selected { "› " } else { "  " },
+                        self.theme.subtle(),
+                    ),
+                    Span::styled(format!("/{}", command.name), style),
+                ];
+                if let Some(hint) = &command.argument_hint {
+                    spans.push(Span::styled(format!(" {hint}"), self.theme.muted()));
+                }
+                if let Some(description) = &command.description {
+                    spans.push(Span::styled(
+                        format!("  {}", truncate(description, 44)),
+                        self.theme.muted(),
+                    ));
+                }
+                if let Some(warning) = commands::command_warning(command) {
+                    spans.push(Span::styled(format!("  {warning}"), self.theme.tool()));
+                }
+                Line::from(spans)
+            })
+            .collect::<Vec<_>>();
+
+        Paragraph::new(Text::from(lines)).block(
+            Block::default()
+                .borders(Borders::TOP)
+                .border_style(self.theme.border())
+                .title(Span::styled(" commands  tab complete ", self.theme.muted())),
+        )
+    }
+
     fn footer(&self, width: u16) -> Paragraph<'static> {
         let status = if self.active_turn_id.is_some() {
             "running"
@@ -791,10 +947,15 @@ impl TuiApp {
         } else {
             ""
         };
+        let command_hint = if self.command_menu_open() {
+            "  / command"
+        } else {
+            ""
+        };
         Paragraph::new(line_with_gap(
             vec![Span::styled(
                 format!(
-                    " {status}  mode:{}{pending_hint}{shell_hint}  enter send  shift+tab mode  ! shell  ctrl+p provider/model  ctrl+l events  esc interrupt  ctrl+c exit",
+                    " {status}  mode:{}{pending_hint}{shell_hint}{command_hint}  enter send  tab complete  shift+tab mode  ! shell  ctrl+p provider/model  ctrl+l events  esc interrupt  ctrl+c exit",
                     policy_mode_label(self.policy_mode)
                 ),
                 self.theme.subtle(),
@@ -1155,6 +1316,10 @@ fn event_log_height(show_event_log: bool, event_count: usize) -> u16 {
     }
 }
 
+fn command_menu_height(open: bool) -> u16 {
+    if open { 5 } else { 0 }
+}
+
 fn composer_textarea(theme: Theme) -> TextArea<'static> {
     let mut composer = TextArea::default();
     composer.set_block(
@@ -1335,6 +1500,40 @@ async fn session_get(client: &LocalAppClient) -> anyhow::Result<SessionGetResult
     decode_response(res)
 }
 
+async fn commands_list(client: &LocalAppClient) -> anyhow::Result<Vec<CommandDescriptor>> {
+    let res = client
+        .send_request(JsonRpcRequest {
+            jsonrpc: "2.0".to_string(),
+            id: Some(serde_json::json!("commands/list")),
+            method: "commands/list".to_string(),
+            params: None,
+        })
+        .await;
+    Ok(decode_response::<CommandsListResult>(res)?.commands)
+}
+
+async fn commands_expand(
+    client: &LocalAppClient,
+    name: &str,
+    arguments: &str,
+) -> anyhow::Result<CommandsExpandResult> {
+    let res = client
+        .send_request(JsonRpcRequest {
+            jsonrpc: "2.0".to_string(),
+            id: Some(serde_json::json!("commands/expand")),
+            method: "commands/expand".to_string(),
+            params: Some(
+                serde_json::to_value(CommandsExpandParams {
+                    name: name.to_string(),
+                    arguments: Some(arguments.to_string()),
+                })
+                .unwrap(),
+            ),
+        })
+        .await;
+    decode_response(res)
+}
+
 fn next_policy_mode(mode: PolicyMode) -> PolicyMode {
     match mode {
         PolicyMode::Default => PolicyMode::AcceptEdits,
@@ -1384,6 +1583,12 @@ fn message_line(message: &str, theme: Theme) -> Line<'static> {
     if let Some(body) = message.strip_prefix("executed slash command: ") {
         return Line::from(vec![
             Span::styled("/ ", theme.tool()),
+            Span::styled(body.to_string(), theme.muted()),
+        ]);
+    }
+    if let Some(body) = message.strip_prefix("command preview: ") {
+        return Line::from(vec![
+            Span::styled("↳ ", theme.subtle()),
             Span::styled(body.to_string(), theme.muted()),
         ]);
     }
