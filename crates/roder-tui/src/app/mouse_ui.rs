@@ -6,7 +6,7 @@ use ratatui::{
     style::{Modifier, Style},
 };
 use roder_api::{
-    interactive::{HoverCursor, InteractiveRegion, RegionKind},
+    interactive::{HoverCursor, InteractiveEvent, InteractiveRegion, RegionKind},
     tui_status::{StatusCell, StatusSegment, StatusStyle},
 };
 
@@ -26,8 +26,16 @@ pub struct MouseFeedbackState {
 }
 
 impl MouseFeedbackState {
-    pub fn set_frame_regions(&mut self, composer: Rect, status: Rect) {
+    pub fn set_frame_regions(
+        &mut self,
+        composer: Rect,
+        status: Rect,
+        extra_regions: impl IntoIterator<Item = InteractiveRegion>,
+    ) {
         let mut builder = RegionFrame::builder();
+        for region in extra_regions {
+            builder.push(region);
+        }
         builder.push(region(
             COMPOSER_REGION_ID,
             RegionKind::Composer,
@@ -56,15 +64,21 @@ impl MouseFeedbackState {
         }
     }
 
-    pub fn handle_mouse_event(&mut self, event: MouseEvent, now: Instant) {
-        for event in self.router.handle_mouse_event(event, now) {
-            match self.hover.apply_event(&event, &self.regions) {
+    pub fn handle_mouse_event(&mut self, event: MouseEvent, now: Instant) -> Vec<InteractiveEvent> {
+        let events = self.router.handle_mouse_event(event, now);
+        for event in &events {
+            match self.hover.apply_event(event, &self.regions) {
                 Some(hovered) => {
                     self.cursor.update(hovered.cursor);
                 }
                 None => self.cursor.clear(),
             }
         }
+        events
+    }
+
+    pub fn region(&self, id: &str) -> Option<&InteractiveRegion> {
+        self.regions.get(id)
     }
 
     pub fn style_for_region(&self, region_id: &str, base: Style) -> Style {
@@ -122,7 +136,7 @@ mod tests {
     #[test]
     fn hover_feedback_sets_pointer_segment_and_clears_off_frame() {
         let mut state = MouseFeedbackState::default();
-        state.set_frame_regions(Rect::new(0, 0, 20, 3), Rect::new(0, 4, 20, 1));
+        state.set_frame_regions(Rect::new(0, 0, 20, 3), Rect::new(0, 4, 20, 1), []);
 
         state.handle_mouse_event(mouse(MouseEventKind::Moved, 2, 4), Instant::now());
         let segment = state.status_segment().expect("status pointer indicator");
@@ -136,7 +150,7 @@ mod tests {
     #[test]
     fn hover_feedback_styles_composer_region() {
         let mut state = MouseFeedbackState::default();
-        state.set_frame_regions(Rect::new(0, 0, 20, 3), Rect::new(0, 4, 20, 1));
+        state.set_frame_regions(Rect::new(0, 0, 20, 3), Rect::new(0, 4, 20, 1), []);
 
         state.handle_mouse_event(mouse(MouseEventKind::Moved, 2, 1), Instant::now());
 
