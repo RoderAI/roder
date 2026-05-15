@@ -14,6 +14,8 @@ const CLIENT_ID: &str = "app_EMoamEEZ73f0CkXaXp7hrann";
 const AUTHORIZE_URL: &str = "https://auth.openai.com/oauth/authorize";
 const TOKEN_ENDPOINT: &str = "https://auth.openai.com/oauth/token";
 const CALLBACK_PORT: u16 = 1455;
+const CALLBACK_PATH: &str = "/auth/callback";
+const ORIGINATOR: &str = "codex_cli_rs";
 const REFRESH_EXPIRY_SKEW_MILLIS: i64 = 3 * 60 * 1000;
 
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]
@@ -148,9 +150,8 @@ pub async fn login() -> anyhow::Result<Tokens> {
     let pkce_verifier = random_string(43);
     let pkce_challenge = code_challenge(&pkce_verifier);
     let state = random_string(43);
-    let listener = TcpListener::bind(("127.0.0.1", CALLBACK_PORT))
-        .or_else(|_| TcpListener::bind(("127.0.0.1", 0)))?;
-    let redirect_uri = format!("http://{}/auth/callback", listener.local_addr()?);
+    let listener = TcpListener::bind(("127.0.0.1", CALLBACK_PORT))?;
+    let redirect_uri = format!("http://localhost:{CALLBACK_PORT}{CALLBACK_PATH}");
     let auth_url = authorize_url(&redirect_uri, &pkce_challenge, &state);
 
     open_browser(&auth_url)?;
@@ -286,12 +287,15 @@ fn send_callback_html(stream: &mut TcpStream, ok: bool) -> anyhow::Result<()> {
 
 fn authorize_url(redirect_uri: &str, challenge: &str, state: &str) -> String {
     format!(
-        "{AUTHORIZE_URL}?response_type=code&client_id={}&redirect_uri={}&scope={}&originator=gode&id_token_add_organizations=true&codex_cli_simplified_flow=true&code_challenge={}&code_challenge_method=S256&state={}",
+        "{AUTHORIZE_URL}?response_type=code&client_id={}&redirect_uri={}&scope={}&code_challenge={}&code_challenge_method=S256&id_token_add_organizations=true&codex_cli_simplified_flow=true&state={}&originator={}",
         urlencoding::encode(CLIENT_ID),
         urlencoding::encode(redirect_uri),
-        urlencoding::encode("openid profile email offline_access"),
+        urlencoding::encode(
+            "openid profile email offline_access api.connectors.read api.connectors.invoke"
+        ),
         urlencoding::encode(challenge),
         urlencoding::encode(state),
+        urlencoding::encode(ORIGINATOR),
     )
 }
 
@@ -420,9 +424,11 @@ mod tests {
 
     #[test]
     fn authorization_url_matches_gode_oauth_shape() {
-        let url = authorize_url("http://127.0.0.1:1455/auth/callback", "challenge", "state");
+        let url = authorize_url("http://localhost:1455/auth/callback", "challenge", "state");
         assert!(url.contains("client_id=app_EMoamEEZ73f0CkXaXp7hrann"));
-        assert!(url.contains("originator=gode"));
+        assert!(url.contains("redirect_uri=http%3A%2F%2Flocalhost%3A1455%2Fauth%2Fcallback"));
+        assert!(url.contains("originator=codex_cli_rs"));
+        assert!(url.contains("api.connectors.read"));
         assert!(url.contains("codex_cli_simplified_flow=true"));
         assert!(url.contains("code_challenge_method=S256"));
     }

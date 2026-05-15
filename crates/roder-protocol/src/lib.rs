@@ -1,6 +1,6 @@
 use roder_api::events::{ThreadId, TurnId};
 use roder_api::extension::ExtensionManifest;
-use roder_api::inference::{InferenceCapabilities, ModelDescriptor};
+use roder_api::inference::{InferenceCapabilities, ModelDescriptor, ProviderAuthType};
 use roder_api::session::{SessionMetadata, ThreadSnapshot};
 use roder_api::tools::ToolSpec;
 use serde::{Deserialize, Serialize};
@@ -47,6 +47,14 @@ pub struct ExtensionsListResult {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProviderDescriptor {
     pub id: String,
+    pub name: String,
+    pub description: Option<String>,
+    pub auth_type: ProviderAuthType,
+    pub auth_label: Option<String>,
+    pub authenticated: bool,
+    pub auth_detail: Option<String>,
+    pub recommended: bool,
+    pub sort_order: i32,
     pub capabilities: InferenceCapabilities,
     pub models: Vec<ModelDescriptor>,
 }

@@ -1,18 +1,27 @@
 use std::sync::Arc;
 
 use roder_api::events::EventEnvelope;
-use roder_api::inference::{InferenceProviderContext, InstructionBundle};
-use roder_core::{Runtime, StartTurnRequest};
+use roder_api::inference::{InferenceProviderContext, InferenceProviderMetadata, ProviderAuthType};
+use roder_core::{Runtime, StartTurnRequest, default_instructions};
 use roder_protocol::*;
 use tokio::sync::broadcast;
 
 pub struct AppServer {
     pub runtime: Arc<Runtime>,
+    persist_user_config: bool,
 }
 
 impl AppServer {
     pub fn new(runtime: Arc<Runtime>) -> Self {
-        Self { runtime }
+        Self {
+            runtime,
+            persist_user_config: false,
+        }
+    }
+
+    pub fn with_user_config_persistence(mut self) -> Self {
+        self.persist_user_config = true;
+        self
     }
 
     pub async fn handle_request(&self, req: JsonRpcRequest) -> JsonRpcResponse {
@@ -130,16 +139,31 @@ impl AppServer {
         let mut providers = Vec::new();
         for engine in &self.runtime.registry().inference_engines {
             let id = engine.id();
+            let metadata = engine.metadata();
+            let (authenticated, auth_detail) = provider_auth_status(&id, &metadata).await;
             let models = engine
                 .list_models(InferenceProviderContext { provider_id: &id })
                 .await
                 .unwrap_or_default();
             providers.push(ProviderDescriptor {
                 id,
+                name: metadata.name,
+                description: metadata.description,
+                auth_type: metadata.auth_type,
+                auth_label: metadata.auth_label,
+                authenticated,
+                auth_detail,
+                recommended: metadata.recommended,
+                sort_order: metadata.sort_order,
                 capabilities: engine.capabilities(),
                 models,
             });
         }
+        providers.sort_by(|a, b| {
+            a.sort_order
+                .cmp(&b.sort_order)
+                .then_with(|| a.name.cmp(&b.name))
+        });
         Ok(serde_json::to_value(ProvidersListResult {
             active_provider: cfg.default_provider,
             active_model: cfg.default_model,
@@ -157,6 +181,10 @@ impl AppServer {
             .select_provider(params.provider, params.model)
             .await
             .map_err(internal_error)?;
+        if self.persist_user_config {
+            roder_config::save_default_provider_model(&cfg.default_provider, &cfg.default_model)
+                .map_err(internal_error)?;
+        }
         Ok(serde_json::to_value(ProviderSelectResult {
             provider: cfg.default_provider,
             model: cfg.default_model,
@@ -237,7 +265,7 @@ impl AppServer {
                 message: params.message,
                 provider_override: params.provider_override,
                 model_override: params.model_override,
-                instructions: InstructionBundle::default(),
+                instructions: default_instructions(),
             })
             .await
             .map_err(internal_error)?;
@@ -280,6 +308,26 @@ fn internal_error(err: impl std::fmt::Display) -> JsonRpcError {
         code: -32000,
         message: err.to_string(),
         data: None,
+    }
+}
+
+async fn provider_auth_status(
+    provider_id: &str,
+    metadata: &InferenceProviderMetadata,
+) -> (bool, Option<String>) {
+    match metadata.auth_type {
+        ProviderAuthType::None => (true, None),
+        ProviderAuthType::ApiKey => (true, metadata.auth_label.clone()),
+        ProviderAuthType::OAuth if provider_id == roder_api::catalog::PROVIDER_CODEX => {
+            match roder_codex_auth::status().await {
+                Ok(Some(tokens)) if !tokens.account_id.is_empty() => {
+                    (true, Some(tokens.account_id))
+                }
+                Ok(Some(_)) => (true, None),
+                Ok(None) | Err(_) => (false, None),
+            }
+        }
+        ProviderAuthType::OAuth => (false, metadata.auth_label.clone()),
     }
 }
 

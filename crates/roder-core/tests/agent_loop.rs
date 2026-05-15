@@ -9,7 +9,7 @@ use roder_api::inference::*;
 use roder_api::tools::{
     ToolCall, ToolContributor, ToolExecutionContext, ToolExecutor, ToolResult, ToolSpec,
 };
-use roder_core::{Runtime, RuntimeConfig, StartTurnRequest};
+use roder_core::{Runtime, RuntimeConfig, StartTurnRequest, default_instructions};
 use serde_json::json;
 
 struct ToolLoopEngine {
@@ -148,7 +148,7 @@ async fn run_turn_continues_after_tool_result() {
             message: "echo please".to_string(),
             provider_override: None,
             model_override: None,
-            instructions: InstructionBundle::default(),
+            instructions: default_instructions(),
         })
         .await
         .unwrap();
@@ -166,6 +166,14 @@ async fn run_turn_continues_after_tool_result() {
     let requests = engine.requests.lock().unwrap();
     assert_eq!(requests.len(), 2);
     assert_eq!(requests[0].reasoning.level.as_deref(), Some("low"));
+    assert!(
+        requests[0]
+            .instructions
+            .system
+            .as_deref()
+            .is_some_and(|text| text.contains("You are Roder")),
+        "first request should include the Roder system prompt"
+    );
     assert!(
         requests[1]
             .conversation

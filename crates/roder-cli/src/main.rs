@@ -1,5 +1,3 @@
-pub mod config;
-
 use std::sync::Arc;
 
 use roder_api::catalog::{DEFAULT_MODEL_ID, PROVIDER_MOCK};
@@ -15,7 +13,7 @@ async fn main() -> anyhow::Result<()> {
         return run_auth(&args[1..]).await;
     }
 
-    let cfg = config::load_config().unwrap_or_default();
+    let cfg = roder_config::load_config().unwrap_or_default();
 
     let openai_key = std::env::var("OPENAI_API_KEY")
         .ok()
@@ -67,7 +65,7 @@ async fn main() -> anyhow::Result<()> {
                 .map(|p| p.display().to_string()),
         },
     )?);
-    let app_server = Arc::new(AppServer::new(runtime));
+    let app_server = Arc::new(AppServer::new(runtime).with_user_config_persistence());
     let client = LocalAppClient::new(app_server);
 
     let mut tui = TuiApp::new(client, default_model).await?;
@@ -144,7 +142,7 @@ mod tests {
     #[test]
     fn explicit_model_wins_over_provider_slash_model() {
         let (provider, model) = resolve_provider_model(
-            Some("codex/gpt-5.4".to_string()),
+            Some("codex/gpt-5.4-mini".to_string()),
             Some("gpt-5.5".to_string()),
         );
         assert_eq!(provider, "codex");

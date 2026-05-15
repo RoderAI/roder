@@ -2,8 +2,9 @@ use roder_api::catalog::{PROVIDER_ANTHROPIC, models_for_provider};
 use roder_api::extension::InferenceEngineId;
 use roder_api::inference::{
     AgentInferenceRequest, CompletionMetadata, InferenceCapabilities, InferenceEngine,
-    InferenceEvent, InferenceEventStream, InferenceProviderContext, InferenceTurnContext,
-    MessageDelta, ModelDescriptor, TokenUsage,
+    InferenceEvent, InferenceEventStream, InferenceProviderContext, InferenceProviderMetadata,
+    InferenceTurnContext, MessageDelta, ModelDescriptor, ProviderAuthType, TokenUsage,
+    ToolCallCompleted,
 };
 use serde_json::{Value, json};
 
@@ -40,6 +41,27 @@ impl AnthropicEngine {
         if let Some(top_p) = request.output.top_p {
             body["top_p"] = json!(top_p);
         }
+        if request.reasoning.enabled {
+            if let Some(level) = request.reasoning.level.as_deref() {
+                body["output_config"] = json!({ "effort": anthropic_effort(level) });
+            }
+        }
+        if !request.tools.is_empty() {
+            body["tools"] = json!(
+                request
+                    .tools
+                    .iter()
+                    .map(|tool| {
+                        json!({
+                            "name": tool.name,
+                            "description": tool.description,
+                            "input_schema": tool.parameters,
+                        })
+                    })
+                    .collect::<Vec<_>>()
+            );
+            body["tool_choice"] = anthropic_tool_choice(&request.tool_choice);
+        }
         body
     }
 }
@@ -53,13 +75,24 @@ impl InferenceEngine for AnthropicEngine {
     fn capabilities(&self) -> InferenceCapabilities {
         InferenceCapabilities {
             streaming: false,
-            tool_calls: false,
+            tool_calls: true,
             parallel_tool_calls: false,
             reasoning_summaries: false,
             structured_output: false,
             image_input: false,
             prompt_cache: false,
             provider_metadata: true,
+        }
+    }
+
+    fn metadata(&self) -> InferenceProviderMetadata {
+        InferenceProviderMetadata {
+            name: "Anthropic".to_string(),
+            description: Some("Anthropic API key provider".to_string()),
+            auth_type: ProviderAuthType::ApiKey,
+            auth_label: Some("API key".to_string()),
+            recommended: true,
+            sort_order: 30,
         }
     }
 
@@ -92,7 +125,13 @@ impl InferenceEngine for AnthropicEngine {
         }
         let value: Value = response.json().await?;
         let text = extract_message_text(&value);
-        let mut events = vec![Ok(InferenceEvent::MessageDelta(MessageDelta { text }))];
+        let mut events = Vec::new();
+        if !text.is_empty() {
+            events.push(Ok(InferenceEvent::MessageDelta(MessageDelta { text })));
+        }
+        for call in extract_tool_calls(&value) {
+            events.push(Ok(InferenceEvent::ToolCallCompleted(call)));
+        }
         if let Some(usage) = extract_usage(&value) {
             events.push(Ok(InferenceEvent::Usage(usage)));
         }
@@ -121,6 +160,15 @@ fn anthropic_messages(request: &AgentInferenceRequest) -> Vec<Value> {
                 "role": "assistant",
                 "content": [{ "type": "text", "text": message.text }]
             })),
+            roder_api::conversation::ConversationItem::ToolCall(call) => Some(json!({
+                "role": "assistant",
+                "content": [{
+                    "type": "tool_use",
+                    "id": call.id,
+                    "name": call.name,
+                    "input": parse_json_object(&call.arguments)
+                }]
+            })),
             roder_api::conversation::ConversationItem::ToolResult(result) => Some(json!({
                 "role": "user",
                 "content": [{
@@ -133,6 +181,32 @@ fn anthropic_messages(request: &AgentInferenceRequest) -> Vec<Value> {
             _ => None,
         })
         .collect()
+}
+
+fn anthropic_tool_choice(choice: &roder_api::tools::ToolChoice) -> Value {
+    match choice {
+        roder_api::tools::ToolChoice::Auto => json!({ "type": "auto" }),
+        roder_api::tools::ToolChoice::Any => json!({ "type": "any" }),
+        roder_api::tools::ToolChoice::None => json!({ "type": "none" }),
+        roder_api::tools::ToolChoice::Specific(name) => {
+            json!({ "type": "tool", "name": name })
+        }
+    }
+}
+
+fn anthropic_effort(level: &str) -> &str {
+    match level {
+        "minimal" => "low",
+        "xhigh" => "xhigh",
+        level => level,
+    }
+}
+
+fn parse_json_object(raw: &str) -> Value {
+    serde_json::from_str::<Value>(raw)
+        .ok()
+        .filter(|value| value.is_object())
+        .unwrap_or_else(|| json!({}))
 }
 
 fn extract_message_text(value: &Value) -> String {
@@ -148,6 +222,32 @@ fn extract_message_text(value: &Value) -> String {
                 })
                 .collect::<Vec<_>>()
                 .join("")
+        })
+        .unwrap_or_default()
+}
+
+fn extract_tool_calls(value: &Value) -> Vec<ToolCallCompleted> {
+    value
+        .get("content")
+        .and_then(|v| v.as_array())
+        .map(|items| {
+            items
+                .iter()
+                .filter(|item| item.get("type").and_then(|v| v.as_str()) == Some("tool_use"))
+                .filter_map(|item| {
+                    let id = item.get("id").and_then(|v| v.as_str())?.to_string();
+                    let name = item.get("name").and_then(|v| v.as_str())?.to_string();
+                    let arguments = item
+                        .get("input")
+                        .map(|input| input.to_string())
+                        .unwrap_or_else(|| "{}".to_string());
+                    Some(ToolCallCompleted {
+                        id,
+                        name,
+                        arguments,
+                    })
+                })
+                .collect()
         })
         .unwrap_or_default()
 }
@@ -171,11 +271,12 @@ fn number_to_u32(value: Option<&Value>) -> Option<u32> {
 mod tests {
     use super::*;
     use roder_api::conversation::{
-        AssistantMessage, ConversationItem, ToolResultRecord, UserMessage,
+        AssistantMessage, ConversationItem, ToolCallRecord, ToolResultRecord, UserMessage,
     };
     use roder_api::inference::{
         InstructionBundle, ModelSelection, OutputConfig, ReasoningConfig, RuntimeHints,
     };
+    use roder_api::tools::{ToolChoice, ToolSpec};
 
     fn request() -> AgentInferenceRequest {
         AgentInferenceRequest {
@@ -194,6 +295,11 @@ mod tests {
                 ConversationItem::AssistantMessage(AssistantMessage {
                     text: "Hi".to_string(),
                 }),
+                ConversationItem::ToolCall(ToolCallRecord {
+                    id: "toolu_1".to_string(),
+                    name: "shell".to_string(),
+                    arguments: r#"{"cmd":"pwd"}"#.to_string(),
+                }),
                 ConversationItem::ToolResult(ToolResultRecord {
                     id: "toolu_1".to_string(),
                     name: Some("shell".to_string()),
@@ -201,9 +307,20 @@ mod tests {
                     is_error: false,
                 }),
             ],
-            tools: vec![],
-            tool_choice: roder_api::tools::ToolChoice::Auto,
-            reasoning: ReasoningConfig::default(),
+            tools: vec![ToolSpec {
+                name: "shell".to_string(),
+                description: "Run a shell command".to_string(),
+                parameters: json!({
+                    "type": "object",
+                    "properties": { "cmd": { "type": "string" } },
+                    "required": ["cmd"]
+                }),
+            }],
+            tool_choice: ToolChoice::Auto,
+            reasoning: ReasoningConfig {
+                enabled: true,
+                level: Some("medium".to_string()),
+            },
             output: OutputConfig {
                 max_tokens: Some(100),
                 temperature: Some(0.3),
@@ -226,21 +343,35 @@ mod tests {
         assert_eq!(body["system"][1]["text"], "developer");
         assert_eq!(body["messages"][0]["role"], "user");
         assert_eq!(body["messages"][1]["role"], "assistant");
-        assert_eq!(body["messages"][2]["content"][0]["type"], "tool_result");
+        assert_eq!(body["messages"][2]["content"][0]["type"], "tool_use");
+        assert_eq!(body["messages"][2]["content"][0]["input"]["cmd"], "pwd");
+        assert_eq!(body["messages"][3]["content"][0]["type"], "tool_result");
+        assert_eq!(body["tools"][0]["name"], "shell");
+        assert_eq!(body["tools"][0]["input_schema"]["type"], "object");
+        assert_eq!(body["tool_choice"]["type"], "auto");
+        assert_eq!(body["output_config"]["effort"], "medium");
     }
 
     #[test]
-    fn extracts_anthropic_text_and_usage() {
+    fn extracts_anthropic_text_tool_calls_and_usage() {
         let value = json!({
             "id": "msg_123",
             "content": [
                 { "type": "text", "text": "hello" },
-                { "type": "tool_use", "name": "ignored" },
+                { "type": "tool_use", "id": "toolu_2", "name": "shell", "input": { "cmd": "ls" } },
                 { "type": "text", "text": " world" }
             ],
             "usage": { "input_tokens": 11, "output_tokens": 7 }
         });
         assert_eq!(extract_message_text(&value), "hello world");
+        assert_eq!(
+            extract_tool_calls(&value),
+            vec![ToolCallCompleted {
+                id: "toolu_2".to_string(),
+                name: "shell".to_string(),
+                arguments: r#"{"cmd":"ls"}"#.to_string(),
+            }]
+        );
         assert_eq!(
             extract_usage(&value),
             Some(TokenUsage {

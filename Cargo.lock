@@ -24,6 +24,28 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7f202df86484c868dbad7eaa557ef785d5c66295e41b460ef922eca0723b842c"
 
 [[package]]
+name = "async-stream"
+version = "0.3.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0b5a71a6f37880a80d1d7f19efd781e4b5de42c88f0722cc13bcb6cc2cfe8476"
+dependencies = [
+ "async-stream-impl",
+ "futures-core",
+ "pin-project-lite",
+]
+
+[[package]]
+name = "async-stream-impl"
+version = "0.3.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c7c24de15d275a1ecfd47a380fb4d5ec9bfe0933f309ed5e705b775596a3574d"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.117",
+]
+
+[[package]]
 name = "async-trait"
 version = "0.1.89"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1907,6 +1929,7 @@ dependencies = [
  "anyhow",
  "roder-api",
  "roder-codex-auth",
+ "roder-config",
  "roder-core",
  "roder-protocol",
  "roder-tools",
@@ -1921,24 +1944,22 @@ name = "roder-cli"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "dirs",
  "roder-api",
  "roder-app-server",
  "roder-codex-auth",
+ "roder-config",
  "roder-core",
  "roder-ext-anthropic",
  "roder-ext-disk-context",
  "roder-ext-gemini",
  "roder-ext-jsonl-session",
  "roder-ext-memory",
- "roder-ext-openai-chat-completions",
  "roder-ext-openai-responses",
  "roder-extension-host",
  "roder-tui",
  "serde",
  "serde_json",
  "tokio",
- "toml",
 ]
 
 [[package]]
@@ -1954,6 +1975,16 @@ dependencies = [
  "serde_json",
  "sha2 0.11.0",
  "urlencoding",
+]
+
+[[package]]
+name = "roder-config"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "dirs",
+ "serde",
+ "toml",
 ]
 
 [[package]]
@@ -2073,6 +2104,7 @@ name = "roder-ext-openai-responses"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "async-stream",
  "async-trait",
  "futures",
  "reqwest",
@@ -2096,7 +2128,6 @@ dependencies = [
  "roder-ext-gemini",
  "roder-ext-jsonl-session",
  "roder-ext-memory",
- "roder-ext-openai-chat-completions",
  "roder-ext-openai-responses",
  "roder-tools",
  "semver",
@@ -2186,6 +2217,7 @@ dependencies = [
  "serde",
  "serde_json",
  "tokio",
+ "tui-textarea-2",
 ]
 
 [[package]]
@@ -2957,6 +2989,20 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e421abadd41a4225275504ea4d6566923418b7f05506fbc9c0fe86ba7396114b"
 
 [[package]]
+name = "tui-textarea-2"
+version = "0.11.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "db511c6000af883f4140245239ff98ff212e32e8d2f0e6cfc9f5acc018f2b800"
+dependencies = [
+ "crossterm",
+ "portable-atomic",
+ "ratatui-core",
+ "ratatui-widgets",
+ "unicode-segmentation",
+ "unicode-width",
+]
+
+[[package]]
 name = "typenum"
 version = "1.20.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2993,9 +3039,9 @@ dependencies = [
 
 [[package]]
 name = "unicode-width"
-version = "0.2.2"
+version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b4ac048d71ede7ee76d585517add45da530660ef4390e49b098733c6e897f254"
+checksum = "1fc81956842c57dac11422a97c3b8195a1ff727f06e85c84ed2e8aa277c9a0fd"
 
 [[package]]
 name = "unicode-xid"

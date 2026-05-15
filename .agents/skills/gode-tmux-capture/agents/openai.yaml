@@ -1,6 +1,0 @@
-interface:
-  display_name: "Gode Tmux Capture"
-  short_description: "Run and capture gode tmux sessions"
-  default_prompt: "Use $gode-tmux-capture to run gode in tmux, interact with it, and save pane captures."
-policy:
-  allow_implicit_invocation: true

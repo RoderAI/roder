@@ -13,7 +13,6 @@ roder-ext-anthropic.workspace = true
 roder-ext-gemini.workspace = true
 roder-ext-jsonl-session.workspace = true
 roder-ext-memory.workspace = true
-roder-ext-openai-chat-completions.workspace = true
 roder-ext-openai-responses.workspace = true
 roder-tools.workspace = true
 semver.workspace = true

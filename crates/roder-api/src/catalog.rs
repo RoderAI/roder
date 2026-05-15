@@ -221,38 +221,28 @@ pub const BUILT_IN_MODELS: &[ModelCatalogEntry] = &[
         "gpt-5.4-mini",
         "GPT-5.4-Mini",
         "Small, fast, and cost-efficient model for simpler coding tasks.",
-        272_000,
-        217_600,
+        400_000,
+        320_000,
         true,
         STANDARD_REASONING,
     ),
-    openai_model(
-        "gpt-5.4",
-        "GPT-5.4",
-        "Strong model for everyday coding.",
-        272_000,
-        217_600,
-        true,
-        STANDARD_REASONING,
-    ),
-    openai_model(
-        "gpt-5.3-codex",
-        "GPT-5.3-Codex",
-        "Coding-optimized model.",
-        272_000,
-        217_600,
-        true,
-        STANDARD_REASONING,
-    ),
-    openai_model(
-        "gpt-5.2",
-        "GPT-5.2",
-        "Optimized for professional work and long-running agents.",
-        272_000,
-        217_600,
-        true,
-        GPT_52_REASONING,
-    ),
+    ModelCatalogEntry {
+        id: "gpt-5.3-codex-spark",
+        display_name: "GPT-5.3-Codex-Spark",
+        description: "Ultra-fast coding model optimized for low-latency Codex workflows.",
+        provider: PROVIDER_CODEX,
+        default_reasoning: REASONING_HIGH,
+        supported_reasoning: STANDARD_REASONING,
+        context_window: 128_000,
+        max_context_window: 128_000,
+        auto_compact_token_limit: 102_400,
+        supports_compaction: true,
+        supports_images: false,
+        supports_tools: true,
+        supports_structured: false,
+        edit_tool: Some("patch"),
+        hidden: false,
+    },
     ModelCatalogEntry {
         id: "codex-auto-review",
         display_name: "Codex Auto Review",
@@ -406,7 +396,7 @@ const fn anthropic_model(
         auto_compact_token_limit,
         supports_compaction: false,
         supports_images: false,
-        supports_tools: false,
+        supports_tools: true,
         supports_structured: false,
         edit_tool: Some("edit"),
         hidden: false,
@@ -457,6 +447,14 @@ pub fn models_for_provider(provider: &str, include_hidden: bool) -> Vec<ModelDes
         .collect()
 }
 
+pub fn models_for_codex(include_hidden: bool) -> Vec<ModelDescriptor> {
+    built_in_models(include_hidden)
+        .into_iter()
+        .filter(|model| model.provider == PROVIDER_OPENAI || model.provider == PROVIDER_CODEX)
+        .map(ModelDescriptor::from)
+        .collect()
+}
+
 pub fn lookup_model(id: &str) -> Option<&'static ModelCatalogEntry> {
     BUILT_IN_MODELS.iter().find(|model| model.id == id)
 }
@@ -495,9 +493,7 @@ mod tests {
             vec![
                 "gpt-5.5",
                 "gpt-5.4-mini",
-                "gpt-5.4",
-                "gpt-5.3-codex",
-                "gpt-5.2",
+                "gpt-5.3-codex-spark",
                 "claude-opus-4-7",
                 "claude-sonnet-4-6",
                 "claude-haiku-4-5-20251001",
@@ -511,9 +507,29 @@ mod tests {
 
     #[test]
     fn provider_model_lists_match_gode_catalog() {
-        assert_eq!(models_for_provider(PROVIDER_OPENAI, false).len(), 5);
+        assert_eq!(models_for_provider(PROVIDER_OPENAI, false).len(), 2);
+        assert_eq!(models_for_codex(false).len(), 3);
         assert_eq!(models_for_provider(PROVIDER_ANTHROPIC, false).len(), 3);
         assert_eq!(models_for_provider(PROVIDER_GEMINI, false).len(), 4);
         assert_eq!(models_for_provider(PROVIDER_MOCK, true).len(), 1);
+    }
+
+    #[test]
+    fn openai_context_windows_match_current_catalog_values() {
+        let gpt55 = lookup_model("gpt-5.5").unwrap();
+        assert_eq!(gpt55.context_window, 1_050_000);
+        assert_eq!(gpt55.max_context_window, 1_050_000);
+        assert_eq!(gpt55.auto_compact_token_limit, 600_000);
+
+        let mini = lookup_model("gpt-5.4-mini").unwrap();
+        assert_eq!(mini.context_window, 400_000);
+        assert_eq!(mini.max_context_window, 400_000);
+        assert_eq!(mini.auto_compact_token_limit, 320_000);
+
+        let spark = lookup_model("gpt-5.3-codex-spark").unwrap();
+        assert_eq!(spark.provider, PROVIDER_CODEX);
+        assert_eq!(spark.context_window, 128_000);
+        assert_eq!(spark.max_context_window, 128_000);
+        assert_eq!(spark.auto_compact_token_limit, 102_400);
     }
 }

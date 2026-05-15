@@ -9,21 +9,19 @@ path = "src/main.rs"
 
 [dependencies]
 anyhow.workspace = true
-dirs.workspace = true
 roder-api.workspace = true
 roder-app-server.workspace = true
 roder-codex-auth.workspace = true
+roder-config.workspace = true
 roder-core.workspace = true
 roder-ext-anthropic.workspace = true
 roder-ext-disk-context.workspace = true
 roder-ext-gemini.workspace = true
 roder-ext-jsonl-session.workspace = true
 roder-ext-memory.workspace = true
-roder-ext-openai-chat-completions.workspace = true
 roder-ext-openai-responses.workspace = true
 roder-extension-host.workspace = true
 roder-tui.workspace = true
 serde = { workspace = true, features = ["derive"] }
 serde_json.workspace = true
 tokio = { workspace = true, features = ["full"] }
-toml.workspace = true
