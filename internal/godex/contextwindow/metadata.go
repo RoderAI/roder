@@ -67,7 +67,7 @@ var modelWindows = map[string]ModelWindow{
 	"gemini-3.1-pro-preview":             geminiWindow(),
 	"gemini-3.1-pro-preview-customtools": geminiWindow(),
 	"gemini-3-flash-preview":             geminiWindow(),
-	"gemini-3.1-flash-lite":              geminiWindow(),
+	"gemini-3.1-flash-lite-preview":      geminiWindow(),
 	"codex-auto-review": {
 		ContextWindow:         DefaultOpenAIContextWindow,
 		MaxContextWindow:      DefaultOpenAIContextWindow,
