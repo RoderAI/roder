@@ -5,6 +5,7 @@ use roder_api::inference::{InferenceCapabilities, ModelDescriptor, ProviderAuthT
 use roder_api::policy_mode::PolicyMode;
 use roder_api::session::{SessionMetadata, ThreadSnapshot};
 use roder_api::subagents::SubagentPermissionMode;
+use roder_api::tasks::{TaskHandle, TaskOutputStream};
 use roder_api::tools::ToolSpec;
 use serde::{Deserialize, Serialize};
 use time::OffsetDateTime;
@@ -262,4 +263,58 @@ pub struct CommandsRunParams {
 pub struct CommandsRunResult {
     pub turn_id: TurnId,
     pub expanded: CommandsExpandResult,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TasksSubmitParams {
+    pub executor_id: String,
+    #[serde(default)]
+    pub input: serde_json::Value,
+    pub thread_id: Option<ThreadId>,
+    pub turn_id: Option<TurnId>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TasksSubmitResult {
+    pub task: TaskHandle,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TasksListResult {
+    pub tasks: Vec<TaskHandle>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TasksGetParams {
+    pub task_id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TaskLogEntryDescriptor {
+    pub stream: TaskOutputStream,
+    pub chunk: String,
+    pub timestamp: OffsetDateTime,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TasksGetResult {
+    pub task: Option<TaskHandle>,
+    pub logs: Vec<TaskLogEntryDescriptor>,
+    pub dropped_bytes: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TasksCancelParams {
+    pub task_id: String,
+    pub reason: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TasksCancelResult {
+    pub cancelled: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TasksSubscribeResult {
+    pub subscribed: bool,
 }

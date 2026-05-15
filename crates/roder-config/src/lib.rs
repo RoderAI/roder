@@ -18,8 +18,15 @@ pub struct Config {
     pub subagents: Option<SubagentsConfig>,
     pub policy_modes: Option<PolicyModesConfig>,
     pub tui: Option<TuiConfig>,
+    pub notifications: Option<NotificationsConfig>,
     #[serde(default)]
     pub providers: HashMap<String, ProviderConfig>,
+}
+
+#[derive(Debug, Default, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct NotificationsConfig {
+    #[serde(default)]
+    pub disabled_kinds: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -341,6 +348,7 @@ mod tests {
             subagents: None,
             policy_modes: None,
             tui: None,
+            notifications: None,
             providers: HashMap::new(),
         };
         config.providers.insert(
@@ -355,6 +363,22 @@ mod tests {
         assert!(encoded.contains("model = \"gpt-5.5\""));
         assert!(encoded.contains("[providers.openai]"));
         assert!(encoded.contains("api_key = \"key\""));
+    }
+
+    #[test]
+    fn parses_notifications_disabled_kinds() {
+        let config: Config = toml::from_str(
+            r#"
+            [notifications]
+            disabled_kinds = ["task_completed", "turn_idle"]
+            "#,
+        )
+        .unwrap();
+
+        assert_eq!(
+            config.notifications.unwrap().disabled_kinds,
+            ["task_completed".to_string(), "turn_idle".to_string()]
+        );
     }
 
     #[test]

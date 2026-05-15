@@ -18,7 +18,8 @@ use roder_protocol::{
     ProviderSelectResult, ProvidersListResult, SessionExitPlanParams, SessionExitPlanResult,
     SessionGetResult, SessionResolveApprovalParams, SessionResolveApprovalResult,
     SessionSetModeParams, SessionSetModeResult, SessionsListResult, StartTurnParams,
-    StartTurnResult, SystemStatusResult, ToolsListResult,
+    StartTurnResult, SystemStatusResult, TasksGetParams, TasksGetResult, TasksSubmitParams,
+    TasksSubmitResult, ToolsListResult,
 };
 use std::{path::PathBuf, sync::Arc, time::Duration};
 use time::OffsetDateTime;
@@ -295,6 +296,79 @@ async fn test_app_server_e2e() {
     assert!(
         kinds.iter().any(|kind| kind == "turn.completed"),
         "missing turn.completed: {kinds:?}"
+    );
+}
+
+#[tokio::test]
+async fn tasks_process_submit_runs_end_to_end_without_tui() {
+    let workspace = temp_workspace("tasks-process");
+    let registry = build_default_registry(DefaultRegistryConfig {
+        workspace: Some(workspace.clone()),
+        ..DefaultRegistryConfig::default()
+    })
+    .unwrap();
+    let runtime = Arc::new(
+        Runtime::new(
+            registry,
+            RuntimeConfig {
+                workspace: Some(workspace.display().to_string()),
+                ..RuntimeConfig::default()
+            },
+        )
+        .unwrap(),
+    );
+    let server = Arc::new(AppServer::new(runtime));
+    let client = LocalAppClient::new(server);
+    let mut events = client.subscribe_events();
+
+    let submitted: TasksSubmitResult = request(
+        &client,
+        "tasks/submit",
+        Some(
+            serde_json::to_value(TasksSubmitParams {
+                executor_id: "process".to_string(),
+                input: serde_json::json!({
+                    "command": "sh",
+                    "args": ["-c", "printf task-ok"],
+                    "cwd": "."
+                }),
+                thread_id: None,
+                turn_id: None,
+            })
+            .unwrap(),
+        ),
+    )
+    .await;
+
+    loop {
+        let envelope = tokio::time::timeout(Duration::from_secs(2), events.recv())
+            .await
+            .unwrap()
+            .unwrap();
+        if let roder_api::events::RoderEvent::TaskCompleted(done) = envelope.event
+            && done.task_id == submitted.task.task_id
+        {
+            assert_eq!(done.exit_code, Some(0));
+            break;
+        }
+    }
+
+    let result: TasksGetResult = request(
+        &client,
+        "tasks/get",
+        Some(
+            serde_json::to_value(TasksGetParams {
+                task_id: submitted.task.task_id,
+            })
+            .unwrap(),
+        ),
+    )
+    .await;
+    assert!(
+        result
+            .logs
+            .iter()
+            .any(|entry| entry.chunk.contains("task-ok"))
     );
 }
 

@@ -1,26 +1,41 @@
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::{path::PathBuf, sync::Arc};
 
-use roder_api::events::EventEnvelope;
+use roder_api::events::{EventEnvelope, RoderEvent};
 use roder_api::inference::{InferenceProviderContext, InferenceProviderMetadata, ProviderAuthType};
+use roder_api::notifications::{Notification, NotificationKind, NotificationSink};
 use roder_commands::{
     CommandExpansionOptions, CommandExpansionRequest, CommandsRegistry, ExtensionCommandDirectory,
     expand_command,
 };
 use roder_core::{Runtime, StartTurnRequest, default_instructions};
 use roder_protocol::*;
+use roder_tasks::{
+    BackgroundRunner, BackgroundRunnerConfig, TaskExecutorRegistry, TaskSubmitOptions,
+};
 use tokio::sync::broadcast;
 
 pub struct AppServer {
     pub runtime: Arc<Runtime>,
     persist_user_config: bool,
+    tasks: BackgroundRunner,
+    events: broadcast::Sender<EventEnvelope>,
+    event_seq: Arc<AtomicU64>,
 }
 
 impl AppServer {
     pub fn new(runtime: Arc<Runtime>) -> Self {
-        Self {
+        let tasks = build_task_runner(&runtime);
+        let (events, _) = broadcast::channel(1024);
+        let server = Self {
             runtime,
             persist_user_config: false,
-        }
+            tasks,
+            events,
+            event_seq: Arc::new(AtomicU64::new(0)),
+        };
+        server.spawn_event_bridges();
+        server
     }
 
     pub fn with_user_config_persistence(mut self) -> Self {
@@ -109,6 +124,31 @@ impl AppServer {
                     |p| async move { self.handle_commands_run(p).await },
                 )
                 .await
+            }
+            "tasks/submit" => {
+                self.decode_and(
+                    req.params,
+                    |p| async move { self.handle_tasks_submit(p).await },
+                )
+                .await
+            }
+            "tasks/list" => self.handle_tasks_list().await,
+            "tasks/get" => {
+                self.decode_and(
+                    req.params,
+                    |p| async move { self.handle_tasks_get(p).await },
+                )
+                .await
+            }
+            "tasks/cancel" => {
+                self.decode_and(
+                    req.params,
+                    |p| async move { self.handle_tasks_cancel(p).await },
+                )
+                .await
+            }
+            "tasks/subscribe" => {
+                Ok(serde_json::to_value(TasksSubscribeResult { subscribed: true }).unwrap())
             }
             _ => Err(JsonRpcError {
                 code: -32601,
@@ -480,6 +520,73 @@ impl AppServer {
         Ok(serde_json::to_value(CommandsRunResult { turn_id, expanded }).unwrap())
     }
 
+    async fn handle_tasks_submit(
+        &self,
+        params: TasksSubmitParams,
+    ) -> Result<serde_json::Value, JsonRpcError> {
+        let cfg = self.runtime.status().await;
+        let task = self
+            .tasks
+            .submit(
+                params.executor_id,
+                params.input,
+                TaskSubmitOptions {
+                    thread_id: params.thread_id,
+                    turn_id: params.turn_id,
+                    workspace_root: cfg.workspace,
+                    deadline: None,
+                    metadata: serde_json::json!({}),
+                },
+            )
+            .await
+            .map_err(internal_error)?;
+        Ok(serde_json::to_value(TasksSubmitResult { task }).unwrap())
+    }
+
+    async fn handle_tasks_list(&self) -> Result<serde_json::Value, JsonRpcError> {
+        Ok(serde_json::to_value(TasksListResult {
+            tasks: self.tasks.list().await,
+        })
+        .unwrap())
+    }
+
+    async fn handle_tasks_get(
+        &self,
+        params: TasksGetParams,
+    ) -> Result<serde_json::Value, JsonRpcError> {
+        let task = self.tasks.get(&params.task_id).await;
+        let (logs, dropped_bytes) = self
+            .tasks
+            .logs(&params.task_id)
+            .await
+            .unwrap_or_else(|| (Vec::new(), 0));
+        Ok(serde_json::to_value(TasksGetResult {
+            task,
+            logs: logs
+                .into_iter()
+                .map(|entry| TaskLogEntryDescriptor {
+                    stream: entry.stream,
+                    chunk: entry.chunk,
+                    timestamp: entry.timestamp,
+                })
+                .collect(),
+            dropped_bytes,
+        })
+        .unwrap())
+    }
+
+    async fn handle_tasks_cancel(
+        &self,
+        params: TasksCancelParams,
+    ) -> Result<serde_json::Value, JsonRpcError> {
+        let cancelled = self
+            .tasks
+            .cancel(&params.task_id, params.reason)
+            .await
+            .map_err(internal_error)?;
+        Ok(serde_json::to_value(TasksCancelResult { cancelled }).unwrap())
+    }
+
     async fn expand_command(
         &self,
         params: CommandsExpandParams,
@@ -535,7 +642,104 @@ impl AppServer {
     }
 
     pub fn subscribe_events(&self) -> broadcast::Receiver<EventEnvelope> {
-        self.runtime.subscribe_events()
+        self.events.subscribe()
+    }
+
+    fn spawn_event_bridges(&self) {
+        let mut runtime_rx = self.runtime.subscribe_events();
+        let runtime_events = self.events.clone();
+        let notification_sinks = self.runtime.registry().notification_sinks.clone();
+        tokio::spawn(async move {
+            while let Ok(envelope) = runtime_rx.recv().await {
+                deliver_notification_for_event(&notification_sinks, &envelope.event).await;
+                let _ = runtime_events.send(envelope);
+            }
+        });
+
+        let mut task_rx = self.tasks.subscribe();
+        let task_events = self.events.clone();
+        let notification_sinks = self.runtime.registry().notification_sinks.clone();
+        let seq = Arc::clone(&self.event_seq);
+        tokio::spawn(async move {
+            while let Ok(event) = task_rx.recv().await {
+                deliver_notification_for_event(&notification_sinks, &event).await;
+                let envelope = EventEnvelope {
+                    event_id: uuid::Uuid::new_v4().to_string(),
+                    seq: seq.fetch_add(1, Ordering::SeqCst) + 1,
+                    timestamp: time::OffsetDateTime::now_utc(),
+                    source: event.source(),
+                    kind: event.kind().to_string(),
+                    thread_id: event.thread_id().cloned(),
+                    turn_id: event.turn_id().cloned(),
+                    event,
+                };
+                let _ = task_events.send(envelope);
+            }
+        });
+    }
+}
+
+fn build_task_runner(runtime: &Runtime) -> BackgroundRunner {
+    let mut registry = TaskExecutorRegistry::default();
+    for executor in &runtime.registry().task_executors {
+        let _ = registry.register(executor.clone());
+    }
+    BackgroundRunner::new(registry, BackgroundRunnerConfig::default())
+}
+
+async fn deliver_notification_for_event(sinks: &[Arc<dyn NotificationSink>], event: &RoderEvent) {
+    let notification = match event {
+        RoderEvent::ApprovalRequested(ev) => Some(Notification {
+            id: format!("approval-{}", ev.approval_id),
+            kind: NotificationKind::NeedsInput,
+            title: "Approval needed".to_string(),
+            body: Some(ev.tool_name.clone()),
+            task_id: None,
+            thread_id: Some(ev.thread_id.clone()),
+            turn_id: Some(ev.turn_id.clone()),
+            timestamp: ev.timestamp,
+            metadata: serde_json::json!({ "approval_id": ev.approval_id }),
+        }),
+        RoderEvent::TurnCompleted(ev) => Some(Notification {
+            id: format!("turn-{}", ev.turn_id),
+            kind: NotificationKind::TurnIdle,
+            title: "Turn completed".to_string(),
+            body: None,
+            task_id: None,
+            thread_id: Some(ev.thread_id.clone()),
+            turn_id: Some(ev.turn_id.clone()),
+            timestamp: ev.timestamp,
+            metadata: serde_json::json!({}),
+        }),
+        RoderEvent::TaskCompleted(ev) => Some(Notification {
+            id: format!("task-{}", ev.task_id),
+            kind: NotificationKind::TaskCompleted,
+            title: "Task completed".to_string(),
+            body: Some(ev.task_id.clone()),
+            task_id: Some(ev.task_id.clone()),
+            thread_id: ev.thread_id.clone(),
+            turn_id: ev.turn_id.clone(),
+            timestamp: ev.timestamp,
+            metadata: ev.payload.clone(),
+        }),
+        RoderEvent::TaskFailed(ev) => Some(Notification {
+            id: format!("task-{}", ev.task_id),
+            kind: NotificationKind::TaskFailed,
+            title: "Task failed".to_string(),
+            body: Some(ev.error.clone()),
+            task_id: Some(ev.task_id.clone()),
+            thread_id: ev.thread_id.clone(),
+            turn_id: ev.turn_id.clone(),
+            timestamp: ev.timestamp,
+            metadata: serde_json::json!({ "error": ev.error }),
+        }),
+        _ => None,
+    };
+    let Some(notification) = notification else {
+        return;
+    };
+    for sink in sinks {
+        let _ = sink.deliver(notification.clone()).await;
     }
 }
 
