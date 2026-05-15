@@ -1,7 +1,11 @@
-use std::sync::Arc;
+use std::{path::PathBuf, sync::Arc};
 
 use roder_api::events::EventEnvelope;
 use roder_api::inference::{InferenceProviderContext, InferenceProviderMetadata, ProviderAuthType};
+use roder_commands::{
+    CommandExpansionOptions, CommandExpansionRequest, CommandsRegistry, ExtensionCommandDirectory,
+    expand_command,
+};
 use roder_core::{Runtime, StartTurnRequest, default_instructions};
 use roder_protocol::*;
 use tokio::sync::broadcast;
@@ -86,6 +90,20 @@ impl AppServer {
             }
             "tools/list" => self.handle_tools_list().await,
             "agents/list" => self.handle_agents_list().await,
+            "commands/list" => self.handle_commands_list().await,
+            "commands/expand" => {
+                self.decode_and(req.params, |p| async move {
+                    self.handle_commands_expand(p).await
+                })
+                .await
+            }
+            "commands/run" => {
+                self.decode_and(
+                    req.params,
+                    |p| async move { self.handle_commands_run(p).await },
+                )
+                .await
+            }
             _ => Err(JsonRpcError {
                 code: -32601,
                 message: "Method not found".to_string(),
@@ -377,6 +395,108 @@ impl AppServer {
                 .collect(),
         })
         .unwrap())
+    }
+
+    async fn handle_commands_list(&self) -> Result<serde_json::Value, JsonRpcError> {
+        let registry = self.command_registry().await.map_err(internal_error)?;
+        Ok(serde_json::to_value(CommandsListResult {
+            commands: registry
+                .iter()
+                .map(|(_, spec)| CommandDescriptor {
+                    name: spec.name.clone(),
+                    description: spec.description.clone(),
+                    argument_hint: spec.argument_hint.clone(),
+                    source: spec.display_source(),
+                })
+                .collect(),
+        })
+        .unwrap())
+    }
+
+    async fn handle_commands_expand(
+        &self,
+        params: CommandsExpandParams,
+    ) -> Result<serde_json::Value, JsonRpcError> {
+        let expanded = self.expand_command(params).await?;
+        Ok(serde_json::to_value(expanded).unwrap())
+    }
+
+    async fn handle_commands_run(
+        &self,
+        params: CommandsRunParams,
+    ) -> Result<serde_json::Value, JsonRpcError> {
+        let expanded = self
+            .expand_command(CommandsExpandParams {
+                name: params.name,
+                arguments: params.arguments,
+            })
+            .await?;
+        let turn_id = self
+            .runtime
+            .start_turn(StartTurnRequest {
+                thread_id: params.thread_id,
+                message: expanded.message.clone(),
+                provider_override: None,
+                model_override: expanded.model.clone(),
+                instructions: default_instructions(),
+            })
+            .await
+            .map_err(internal_error)?;
+        Ok(serde_json::to_value(CommandsRunResult { turn_id, expanded }).unwrap())
+    }
+
+    async fn expand_command(
+        &self,
+        params: CommandsExpandParams,
+    ) -> Result<CommandsExpandResult, JsonRpcError> {
+        let registry = self.command_registry().await.map_err(internal_error)?;
+        let spec = registry.get(&params.name).ok_or_else(|| JsonRpcError {
+            code: -32602,
+            message: format!("Unknown command `{}`", params.name),
+            data: None,
+        })?;
+        let cfg = self.runtime.status().await;
+        let workspace_root = cfg
+            .workspace
+            .as_ref()
+            .map(PathBuf::from)
+            .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
+        let expanded = expand_command(CommandExpansionRequest {
+            spec,
+            arguments: params.arguments.as_deref().unwrap_or_default(),
+            workspace_root: &workspace_root,
+            options: CommandExpansionOptions {
+                policy_mode: cfg.policy_mode,
+                ..CommandExpansionOptions::default()
+            },
+            shell_runner: None,
+            url_fetcher: None,
+        })
+        .map_err(internal_error)?;
+        Ok(CommandsExpandResult {
+            name: expanded.command_name,
+            message: expanded.message,
+            context_blocks: expanded.context_blocks,
+            allowed_tools: expanded.allowed_tools,
+            model: expanded.model,
+            agent: expanded.agent,
+        })
+    }
+
+    async fn command_registry(&self) -> anyhow::Result<CommandsRegistry> {
+        let cfg = self.runtime.status().await;
+        let workspace_dir = cfg
+            .workspace
+            .as_ref()
+            .map(|workspace| PathBuf::from(workspace).join(".roder").join("commands"));
+        let user_dir = std::env::var_os("HOME")
+            .map(PathBuf::from)
+            .map(|home| home.join(".roder").join("commands"));
+        CommandsRegistry::load(
+            user_dir.as_ref(),
+            workspace_dir.as_ref(),
+            std::iter::empty::<ExtensionCommandDirectory>(),
+        )
     }
 
     pub fn subscribe_events(&self) -> broadcast::Receiver<EventEnvelope> {

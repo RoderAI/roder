@@ -33,6 +33,7 @@ uuid = "1.23.1"
 roder-api = { path = "crates/roder-api" }
 roder-app-server = { path = "crates/roder-app-server" }
 roder-codex-auth = { path = "crates/roder-codex-auth" }
+roder-commands = { path = "crates/roder-commands" }
 roder-config = { path = "crates/roder-config" }
 roder-core = { path = "crates/roder-core" }
 roder-ext-anthropic = { path = "crates/roder-ext-anthropic" }

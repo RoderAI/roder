@@ -1931,6 +1931,7 @@ dependencies = [
  "futures",
  "roder-api",
  "roder-codex-auth",
+ "roder-commands",
  "roder-config",
  "roder-core",
  "roder-ext-subagents",
