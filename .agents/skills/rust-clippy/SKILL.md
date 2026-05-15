@@ -1,3 +1,8 @@
+---
+name: rust-clippy
+description: Use when running or fixing Rust clippy checks in the Gode workspace, including cargo clippy warnings, automatic fixes, and follow-up Rust tests.
+---
+
 # Rust Clippy Skill
 
 ## Purpose
