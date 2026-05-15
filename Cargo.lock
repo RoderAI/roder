@@ -2040,6 +2040,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "roder-ext-firecrawl-search"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "reqwest",
+ "roder-api",
+ "roder-web-search",
+ "semver",
+ "serde",
+ "serde_json",
+ "tokio",
+]
+
+[[package]]
 name = "roder-ext-gemini"
 version = "0.1.0"
 dependencies = [
