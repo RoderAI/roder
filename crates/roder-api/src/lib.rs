@@ -9,6 +9,7 @@ pub mod policy_mode;
 pub mod session;
 pub mod subagents;
 pub mod tools;
+pub mod tui_status;
 
 pub use catalog::*;
 pub use context::*;
@@ -20,3 +21,4 @@ pub use policy_mode::*;
 pub use session::*;
 pub use subagents::*;
 pub use tools::*;
+pub use tui_status::*;

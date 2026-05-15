@@ -33,6 +33,7 @@ pub enum ProvidedService {
     SubagentDispatcher(SubagentDispatcherId),
     PolicyContributor(PolicyContributorId),
     EventSink(EventSinkId),
+    StatusSegment(crate::tui_status::StatusSegmentId),
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -65,6 +66,7 @@ pub struct ExtensionRegistry {
     pub subagent_dispatchers: Vec<Arc<dyn crate::subagents::SubagentDispatcher>>,
     pub policy_contributors: Vec<Arc<dyn crate::context::PolicyContributor>>,
     pub event_sinks: Vec<Arc<dyn crate::extension::EventSink>>,
+    pub status_segments: Vec<crate::tui_status::StatusSegment>,
 }
 
 impl ExtensionRegistry {
@@ -109,6 +111,7 @@ pub struct ExtensionRegistryBuilder {
     pub subagent_dispatchers: Vec<Arc<dyn crate::subagents::SubagentDispatcher>>,
     pub policy_contributors: Vec<Arc<dyn crate::context::PolicyContributor>>,
     pub event_sinks: Vec<Arc<dyn crate::extension::EventSink>>,
+    pub status_segments: Vec<crate::tui_status::StatusSegment>,
 }
 
 impl Default for ExtensionRegistryBuilder {
@@ -131,6 +134,7 @@ impl ExtensionRegistryBuilder {
             subagent_dispatchers: Vec::new(),
             policy_contributors: Vec::new(),
             event_sinks: Vec::new(),
+            status_segments: Vec::new(),
         }
     }
 
@@ -161,6 +165,7 @@ impl ExtensionRegistryBuilder {
             subagent_dispatchers: self.subagent_dispatchers,
             policy_contributors: self.policy_contributors,
             event_sinks: self.event_sinks,
+            status_segments: self.status_segments,
         })
     }
 
@@ -213,9 +218,47 @@ impl ExtensionRegistryBuilder {
     pub fn event_sink(&mut self, sink: Arc<dyn crate::extension::EventSink>) {
         self.event_sinks.push(sink);
     }
+
+    pub fn status_segment(&mut self, segment: crate::tui_status::StatusSegment) {
+        self.status_segments.push(segment);
+    }
 }
 
 #[async_trait::async_trait]
 pub trait EventSink: Send + Sync + 'static {
     async fn handle_event(&self, envelope: &crate::events::EventEnvelope) -> anyhow::Result<()>;
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::tui_status::{StatusCell, StatusSegment, StatusStyle};
+
+    use super::*;
+
+    #[test]
+    fn provided_service_status_segment_round_trips_json() {
+        let service = ProvidedService::StatusSegment("mode".to_string());
+        let encoded = serde_json::to_value(&service).expect("serialize status segment service");
+        assert_eq!(encoded, serde_json::json!({ "StatusSegment": "mode" }));
+
+        let decoded = serde_json::from_value::<ProvidedService>(encoded)
+            .expect("deserialize status segment service");
+        assert_eq!(decoded, service);
+    }
+
+    #[test]
+    fn registry_builder_records_status_segments() {
+        let mut builder = ExtensionRegistryBuilder::new();
+        builder.status_segment(StatusSegment::new("custom", 42, 6, |_| StatusCell {
+            text: "ready".to_string(),
+            style: StatusStyle::Accent,
+            tooltip: None,
+        }));
+
+        let registry = builder.build().expect("build registry");
+        assert_eq!(registry.status_segments.len(), 1);
+        assert_eq!(registry.status_segments[0].id, "custom");
+        assert_eq!(registry.status_segments[0].priority, 42);
+        assert_eq!(registry.status_segments[0].min_width, 6);
+    }
 }
