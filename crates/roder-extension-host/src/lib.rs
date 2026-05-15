@@ -8,6 +8,7 @@ use roder_api::extension::{
 };
 use roder_api::inference::*;
 use roder_api::policy_mode::PolicyMode;
+use roder_api::tui_status::{PaletteSourceDescriptor, built_in_status_segments};
 use roder_ext_anthropic::AnthropicExtension;
 use roder_ext_gemini::GeminiExtension;
 use roder_ext_jsonl_session::JsonlSessionExtension;
@@ -67,6 +68,7 @@ pub fn build_default_registry(config: DefaultRegistryConfig) -> anyhow::Result<E
     builder.install(roder_ext_plan_mode::PlanModeExtension::new(
         config.policy_mode,
     ))?;
+    builder.install(DefaultTuiExtension)?;
 
     if let Some(web_search) = config.web_search {
         web_search::install_web_search(&mut builder, web_search)?;
@@ -92,6 +94,61 @@ pub fn build_default_registry(config: DefaultRegistryConfig) -> anyhow::Result<E
 }
 
 struct FakeProviderExtension;
+
+struct DefaultTuiExtension;
+
+impl RoderExtension for DefaultTuiExtension {
+    fn manifest(&self) -> ExtensionManifest {
+        ExtensionManifest {
+            id: "roder-ext-default-tui".to_string(),
+            name: "Default TUI Surfaces".to_string(),
+            version: Version::new(0, 1, 0),
+            api_version: "0.1.0".to_string(),
+            description: Some("Built-in status line and command palette sources".to_string()),
+            provides: built_in_tui_services(),
+            required_capabilities: vec![],
+        }
+    }
+
+    fn install(&self, registry: &mut ExtensionRegistryBuilder) -> anyhow::Result<()> {
+        for segment in built_in_status_segments() {
+            registry.status_segment(segment);
+        }
+        for source in built_in_palette_sources() {
+            registry.palette_source(source);
+        }
+        Ok(())
+    }
+}
+
+fn built_in_tui_services() -> Vec<ProvidedService> {
+    built_in_status_segments()
+        .into_iter()
+        .map(|segment| ProvidedService::StatusSegment(segment.id))
+        .chain(
+            built_in_palette_sources()
+                .into_iter()
+                .map(|source| ProvidedService::PaletteSource(source.id)),
+        )
+        .collect()
+}
+
+fn built_in_palette_sources() -> Vec<PaletteSourceDescriptor> {
+    [
+        ("commands", "Commands", 100),
+        ("sessions", "Sessions", 90),
+        ("agents", "Agents", 80),
+        ("models", "Models", 70),
+        ("modes", "Modes", 60),
+    ]
+    .into_iter()
+    .map(|(id, label, priority)| PaletteSourceDescriptor {
+        id: id.to_string(),
+        label: label.to_string(),
+        priority,
+    })
+    .collect()
+}
 
 impl RoderExtension for FakeProviderExtension {
     fn manifest(&self) -> ExtensionManifest {
@@ -321,5 +378,40 @@ mod tests {
                 "missing builtin coding tool {expected}: {names:?}"
             );
         }
+    }
+
+    #[test]
+    fn tui_integration_default_registry_installs_tui_surfaces() {
+        let registry = build_default_registry(DefaultRegistryConfig::default()).unwrap();
+        let status_ids = registry
+            .status_segments
+            .iter()
+            .map(|segment| segment.id.as_str())
+            .collect::<Vec<_>>();
+        let palette_ids = registry
+            .palette_sources
+            .iter()
+            .map(|source| source.id.as_str())
+            .collect::<Vec<_>>();
+
+        for expected in ["mode", "model", "session", "branch", "usage", "mcp"] {
+            assert!(
+                status_ids.contains(&expected),
+                "missing status segment {expected}: {status_ids:?}"
+            );
+        }
+        for expected in ["commands", "sessions", "agents", "models", "modes"] {
+            assert!(
+                palette_ids.contains(&expected),
+                "missing palette source {expected}: {palette_ids:?}"
+            );
+        }
+        let services = registry.provided_services();
+        assert!(services.iter().any(|service| {
+            matches!(service, ProvidedService::StatusSegment(id) if id == "mode")
+        }));
+        assert!(services.iter().any(|service| {
+            matches!(service, ProvidedService::PaletteSource(id) if id == "commands")
+        }));
     }
 }

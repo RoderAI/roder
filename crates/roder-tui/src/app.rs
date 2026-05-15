@@ -3,6 +3,7 @@ mod dialog;
 mod diff_ui;
 mod palette_ui;
 
+use std::collections::BTreeSet;
 use std::io;
 use std::time::Duration;
 
@@ -38,6 +39,7 @@ use roder_protocol::{
 use tokio::process::Command;
 use tui_textarea::TextArea;
 
+use crate::config::TuiAppConfig;
 use crate::diff::{DiffViewerState, render::DiffTheme};
 use crate::palette::{PaletteEntry, render::PaletteTheme};
 use crate::status_line::{
@@ -325,8 +327,11 @@ pub struct TuiApp {
     palette_query: String,
     palette_source_filter: Option<String>,
     palette_state: ListState,
+    enabled_palette_sources: BTreeSet<String>,
     diff_viewer: Option<DiffViewerState>,
+    diff_enabled: bool,
     status_segments: Vec<StatusSegment>,
+    status_config: StatusLineConfig,
     status_git: Option<GitSnapshot>,
     policy_mode: PolicyMode,
     pending_plan_exit: Option<PendingPlanExitDescriptor>,
@@ -335,6 +340,14 @@ pub struct TuiApp {
 
 impl TuiApp {
     pub async fn new(client: LocalAppClient, model: String) -> anyhow::Result<Self> {
+        Self::new_with_config(client, model, TuiAppConfig::default()).await
+    }
+
+    pub async fn new_with_config(
+        client: LocalAppClient,
+        model: String,
+        config: TuiAppConfig,
+    ) -> anyhow::Result<Self> {
         let req = JsonRpcRequest {
             jsonrpc: "2.0".to_string(),
             id: Some(serde_json::json!(1)),
@@ -386,8 +399,17 @@ impl TuiApp {
             palette_query: String::new(),
             palette_source_filter: None,
             palette_state: ListState::default(),
+            enabled_palette_sources: config.enabled_palette_source_ids(),
             diff_viewer: None,
-            status_segments: built_in_status_segments(),
+            diff_enabled: config.diff_enabled,
+            status_segments: if config.status_segments.is_empty() {
+                built_in_status_segments()
+            } else {
+                config.status_segments
+            },
+            status_config: StatusLineConfig {
+                disabled_segments: config.disabled_status_segments,
+            },
             status_git,
             policy_mode: policy_state
                 .as_ref()
@@ -575,8 +597,11 @@ impl TuiApp {
                     RoderEvent::PolicyExitPlanResolved(_) => {
                         self.refresh_session_state().await;
                     }
-                    RoderEvent::FileChangePreviewReady(ev) => {
+                    RoderEvent::FileChangePreviewReady(ev) if self.diff_enabled => {
                         self.open_diff_preview(ev);
+                    }
+                    RoderEvent::ApprovalRequested(ev) if !self.diff_enabled => {
+                        self.resolve_diff_approval(ev.approval_id, false).await;
                     }
                     _ => {}
                 }
@@ -1066,7 +1091,7 @@ impl TuiApp {
             &self.status_segments,
             &ctx,
             width,
-            &StatusLineConfig::default(),
+            &self.status_config,
             self.theme.status_line(),
         )
     }

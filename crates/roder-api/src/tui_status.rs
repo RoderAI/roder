@@ -5,6 +5,7 @@ use serde::{Deserialize, Serialize};
 use crate::policy_mode::PolicyMode;
 
 pub type StatusSegmentId = String;
+pub type PaletteSourceId = String;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub enum StatusStyle {
@@ -62,6 +63,13 @@ pub struct StatusSegment {
     pub render: Arc<dyn Fn(&StatusContext<'_>) -> StatusCell + Send + Sync>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct PaletteSourceDescriptor {
+    pub id: PaletteSourceId,
+    pub label: String,
+    pub priority: i32,
+}
+
 impl Clone for StatusSegment {
     fn clone(&self) -> Self {
         Self {
@@ -86,5 +94,63 @@ impl StatusSegment {
             min_width,
             render: Arc::new(render),
         }
+    }
+}
+
+pub fn built_in_status_segments() -> Vec<StatusSegment> {
+    vec![
+        StatusSegment::new("mode", 100, 8, |ctx| StatusCell {
+            text: format!("mode:{}", policy_mode_label(ctx.policy_mode)),
+            style: StatusStyle::Accent,
+            tooltip: Some("Active policy mode".to_string()),
+        }),
+        StatusSegment::new("model", 90, 8, |ctx| StatusCell {
+            text: ctx
+                .model
+                .map(|model| format!("model:{model}"))
+                .unwrap_or_else(|| "model:-".to_string()),
+            style: StatusStyle::Default,
+            tooltip: Some("Active model".to_string()),
+        }),
+        StatusSegment::new("session", 80, 8, |ctx| StatusCell {
+            text: format!("session:{}", short_id(&ctx.session.thread_id)),
+            style: StatusStyle::Muted,
+            tooltip: ctx.session.title.clone(),
+        }),
+        StatusSegment::new("branch", 70, 8, |ctx| StatusCell {
+            text: ctx
+                .git
+                .and_then(|git| git.branch.as_deref())
+                .map(|branch| format!("branch:{branch}"))
+                .unwrap_or_else(|| "branch:-".to_string()),
+            style: StatusStyle::Muted,
+            tooltip: Some("Best-effort git branch".to_string()),
+        }),
+        StatusSegment::new("usage", 60, 8, |ctx| StatusCell {
+            text: ctx
+                .usage
+                .map(|usage| format!("tok:{}", usage.input_tokens + usage.output_tokens))
+                .unwrap_or_else(|| "tok:-".to_string()),
+            style: StatusStyle::Muted,
+            tooltip: Some("Session token usage".to_string()),
+        }),
+        StatusSegment::new("mcp", 50, 6, |ctx| StatusCell {
+            text: format!("mcp:{}", ctx.mcp.len()),
+            style: StatusStyle::Muted,
+            tooltip: Some("Configured MCP servers".to_string()),
+        }),
+    ]
+}
+
+fn short_id(id: &str) -> &str {
+    id.get(..8).unwrap_or(id)
+}
+
+fn policy_mode_label(mode: PolicyMode) -> &'static str {
+    match mode {
+        PolicyMode::Default => "default",
+        PolicyMode::AcceptEdits => "accept_edits",
+        PolicyMode::Plan => "plan",
+        PolicyMode::Bypass => "bypass",
     }
 }

@@ -46,13 +46,22 @@ impl TuiApp {
             }
         };
 
-        let mut sources = vec![
-            command_source(&self.command_catalog),
-            session_source(&sessions),
-            agent_source(&agents),
-            mode_source(self.policy_mode),
-        ];
-        if let Some(providers) = providers.as_ref() {
+        let mut sources = Vec::new();
+        if self.palette_source_enabled("commands") {
+            sources.push(command_source(&self.command_catalog));
+        }
+        if self.palette_source_enabled("sessions") {
+            sources.push(session_source(&sessions));
+        }
+        if self.palette_source_enabled("agents") {
+            sources.push(agent_source(&agents));
+        }
+        if self.palette_source_enabled("modes") {
+            sources.push(mode_source(self.policy_mode));
+        }
+        if self.palette_source_enabled("models")
+            && let Some(providers) = providers.as_ref()
+        {
             sources.push(model_source(providers));
         }
         self.palette_entries = collect_entries(&sources);
@@ -195,6 +204,10 @@ impl TuiApp {
                 self.composer.insert_str(text);
             }
         }
+    }
+
+    fn palette_source_enabled(&self, source_id: &str) -> bool {
+        self.enabled_palette_sources.is_empty() || self.enabled_palette_sources.contains(source_id)
     }
 }
 

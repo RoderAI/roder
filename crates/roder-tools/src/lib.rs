@@ -178,6 +178,20 @@ mod tests {
         .await;
         assert_eq!(edit.text, "edited src/main.rs");
 
+        let multi_edit = run_tool(
+            &registry,
+            "multi_edit",
+            json!({
+                "path": "src/main.rs",
+                "edits": [
+                    { "old_string": "alpha", "new_string": "ALPHA" },
+                    { "old_string": "omega", "new_string": "OMEGA" }
+                ]
+            }),
+        )
+        .await;
+        assert_eq!(multi_edit.text, "edited src/main.rs (2 replacements)");
+
         let read = run_tool(
             &registry,
             "read_file",

@@ -1,4 +1,5 @@
 mod commands;
+mod tui_config;
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -14,6 +15,7 @@ use roder_extension_host::{
 };
 use roder_tui::TuiApp;
 use roder_web_search::WebSearchProviderKind;
+use tui_config::resolve_tui_app_config;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -27,11 +29,11 @@ async fn main() -> anyhow::Result<()> {
     }
 
     let cli_options = parse_cli_options(&args)?;
-    let (runtime, default_model) = build_runtime_from_config(cli_options).await?;
+    let (runtime, default_model, tui_config) = build_runtime_from_config(cli_options).await?;
     let app_server = Arc::new(AppServer::new(runtime).with_user_config_persistence());
     let client = LocalAppClient::new(app_server);
 
-    let mut tui = TuiApp::new(client, default_model).await?;
+    let mut tui = TuiApp::new_with_config(client, default_model, tui_config).await?;
     tui.run().await?;
     Ok(())
 }
@@ -41,7 +43,9 @@ struct CliOptions {
     policy_mode: Option<PolicyMode>,
 }
 
-async fn build_runtime_from_config(options: CliOptions) -> anyhow::Result<(Arc<Runtime>, String)> {
+async fn build_runtime_from_config(
+    options: CliOptions,
+) -> anyhow::Result<(Arc<Runtime>, String, roder_tui::TuiAppConfig)> {
     let cfg = roder_config::load_config()?;
     let keys = provider_keys(&cfg);
     let web_search = cfg
@@ -50,7 +54,8 @@ async fn build_runtime_from_config(options: CliOptions) -> anyhow::Result<(Arc<R
         .map(resolve_web_search_config)
         .transpose()?;
     let policy_mode = resolve_policy_mode(&options, &cfg)?;
-    let (default_provider, configured_model) = resolve_provider_model(cfg.provider, cfg.model);
+    let (default_provider, configured_model) =
+        resolve_provider_model(cfg.provider.clone(), cfg.model.clone());
     let default_model = configured_model.clone().unwrap_or_else(|| {
         if default_provider == PROVIDER_MOCK {
             "mock".to_string()
@@ -85,20 +90,21 @@ async fn build_runtime_from_config(options: CliOptions) -> anyhow::Result<(Arc<R
         subagents,
         policy_mode,
     })?;
+    let tui_config = resolve_tui_app_config(&cfg, &registry);
 
     let runtime = Arc::new(Runtime::new(
         registry,
         RuntimeConfig {
             default_provider,
             default_model: default_model.clone(),
-            reasoning: cfg.reasoning,
+            reasoning: cfg.reasoning.clone(),
             auto_compact_token_limit: cfg.auto_compact_token_limit,
             workspace: workspace.map(|p| p.display().to_string()),
             policy_mode,
         },
     )?);
 
-    Ok((runtime, default_model))
+    Ok((runtime, default_model, tui_config))
 }
 
 fn parse_cli_options(args: &[String]) -> anyhow::Result<CliOptions> {

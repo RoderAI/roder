@@ -34,6 +34,7 @@ pub enum ProvidedService {
     PolicyContributor(PolicyContributorId),
     EventSink(EventSinkId),
     StatusSegment(crate::tui_status::StatusSegmentId),
+    PaletteSource(crate::tui_status::PaletteSourceId),
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -67,6 +68,7 @@ pub struct ExtensionRegistry {
     pub policy_contributors: Vec<Arc<dyn crate::context::PolicyContributor>>,
     pub event_sinks: Vec<Arc<dyn crate::extension::EventSink>>,
     pub status_segments: Vec<crate::tui_status::StatusSegment>,
+    pub palette_sources: Vec<crate::tui_status::PaletteSourceDescriptor>,
 }
 
 impl ExtensionRegistry {
@@ -112,6 +114,7 @@ pub struct ExtensionRegistryBuilder {
     pub policy_contributors: Vec<Arc<dyn crate::context::PolicyContributor>>,
     pub event_sinks: Vec<Arc<dyn crate::extension::EventSink>>,
     pub status_segments: Vec<crate::tui_status::StatusSegment>,
+    pub palette_sources: Vec<crate::tui_status::PaletteSourceDescriptor>,
 }
 
 impl Default for ExtensionRegistryBuilder {
@@ -135,6 +138,7 @@ impl ExtensionRegistryBuilder {
             policy_contributors: Vec::new(),
             event_sinks: Vec::new(),
             status_segments: Vec::new(),
+            palette_sources: Vec::new(),
         }
     }
 
@@ -166,6 +170,7 @@ impl ExtensionRegistryBuilder {
             policy_contributors: self.policy_contributors,
             event_sinks: self.event_sinks,
             status_segments: self.status_segments,
+            palette_sources: self.palette_sources,
         })
     }
 
@@ -222,6 +227,10 @@ impl ExtensionRegistryBuilder {
     pub fn status_segment(&mut self, segment: crate::tui_status::StatusSegment) {
         self.status_segments.push(segment);
     }
+
+    pub fn palette_source(&mut self, source: crate::tui_status::PaletteSourceDescriptor) {
+        self.palette_sources.push(source);
+    }
 }
 
 #[async_trait::async_trait]
@@ -231,7 +240,7 @@ pub trait EventSink: Send + Sync + 'static {
 
 #[cfg(test)]
 mod tests {
-    use crate::tui_status::{StatusCell, StatusSegment, StatusStyle};
+    use crate::tui_status::{PaletteSourceDescriptor, StatusCell, StatusSegment, StatusStyle};
 
     use super::*;
 
@@ -243,6 +252,17 @@ mod tests {
 
         let decoded = serde_json::from_value::<ProvidedService>(encoded)
             .expect("deserialize status segment service");
+        assert_eq!(decoded, service);
+    }
+
+    #[test]
+    fn provided_service_palette_source_round_trips_json() {
+        let service = ProvidedService::PaletteSource("commands".to_string());
+        let encoded = serde_json::to_value(&service).expect("serialize palette source service");
+        assert_eq!(encoded, serde_json::json!({ "PaletteSource": "commands" }));
+
+        let decoded = serde_json::from_value::<ProvidedService>(encoded)
+            .expect("deserialize palette source service");
         assert_eq!(decoded, service);
     }
 
@@ -260,5 +280,21 @@ mod tests {
         assert_eq!(registry.status_segments[0].id, "custom");
         assert_eq!(registry.status_segments[0].priority, 42);
         assert_eq!(registry.status_segments[0].min_width, 6);
+    }
+
+    #[test]
+    fn registry_builder_records_palette_sources() {
+        let mut builder = ExtensionRegistryBuilder::new();
+        builder.palette_source(PaletteSourceDescriptor {
+            id: "commands".to_string(),
+            label: "Commands".to_string(),
+            priority: 100,
+        });
+
+        let registry = builder.build().expect("build registry");
+        assert_eq!(registry.palette_sources.len(), 1);
+        assert_eq!(registry.palette_sources[0].id, "commands");
+        assert_eq!(registry.palette_sources[0].label, "Commands");
+        assert_eq!(registry.palette_sources[0].priority, 100);
     }
 }
