@@ -1,8 +1,10 @@
+use crate::store::JsonlSessionStoreFactory;
+use roder_api::extension::{
+    ExtensionManifest, ExtensionRegistryBuilder, ProvidedService, RoderExtension,
+};
 use semver::Version;
-use roder_api::extension::{ExtensionManifest, ExtensionRegistryBuilder, RoderExtension};
 use std::path::PathBuf;
 use std::sync::Arc;
-use crate::store::JsonlSessionStoreFactory;
 
 pub struct JsonlSessionExtension {
     base_path: PathBuf,
@@ -22,15 +24,12 @@ impl RoderExtension for JsonlSessionExtension {
             version: Version::new(0, 1, 0),
             api_version: "0.1.0".to_string(),
             description: Some("Append-only JSONL session persistence".to_string()),
-            provides: vec![],
+            provides: vec![ProvidedService::SessionStore("jsonl".to_string())],
             required_capabilities: vec![],
         }
     }
 
-    fn install(
-        &self,
-        registry: &mut ExtensionRegistryBuilder,
-    ) -> anyhow::Result<()> {
+    fn install(&self, registry: &mut ExtensionRegistryBuilder) -> anyhow::Result<()> {
         registry.session_store_factory(Arc::new(JsonlSessionStoreFactory {
             base_path: self.base_path.clone(),
         }));
