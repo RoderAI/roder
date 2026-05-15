@@ -1,11 +1,13 @@
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use roder_api::catalog::{DEFAULT_MODEL_ID, PROVIDER_MOCK};
 use roder_app_server::{AppServer, LocalAppClient};
 use roder_core::{Runtime, RuntimeConfig};
+use roder_ext_subagents::{AgentLoadConfig, load_agent_definitions};
 use roder_extension_host::{
-    DefaultRegistryConfig, DefaultWebSearchConfig, DefaultWebSearchProviderConfig,
-    build_default_registry,
+    DefaultRegistryConfig, DefaultSubagentsConfig, DefaultWebSearchConfig,
+    DefaultWebSearchProviderConfig, build_default_registry,
 };
 use roder_tui::TuiApp;
 use roder_web_search::WebSearchProviderKind;
@@ -17,7 +19,7 @@ async fn main() -> anyhow::Result<()> {
         return run_auth(&args[1..]).await;
     }
 
-    let (runtime, default_model) = build_runtime_from_config()?;
+    let (runtime, default_model) = build_runtime_from_config().await?;
     let app_server = Arc::new(AppServer::new(runtime).with_user_config_persistence());
     let client = LocalAppClient::new(app_server);
 
@@ -26,8 +28,8 @@ async fn main() -> anyhow::Result<()> {
     Ok(())
 }
 
-fn build_runtime_from_config() -> anyhow::Result<(Arc<Runtime>, String)> {
-    let cfg = roder_config::load_config().unwrap_or_default();
+async fn build_runtime_from_config() -> anyhow::Result<(Arc<Runtime>, String)> {
+    let cfg = roder_config::load_config()?;
     let keys = provider_keys(&cfg);
     let web_search = cfg
         .web_search
@@ -35,6 +37,19 @@ fn build_runtime_from_config() -> anyhow::Result<(Arc<Runtime>, String)> {
         .map(resolve_web_search_config)
         .transpose()?;
     let (default_provider, configured_model) = resolve_provider_model(cfg.provider, cfg.model);
+    let default_model = configured_model.clone().unwrap_or_else(|| {
+        if default_provider == PROVIDER_MOCK {
+            "mock".to_string()
+        } else {
+            DEFAULT_MODEL_ID.to_string()
+        }
+    });
+    let subagents = resolve_subagents_config(
+        cfg.subagents.as_ref(),
+        default_provider.clone(),
+        default_model.clone(),
+    )
+    .await?;
 
     let registry = build_default_registry(DefaultRegistryConfig {
         openai_api_key: keys.openai,
@@ -42,15 +57,8 @@ fn build_runtime_from_config() -> anyhow::Result<(Arc<Runtime>, String)> {
         gemini_api_key: keys.gemini,
         session_dir: None,
         web_search,
+        subagents,
     })?;
-
-    let default_model = configured_model.unwrap_or_else(|| {
-        if default_provider == PROVIDER_MOCK {
-            "mock".to_string()
-        } else {
-            DEFAULT_MODEL_ID.to_string()
-        }
-    });
 
     let runtime = Arc::new(Runtime::new(
         registry,
@@ -66,6 +74,81 @@ fn build_runtime_from_config() -> anyhow::Result<(Arc<Runtime>, String)> {
     )?);
 
     Ok((runtime, default_model))
+}
+
+async fn resolve_subagents_config(
+    cfg: Option<&roder_config::SubagentsConfig>,
+    default_provider: String,
+    default_model: String,
+) -> anyhow::Result<Option<DefaultSubagentsConfig>> {
+    let Some(cfg) = cfg else {
+        return Ok(None);
+    };
+    if !cfg.enabled {
+        return Ok(Some(DefaultSubagentsConfig {
+            enabled: false,
+            ..DefaultSubagentsConfig::default()
+        }));
+    }
+
+    let load_config = AgentLoadConfig {
+        user_dir: resolve_user_agent_dir(cfg),
+        workspace_dir: resolve_workspace_agent_dir(cfg)?,
+    };
+    let definitions = load_agent_definitions(&load_config).await?;
+    Ok(Some(DefaultSubagentsConfig {
+        enabled: true,
+        definitions,
+        default_agent: trim_nonempty(cfg.default_agent.clone())
+            .unwrap_or_else(|| DefaultSubagentsConfig::default().default_agent),
+        default_provider: Some(default_provider),
+        default_model,
+        max_concurrent: cfg
+            .max_concurrent
+            .unwrap_or_else(|| DefaultSubagentsConfig::default().max_concurrent),
+        max_depth: cfg
+            .max_depth
+            .unwrap_or_else(|| DefaultSubagentsConfig::default().max_depth),
+        default_timeout_seconds: cfg
+            .default_timeout_seconds
+            .unwrap_or_else(|| DefaultSubagentsConfig::default().default_timeout_seconds),
+        include_child_transcript: cfg.include_child_transcript,
+        expose_per_type: cfg.expose_per_type,
+    }))
+}
+
+fn resolve_user_agent_dir(cfg: &roder_config::SubagentsConfig) -> Option<PathBuf> {
+    cfg.disk
+        .user_dir
+        .as_deref()
+        .map(expand_tilde)
+        .or_else(roder_ext_subagents::default_user_agent_dir)
+}
+
+fn resolve_workspace_agent_dir(
+    cfg: &roder_config::SubagentsConfig,
+) -> anyhow::Result<Option<PathBuf>> {
+    if let Some(path) = cfg.disk.workspace_dir.as_deref() {
+        return Ok(Some(expand_tilde(path)));
+    }
+    Ok(Some(std::env::current_dir()?.join(".roder").join("agents")))
+}
+
+fn expand_tilde(path: &Path) -> PathBuf {
+    let text = path.to_string_lossy();
+    if text == "~" {
+        home_dir().unwrap_or_else(|| path.to_path_buf())
+    } else if let Some(rest) = text.strip_prefix("~/") {
+        home_dir()
+            .map(|home| home.join(rest))
+            .unwrap_or_else(|| path.to_path_buf())
+    } else {
+        path.to_path_buf()
+    }
+}
+
+fn home_dir() -> Option<PathBuf> {
+    std::env::var_os("HOME").map(PathBuf::from)
 }
 
 struct ProviderKeys {
@@ -258,5 +341,73 @@ mod tests {
         );
         assert_eq!(provider, "codex");
         assert_eq!(model.as_deref(), Some("gpt-5.5"));
+    }
+
+    #[tokio::test]
+    async fn subagents_config_loads_agent_definitions_from_disk() {
+        let root = std::env::temp_dir()
+            .join(format!("roder-cli-subagents-{}", std::process::id()))
+            .join("loads");
+        let user_dir = root.join("user");
+        let workspace_dir = root.join("workspace");
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&user_dir).unwrap();
+        std::fs::create_dir_all(&workspace_dir).unwrap();
+        std::fs::write(
+            user_dir.join("explore.md"),
+            r#"---
+name: explore
+description: Explore the workspace
+tools: [echo]
+---
+
+Report findings.
+"#,
+        )
+        .unwrap();
+
+        let cfg = roder_config::SubagentsConfig {
+            enabled: true,
+            default_agent: Some("explore".to_string()),
+            disk: roder_config::SubagentsDiskConfig {
+                user_dir: Some(user_dir),
+                workspace_dir: Some(workspace_dir),
+            },
+            ..roder_config::SubagentsConfig::default()
+        };
+
+        let resolved =
+            resolve_subagents_config(Some(&cfg), PROVIDER_MOCK.to_string(), "mock".to_string())
+                .await
+                .unwrap()
+                .unwrap();
+
+        assert!(resolved.enabled);
+        assert_eq!(resolved.default_agent, "explore");
+        assert_eq!(resolved.definitions.len(), 1);
+        assert_eq!(resolved.definitions[0].agent_type, "explore");
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[tokio::test]
+    async fn subagents_disabled_config_skips_loading() {
+        let cfg = roder_config::SubagentsConfig {
+            enabled: false,
+            disk: roder_config::SubagentsDiskConfig {
+                user_dir: Some(PathBuf::from("/definitely/not/a/real/agent/dir")),
+                workspace_dir: Some(PathBuf::from("/definitely/not/a/real/workspace/dir")),
+            },
+            ..roder_config::SubagentsConfig::default()
+        };
+
+        let resolved =
+            resolve_subagents_config(Some(&cfg), PROVIDER_MOCK.to_string(), "mock".to_string())
+                .await
+                .unwrap()
+                .unwrap();
+
+        assert!(!resolved.enabled);
+        assert!(resolved.definitions.is_empty());
     }
 }
