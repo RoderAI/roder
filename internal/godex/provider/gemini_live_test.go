@@ -118,6 +118,35 @@ func TestGeminiLiveCustomToolsThoughtSignatureRoundTrip(t *testing.T) {
 	t.Fatalf("round trip did not complete: %#v", got)
 }
 
+func TestGeminiLiveCustomToolsSyntheticThoughtSignatureReplay(t *testing.T) {
+	prov := geminiLiveProviderForModel(t, "gemini-3.1-pro-preview-customtools")
+	tool := ToolSpec{Name: "echo", Description: "Echo a message", Schema: map[string]any{
+		"type": "object",
+		"properties": map[string]any{
+			"message": map[string]any{"type": "string"},
+		},
+		"required": []any{"message"},
+	}}
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+	events, errs := prov.Stream(ctx, Request{
+		InputItems: []Item{
+			{Kind: ItemMessage, Role: "user", Text: "Call echo with message hello."},
+			{Kind: ItemFunctionCall, ToolCallID: "call_1", ToolName: "echo", Text: `{"message":"hello"}`},
+			{Kind: ItemFunctionOut, ToolCallID: "call_1", ToolName: "echo", Text: `{"message":"hello"}`},
+			{Kind: ItemMessage, Role: "user", Text: "Reply with exactly: done"},
+		},
+		Tools: []ToolSpec{tool},
+	})
+	got := collectProviderEvents(t, events, errs)
+	for _, ev := range got {
+		if ev.Kind == EventCompleted {
+			return
+		}
+	}
+	t.Fatalf("synthetic thought signature replay did not complete: %#v", got)
+}
+
 func TestGeminiLiveStructuredOutput(t *testing.T) {
 	prov := geminiLiveProvider(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)

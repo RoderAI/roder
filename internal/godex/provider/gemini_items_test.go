@@ -51,7 +51,7 @@ func TestGeminiInputReplaysSignedFunctionCallThoughtSignature(t *testing.T) {
 	}
 }
 
-func TestGeminiInputFallsBackUnsignedToolLoopToText(t *testing.T) {
+func TestGeminiInputReplaysUnsignedToolLoopWithSyntheticThoughtSignature(t *testing.T) {
 	input, err := GeminiInputFromResponsesItems([]Item{
 		{Kind: ItemMessage, Role: "user", Text: "Where am I?"},
 		{Kind: ItemFunctionCall, ToolCallID: "call_1", ToolName: "shell", Text: `{"command":"pwd"}`},
@@ -60,20 +60,19 @@ func TestGeminiInputFallsBackUnsignedToolLoopToText(t *testing.T) {
 	if err != nil {
 		t.Fatalf("convert: %v", err)
 	}
-	data, err := json.Marshal(input)
-	if err != nil {
-		t.Fatalf("marshal: %v", err)
+	if len(input.Contents) != 3 {
+		t.Fatalf("contents = %#v", input.Contents)
 	}
-	raw := string(data)
-	for _, forbidden := range []string{`"function_call"`, `"function_response"`} {
-		if strings.Contains(raw, forbidden) {
-			t.Fatalf("unsigned tool loop replayed as %s:\n%s", forbidden, raw)
-		}
+	call := input.Contents[1].Parts[0]
+	if call.FunctionCall == nil || call.FunctionCall.Name != "shell" {
+		t.Fatalf("function call part = %#v", call)
 	}
-	for _, want := range []string{"Tool result from earlier unsigned function call shell", `\"command\":\"pwd\"`, "/Users/pz/w/gode"} {
-		if !strings.Contains(raw, want) {
-			t.Fatalf("fallback input missing %q:\n%s", want, raw)
-		}
+	if string(call.ThoughtSignature) != geminiSyntheticThoughtSignature {
+		t.Fatalf("thought signature = %q", string(call.ThoughtSignature))
+	}
+	response := input.Contents[2].Parts[0]
+	if response.FunctionResponse == nil || response.FunctionResponse.Name != "shell" || response.FunctionResponse.ID != "call_1" {
+		t.Fatalf("function response part = %#v", response)
 	}
 }
 

@@ -18,7 +18,7 @@ func TestGeminiProviderAndModels(t *testing.T) {
 	if !reflect.DeepEqual(provider.EnvAliases, []string{"GEMINI_API_KEY", "GOOGLE_API_KEY", "GOOGLE_GENAI_API_KEY", "GOOGLE_AI_API_KEY"}) {
 		t.Fatalf("aliases = %#v", provider.EnvAliases)
 	}
-	for _, id := range []string{"gemini-3.1-pro-preview", "gemini-3.1-pro-preview-customtools", "gemini-3-flash-preview", "gemini-3.1-flash-lite"} {
+	for _, id := range []string{"gemini-3.1-pro-preview", "gemini-3.1-pro-preview-customtools", "gemini-3-flash-preview", "gemini-3.1-flash-lite-preview"} {
 		model := ModelConfigFor(id)
 		if model.Provider != ProviderGemini || model.ContextWindow != 1048576 || model.MaxContextWindow != 1048576 {
 			t.Fatalf("%s = %#v", id, model)

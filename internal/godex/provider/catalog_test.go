@@ -26,7 +26,7 @@ func TestCatalogGeminiProviderAndModels(t *testing.T) {
 	if !reflect.DeepEqual(providerConfig.EnvAliases, []string{"GEMINI_API_KEY", "GOOGLE_API_KEY", "GOOGLE_GENAI_API_KEY", "GOOGLE_AI_API_KEY"}) {
 		t.Fatalf("gemini aliases = %#v", providerConfig.EnvAliases)
 	}
-	for _, id := range []string{"gemini-3.1-pro-preview", "gemini-3.1-pro-preview-customtools", "gemini-3-flash-preview", "gemini-3.1-flash-lite"} {
+	for _, id := range []string{"gemini-3.1-pro-preview", "gemini-3.1-pro-preview-customtools", "gemini-3-flash-preview", "gemini-3.1-flash-lite-preview"} {
 		model, ok := Catalog.Model(id)
 		if !ok {
 			t.Fatalf("%s missing", id)

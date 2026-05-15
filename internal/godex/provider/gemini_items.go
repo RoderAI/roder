@@ -9,6 +9,8 @@ import (
 	"google.golang.org/genai"
 )
 
+const geminiSyntheticThoughtSignature = "skip_thought_signature_validator"
+
 type GeminiInput struct {
 	SystemInstruction []GeminiPart    `json:"system_instruction,omitempty"`
 	Contents          []GeminiContent `json:"contents"`
@@ -59,7 +61,6 @@ type GeminiFunctionDeclaration struct {
 func GeminiInputFromResponsesItems(items []Item, tools []ToolSpec) (GeminiInput, error) {
 	input := GeminiInput{Tools: geminiDebugTools(tools)}
 	callNames := map[string]string{}
-	unsignedCalls := map[string]GeminiCall{}
 	for _, item := range items {
 		switch item.Kind {
 		case ItemMessage:
@@ -86,20 +87,14 @@ func GeminiInputFromResponsesItems(items []Item, tools []ToolSpec) (GeminiInput,
 			}
 			call := GeminiCall{ID: id, Name: item.ToolName, Args: args, Raw: raw}
 			signature := geminiThoughtSignature(item.RawJSON)
-			if len(signature) == 0 && !input.lastModelContentHasSignedFunctionCall() {
-				unsignedCalls[id] = call
-				continue
+			if len(signature) == 0 && !input.lastModelContentHasFunctionCall() {
+				signature = []byte(geminiSyntheticThoughtSignature)
 			}
 			input.appendParts("model", []GeminiPart{{FunctionCall: &call, ThoughtSignature: signature}})
 		case ItemFunctionOut:
 			name := firstNonEmpty(item.ToolName, callNames[item.ToolCallID])
 			if name == "" {
 				name = "tool"
-			}
-			if unsigned, ok := unsignedCalls[item.ToolCallID]; ok {
-				input.appendParts("user", []GeminiPart{{Text: geminiUnsignedToolResultText(unsigned, item.Text)}})
-				delete(unsignedCalls, item.ToolCallID)
-				continue
 			}
 			input.appendToolResponse(GeminiPart{FunctionResponse: &GeminiResponse{ID: item.ToolCallID, Name: name, Response: geminiToolResponse(item.Text)}})
 		case ItemReasoning:
@@ -145,7 +140,7 @@ func (input *GeminiInput) appendToolResponse(part GeminiPart) {
 	input.Contents = append(input.Contents, GeminiContent{Role: "user", Parts: []GeminiPart{part}})
 }
 
-func (input GeminiInput) lastModelContentHasSignedFunctionCall() bool {
+func (input GeminiInput) lastModelContentHasFunctionCall() bool {
 	if len(input.Contents) == 0 {
 		return false
 	}
@@ -154,7 +149,7 @@ func (input GeminiInput) lastModelContentHasSignedFunctionCall() bool {
 		return false
 	}
 	for _, part := range last.Parts {
-		if part.FunctionCall != nil && len(part.ThoughtSignature) > 0 {
+		if part.FunctionCall != nil {
 			return true
 		}
 	}
@@ -187,27 +182,6 @@ func geminiThoughtSignature(raw json.RawMessage) []byte {
 		return append([]byte(nil), snake.ThoughtSignature...)
 	}
 	return nil
-}
-
-func geminiUnsignedToolResultText(call GeminiCall, output string) string {
-	var b strings.Builder
-	b.WriteString("Tool result from earlier unsigned function call")
-	if call.Name != "" {
-		b.WriteString(" ")
-		b.WriteString(call.Name)
-	}
-	if call.ID != "" {
-		b.WriteString(" (")
-		b.WriteString(call.ID)
-		b.WriteString(")")
-	}
-	if strings.TrimSpace(call.Raw) != "" {
-		b.WriteString("\nArguments: ")
-		b.WriteString(strings.TrimSpace(call.Raw))
-	}
-	b.WriteString("\nOutput:\n")
-	b.WriteString(strings.TrimSpace(output))
-	return b.String()
 }
 
 func geminiPartsFromMessage(item Item) ([]GeminiPart, error) {

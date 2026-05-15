@@ -19,7 +19,7 @@ func TestGPT55ContextWindow(t *testing.T) {
 }
 
 func TestGeminiContextWindow(t *testing.T) {
-	for _, id := range []string{"gemini-3.1-pro-preview", "gemini-3.1-pro-preview-customtools", "gemini-3-flash-preview", "gemini-3.1-flash-lite"} {
+	for _, id := range []string{"gemini-3.1-pro-preview", "gemini-3.1-pro-preview-customtools", "gemini-3-flash-preview", "gemini-3.1-flash-lite-preview"} {
 		window := ForModel(id)
 		if window.ContextWindow != 1048576 || window.MaxContextWindow != 1048576 {
 			t.Fatalf("%s context = %d/%d", id, window.ContextWindow, window.MaxContextWindow)

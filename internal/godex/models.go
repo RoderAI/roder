@@ -340,8 +340,8 @@ var builtInModels = []ModelConfig{
 		SupportsStructured: true,
 	}),
 	withContextWindow(ModelConfig{
-		ID:                 "gemini-3.1-flash-lite",
-		DisplayName:        "Gemini 3.1 Flash-Lite",
+		ID:                 "gemini-3.1-flash-lite-preview",
+		DisplayName:        "Gemini 3.1 Flash-Lite Preview",
 		Description:        "Lightweight Gemini model for low-latency coding and agent interactions.",
 		Provider:           ProviderGemini,
 		DefaultReasoning:   ReasoningLow,
