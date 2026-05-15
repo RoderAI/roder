@@ -63,8 +63,13 @@ pub struct ToolRegistry {
 }
 
 impl ToolRegistry {
-    pub fn register(&mut self, tool: Arc<dyn ToolExecutor>) {
-        self.tools.insert(tool.spec().name, tool);
+    pub fn register(&mut self, tool: Arc<dyn ToolExecutor>) -> anyhow::Result<()> {
+        let name = tool.spec().name;
+        if self.tools.contains_key(&name) {
+            anyhow::bail!("tool {name:?} is already registered");
+        }
+        self.tools.insert(name, tool);
+        Ok(())
     }
 
     pub fn specs(&self) -> Vec<ToolSpec> {

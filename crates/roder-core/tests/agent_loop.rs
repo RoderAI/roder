@@ -24,8 +24,7 @@ impl ToolContributor for EchoContributor {
     }
 
     fn contribute(&self, registry: &mut roder_api::tools::ToolRegistry) -> anyhow::Result<()> {
-        registry.register(Arc::new(EchoTool));
-        Ok(())
+        registry.register(Arc::new(EchoTool))
     }
 }
 
@@ -61,6 +60,49 @@ impl ToolExecutor for EchoTool {
             name: call.name,
             text: text.clone(),
             data: json!({ "text": text }),
+            is_error: false,
+        })
+    }
+}
+
+struct DuplicateWebSearchContributor(&'static str);
+
+impl ToolContributor for DuplicateWebSearchContributor {
+    fn id(&self) -> ToolProviderId {
+        self.0.to_string()
+    }
+
+    fn contribute(&self, registry: &mut roder_api::tools::ToolRegistry) -> anyhow::Result<()> {
+        registry.register(Arc::new(WebSearchTool))
+    }
+}
+
+struct WebSearchTool;
+
+#[async_trait::async_trait]
+impl ToolExecutor for WebSearchTool {
+    fn spec(&self) -> ToolSpec {
+        ToolSpec {
+            name: "web_search".to_string(),
+            description: "Search the web.".to_string(),
+            parameters: json!({
+                "type": "object",
+                "properties": { "query": { "type": "string" } },
+                "required": ["query"]
+            }),
+        }
+    }
+
+    async fn execute(
+        &self,
+        _ctx: ToolExecutionContext,
+        call: ToolCall,
+    ) -> anyhow::Result<ToolResult> {
+        Ok(ToolResult {
+            id: call.id,
+            name: call.name,
+            text: String::new(),
+            data: json!({}),
             is_error: false,
         })
     }
@@ -181,5 +223,28 @@ async fn run_turn_continues_after_tool_result() {
             .any(|item| matches!(item, ConversationItem::ToolResult(result) if result.result == "from tool")),
         "second request should include the tool result: {:?}",
         requests[1].conversation
+    );
+}
+
+#[test]
+fn duplicate_tool_contributors_fail_with_contributor_context() {
+    let engine = Arc::new(ToolLoopEngine {
+        requests: Mutex::new(Vec::new()),
+    });
+    let mut builder = ExtensionRegistryBuilder::new();
+    builder.inference_engine(engine);
+    builder.tool_contributor(Arc::new(DuplicateWebSearchContributor("search-a")));
+    builder.tool_contributor(Arc::new(DuplicateWebSearchContributor("search-b")));
+
+    let err = match Runtime::new(builder.build().unwrap(), RuntimeConfig::default()) {
+        Ok(_) => panic!("duplicate web_search tools should fail runtime construction"),
+        Err(err) => err,
+    };
+    let message = format!("{err:#}");
+
+    assert!(message.contains("tool contributor search-b failed"), "{message}");
+    assert!(
+        message.contains("tool \"web_search\" is already registered"),
+        "{message}"
     );
 }

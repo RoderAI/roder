@@ -14,8 +14,7 @@ impl ToolContributor for EchoToolContributor {
     }
 
     fn contribute(&self, registry: &mut ToolRegistry) -> anyhow::Result<()> {
-        registry.register(Arc::new(EchoTool));
-        Ok(())
+        registry.register(Arc::new(EchoTool))
     }
 }
 
