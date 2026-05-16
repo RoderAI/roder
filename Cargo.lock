@@ -2770,6 +2770,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "roder-theme"
+version = "0.1.0"
+dependencies = [
+ "ratatui",
+ "thiserror 2.0.18",
+]
+
+[[package]]
 name = "roder-tools"
 version = "0.1.0"
 dependencies = [
@@ -2794,6 +2802,7 @@ dependencies = [
  "roder-api",
  "roder-app-server",
  "roder-protocol",
+ "roder-theme",
  "serde",
  "serde_json",
  "similar",

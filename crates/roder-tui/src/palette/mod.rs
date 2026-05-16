@@ -23,6 +23,10 @@ pub enum PaletteAction {
     SetPolicyMode(PolicyMode),
     SetWebSearchMode(HostedWebSearchMode),
     InsertComposerText(String),
+    /// Switch the active theme by id (basename of the `.css` file, no
+    /// extension). The dispatcher reloads the stylesheet, restyles the next
+    /// frame, and persists the choice to `~/.roder/state.toml`.
+    SetTheme(String),
 }
 
 pub trait PaletteSource: Send + Sync + 'static {

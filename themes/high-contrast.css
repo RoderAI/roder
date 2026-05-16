@@ -1,0 +1,39 @@
+/*
+ * high-contrast.css — accessibility-focused: bright primary colors, bold,
+ * high-saturation background swatches. Designed for low-vision and bright-
+ * ambient-light terminals.
+ */
+:root {
+    /* Thick borders for unambiguous frame edges. */
+    border-style: thick;
+    --text: #ffffff;
+    --muted: #ffff00;
+    --subtle: #ffff00;
+    --accent: #00ffff;
+    --accent-soft: #00ffff;
+    --tool: #ffff00;
+    --diff-added: #00ff00;
+    --diff-added-bg: #003300;
+    --diff-removed: #ff0000;
+    --diff-removed-bg: #330000;
+    --shell: #ffff00;
+    --error: #ff0000;
+    --border: #ffffff;
+    --mode-plan: #00ffff;
+    --mode-default: #ffffff;
+    --mode-accept-edits: #00ff00;
+    --mode-bypass: #ff0000;
+    --selection-bg: #ffffff;
+    --selection-fg: #000000;
+}
+
+.error, .timeline-error {
+    color: #ff0000;
+    background-color: #ffff00;
+    font-weight: bold;
+    text-decoration: underline;
+}
+
+.timeline-assistant, .timeline-tool {
+    font-weight: bold;
+}

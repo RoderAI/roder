@@ -1,0 +1,36 @@
+/*
+ * minimal.css — hide thinking; mute everything except errors and the active
+ * assistant message. The headline demo for `display: none` from the RFC.
+ */
+:root {
+    /* Squared-off corners so the minimal theme reads as utilitarian, not
+     * decorative. `border-radius: 0` → ratatui `Plain`; any nonzero value
+     * (or `border-style: rounded`) flips back to the default. */
+    border-radius: 0;
+    --text: reset;
+    --muted: ansi(240);
+    --subtle: ansi(238);
+    --accent: ansi(244);
+    --accent-soft: ansi(244);
+    --tool: ansi(240);
+    --shell: ansi(240);
+    --error: #ff0033;
+    --border: ansi(238);
+    --mode-plan: ansi(244);
+    --mode-default: ansi(244);
+    --mode-accept-edits: ansi(244);
+    --mode-bypass: #ff0033;
+    --selection-bg: ansi(238);
+    --selection-fg: reset;
+}
+
+/* Hide the model's chain-of-thought entirely. */
+.timeline-thinking {
+    display: none;
+}
+
+/* Loud, unmissable errors. */
+.error, .timeline-error {
+    color: #ff0033;
+    font-weight: bold;
+}

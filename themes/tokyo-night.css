@@ -1,0 +1,51 @@
+/*
+ * tokyo-night.css — deep blue with neon accents (after enkia/tokyo-night).
+ *
+ * Inky background, electric-cyan accent, soft violet for muted text. The
+ * composer takes the accent border to feel like a focused input cell.
+ */
+:root {
+    background:  #1a1b26;
+    --bg:        #1a1b26;
+    --bg-elev:   #1f2335;
+    --fg:        #c0caf5;
+    --comment:   #565f89;
+    --cyan:      #7dcfff;
+    --blue:      #7aa2f7;
+    --purple:    #bb9af7;
+    --magenta:   #f7768e;
+    --green:     #9ece6a;
+    --yellow:    #e0af68;
+    --orange:    #ff9e64;
+    --red:       #f7768e;
+
+    --text:               var(--fg);
+    --muted:              var(--comment);
+    --subtle:             var(--bg-elev);
+    --accent:             var(--cyan);
+    --accent-soft:        var(--blue);
+    --tool:               var(--purple);
+    --diff-added:         var(--green);
+    --diff-added-bg:      #1f3a2a;
+    --diff-removed:       var(--red);
+    --diff-removed-bg:    #3a1f2a;
+    --shell:              var(--yellow);
+    --error:              var(--red);
+    --border:             var(--bg-elev);
+    --mode-plan:          var(--cyan);
+    --mode-default:       var(--comment);
+    --mode-accept-edits:  var(--green);
+    --mode-bypass:        var(--red);
+    --selection-bg:       var(--bg-elev);
+    --selection-fg:       var(--fg);
+}
+
+.error, .timeline-error {
+    color: var(--red);
+    font-weight: bold;
+}
+
+#composer {
+    border-color: var(--cyan);
+    padding: 1 2;
+}

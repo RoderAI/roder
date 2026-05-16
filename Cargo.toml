@@ -51,6 +51,7 @@ roder-ext-tavily-search = { path = "crates/roder-ext-tavily-search" }
 roder-ext-web-search = { path = "crates/roder-ext-web-search" }
 roder-extension-host = { path = "crates/roder-extension-host" }
 roder-protocol = { path = "crates/roder-protocol" }
+roder-theme = { path = "crates/roder-theme" }
 roder-tools = { path = "crates/roder-tools" }
 roder-tui = { path = "crates/roder-tui" }
 roder-web-search = { path = "crates/roder-web-search" }

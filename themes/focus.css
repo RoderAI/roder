@@ -1,0 +1,43 @@
+/*
+ * focus.css — pairing / demo theme.
+ *
+ * Hides thinking and tool argument blobs so the timeline reads as a clean
+ * conversation: only the user's message, the assistant's prose, and errors.
+ * Useful for screen-sharing or live coding when you don't want the room
+ * watching the model reason about JSON.
+ */
+:root {
+    --text:               reset;
+    --muted:              ansi(244);
+    --subtle:             ansi(240);
+    --accent:             #00b894;
+    --accent-soft:        #55efc4;
+    --tool:               ansi(240);
+    --diff-added:         #00b894;
+    --diff-added-bg:      #0b2a23;
+    --diff-removed:       #ff7675;
+    --diff-removed-bg:    #2a0f12;
+    --shell:              ansi(240);
+    --error:              #ff3b3b;
+    --border:             ansi(240);
+    --mode-plan:          #00b894;
+    --mode-default:       ansi(244);
+    --mode-accept-edits:  #00b894;
+    --mode-bypass:        #ff3b3b;
+    --selection-bg:       ansi(240);
+    --selection-fg:       reset;
+}
+
+/* The two big "hide while pairing" rules. */
+.timeline-thinking { display: none; }
+.tool-args { display: none; }
+
+/* Errors stay loud — they're the only signal we can't afford to miss. */
+.error, .timeline-error {
+    color: var(--error);
+    font-weight: bold;
+}
+
+.timeline-assistant {
+    color: var(--text);
+}

@@ -1,0 +1,34 @@
+/*
+ * default.css — matches today's baseline TUI palette.
+ *
+ * Drop this file into ~/.roder/themes/ as a starting point for your own
+ * theme. Every variable below corresponds to a field on the compiled-in
+ * `Theme` struct in roder-tui. Override the ones you care about; the rest
+ * stay at the baseline.
+ */
+:root {
+    /* Let the terminal's own background show through. Set to a concrete
+     * color (or `--background: #1e1e2e;`, or `#body { background: ... }`)
+     * to paint the whole frame. */
+    background: transparent;
+
+    --text: reset;
+    --muted: ansi(244);
+    --subtle: ansi(245);
+    --accent: ansi(212);
+    --accent-soft: ansi(183);
+    --tool: ansi(244);
+    --diff-added: ansi(114);
+    --diff-added-bg: ansi(22);
+    --diff-removed: ansi(210);
+    --diff-removed-bg: ansi(52);
+    --shell: ansi(220);
+    --error: ansi(196);
+    --border: ansi(244);
+    --mode-plan: ansi(75);
+    --mode-default: ansi(244);
+    --mode-accept-edits: ansi(40);
+    --mode-bypass: ansi(196);
+    --selection-bg: ansi(212);
+    --selection-fg: reset;
+}

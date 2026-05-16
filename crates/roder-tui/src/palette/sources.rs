@@ -4,6 +4,7 @@ use roder_api::session::SessionMetadata;
 use roder_protocol::{AgentDescriptor, CommandDescriptor, ProvidersListResult, WebSearchSettings};
 
 use super::{PaletteAction, PaletteItem, StaticPaletteSource};
+use crate::theme::{ThemeEntry, ThemeOverrides};
 
 pub fn command_source(commands: &[CommandDescriptor]) -> StaticPaletteSource {
     StaticPaletteSource::new(
@@ -159,6 +160,81 @@ pub fn mode_source(active: PolicyMode) -> StaticPaletteSource {
         })
         .collect(),
     )
+}
+
+/// Build a palette source that lists every discovered theme. Selecting an
+/// entry emits a [`PaletteAction::SetTheme`] which the app handles by reloading
+/// the stylesheet live and persisting the choice to `~/.roder/state.toml`.
+///
+/// `active` is the id of the currently-applied theme (used to label the
+/// active row) and is matched case-sensitively against `ThemeEntry::id`.
+pub fn theme_source(entries: &[ThemeEntry], active: Option<&str>) -> StaticPaletteSource {
+    StaticPaletteSource::new(
+        "themes",
+        "Themes",
+        entries
+            .iter()
+            .map(|entry| {
+                let is_active = active.is_some_and(|a| a == entry.id);
+                let active_suffix = if is_active { " (active)" } else { "" };
+                let swatch = theme_preview_swatch(&entry.path);
+                let subtitle = match swatch {
+                    Some(s) => Some(format!("{s}  {}", entry.path.display())),
+                    None => Some(entry.path.display().to_string()),
+                };
+                (
+                    PaletteItem {
+                        id: entry.id.clone(),
+                        title: format!("Theme: {}{active_suffix}", entry.display_name),
+                        subtitle,
+                        keywords: vec![
+                            "theme".to_string(),
+                            "css".to_string(),
+                            "color".to_string(),
+                            entry.id.clone(),
+                        ],
+                        icon: Some('~'),
+                    },
+                    PaletteAction::SetTheme(entry.id.clone()),
+                )
+            })
+            .collect(),
+    )
+}
+
+/// Best-effort 3-cell preview built from a theme's `:root` accent/error/border
+/// (or background) variables. Returns a small string of fullblock chars whose
+/// hex hints are interpolated into the row subtitle. We deliberately keep
+/// this cheap — a parse error returns `None` and the row renders without it.
+fn theme_preview_swatch(path: &std::path::Path) -> Option<String> {
+    let css = std::fs::read_to_string(path).ok()?;
+    let overrides = ThemeOverrides::from_css(&css).ok()?;
+    let pick = |name: &str| overrides.color(name);
+    let primary = pick("accent")
+        .or_else(|| pick("text"))
+        .or_else(|| pick("border"));
+    let secondary = pick("error").or_else(|| pick("mode-bypass"));
+    let tertiary = pick("diff-added").or_else(|| pick("tool"));
+    let chunks: Vec<String> = [primary, secondary, tertiary]
+        .into_iter()
+        .flatten()
+        .map(|c| swatch_hint(c))
+        .collect();
+    if chunks.is_empty() {
+        None
+    } else {
+        Some(format!("[{}]", chunks.join(" ")))
+    }
+}
+
+fn swatch_hint(color: ratatui::style::Color) -> String {
+    use ratatui::style::Color::*;
+    match color {
+        Rgb(r, g, b) => format!("#{r:02x}{g:02x}{b:02x}"),
+        Indexed(n) => format!("ansi{n}"),
+        Reset => "reset".to_string(),
+        other => format!("{other:?}").to_lowercase(),
+    }
 }
 
 pub fn settings_source(web_search: &WebSearchSettings) -> StaticPaletteSource {
@@ -337,6 +413,31 @@ mod tests {
         assert_eq!(
             entries[1].action,
             PaletteAction::SetWebSearchMode(HostedWebSearchMode::Live)
+        );
+    }
+
+    #[test]
+    fn theme_source_emits_set_theme_action_per_entry() {
+        use std::path::PathBuf;
+        let entries = vec![
+            ThemeEntry {
+                id: "default".to_string(),
+                display_name: "default".to_string(),
+                path: PathBuf::from("themes/default.css"),
+            },
+            ThemeEntry {
+                id: "midnight".to_string(),
+                display_name: "midnight".to_string(),
+                path: PathBuf::from("themes/midnight.css"),
+            },
+        ];
+        let source = theme_source(&entries, Some("default"));
+        let rows = source.entries();
+        assert_eq!(rows.len(), 2);
+        assert!(rows[0].item.title.contains("(active)"));
+        assert_eq!(
+            rows[1].action,
+            PaletteAction::SetTheme("midnight".to_string())
         );
     }
 

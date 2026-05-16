@@ -3,8 +3,12 @@ use crate::palette::{
     PaletteAction, collect_entries, cycle_source_filter,
     index::{PaletteMatch, search as search_palette},
     render::palette_list,
-    sources::{agent_source, command_source, mode_source, model_source, session_source, settings_source},
+    sources::{
+        agent_source, command_source, mode_source, model_source, session_source, settings_source,
+        theme_source,
+    },
 };
+use crate::theme::{discover_themes, discovery::default_directories};
 
 pub(super) fn is_palette_open_key(key: crossterm::event::KeyEvent) -> bool {
     key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('k')
@@ -75,6 +79,10 @@ impl TuiApp {
             && let Some(providers) = providers.as_ref()
         {
             sources.push(model_source(providers));
+        }
+        if self.palette_source_enabled("themes") {
+            let entries = discover_themes(&default_directories());
+            sources.push(theme_source(&entries, self.active_theme_id.as_deref()));
         }
         self.palette_entries = collect_entries(&sources);
         self.palette_state
@@ -218,6 +226,31 @@ impl TuiApp {
             PaletteAction::InsertComposerText(text) => {
                 self.composer = composer_textarea(self.theme);
                 self.composer.insert_str(text);
+            }
+            PaletteAction::SetTheme(id) => {
+                self.apply_theme_by_id(&id);
+            }
+        }
+    }
+
+    /// Live-switch the active theme. Reloads the stylesheet, restyles every
+    /// composed widget, and persists the choice for next launch. Failures
+    /// (unknown id, parse error, unwritable state file) surface in the event
+    /// log instead of crashing.
+    pub(super) fn apply_theme_by_id(&mut self, id: &str) {
+        match crate::theme::load_theme_by_id(&default_directories(), id) {
+            Some(overrides) => {
+                let new_theme = Theme::for_terminal().with_overrides(&overrides);
+                self.theme = new_theme;
+                self.composer = composer_textarea(self.theme);
+                self.active_theme_id = Some(id.to_string());
+                if let Err(err) = crate::theme::write_active_theme(id) {
+                    self.push_event(format!("theme: persist failed: {err}"));
+                }
+                self.push_event(format!("theme: switched to {id}"));
+            }
+            None => {
+                self.push_event(format!("theme: cannot load {id} (not found or bad CSS)"));
             }
         }
     }
