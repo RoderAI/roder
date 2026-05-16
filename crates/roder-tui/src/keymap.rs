@@ -22,6 +22,46 @@ pub enum Action {
     FocusPreviousRegion,
 }
 
+pub const HELP_ACTIONS: &[Action] = &[
+    Action::OpenPalette,
+    Action::CycleMode,
+    Action::FocusNextRegion,
+    Action::FocusPreviousRegion,
+    Action::ScrollTranscript,
+    Action::ExpandToolCall,
+    Action::CollapseToolCall,
+    Action::OpenUrl,
+    Action::OpenFileRef,
+    Action::FoldMessage,
+    Action::OpenContextMenu,
+    Action::CopySelection,
+    Action::PasteToComposer,
+    Action::ApproveHunk,
+    Action::RejectHunk,
+];
+
+impl Action {
+    pub fn label(self) -> &'static str {
+        match self {
+            Action::ExpandToolCall => "Expand tool call",
+            Action::CollapseToolCall => "Collapse tool call",
+            Action::OpenUrl => "Open URL",
+            Action::OpenFileRef => "Open file reference",
+            Action::FoldMessage => "Fold message",
+            Action::OpenContextMenu => "Open context menu",
+            Action::CopySelection => "Copy selection",
+            Action::PasteToComposer => "Paste to composer",
+            Action::ApproveHunk => "Approve hunk",
+            Action::RejectHunk => "Reject hunk",
+            Action::OpenPalette => "Open palette",
+            Action::CycleMode => "Cycle mode",
+            Action::ScrollTranscript => "Scroll transcript",
+            Action::FocusNextRegion => "Focus next region",
+            Action::FocusPreviousRegion => "Focus previous region",
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct KeyBinding {
     pub key: String,
@@ -109,6 +149,13 @@ impl Keymap {
             .unwrap_or_default()
     }
 
+    pub fn binding_labels_for(&self, action: Action) -> Vec<String> {
+        self.bindings_for(action)
+            .iter()
+            .map(KeyBinding::display_label)
+            .collect()
+    }
+
     pub fn actions(&self) -> BTreeSet<Action> {
         self.bindings.keys().copied().collect()
     }
@@ -143,8 +190,36 @@ impl KeyBinding {
             && self.modifiers == key_modifiers_from_crossterm(event.modifiers)
     }
 
+    pub fn display_label(&self) -> String {
+        let mut parts = self
+            .modifiers
+            .iter()
+            .map(|modifier| match modifier {
+                KeyModifier::Control => "Ctrl".to_string(),
+                KeyModifier::Shift => "Shift".to_string(),
+                KeyModifier::Alt => "Alt".to_string(),
+            })
+            .collect::<Vec<_>>();
+        parts.push(display_key(&self.key));
+        parts.join("+")
+    }
+
     fn normalized_key(&self) -> String {
         self.key.to_lowercase()
+    }
+}
+
+fn display_key(key: &str) -> String {
+    match key.to_lowercase().as_str() {
+        "enter" => "Enter".to_string(),
+        "esc" => "Esc".to_string(),
+        "tab" => "Tab".to_string(),
+        "backtab" => "Shift+Tab".to_string(),
+        "pagedown" => "PageDown".to_string(),
+        "pageup" => "PageUp".to_string(),
+        "f10" => "F10".to_string(),
+        value if value.len() == 1 => value.to_uppercase(),
+        value => value.to_string(),
     }
 }
 
@@ -356,5 +431,14 @@ mod tests {
             Action::CopySelection,
             &KeyEvent::new(KeyCode::Char('c'), CrosstermKeyModifiers::NONE),
         ));
+    }
+
+    #[test]
+    fn binding_display_labels_are_user_readable() {
+        assert_eq!(
+            KeyBinding::modified("c", [KeyModifier::Control, KeyModifier::Shift]).display_label(),
+            "Ctrl+Shift+C"
+        );
+        assert_eq!(KeyBinding::plain("backtab").display_label(), "Shift+Tab");
     }
 }

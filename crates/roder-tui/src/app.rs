@@ -1,6 +1,7 @@
 mod commands;
 mod dialog;
 mod diff_ui;
+mod help;
 mod mouse_capture_runtime;
 mod mouse_ui;
 mod palette_ui;
@@ -330,6 +331,7 @@ pub struct TuiApp {
     events: Vec<String>,
     animation_frame: u64,
     show_event_log: bool,
+    show_help: bool,
     show_provider_popup: bool,
     provider_popup_screen: ProviderPopupScreen,
     provider_choices: Vec<ProviderChoice>,
@@ -412,6 +414,7 @@ impl TuiApp {
             events: Vec::new(),
             animation_frame: 0,
             show_event_log: false,
+            show_help: false,
             show_provider_popup: false,
             provider_popup_screen: ProviderPopupScreen::Main,
             provider_choices: Vec::new(),
@@ -487,6 +490,11 @@ impl TuiApp {
                             if self.handle_confirm_key(key).await {
                                 break;
                             }
+                        } else if self.show_help {
+                            self.handle_help_key(key);
+                        } else if help::is_help_key(key) {
+                            self.show_help = true;
+                            self.push_event("help shown".to_string());
                         } else if self.diff_viewer.is_some() {
                             self.handle_diff_key(key).await;
                         } else if self.show_palette {
@@ -710,6 +718,13 @@ impl TuiApp {
             _ => {}
         }
         false
+    }
+
+    fn handle_help_key(&mut self, key: crossterm::event::KeyEvent) {
+        if matches!(key.code, KeyCode::Esc | KeyCode::Char('?')) {
+            self.show_help = false;
+            self.push_event("help hidden".to_string());
+        }
     }
 
     async fn interrupt_active_turn(&mut self) {
@@ -1073,6 +1088,9 @@ impl TuiApp {
         }
         if self.diff_viewer.is_some() {
             self.render_diff_viewer(f, area);
+        }
+        if self.show_help {
+            help::render_keymap_help(f, area, &self.keymap, self.theme);
         }
         if let Some(menu) = &self.transcript_context_menu {
             self.render_transcript_context_menu(f, menu);
