@@ -215,6 +215,7 @@ mod tests {
                 default_model: "mock".to_string(),
                 reasoning: None,
                 auto_compact_token_limit: Some(1),
+                model_edit_tools: std::collections::HashMap::new(),
                 workspace: None,
                 policy_mode: roder_api::policy_mode::PolicyMode::Default,
             },

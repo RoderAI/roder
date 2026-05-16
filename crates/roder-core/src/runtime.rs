@@ -4,7 +4,7 @@ use std::sync::Arc;
 use anyhow::Context;
 use futures::StreamExt;
 use futures::future::{AbortHandle, Abortable};
-use roder_api::catalog::{REASONING_NONE, lookup_model};
+use roder_api::catalog::{EDIT_TOOL_EDIT, EDIT_TOOL_PATCH, REASONING_NONE, lookup_model};
 use roder_api::conversation::{
     AssistantMessage, ConversationItem, ErrorRecord, ReasoningSummary, ToolCallRecord, UserMessage,
 };
@@ -32,6 +32,7 @@ pub struct RuntimeConfig {
     pub default_model: String,
     pub reasoning: Option<String>,
     pub auto_compact_token_limit: Option<u32>,
+    pub model_edit_tools: HashMap<String, String>,
     pub workspace: Option<String>,
     pub policy_mode: PolicyMode,
 }
@@ -43,6 +44,7 @@ impl Default for RuntimeConfig {
             default_model: "mock".to_string(),
             reasoning: None,
             auto_compact_token_limit: None,
+            model_edit_tools: HashMap::new(),
             workspace: None,
             policy_mode: PolicyMode::Default,
         }
@@ -448,8 +450,9 @@ impl Runtime {
         Ok(())
     }
 
-    pub fn tool_specs(&self) -> Vec<roder_api::tools::ToolSpec> {
-        self.tool_registry.specs()
+    pub async fn tool_specs(&self) -> Vec<roder_api::tools::ToolSpec> {
+        let cfg = self.config.read().await;
+        self.filtered_tool_specs(&cfg, &cfg.default_model)
     }
 
     pub fn subagent_definitions(&self) -> Vec<SubagentDefinition> {
@@ -486,6 +489,12 @@ impl Runtime {
             .clone()
             .unwrap_or(cfg.default_model.clone());
         let engine = self.engine_for(&provider)?;
+        let tools = self.filtered_tool_specs(&cfg, &model);
+        let tool_choice = if tools.is_empty() {
+            ToolChoice::None
+        } else {
+            ToolChoice::Auto
+        };
         let mut conversation = self.conversation_for_turn(&req, &turn_id, &model).await?;
         let mut final_assistant_text = String::new();
         let mut final_reasoning_text = String::new();
@@ -507,12 +516,8 @@ impl Runtime {
                 },
                 instructions: req.instructions.clone(),
                 conversation: conversation.clone(),
-                tools: self.tool_registry.specs(),
-                tool_choice: if self.tool_registry.is_empty() {
-                    ToolChoice::None
-                } else {
-                    ToolChoice::Auto
-                },
+                tools: tools.clone(),
+                tool_choice: tool_choice.clone(),
                 reasoning: reasoning_for_model(&cfg, &model),
                 output: OutputConfig::default(),
                 runtime: RuntimeHints::default(),
@@ -661,6 +666,15 @@ impl Runtime {
         Ok(())
     }
 
+    fn filtered_tool_specs(
+        &self,
+        cfg: &RuntimeConfig,
+        model: &str,
+    ) -> Vec<roder_api::tools::ToolSpec> {
+        self.tool_registry
+            .specs_for_edit_tool(edit_tool_for_model(cfg, model))
+    }
+
     fn engine_for(&self, provider: &str) -> anyhow::Result<Arc<dyn InferenceEngine>> {
         self.registry
             .inference_engine(provider)
@@ -722,6 +736,23 @@ fn reasoning_for_model(cfg: &RuntimeConfig, model: &str) -> ReasoningConfig {
             enabled: true,
             level: Some(level.to_string()),
         },
+    }
+}
+
+fn edit_tool_for_model<'a>(cfg: &'a RuntimeConfig, model: &'a str) -> Option<&'a str> {
+    cfg.model_edit_tools
+        .get(model)
+        .map(String::as_str)
+        .or_else(|| lookup_model(model).and_then(|entry| entry.edit_tool))
+        .or(Some(EDIT_TOOL_EDIT))
+}
+
+pub fn validate_edit_tool(value: &str) -> anyhow::Result<()> {
+    match value.trim() {
+        EDIT_TOOL_PATCH | EDIT_TOOL_EDIT => Ok(()),
+        _ => anyhow::bail!(
+            "unsupported edit_tool {value:?}; allowed values: {EDIT_TOOL_PATCH}, {EDIT_TOOL_EDIT}"
+        ),
     }
 }
 

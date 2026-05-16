@@ -78,12 +78,28 @@ impl ToolRegistry {
         self.tools.values().map(|tool| tool.spec()).collect()
     }
 
+    pub fn specs_for_edit_tool(&self, edit_tool: Option<&str>) -> Vec<ToolSpec> {
+        self.tools
+            .values()
+            .map(|tool| tool.spec())
+            .filter(|spec| keep_tool_for_edit_tool(&spec.name, edit_tool))
+            .collect()
+    }
+
     pub fn get(&self, name: &str) -> Option<Arc<dyn ToolExecutor>> {
         self.tools.get(name).cloned()
     }
 
     pub fn is_empty(&self) -> bool {
         self.tools.is_empty()
+    }
+}
+
+fn keep_tool_for_edit_tool(name: &str, edit_tool: Option<&str>) -> bool {
+    match name {
+        "apply_patch" => matches!(edit_tool, Some("patch")),
+        "write_file" | "edit" | "multi_edit" => !matches!(edit_tool, Some("patch")),
+        _ => true,
     }
 }
 

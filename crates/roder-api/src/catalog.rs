@@ -22,6 +22,8 @@ pub const REASONING_HIGH: &str = "high";
 pub const REASONING_XHIGH: &str = "xhigh";
 
 pub const DEFAULT_MODEL_ID: &str = "gpt-5.5";
+pub const EDIT_TOOL_PATCH: &str = "patch";
+pub const EDIT_TOOL_EDIT: &str = "edit";
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 pub struct ProviderCatalogEntry {

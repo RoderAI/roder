@@ -153,6 +153,8 @@ pub struct ToolCallCompleted {
     pub thread_id: ThreadId,
     pub turn_id: TurnId,
     pub tool_id: String,
+    #[serde(default)]
+    pub is_error: bool,
     #[serde(with = "time::serde::rfc3339")]
     pub timestamp: OffsetDateTime,
 }
@@ -684,6 +686,39 @@ mod tests {
                 assert_eq!(output.task_id, "task-1");
                 assert_eq!(output.stream, crate::tasks::TaskOutputStream::Stdout);
                 assert_eq!(output.chunk, "building\n");
+            }
+            other => panic!("unexpected event: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn tool_call_completed_round_trips_error_status() {
+        let event = RoderEvent::ToolCallCompleted(ToolCallCompleted {
+            thread_id: "thread-a".to_string(),
+            turn_id: "turn-a".to_string(),
+            tool_id: "tool-a".to_string(),
+            is_error: true,
+            timestamp: OffsetDateTime::UNIX_EPOCH,
+        });
+        let envelope = EventEnvelope {
+            event_id: "event-tool-completed".to_string(),
+            seq: 10,
+            timestamp: OffsetDateTime::UNIX_EPOCH,
+            source: event.source(),
+            kind: event.kind().to_string(),
+            thread_id: event.thread_id().cloned(),
+            turn_id: event.turn_id().cloned(),
+            event,
+        };
+
+        let serialized = serde_json::to_string(&envelope).unwrap();
+        let round_trip: EventEnvelope = serde_json::from_str(&serialized).unwrap();
+
+        assert_eq!(round_trip.kind, "tool.call_completed");
+        match round_trip.event {
+            RoderEvent::ToolCallCompleted(completed) => {
+                assert_eq!(completed.tool_id, "tool-a");
+                assert!(completed.is_error);
             }
             other => panic!("unexpected event: {other:?}"),
         }

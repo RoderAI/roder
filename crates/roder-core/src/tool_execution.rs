@@ -29,7 +29,7 @@ impl Runtime {
         .await;
         let Some(executor) = self.tool_registry.get(&call.name) else {
             let item = ToolResultRecord {
-                id: call.id,
+                id: call.id.clone(),
                 name: Some(call.name),
                 result: "tool not found".to_string(),
                 is_error: true,
@@ -40,6 +40,14 @@ impl Runtime {
                 &roder_api::conversation::ConversationItem::ToolResult(item.clone()),
             )
             .await?;
+            self.emit(RoderEvent::ToolCallCompleted(ToolCallCompleted {
+                thread_id: thread_id.clone(),
+                turn_id: turn_id.clone(),
+                tool_id: call.id,
+                is_error: true,
+                timestamp: OffsetDateTime::now_utc(),
+            }))
+            .await;
             return Ok(item);
         };
         let runtime_config = self.status().await;
@@ -89,6 +97,7 @@ impl Runtime {
                 thread_id: thread_id.clone(),
                 turn_id: turn_id.clone(),
                 tool_id: tool_call.id,
+                is_error: true,
                 timestamp: OffsetDateTime::now_utc(),
             }))
             .await;
@@ -122,6 +131,7 @@ impl Runtime {
                 thread_id: thread_id.clone(),
                 turn_id: turn_id.clone(),
                 tool_id: tool_call.id,
+                is_error: true,
                 timestamp: OffsetDateTime::now_utc(),
             }))
             .await;
@@ -135,7 +145,21 @@ impl Runtime {
             timestamp: OffsetDateTime::now_utc(),
         }))
         .await;
-        let result = executor.execute(ctx, tool_call).await?;
+        let result = match executor.execute(ctx, tool_call.clone()).await {
+            Ok(result) => result,
+            Err(err) => ToolResult {
+                id: tool_call.id.clone(),
+                name: tool_call.name.clone(),
+                text: err.to_string(),
+                data: serde_json::json!({
+                    "error": {
+                        "kind": "tool_execution_failed",
+                        "message": err.to_string(),
+                    }
+                }),
+                is_error: true,
+            },
+        };
         self.emit_subagent_events(thread_id, turn_id, &parsed_args, &result)
             .await;
         self.emit_policy_exit_plan_request(thread_id, turn_id, &result)
@@ -156,6 +180,7 @@ impl Runtime {
             thread_id: thread_id.clone(),
             turn_id: turn_id.clone(),
             tool_id: result.id,
+            is_error: item.is_error,
             timestamp: OffsetDateTime::now_utc(),
         }))
         .await;

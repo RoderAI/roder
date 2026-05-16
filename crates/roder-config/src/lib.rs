@@ -14,11 +14,18 @@ pub struct Config {
     pub policy_modes: Option<PolicyModesConfig>,
     #[serde(default)]
     pub providers: HashMap<String, ProviderConfig>,
+    #[serde(default)]
+    pub models: HashMap<String, ModelConfig>,
 }
 
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]
 pub struct ProviderConfig {
     pub api_key: Option<String>,
+}
+
+#[derive(Debug, Default, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ModelConfig {
+    pub edit_tool: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -278,6 +285,7 @@ mod tests {
             subagents: None,
             policy_modes: None,
             providers: HashMap::new(),
+            models: HashMap::new(),
         };
         config.providers.insert(
             "openai".to_string(),
@@ -419,6 +427,35 @@ mod tests {
         assert_eq!(
             web_search.tavily.project_env.as_deref(),
             Some("TAVILY_PROJECT")
+        );
+    }
+
+    #[test]
+    fn deserializes_custom_model_edit_tool_config() {
+        let config: Config = toml::from_str(
+            r#"
+            [models."custom-openai"]
+            edit_tool = "patch"
+
+            [models."custom-claude"]
+            edit_tool = "edit"
+            "#,
+        )
+        .unwrap();
+
+        assert_eq!(
+            config
+                .models
+                .get("custom-openai")
+                .and_then(|model| model.edit_tool.as_deref()),
+            Some("patch")
+        );
+        assert_eq!(
+            config
+                .models
+                .get("custom-claude")
+                .and_then(|model| model.edit_tool.as_deref()),
+            Some("edit")
         );
     }
 

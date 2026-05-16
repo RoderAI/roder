@@ -38,6 +38,7 @@ impl AutoApproveSet {
                 "fs.write".to_string(),
                 "fs.edit".to_string(),
                 "fs.multi_edit".to_string(),
+                "apply_patch".to_string(),
                 "write_file".to_string(),
                 "edit".to_string(),
                 "multi_edit".to_string(),
@@ -269,6 +270,7 @@ mod tests {
         assert!(accept_edits.auto_approve.contains_tool("fs.write"));
         assert!(accept_edits.auto_approve.contains_tool("fs.edit"));
         assert!(accept_edits.auto_approve.contains_tool("fs.multi_edit"));
+        assert!(accept_edits.auto_approve.contains_tool("apply_patch"));
         assert!(accept_edits.auto_approve.contains_tool("write_file"));
         assert!(accept_edits.auto_approve.contains_tool("edit"));
         assert!(accept_edits.auto_approve.contains_tool("multi_edit"));
