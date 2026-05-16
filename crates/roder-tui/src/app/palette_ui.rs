@@ -5,6 +5,7 @@ use crate::palette::{
     render::palette_list,
     sources::{agent_source, command_source, mode_source, model_source, session_source},
 };
+use roder_api::interactive::{HoverCursor, InteractiveRegion, RegionKind};
 
 pub(super) fn is_palette_open_key(key: crossterm::event::KeyEvent) -> bool {
     key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('k')
@@ -127,9 +128,14 @@ impl TuiApp {
         } else {
             self.palette_state.select(Some(selected));
         }
-        let palette_area = centered_rect(area, area.width.min(86), area.height.min(18));
+        let palette_area = palette_popup_area(area);
         f.render_widget(Clear, palette_area);
         f.render_stateful_widget(list, palette_area, &mut self.palette_state);
+    }
+
+    pub(super) fn palette_item_regions(&self, area: Rect) -> Vec<InteractiveRegion> {
+        let matches = self.palette_matches();
+        palette_item_regions_for_matches(&matches, palette_popup_area(area))
     }
 
     fn palette_matches(&self) -> Vec<PaletteMatch<'_>> {
@@ -177,6 +183,34 @@ impl TuiApp {
         self.execute_palette_action(action).await;
     }
 
+    pub(super) async fn execute_palette_item(&mut self, source_id: &str, item_id: &str) {
+        let matches = self.palette_matches();
+        let selected = matches.iter().position(|matched| {
+            matched.entry.source_id == source_id && matched.entry.item.id == item_id
+        });
+        let action = selected
+            .and_then(|idx| matches.get(idx).map(|matched| matched.entry.action.clone()))
+            .or_else(|| {
+                self.palette_entries
+                    .iter()
+                    .find(|entry| entry.source_id == source_id && entry.item.id == item_id)
+                    .map(|entry| entry.action.clone())
+            });
+        drop(matches);
+        if let Some(selected) = selected {
+            self.palette_state.select(Some(selected));
+        }
+
+        let Some(action) = action else {
+            self.show_palette = false;
+            self.push_event(format!("palette item unavailable: {source_id}/{item_id}"));
+            return;
+        };
+        self.show_palette = false;
+        self.push_event(format!("palette item selected: {source_id}/{item_id}"));
+        self.execute_palette_action(action).await;
+    }
+
     async fn execute_palette_action(&mut self, action: PaletteAction) {
         match action {
             PaletteAction::SendCommand(command) => {
@@ -211,9 +245,45 @@ impl TuiApp {
     }
 }
 
+fn palette_popup_area(area: Rect) -> Rect {
+    centered_rect(area, area.width.min(86), area.height.min(18))
+}
+
+fn palette_item_regions_for_matches(
+    matches: &[PaletteMatch<'_>],
+    palette_area: Rect,
+) -> Vec<InteractiveRegion> {
+    let rows = usize::from(palette_area.height.saturating_sub(2)).min(12);
+    matches
+        .iter()
+        .take(rows)
+        .enumerate()
+        .map(|(idx, matched)| InteractiveRegion {
+            id: format!(
+                "palette:{}:{}",
+                matched.entry.source_id, matched.entry.item.id
+            ),
+            rect: roder_api::interactive::RegionRect {
+                x: palette_area.x.saturating_add(1),
+                y: palette_area.y.saturating_add(1 + idx as u16),
+                width: palette_area.width.saturating_sub(2),
+                height: 1,
+            },
+            z: 20,
+            kind: RegionKind::PaletteItem {
+                source_id: matched.entry.source_id.clone(),
+                item_id: matched.entry.item.id.clone(),
+            },
+            hover_cursor: HoverCursor::Pointer,
+            keyboard_binding: None,
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::palette::{PaletteEntry, PaletteItem};
 
     #[test]
     fn palette_open_and_close_keys_are_modal_safe() {
@@ -229,5 +299,44 @@ mod tests {
             KeyCode::Esc,
             KeyModifiers::NONE,
         )));
+    }
+
+    #[test]
+    fn palette_item_regions_cover_visible_popup_rows() {
+        let entries = vec![
+            palette_entry("commands", "review"),
+            palette_entry("models", "gpt-5"),
+        ];
+        let matches = search_palette(&entries, "", None);
+
+        let regions = palette_item_regions_for_matches(&matches, Rect::new(10, 5, 40, 6));
+
+        assert_eq!(regions.len(), 2);
+        assert_eq!(regions[0].id, "palette:commands:review");
+        assert_eq!(regions[0].rect.x, 11);
+        assert_eq!(regions[0].rect.y, 6);
+        assert_eq!(regions[0].rect.width, 38);
+        assert_eq!(
+            regions[1].kind,
+            RegionKind::PaletteItem {
+                source_id: "models".to_string(),
+                item_id: "gpt-5".to_string()
+            }
+        );
+    }
+
+    fn palette_entry(source_id: &str, item_id: &str) -> PaletteEntry {
+        PaletteEntry {
+            source_id: source_id.to_string(),
+            source_label: source_id.to_string(),
+            item: PaletteItem {
+                id: item_id.to_string(),
+                title: item_id.to_string(),
+                subtitle: None,
+                keywords: Vec::new(),
+                icon: None,
+            },
+            action: PaletteAction::InsertComposerText(item_id.to_string()),
+        }
     }
 }
