@@ -13,6 +13,13 @@ type Document struct {
 	Raw                string
 }
 
+type DocumentSummary struct {
+	Path      string `json:"path"`
+	Title     string `json:"title"`
+	Checked   int    `json:"checked"`
+	Unchecked int    `json:"unchecked"`
+}
+
 type Task struct {
 	ID      string
 	Text    string
@@ -35,4 +42,15 @@ type Diagnostic struct {
 	Line     int
 	Severity string
 	Message  string
+}
+
+type ValidationResult struct {
+	Path        string       `json:"path"`
+	Diagnostics []Diagnostic `json:"diagnostics"`
+}
+
+type ThreadAttachment struct {
+	Path     string `json:"path"`
+	TaskID   string `json:"taskId,omitempty"`
+	ThreadID string `json:"threadId"`
 }

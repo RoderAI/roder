@@ -78,6 +78,7 @@ type RunRequest struct {
 	ResponseFormat  string
 	Messages        []provider.Message
 	InputItems      []provider.Item
+	RoadmapContext  string
 	SkillSelections []godeskills.InvocationSelection
 	ReplacePrompt   bool
 }
@@ -298,6 +299,9 @@ type initialContext struct {
 
 func (r *Runner) initialContext(ctx context.Context, req RunRequest, runMessages []provider.Message, prompt string) (initialContext, error) {
 	messages := append([]provider.Message(nil), r.contextMessages...)
+	if strings.TrimSpace(req.RoadmapContext) != "" {
+		messages = append(messages, provider.Message{Role: provider.RoleSystem, Content: strings.TrimSpace(req.RoadmapContext)})
+	}
 	messages = append(messages, runMessages...)
 	messages = append(messages, req.Messages...)
 	inputItems := providerItemsFromProviderMessages(messages)

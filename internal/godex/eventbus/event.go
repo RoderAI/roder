@@ -69,6 +69,15 @@ const (
 	KindSubscriberDrop  Kind = "subscriber.dropped"
 
 	KindSessionProjected Kind = "session.projected"
+
+	KindRoadmapOpened         Kind = "roadmap.opened"
+	KindRoadmapUpdated        Kind = "roadmap.updated"
+	KindRoadmapTaskFocused    Kind = "roadmap.task_focused"
+	KindRoadmapTaskChanged    Kind = "roadmap.task_changed"
+	KindRoadmapValidated      Kind = "roadmap.validated"
+	KindRoadmapThreadSpawned  Kind = "roadmap.thread_spawned"
+	KindRoadmapThreadAttached Kind = "roadmap.thread_attached"
+	KindRoadmapModeChanged    Kind = "roadmap.mode_changed"
 )
 
 type Event struct {
