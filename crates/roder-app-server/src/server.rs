@@ -77,6 +77,12 @@ impl AppServer {
                 })
                 .await
             }
+            "session/resolve_user_input" => {
+                self.decode_and(req.params, |p| async move {
+                    self.handle_session_resolve_user_input(p).await
+                })
+                .await
+            }
             "sessions/load" | "sessions/resume" => {
                 self.decode_and(
                     req.params,
@@ -354,6 +360,18 @@ impl AppServer {
             .await
             .map_err(internal_error)?;
         Ok(serde_json::to_value(SessionResolveApprovalResult { resolved }).unwrap())
+    }
+
+    async fn handle_session_resolve_user_input(
+        &self,
+        params: SessionResolveUserInputParams,
+    ) -> Result<serde_json::Value, JsonRpcError> {
+        let resolved = self
+            .runtime
+            .resolve_user_input(&params.request_id, params.answers)
+            .await
+            .map_err(internal_error)?;
+        Ok(serde_json::to_value(SessionResolveUserInputResult { resolved }).unwrap())
     }
 
     async fn handle_session_load(

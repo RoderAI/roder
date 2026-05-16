@@ -1,5 +1,35 @@
 use roder_protocol::CommandDescriptor;
 
+pub(super) fn built_in_command_catalog() -> Vec<CommandDescriptor> {
+    [
+        (
+            "init",
+            "Create or refresh project instructions for this workspace.",
+        ),
+        ("clear", "Clear the visible conversation state."),
+        (
+            "compact",
+            "Summarize the current thread and continue with a smaller context.",
+        ),
+        ("help", "Show available commands and common workflows."),
+        ("model", "Show or change the active model."),
+        ("agents", "List configured subagents."),
+        ("memory", "Inspect relevant project and user memory."),
+    ]
+    .into_iter()
+    .map(|(name, description)| CommandDescriptor {
+        name: name.to_string(),
+        description: Some(description.to_string()),
+        argument_hint: None,
+        source: "built-in".to_string(),
+        model: None,
+        agent: None,
+        has_shell_includes: false,
+        has_url_includes: false,
+    })
+    .collect()
+}
+
 pub(super) fn slash_query(input: &str) -> Option<&str> {
     let trimmed = input.trim_start();
     if !trimmed.starts_with('/') || trimmed.starts_with("//") {
@@ -24,6 +54,13 @@ pub(super) fn matching_commands<'a>(
         .iter()
         .filter(|command| command.name.starts_with(token))
         .collect()
+}
+
+pub(super) fn should_show_menu(input: &str) -> bool {
+    let Some(query) = slash_query(input) else {
+        return false;
+    };
+    !query.contains(char::is_whitespace)
 }
 
 pub(super) fn command_invocation(
@@ -92,6 +129,31 @@ mod tests {
             accepted_completion("/he", &commands, 0).as_deref(),
             Some("/help ")
         );
+    }
+
+    #[test]
+    fn built_in_catalog_contains_expected_slash_commands() {
+        let commands = built_in_command_catalog();
+        let names = commands
+            .iter()
+            .map(|command| command.name.as_str())
+            .collect::<Vec<_>>();
+
+        assert_eq!(
+            names,
+            [
+                "init", "clear", "compact", "help", "model", "agents", "memory"
+            ]
+        );
+    }
+
+    #[test]
+    fn menu_only_shows_while_typing_command_name() {
+        assert!(should_show_menu("/"));
+        assert!(should_show_menu("/he"));
+        assert!(should_show_menu(" /he"));
+        assert!(!should_show_menu("/help "));
+        assert!(!should_show_menu("//not-command"));
     }
 
     #[test]

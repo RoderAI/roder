@@ -17,9 +17,10 @@ use roder_extension_host::{
 use roder_protocol::{
     AgentsListResult, CreateSessionResult, ExtensionsListResult, InterruptTurnParams,
     JsonRpcRequest, ProviderSelectParams, ProviderSelectResult, ProvidersListResult,
-    SessionExitPlanParams, SessionExitPlanResult, SessionGetResult, SessionSetModeParams,
-    SessionSetModeResult, SessionsListResult, StartTurnParams, StartTurnResult, SteerTurnParams,
-    SteerTurnResult, SystemStatusResult, ToolsListResult,
+    SessionExitPlanParams, SessionExitPlanResult, SessionGetResult, SessionResolveUserInputParams,
+    SessionResolveUserInputResult, SessionSetModeParams, SessionSetModeResult, SessionsListResult,
+    StartTurnParams, StartTurnResult, SteerTurnParams, SteerTurnResult, SystemStatusResult,
+    ToolsListResult,
 };
 use std::sync::Arc;
 use std::time::Duration;
@@ -36,6 +37,10 @@ struct PendingEngine;
 
 struct ImageCaptureEngine {
     requests: Mutex<Vec<AgentInferenceRequest>>,
+}
+
+struct UserInputEngine {
+    calls: Mutex<usize>,
 }
 
 #[async_trait::async_trait]
@@ -110,6 +115,68 @@ impl TaskCallingEngine {
             parent_calls: Mutex::new(0),
             requests: Mutex::new(Vec::new()),
         }
+    }
+}
+
+#[async_trait::async_trait]
+impl InferenceEngine for UserInputEngine {
+    fn id(&self) -> InferenceEngineId {
+        PROVIDER_MOCK.to_string()
+    }
+
+    fn capabilities(&self) -> InferenceCapabilities {
+        InferenceCapabilities::coding_agent_default()
+    }
+
+    async fn list_models(
+        &self,
+        _ctx: InferenceProviderContext<'_>,
+    ) -> anyhow::Result<Vec<ModelDescriptor>> {
+        Ok(Vec::new())
+    }
+
+    async fn stream_turn(
+        &self,
+        _ctx: InferenceTurnContext<'_>,
+        _request: AgentInferenceRequest,
+    ) -> anyhow::Result<InferenceEventStream> {
+        let mut calls = self.calls.lock().await;
+        *calls += 1;
+        if *calls == 1 {
+            return Ok(Box::pin(futures::stream::iter(vec![
+                Ok(InferenceEvent::ToolCallCompleted(ToolCallCompleted {
+                    id: "user-input-1".to_string(),
+                    name: "request_user_input".to_string(),
+                    arguments: serde_json::json!({
+                        "questions": [{
+                            "header": "Mode",
+                            "id": "mode",
+                            "question": "Which mode?",
+                            "options": [
+                                { "label": "Safe", "description": "Keep restrictions." },
+                                { "label": "Fast", "description": "Allow automation." }
+                            ]
+                        }]
+                    })
+                    .to_string(),
+                })),
+                Ok(InferenceEvent::Completed(CompletionMetadata {
+                    stop_reason: Some("tool_calls".to_string()),
+                    provider_response_id: None,
+                })),
+            ])));
+        }
+
+        Ok(Box::pin(futures::stream::iter(vec![
+            Ok(InferenceEvent::MessageDelta(MessageDelta {
+                text: "choice noted".to_string(),
+                phase: None,
+            })),
+            Ok(InferenceEvent::Completed(CompletionMetadata {
+                stop_reason: Some("stop".to_string()),
+                provider_response_id: None,
+            })),
+        ])))
     }
 }
 
@@ -535,6 +602,14 @@ async fn tools_list_exposes_default_coding_tools() {
         "list_files",
         "grep",
         "glob",
+        "shell",
+        "exec_command",
+        "write_stdin",
+        "update_plan",
+        "get_goal",
+        "create_goal",
+        "update_goal",
+        "request_user_input",
         "write_file",
         "edit",
         "multi_edit",
@@ -544,6 +619,87 @@ async fn tools_list_exposes_default_coding_tools() {
             "tools/list should expose {expected}: {names:?}"
         );
     }
+}
+
+#[tokio::test]
+async fn request_user_input_tool_waits_for_app_server_resolution() {
+    let engine = Arc::new(UserInputEngine {
+        calls: Mutex::new(0),
+    });
+    let mut builder = ExtensionRegistryBuilder::new();
+    builder.inference_engine(engine);
+    builder.tool_contributor(roder_tools::builtin_coding_tools_contributor(".").unwrap());
+    let runtime = Arc::new(Runtime::new(builder.build().unwrap(), Default::default()).unwrap());
+    let server = Arc::new(AppServer::new(runtime));
+    let client = LocalAppClient::new(server);
+    let mut events = client.subscribe_events();
+
+    let session: CreateSessionResult = request(&client, "sessions/create", None).await;
+    let _started: StartTurnResult = request(
+        &client,
+        "turns/start",
+        Some(
+            serde_json::to_value(StartTurnParams {
+                thread_id: session.thread_id,
+                message: "ask me".to_string(),
+                images: Vec::new(),
+                provider_override: None,
+                model_override: None,
+            })
+            .unwrap(),
+        ),
+    )
+    .await;
+
+    let mut request_id = None;
+    for _ in 0..20 {
+        let envelope = tokio::time::timeout(Duration::from_secs(2), events.recv())
+            .await
+            .unwrap()
+            .unwrap();
+        if let roder_api::events::RoderEvent::UserInputRequested(event) = envelope.event {
+            assert_eq!(event.questions[0]["id"], "mode");
+            request_id = Some(event.request_id);
+            break;
+        }
+    }
+    let request_id = request_id.expect("missing user input request event");
+
+    let resolved: SessionResolveUserInputResult = request(
+        &client,
+        "session/resolve_user_input",
+        Some(
+            serde_json::to_value(SessionResolveUserInputParams {
+                request_id: request_id.clone(),
+                answers: serde_json::json!({ "mode": "Safe" }),
+            })
+            .unwrap(),
+        ),
+    )
+    .await;
+    assert!(resolved.resolved);
+
+    let mut saw_resolved = false;
+    let mut saw_turn_completed = false;
+    for _ in 0..30 {
+        let envelope = tokio::time::timeout(Duration::from_secs(2), events.recv())
+            .await
+            .unwrap()
+            .unwrap();
+        match envelope.event {
+            roder_api::events::RoderEvent::UserInputResolved(event) => {
+                saw_resolved = event.request_id == request_id && event.answers["mode"] == "Safe";
+            }
+            roder_api::events::RoderEvent::TurnCompleted(_) => {
+                saw_turn_completed = true;
+                break;
+            }
+            _ => {}
+        }
+    }
+
+    assert!(saw_resolved);
+    assert!(saw_turn_completed);
 }
 
 #[tokio::test]

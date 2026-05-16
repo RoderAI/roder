@@ -32,6 +32,7 @@ pub struct ModelConfig {
 pub struct WebSearchConfig {
     #[serde(default)]
     pub enabled: bool,
+    pub mode: Option<String>,
     pub provider: Option<String>,
     #[serde(default)]
     pub canonical_tool: bool,
@@ -53,6 +54,7 @@ impl Default for WebSearchConfig {
     fn default() -> Self {
         Self {
             enabled: false,
+            mode: None,
             provider: None,
             canonical_tool: true,
             namespaced_tools: false,
@@ -280,6 +282,11 @@ fn apply_env_overrides_with(config: &mut Config, mut env: impl FnMut(&str) -> Op
             .get_or_insert_with(Default::default)
             .warn_on_bypass = Some(warn);
     }
+    if let Some(mode) = env("RODER_WEB_SEARCH_MODE")
+        && !mode.trim().is_empty()
+    {
+        config.web_search.get_or_insert_with(Default::default).mode = Some(mode);
+    }
 }
 
 fn parse_bool(value: &str) -> Option<bool> {
@@ -420,6 +427,7 @@ mod tests {
             r#"
             [web_search]
             enabled = true
+            mode = "external"
             provider = "tavily"
             namespaced_tools = true
             max_results = 8
@@ -437,6 +445,7 @@ mod tests {
 
         let web_search = config.web_search.unwrap();
         assert!(web_search.enabled);
+        assert_eq!(web_search.mode.as_deref(), Some("external"));
         assert_eq!(web_search.provider.as_deref(), Some("tavily"));
         assert!(web_search.namespaced_tools);
         assert_eq!(web_search.max_results, Some(8));
@@ -448,6 +457,18 @@ mod tests {
             web_search.tavily.project_env.as_deref(),
             Some("TAVILY_PROJECT")
         );
+    }
+
+    #[test]
+    fn web_search_mode_env_override_applies_without_mutating_process_env() {
+        let mut config = Config::default();
+
+        apply_env_overrides_with(&mut config, |key| match key {
+            "RODER_WEB_SEARCH_MODE" => Some("live".to_string()),
+            _ => None,
+        });
+
+        assert_eq!(config.web_search.unwrap().mode.as_deref(), Some("live"));
     }
 
     #[test]

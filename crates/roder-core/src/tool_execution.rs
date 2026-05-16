@@ -64,7 +64,7 @@ impl Runtime {
             thread_id: thread_id.clone(),
             turn_id: turn_id.clone(),
         };
-        let ctx = ToolExecutionContext {
+        let mut ctx = ToolExecutionContext {
             thread_id: thread_id.clone(),
             turn_id: turn_id.clone(),
             effective_mode: mode,
@@ -113,7 +113,6 @@ impl Runtime {
         }
 
         if let PolicyDecision::RequiresApproval { reason } = &decision
-            && preview.is_some()
             && !self
                 .request_tool_approval(thread_id, turn_id, &tool_call, reason.clone())
                 .await?
@@ -141,6 +140,7 @@ impl Runtime {
             .await;
             return Ok(item);
         }
+        ctx.effective_mode = self.status().await.policy_mode;
 
         self.emit(RoderEvent::ToolCallStarted(ToolCallStarted {
             thread_id: thread_id.clone(),
@@ -164,6 +164,9 @@ impl Runtime {
                 is_error: true,
             },
         };
+        let result = self
+            .resolve_user_input_request(thread_id, turn_id, result)
+            .await?;
         self.emit_subagent_events(thread_id, turn_id, &parsed_args, &result)
             .await;
         self.emit_policy_exit_plan_request(thread_id, turn_id, &result)
@@ -228,6 +231,7 @@ impl Runtime {
                 turn_id: turn_id.clone(),
                 tool_id: call.id.clone(),
                 tool_name: call.name.clone(),
+                call: call.clone(),
                 tx,
             },
         );
@@ -363,6 +367,52 @@ impl Runtime {
             plan_summary,
         ))
         .await;
+    }
+
+    async fn resolve_user_input_request(
+        &self,
+        thread_id: &ThreadId,
+        turn_id: &TurnId,
+        result: ToolResult,
+    ) -> anyhow::Result<ToolResult> {
+        let Some(request) = result.data.get("user_input_request") else {
+            return Ok(result);
+        };
+        let Some(request_id) = request.get("request_id").and_then(Value::as_str) else {
+            return Ok(result);
+        };
+        let questions = request
+            .get("questions")
+            .cloned()
+            .unwrap_or_else(|| serde_json::json!([]));
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        self.pending_user_inputs.lock().await.insert(
+            request_id.to_string(),
+            crate::runtime::PendingUserInput {
+                thread_id: thread_id.clone(),
+                turn_id: turn_id.clone(),
+                tx,
+            },
+        );
+        self.emit(RoderEvent::UserInputRequested(UserInputRequested {
+            thread_id: thread_id.clone(),
+            turn_id: turn_id.clone(),
+            request_id: request_id.to_string(),
+            questions,
+            timestamp: OffsetDateTime::now_utc(),
+        }))
+        .await;
+        let answers = rx.await.unwrap_or_else(|_| serde_json::json!({}));
+        Ok(ToolResult {
+            id: result.id,
+            name: result.name,
+            text: format!("User input received:\n{}", answers),
+            data: serde_json::json!({
+                "request_id": request_id,
+                "answers": answers,
+            }),
+            is_error: false,
+        })
     }
 }
 

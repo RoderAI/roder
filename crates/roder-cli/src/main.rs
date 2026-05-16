@@ -2,6 +2,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use roder_api::catalog::{DEFAULT_MODEL_ID, PROVIDER_MOCK};
+use roder_api::inference::HostedWebSearchConfig;
 use roder_api::policy_mode::PolicyMode;
 use roder_app_server::{AppServer, LocalAppClient};
 use roder_core::{Runtime, RuntimeConfig, validate_edit_tool};
@@ -50,11 +51,7 @@ struct AppServerOptions {
 async fn build_runtime_from_config(options: CliOptions) -> anyhow::Result<(Arc<Runtime>, String)> {
     let cfg = roder_config::load_config()?;
     let keys = provider_keys(&cfg);
-    let web_search = cfg
-        .web_search
-        .as_ref()
-        .map(resolve_web_search_config)
-        .transpose()?;
+    let web_search = resolve_web_search_config(cfg.web_search.as_ref())?;
     let policy_mode = resolve_policy_mode(&options, &cfg)?;
     let (default_provider, configured_model) = resolve_provider_model(cfg.provider, cfg.model);
     let default_model = configured_model.clone().unwrap_or_else(|| {
@@ -88,7 +85,7 @@ async fn build_runtime_from_config(options: CliOptions) -> anyhow::Result<(Arc<R
         gemini_api_key: keys.gemini,
         session_dir: None,
         workspace: workspace.clone(),
-        web_search,
+        web_search: web_search.external,
         subagents,
         policy_mode,
     })?;
@@ -100,6 +97,7 @@ async fn build_runtime_from_config(options: CliOptions) -> anyhow::Result<(Arc<R
             default_model: default_model.clone(),
             reasoning: cfg.reasoning,
             auto_compact_token_limit: cfg.auto_compact_token_limit,
+            hosted_web_search: web_search.hosted,
             model_edit_tools,
             workspace: workspace.map(|p| p.display().to_string()),
             policy_mode,
@@ -365,15 +363,98 @@ fn provider_keys(cfg: &roder_config::Config) -> ProviderKeys {
     }
 }
 
+#[derive(Debug, Clone)]
+struct ResolvedWebSearchConfig {
+    external: Option<DefaultWebSearchConfig>,
+    hosted: HostedWebSearchConfig,
+}
+
 fn resolve_web_search_config(
+    cfg: Option<&roder_config::WebSearchConfig>,
+) -> anyhow::Result<ResolvedWebSearchConfig> {
+    let Some(cfg) = cfg else {
+        return Ok(ResolvedWebSearchConfig {
+            external: None,
+            hosted: HostedWebSearchConfig::cached(),
+        });
+    };
+
+    match web_search_mode(cfg)? {
+        ResolvedWebSearchMode::HostedCached => Ok(ResolvedWebSearchConfig {
+            external: None,
+            hosted: HostedWebSearchConfig::cached(),
+        }),
+        ResolvedWebSearchMode::HostedLive => Ok(ResolvedWebSearchConfig {
+            external: None,
+            hosted: HostedWebSearchConfig::live(),
+        }),
+        ResolvedWebSearchMode::External => Ok(ResolvedWebSearchConfig {
+            external: Some(resolve_external_web_search_config(cfg, true)?),
+            hosted: HostedWebSearchConfig::disabled(),
+        }),
+        ResolvedWebSearchMode::Disabled => Ok(ResolvedWebSearchConfig {
+            external: None,
+            hosted: HostedWebSearchConfig::disabled(),
+        }),
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ResolvedWebSearchMode {
+    HostedCached,
+    HostedLive,
+    External,
+    Disabled,
+}
+
+fn web_search_mode(cfg: &roder_config::WebSearchConfig) -> anyhow::Result<ResolvedWebSearchMode> {
+    match cfg.mode.as_deref().map(normalize_mode) {
+        Some(mode) if matches!(mode.as_str(), "codex" | "hosted" | "native" | "cached") => {
+            Ok(ResolvedWebSearchMode::HostedCached)
+        }
+        Some(mode) if mode == "live" => Ok(ResolvedWebSearchMode::HostedLive),
+        Some(mode) if matches!(mode.as_str(), "external" | "router" | "local") => {
+            Ok(ResolvedWebSearchMode::External)
+        }
+        Some(mode) if matches!(mode.as_str(), "disabled" | "off" | "none" | "false") => {
+            Ok(ResolvedWebSearchMode::Disabled)
+        }
+        Some(mode) => anyhow::bail!(
+            "unsupported web_search.mode {mode:?}; expected codex, hosted, cached, live, external, or disabled"
+        ),
+        None if cfg
+            .provider
+            .as_deref()
+            .is_some_and(is_hosted_web_search_provider) =>
+        {
+            Ok(ResolvedWebSearchMode::HostedCached)
+        }
+        None if cfg.enabled || cfg.provider.is_some() => Ok(ResolvedWebSearchMode::External),
+        None => Ok(ResolvedWebSearchMode::Disabled),
+    }
+}
+
+fn is_hosted_web_search_provider(provider: &str) -> bool {
+    matches!(
+        normalize_mode(provider).as_str(),
+        "codex" | "openai" | "hosted" | "native"
+    )
+}
+
+fn normalize_mode(mode: &str) -> String {
+    mode.trim().to_ascii_lowercase().replace(['-', '_'], "")
+}
+
+fn resolve_external_web_search_config(
     cfg: &roder_config::WebSearchConfig,
+    force_enabled: bool,
 ) -> anyhow::Result<DefaultWebSearchConfig> {
     let provider = match cfg.provider.as_deref() {
         Some(provider) => Some(parse_web_search_provider(provider)?),
         None => None,
     };
     Ok(DefaultWebSearchConfig {
-        enabled: cfg.enabled,
+        enabled: force_enabled || cfg.enabled,
         provider,
         firecrawl: resolve_web_search_provider_config(
             &cfg.firecrawl,
@@ -550,6 +631,70 @@ mod tests {
 
         let err = resolve_policy_mode(&CliOptions::default(), &cfg).unwrap_err();
         assert!(err.to_string().contains("unsupported policy mode"));
+    }
+
+    #[test]
+    fn web_search_defaults_to_codex_hosted_cached() {
+        let resolved = resolve_web_search_config(None).unwrap();
+
+        assert!(resolved.external.is_none());
+        assert_eq!(
+            resolved.hosted.mode,
+            roder_api::inference::HostedWebSearchMode::Cached
+        );
+    }
+
+    #[test]
+    fn web_search_live_mode_uses_codex_hosted_live() {
+        let cfg = roder_config::WebSearchConfig {
+            mode: Some("live".to_string()),
+            ..roder_config::WebSearchConfig::default()
+        };
+
+        let resolved = resolve_web_search_config(Some(&cfg)).unwrap();
+
+        assert!(resolved.external.is_none());
+        assert_eq!(
+            resolved.hosted.mode,
+            roder_api::inference::HostedWebSearchMode::Live
+        );
+    }
+
+    #[test]
+    fn web_search_external_mode_uses_local_router() {
+        let cfg = roder_config::WebSearchConfig {
+            mode: Some("external".to_string()),
+            provider: Some("tavily".to_string()),
+            tavily: roder_config::WebSearchProviderConfig {
+                api_key: Some("secret".to_string()),
+                ..roder_config::WebSearchProviderConfig::default()
+            },
+            ..roder_config::WebSearchConfig::default()
+        };
+
+        let resolved = resolve_web_search_config(Some(&cfg)).unwrap();
+
+        assert!(resolved.external.is_some());
+        assert_eq!(
+            resolved.hosted.mode,
+            roder_api::inference::HostedWebSearchMode::Disabled
+        );
+    }
+
+    #[test]
+    fn web_search_disabled_mode_disables_hosted_and_external() {
+        let cfg = roder_config::WebSearchConfig {
+            mode: Some("disabled".to_string()),
+            ..roder_config::WebSearchConfig::default()
+        };
+
+        let resolved = resolve_web_search_config(Some(&cfg)).unwrap();
+
+        assert!(resolved.external.is_none());
+        assert_eq!(
+            resolved.hosted.mode,
+            roder_api::inference::HostedWebSearchMode::Disabled
+        );
     }
 
     #[tokio::test]

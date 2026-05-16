@@ -5,6 +5,7 @@ use anyhow::Context;
 use futures::StreamExt;
 use futures::future::{AbortHandle, Abortable};
 use roder_api::catalog::{EDIT_TOOL_EDIT, EDIT_TOOL_PATCH, REASONING_NONE, lookup_model};
+use roder_api::context::PolicyGate;
 use roder_api::conversation::{
     AssistantMessage, ConversationItem, ErrorRecord, InputImage, ReasoningSummary, ToolCallRecord,
     UserMessage,
@@ -12,18 +13,20 @@ use roder_api::conversation::{
 use roder_api::events::*;
 use roder_api::extension::ExtensionRegistry;
 use roder_api::inference::{
-    AgentInferenceRequest, InferenceEngine, InferenceEvent, InferenceTurnContext,
-    InstructionBundle, ModelSelection, OutputConfig, ReasoningConfig, RuntimeHints,
+    AgentInferenceRequest, HostedWebSearchConfig, InferenceEngine, InferenceEvent,
+    InferenceTurnContext, InstructionBundle, ModelSelection, OutputConfig, ReasoningConfig,
+    RuntimeHints,
 };
-use roder_api::policy_mode::PolicyMode;
+use roder_api::policy_mode::{PolicyDecision, PolicyMode};
 use roder_api::session::{SessionMetadata, SessionStore, ThreadSnapshot};
 use roder_api::subagents::SubagentDefinition;
-use roder_api::tools::{ToolChoice, ToolRegistry};
+use roder_api::tools::{ToolChoice, ToolExecutionContext, ToolRegistry};
 use time::{Duration, OffsetDateTime};
 use tokio::sync::{Mutex, RwLock, oneshot};
 
 use crate::bus::EventBus;
 use crate::fake_provider::FakeInferenceEngine;
+use crate::policy_gate::DefaultPolicyGate;
 
 const MAX_TOOL_ROUNDS_PER_TURN: usize = 1024;
 const FINAL_ANSWER_PHASE: &str = "final_answer";
@@ -34,6 +37,7 @@ pub struct RuntimeConfig {
     pub default_model: String,
     pub reasoning: Option<String>,
     pub auto_compact_token_limit: Option<u32>,
+    pub hosted_web_search: HostedWebSearchConfig,
     pub model_edit_tools: HashMap<String, String>,
     pub workspace: Option<String>,
     pub policy_mode: PolicyMode,
@@ -46,6 +50,7 @@ impl Default for RuntimeConfig {
             default_model: "mock".to_string(),
             reasoning: None,
             auto_compact_token_limit: None,
+            hosted_web_search: HostedWebSearchConfig::cached(),
             model_edit_tools: HashMap::new(),
             workspace: None,
             policy_mode: PolicyMode::Default,
@@ -87,7 +92,14 @@ pub(crate) struct PendingToolApproval {
     pub(crate) turn_id: TurnId,
     pub(crate) tool_id: String,
     pub(crate) tool_name: String,
+    pub(crate) call: roder_api::tools::ToolCall,
     pub(crate) tx: oneshot::Sender<bool>,
+}
+
+pub(crate) struct PendingUserInput {
+    pub(crate) thread_id: ThreadId,
+    pub(crate) turn_id: TurnId,
+    pub(crate) tx: oneshot::Sender<serde_json::Value>,
 }
 
 #[derive(Clone)]
@@ -131,6 +143,7 @@ pub struct Runtime {
     config: RwLock<RuntimeConfig>,
     pending_plan_exit: RwLock<Option<PendingPlanExit>>,
     pub(crate) pending_tool_approvals: Mutex<HashMap<String, PendingToolApproval>>,
+    pub(crate) pending_user_inputs: Mutex<HashMap<String, PendingUserInput>>,
     active_turns: RwLock<HashMap<TurnId, ActiveTurnHandle>>,
     pub(crate) session_store: Option<Arc<dyn SessionStore>>,
     pub(crate) tool_registry: ToolRegistry,
@@ -160,6 +173,7 @@ impl Runtime {
             config: RwLock::new(config),
             pending_plan_exit: RwLock::new(None),
             pending_tool_approvals: Mutex::new(HashMap::new()),
+            pending_user_inputs: Mutex::new(HashMap::new()),
             active_turns: RwLock::new(HashMap::new()),
             session_store,
             tool_registry,
@@ -232,7 +246,78 @@ impl Runtime {
             timestamp: OffsetDateTime::now_utc(),
         }))
         .await;
+        self.auto_resolve_pending_tool_approvals_for_mode(mode)
+            .await;
         Ok(next)
+    }
+
+    async fn auto_resolve_pending_tool_approvals_for_mode(&self, mode: PolicyMode) {
+        let gate = DefaultPolicyGate::new();
+        let mut pending = self.pending_tool_approvals.lock().await;
+        let approval_ids = pending
+            .iter()
+            .filter_map(|(approval_id, approval)| {
+                let ctx = ToolExecutionContext {
+                    thread_id: approval.thread_id.clone(),
+                    turn_id: approval.turn_id.clone(),
+                    effective_mode: mode,
+                };
+                matches!(
+                    gate.decide(&approval.call, mode, &ctx),
+                    PolicyDecision::AutoApproved { .. }
+                )
+                .then_some(approval_id.clone())
+            })
+            .collect::<Vec<_>>();
+        let approvals = approval_ids
+            .into_iter()
+            .filter_map(|approval_id| {
+                pending
+                    .remove(&approval_id)
+                    .map(|approval| (approval_id, approval))
+            })
+            .collect::<Vec<_>>();
+        drop(pending);
+
+        for (approval_id, approval) in approvals {
+            let ctx = ToolExecutionContext {
+                thread_id: approval.thread_id.clone(),
+                turn_id: approval.turn_id.clone(),
+                effective_mode: mode,
+            };
+            let decision = gate.decide(&approval.call, mode, &ctx);
+            self.emit(RoderEvent::PolicyDecisionRecorded(PolicyDecisionRecorded {
+                thread_id: approval.thread_id.clone(),
+                turn_id: approval.turn_id.clone(),
+                tool_id: approval.tool_id.clone(),
+                tool_name: approval.tool_name.clone(),
+                mode,
+                decision,
+                timestamp: OffsetDateTime::now_utc(),
+            }))
+            .await;
+            if mode == PolicyMode::Bypass {
+                self.emit(RoderEvent::PolicyBypassActive(PolicyBypassActive {
+                    thread_id: approval.thread_id.clone(),
+                    turn_id: approval.turn_id.clone(),
+                    tool_id: approval.tool_id.clone(),
+                    tool_name: approval.tool_name.clone(),
+                    timestamp: OffsetDateTime::now_utc(),
+                }))
+                .await;
+            }
+            self.emit(RoderEvent::ApprovalResolved(ApprovalResolved {
+                thread_id: approval.thread_id,
+                turn_id: approval.turn_id,
+                approval_id,
+                tool_id: approval.tool_id,
+                tool_name: approval.tool_name,
+                approved: true,
+                timestamp: OffsetDateTime::now_utc(),
+            }))
+            .await;
+            let _ = approval.tx.send(true);
+        }
     }
 
     pub async fn record_pending_plan_exit(&self, pending: PendingPlanExit) {
@@ -309,6 +394,27 @@ impl Runtime {
         }))
         .await;
         let _ = pending.tx.send(approved);
+        Ok(true)
+    }
+
+    pub async fn resolve_user_input(
+        &self,
+        request_id: &str,
+        answers: serde_json::Value,
+    ) -> anyhow::Result<bool> {
+        let pending = self.pending_user_inputs.lock().await.remove(request_id);
+        let Some(pending) = pending else {
+            return Ok(false);
+        };
+        self.emit(RoderEvent::UserInputResolved(UserInputResolved {
+            thread_id: pending.thread_id,
+            turn_id: pending.turn_id,
+            request_id: request_id.to_string(),
+            answers: answers.clone(),
+            timestamp: OffsetDateTime::now_utc(),
+        }))
+        .await;
+        let _ = pending.tx.send(answers);
         Ok(true)
     }
 
@@ -564,6 +670,7 @@ impl Runtime {
         let mut final_assistant_text = String::new();
         let mut final_phase_messages = Vec::<AssistantMessage>::new();
         let mut final_reasoning_text = String::new();
+        let mut final_provider_metadata = None;
         let mut exhausted_tool_rounds = true;
 
         for _ in 0..MAX_TOOL_ROUNDS_PER_TURN {
@@ -599,7 +706,11 @@ impl Runtime {
                 tool_choice: tool_choice.clone(),
                 reasoning: reasoning_for_model(&cfg, &model),
                 output: OutputConfig::default(),
-                runtime: RuntimeHints::default(),
+                runtime: RuntimeHints {
+                    auto_compact_token_limit: server_side_compaction_threshold(&cfg, &model),
+                    hosted_web_search: cfg.hosted_web_search.clone(),
+                    ..RuntimeHints::default()
+                },
                 metadata: serde_json::json!({}),
             };
 
@@ -674,6 +785,7 @@ impl Runtime {
                     }
                     InferenceEvent::Completed(_)
                     | InferenceEvent::Usage(_)
+                    | InferenceEvent::Compaction(_)
                     | InferenceEvent::ToolCallStarted(_)
                     | InferenceEvent::ToolCallDelta(_) => {}
                     InferenceEvent::ProviderMetadata(metadata) => {
@@ -701,7 +813,10 @@ impl Runtime {
                         conversation.push(assistant);
                     }
                     if let Some(metadata) = provider_metadata {
-                        conversation.push(ConversationItem::ProviderMetadata(metadata));
+                        let item = ConversationItem::ProviderMetadata(metadata);
+                        self.persist_turn_item(&req.thread_id, &turn_id, &item)
+                            .await?;
+                        conversation.push(item);
                     }
                     self.append_steers(&req, &turn_id, &mut conversation, steers)
                         .await?;
@@ -710,6 +825,7 @@ impl Runtime {
                 final_phase_messages = phase_messages;
                 final_assistant_text = assistant_text;
                 final_reasoning_text = reasoning_text;
+                final_provider_metadata = provider_metadata;
                 exhausted_tool_rounds = false;
                 break;
             }
@@ -727,7 +843,10 @@ impl Runtime {
                 }));
             }
             if let Some(metadata) = provider_metadata {
-                conversation.push(ConversationItem::ProviderMetadata(metadata));
+                let item = ConversationItem::ProviderMetadata(metadata);
+                self.persist_turn_item(&req.thread_id, &turn_id, &item)
+                    .await?;
+                conversation.push(item);
             }
             for call in tool_calls {
                 let tool_item = ConversationItem::ToolCall(ToolCallRecord {
@@ -793,6 +912,14 @@ impl Runtime {
                     text: final_assistant_text,
                     phase: Some(FINAL_ANSWER_PHASE.to_string()),
                 }),
+            )
+            .await?;
+        }
+        if let Some(metadata) = final_provider_metadata {
+            self.persist_turn_item(
+                &req.thread_id,
+                &turn_id,
+                &ConversationItem::ProviderMetadata(metadata),
             )
             .await?;
         }
@@ -937,6 +1064,16 @@ fn reasoning_for_model(cfg: &RuntimeConfig, model: &str) -> ReasoningConfig {
     }
 }
 
+fn server_side_compaction_threshold(cfg: &RuntimeConfig, model: &str) -> Option<u32> {
+    let entry = lookup_model(model)?;
+    if !entry.supports_compaction {
+        return None;
+    }
+    cfg.auto_compact_token_limit
+        .or(Some(entry.auto_compact_token_limit))
+        .filter(|threshold| *threshold > 0)
+}
+
 fn effective_reasoning_for_model(cfg: &RuntimeConfig, model: &str) -> String {
     cfg.reasoning
         .clone()
@@ -977,5 +1114,49 @@ pub fn validate_edit_tool(value: &str) -> anyhow::Result<()> {
         _ => anyhow::bail!(
             "unsupported edit_tool {value:?}; allowed values: {EDIT_TOOL_PATCH}, {EDIT_TOOL_EDIT}"
         ),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn server_side_compaction_uses_catalog_ninety_percent_default() {
+        assert_eq!(
+            server_side_compaction_threshold(&RuntimeConfig::default(), "gpt-5.5"),
+            Some(945_000)
+        );
+        assert_eq!(
+            server_side_compaction_threshold(&RuntimeConfig::default(), "gpt-5.3-codex-spark"),
+            Some(115_200)
+        );
+    }
+
+    #[test]
+    fn server_side_compaction_respects_explicit_config_override() {
+        let cfg = RuntimeConfig {
+            auto_compact_token_limit: Some(123_456),
+            ..RuntimeConfig::default()
+        };
+
+        assert_eq!(
+            server_side_compaction_threshold(&cfg, "gpt-5.5"),
+            Some(123_456)
+        );
+    }
+
+    #[test]
+    fn server_side_compaction_is_only_enabled_for_supported_models() {
+        let cfg = RuntimeConfig {
+            auto_compact_token_limit: Some(123_456),
+            ..RuntimeConfig::default()
+        };
+
+        assert_eq!(server_side_compaction_threshold(&cfg, "mock"), None);
+        assert_eq!(
+            server_side_compaction_threshold(&cfg, "codex-auto-review"),
+            None
+        );
     }
 }

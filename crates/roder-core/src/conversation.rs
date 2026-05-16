@@ -116,6 +116,9 @@ impl Runtime {
         conversation: Vec<ConversationItem>,
     ) -> anyhow::Result<Vec<ConversationItem>> {
         let cfg = self.status().await;
+        if lookup_model(model).is_some_and(|entry| entry.supports_compaction) {
+            return Ok(conversation);
+        }
         let threshold = cfg
             .auto_compact_token_limit
             .or_else(|| lookup_model(model).map(|entry| entry.auto_compact_token_limit))
@@ -217,6 +220,7 @@ mod tests {
                 default_model: "mock".to_string(),
                 reasoning: None,
                 auto_compact_token_limit: Some(1),
+                hosted_web_search: roder_api::inference::HostedWebSearchConfig::disabled(),
                 model_edit_tools: std::collections::HashMap::new(),
                 workspace: None,
                 policy_mode: roder_api::policy_mode::PolicyMode::Default,
@@ -255,5 +259,51 @@ mod tests {
             &compacted[1],
             ConversationItem::UserMessage(message) if message.text == "current prompt"
         ));
+    }
+
+    #[tokio::test]
+    async fn openai_server_side_compaction_models_skip_local_summary_compaction() {
+        let mut builder = ExtensionRegistryBuilder::new();
+        builder.inference_engine(Arc::new(FakeInferenceEngine));
+        let runtime = Runtime::new(
+            builder.build().unwrap(),
+            RuntimeConfig {
+                default_provider: PROVIDER_MOCK.to_string(),
+                default_model: "mock".to_string(),
+                reasoning: None,
+                auto_compact_token_limit: Some(1),
+                hosted_web_search: roder_api::inference::HostedWebSearchConfig::disabled(),
+                model_edit_tools: std::collections::HashMap::new(),
+                workspace: None,
+                policy_mode: roder_api::policy_mode::PolicyMode::Default,
+            },
+        )
+        .unwrap();
+        let conversation = vec![
+            ConversationItem::UserMessage(UserMessage {
+                text: "very large old context".repeat(20),
+                images: Vec::new(),
+            }),
+            ConversationItem::AssistantMessage(AssistantMessage {
+                text: "old answer".to_string(),
+                phase: None,
+            }),
+            ConversationItem::UserMessage(UserMessage {
+                text: "current prompt".to_string(),
+                images: Vec::new(),
+            }),
+        ];
+
+        let compacted = runtime
+            .compact_conversation_if_needed(
+                &"thread".to_string(),
+                &"turn".to_string(),
+                "gpt-5.5",
+                conversation.clone(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(compacted, conversation);
     }
 }

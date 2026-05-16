@@ -1,11 +1,12 @@
 use roder_api::catalog::{PROVIDER_OPENAI, models_for_provider};
 use roder_api::extension::InferenceEngineId;
+use roder_api::inference::CompactionProgress;
 use roder_api::inference::{
-    AgentInferenceRequest, CompletionMetadata, InferenceCapabilities, InferenceEngine,
-    InferenceEvent, InferenceEventStream, InferenceFailure, InferenceProviderContext,
-    InferenceProviderMetadata, InferenceTurnContext, MessageDelta, ModelDescriptor,
-    ProviderAuthType, ReasoningDelta, TokenUsage, ToolCallCompleted, ToolCallDelta,
-    ToolCallStarted,
+    AgentInferenceRequest, CompletionMetadata, HostedWebSearchMode, InferenceCapabilities,
+    InferenceEngine, InferenceEvent, InferenceEventStream, InferenceFailure,
+    InferenceProviderContext, InferenceProviderMetadata, InferenceTurnContext, MessageDelta,
+    ModelDescriptor, ProviderAuthType, ReasoningDelta, TokenUsage, ToolCallCompleted,
+    ToolCallDelta, ToolCallStarted,
 };
 use serde_json::{Value, json};
 use std::collections::{HashMap, HashSet};
@@ -76,26 +77,21 @@ impl OpenAiResponsesEngine {
         }
         if request.reasoning.enabled {
             body["reasoning"] = match request.reasoning.level.as_deref() {
-                Some(level) => json!({ "effort": level }),
-                None => json!({}),
+                Some(level) => json!({ "effort": level, "summary": "auto" }),
+                None => json!({ "summary": "auto" }),
             };
+            body["include"] = json!(["reasoning.encrypted_content"]);
         }
-        if !request.tools.is_empty() {
-            body["tools"] = json!(
-                request
-                    .tools
-                    .iter()
-                    .map(|tool| {
-                        json!({
-                            "type": "function",
-                            "name": tool.name,
-                            "description": tool.description,
-                            "parameters": tool.parameters,
-                        })
-                    })
-                    .collect::<Vec<_>>()
-            );
+        let tools = responses_tools(request);
+        if !tools.is_empty() {
+            body["tools"] = json!(tools);
             body["tool_choice"] = match &request.tool_choice {
+                roder_api::tools::ToolChoice::None
+                    if request.tools.is_empty()
+                        && request.runtime.hosted_web_search.is_enabled() =>
+                {
+                    json!("auto")
+                }
                 roder_api::tools::ToolChoice::None => json!("none"),
                 roder_api::tools::ToolChoice::Specific(name) => {
                     json!({ "type": "function", "name": name })
@@ -108,8 +104,40 @@ impl OpenAiResponsesEngine {
         if let Some(prompt_cache_key) = request.runtime.prompt_cache_key.as_deref() {
             body["prompt_cache_key"] = json!(prompt_cache_key);
         }
+        if let Some(threshold) = request
+            .runtime
+            .auto_compact_token_limit
+            .filter(|threshold| *threshold > 0)
+        {
+            body["context_management"] =
+                json!([{ "type": "compaction", "compact_threshold": threshold }]);
+        }
         body
     }
+}
+
+fn responses_tools(request: &AgentInferenceRequest) -> Vec<Value> {
+    let mut tools = Vec::new();
+    match request.runtime.hosted_web_search.mode {
+        HostedWebSearchMode::Disabled => {}
+        HostedWebSearchMode::Cached => tools.push(json!({
+            "type": "web_search",
+            "external_web_access": false,
+        })),
+        HostedWebSearchMode::Live => tools.push(json!({
+            "type": "web_search",
+            "external_web_access": true,
+        })),
+    }
+    tools.extend(request.tools.iter().map(|tool| {
+        json!({
+            "type": "function",
+            "name": tool.name,
+            "description": tool.description,
+            "parameters": tool.parameters,
+        })
+    }));
+    tools
 }
 
 #[async_trait::async_trait]
@@ -219,6 +247,7 @@ struct ResponsesStreamState {
     streamed_final_text: bool,
     current_message_phase: String,
     message_phases: HashMap<String, String>,
+    streamed_message_ids: HashSet<String>,
     tool_arguments: HashMap<String, String>,
     tool_names: HashMap<String, String>,
     tool_call_ids: HashMap<String, String>,
@@ -286,6 +315,9 @@ fn events_from_sse_event(
     match kind {
         "response.output_text.delta" => {
             let phase = output_text_phase(&event.data, state);
+            if let Some(item_id) = event.data.get("item_id").and_then(Value::as_str) {
+                state.streamed_message_ids.insert(item_id.to_string());
+            }
             event
                 .data
                 .get("delta")
@@ -341,6 +373,9 @@ fn events_from_sse_event(
         "response.output_item.added" => {
             if let Some(item) = event.data.get("item") {
                 record_output_item(item, state);
+                if is_compaction_item(item) {
+                    return vec![compaction_event(item, "started")];
+                }
                 if let Some(call) = started_function_call(item, state) {
                     return vec![InferenceEvent::ToolCallStarted(call)];
                 }
@@ -373,30 +408,28 @@ fn events_from_sse_event(
             .into_iter()
             .collect(),
         "response.output_item.done" => {
-            let calls = event
-                .data
-                .get("item")
-                .map(|item| {
-                    record_output_item(item, state);
+            let mut events = Vec::new();
+            if let Some(item) = event.data.get("item") {
+                record_output_item(item, state);
+                if is_compaction_item(item) {
+                    events.push(compaction_event(item, "completed"));
+                }
+                if let Some(message) = message_delta_from_done_item(item, state) {
+                    events.push(message);
+                }
+                events.extend(
                     extract_tool_calls_from_item(item)
-                })
-                .unwrap_or_default();
-            calls
-                .into_iter()
-                .filter_map(|call| emit_tool_call_once(call, state))
-                .collect()
+                        .into_iter()
+                        .filter_map(|call| emit_tool_call_once(call, state)),
+                );
+            }
+            events
         }
         "response.completed" => {
             state.terminal = true;
             let response = event.data.get("response").unwrap_or(&event.data);
             let mut events = Vec::new();
-            let text = extract_response_text(response);
-            if !state.streamed_final_text && !text.is_empty() {
-                events.push(InferenceEvent::MessageDelta(MessageDelta {
-                    text,
-                    phase: Some(FINAL_ANSWER_PHASE.to_string()),
-                }));
-            }
+            events.extend(message_deltas_from_response(response, state));
             for call in extract_tool_calls(response) {
                 if let Some(call) = emit_tool_call_once(call, state) {
                     events.push(call);
@@ -490,6 +523,35 @@ fn record_output_item(item: &Value, state: &mut ResponsesStreamState) {
         }
         _ => {}
     }
+}
+
+fn message_delta_from_done_item(
+    item: &Value,
+    state: &mut ResponsesStreamState,
+) -> Option<InferenceEvent> {
+    if item.get("type").and_then(Value::as_str) != Some("message") {
+        return None;
+    }
+    let id = item.get("id").and_then(Value::as_str);
+    if id.is_some_and(|id| state.streamed_message_ids.contains(id)) {
+        return None;
+    }
+    let text = output_text_from_message_item(item)?;
+    let phase = item
+        .get("phase")
+        .and_then(Value::as_str)
+        .unwrap_or(FINAL_ANSWER_PHASE)
+        .to_string();
+    if is_final_answer_phase(&phase) {
+        state.streamed_final_text = true;
+    }
+    if let Some(id) = id {
+        state.streamed_message_ids.insert(id.to_string());
+    }
+    Some(InferenceEvent::MessageDelta(MessageDelta {
+        text,
+        phase: Some(phase),
+    }))
 }
 
 fn started_function_call(item: &Value, state: &ResponsesStreamState) -> Option<ToolCallStarted> {
@@ -704,11 +766,30 @@ fn append_provider_output_items(
                 items.push(item.clone());
             }
             Some("reasoning") => items.push(item.clone()),
+            Some(kind) if is_compaction_type(kind) => items.push(item.clone()),
             _ => {}
         }
     }
 }
 
+fn is_compaction_item(item: &Value) -> bool {
+    item.get("type")
+        .and_then(Value::as_str)
+        .is_some_and(is_compaction_type)
+}
+
+fn is_compaction_type(kind: &str) -> bool {
+    kind.contains("compaction")
+}
+
+fn compaction_event(item: &Value, status: &str) -> InferenceEvent {
+    InferenceEvent::Compaction(CompactionProgress {
+        status: status.to_string(),
+        item_id: item.get("id").and_then(Value::as_str).map(str::to_string),
+    })
+}
+
+#[cfg(test)]
 fn extract_response_text(value: &Value) -> String {
     value
         .get("output_text")
@@ -716,6 +797,31 @@ fn extract_response_text(value: &Value) -> String {
         .map(str::to_string)
         .or_else(|| extract_output_text(value))
         .unwrap_or_default()
+}
+
+fn message_deltas_from_response(
+    value: &Value,
+    state: &mut ResponsesStreamState,
+) -> Vec<InferenceEvent> {
+    let Some(output) = value.get("output").and_then(Value::as_array) else {
+        let text = value
+            .get("output_text")
+            .and_then(Value::as_str)
+            .unwrap_or_default();
+        if state.streamed_final_text || text.is_empty() {
+            return Vec::new();
+        }
+        state.streamed_final_text = true;
+        return vec![InferenceEvent::MessageDelta(MessageDelta {
+            text: text.to_string(),
+            phase: Some(FINAL_ANSWER_PHASE.to_string()),
+        })];
+    };
+
+    output
+        .iter()
+        .filter_map(|item| message_delta_from_done_item(item, state))
+        .collect()
 }
 
 fn extract_tool_calls(value: &Value) -> Vec<ToolCallCompleted> {
@@ -746,6 +852,7 @@ fn extract_tool_calls(value: &Value) -> Vec<ToolCallCompleted> {
         .collect()
 }
 
+#[cfg(test)]
 fn extract_output_text(value: &Value) -> Option<String> {
     let output = value.get("output")?.as_array()?;
     let mut parts = Vec::new();
@@ -767,6 +874,21 @@ fn extract_output_text(value: &Value) -> Option<String> {
                     parts.push(text.to_string());
                 }
             }
+        }
+    }
+    (!parts.is_empty()).then(|| parts.join(""))
+}
+
+fn output_text_from_message_item(item: &Value) -> Option<String> {
+    let content = item.get("content")?.as_array()?;
+    let mut parts = Vec::new();
+    for block in content {
+        if let Some(text) = block
+            .get("text")
+            .or_else(|| block.get("output_text"))
+            .and_then(Value::as_str)
+        {
+            parts.push(text.to_string());
         }
     }
     (!parts.is_empty()).then(|| parts.join(""))
@@ -836,6 +958,8 @@ mod tests {
             runtime: RuntimeHints {
                 trace_id: None,
                 prompt_cache_key: Some("cache-key".to_string()),
+                auto_compact_token_limit: Some(200_000),
+                hosted_web_search: roder_api::inference::HostedWebSearchConfig::disabled(),
             },
             metadata: json!({}),
         }
@@ -851,7 +975,13 @@ mod tests {
         assert_eq!(body["max_output_tokens"], 200);
         assert!((body["temperature"].as_f64().unwrap() - 0.2).abs() < 1e-6);
         assert_eq!(body["reasoning"]["effort"], "medium");
+        assert_eq!(body["reasoning"]["summary"], "auto");
+        assert_eq!(body["include"][0], "reasoning.encrypted_content");
         assert_eq!(body["prompt_cache_key"], "cache-key");
+        assert_eq!(
+            body["context_management"][0],
+            json!({ "type": "compaction", "compact_threshold": 200_000 })
+        );
         assert_eq!(body["text"]["format"]["type"], "json_object");
         assert_eq!(body["tools"][0]["name"], "echo");
         assert_eq!(body["tool_choice"], "auto");
@@ -918,6 +1048,34 @@ mod tests {
     }
 
     #[test]
+    fn maps_hosted_web_search_for_responses_requests() {
+        let mut request = request();
+        request.runtime.hosted_web_search = roder_api::inference::HostedWebSearchConfig::cached();
+
+        let body = OpenAiResponsesEngine::map_request(&request);
+        let tools = body["tools"].as_array().unwrap();
+        assert_eq!(tools[0]["type"], "web_search");
+        assert_eq!(tools[0]["external_web_access"], false);
+        assert_eq!(tools[1]["type"], "function");
+        assert_eq!(tools[1]["name"], "echo");
+    }
+
+    #[test]
+    fn hosted_web_search_without_function_tools_remains_available() {
+        let mut request = request();
+        request.tools.clear();
+        request.tool_choice = roder_api::tools::ToolChoice::None;
+        request.runtime.hosted_web_search = roder_api::inference::HostedWebSearchConfig::live();
+
+        let body = OpenAiResponsesEngine::map_request(&request);
+        let tools = body["tools"].as_array().unwrap();
+        assert_eq!(tools.len(), 1);
+        assert_eq!(tools[0]["type"], "web_search");
+        assert_eq!(tools[0]["external_web_access"], true);
+        assert_eq!(body["tool_choice"], "auto");
+    }
+
+    #[test]
     fn replays_provider_function_call_items_before_tool_outputs() {
         let mut request = request();
         request.conversation = vec![
@@ -927,6 +1085,7 @@ mod tests {
                     {
                         "id": "rs_1",
                         "type": "reasoning",
+                        "encrypted_content": "encrypted-thinking",
                         "summary": []
                     },
                     {
@@ -954,6 +1113,7 @@ mod tests {
 
         let input = response_input_items(&request);
         assert_eq!(input[1]["type"], "reasoning");
+        assert_eq!(input[1]["encrypted_content"], "encrypted-thinking");
         assert_eq!(input[2]["id"], "fc_1");
         assert_eq!(input[2]["call_id"], "call_1");
         assert_eq!(input[2]["status"], "completed");
@@ -966,6 +1126,28 @@ mod tests {
                 .count(),
             1
         );
+    }
+
+    #[test]
+    fn replays_provider_compaction_items() {
+        let mut request = request();
+        request.conversation = vec![
+            ConversationItem::ProviderMetadata(json!({
+                "output": [
+                    {
+                        "id": "cmp_1",
+                        "type": "compaction",
+                        "encrypted_content": "opaque"
+                    }
+                ]
+            })),
+            ConversationItem::UserMessage(UserMessage::text("Continue")),
+        ];
+
+        let input = response_input_items(&request);
+        assert_eq!(input[0]["type"], "compaction");
+        assert_eq!(input[0]["encrypted_content"], "opaque");
+        assert_eq!(input[1]["role"], "user");
     }
 
     #[test]
@@ -1196,6 +1378,96 @@ mod tests {
     }
 
     #[test]
+    fn emits_commentary_from_done_item_when_no_delta_was_streamed() {
+        let mut state = ResponsesStreamState::default();
+        let done = SseEvent {
+            event: Some("response.output_item.done".to_string()),
+            data: json!({
+                "type": "response.output_item.done",
+                "item": {
+                    "id": "msg_1",
+                    "type": "message",
+                    "role": "assistant",
+                    "phase": "commentary",
+                    "content": [
+                        {
+                            "type": "output_text",
+                            "text": "I’ll inspect the logs first."
+                        }
+                    ]
+                }
+            }),
+        };
+
+        assert_eq!(
+            events_from_sse_event(&done, &mut state),
+            vec![InferenceEvent::MessageDelta(MessageDelta {
+                text: "I’ll inspect the logs first.".to_string(),
+                phase: Some("commentary".to_string()),
+            })]
+        );
+    }
+
+    #[test]
+    fn emits_all_unstreamed_phase_messages_from_completed_response() {
+        let mut state = ResponsesStreamState::default();
+        let completed = SseEvent {
+            event: Some("response.completed".to_string()),
+            data: json!({
+                "type": "response.completed",
+                "response": {
+                    "id": "resp_1",
+                    "status": "completed",
+                    "output": [
+                        {
+                            "id": "msg_1",
+                            "type": "message",
+                            "role": "assistant",
+                            "phase": "commentary",
+                            "content": [
+                                {
+                                    "type": "output_text",
+                                    "text": "I’ll inspect first."
+                                }
+                            ]
+                        },
+                        {
+                            "id": "msg_2",
+                            "type": "message",
+                            "role": "assistant",
+                            "phase": "final_answer",
+                            "content": [
+                                {
+                                    "type": "output_text",
+                                    "text": "Done."
+                                }
+                            ]
+                        }
+                    ],
+                    "usage": {
+                        "input_tokens": 1,
+                        "output_tokens": 2,
+                        "total_tokens": 3
+                    }
+                }
+            }),
+        };
+
+        let events = events_from_sse_event(&completed, &mut state);
+
+        assert!(events.iter().any(|event| matches!(
+            event,
+            InferenceEvent::MessageDelta(MessageDelta { text, phase })
+                if text == "I’ll inspect first." && phase.as_deref() == Some("commentary")
+        )));
+        assert!(events.iter().any(|event| matches!(
+            event,
+            InferenceEvent::MessageDelta(MessageDelta { text, phase })
+                if text == "Done." && phase.as_deref() == Some("final_answer")
+        )));
+    }
+
+    #[test]
     fn emits_reasoning_text_deltas_and_avoids_done_duplicates() {
         let mut state = ResponsesStreamState::default();
         let delta = SseEvent {
@@ -1301,6 +1573,48 @@ mod tests {
                 id: "call_1".to_string(),
                 name: "echo".to_string(),
                 arguments: "{\"text\":\"hello\"}".to_string(),
+            })]
+        );
+    }
+
+    #[test]
+    fn emits_compaction_progress_for_compaction_output_items() {
+        let mut state = ResponsesStreamState::default();
+        let added = SseEvent {
+            event: Some("response.output_item.added".to_string()),
+            data: json!({
+                "type": "response.output_item.added",
+                "item": {
+                    "id": "cmp_1",
+                    "type": "compaction",
+                    "encrypted_content": "opaque"
+                }
+            }),
+        };
+        assert_eq!(
+            events_from_sse_event(&added, &mut state),
+            vec![InferenceEvent::Compaction(CompactionProgress {
+                status: "started".to_string(),
+                item_id: Some("cmp_1".to_string()),
+            })]
+        );
+
+        let done = SseEvent {
+            event: Some("response.output_item.done".to_string()),
+            data: json!({
+                "type": "response.output_item.done",
+                "item": {
+                    "id": "cmp_1",
+                    "type": "compaction",
+                    "encrypted_content": "opaque"
+                }
+            }),
+        };
+        assert_eq!(
+            events_from_sse_event(&done, &mut state),
+            vec![InferenceEvent::Compaction(CompactionProgress {
+                status: "completed".to_string(),
+                item_id: Some("cmp_1".to_string()),
             })]
         );
     }

@@ -1,7 +1,10 @@
+mod commands;
 mod composer;
 mod dialog;
 mod input_queue;
+mod tool_detail;
 mod tool_timeline;
+mod turn_timer;
 
 use std::io;
 use std::path::{Path, PathBuf};
@@ -11,7 +14,7 @@ use base64::Engine;
 use crossterm::{
     event::{
         self, DisableBracketedPaste, DisableMouseCapture, EnableBracketedPaste, EnableMouseCapture,
-        Event, KeyCode, KeyEvent, KeyModifiers, KeyboardEnhancementFlags, MouseEvent,
+        Event, KeyCode, KeyEvent, KeyModifiers, KeyboardEnhancementFlags, MouseButton, MouseEvent,
         MouseEventKind, PopKeyboardEnhancementFlags, PushKeyboardEnhancementFlags,
     },
     execute,
@@ -20,10 +23,13 @@ use crossterm::{
 use ratatui::{
     Frame, Terminal,
     backend::CrosstermBackend,
+    buffer::Buffer,
     layout::{Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span, Text},
-    widgets::{Block, BorderType, Borders, Clear, List, ListItem, ListState, Paragraph, Wrap},
+    widgets::{
+        Block, BorderType, Borders, Clear, List, ListItem, ListState, Paragraph, Widget, Wrap,
+    },
 };
 use roder_api::catalog::lookup_model;
 use roder_api::conversation::InputImage;
@@ -32,25 +38,35 @@ use roder_api::inference::{ProviderAuthType, ReasoningEffortDescriptor, TokenUsa
 use roder_api::policy_mode::{PolicyDecision, PolicyMode};
 use roder_app_server::LocalAppClient;
 use roder_protocol::{
-    CodexAuthResult, CreateSessionResult, InterruptTurnParams, JsonRpcRequest, JsonRpcResponse,
-    PendingPlanExitDescriptor, ProviderDescriptor, ProviderSelectParams, ProviderSelectResult,
-    ProvidersListResult, SessionExitPlanParams, SessionExitPlanResult, SessionGetResult,
-    SessionResolveApprovalParams, SessionResolveApprovalResult, SessionSetModeParams,
-    SessionSetModeResult, StartTurnParams, SteerTurnParams,
+    CodexAuthResult, CommandDescriptor, CreateSessionResult, InterruptTurnParams, JsonRpcRequest,
+    JsonRpcResponse, PendingPlanExitDescriptor, ProviderDescriptor, ProviderSelectParams,
+    ProviderSelectResult, ProvidersListResult, SessionExitPlanParams, SessionExitPlanResult,
+    SessionGetResult, SessionResolveApprovalParams, SessionResolveApprovalResult,
+    SessionSetModeParams, SessionSetModeResult, StartTurnParams, SteerTurnParams,
 };
+use tokio::io::AsyncWriteExt;
 use tokio::process::Command;
 use tui_textarea::TextArea;
 
+use self::commands::built_in_command_catalog;
 use composer::{
     ComposerKeyAction, composer_mode, composer_text, composer_textarea, handle_composer_key,
     shell_command_from_input, style_composer_for_current_mode,
 };
 use input_queue::{PendingPrompt, PromptQueue, queue_status};
+use tool_detail::{ToolDetailAction, ToolDetailModal, render_tool_detail_modal};
 use tool_timeline::{
     TimelineFocus, TimelineState, ToolTimelineEntry, TurnCompletedSummary, fallback_entry,
 };
+use turn_timer::TurnTimer;
 
-const TOP_STATUS_ANIMATION_FPS: u64 = 30;
+const TOP_STATUS_ANIMATION_FPS: u64 = 6;
+const MAX_VISIBLE_SLASH_COMMANDS: usize = 8;
+
+fn keyboard_enhancement_flags() -> KeyboardEnhancementFlags {
+    KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES
+        | KeyboardEnhancementFlags::REPORT_ALL_KEYS_AS_ESCAPE_CODES
+}
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 struct Theme {
@@ -58,10 +74,16 @@ struct Theme {
     text_strong: Color,
     muted: Color,
     subtle: Color,
+    user_bg: Color,
     accent: Color,
     accent_soft: Color,
     tool: Color,
     tool_running: Color,
+    diff_added: Color,
+    diff_added_bg: Color,
+    diff_removed: Color,
+    diff_removed_bg: Color,
+    diff_line_number: Color,
     shell: Color,
     error: Color,
     border: Color,
@@ -89,10 +111,16 @@ impl Theme {
                 text_strong: Color::Reset,
                 muted: Color::Indexed(244),
                 subtle: Color::Indexed(245),
+                user_bg: Color::Indexed(235),
                 accent: Color::Indexed(212),
                 accent_soft: Color::Indexed(183),
-                tool: Color::Indexed(214),
-                tool_running: Color::Indexed(75),
+                tool: Color::Indexed(244),
+                tool_running: Color::Indexed(244),
+                diff_added: Color::Indexed(114),
+                diff_added_bg: Color::Indexed(22),
+                diff_removed: Color::Indexed(210),
+                diff_removed_bg: Color::Indexed(52),
+                diff_line_number: Color::Indexed(246),
                 shell: Color::Indexed(220),
                 error: Color::Indexed(196),
                 border: Color::Indexed(244),
@@ -114,10 +142,16 @@ impl Theme {
             text_strong: Color::Reset,
             muted: Color::Indexed(240),
             subtle: Color::Indexed(240),
+            user_bg: Color::Indexed(252),
             accent: Color::Indexed(198),
             accent_soft: Color::Indexed(96),
-            tool: Color::Indexed(172),
-            tool_running: Color::Indexed(25),
+            tool: Color::Indexed(240),
+            tool_running: Color::Indexed(240),
+            diff_added: Color::Indexed(28),
+            diff_added_bg: Color::Indexed(194),
+            diff_removed: Color::Indexed(160),
+            diff_removed_bg: Color::Indexed(224),
+            diff_line_number: Color::Indexed(244),
             shell: Color::Indexed(160),
             error: Color::Indexed(160),
             border: Color::Indexed(240),
@@ -152,6 +186,10 @@ impl Theme {
         Style::default().fg(self.subtle)
     }
 
+    fn user_surface(self) -> Style {
+        Style::default().fg(self.text_strong).bg(self.user_bg)
+    }
+
     fn accent(self) -> Style {
         Style::default()
             .fg(self.accent)
@@ -172,6 +210,20 @@ impl Theme {
         Style::default()
             .fg(self.tool_running)
             .add_modifier(Modifier::BOLD)
+    }
+
+    fn diff_added(self) -> Style {
+        Style::default().fg(self.diff_added).bg(self.diff_added_bg)
+    }
+
+    fn diff_removed(self) -> Style {
+        Style::default()
+            .fg(self.diff_removed)
+            .bg(self.diff_removed_bg)
+    }
+
+    fn diff_line_number(self) -> Style {
+        Style::default().fg(self.diff_line_number)
     }
 
     fn shell(self) -> Style {
@@ -253,6 +305,25 @@ struct ProviderChoice {
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct ImageAttachment {
     path: PathBuf,
+}
+
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+struct SelectionPoint {
+    row: u16,
+    column: u16,
+}
+
+#[derive(Debug, Clone, Eq, PartialEq)]
+struct MouseSelection {
+    anchor: SelectionPoint,
+    cursor: SelectionPoint,
+    dragging: bool,
+}
+
+#[derive(Debug, Clone, Eq, PartialEq)]
+struct SelectableLine {
+    row: u16,
+    text: String,
 }
 
 impl ImageAttachment {
@@ -459,15 +530,20 @@ pub struct TuiApp {
     client: LocalAppClient,
     thread_id: String,
     active_turn_id: Option<String>,
-    active_turn_started_at: Option<Instant>,
+    active_turn_timer: TurnTimer,
     current_turn_input_tokens: u32,
     current_turn_output_tokens: u32,
+    current_turn_reasoning_tokens: Option<u32>,
+    current_turn_total_tokens: u32,
     session_tokens: u64,
+    context_window_tokens: u64,
     provider: String,
     model: String,
     model_context_window: Option<u32>,
     context_counter_hovered: bool,
     last_frame_width: u16,
+    selectable_lines: Vec<SelectableLine>,
+    mouse_selection: Option<MouseSelection>,
     reasoning_effort: String,
     composer: TextArea<'static>,
     timeline: TimelineState,
@@ -484,10 +560,14 @@ pub struct TuiApp {
     provider_state: ListState,
     working_spinner: WorkingSpinner,
     confirm_dialog: Option<ConfirmDialogState>,
+    tool_detail_modal: Option<ToolDetailModal>,
     image_attachments: Vec<ImageAttachment>,
     queued_prompts: PromptQueue,
+    command_catalog: Vec<CommandDescriptor>,
+    slash_command_selection: usize,
     policy_mode: PolicyMode,
     pending_plan_exit: Option<PendingPlanExitDescriptor>,
+    compaction_active: bool,
     theme: Theme,
 }
 
@@ -523,15 +603,20 @@ impl TuiApp {
             client,
             thread_id: session.thread_id,
             active_turn_id: None,
-            active_turn_started_at: None,
+            active_turn_timer: TurnTimer::default(),
             current_turn_input_tokens: 0,
             current_turn_output_tokens: 0,
+            current_turn_reasoning_tokens: None,
+            current_turn_total_tokens: 0,
             session_tokens: 0,
+            context_window_tokens: 0,
             provider: session.provider,
             model: selected_model,
             model_context_window,
             context_counter_hovered: false,
             last_frame_width: 0,
+            selectable_lines: Vec::new(),
+            mouse_selection: None,
             reasoning_effort: session.reasoning,
             composer: composer_textarea(theme),
             timeline: TimelineState::default(),
@@ -548,13 +633,17 @@ impl TuiApp {
             provider_state,
             working_spinner: WorkingSpinner::from_config(tui_config.spinner.as_deref()),
             confirm_dialog: None,
+            tool_detail_modal: None,
             image_attachments: Vec::new(),
             queued_prompts: PromptQueue::default(),
+            command_catalog: built_in_command_catalog(),
+            slash_command_selection: 0,
             policy_mode: policy_state
                 .as_ref()
                 .map(|state| state.mode)
                 .unwrap_or_default(),
             pending_plan_exit: policy_state.and_then(|state| state.pending_plan_exit),
+            compaction_active: false,
             theme,
         })
     }
@@ -567,7 +656,7 @@ impl TuiApp {
             EnterAlternateScreen,
             EnableBracketedPaste,
             EnableMouseCapture,
-            PushKeyboardEnhancementFlags(KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES)
+            PushKeyboardEnhancementFlags(keyboard_enhancement_flags()),
         )?;
         let backend = CrosstermBackend::new(stdout);
         let mut terminal = Terminal::new(backend)?;
@@ -589,7 +678,12 @@ impl TuiApp {
             ))? {
                 match event::read()? {
                     Event::Key(key) => {
-                        if self.confirm_dialog.is_some() {
+                        if let Some(modal) = self.tool_detail_modal.as_mut() {
+                            match modal.handle_key(key) {
+                                ToolDetailAction::Close => self.tool_detail_modal = None,
+                                ToolDetailAction::Handled => {}
+                            }
+                        } else if self.confirm_dialog.is_some() {
                             if self.handle_confirm_key(key).await {
                                 break;
                             }
@@ -658,6 +752,9 @@ impl TuiApp {
                                 }
                                 continue;
                             }
+                            if self.handle_slash_command_key(key) {
+                                continue;
+                            }
                             if key.code == KeyCode::Tab {
                                 self.timeline.focus_latest();
                                 continue;
@@ -686,7 +783,11 @@ impl TuiApp {
                                 }
                                 _ => match handle_composer_key(&mut self.composer, key) {
                                     ComposerKeyAction::Submit => self.submit_prompt().await,
-                                    ComposerKeyAction::Edited | ComposerKeyAction::Ignored => {
+                                    ComposerKeyAction::Edited => {
+                                        self.slash_command_selection = 0;
+                                        self.timeline.focus_composer();
+                                    }
+                                    ComposerKeyAction::Ignored => {
                                         self.timeline.focus_composer();
                                     }
                                 },
@@ -705,36 +806,42 @@ impl TuiApp {
                 match envelope.event {
                     RoderEvent::TurnStarted(ev) => {
                         self.active_turn_id = Some(ev.turn_id);
-                        self.active_turn_started_at = Some(Instant::now());
+                        self.active_turn_timer.start(Instant::now());
                         self.current_turn_input_tokens = 0;
                         self.current_turn_output_tokens = 0;
+                        self.current_turn_reasoning_tokens = None;
+                        self.current_turn_total_tokens = 0;
+                        self.compaction_active = false;
                     }
                     RoderEvent::TurnCompleted(ev)
                         if self.active_turn_id.as_deref() == Some(&ev.turn_id) =>
                     {
-                        let elapsed = self
-                            .active_turn_started_at
-                            .take()
-                            .map(|started| started.elapsed())
-                            .unwrap_or_default();
+                        let elapsed = self.active_turn_timer.finish(Instant::now());
                         self.active_turn_id = None;
                         self.timeline.push_turn_completed(TurnCompletedSummary {
                             elapsed,
                             input_tokens: self.current_turn_input_tokens,
                             output_tokens: self.current_turn_output_tokens,
+                            reasoning_tokens: self.current_turn_reasoning_tokens,
                             session_tokens: self.session_tokens,
                         });
                         self.current_turn_input_tokens = 0;
                         self.current_turn_output_tokens = 0;
+                        self.current_turn_reasoning_tokens = None;
+                        self.current_turn_total_tokens = 0;
+                        self.compaction_active = false;
                         self.submit_next_queued_prompt().await;
                     }
                     RoderEvent::TurnInterrupted(ev)
                         if self.active_turn_id.as_deref() == Some(&ev.turn_id) =>
                     {
                         self.active_turn_id = None;
-                        self.active_turn_started_at = None;
+                        self.active_turn_timer.reset();
                         self.current_turn_input_tokens = 0;
                         self.current_turn_output_tokens = 0;
+                        self.current_turn_reasoning_tokens = None;
+                        self.current_turn_total_tokens = 0;
+                        self.compaction_active = false;
                     }
                     RoderEvent::InferenceEventReceived(ev) => match ev.event {
                         roder_api::inference::InferenceEvent::MessageDelta(delta) => {
@@ -759,14 +866,23 @@ impl TuiApp {
                                 ToolTimelineEntry::new(call.name, call.arguments),
                             );
                         }
+                        roder_api::inference::InferenceEvent::Compaction(compaction) => {
+                            self.record_compaction_progress(&compaction.status);
+                        }
+                        roder_api::inference::InferenceEvent::ProviderMetadata(metadata) => {
+                            self.record_provider_metadata(&metadata);
+                        }
                         _ => {}
                     },
                     RoderEvent::TurnFailed(ev) => {
                         if self.active_turn_id.as_deref() == Some(&ev.turn_id) {
                             self.active_turn_id = None;
-                            self.active_turn_started_at = None;
+                            self.active_turn_timer.reset();
                             self.current_turn_input_tokens = 0;
                             self.current_turn_output_tokens = 0;
+                            self.current_turn_reasoning_tokens = None;
+                            self.current_turn_total_tokens = 0;
+                            self.compaction_active = false;
                         }
                         self.timeline.push_error(ev.error);
                     }
@@ -790,6 +906,9 @@ impl TuiApp {
                         PolicyDecision::Allowed | PolicyDecision::AutoApproved { .. } => {}
                     },
                     RoderEvent::ApprovalRequested(ev) => {
+                        if self.active_turn_id.as_deref() == Some(&ev.turn_id) {
+                            self.active_turn_timer.pause(Instant::now());
+                        }
                         self.record_tool_requested_with_id(
                             ev.tool_id,
                             fallback_entry(format!("{} needs approval", ev.tool_name)),
@@ -801,8 +920,32 @@ impl TuiApp {
                                 reason: ev.reason,
                             }));
                     }
+                    RoderEvent::ApprovalResolved(ev)
+                        if self.active_turn_id.as_deref() == Some(&ev.turn_id) =>
+                    {
+                        self.active_turn_timer.resume(Instant::now());
+                        if !ev.approved {
+                            self.record_tool_completed(&ev.tool_id, true, None);
+                        }
+                    }
                     RoderEvent::ApprovalResolved(ev) if !ev.approved => {
                         self.record_tool_completed(&ev.tool_id, true, None);
+                    }
+                    RoderEvent::UserInputRequested(ev) => {
+                        let question = ev
+                            .questions
+                            .get(0)
+                            .and_then(|question| question.get("question"))
+                            .and_then(serde_json::Value::as_str)
+                            .unwrap_or("user input requested");
+                        self.timeline
+                            .push_system(format!("user input requested: {question}"));
+                    }
+                    RoderEvent::UserInputResolved(ev) => {
+                        self.timeline.push_system(format!(
+                            "user input resolved: {}",
+                            short_id(&ev.request_id)
+                        ));
                     }
                     RoderEvent::ToolCallCompleted(ev) => {
                         self.record_tool_completed(&ev.tool_id, ev.is_error, ev.output);
@@ -993,6 +1136,7 @@ impl TuiApp {
             && let Some(command) = shell_command_from_input(&composer_text(&self.composer))
         {
             self.composer = composer_textarea(self.theme);
+            self.slash_command_selection = 0;
             self.run_shell_command(command).await;
             return;
         }
@@ -1008,15 +1152,98 @@ impl TuiApp {
         }
     }
 
+    fn handle_slash_command_key(&mut self, key: KeyEvent) -> bool {
+        if key.modifiers != KeyModifiers::NONE {
+            return false;
+        }
+        let input = composer_text(&self.composer);
+        if self.image_attachments.is_empty()
+            && key.code == KeyCode::Enter
+            && self.try_run_slash_command(&input)
+        {
+            return true;
+        }
+
+        let match_count = self
+            .slash_command_matches()
+            .map(|matches| matches.len().min(MAX_VISIBLE_SLASH_COMMANDS))
+            .unwrap_or_default();
+        let has_matches = match_count > 0;
+        if !has_matches {
+            return false;
+        }
+        self.slash_command_selection = self.slash_command_selection.min(match_count - 1);
+
+        match key.code {
+            KeyCode::Up => {
+                self.move_slash_command_selection(-1);
+                true
+            }
+            KeyCode::Down => {
+                self.move_slash_command_selection(1);
+                true
+            }
+            KeyCode::Tab => {
+                if let Some(completed) = commands::accepted_completion(
+                    &composer_text(&self.composer),
+                    &self.command_catalog,
+                    self.slash_command_selection,
+                ) {
+                    self.composer = composer_textarea(self.theme);
+                    self.composer.insert_str(completed);
+                }
+                self.slash_command_selection = 0;
+                true
+            }
+            _ => false,
+        }
+    }
+
+    fn move_slash_command_selection(&mut self, delta: isize) {
+        let count = self
+            .slash_command_matches()
+            .map(|matches| matches.len().min(MAX_VISIBLE_SLASH_COMMANDS))
+            .unwrap_or_default();
+        if count == 0 {
+            self.slash_command_selection = 0;
+            return;
+        }
+        self.slash_command_selection =
+            (self.slash_command_selection as isize + delta).rem_euclid(count as isize) as usize;
+    }
+
+    fn try_run_slash_command(&mut self, input: &str) -> bool {
+        if self.image_attachments.is_empty()
+            && let Some((name, args)) = commands::command_invocation(input, &self.command_catalog)
+        {
+            self.composer = composer_textarea(self.theme);
+            self.slash_command_selection = 0;
+            let suffix = if args.is_empty() {
+                String::new()
+            } else {
+                format!(" {args}")
+            };
+            self.timeline
+                .push_system(format!("executed slash command: /{name}{suffix}"));
+            return true;
+        }
+        false
+    }
+
+    fn slash_command_matches(&self) -> Option<Vec<&CommandDescriptor>> {
+        if !self.image_attachments.is_empty() {
+            return None;
+        }
+        let input = composer_text(&self.composer);
+        if !commands::should_show_menu(&input) {
+            return None;
+        }
+        Some(commands::matching_commands(&self.command_catalog, &input))
+    }
+
     fn take_prepared_prompt(&mut self) -> Option<PendingPrompt> {
         let text = composer_text(&self.composer).trim().to_string();
         if text.is_empty() && self.image_attachments.is_empty() {
-            return None;
-        }
-        if self.image_attachments.is_empty() && text.starts_with('/') {
-            self.composer = composer_textarea(self.theme);
-            self.timeline
-                .push_system(format!("executed slash command: {text}"));
             return None;
         }
         let images = match image_inputs_from_attachments(&self.image_attachments) {
@@ -1029,6 +1256,7 @@ impl TuiApp {
         };
         let attachments = std::mem::take(&mut self.image_attachments);
         self.composer = composer_textarea(self.theme);
+        self.slash_command_selection = 0;
         let display = transcript_message_with_image_attachments(&text, &attachments);
         Some(PendingPrompt::with_images(display, text, images))
     }
@@ -1106,6 +1334,9 @@ impl TuiApp {
     }
 
     fn handle_paste(&mut self, text: String) {
+        if self.tool_detail_modal.is_some() {
+            return;
+        }
         if self.confirm_dialog.is_some() {
             return;
         }
@@ -1134,16 +1365,85 @@ impl TuiApp {
         }
         self.composer.set_yank_text(text);
         self.composer.paste();
+        self.slash_command_selection = 0;
     }
 
     fn handle_mouse(&mut self, mouse: MouseEvent) {
         self.update_context_counter_hover(&mouse);
+        if let Some(modal) = self.tool_detail_modal.as_mut() {
+            modal.handle_mouse(mouse);
+            return;
+        }
         if self.confirm_dialog.is_some() || self.show_provider_popup {
             return;
         }
+        if self.handle_mouse_selection(mouse) {
+            return;
+        }
         if self.timeline.handle_mouse(mouse) {
+            if let Some(detail) = self.timeline.take_requested_detail() {
+                self.tool_detail_modal = Some(ToolDetailModal::new(detail));
+                self.push_event("tool detail opened".to_string());
+                return;
+            }
             self.push_event("timeline selected".to_string());
         }
+    }
+
+    fn handle_mouse_selection(&mut self, mouse: MouseEvent) -> bool {
+        match mouse.kind {
+            MouseEventKind::Down(MouseButton::Left) => {
+                let Some(point) = self.selection_point(mouse) else {
+                    return false;
+                };
+                self.mouse_selection = Some(MouseSelection {
+                    anchor: point,
+                    cursor: point,
+                    dragging: false,
+                });
+                true
+            }
+            MouseEventKind::Drag(MouseButton::Left) => {
+                if let Some(point) = self.selection_point(mouse)
+                    && let Some(selection) = self.mouse_selection.as_mut()
+                {
+                    selection.cursor = point;
+                    selection.dragging = true;
+                    return true;
+                }
+                self.mouse_selection.is_some()
+            }
+            MouseEventKind::Up(MouseButton::Left) => {
+                let Some(mut selection) = self.mouse_selection.take() else {
+                    return false;
+                };
+                if let Some(point) = self.selection_point(mouse) {
+                    selection.cursor = point;
+                }
+                if !selection.dragging {
+                    return true;
+                }
+                let Some(text) = selected_text(&self.selectable_lines, &selection) else {
+                    return true;
+                };
+                tokio::spawn(async move {
+                    let _ = copy_selection_to_clipboards(text).await;
+                });
+                self.push_event("selection copied".to_string());
+                true
+            }
+            _ => false,
+        }
+    }
+
+    fn selection_point(&self, mouse: MouseEvent) -> Option<SelectionPoint> {
+        self.selectable_lines
+            .iter()
+            .find(|line| line.row == mouse.row)
+            .map(|line| SelectionPoint {
+                row: mouse.row,
+                column: mouse.column.min(line.text.chars().count() as u16),
+            })
     }
 
     fn update_context_counter_hover(&mut self, mouse: &MouseEvent) {
@@ -1186,6 +1486,10 @@ impl TuiApp {
         let event_height = event_log_height(self.show_event_log, self.events.len());
         let attachment_height = image_attachment_height(self.image_attachments.len());
         let queue_height = queued_prompt_height(self.queued_prompts.len());
+        let slash_matches = self
+            .slash_command_matches()
+            .map(|matches| matches.into_iter().cloned().collect::<Vec<_>>());
+        let slash_height = slash_command_menu_height(slash_matches.as_deref());
         let composer_height = self.composer.measure(area.width).preferred_rows;
         let mut constraints = top_layout_constraints().to_vec();
         if event_height > 0 {
@@ -1200,7 +1504,11 @@ impl TuiApp {
         if self.active_turn_id.is_some() {
             constraints.push(Constraint::Length(1));
         }
-        constraints.extend([Constraint::Length(composer_height), Constraint::Length(1)]);
+        constraints.push(Constraint::Length(composer_height));
+        if slash_height > 0 {
+            constraints.push(Constraint::Length(slash_height));
+        }
+        constraints.push(Constraint::Length(1));
 
         let chunks = Layout::default()
             .direction(Direction::Vertical)
@@ -1233,7 +1541,15 @@ impl TuiApp {
             composer_index += 1;
         }
         f.render_widget(&self.composer, chunks[composer_index]);
-        f.render_widget(self.footer(area.width), chunks[composer_index + 1]);
+        composer_index += 1;
+        if slash_height > 0 {
+            f.render_widget(
+                self.slash_command_menu(slash_matches.as_deref()),
+                chunks[composer_index],
+            );
+            composer_index += 1;
+        }
+        f.render_widget(self.footer(area.width), chunks[composer_index]);
 
         if self.show_provider_popup {
             self.render_provider_popup(f, area);
@@ -1241,13 +1557,14 @@ impl TuiApp {
         if let Some(dialog) = self.confirm_dialog.clone() {
             self.render_confirm_dialog(f, area, dialog);
         }
+        if let Some(modal) = &self.tool_detail_modal {
+            render_tool_detail_modal(f, area, modal, self.theme);
+        }
     }
 
     fn working_line(&self) -> Paragraph<'static> {
-        let elapsed = self
-            .active_turn_started_at
-            .map(|started| started.elapsed())
-            .unwrap_or_default();
+        let elapsed = self.active_turn_timer.elapsed(Instant::now());
+        let status = working_status_label(self.compaction_active);
         Paragraph::new(Line::from(vec![
             Span::styled(
                 format!(
@@ -1258,7 +1575,7 @@ impl TuiApp {
             ),
             Span::styled(
                 format!(
-                    "Working ({} - esc to interrupt)",
+                    "{status} ({} - esc to interrupt)",
                     format_working_elapsed(elapsed)
                 ),
                 self.theme.muted(),
@@ -1301,15 +1618,27 @@ impl TuiApp {
     fn context_window_counter(&self) -> Option<ContextWindowCounter> {
         let max_tokens = u64::from(self.model_context_window?);
         (max_tokens > 0).then_some(ContextWindowCounter {
-            used_tokens: self.session_tokens,
+            used_tokens: self.context_window_tokens,
             max_tokens,
             hovered: self.context_counter_hovered,
         })
     }
 
     fn transcript(&mut self, area: Rect) -> Paragraph<'static> {
-        let render = self.timeline.render(self.theme, area);
-        Paragraph::new(render.text)
+        let render = self
+            .timeline
+            .render_with_frame(self.theme, area, self.animation_frame);
+        self.selectable_lines = selectable_lines_from_text(&render.text, area, render.scroll);
+        let text = if let Some(selection) = &self.mouse_selection {
+            if selection.dragging {
+                highlight_selection(render.text, area, render.scroll, selection, self.theme)
+            } else {
+                render.text
+            }
+        } else {
+            render.text
+        };
+        Paragraph::new(text)
             .style(self.theme.text())
             .scroll((render.scroll, 0))
             .wrap(Wrap { trim: false })
@@ -1408,6 +1737,61 @@ impl TuiApp {
             .wrap(Wrap { trim: false })
     }
 
+    fn slash_command_menu(&self, matches: Option<&[CommandDescriptor]>) -> Paragraph<'static> {
+        let Some(matches) = matches else {
+            return Paragraph::new(Text::default());
+        };
+        let selected_index = self.slash_command_selection.min(
+            matches
+                .len()
+                .min(MAX_VISIBLE_SLASH_COMMANDS)
+                .saturating_sub(1),
+        );
+        let visible = matches
+            .iter()
+            .take(MAX_VISIBLE_SLASH_COMMANDS)
+            .enumerate()
+            .map(|(index, command)| {
+                let selected = index == selected_index;
+                let marker = if selected { ">" } else { " " };
+                let style = if selected {
+                    self.theme.selected()
+                } else {
+                    self.theme.text()
+                };
+                let mut spans = vec![
+                    Span::styled(format!(" {marker} "), self.theme.subtle()),
+                    Span::styled(format!("/{}", command.name), style),
+                ];
+                if let Some(hint) = &command.argument_hint {
+                    spans.push(Span::styled(format!(" {hint}"), self.theme.subtle()));
+                }
+                if let Some(description) = &command.description {
+                    spans.push(Span::styled(
+                        format!(" - {}", truncate(description, 72)),
+                        self.theme.muted(),
+                    ));
+                }
+                if let Some(warning) = commands::command_warning(command) {
+                    spans.push(Span::styled(format!("  {warning}"), self.theme.shell()));
+                }
+                Line::from(spans)
+            });
+        let mut lines = Vec::new();
+        lines.push(Line::from(vec![
+            Span::styled(" Slash commands", self.theme.strong()),
+            Span::styled(
+                "  tab complete  enter run  up/down select",
+                self.theme.subtle(),
+            ),
+        ]));
+        lines.extend(visible);
+
+        Paragraph::new(Text::from(lines))
+            .style(self.theme.text())
+            .wrap(Wrap { trim: false })
+    }
+
     fn footer(&self, width: u16) -> Paragraph<'static> {
         let status = if self.active_turn_id.is_some() {
             "running"
@@ -1434,13 +1818,13 @@ impl TuiApp {
         };
         let interaction_hint = match self.timeline.focus() {
             TimelineFocus::Timeline => {
-                "  j/k navigate  pgup/pgdn scroll  enter expand  click select  wheel scroll  esc composer"
+                "  j/k navigate tools  pgup/pgdn scroll  enter expand  click tools  wheel scroll  esc composer"
             }
             TimelineFocus::Composer => {
                 if self.active_turn_id.is_some() {
                     "  enter steer  tab queue message  shift+enter newline  shift+tab mode  paste/drag images  esc interrupt  ctrl+c exit"
                 } else {
-                    "  enter send  shift+enter newline  tab timeline  shift+tab mode  paste/drag images  ! shell  ctrl+p provider/model  ctrl+l events  esc interrupt  ctrl+c exit"
+                    "  enter send  shift+enter newline  / commands  tab timeline  shift+tab mode  paste/drag images  ! shell  ctrl+p provider/model  ctrl+l events  esc interrupt  ctrl+c exit"
                 }
             }
         };
@@ -1896,16 +2280,46 @@ impl TuiApp {
         self.timeline.record_tool_completed(tool_id, failed, output);
     }
 
+    fn record_compaction_progress(&mut self, status: &str) {
+        match status {
+            "started" => {
+                if !self.compaction_active {
+                    self.timeline.push_system("Compacting context...");
+                }
+                self.compaction_active = true;
+            }
+            "completed" => {
+                if self.compaction_active {
+                    self.timeline.push_system("Context compacted.");
+                }
+                self.compaction_active = false;
+            }
+            other => {
+                self.timeline
+                    .push_system(format!("Context compaction {other}."));
+            }
+        }
+    }
+
+    fn record_provider_metadata(&mut self, metadata: &serde_json::Value) {
+        if let Some(tokens) = reasoning_tokens_from_provider_metadata(metadata) {
+            self.current_turn_reasoning_tokens = Some(
+                self.current_turn_reasoning_tokens
+                    .unwrap_or_default()
+                    .max(tokens),
+            );
+        }
+    }
+
     fn record_usage(&mut self, usage: TokenUsage) {
-        self.current_turn_input_tokens = self
-            .current_turn_input_tokens
-            .saturating_add(usage.prompt_tokens);
-        self.current_turn_output_tokens = self
-            .current_turn_output_tokens
-            .saturating_add(usage.completion_tokens);
-        self.session_tokens = self
-            .session_tokens
-            .saturating_add(u64::from(usage.total_tokens));
+        record_usage_counters(
+            &mut self.current_turn_input_tokens,
+            &mut self.current_turn_output_tokens,
+            &mut self.current_turn_total_tokens,
+            &mut self.session_tokens,
+            &mut self.context_window_tokens,
+            usage,
+        );
     }
 
     fn push_event(&mut self, event: String) {
@@ -2024,6 +2438,31 @@ fn format_working_elapsed(duration: Duration) -> String {
     }
 }
 
+fn working_status_label(compaction_active: bool) -> &'static str {
+    if compaction_active {
+        "Compacting context"
+    } else {
+        "Working"
+    }
+}
+
+fn reasoning_tokens_from_provider_metadata(metadata: &serde_json::Value) -> Option<u32> {
+    metadata
+        .get("usage")
+        .and_then(|usage| {
+            usage
+                .get("output_tokens_details")
+                .or_else(|| usage.get("completion_tokens_details"))
+        })
+        .and_then(|details| {
+            details
+                .get("reasoning_tokens")
+                .or_else(|| details.get("thinking_tokens"))
+        })
+        .and_then(serde_json::Value::as_u64)
+        .and_then(|tokens| u32::try_from(tokens).ok())
+}
+
 fn event_log_height(show_event_log: bool, event_count: usize) -> u16 {
     if show_event_log {
         (event_count as u16 + 2).clamp(3, 8)
@@ -2050,6 +2489,206 @@ fn queued_prompt_height(count: usize) -> u16 {
         0
     } else {
         count.min(3) as u16 + 1 + u16::from(count > 3)
+    }
+}
+
+fn selectable_lines_from_text(text: &Text<'_>, area: Rect, scroll: u16) -> Vec<SelectableLine> {
+    rendered_selectable_rows(text, area, scroll)
+        .into_iter()
+        .map(|row| SelectableLine {
+            row: row.row,
+            text: row.text,
+        })
+        .collect()
+}
+
+fn highlight_selection(
+    text: Text<'static>,
+    area: Rect,
+    scroll: u16,
+    selection: &MouseSelection,
+    theme: Theme,
+) -> Text<'static> {
+    let range = normalized_selection(selection);
+    let render_height = scroll.saturating_add(area.height);
+    let rows = rendered_text_rows(&text, area.width, render_height, 0);
+    let lines = rows
+        .into_iter()
+        .enumerate()
+        .map(|(index, row)| {
+            let row_number = u16::try_from(index).unwrap_or(u16::MAX);
+            let screen_row = area.y.saturating_add(row_number.saturating_sub(scroll));
+            if row_number < scroll || row_number >= scroll.saturating_add(area.height) {
+                return row.into_line(None, theme);
+            }
+            let selected = selection_columns_for_row(screen_row, &row.text(), range);
+            row.into_line(selected, theme)
+        })
+        .collect::<Vec<_>>();
+    Text::from(lines)
+}
+
+#[derive(Debug, Clone, Eq, PartialEq)]
+struct RenderedSelectableRow {
+    row: u16,
+    text: String,
+    cells: Vec<RenderedCell>,
+}
+
+#[derive(Debug, Clone, Eq, PartialEq)]
+struct RenderedCell {
+    symbol: String,
+    style: Style,
+}
+
+impl RenderedSelectableRow {
+    fn into_line(self, selected: Option<(usize, usize)>, theme: Theme) -> Line<'static> {
+        let spans = self
+            .cells
+            .into_iter()
+            .enumerate()
+            .map(|(index, cell)| {
+                let style = if selected.is_some_and(|(start, end)| (start..end).contains(&index)) {
+                    theme.selected()
+                } else {
+                    cell.style
+                };
+                Span::styled(cell.symbol, style)
+            })
+            .collect::<Vec<_>>();
+        Line::from(spans)
+    }
+
+    fn text(&self) -> String {
+        self.cells.iter().map(|cell| cell.symbol.as_str()).collect()
+    }
+}
+
+fn rendered_selectable_rows(
+    text: &Text<'_>,
+    area: Rect,
+    scroll: u16,
+) -> Vec<RenderedSelectableRow> {
+    if area.is_empty() {
+        return Vec::new();
+    }
+
+    rendered_text_rows(text, area.width, area.height, scroll)
+        .into_iter()
+        .enumerate()
+        .filter_map(|(offset, mut row)| {
+            (!row.text.trim().is_empty()).then(|| {
+                row.row = area
+                    .y
+                    .saturating_add(u16::try_from(offset).unwrap_or(u16::MAX));
+                row
+            })
+        })
+        .collect()
+}
+
+fn rendered_text_rows(
+    text: &Text<'_>,
+    width: u16,
+    height: u16,
+    scroll: u16,
+) -> Vec<RenderedSelectableRow> {
+    if width == 0 || height == 0 {
+        return Vec::new();
+    }
+
+    let render_area = Rect::new(0, 0, width, height);
+    let mut buffer = Buffer::empty(render_area);
+    Paragraph::new(text.clone())
+        .scroll((scroll, 0))
+        .wrap(Wrap { trim: false })
+        .render(render_area, &mut buffer);
+
+    (0..height)
+        .map(|row| {
+            let cells = buffer_row_cells(&buffer, row);
+            let text = cells.iter().map(|cell| cell.symbol.as_str()).collect();
+            RenderedSelectableRow { row, text, cells }
+        })
+        .collect()
+}
+
+fn buffer_row_cells(buffer: &Buffer, row: u16) -> Vec<RenderedCell> {
+    let mut cells = (0..buffer.area.width)
+        .map(|column| {
+            let cell = &buffer[(column, row)];
+            RenderedCell {
+                symbol: cell.symbol().to_string(),
+                style: cell.style(),
+            }
+        })
+        .collect::<Vec<_>>();
+    while cells.last().is_some_and(|cell| cell.symbol == " ") {
+        cells.pop();
+    }
+    cells
+}
+
+fn selected_text(lines: &[SelectableLine], selection: &MouseSelection) -> Option<String> {
+    let range = normalized_selection(selection);
+    let selected = lines
+        .iter()
+        .filter_map(|line| {
+            let (start, end) = selection_columns_for_row(line.row, &line.text, range)?;
+            Some(slice_chars(&line.text, start, end).trim_end().to_string())
+        })
+        .collect::<Vec<_>>();
+    let text = selected.join("\n");
+    (!text.trim().is_empty()).then_some(text)
+}
+
+fn normalized_selection(selection: &MouseSelection) -> (SelectionPoint, SelectionPoint) {
+    let a = selection.anchor;
+    let b = selection.cursor;
+    if (b.row, b.column) < (a.row, a.column) {
+        (b, a)
+    } else {
+        (a, b)
+    }
+}
+
+fn selection_columns_for_row(
+    row: u16,
+    text: &str,
+    (start, end): (SelectionPoint, SelectionPoint),
+) -> Option<(usize, usize)> {
+    if row < start.row || row > end.row {
+        return None;
+    }
+    let len = text.chars().count();
+    let from = if row == start.row {
+        usize::from(start.column).min(len)
+    } else {
+        0
+    };
+    let to = if row == end.row {
+        usize::from(end.column).saturating_add(1).min(len)
+    } else {
+        len
+    };
+    (from < to).then_some((from, to))
+}
+
+fn slice_chars(text: &str, start: usize, end: usize) -> String {
+    text.chars()
+        .skip(start)
+        .take(end.saturating_sub(start))
+        .collect()
+}
+
+fn slash_command_menu_height<T>(matches: Option<&[T]>) -> u16 {
+    let Some(matches) = matches else {
+        return 0;
+    };
+    if matches.is_empty() {
+        0
+    } else {
+        1 + matches.len().min(MAX_VISIBLE_SLASH_COMMANDS) as u16
     }
 }
 
@@ -2278,6 +2917,65 @@ async fn run_shell_command(command: String) -> anyhow::Result<String> {
     }
 }
 
+async fn copy_selection_to_clipboards(text: String) -> anyhow::Result<()> {
+    let mut errors = Vec::new();
+    if let Err(err) = copy_to_system_clipboard(&text).await {
+        errors.push(err.to_string());
+    }
+    if std::env::var_os("TMUX").is_some()
+        && let Err(err) = copy_to_tmux_buffer(&text).await
+    {
+        errors.push(err.to_string());
+    }
+    if errors.is_empty() {
+        Ok(())
+    } else {
+        anyhow::bail!(errors.join("; "))
+    }
+}
+
+async fn copy_to_system_clipboard(text: &str) -> anyhow::Result<()> {
+    #[cfg(target_os = "macos")]
+    let candidates: &[(&str, &[&str])] = &[("pbcopy", &[])];
+    #[cfg(all(unix, not(target_os = "macos")))]
+    let candidates: &[(&str, &[&str])] = &[
+        ("wl-copy", &[]),
+        ("xclip", &["-selection", "clipboard"]),
+        ("xsel", &["--clipboard", "--input"]),
+    ];
+    #[cfg(windows)]
+    let candidates: &[(&str, &[&str])] = &[("clip", &[])];
+
+    for (program, args) in candidates {
+        if pipe_to_command(program, args, text).await.is_ok() {
+            return Ok(());
+        }
+    }
+    anyhow::bail!("no clipboard command available")
+}
+
+async fn copy_to_tmux_buffer(text: &str) -> anyhow::Result<()> {
+    pipe_to_command("tmux", &["load-buffer", "-"], text).await
+}
+
+async fn pipe_to_command(program: &str, args: &[&str], text: &str) -> anyhow::Result<()> {
+    let mut child = Command::new(program)
+        .args(args)
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn()?;
+    if let Some(mut stdin) = child.stdin.take() {
+        stdin.write_all(text.as_bytes()).await?;
+    }
+    let status = child.wait().await?;
+    if status.success() {
+        Ok(())
+    } else {
+        anyhow::bail!("{program} exited with {status}")
+    }
+}
+
 fn truncate_for_transcript(text: &str, max_chars: usize) -> String {
     let mut truncated = text.chars().take(max_chars).collect::<String>();
     if truncated.len() < text.len() {
@@ -2426,6 +3124,15 @@ fn policy_mode_label(mode: PolicyMode) -> &'static str {
         PolicyMode::AcceptEdits => "accept_edits",
         PolicyMode::Plan => "plan",
         PolicyMode::Bypass => "bypass",
+    }
+}
+
+fn pretty_policy_mode_label(mode: PolicyMode) -> &'static str {
+    match mode {
+        PolicyMode::Default => "Default",
+        PolicyMode::AcceptEdits => "Accept Edits",
+        PolicyMode::Plan => "Plan",
+        PolicyMode::Bypass => "Bypass",
     }
 }
 
@@ -2624,6 +3331,30 @@ fn context_window_from_options(
         .and_then(|option| option.context_window)
 }
 
+fn record_usage_counters(
+    current_turn_input_tokens: &mut u32,
+    current_turn_output_tokens: &mut u32,
+    current_turn_total_tokens: &mut u32,
+    session_tokens: &mut u64,
+    context_window_tokens: &mut u64,
+    usage: TokenUsage,
+) {
+    let total_tokens = usage
+        .total_tokens
+        .max(usage.prompt_tokens.saturating_add(usage.completion_tokens));
+
+    *current_turn_input_tokens = (*current_turn_input_tokens).max(usage.prompt_tokens);
+    *current_turn_output_tokens = (*current_turn_output_tokens).max(usage.completion_tokens);
+    if total_tokens > *current_turn_total_tokens {
+        let delta = total_tokens - *current_turn_total_tokens;
+        *session_tokens = session_tokens.saturating_add(u64::from(delta));
+        *current_turn_total_tokens = total_tokens;
+    }
+    if total_tokens > 0 {
+        *context_window_tokens = u64::from(total_tokens);
+    }
+}
+
 fn line_with_gap(
     mut left: Vec<Span<'static>>,
     right: Vec<Span<'static>>,
@@ -2697,10 +3428,16 @@ mod tests {
                 theme.text_strong,
                 theme.muted,
                 theme.subtle,
+                theme.user_bg,
                 theme.accent,
                 theme.accent_soft,
                 theme.tool,
                 theme.tool_running,
+                theme.diff_added,
+                theme.diff_added_bg,
+                theme.diff_removed,
+                theme.diff_removed_bg,
+                theme.diff_line_number,
                 theme.shell,
                 theme.error,
                 theme.border,
@@ -2718,6 +3455,18 @@ mod tests {
             assert!(!colors.contains(&Color::White));
             assert!(!colors.contains(&Color::Black));
         }
+    }
+
+    #[test]
+    fn keyboard_enhancements_request_all_keys_for_command_backspace() {
+        assert!(
+            keyboard_enhancement_flags()
+                .contains(KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES)
+        );
+        assert!(
+            keyboard_enhancement_flags()
+                .contains(KeyboardEnhancementFlags::REPORT_ALL_KEYS_AS_ESCAPE_CODES)
+        );
     }
 
     #[test]
@@ -2789,6 +3538,87 @@ mod tests {
             ..usage
         };
         assert_eq!(hovered.label(), "│ 15K / 1.0M │");
+    }
+
+    #[test]
+    fn usage_accounting_tracks_latest_context_window_separately_from_session_total() {
+        let mut input = 0;
+        let mut output = 0;
+        let mut turn_total = 0;
+        let mut session_total = 0;
+        let mut context_total = 0;
+
+        record_usage_counters(
+            &mut input,
+            &mut output,
+            &mut turn_total,
+            &mut session_total,
+            &mut context_total,
+            TokenUsage {
+                prompt_tokens: 10_000,
+                completion_tokens: 1_000,
+                total_tokens: 11_000,
+            },
+        );
+        record_usage_counters(
+            &mut input,
+            &mut output,
+            &mut turn_total,
+            &mut session_total,
+            &mut context_total,
+            TokenUsage {
+                prompt_tokens: 10_500,
+                completion_tokens: 1_500,
+                total_tokens: 12_000,
+            },
+        );
+
+        assert_eq!(input, 10_500);
+        assert_eq!(output, 1_500);
+        assert_eq!(turn_total, 12_000);
+        assert_eq!(session_total, 12_000);
+        assert_eq!(context_total, 12_000);
+
+        input = 0;
+        output = 0;
+        turn_total = 0;
+        record_usage_counters(
+            &mut input,
+            &mut output,
+            &mut turn_total,
+            &mut session_total,
+            &mut context_total,
+            TokenUsage {
+                prompt_tokens: 20_000,
+                completion_tokens: 2_000,
+                total_tokens: 22_000,
+            },
+        );
+
+        assert_eq!(session_total, 34_000);
+        assert_eq!(context_total, 22_000);
+    }
+
+    #[test]
+    fn working_status_label_reflects_server_side_compaction() {
+        assert_eq!(working_status_label(false), "Working");
+        assert_eq!(working_status_label(true), "Compacting context");
+    }
+
+    #[test]
+    fn reasoning_token_count_is_extracted_from_provider_metadata() {
+        let metadata = serde_json::json!({
+            "usage": {
+                "output_tokens_details": {
+                    "reasoning_tokens": 2048
+                }
+            }
+        });
+
+        assert_eq!(
+            reasoning_tokens_from_provider_metadata(&metadata),
+            Some(2048)
+        );
     }
 
     #[test]
@@ -2903,11 +3733,11 @@ mod tests {
     }
 
     #[test]
-    fn top_status_animation_interval_is_locked_to_30fps() {
-        assert_eq!(TOP_STATUS_ANIMATION_FPS, 30);
+    fn top_status_animation_interval_is_locked_to_calm_6fps() {
+        assert_eq!(TOP_STATUS_ANIMATION_FPS, 6);
         assert_eq!(
             top_status_animation_interval(),
-            Duration::from_nanos(33_333_333)
+            Duration::from_nanos(166_666_666)
         );
     }
 
@@ -2993,6 +3823,17 @@ mod tests {
     }
 
     #[test]
+    fn pretty_policy_mode_labels_are_human_readable() {
+        assert_eq!(pretty_policy_mode_label(PolicyMode::Default), "Default");
+        assert_eq!(
+            pretty_policy_mode_label(PolicyMode::AcceptEdits),
+            "Accept Edits"
+        );
+        assert_eq!(pretty_policy_mode_label(PolicyMode::Plan), "Plan");
+        assert_eq!(pretty_policy_mode_label(PolicyMode::Bypass), "Bypass");
+    }
+
+    #[test]
     fn policy_mode_styles_are_distinct() {
         for dark in [true, false] {
             let theme = Theme::for_dark_background(dark);
@@ -3029,6 +3870,127 @@ mod tests {
         assert_eq!(queued_prompt_height(1), 2);
         assert_eq!(queued_prompt_height(3), 4);
         assert_eq!(queued_prompt_height(4), 5);
+    }
+
+    #[test]
+    fn mouse_selection_extracts_text_across_rows() {
+        let lines = vec![
+            SelectableLine {
+                row: 2,
+                text: "hello world".to_string(),
+            },
+            SelectableLine {
+                row: 3,
+                text: "second line".to_string(),
+            },
+        ];
+        let selection = MouseSelection {
+            anchor: SelectionPoint { row: 2, column: 6 },
+            cursor: SelectionPoint { row: 3, column: 5 },
+            dragging: true,
+        };
+
+        assert_eq!(
+            selected_text(&lines, &selection).as_deref(),
+            Some("world\nsecond")
+        );
+    }
+
+    #[test]
+    fn mouse_selection_normalizes_reverse_drags() {
+        let lines = vec![SelectableLine {
+            row: 4,
+            text: "abcdef".to_string(),
+        }];
+        let selection = MouseSelection {
+            anchor: SelectionPoint { row: 4, column: 4 },
+            cursor: SelectionPoint { row: 4, column: 1 },
+            dragging: true,
+        };
+
+        assert_eq!(selected_text(&lines, &selection).as_deref(), Some("bcde"));
+    }
+
+    #[test]
+    fn mouse_selection_uses_wrapped_visual_rows() {
+        let text = Text::from(Line::raw("abc def ghi jkl mno"));
+        let area = Rect::new(0, 5, 7, 4);
+
+        let rows = selectable_lines_from_text(&text, area, 0);
+
+        assert_eq!(
+            rows,
+            vec![
+                SelectableLine {
+                    row: 5,
+                    text: "abc def".to_string()
+                },
+                SelectableLine {
+                    row: 6,
+                    text: "ghi jkl".to_string()
+                },
+                SelectableLine {
+                    row: 7,
+                    text: "mno".to_string()
+                },
+            ]
+        );
+
+        let selection = MouseSelection {
+            anchor: SelectionPoint { row: 6, column: 4 },
+            cursor: SelectionPoint { row: 6, column: 6 },
+            dragging: true,
+        };
+        assert_eq!(selected_text(&rows, &selection).as_deref(), Some("jkl"));
+    }
+
+    #[test]
+    fn mouse_selection_highlights_wrapped_visual_rows() {
+        let text = Text::from(Line::raw("abc def ghi jkl mno"));
+        let area = Rect::new(0, 5, 7, 4);
+        let theme = Theme::for_dark_background(true);
+        let selection = MouseSelection {
+            anchor: SelectionPoint { row: 6, column: 4 },
+            cursor: SelectionPoint { row: 6, column: 6 },
+            dragging: true,
+        };
+
+        let highlighted = highlight_selection(text, area, 0, &selection, theme);
+        let row = &highlighted.lines[1];
+
+        assert_eq!(row.spans[4].style, theme.selected());
+        assert_eq!(row.spans[5].style, theme.selected());
+        assert_eq!(row.spans[6].style, theme.selected());
+    }
+
+    #[test]
+    fn mouse_selection_scroll_uses_visual_rows() {
+        let text = Text::from(Line::raw("abc def ghi jkl mno"));
+        let area = Rect::new(0, 5, 7, 2);
+
+        let rows = selectable_lines_from_text(&text, area, 2);
+
+        assert_eq!(
+            rows,
+            vec![SelectableLine {
+                row: 5,
+                text: "mno".to_string()
+            }]
+        );
+    }
+
+    #[test]
+    fn slash_command_menu_height_tracks_visible_matches() {
+        let commands = built_in_command_catalog();
+        let matches = commands.iter().collect::<Vec<_>>();
+
+        assert_eq!(slash_command_menu_height(None::<&[CommandDescriptor]>), 0);
+        assert_eq!(
+            slash_command_menu_height(Some(&[] as &[CommandDescriptor])),
+            0
+        );
+        assert_eq!(slash_command_menu_height(Some(&matches[..1])), 2);
+        assert_eq!(slash_command_menu_height(Some(&matches)), 8);
     }
 
     #[test]

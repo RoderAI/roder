@@ -297,6 +297,58 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn load_session_preserves_provider_metadata_with_encrypted_reasoning() {
+        let base_path =
+            std::env::temp_dir().join(format!("roder-jsonl-session-test-{}", uuid::Uuid::new_v4()));
+        let store = JsonlSessionStore {
+            base_path: base_path.clone(),
+        };
+        let thread_id = "thread-encrypted-reasoning".to_string();
+        let turn_id = "turn-encrypted-reasoning".to_string();
+        let now = OffsetDateTime::UNIX_EPOCH;
+        let metadata = serde_json::json!({
+            "id": "resp_1",
+            "output": [{
+                "id": "rs_1",
+                "type": "reasoning",
+                "encrypted_content": "opaque-thinking-state",
+                "summary": []
+            }]
+        });
+
+        store
+            .create_session(SessionMetadata {
+                thread_id: thread_id.clone(),
+                title: Some("Resume encrypted reasoning".to_string()),
+                workspace: None,
+                provider: Some("openai".to_string()),
+                model: Some("gpt-5.5".to_string()),
+                created_at: now,
+                updated_at: now,
+                message_count: 0,
+            })
+            .await
+            .unwrap();
+        store
+            .append_turn_item(
+                &thread_id,
+                &turn_id,
+                &ConversationItem::ProviderMetadata(metadata.clone()),
+            )
+            .await
+            .unwrap();
+
+        let snapshot = store.load_session(&thread_id).await.unwrap().unwrap();
+
+        assert_eq!(
+            snapshot.turns[0].items[0],
+            ConversationItem::ProviderMetadata(metadata)
+        );
+
+        let _ = fs::remove_dir_all(base_path).await;
+    }
+
+    #[tokio::test]
     async fn load_missing_session_returns_none() {
         let base_path = std::env::temp_dir().join(format!(
             "roder-jsonl-missing-session-test-{}",

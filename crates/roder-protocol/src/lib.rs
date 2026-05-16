@@ -180,6 +180,17 @@ pub struct SessionResolveApprovalResult {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SessionResolveUserInputParams {
+    pub request_id: String,
+    pub answers: serde_json::Value,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SessionResolveUserInputResult {
+    pub resolved: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CommandDescriptor {
     pub name: String,
     pub description: Option<String>,

@@ -189,7 +189,7 @@ default_session_store = "jsonl-session"
 
 The configurator must not write API keys into generated files. Put secrets in environment variables such as `OPENAI_API_KEY`, or reference env-var names in the generated/user `config.toml`.
 
-Web search provider setup is documented in [`docs/roder-web-search-extensions.md`](./docs/roder-web-search-extensions.md).
+Codex/OpenAI hosted web search is enabled by default. External web search provider setup is documented in [`docs/roder-web-search-extensions.md`](./docs/roder-web-search-extensions.md).
 
 Subagent setup for the `task` tool and disk-defined agents is documented in [`docs/roder-subagents.md`](./docs/roder-subagents.md).
 
@@ -203,6 +203,20 @@ edit_tool = "patch" # or "edit"
 `patch` advertises `apply_patch`; `edit` advertises `write_file`, `edit`, and `multi_edit`. Roder never advertises both edit surfaces to a single model request.
 
 The app-server run-control methods are `turns/start`, `turns/steer`, and `turns/interrupt`. `turns/start` and `turns/steer` accept an optional `images` array of `{ "image_url": "data:image/png;base64,..." }` input images; image-capable providers receive those as structured image content instead of appended file-path text. Steering accepts `{ "thread_id": "...", "turn_id": "...", "message": "...", "images": [] }`, emits `turn.steered`, and appends the steering message to the active turn before the next provider request.
+
+`tools/list` exposes the built-in coding tools plus Codex-compatible workflow helpers: `exec_command`, `write_stdin`, `update_plan`, `get_goal`, `create_goal`, `update_goal`, and `request_user_input`. `exec_command` starts a shell session and returns either final output or a `session_id`; `write_stdin` writes to or polls that session. When a model calls `request_user_input`, Roder emits `user_input.requested` and pauses the turn until a client answers with:
+
+```json
+{
+  "method": "session/resolve_user_input",
+  "params": {
+    "request_id": "user-input-1",
+    "answers": { "mode": "Safe" }
+  }
+}
+```
+
+The response is `{ "resolved": true }` when the request was pending. Roder then emits `user_input.resolved`, returns the answers to the model as the tool result, and continues the turn.
 
 A more complete quick-start (configuration, providers, session resume, app-server transports, MCP) will land alongside the corresponding roadmap phases.
 

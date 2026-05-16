@@ -130,6 +130,122 @@ async fn policy_plan_mode_denial_skips_tool_executor() {
     assert!(seen_modes.lock().unwrap().is_empty());
 }
 
+#[tokio::test]
+async fn policy_default_mode_process_waits_for_approval_before_executing() {
+    let seen_modes = Arc::new(Mutex::new(Vec::new()));
+    let runtime = runtime_with_policy(
+        PolicyMode::Default,
+        "process.spawn",
+        json!({ "cmd": "cargo test" }),
+        seen_modes.clone(),
+    );
+    let mut events = runtime.subscribe_events();
+
+    runtime
+        .start_turn(StartTurnRequest {
+            thread_id: "thread-approval".to_string(),
+            message: "run command".to_string(),
+            images: Vec::new(),
+            provider_override: None,
+            model_override: None,
+            instructions: default_instructions(),
+        })
+        .await
+        .unwrap();
+
+    let approval_id = loop {
+        let envelope = tokio::time::timeout(Duration::from_secs(2), events.recv())
+            .await
+            .unwrap()
+            .unwrap();
+        if let RoderEvent::ApprovalRequested(event) = envelope.event {
+            assert_eq!(event.tool_name, "process.spawn");
+            break event.approval_id;
+        }
+    };
+
+    assert!(seen_modes.lock().unwrap().is_empty());
+
+    runtime
+        .resolve_tool_approval(&approval_id, true)
+        .await
+        .unwrap();
+
+    loop {
+        let envelope = tokio::time::timeout(Duration::from_secs(2), events.recv())
+            .await
+            .unwrap()
+            .unwrap();
+        if matches!(envelope.event, RoderEvent::TurnCompleted(_)) {
+            break;
+        }
+    }
+
+    assert_eq!(*seen_modes.lock().unwrap(), vec![PolicyMode::Default]);
+}
+
+#[tokio::test]
+async fn switching_to_accept_edits_auto_approves_pending_write_tool() {
+    let seen_modes = Arc::new(Mutex::new(Vec::new()));
+    let runtime = runtime_with_policy(
+        PolicyMode::Default,
+        "write_file",
+        json!({ "path": "src/lib.rs", "content": "updated" }),
+        seen_modes.clone(),
+    );
+    let mut events = runtime.subscribe_events();
+
+    runtime
+        .start_turn(StartTurnRequest {
+            thread_id: "thread-live-approval".to_string(),
+            message: "write file".to_string(),
+            images: Vec::new(),
+            provider_override: None,
+            model_override: None,
+            instructions: default_instructions(),
+        })
+        .await
+        .unwrap();
+
+    let approval_id = loop {
+        let envelope = tokio::time::timeout(Duration::from_secs(2), events.recv())
+            .await
+            .unwrap()
+            .unwrap();
+        if let RoderEvent::ApprovalRequested(event) = envelope.event {
+            assert_eq!(event.tool_name, "write_file");
+            break event.approval_id;
+        }
+    };
+
+    assert!(seen_modes.lock().unwrap().is_empty());
+    runtime
+        .set_policy_mode(
+            PolicyMode::AcceptEdits,
+            Some("test mode switch".to_string()),
+        )
+        .await
+        .unwrap();
+
+    let mut saw_auto_approval_resolution = false;
+    loop {
+        let envelope = tokio::time::timeout(Duration::from_secs(2), events.recv())
+            .await
+            .unwrap()
+            .unwrap();
+        match envelope.event {
+            RoderEvent::ApprovalResolved(event) => {
+                saw_auto_approval_resolution = event.approval_id == approval_id && event.approved;
+            }
+            RoderEvent::TurnCompleted(_) => break,
+            _ => {}
+        }
+    }
+
+    assert!(saw_auto_approval_resolution);
+    assert_eq!(*seen_modes.lock().unwrap(), vec![PolicyMode::AcceptEdits]);
+}
+
 fn runtime_with_policy(
     policy_mode: PolicyMode,
     tool_name: &'static str,
