@@ -19,7 +19,7 @@ use roder_protocol::{
     SessionGetResult, SessionResolveApprovalParams, SessionResolveApprovalResult,
     SessionSetModeParams, SessionSetModeResult, SessionsListResult, StartTurnParams,
     StartTurnResult, SystemStatusResult, TasksGetParams, TasksGetResult, TasksSubmitParams,
-    TasksSubmitResult, ToolsListResult,
+    TasksSubmitResult, ToolsListResult, TranscriptOpenFileParams, TranscriptOpenFileResult,
 };
 use std::{path::PathBuf, sync::Arc, time::Duration};
 use time::OffsetDateTime;
@@ -511,6 +511,46 @@ async fn tools_list_exposes_default_coding_tools() {
             names.contains(&expected.to_string()),
             "tools/list should expose {expected}: {names:?}"
         );
+    }
+}
+
+#[tokio::test]
+async fn transcript_open_file_emits_app_server_event() {
+    let runtime = Arc::new(Runtime::fake().unwrap());
+    let server = Arc::new(AppServer::new(runtime));
+    let client = LocalAppClient::new(server);
+    let mut events = client.subscribe_events();
+
+    let opened: TranscriptOpenFileResult = request(
+        &client,
+        "transcript/open_file",
+        Some(
+            serde_json::to_value(TranscriptOpenFileParams {
+                thread_id: "thread-open-file".to_string(),
+                path: "crates/roder-tui/src/app.rs".to_string(),
+                line: Some(42),
+            })
+            .unwrap(),
+        ),
+    )
+    .await;
+    assert!(opened.requested);
+
+    let envelope = tokio::time::timeout(Duration::from_secs(2), events.recv())
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(envelope.kind, "transcript.open_file_requested");
+    assert_eq!(envelope.source, roder_api::events::EventSource::AppServer);
+    assert_eq!(envelope.thread_id.as_deref(), Some("thread-open-file"));
+    assert_eq!(envelope.turn_id, None);
+    match envelope.event {
+        roder_api::events::RoderEvent::TranscriptOpenFileRequested(event) => {
+            assert_eq!(event.thread_id, "thread-open-file");
+            assert_eq!(event.path, "crates/roder-tui/src/app.rs");
+            assert_eq!(event.line, Some(42));
+        }
+        other => panic!("unexpected event: {other:?}"),
     }
 }
 

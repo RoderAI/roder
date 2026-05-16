@@ -1,3 +1,5 @@
+mod transcript;
+
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::{path::PathBuf, sync::Arc};
 
@@ -149,6 +151,12 @@ impl AppServer {
             }
             "tasks/subscribe" => {
                 Ok(serde_json::to_value(TasksSubscribeResult { subscribed: true }).unwrap())
+            }
+            "transcript/open_file" => {
+                self.decode_and(req.params, |p| async move {
+                    self.handle_transcript_open_file(p).await
+                })
+                .await
             }
             _ => Err(JsonRpcError {
                 code: -32601,

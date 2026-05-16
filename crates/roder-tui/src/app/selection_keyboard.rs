@@ -16,8 +16,11 @@ impl SelectionKeyboardState {
         let Some(text) = self.last_selection_text() else {
             return Ok(None);
         };
-        let text = text.to_string();
-        if copy_selection(&mut self.clipboard, &text)? {
+        self.copy_text(&text.to_string())
+    }
+
+    pub(super) fn copy_text(&mut self, text: &str) -> anyhow::Result<Option<usize>> {
+        if copy_selection(&mut self.clipboard, text)? {
             return Ok(Some(text.chars().count()));
         }
         Ok(None)
@@ -69,5 +72,16 @@ mod tests {
 
         assert_eq!(state.copy_last_selection().unwrap(), Some(13));
         assert_eq!(state.paste_text(), Some("selected text"));
+    }
+
+    #[test]
+    fn explicit_text_copy_is_available_for_paste() {
+        let mut state = SelectionKeyboardState::default();
+
+        assert_eq!(
+            state.copy_text("https://example.com").unwrap(),
+            Some("https://example.com".len())
+        );
+        assert_eq!(state.paste_text(), Some("https://example.com"));
     }
 }
