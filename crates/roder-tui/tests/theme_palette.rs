@@ -17,11 +17,10 @@ use std::fs;
 use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use roder_tui::palette::sources::theme_source;
 use roder_tui::palette::PaletteAction;
+use roder_tui::palette::sources::theme_source;
 use roder_tui::theme::{
-    apply_theme, discover_themes, read_active_theme,
-    state::read_active_theme_from, ThemeEntry,
+    ThemeEntry, apply_theme, discover_themes, read_active_theme, state::read_active_theme_from,
 };
 
 fn repo_themes_dir() -> PathBuf {

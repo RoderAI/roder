@@ -19,7 +19,10 @@ pub struct PaletteItem {
 pub enum PaletteAction {
     SendCommand(String),
     SwitchSession(ThreadId),
-    SwitchModel { provider: String, model: String },
+    SwitchModel {
+        provider: String,
+        model: String,
+    },
     SetPolicyMode(PolicyMode),
     SetWebSearchMode(HostedWebSearchMode),
     InsertComposerText(String),

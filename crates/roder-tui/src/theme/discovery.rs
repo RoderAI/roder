@@ -90,7 +90,10 @@ pub fn load_overrides(path: &Path) -> Option<ThemeOverrides> {
 
 /// End-to-end: discover, pick active, parse. Returns `None` if anything fails;
 /// callers should fall back to the compiled-in defaults.
-pub fn load_active_theme(directories: &[PathBuf], config_active: Option<&str>) -> Option<ThemeOverrides> {
+pub fn load_active_theme(
+    directories: &[PathBuf],
+    config_active: Option<&str>,
+) -> Option<ThemeOverrides> {
     let entries = discover_themes(directories);
     let entry = active_theme(&entries, config_active)?;
     load_overrides(&entry.path)

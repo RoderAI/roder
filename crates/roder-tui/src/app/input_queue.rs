@@ -38,6 +38,10 @@ impl PromptQueue {
         Some(self.items.remove(0))
     }
 
+    pub fn pop_back(&mut self) -> Option<PendingPrompt> {
+        self.items.pop()
+    }
+
     pub fn is_empty(&self) -> bool {
         self.items.is_empty()
     }
@@ -82,5 +86,23 @@ mod tests {
         assert_eq!(queue.pop_front().unwrap().message, "first message");
         assert_eq!(queue.pop_front().unwrap().message, "second message");
         assert!(queue.pop_front().is_none());
+    }
+
+    #[test]
+    fn queue_allows_editing_latest_prompt_first() {
+        let mut queue = PromptQueue::default();
+        queue.push(PendingPrompt::with_images(
+            "first",
+            "first message",
+            Vec::new(),
+        ));
+        queue.push(PendingPrompt::with_images(
+            "second",
+            "second message",
+            Vec::new(),
+        ));
+
+        assert_eq!(queue.pop_back().unwrap().message, "second message");
+        assert_eq!(queue.pop_front().unwrap().message, "first message");
     }
 }

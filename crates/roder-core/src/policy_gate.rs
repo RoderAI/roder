@@ -63,57 +63,37 @@ fn matching_rule(config: &PolicyModeConfig, tool_name: &str) -> Option<String> {
 }
 
 fn looks_like_side_effect(call: &ToolCall) -> bool {
-    looks_like_write(call) || looks_like_process(call) || looks_like_network(call)
+    looks_like_write(call) || looks_like_process(call)
 }
 
 fn looks_like_write(call: &ToolCall) -> bool {
-    contains_any_signal(
+    tool_name_contains_any(
         call,
         &[
-            "fs.write",
-            "fs.edit",
-            "fs.multi_edit",
-            "write",
-            "edit",
-            "patch",
-            "delete",
-            "mkdir",
-            "move",
-            "rename",
+            "write", "edit", "patch", "delete", "mkdir", "move", "rename",
         ],
     )
 }
 
 fn looks_like_process(call: &ToolCall) -> bool {
-    contains_any_signal(
+    tool_name_contains_any(
         call,
         &[
-            "process.spawn",
-            "process",
-            "spawn",
-            "shell",
-            "bash",
-            "exec",
-            "terminal",
-            "command",
+            "process", "spawn", "shell", "bash", "exec", "terminal", "command",
         ],
     )
 }
 
 fn looks_like_network(call: &ToolCall) -> bool {
-    contains_any_signal(
+    tool_name_contains_any(
         call,
         &["network", "web_search", "fetch", "download", "http", "url"],
     )
 }
 
-fn contains_any_signal(call: &ToolCall, signals: &[&str]) -> bool {
+fn tool_name_contains_any(call: &ToolCall, signals: &[&str]) -> bool {
     let name = call.name.to_ascii_lowercase();
-    if signals.iter().any(|signal| name.contains(signal)) {
-        return true;
-    }
-    let arguments = call.arguments.to_string().to_ascii_lowercase();
-    signals.iter().any(|signal| arguments.contains(signal))
+    signals.iter().any(|signal| name.contains(signal))
 }
 
 #[cfg(test)]
@@ -125,7 +105,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn plan_mode_denies_write_like_arguments_even_with_benign_tool_name() {
+    fn plan_mode_allows_read_like_tool_with_write_like_arguments() {
         let decision = DefaultPolicyGate::new().decide(
             &call(
                 "read_metadata",
@@ -135,7 +115,65 @@ mod tests {
             &context(),
         );
 
+        assert!(matches!(decision, PolicyDecision::Allowed));
+    }
+
+    #[test]
+    fn grep_query_containing_destructive_words_is_allowed() {
+        let decision = DefaultPolicyGate::new().decide(
+            &call(
+                "grep",
+                json!({ "query": "edit command patch", "path": "." }),
+            ),
+            PolicyMode::Default,
+            &context(),
+        );
+
+        assert!(matches!(decision, PolicyDecision::Allowed));
+    }
+
+    #[test]
+    fn plan_mode_denies_write_tool_name() {
+        let decision = DefaultPolicyGate::new().decide(
+            &call("fs.write", json!({ "path": "src/lib.rs" })),
+            PolicyMode::Plan,
+            &context(),
+        );
+
         assert!(matches!(decision, PolicyDecision::Denied { .. }));
+    }
+
+    #[test]
+    fn plan_mode_denies_shell_tool_name() {
+        let decision = DefaultPolicyGate::new().decide(
+            &call("shell", json!({ "command": "cargo test" })),
+            PolicyMode::Plan,
+            &context(),
+        );
+
+        assert!(matches!(decision, PolicyDecision::Denied { .. }));
+    }
+
+    #[test]
+    fn default_mode_shell_still_requires_approval() {
+        let decision = DefaultPolicyGate::new().decide(
+            &call("shell", json!({ "command": "cargo test" })),
+            PolicyMode::Default,
+            &context(),
+        );
+
+        assert!(matches!(decision, PolicyDecision::RequiresApproval { .. }));
+    }
+
+    #[test]
+    fn default_mode_edit_still_requires_approval() {
+        let decision = DefaultPolicyGate::new().decide(
+            &call("fs.edit", json!({ "path": "src/lib.rs" })),
+            PolicyMode::Default,
+            &context(),
+        );
+
+        assert!(matches!(decision, PolicyDecision::RequiresApproval { .. }));
     }
 
     #[test]

@@ -122,10 +122,7 @@ impl ThemeOverrides {
 /// the style map) or the `background` variable on `:root`. `Color::Reset`
 /// (which `parse_color` returns for `transparent` / `reset`) collapses back
 /// to `None` so renderers know to skip painting.
-fn resolve_body_background(
-    style_map: &StyleMap,
-    colors: &[(String, Color)],
-) -> Option<Color> {
+fn resolve_body_background(style_map: &StyleMap, colors: &[(String, Color)]) -> Option<Color> {
     let computed = style_map.computed(&roder_theme::StyledNode::container().id("body"));
     if let Some(c) = computed.background {
         return (c != Color::Reset).then_some(c);
@@ -142,10 +139,7 @@ fn resolve_body_background(
 /// 1. `#body` computed style — the "DOM-ish" form.
 /// 2. `:root { border-style: ... }` / `border-radius` / `border` shorthand,
 ///    captured by the parser as synthetic variables of the same name.
-fn resolve_border_shape(
-    style_map: &StyleMap,
-    sheet: &Stylesheet,
-) -> Option<BorderShape> {
+fn resolve_border_shape(style_map: &StyleMap, sheet: &Stylesheet) -> Option<BorderShape> {
     let computed = style_map.computed(&roder_theme::StyledNode::container().id("body"));
     if let Some(s) = computed.border {
         return Some(s);

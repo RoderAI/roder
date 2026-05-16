@@ -7,7 +7,9 @@ use ratatui::{
 use super::super::Theme;
 use super::markdown::markdown_lines;
 use super::patch_preview::{tool_diff_preview, tool_diff_preview_lines};
-use super::{TimelineItem, TimelineItemKind, ToolTimelineStatus, ToolTimelineTool};
+use super::{
+    TimelineItem, TimelineItemKind, ToolTimelineStatus, ToolTimelineTool, reasoning_visible_body,
+};
 
 impl TimelineItem {
     pub(super) fn render(
@@ -31,17 +33,22 @@ impl TimelineItem {
                 item_style(theme.text(), selected, theme),
                 theme,
             ),
-            TimelineItemKind::Reasoning(text) => push_body_lines(
-                lines,
-                "Thinking: ",
-                text,
-                theme.accent_soft().add_modifier(Modifier::ITALIC),
-                item_style(
-                    theme.muted().add_modifier(Modifier::ITALIC),
-                    selected,
-                    theme,
-                ),
-            ),
+            TimelineItemKind::Reasoning(text) => {
+                let body = reasoning_visible_body(text);
+                if !body.trim().is_empty() {
+                    push_body_lines(
+                        lines,
+                        "Thinking: ",
+                        &body,
+                        theme.accent_soft().add_modifier(Modifier::ITALIC),
+                        item_style(
+                            theme.muted().add_modifier(Modifier::ITALIC),
+                            selected,
+                            theme,
+                        ),
+                    );
+                }
+            }
             TimelineItemKind::System(text) => push_body_lines(
                 lines,
                 "    ",

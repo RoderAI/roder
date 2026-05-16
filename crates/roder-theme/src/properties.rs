@@ -251,16 +251,25 @@ mod tests {
     fn parses_border_shorthand_pairs() {
         assert_eq!(
             parse_border_shorthand("rounded #ffcc00"),
-            (Some(BorderShape::Rounded), Some(Color::Rgb(0xff, 0xcc, 0x00)))
+            (
+                Some(BorderShape::Rounded),
+                Some(Color::Rgb(0xff, 0xcc, 0x00))
+            )
         );
         assert_eq!(
             parse_border_shorthand("solid"),
             (Some(BorderShape::Plain), None)
         );
-        assert_eq!(parse_border_shorthand("none"), (Some(BorderShape::None), None));
+        assert_eq!(
+            parse_border_shorthand("none"),
+            (Some(BorderShape::None), None)
+        );
         assert_eq!(
             parse_border_shorthand("#abcdef double"),
-            (Some(BorderShape::Double), Some(Color::Rgb(0xab, 0xcd, 0xef)))
+            (
+                Some(BorderShape::Double),
+                Some(Color::Rgb(0xab, 0xcd, 0xef))
+            )
         );
         assert_eq!(parse_border_shorthand("garbage"), (None, None));
     }

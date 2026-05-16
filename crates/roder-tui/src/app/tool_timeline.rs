@@ -188,6 +188,13 @@ impl TimelineState {
         self.push_item(TimelineItemKind::Reasoning(text.to_string()));
     }
 
+    pub fn latest_reasoning_heading(&self) -> Option<String> {
+        self.items.iter().rev().find_map(|item| match &item.kind {
+            TimelineItemKind::Reasoning(text) => reasoning_heading(text),
+            _ => None,
+        })
+    }
+
     pub fn push_system(&mut self, text: impl Into<String>) {
         self.push_item(TimelineItemKind::System(text.into()));
     }
@@ -569,6 +576,7 @@ impl TimelineState {
         let visible_tools = self.visible_tool_indices();
         let hidden_tool_count = self.hidden_tool_count();
         let overflow_insert_index = visible_tools.first().copied();
+        let latest_reasoning_index = self.latest_reasoning_index();
         for (index, item) in self.items.iter().enumerate() {
             if Some(index) == overflow_insert_index && hidden_tool_count > 0 {
                 let line_start = lines.len();
@@ -598,7 +606,7 @@ impl TimelineState {
             // Honor `display: none` for `.timeline-thinking`. This is the
             // headline RFC demo — themes like minimal.css hide the model's
             // chain-of-thought.
-            if matches!(item.kind, TimelineItemKind::Reasoning(_)) && theme.hide_thinking {
+            if !item_is_visible(item, index, latest_reasoning_index, theme.hide_thinking) {
                 continue;
             }
             let line_start = lines.len();
@@ -616,7 +624,12 @@ impl TimelineState {
             );
             visual_row =
                 map_rendered_lines(&lines, line_start, visual_row, width, index, &mut row_items);
-            if self.should_separate_visible_item(index, &visible_tools) {
+            if self.should_separate_visible_item(
+                index,
+                &visible_tools,
+                latest_reasoning_index,
+                theme.hide_thinking,
+            ) {
                 lines.push(Line::raw(""));
                 visual_row += 1;
             }
@@ -654,14 +667,37 @@ impl TimelineState {
             .saturating_sub(TOOL_COLLAPSE_LIMIT)
     }
 
-    fn should_separate_visible_item(&self, index: usize, visible_tools: &[usize]) -> bool {
-        let Some(next_index) = self.next_visible_index(index, visible_tools) else {
+    fn latest_reasoning_index(&self) -> Option<usize> {
+        self.items.iter().rposition(|item| {
+            matches!(
+                item.kind,
+                TimelineItemKind::Reasoning(ref text) if !reasoning_visible_body(text).trim().is_empty()
+            )
+        })
+    }
+
+    fn should_separate_visible_item(
+        &self,
+        index: usize,
+        visible_tools: &[usize],
+        latest_reasoning_index: Option<usize>,
+        hide_thinking: bool,
+    ) -> bool {
+        let Some(next_index) =
+            self.next_visible_index(index, visible_tools, latest_reasoning_index, hide_thinking)
+        else {
             return false;
         };
         should_separate_items(&self.items[index], &self.items[next_index])
     }
 
-    fn next_visible_index(&self, index: usize, visible_tools: &[usize]) -> Option<usize> {
+    fn next_visible_index(
+        &self,
+        index: usize,
+        visible_tools: &[usize],
+        latest_reasoning_index: Option<usize>,
+        hide_thinking: bool,
+    ) -> Option<usize> {
         self.items
             .iter()
             .enumerate()
@@ -671,6 +707,9 @@ impl TimelineState {
                     && !self.show_all_tools
                     && !visible_tools.contains(&candidate)
                 {
+                    return None;
+                }
+                if !item_is_visible(item, candidate, latest_reasoning_index, hide_thinking) {
                     return None;
                 }
                 Some(candidate)
@@ -771,6 +810,47 @@ fn item_is_selectable(item: &TimelineItem) -> bool {
         item.kind,
         TimelineItemKind::Tool(_) | TimelineItemKind::Shell(_)
     )
+}
+
+fn item_is_visible(
+    item: &TimelineItem,
+    index: usize,
+    latest_reasoning_index: Option<usize>,
+    hide_thinking: bool,
+) -> bool {
+    match item.kind {
+        TimelineItemKind::Reasoning(_) => !hide_thinking && Some(index) == latest_reasoning_index,
+        _ => true,
+    }
+}
+
+fn reasoning_heading(text: &str) -> Option<String> {
+    text.lines()
+        .find(|line| !line.trim().is_empty())
+        .and_then(parse_bold_heading_line)
+}
+
+pub(super) fn reasoning_visible_body(text: &str) -> String {
+    let lines = text.lines().collect::<Vec<_>>();
+    let Some(heading_index) = lines.iter().position(|line| !line.trim().is_empty()) else {
+        return String::new();
+    };
+    if parse_bold_heading_line(lines[heading_index]).is_none() {
+        return text.to_string();
+    }
+    let body_start = lines
+        .iter()
+        .enumerate()
+        .skip(heading_index + 1)
+        .find_map(|(index, line)| (!line.trim().is_empty()).then_some(index))
+        .unwrap_or(lines.len());
+    lines[body_start..].join("\n")
+}
+
+fn parse_bold_heading_line(line: &str) -> Option<String> {
+    let trimmed = line.trim();
+    let inner = trimmed.strip_prefix("**")?.strip_suffix("**")?.trim();
+    (!inner.is_empty()).then(|| inner.to_string())
 }
 
 fn should_separate_items(current: &TimelineItem, next: &TimelineItem) -> bool {

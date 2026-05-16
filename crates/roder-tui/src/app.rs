@@ -47,7 +47,8 @@ use roder_protocol::{
     ProviderSelectParams, ProviderSelectResult, ProvidersListResult, SessionExitPlanParams,
     SessionExitPlanResult, SessionGetResult, SessionResolveApprovalParams,
     SessionResolveApprovalResult, SessionSetModeParams, SessionSetModeResult, SettingsGetResult,
-    SettingsSetWebSearchParams, SettingsSetWebSearchResult, StartTurnParams, SteerTurnParams,
+    SettingsSetDefaultModeParams, SettingsSetDefaultModeResult, SettingsSetWebSearchParams,
+    SettingsSetWebSearchResult, StartTurnParams, SteerTurnParams,
 };
 use tokio::io::AsyncWriteExt;
 use tokio::process::Command;
@@ -291,7 +292,8 @@ impl Theme {
     /// `.roder/themes/` directory, or the repo's `themes/` directory.
     fn for_terminal_themed() -> Self {
         let base = Self::for_terminal();
-        match crate::theme::load_active_theme(&crate::theme::discovery::default_directories(), None) {
+        match crate::theme::load_active_theme(&crate::theme::discovery::default_directories(), None)
+        {
             Some(overrides) => base.apply_overrides(&overrides),
             None => base,
         }
@@ -505,6 +507,7 @@ enum ProviderPopupScreen {
     Providers,
     Models,
     Reasoning,
+    Settings,
     Spinner,
     WebSearch,
     Themes,
@@ -657,9 +660,11 @@ fn is_dialog_menu_next_key(key: KeyEvent) -> bool {
 enum ProviderMenuItem {
     Models,
     Providers,
+    Settings,
     SpinnerSettings,
     WebSearchSettings,
     ThemesSettings,
+    DefaultMode(PolicyMode),
     Spinner(WorkingSpinner),
     WebSearchMode(HostedWebSearchMode),
     Provider(ProviderChoice),
@@ -691,14 +696,22 @@ fn active_turn_prompt_shortcut(
     }
 }
 
+fn composer_queue_key(key: KeyEvent, has_prepared_prompt: bool) -> bool {
+    has_prepared_prompt && key.modifiers == KeyModifiers::NONE && key.code == KeyCode::Tab
+}
+
 impl ProviderMenuItem {
     fn label(&self) -> String {
         match self {
             Self::Models => "Models".to_string(),
             Self::Providers => "Providers".to_string(),
+            Self::Settings => "Settings".to_string(),
             Self::SpinnerSettings => "Working spinner".to_string(),
             Self::WebSearchSettings => "Web search provider".to_string(),
             Self::ThemesSettings => "Themes".to_string(),
+            Self::DefaultMode(mode) => {
+                format!("Default mode: {}", settings_policy_mode_label(*mode))
+            }
             Self::Spinner(spinner) => spinner.label().to_string(),
             Self::WebSearchMode(mode) => web_search_mode_label(*mode).to_string(),
             Self::Provider(provider) => provider.label(),
@@ -998,6 +1011,13 @@ impl TuiApp {
                                 _ => {}
                             }
                         } else {
+                            if self.handle_slash_command_key(key).await {
+                                continue;
+                            }
+                            if composer_queue_key(key, self.has_prepared_prompt()) {
+                                self.queue_current_prompt();
+                                continue;
+                            }
                             if self.active_turn_id.is_some()
                                 && let Some(shortcut) =
                                     active_turn_prompt_shortcut(key, self.has_prepared_prompt())
@@ -1012,7 +1032,8 @@ impl TuiApp {
                                 }
                                 continue;
                             }
-                            if self.handle_slash_command_key(key).await {
+                            if key.code == KeyCode::Up && self.can_edit_queued_prompt() {
+                                self.edit_latest_queued_prompt();
                                 continue;
                             }
                             if key.code == KeyCode::Tab {
@@ -1695,6 +1716,29 @@ impl TuiApp {
         self.push_event(queue_status(self.queued_prompts.len()));
     }
 
+    fn can_edit_queued_prompt(&self) -> bool {
+        self.timeline.focus() == TimelineFocus::Composer
+            && composer_text(&self.composer).trim().is_empty()
+            && !self.queued_prompts.is_empty()
+    }
+
+    fn edit_latest_queued_prompt(&mut self) -> bool {
+        let Some(pending) = self.queued_prompts.pop_back() else {
+            return false;
+        };
+        if !pending.images.is_empty() {
+            self.queued_prompts.push(pending);
+            self.record_error("queued image prompts cannot be edited in place yet.".to_string());
+            return false;
+        }
+        self.composer = composer_textarea(self.theme);
+        self.composer.insert_str(pending.message);
+        self.slash_command_selection = 0;
+        self.timeline.focus_composer();
+        self.push_event(queue_status(self.queued_prompts.len()));
+        true
+    }
+
     async fn submit_next_queued_prompt(&mut self) {
         if let Some(next) = self.queued_prompts.pop_front() {
             self.start_prepared_prompt(next).await;
@@ -1874,10 +1918,7 @@ impl TuiApp {
             // Theme opted out of transparency — paint the whole frame so
             // subsequent widgets (which mostly use Style::default()) sit on
             // the themed surface instead of the terminal's native background.
-            f.render_widget(
-                Block::default().style(Style::default().bg(bg)),
-                area,
-            );
+            f.render_widget(Block::default().style(Style::default().bg(bg)), area);
         }
         style_composer_for_current_mode(&mut self.composer, self.theme, self.policy_mode);
         let event_height = event_log_height(self.show_event_log, self.events.len());
@@ -1995,7 +2036,10 @@ impl TuiApp {
 
     fn working_line(&self) -> Paragraph<'static> {
         let elapsed = self.active_turn_timer.elapsed(Instant::now());
-        let status = working_status_label(self.compaction_active);
+        let status = self
+            .timeline
+            .latest_reasoning_heading()
+            .unwrap_or_else(|| working_status_label(self.compaction_active).to_string());
         Paragraph::new(Line::from(vec![
             Span::styled(
                 format!(
@@ -2300,6 +2344,7 @@ impl TuiApp {
                 .map(|item| {
                     let marker = match item {
                         ProviderMenuItem::Provider(provider) if provider.authenticated => "✓ ",
+                        ProviderMenuItem::DefaultMode(mode) if *mode == self.policy_mode => "✓ ",
                         ProviderMenuItem::Spinner(spinner) if *spinner == self.working_spinner => {
                             "✓ "
                         }
@@ -2313,6 +2358,7 @@ impl TuiApp {
                         }
                         ProviderMenuItem::Models
                         | ProviderMenuItem::Providers
+                        | ProviderMenuItem::Settings
                         | ProviderMenuItem::SpinnerSettings
                         | ProviderMenuItem::WebSearchSettings
                         | ProviderMenuItem::ThemesSettings
@@ -2332,6 +2378,7 @@ impl TuiApp {
             ProviderPopupScreen::Providers => " Providers (Enter select, Esc back) ",
             ProviderPopupScreen::Models => " Models (Enter select, Esc back) ",
             ProviderPopupScreen::Reasoning => " Reasoning effort (Enter select, Esc back) ",
+            ProviderPopupScreen::Settings => " Settings (Enter select, Esc back) ",
             ProviderPopupScreen::Spinner => " Working spinner (Enter select, Esc back) ",
             ProviderPopupScreen::WebSearch => " Web search provider (Enter select, Esc back) ",
             ProviderPopupScreen::Themes => " Themes (Enter select, Esc back) ",
@@ -2452,6 +2499,37 @@ impl TuiApp {
         }
     }
 
+    async fn set_default_mode(&mut self, mode: PolicyMode) {
+        let res = self
+            .client
+            .send_request(JsonRpcRequest {
+                jsonrpc: "2.0".to_string(),
+                id: Some(serde_json::json!("settings/set_default_mode")),
+                method: "settings/set_default_mode".to_string(),
+                params: Some(serde_json::to_value(SettingsSetDefaultModeParams { mode }).unwrap()),
+            })
+            .await;
+
+        match decode_response::<SettingsSetDefaultModeResult>(res) {
+            Ok(result) => {
+                self.policy_mode = result.default_mode;
+                self.timeline.push_system(format!(
+                    "default mode set to {}.",
+                    policy_mode_label(result.default_mode)
+                ));
+                self.push_event(format!(
+                    "default mode selected: {}",
+                    policy_mode_label(result.default_mode)
+                ));
+                self.show_provider_popup = false;
+            }
+            Err(err) => {
+                self.record_error(format!("failed to set default mode: {err}"));
+                self.show_provider_popup = false;
+            }
+        }
+    }
+
     fn close_or_back_provider_popup(&mut self) {
         if !self.provider_menu_filter.is_empty() {
             self.provider_menu_filter.clear();
@@ -2461,6 +2539,12 @@ impl TuiApp {
         }
         if self.provider_popup_screen == ProviderPopupScreen::Reasoning {
             self.open_models_submenu();
+            return;
+        }
+        if self.provider_popup_screen == ProviderPopupScreen::Settings {
+            self.provider_popup_screen = ProviderPopupScreen::Main;
+            self.provider_menu_items = main_provider_menu_items(&self.provider_choices);
+            self.provider_state.select(Some(0));
             return;
         }
         if self.provider_popup_screen == ProviderPopupScreen::Spinner {
@@ -2539,6 +2623,9 @@ impl TuiApp {
             ProviderMenuItem::Providers => {
                 self.open_providers_submenu();
             }
+            ProviderMenuItem::Settings => {
+                self.open_settings_submenu();
+            }
             ProviderMenuItem::SpinnerSettings => {
                 self.open_spinner_submenu();
             }
@@ -2556,6 +2643,9 @@ impl TuiApp {
             }
             ProviderMenuItem::WebSearchMode(mode) => {
                 self.set_web_search_mode(mode).await;
+            }
+            ProviderMenuItem::DefaultMode(mode) => {
+                self.set_default_mode(mode).await;
             }
             ProviderMenuItem::Provider(provider) => {
                 self.select_provider(provider).await;
@@ -2615,6 +2705,27 @@ impl TuiApp {
         }
     }
 
+    fn open_settings_submenu(&mut self) {
+        self.provider_popup_screen = ProviderPopupScreen::Settings;
+        self.provider_menu_filter.clear();
+        self.provider_menu_items = [
+            PolicyMode::Default,
+            PolicyMode::AcceptAll,
+            PolicyMode::Plan,
+            PolicyMode::Bypass,
+        ]
+        .into_iter()
+        .map(ProviderMenuItem::DefaultMode)
+        .chain(std::iter::once(ProviderMenuItem::Back))
+        .collect();
+        let selected = self
+            .provider_menu_items
+            .iter()
+            .position(|item| matches!(item, ProviderMenuItem::DefaultMode(mode) if *mode == self.policy_mode))
+            .unwrap_or(0);
+        self.provider_state.select(Some(selected));
+    }
+
     fn open_spinner_submenu(&mut self) {
         self.provider_popup_screen = ProviderPopupScreen::Spinner;
         self.provider_menu_filter.clear();
@@ -2656,8 +2767,7 @@ impl TuiApp {
         // snapshot when arriving from a non-Themes screen — re-entering
         // shouldn't clobber the original baseline.
         if self.provider_popup_screen != ProviderPopupScreen::Themes {
-            self.theme_preview_baseline =
-                Some((self.theme.clone(), self.active_theme_id.clone()));
+            self.theme_preview_baseline = Some((self.theme, self.active_theme_id.clone()));
         }
         self.provider_popup_screen = ProviderPopupScreen::Themes;
         self.provider_menu_filter.clear();
@@ -2714,7 +2824,7 @@ impl TuiApp {
     /// Back row). For the final teardown use [`Self::cancel_theme_preview`].
     fn revert_theme_preview_in_place(&mut self) {
         if let Some((theme, id)) = &self.theme_preview_baseline {
-            self.theme = theme.clone();
+            self.theme = *theme;
             self.active_theme_id = id.clone();
         }
     }
@@ -2740,8 +2850,7 @@ impl TuiApp {
             Ok(overrides) => {
                 self.theme = Theme::for_terminal().with_overrides(&overrides);
                 self.active_theme_id = Some(id.clone());
-                self.timeline
-                    .push_system(format!("theme set to {id}."));
+                self.timeline.push_system(format!("theme set to {id}."));
                 self.push_event(format!("theme applied: {id}"));
                 // Commit: drop the baseline so any subsequent Esc out of a
                 // different screen doesn't snap back to the previous theme.
@@ -3759,6 +3868,7 @@ fn main_provider_menu_items(providers: &[ProviderChoice]) -> Vec<ProviderMenuIte
     vec![
         ProviderMenuItem::Models,
         ProviderMenuItem::Providers,
+        ProviderMenuItem::Settings,
         ProviderMenuItem::WebSearchSettings,
         ProviderMenuItem::SpinnerSettings,
         ProviderMenuItem::ThemesSettings,
@@ -3882,6 +3992,15 @@ fn pretty_policy_mode_label(mode: PolicyMode) -> &'static str {
     match mode {
         PolicyMode::Default => "Default",
         PolicyMode::AcceptAll => "Accept All",
+        PolicyMode::Plan => "Plan",
+        PolicyMode::Bypass => "Bypass",
+    }
+}
+
+fn settings_policy_mode_label(mode: PolicyMode) -> &'static str {
+    match mode {
+        PolicyMode::Default => "Default",
+        PolicyMode::AcceptAll => "Accept edits",
         PolicyMode::Plan => "Plan",
         PolicyMode::Bypass => "Bypass",
     }
@@ -4947,18 +5066,29 @@ mod tests {
         let items = main_provider_menu_items(&[]);
         assert!(matches!(items.first(), Some(ProviderMenuItem::Models)));
         assert!(matches!(items.get(1), Some(ProviderMenuItem::Providers)));
+        assert!(matches!(items.get(2), Some(ProviderMenuItem::Settings)));
         assert!(matches!(
-            items.get(2),
+            items.get(3),
             Some(ProviderMenuItem::WebSearchSettings)
         ));
         assert!(matches!(
-            items.get(3),
+            items.get(4),
             Some(ProviderMenuItem::SpinnerSettings)
         ));
         assert!(matches!(
-            items.get(4),
+            items.get(5),
             Some(ProviderMenuItem::ThemesSettings)
         ));
+    }
+
+    #[test]
+    fn settings_menu_labels_default_modes_for_users() {
+        assert_eq!(ProviderMenuItem::Settings.label(), "Settings");
+        assert_eq!(
+            ProviderMenuItem::DefaultMode(PolicyMode::AcceptAll).label(),
+            "Default mode: Accept edits"
+        );
+        assert_eq!(settings_policy_mode_label(PolicyMode::Default), "Default");
     }
 
     #[test]
@@ -5128,6 +5258,22 @@ mod tests {
             active_turn_prompt_shortcut(KeyEvent::new(KeyCode::Enter, KeyModifiers::CONTROL), true),
             None
         );
+    }
+
+    #[test]
+    fn composer_tab_queues_only_when_prompt_is_prepared() {
+        assert!(composer_queue_key(
+            KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE),
+            true
+        ));
+        assert!(!composer_queue_key(
+            KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE),
+            false
+        ));
+        assert!(!composer_queue_key(
+            KeyEvent::new(KeyCode::Tab, KeyModifiers::SHIFT),
+            true
+        ));
     }
 
     #[test]

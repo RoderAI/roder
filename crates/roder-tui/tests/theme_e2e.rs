@@ -10,7 +10,7 @@ use std::path::PathBuf;
 use ratatui::style::{Color, Modifier};
 
 use roder_theme::{ComputedStyle, StyleMap, StyledNode};
-use roder_tui::theme::node_tree::{fake_timeline, CrossCuttingTag};
+use roder_tui::theme::node_tree::{CrossCuttingTag, fake_timeline};
 use roder_tui::theme::overrides::ThemeOverrides;
 
 fn theme_path(name: &str) -> PathBuf {
@@ -25,8 +25,7 @@ fn theme_path(name: &str) -> PathBuf {
 fn load(name: &str) -> ThemeOverrides {
     let css = std::fs::read_to_string(theme_path(name))
         .unwrap_or_else(|e| panic!("missing theme {name}: {e}"));
-    ThemeOverrides::from_css(&css)
-        .unwrap_or_else(|e| panic!("theme {name} failed to parse: {e}"))
+    ThemeOverrides::from_css(&css).unwrap_or_else(|e| panic!("theme {name} failed to parse: {e}"))
 }
 
 /// Canonical list of every theme committed to the repo's `themes/` directory.
@@ -67,7 +66,11 @@ fn repo_themes_directory_has_ten_or_more_files() {
         .filter(|e| e.path().extension().and_then(|s| s.to_str()) == Some("css"))
         .count();
     assert!(count >= 10, "expected >=10 themes, found {count}");
-    assert_eq!(count, ALL_THEMES.len(), "ALL_THEMES out of sync with themes/");
+    assert_eq!(
+        count,
+        ALL_THEMES.len(),
+        "ALL_THEMES out of sync with themes/"
+    );
 }
 
 #[test]
