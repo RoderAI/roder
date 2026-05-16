@@ -2298,6 +2298,7 @@ dependencies = [
  "roder-commands",
  "roder-config",
  "roder-core",
+ "roder-ext-jsonl-session",
  "roder-ext-subagents",
  "roder-extension-host",
  "roder-protocol",

@@ -1,6 +1,6 @@
 use roder_api::context::ContextBlock;
 use roder_api::events::{ThreadId, TurnId};
-use roder_api::extension::ExtensionManifest;
+use roder_api::extension::{ExtensionManifest, ExtensionStateKey, ExtensionStateRecord};
 use roder_api::inference::{InferenceCapabilities, ModelDescriptor, ProviderAuthType};
 use roder_api::policy_mode::PolicyMode;
 use roder_api::session::{SessionMetadata, ThreadSnapshot};
@@ -177,6 +177,26 @@ pub struct SessionResolveApprovalParams {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SessionResolveApprovalResult {
     pub resolved: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ExtensionStateGetParams {
+    pub key: ExtensionStateKey,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ExtensionStateGetResult {
+    pub record: Option<ExtensionStateRecord>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ExtensionStateSetParams {
+    pub record: ExtensionStateRecord,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ExtensionStateSetResult {
+    pub saved: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -7,7 +7,7 @@ use roder_api::conversation::{
     AssistantMessage, ConversationItem, ErrorRecord, ReasoningSummary, ToolCallRecord, UserMessage,
 };
 use roder_api::events::*;
-use roder_api::extension::ExtensionRegistry;
+use roder_api::extension::{ExtensionRegistry, ExtensionStateKey, ExtensionStateRecord};
 use roder_api::inference::{
     AgentInferenceRequest, InferenceEngine, InferenceEvent, InferenceTurnContext,
     InstructionBundle, ModelSelection, OutputConfig, ReasoningConfig, RuntimeHints,
@@ -433,6 +433,23 @@ impl Runtime {
             .await;
         }
         Ok(loaded)
+    }
+
+    pub async fn load_extension_state(
+        &self,
+        key: &ExtensionStateKey,
+    ) -> anyhow::Result<Option<ExtensionStateRecord>> {
+        let Some(store) = &self.session_store else {
+            return Ok(None);
+        };
+        store.load_extension_state(key).await
+    }
+
+    pub async fn save_extension_state(&self, record: ExtensionStateRecord) -> anyhow::Result<bool> {
+        let Some(store) = &self.session_store else {
+            return Ok(false);
+        };
+        store.save_extension_state(record).await
     }
 
     pub async fn start_turn(self: &Arc<Self>, req: StartTurnRequest) -> anyhow::Result<TurnId> {

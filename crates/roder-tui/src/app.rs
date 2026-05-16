@@ -7,6 +7,7 @@ mod mouse_ui;
 mod palette_ui;
 mod policy_ui;
 mod selection_keyboard;
+mod transcript_fold_persistence;
 mod transcript_open;
 
 use std::collections::BTreeSet;
@@ -821,10 +822,23 @@ impl TuiApp {
             .await;
         match decode_response::<SessionLoadResult>(res) {
             Ok(result) => {
+                let snapshot = result.snapshot;
                 self.thread_id = thread_id;
                 self.active_turn_id = None;
                 self.messages.clear();
-                if let Some(metadata) = result.snapshot.and_then(|snapshot| snapshot.metadata) {
+                match if let Some(snapshot) = snapshot.as_ref() {
+                    transcript_fold_persistence::from_snapshot(&self.thread_id, snapshot)
+                } else {
+                    Ok(None)
+                } {
+                    Ok(Some(fold_state)) => self.transcript_fold = fold_state,
+                    Ok(None) => self.transcript_fold = TranscriptFoldState::default(),
+                    Err(err) => {
+                        self.transcript_fold = TranscriptFoldState::default();
+                        self.record_error(format!("transcript fold state load failed: {err}"));
+                    }
+                }
+                if let Some(metadata) = snapshot.and_then(|snapshot| snapshot.metadata) {
                     if let Some(provider) = metadata.provider {
                         self.provider = provider;
                     }
@@ -1603,6 +1617,7 @@ impl TuiApp {
                     "tool call {}: {call_id}",
                     if expanded { "expanded" } else { "collapsed" }
                 ));
+                self.persist_transcript_fold().await;
             }
             TranscriptAction::ToggleMessage { message_idx } => {
                 let expanded = self.transcript_fold.toggle_message(message_idx);
@@ -1610,6 +1625,7 @@ impl TuiApp {
                     "message {}: {message_idx}",
                     if expanded { "expanded" } else { "folded" }
                 ));
+                self.persist_transcript_fold().await;
             }
             TranscriptAction::OpenUrl { url } => {
                 match transcript_open::copy_url_fallback(&mut self.selection_keyboard, &url) {
@@ -1888,6 +1904,15 @@ impl TuiApp {
     fn record_error(&mut self, message: String) {
         self.messages.push(format!("error: {message}"));
         self.push_event(format!("error: {message}"));
+    }
+
+    async fn persist_transcript_fold(&mut self) {
+        if let Err(err) =
+            transcript_fold_persistence::save(&self.client, &self.thread_id, &self.transcript_fold)
+                .await
+        {
+            self.record_error(format!("transcript fold state save failed: {err}"));
+        }
     }
 
     fn push_event(&mut self, event: String) {

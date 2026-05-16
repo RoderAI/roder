@@ -21,6 +21,7 @@ uuid = { workspace = true, features = ["v4"] }
 [dev-dependencies]
 async-trait.workspace = true
 futures.workspace = true
+roder-ext-jsonl-session.workspace = true
 roder-ext-subagents.workspace = true
 roder-extension-host.workspace = true
 roder-tools.workspace = true

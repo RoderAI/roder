@@ -1,5 +1,6 @@
 use roder_api::catalog::PROVIDER_MOCK;
 use roder_api::extension::{ExtensionRegistryBuilder, InferenceEngineId};
+use roder_api::extension::{ExtensionStateKey, ExtensionStateRecord, ExtensionStoreScope};
 use roder_api::inference::*;
 use roder_api::policy_mode::PolicyMode;
 use roder_api::subagents::{SubagentDefinition, SubagentPermissionMode};
@@ -14,7 +15,8 @@ use roder_extension_host::{
 };
 use roder_protocol::{
     AgentsListResult, CommandsExpandParams, CommandsExpandResult, CommandsListResult,
-    CreateSessionResult, ExtensionsListResult, JsonRpcRequest, ProviderSelectParams,
+    CreateSessionResult, ExtensionStateGetParams, ExtensionStateGetResult, ExtensionStateSetParams,
+    ExtensionStateSetResult, ExtensionsListResult, JsonRpcRequest, ProviderSelectParams,
     ProviderSelectResult, ProvidersListResult, SessionExitPlanParams, SessionExitPlanResult,
     SessionGetResult, SessionResolveApprovalParams, SessionResolveApprovalResult,
     SessionSetModeParams, SessionSetModeResult, SessionsListResult, StartTurnParams,
@@ -552,6 +554,56 @@ async fn transcript_open_file_emits_app_server_event() {
         }
         other => panic!("unexpected event: {other:?}"),
     }
+}
+
+#[tokio::test]
+async fn extension_state_round_trips_through_app_server_session_store() {
+    let session_dir = temp_workspace("extension-state");
+    let mut builder = ExtensionRegistryBuilder::new();
+    builder.inference_engine(Arc::new(FakeInferenceEngine));
+    builder.session_store_factory(Arc::new(
+        roder_ext_jsonl_session::store::JsonlSessionStoreFactory {
+            base_path: session_dir.clone(),
+        },
+    ));
+    let runtime = Arc::new(Runtime::new(builder.build().unwrap(), Default::default()).unwrap());
+    let client = LocalAppClient::new(Arc::new(AppServer::new(runtime)));
+    let key = ExtensionStateKey {
+        extension_id: "roder-tui".to_string(),
+        scope: ExtensionStoreScope::Thread {
+            thread_id: "thread-fold".to_string(),
+        },
+        key: "transcript_fold".to_string(),
+    };
+    let record = ExtensionStateRecord {
+        key: key.clone(),
+        schema_version: 1,
+        value: serde_json::json!({"collapsed_tool_calls": ["call-1"]}),
+        updated_at: OffsetDateTime::UNIX_EPOCH,
+    };
+
+    let saved: ExtensionStateSetResult = request(
+        &client,
+        "extension_state/set",
+        Some(
+            serde_json::to_value(ExtensionStateSetParams {
+                record: record.clone(),
+            })
+            .unwrap(),
+        ),
+    )
+    .await;
+    assert!(saved.saved);
+
+    let loaded: ExtensionStateGetResult = request(
+        &client,
+        "extension_state/get",
+        Some(serde_json::to_value(ExtensionStateGetParams { key }).unwrap()),
+    )
+    .await;
+    assert_eq!(loaded.record, Some(record));
+
+    let _ = std::fs::remove_dir_all(session_dir);
 }
 
 #[tokio::test]
