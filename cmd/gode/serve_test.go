@@ -94,11 +94,11 @@ func TestPrintRemoteServerInfoPrintsSensitivePairingURL(t *testing.T) {
 	if !bytes.Contains(stderr.Bytes(), []byte(auth.TokenPreview)) {
 		t.Fatalf("stderr missing token preview:\n%s", stderr.String())
 	}
-	if !bytes.Contains(stderr.Bytes(), []byte("pairing url (sensitive): gode://")) {
+	if !bytes.Contains(stderr.Bytes(), []byte("pairing url (sensitive): gode://connect?payload=")) {
 		t.Fatalf("stderr missing pairing url:\n%s", stderr.String())
 	}
-	if !bytes.Contains(stderr.Bytes(), []byte("auth=full-secret-token-value")) {
-		t.Fatalf("stderr missing full token in sensitive pairing url:\n%s", stderr.String())
+	if bytes.Contains(stderr.Bytes(), []byte("auth=full-secret-token-value")) || bytes.Contains(stderr.Bytes(), []byte("Bearer full-secret-token-value")) {
+		t.Fatalf("stderr leaked raw token outside encoded pairing payload:\n%s", stderr.String())
 	}
 }
 
