@@ -219,6 +219,7 @@ async fn test_app_server_e2e() {
             serde_json::to_value(ProviderSelectParams {
                 provider: PROVIDER_MOCK.to_string(),
                 model: Some("alternate-mock-model".to_string()),
+                reasoning: Some("none".to_string()),
             })
             .unwrap(),
         ),
@@ -226,10 +227,12 @@ async fn test_app_server_e2e() {
     .await;
     assert_eq!(selected.provider, PROVIDER_MOCK);
     assert_eq!(selected.model, "alternate-mock-model");
+    assert_eq!(selected.reasoning, "none");
 
     let status: SystemStatusResult = request(&client, "system/status", None).await;
     assert_eq!(status.provider, PROVIDER_MOCK);
     assert_eq!(status.model, "alternate-mock-model");
+    assert_eq!(status.reasoning, "none");
 
     let invalid_provider = client
         .send_request(JsonRpcRequest {
@@ -240,6 +243,7 @@ async fn test_app_server_e2e() {
                 serde_json::to_value(ProviderSelectParams {
                     provider: "missing-provider".to_string(),
                     model: Some("missing-model".to_string()),
+                    reasoning: None,
                 })
                 .unwrap(),
             ),

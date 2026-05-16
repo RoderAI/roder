@@ -1,4 +1,4 @@
-"""Composer (text input) tests for gode."""
+"""Composer (text input) tests for Roder."""
 
 from __future__ import annotations
 
@@ -13,7 +13,7 @@ _STARTUP_TIMEOUT = 12
 
 async def _ready(tui: TuiSession, gode_bin: str, gode_env: dict[str, str]) -> None:
     await tui.start([gode_bin], env=gode_env, cols=140, rows=44)
-    await tui.wait_for_text("Ask gode to work on this repo", timeout=_STARTUP_TIMEOUT)
+    await tui.wait_for_text("Ask Roder to work on this repo", timeout=_STARTUP_TIMEOUT)
 
 
 async def test_typing_appears_in_composer(
@@ -42,7 +42,7 @@ async def test_backspace_removes_char(
     await _ready(tui, gode_bin, gode_env)
     await tui.type("foobar")
     await tui.wait_for_text("foobar", timeout=3)
-    # gode's composer needs a settle between rapid backspaces — a real
+    # Roder's composer needs a settle between rapid backspaces — a real
     # user types at <10 keys/sec which leaves time for the render loop.
     for _ in range(3):
         await tui.press("backspace")

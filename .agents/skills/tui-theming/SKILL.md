@@ -7,7 +7,7 @@ description: Keep Roder/gode TUI visuals readable, compact, and consistent. Use 
 
 ## Instructions
 
-- Target `crates/roder-tui` first. Older Go/Bubble Tea paths are historical unless the user explicitly points at them.
+- Target `crates/roder-tui`; it is the canonical TUI implementation.
 - Route new colors through the local `Theme` struct in `crates/roder-tui/src/app.rs` or a nearby extracted theme module. Do not scatter `Color::White`, `Color::Black`, raw grays, or one-off `Rgb` values through render code.
 - Primary text should usually use terminal default/reset for contrast. Use semantic roles for muted text, strong text, borders, accent, tool, running tool, error, mode, selection, and status/build rows.
 - Keep the app transcript-first. Do not add a side panel unless explicitly requested.
@@ -19,7 +19,7 @@ description: Keep Roder/gode TUI visuals readable, compact, and consistent. Use 
 The current timeline goal is closer to Grok/OpenCode than the old requested/completed event log:
 
 - User prompts render as full-width transcript blocks with a subtle left state rail or border. The block should have minimal padding and no extra left column before the timeline content.
-- Reasoning and phase messages render inline as muted commentary, for example `Thinking:` or `Commentary:`, with the phase label styled separately from the text. Commentary should be visible and preserved, but visually secondary to final assistant output.
+- Reasoning/thinking deltas must render live as they stream, not only after the final answer. Render them inline as muted commentary, for example `Thinking:`, with the label styled separately from the text. Phase/commentary messages should also be visible and preserved, but visually secondary to final assistant output.
 - Final assistant text renders as normal transcript text, not inside a card.
 - Tool calls render as one row per tool with a compact symbol, title, and key arguments. Show the row immediately when requested, update it in place as it runs/completes, and turn the row red on failure.
 - Completed tool output should be expandable through keyboard and mouse interaction. Navigation should work with Tab, arrows, `j`/`k`, and click, while normal typing in the composer keeps working.

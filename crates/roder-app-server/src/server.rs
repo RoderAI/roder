@@ -155,6 +155,7 @@ impl AppServer {
         Ok(serde_json::to_value(SystemStatusResult {
             provider: cfg.default_provider,
             model: cfg.default_model,
+            reasoning: self.runtime.effective_reasoning().await,
             extensions: self.runtime.registry().manifests.len(),
             providers: self.runtime.registry().inference_engines.len(),
         })
@@ -201,6 +202,7 @@ impl AppServer {
         Ok(serde_json::to_value(ProvidersListResult {
             active_provider: cfg.default_provider,
             active_model: cfg.default_model,
+            active_reasoning: self.runtime.effective_reasoning().await,
             providers,
         })
         .unwrap())
@@ -212,16 +214,21 @@ impl AppServer {
     ) -> Result<serde_json::Value, JsonRpcError> {
         let cfg = self
             .runtime
-            .select_provider(params.provider, params.model)
+            .select_provider(params.provider, params.model, params.reasoning)
             .await
             .map_err(internal_error)?;
         if self.persist_user_config {
-            roder_config::save_default_provider_model(&cfg.default_provider, &cfg.default_model)
-                .map_err(internal_error)?;
+            roder_config::save_default_provider_model_reasoning(
+                &cfg.default_provider,
+                &cfg.default_model,
+                cfg.reasoning.as_deref(),
+            )
+            .map_err(internal_error)?;
         }
         Ok(serde_json::to_value(ProviderSelectResult {
             provider: cfg.default_provider,
             model: cfg.default_model,
+            reasoning: self.runtime.effective_reasoning().await,
         })
         .unwrap())
     }
@@ -272,6 +279,7 @@ impl AppServer {
             thread_id: metadata.thread_id,
             provider: cfg.default_provider,
             model: cfg.default_model,
+            reasoning: self.runtime.effective_reasoning().await,
         })
         .unwrap())
     }

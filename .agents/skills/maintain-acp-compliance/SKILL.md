@@ -9,7 +9,7 @@ description: Use when changing Roder Rust features, tools, sessions, permissions
 
 Treat ACP as a public contract for the Roder Rust app. Any feature that changes what `roder` can do, what tools can run, how sessions work, how app-server clients observe state, or how users approve actions must be reflected in the Roder ACP/protocol surface, its wire-level tests, and docs before the task is complete.
 
-Do not satisfy new ACP work by updating only the legacy Go `internal/godex/acp` package. If the Rust Roder ACP surface is missing or incomplete, implement or extend it in the Roder crates as part of the change.
+Do not satisfy new ACP work outside the Rust Roder surface. If the Rust Roder ACP surface is missing or incomplete, implement or extend it in the Roder crates as part of the change.
 
 ## Required Workflow
 
@@ -23,7 +23,6 @@ Do not satisfy new ACP work by updating only the legacy Go `internal/godex/acp` 
    - Roder runtime/events: `crates/roder-core/src/runtime.rs`, `crates/roder-core/src/tool_execution.rs`, and `crates/roder-api/src/events.rs`.
    - Roder CLI entrypoint: `crates/roder-cli/src/main.rs`; add or update a `roder acp` entrypoint when ACP behavior is expected from the Rust app.
    - Roder docs: README `Agent Client Protocol` section or `docs/` Roder ACP documentation.
-   - Legacy Go ACP code may be useful as a reference only: `internal/godex/acp/{protocol.go,types.go,server.go,transport.go}`.
    - Current spec reference when needed: `https://agentclientprotocol.com/protocol/overview` and the upstream schema.
 
 3. Update advertised capabilities conservatively.
@@ -47,7 +46,6 @@ Do not satisfy new ACP work by updating only the legacy Go `internal/godex/acp` 
    - Run `cargo test -p roder-app-server --test e2e` when app-server or client-visible event behavior changes.
    - Run `cargo test --workspace` unless unrelated concurrent work makes that impossible; if blocked, report the exact package and error.
    - For CLI or transport changes, run a real `cargo run -p roder-cli --bin roder -- acp ...` stdio smoke once the `roder acp` entrypoint exists.
-   - Run legacy `go test ./internal/godex/acp -count=1` only when intentionally touching the legacy Go ACP bridge.
 
 ## ACP Change Checklist
 
@@ -65,4 +63,4 @@ Do not satisfy new ACP work by updating only the legacy Go `internal/godex/acp` 
 - Adding a feature to Roder TUI/app-server/runtime but forgetting ACP clients.
 - Testing private helpers but not the JSON-RPC envelope.
 - Updating README with planned behavior instead of implemented behavior.
-- Treating the legacy Go ACP tests as enough after touching Roder runtime, tool, MCP, app-server, protocol, or config code.
+- Treating private helper tests as enough after touching Roder runtime, tool, MCP, app-server, protocol, or config code.

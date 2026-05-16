@@ -193,6 +193,16 @@ pub struct ModelDescriptor {
     pub id: String,
     pub name: String,
     pub context_window: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub default_reasoning: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub supported_reasoning: Vec<ReasoningEffortDescriptor>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ReasoningEffortDescriptor {
+    pub effort: String,
+    pub description: String,
 }
 
 pub struct InferenceProviderContext<'a> {

@@ -9,13 +9,13 @@ Usage: VERSION=0.1.0 make release-brew
 Creates a local Homebrew source release for the Roder Rust CLI:
   - runs cargo test --workspace unless RUN_TESTS=0
   - creates/uses git tag v$VERSION unless CREATE_TAG=0
-  - writes dist/gode-v$VERSION.tar.gz from the tagged source
-  - updates Formula/gode.rb to build roder from source
+  - writes dist/roder-v$VERSION.tar.gz from the tagged source
+  - updates Formula/roder.rb to build roder from source
 
 Environment:
   MODE=local|git       local uses the dist tarball; git uses REPO_URL.git tag+revision
   REPO_URL=URL         default: https://github.com/PandelisZ/gode
-  FORMULA=PATH         default: Formula/gode.rb
+  FORMULA=PATH         default: Formula/roder.rb
   RUN_TESTS=0          skip tests
   ALLOW_DIRTY=1        allow releasing from a dirty working tree (for local testing only)
   CREATE_TAG=0         do not create a local git tag
@@ -40,7 +40,7 @@ version="${version#v}"
 tag="v${version}"
 mode="${MODE:-local}"
 repo_url="${REPO_URL:-https://github.com/PandelisZ/gode}"
-formula="${FORMULA:-Formula/gode.rb}"
+formula="${FORMULA:-Formula/roder.rb}"
 run_tests="${RUN_TESTS:-1}"
 create_tag="${CREATE_TAG:-1}"
 commit_formula="${COMMIT:-0}"
@@ -91,7 +91,7 @@ if [[ "$create_tag" == "1" ]]; then
   if git rev-parse -q --verify "refs/tags/$tag" >/dev/null; then
     echo "release-brew: using existing tag $tag"
   else
-    git tag -a "$tag" -m "gode $tag"
+    git tag -a "$tag" -m "roder $tag"
     echo "release-brew: created tag $tag"
   fi
   source_ref="$tag"
@@ -101,14 +101,14 @@ fi
 
 mkdir -p dist Formula
 revision="$(git rev-parse "$source_ref^{commit}")"
-archive="dist/gode-$tag.tar.gz"
+archive="dist/roder-$tag.tar.gz"
 
-git archive --format=tar --prefix="gode-$tag/" "$source_ref" | gzip -n > "$archive"
+git archive --format=tar --prefix="roder-$tag/" "$source_ref" | gzip -n > "$archive"
 sha256="$(shasum -a 256 "$archive" | awk '{print $1}')"
 
 if [[ "$mode" == "local" ]]; then
   url_block=$(cat <<EOF
-  url "file://#{File.expand_path("../dist/gode-$tag.tar.gz", __dir__)}"
+  url "file://#{File.expand_path("../dist/roder-$tag.tar.gz", __dir__)}"
   sha256 "$sha256"
 EOF
 )
@@ -122,7 +122,7 @@ EOF
 fi
 
 cat > "$formula" <<EOF
-class Gode < Formula
+class Roder < Formula
   desc "Rust-native TUI coding agent and event-driven agent harness"
   homepage "$repo_url"
   version "$version"
@@ -159,7 +159,7 @@ if [[ "$commit_formula" == "1" ]]; then
   if git diff --cached --quiet -- "$formula"; then
     echo "release-brew: no formula changes to commit"
   else
-    git commit -m "brew: update gode to $tag" -- "$formula"
+    git commit -m "brew: update roder to $tag" -- "$formula"
   fi
 fi
 

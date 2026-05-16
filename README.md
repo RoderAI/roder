@@ -33,7 +33,7 @@ The whitepaper lays out the long-term aspiration in §27: a maintained, referenc
 
 ## Alpha status
 
-Roder is alpha software. The core types in `roder-api`, the protocol in `roder-protocol`, and the extension surfaces are stabilizing but not frozen. Expect breaking changes during the rewrite from the legacy Go implementation. The roadmap is the source of truth for what is built, what is in flight, and what is queued.
+Roder is alpha software. The core types in `roder-api`, the protocol in `roder-protocol`, and the extension surfaces are stabilizing but not frozen. Expect breaking changes while the Rust runtime and extension APIs settle. The roadmap is the source of truth for what is built, what is in flight, and what is queued.
 
 ---
 
@@ -117,13 +117,65 @@ Each plan carries a "Whitepaper Alignment" section mapping its work to the relev
 
 ## Quick start
 
-The Rust binary is the primary entry point. During the rewrite the legacy Go implementation (see [Relationship to gode](#relationship-to-gode) below) still ships in parallel.
+The Rust binary is the primary entry point.
 
 ```sh
 cargo build --workspace
-cargo run -p roder-cli -- --help
+cargo run -p roder-cli --bin roder -- auth status
 cargo test --workspace
 ```
+
+Install the standard Roder CLI locally with:
+
+```sh
+make install
+```
+
+By default this writes `roder` to `~/.local/bin`. Override the install target with `BINDIR=/path/to/bin make install`.
+
+## Roder installer configurator
+
+Roder's distribution configurator is tracked in [`roadmap/30-roder-distribution-configurator.md`](./roadmap/30-roder-distribution-configurator.md). The intended installed binary is `roder-configure`: it generates a small downstream distribution crate, an initial `config.toml`, and optionally builds the resulting binary.
+
+Use a checked-in profile for reproducible, non-interactive builds:
+
+```sh
+roder-configure --profile ./profile.toml --out ./dist/lab-roder
+```
+
+Use the interactive wizard to create or adjust a profile:
+
+```sh
+roder-configure --interactive --emit-profile ./profile.toml
+```
+
+Validate a profile without generating files:
+
+```sh
+roder-configure validate ./profile.toml
+```
+
+A minimal profile looks like:
+
+```toml
+[distribution]
+name = "lab-roder"
+version = "0.1.0"
+include_tui = true
+include_app_server = true
+include_cli = true
+
+extensions = [
+  "openai-responses",
+  "jsonl-session",
+  "disk-context",
+]
+
+default_provider = "openai-responses"
+default_session_store = "jsonl-session"
+```
+
+The configurator must not write API keys into generated files. Put secrets in environment variables such as `OPENAI_API_KEY`, or reference env-var names in the generated/user `config.toml`.
 
 Web search provider setup is documented in [`docs/roder-web-search-extensions.md`](./docs/roder-web-search-extensions.md).
 
@@ -195,11 +247,11 @@ No fork is required. The lab or product builds its own distribution.
 
 ## Relationship to `gode`
 
-This repository started as `gode` — a Go-native TUI coding agent and event-driven harness in `internal/godex` and `internal/tui`. That implementation proved the core behaviors Roder is built around: event-driven sessions, the provider abstraction, the tool registry, the MCP manager, the JSONL journal, and the app-server protocol with stdio and WebSocket transports.
+This repository started as `gode`, a Go-native TUI coding agent and event-driven harness. That implementation proved the core behaviors Roder is built around: event-driven sessions, provider abstraction, tool routing, session storage, policy modes, and the app-server control plane.
 
-Roder is the Rust rewrite of that work, re-founded as a harness-first project rather than a coding-agent application. The Go implementation continues to live under `cmd/gode` and `internal/` during the transition and serves as the behavioral oracle while Rust crates fill out. New work should land in `crates/roder-*`; the roadmap calls out plans whose Go counterparts are explicitly being ported.
+Roder is now the active implementation. The legacy Go code has been removed from this repository; new work should land in `crates/roder-*`, `docs/`, `roadmap/`, or the Rust CLI/TUI surfaces.
 
-See [`roadmap/roder_rust_rewrite_plan.md`](./roadmap/roder_rust_rewrite_plan.md) for the rewrite sequence and which Go behaviors are mapped to which Rust crates.
+See [`roadmap/roder_rust_rewrite_plan.md`](./roadmap/roder_rust_rewrite_plan.md) for the historical rewrite sequence and the Rust crate mapping.
 
 ---
 

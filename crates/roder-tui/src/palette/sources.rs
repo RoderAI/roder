@@ -169,7 +169,7 @@ fn model_entry(
     (
         PaletteItem {
             id: format!("{provider_id}:{model_id}"),
-            title: format!("{provider_id} / {model_label}"),
+            title: format!("{provider_id}/{model_label}"),
             subtitle: provider_description,
             keywords: vec![provider_id.to_string(), model_id.to_string()],
             icon: Some('*'),
@@ -236,6 +236,7 @@ mod tests {
         let source = model_source(&ProvidersListResult {
             active_provider: "mock".to_string(),
             active_model: "mock-small".to_string(),
+            active_reasoning: "medium".to_string(),
             providers: vec![ProviderDescriptor {
                 id: "mock".to_string(),
                 name: "Mock".to_string(),
@@ -251,6 +252,8 @@ mod tests {
                     id: "mock-small".to_string(),
                     name: "Mock Small".to_string(),
                     context_window: None,
+                    default_reasoning: Some("medium".to_string()),
+                    supported_reasoning: Vec::new(),
                 }],
             }],
         });

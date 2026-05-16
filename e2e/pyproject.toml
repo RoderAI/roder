@@ -1,7 +1,7 @@
 [project]
-name = "gode-e2e"
+name = "roder-e2e"
 version = "0.1.0"
-description = "End-to-end TUI tests for gode, driven by tuiwright."
+description = "End-to-end TUI tests for Roder, driven by tuiwright."
 requires-python = ">=3.11"
 dependencies = [
     # Local path during development; switch to `tuiwright>=0.1` once published.

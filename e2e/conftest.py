@@ -1,4 +1,4 @@
-"""Shared fixtures for gode end-to-end tests."""
+"""Shared fixtures for Roder end-to-end tests."""
 
 from __future__ import annotations
 
@@ -10,42 +10,44 @@ import pytest
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-DEFAULT_BIN = REPO_ROOT / "bin" / "gode"
+DEFAULT_BIN = REPO_ROOT / "bin" / "roder"
 
 
 @pytest.fixture
 def gode_bin() -> str:
-    """Resolve the gode binary path.
+    """Resolve the Roder binary path.
 
     Resolution order:
-        1. ``GODE_BIN`` env var
-        2. ``/Users/pz/w/gode/bin/gode`` (the repo-local committed build)
-        3. ``gode`` on PATH
+        1. ``RODER_BIN`` env var
+        2. ``GODE_BIN`` env var for older local test invocations
+        3. ``/Users/pz/w/gode/bin/roder`` (the repo-local build)
+        4. ``roder`` on PATH
 
     Skips the test if none are usable so this suite can run in environments
     where the binary hasn't been built.
     """
     candidates: list[str | None] = [
+        os.environ.get("RODER_BIN"),
         os.environ.get("GODE_BIN"),
         str(DEFAULT_BIN) if DEFAULT_BIN.is_file() else None,
-        shutil.which("gode"),
+        shutil.which("roder"),
     ]
     for c in candidates:
         if c and os.path.isfile(c) and os.access(c, os.X_OK):
             return c
     pytest.skip(
-        "no gode binary found: set GODE_BIN, build with `cargo build -p roder-cli`, "
-        "or put `gode` on PATH"
+        "no Roder binary found: set RODER_BIN, build with `make build`, "
+        "or put `roder` on PATH"
     )
 
 
 @pytest.fixture
 def gode_env() -> dict[str, str]:
-    """Env vars given to every gode subprocess.
+    """Env vars given to every Roder subprocess.
 
     A dummy ``OPENAI_API_KEY`` keeps the provider init from failing on
     machines without real credentials. ``GODE_TEST_MODE`` is a soft hint
-    that some flows in gode check.
+    that some flows in Roder check.
     """
     return {
         "OPENAI_API_KEY": os.environ.get("OPENAI_API_KEY", "sk-test"),
