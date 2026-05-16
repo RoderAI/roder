@@ -466,7 +466,7 @@ async fn run_turn_continues_after_tool_result() {
             builder.build().unwrap(),
             RuntimeConfig {
                 default_provider: PROVIDER_MOCK.to_string(),
-                default_model: "mock".to_string(),
+                default_model: "gpt-5.5".to_string(),
                 reasoning: Some("low".to_string()),
                 auto_compact_token_limit: Some(10_000),
                 hosted_web_search: roder_api::inference::HostedWebSearchConfig::disabled(),

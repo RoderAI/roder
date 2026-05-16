@@ -19,7 +19,7 @@ use ratatui::{
 use serde_json::Value;
 
 use super::{Theme, short_id};
-use preview::{argument_preview, tool_title};
+use preview::tool_label;
 use render::{max_scroll, visible_hit_rows};
 
 const BOTTOM_PADDING_ROWS: usize = 3;
@@ -43,13 +43,7 @@ impl ToolTimelineEntry {
     }
 
     pub fn label(&self) -> String {
-        let title = tool_title(&self.name);
-        let arguments = argument_preview(&self.arguments);
-        if arguments.is_empty() {
-            title
-        } else {
-            format!("{title} {arguments}")
-        }
+        tool_label(&self.name, &self.arguments)
     }
 }
 

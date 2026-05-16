@@ -68,6 +68,7 @@ async fn build_runtime_from_config(options: CliOptions) -> anyhow::Result<(Arc<R
     )
     .await?;
     let model_edit_tools = resolve_model_edit_tools(&cfg.models)?;
+    let model_parallel_tool_calls = resolve_model_parallel_tool_calls(&cfg.models);
     if policy_mode == PolicyMode::Bypass
         && cfg
             .policy_modes
@@ -99,6 +100,7 @@ async fn build_runtime_from_config(options: CliOptions) -> anyhow::Result<(Arc<R
             auto_compact_token_limit: cfg.auto_compact_token_limit,
             hosted_web_search: web_search.hosted,
             model_edit_tools,
+            model_parallel_tool_calls,
             workspace: workspace.map(|p| p.display().to_string()),
             policy_mode,
         },
@@ -122,6 +124,18 @@ fn resolve_model_edit_tools(
         edit_tools.insert(model.clone(), edit_tool.to_string());
     }
     Ok(edit_tools)
+}
+
+fn resolve_model_parallel_tool_calls(
+    models: &std::collections::HashMap<String, roder_config::ModelConfig>,
+) -> std::collections::HashMap<String, bool> {
+    models
+        .iter()
+        .filter_map(|(model, cfg)| {
+            cfg.parallel_tool_calls
+                .map(|parallel| (model.clone(), parallel))
+        })
+        .collect()
 }
 
 fn parse_cli_options(args: &[String]) -> anyhow::Result<CliOptions> {

@@ -34,7 +34,9 @@ use ratatui::{
 use roder_api::catalog::lookup_model;
 use roder_api::conversation::InputImage;
 use roder_api::events::RoderEvent;
-use roder_api::inference::{ProviderAuthType, ReasoningEffortDescriptor, TokenUsage};
+use roder_api::inference::{
+    HostedWebSearchMode, ProviderAuthType, ReasoningEffortDescriptor, TokenUsage,
+};
 use roder_api::policy_mode::{PolicyDecision, PolicyMode};
 use roder_app_server::LocalAppClient;
 use roder_protocol::{
@@ -42,7 +44,8 @@ use roder_protocol::{
     JsonRpcResponse, PendingPlanExitDescriptor, ProviderDescriptor, ProviderSelectParams,
     ProviderSelectResult, ProvidersListResult, SessionExitPlanParams, SessionExitPlanResult,
     SessionGetResult, SessionResolveApprovalParams, SessionResolveApprovalResult,
-    SessionSetModeParams, SessionSetModeResult, StartTurnParams, SteerTurnParams,
+    SessionSetModeParams, SessionSetModeResult, SettingsGetResult, SettingsSetWebSearchParams,
+    SettingsSetWebSearchResult, StartTurnParams, SteerTurnParams,
 };
 use tokio::io::AsyncWriteExt;
 use tokio::process::Command;
@@ -62,6 +65,8 @@ use turn_timer::TurnTimer;
 
 const TOP_STATUS_ANIMATION_FPS: u64 = 6;
 const MAX_VISIBLE_SLASH_COMMANDS: usize = 8;
+const COPIED_HELPER_LABEL: &str = "Copied to clipboard";
+const COPIED_HELPER_DURATION: Duration = Duration::from_secs(2);
 
 fn keyboard_enhancement_flags() -> KeyboardEnhancementFlags {
     KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES
@@ -74,7 +79,6 @@ struct Theme {
     text_strong: Color,
     muted: Color,
     subtle: Color,
-    user_bg: Color,
     accent: Color,
     accent_soft: Color,
     tool: Color,
@@ -111,7 +115,6 @@ impl Theme {
                 text_strong: Color::Reset,
                 muted: Color::Indexed(244),
                 subtle: Color::Indexed(245),
-                user_bg: Color::Indexed(235),
                 accent: Color::Indexed(212),
                 accent_soft: Color::Indexed(183),
                 tool: Color::Indexed(244),
@@ -142,7 +145,6 @@ impl Theme {
             text_strong: Color::Reset,
             muted: Color::Indexed(240),
             subtle: Color::Indexed(240),
-            user_bg: Color::Indexed(252),
             accent: Color::Indexed(198),
             accent_soft: Color::Indexed(96),
             tool: Color::Indexed(240),
@@ -187,7 +189,7 @@ impl Theme {
     }
 
     fn user_surface(self) -> Style {
-        Style::default().fg(self.text_strong).bg(self.user_bg)
+        Style::default().fg(self.text_strong)
     }
 
     fn accent(self) -> Style {
@@ -320,6 +322,17 @@ struct MouseSelection {
     dragging: bool,
 }
 
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+struct CopiedHelper {
+    shown_at: Instant,
+}
+
+impl CopiedHelper {
+    fn visible(self, now: Instant) -> bool {
+        now.duration_since(self.shown_at) < COPIED_HELPER_DURATION
+    }
+}
+
 #[derive(Debug, Clone, Eq, PartialEq)]
 struct SelectableLine {
     row: u16,
@@ -347,6 +360,7 @@ enum ProviderPopupScreen {
     Models,
     Reasoning,
     Spinner,
+    WebSearch,
 }
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
@@ -453,12 +467,42 @@ fn confirm_action_for_key(key: KeyCode, selected: ConfirmChoice) -> ConfirmKeyAc
     }
 }
 
+fn is_policy_mode_switch_key(key: KeyEvent) -> bool {
+    key.code == KeyCode::BackTab
+}
+
+fn confirm_dialog_allows_policy_switch(state: &ConfirmDialogState) -> bool {
+    matches!(state.dialog, ConfirmDialog::ToolApproval { .. })
+}
+
+fn tool_approval_dialog_matches(state: &ConfirmDialogState, approval_id: &str) -> bool {
+    matches!(
+        &state.dialog,
+        ConfirmDialog::ToolApproval {
+            approval_id: current,
+            ..
+        } if current == approval_id
+    )
+}
+
+fn is_dialog_menu_previous_key(key: KeyEvent) -> bool {
+    key.code == KeyCode::Up
+        || (key.code == KeyCode::Char('k') && key.modifiers.contains(KeyModifiers::CONTROL))
+}
+
+fn is_dialog_menu_next_key(key: KeyEvent) -> bool {
+    key.code == KeyCode::Down
+        || (key.code == KeyCode::Char('j') && key.modifiers.contains(KeyModifiers::CONTROL))
+}
+
 #[derive(Debug, Clone)]
 enum ProviderMenuItem {
     Models,
     Providers,
     SpinnerSettings,
+    WebSearchSettings,
     Spinner(WorkingSpinner),
+    WebSearchMode(HostedWebSearchMode),
     Provider(ProviderChoice),
     Model(ProviderOption),
     Reasoning(ReasoningOptionChoice),
@@ -493,7 +537,9 @@ impl ProviderMenuItem {
             Self::Models => "Models".to_string(),
             Self::Providers => "Providers".to_string(),
             Self::SpinnerSettings => "Working spinner".to_string(),
+            Self::WebSearchSettings => "Web search provider".to_string(),
             Self::Spinner(spinner) => spinner.label().to_string(),
+            Self::WebSearchMode(mode) => web_search_mode_label(*mode).to_string(),
             Self::Provider(provider) => provider.label(),
             Self::Model(option) => option.label.clone(),
             Self::Reasoning(option) => format!("{} - {}", option.effort, option.description),
@@ -544,6 +590,7 @@ pub struct TuiApp {
     last_frame_width: u16,
     selectable_lines: Vec<SelectableLine>,
     mouse_selection: Option<MouseSelection>,
+    copied_helper: Option<CopiedHelper>,
     reasoning_effort: String,
     composer: TextArea<'static>,
     timeline: TimelineState,
@@ -559,6 +606,7 @@ pub struct TuiApp {
     provider_menu_filter: String,
     provider_state: ListState,
     working_spinner: WorkingSpinner,
+    web_search_mode: HostedWebSearchMode,
     confirm_dialog: Option<ConfirmDialogState>,
     tool_detail_modal: Option<ToolDetailModal>,
     image_attachments: Vec<ImageAttachment>,
@@ -591,6 +639,7 @@ impl TuiApp {
         provider_state.select(Some(0));
         let theme = Theme::for_terminal();
         let policy_state = session_get(&client).await.ok();
+        let settings_state = settings_get(&client).await.ok();
         let tui_config = load_tui_config().unwrap_or_default();
         let selected_model = if model.is_empty() {
             session.model
@@ -617,6 +666,7 @@ impl TuiApp {
             last_frame_width: 0,
             selectable_lines: Vec::new(),
             mouse_selection: None,
+            copied_helper: None,
             reasoning_effort: session.reasoning,
             composer: composer_textarea(theme),
             timeline: TimelineState::default(),
@@ -632,6 +682,9 @@ impl TuiApp {
             provider_menu_filter: String::new(),
             provider_state,
             working_spinner: WorkingSpinner::from_config(tui_config.spinner.as_deref()),
+            web_search_mode: settings_state
+                .map(|settings| settings.web_search.mode)
+                .unwrap_or(HostedWebSearchMode::Cached),
             confirm_dialog: None,
             tool_detail_modal: None,
             image_attachments: Vec::new(),
@@ -683,6 +736,10 @@ impl TuiApp {
                                 ToolDetailAction::Close => self.tool_detail_modal = None,
                                 ToolDetailAction::Handled => {}
                             }
+                        } else if self.confirm_dialog_allows_policy_switch()
+                            && is_policy_mode_switch_key(key)
+                        {
+                            self.cycle_policy_mode().await;
                         } else if self.confirm_dialog.is_some() {
                             if self.handle_confirm_key(key).await {
                                 break;
@@ -709,7 +766,7 @@ impl TuiApp {
                         {
                             self.confirm_dialog =
                                 Some(ConfirmDialogState::new(ConfirmDialog::Exit));
-                        } else if key.code == KeyCode::BackTab {
+                        } else if is_policy_mode_switch_key(key) {
                             self.cycle_policy_mode().await;
                         } else if self.pending_plan_exit.is_some()
                             && matches!(key.code, KeyCode::Char('y') | KeyCode::Char('Y'))
@@ -722,8 +779,12 @@ impl TuiApp {
                         } else if self.show_provider_popup {
                             match key.code {
                                 KeyCode::Esc => self.close_or_back_provider_popup(),
-                                KeyCode::Up => self.select_previous_provider_menu_item(),
-                                KeyCode::Down => self.select_next_provider_menu_item(),
+                                _ if is_dialog_menu_previous_key(key) => {
+                                    self.select_previous_provider_menu_item();
+                                }
+                                _ if is_dialog_menu_next_key(key) => {
+                                    self.select_next_provider_menu_item();
+                                }
                                 KeyCode::Enter => self.select_current_provider_menu_item().await,
                                 KeyCode::Backspace => {
                                     self.provider_menu_filter.pop();
@@ -920,16 +981,14 @@ impl TuiApp {
                                 reason: ev.reason,
                             }));
                     }
-                    RoderEvent::ApprovalResolved(ev)
-                        if self.active_turn_id.as_deref() == Some(&ev.turn_id) =>
-                    {
-                        self.active_turn_timer.resume(Instant::now());
+                    RoderEvent::ApprovalResolved(ev) => {
+                        self.clear_tool_approval_dialog(&ev.approval_id);
+                        if self.active_turn_id.as_deref() == Some(&ev.turn_id) {
+                            self.active_turn_timer.resume(Instant::now());
+                        }
                         if !ev.approved {
                             self.record_tool_completed(&ev.tool_id, true, None);
                         }
-                    }
-                    RoderEvent::ApprovalResolved(ev) if !ev.approved => {
-                        self.record_tool_completed(&ev.tool_id, true, None);
                     }
                     RoderEvent::UserInputRequested(ev) => {
                         let question = ev
@@ -1009,6 +1068,22 @@ impl TuiApp {
             ConfirmKeyAction::Ignore => {}
         }
         false
+    }
+
+    fn confirm_dialog_allows_policy_switch(&self) -> bool {
+        self.confirm_dialog
+            .as_ref()
+            .is_some_and(confirm_dialog_allows_policy_switch)
+    }
+
+    fn clear_tool_approval_dialog(&mut self, approval_id: &str) {
+        let should_clear = self
+            .confirm_dialog
+            .as_ref()
+            .is_some_and(|state| tool_approval_dialog_matches(state, approval_id));
+        if should_clear {
+            self.confirm_dialog = None;
+        }
     }
 
     async fn interrupt_active_turn(&mut self) {
@@ -1429,6 +1504,9 @@ impl TuiApp {
                 tokio::spawn(async move {
                     let _ = copy_selection_to_clipboards(text).await;
                 });
+                self.copied_helper = Some(CopiedHelper {
+                    shown_at: Instant::now(),
+                });
                 self.push_event("selection copied".to_string());
                 true
             }
@@ -1540,6 +1618,7 @@ impl TuiApp {
             f.render_widget(self.working_line(), chunks[composer_index]);
             composer_index += 1;
         }
+        self.render_copied_helper(f, chunks[composer_index], Instant::now());
         f.render_widget(&self.composer, chunks[composer_index]);
         composer_index += 1;
         if slash_height > 0 {
@@ -1560,6 +1639,18 @@ impl TuiApp {
         if let Some(modal) = &self.tool_detail_modal {
             render_tool_detail_modal(f, area, modal, self.theme);
         }
+    }
+
+    fn render_copied_helper(&mut self, f: &mut Frame<'_>, composer_area: Rect, now: Instant) {
+        if !self.copied_helper.is_some_and(|helper| helper.visible(now)) {
+            self.copied_helper = None;
+            return;
+        }
+
+        let Some(area) = copied_helper_area(composer_area) else {
+            return;
+        };
+        f.render_widget(copied_helper_widget(self.theme), area);
     }
 
     fn working_line(&self) -> Paragraph<'static> {
@@ -1824,7 +1915,7 @@ impl TuiApp {
                 if self.active_turn_id.is_some() {
                     "  enter steer  tab queue message  shift+enter newline  shift+tab mode  paste/drag images  esc interrupt  ctrl+c exit"
                 } else {
-                    "  enter send  shift+enter newline  / commands  tab timeline  shift+tab mode  paste/drag images  ! shell  ctrl+p provider/model  ctrl+l events  esc interrupt  ctrl+c exit"
+                    "  enter send  shift+enter newline  / commands  tab timeline  shift+tab mode  paste/drag images  ! shell  ctrl+p settings  ctrl+l events  esc interrupt  ctrl+c exit"
                 }
             }
         };
@@ -1867,9 +1958,13 @@ impl TuiApp {
                         ProviderMenuItem::Spinner(spinner) if *spinner == self.working_spinner => {
                             "✓ "
                         }
+                        ProviderMenuItem::WebSearchMode(mode) if *mode == self.web_search_mode => {
+                            "✓ "
+                        }
                         ProviderMenuItem::Models
                         | ProviderMenuItem::Providers
                         | ProviderMenuItem::SpinnerSettings
+                        | ProviderMenuItem::WebSearchSettings
                         | ProviderMenuItem::Reasoning(_) => "› ",
                         ProviderMenuItem::Back => "‹ ",
                         _ => "• ",
@@ -1887,26 +1982,31 @@ impl TuiApp {
             ProviderPopupScreen::Models => " Models (Enter select, Esc back) ",
             ProviderPopupScreen::Reasoning => " Reasoning effort (Enter select, Esc back) ",
             ProviderPopupScreen::Spinner => " Working spinner (Enter select, Esc back) ",
+            ProviderPopupScreen::WebSearch => " Web search provider (Enter select, Esc back) ",
         };
-        let title = if self.provider_menu_filter.is_empty() {
-            title.to_string()
-        } else {
-            format!("{} /{} ", title.trim_end(), self.provider_menu_filter)
-        };
+        let block = Block::default()
+            .borders(Borders::ALL)
+            .border_type(BorderType::Rounded)
+            .style(self.theme.dialog_surface())
+            .border_style(self.theme.dialog())
+            .title(Span::styled(title, self.theme.accent()));
+        let inner = block.inner(menu_area);
+        let chunks = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([Constraint::Length(1), Constraint::Min(1)])
+            .split(inner);
         let menu = List::new(items)
-            .block(
-                Block::default()
-                    .borders(Borders::ALL)
-                    .border_type(BorderType::Rounded)
-                    .style(self.theme.dialog_surface())
-                    .border_style(self.theme.dialog())
-                    .title(Span::styled(title, self.theme.accent())),
-            )
             .style(self.theme.dialog_surface())
             .highlight_style(self.theme.selected())
             .highlight_symbol("› ");
         f.render_widget(Clear, menu_area);
-        f.render_stateful_widget(menu, menu_area, &mut self.provider_state);
+        f.render_widget(block, menu_area);
+        f.render_widget(
+            Paragraph::new(provider_search_line(&self.provider_menu_filter, self.theme))
+                .style(self.theme.dialog_surface()),
+            chunks[0],
+        );
+        f.render_stateful_widget(menu, chunks[1], &mut self.provider_state);
     }
 
     fn render_confirm_dialog(&self, f: &mut Frame<'_>, area: Rect, dialog: ConfirmDialogState) {
@@ -1955,6 +2055,33 @@ impl TuiApp {
         decode_response(res)
     }
 
+    async fn set_web_search_mode(&mut self, mode: HostedWebSearchMode) {
+        let res = self
+            .client
+            .send_request(JsonRpcRequest {
+                jsonrpc: "2.0".to_string(),
+                id: Some(serde_json::json!("settings/set_web_search")),
+                method: "settings/set_web_search".to_string(),
+                params: Some(serde_json::to_value(SettingsSetWebSearchParams { mode }).unwrap()),
+            })
+            .await;
+
+        match decode_response::<SettingsSetWebSearchResult>(res) {
+            Ok(result) => {
+                self.web_search_mode = result.web_search.mode;
+                let label = web_search_mode_label(result.web_search.mode);
+                self.timeline
+                    .push_system(format!("web search provider set to {label}."));
+                self.push_event(format!("web search provider selected: {label}"));
+                self.show_provider_popup = false;
+            }
+            Err(err) => {
+                self.record_error(format!("failed to set web search provider: {err}"));
+                self.show_provider_popup = false;
+            }
+        }
+    }
+
     fn close_or_back_provider_popup(&mut self) {
         if !self.provider_menu_filter.is_empty() {
             self.provider_menu_filter.clear();
@@ -1966,6 +2093,12 @@ impl TuiApp {
             return;
         }
         if self.provider_popup_screen == ProviderPopupScreen::Spinner {
+            self.provider_popup_screen = ProviderPopupScreen::Main;
+            self.provider_menu_items = main_provider_menu_items(&self.provider_choices);
+            self.provider_state.select(Some(0));
+            return;
+        }
+        if self.provider_popup_screen == ProviderPopupScreen::WebSearch {
             self.provider_popup_screen = ProviderPopupScreen::Main;
             self.provider_menu_items = main_provider_menu_items(&self.provider_choices);
             self.provider_state.select(Some(0));
@@ -2027,8 +2160,14 @@ impl TuiApp {
             ProviderMenuItem::SpinnerSettings => {
                 self.open_spinner_submenu();
             }
+            ProviderMenuItem::WebSearchSettings => {
+                self.open_web_search_submenu();
+            }
             ProviderMenuItem::Spinner(spinner) => {
                 self.select_working_spinner(spinner);
+            }
+            ProviderMenuItem::WebSearchMode(mode) => {
+                self.set_web_search_mode(mode).await;
             }
             ProviderMenuItem::Provider(provider) => {
                 self.select_provider(provider).await;
@@ -2100,6 +2239,26 @@ impl TuiApp {
         let selected = WorkingSpinner::all()
             .iter()
             .position(|spinner| *spinner == self.working_spinner)
+            .unwrap_or(0);
+        self.provider_state.select(Some(selected));
+    }
+
+    fn open_web_search_submenu(&mut self) {
+        self.provider_popup_screen = ProviderPopupScreen::WebSearch;
+        self.provider_menu_filter.clear();
+        self.provider_menu_items = [
+            HostedWebSearchMode::Cached,
+            HostedWebSearchMode::Live,
+            HostedWebSearchMode::Disabled,
+        ]
+        .into_iter()
+        .map(ProviderMenuItem::WebSearchMode)
+        .chain(std::iter::once(ProviderMenuItem::Back))
+        .collect();
+        let selected = self
+            .provider_menu_items
+            .iter()
+            .position(|item| matches!(item, ProviderMenuItem::WebSearchMode(mode) if *mode == self.web_search_mode))
             .unwrap_or(0);
         self.provider_state.select(Some(selected));
     }
@@ -2490,6 +2649,31 @@ fn queued_prompt_height(count: usize) -> u16 {
     } else {
         count.min(3) as u16 + 1 + u16::from(count > 3)
     }
+}
+
+fn copied_helper_widget(theme: Theme) -> Paragraph<'static> {
+    Paragraph::new(Line::from(vec![
+        Span::styled("✓ ", theme.accent()),
+        Span::styled(COPIED_HELPER_LABEL, theme.muted()),
+    ]))
+}
+
+fn copied_helper_area(composer_area: Rect) -> Option<Rect> {
+    if composer_area.y == 0 || composer_area.width == 0 {
+        return None;
+    }
+
+    let width = copied_helper_width().min(composer_area.width);
+    Some(Rect::new(
+        composer_area.x + composer_area.width.saturating_sub(width + 2),
+        composer_area.y - 1,
+        width,
+        1,
+    ))
+}
+
+fn copied_helper_width() -> u16 {
+    (2 + COPIED_HELPER_LABEL.chars().count()) as u16
 }
 
 fn selectable_lines_from_text(text: &Text<'_>, area: Rect, scroll: u16) -> Vec<SelectableLine> {
@@ -3042,8 +3226,9 @@ fn provider_choice_from_descriptor(provider: &ProviderDescriptor) -> ProviderCho
 fn main_provider_menu_items(providers: &[ProviderChoice]) -> Vec<ProviderMenuItem> {
     let _provider_count = providers.len();
     vec![
-        ProviderMenuItem::Providers,
         ProviderMenuItem::Models,
+        ProviderMenuItem::Providers,
+        ProviderMenuItem::WebSearchSettings,
         ProviderMenuItem::SpinnerSettings,
     ]
 }
@@ -3067,6 +3252,20 @@ fn filter_provider_menu_items(items: &[ProviderMenuItem], query: &str) -> Vec<Pr
         .filter(|item| item.label().to_lowercase().contains(&query))
         .cloned()
         .collect()
+}
+
+fn provider_search_line(query: &str, theme: Theme) -> Line<'static> {
+    let query = query.trim();
+    let value = if query.is_empty() {
+        Span::styled("type to filter", theme.muted())
+    } else {
+        Span::styled(query.to_string(), theme.text())
+    };
+    Line::from(vec![
+        Span::styled(" / ", theme.accent()),
+        value,
+        Span::styled("  ", theme.muted()),
+    ])
 }
 
 fn codex_auth_message(method: &str, result: &CodexAuthResult) -> String {
@@ -3110,6 +3309,18 @@ async fn session_get(client: &LocalAppClient) -> anyhow::Result<SessionGetResult
     decode_response(res)
 }
 
+async fn settings_get(client: &LocalAppClient) -> anyhow::Result<SettingsGetResult> {
+    let res = client
+        .send_request(JsonRpcRequest {
+            jsonrpc: "2.0".to_string(),
+            id: Some(serde_json::json!("settings/get")),
+            method: "settings/get".to_string(),
+            params: None,
+        })
+        .await;
+    decode_response(res)
+}
+
 fn next_policy_mode(mode: PolicyMode) -> PolicyMode {
     match mode {
         PolicyMode::Default => PolicyMode::AcceptEdits,
@@ -3124,6 +3335,14 @@ fn policy_mode_label(mode: PolicyMode) -> &'static str {
         PolicyMode::AcceptEdits => "accept_edits",
         PolicyMode::Plan => "plan",
         PolicyMode::Bypass => "bypass",
+    }
+}
+
+fn web_search_mode_label(mode: HostedWebSearchMode) -> &'static str {
+    match mode {
+        HostedWebSearchMode::Disabled => "Disabled",
+        HostedWebSearchMode::Cached => "Codex cached",
+        HostedWebSearchMode::Live => "Codex live",
     }
 }
 
@@ -3276,11 +3495,8 @@ impl ContextWindowCounter {
         };
         vec![
             Span::styled("│ ", theme.muted()),
-            Span::styled(" ".repeat(filled), Style::default().bg(theme.subtle)),
-            Span::styled(
-                " ".repeat(cells.saturating_sub(filled)),
-                Style::default().bg(theme.dialog_bg),
-            ),
+            Span::styled("▰".repeat(filled), theme.subtle()),
+            Span::styled("▱".repeat(cells.saturating_sub(filled)), theme.muted()),
             Span::styled(format!(" {:.2}% │", self.percent()), theme.muted()),
         ]
     }
@@ -3428,7 +3644,6 @@ mod tests {
                 theme.text_strong,
                 theme.muted,
                 theme.subtle,
-                theme.user_bg,
                 theme.accent,
                 theme.accent_soft,
                 theme.tool,
@@ -3506,6 +3721,61 @@ mod tests {
             confirm_action_for_key(KeyCode::Char('n'), ConfirmChoice::Yes),
             ConfirmKeyAction::Cancel
         );
+    }
+
+    #[test]
+    fn approval_confirm_dialog_allows_policy_mode_switch_key() {
+        let approval = ConfirmDialogState::new(ConfirmDialog::ToolApproval {
+            approval_id: "approval-1".to_string(),
+            tool_name: "write_file".to_string(),
+            reason: None,
+        });
+        let exit = ConfirmDialogState::new(ConfirmDialog::Exit);
+
+        assert!(confirm_dialog_allows_policy_switch(&approval));
+        assert!(!confirm_dialog_allows_policy_switch(&exit));
+        assert!(is_policy_mode_switch_key(KeyEvent::new(
+            KeyCode::BackTab,
+            KeyModifiers::SHIFT
+        )));
+    }
+
+    #[test]
+    fn tool_approval_dialog_matches_only_matching_approval_id() {
+        let approval = ConfirmDialogState::new(ConfirmDialog::ToolApproval {
+            approval_id: "approval-1".to_string(),
+            tool_name: "write_file".to_string(),
+            reason: None,
+        });
+        let interrupt = ConfirmDialogState::new(ConfirmDialog::Interrupt);
+
+        assert!(tool_approval_dialog_matches(&approval, "approval-1"));
+        assert!(!tool_approval_dialog_matches(&approval, "approval-2"));
+        assert!(!tool_approval_dialog_matches(&interrupt, "approval-1"));
+    }
+
+    #[test]
+    fn dialog_menu_ctrl_j_and_ctrl_k_match_arrow_navigation() {
+        assert!(is_dialog_menu_previous_key(KeyEvent::new(
+            KeyCode::Up,
+            KeyModifiers::NONE
+        )));
+        assert!(is_dialog_menu_previous_key(KeyEvent::new(
+            KeyCode::Char('k'),
+            KeyModifiers::CONTROL
+        )));
+        assert!(is_dialog_menu_next_key(KeyEvent::new(
+            KeyCode::Down,
+            KeyModifiers::NONE
+        )));
+        assert!(is_dialog_menu_next_key(KeyEvent::new(
+            KeyCode::Char('j'),
+            KeyModifiers::CONTROL
+        )));
+        assert!(!is_dialog_menu_next_key(KeyEvent::new(
+            KeyCode::Char('j'),
+            KeyModifiers::NONE
+        )));
     }
 
     #[test]
@@ -3797,6 +4067,31 @@ mod tests {
     }
 
     #[test]
+    fn copied_helper_expires_after_duration() {
+        let start = Instant::now();
+        let helper = CopiedHelper { shown_at: start };
+
+        assert!(helper.visible(start + COPIED_HELPER_DURATION - Duration::from_millis(1)));
+        assert!(!helper.visible(start + COPIED_HELPER_DURATION));
+    }
+
+    #[test]
+    fn copied_helper_area_sits_above_prompt_right_edge() {
+        let composer = Rect::new(0, 20, 100, 3);
+        let area = copied_helper_area(composer).expect("helper should fit above composer");
+
+        assert_eq!(area.y, 19);
+        assert_eq!(area.height, 1);
+        assert_eq!(area.width, copied_helper_width());
+        assert_eq!(area.x + area.width, 98);
+    }
+
+    #[test]
+    fn copied_helper_area_is_absent_on_top_row() {
+        assert_eq!(copied_helper_area(Rect::new(0, 0, 100, 3)), None);
+    }
+
+    #[test]
     fn transcript_scroll_offset_follows_latest_lines() {
         assert_eq!(transcript_scroll_offset(3, 10), 0);
         assert_eq!(transcript_scroll_offset(10, 10), 0);
@@ -4084,12 +4379,34 @@ mod tests {
     #[test]
     fn provider_menu_starts_with_providers_submenu() {
         let items = main_provider_menu_items(&[]);
-        assert!(matches!(items.first(), Some(ProviderMenuItem::Providers)));
-        assert!(matches!(items.get(1), Some(ProviderMenuItem::Models)));
+        assert!(matches!(items.first(), Some(ProviderMenuItem::Models)));
+        assert!(matches!(items.get(1), Some(ProviderMenuItem::Providers)));
         assert!(matches!(
             items.get(2),
+            Some(ProviderMenuItem::WebSearchSettings)
+        ));
+        assert!(matches!(
+            items.get(3),
             Some(ProviderMenuItem::SpinnerSettings)
         ));
+    }
+
+    #[test]
+    fn web_search_settings_menu_lists_hosted_modes() {
+        let items = [
+            HostedWebSearchMode::Cached,
+            HostedWebSearchMode::Live,
+            HostedWebSearchMode::Disabled,
+        ]
+        .into_iter()
+        .map(ProviderMenuItem::WebSearchMode)
+        .chain(std::iter::once(ProviderMenuItem::Back))
+        .collect::<Vec<_>>();
+
+        assert_eq!(items[0].label(), "Codex cached");
+        assert_eq!(items[1].label(), "Codex live");
+        assert_eq!(items[2].label(), "Disabled");
+        assert!(matches!(items[3], ProviderMenuItem::Back));
     }
 
     #[test]
@@ -4157,6 +4474,16 @@ mod tests {
         let filtered = filter_provider_menu_items(&items, "5.5");
         assert_eq!(filtered.len(), 1);
         assert!(matches!(filtered[0], ProviderMenuItem::Model(_)));
+    }
+
+    #[test]
+    fn provider_search_line_shows_placeholder_and_query() {
+        let theme = Theme::for_dark_background(true);
+        let placeholder = provider_search_line("", theme);
+        assert_eq!(placeholder.spans[1].content, "type to filter");
+
+        let query = provider_search_line("codex", theme);
+        assert_eq!(query.spans[1].content, "codex");
     }
 
     #[test]

@@ -3,6 +3,7 @@ pub mod render;
 pub mod sources;
 
 use roder_api::events::ThreadId;
+use roder_api::inference::HostedWebSearchMode;
 use roder_api::policy_mode::PolicyMode;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -20,6 +21,7 @@ pub enum PaletteAction {
     SwitchSession(ThreadId),
     SwitchModel { provider: String, model: String },
     SetPolicyMode(PolicyMode),
+    SetWebSearchMode(HostedWebSearchMode),
     InsertComposerText(String),
 }
 

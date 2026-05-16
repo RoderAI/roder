@@ -3,7 +3,7 @@ use crate::palette::{
     PaletteAction, collect_entries, cycle_source_filter,
     index::{PaletteMatch, search as search_palette},
     render::palette_list,
-    sources::{agent_source, command_source, mode_source, model_source, session_source},
+    sources::{agent_source, command_source, mode_source, model_source, session_source, settings_source},
 };
 
 pub(super) fn is_palette_open_key(key: crossterm::event::KeyEvent) -> bool {
@@ -45,6 +45,13 @@ impl TuiApp {
                 None
             }
         };
+        let settings = match self.settings_get().await {
+            Ok(settings) => Some(settings),
+            Err(err) => {
+                self.push_event(format!("settings/get unavailable: {err}"));
+                None
+            }
+        };
 
         let mut sources = Vec::new();
         if self.palette_source_enabled("commands") {
@@ -58,6 +65,11 @@ impl TuiApp {
         }
         if self.palette_source_enabled("modes") {
             sources.push(mode_source(self.policy_mode));
+        }
+        if self.palette_source_enabled("settings")
+            && let Some(settings) = settings.as_ref()
+        {
+            sources.push(settings_source(&settings.web_search));
         }
         if self.palette_source_enabled("models")
             && let Some(providers) = providers.as_ref()
@@ -199,6 +211,9 @@ impl TuiApp {
             }
             PaletteAction::SetPolicyMode(mode) => {
                 self.set_policy_mode(mode, "palette mode switcher").await;
+            }
+            PaletteAction::SetWebSearchMode(mode) => {
+                self.set_web_search_mode(mode).await;
             }
             PaletteAction::InsertComposerText(text) => {
                 self.composer = composer_textarea(self.theme);

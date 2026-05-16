@@ -26,6 +26,7 @@ pub struct ProviderConfig {
 #[derive(Debug, Default, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ModelConfig {
     pub edit_tool: Option<String>,
+    pub parallel_tool_calls: Option<bool>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -161,6 +162,10 @@ pub fn save_default_provider_model_reasoning(
     save_default_provider_model_reasoning_to_path(config_path(), provider, model, reasoning)
 }
 
+pub fn save_web_search_mode(mode: &str) -> anyhow::Result<()> {
+    save_web_search_mode_to_path(config_path(), mode)
+}
+
 pub fn save_default_provider_model_to_path(
     path: impl AsRef<Path>,
     provider: &str,
@@ -182,6 +187,13 @@ pub fn save_default_provider_model_reasoning_to_path(
     if let Some(reasoning) = reasoning {
         config.reasoning = Some(reasoning.to_string());
     }
+    save_config_file_to_path(path, &config)
+}
+
+pub fn save_web_search_mode_to_path(path: impl AsRef<Path>, mode: &str) -> anyhow::Result<()> {
+    let path = path.as_ref();
+    let mut config = load_config_file_from_path(path)?;
+    config.web_search.get_or_insert_with(Default::default).mode = Some(mode.to_string());
     save_config_file_to_path(path, &config)
 }
 
@@ -477,9 +489,11 @@ mod tests {
             r#"
             [models."custom-openai"]
             edit_tool = "patch"
+            parallel_tool_calls = false
 
             [models."custom-claude"]
             edit_tool = "edit"
+            parallel_tool_calls = true
             "#,
         )
         .unwrap();
@@ -494,9 +508,23 @@ mod tests {
         assert_eq!(
             config
                 .models
+                .get("custom-openai")
+                .and_then(|model| model.parallel_tool_calls),
+            Some(false)
+        );
+        assert_eq!(
+            config
+                .models
                 .get("custom-claude")
                 .and_then(|model| model.edit_tool.as_deref()),
             Some("edit")
+        );
+        assert_eq!(
+            config
+                .models
+                .get("custom-claude")
+                .and_then(|model| model.parallel_tool_calls),
+            Some(true)
         );
     }
 
@@ -515,5 +543,20 @@ mod tests {
         assert!(contents.contains("model = \"gpt-5.5\""));
 
         let _ = fs::remove_dir_all(path.parent().unwrap().parent().unwrap());
+    }
+
+    #[test]
+    fn save_web_search_mode_creates_or_updates_web_search_config() {
+        let path = std::env::temp_dir().join(format!(
+            "roder-config-web-search-{}.toml",
+            std::process::id()
+        ));
+        let _ = fs::remove_file(&path);
+
+        save_web_search_mode_to_path(&path, "live").unwrap();
+
+        let config = load_config_file_from_path(&path).unwrap();
+        assert_eq!(config.web_search.unwrap().mode.as_deref(), Some("live"));
+        let _ = fs::remove_file(&path);
     }
 }

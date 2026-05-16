@@ -24,6 +24,20 @@ pub(super) fn tool_title(name: &str) -> String {
     }
 }
 
+pub(super) fn tool_label(name: &str, arguments: &str) -> String {
+    let title = tool_title(name);
+    let arguments = argument_preview(arguments);
+    if arguments.is_empty() {
+        return title;
+    }
+
+    if let Some(primary) = arguments.strip_prefix("path: ") {
+        return format!("{title}: {primary}");
+    }
+
+    format!("{title}: {arguments}")
+}
+
 pub(super) fn argument_preview(arguments: &str) -> String {
     let trimmed = arguments.trim();
     if trimmed.is_empty() || trimmed == "{}" {

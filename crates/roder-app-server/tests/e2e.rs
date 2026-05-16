@@ -19,8 +19,8 @@ use roder_protocol::{
     JsonRpcRequest, ProviderSelectParams, ProviderSelectResult, ProvidersListResult,
     SessionExitPlanParams, SessionExitPlanResult, SessionGetResult, SessionResolveUserInputParams,
     SessionResolveUserInputResult, SessionSetModeParams, SessionSetModeResult, SessionsListResult,
-    StartTurnParams, StartTurnResult, SteerTurnParams, SteerTurnResult, SystemStatusResult,
-    ToolsListResult,
+    SettingsGetResult, SettingsSetWebSearchParams, SettingsSetWebSearchResult, StartTurnParams,
+    StartTurnResult, SteerTurnParams, SteerTurnResult, SystemStatusResult, ToolsListResult,
 };
 use std::sync::Arc;
 use std::time::Duration;
@@ -267,6 +267,7 @@ async fn test_app_server_e2e() {
     let status: SystemStatusResult = request(&client, "system/status", None).await;
     assert_eq!(status.provider, PROVIDER_MOCK);
     assert_eq!(status.model, "mock");
+    assert_eq!(status.web_search.mode, HostedWebSearchMode::Cached);
 
     let extensions: ExtensionsListResult = request(&client, "extensions/list", None).await;
     assert!(extensions.extensions.is_empty());
@@ -700,6 +701,36 @@ async fn request_user_input_tool_waits_for_app_server_resolution() {
 
     assert!(saw_resolved);
     assert!(saw_turn_completed);
+}
+
+#[tokio::test]
+async fn web_search_setting_can_be_set_and_observed() {
+    let runtime = Arc::new(Runtime::fake().unwrap());
+    let server = Arc::new(AppServer::new(runtime.clone()));
+    let client = LocalAppClient::new(server);
+
+    let settings: SettingsGetResult = request(&client, "settings/get", None).await;
+    assert_eq!(settings.web_search.mode, HostedWebSearchMode::Cached);
+
+    let changed: SettingsSetWebSearchResult = request(
+        &client,
+        "settings/set_web_search",
+        Some(
+            serde_json::to_value(SettingsSetWebSearchParams {
+                mode: HostedWebSearchMode::Live,
+            })
+            .unwrap(),
+        ),
+    )
+    .await;
+    assert_eq!(changed.web_search.mode, HostedWebSearchMode::Live);
+
+    let status: SystemStatusResult = request(&client, "system/status", None).await;
+    assert_eq!(status.web_search.mode, HostedWebSearchMode::Live);
+    assert_eq!(
+        runtime.status().await.hosted_web_search.mode,
+        HostedWebSearchMode::Live
+    );
 }
 
 #[tokio::test]

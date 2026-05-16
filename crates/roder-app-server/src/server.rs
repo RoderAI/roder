@@ -1,7 +1,9 @@
 use std::sync::Arc;
 
 use roder_api::events::EventEnvelope;
-use roder_api::inference::{InferenceProviderContext, InferenceProviderMetadata, ProviderAuthType};
+use roder_api::inference::{
+    HostedWebSearchMode, InferenceProviderContext, InferenceProviderMetadata, ProviderAuthType,
+};
 use roder_core::{Runtime, StartTurnRequest, default_instructions};
 use roder_protocol::*;
 use tokio::sync::broadcast;
@@ -32,6 +34,13 @@ impl AppServer {
             "providers/select" => {
                 self.decode_and(req.params, |p| async move {
                     self.handle_provider_select(p).await
+                })
+                .await
+            }
+            "settings/get" => self.handle_settings_get().await,
+            "settings/set_web_search" => {
+                self.decode_and(req.params, |p| async move {
+                    self.handle_settings_set_web_search(p).await
                 })
                 .await
             }
@@ -162,6 +171,9 @@ impl AppServer {
             provider: cfg.default_provider,
             model: cfg.default_model,
             reasoning: self.runtime.effective_reasoning().await,
+            web_search: WebSearchSettings {
+                mode: cfg.hosted_web_search.mode,
+            },
             extensions: self.runtime.registry().manifests.len(),
             providers: self.runtime.registry().inference_engines.len(),
         })
@@ -235,6 +247,39 @@ impl AppServer {
             provider: cfg.default_provider,
             model: cfg.default_model,
             reasoning: self.runtime.effective_reasoning().await,
+        })
+        .unwrap())
+    }
+
+    async fn handle_settings_get(&self) -> Result<serde_json::Value, JsonRpcError> {
+        let cfg = self.runtime.status().await;
+        Ok(serde_json::to_value(SettingsGetResult {
+            web_search: WebSearchSettings {
+                mode: cfg.hosted_web_search.mode,
+            },
+        })
+        .unwrap())
+    }
+
+    async fn handle_settings_set_web_search(
+        &self,
+        params: SettingsSetWebSearchParams,
+    ) -> Result<serde_json::Value, JsonRpcError> {
+        let cfg = self
+            .runtime
+            .set_hosted_web_search(params.mode)
+            .await
+            .map_err(internal_error)?;
+        if self.persist_user_config {
+            roder_config::save_web_search_mode(web_search_mode_config_value(
+                cfg.hosted_web_search.mode,
+            ))
+            .map_err(internal_error)?;
+        }
+        Ok(serde_json::to_value(SettingsSetWebSearchResult {
+            web_search: WebSearchSettings {
+                mode: cfg.hosted_web_search.mode,
+            },
         })
         .unwrap())
     }
@@ -478,6 +523,14 @@ fn internal_error(err: impl std::fmt::Display) -> JsonRpcError {
         code: -32000,
         message: err.to_string(),
         data: None,
+    }
+}
+
+fn web_search_mode_config_value(mode: HostedWebSearchMode) -> &'static str {
+    match mode {
+        HostedWebSearchMode::Disabled => "disabled",
+        HostedWebSearchMode::Cached => "codex",
+        HostedWebSearchMode::Live => "live",
     }
 }
 

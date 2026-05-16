@@ -204,6 +204,8 @@ edit_tool = "patch" # or "edit"
 
 The app-server run-control methods are `turns/start`, `turns/steer`, and `turns/interrupt`. `turns/start` and `turns/steer` accept an optional `images` array of `{ "image_url": "data:image/png;base64,..." }` input images; image-capable providers receive those as structured image content instead of appended file-path text. Steering accepts `{ "thread_id": "...", "turn_id": "...", "message": "...", "images": [] }`, emits `turn.steered`, and appends the steering message to the active turn before the next provider request.
 
+`settings/get` returns runtime settings including hosted web search. `settings/set_web_search` accepts `{ "mode": "cached" }`, `{ "mode": "live" }`, or `{ "mode": "disabled" }`; the TUI exposes these under the Ctrl+P settings menu and the Ctrl+K palette Settings source, and persists the choice to `~/.roder/config.toml` when user config persistence is enabled.
+
 `tools/list` exposes the built-in coding tools plus Codex-compatible workflow helpers: `exec_command`, `write_stdin`, `update_plan`, `get_goal`, `create_goal`, `update_goal`, and `request_user_input`. `exec_command` starts a shell session and returns either final output or a `session_id`; `write_stdin` writes to or polls that session. When a model calls `request_user_input`, Roder emits `user_input.requested` and pauses the turn until a client answers with:
 
 ```json

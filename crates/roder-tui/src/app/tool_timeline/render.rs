@@ -191,7 +191,6 @@ pub(super) fn push_tool_overflow_line(
         item_style(
             Style::default()
                 .fg(theme.muted)
-                .bg(theme.user_bg)
                 .add_modifier(Modifier::BOLD),
             selected,
             theme,

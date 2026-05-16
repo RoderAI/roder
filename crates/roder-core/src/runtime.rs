@@ -3,19 +3,19 @@ use std::sync::Arc;
 
 use anyhow::Context;
 use futures::StreamExt;
-use futures::future::{AbortHandle, Abortable};
+use futures::future::{AbortHandle, Abortable, try_join_all};
 use roder_api::catalog::{EDIT_TOOL_EDIT, EDIT_TOOL_PATCH, REASONING_NONE, lookup_model};
 use roder_api::context::PolicyGate;
 use roder_api::conversation::{
     AssistantMessage, ConversationItem, ErrorRecord, InputImage, ReasoningSummary, ToolCallRecord,
-    UserMessage,
+    ToolResultRecord, UserMessage,
 };
 use roder_api::events::*;
 use roder_api::extension::ExtensionRegistry;
 use roder_api::inference::{
-    AgentInferenceRequest, HostedWebSearchConfig, InferenceEngine, InferenceEvent,
-    InferenceTurnContext, InstructionBundle, ModelSelection, OutputConfig, ReasoningConfig,
-    RuntimeHints,
+    AgentInferenceRequest, HostedWebSearchConfig, HostedWebSearchMode, InferenceEngine,
+    InferenceEvent, InferenceTurnContext, InstructionBundle, ModelSelection, OutputConfig,
+    ReasoningConfig, RuntimeHints, ToolCallCompleted,
 };
 use roder_api::policy_mode::{PolicyDecision, PolicyMode};
 use roder_api::session::{SessionMetadata, SessionStore, ThreadSnapshot};
@@ -39,6 +39,7 @@ pub struct RuntimeConfig {
     pub auto_compact_token_limit: Option<u32>,
     pub hosted_web_search: HostedWebSearchConfig,
     pub model_edit_tools: HashMap<String, String>,
+    pub model_parallel_tool_calls: HashMap<String, bool>,
     pub workspace: Option<String>,
     pub policy_mode: PolicyMode,
 }
@@ -52,6 +53,7 @@ impl Default for RuntimeConfig {
             auto_compact_token_limit: None,
             hosted_web_search: HostedWebSearchConfig::cached(),
             model_edit_tools: HashMap::new(),
+            model_parallel_tool_calls: HashMap::new(),
             workspace: None,
             policy_mode: PolicyMode::Default,
         }
@@ -249,6 +251,15 @@ impl Runtime {
         self.auto_resolve_pending_tool_approvals_for_mode(mode)
             .await;
         Ok(next)
+    }
+
+    pub async fn set_hosted_web_search(
+        &self,
+        mode: HostedWebSearchMode,
+    ) -> anyhow::Result<RuntimeConfig> {
+        let mut cfg = self.config.write().await;
+        cfg.hosted_web_search = HostedWebSearchConfig { mode };
+        Ok(cfg.clone())
     }
 
     async fn auto_resolve_pending_tool_approvals_for_mode(&self, mode: PolicyMode) {
@@ -652,6 +663,7 @@ impl Runtime {
         let engine = self.engine_for(&provider)?;
         let capabilities = engine.capabilities();
         let tools = self.filtered_tool_specs(&cfg, &model);
+        let parallel_tool_calls = parallel_tool_calls_for_model(&cfg, &model);
         let tool_choice = if tools.is_empty() {
             ToolChoice::None
         } else {
@@ -708,6 +720,7 @@ impl Runtime {
                 output: OutputConfig::default(),
                 runtime: RuntimeHints {
                     auto_compact_token_limit: server_side_compaction_threshold(&cfg, &model),
+                    parallel_tool_calls: Some(parallel_tool_calls),
                     hosted_web_search: cfg.hosted_web_search.clone(),
                     ..RuntimeHints::default()
                 },
@@ -848,7 +861,7 @@ impl Runtime {
                     .await?;
                 conversation.push(item);
             }
-            for call in tool_calls {
+            for call in &tool_calls {
                 let tool_item = ConversationItem::ToolCall(ToolCallRecord {
                     id: call.id.clone(),
                     name: call.name.clone(),
@@ -857,7 +870,16 @@ impl Runtime {
                 self.persist_turn_item(&req.thread_id, &turn_id, &tool_item)
                     .await?;
                 conversation.push(tool_item);
-                let result = self.route_tool_call(&req.thread_id, &turn_id, call).await?;
+            }
+            let results = self
+                .route_tool_calls(
+                    &req.thread_id,
+                    &turn_id,
+                    tool_calls,
+                    parallel_tool_calls,
+                )
+                .await?;
+            for result in results {
                 conversation.push(ConversationItem::ToolResult(result));
             }
             conversation = self
@@ -1075,10 +1097,25 @@ fn server_side_compaction_threshold(cfg: &RuntimeConfig, model: &str) -> Option<
 }
 
 fn effective_reasoning_for_model(cfg: &RuntimeConfig, model: &str) -> String {
+    let Some(entry) = lookup_model(model) else {
+        return cfg
+            .reasoning
+            .clone()
+            .unwrap_or_else(|| REASONING_NONE.to_string());
+    };
+    if entry.supported_reasoning.is_empty() {
+        return REASONING_NONE.to_string();
+    }
     cfg.reasoning
-        .clone()
-        .or_else(|| lookup_model(model).map(|entry| entry.default_reasoning.to_string()))
-        .unwrap_or_else(|| REASONING_NONE.to_string())
+        .as_deref()
+        .filter(|reasoning| {
+            entry
+                .supported_reasoning
+                .iter()
+                .any(|option| option.effort == *reasoning)
+        })
+        .unwrap_or(entry.default_reasoning)
+        .to_string()
 }
 
 fn validate_reasoning_effort(model: &str, effort: &str) -> anyhow::Result<()> {
@@ -1120,6 +1157,7 @@ pub fn validate_edit_tool(value: &str) -> anyhow::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use roder_api::catalog::{REASONING_HIGH, REASONING_MEDIUM, REASONING_MINIMAL};
 
     #[test]
     fn server_side_compaction_uses_catalog_ninety_percent_default() {
@@ -1157,6 +1195,36 @@ mod tests {
         assert_eq!(
             server_side_compaction_threshold(&cfg, "codex-auto-review"),
             None
+        );
+    }
+
+    #[test]
+    fn reasoning_is_disabled_for_models_without_reasoning_support() {
+        let cfg = RuntimeConfig {
+            reasoning: Some(REASONING_HIGH.to_string()),
+            ..RuntimeConfig::default()
+        };
+
+        assert_eq!(
+            effective_reasoning_for_model(&cfg, "claude-haiku-4-5-20251001"),
+            REASONING_NONE
+        );
+        assert_eq!(
+            reasoning_for_model(&cfg, "claude-haiku-4-5-20251001"),
+            ReasoningConfig::default()
+        );
+    }
+
+    #[test]
+    fn unsupported_configured_reasoning_falls_back_to_model_default() {
+        let cfg = RuntimeConfig {
+            reasoning: Some(REASONING_MINIMAL.to_string()),
+            ..RuntimeConfig::default()
+        };
+
+        assert_eq!(
+            effective_reasoning_for_model(&cfg, "gpt-5.5"),
+            REASONING_MEDIUM
         );
     }
 }

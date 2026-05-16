@@ -54,7 +54,7 @@ fn tool_entry_formats_title_and_arguments() {
 
     assert_eq!(
         entry.label(),
-        r#"Grep path: README.md pattern: "^#|name =|description""#
+        r#"Grep: README.md pattern: "^#|name =|description""#
     );
 }
 
@@ -71,7 +71,7 @@ fn timeline_updates_tool_rows_in_place() {
     assert!(
         lines
             .iter()
-            .any(|line| line.contains("Read File path: README.md"))
+            .any(|line| line.contains("Read File: README.md"))
     );
     assert_eq!(
         timeline
@@ -94,7 +94,7 @@ fn tool_rows_do_not_render_a_left_gutter() {
     let lines = rendered_lines(&mut timeline);
     let row = lines
         .iter()
-        .find(|line| line.contains("Grep path: . query: timeline"))
+        .find(|line| line.contains("Grep: . query: timeline"))
         .expect("tool row should be rendered");
     assert!(row.starts_with("  ◆ "));
     assert!(!row.starts_with("│"));
@@ -102,7 +102,7 @@ fn tool_rows_do_not_render_a_left_gutter() {
 }
 
 #[test]
-fn user_prompts_render_as_full_width_bands() {
+fn user_prompts_render_without_background() {
     let mut timeline = TimelineState::default();
     timeline.push_user("what does this repo do?");
 
@@ -125,11 +125,7 @@ fn user_prompts_render_as_full_width_bands() {
 
     assert!(text.starts_with("  ❯ what does this repo do?"));
     assert_eq!(text.chars().count(), 64);
-    assert!(
-        row.spans
-            .iter()
-            .all(|span| span.style.bg == Some(Theme::for_dark_background(true).user_bg))
-    );
+    assert!(row.spans.iter().all(|span| span.style.bg.is_none()));
 }
 
 #[test]
@@ -151,7 +147,7 @@ fn consecutive_tool_rows_stay_compact() {
         .expect("list row should be rendered");
     let grep_row = lines
         .iter()
-        .position(|line| line.contains("Grep path: . query: repo"))
+        .position(|line| line.contains("Grep: . query: repo"))
         .expect("grep row should be rendered");
 
     assert_eq!(grep_row, list_row + 1);
@@ -304,11 +300,7 @@ fn more_tools_row_matches_collapsed_tool_header_style() {
 
     assert_eq!(text.trim_end(), "  › 2 more");
     assert_eq!(text.chars().count(), 80);
-    assert!(
-        row.spans
-            .iter()
-            .all(|span| span.style.bg == Some(Theme::for_dark_background(true).user_bg))
-    );
+    assert!(row.spans.iter().all(|span| span.style.bg.is_none()));
 }
 
 #[test]
@@ -350,7 +342,7 @@ fn running_tool_marker_fades_with_animation_frame() {
 }
 
 #[test]
-fn user_prompt_continuation_lines_keep_prompt_band_width() {
+fn user_prompt_continuation_lines_keep_prompt_width() {
     let mut timeline = TimelineState::default();
     timeline.push_user("first\nsecond");
 
@@ -562,7 +554,7 @@ fn tools_render_after_commentary_phase_messages() {
         .expect("commentary row should render");
     let tool_row = lines
         .iter()
-        .position(|line| line.contains("Read File path: README.md"))
+        .position(|line| line.contains("Read File: README.md"))
         .expect("tool row should render");
 
     assert_eq!(tool_row, commentary_row + 1);

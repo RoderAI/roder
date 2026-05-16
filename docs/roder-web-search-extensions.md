@@ -11,6 +11,8 @@ mode = "live" # default is "codex", which uses cached hosted search
 
 Set `RODER_WEB_SEARCH_MODE=live`, `codex`, `external`, or `disabled` to override this from the environment.
 
+The TUI command palette (`Ctrl+P`) exposes hosted web search choices under Settings: Codex cached, Codex live, and Disabled. External provider-router mode still requires config because those local tools are installed when the registry is built.
+
 ## External Provider Router
 
 Roder can also install web search through native extension crates. In this mode the canonical local tool is `web_search`; provider-specific tools are only exposed when `namespaced_tools = true`.

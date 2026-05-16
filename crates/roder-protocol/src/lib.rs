@@ -1,7 +1,9 @@
 use roder_api::conversation::InputImage;
 use roder_api::events::{ThreadId, TurnId};
 use roder_api::extension::ExtensionManifest;
-use roder_api::inference::{InferenceCapabilities, ModelDescriptor, ProviderAuthType};
+use roder_api::inference::{
+    HostedWebSearchMode, InferenceCapabilities, ModelDescriptor, ProviderAuthType,
+};
 use roder_api::policy_mode::PolicyMode;
 use roder_api::session::{SessionMetadata, ThreadSnapshot};
 use roder_api::subagents::SubagentPermissionMode;
@@ -45,8 +47,14 @@ pub struct SystemStatusResult {
     pub provider: String,
     pub model: String,
     pub reasoning: String,
+    pub web_search: WebSearchSettings,
     pub extensions: usize,
     pub providers: usize,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct WebSearchSettings {
+    pub mode: HostedWebSearchMode,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -89,6 +97,21 @@ pub struct ProviderSelectResult {
     pub provider: String,
     pub model: String,
     pub reasoning: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SettingsGetResult {
+    pub web_search: WebSearchSettings,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SettingsSetWebSearchParams {
+    pub mode: HostedWebSearchMode,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SettingsSetWebSearchResult {
+    pub web_search: WebSearchSettings,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
