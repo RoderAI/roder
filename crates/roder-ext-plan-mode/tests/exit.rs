@@ -60,7 +60,7 @@ async fn exit_plan_tool_returns_pending_request_payload() {
             call(json!({
                 "summary": "Build the approved change.",
                 "next_steps": ["edit files", "run tests"],
-                "target_mode": "accept_edits"
+                "target_mode": "accept_all"
             })),
         )
         .await
@@ -69,7 +69,7 @@ async fn exit_plan_tool_returns_pending_request_payload() {
     assert!(!result.is_error);
     assert_eq!(
         result.data["policy_exit_plan_request"]["target_mode"],
-        "accept_edits"
+        "accept_all"
     );
     assert_eq!(
         result.data["policy_exit_plan_request"]["summary"],
@@ -79,6 +79,26 @@ async fn exit_plan_tool_returns_pending_request_payload() {
         result.data["policy_exit_plan_request"]["request_id"]
             .as_str()
             .is_some_and(|id| !id.is_empty())
+    );
+}
+
+#[tokio::test]
+async fn exit_plan_tool_accepts_legacy_accept_edits_target_mode() {
+    let result = ExitPlanModeTool
+        .execute(
+            context(PolicyMode::Plan),
+            call(json!({
+                "summary": "Build the approved change.",
+                "target_mode": "accept_edits"
+            })),
+        )
+        .await
+        .unwrap();
+
+    assert!(!result.is_error);
+    assert_eq!(
+        result.data["policy_exit_plan_request"]["target_mode"],
+        "accept_all"
     );
 }
 

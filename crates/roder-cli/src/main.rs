@@ -247,11 +247,11 @@ async fn run_stdio_app_server(app_server: Arc<AppServer>) -> anyhow::Result<()> 
 fn parse_policy_mode(mode: &str) -> anyhow::Result<PolicyMode> {
     match mode.trim() {
         "default" => Ok(PolicyMode::Default),
-        "accept_edits" | "accept-edits" => Ok(PolicyMode::AcceptEdits),
+        "accept_all" | "accept-all" | "accept_edits" | "accept-edits" => Ok(PolicyMode::AcceptAll),
         "plan" => Ok(PolicyMode::Plan),
         "bypass" | "yolo" => Ok(PolicyMode::Bypass),
         other => anyhow::bail!(
-            "unsupported policy mode {other:?}; expected default, accept_edits, plan, or bypass"
+            "unsupported policy mode {other:?}; expected default, accept_all, plan, or bypass"
         ),
     }
 }
@@ -651,8 +651,11 @@ mod tests {
         let options = parse_cli_options(&["--mode".to_string(), "plan".to_string()]).unwrap();
         assert_eq!(options.policy_mode, Some(PolicyMode::Plan));
 
+        let options = parse_cli_options(&["--mode=accept-all".to_string()]).unwrap();
+        assert_eq!(options.policy_mode, Some(PolicyMode::AcceptAll));
+
         let options = parse_cli_options(&["--mode=accept-edits".to_string()]).unwrap();
-        assert_eq!(options.policy_mode, Some(PolicyMode::AcceptEdits));
+        assert_eq!(options.policy_mode, Some(PolicyMode::AcceptAll));
 
         let options = parse_cli_options(&["--yolo".to_string()]).unwrap();
         assert_eq!(options.policy_mode, Some(PolicyMode::Bypass));
