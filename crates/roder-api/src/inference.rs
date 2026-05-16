@@ -107,6 +107,8 @@ pub struct RuntimeHints {
     pub trace_id: Option<String>,
     pub prompt_cache_key: Option<String>,
     pub auto_compact_token_limit: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub parallel_tool_calls: Option<bool>,
     #[serde(default)]
     pub hosted_web_search: HostedWebSearchConfig,
 }

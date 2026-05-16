@@ -286,8 +286,8 @@ pub const BUILT_IN_MODELS: &[ModelCatalogEntry] = &[
         "Fast Claude model for lower-latency tool workflows.",
         200_000,
         180_000,
-        REASONING_LOW,
-        HAIKU_REASONING,
+        REASONING_NONE,
+        &[],
     ),
     gemini_model(
         "gemini-3.1-pro-preview",
@@ -523,6 +523,17 @@ mod tests {
         assert_eq!(models_for_provider(PROVIDER_ANTHROPIC, false).len(), 3);
         assert_eq!(models_for_provider(PROVIDER_GEMINI, false).len(), 4);
         assert_eq!(models_for_provider(PROVIDER_MOCK, true).len(), 1);
+    }
+
+    #[test]
+    fn claude_haiku_does_not_advertise_reasoning_effort() {
+        let haiku = lookup_model("claude-haiku-4-5-20251001").unwrap();
+
+        assert_eq!(haiku.default_reasoning, REASONING_NONE);
+        assert!(haiku.supported_reasoning.is_empty());
+
+        let descriptor = ModelDescriptor::from(haiku);
+        assert!(descriptor.supported_reasoning.is_empty());
     }
 
     #[test]

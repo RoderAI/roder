@@ -1,6 +1,7 @@
+use roder_api::inference::HostedWebSearchMode;
 use roder_api::policy_mode::PolicyMode;
 use roder_api::session::SessionMetadata;
-use roder_protocol::{AgentDescriptor, CommandDescriptor, ProvidersListResult};
+use roder_protocol::{AgentDescriptor, CommandDescriptor, ProvidersListResult, WebSearchSettings};
 
 use super::{PaletteAction, PaletteItem, StaticPaletteSource};
 
@@ -160,6 +161,54 @@ pub fn mode_source(active: PolicyMode) -> StaticPaletteSource {
     )
 }
 
+pub fn settings_source(web_search: &WebSearchSettings) -> StaticPaletteSource {
+    StaticPaletteSource::new(
+        "settings",
+        "Settings",
+        [
+            (
+                HostedWebSearchMode::Cached,
+                "Web search provider: Codex cached",
+                "Use Codex/OpenAI hosted web search over cached content",
+            ),
+            (
+                HostedWebSearchMode::Live,
+                "Web search provider: Codex live",
+                "Use Codex/OpenAI hosted web search with live internet access",
+            ),
+            (
+                HostedWebSearchMode::Disabled,
+                "Web search provider: Disabled",
+                "Do not send the hosted web_search tool to the provider",
+            ),
+        ]
+        .into_iter()
+        .map(|(mode, title, subtitle)| {
+            let active_suffix = if mode == web_search.mode {
+                " (active)"
+            } else {
+                ""
+            };
+            (
+                PaletteItem {
+                    id: format!("web_search:{}", web_search_mode_id(mode)),
+                    title: format!("{title}{active_suffix}"),
+                    subtitle: Some(subtitle.to_string()),
+                    keywords: vec![
+                        "web".to_string(),
+                        "search".to_string(),
+                        "provider".to_string(),
+                        web_search_mode_id(mode).to_string(),
+                    ],
+                    icon: Some('~'),
+                },
+                PaletteAction::SetWebSearchMode(mode),
+            )
+        })
+        .collect(),
+    )
+}
+
 fn model_entry(
     provider_id: &str,
     model_id: &str,
@@ -203,9 +252,19 @@ fn policy_mode_description(mode: PolicyMode) -> &'static str {
     }
 }
 
+fn web_search_mode_id(mode: HostedWebSearchMode) -> &'static str {
+    match mode {
+        HostedWebSearchMode::Disabled => "disabled",
+        HostedWebSearchMode::Cached => "codex",
+        HostedWebSearchMode::Live => "live",
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use roder_api::inference::{InferenceCapabilities, ModelDescriptor, ProviderAuthType};
+    use roder_api::inference::{
+        HostedWebSearchMode, InferenceCapabilities, ModelDescriptor, ProviderAuthType,
+    };
     use roder_api::subagents::SubagentPermissionMode;
     use roder_protocol::ProviderDescriptor;
 
@@ -264,6 +323,20 @@ mod tests {
                 provider: "mock".to_string(),
                 model: "mock-small".to_string()
             }
+        );
+    }
+
+    #[test]
+    fn settings_source_maps_web_search_modes_to_actions() {
+        let source = settings_source(&WebSearchSettings {
+            mode: HostedWebSearchMode::Cached,
+        });
+        let entries = source.entries();
+
+        assert!(entries[0].item.title.contains("(active)"));
+        assert_eq!(
+            entries[1].action,
+            PaletteAction::SetWebSearchMode(HostedWebSearchMode::Live)
         );
     }
 
