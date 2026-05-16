@@ -139,14 +139,25 @@ mod tests {
     }
 
     #[test]
-    fn accept_edits_does_not_auto_approve_process_spawn() {
+    fn accept_all_auto_approves_process_spawn() {
         let decision = DefaultPolicyGate::new().decide(
             &call("process.spawn", json!({ "cmd": "cargo test" })),
-            PolicyMode::AcceptEdits,
+            PolicyMode::AcceptAll,
             &context(),
         );
 
-        assert!(matches!(decision, PolicyDecision::RequiresApproval { .. }));
+        assert!(matches!(decision, PolicyDecision::AutoApproved { .. }));
+    }
+
+    #[test]
+    fn accept_all_auto_approves_shell_tool() {
+        let decision = DefaultPolicyGate::new().decide(
+            &call("shell", json!({ "command": "cargo test" })),
+            PolicyMode::AcceptAll,
+            &context(),
+        );
+
+        assert!(matches!(decision, PolicyDecision::AutoApproved { .. }));
     }
 
     #[test]

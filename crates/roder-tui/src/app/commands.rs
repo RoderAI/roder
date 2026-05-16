@@ -89,6 +89,47 @@ pub(super) fn accepted_completion(
     Some(format!("/{} ", command.name))
 }
 
+pub(super) fn selected_invocation(
+    input: &str,
+    commands: &[CommandDescriptor],
+    selected: usize,
+) -> Option<(String, String)> {
+    let matches = matching_commands(commands, input);
+    let command = matches.get(selected.min(matches.len().saturating_sub(1)))?;
+    Some((command.name.clone(), String::new()))
+}
+
+pub(super) fn built_in_prompt(name: &str, args: &str) -> Option<String> {
+    let body = match name {
+        "init" => "Inspect the workspace and draft concise project instructions.",
+        "compact" => "Compact the current thread while preserving the working state.",
+        "memory" => "Surface relevant memory for the current workspace and task.",
+        _ => return None,
+    };
+    if args.trim().is_empty() {
+        Some(body.to_string())
+    } else {
+        Some(format!("{body}\n\nUser arguments: {}", args.trim()))
+    }
+}
+
+pub(super) fn help_text(commands: &[CommandDescriptor]) -> String {
+    let mut lines = vec![
+        "Slash commands:".to_string(),
+        "/clear - Clear the visible conversation state.".to_string(),
+        "/model - Show or change the active model.".to_string(),
+        "/agents - List configured subagents.".to_string(),
+    ];
+    for command in commands {
+        if matches!(command.name.as_str(), "clear" | "model" | "agents") {
+            continue;
+        }
+        let description = command.description.as_deref().unwrap_or("Run command.");
+        lines.push(format!("/{} - {description}", command.name));
+    }
+    lines.join("\n")
+}
+
 pub(super) fn command_warning(command: &CommandDescriptor) -> Option<String> {
     if command.agent.is_some() {
         Some("uses subagent".to_string())
@@ -129,6 +170,35 @@ mod tests {
             accepted_completion("/he", &commands, 0).as_deref(),
             Some("/help ")
         );
+    }
+
+    #[test]
+    fn selected_invocation_runs_highlighted_command() {
+        let commands = sample_commands();
+
+        assert_eq!(
+            selected_invocation("/r", &commands, 1),
+            Some(("refactor".to_string(), String::new()))
+        );
+    }
+
+    #[test]
+    fn built_in_prompt_preserves_user_arguments() {
+        assert_eq!(
+            built_in_prompt("memory", "focus on ui").as_deref(),
+            Some(
+                "Surface relevant memory for the current workspace and task.\n\nUser arguments: focus on ui"
+            )
+        );
+        assert_eq!(built_in_prompt("help", ""), None);
+    }
+
+    #[test]
+    fn help_text_lists_commands() {
+        let help = help_text(&sample_commands());
+
+        assert!(help.contains("Slash commands:"));
+        assert!(help.contains("/help - Run command."));
     }
 
     #[test]

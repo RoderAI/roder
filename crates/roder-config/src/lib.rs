@@ -136,8 +136,8 @@ impl Default for PolicyModesConfig {
 pub struct PolicyAutoApproveConfig {
     #[serde(default)]
     pub default: Vec<String>,
-    #[serde(default)]
-    pub accept_edits: Vec<String>,
+    #[serde(default, alias = "accept_edits")]
+    pub accept_all: Vec<String>,
     #[serde(default)]
     pub plan: Vec<String>,
     #[serde(default)]
@@ -402,7 +402,7 @@ mod tests {
             exit_plan_requires_summary = true
 
             [policy_modes.auto_approve]
-            accept_edits = ["fs.write", "fs.edit"]
+            accept_all = ["fs.write", "fs.edit"]
             bypass = ["*"]
             "#,
         )
@@ -413,8 +413,24 @@ mod tests {
         assert_eq!(policy_modes.warn_on_bypass, Some(false));
         assert_eq!(policy_modes.plan_blocks_network, Some(true));
         assert_eq!(
-            policy_modes.auto_approve.accept_edits,
+            policy_modes.auto_approve.accept_all,
             vec!["fs.write".to_string(), "fs.edit".to_string()]
+        );
+    }
+
+    #[test]
+    fn deserializes_legacy_accept_edits_auto_approve_config() {
+        let config: Config = toml::from_str(
+            r#"
+            [policy_modes.auto_approve]
+            accept_edits = ["shell"]
+            "#,
+        )
+        .unwrap();
+
+        assert_eq!(
+            config.policy_modes.unwrap().auto_approve.accept_all,
+            vec!["shell".to_string()]
         );
     }
 
