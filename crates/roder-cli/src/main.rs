@@ -622,6 +622,31 @@ mod tests {
     }
 
     #[test]
+    fn model_parallel_tool_call_config_keeps_only_explicit_overrides() {
+        let models = std::collections::HashMap::from([
+            (
+                "custom-serial".to_string(),
+                roder_config::ModelConfig {
+                    edit_tool: None,
+                    parallel_tool_calls: Some(false),
+                },
+            ),
+            (
+                "custom-default".to_string(),
+                roder_config::ModelConfig {
+                    edit_tool: Some("patch".to_string()),
+                    parallel_tool_calls: None,
+                },
+            ),
+        ]);
+
+        let resolved = resolve_model_parallel_tool_calls(&models);
+
+        assert_eq!(resolved.get("custom-serial"), Some(&false));
+        assert!(!resolved.contains_key("custom-default"));
+    }
+
+    #[test]
     fn parses_policy_mode_cli_flags() {
         let options = parse_cli_options(&["--mode".to_string(), "plan".to_string()]).unwrap();
         assert_eq!(options.policy_mode, Some(PolicyMode::Plan));

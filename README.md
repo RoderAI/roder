@@ -198,9 +198,11 @@ Custom model edit-tool preferences can be set in `~/.roder/config.toml`:
 ```toml
 [models."my-openai-compatible-model"]
 edit_tool = "patch" # or "edit"
+parallel_tool_calls = true # set false for custom models that need serial tool calls
 ```
 
 `patch` advertises `apply_patch`; `edit` advertises `write_file`, `edit`, and `multi_edit`. Roder never advertises both edit surfaces to a single model request.
+Parallel tool calls are enabled by default. For OpenAI Responses-compatible providers, Roder sends the model-specific `parallel_tool_calls` setting with each tool-capable request and executes each returned tool-call batch concurrently unless that model override is set to `false`.
 
 The app-server run-control methods are `turns/start`, `turns/steer`, and `turns/interrupt`. `turns/start` and `turns/steer` accept an optional `images` array of `{ "image_url": "data:image/png;base64,..." }` input images; image-capable providers receive those as structured image content instead of appended file-path text. Steering accepts `{ "thread_id": "...", "turn_id": "...", "message": "...", "images": [] }`, emits `turn.steered`, and appends the steering message to the active turn before the next provider request.
 

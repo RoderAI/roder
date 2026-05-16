@@ -18,6 +18,10 @@ struct ToolLoopEngine {
     tool_rounds: usize,
 }
 
+struct ParallelToolLoopEngine {
+    requests: Mutex<Vec<AgentInferenceRequest>>,
+}
+
 struct EchoContributor;
 
 impl ToolContributor for EchoContributor {
@@ -295,6 +299,65 @@ impl InferenceEngine for ToolLoopEngine {
     }
 }
 
+#[async_trait::async_trait]
+impl InferenceEngine for ParallelToolLoopEngine {
+    fn id(&self) -> InferenceEngineId {
+        PROVIDER_MOCK.to_string()
+    }
+
+    fn capabilities(&self) -> InferenceCapabilities {
+        InferenceCapabilities::coding_agent_default()
+    }
+
+    async fn list_models(
+        &self,
+        _ctx: InferenceProviderContext<'_>,
+    ) -> anyhow::Result<Vec<ModelDescriptor>> {
+        Ok(Vec::new())
+    }
+
+    async fn stream_turn(
+        &self,
+        _ctx: InferenceTurnContext<'_>,
+        request: AgentInferenceRequest,
+    ) -> anyhow::Result<InferenceEventStream> {
+        let mut requests = self.requests.lock().unwrap();
+        requests.push(request);
+        let turn = requests.len();
+        drop(requests);
+        let events = if turn == 1 {
+            vec![
+                Ok(InferenceEvent::ToolCallCompleted(ToolCallCompleted {
+                    id: "call_1".to_string(),
+                    name: "echo".to_string(),
+                    arguments: r#"{"text":"one"}"#.to_string(),
+                })),
+                Ok(InferenceEvent::ToolCallCompleted(ToolCallCompleted {
+                    id: "call_2".to_string(),
+                    name: "echo".to_string(),
+                    arguments: r#"{"text":"two"}"#.to_string(),
+                })),
+                Ok(InferenceEvent::Completed(CompletionMetadata {
+                    stop_reason: Some("tool_calls".to_string()),
+                    provider_response_id: Some("resp_tools".to_string()),
+                })),
+            ]
+        } else {
+            vec![
+                Ok(InferenceEvent::MessageDelta(MessageDelta {
+                    text: "done".to_string(),
+                    phase: None,
+                })),
+                Ok(InferenceEvent::Completed(CompletionMetadata {
+                    stop_reason: Some("stop".to_string()),
+                    provider_response_id: Some("resp_done".to_string()),
+                })),
+            ]
+        };
+        Ok(Box::pin(stream::iter(events)))
+    }
+}
+
 struct ErrorRecoveringEngine {
     requests: Mutex<Vec<AgentInferenceRequest>>,
 }
@@ -471,6 +534,7 @@ async fn run_turn_continues_after_tool_result() {
                 auto_compact_token_limit: Some(10_000),
                 hosted_web_search: roder_api::inference::HostedWebSearchConfig::disabled(),
                 model_edit_tools: std::collections::HashMap::new(),
+                model_parallel_tool_calls: std::collections::HashMap::new(),
                 workspace: None,
                 policy_mode: roder_api::policy_mode::PolicyMode::Default,
             },
@@ -520,6 +584,88 @@ async fn run_turn_continues_after_tool_result() {
         "second request should include the tool result: {:?}",
         requests[1].conversation
     );
+}
+
+#[tokio::test]
+async fn run_turn_executes_parallel_tool_call_batch_concurrently() {
+    let engine = Arc::new(ParallelToolLoopEngine {
+        requests: Mutex::new(Vec::new()),
+    });
+    let release = Arc::new(Notify::new());
+    let mut builder = ExtensionRegistryBuilder::new();
+    builder.inference_engine(engine.clone());
+    builder.tool_contributor(Arc::new(BlockingEchoContributor {
+        release: release.clone(),
+    }));
+    let runtime = Arc::new(
+        Runtime::new(
+            builder.build().unwrap(),
+            RuntimeConfig {
+                default_provider: PROVIDER_MOCK.to_string(),
+                default_model: "gpt-5.5".to_string(),
+                reasoning: Some("low".to_string()),
+                auto_compact_token_limit: None,
+                hosted_web_search: roder_api::inference::HostedWebSearchConfig::disabled(),
+                model_edit_tools: std::collections::HashMap::new(),
+                model_parallel_tool_calls: std::collections::HashMap::new(),
+                workspace: None,
+                policy_mode: roder_api::policy_mode::PolicyMode::Default,
+            },
+        )
+        .unwrap(),
+    );
+    let mut events = runtime.subscribe_events();
+
+    runtime
+        .start_turn(StartTurnRequest {
+            thread_id: "thread_parallel".to_string(),
+            message: "run tools".to_string(),
+            images: Vec::new(),
+            provider_override: None,
+            model_override: None,
+            instructions: default_instructions(),
+        })
+        .await
+        .unwrap();
+
+    let started_two_tools = tokio::time::timeout(Duration::from_millis(300), async {
+        let mut started = Vec::new();
+        while started.len() < 2 {
+            let event = events.recv().await.unwrap();
+            if let roder_api::events::RoderEvent::ToolCallStarted(tool) = event.event {
+                started.push(tool.tool_id);
+            }
+        }
+        started
+    })
+    .await;
+    if started_two_tools.is_err() {
+        release.notify_waiters();
+        panic!("runtime did not start both tool calls before the first blocked");
+    }
+    let started = started_two_tools.unwrap();
+    assert_eq!(started, vec!["call_1".to_string(), "call_2".to_string()]);
+
+    release.notify_waiters();
+    loop {
+        let event = tokio::time::timeout(Duration::from_secs(2), events.recv())
+            .await
+            .unwrap()
+            .unwrap();
+        if event.kind == "turn.completed" && event.thread_id.as_deref() == Some("thread_parallel") {
+            break;
+        }
+    }
+
+    let requests = engine.requests.lock().unwrap();
+    assert_eq!(requests.len(), 2);
+    assert_eq!(requests[0].runtime.parallel_tool_calls, Some(true));
+    let result_count = requests[1]
+        .conversation
+        .iter()
+        .filter(|item| matches!(item, ConversationItem::ToolResult(_)))
+        .count();
+    assert_eq!(result_count, 2);
 }
 
 #[tokio::test]
@@ -573,6 +719,7 @@ async fn commentary_phase_messages_are_preserved_for_next_provider_request() {
                 auto_compact_token_limit: None,
                 hosted_web_search: roder_api::inference::HostedWebSearchConfig::disabled(),
                 model_edit_tools: std::collections::HashMap::new(),
+                model_parallel_tool_calls: std::collections::HashMap::new(),
                 workspace: None,
                 policy_mode: roder_api::policy_mode::PolicyMode::Default,
             },
@@ -681,6 +828,7 @@ async fn runtime_advertises_apply_patch_only_for_patch_models() {
                 auto_compact_token_limit: None,
                 hosted_web_search: roder_api::inference::HostedWebSearchConfig::disabled(),
                 model_edit_tools: std::collections::HashMap::new(),
+                model_parallel_tool_calls: std::collections::HashMap::new(),
                 workspace: None,
                 policy_mode: roder_api::policy_mode::PolicyMode::Default,
             },
@@ -734,6 +882,7 @@ async fn runtime_uses_custom_model_edit_tool_override() {
                     "custom-model".to_string(),
                     "patch".to_string(),
                 )]),
+                model_parallel_tool_calls: std::collections::HashMap::new(),
                 workspace: None,
                 policy_mode: roder_api::policy_mode::PolicyMode::Default,
             },
@@ -771,6 +920,7 @@ async fn tool_execution_errors_are_returned_to_model() {
                 auto_compact_token_limit: None,
                 hosted_web_search: roder_api::inference::HostedWebSearchConfig::disabled(),
                 model_edit_tools: std::collections::HashMap::new(),
+                model_parallel_tool_calls: std::collections::HashMap::new(),
                 workspace: None,
                 policy_mode: roder_api::policy_mode::PolicyMode::Default,
             },
@@ -827,6 +977,7 @@ async fn run_turn_allows_more_than_eight_tool_rounds() {
                 auto_compact_token_limit: Some(10_000),
                 hosted_web_search: roder_api::inference::HostedWebSearchConfig::disabled(),
                 model_edit_tools: std::collections::HashMap::new(),
+                model_parallel_tool_calls: std::collections::HashMap::new(),
                 workspace: None,
                 policy_mode: roder_api::policy_mode::PolicyMode::Default,
             },
@@ -880,6 +1031,7 @@ async fn unknown_tool_completion_is_marked_as_error() {
                 auto_compact_token_limit: Some(10_000),
                 hosted_web_search: roder_api::inference::HostedWebSearchConfig::disabled(),
                 model_edit_tools: std::collections::HashMap::new(),
+                model_parallel_tool_calls: std::collections::HashMap::new(),
                 workspace: None,
                 policy_mode: roder_api::policy_mode::PolicyMode::Default,
             },

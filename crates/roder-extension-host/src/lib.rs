@@ -212,7 +212,7 @@ impl InferenceEngine for CodexOAuthInferenceEngine {
         InferenceCapabilities {
             streaming: true,
             tool_calls: true,
-            parallel_tool_calls: false,
+            parallel_tool_calls: true,
             reasoning_summaries: true,
             structured_output: true,
             image_input: true,
