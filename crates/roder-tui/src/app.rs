@@ -1441,13 +1441,15 @@ fn animated_bar_highlight_width(width: usize) -> usize {
     (width / 4).clamp(8, 48).min(width)
 }
 
+const TOP_BAR_ANIMATION_STEP: usize = 5;
+
 fn animated_bar_offset(width: usize, highlight_width: usize, frame: u64) -> usize {
     let travel = width.saturating_sub(highlight_width);
     if travel == 0 {
         return 0;
     }
     let period = travel * 2;
-    let phase = (frame as usize) % period;
+    let phase = (frame as usize * TOP_BAR_ANIMATION_STEP) % period;
     if phase <= travel {
         phase
     } else {
@@ -2135,9 +2137,14 @@ mod tests {
     #[test]
     fn animated_bar_offset_bounces_between_edges() {
         assert_eq!(animated_bar_offset(20, 5, 0), 0);
-        assert_eq!(animated_bar_offset(20, 5, 15), 15);
-        assert_eq!(animated_bar_offset(20, 5, 16), 14);
-        assert_eq!(animated_bar_offset(20, 5, 30), 0);
+        assert_eq!(animated_bar_offset(20, 5, 3), 15);
+        assert_eq!(animated_bar_offset(20, 5, 4), 10);
+        assert_eq!(animated_bar_offset(20, 5, 6), 0);
+    }
+
+    #[test]
+    fn animated_bar_moves_multiple_columns_per_frame() {
+        assert_eq!(animated_bar_offset(20, 5, 1), TOP_BAR_ANIMATION_STEP);
     }
 
     #[test]

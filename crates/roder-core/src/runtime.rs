@@ -532,6 +532,7 @@ impl Runtime {
             let mut assistant_text = String::new();
             let mut reasoning_text = String::new();
             let mut tool_calls = Vec::new();
+            let mut provider_metadata = None;
 
             while let Some(res) = stream.next().await {
                 let event = match res {
@@ -581,8 +582,10 @@ impl Runtime {
                     InferenceEvent::Completed(_)
                     | InferenceEvent::Usage(_)
                     | InferenceEvent::ToolCallStarted(_)
-                    | InferenceEvent::ToolCallDelta(_)
-                    | InferenceEvent::ProviderMetadata(_) => {}
+                    | InferenceEvent::ToolCallDelta(_) => {}
+                    | InferenceEvent::ProviderMetadata(metadata) => {
+                        provider_metadata = Some(metadata);
+                    }
                 }
             }
 
@@ -597,6 +600,9 @@ impl Runtime {
                 conversation.push(ConversationItem::AssistantMessage(AssistantMessage {
                     text: assistant_text,
                 }));
+            }
+            if let Some(metadata) = provider_metadata {
+                conversation.push(ConversationItem::ProviderMetadata(metadata));
             }
             for call in tool_calls {
                 let tool_item = ConversationItem::ToolCall(ToolCallRecord {

@@ -10,6 +10,7 @@ use time::OffsetDateTime;
 
 use crate::policy_gate::DefaultPolicyGate;
 use crate::runtime::{PendingPlanExit, Runtime};
+use crate::tool_output::cap_tool_output_lines;
 use crate::tool_preview::file_change_preview;
 
 impl Runtime {
@@ -167,7 +168,7 @@ impl Runtime {
         let item = ToolResultRecord {
             id: result.id.clone(),
             name: Some(result.name.clone()),
-            result: result.text,
+            result: cap_tool_output_lines(result.text),
             is_error: result.is_error,
         };
         self.persist_turn_item(
