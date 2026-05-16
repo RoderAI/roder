@@ -714,6 +714,28 @@ mod tests {
     }
 
     #[test]
+    fn maps_apply_patch_tool_for_responses_requests() {
+        let mut request = request();
+        request.tools = vec![roder_api::tools::ToolSpec {
+            name: "apply_patch".to_string(),
+            description: "Apply a patch".to_string(),
+            parameters: json!({
+                "type": "object",
+                "properties": { "patch": { "type": "string" } },
+                "required": ["patch"],
+                "additionalProperties": false
+            }),
+        }];
+
+        let body = OpenAiResponsesEngine::map_request(&request);
+        let tools = body["tools"].as_array().unwrap();
+        assert_eq!(tools.len(), 1);
+        assert_eq!(tools[0]["type"], "function");
+        assert_eq!(tools[0]["name"], "apply_patch");
+        assert_eq!(tools[0]["parameters"]["required"][0], "patch");
+    }
+
+    #[test]
     fn extracts_responses_output_text() {
         let value = json!({
             "output": [{ "content": [{ "text": "hello" }, { "output_text": " world" }] }]

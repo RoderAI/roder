@@ -1,5 +1,5 @@
 use ratatui::{
-    style::{Modifier, Style},
+    style::{Color, Modifier, Style},
     text::Span,
     widgets::{Block, BorderType, Borders},
 };
@@ -55,11 +55,7 @@ pub(super) fn composer_textarea(theme: Theme) -> TextArea<'static> {
     composer.set_max_rows(8);
     composer.set_style(theme.text());
     composer.set_cursor_line_style(theme.text());
-    composer.set_cursor_style(
-        Style::default()
-            .fg(theme.selection_fg)
-            .bg(theme.selection_bg),
-    );
+    composer.set_cursor_style(Style::default().fg(theme.text).bg(cursor_color(theme)));
     composer
 }
 
@@ -89,6 +85,10 @@ pub(super) fn shell_command_from_input(input: &str) -> Option<String> {
     (!command.is_empty()).then(|| command.to_string())
 }
 
+fn cursor_color(theme: Theme) -> Color {
+    theme.muted
+}
+
 fn style_composer_for_mode(composer: &mut TextArea<'static>, theme: Theme, mode: ComposerMode) {
     composer.set_block(
         Block::default()
@@ -99,4 +99,21 @@ fn style_composer_for_mode(composer: &mut TextArea<'static>, theme: Theme, mode:
     );
     composer.set_placeholder_text(mode.placeholder());
     composer.set_placeholder_style(mode.title_style(theme).add_modifier(Modifier::ITALIC));
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ratatui::style::Color;
+
+    #[test]
+    fn composer_cursor_uses_gray_instead_of_selection_pink() {
+        for dark in [true, false] {
+            let theme = Theme::for_dark_background(dark);
+
+            assert_eq!(cursor_color(theme), theme.muted);
+            assert_ne!(cursor_color(theme), theme.selection_bg);
+            assert!(matches!(cursor_color(theme), Color::Indexed(240 | 244)));
+        }
+    }
 }

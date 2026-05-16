@@ -369,6 +369,7 @@ mod tests {
             "list_files",
             "grep",
             "glob",
+            "apply_patch",
             "write_file",
             "edit",
             "multi_edit",

@@ -1,5 +1,6 @@
 mod composer;
 mod dialog;
+mod tool_timeline;
 
 use std::collections::HashMap;
 use std::io;
@@ -37,6 +38,7 @@ use composer::{
     composer_mode, composer_text, composer_textarea, shell_command_from_input,
     style_composer_for_current_mode,
 };
+use tool_timeline::{ToolTimelineEntry, fallback_entry};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 struct Theme {
@@ -349,7 +351,7 @@ pub struct TuiApp {
     provider_state: ListState,
     confirm_dialog: Option<ConfirmDialogState>,
     image_attachments: Vec<ImageAttachment>,
-    tool_call_names: HashMap<String, String>,
+    tool_call_entries: HashMap<String, (usize, ToolTimelineEntry)>,
     policy_mode: PolicyMode,
     pending_plan_exit: Option<PendingPlanExitDescriptor>,
     theme: Theme,
@@ -400,7 +402,7 @@ impl TuiApp {
             provider_state,
             confirm_dialog: None,
             image_attachments: Vec::new(),
-            tool_call_names: HashMap::new(),
+            tool_call_entries: HashMap::new(),
             policy_mode: policy_state
                 .as_ref()
                 .map(|state| state.mode)
@@ -533,9 +535,8 @@ impl TuiApp {
                     {
                         self.active_turn_id = None;
                     }
-                    RoderEvent::InferenceEventReceived(ev) => {
-                        if let roder_api::inference::InferenceEvent::MessageDelta(delta) = ev.event
-                        {
+                    RoderEvent::InferenceEventReceived(ev) => match ev.event {
+                        roder_api::inference::InferenceEvent::MessageDelta(delta) => {
                             if let Some(last) = self.messages.last_mut()
                                 && last.starts_with("assistant: ")
                             {
@@ -544,7 +545,14 @@ impl TuiApp {
                             }
                             self.messages.push(format!("assistant: {}", delta.text));
                         }
-                    }
+                        roder_api::inference::InferenceEvent::ToolCallCompleted(call) => {
+                            self.record_tool_requested_with_id(
+                                call.id,
+                                ToolTimelineEntry::new(call.name, call.arguments),
+                            );
+                        }
+                        _ => {}
+                    },
                     RoderEvent::TurnFailed(ev) => {
                         if self.active_turn_id.as_deref() == Some(&ev.turn_id) {
                             self.active_turn_id = None;
@@ -552,24 +560,29 @@ impl TuiApp {
                         self.messages.push(format!("error: {}", ev.error))
                     }
                     RoderEvent::ToolCallRequested(ev) => {
-                        self.tool_call_names
-                            .insert(ev.tool_id.clone(), ev.tool_name.clone());
-                        self.messages
-                            .push(format!("tool: {} requested", ev.tool_name));
+                        self.record_tool_requested_with_id(
+                            ev.tool_id,
+                            fallback_entry(ev.tool_name),
+                        );
                     }
                     RoderEvent::PolicyDecisionRecorded(ev) => match ev.decision {
                         PolicyDecision::Denied { reason } => {
+                            self.record_tool_completed(&ev.tool_id, true);
                             self.record_error(format!("tool {} denied: {reason}", ev.tool_name));
                         }
                         PolicyDecision::RequiresApproval { .. } => {
-                            self.messages
-                                .push(format!("tool: {} awaiting approval", ev.tool_name));
+                            self.record_tool_requested_with_id(
+                                ev.tool_id,
+                                fallback_entry(format!("{} awaiting approval", ev.tool_name)),
+                            );
                         }
                         PolicyDecision::Allowed | PolicyDecision::AutoApproved { .. } => {}
                     },
                     RoderEvent::ApprovalRequested(ev) => {
-                        self.messages
-                            .push(format!("tool: {} needs approval", ev.tool_name));
+                        self.record_tool_requested_with_id(
+                            ev.tool_id,
+                            fallback_entry(format!("{} needs approval", ev.tool_name)),
+                        );
                         self.confirm_dialog =
                             Some(ConfirmDialogState::new(ConfirmDialog::ToolApproval {
                                 approval_id: ev.approval_id,
@@ -578,18 +591,12 @@ impl TuiApp {
                             }));
                     }
                     RoderEvent::ApprovalResolved(ev) => {
-                        self.messages.push(format!(
-                            "tool: {} approval {}",
-                            ev.tool_name,
-                            if ev.approved { "accepted" } else { "rejected" }
-                        ));
+                        if !ev.approved {
+                            self.record_tool_completed(&ev.tool_id, true);
+                        }
                     }
                     RoderEvent::ToolCallCompleted(ev) => {
-                        let name = self
-                            .tool_call_names
-                            .remove(&ev.tool_id)
-                            .unwrap_or_else(|| format!("tool {}", short_id(&ev.tool_id)));
-                        self.messages.push(format!("tool: {name} completed"));
+                        self.record_tool_completed(&ev.tool_id, ev.is_error);
                     }
                     RoderEvent::PolicyModeChanged(ev) => {
                         self.policy_mode = ev.new_mode;
@@ -1378,6 +1385,27 @@ impl TuiApp {
         self.push_event(format!("error: {message}"));
     }
 
+    fn record_tool_requested_with_id(&mut self, tool_id: String, entry: ToolTimelineEntry) {
+        if self.tool_call_entries.contains_key(&tool_id) {
+            return;
+        }
+
+        let index = self.messages.len();
+        self.messages.push(entry.running_message());
+        self.tool_call_entries.insert(tool_id, (index, entry));
+    }
+
+    fn record_tool_completed(&mut self, tool_id: &str, failed: bool) {
+        let Some((index, entry)) = self.tool_call_entries.get(tool_id) else {
+            let entry = fallback_entry(format!("tool {}", short_id(tool_id)));
+            self.messages.push(entry.completed_message(failed));
+            return;
+        };
+        if let Some(message) = self.messages.get_mut(*index) {
+            *message = entry.completed_message(failed);
+        }
+    }
+
     fn push_event(&mut self, event: String) {
         self.events.push(event);
         if self.events.len() > 12 {
@@ -1819,6 +1847,12 @@ fn message_lines(message: &str, theme: Theme) -> Vec<Line<'static>> {
     if let Some(body) = message.strip_prefix("tool: ") {
         return simple_message_lines("◆ ", body, theme.tool(), theme.muted());
     }
+    if let Some(body) = message.strip_prefix("tool_running: ") {
+        return simple_message_lines("◆ ", body, theme.tool(), theme.muted());
+    }
+    if let Some(body) = message.strip_prefix("tool_failed: ") {
+        return simple_message_lines("◆ ", body, theme.error(), theme.error());
+    }
     if let Some(body) = message.strip_prefix("shell: ") {
         return simple_message_lines("$ ", body, theme.tool(), theme.text());
     }
@@ -2070,6 +2104,32 @@ mod tests {
             .collect::<String>();
 
         assert_eq!(rendered, "◆ write_file completed");
+    }
+
+    #[test]
+    fn message_lines_format_running_and_failed_tool_messages() {
+        let theme = Theme::for_dark_background(true);
+        let running = message_line("tool_running: Search query: rust", theme);
+        let failed = message_line("tool_failed: Search query: rust", theme);
+
+        assert_eq!(
+            running
+                .spans
+                .iter()
+                .map(|span| span.content.as_ref())
+                .collect::<String>(),
+            "◆ Search query: rust"
+        );
+        assert_eq!(
+            failed
+                .spans
+                .iter()
+                .map(|span| span.content.as_ref())
+                .collect::<String>(),
+            "◆ Search query: rust"
+        );
+        assert_eq!(failed.spans[0].style, theme.error());
+        assert_eq!(failed.spans[1].style, theme.error());
     }
 
     #[test]

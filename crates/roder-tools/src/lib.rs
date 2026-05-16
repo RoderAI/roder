@@ -1,5 +1,6 @@
 mod edit;
 mod files;
+mod patch;
 mod search;
 mod workspace;
 
@@ -90,6 +91,9 @@ impl ToolContributor for BuiltinCodingToolsContributor {
     fn contribute(&self, registry: &mut ToolRegistry) -> anyhow::Result<()> {
         files::register(registry, self.workspace.clone())?;
         search::register(registry, self.workspace.clone())?;
+        registry.register(Arc::new(patch::ApplyPatchTool {
+            workspace: self.workspace.clone(),
+        }))?;
         edit::register(registry, self.workspace.clone())
     }
 }
@@ -192,6 +196,16 @@ mod tests {
         .await;
         assert_eq!(multi_edit.text, "edited src/main.rs (2 replacements)");
 
+        let patch = run_tool(
+            &registry,
+            "apply_patch",
+            json!({
+                "patch": "*** Begin Patch\n*** Update File: src/main.rs\n@@\n-ALPHA\n+patched\n*** End Patch\n"
+            }),
+        )
+        .await;
+        assert_eq!(patch.text, "Success. Updated src/main.rs");
+
         let read = run_tool(
             &registry,
             "read_file",
@@ -199,6 +213,14 @@ mod tests {
         )
         .await;
         assert!(read.text.contains("2: NEEDLE"));
+
+        let relative_read = run_tool(
+            &registry,
+            "read_file",
+            json!({ "path": "./src/../src/main.rs", "start_line": 1, "limit": 1 }),
+        )
+        .await;
+        assert!(relative_read.text.contains("1: patched"));
 
         let _ = std::fs::remove_dir_all(root);
     }

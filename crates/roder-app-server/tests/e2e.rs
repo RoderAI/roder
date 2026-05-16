@@ -231,115 +231,34 @@ async fn test_app_server_e2e() {
 }
 
 #[tokio::test]
-async fn legacy_desktop_protocol_supports_threads_models_and_events() {
-    let session_dir = std::env::temp_dir().join(format!(
-        "roder-app-server-legacy-desktop-{}",
-        uuid::Uuid::new_v4()
-    ));
-    let registry = build_default_registry(DefaultRegistryConfig {
-        session_dir: Some(session_dir.clone()),
-        ..DefaultRegistryConfig::default()
-    })
-    .unwrap();
-    let runtime = Arc::new(Runtime::new(registry, Default::default()).unwrap());
+async fn desktop_protocol_methods_are_not_supported() {
+    let runtime = Arc::new(Runtime::fake().unwrap());
     let server = Arc::new(AppServer::new(runtime));
-    let client = LocalAppClient::new(Arc::clone(&server));
-    let mut events = client.subscribe_events();
+    let client = LocalAppClient::new(server);
 
-    let initialized: serde_json::Value = request(&client, "initialize", None).await;
-    assert!(
-        initialized["capabilities"]["methods"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .any(|method| method == "thread/start")
-    );
-
-    let models: serde_json::Value =
-        request(&client, "model/list", Some(serde_json::json!({}))).await;
-    assert!(
-        models["models"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .any(|model| model["id"] == "mock" && model["modelProvider"] == "mock")
-    );
-
-    let started: serde_json::Value = request(
-        &client,
+    for method in [
+        "initialize",
         "thread/start",
-        Some(serde_json::json!({
-            "cwd": "/tmp/roder-desktop-workspace",
-            "model": "mock",
-            "modelProvider": "mock",
-        })),
-    )
-    .await;
-    let thread_id = started["thread"]["id"].as_str().unwrap().to_string();
-    assert_eq!(started["thread"]["cwd"], "/tmp/roder-desktop-workspace");
-
-    let turn: serde_json::Value = request(
-        &client,
-        "turn/start",
-        Some(serde_json::json!({
-            "threadId": thread_id,
-            "prompt": "Hello",
-        })),
-    )
-    .await;
-    assert!(turn["turnId"].as_str().is_some_and(|id| !id.is_empty()));
-
-    let mut legacy_methods = Vec::new();
-    for _ in 0..20 {
-        let envelope = tokio::time::timeout(Duration::from_secs(2), events.recv())
-            .await
-            .unwrap()
-            .unwrap();
-        for notification in server.legacy_notifications_for_event(envelope).await {
-            if let Some(method) = notification["method"].as_str() {
-                legacy_methods.push(method.to_string());
-            }
-        }
-        if legacy_methods
-            .iter()
-            .any(|method| method == "turn/completed")
-        {
-            break;
-        }
-    }
-    assert!(legacy_methods.iter().any(|method| method == "turn/started"));
-    assert!(
-        legacy_methods
-            .iter()
-            .any(|method| method == "item/agentMessage/delta")
-    );
-    assert!(
-        legacy_methods
-            .iter()
-            .any(|method| method == "turn/completed")
-    );
-
-    let read: serde_json::Value = request(
-        &client,
+        "thread/list",
         "thread/read",
-        Some(serde_json::json!({
-            "threadId": started["thread"]["id"],
-            "includeTurns": true,
-        })),
-    )
-    .await;
-    assert_eq!(read["thread"]["id"], started["thread"]["id"]);
-    assert!(
-        read["thread"]["turns"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .any(|turn| turn["items"]
-                .as_array()
-                .is_some_and(|items| items.iter().any(|item| item["type"] == "agentMessage")))
-    );
-
-    let _ = tokio::fs::remove_dir_all(session_dir).await;
+        "turn/start",
+        "turn/steer",
+        "turn/interrupt",
+        "model/list",
+    ] {
+        let response = client
+            .send_request(JsonRpcRequest {
+                jsonrpc: "2.0".to_string(),
+                id: Some(serde_json::json!(method)),
+                method: method.to_string(),
+                params: None,
+            })
+            .await;
+        let error = response
+            .error
+            .expect("old Desktop method should be rejected");
+        assert_eq!(error.code, -32601, "{method}");
+    }
 }
 
 #[tokio::test]

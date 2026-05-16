@@ -129,6 +129,15 @@ Web search provider setup is documented in [`docs/roder-web-search-extensions.md
 
 Subagent setup for the `task` tool and disk-defined agents is documented in [`docs/roder-subagents.md`](./docs/roder-subagents.md).
 
+Custom model edit-tool preferences can be set in `~/.roder/config.toml`:
+
+```toml
+[models."my-openai-compatible-model"]
+edit_tool = "patch" # or "edit"
+```
+
+`patch` advertises `apply_patch`; `edit` advertises `write_file`, `edit`, and `multi_edit`. Roder never advertises both edit surfaces to a single model request.
+
 A more complete quick-start (configuration, providers, session resume, app-server transports, MCP) will land alongside the corresponding roadmap phases.
 
 ---

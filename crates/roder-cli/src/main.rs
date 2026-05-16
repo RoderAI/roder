@@ -4,7 +4,7 @@ use std::sync::Arc;
 use roder_api::catalog::{DEFAULT_MODEL_ID, PROVIDER_MOCK};
 use roder_api::policy_mode::PolicyMode;
 use roder_app_server::{AppServer, LocalAppClient};
-use roder_core::{Runtime, RuntimeConfig};
+use roder_core::{Runtime, RuntimeConfig, validate_edit_tool};
 use roder_ext_subagents::{AgentLoadConfig, load_agent_definitions};
 use roder_extension_host::{
     DefaultRegistryConfig, DefaultSubagentsConfig, DefaultWebSearchConfig,
@@ -70,6 +70,7 @@ async fn build_runtime_from_config(options: CliOptions) -> anyhow::Result<(Arc<R
         default_model.clone(),
     )
     .await?;
+    let model_edit_tools = resolve_model_edit_tools(&cfg.models)?;
     if policy_mode == PolicyMode::Bypass
         && cfg
             .policy_modes
@@ -99,12 +100,30 @@ async fn build_runtime_from_config(options: CliOptions) -> anyhow::Result<(Arc<R
             default_model: default_model.clone(),
             reasoning: cfg.reasoning,
             auto_compact_token_limit: cfg.auto_compact_token_limit,
+            model_edit_tools,
             workspace: workspace.map(|p| p.display().to_string()),
             policy_mode,
         },
     )?);
 
     Ok((runtime, default_model))
+}
+
+fn resolve_model_edit_tools(
+    models: &std::collections::HashMap<String, roder_config::ModelConfig>,
+) -> anyhow::Result<std::collections::HashMap<String, String>> {
+    let mut edit_tools = std::collections::HashMap::new();
+    for (model, cfg) in models {
+        let Some(edit_tool) = cfg.edit_tool.as_deref().map(str::trim) else {
+            continue;
+        };
+        if edit_tool.is_empty() {
+            continue;
+        }
+        validate_edit_tool(edit_tool)?;
+        edit_tools.insert(model.clone(), edit_tool.to_string());
+    }
+    Ok(edit_tools)
 }
 
 fn parse_cli_options(args: &[String]) -> anyhow::Result<CliOptions> {
@@ -185,19 +204,6 @@ async fn run_stdio_app_server(app_server: Arc<AppServer>) -> anyhow::Result<()> 
         anyhow::Ok(())
     });
 
-    let mut events = app_server.subscribe_events();
-    let event_server = Arc::clone(&app_server);
-    let event_tx = tx.clone();
-    let event_task = tokio::spawn(async move {
-        while let Ok(envelope) = events.recv().await {
-            for message in event_server.legacy_notifications_for_event(envelope).await {
-                if event_tx.send(message).is_err() {
-                    return;
-                }
-            }
-        }
-    });
-
     let stdin = BufReader::new(tokio::io::stdin());
     let mut lines = stdin.lines();
     while let Some(line) = lines.next_line().await? {
@@ -221,7 +227,6 @@ async fn run_stdio_app_server(app_server: Arc<AppServer>) -> anyhow::Result<()> 
             break;
         }
     }
-    event_task.abort();
     drop(tx);
     writer.await??;
     Ok(())

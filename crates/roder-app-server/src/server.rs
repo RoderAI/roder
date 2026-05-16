@@ -26,14 +26,6 @@ impl AppServer {
 
     pub async fn handle_request(&self, req: JsonRpcRequest) -> JsonRpcResponse {
         let result = match req.method.as_str() {
-            "initialize" => self.handle_legacy_initialize(req.params).await,
-            "thread/start" => self.handle_legacy_thread_start(req.params).await,
-            "thread/list" => self.handle_legacy_thread_list(req.params).await,
-            "thread/read" => self.handle_legacy_thread_read(req.params).await,
-            "turn/start" => self.handle_legacy_turn_start(req.params).await,
-            "turn/steer" => self.handle_legacy_turn_steer(req.params).await,
-            "turn/interrupt" => self.handle_legacy_turn_interrupt(req.params).await,
-            "model/list" => self.handle_legacy_model_list().await,
             "system/initialize" | "system/status" => self.handle_system_status().await,
             "extensions/list" => self.handle_extensions_list().await,
             "providers/list" => self.handle_providers_list().await,
@@ -392,7 +384,7 @@ impl AppServer {
 
     async fn handle_tools_list(&self) -> Result<serde_json::Value, JsonRpcError> {
         Ok(serde_json::to_value(ToolsListResult {
-            tools: self.runtime.tool_specs(),
+            tools: self.runtime.tool_specs().await,
         })
         .unwrap())
     }
