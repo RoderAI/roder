@@ -41,7 +41,7 @@ func protocolCapabilities() map[string]any {
 			"command/exec/resize",
 		},
 		"turnInput": map[string]any{
-			"types":                 []string{"text", "image", "local_image", "file", "local_file"},
+			"types":                 []string{"text", "image", "local_image", "file", "local_file", "skill"},
 			"maxLocalFileBytes":     maxLocalFileInputBytes,
 			"localFileBinaryPolicy": "metadata",
 		},
