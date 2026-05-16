@@ -314,7 +314,7 @@ fn resolve_workspace_agent_dir(
     if let Some(path) = cfg.disk.workspace_dir.as_deref() {
         return Ok(Some(expand_tilde(path)));
     }
-    Ok(Some(std::env::current_dir()?.join(".roder").join("agents")))
+    Ok(None)
 }
 
 fn expand_tilde(path: &Path) -> PathBuf {
@@ -597,6 +597,20 @@ Report findings.
         assert_eq!(resolved.definitions[0].agent_type, "explore");
 
         let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn subagents_do_not_default_to_workspace_roder_dir() {
+        let cfg = roder_config::SubagentsConfig {
+            enabled: true,
+            disk: roder_config::SubagentsDiskConfig {
+                user_dir: None,
+                workspace_dir: None,
+            },
+            ..roder_config::SubagentsConfig::default()
+        };
+
+        assert!(resolve_workspace_agent_dir(&cfg).unwrap().is_none());
     }
 
     #[tokio::test]

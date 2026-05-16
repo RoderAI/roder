@@ -321,7 +321,6 @@ pub(super) fn visible_hit_rows(
         .collect()
 }
 
-pub(super) fn max_scroll(row_items: &[(usize, usize)], height: u16) -> usize {
-    let total_lines = row_items.last().map(|(row, _)| row + 1).unwrap_or_default();
+pub(super) fn max_scroll(total_lines: usize, height: u16) -> usize {
     total_lines.saturating_sub(usize::from(height))
 }

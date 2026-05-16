@@ -107,9 +107,7 @@ fn resolve_workspace_command_dir(
     if let Some(path) = cfg.workspace_dir.as_deref() {
         return Ok(Some(expand_tilde(path)));
     }
-    Ok(Some(
-        std::env::current_dir()?.join(".roder").join("commands"),
-    ))
+    Ok(None)
 }
 
 fn default_user_command_dir() -> Option<PathBuf> {
@@ -272,6 +270,16 @@ mod tests {
             registry.get("review").unwrap().description.as_deref(),
             Some("workspace")
         );
+    }
+
+    #[test]
+    fn commands_do_not_default_to_workspace_roder_dir() {
+        let cfg = roder_config::CommandsConfig {
+            workspace_dir: None,
+            ..roder_config::CommandsConfig::default()
+        };
+
+        assert!(resolve_workspace_command_dir(&cfg).unwrap().is_none());
     }
 
     #[test]

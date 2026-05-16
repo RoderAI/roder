@@ -11,8 +11,8 @@ use base64::Engine;
 use crossterm::{
     event::{
         self, DisableBracketedPaste, DisableMouseCapture, EnableBracketedPaste, EnableMouseCapture,
-        Event, KeyCode, KeyModifiers, KeyboardEnhancementFlags, MouseEvent, MouseEventKind,
-        PopKeyboardEnhancementFlags, PushKeyboardEnhancementFlags,
+        Event, KeyCode, KeyEvent, KeyModifiers, KeyboardEnhancementFlags, MouseEvent,
+        MouseEventKind, PopKeyboardEnhancementFlags, PushKeyboardEnhancementFlags,
     },
     execute,
     terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
@@ -49,6 +49,8 @@ use input_queue::{PendingPrompt, PromptQueue, queue_status};
 use tool_timeline::{
     TimelineFocus, TimelineState, ToolTimelineEntry, TurnCompletedSummary, fallback_entry,
 };
+
+const TOP_STATUS_ANIMATION_FPS: u64 = 30;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 struct Theme {
@@ -392,6 +394,28 @@ enum ProviderMenuItem {
     Back,
 }
 
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+enum ActiveTurnPromptShortcut {
+    Queue,
+    Steer,
+}
+
+fn active_turn_prompt_shortcut(
+    key: KeyEvent,
+    has_prepared_prompt: bool,
+) -> Option<ActiveTurnPromptShortcut> {
+    if !has_prepared_prompt {
+        return None;
+    }
+    match key.code {
+        KeyCode::Tab => Some(ActiveTurnPromptShortcut::Queue),
+        KeyCode::Enter if key.modifiers == KeyModifiers::NONE => {
+            Some(ActiveTurnPromptShortcut::Steer)
+        }
+        _ => None,
+    }
+}
+
 impl ProviderMenuItem {
     fn label(&self) -> String {
         match self {
@@ -549,12 +573,20 @@ impl TuiApp {
         let mut terminal = Terminal::new(backend)?;
 
         let mut rx = self.client.subscribe_events();
+        let mut next_animation_tick = Instant::now() + top_status_animation_interval();
 
         loop {
-            self.animation_frame = self.animation_frame.wrapping_add(1);
+            advance_top_status_animation(
+                &mut self.animation_frame,
+                &mut next_animation_tick,
+                Instant::now(),
+            );
             terminal.draw(|f| self.render(f))?;
 
-            if event::poll(Duration::from_millis(50))? {
+            if event::poll(top_status_animation_poll_timeout(
+                next_animation_tick,
+                Instant::now(),
+            ))? {
                 match event::read()? {
                     Event::Key(key) => {
                         if self.confirm_dialog.is_some() {
@@ -612,10 +644,21 @@ impl TuiApp {
                                 _ => {}
                             }
                         } else {
-                            if key.code == KeyCode::Tab {
-                                if self.active_turn_id.is_some() && self.queue_current_prompt() {
-                                    continue;
+                            if self.active_turn_id.is_some()
+                                && let Some(shortcut) =
+                                    active_turn_prompt_shortcut(key, self.has_prepared_prompt())
+                            {
+                                match shortcut {
+                                    ActiveTurnPromptShortcut::Queue => {
+                                        self.queue_current_prompt();
+                                    }
+                                    ActiveTurnPromptShortcut::Steer => {
+                                        self.submit_prompt().await;
+                                    }
                                 }
+                                continue;
+                            }
+                            if key.code == KeyCode::Tab {
                                 self.timeline.focus_latest();
                                 continue;
                             }
@@ -990,6 +1033,10 @@ impl TuiApp {
         Some(PendingPrompt::with_images(display, text, images))
     }
 
+    fn has_prepared_prompt(&self) -> bool {
+        !composer_text(&self.composer).trim().is_empty() || !self.image_attachments.is_empty()
+    }
+
     async fn start_prepared_prompt(&mut self, pending: PendingPrompt) {
         self.timeline.push_user(pending.display.clone());
         let params = StartTurnParams {
@@ -1205,7 +1252,7 @@ impl TuiApp {
             Span::styled(
                 format!(
                     " {} ",
-                    spinner_frame(self.working_spinner, self.animation_frame)
+                    padded_spinner_frame(self.working_spinner, self.animation_frame)
                 ),
                 self.theme.running(),
             ),
@@ -1246,7 +1293,7 @@ impl TuiApp {
         let mut right = vec![Span::styled(turn.to_string(), right_style)];
         if let Some(counter) = self.context_window_counter() {
             right.push(Span::styled(" ".to_string(), self.theme.text()));
-            right.push(Span::styled(counter.label(), self.theme.muted()));
+            right.extend(counter.spans(self.theme));
         }
         Paragraph::new(line_with_gap(left, right, width, self.theme.text()))
     }
@@ -1874,6 +1921,37 @@ fn spinner_frame(spinner: WorkingSpinner, frame: u64) -> &'static str {
     frames[(frame as usize) % frames.len()]
 }
 
+fn padded_spinner_frame(spinner: WorkingSpinner, frame: u64) -> String {
+    let frame = spinner_frame(spinner, frame);
+    let width = spinner_frame_width(spinner);
+    format!("{frame:<width$}")
+}
+
+fn spinner_frame_width(spinner: WorkingSpinner) -> usize {
+    spinner
+        .frames()
+        .iter()
+        .map(|frame| frame.chars().count())
+        .max()
+        .unwrap_or(0)
+}
+
+fn top_status_animation_interval() -> Duration {
+    Duration::from_nanos(1_000_000_000 / TOP_STATUS_ANIMATION_FPS)
+}
+
+fn top_status_animation_poll_timeout(next_tick: Instant, now: Instant) -> Duration {
+    next_tick.saturating_duration_since(now)
+}
+
+fn advance_top_status_animation(frame: &mut u64, next_tick: &mut Instant, now: Instant) {
+    if now < *next_tick {
+        return;
+    }
+    *frame = frame.wrapping_add(1);
+    *next_tick = now + top_status_animation_interval();
+}
+
 #[derive(Debug, Default)]
 struct TuiUserConfig {
     spinner: Option<String>,
@@ -1926,7 +2004,6 @@ fn save_tui_spinner(spinner: &str) -> anyhow::Result<()> {
 
 fn tui_config_path() -> PathBuf {
     let mut path = dirs::home_dir().unwrap_or_else(|| PathBuf::from("."));
-    path.push("w");
     path.push(".roder");
     path.push("config.toml");
     path
@@ -2477,12 +2554,35 @@ impl ContextWindowCounter {
         if self.hovered {
             return self.expanded_label();
         }
-        let percent = if self.max_tokens == 0 {
-            0.0
+        format!("│ {:.2}% │", self.percent())
+    }
+
+    fn spans(self, theme: Theme) -> Vec<Span<'static>> {
+        if self.hovered {
+            return vec![Span::styled(self.label(), theme.muted())];
+        }
+        let cells = 5usize;
+        let filled = if self.used_tokens == 0 {
+            0
         } else {
-            (self.used_tokens as f64 / self.max_tokens as f64) * 100.0
+            (((self.percent() / 100.0) * cells as f64).ceil() as usize).clamp(1, cells)
         };
-        format!("│ {percent:.2}% │")
+        vec![
+            Span::styled("│ ", theme.muted()),
+            Span::styled(" ".repeat(filled), Style::default().bg(theme.subtle)),
+            Span::styled(
+                " ".repeat(cells.saturating_sub(filled)),
+                Style::default().bg(theme.dialog_bg),
+            ),
+            Span::styled(format!(" {:.2}% │", self.percent()), theme.muted()),
+        ]
+    }
+
+    fn percent(self) -> f64 {
+        if self.max_tokens == 0 {
+            return 0.0;
+        }
+        (self.used_tokens as f64 / self.max_tokens as f64) * 100.0
     }
 
     fn expanded_label(self) -> String {
@@ -2793,6 +2893,44 @@ mod tests {
     }
 
     #[test]
+    fn padded_spinner_frames_keep_status_width_stable() {
+        for spinner in WorkingSpinner::all() {
+            let width = spinner_frame_width(*spinner);
+            for frame in 0..16 {
+                assert_eq!(padded_spinner_frame(*spinner, frame).chars().count(), width);
+            }
+        }
+    }
+
+    #[test]
+    fn top_status_animation_interval_is_locked_to_30fps() {
+        assert_eq!(TOP_STATUS_ANIMATION_FPS, 30);
+        assert_eq!(
+            top_status_animation_interval(),
+            Duration::from_nanos(33_333_333)
+        );
+    }
+
+    #[test]
+    fn top_status_animation_advances_at_most_one_frame_per_tick() {
+        let start = Instant::now();
+        let mut next_tick = start + top_status_animation_interval();
+        let mut frame = 10;
+
+        advance_top_status_animation(&mut frame, &mut next_tick, start);
+        assert_eq!(frame, 10);
+        assert_eq!(
+            top_status_animation_poll_timeout(next_tick, start),
+            top_status_animation_interval()
+        );
+
+        let delayed = start + Duration::from_secs(1);
+        advance_top_status_animation(&mut frame, &mut next_tick, delayed);
+        assert_eq!(frame, 11);
+        assert_eq!(next_tick, delayed + top_status_animation_interval());
+    }
+
+    #[test]
     fn working_spinner_parses_config_ids() {
         assert_eq!(
             WorkingSpinner::from_config(Some("line")),
@@ -2806,9 +2944,10 @@ mod tests {
     }
 
     #[test]
-    fn tui_config_path_targets_workspace_roder_config() {
+    fn tui_config_path_targets_home_roder_config() {
         let rendered = tui_config_path().to_string_lossy().replace('\\', "/");
-        assert!(rendered.ends_with("/w/.roder/config.toml"));
+        assert!(rendered.ends_with("/.roder/config.toml"));
+        assert!(!rendered.ends_with("/w/.roder/config.toml"));
     }
 
     #[test]
@@ -3094,6 +3233,34 @@ mod tests {
         assert_eq!(
             composer::composer_mode_from_text("echo hi"),
             composer::ComposerMode::Chat
+        );
+    }
+
+    #[test]
+    fn active_turn_prompt_shortcuts_prioritize_queue_and_steer() {
+        assert_eq!(
+            active_turn_prompt_shortcut(KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE), true),
+            Some(ActiveTurnPromptShortcut::Queue)
+        );
+        assert_eq!(
+            active_turn_prompt_shortcut(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE), true),
+            Some(ActiveTurnPromptShortcut::Steer)
+        );
+    }
+
+    #[test]
+    fn active_turn_prompt_shortcuts_do_not_steal_empty_or_modified_keys() {
+        assert_eq!(
+            active_turn_prompt_shortcut(KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE), false),
+            None
+        );
+        assert_eq!(
+            active_turn_prompt_shortcut(KeyEvent::new(KeyCode::Enter, KeyModifiers::SHIFT), true),
+            None
+        );
+        assert_eq!(
+            active_turn_prompt_shortcut(KeyEvent::new(KeyCode::Enter, KeyModifiers::CONTROL), true),
+            None
         );
     }
 
