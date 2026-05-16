@@ -1073,6 +1073,9 @@ impl TuiApp {
         if self.show_palette {
             interactive_regions.extend(self.palette_item_regions(area));
         }
+        if self.diff_viewer.is_some() {
+            interactive_regions.extend(self.diff_hunk_regions(area));
+        }
         self.mouse_feedback
             .set_frame_regions(composer_area, footer_area, interactive_regions);
         let composer_border_style = self
@@ -1518,6 +1521,10 @@ impl TuiApp {
         };
         if let RegionKind::PaletteItem { source_id, item_id } = region.kind {
             self.execute_palette_item(&source_id, &item_id).await;
+            return;
+        }
+        if let RegionKind::DiffHunk { hunk_idx, .. } = region.kind {
+            self.handle_diff_region_click(&region.id, hunk_idx).await;
             return;
         }
         let Some(action) = action_for_region(&region, right_click_at) else {
