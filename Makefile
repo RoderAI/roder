@@ -1,68 +1,47 @@
-BINARY ?= bin/gode
-GO_BIN ?= $(shell go env GOBIN)
-GO_PATH ?= $(shell go env GOPATH)
-BINDIR ?= $(if $(GO_BIN),$(GO_BIN),$(GO_PATH)/bin)
+BINARY ?= bin/roder
+BINDIR ?= $(HOME)/.local/bin
 INSTALL ?= install
 WORKSPACE ?= .
-DATA_DIR ?=
 PROVIDER ?=
 MODEL ?=
 REASONING ?=
-PROMPT ?= summarize this repo in one sentence
-LISTEN ?= ws://127.0.0.1:0
-TELEMETRY ?= true
-TELEMETRY_ENDPOINT ?= localhost:4317
+LISTEN ?= stdio://
+VERSION ?=
 
-WORKSPACE_FLAG = $(if $(WORKSPACE),--workspace "$(WORKSPACE)")
-DATA_DIR_FLAG = $(if $(DATA_DIR),--data-dir "$(DATA_DIR)")
-PROVIDER_FLAG = $(if $(PROVIDER),--provider "$(PROVIDER)")
-MODEL_FLAG = $(if $(MODEL),--model "$(MODEL)")
-REASONING_FLAG = $(if $(REASONING),--reasoning "$(REASONING)")
-CONFIG_FLAGS = $(WORKSPACE_FLAG) $(DATA_DIR_FLAG) $(PROVIDER_FLAG) $(MODEL_FLAG) $(REASONING_FLAG)
-
-.PHONY: build install run ask app-server mock-app-server mock-run mock-ask tui jaeger test smoke release-brew clean
+.PHONY: build install run app-server mock-run mock-app-server jaeger test smoke release-brew clean
 
 build:
 	@mkdir -p $(dir $(BINARY))
-	go build -o $(BINARY) ./cmd/gode
+	cargo build -p roder-cli --bin roder
+	cp target/debug/roder "$(BINARY)"
 
-install: build
+install:
+	cargo build --release -p roder-cli --bin roder
 	$(INSTALL) -d "$(BINDIR)"
-	$(INSTALL) -m 0755 "$(BINARY)" "$(BINDIR)/gode"
-	cargo build --release -p roder-cli
-	$(INSTALL) -m 0755 "target/release/rode" "$(BINDIR)/rode"
+	$(INSTALL) -m 0755 target/release/roder "$(BINDIR)/roder"
 
 run:
-	cd "$(WORKSPACE)" && RODER_PROVIDER="$(PROVIDER)" RODER_MODEL="$(MODEL)" RODER_REASONING="$(REASONING)" cargo run --manifest-path "$(CURDIR)/Cargo.toml" -p roder-cli
+	cd "$(WORKSPACE)" && RODER_PROVIDER="$(PROVIDER)" RODER_MODEL="$(MODEL)" RODER_REASONING="$(REASONING)" cargo run --manifest-path "$(CURDIR)/Cargo.toml" -p roder-cli --bin roder
 
-ask: build
-	$(BINARY) run $(CONFIG_FLAGS) --auto-approve "$(PROMPT)"
+app-server:
+	cd "$(WORKSPACE)" && RODER_PROVIDER="$(PROVIDER)" RODER_MODEL="$(MODEL)" RODER_REASONING="$(REASONING)" cargo run --manifest-path "$(CURDIR)/Cargo.toml" -p roder-cli --bin roder -- app-server --listen "$(LISTEN)"
 
-app-server: build
-	$(BINARY) app-server --listen "$(LISTEN)" $(CONFIG_FLAGS) --auto-approve
+mock-run:
+	cd "$(WORKSPACE)" && RODER_PROVIDER="mock" RODER_MODEL="$(MODEL)" RODER_REASONING="$(REASONING)" cargo run --manifest-path "$(CURDIR)/Cargo.toml" -p roder-cli --bin roder
 
-mock-run: build
-	$(BINARY) $(WORKSPACE_FLAG) $(DATA_DIR_FLAG) --provider "mock" $(MODEL_FLAG) $(REASONING_FLAG) --auto-approve
-
-mock-ask: build
-	$(BINARY) run $(WORKSPACE_FLAG) $(DATA_DIR_FLAG) --provider "mock" $(MODEL_FLAG) $(REASONING_FLAG) --auto-approve "$(PROMPT)"
-
-mock-app-server: build
-	$(BINARY) app-server --listen "$(LISTEN)" $(WORKSPACE_FLAG) $(DATA_DIR_FLAG) --provider "mock" $(MODEL_FLAG) $(REASONING_FLAG) --auto-approve
-
-tui: build
-	$(BINARY) $(CONFIG_FLAGS) --auto-approve
+mock-app-server:
+	cd "$(WORKSPACE)" && RODER_PROVIDER="mock" RODER_MODEL="$(MODEL)" RODER_REASONING="$(REASONING)" cargo run --manifest-path "$(CURDIR)/Cargo.toml" -p roder-cli --bin roder -- app-server --listen "$(LISTEN)"
 
 jaeger:
 	./jaeger.sh
 
 test:
-	go test ./...
+	cargo test --workspace
 
-smoke: test mock-ask
+smoke: test
 
 release-brew:
 	./scripts/release-brew.sh $(VERSION)
 
 clean:
-	rm -rf bin .gode
+	rm -rf bin .gode .roder

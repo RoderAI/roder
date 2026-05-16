@@ -155,7 +155,7 @@ mod tests {
     }
 
     fn temp_workspace(name: &str) -> std::path::PathBuf {
-        let path = std::env::temp_dir().join(format!("gode-{name}-{}", uuid::Uuid::new_v4()));
+        let path = std::env::temp_dir().join(format!("roder-{name}-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&path).unwrap();
         path
     }
@@ -240,7 +240,7 @@ mod runtime_tests {
     }
 
     fn temp_workspace(name: &str) -> std::path::PathBuf {
-        let path = std::env::temp_dir().join(format!("gode-{name}-{}", uuid::Uuid::new_v4()));
+        let path = std::env::temp_dir().join(format!("roder-{name}-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&path).unwrap();
         path
     }

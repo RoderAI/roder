@@ -101,6 +101,134 @@ fn keyboard_navigation_expands_selected_tool_output() {
 }
 
 #[test]
+fn apply_patch_renders_streaming_inline_diff() {
+    let mut timeline = TimelineState::default();
+    timeline.record_tool_requested(
+        "call_1".to_string(),
+        ToolTimelineEntry::new("apply_patch", ""),
+    );
+    timeline.record_tool_delta(
+        "call_1",
+        "{\"patch\":\"*** Begin Patch\\n*** Update File: src/lib.rs\\n@@\\n-old\\n+new",
+    );
+
+    let render = timeline.render(Theme::for_dark_background(true), Rect::new(0, 0, 100, 20));
+    let lines = render
+        .text
+        .lines
+        .iter()
+        .map(|line| {
+            line.spans
+                .iter()
+                .map(|span| span.content.as_ref())
+                .collect::<String>()
+        })
+        .collect::<Vec<_>>();
+
+    assert!(lines.iter().any(|line| line.contains("Apply Patch")));
+    assert!(
+        lines
+            .iter()
+            .any(|line| line == "  *** Update File: src/lib.rs")
+    );
+    assert!(lines.iter().any(|line| line == "  -old"));
+    assert!(lines.iter().any(|line| line == "  +new"));
+
+    let removed = render
+        .text
+        .lines
+        .iter()
+        .find(|line| {
+            line.spans
+                .iter()
+                .any(|span| span.content.as_ref() == "-old")
+        })
+        .expect("removed diff line should be rendered");
+    assert!(
+        removed
+            .spans
+            .iter()
+            .any(|span| span.content.as_ref() == "-old"
+                && span.style.add_modifier.contains(Modifier::BOLD))
+    );
+}
+
+#[test]
+fn edit_tool_renders_streaming_inline_diff() {
+    let mut timeline = TimelineState::default();
+    timeline.record_tool_requested("call_1".to_string(), ToolTimelineEntry::new("edit", ""));
+    timeline.record_tool_delta(
+        "call_1",
+        "{\"path\":\"src/lib.rs\",\"old_string\":\"old line\",\"new_string\":\"new line",
+    );
+
+    let lines = rendered_lines(&mut timeline);
+    assert!(
+        lines
+            .iter()
+            .any(|line| line == "  *** Edit File: src/lib.rs")
+    );
+    assert!(lines.iter().any(|line| line == "  -old line"));
+    assert!(lines.iter().any(|line| line == "  +new line"));
+}
+
+#[test]
+fn multi_edit_tool_renders_inline_diff() {
+    let mut timeline = TimelineState::default();
+    timeline.record_tool_requested(
+        "call_1".to_string(),
+        ToolTimelineEntry::new(
+            "multi_edit",
+            serde_json::json!({
+                "path": "src/lib.rs",
+                "edits": [
+                    { "old_string": "alpha", "new_string": "beta" },
+                    { "old_string": "one\ntwo", "new_string": "three" }
+                ]
+            })
+            .to_string(),
+        ),
+    );
+
+    let lines = rendered_lines(&mut timeline);
+    assert!(
+        lines
+            .iter()
+            .any(|line| line == "  *** Edit File: src/lib.rs")
+    );
+    assert!(lines.iter().any(|line| line == "  -alpha"));
+    assert!(lines.iter().any(|line| line == "  +beta"));
+    assert!(lines.iter().any(|line| line == "  -one"));
+    assert!(lines.iter().any(|line| line == "  -two"));
+    assert!(lines.iter().any(|line| line == "  +three"));
+}
+
+#[test]
+fn write_file_tool_renders_inline_diff() {
+    let mut timeline = TimelineState::default();
+    timeline.record_tool_requested(
+        "call_1".to_string(),
+        ToolTimelineEntry::new(
+            "write_file",
+            serde_json::json!({
+                "path": "src/lib.rs",
+                "content": "first\nsecond\n"
+            })
+            .to_string(),
+        ),
+    );
+
+    let lines = rendered_lines(&mut timeline);
+    assert!(
+        lines
+            .iter()
+            .any(|line| line == "  *** Write File: src/lib.rs")
+    );
+    assert!(lines.iter().any(|line| line == "  +first"));
+    assert!(lines.iter().any(|line| line == "  +second"));
+}
+
+#[test]
 fn commentary_phase_deltas_render_with_phase_label() {
     let mut timeline = TimelineState::default();
     timeline.push_assistant_delta("I will inspect first.", Some("commentary".to_string()));
@@ -117,12 +245,77 @@ fn commentary_phase_deltas_render_with_phase_label() {
 }
 
 #[test]
+fn final_assistant_messages_render_markdown() {
+    let mut timeline = TimelineState::default();
+    timeline.push_assistant_delta(
+        "# Result\n\n- **Fast** path with `code`\n1. _Slow_ path\n```rust\nlet x = 1;\n```",
+        Some("final_answer".to_string()),
+    );
+
+    let render = timeline.render(Theme::for_dark_background(true), Rect::new(0, 0, 100, 20));
+    let lines = render
+        .text
+        .lines
+        .iter()
+        .map(|line| {
+            line.spans
+                .iter()
+                .map(|span| span.content.as_ref())
+                .collect::<String>()
+        })
+        .collect::<Vec<_>>();
+
+    assert!(lines.iter().any(|line| line == "Result"));
+    assert!(lines.iter().any(|line| line.is_empty()));
+    assert!(lines.iter().any(|line| line == "- Fast path with code"));
+    assert!(lines.iter().any(|line| line == "1. Slow path"));
+    assert!(lines.iter().any(|line| line == "    let x = 1;"));
+    assert!(!lines.iter().any(|line| line.contains("**")));
+    assert!(!lines.iter().any(|line| line.contains('`')));
+
+    let heading = render
+        .text
+        .lines
+        .iter()
+        .find(|line| {
+            line.spans
+                .iter()
+                .any(|span| span.content.as_ref() == "Result")
+        })
+        .expect("heading should be rendered");
+    assert!(
+        heading
+            .spans
+            .iter()
+            .any(|span| span.content.as_ref() == "Result"
+                && span.style.add_modifier.contains(Modifier::BOLD))
+    );
+}
+
+#[test]
+fn reasoning_deltas_render_live_as_thinking() {
+    let mut timeline = TimelineState::default();
+    timeline.push_reasoning_delta("The user is asking for ");
+    timeline.push_reasoning_delta("visible thinking tokens.");
+    timeline.push_assistant_delta("Done.", Some("final_answer".to_string()));
+
+    let lines = rendered_lines(&mut timeline);
+    assert!(
+        lines
+            .iter()
+            .any(|line| line == "Thinking: The user is asking for visible thinking tokens.")
+    );
+    assert!(lines.iter().any(|line| line == "Done."));
+}
+
+#[test]
 fn turn_completed_renders_right_aligned_usage_summary() {
     let mut timeline = TimelineState::default();
     timeline.push_turn_completed(TurnCompletedSummary {
         elapsed: Duration::from_millis(1234),
-        turn_tokens: 42,
-        session_tokens: 100,
+        input_tokens: 46_694,
+        output_tokens: 1_240,
+        session_tokens: 100_200,
     });
 
     let lines = rendered_lines(&mut timeline);
@@ -132,7 +325,26 @@ fn turn_completed_renders_right_aligned_usage_summary() {
         .expect("turn completion row should be rendered");
 
     assert!(row.starts_with("    Turn completed."));
-    assert!(row.ends_with("1.2s  turn:42 tok  session:100 tok"));
+    assert!(row.ends_with("1.2 sec  in 46K  out 1.2K  session 100K tokens"));
+}
+
+#[test]
+fn turn_completed_duration_summary_uses_human_units() {
+    let mut timeline = TimelineState::default();
+    timeline.push_turn_completed(TurnCompletedSummary {
+        elapsed: Duration::from_secs(125),
+        input_tokens: 400,
+        output_tokens: 20,
+        session_tokens: 420,
+    });
+
+    let lines = rendered_lines(&mut timeline);
+    let row = lines
+        .iter()
+        .find(|line| line.contains("Turn completed."))
+        .expect("turn completion row should be rendered");
+
+    assert!(row.ends_with("2 min 5 sec  in 400  out 20  session 420 tokens"));
 }
 
 #[test]

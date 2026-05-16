@@ -151,15 +151,35 @@ pub fn save_default_provider_model(provider: &str, model: &str) -> anyhow::Resul
     save_default_provider_model_to_path(config_path(), provider, model)
 }
 
+pub fn save_default_provider_model_reasoning(
+    provider: &str,
+    model: &str,
+    reasoning: Option<&str>,
+) -> anyhow::Result<()> {
+    save_default_provider_model_reasoning_to_path(config_path(), provider, model, reasoning)
+}
+
 pub fn save_default_provider_model_to_path(
     path: impl AsRef<Path>,
     provider: &str,
     model: &str,
 ) -> anyhow::Result<()> {
+    save_default_provider_model_reasoning_to_path(path, provider, model, None)
+}
+
+pub fn save_default_provider_model_reasoning_to_path(
+    path: impl AsRef<Path>,
+    provider: &str,
+    model: &str,
+    reasoning: Option<&str>,
+) -> anyhow::Result<()> {
     let path = path.as_ref();
     let mut config = load_config_file_from_path(path)?;
     config.provider = Some(provider.to_string());
     config.model = Some(model.to_string());
+    if let Some(reasoning) = reasoning {
+        config.reasoning = Some(reasoning.to_string());
+    }
     save_config_file_to_path(path, &config)
 }
 

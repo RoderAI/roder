@@ -334,6 +334,7 @@ impl Runtime {
         &self,
         provider: String,
         model: Option<String>,
+        reasoning: Option<String>,
     ) -> anyhow::Result<RuntimeConfig> {
         self.engine_for(&provider)?;
         let mut cfg = self.config.write().await;
@@ -341,7 +342,16 @@ impl Runtime {
         if let Some(model) = model {
             cfg.default_model = model;
         }
+        if let Some(reasoning) = reasoning {
+            validate_reasoning_effort(&cfg.default_model, &reasoning)?;
+            cfg.reasoning = Some(reasoning);
+        }
         Ok(cfg.clone())
+    }
+
+    pub async fn effective_reasoning(&self) -> String {
+        let cfg = self.config.read().await;
+        effective_reasoning_for_model(&cfg, &cfg.default_model)
     }
 
     pub async fn create_session(&self, title: Option<String>) -> anyhow::Result<SessionMetadata> {
@@ -917,16 +927,35 @@ fn conversation_has_images(conversation: &[ConversationItem]) -> bool {
 }
 
 fn reasoning_for_model(cfg: &RuntimeConfig, model: &str) -> ReasoningConfig {
-    let level = cfg
-        .reasoning
-        .clone()
-        .or_else(|| lookup_model(model).map(|entry| entry.default_reasoning.to_string()));
-    match level.as_deref() {
-        Some("") | None | Some(REASONING_NONE) => ReasoningConfig::default(),
-        Some(level) => ReasoningConfig {
+    let level = effective_reasoning_for_model(cfg, model);
+    match level.as_str() {
+        "" | REASONING_NONE => ReasoningConfig::default(),
+        level => ReasoningConfig {
             enabled: true,
             level: Some(level.to_string()),
         },
+    }
+}
+
+fn effective_reasoning_for_model(cfg: &RuntimeConfig, model: &str) -> String {
+    cfg.reasoning
+        .clone()
+        .or_else(|| lookup_model(model).map(|entry| entry.default_reasoning.to_string()))
+        .unwrap_or_else(|| REASONING_NONE.to_string())
+}
+
+fn validate_reasoning_effort(model: &str, effort: &str) -> anyhow::Result<()> {
+    let Some(entry) = lookup_model(model) else {
+        return Ok(());
+    };
+    if entry
+        .supported_reasoning
+        .iter()
+        .any(|option| option.effort == effort)
+    {
+        Ok(())
+    } else {
+        anyhow::bail!("model {model} does not support reasoning effort {effort}")
     }
 }
 

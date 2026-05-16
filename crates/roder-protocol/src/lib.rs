@@ -44,6 +44,7 @@ pub struct JsonRpcError {
 pub struct SystemStatusResult {
     pub provider: String,
     pub model: String,
+    pub reasoning: String,
     pub extensions: usize,
     pub providers: usize,
 }
@@ -72,6 +73,7 @@ pub struct ProviderDescriptor {
 pub struct ProvidersListResult {
     pub active_provider: String,
     pub active_model: String,
+    pub active_reasoning: String,
     pub providers: Vec<ProviderDescriptor>,
 }
 
@@ -79,12 +81,14 @@ pub struct ProvidersListResult {
 pub struct ProviderSelectParams {
     pub provider: String,
     pub model: Option<String>,
+    pub reasoning: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProviderSelectResult {
     pub provider: String,
     pub model: String,
+    pub reasoning: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -106,6 +110,7 @@ pub struct CreateSessionResult {
     pub thread_id: ThreadId,
     pub provider: String,
     pub model: String,
+    pub reasoning: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -1,4 +1,4 @@
-"""Resize behaviour: gode must reflow without crashing."""
+"""Resize behaviour: Roder must reflow without crashing."""
 
 from __future__ import annotations
 
@@ -13,7 +13,7 @@ _STARTUP_TIMEOUT = 12
 
 async def _ready(tui: TuiSession, gode_bin: str, gode_env: dict[str, str]) -> None:
     await tui.start([gode_bin], env=gode_env, cols=140, rows=44)
-    await tui.wait_for_text("Ask gode to work on this repo", timeout=_STARTUP_TIMEOUT)
+    await tui.wait_for_text("Ask Roder to work on this repo", timeout=_STARTUP_TIMEOUT)
 
 
 async def test_shrink_to_80x24(
@@ -48,7 +48,7 @@ async def test_tiny_terminal_does_not_crash(
     await _ready(tui, gode_bin, gode_env)
     await tui.resize(40, 10)
     await tui.wait_for_stable(quiet_ms=300, timeout=4)
-    assert tui.alive, "gode crashed on extreme resize"
+    assert tui.alive, "Roder crashed on extreme resize"
 
 
 async def test_rapid_resize_burst(

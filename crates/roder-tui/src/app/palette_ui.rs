@@ -193,6 +193,7 @@ impl TuiApp {
                 self.select_provider_model_params(ProviderSelectParams {
                     provider,
                     model: Some(model),
+                    reasoning: None,
                 })
                 .await;
             }

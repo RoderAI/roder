@@ -1,6 +1,6 @@
 use serde::Serialize;
 
-use crate::inference::ModelDescriptor;
+use crate::inference::{ModelDescriptor, ReasoningEffortDescriptor};
 
 pub const PROVIDER_MOCK: &str = "mock";
 pub const PROVIDER_OPENAI: &str = "openai";
@@ -467,6 +467,15 @@ impl From<&ModelCatalogEntry> for ModelDescriptor {
             id: model.id.to_string(),
             name: model.display_name.to_string(),
             context_window: (model.context_window > 0).then_some(model.context_window),
+            default_reasoning: Some(model.default_reasoning.to_string()),
+            supported_reasoning: model
+                .supported_reasoning
+                .iter()
+                .map(|option| ReasoningEffortDescriptor {
+                    effort: option.effort.to_string(),
+                    description: option.description.to_string(),
+                })
+                .collect(),
         }
     }
 }

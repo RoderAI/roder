@@ -1,16 +1,15 @@
-# gode end-to-end TUI tests
+# Roder end-to-end TUI tests
 
-Black-box tests that spawn the real `gode` binary under a pseudo-terminal
+Black-box tests that spawn the real `roder` binary under a pseudo-terminal
 and drive it like a human would — typing, clicking, pasting, resizing.
 Powered by [`tuiwright`](https://github.com/pandelisz/tuiwright).
 
 ## Setup
 
-Build gode (release recommended for speed):
+Build Roder (release recommended for speed):
 
 ```bash
-cargo build --release -p roder-cli
-ln -sf "$(pwd)/target/release/gode" bin/gode
+make build
 ```
 
 Install Python deps via `uv` (one-time, ~3 s):
@@ -30,10 +29,10 @@ uv run pytest -k "settings" -v               # one keyword
 uv run pytest --snapshot-update              # refresh snapshots after a UI change
 ```
 
-The test runner picks up `bin/gode` automatically. Override with:
+The test runner picks up `bin/roder` automatically. Override with:
 
 ```bash
-GODE_BIN=/path/to/other/gode uv run pytest
+RODER_BIN=/path/to/other/roder uv run pytest
 ```
 
 ## What's covered

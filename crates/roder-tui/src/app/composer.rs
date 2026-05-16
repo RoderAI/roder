@@ -27,13 +27,6 @@ impl ComposerMode {
         matches!(self, Self::Shell)
     }
 
-    fn title(self) -> &'static str {
-        match self {
-            Self::Chat => "chat",
-            Self::Shell => "shell",
-        }
-    }
-
     fn placeholder(self) -> &'static str {
         match self {
             Self::Chat => "Ask Roder to work on this repo",
@@ -48,14 +41,36 @@ impl ComposerMode {
         }
     }
 
-    fn title_spans(self, theme: Theme, policy_mode: PolicyMode) -> Line<'static> {
-        Line::from(vec![
-            Span::styled(format!(" {} ", self.title()), self.title_style(theme)),
-            Span::styled(
-                format!("{} ", policy_mode_label(policy_mode)),
+    fn title_spans(self, theme: Theme, policy_mode: PolicyMode) -> Option<Line<'static>> {
+        let mode_label = match policy_mode {
+            PolicyMode::Default => "",
+            _ => policy_mode_label(policy_mode),
+        };
+
+        Some(match self {
+            Self::Chat if mode_label.is_empty() => return None,
+            Self::Chat => Line::from(Span::styled(
+                format!(" {} ", mode_label),
                 theme.policy_mode(policy_mode),
-            ),
-        ])
+            )),
+            Self::Shell if mode_label.is_empty() => {
+                Line::from(Span::styled(" shell ", self.title_style(theme)))
+            }
+            Self::Shell => Line::from(vec![
+                Span::styled(" shell ", self.title_style(theme)),
+                Span::styled(format!("{} ", mode_label), theme.policy_mode(policy_mode)),
+            ]),
+        })
+    }
+
+    #[cfg(test)]
+    fn title_text(self, policy_mode: PolicyMode) -> String {
+        self.title_spans(Theme::for_dark_background(true), policy_mode)
+            .unwrap_or_default()
+            .spans
+            .iter()
+            .map(|span| span.content.as_ref())
+            .collect()
     }
 
     fn border_style(self, theme: Theme, policy_mode: PolicyMode) -> Style {
@@ -193,13 +208,16 @@ fn style_composer_for_mode(
     mode: ComposerMode,
     policy_mode: PolicyMode,
 ) {
-    composer.set_block(
-        Block::default()
-            .borders(Borders::ALL)
-            .border_type(BorderType::Rounded)
-            .border_style(mode.border_style(theme, policy_mode))
-            .title(mode.title_spans(theme, policy_mode)),
-    );
+    let mut block = Block::default()
+        .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
+        .border_style(mode.border_style(theme, policy_mode));
+
+    if let Some(title) = mode.title_spans(theme, policy_mode) {
+        block = block.title(title);
+    }
+
+    composer.set_block(block);
     composer.set_placeholder_text(mode.placeholder());
     composer.set_placeholder_style(mode.title_style(theme).add_modifier(Modifier::ITALIC));
 }
@@ -219,6 +237,24 @@ mod tests {
             assert_ne!(cursor_color(theme), theme.selection_bg);
             assert!(matches!(cursor_color(theme), Color::Indexed(240 | 244)));
         }
+    }
+
+    #[test]
+    fn default_chat_mode_has_no_composer_title() {
+        assert_eq!(ComposerMode::Chat.title_text(PolicyMode::Default), "");
+    }
+
+    #[test]
+    fn non_default_chat_mode_title_only_shows_policy_mode() {
+        assert_eq!(ComposerMode::Chat.title_text(PolicyMode::Plan), " plan ");
+    }
+
+    #[test]
+    fn shell_mode_title_is_not_labeled_as_chat() {
+        assert_eq!(
+            ComposerMode::Shell.title_text(PolicyMode::Plan),
+            " shell plan "
+        );
     }
 
     #[test]

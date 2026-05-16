@@ -5,6 +5,8 @@ use ratatui::{
 };
 
 use super::super::Theme;
+use super::markdown::markdown_lines;
+use super::patch_preview::tool_diff_preview_lines;
 use super::{TimelineItem, TimelineItemKind, ToolTimelineStatus, ToolTimelineTool};
 
 impl TimelineItem {
@@ -29,23 +31,36 @@ impl TimelineItem {
                     .as_deref()
                     .is_some_and(|phase| !phase.is_empty() && phase != "final_answer")
                 {
-                    push_body_lines(
+                    push_markdown_body_lines(
                         lines,
                         format!("  {} ", phase.as_deref().unwrap()),
                         text,
                         theme.accent_soft(),
                         item_style(theme.muted(), selected, theme),
+                        theme,
                     );
                 } else {
-                    push_body_lines(
+                    push_markdown_body_lines(
                         lines,
                         "",
                         text,
                         theme.subtle(),
                         item_style(theme.text(), selected, theme),
+                        theme,
                     );
                 }
             }
+            TimelineItemKind::Reasoning(text) => push_body_lines(
+                lines,
+                "Thinking: ",
+                text,
+                theme.accent_soft().add_modifier(Modifier::ITALIC),
+                item_style(
+                    theme.muted().add_modifier(Modifier::ITALIC),
+                    selected,
+                    theme,
+                ),
+            ),
             TimelineItemKind::System(text) => push_body_lines(
                 lines,
                 "    ",
@@ -56,10 +71,11 @@ impl TimelineItem {
             TimelineItemKind::TurnCompleted(summary) => {
                 let left = "    Turn completed.";
                 let right = format!(
-                    "{}  turn:{} tok  session:{} tok",
+                    "{}  in {}  out {}  session {} tokens",
                     format_duration(summary.elapsed),
-                    summary.turn_tokens,
-                    summary.session_tokens
+                    format_compact_count(u64::from(summary.input_tokens)),
+                    format_compact_count(u64::from(summary.output_tokens)),
+                    format_compact_count(summary.session_tokens),
                 );
                 push_aligned_line(
                     lines,
@@ -133,6 +149,8 @@ impl ToolTimelineTool {
             ),
         ]));
 
+        lines.extend(tool_diff_preview_lines(&self.entry, theme));
+
         if expanded && let Some(output) = self.output.as_deref() {
             for line in output.lines().take(24) {
                 lines.push(Line::from(vec![
@@ -181,6 +199,31 @@ fn push_body_lines(
     }
 }
 
+fn push_markdown_body_lines(
+    lines: &mut Vec<Line<'static>>,
+    marker: impl Into<String>,
+    body: &str,
+    marker_style: Style,
+    body_style: Style,
+    theme: Theme,
+) {
+    let marker = marker.into();
+    for (line_index, body_line) in markdown_lines(body, body_style, theme)
+        .into_iter()
+        .enumerate()
+    {
+        let marker = if line_index == 0 || marker.is_empty() {
+            marker.clone()
+        } else {
+            "    ".to_string()
+        };
+        let mut spans = Vec::with_capacity(body_line.spans.len() + 1);
+        spans.push(Span::styled(marker, marker_style));
+        spans.extend(body_line.spans);
+        lines.push(Line::from(spans));
+    }
+}
+
 fn push_aligned_line(
     lines: &mut Vec<Line<'static>>,
     left: &str,
@@ -198,13 +241,54 @@ fn push_aligned_line(
 }
 
 fn format_duration(duration: std::time::Duration) -> String {
-    let total_seconds = duration.as_secs();
-    if total_seconds < 60 {
-        return format!("{}.{:01}s", total_seconds, duration.subsec_millis() / 100);
+    let total_millis = duration.as_millis();
+    if total_millis < 1_000 {
+        return format!("{}ms", total_millis);
     }
+
+    let total_seconds = duration.as_secs();
+    if total_seconds < 10 {
+        return format!("{:.1} sec", total_millis as f64 / 1_000.0);
+    }
+    if total_seconds < 60 {
+        return format!("{total_seconds} sec");
+    }
+
     let minutes = total_seconds / 60;
     let seconds = total_seconds % 60;
-    format!("{minutes}m{seconds:02}s")
+    if minutes < 60 {
+        return format!("{minutes} min {seconds} sec");
+    }
+
+    let hours = minutes / 60;
+    let minutes = minutes % 60;
+    format!("{hours} hr {minutes} min")
+}
+
+fn format_compact_count(value: u64) -> String {
+    if value < 1_000 {
+        return value.to_string();
+    }
+
+    const UNITS: &[(u64, &str)] = &[(1_000_000_000, "B"), (1_000_000, "M"), (1_000, "K")];
+    let (divisor, unit) = UNITS
+        .iter()
+        .find(|(divisor, _)| value >= *divisor)
+        .copied()
+        .unwrap_or((1, ""));
+    let whole = value / divisor;
+    let remainder = value % divisor;
+
+    if whole >= 10 || remainder == 0 {
+        return format!("{whole}{unit}");
+    }
+
+    let decimal = (remainder * 10 + divisor / 2) / divisor;
+    if decimal == 10 {
+        format!("{}{}", whole + 1, unit)
+    } else {
+        format!("{whole}.{decimal}{unit}")
+    }
 }
 
 fn item_style(style: Style, selected: bool, theme: Theme) -> Style {

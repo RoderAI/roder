@@ -11,7 +11,7 @@ use base64::Engine;
 use crossterm::{
     event::{
         self, DisableBracketedPaste, DisableMouseCapture, EnableBracketedPaste, EnableMouseCapture,
-        Event, KeyCode, KeyModifiers, KeyboardEnhancementFlags, MouseEvent,
+        Event, KeyCode, KeyModifiers, KeyboardEnhancementFlags, MouseEvent, MouseEventKind,
         PopKeyboardEnhancementFlags, PushKeyboardEnhancementFlags,
     },
     execute,
@@ -25,9 +25,10 @@ use ratatui::{
     text::{Line, Span, Text},
     widgets::{Block, BorderType, Borders, Clear, List, ListItem, ListState, Paragraph, Wrap},
 };
+use roder_api::catalog::lookup_model;
 use roder_api::conversation::InputImage;
 use roder_api::events::RoderEvent;
-use roder_api::inference::{ProviderAuthType, TokenUsage};
+use roder_api::inference::{ProviderAuthType, ReasoningEffortDescriptor, TokenUsage};
 use roder_api::policy_mode::{PolicyDecision, PolicyMode};
 use roder_app_server::LocalAppClient;
 use roder_protocol::{
@@ -72,8 +73,6 @@ struct Theme {
     dialog_key_bg: Color,
     selection_fg: Color,
     selection_bg: Color,
-    top_bar_track: Color,
-    top_bar_fill: Color,
 }
 
 impl Theme {
@@ -105,8 +104,6 @@ impl Theme {
                 dialog_key_bg: Color::Indexed(238),
                 selection_fg: Color::Reset,
                 selection_bg: Color::Indexed(212),
-                top_bar_track: Color::Indexed(236),
-                top_bar_fill: Color::Indexed(212),
             };
         }
 
@@ -132,8 +129,6 @@ impl Theme {
             dialog_key_bg: Color::Indexed(252),
             selection_fg: Color::Reset,
             selection_bg: Color::Indexed(198),
-            top_bar_track: Color::Indexed(252),
-            top_bar_fill: Color::Indexed(198),
         }
     }
 
@@ -228,6 +223,17 @@ struct ProviderOption {
     provider_id: String,
     model_id: String,
     label: String,
+    context_window: Option<u32>,
+    default_reasoning: Option<String>,
+    reasoning_options: Vec<ReasoningEffortDescriptor>,
+}
+
+#[derive(Debug, Clone)]
+struct ReasoningOptionChoice {
+    provider_id: String,
+    model_id: String,
+    effort: String,
+    description: String,
 }
 
 #[derive(Debug, Clone)]
@@ -266,6 +272,60 @@ enum ProviderPopupScreen {
     Main,
     Providers,
     Models,
+    Reasoning,
+    Spinner,
+}
+
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+enum WorkingSpinner {
+    Dots,
+    Line,
+    Arc,
+    Pulse,
+}
+
+impl WorkingSpinner {
+    fn all() -> &'static [Self] {
+        &[Self::Dots, Self::Line, Self::Arc, Self::Pulse]
+    }
+
+    fn id(self) -> &'static str {
+        match self {
+            Self::Dots => "dots",
+            Self::Line => "line",
+            Self::Arc => "arc",
+            Self::Pulse => "pulse",
+        }
+    }
+
+    fn label(self) -> &'static str {
+        match self {
+            Self::Dots => "Dots",
+            Self::Line => "Line",
+            Self::Arc => "Arc",
+            Self::Pulse => "Pulse",
+        }
+    }
+
+    fn frames(self) -> &'static [&'static str] {
+        match self {
+            Self::Dots => &[".", "..", "...", " ..", "  .", "   "],
+            Self::Line => &["-", "\\", "|", "/"],
+            Self::Arc => &["(", "(.", "(.)", ".)", ")", " "],
+            Self::Pulse => &[".", "o", "O", "o"],
+        }
+    }
+
+    fn from_config(config: Option<&str>) -> Self {
+        config
+            .and_then(|value| {
+                Self::all()
+                    .iter()
+                    .copied()
+                    .find(|spinner| spinner.id() == value)
+            })
+            .unwrap_or(Self::Dots)
+    }
 }
 
 #[derive(Debug, Clone, Eq, PartialEq)]
@@ -324,8 +384,11 @@ fn confirm_action_for_key(key: KeyCode, selected: ConfirmChoice) -> ConfirmKeyAc
 enum ProviderMenuItem {
     Models,
     Providers,
+    SpinnerSettings,
+    Spinner(WorkingSpinner),
     Provider(ProviderChoice),
     Model(ProviderOption),
+    Reasoning(ReasoningOptionChoice),
     Back,
 }
 
@@ -334,8 +397,11 @@ impl ProviderMenuItem {
         match self {
             Self::Models => "Models".to_string(),
             Self::Providers => "Providers".to_string(),
+            Self::SpinnerSettings => "Working spinner".to_string(),
+            Self::Spinner(spinner) => spinner.label().to_string(),
             Self::Provider(provider) => provider.label(),
             Self::Model(option) => option.label.clone(),
+            Self::Reasoning(option) => format!("{} - {}", option.effort, option.description),
             Self::Back => "Back".to_string(),
         }
     }
@@ -370,10 +436,15 @@ pub struct TuiApp {
     thread_id: String,
     active_turn_id: Option<String>,
     active_turn_started_at: Option<Instant>,
-    current_turn_tokens: u32,
+    current_turn_input_tokens: u32,
+    current_turn_output_tokens: u32,
     session_tokens: u64,
     provider: String,
     model: String,
+    model_context_window: Option<u32>,
+    context_counter_hovered: bool,
+    last_frame_width: u16,
+    reasoning_effort: String,
     composer: TextArea<'static>,
     timeline: TimelineState,
     events: Vec<String>,
@@ -383,9 +454,11 @@ pub struct TuiApp {
     provider_popup_screen: ProviderPopupScreen,
     provider_choices: Vec<ProviderChoice>,
     model_options: Vec<ProviderOption>,
+    pending_reasoning_model: Option<ProviderOption>,
     provider_menu_items: Vec<ProviderMenuItem>,
     provider_menu_filter: String,
     provider_state: ListState,
+    working_spinner: WorkingSpinner,
     confirm_dialog: Option<ConfirmDialogState>,
     image_attachments: Vec<ImageAttachment>,
     queued_prompts: PromptQueue,
@@ -414,20 +487,28 @@ impl TuiApp {
         provider_state.select(Some(0));
         let theme = Theme::for_terminal();
         let policy_state = session_get(&client).await.ok();
+        let tui_config = load_tui_config().unwrap_or_default();
+        let selected_model = if model.is_empty() {
+            session.model
+        } else {
+            model
+        };
+        let model_context_window = context_window_for_model(&selected_model);
 
         Ok(Self {
             client,
             thread_id: session.thread_id,
             active_turn_id: None,
             active_turn_started_at: None,
-            current_turn_tokens: 0,
+            current_turn_input_tokens: 0,
+            current_turn_output_tokens: 0,
             session_tokens: 0,
             provider: session.provider,
-            model: if model.is_empty() {
-                session.model
-            } else {
-                model
-            },
+            model: selected_model,
+            model_context_window,
+            context_counter_hovered: false,
+            last_frame_width: 0,
+            reasoning_effort: session.reasoning,
             composer: composer_textarea(theme),
             timeline: TimelineState::default(),
             events: Vec::new(),
@@ -437,9 +518,11 @@ impl TuiApp {
             provider_popup_screen: ProviderPopupScreen::Main,
             provider_choices: Vec::new(),
             model_options: Vec::new(),
+            pending_reasoning_model: None,
             provider_menu_items: Vec::new(),
             provider_menu_filter: String::new(),
             provider_state,
+            working_spinner: WorkingSpinner::from_config(tui_config.spinner.as_deref()),
             confirm_dialog: None,
             image_attachments: Vec::new(),
             queued_prompts: PromptQueue::default(),
@@ -580,7 +663,8 @@ impl TuiApp {
                     RoderEvent::TurnStarted(ev) => {
                         self.active_turn_id = Some(ev.turn_id);
                         self.active_turn_started_at = Some(Instant::now());
-                        self.current_turn_tokens = 0;
+                        self.current_turn_input_tokens = 0;
+                        self.current_turn_output_tokens = 0;
                     }
                     RoderEvent::TurnCompleted(ev)
                         if self.active_turn_id.as_deref() == Some(&ev.turn_id) =>
@@ -593,10 +677,12 @@ impl TuiApp {
                         self.active_turn_id = None;
                         self.timeline.push_turn_completed(TurnCompletedSummary {
                             elapsed,
-                            turn_tokens: self.current_turn_tokens,
+                            input_tokens: self.current_turn_input_tokens,
+                            output_tokens: self.current_turn_output_tokens,
                             session_tokens: self.session_tokens,
                         });
-                        self.current_turn_tokens = 0;
+                        self.current_turn_input_tokens = 0;
+                        self.current_turn_output_tokens = 0;
                         self.submit_next_queued_prompt().await;
                     }
                     RoderEvent::TurnInterrupted(ev)
@@ -604,14 +690,25 @@ impl TuiApp {
                     {
                         self.active_turn_id = None;
                         self.active_turn_started_at = None;
-                        self.current_turn_tokens = 0;
+                        self.current_turn_input_tokens = 0;
+                        self.current_turn_output_tokens = 0;
                     }
                     RoderEvent::InferenceEventReceived(ev) => match ev.event {
                         roder_api::inference::InferenceEvent::MessageDelta(delta) => {
                             self.timeline.push_assistant_delta(&delta.text, delta.phase);
                         }
+                        roder_api::inference::InferenceEvent::ReasoningDelta(delta) => {
+                            self.timeline.push_reasoning_delta(&delta.text);
+                        }
                         roder_api::inference::InferenceEvent::Usage(usage) => {
                             self.record_usage(usage);
+                        }
+                        roder_api::inference::InferenceEvent::ToolCallStarted(call) => {
+                            self.record_tool_requested_with_id(call.id, fallback_entry(call.name));
+                        }
+                        roder_api::inference::InferenceEvent::ToolCallDelta(delta) => {
+                            self.timeline
+                                .record_tool_delta(&delta.id, &delta.arguments_delta);
                         }
                         roder_api::inference::InferenceEvent::ToolCallCompleted(call) => {
                             self.record_tool_requested_with_id(
@@ -625,7 +722,8 @@ impl TuiApp {
                         if self.active_turn_id.as_deref() == Some(&ev.turn_id) {
                             self.active_turn_id = None;
                             self.active_turn_started_at = None;
-                            self.current_turn_tokens = 0;
+                            self.current_turn_input_tokens = 0;
+                            self.current_turn_output_tokens = 0;
                         }
                         self.timeline.push_error(ev.error);
                     }
@@ -992,12 +1090,32 @@ impl TuiApp {
     }
 
     fn handle_mouse(&mut self, mouse: MouseEvent) {
+        self.update_context_counter_hover(&mouse);
         if self.confirm_dialog.is_some() || self.show_provider_popup {
             return;
         }
         if self.timeline.handle_mouse(mouse) {
             self.push_event("timeline selected".to_string());
         }
+    }
+
+    fn update_context_counter_hover(&mut self, mouse: &MouseEvent) {
+        if !matches!(
+            mouse.kind,
+            MouseEventKind::Moved
+                | MouseEventKind::Down(_)
+                | MouseEventKind::Up(_)
+                | MouseEventKind::Drag(_)
+                | MouseEventKind::ScrollDown
+                | MouseEventKind::ScrollUp
+                | MouseEventKind::ScrollLeft
+                | MouseEventKind::ScrollRight
+        ) {
+            return;
+        }
+        self.context_counter_hovered = self.context_window_counter().is_some_and(|counter| {
+            counter.hit_test(self.last_frame_width, mouse.row, mouse.column)
+        });
     }
 
     async fn run_shell_command(&mut self, command: String) {
@@ -1016,6 +1134,7 @@ impl TuiApp {
 
     fn render(&mut self, f: &mut Frame<'_>) {
         let area = f.area();
+        self.last_frame_width = area.width;
         style_composer_for_current_mode(&mut self.composer, self.theme, self.policy_mode);
         let event_height = event_log_height(self.show_event_log, self.events.len());
         let attachment_height = image_attachment_height(self.image_attachments.len());
@@ -1031,6 +1150,9 @@ impl TuiApp {
         if queue_height > 0 {
             constraints.push(Constraint::Length(queue_height));
         }
+        if self.active_turn_id.is_some() {
+            constraints.push(Constraint::Length(1));
+        }
         constraints.extend([Constraint::Length(composer_height), Constraint::Length(1)]);
 
         let chunks = Layout::default()
@@ -1038,12 +1160,8 @@ impl TuiApp {
             .constraints(constraints)
             .split(area);
 
-        let loader_index = 1;
-        let transcript_index = 2;
+        let transcript_index = 1;
         f.render_widget(self.header(area.width), chunks[0]);
-        if self.active_turn_id.is_some() {
-            f.render_widget(self.animated_top_bar(area.width), chunks[loader_index]);
-        }
         f.render_widget(
             self.transcript(chunks[transcript_index]),
             chunks[transcript_index],
@@ -1063,6 +1181,10 @@ impl TuiApp {
             f.render_widget(self.queued_prompt_bar(), chunks[composer_index]);
             composer_index += 1;
         }
+        if self.active_turn_id.is_some() {
+            f.render_widget(self.working_line(), chunks[composer_index]);
+            composer_index += 1;
+        }
         f.render_widget(&self.composer, chunks[composer_index]);
         f.render_widget(self.footer(area.width), chunks[composer_index + 1]);
 
@@ -1074,13 +1196,27 @@ impl TuiApp {
         }
     }
 
-    fn animated_top_bar(&self, width: u16) -> Paragraph<'static> {
-        Paragraph::new(animated_bar_line(
-            width,
-            self.animation_frame,
-            self.theme.top_bar_track,
-            self.theme.top_bar_fill,
-        ))
+    fn working_line(&self) -> Paragraph<'static> {
+        let elapsed = self
+            .active_turn_started_at
+            .map(|started| started.elapsed())
+            .unwrap_or_default();
+        Paragraph::new(Line::from(vec![
+            Span::styled(
+                format!(
+                    " {} ",
+                    spinner_frame(self.working_spinner, self.animation_frame)
+                ),
+                self.theme.running(),
+            ),
+            Span::styled(
+                format!(
+                    "Working ({} - esc to interrupt)",
+                    format_working_elapsed(elapsed)
+                ),
+                self.theme.muted(),
+            ),
+        ]))
     }
 
     fn header(&self, width: u16) -> Paragraph<'static> {
@@ -1088,6 +1224,10 @@ impl TuiApp {
         let left = vec![
             Span::styled(" roder", self.theme.accent()),
             Span::styled(format!("  {model_label}"), self.theme.text()),
+            Span::styled(
+                format!("  reasoning {}", self.reasoning_effort),
+                self.theme.muted(),
+            ),
             Span::styled(
                 format!("  session {}", short_id(&self.thread_id)),
                 self.theme.muted(),
@@ -1103,12 +1243,21 @@ impl TuiApp {
         } else {
             self.theme.muted()
         };
-        Paragraph::new(line_with_gap(
-            left,
-            vec![Span::styled(turn.to_string(), right_style)],
-            width,
-            self.theme.text(),
-        ))
+        let mut right = vec![Span::styled(turn.to_string(), right_style)];
+        if let Some(counter) = self.context_window_counter() {
+            right.push(Span::styled(" ".to_string(), self.theme.text()));
+            right.push(Span::styled(counter.label(), self.theme.muted()));
+        }
+        Paragraph::new(line_with_gap(left, right, width, self.theme.text()))
+    }
+
+    fn context_window_counter(&self) -> Option<ContextWindowCounter> {
+        let max_tokens = u64::from(self.model_context_window?);
+        (max_tokens > 0).then_some(ContextWindowCounter {
+            used_tokens: self.session_tokens,
+            max_tokens,
+            hovered: self.context_counter_hovered,
+        })
     }
 
     fn transcript(&mut self, area: Rect) -> Paragraph<'static> {
@@ -1284,7 +1433,13 @@ impl TuiApp {
                 .map(|item| {
                     let marker = match item {
                         ProviderMenuItem::Provider(provider) if provider.authenticated => "✓ ",
-                        ProviderMenuItem::Models | ProviderMenuItem::Providers => "› ",
+                        ProviderMenuItem::Spinner(spinner) if *spinner == self.working_spinner => {
+                            "✓ "
+                        }
+                        ProviderMenuItem::Models
+                        | ProviderMenuItem::Providers
+                        | ProviderMenuItem::SpinnerSettings
+                        | ProviderMenuItem::Reasoning(_) => "› ",
                         ProviderMenuItem::Back => "‹ ",
                         _ => "• ",
                     };
@@ -1299,6 +1454,8 @@ impl TuiApp {
             ProviderPopupScreen::Main => " Menu (Enter select, Esc close) ",
             ProviderPopupScreen::Providers => " Providers (Enter select, Esc back) ",
             ProviderPopupScreen::Models => " Models (Enter select, Esc back) ",
+            ProviderPopupScreen::Reasoning => " Reasoning effort (Enter select, Esc back) ",
+            ProviderPopupScreen::Spinner => " Working spinner (Enter select, Esc back) ",
         };
         let title = if self.provider_menu_filter.is_empty() {
             title.to_string()
@@ -1330,8 +1487,13 @@ impl TuiApp {
             Ok(list) => {
                 self.provider = list.active_provider.clone();
                 self.model = list.active_model.clone();
+                self.reasoning_effort = list.active_reasoning.clone();
                 self.provider_choices = provider_choices_from_list(&list);
                 self.model_options = provider_options_from_list(&list);
+                self.model_context_window =
+                    context_window_from_options(&self.model_options, &self.provider, &self.model)
+                        .or_else(|| context_window_for_model(&self.model));
+                self.pending_reasoning_model = None;
                 self.provider_menu_items = main_provider_menu_items(&self.provider_choices);
                 self.provider_popup_screen = ProviderPopupScreen::Main;
                 self.provider_menu_filter.clear();
@@ -1366,6 +1528,16 @@ impl TuiApp {
         if !self.provider_menu_filter.is_empty() {
             self.provider_menu_filter.clear();
             self.clamp_provider_menu_selection();
+            return;
+        }
+        if self.provider_popup_screen == ProviderPopupScreen::Reasoning {
+            self.open_models_submenu();
+            return;
+        }
+        if self.provider_popup_screen == ProviderPopupScreen::Spinner {
+            self.provider_popup_screen = ProviderPopupScreen::Main;
+            self.provider_menu_items = main_provider_menu_items(&self.provider_choices);
+            self.provider_state.select(Some(0));
             return;
         }
         if self.provider_popup_screen != ProviderPopupScreen::Main {
@@ -1421,17 +1593,28 @@ impl TuiApp {
             ProviderMenuItem::Providers => {
                 self.open_providers_submenu();
             }
+            ProviderMenuItem::SpinnerSettings => {
+                self.open_spinner_submenu();
+            }
+            ProviderMenuItem::Spinner(spinner) => {
+                self.select_working_spinner(spinner);
+            }
             ProviderMenuItem::Provider(provider) => {
                 self.select_provider(provider).await;
             }
             ProviderMenuItem::Model(option) => {
                 self.select_provider_model(option).await;
             }
+            ProviderMenuItem::Reasoning(option) => {
+                self.select_provider_model_params(ProviderSelectParams {
+                    provider: option.provider_id,
+                    model: Some(option.model_id),
+                    reasoning: Some(option.effort),
+                })
+                .await;
+            }
             ProviderMenuItem::Back => {
-                self.provider_popup_screen = ProviderPopupScreen::Main;
-                self.provider_menu_filter.clear();
-                self.provider_menu_items = main_provider_menu_items(&self.provider_choices);
-                self.provider_state.select(Some(0));
+                self.close_or_back_provider_popup();
             }
         }
     }
@@ -1474,6 +1657,37 @@ impl TuiApp {
         }
     }
 
+    fn open_spinner_submenu(&mut self) {
+        self.provider_popup_screen = ProviderPopupScreen::Spinner;
+        self.provider_menu_filter.clear();
+        self.provider_menu_items = WorkingSpinner::all()
+            .iter()
+            .copied()
+            .map(ProviderMenuItem::Spinner)
+            .chain(std::iter::once(ProviderMenuItem::Back))
+            .collect();
+        let selected = WorkingSpinner::all()
+            .iter()
+            .position(|spinner| *spinner == self.working_spinner)
+            .unwrap_or(0);
+        self.provider_state.select(Some(selected));
+    }
+
+    fn select_working_spinner(&mut self, spinner: WorkingSpinner) {
+        self.working_spinner = spinner;
+        match save_tui_spinner(spinner.id()) {
+            Ok(()) => {
+                self.push_event(format!("working spinner saved: {}", spinner.id()));
+                self.timeline
+                    .push_system(format!("working spinner set to {}.", spinner.label()));
+            }
+            Err(err) => {
+                self.record_error(format!("failed to save working spinner: {err}"));
+            }
+        }
+        self.show_provider_popup = false;
+    }
+
     fn filtered_provider_menu_items(&self) -> Vec<ProviderMenuItem> {
         filter_provider_menu_items(&self.provider_menu_items, &self.provider_menu_filter)
     }
@@ -1489,11 +1703,49 @@ impl TuiApp {
     }
 
     async fn select_provider_model(&mut self, option: ProviderOption) {
+        if !option.reasoning_options.is_empty() {
+            self.open_reasoning_submenu(option);
+            return;
+        }
         let params = ProviderSelectParams {
             provider: option.provider_id,
             model: Some(option.model_id),
+            reasoning: option.default_reasoning,
         };
         self.select_provider_model_params(params).await;
+    }
+
+    fn open_reasoning_submenu(&mut self, option: ProviderOption) {
+        self.provider_popup_screen = ProviderPopupScreen::Reasoning;
+        self.provider_menu_filter.clear();
+        self.pending_reasoning_model = Some(option.clone());
+        self.provider_menu_items = option
+            .reasoning_options
+            .iter()
+            .map(|reasoning| {
+                ProviderMenuItem::Reasoning(ReasoningOptionChoice {
+                    provider_id: option.provider_id.clone(),
+                    model_id: option.model_id.clone(),
+                    effort: reasoning.effort.clone(),
+                    description: reasoning.description.clone(),
+                })
+            })
+            .chain(std::iter::once(ProviderMenuItem::Back))
+            .collect();
+        let selected = option
+            .reasoning_options
+            .iter()
+            .position(|reasoning| reasoning.effort == self.reasoning_effort)
+            .or_else(|| {
+                option.default_reasoning.as_ref().and_then(|default| {
+                    option
+                        .reasoning_options
+                        .iter()
+                        .position(|reasoning| &reasoning.effort == default)
+                })
+            })
+            .unwrap_or(0);
+        self.provider_state.select(Some(selected));
     }
 
     async fn select_provider(&mut self, provider: ProviderChoice) {
@@ -1513,6 +1765,7 @@ impl TuiApp {
         let params = ProviderSelectParams {
             provider: provider.provider_id,
             model: provider.default_model,
+            reasoning: None,
         };
         self.select_provider_model_params(params).await;
     }
@@ -1532,15 +1785,20 @@ impl TuiApp {
             Ok(selected) => {
                 self.provider = selected.provider;
                 self.model = selected.model;
+                self.reasoning_effort = selected.reasoning;
+                self.model_context_window =
+                    context_window_from_options(&self.model_options, &self.provider, &self.model)
+                        .or_else(|| context_window_for_model(&self.model));
                 self.timeline.push_system(format!(
-                    "switched provider/model to {}/{}.",
-                    self.provider, self.model
+                    "switched provider/model to {}/{} with reasoning {}.",
+                    self.provider, self.model, self.reasoning_effort
                 ));
                 self.push_event(format!(
-                    "provider selected: {}/{}",
-                    self.provider, self.model
+                    "provider selected: {}/{} ({})",
+                    self.provider, self.model, self.reasoning_effort
                 ));
                 self.show_provider_popup = false;
+                self.pending_reasoning_model = None;
             }
             Err(err) => {
                 self.record_error(format!("providers/select failed: {err}"));
@@ -1592,7 +1850,12 @@ impl TuiApp {
     }
 
     fn record_usage(&mut self, usage: TokenUsage) {
-        self.current_turn_tokens = self.current_turn_tokens.saturating_add(usage.total_tokens);
+        self.current_turn_input_tokens = self
+            .current_turn_input_tokens
+            .saturating_add(usage.prompt_tokens);
+        self.current_turn_output_tokens = self
+            .current_turn_output_tokens
+            .saturating_add(usage.completion_tokens);
         self.session_tokens = self
             .session_tokens
             .saturating_add(u64::from(usage.total_tokens));
@@ -1606,46 +1869,81 @@ impl TuiApp {
     }
 }
 
-fn animated_bar_line(width: u16, frame: u64, track: Color, fill: Color) -> Line<'static> {
-    let width = usize::from(width);
-    if width == 0 {
-        return Line::raw("");
-    }
-
-    let highlight_width = animated_bar_highlight_width(width);
-    let offset = animated_bar_offset(width, highlight_width, frame);
-    let mut spans = Vec::new();
-    if offset > 0 {
-        spans.push(Span::styled("─".repeat(offset), Style::default().fg(track)));
-    }
-    spans.push(Span::styled(
-        "─".repeat(highlight_width),
-        Style::default().fg(fill),
-    ));
-    let tail = width.saturating_sub(offset + highlight_width);
-    if tail > 0 {
-        spans.push(Span::styled("─".repeat(tail), Style::default().fg(track)));
-    }
-    Line::from(spans)
+fn spinner_frame(spinner: WorkingSpinner, frame: u64) -> &'static str {
+    let frames = spinner.frames();
+    frames[(frame as usize) % frames.len()]
 }
 
-fn animated_bar_highlight_width(width: usize) -> usize {
-    (width / 4).clamp(8, 48).min(width)
+#[derive(Debug, Default)]
+struct TuiUserConfig {
+    spinner: Option<String>,
 }
 
-const TOP_BAR_ANIMATION_STEP: usize = 5;
-
-fn animated_bar_offset(width: usize, highlight_width: usize, frame: u64) -> usize {
-    let travel = width.saturating_sub(highlight_width);
-    if travel == 0 {
-        return 0;
+fn load_tui_config() -> anyhow::Result<TuiUserConfig> {
+    let path = tui_config_path();
+    if !path.exists() {
+        return Ok(TuiUserConfig::default());
     }
-    let period = travel * 2;
-    let phase = (frame as usize * TOP_BAR_ANIMATION_STEP) % period;
-    if phase <= travel {
-        phase
+    let contents = std::fs::read_to_string(path)?;
+    let value = contents.parse::<toml::Value>()?;
+    Ok(TuiUserConfig {
+        spinner: value
+            .get("tui")
+            .and_then(|tui| tui.get("spinner"))
+            .and_then(|spinner| spinner.as_str())
+            .map(str::to_string),
+    })
+}
+
+fn save_tui_spinner(spinner: &str) -> anyhow::Result<()> {
+    let path = tui_config_path();
+    let mut value = if path.exists() {
+        std::fs::read_to_string(&path)?.parse::<toml::Value>()?
     } else {
-        period - phase
+        toml::Value::Table(toml::map::Map::new())
+    };
+
+    let root = value
+        .as_table_mut()
+        .ok_or_else(|| anyhow::anyhow!("config root must be a TOML table"))?;
+    let tui = root
+        .entry("tui".to_string())
+        .or_insert_with(|| toml::Value::Table(toml::map::Map::new()));
+    let tui = tui
+        .as_table_mut()
+        .ok_or_else(|| anyhow::anyhow!("[tui] config must be a TOML table"))?;
+    tui.insert(
+        "spinner".to_string(),
+        toml::Value::String(spinner.to_string()),
+    );
+
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    std::fs::write(path, toml::to_string_pretty(&value)?)?;
+    Ok(())
+}
+
+fn tui_config_path() -> PathBuf {
+    let mut path = dirs::home_dir().unwrap_or_else(|| PathBuf::from("."));
+    path.push("w");
+    path.push(".roder");
+    path.push("config.toml");
+    path
+}
+
+fn format_working_elapsed(duration: Duration) -> String {
+    let total_seconds = duration.as_secs();
+    let hours = total_seconds / 3_600;
+    let minutes = (total_seconds % 3_600) / 60;
+    let seconds = total_seconds % 60;
+
+    if hours > 0 {
+        format!("{hours}h {minutes}m {seconds}s")
+    } else if minutes > 0 {
+        format!("{minutes}m {seconds}s")
+    } else {
+        format!("{seconds}s")
     }
 }
 
@@ -1918,7 +2216,10 @@ fn provider_options_from_list(list: &ProvidersListResult) -> Vec<ProviderOption>
             options.push(ProviderOption {
                 provider_id: provider.id.clone(),
                 model_id: list.active_model.clone(),
-                label: format!("{} / {}", provider.id, list.active_model),
+                label: format!("{}/{}", provider.id, list.active_model),
+                context_window: context_window_for_model(&list.active_model),
+                default_reasoning: Some(list.active_reasoning.clone()),
+                reasoning_options: Vec::new(),
             });
             continue;
         }
@@ -1931,7 +2232,12 @@ fn provider_options_from_list(list: &ProvidersListResult) -> Vec<ProviderOption>
             options.push(ProviderOption {
                 provider_id: provider.id.clone(),
                 model_id: model.id.clone(),
-                label: format!("{} / {}", provider.id, model_name),
+                label: format!("{}/{}", provider.id, model_name),
+                context_window: model
+                    .context_window
+                    .or_else(|| context_window_for_model(&model.id)),
+                default_reasoning: model.default_reasoning.clone(),
+                reasoning_options: model.supported_reasoning.clone(),
             });
         }
     }
@@ -1960,7 +2266,11 @@ fn provider_choice_from_descriptor(provider: &ProviderDescriptor) -> ProviderCho
 
 fn main_provider_menu_items(providers: &[ProviderChoice]) -> Vec<ProviderMenuItem> {
     let _provider_count = providers.len();
-    vec![ProviderMenuItem::Providers, ProviderMenuItem::Models]
+    vec![
+        ProviderMenuItem::Providers,
+        ProviderMenuItem::Models,
+        ProviderMenuItem::SpinnerSettings,
+    ]
 }
 
 fn providers_menu_items(providers: &[ProviderChoice]) -> Vec<ProviderMenuItem> {
@@ -2155,6 +2465,65 @@ fn body_lines(body: &str) -> impl Iterator<Item = String> + '_ {
     body.split('\n').map(str::to_string)
 }
 
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+struct ContextWindowCounter {
+    used_tokens: u64,
+    max_tokens: u64,
+    hovered: bool,
+}
+
+impl ContextWindowCounter {
+    fn label(self) -> String {
+        if self.hovered {
+            return self.expanded_label();
+        }
+        let percent = if self.max_tokens == 0 {
+            0.0
+        } else {
+            (self.used_tokens as f64 / self.max_tokens as f64) * 100.0
+        };
+        format!("│ {percent:.2}% │")
+    }
+
+    fn expanded_label(self) -> String {
+        format!(
+            "│ {} / {} │",
+            compact_token_count(self.used_tokens),
+            compact_token_count(self.max_tokens)
+        )
+    }
+
+    fn hit_test(self, width: u16, row: u16, column: u16) -> bool {
+        row == 0 && column >= width.saturating_sub(self.expanded_label().chars().count() as u16)
+    }
+}
+
+fn compact_token_count(tokens: u64) -> String {
+    if tokens >= 1_000_000 {
+        let floored_tenths = tokens / 100_000;
+        return format!("{}.{}M", floored_tenths / 10, floored_tenths % 10);
+    }
+    if tokens >= 1_000 {
+        return format!("{}K", tokens / 1_000);
+    }
+    tokens.to_string()
+}
+
+fn context_window_for_model(model: &str) -> Option<u32> {
+    lookup_model(model).and_then(|entry| (entry.context_window > 0).then_some(entry.context_window))
+}
+
+fn context_window_from_options(
+    options: &[ProviderOption],
+    provider: &str,
+    model: &str,
+) -> Option<u32> {
+    options
+        .iter()
+        .find(|option| option.provider_id == provider && option.model_id == model)
+        .and_then(|option| option.context_window)
+}
+
 fn line_with_gap(
     mut left: Vec<Span<'static>>,
     right: Vec<Span<'static>>,
@@ -2171,12 +2540,8 @@ fn line_with_gap(
     Line::from(left)
 }
 
-fn top_layout_constraints() -> [Constraint; 3] {
-    [
-        Constraint::Length(1),
-        Constraint::Length(1),
-        Constraint::Min(5),
-    ]
+fn top_layout_constraints() -> [Constraint; 2] {
+    [Constraint::Length(1), Constraint::Min(5)]
 }
 
 fn spans_width(spans: &[Span<'_>]) -> usize {
@@ -2249,8 +2614,6 @@ mod tests {
                 theme.dialog_key_bg,
                 theme.selection_fg,
                 theme.selection_bg,
-                theme.top_bar_track,
-                theme.top_bar_fill,
             ];
             assert!(!colors.contains(&Color::White));
             assert!(!colors.contains(&Color::Black));
@@ -2310,6 +2673,35 @@ mod tests {
             .map(|span| span.content.as_ref())
             .collect::<String>();
         assert_eq!(rendered, "left   right");
+    }
+
+    #[test]
+    fn context_window_counter_formats_compact_and_hovered_labels() {
+        let usage = ContextWindowCounter {
+            used_tokens: 15_800,
+            max_tokens: 1_000_000,
+            hovered: false,
+        };
+        assert_eq!(usage.label(), "│ 1.58% │");
+
+        let hovered = ContextWindowCounter {
+            hovered: true,
+            ..usage
+        };
+        assert_eq!(hovered.label(), "│ 15K / 1.0M │");
+    }
+
+    #[test]
+    fn context_window_counter_hitbox_uses_hover_width_at_right_edge() {
+        let usage = ContextWindowCounter {
+            used_tokens: 15_800,
+            max_tokens: 1_000_000,
+            hovered: false,
+        };
+        assert!(usage.hit_test(120, 0, 108));
+        assert!(usage.hit_test(120, 0, 119));
+        assert!(!usage.hit_test(120, 0, 100));
+        assert!(!usage.hit_test(120, 1, 119));
     }
 
     #[test]
@@ -2384,35 +2776,46 @@ mod tests {
     }
 
     #[test]
-    fn animated_bar_offset_bounces_between_edges() {
-        assert_eq!(animated_bar_offset(20, 5, 0), 0);
-        assert_eq!(animated_bar_offset(20, 5, 3), 15);
-        assert_eq!(animated_bar_offset(20, 5, 4), 10);
-        assert_eq!(animated_bar_offset(20, 5, 6), 0);
+    fn working_elapsed_formats_like_status_text() {
+        assert_eq!(format_working_elapsed(Duration::from_secs(9)), "9s");
+        assert_eq!(format_working_elapsed(Duration::from_secs(175)), "2m 55s");
+        assert_eq!(
+            format_working_elapsed(Duration::from_secs(3_725)),
+            "1h 2m 5s"
+        );
     }
 
     #[test]
-    fn animated_bar_moves_multiple_columns_per_frame() {
-        assert_eq!(animated_bar_offset(20, 5, 1), TOP_BAR_ANIMATION_STEP);
+    fn spinner_frame_cycles_configured_frames() {
+        assert_eq!(spinner_frame(WorkingSpinner::Line, 0), "-");
+        assert_eq!(spinner_frame(WorkingSpinner::Line, 1), "\\");
+        assert_eq!(spinner_frame(WorkingSpinner::Line, 4), "-");
     }
 
     #[test]
-    fn animated_bar_highlight_width_stays_within_width() {
-        assert_eq!(animated_bar_highlight_width(0), 0);
-        assert_eq!(animated_bar_highlight_width(4), 4);
-        assert_eq!(animated_bar_highlight_width(80), 20);
-        assert_eq!(animated_bar_highlight_width(400), 48);
+    fn working_spinner_parses_config_ids() {
+        assert_eq!(
+            WorkingSpinner::from_config(Some("line")),
+            WorkingSpinner::Line
+        );
+        assert_eq!(
+            WorkingSpinner::from_config(Some("unknown")),
+            WorkingSpinner::Dots
+        );
+        assert_eq!(WorkingSpinner::from_config(None), WorkingSpinner::Dots);
     }
 
     #[test]
-    fn top_layout_reserves_loader_gap_under_header() {
+    fn tui_config_path_targets_workspace_roder_config() {
+        let rendered = tui_config_path().to_string_lossy().replace('\\', "/");
+        assert!(rendered.ends_with("/w/.roder/config.toml"));
+    }
+
+    #[test]
+    fn top_layout_starts_with_header_and_transcript() {
         assert_eq!(
             top_layout_constraints(),
-            [
-                Constraint::Length(1),
-                Constraint::Length(1),
-                Constraint::Min(5)
-            ]
+            [Constraint::Length(1), Constraint::Min(5)]
         );
     }
 
@@ -2543,6 +2946,7 @@ mod tests {
         let list = ProvidersListResult {
             active_provider: "mock".to_string(),
             active_model: "mock".to_string(),
+            active_reasoning: "medium".to_string(),
             providers: vec![ProviderDescriptor {
                 id: "mock".to_string(),
                 name: "Mock".to_string(),
@@ -2557,7 +2961,12 @@ mod tests {
                 models: vec![roder_api::inference::ModelDescriptor {
                     id: "mock".to_string(),
                     name: "Mock".to_string(),
-                    context_window: None,
+                    context_window: Some(123_000),
+                    default_reasoning: Some("medium".to_string()),
+                    supported_reasoning: vec![ReasoningEffortDescriptor {
+                        effort: "medium".to_string(),
+                        description: "Balanced reasoning".to_string(),
+                    }],
                 }],
             }],
         };
@@ -2566,6 +2975,9 @@ mod tests {
         assert_eq!(options.len(), 1);
         assert_eq!(options[0].provider_id, "mock");
         assert_eq!(options[0].model_id, "mock");
+        assert_eq!(options[0].context_window, Some(123_000));
+        assert_eq!(options[0].default_reasoning.as_deref(), Some("medium"));
+        assert_eq!(options[0].reasoning_options.len(), 1);
     }
 
     #[test]
@@ -2573,6 +2985,10 @@ mod tests {
         let items = main_provider_menu_items(&[]);
         assert!(matches!(items.first(), Some(ProviderMenuItem::Providers)));
         assert!(matches!(items.get(1), Some(ProviderMenuItem::Models)));
+        assert!(matches!(
+            items.get(2),
+            Some(ProviderMenuItem::SpinnerSettings)
+        ));
     }
 
     #[test]
@@ -2631,12 +3047,28 @@ mod tests {
             ProviderMenuItem::Model(ProviderOption {
                 provider_id: "codex".to_string(),
                 model_id: "gpt-5.5".to_string(),
-                label: "codex / gpt-5.5 (GPT-5.5)".to_string(),
+                label: "codex/gpt-5.5 (GPT-5.5)".to_string(),
+                context_window: Some(1_000_000),
+                default_reasoning: Some("medium".to_string()),
+                reasoning_options: Vec::new(),
             }),
         ];
         let filtered = filter_provider_menu_items(&items, "5.5");
         assert_eq!(filtered.len(), 1);
         assert!(matches!(filtered[0], ProviderMenuItem::Model(_)));
+    }
+
+    #[test]
+    fn spinner_menu_items_include_all_spinners_and_back() {
+        let mut items = WorkingSpinner::all()
+            .iter()
+            .copied()
+            .map(ProviderMenuItem::Spinner)
+            .chain(std::iter::once(ProviderMenuItem::Back))
+            .collect::<Vec<_>>();
+
+        assert_eq!(items.len(), WorkingSpinner::all().len() + 1);
+        assert!(matches!(items.pop(), Some(ProviderMenuItem::Back)));
     }
 
     #[test]

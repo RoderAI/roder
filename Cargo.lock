@@ -2787,6 +2787,7 @@ dependencies = [
  "anyhow",
  "base64",
  "crossterm",
+ "dirs",
  "futures",
  "ratatui",
  "roder-api",
@@ -2796,6 +2797,7 @@ dependencies = [
  "serde_json",
  "similar",
  "tokio",
+ "toml",
  "tui-textarea-2",
 ]
 

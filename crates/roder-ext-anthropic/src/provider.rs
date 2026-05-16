@@ -23,6 +23,7 @@ impl AnthropicEngine {
         let mut body = json!({
             "model": request.model.model,
             "max_tokens": request.output.max_tokens.unwrap_or(DEFAULT_MAX_TOKENS),
+            "cache_control": { "type": "ephemeral" },
             "messages": anthropic_messages(request),
         });
         let mut system = Vec::new();
@@ -80,7 +81,7 @@ impl InferenceEngine for AnthropicEngine {
             reasoning_summaries: false,
             structured_output: false,
             image_input: false,
-            prompt_cache: false,
+            prompt_cache: true,
             provider_metadata: true,
         }
     }
@@ -339,6 +340,7 @@ mod tests {
         let body = AnthropicEngine::map_request(&request());
         assert_eq!(body["model"], "claude-sonnet-4-6");
         assert_eq!(body["max_tokens"], 100);
+        assert_eq!(body["cache_control"], json!({ "type": "ephemeral" }));
         assert!((body["temperature"].as_f64().unwrap() - 0.3).abs() < 1e-6);
         assert!((body["top_p"].as_f64().unwrap() - 0.8).abs() < 1e-6);
         assert_eq!(body["system"][0]["text"], "system");
@@ -352,6 +354,12 @@ mod tests {
         assert_eq!(body["tools"][0]["input_schema"]["type"], "object");
         assert_eq!(body["tool_choice"]["type"], "auto");
         assert_eq!(body["output_config"]["effort"], "medium");
+    }
+
+    #[test]
+    fn anthropic_capabilities_advertise_prompt_cache() {
+        let engine = AnthropicEngine::new("test-key".to_string());
+        assert!(engine.capabilities().prompt_cache);
     }
 
     #[test]

@@ -4,7 +4,8 @@ use roder_api::inference::{
     AgentInferenceRequest, CompletionMetadata, InferenceCapabilities, InferenceEngine,
     InferenceEvent, InferenceEventStream, InferenceFailure, InferenceProviderContext,
     InferenceProviderMetadata, InferenceTurnContext, MessageDelta, ModelDescriptor,
-    ProviderAuthType, ReasoningDelta, TokenUsage, ToolCallCompleted,
+    ProviderAuthType, ReasoningDelta, TokenUsage, ToolCallCompleted, ToolCallDelta,
+    ToolCallStarted,
 };
 use serde_json::{Value, json};
 use std::collections::{HashMap, HashSet};
@@ -222,6 +223,7 @@ struct ResponsesStreamState {
     tool_names: HashMap<String, String>,
     tool_call_ids: HashMap<String, String>,
     emitted_tool_call_ids: HashSet<String>,
+    reasoning_delta_keys: HashSet<String>,
 }
 
 #[derive(Debug, PartialEq)]
@@ -300,20 +302,48 @@ fn events_from_sse_event(
                 .into_iter()
                 .collect()
         }
-        "response.reasoning_summary_text.delta" | "response.reasoning_text.delta" => event
-            .data
-            .get("delta")
-            .and_then(|value| value.as_str())
-            .map(|text| {
-                InferenceEvent::ReasoningDelta(ReasoningDelta {
-                    text: text.to_string(),
+        "response.reasoning_summary_text.delta" | "response.reasoning_text.delta" => {
+            if let Some(key) = reasoning_content_key(kind, &event.data) {
+                state.reasoning_delta_keys.insert(key);
+            }
+            event
+                .data
+                .get("delta")
+                .and_then(|value| value.as_str())
+                .map(|text| {
+                    InferenceEvent::ReasoningDelta(ReasoningDelta {
+                        text: text.to_string(),
+                    })
                 })
-            })
-            .into_iter()
-            .collect(),
+                .into_iter()
+                .collect()
+        }
+        "response.reasoning_summary_text.done" | "response.reasoning_text.done" => {
+            let key = reasoning_content_key(kind, &event.data);
+            if key
+                .as_ref()
+                .is_some_and(|key| state.reasoning_delta_keys.contains(key))
+            {
+                return Vec::new();
+            }
+            event
+                .data
+                .get("text")
+                .and_then(|value| value.as_str())
+                .map(|text| {
+                    InferenceEvent::ReasoningDelta(ReasoningDelta {
+                        text: text.to_string(),
+                    })
+                })
+                .into_iter()
+                .collect()
+        }
         "response.output_item.added" => {
             if let Some(item) = event.data.get("item") {
                 record_output_item(item, state);
+                if let Some(call) = started_function_call(item, state) {
+                    return vec![InferenceEvent::ToolCallStarted(call)];
+                }
             }
             Vec::new()
         }
@@ -326,6 +356,15 @@ fn events_from_sse_event(
                     .entry(item_id.to_string())
                     .or_default()
                     .push_str(delta);
+                let id = state
+                    .tool_call_ids
+                    .get(item_id)
+                    .cloned()
+                    .unwrap_or_else(|| item_id.to_string());
+                return vec![InferenceEvent::ToolCallDelta(ToolCallDelta {
+                    id,
+                    arguments_delta: delta.to_string(),
+                })];
             }
             Vec::new()
         }
@@ -389,6 +428,19 @@ fn events_from_sse_event(
     }
 }
 
+fn reasoning_content_key(kind: &str, data: &Value) -> Option<String> {
+    let item_id = data.get("item_id").and_then(Value::as_str)?;
+    let content_index = data
+        .get("content_index")
+        .and_then(Value::as_u64)
+        .unwrap_or_default();
+    let kind = kind
+        .strip_suffix(".delta")
+        .or_else(|| kind.strip_suffix(".done"))
+        .unwrap_or(kind);
+    Some(format!("{kind}:{item_id}:{content_index}"))
+}
+
 fn output_text_phase(data: &Value, state: &ResponsesStreamState) -> String {
     data.get("item_id")
         .and_then(Value::as_str)
@@ -438,6 +490,24 @@ fn record_output_item(item: &Value, state: &mut ResponsesStreamState) {
         }
         _ => {}
     }
+}
+
+fn started_function_call(item: &Value, state: &ResponsesStreamState) -> Option<ToolCallStarted> {
+    if item.get("type").and_then(Value::as_str) != Some("function_call") {
+        return None;
+    }
+    let item_id = item.get("id").and_then(Value::as_str)?;
+    let id = state
+        .tool_call_ids
+        .get(item_id)
+        .cloned()
+        .unwrap_or_else(|| item_id.to_string());
+    let name = item
+        .get("name")
+        .and_then(Value::as_str)
+        .map(str::to_string)
+        .or_else(|| state.tool_names.get(item_id).cloned())?;
+    Some(ToolCallStarted { id, name })
 }
 
 fn finalized_function_call(
@@ -1126,6 +1196,58 @@ mod tests {
     }
 
     #[test]
+    fn emits_reasoning_text_deltas_and_avoids_done_duplicates() {
+        let mut state = ResponsesStreamState::default();
+        let delta = SseEvent {
+            event: Some("response.reasoning_text.delta".to_string()),
+            data: json!({
+                "type": "response.reasoning_text.delta",
+                "item_id": "rs_1",
+                "content_index": 0,
+                "delta": "The user is asking "
+            }),
+        };
+        assert_eq!(
+            events_from_sse_event(&delta, &mut state),
+            vec![InferenceEvent::ReasoningDelta(ReasoningDelta {
+                text: "The user is asking ".to_string(),
+            })]
+        );
+
+        let done = SseEvent {
+            event: Some("response.reasoning_text.done".to_string()),
+            data: json!({
+                "type": "response.reasoning_text.done",
+                "item_id": "rs_1",
+                "content_index": 0,
+                "text": "The user is asking for visible thinking."
+            }),
+        };
+        assert!(events_from_sse_event(&done, &mut state).is_empty());
+    }
+
+    #[test]
+    fn emits_reasoning_text_done_when_no_delta_was_streamed() {
+        let mut state = ResponsesStreamState::default();
+        let done = SseEvent {
+            event: Some("response.reasoning_summary_text.done".to_string()),
+            data: json!({
+                "type": "response.reasoning_summary_text.done",
+                "item_id": "rs_1",
+                "content_index": 0,
+                "text": "I should inspect the repo."
+            }),
+        };
+
+        assert_eq!(
+            events_from_sse_event(&done, &mut state),
+            vec![InferenceEvent::ReasoningDelta(ReasoningDelta {
+                text: "I should inspect the repo.".to_string(),
+            })]
+        );
+    }
+
+    #[test]
     fn emits_tool_call_from_function_arguments_done() {
         let mut state = ResponsesStreamState::default();
         let added = SseEvent {
@@ -1140,7 +1262,13 @@ mod tests {
                 }
             }),
         };
-        assert!(events_from_sse_event(&added, &mut state).is_empty());
+        assert_eq!(
+            events_from_sse_event(&added, &mut state),
+            vec![InferenceEvent::ToolCallStarted(ToolCallStarted {
+                id: "call_1".to_string(),
+                name: "echo".to_string(),
+            })]
+        );
 
         let delta = SseEvent {
             event: Some("response.function_call_arguments.delta".to_string()),
@@ -1150,7 +1278,13 @@ mod tests {
                 "delta": "{\"text\":"
             }),
         };
-        assert!(events_from_sse_event(&delta, &mut state).is_empty());
+        assert_eq!(
+            events_from_sse_event(&delta, &mut state),
+            vec![InferenceEvent::ToolCallDelta(ToolCallDelta {
+                id: "call_1".to_string(),
+                arguments_delta: "{\"text\":".to_string(),
+            })]
+        );
 
         let done = SseEvent {
             event: Some("response.function_call_arguments.done".to_string()),

@@ -1,3 +1,5 @@
+mod markdown;
+mod patch_preview;
 mod preview;
 mod render;
 #[cfg(test)]
@@ -52,6 +54,7 @@ pub(super) fn fallback_entry(name: impl Into<String>) -> ToolTimelineEntry {
 enum TimelineItemKind {
     User(String),
     Assistant { text: String, phase: Option<String> },
+    Reasoning(String),
     System(String),
     TurnCompleted(TurnCompletedSummary),
     Error(String),
@@ -63,7 +66,8 @@ enum TimelineItemKind {
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub(super) struct TurnCompletedSummary {
     pub elapsed: Duration,
-    pub turn_tokens: u32,
+    pub input_tokens: u32,
+    pub output_tokens: u32,
     pub session_tokens: u64,
 }
 
@@ -157,6 +161,17 @@ impl TimelineState {
         });
     }
 
+    pub fn push_reasoning_delta(&mut self, text: &str) {
+        if let Some(TimelineItem {
+            kind: TimelineItemKind::Reasoning(existing),
+        }) = self.items.last_mut()
+        {
+            existing.push_str(text);
+            return;
+        }
+        self.push_item(TimelineItemKind::Reasoning(text.to_string()));
+    }
+
     pub fn push_system(&mut self, text: impl Into<String>) {
         self.push_item(TimelineItemKind::System(text.into()));
     }
@@ -174,7 +189,18 @@ impl TimelineState {
     }
 
     pub fn record_tool_requested(&mut self, tool_id: String, entry: ToolTimelineEntry) {
-        if self.tool_indices.contains_key(&tool_id) {
+        if let Some(index) = self.tool_indices.get(&tool_id).copied() {
+            if let Some(TimelineItem {
+                kind: TimelineItemKind::Tool(tool),
+            }) = self.items.get_mut(index)
+            {
+                if !entry.name.trim().is_empty() {
+                    tool.entry.name = entry.name;
+                }
+                if !entry.arguments.trim().is_empty() {
+                    tool.entry.arguments = entry.arguments;
+                }
+            }
             return;
         }
         let index = self.items.len();
@@ -187,6 +213,22 @@ impl TimelineState {
             }),
         });
         self.tool_indices.insert(tool_id, index);
+    }
+
+    pub fn record_tool_delta(&mut self, tool_id: &str, arguments_delta: &str) {
+        let index = if let Some(index) = self.tool_indices.get(tool_id).copied() {
+            index
+        } else {
+            let entry = fallback_entry(format!("tool {}", short_id(tool_id)));
+            self.record_tool_requested(tool_id.to_string(), entry);
+            self.tool_indices.get(tool_id).copied().unwrap_or(0)
+        };
+        if let Some(TimelineItem {
+            kind: TimelineItemKind::Tool(tool),
+        }) = self.items.get_mut(index)
+        {
+            tool.entry.arguments.push_str(arguments_delta);
+        }
     }
 
     pub fn record_tool_completed(&mut self, tool_id: &str, failed: bool, output: Option<String>) {
