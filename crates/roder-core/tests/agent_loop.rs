@@ -11,6 +11,7 @@ use roder_api::tools::{
 };
 use roder_core::{Runtime, RuntimeConfig, StartTurnRequest, default_instructions};
 use serde_json::json;
+use tokio::sync::Notify;
 
 struct ToolLoopEngine {
     requests: Mutex<Vec<AgentInferenceRequest>>,
@@ -61,6 +62,56 @@ impl ToolExecutor for EchoTool {
             name: call.name,
             text: text.clone(),
             data: json!({ "text": text }),
+            is_error: false,
+        })
+    }
+}
+
+struct BlockingEchoContributor {
+    release: Arc<Notify>,
+}
+
+impl ToolContributor for BlockingEchoContributor {
+    fn id(&self) -> ToolProviderId {
+        "test-blocking-echo".to_string()
+    }
+
+    fn contribute(&self, registry: &mut roder_api::tools::ToolRegistry) -> anyhow::Result<()> {
+        registry.register(Arc::new(BlockingEchoTool {
+            release: self.release.clone(),
+        }))
+    }
+}
+
+struct BlockingEchoTool {
+    release: Arc<Notify>,
+}
+
+#[async_trait::async_trait]
+impl ToolExecutor for BlockingEchoTool {
+    fn spec(&self) -> ToolSpec {
+        ToolSpec {
+            name: "echo".to_string(),
+            description: "Echo text after release".to_string(),
+            parameters: json!({
+                "type": "object",
+                "properties": { "text": { "type": "string" } },
+                "required": ["text"]
+            }),
+        }
+    }
+
+    async fn execute(
+        &self,
+        _ctx: ToolExecutionContext,
+        call: ToolCall,
+    ) -> anyhow::Result<ToolResult> {
+        self.release.notified().await;
+        Ok(ToolResult {
+            id: call.id,
+            name: call.name,
+            text: "from blocked tool".to_string(),
+            data: json!({ "text": "from blocked tool" }),
             is_error: false,
         })
     }
@@ -247,6 +298,8 @@ struct ErrorRecoveringEngine {
     requests: Mutex<Vec<AgentInferenceRequest>>,
 }
 
+struct FailingStreamStartEngine;
+
 #[async_trait::async_trait]
 impl InferenceEngine for ErrorRecoveringEngine {
     fn id(&self) -> InferenceEngineId {
@@ -305,6 +358,32 @@ impl InferenceEngine for ErrorRecoveringEngine {
             ]
         };
         Ok(Box::pin(stream::iter(events)))
+    }
+}
+
+#[async_trait::async_trait]
+impl InferenceEngine for FailingStreamStartEngine {
+    fn id(&self) -> InferenceEngineId {
+        PROVIDER_MOCK.to_string()
+    }
+
+    fn capabilities(&self) -> InferenceCapabilities {
+        InferenceCapabilities::coding_agent_default()
+    }
+
+    async fn list_models(
+        &self,
+        _ctx: InferenceProviderContext<'_>,
+    ) -> anyhow::Result<Vec<ModelDescriptor>> {
+        Ok(Vec::new())
+    }
+
+    async fn stream_turn(
+        &self,
+        _ctx: InferenceTurnContext<'_>,
+        _request: AgentInferenceRequest,
+    ) -> anyhow::Result<InferenceEventStream> {
+        anyhow::bail!("input exceeds the context window")
     }
 }
 
@@ -372,6 +451,89 @@ async fn run_turn_continues_after_tool_result() {
             .iter()
             .any(|item| matches!(item, ConversationItem::ToolResult(result) if result.result == "from tool")),
         "second request should include the tool result: {:?}",
+        requests[1].conversation
+    );
+}
+
+#[tokio::test]
+async fn provider_start_errors_are_emitted_for_the_active_thread() {
+    let mut builder = ExtensionRegistryBuilder::new();
+    builder.inference_engine(Arc::new(FailingStreamStartEngine));
+    let runtime =
+        Arc::new(Runtime::new(builder.build().unwrap(), RuntimeConfig::default()).unwrap());
+    let mut events = runtime.subscribe_events();
+
+    runtime
+        .start_turn(StartTurnRequest {
+            thread_id: "thread_context_error".to_string(),
+            message: "short prompt".to_string(),
+            provider_override: None,
+            model_override: None,
+            instructions: default_instructions(),
+        })
+        .await
+        .unwrap();
+
+    loop {
+        let event = tokio::time::timeout(Duration::from_secs(2), events.recv())
+            .await
+            .unwrap()
+            .unwrap();
+        if let roder_api::events::RoderEvent::TurnFailed(failed) = event.event {
+            assert_eq!(failed.thread_id, "thread_context_error");
+            assert!(failed.error.contains("context window"));
+            break;
+        }
+    }
+}
+
+#[tokio::test]
+async fn steer_turn_is_included_in_next_provider_request() {
+    let engine = Arc::new(ToolLoopEngine {
+        requests: Mutex::new(Vec::new()),
+        tool_rounds: 1,
+    });
+    let release_tool = Arc::new(Notify::new());
+    let mut builder = ExtensionRegistryBuilder::new();
+    builder.inference_engine(engine.clone());
+    builder.tool_contributor(Arc::new(BlockingEchoContributor {
+        release: release_tool.clone(),
+    }));
+    let runtime =
+        Arc::new(Runtime::new(builder.build().unwrap(), RuntimeConfig::default()).unwrap());
+    let mut events = runtime.subscribe_events();
+
+    let turn_id = runtime
+        .start_turn(StartTurnRequest {
+            thread_id: "thread_steer".to_string(),
+            message: "start".to_string(),
+            provider_override: None,
+            model_override: None,
+            instructions: default_instructions(),
+        })
+        .await
+        .unwrap();
+
+    wait_for_kind(&mut events, "thread_steer", "tool.call_requested").await;
+
+    runtime
+        .steer_turn(
+            "thread_steer".to_string(),
+            turn_id,
+            "use the new constraint".to_string(),
+        )
+        .await
+        .unwrap();
+    release_tool.notify_waiters();
+    wait_for_completed(&mut events, "thread_steer").await;
+
+    let requests = engine.requests.lock().unwrap();
+    assert_eq!(requests.len(), 2);
+    assert!(
+        requests[1].conversation.iter().any(|item| {
+            matches!(item, ConversationItem::UserMessage(message) if message.text == "use the new constraint")
+        }),
+        "second request should include steer message: {:?}",
         requests[1].conversation
     );
 }
@@ -648,12 +810,20 @@ async fn wait_for_completed(
     events: &mut tokio::sync::broadcast::Receiver<roder_api::events::EventEnvelope>,
     thread_id: &str,
 ) {
+    wait_for_kind(events, thread_id, "turn.completed").await;
+}
+
+async fn wait_for_kind(
+    events: &mut tokio::sync::broadcast::Receiver<roder_api::events::EventEnvelope>,
+    thread_id: &str,
+    kind: &str,
+) {
     loop {
         let event = tokio::time::timeout(Duration::from_secs(2), events.recv())
             .await
             .unwrap()
             .unwrap();
-        if event.kind == "turn.completed" && event.thread_id.as_deref() == Some(thread_id) {
+        if event.kind == kind && event.thread_id.as_deref() == Some(thread_id) {
             break;
         }
     }

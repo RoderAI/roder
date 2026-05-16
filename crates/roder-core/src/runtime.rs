@@ -87,6 +87,12 @@ pub(crate) struct PendingToolApproval {
     pub(crate) tx: oneshot::Sender<bool>,
 }
 
+#[derive(Clone)]
+struct ActiveTurnHandle {
+    abort: AbortHandle,
+    steers: Arc<Mutex<Vec<String>>>,
+}
+
 impl PendingPlanExit {
     pub fn new(
         thread_id: ThreadId,
@@ -122,7 +128,7 @@ pub struct Runtime {
     config: RwLock<RuntimeConfig>,
     pending_plan_exit: RwLock<Option<PendingPlanExit>>,
     pub(crate) pending_tool_approvals: Mutex<HashMap<String, PendingToolApproval>>,
-    active_turns: RwLock<HashMap<TurnId, AbortHandle>>,
+    active_turns: RwLock<HashMap<TurnId, ActiveTurnHandle>>,
     pub(crate) session_store: Option<Arc<dyn SessionStore>>,
     pub(crate) tool_registry: ToolRegistry,
 }
@@ -408,12 +414,17 @@ impl Runtime {
         self.engine_for(&provider)?;
         let turn_id = uuid::Uuid::new_v4().to_string();
         let (abort_handle, abort_registration) = AbortHandle::new_pair();
+        let active = ActiveTurnHandle {
+            abort: abort_handle,
+            steers: Arc::new(Mutex::new(Vec::new())),
+        };
         self.active_turns
             .write()
             .await
-            .insert(turn_id.clone(), abort_handle);
+            .insert(turn_id.clone(), active);
         let runtime = Arc::clone(self);
         let turn_req = req;
+        let thread_id_for_task = turn_req.thread_id.clone();
         let turn_id_for_task = turn_id.clone();
         tokio::spawn(async move {
             let result = Abortable::new(
@@ -422,15 +433,14 @@ impl Runtime {
             )
             .await;
             if let Ok(Err(err)) = result {
-                let thread_id = runtime_thread_id_from_error_turn(&turn_id_for_task);
-                let _ = thread_id;
-                // run_turn emits failures after the turn has started; this is only a last-resort guard.
-                runtime.bus.emit(RoderEvent::TurnFailed(TurnFailed {
-                    thread_id: "unknown".to_string(),
+                // run_turn emits failures after the stream starts; this covers setup/startup errors.
+                runtime.emit(RoderEvent::TurnFailed(TurnFailed {
+                    thread_id: thread_id_for_task,
                     turn_id: turn_id_for_task.clone(),
                     error: err.to_string(),
                     timestamp: OffsetDateTime::now_utc(),
-                }));
+                }))
+                .await;
             }
             runtime.active_turns.write().await.remove(&turn_id_for_task);
         });
@@ -439,11 +449,36 @@ impl Runtime {
 
     pub async fn interrupt_turn(&self, thread_id: ThreadId, turn_id: TurnId) -> anyhow::Result<()> {
         if let Some(handle) = self.active_turns.write().await.remove(&turn_id) {
-            handle.abort();
+            handle.abort.abort();
         }
         self.emit(RoderEvent::TurnInterrupted(TurnInterrupted {
             thread_id,
             turn_id,
+            timestamp: OffsetDateTime::now_utc(),
+        }))
+        .await;
+        Ok(())
+    }
+
+    pub async fn steer_turn(
+        &self,
+        thread_id: ThreadId,
+        turn_id: TurnId,
+        message: String,
+    ) -> anyhow::Result<()> {
+        let message = message.trim().to_string();
+        if message.is_empty() {
+            return Ok(());
+        }
+
+        let Some(active) = self.active_turns.read().await.get(&turn_id).cloned() else {
+            anyhow::bail!("no active turn to steer");
+        };
+        active.steers.lock().await.push(message.clone());
+        self.emit(RoderEvent::TurnSteered(TurnSteered {
+            thread_id,
+            turn_id,
+            message,
             timestamp: OffsetDateTime::now_utc(),
         }))
         .await;
@@ -501,6 +536,10 @@ impl Runtime {
         let mut exhausted_tool_rounds = true;
 
         for _ in 0..MAX_TOOL_ROUNDS_PER_TURN {
+            let steers = self.drain_turn_steers(&turn_id).await;
+            self.append_steers(&req, &turn_id, &mut conversation, steers)
+                .await?;
+
             self.emit(RoderEvent::InferenceStarted(InferenceStarted {
                 thread_id: req.thread_id.clone(),
                 turn_id: turn_id.clone(),
@@ -583,13 +622,30 @@ impl Runtime {
                     | InferenceEvent::Usage(_)
                     | InferenceEvent::ToolCallStarted(_)
                     | InferenceEvent::ToolCallDelta(_) => {}
-                    | InferenceEvent::ProviderMetadata(metadata) => {
+                    InferenceEvent::ProviderMetadata(metadata) => {
                         provider_metadata = Some(metadata);
                     }
                 }
             }
 
             if tool_calls.is_empty() {
+                let steers = self.drain_turn_steers(&turn_id).await;
+                if !steers.is_empty() {
+                    if !assistant_text.is_empty() {
+                        let assistant = ConversationItem::AssistantMessage(AssistantMessage {
+                            text: assistant_text,
+                        });
+                        self.persist_turn_item(&req.thread_id, &turn_id, &assistant)
+                            .await?;
+                        conversation.push(assistant);
+                    }
+                    if let Some(metadata) = provider_metadata {
+                        conversation.push(ConversationItem::ProviderMetadata(metadata));
+                    }
+                    self.append_steers(&req, &turn_id, &mut conversation, steers)
+                        .await?;
+                    continue;
+                }
                 final_assistant_text = assistant_text;
                 final_reasoning_text = reasoning_text;
                 exhausted_tool_rounds = false;
@@ -669,6 +725,36 @@ impl Runtime {
             timestamp: OffsetDateTime::now_utc(),
         }))
         .await;
+        Ok(())
+    }
+
+    async fn drain_turn_steers(&self, turn_id: &TurnId) -> Vec<String> {
+        let Some(active) = self.active_turns.read().await.get(turn_id).cloned() else {
+            return Vec::new();
+        };
+        let mut steers = active.steers.lock().await;
+        std::mem::take(&mut *steers)
+    }
+
+    async fn append_steers(
+        &self,
+        req: &StartTurnRequest,
+        turn_id: &TurnId,
+        conversation: &mut Vec<ConversationItem>,
+        steers: Vec<String>,
+    ) -> anyhow::Result<()> {
+        for steer in steers {
+            let steer = steer.trim();
+            if steer.is_empty() {
+                continue;
+            }
+            let item = ConversationItem::UserMessage(UserMessage {
+                text: steer.to_string(),
+            });
+            self.persist_turn_item(&req.thread_id, turn_id, &item)
+                .await?;
+            conversation.push(item);
+        }
         Ok(())
     }
 
@@ -760,8 +846,4 @@ pub fn validate_edit_tool(value: &str) -> anyhow::Result<()> {
             "unsupported edit_tool {value:?}; allowed values: {EDIT_TOOL_PATCH}, {EDIT_TOOL_EDIT}"
         ),
     }
-}
-
-fn runtime_thread_id_from_error_turn(_turn_id: &str) -> ThreadId {
-    "unknown".to_string()
 }

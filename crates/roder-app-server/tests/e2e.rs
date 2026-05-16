@@ -1,3 +1,4 @@
+use futures::stream;
 use roder_api::catalog::PROVIDER_MOCK;
 use roder_api::extension::{ExtensionRegistryBuilder, InferenceEngineId};
 use roder_api::inference::*;
@@ -13,10 +14,11 @@ use roder_extension_host::{
     build_default_registry,
 };
 use roder_protocol::{
-    AgentsListResult, CreateSessionResult, ExtensionsListResult, JsonRpcRequest,
-    ProviderSelectParams, ProviderSelectResult, ProvidersListResult, SessionExitPlanParams,
-    SessionExitPlanResult, SessionGetResult, SessionSetModeParams, SessionSetModeResult,
-    SessionsListResult, StartTurnParams, StartTurnResult, SystemStatusResult, ToolsListResult,
+    AgentsListResult, CreateSessionResult, ExtensionsListResult, InterruptTurnParams,
+    JsonRpcRequest, ProviderSelectParams, ProviderSelectResult, ProvidersListResult,
+    SessionExitPlanParams, SessionExitPlanResult, SessionGetResult, SessionSetModeParams,
+    SessionSetModeResult, SessionsListResult, StartTurnParams, StartTurnResult, SteerTurnParams,
+    SteerTurnResult, SystemStatusResult, ToolsListResult,
 };
 use std::sync::Arc;
 use std::time::Duration;
@@ -27,6 +29,34 @@ struct TaskCallingEngine {
     hang_child: bool,
     parent_calls: Mutex<usize>,
     requests: Mutex<Vec<AgentInferenceRequest>>,
+}
+
+struct PendingEngine;
+
+#[async_trait::async_trait]
+impl InferenceEngine for PendingEngine {
+    fn id(&self) -> InferenceEngineId {
+        PROVIDER_MOCK.to_string()
+    }
+
+    fn capabilities(&self) -> InferenceCapabilities {
+        InferenceCapabilities::text_only()
+    }
+
+    async fn list_models(
+        &self,
+        _ctx: InferenceProviderContext<'_>,
+    ) -> anyhow::Result<Vec<ModelDescriptor>> {
+        Ok(Vec::new())
+    }
+
+    async fn stream_turn(
+        &self,
+        _ctx: InferenceTurnContext<'_>,
+        _request: AgentInferenceRequest,
+    ) -> anyhow::Result<InferenceEventStream> {
+        Ok(Box::pin(stream::pending()))
+    }
 }
 
 impl TaskCallingEngine {
@@ -228,6 +258,92 @@ async fn test_app_server_e2e() {
         kinds.iter().any(|kind| kind == "turn.completed"),
         "missing turn.completed: {kinds:?}"
     );
+}
+
+#[tokio::test]
+async fn turns_steer_requires_active_turn() {
+    let runtime = Arc::new(Runtime::fake().unwrap());
+    let server = Arc::new(AppServer::new(runtime));
+    let client = LocalAppClient::new(server);
+
+    let response = client
+        .send_request(JsonRpcRequest {
+            jsonrpc: "2.0".to_string(),
+            id: Some(serde_json::json!("turns/steer")),
+            method: "turns/steer".to_string(),
+            params: Some(
+                serde_json::to_value(SteerTurnParams {
+                    thread_id: "thread_missing".to_string(),
+                    turn_id: "turn_missing".to_string(),
+                    message: "change direction".to_string(),
+                })
+                .unwrap(),
+            ),
+        })
+        .await;
+
+    assert!(response.result.is_none());
+    let error = response.error.expect("missing steer error");
+    assert_eq!(error.code, -32000);
+    assert_eq!(error.message, "no active turn to steer");
+}
+
+#[tokio::test]
+async fn turns_steer_accepts_active_turn() {
+    let mut builder = ExtensionRegistryBuilder::new();
+    builder.inference_engine(Arc::new(PendingEngine));
+    let runtime = Arc::new(Runtime::new(builder.build().unwrap(), Default::default()).unwrap());
+    let server = Arc::new(AppServer::new(runtime));
+    let client = LocalAppClient::new(server);
+    let mut events = client.subscribe_events();
+
+    let session: CreateSessionResult = request(&client, "sessions/create", None).await;
+    let started: StartTurnResult = request(
+        &client,
+        "turns/start",
+        Some(
+            serde_json::to_value(StartTurnParams {
+                thread_id: session.thread_id.clone(),
+                message: "start".to_string(),
+                provider_override: None,
+                model_override: None,
+            })
+            .unwrap(),
+        ),
+    )
+    .await;
+    wait_for_event(&mut events, &session.thread_id, "turn.started").await;
+
+    let steered: SteerTurnResult = request(
+        &client,
+        "turns/steer",
+        Some(
+            serde_json::to_value(SteerTurnParams {
+                thread_id: session.thread_id.clone(),
+                turn_id: started.turn_id.clone(),
+                message: "change direction".to_string(),
+            })
+            .unwrap(),
+        ),
+    )
+    .await;
+    assert_eq!(steered.turn_id, started.turn_id);
+
+    let event = wait_for_event(&mut events, &session.thread_id, "turn.steered").await;
+    assert_eq!(event.turn_id.as_deref(), Some(started.turn_id.as_str()));
+
+    let _: serde_json::Value = request(
+        &client,
+        "turns/interrupt",
+        Some(
+            serde_json::to_value(InterruptTurnParams {
+                thread_id: session.thread_id,
+                turn_id: started.turn_id,
+            })
+            .unwrap(),
+        ),
+    )
+    .await;
 }
 
 #[tokio::test]
@@ -675,4 +791,20 @@ async fn request<T: serde::de::DeserializeOwned>(
         res.error
     );
     serde_json::from_value(res.result.unwrap()).unwrap()
+}
+
+async fn wait_for_event(
+    events: &mut tokio::sync::broadcast::Receiver<roder_api::events::EventEnvelope>,
+    thread_id: &str,
+    kind: &str,
+) -> roder_api::events::EventEnvelope {
+    loop {
+        let envelope = tokio::time::timeout(Duration::from_secs(2), events.recv())
+            .await
+            .unwrap()
+            .unwrap();
+        if envelope.thread_id.as_deref() == Some(thread_id) && envelope.kind == kind {
+            return envelope;
+        }
+    }
 }

@@ -155,6 +155,8 @@ pub struct ToolCallCompleted {
     pub tool_id: String,
     #[serde(default)]
     pub is_error: bool,
+    #[serde(default)]
+    pub output: Option<String>,
     #[serde(with = "time::serde::rfc3339")]
     pub timestamp: OffsetDateTime,
 }
@@ -281,6 +283,15 @@ pub struct TurnInterrupted {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TurnSteered {
+    pub thread_id: ThreadId,
+    pub turn_id: TurnId,
+    pub message: String,
+    #[serde(with = "time::serde::rfc3339")]
+    pub timestamp: OffsetDateTime,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum RoderEvent {
     RuntimeStarted(RuntimeStarted),
     ExtensionRegistered(ExtensionRegistered),
@@ -318,6 +329,7 @@ pub enum RoderEvent {
     TurnCompleted(TurnCompleted),
     TurnFailed(TurnFailed),
     TurnInterrupted(TurnInterrupted),
+    TurnSteered(TurnSteered),
 }
 
 impl RoderEvent {
@@ -359,6 +371,7 @@ impl RoderEvent {
             RoderEvent::TurnCompleted(_) => "turn.completed",
             RoderEvent::TurnFailed(_) => "turn.failed",
             RoderEvent::TurnInterrupted(_) => "turn.interrupted",
+            RoderEvent::TurnSteered(_) => "turn.steered",
         }
     }
 
@@ -422,6 +435,7 @@ impl RoderEvent {
             RoderEvent::TurnCompleted(e) => Some(&e.thread_id),
             RoderEvent::TurnFailed(e) => Some(&e.thread_id),
             RoderEvent::TurnInterrupted(e) => Some(&e.thread_id),
+            RoderEvent::TurnSteered(e) => Some(&e.thread_id),
             RoderEvent::RuntimeStarted(_) | RoderEvent::ExtensionRegistered(_) => None,
         }
     }
@@ -460,6 +474,7 @@ impl RoderEvent {
             RoderEvent::TurnCompleted(e) => Some(&e.turn_id),
             RoderEvent::TurnFailed(e) => Some(&e.turn_id),
             RoderEvent::TurnInterrupted(e) => Some(&e.turn_id),
+            RoderEvent::TurnSteered(e) => Some(&e.turn_id),
             RoderEvent::RuntimeStarted(_)
             | RoderEvent::ExtensionRegistered(_)
             | RoderEvent::SessionCreated(_)
@@ -698,6 +713,7 @@ mod tests {
             turn_id: "turn-a".to_string(),
             tool_id: "tool-a".to_string(),
             is_error: true,
+            output: Some("tool failed".to_string()),
             timestamp: OffsetDateTime::UNIX_EPOCH,
         });
         let envelope = EventEnvelope {
@@ -719,6 +735,7 @@ mod tests {
             RoderEvent::ToolCallCompleted(completed) => {
                 assert_eq!(completed.tool_id, "tool-a");
                 assert!(completed.is_error);
+                assert_eq!(completed.output.as_deref(), Some("tool failed"));
             }
             other => panic!("unexpected event: {other:?}"),
         }

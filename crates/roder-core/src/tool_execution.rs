@@ -46,6 +46,7 @@ impl Runtime {
                 turn_id: turn_id.clone(),
                 tool_id: call.id,
                 is_error: true,
+                output: Some(item.result.clone()),
                 timestamp: OffsetDateTime::now_utc(),
             }))
             .await;
@@ -99,6 +100,7 @@ impl Runtime {
                 turn_id: turn_id.clone(),
                 tool_id: tool_call.id,
                 is_error: true,
+                output: Some(item.result.clone()),
                 timestamp: OffsetDateTime::now_utc(),
             }))
             .await;
@@ -133,6 +135,7 @@ impl Runtime {
                 turn_id: turn_id.clone(),
                 tool_id: tool_call.id,
                 is_error: true,
+                output: Some(item.result.clone()),
                 timestamp: OffsetDateTime::now_utc(),
             }))
             .await;
@@ -182,6 +185,7 @@ impl Runtime {
             turn_id: turn_id.clone(),
             tool_id: result.id,
             is_error: item.is_error,
+            output: Some(item.result.clone()),
             timestamp: OffsetDateTime::now_utc(),
         }))
         .await;

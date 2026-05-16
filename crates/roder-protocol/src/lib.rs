@@ -205,6 +205,18 @@ pub struct InterruptTurnParams {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SteerTurnParams {
+    pub thread_id: ThreadId,
+    pub turn_id: TurnId,
+    pub message: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SteerTurnResult {
+    pub turn_id: TurnId,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ToolsListResult {
     pub tools: Vec<ToolSpec>,
 }
