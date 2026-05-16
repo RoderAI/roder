@@ -20,6 +20,27 @@ fn rendered_lines(timeline: &mut TimelineState) -> Vec<String> {
         .collect()
 }
 
+fn visible_lines(timeline: &mut TimelineState, height: u16) -> Vec<String> {
+    let render = timeline.render(
+        Theme::for_dark_background(true),
+        Rect::new(0, 0, 100, height),
+    );
+    let scroll = usize::from(render.scroll);
+    render
+        .text
+        .lines
+        .iter()
+        .skip(scroll)
+        .take(usize::from(height))
+        .map(|line| {
+            line.spans
+                .iter()
+                .map(|span| span.content.as_ref())
+                .collect::<String>()
+        })
+        .collect()
+}
+
 fn key(code: KeyCode) -> KeyEvent {
     KeyEvent::new(code, KeyModifiers::NONE)
 }
@@ -383,6 +404,52 @@ fn keyboard_and_mouse_can_scroll_timeline() {
         .render(Theme::for_dark_background(true), Rect::new(0, 0, 100, 5))
         .scroll;
     assert!(second_scroll >= first_scroll);
+}
+
+#[test]
+fn timeline_auto_follows_streaming_deltas() {
+    let mut timeline = TimelineState::default();
+    for index in 0..8 {
+        timeline.push_system(format!("event {index}"));
+    }
+
+    let first = timeline.render(Theme::for_dark_background(true), Rect::new(0, 0, 100, 5));
+    let first_scroll = first.scroll;
+
+    timeline.push_reasoning_delta("line 1");
+    timeline.push_reasoning_delta("\nline 2\nline 3\nline 4");
+    let second = timeline.render(Theme::for_dark_background(true), Rect::new(0, 0, 100, 5));
+
+    assert!(second.scroll > first_scroll);
+    let visible = visible_lines(&mut timeline, 5);
+    assert!(visible.iter().any(|line| line == "    line 4"));
+    assert_eq!(visible[2], "");
+    assert_eq!(visible[3], "");
+    assert_eq!(visible[4], "");
+}
+
+#[test]
+fn timeline_manual_scroll_disables_auto_follow_until_end() {
+    let mut timeline = TimelineState::default();
+    for index in 0..12 {
+        timeline.push_system(format!("event {index}"));
+    }
+    timeline.render(Theme::for_dark_background(true), Rect::new(0, 0, 100, 5));
+
+    timeline.focus_latest();
+    assert!(timeline.handle_key(key(KeyCode::PageUp)));
+    let scrolled = timeline.render(Theme::for_dark_background(true), Rect::new(0, 0, 100, 5));
+    timeline.push_system("event after manual scroll");
+    let after_push = timeline.render(Theme::for_dark_background(true), Rect::new(0, 0, 100, 5));
+    assert_eq!(after_push.scroll, scrolled.scroll);
+
+    assert!(timeline.handle_key(key(KeyCode::End)));
+    let followed = visible_lines(&mut timeline, 5);
+    assert!(
+        followed
+            .iter()
+            .any(|line| line.contains("event after manual scroll"))
+    );
 }
 
 #[test]

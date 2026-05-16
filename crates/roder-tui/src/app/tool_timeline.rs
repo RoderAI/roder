@@ -21,6 +21,8 @@ use super::{Theme, short_id};
 use preview::{argument_preview, tool_title};
 use render::{max_scroll, visible_hit_rows};
 
+const BOTTOM_PADDING_ROWS: usize = 3;
+
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub(super) struct ToolTimelineEntry {
     pub name: String,
@@ -153,6 +155,7 @@ impl TimelineState {
             && *existing_phase == phase
         {
             existing.push_str(text);
+            self.follow_live_updates_from_composer();
             return;
         }
         self.push_item(TimelineItemKind::Assistant {
@@ -167,6 +170,7 @@ impl TimelineState {
         }) = self.items.last_mut()
         {
             existing.push_str(text);
+            self.follow_live_updates_from_composer();
             return;
         }
         self.push_item(TimelineItemKind::Reasoning(text.to_string()));
@@ -213,6 +217,7 @@ impl TimelineState {
             }),
         });
         self.tool_indices.insert(tool_id, index);
+        self.follow_live_updates_from_composer();
     }
 
     pub fn record_tool_delta(&mut self, tool_id: &str, arguments_delta: &str) {
@@ -228,6 +233,7 @@ impl TimelineState {
         }) = self.items.get_mut(index)
         {
             tool.entry.arguments.push_str(arguments_delta);
+            self.follow_live_updates_from_composer();
         }
     }
 
@@ -249,6 +255,7 @@ impl TimelineState {
                 ToolTimelineStatus::Completed
             };
             tool.output = output.filter(|text| !text.trim().is_empty());
+            self.follow_live_updates_from_composer();
         }
     }
 
@@ -334,7 +341,7 @@ impl TimelineState {
 
     pub fn render(&mut self, theme: Theme, area: Rect) -> TimelineRender {
         let (lines, row_items) = self.build_lines(theme, area.width);
-        let max_scroll = max_scroll(&row_items, area.height);
+        let max_scroll = max_scroll(lines.len(), area.height);
         let scroll = self.scroll_for(area.height, &row_items, max_scroll);
         self.hit_rows = visible_hit_rows(area, scroll, area.height, &row_items);
         self.scroll_offset = usize::from(scroll);
@@ -346,6 +353,10 @@ impl TimelineState {
 
     fn push_item(&mut self, kind: TimelineItemKind) {
         self.items.push(TimelineItem { kind });
+        self.follow_live_updates_from_composer();
+    }
+
+    fn follow_live_updates_from_composer(&mut self) {
         if self.focus == TimelineFocus::Composer {
             self.auto_follow = true;
         }
@@ -435,15 +446,15 @@ impl TimelineState {
         if row_items.is_empty() || height == 0 {
             return 0;
         }
+        if self.auto_follow {
+            return max_scroll as u16;
+        }
         if self.focus == TimelineFocus::Timeline
             && let Some(selected) = self.selected
             && let Some((row, _)) = row_items.iter().find(|(_, index)| *index == selected)
         {
             let half = usize::from(height) / 2;
             return row.saturating_sub(half).min(max_scroll) as u16;
-        }
-        if self.auto_follow {
-            return max_scroll as u16;
         }
         self.scroll_offset.min(max_scroll) as u16
     }
@@ -469,8 +480,11 @@ impl TimelineState {
             let selected = self.focus == TimelineFocus::Timeline && self.selected == Some(index);
             let expanded = self.expanded.contains(&index);
             item.render(selected, expanded, theme, width, &mut lines);
-            lines.push(Line::raw(""));
+            if index + 1 < self.items.len() {
+                lines.push(Line::raw(""));
+            }
         }
+        lines.extend((0..BOTTOM_PADDING_ROWS).map(|_| Line::raw("")));
         (lines, row_items)
     }
 }

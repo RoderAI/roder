@@ -1,0 +1,63 @@
+[tools]
+python = "3.12"
+rust = "1.95.0"
+uv = "0.11.7"
+
+[tasks.build]
+description = "Build the local roder binary used by tests"
+run = "make build"
+
+[tasks.install]
+description = "Install the roder binary into BINDIR"
+run = "make install"
+
+[tasks."rust:fmt"]
+description = "Check Rust formatting"
+run = "cargo fmt --all -- --check"
+
+[tasks."rust:fmt:fix"]
+description = "Format Rust sources"
+run = "cargo fmt --all"
+
+[tasks."rust:clippy"]
+description = "Run Rust clippy across the workspace"
+run = "cargo clippy --workspace --all-targets -- -D warnings"
+
+[tasks."rust:test"]
+description = "Run Rust tests across the workspace"
+run = "cargo test --workspace"
+
+[tasks."python:sync"]
+description = "Install/sync Python e2e test dependencies"
+dir = "e2e"
+run = "uv sync --group dev"
+
+[tasks."python:test"]
+description = "Run Python e2e tests"
+depends = ["build", "python:sync"]
+dir = "e2e"
+run = "uv run pytest"
+
+[tasks."python:test:startup"]
+description = "Run a fast Python e2e startup smoke test"
+depends = ["build", "python:sync"]
+dir = "e2e"
+run = "uv run pytest tests/test_startup.py -v"
+
+[tasks."python:snapshots"]
+description = "Refresh Python e2e visual snapshots"
+depends = ["build", "python:sync"]
+dir = "e2e"
+run = "uv run pytest --snapshot-update"
+
+[tasks.check]
+description = "Run formatting, clippy, and Rust tests"
+depends = ["rust:fmt", "rust:clippy", "rust:test"]
+
+[tasks.test]
+description = "Run Rust and Python tests"
+depends = ["rust:test", "python:test"]
+
+[tasks.ci]
+description = "Run the full local verification stack"
+depends = ["rust:fmt", "rust:clippy", "rust:test", "python:test"]

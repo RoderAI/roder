@@ -1,6 +1,7 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
+use anyhow::Context;
 use futures::stream;
 use roder_api::catalog::{PROVIDER_CODEX, PROVIDER_MOCK, models_for_codex, models_for_provider};
 use roder_api::extension::{
@@ -84,13 +85,20 @@ pub fn build_default_registry(config: DefaultRegistryConfig) -> anyhow::Result<E
         subagents::install_subagents(&mut builder, subagents)?;
     }
 
+    let roder_home = roder_home_dir()?;
     let session_dir = config
         .session_dir
-        .unwrap_or_else(|| PathBuf::from(".roder").join("sessions"));
+        .unwrap_or_else(|| roder_home.join("sessions"));
     builder.install(JsonlSessionExtension::new(session_dir))?;
-    builder.install(MemoryExtension::new(PathBuf::from(".roder").join("memory")))?;
+    builder.install(MemoryExtension::new(roder_home.join("memory")))?;
 
     builder.build()
+}
+
+fn roder_home_dir() -> anyhow::Result<PathBuf> {
+    dirs::home_dir()
+        .map(|home| home.join(".roder"))
+        .context("could not resolve home directory for ~/.roder")
 }
 
 struct FakeProviderExtension;
@@ -325,6 +333,16 @@ mod tests {
     fn default_registry_without_keys_has_mock_provider() {
         let registry = build_default_registry(DefaultRegistryConfig::default()).unwrap();
         assert!(registry.inference_engine(PROVIDER_MOCK).is_some());
+    }
+
+    #[test]
+    fn default_roder_home_dir_uses_home_roder() {
+        let rendered = roder_home_dir()
+            .unwrap()
+            .to_string_lossy()
+            .replace('\\', "/");
+        assert!(rendered.ends_with("/.roder"));
+        assert!(!rendered.ends_with("/w/.roder"));
     }
 
     #[test]

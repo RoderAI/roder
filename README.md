@@ -125,6 +125,18 @@ cargo run -p roder-cli --bin roder -- auth status
 cargo test --workspace
 ```
 
+This repo also includes a mise configuration for repeatable local tooling:
+
+```sh
+mise install
+mise run rust:test
+mise run python:test
+mise run ci
+```
+
+Useful focused tasks include `mise run rust:fmt`, `mise run rust:clippy`,
+`mise run python:sync`, and `mise run python:test:startup`.
+
 Install the standard Roder CLI locally with:
 
 ```sh

@@ -1,6 +1,8 @@
 BINARY ?= bin/roder
 BINDIR ?= $(HOME)/.local/bin
 INSTALL ?= install
+INSTALL_BIN ?= roder
+LEGACY_INSTALL_BIN ?= rode
 WORKSPACE ?= .
 PROVIDER ?=
 MODEL ?=
@@ -18,7 +20,10 @@ build:
 install:
 	cargo build --release -p roder-cli --bin roder
 	$(INSTALL) -d "$(BINDIR)"
-	$(INSTALL) -m 0755 target/release/roder "$(BINDIR)/roder"
+	$(INSTALL) -m 0755 target/release/roder "$(BINDIR)/$(INSTALL_BIN)"
+	@if [ "$(LEGACY_INSTALL_BIN)" != "$(INSTALL_BIN)" ] && [ -e "$(BINDIR)/$(LEGACY_INSTALL_BIN)" ]; then \
+		rm -f "$(BINDIR)/$(LEGACY_INSTALL_BIN)"; \
+	fi
 
 run:
 	cd "$(WORKSPACE)" && RODER_PROVIDER="$(PROVIDER)" RODER_MODEL="$(MODEL)" RODER_REASONING="$(REASONING)" cargo run --manifest-path "$(CURDIR)/Cargo.toml" -p roder-cli --bin roder
@@ -44,4 +49,4 @@ release-brew:
 	./scripts/release-brew.sh $(VERSION)
 
 clean:
-	rm -rf bin .gode .roder
+	rm -rf bin .gode
