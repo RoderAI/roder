@@ -55,6 +55,7 @@ async fn policy_bypass_mode_emits_bypass_active_and_executes_with_effective_mode
         .start_turn(StartTurnRequest {
             thread_id: "thread-policy".to_string(),
             message: "run command".to_string(),
+            images: Vec::new(),
             provider_override: None,
             model_override: None,
             instructions: default_instructions(),
@@ -102,6 +103,7 @@ async fn policy_plan_mode_denial_skips_tool_executor() {
         .start_turn(StartTurnRequest {
             thread_id: "thread-plan".to_string(),
             message: "inspect only".to_string(),
+            images: Vec::new(),
             provider_override: None,
             model_override: None,
             instructions: default_instructions(),
@@ -221,6 +223,7 @@ impl InferenceEngine for SingleToolCallEngine {
             Ok(Box::pin(stream::iter(vec![
                 Ok(InferenceEvent::MessageDelta(MessageDelta {
                     text: "done".to_string(),
+                    phase: None,
                 })),
                 Ok(InferenceEvent::Completed(CompletionMetadata {
                     stop_reason: Some("stop".to_string()),

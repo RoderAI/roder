@@ -1,3 +1,4 @@
+use roder_api::conversation::InputImage;
 use roder_api::events::{ThreadId, TurnId};
 use roder_api::extension::ExtensionManifest;
 use roder_api::inference::{InferenceCapabilities, ModelDescriptor, ProviderAuthType};
@@ -189,6 +190,8 @@ pub struct CommandDescriptor {
 pub struct StartTurnParams {
     pub thread_id: ThreadId,
     pub message: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub images: Vec<InputImage>,
     pub provider_override: Option<String>,
     pub model_override: Option<String>,
 }
@@ -209,6 +212,8 @@ pub struct SteerTurnParams {
     pub thread_id: ThreadId,
     pub turn_id: TurnId,
     pub message: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub images: Vec<InputImage>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -30,12 +30,15 @@ impl InferenceEngine for FakeInferenceEngine {
         let stream = stream::iter(vec![
             Ok(InferenceEvent::MessageDelta(MessageDelta {
                 text: "hello".to_string(),
+                phase: None,
             })),
             Ok(InferenceEvent::MessageDelta(MessageDelta {
                 text: " from".to_string(),
+                phase: None,
             })),
             Ok(InferenceEvent::MessageDelta(MessageDelta {
                 text: " roder".to_string(),
+                phase: None,
             })),
             Ok(InferenceEvent::Completed(CompletionMetadata {
                 stop_reason: Some("stop".to_string()),

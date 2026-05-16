@@ -13,6 +13,7 @@ impl TimelineItem {
         selected: bool,
         expanded: bool,
         theme: Theme,
+        width: u16,
         lines: &mut Vec<Line<'static>>,
     ) {
         match &self.kind {
@@ -23,13 +24,28 @@ impl TimelineItem {
                 theme.accent(),
                 item_style(theme.text(), selected, theme),
             ),
-            TimelineItemKind::Assistant(text) => push_body_lines(
-                lines,
-                "    ",
-                text,
-                theme.subtle(),
-                item_style(theme.text(), selected, theme),
-            ),
+            TimelineItemKind::Assistant { text, phase } => {
+                if phase
+                    .as_deref()
+                    .is_some_and(|phase| !phase.is_empty() && phase != "final_answer")
+                {
+                    push_body_lines(
+                        lines,
+                        format!("  {} ", phase.as_deref().unwrap()),
+                        text,
+                        theme.accent_soft(),
+                        item_style(theme.muted(), selected, theme),
+                    );
+                } else {
+                    push_body_lines(
+                        lines,
+                        "",
+                        text,
+                        theme.subtle(),
+                        item_style(theme.text(), selected, theme),
+                    );
+                }
+            }
             TimelineItemKind::System(text) => push_body_lines(
                 lines,
                 "    ",
@@ -37,6 +53,22 @@ impl TimelineItem {
                 theme.subtle(),
                 item_style(theme.muted(), selected, theme),
             ),
+            TimelineItemKind::TurnCompleted(summary) => {
+                let left = "    Turn completed.";
+                let right = format!(
+                    "{}  turn:{} tok  session:{} tok",
+                    format_duration(summary.elapsed),
+                    summary.turn_tokens,
+                    summary.session_tokens
+                );
+                push_aligned_line(
+                    lines,
+                    left,
+                    &right,
+                    item_style(theme.muted(), selected, theme),
+                    width,
+                );
+            }
             TimelineItemKind::Error(text) => push_body_lines(
                 lines,
                 "! ",
@@ -130,18 +162,49 @@ impl ToolTimelineTool {
 
 fn push_body_lines(
     lines: &mut Vec<Line<'static>>,
-    marker: &'static str,
+    marker: impl Into<String>,
     body: &str,
     marker_style: Style,
     body_style: Style,
 ) {
+    let marker = marker.into();
     for (line_index, line) in body.split('\n').enumerate() {
-        let marker = if line_index == 0 { marker } else { "    " };
+        let marker = if line_index == 0 || marker.is_empty() {
+            marker.clone()
+        } else {
+            "    ".to_string()
+        };
         lines.push(Line::from(vec![
             Span::styled(marker, marker_style),
             Span::styled(line.to_string(), body_style),
         ]));
     }
+}
+
+fn push_aligned_line(
+    lines: &mut Vec<Line<'static>>,
+    left: &str,
+    right: &str,
+    style: Style,
+    width: u16,
+) {
+    let used = left.chars().count() + right.chars().count();
+    let gap = usize::from(width).saturating_sub(used).max(1);
+    lines.push(Line::from(vec![
+        Span::styled(left.to_string(), style),
+        Span::styled(" ".repeat(gap), style),
+        Span::styled(right.to_string(), style),
+    ]));
+}
+
+fn format_duration(duration: std::time::Duration) -> String {
+    let total_seconds = duration.as_secs();
+    if total_seconds < 60 {
+        return format!("{}.{:01}s", total_seconds, duration.subsec_millis() / 100);
+    }
+    let minutes = total_seconds / 60;
+    let seconds = total_seconds % 60;
+    format!("{minutes}m{seconds:02}s")
 }
 
 fn item_style(style: Style, selected: bool, theme: Theme) -> Style {

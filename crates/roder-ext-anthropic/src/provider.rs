@@ -41,10 +41,10 @@ impl AnthropicEngine {
         if let Some(top_p) = request.output.top_p {
             body["top_p"] = json!(top_p);
         }
-        if request.reasoning.enabled {
-            if let Some(level) = request.reasoning.level.as_deref() {
-                body["output_config"] = json!({ "effort": anthropic_effort(level) });
-            }
+        if request.reasoning.enabled
+            && let Some(level) = request.reasoning.level.as_deref()
+        {
+            body["output_config"] = json!({ "effort": anthropic_effort(level) });
         }
         if !request.tools.is_empty() {
             body["tools"] = json!(
@@ -127,7 +127,10 @@ impl InferenceEngine for AnthropicEngine {
         let text = extract_message_text(&value);
         let mut events = Vec::new();
         if !text.is_empty() {
-            events.push(Ok(InferenceEvent::MessageDelta(MessageDelta { text })));
+            events.push(Ok(InferenceEvent::MessageDelta(MessageDelta {
+                text,
+                phase: None,
+            })));
         }
         for call in extract_tool_calls(&value) {
             events.push(Ok(InferenceEvent::ToolCallCompleted(call)));
@@ -289,11 +292,10 @@ mod tests {
                 developer: Some("developer".to_string()),
             },
             conversation: vec![
-                ConversationItem::UserMessage(UserMessage {
-                    text: "Hello".to_string(),
-                }),
+                ConversationItem::UserMessage(UserMessage::text("Hello")),
                 ConversationItem::AssistantMessage(AssistantMessage {
                     text: "Hi".to_string(),
+                    phase: None,
                 }),
                 ConversationItem::ToolCall(ToolCallRecord {
                     id: "toolu_1".to_string(),

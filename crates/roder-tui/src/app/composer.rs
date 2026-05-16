@@ -1,12 +1,13 @@
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::{
     style::{Color, Modifier, Style},
-    text::Span,
+    text::{Line, Span},
     widgets::{Block, BorderType, Borders},
 };
+use roder_api::policy_mode::PolicyMode;
 use tui_textarea::{CursorMove, TextArea, WrapMode};
 
-use super::Theme;
+use super::{Theme, policy_mode_label};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(super) enum ComposerMode {
@@ -28,8 +29,8 @@ impl ComposerMode {
 
     fn title(self) -> &'static str {
         match self {
-            Self::Chat => " chat ",
-            Self::Shell => " shell ",
+            Self::Chat => "chat",
+            Self::Shell => "shell",
         }
     }
 
@@ -47,17 +48,32 @@ impl ComposerMode {
         }
     }
 
-    fn border_style(self, theme: Theme) -> Style {
+    fn title_spans(self, theme: Theme, policy_mode: PolicyMode) -> Line<'static> {
+        Line::from(vec![
+            Span::styled(format!(" {} ", self.title()), self.title_style(theme)),
+            Span::styled(
+                format!("{} ", policy_mode_label(policy_mode)),
+                theme.policy_mode(policy_mode),
+            ),
+        ])
+    }
+
+    fn border_style(self, theme: Theme, policy_mode: PolicyMode) -> Style {
         match self {
-            Self::Chat => theme.border(),
-            Self::Shell => theme.shell(),
+            Self::Chat => theme.policy_mode(policy_mode),
+            Self::Shell => theme.policy_mode(policy_mode),
         }
     }
 }
 
 pub(super) fn composer_textarea(theme: Theme) -> TextArea<'static> {
     let mut composer = TextArea::default();
-    style_composer_for_mode(&mut composer, theme, ComposerMode::Chat);
+    style_composer_for_mode(
+        &mut composer,
+        theme,
+        ComposerMode::Chat,
+        PolicyMode::Default,
+    );
     composer.set_wrap_mode(WrapMode::WordOrGlyph);
     composer.set_min_rows(3);
     composer.set_max_rows(8);
@@ -67,9 +83,13 @@ pub(super) fn composer_textarea(theme: Theme) -> TextArea<'static> {
     composer
 }
 
-pub(super) fn style_composer_for_current_mode(composer: &mut TextArea<'static>, theme: Theme) {
+pub(super) fn style_composer_for_current_mode(
+    composer: &mut TextArea<'static>,
+    theme: Theme,
+    policy_mode: PolicyMode,
+) {
     let mode = composer_mode(composer);
-    style_composer_for_mode(composer, theme, mode);
+    style_composer_for_mode(composer, theme, mode, policy_mode);
 }
 
 pub(super) fn composer_mode(composer: &TextArea<'_>) -> ComposerMode {
@@ -167,13 +187,18 @@ fn action_from_modified(modified: bool) -> ComposerKeyAction {
     }
 }
 
-fn style_composer_for_mode(composer: &mut TextArea<'static>, theme: Theme, mode: ComposerMode) {
+fn style_composer_for_mode(
+    composer: &mut TextArea<'static>,
+    theme: Theme,
+    mode: ComposerMode,
+    policy_mode: PolicyMode,
+) {
     composer.set_block(
         Block::default()
             .borders(Borders::ALL)
             .border_type(BorderType::Rounded)
-            .border_style(mode.border_style(theme))
-            .title(Span::styled(mode.title(), mode.title_style(theme))),
+            .border_style(mode.border_style(theme, policy_mode))
+            .title(mode.title_spans(theme, policy_mode)),
     );
     composer.set_placeholder_text(mode.placeholder());
     composer.set_placeholder_style(mode.title_style(theme).add_modifier(Modifier::ITALIC));

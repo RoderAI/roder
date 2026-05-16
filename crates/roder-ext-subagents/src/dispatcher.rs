@@ -242,9 +242,9 @@ impl InProcessDispatcher {
         let mut transcript = BoundedTranscript::new(max_result_chars);
         transcript.push_text("user", request.prompt.clone());
 
-        let mut conversation = vec![ConversationItem::UserMessage(UserMessage {
-            text: request.prompt,
-        })];
+        let mut conversation = vec![ConversationItem::UserMessage(UserMessage::text(
+            request.prompt,
+        ))];
         let mut usage = None;
         let mut final_message = String::new();
         let mut exit_reason = SubagentExitReason::MaxTurns;
@@ -327,6 +327,7 @@ impl InProcessDispatcher {
                 transcript.push_text("assistant", assistant_text.clone());
                 conversation.push(ConversationItem::AssistantMessage(AssistantMessage {
                     text: assistant_text,
+                    phase: None,
                 }));
             }
             for call in tool_calls {

@@ -245,9 +245,7 @@ mod tests {
             .append_turn_item(
                 &thread_id,
                 &turn_id,
-                &ConversationItem::UserMessage(UserMessage {
-                    text: "hello".to_string(),
-                }),
+                &ConversationItem::UserMessage(UserMessage::text("hello")),
             )
             .await
             .unwrap();
@@ -257,6 +255,7 @@ mod tests {
                 &turn_id,
                 &ConversationItem::AssistantMessage(AssistantMessage {
                     text: "world".to_string(),
+                    phase: None,
                 }),
             )
             .await

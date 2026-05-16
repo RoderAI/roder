@@ -5,8 +5,9 @@ mod tool_timeline;
 
 use std::io;
 use std::path::{Path, PathBuf};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
+use base64::Engine;
 use crossterm::{
     event::{
         self, DisableBracketedPaste, DisableMouseCapture, EnableBracketedPaste, EnableMouseCapture,
@@ -24,8 +25,9 @@ use ratatui::{
     text::{Line, Span, Text},
     widgets::{Block, BorderType, Borders, Clear, List, ListItem, ListState, Paragraph, Wrap},
 };
+use roder_api::conversation::InputImage;
 use roder_api::events::RoderEvent;
-use roder_api::inference::ProviderAuthType;
+use roder_api::inference::{ProviderAuthType, TokenUsage};
 use roder_api::policy_mode::{PolicyDecision, PolicyMode};
 use roder_app_server::LocalAppClient;
 use roder_protocol::{
@@ -43,7 +45,9 @@ use composer::{
     shell_command_from_input, style_composer_for_current_mode,
 };
 use input_queue::{PendingPrompt, PromptQueue, queue_status};
-use tool_timeline::{TimelineFocus, TimelineState, ToolTimelineEntry, fallback_entry};
+use tool_timeline::{
+    TimelineFocus, TimelineState, ToolTimelineEntry, TurnCompletedSummary, fallback_entry,
+};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 struct Theme {
@@ -58,6 +62,10 @@ struct Theme {
     shell: Color,
     error: Color,
     border: Color,
+    mode_default: Color,
+    mode_accept_edits: Color,
+    mode_plan: Color,
+    mode_bypass: Color,
     dialog: Color,
     dialog_bg: Color,
     dialog_shadow: Color,
@@ -87,6 +95,10 @@ impl Theme {
                 shell: Color::Indexed(220),
                 error: Color::Indexed(196),
                 border: Color::Indexed(244),
+                mode_default: Color::Indexed(244),
+                mode_accept_edits: Color::Indexed(40),
+                mode_plan: Color::Indexed(75),
+                mode_bypass: Color::Indexed(196),
                 dialog: Color::Indexed(62),
                 dialog_bg: Color::Indexed(235),
                 dialog_shadow: Color::Indexed(232),
@@ -110,6 +122,10 @@ impl Theme {
             shell: Color::Indexed(160),
             error: Color::Indexed(160),
             border: Color::Indexed(240),
+            mode_default: Color::Indexed(240),
+            mode_accept_edits: Color::Indexed(28),
+            mode_plan: Color::Indexed(25),
+            mode_bypass: Color::Indexed(160),
             dialog: Color::Indexed(62),
             dialog_bg: Color::Indexed(255),
             dialog_shadow: Color::Indexed(250),
@@ -171,6 +187,16 @@ impl Theme {
 
     fn border(self) -> Style {
         Style::default().fg(self.border)
+    }
+
+    fn policy_mode(self, mode: PolicyMode) -> Style {
+        let color = match mode {
+            PolicyMode::Default => self.mode_default,
+            PolicyMode::AcceptEdits => self.mode_accept_edits,
+            PolicyMode::Plan => self.mode_plan,
+            PolicyMode::Bypass => self.mode_bypass,
+        };
+        Style::default().fg(color).add_modifier(Modifier::BOLD)
     }
 
     fn dialog(self) -> Style {
@@ -238,6 +264,7 @@ impl ImageAttachment {
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
 enum ProviderPopupScreen {
     Main,
+    Providers,
     Models,
 }
 
@@ -296,6 +323,7 @@ fn confirm_action_for_key(key: KeyCode, selected: ConfirmChoice) -> ConfirmKeyAc
 #[derive(Debug, Clone)]
 enum ProviderMenuItem {
     Models,
+    Providers,
     Provider(ProviderChoice),
     Model(ProviderOption),
     Back,
@@ -305,6 +333,7 @@ impl ProviderMenuItem {
     fn label(&self) -> String {
         match self {
             Self::Models => "Models".to_string(),
+            Self::Providers => "Providers".to_string(),
             Self::Provider(provider) => provider.label(),
             Self::Model(option) => option.label.clone(),
             Self::Back => "Back".to_string(),
@@ -340,6 +369,9 @@ pub struct TuiApp {
     client: LocalAppClient,
     thread_id: String,
     active_turn_id: Option<String>,
+    active_turn_started_at: Option<Instant>,
+    current_turn_tokens: u32,
+    session_tokens: u64,
     provider: String,
     model: String,
     composer: TextArea<'static>,
@@ -387,6 +419,9 @@ impl TuiApp {
             client,
             thread_id: session.thread_id,
             active_turn_id: None,
+            active_turn_started_at: None,
+            current_turn_tokens: 0,
+            session_tokens: 0,
             provider: session.provider,
             model: if model.is_empty() {
                 session.model
@@ -542,22 +577,41 @@ impl TuiApp {
                 self.push_event(format!("{} #{}", envelope.kind, envelope.seq));
 
                 match envelope.event {
-                    RoderEvent::TurnStarted(ev) => self.active_turn_id = Some(ev.turn_id),
+                    RoderEvent::TurnStarted(ev) => {
+                        self.active_turn_id = Some(ev.turn_id);
+                        self.active_turn_started_at = Some(Instant::now());
+                        self.current_turn_tokens = 0;
+                    }
                     RoderEvent::TurnCompleted(ev)
                         if self.active_turn_id.as_deref() == Some(&ev.turn_id) =>
                     {
+                        let elapsed = self
+                            .active_turn_started_at
+                            .take()
+                            .map(|started| started.elapsed())
+                            .unwrap_or_default();
                         self.active_turn_id = None;
-                        self.timeline.push_turn_completed();
+                        self.timeline.push_turn_completed(TurnCompletedSummary {
+                            elapsed,
+                            turn_tokens: self.current_turn_tokens,
+                            session_tokens: self.session_tokens,
+                        });
+                        self.current_turn_tokens = 0;
                         self.submit_next_queued_prompt().await;
                     }
                     RoderEvent::TurnInterrupted(ev)
                         if self.active_turn_id.as_deref() == Some(&ev.turn_id) =>
                     {
                         self.active_turn_id = None;
+                        self.active_turn_started_at = None;
+                        self.current_turn_tokens = 0;
                     }
                     RoderEvent::InferenceEventReceived(ev) => match ev.event {
                         roder_api::inference::InferenceEvent::MessageDelta(delta) => {
-                            self.timeline.push_assistant_delta(&delta.text);
+                            self.timeline.push_assistant_delta(&delta.text, delta.phase);
+                        }
+                        roder_api::inference::InferenceEvent::Usage(usage) => {
+                            self.record_usage(usage);
                         }
                         roder_api::inference::InferenceEvent::ToolCallCompleted(call) => {
                             self.record_tool_requested_with_id(
@@ -570,6 +624,8 @@ impl TuiApp {
                     RoderEvent::TurnFailed(ev) => {
                         if self.active_turn_id.as_deref() == Some(&ev.turn_id) {
                             self.active_turn_id = None;
+                            self.active_turn_started_at = None;
+                            self.current_turn_tokens = 0;
                         }
                         self.timeline.push_error(ev.error);
                     }
@@ -813,19 +869,27 @@ impl TuiApp {
 
     fn take_prepared_prompt(&mut self) -> Option<PendingPrompt> {
         let text = composer_text(&self.composer).trim().to_string();
-        let attachments = std::mem::take(&mut self.image_attachments);
-        self.composer = composer_textarea(self.theme);
-        if text.is_empty() && attachments.is_empty() {
+        if text.is_empty() && self.image_attachments.is_empty() {
             return None;
         }
-        if attachments.is_empty() && text.starts_with('/') {
+        if self.image_attachments.is_empty() && text.starts_with('/') {
+            self.composer = composer_textarea(self.theme);
             self.timeline
                 .push_system(format!("executed slash command: {text}"));
             return None;
         }
-        let message = message_with_image_attachments(&text, &attachments);
+        let images = match image_inputs_from_attachments(&self.image_attachments) {
+            Ok(images) => images,
+            Err(err) => {
+                self.timeline
+                    .push_error(format!("image attachment failed: {err}"));
+                return None;
+            }
+        };
+        let attachments = std::mem::take(&mut self.image_attachments);
+        self.composer = composer_textarea(self.theme);
         let display = transcript_message_with_image_attachments(&text, &attachments);
-        Some(PendingPrompt::new(display, message))
+        Some(PendingPrompt::with_images(display, text, images))
     }
 
     async fn start_prepared_prompt(&mut self, pending: PendingPrompt) {
@@ -833,6 +897,7 @@ impl TuiApp {
         let params = StartTurnParams {
             thread_id: self.thread_id.clone(),
             message: pending.message,
+            images: pending.images,
             provider_override: None,
             model_override: Some(self.model.clone()),
         };
@@ -861,6 +926,7 @@ impl TuiApp {
             thread_id: self.thread_id.clone(),
             turn_id,
             message: pending.message,
+            images: pending.images,
         };
         let client = self.client.clone();
         tokio::spawn(async move {
@@ -950,17 +1016,12 @@ impl TuiApp {
 
     fn render(&mut self, f: &mut Frame<'_>) {
         let area = f.area();
-        style_composer_for_current_mode(&mut self.composer, self.theme);
+        style_composer_for_current_mode(&mut self.composer, self.theme, self.policy_mode);
         let event_height = event_log_height(self.show_event_log, self.events.len());
-        let loader_height = if self.active_turn_id.is_some() { 1 } else { 0 };
         let attachment_height = image_attachment_height(self.image_attachments.len());
         let queue_height = queued_prompt_height(self.queued_prompts.len());
         let composer_height = self.composer.measure(area.width).preferred_rows;
-        let mut constraints = Vec::new();
-        if loader_height > 0 {
-            constraints.push(Constraint::Length(loader_height));
-        }
-        constraints.extend([Constraint::Length(1), Constraint::Min(5)]);
+        let mut constraints = top_layout_constraints().to_vec();
         if event_height > 0 {
             constraints.push(Constraint::Length(event_height));
         }
@@ -977,14 +1038,12 @@ impl TuiApp {
             .constraints(constraints)
             .split(area);
 
-        let header_index = if loader_height > 0 {
-            f.render_widget(self.animated_top_bar(area.width), chunks[0]);
-            1
-        } else {
-            0
-        };
-        let transcript_index = header_index + 1;
-        f.render_widget(self.header(area.width), chunks[header_index]);
+        let loader_index = 1;
+        let transcript_index = 2;
+        f.render_widget(self.header(area.width), chunks[0]);
+        if self.active_turn_id.is_some() {
+            f.render_widget(self.animated_top_bar(area.width), chunks[loader_index]);
+        }
         f.render_widget(
             self.transcript(chunks[transcript_index]),
             chunks[transcript_index],
@@ -1225,6 +1284,8 @@ impl TuiApp {
                 .map(|item| {
                     let marker = match item {
                         ProviderMenuItem::Provider(provider) if provider.authenticated => "✓ ",
+                        ProviderMenuItem::Models | ProviderMenuItem::Providers => "› ",
+                        ProviderMenuItem::Back => "‹ ",
                         _ => "• ",
                     };
                     ListItem::new(Line::from(vec![
@@ -1235,7 +1296,8 @@ impl TuiApp {
                 .collect()
         };
         let title = match self.provider_popup_screen {
-            ProviderPopupScreen::Main => " Connect a provider (Enter select, Esc close) ",
+            ProviderPopupScreen::Main => " Menu (Enter select, Esc close) ",
+            ProviderPopupScreen::Providers => " Providers (Enter select, Esc back) ",
             ProviderPopupScreen::Models => " Models (Enter select, Esc back) ",
         };
         let title = if self.provider_menu_filter.is_empty() {
@@ -1306,7 +1368,7 @@ impl TuiApp {
             self.clamp_provider_menu_selection();
             return;
         }
-        if self.provider_popup_screen == ProviderPopupScreen::Models {
+        if self.provider_popup_screen != ProviderPopupScreen::Main {
             self.provider_popup_screen = ProviderPopupScreen::Main;
             self.provider_menu_items = main_provider_menu_items(&self.provider_choices);
             self.provider_state.select(Some(0));
@@ -1356,6 +1418,9 @@ impl TuiApp {
             ProviderMenuItem::Models => {
                 self.open_models_submenu();
             }
+            ProviderMenuItem::Providers => {
+                self.open_providers_submenu();
+            }
             ProviderMenuItem::Provider(provider) => {
                 self.select_provider(provider).await;
             }
@@ -1385,6 +1450,22 @@ impl TuiApp {
             .model_options
             .iter()
             .position(|option| option.provider_id == self.provider && option.model_id == self.model)
+            .unwrap_or(0);
+        if self.provider_menu_items.is_empty() {
+            self.provider_state.select(None);
+        } else {
+            self.provider_state.select(Some(selected));
+        }
+    }
+
+    fn open_providers_submenu(&mut self) {
+        self.provider_popup_screen = ProviderPopupScreen::Providers;
+        self.provider_menu_filter.clear();
+        self.provider_menu_items = providers_menu_items(&self.provider_choices);
+        let selected = self
+            .provider_choices
+            .iter()
+            .position(|provider| provider.provider_id == self.provider)
             .unwrap_or(0);
         if self.provider_menu_items.is_empty() {
             self.provider_state.select(None);
@@ -1508,6 +1589,13 @@ impl TuiApp {
 
     fn record_tool_completed(&mut self, tool_id: &str, failed: bool, output: Option<String>) {
         self.timeline.record_tool_completed(tool_id, failed, output);
+    }
+
+    fn record_usage(&mut self, usage: TokenUsage) {
+        self.current_turn_tokens = self.current_turn_tokens.saturating_add(usage.total_tokens);
+        self.session_tokens = self
+            .session_tokens
+            .saturating_add(u64::from(usage.total_tokens));
     }
 
     fn push_event(&mut self, event: String) {
@@ -1710,20 +1798,44 @@ fn expand_home_path(value: &str) -> PathBuf {
     PathBuf::from(value)
 }
 
-fn message_with_image_attachments(text: &str, attachments: &[ImageAttachment]) -> String {
-    let mut message = text.to_string();
-    if attachments.is_empty() {
-        return message;
+fn image_inputs_from_attachments(
+    attachments: &[ImageAttachment],
+) -> anyhow::Result<Vec<InputImage>> {
+    attachments
+        .iter()
+        .map(|attachment| {
+            let bytes = std::fs::read(&attachment.path)
+                .map_err(|err| anyhow::anyhow!("{}: {err}", attachment.path.display()))?;
+            let encoded = base64::engine::general_purpose::STANDARD.encode(bytes);
+            Ok(InputImage {
+                image_url: format!(
+                    "data:{};base64,{encoded}",
+                    mime_type_for_image_path(&attachment.path)
+                ),
+            })
+        })
+        .collect()
+}
+
+fn mime_type_for_image_path(path: &Path) -> &'static str {
+    match path
+        .extension()
+        .and_then(|ext| ext.to_str())
+        .map(|ext| ext.to_ascii_lowercase())
+        .as_deref()
+    {
+        Some("png") => "image/png",
+        Some("jpg" | "jpeg") => "image/jpeg",
+        Some("gif") => "image/gif",
+        Some("webp") => "image/webp",
+        Some("bmp") => "image/bmp",
+        Some("tif" | "tiff") => "image/tiff",
+        Some("heic") => "image/heic",
+        Some("heif") => "image/heif",
+        Some("avif") => "image/avif",
+        Some("svg") => "image/svg+xml",
+        _ => "application/octet-stream",
     }
-    if !message.is_empty() {
-        message.push_str("\n\n");
-    }
-    message.push_str("Attached image file paths:");
-    for attachment in attachments {
-        message.push_str("\n- ");
-        message.push_str(&attachment.path.display().to_string());
-    }
-    message
 }
 
 fn transcript_message_with_image_attachments(
@@ -1847,8 +1959,16 @@ fn provider_choice_from_descriptor(provider: &ProviderDescriptor) -> ProviderCho
 }
 
 fn main_provider_menu_items(providers: &[ProviderChoice]) -> Vec<ProviderMenuItem> {
-    std::iter::once(ProviderMenuItem::Models)
-        .chain(providers.iter().cloned().map(ProviderMenuItem::Provider))
+    let _provider_count = providers.len();
+    vec![ProviderMenuItem::Providers, ProviderMenuItem::Models]
+}
+
+fn providers_menu_items(providers: &[ProviderChoice]) -> Vec<ProviderMenuItem> {
+    providers
+        .iter()
+        .cloned()
+        .map(ProviderMenuItem::Provider)
+        .chain(std::iter::once(ProviderMenuItem::Back))
         .collect()
 }
 
@@ -2051,6 +2171,14 @@ fn line_with_gap(
     Line::from(left)
 }
 
+fn top_layout_constraints() -> [Constraint; 3] {
+    [
+        Constraint::Length(1),
+        Constraint::Length(1),
+        Constraint::Min(5),
+    ]
+}
+
 fn spans_width(spans: &[Span<'_>]) -> usize {
     spans.iter().map(|span| span.content.chars().count()).sum()
 }
@@ -2111,6 +2239,10 @@ mod tests {
                 theme.shell,
                 theme.error,
                 theme.border,
+                theme.mode_default,
+                theme.mode_accept_edits,
+                theme.mode_plan,
+                theme.mode_bypass,
                 theme.dialog,
                 theme.dialog_bg,
                 theme.dialog_shadow,
@@ -2273,6 +2405,18 @@ mod tests {
     }
 
     #[test]
+    fn top_layout_reserves_loader_gap_under_header() {
+        assert_eq!(
+            top_layout_constraints(),
+            [
+                Constraint::Length(1),
+                Constraint::Length(1),
+                Constraint::Min(5)
+            ]
+        );
+    }
+
+    #[test]
     fn event_log_height_only_allocates_space_when_toggled_on() {
         assert_eq!(event_log_height(false, 10), 0);
         assert_eq!(event_log_height(true, 0), 3);
@@ -2304,6 +2448,29 @@ mod tests {
         assert_eq!(policy_mode_label(PolicyMode::AcceptEdits), "accept_edits");
         assert_eq!(policy_mode_label(PolicyMode::Plan), "plan");
         assert_eq!(policy_mode_label(PolicyMode::Bypass), "bypass");
+    }
+
+    #[test]
+    fn policy_mode_styles_are_distinct() {
+        for dark in [true, false] {
+            let theme = Theme::for_dark_background(dark);
+            let colors = [
+                theme.policy_mode(PolicyMode::Default).fg,
+                theme.policy_mode(PolicyMode::AcceptEdits).fg,
+                theme.policy_mode(PolicyMode::Plan).fg,
+                theme.policy_mode(PolicyMode::Bypass).fg,
+            ];
+
+            for (index, color) in colors.iter().enumerate() {
+                assert!(
+                    colors
+                        .iter()
+                        .enumerate()
+                        .all(|(other_index, other)| index == other_index || color != other),
+                    "{colors:?}"
+                );
+            }
+        }
     }
 
     #[test]
@@ -2346,17 +2513,29 @@ mod tests {
     }
 
     #[test]
-    fn prompt_message_includes_attached_image_paths() {
-        let attachments = vec![ImageAttachment::new(PathBuf::from("/tmp/diagram.png"))];
+    fn prompt_images_are_encoded_as_data_urls() {
+        let path = std::env::temp_dir().join(format!(
+            "roder-tui-image-attachment-{}.png",
+            std::process::id()
+        ));
+        std::fs::write(&path, b"abc").unwrap();
+        let attachments = vec![ImageAttachment::new(path.clone())];
 
+        let images = image_inputs_from_attachments(&attachments).unwrap();
+        assert_eq!(images.len(), 1);
+        assert_eq!(images[0].image_url, "data:image/png;base64,YWJj");
         assert_eq!(
-            message_with_image_attachments("what is this?", &attachments),
-            "what is this?\n\nAttached image file paths:\n- /tmp/diagram.png"
+            mime_type_for_image_path(&PathBuf::from("/tmp/diagram.webp")),
+            "image/webp"
         );
         assert_eq!(
             transcript_message_with_image_attachments("", &attachments),
-            "attached image: diagram.png"
+            format!(
+                "attached image: {}",
+                path.file_name().unwrap().to_string_lossy()
+            )
         );
+        let _ = std::fs::remove_file(path);
     }
 
     #[test]
@@ -2390,14 +2569,43 @@ mod tests {
     }
 
     #[test]
-    fn provider_menu_starts_with_models_submenu() {
+    fn provider_menu_starts_with_providers_submenu() {
         let items = main_provider_menu_items(&[]);
-        assert!(matches!(items.first(), Some(ProviderMenuItem::Models)));
+        assert!(matches!(items.first(), Some(ProviderMenuItem::Providers)));
+        assert!(matches!(items.get(1), Some(ProviderMenuItem::Models)));
+    }
+
+    #[test]
+    fn provider_choices_live_under_providers_submenu() {
+        let provider = ProviderChoice {
+            provider_id: "codex".to_string(),
+            name: "Codex".to_string(),
+            description: Some("ChatGPT account provider".to_string()),
+            auth_type: ProviderAuthType::OAuth,
+            authenticated: false,
+            auth_detail: None,
+            default_model: Some("gpt-5.5".to_string()),
+            recommended: true,
+        };
+
+        let main = main_provider_menu_items(std::slice::from_ref(&provider));
+        assert!(
+            !main
+                .iter()
+                .any(|item| matches!(item, ProviderMenuItem::Provider(_)))
+        );
+
+        let submenu = providers_menu_items(&[provider]);
+        assert!(matches!(
+            submenu.first(),
+            Some(ProviderMenuItem::Provider(_))
+        ));
+        assert!(matches!(submenu.last(), Some(ProviderMenuItem::Back)));
     }
 
     #[test]
     fn provider_menu_filter_matches_labels_case_insensitively() {
-        let items = main_provider_menu_items(&[ProviderChoice {
+        let items = providers_menu_items(&[ProviderChoice {
             provider_id: "codex".to_string(),
             name: "Codex".to_string(),
             description: Some("ChatGPT account provider".to_string()),

@@ -117,7 +117,10 @@ impl InferenceEngine for GeminiEngine {
         let text = extract_candidate_text(&value);
         let mut events = Vec::new();
         if !text.is_empty() {
-            events.push(Ok(InferenceEvent::MessageDelta(MessageDelta { text })));
+            events.push(Ok(InferenceEvent::MessageDelta(MessageDelta {
+                text,
+                phase: None,
+            })));
         }
         for call in extract_tool_calls(&value) {
             events.push(Ok(InferenceEvent::ToolCallCompleted(call)));
@@ -213,10 +216,10 @@ fn gemini_generation_config(request: &AgentInferenceRequest) -> Value {
             config["responseSchema"] = schema.clone();
         }
     }
-    if request.reasoning.enabled {
-        if let Some(thinking_config) = gemini_thinking_config(request.reasoning.level.as_deref()) {
-            config["thinkingConfig"] = thinking_config;
-        }
+    if request.reasoning.enabled
+        && let Some(thinking_config) = gemini_thinking_config(request.reasoning.level.as_deref())
+    {
+        config["thinkingConfig"] = thinking_config;
     }
     config
 }
@@ -322,11 +325,10 @@ mod tests {
                 developer: Some("developer".to_string()),
             },
             conversation: vec![
-                ConversationItem::UserMessage(UserMessage {
-                    text: "Hello".to_string(),
-                }),
+                ConversationItem::UserMessage(UserMessage::text("Hello")),
                 ConversationItem::AssistantMessage(AssistantMessage {
                     text: "Hi".to_string(),
+                    phase: None,
                 }),
                 ConversationItem::ToolCall(ToolCallRecord {
                     id: "call_1".to_string(),

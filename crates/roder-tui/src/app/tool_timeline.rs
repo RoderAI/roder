@@ -3,7 +3,10 @@ mod render;
 #[cfg(test)]
 mod tests;
 
-use std::collections::{HashMap, HashSet};
+use std::{
+    collections::{HashMap, HashSet},
+    time::Duration,
+};
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 use ratatui::{
@@ -48,12 +51,20 @@ pub(super) fn fallback_entry(name: impl Into<String>) -> ToolTimelineEntry {
 #[derive(Debug, Clone, Eq, PartialEq)]
 enum TimelineItemKind {
     User(String),
-    Assistant(String),
+    Assistant { text: String, phase: Option<String> },
     System(String),
+    TurnCompleted(TurnCompletedSummary),
     Error(String),
     Shell(String),
     ShellOutput(String),
     Tool(ToolTimelineTool),
+}
+
+#[derive(Debug, Clone, Eq, PartialEq)]
+pub(super) struct TurnCompletedSummary {
+    pub elapsed: Duration,
+    pub turn_tokens: u32,
+    pub session_tokens: u64,
 }
 
 #[derive(Debug, Clone, Eq, PartialEq)]
@@ -127,15 +138,23 @@ impl TimelineState {
         self.push_item(TimelineItemKind::User(text.into()));
     }
 
-    pub fn push_assistant_delta(&mut self, text: &str) {
+    pub fn push_assistant_delta(&mut self, text: &str, phase: Option<String>) {
         if let Some(TimelineItem {
-            kind: TimelineItemKind::Assistant(existing),
+            kind:
+                TimelineItemKind::Assistant {
+                    text: existing,
+                    phase: existing_phase,
+                },
         }) = self.items.last_mut()
+            && *existing_phase == phase
         {
             existing.push_str(text);
             return;
         }
-        self.push_item(TimelineItemKind::Assistant(text.to_string()));
+        self.push_item(TimelineItemKind::Assistant {
+            text: text.to_string(),
+            phase,
+        });
     }
 
     pub fn push_system(&mut self, text: impl Into<String>) {
@@ -191,8 +210,8 @@ impl TimelineState {
         }
     }
 
-    pub fn push_turn_completed(&mut self) {
-        self.push_item(TimelineItemKind::System("Turn completed.".to_string()));
+    pub fn push_turn_completed(&mut self, summary: TurnCompletedSummary) {
+        self.push_item(TimelineItemKind::TurnCompleted(summary));
     }
 
     pub fn handle_key(&mut self, key: KeyEvent) -> bool {
@@ -272,7 +291,7 @@ impl TimelineState {
     }
 
     pub fn render(&mut self, theme: Theme, area: Rect) -> TimelineRender {
-        let (lines, row_items) = self.build_lines(theme);
+        let (lines, row_items) = self.build_lines(theme, area.width);
         let max_scroll = max_scroll(&row_items, area.height);
         let scroll = self.scroll_for(area.height, &row_items, max_scroll);
         self.hit_rows = visible_hit_rows(area, scroll, area.height, &row_items);
@@ -387,7 +406,7 @@ impl TimelineState {
         self.scroll_offset.min(max_scroll) as u16
     }
 
-    fn build_lines(&self, theme: Theme) -> (Vec<Line<'static>>, Vec<(usize, usize)>) {
+    fn build_lines(&self, theme: Theme, width: u16) -> (Vec<Line<'static>>, Vec<(usize, usize)>) {
         if self.items.is_empty() {
             return (
                 vec![
@@ -407,7 +426,7 @@ impl TimelineState {
             row_items.push((lines.len(), index));
             let selected = self.focus == TimelineFocus::Timeline && self.selected == Some(index);
             let expanded = self.expanded.contains(&index);
-            item.render(selected, expanded, theme, &mut lines);
+            item.render(selected, expanded, theme, width, &mut lines);
             lines.push(Line::raw(""));
         }
         (lines, row_items)

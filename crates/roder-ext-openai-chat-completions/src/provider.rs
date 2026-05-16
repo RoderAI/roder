@@ -134,7 +134,10 @@ impl InferenceEngine for OpenAiChatCompletionsEngine {
         }
         let value: Value = response.json().await?;
         let text = extract_message_text(&value);
-        let mut events = vec![Ok(InferenceEvent::MessageDelta(MessageDelta { text }))];
+        let mut events = vec![Ok(InferenceEvent::MessageDelta(MessageDelta {
+            text,
+            phase: None,
+        }))];
         if let Some(usage) = extract_usage(&value) {
             events.push(Ok(InferenceEvent::Usage(usage)));
         }
@@ -190,11 +193,10 @@ mod tests {
                 developer: Some("Be concise.".to_string()),
             },
             conversation: vec![
-                ConversationItem::UserMessage(UserMessage {
-                    text: "Hello".to_string(),
-                }),
+                ConversationItem::UserMessage(UserMessage::text("Hello")),
                 ConversationItem::AssistantMessage(AssistantMessage {
                     text: "Hi there!".to_string(),
+                    phase: None,
                 }),
             ],
             tools: vec![],

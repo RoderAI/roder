@@ -369,6 +369,7 @@ impl AppServer {
             .start_turn(StartTurnRequest {
                 thread_id: params.thread_id,
                 message: params.message,
+                images: params.images,
                 provider_override: params.provider_override,
                 model_override: params.model_override,
                 instructions: default_instructions(),
@@ -395,7 +396,12 @@ impl AppServer {
     ) -> Result<serde_json::Value, JsonRpcError> {
         let turn_id = params.turn_id;
         self.runtime
-            .steer_turn(params.thread_id, turn_id.clone(), params.message)
+            .steer_turn(
+                params.thread_id,
+                turn_id.clone(),
+                params.message,
+                params.images,
+            )
             .await
             .map_err(internal_error)?;
         Ok(serde_json::to_value(SteerTurnResult { turn_id }).unwrap())

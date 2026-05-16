@@ -6,7 +6,8 @@ use futures::StreamExt;
 use futures::future::{AbortHandle, Abortable};
 use roder_api::catalog::{EDIT_TOOL_EDIT, EDIT_TOOL_PATCH, REASONING_NONE, lookup_model};
 use roder_api::conversation::{
-    AssistantMessage, ConversationItem, ErrorRecord, ReasoningSummary, ToolCallRecord, UserMessage,
+    AssistantMessage, ConversationItem, ErrorRecord, InputImage, ReasoningSummary, ToolCallRecord,
+    UserMessage,
 };
 use roder_api::events::*;
 use roder_api::extension::ExtensionRegistry;
@@ -25,6 +26,7 @@ use crate::bus::EventBus;
 use crate::fake_provider::FakeInferenceEngine;
 
 const MAX_TOOL_ROUNDS_PER_TURN: usize = 1024;
+const FINAL_ANSWER_PHASE: &str = "final_answer";
 
 #[derive(Debug, Clone)]
 pub struct RuntimeConfig {
@@ -55,6 +57,7 @@ impl Default for RuntimeConfig {
 pub struct StartTurnRequest {
     pub thread_id: ThreadId,
     pub message: String,
+    pub images: Vec<InputImage>,
     pub provider_override: Option<String>,
     pub model_override: Option<String>,
     pub instructions: InstructionBundle,
@@ -90,7 +93,7 @@ pub(crate) struct PendingToolApproval {
 #[derive(Clone)]
 struct ActiveTurnHandle {
     abort: AbortHandle,
-    steers: Arc<Mutex<Vec<String>>>,
+    steers: Arc<Mutex<Vec<UserMessage>>>,
 }
 
 impl PendingPlanExit {
@@ -434,13 +437,14 @@ impl Runtime {
             .await;
             if let Ok(Err(err)) = result {
                 // run_turn emits failures after the stream starts; this covers setup/startup errors.
-                runtime.emit(RoderEvent::TurnFailed(TurnFailed {
-                    thread_id: thread_id_for_task,
-                    turn_id: turn_id_for_task.clone(),
-                    error: err.to_string(),
-                    timestamp: OffsetDateTime::now_utc(),
-                }))
-                .await;
+                runtime
+                    .emit(RoderEvent::TurnFailed(TurnFailed {
+                        thread_id: thread_id_for_task,
+                        turn_id: turn_id_for_task.clone(),
+                        error: err.to_string(),
+                        timestamp: OffsetDateTime::now_utc(),
+                    }))
+                    .await;
             }
             runtime.active_turns.write().await.remove(&turn_id_for_task);
         });
@@ -465,16 +469,21 @@ impl Runtime {
         thread_id: ThreadId,
         turn_id: TurnId,
         message: String,
+        images: Vec<InputImage>,
     ) -> anyhow::Result<()> {
         let message = message.trim().to_string();
-        if message.is_empty() {
+        if message.is_empty() && images.is_empty() {
             return Ok(());
         }
 
         let Some(active) = self.active_turns.read().await.get(&turn_id).cloned() else {
             anyhow::bail!("no active turn to steer");
         };
-        active.steers.lock().await.push(message.clone());
+        active
+            .steers
+            .lock()
+            .await
+            .push(UserMessage::with_images(message.clone(), images));
         self.emit(RoderEvent::TurnSteered(TurnSteered {
             thread_id,
             turn_id,
@@ -508,9 +517,10 @@ impl Runtime {
         self.persist_turn_item(
             &req.thread_id,
             &turn_id,
-            &ConversationItem::UserMessage(UserMessage {
-                text: req.message.clone(),
-            }),
+            &ConversationItem::UserMessage(UserMessage::with_images(
+                req.message.clone(),
+                req.images.clone(),
+            )),
         )
         .await?;
 
@@ -524,6 +534,7 @@ impl Runtime {
             .clone()
             .unwrap_or(cfg.default_model.clone());
         let engine = self.engine_for(&provider)?;
+        let capabilities = engine.capabilities();
         let tools = self.filtered_tool_specs(&cfg, &model);
         let tool_choice = if tools.is_empty() {
             ToolChoice::None
@@ -531,7 +542,17 @@ impl Runtime {
             ToolChoice::Auto
         };
         let mut conversation = self.conversation_for_turn(&req, &turn_id, &model).await?;
+        if !capabilities.image_input && conversation_has_images(&conversation) {
+            self.fail_turn_with_error(
+                &req.thread_id,
+                &turn_id,
+                format!("provider {provider} does not support image input"),
+            )
+            .await?;
+            return Ok(());
+        }
         let mut final_assistant_text = String::new();
+        let mut final_phase_messages = Vec::<AssistantMessage>::new();
         let mut final_reasoning_text = String::new();
         let mut exhausted_tool_rounds = true;
 
@@ -539,6 +560,15 @@ impl Runtime {
             let steers = self.drain_turn_steers(&turn_id).await;
             self.append_steers(&req, &turn_id, &mut conversation, steers)
                 .await?;
+            if !capabilities.image_input && conversation_has_images(&conversation) {
+                self.fail_turn_with_error(
+                    &req.thread_id,
+                    &turn_id,
+                    format!("provider {provider} does not support image input"),
+                )
+                .await?;
+                return Ok(());
+            }
 
             self.emit(RoderEvent::InferenceStarted(InferenceStarted {
                 thread_id: req.thread_id.clone(),
@@ -569,6 +599,7 @@ impl Runtime {
             };
             let mut stream = engine.stream_turn(ctx, request).await?;
             let mut assistant_text = String::new();
+            let mut phase_messages = Vec::<AssistantMessage>::new();
             let mut reasoning_text = String::new();
             let mut tool_calls = Vec::new();
             let mut provider_metadata = None;
@@ -597,7 +628,20 @@ impl Runtime {
                 .await;
 
                 match event {
-                    InferenceEvent::MessageDelta(delta) => assistant_text.push_str(&delta.text),
+                    InferenceEvent::MessageDelta(delta) => {
+                        if is_final_answer_phase(delta.phase.as_deref()) {
+                            assistant_text.push_str(&delta.text);
+                        } else if let Some(last) = phase_messages.last_mut()
+                            && last.phase == delta.phase
+                        {
+                            last.text.push_str(&delta.text);
+                        } else {
+                            phase_messages.push(AssistantMessage {
+                                text: delta.text,
+                                phase: delta.phase,
+                            });
+                        }
+                    }
                     InferenceEvent::ReasoningDelta(delta) => reasoning_text.push_str(&delta.text),
                     InferenceEvent::ToolCallCompleted(call) => tool_calls.push(call),
                     InferenceEvent::Failed(failure) => {
@@ -631,9 +675,16 @@ impl Runtime {
             if tool_calls.is_empty() {
                 let steers = self.drain_turn_steers(&turn_id).await;
                 if !steers.is_empty() {
+                    for message in phase_messages {
+                        let item = ConversationItem::AssistantMessage(message);
+                        self.persist_turn_item(&req.thread_id, &turn_id, &item)
+                            .await?;
+                        conversation.push(item);
+                    }
                     if !assistant_text.is_empty() {
                         let assistant = ConversationItem::AssistantMessage(AssistantMessage {
                             text: assistant_text,
+                            phase: Some(FINAL_ANSWER_PHASE.to_string()),
                         });
                         self.persist_turn_item(&req.thread_id, &turn_id, &assistant)
                             .await?;
@@ -646,15 +697,23 @@ impl Runtime {
                         .await?;
                     continue;
                 }
+                final_phase_messages = phase_messages;
                 final_assistant_text = assistant_text;
                 final_reasoning_text = reasoning_text;
                 exhausted_tool_rounds = false;
                 break;
             }
 
+            for message in phase_messages {
+                let item = ConversationItem::AssistantMessage(message);
+                self.persist_turn_item(&req.thread_id, &turn_id, &item)
+                    .await?;
+                conversation.push(item);
+            }
             if !assistant_text.is_empty() {
                 conversation.push(ConversationItem::AssistantMessage(AssistantMessage {
                     text: assistant_text,
+                    phase: Some(FINAL_ANSWER_PHASE.to_string()),
                 }));
             }
             if let Some(metadata) = provider_metadata {
@@ -708,12 +767,21 @@ impl Runtime {
             )
             .await?;
         }
+        for message in final_phase_messages {
+            self.persist_turn_item(
+                &req.thread_id,
+                &turn_id,
+                &ConversationItem::AssistantMessage(message),
+            )
+            .await?;
+        }
         if !final_assistant_text.is_empty() {
             self.persist_turn_item(
                 &req.thread_id,
                 &turn_id,
                 &ConversationItem::AssistantMessage(AssistantMessage {
                     text: final_assistant_text,
+                    phase: Some(FINAL_ANSWER_PHASE.to_string()),
                 }),
             )
             .await?;
@@ -728,7 +796,7 @@ impl Runtime {
         Ok(())
     }
 
-    async fn drain_turn_steers(&self, turn_id: &TurnId) -> Vec<String> {
+    async fn drain_turn_steers(&self, turn_id: &TurnId) -> Vec<UserMessage> {
         let Some(active) = self.active_turns.read().await.get(turn_id).cloned() else {
             return Vec::new();
         };
@@ -736,21 +804,43 @@ impl Runtime {
         std::mem::take(&mut *steers)
     }
 
+    async fn fail_turn_with_error(
+        &self,
+        thread_id: &ThreadId,
+        turn_id: &TurnId,
+        message: String,
+    ) -> anyhow::Result<()> {
+        self.persist_turn_item(
+            thread_id,
+            turn_id,
+            &ConversationItem::Error(ErrorRecord {
+                message: message.clone(),
+            }),
+        )
+        .await?;
+        self.emit(RoderEvent::TurnFailed(TurnFailed {
+            thread_id: thread_id.clone(),
+            turn_id: turn_id.clone(),
+            error: message,
+            timestamp: OffsetDateTime::now_utc(),
+        }))
+        .await;
+        Ok(())
+    }
+
     async fn append_steers(
         &self,
         req: &StartTurnRequest,
         turn_id: &TurnId,
         conversation: &mut Vec<ConversationItem>,
-        steers: Vec<String>,
+        steers: Vec<UserMessage>,
     ) -> anyhow::Result<()> {
-        for steer in steers {
-            let steer = steer.trim();
-            if steer.is_empty() {
+        for mut steer in steers {
+            steer.text = steer.text.trim().to_string();
+            if steer.text.is_empty() && steer.images.is_empty() {
                 continue;
             }
-            let item = ConversationItem::UserMessage(UserMessage {
-                text: steer.to_string(),
-            });
+            let item = ConversationItem::UserMessage(steer);
             self.persist_turn_item(&req.thread_id, turn_id, &item)
                 .await?;
             conversation.push(item);
@@ -817,6 +907,15 @@ impl Runtime {
     }
 }
 
+fn conversation_has_images(conversation: &[ConversationItem]) -> bool {
+    conversation.iter().any(|item| {
+        matches!(
+            item,
+            ConversationItem::UserMessage(message) if !message.images.is_empty()
+        )
+    })
+}
+
 fn reasoning_for_model(cfg: &RuntimeConfig, model: &str) -> ReasoningConfig {
     let level = cfg
         .reasoning
@@ -829,6 +928,10 @@ fn reasoning_for_model(cfg: &RuntimeConfig, model: &str) -> ReasoningConfig {
             level: Some(level.to_string()),
         },
     }
+}
+
+fn is_final_answer_phase(phase: Option<&str>) -> bool {
+    phase.is_none_or(|phase| phase.is_empty() || phase == FINAL_ANSWER_PHASE)
 }
 
 fn edit_tool_for_model<'a>(cfg: &'a RuntimeConfig, model: &'a str) -> Option<&'a str> {

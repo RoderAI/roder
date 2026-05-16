@@ -1,5 +1,6 @@
 use futures::stream;
 use roder_api::catalog::PROVIDER_MOCK;
+use roder_api::conversation::{ConversationItem, InputImage};
 use roder_api::extension::{ExtensionRegistryBuilder, InferenceEngineId};
 use roder_api::inference::*;
 use roder_api::policy_mode::PolicyMode;
@@ -33,6 +34,10 @@ struct TaskCallingEngine {
 
 struct PendingEngine;
 
+struct ImageCaptureEngine {
+    requests: Mutex<Vec<AgentInferenceRequest>>,
+}
+
 #[async_trait::async_trait]
 impl InferenceEngine for PendingEngine {
     fn id(&self) -> InferenceEngineId {
@@ -56,6 +61,45 @@ impl InferenceEngine for PendingEngine {
         _request: AgentInferenceRequest,
     ) -> anyhow::Result<InferenceEventStream> {
         Ok(Box::pin(stream::pending()))
+    }
+}
+
+#[async_trait::async_trait]
+impl InferenceEngine for ImageCaptureEngine {
+    fn id(&self) -> InferenceEngineId {
+        PROVIDER_MOCK.to_string()
+    }
+
+    fn capabilities(&self) -> InferenceCapabilities {
+        InferenceCapabilities {
+            image_input: true,
+            ..InferenceCapabilities::text_only()
+        }
+    }
+
+    async fn list_models(
+        &self,
+        _ctx: InferenceProviderContext<'_>,
+    ) -> anyhow::Result<Vec<ModelDescriptor>> {
+        Ok(Vec::new())
+    }
+
+    async fn stream_turn(
+        &self,
+        _ctx: InferenceTurnContext<'_>,
+        request: AgentInferenceRequest,
+    ) -> anyhow::Result<InferenceEventStream> {
+        self.requests.lock().await.push(request);
+        Ok(Box::pin(stream::iter([
+            Ok(InferenceEvent::MessageDelta(MessageDelta {
+                text: "ok".to_string(),
+                phase: None,
+            })),
+            Ok(InferenceEvent::Completed(CompletionMetadata {
+                stop_reason: Some("stop".to_string()),
+                provider_response_id: None,
+            })),
+        ])))
     }
 }
 
@@ -99,6 +143,7 @@ impl InferenceEngine for TaskCallingEngine {
             return Ok(Box::pin(futures::stream::iter(vec![
                 Ok(InferenceEvent::MessageDelta(MessageDelta {
                     text: "child result".to_string(),
+                    phase: None,
                 })),
                 Ok(InferenceEvent::Completed(CompletionMetadata {
                     stop_reason: Some("stop".to_string()),
@@ -130,6 +175,7 @@ impl InferenceEngine for TaskCallingEngine {
             Ok(Box::pin(futures::stream::iter(vec![
                 Ok(InferenceEvent::MessageDelta(MessageDelta {
                     text: "parent final".to_string(),
+                    phase: None,
                 })),
                 Ok(InferenceEvent::Completed(CompletionMetadata {
                     stop_reason: Some("stop".to_string()),
@@ -217,6 +263,7 @@ async fn test_app_server_e2e() {
     let params = StartTurnParams {
         thread_id: session.thread_id.clone(),
         message: "Hello".to_string(),
+        images: Vec::new(),
         provider_override: None,
         model_override: None,
     };
@@ -276,6 +323,7 @@ async fn turns_steer_requires_active_turn() {
                     thread_id: "thread_missing".to_string(),
                     turn_id: "turn_missing".to_string(),
                     message: "change direction".to_string(),
+                    images: Vec::new(),
                 })
                 .unwrap(),
             ),
@@ -286,6 +334,57 @@ async fn turns_steer_requires_active_turn() {
     let error = response.error.expect("missing steer error");
     assert_eq!(error.code, -32000);
     assert_eq!(error.message, "no active turn to steer");
+}
+
+#[tokio::test]
+async fn turns_start_preserves_image_payloads_for_provider_request() {
+    let engine = Arc::new(ImageCaptureEngine {
+        requests: Mutex::new(Vec::new()),
+    });
+    let mut builder = ExtensionRegistryBuilder::new();
+    builder.inference_engine(engine.clone());
+    let runtime = Arc::new(Runtime::new(builder.build().unwrap(), Default::default()).unwrap());
+    let server = Arc::new(AppServer::new(runtime));
+    let client = LocalAppClient::new(server);
+    let mut events = client.subscribe_events();
+
+    let session: CreateSessionResult = request(&client, "sessions/create", None).await;
+    let _: StartTurnResult = request(
+        &client,
+        "turns/start",
+        Some(
+            serde_json::to_value(StartTurnParams {
+                thread_id: session.thread_id.clone(),
+                message: "what is this?".to_string(),
+                images: vec![InputImage {
+                    image_url: "data:image/png;base64,YWJj".to_string(),
+                }],
+                provider_override: None,
+                model_override: None,
+            })
+            .unwrap(),
+        ),
+    )
+    .await;
+    wait_for_event(&mut events, &session.thread_id, "turn.completed").await;
+
+    let requests = engine.requests.lock().await;
+    assert_eq!(requests.len(), 1);
+    let user_message = requests[0]
+        .conversation
+        .iter()
+        .find_map(|item| match item {
+            ConversationItem::UserMessage(message) if message.text == "what is this?" => {
+                Some(message)
+            }
+            _ => None,
+        })
+        .expect("missing user message");
+    assert_eq!(user_message.images.len(), 1);
+    assert_eq!(
+        user_message.images[0].image_url,
+        "data:image/png;base64,YWJj"
+    );
 }
 
 #[tokio::test]
@@ -305,6 +404,7 @@ async fn turns_steer_accepts_active_turn() {
             serde_json::to_value(StartTurnParams {
                 thread_id: session.thread_id.clone(),
                 message: "start".to_string(),
+                images: Vec::new(),
                 provider_override: None,
                 model_override: None,
             })
@@ -322,6 +422,7 @@ async fn turns_steer_accepts_active_turn() {
                 thread_id: session.thread_id.clone(),
                 turn_id: started.turn_id.clone(),
                 message: "change direction".to_string(),
+                images: Vec::new(),
             })
             .unwrap(),
         ),
@@ -614,6 +715,7 @@ async fn task_tool_emits_subagent_events_before_tool_completion() {
             serde_json::to_value(StartTurnParams {
                 thread_id: session.thread_id.clone(),
                 message: "delegate this".to_string(),
+                images: Vec::new(),
                 provider_override: None,
                 model_override: None,
             })
@@ -692,6 +794,7 @@ async fn subagent_failed_events_redact_private_agent_material() {
             serde_json::to_value(StartTurnParams {
                 thread_id: session.thread_id,
                 message: "delegate this".to_string(),
+                images: Vec::new(),
                 provider_override: None,
                 model_override: None,
             })

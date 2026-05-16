@@ -207,7 +207,7 @@ impl InferenceEngine for CodexOAuthInferenceEngine {
             parallel_tool_calls: false,
             reasoning_summaries: true,
             structured_output: true,
-            image_input: false,
+            image_input: true,
             prompt_cache: true,
             provider_metadata: true,
         }
@@ -298,12 +298,15 @@ impl InferenceEngine for FakeInferenceEngine {
         Ok(Box::pin(stream::iter(vec![
             Ok(InferenceEvent::MessageDelta(MessageDelta {
                 text: "hello".to_string(),
+                phase: None,
             })),
             Ok(InferenceEvent::MessageDelta(MessageDelta {
                 text: " from".to_string(),
+                phase: None,
             })),
             Ok(InferenceEvent::MessageDelta(MessageDelta {
                 text: " roder".to_string(),
+                phase: None,
             })),
             Ok(InferenceEvent::Completed(CompletionMetadata {
                 stop_reason: Some("stop".to_string()),
