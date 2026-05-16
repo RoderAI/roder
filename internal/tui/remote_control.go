@@ -13,6 +13,10 @@ type remoteStateMsg struct {
 	Err   error
 }
 
+type remoteCopyMsg struct {
+	Status string
+}
+
 func (m *Model) ensureRemoteController() *tuiremote.Controller {
 	if m.remote == nil {
 		m.remote = tuiremote.NewController(m.app)
@@ -56,8 +60,41 @@ func (m Model) updateRemotePanel(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		return m, m.startRemoteServer()
 	case "r":
 		return m, m.regenerateRemoteServer()
+	case "u":
+		return m, m.copyRemoteURL()
+	case "h":
+		return m, m.copyRemoteAuthHeader()
 	}
 	return m, nil
+}
+
+func (m Model) copyRemoteURL() tea.Cmd {
+	if len(m.remoteState.URLs) == 0 {
+		m.status = "remote url unavailable"
+		return nil
+	}
+	return m.copyRemoteText(m.remoteState.URLs[0], "Copied remote URL")
+}
+
+func (m Model) copyRemoteAuthHeader() tea.Cmd {
+	if m.remoteState.AuthHeader == "" {
+		m.status = "remote auth header unavailable"
+		return nil
+	}
+	return m.copyRemoteText(m.remoteState.AuthHeader, "Copied remote auth header")
+}
+
+func (m Model) copyRemoteText(text string, status string) tea.Cmd {
+	writer := m.clipboardWrite
+	if writer == nil {
+		return nil
+	}
+	return func() tea.Msg {
+		if err := writer(text); err != nil {
+			return remoteCopyMsg{Status: "clipboard failed - " + truncateStatus(err.Error(), 120)}
+		}
+		return remoteCopyMsg{Status: status}
+	}
 }
 
 func (m Model) startRemoteServer() tea.Cmd {
@@ -100,6 +137,6 @@ func (m Model) remoteViewModel() *viewmodel.RemoteDialog {
 		ConnectedClients: state.ConnectedClients,
 		Warning:          tuiremote.SecurityWarning(state),
 		Error:            state.Error,
-		Help:             "enter start/stop  r regenerate  esc close",
+		Help:             "enter start/stop  r regenerate  u copy url  h copy auth  esc close",
 	}
 }

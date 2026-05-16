@@ -46,6 +46,7 @@ func TestAppServerRemoteParseAuthTokenEnv(t *testing.T) {
 		"--listen", "ws://127.0.0.1:0",
 		"--auth-token", "env:GODE_REMOTE_TOKEN",
 		"--print-qr=false",
+		"--remote-token-ttl", "30m",
 		"--allowed-origin", "https://phone.example",
 		"--allowed-origin", "https://other.example,https://third.example",
 		"--provider", "mock",
@@ -61,8 +62,24 @@ func TestAppServerRemoteParseAuthTokenEnv(t *testing.T) {
 	if listen.Remote.PrintQR {
 		t.Fatalf("print qr should be false")
 	}
+	if listen.Remote.TokenTTL != 30*time.Minute {
+		t.Fatalf("token ttl = %s", listen.Remote.TokenTTL)
+	}
 	if got := fmt.Sprint(listen.Remote.AllowedOrigins); got != "[https://phone.example https://other.example https://third.example]" {
 		t.Fatalf("allowed origins = %s", got)
+	}
+}
+
+func TestPrepareRemoteAuthAppliesTokenTTL(t *testing.T) {
+	_, auth, err := prepareRemoteAuth("ttl-secret", 45*time.Minute)
+	if err != nil {
+		t.Fatalf("prepare auth: %v", err)
+	}
+	if auth.ExpiresAt == nil {
+		t.Fatal("expiresAt missing")
+	}
+	if got := auth.ExpiresAt.Sub(auth.CreatedAt); got != 45*time.Minute {
+		t.Fatalf("ttl = %s", got)
 	}
 }
 

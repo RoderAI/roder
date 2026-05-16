@@ -30,6 +30,7 @@ type RemoteAuth struct {
 	AllowInsecure bool
 	CreatedAt     time.Time
 	ExpiresAt     *time.Time
+	Now           func() time.Time
 }
 
 func GenerateRemoteToken(rand io.Reader) (RemoteToken, error) {
@@ -62,7 +63,7 @@ func (a RemoteAuth) VerifyRequest(r *http.Request) bool {
 	if len(a.TokenHash) == 0 {
 		return false
 	}
-	if a.ExpiresAt != nil && time.Now().After(*a.ExpiresAt) {
+	if a.ExpiresAt != nil && a.now().After(*a.ExpiresAt) {
 		return false
 	}
 	for _, candidate := range a.requestTokens(r) {
@@ -72,6 +73,67 @@ func (a RemoteAuth) VerifyRequest(r *http.Request) bool {
 		}
 	}
 	return false
+}
+
+func (a RemoteAuth) now() time.Time {
+	if a.Now != nil {
+		return a.Now()
+	}
+	return time.Now()
+}
+
+type RemoteAuthBackoff struct {
+	Failures    int
+	LastFailure time.Time
+	BaseDelay   time.Duration
+	MaxDelay    time.Duration
+	Now         func() time.Time
+}
+
+func (b *RemoteAuthBackoff) RecordFailure() time.Duration {
+	if b == nil {
+		return 0
+	}
+	b.Failures++
+	b.LastFailure = b.now()
+	return b.Delay()
+}
+
+func (b *RemoteAuthBackoff) Reset() {
+	if b == nil {
+		return
+	}
+	b.Failures = 0
+	b.LastFailure = time.Time{}
+}
+
+func (b RemoteAuthBackoff) Delay() time.Duration {
+	if b.Failures <= 0 {
+		return 0
+	}
+	base := b.BaseDelay
+	if base <= 0 {
+		base = 250 * time.Millisecond
+	}
+	maxDelay := b.MaxDelay
+	if maxDelay <= 0 {
+		maxDelay = 5 * time.Second
+	}
+	delay := base
+	for i := 1; i < b.Failures; i++ {
+		delay *= 2
+		if delay >= maxDelay {
+			return maxDelay
+		}
+	}
+	return delay
+}
+
+func (b RemoteAuthBackoff) now() time.Time {
+	if b.Now != nil {
+		return b.Now()
+	}
+	return time.Now()
 }
 
 func (a RemoteAuth) requestTokens(r *http.Request) []string {
