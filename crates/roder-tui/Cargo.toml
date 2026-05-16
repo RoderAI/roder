@@ -18,4 +18,5 @@ tokio = { workspace = true, features = ["full", "sync"] }
 tui-textarea = { version = "0.11.0", package = "tui-textarea-2" }
 
 [dev-dependencies]
+async-trait.workspace = true
 time.workspace = true
