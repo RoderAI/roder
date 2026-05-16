@@ -16,3 +16,6 @@ serde_json.workspace = true
 similar.workspace = true
 tokio = { workspace = true, features = ["full", "sync"] }
 tui-textarea = { version = "0.11.0", package = "tui-textarea-2" }
+
+[dev-dependencies]
+time.workspace = true

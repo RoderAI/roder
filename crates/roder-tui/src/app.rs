@@ -5,6 +5,7 @@ mod help;
 mod mouse_capture_runtime;
 mod mouse_ui;
 mod palette_ui;
+mod policy_ui;
 mod selection_keyboard;
 
 use std::collections::BTreeSet;
@@ -28,7 +29,8 @@ use ratatui::{
 use roder_api::events::RoderEvent;
 use roder_api::inference::ProviderAuthType;
 use roder_api::interactive::{
-    HandlerOutcome, InteractiveEvent, InteractiveRegionHandler, MouseButton, RegionKind,
+    ApprovalVote, HandlerOutcome, InteractiveEvent, InteractiveRegionHandler, MouseButton,
+    RegionKind,
 };
 use roder_api::policy_mode::PolicyMode;
 use roder_api::tui_status::{
@@ -1076,6 +1078,9 @@ impl TuiApp {
         if self.diff_viewer.is_some() {
             interactive_regions.extend(self.diff_hunk_regions(area));
         }
+        if self.pending_plan_exit.is_some() {
+            interactive_regions.extend(self.policy_approval_regions(area));
+        }
         self.mouse_feedback
             .set_frame_regions(composer_area, footer_area, interactive_regions);
         let composer_border_style = self
@@ -1094,6 +1099,9 @@ impl TuiApp {
         }
         if self.diff_viewer.is_some() {
             self.render_diff_viewer(f, area);
+        }
+        if let Some(pending) = &self.pending_plan_exit {
+            policy_ui::render_policy_approval(f, area, pending, self.theme);
         }
         if self.show_help {
             help::render_keymap_help(f, area, &self.keymap, self.theme);
@@ -1525,6 +1533,11 @@ impl TuiApp {
         }
         if let RegionKind::DiffHunk { hunk_idx, .. } = region.kind {
             self.handle_diff_region_click(&region.id, hunk_idx).await;
+            return;
+        }
+        if let RegionKind::PolicyApprovalButton { vote, .. } = region.kind {
+            self.resolve_pending_plan_exit(vote == ApprovalVote::Approve)
+                .await;
             return;
         }
         let Some(action) = action_for_region(&region, right_click_at) else {
