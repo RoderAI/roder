@@ -22,6 +22,8 @@ use tokio::sync::{RwLock, oneshot};
 use crate::bus::EventBus;
 use crate::fake_provider::FakeInferenceEngine;
 
+const MAX_AGENTIC_MODEL_CALLS_PER_TURN: usize = 64;
+
 #[derive(Debug, Clone)]
 pub struct RuntimeConfig {
     pub default_provider: String,
@@ -512,7 +514,8 @@ impl Runtime {
         let mut final_assistant_text = String::new();
         let mut final_reasoning_text = String::new();
 
-        for _ in 0..8 {
+        let mut completed_without_follow_up = false;
+        for _ in 0..MAX_AGENTIC_MODEL_CALLS_PER_TURN {
             self.emit(RoderEvent::InferenceStarted(InferenceStarted {
                 thread_id: req.thread_id.clone(),
                 turn_id: turn_id.clone(),
@@ -605,6 +608,7 @@ impl Runtime {
             if tool_calls.is_empty() {
                 final_assistant_text = assistant_text;
                 final_reasoning_text = reasoning_text;
+                completed_without_follow_up = true;
                 break;
             }
 
@@ -628,6 +632,28 @@ impl Runtime {
             conversation = self
                 .compact_conversation_if_needed(&req.thread_id, &turn_id, &model, conversation)
                 .await?;
+        }
+
+        if !completed_without_follow_up {
+            let message = format!(
+                "turn exceeded {MAX_AGENTIC_MODEL_CALLS_PER_TURN} model calls while waiting for a final assistant response"
+            );
+            self.persist_turn_item(
+                &req.thread_id,
+                &turn_id,
+                &ConversationItem::Error(ErrorRecord {
+                    message: message.clone(),
+                }),
+            )
+            .await?;
+            self.emit(RoderEvent::TurnFailed(TurnFailed {
+                thread_id: req.thread_id,
+                turn_id,
+                error: message,
+                timestamp: OffsetDateTime::now_utc(),
+            }))
+            .await;
+            return Ok(());
         }
 
         if !final_reasoning_text.is_empty() {

@@ -16,6 +16,11 @@ struct ToolLoopEngine {
     requests: Mutex<Vec<AgentInferenceRequest>>,
 }
 
+struct ManyToolLoopEngine {
+    requests: Mutex<Vec<AgentInferenceRequest>>,
+    tool_calls_before_final: usize,
+}
+
 struct EchoContributor;
 
 impl ToolContributor for EchoContributor {
@@ -161,6 +166,60 @@ impl InferenceEngine for ToolLoopEngine {
     }
 }
 
+#[async_trait::async_trait]
+impl InferenceEngine for ManyToolLoopEngine {
+    fn id(&self) -> InferenceEngineId {
+        PROVIDER_MOCK.to_string()
+    }
+
+    fn capabilities(&self) -> InferenceCapabilities {
+        InferenceCapabilities::coding_agent_default()
+    }
+
+    async fn list_models(
+        &self,
+        _ctx: InferenceProviderContext<'_>,
+    ) -> anyhow::Result<Vec<ModelDescriptor>> {
+        Ok(Vec::new())
+    }
+
+    async fn stream_turn(
+        &self,
+        _ctx: InferenceTurnContext<'_>,
+        request: AgentInferenceRequest,
+    ) -> anyhow::Result<InferenceEventStream> {
+        let mut requests = self.requests.lock().unwrap();
+        requests.push(request);
+        let turn = requests.len();
+        drop(requests);
+
+        let events = if turn <= self.tool_calls_before_final {
+            vec![
+                Ok(InferenceEvent::ToolCallCompleted(ToolCallCompleted {
+                    id: format!("call_{turn}"),
+                    name: "echo".to_string(),
+                    arguments: format!(r#"{{"text":"from tool {turn}"}}"#),
+                })),
+                Ok(InferenceEvent::Completed(CompletionMetadata {
+                    stop_reason: Some("tool_calls".to_string()),
+                    provider_response_id: Some(format!("resp_{turn}")),
+                })),
+            ]
+        } else {
+            vec![
+                Ok(InferenceEvent::MessageDelta(MessageDelta {
+                    text: "final after many tools".to_string(),
+                })),
+                Ok(InferenceEvent::Completed(CompletionMetadata {
+                    stop_reason: Some("stop".to_string()),
+                    provider_response_id: Some(format!("resp_{turn}")),
+                })),
+            ]
+        };
+        Ok(Box::pin(stream::iter(events)))
+    }
+}
+
 #[tokio::test]
 async fn run_turn_continues_after_tool_result() {
     let engine = Arc::new(ToolLoopEngine {
@@ -224,6 +283,74 @@ async fn run_turn_continues_after_tool_result() {
             .any(|item| matches!(item, ConversationItem::ToolResult(result) if result.result == "from tool")),
         "second request should include the tool result: {:?}",
         requests[1].conversation
+    );
+}
+
+#[tokio::test]
+async fn run_turn_continues_beyond_eight_tool_followups() {
+    let tool_calls_before_final = 9;
+    let engine = Arc::new(ManyToolLoopEngine {
+        requests: Mutex::new(Vec::new()),
+        tool_calls_before_final,
+    });
+    let mut builder = ExtensionRegistryBuilder::new();
+    builder.inference_engine(engine.clone());
+    builder.tool_contributor(Arc::new(EchoContributor));
+    let runtime = Arc::new(
+        Runtime::new(
+            builder.build().unwrap(),
+            RuntimeConfig {
+                default_provider: PROVIDER_MOCK.to_string(),
+                default_model: "mock".to_string(),
+                reasoning: Some("low".to_string()),
+                auto_compact_token_limit: Some(10_000),
+                workspace: None,
+                policy_mode: roder_api::policy_mode::PolicyMode::Default,
+            },
+        )
+        .unwrap(),
+    );
+    let mut events = runtime.subscribe_events();
+
+    runtime
+        .start_turn(StartTurnRequest {
+            thread_id: "thread_many_tools".to_string(),
+            message: "keep using tools".to_string(),
+            provider_override: None,
+            model_override: None,
+            instructions: default_instructions(),
+        })
+        .await
+        .unwrap();
+
+    let mut appended_assistant = false;
+    loop {
+        let event = tokio::time::timeout(Duration::from_secs(2), events.recv())
+            .await
+            .unwrap()
+            .unwrap();
+        if let roder_api::events::RoderEvent::TurnItemAppended(item) = &event.event
+            && item.item_type == "assistant_message"
+        {
+            appended_assistant = true;
+        }
+        if event.kind == "turn.completed" && event.thread_id.as_deref() == Some("thread_many_tools")
+        {
+            break;
+        }
+    }
+
+    let requests = engine.requests.lock().unwrap();
+    assert_eq!(requests.len(), tool_calls_before_final + 1);
+    assert!(
+        appended_assistant,
+        "final assistant message should be recorded"
+    );
+    assert!(
+        requests.last().unwrap().conversation.iter().any(
+            |item| matches!(item, ConversationItem::ToolResult(result) if result.id == "call_9")
+        ),
+        "final request should include the ninth tool result"
     );
 }
 
