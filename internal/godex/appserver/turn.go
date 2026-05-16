@@ -176,12 +176,13 @@ func (s *Server) runTurn(ctx context.Context, threadID, turnID string, input bui
 	errCh := make(chan error, 1)
 	go func() {
 		result, err := s.app.Run(ctx, agent.RunRequest{
-			SessionID:     threadID,
-			RunID:         turnID,
-			Prompt:        input.Prompt,
-			Resume:        true,
-			InputItems:    input.InputItems,
-			ReplacePrompt: input.ReplacePrompt,
+			SessionID:       threadID,
+			RunID:           turnID,
+			Prompt:          input.Prompt,
+			Resume:          true,
+			InputItems:      input.InputItems,
+			SkillSelections: input.SkillSelections,
+			ReplacePrompt:   input.ReplacePrompt,
 		})
 		if err != nil {
 			errCh <- err

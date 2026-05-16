@@ -209,7 +209,7 @@ func skillSettingsContent(width int, items []viewmodel.SettingsSkillItem, zones 
 	if len(items) == 0 {
 		return []string{settingsDescriptionStyle.Render("No skills installed. Press i to install one or r for recommended skills.")}
 	}
-	lines := make([]string, 0, len(items)*2)
+	lines := make([]string, 0, len(items)*4)
 	for _, item := range items {
 		prefix := "  "
 		style := settingsItemStyle
@@ -225,21 +225,38 @@ func skillSettingsContent(width int, items []viewmodel.SettingsSkillItem, zones 
 		if item.Scope != "" {
 			value += " " + item.Scope
 		}
-		main := prefix + settingsLabelValue(width-2, name, value)
-		detail := item.Description
-		if detail == "" {
-			detail = item.Diagnostic
-		}
-		if detail == "" {
-			detail = item.Path
+		label := firstNonEmpty(item.DisplayName, name)
+		main := prefix + settingsLabelValue(width-2, label, value)
+		details := skillDetailLines(item)
+		if len(details) == 0 && item.Path != "" {
+			details = append(details, item.Path)
 		}
 		block := markSettingsZone(zones, viewmodel.SettingsSkillZoneID(item.Name), style.Render(main))
-		if detail != "" {
+		for _, detail := range details {
 			block += "\n" + "  " + settingsDescriptionStyle.Render(truncateCell(detail, width-2))
 		}
 		lines = append(lines, block)
 	}
 	return lines
+}
+
+func skillDetailLines(item viewmodel.SettingsSkillItem) []string {
+	var details []string
+	if item.Description != "" {
+		details = append(details, item.Description)
+	}
+	if item.AmbiguousName && item.Path != "" {
+		details = append(details, "ambiguous name; path required: "+item.Path)
+	} else if item.Selected && item.Path != "" {
+		details = append(details, item.Path)
+	}
+	if len(item.DependencyHints) > 0 {
+		details = append(details, "requires "+strings.Join(item.DependencyHints, ", "))
+	}
+	if item.Diagnostic != "" {
+		details = append(details, "diagnostic: "+item.Diagnostic)
+	}
+	return details
 }
 
 func recommendedSkillSettingsContent(width int, items []viewmodel.SettingsRecommendedSkillItem, zones *zone.Manager) []string {

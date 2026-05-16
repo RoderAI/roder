@@ -485,6 +485,37 @@ func TestRunnerInjectsInvokedSkillsAndCleansPrompt(t *testing.T) {
 	}
 }
 
+func TestRunnerInjectsStructuredSkillSelection(t *testing.T) {
+	capture := &captureProvider{finalText: "done"}
+	skillPath := "/skills/go-tests/SKILL.md"
+	runner := NewRunner(Config{
+		Bus:      eventbus.New(eventbus.WithSubscriberBuffer(16)),
+		Provider: capture,
+		Skills: []godeskills.Skill{{
+			Name: "go-tests",
+			Path: skillPath,
+			Body: "Run Go tests before reporting completion.",
+		}},
+	})
+	defer runner.bus.Close()
+
+	if _, err := runner.Run(context.Background(), RunRequest{
+		Prompt:          "please check this",
+		SkillSelections: []godeskills.InvocationSelection{{Path: skillPath}},
+	}); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	if len(capture.request.Messages) != 3 {
+		t.Fatalf("messages = %#v", capture.request.Messages)
+	}
+	if capture.request.Messages[1].Role != provider.RoleUser || !strings.Contains(capture.request.Messages[1].Content, `<path>`+skillPath+`</path>`) {
+		t.Fatalf("skill message = %#v", capture.request.Messages[1])
+	}
+	if capture.request.Messages[2].Role != provider.RoleUser || capture.request.Messages[2].Content != "please check this" {
+		t.Fatalf("user message = %#v", capture.request.Messages[2])
+	}
+}
+
 func TestRunnerSkipsDisabledInvokedSkillAndKeepsPromptDiagnostic(t *testing.T) {
 	capture := &captureProvider{finalText: "done"}
 	runner := NewRunner(Config{

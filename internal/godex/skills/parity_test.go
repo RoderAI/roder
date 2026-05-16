@@ -3,6 +3,7 @@ package skills
 import (
 	"os"
 	"path/filepath"
+	"reflect"
 	"testing"
 )
 
@@ -28,6 +29,38 @@ func TestCodexParityFixturesCoverCoreContracts(t *testing.T) {
 	}
 }
 
+func TestCodexParityCatalogComparisonCoversCatalogShape(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "go-tests", "SKILL.md")
+	catalog := Catalog{
+		Skills: []Skill{{
+			Name:        "go-tests",
+			Description: "Run Go tests",
+			Path:        path,
+			Scope:       SkillScopeRepo,
+			Metadata:    map[string]string{"owner": "agents"},
+			Interface:   &SkillInterface{DisplayName: "Go Tests"},
+			Dependencies: &SkillDependencies{Tools: []SkillToolDependency{{
+				Type:  "mcp",
+				Value: "filesystem",
+			}}},
+		}},
+		Diagnostics: []Diagnostic{{Path: filepath.Join(filepath.Dir(path), "bad", "SKILL.md"), Message: "invalid"}},
+	}
+	cfg := Config{Rules: []ConfigRule{{Path: path, Enabled: false}}}
+
+	got, diagnostics := catalogSnapshot(catalog, cfg)
+	assertCatalogSnapshot(t, got, []skillCatalogSnapshot{{
+		Path:         canonicalPath(path),
+		Scope:        SkillScopeRepo,
+		Name:         "go-tests",
+		Metadata:     map[string]string{"owner": "agents"},
+		Enabled:      false,
+		Interface:    SkillInterface{DisplayName: "Go Tests"},
+		Dependencies: []SkillToolDependency{{Type: "mcp", Value: "filesystem"}},
+		Diagnostics:  nil,
+	}}, diagnostics, []Diagnostic{{Path: filepath.Join(filepath.Dir(path), "bad", "SKILL.md"), Message: "invalid"}})
+}
+
 func TestCodexReferenceParity(t *testing.T) {
 	reference := os.Getenv("CODEX_REFERENCE_DIR")
 	if reference == "" {
@@ -44,4 +77,57 @@ func TestCodexReferenceParity(t *testing.T) {
 			t.Fatalf("reference file %s: %v", rel, err)
 		}
 	}
+}
+
+type skillCatalogSnapshot struct {
+	Path         string
+	Scope        SkillScope
+	Name         string
+	Metadata     map[string]string
+	Enabled      bool
+	Interface    SkillInterface
+	Dependencies []SkillToolDependency
+	Diagnostics  []Diagnostic
+}
+
+func catalogSnapshot(catalog Catalog, config Config) ([]skillCatalogSnapshot, []Diagnostic) {
+	out := make([]skillCatalogSnapshot, 0, len(catalog.Skills))
+	for _, skill := range catalog.Skills {
+		snapshot := skillCatalogSnapshot{
+			Path:     skillIdentity(skill),
+			Scope:    skill.Scope,
+			Name:     skill.Name,
+			Metadata: cloneStringMap(skill.Metadata),
+			Enabled:  IsSkillEnabled(config, skill),
+		}
+		if skill.Interface != nil {
+			snapshot.Interface = *skill.Interface
+		}
+		if skill.Dependencies != nil {
+			snapshot.Dependencies = append([]SkillToolDependency(nil), skill.Dependencies.Tools...)
+		}
+		out = append(out, snapshot)
+	}
+	return out, append([]Diagnostic(nil), catalog.Diagnostics...)
+}
+
+func assertCatalogSnapshot(t *testing.T, got []skillCatalogSnapshot, want []skillCatalogSnapshot, gotDiagnostics []Diagnostic, wantDiagnostics []Diagnostic) {
+	t.Helper()
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("catalog snapshot mismatch\n got: %#v\nwant: %#v", got, want)
+	}
+	if !reflect.DeepEqual(gotDiagnostics, wantDiagnostics) {
+		t.Fatalf("diagnostics mismatch\n got: %#v\nwant: %#v", gotDiagnostics, wantDiagnostics)
+	}
+}
+
+func cloneStringMap(in map[string]string) map[string]string {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make(map[string]string, len(in))
+	for key, value := range in {
+		out[key] = value
+	}
+	return out
 }

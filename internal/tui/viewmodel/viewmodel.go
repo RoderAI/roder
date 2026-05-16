@@ -234,15 +234,19 @@ type SettingsMemoryRow struct {
 }
 
 type SettingsSkillItem struct {
-	Name        string
-	Description string
-	Path        string
-	Source      string
-	Scope       string
-	State       string
-	Diagnostic  string
-	Enabled     bool
-	Selected    bool
+	Name             string
+	DisplayName      string
+	Description      string
+	ShortDescription string
+	Path             string
+	Source           string
+	Scope            string
+	State            string
+	DependencyHints  []string
+	Diagnostic       string
+	AmbiguousName    bool
+	Enabled          bool
+	Selected         bool
 }
 
 type SettingsRecommendedSkillItem struct {

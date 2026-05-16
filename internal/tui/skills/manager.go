@@ -20,16 +20,26 @@ func ViewState(installed []godeskills.ManagedSkill, recommended []godeskills.Rec
 		Installed:   make([]viewmodel.SettingsSkillItem, 0, len(installed)),
 		Recommended: make([]viewmodel.SettingsRecommendedSkillItem, 0, len(recommended)),
 	}
+	nameCounts := map[string]int{}
+	for _, skill := range installed {
+		if strings.TrimSpace(skill.Name) != "" {
+			nameCounts[skill.Name]++
+		}
+	}
 	for _, skill := range installed {
 		item := viewmodel.SettingsSkillItem{
-			Name:        skill.Name,
-			Description: skill.Description,
-			Path:        skill.Path,
-			Source:      skill.Source,
-			Scope:       firstNonEmpty(string(skill.Scope), skillScope(skill.Path)),
-			State:       string(skill.State),
-			Diagnostic:  skill.Diagnostic,
-			Enabled:     skill.State == godeskills.ActivationEnabled,
+			Name:             skill.Name,
+			DisplayName:      interfaceDisplayName(skill),
+			Description:      firstNonEmpty(interfaceShortDescription(skill), skill.Description),
+			ShortDescription: interfaceShortDescription(skill),
+			Path:             skill.Path,
+			Source:           skill.Source,
+			Scope:            firstNonEmpty(string(skill.Scope), skillScope(skill.Path)),
+			State:            string(skill.State),
+			DependencyHints:  dependencyHints(skill.Dependencies),
+			Diagnostic:       skill.Diagnostic,
+			AmbiguousName:    skill.Name != "" && nameCounts[skill.Name] > 1,
+			Enabled:          skill.State == godeskills.ActivationEnabled,
 		}
 		if skill.Name != "" {
 			state.InstalledN++
@@ -47,6 +57,44 @@ func ViewState(installed []godeskills.ManagedSkill, recommended []godeskills.Rec
 		})
 	}
 	return state
+}
+
+func interfaceDisplayName(skill godeskills.ManagedSkill) string {
+	if skill.Interface == nil {
+		return ""
+	}
+	return strings.TrimSpace(skill.Interface.DisplayName)
+}
+
+func interfaceShortDescription(skill godeskills.ManagedSkill) string {
+	if skill.Interface == nil {
+		return ""
+	}
+	return strings.TrimSpace(skill.Interface.ShortDescription)
+}
+
+func dependencyHints(deps *godeskills.SkillDependencies) []string {
+	if deps == nil {
+		return nil
+	}
+	hints := make([]string, 0, len(deps.Tools))
+	for _, tool := range deps.Tools {
+		parts := []string{}
+		if strings.TrimSpace(tool.Type) != "" {
+			parts = append(parts, tool.Type)
+		}
+		if strings.TrimSpace(tool.Value) != "" {
+			parts = append(parts, tool.Value)
+		}
+		if strings.TrimSpace(tool.Transport) != "" {
+			parts = append(parts, tool.Transport)
+		}
+		if len(parts) == 0 {
+			continue
+		}
+		hints = append(hints, strings.Join(parts, ":"))
+	}
+	return hints
 }
 
 func firstNonEmpty(values ...string) string {

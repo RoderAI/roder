@@ -69,16 +69,17 @@ type Runner struct {
 }
 
 type RunRequest struct {
-	SessionID      string
-	RunID          string
-	Prompt         string
-	Resume         bool
-	ResumeMode     session.ResumeMode
-	Instructions   string
-	ResponseFormat string
-	Messages       []provider.Message
-	InputItems     []provider.Item
-	ReplacePrompt  bool
+	SessionID       string
+	RunID           string
+	Prompt          string
+	Resume          bool
+	ResumeMode      session.ResumeMode
+	Instructions    string
+	ResponseFormat  string
+	Messages        []provider.Message
+	InputItems      []provider.Item
+	SkillSelections []godeskills.InvocationSelection
+	ReplacePrompt   bool
 }
 
 type RunResult struct {
@@ -187,7 +188,7 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (RunResult, error) {
 	if err != nil {
 		return RunResult{}, r.fail(ctx, req, err)
 	}
-	runMessages, prompt, err := r.skillContextMessages(ctx, commandExpansion.Prompt)
+	runMessages, prompt, err := r.skillContextMessages(ctx, commandExpansion.Prompt, req.SkillSelections)
 	if err != nil {
 		return RunResult{}, r.fail(ctx, req, err)
 	}
