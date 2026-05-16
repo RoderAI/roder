@@ -526,10 +526,11 @@ fn stream_error_message(data: &Value, fallback: &str) -> String {
 }
 
 fn response_input_items(request: &AgentInferenceRequest) -> Vec<Value> {
-    request
-        .conversation
-        .iter()
-        .filter_map(|item| match item {
+    let mut items = Vec::new();
+    let mut provider_output_call_ids = HashSet::new();
+
+    for conversation_item in &request.conversation {
+        let mapped = match conversation_item {
             roder_api::conversation::ConversationItem::UserMessage(message) => Some(json!({
                 "type": "message",
                 "role": "user",
@@ -544,12 +545,21 @@ fn response_input_items(request: &AgentInferenceRequest) -> Vec<Value> {
                 "type": "reasoning",
                 "summary": [{ "type": "summary_text", "text": summary.text }]
             })),
-            roder_api::conversation::ConversationItem::ToolCall(call) => Some(json!({
-                "type": "function_call",
-                "call_id": call.id,
-                "name": call.name,
-                "arguments": call.arguments
-            })),
+            roder_api::conversation::ConversationItem::ToolCall(call) => {
+                if provider_output_call_ids.contains(&call.id) {
+                    None
+                } else {
+                    let item_id = fallback_function_call_item_id(&call.id);
+                    Some(json!({
+                        "type": "function_call",
+                        "id": item_id,
+                        "call_id": call.id,
+                        "name": call.name,
+                        "arguments": call.arguments,
+                        "status": "completed"
+                    }))
+                }
+            }
             roder_api::conversation::ConversationItem::ToolResult(result) => Some(json!({
                 "type": "function_call_output",
                 "call_id": result.id,
@@ -560,9 +570,50 @@ fn response_input_items(request: &AgentInferenceRequest) -> Vec<Value> {
                 "role": "user",
                 "content": [{ "type": "input_text", "text": format!("Context summary:\n{}", compaction.summary) }]
             })),
+            roder_api::conversation::ConversationItem::ProviderMetadata(metadata) => {
+                append_provider_output_items(metadata, &mut items, &mut provider_output_call_ids);
+                None
+            }
             _ => None,
-        })
-        .collect()
+        };
+        if let Some(item) = mapped {
+            items.push(item);
+        }
+    }
+
+    items
+}
+
+fn fallback_function_call_item_id(call_id: &str) -> String {
+    if call_id.starts_with("fc_") {
+        call_id.to_string()
+    } else if let Some(suffix) = call_id.strip_prefix("call_") {
+        format!("fc_{suffix}")
+    } else {
+        format!("fc_{call_id}")
+    }
+}
+
+fn append_provider_output_items(
+    metadata: &Value,
+    items: &mut Vec<Value>,
+    provider_output_call_ids: &mut HashSet<String>,
+) {
+    let Some(output) = metadata.get("output").and_then(Value::as_array) else {
+        return;
+    };
+    for item in output {
+        match item.get("type").and_then(Value::as_str) {
+            Some("function_call") => {
+                if let Some(call_id) = item.get("call_id").and_then(Value::as_str) {
+                    provider_output_call_ids.insert(call_id.to_string());
+                }
+                items.push(item.clone());
+            }
+            Some("reasoning") => items.push(item.clone()),
+            _ => {}
+        }
+    }
 }
 
 fn extract_response_text(value: &Value) -> String {
@@ -648,7 +699,9 @@ fn number_to_u32(value: Option<&Value>) -> Option<u32> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use roder_api::conversation::{AssistantMessage, ConversationItem, UserMessage};
+    use roder_api::conversation::{
+        AssistantMessage, ConversationItem, ToolCallRecord, ToolResultRecord, UserMessage,
+    };
     use roder_api::inference::{
         InstructionBundle, ModelSelection, OutputConfig, ReasoningConfig, RuntimeHints,
     };
@@ -733,6 +786,86 @@ mod tests {
         assert_eq!(tools[0]["type"], "function");
         assert_eq!(tools[0]["name"], "apply_patch");
         assert_eq!(tools[0]["parameters"]["required"][0], "patch");
+    }
+
+    #[test]
+    fn replays_provider_function_call_items_before_tool_outputs() {
+        let mut request = request();
+        request.conversation = vec![
+            ConversationItem::UserMessage(UserMessage {
+                text: "List files".to_string(),
+            }),
+            ConversationItem::ProviderMetadata(json!({
+                "output": [
+                    {
+                        "id": "rs_1",
+                        "type": "reasoning",
+                        "summary": []
+                    },
+                    {
+                        "id": "fc_1",
+                        "type": "function_call",
+                        "status": "completed",
+                        "call_id": "call_1",
+                        "name": "list_files",
+                        "arguments": "{\"path\":\".\"}"
+                    }
+                ]
+            })),
+            ConversationItem::ToolCall(ToolCallRecord {
+                id: "call_1".to_string(),
+                name: "list_files".to_string(),
+                arguments: "{\"path\":\".\"}".to_string(),
+            }),
+            ConversationItem::ToolResult(ToolResultRecord {
+                id: "call_1".to_string(),
+                name: Some("list_files".to_string()),
+                result: "Cargo.toml".to_string(),
+                is_error: false,
+            }),
+        ];
+
+        let input = response_input_items(&request);
+        assert_eq!(input[1]["type"], "reasoning");
+        assert_eq!(input[2]["id"], "fc_1");
+        assert_eq!(input[2]["call_id"], "call_1");
+        assert_eq!(input[2]["status"], "completed");
+        assert_eq!(input[3]["type"], "function_call_output");
+        assert_eq!(input[3]["call_id"], "call_1");
+        assert_eq!(
+            input
+                .iter()
+                .filter(|item| item["type"] == "function_call")
+                .count(),
+            1
+        );
+    }
+
+    #[test]
+    fn fallback_function_call_items_use_responses_item_id_prefix() {
+        let mut request = request();
+        request.conversation = vec![
+            ConversationItem::UserMessage(UserMessage {
+                text: "List files".to_string(),
+            }),
+            ConversationItem::ToolCall(ToolCallRecord {
+                id: "call_1".to_string(),
+                name: "list_files".to_string(),
+                arguments: "{\"path\":\".\"}".to_string(),
+            }),
+            ConversationItem::ToolResult(ToolResultRecord {
+                id: "call_1".to_string(),
+                name: Some("list_files".to_string()),
+                result: "Cargo.toml".to_string(),
+                is_error: false,
+            }),
+        ];
+
+        let input = response_input_items(&request);
+        assert_eq!(input[1]["type"], "function_call");
+        assert_eq!(input[1]["id"], "fc_1");
+        assert_eq!(input[1]["call_id"], "call_1");
+        assert_eq!(input[2]["type"], "function_call_output");
     }
 
     #[test]

@@ -7,10 +7,8 @@ use roder_api::tools::{
 use serde::Deserialize;
 use serde_json::json;
 
+use crate::paging::{DEFAULT_PAGE_LINES, MAX_PAGE_LINES, clamp_limit, page_lines, page_metadata};
 use crate::workspace::Workspace;
-
-const DEFAULT_READ_LIMIT: usize = 200;
-const MAX_READ_LIMIT: usize = 400;
 
 pub(crate) fn register(registry: &mut ToolRegistry, workspace: Workspace) -> anyhow::Result<()> {
     registry.register(Arc::new(ReadFileTool {
@@ -36,7 +34,13 @@ impl ToolExecutor for ReadFileTool {
                 "properties": {
                     "path": { "type": "string" },
                     "start_line": { "type": "integer", "minimum": 1 },
-                    "limit": { "type": "integer", "minimum": 1, "maximum": MAX_READ_LIMIT }
+                    "limit": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "maximum": MAX_PAGE_LINES,
+                        "default": DEFAULT_PAGE_LINES,
+                        "description": "Maximum number of lines to return. Use start_line from the response to continue reading."
+                    }
                 },
                 "required": ["path"],
                 "additionalProperties": false
@@ -53,22 +57,26 @@ impl ToolExecutor for ReadFileTool {
         let path = self.workspace.resolve_existing(&args.path)?;
         let text = std::fs::read_to_string(&path)?;
         let start_line = args.start_line.unwrap_or(1).max(1);
-        let limit = args
-            .limit
-            .unwrap_or(DEFAULT_READ_LIMIT)
-            .clamp(1, MAX_READ_LIMIT);
-        let body = text
+        let limit = clamp_limit(args.limit);
+        let lines = text
             .lines()
             .enumerate()
-            .skip(start_line - 1)
-            .take(limit)
             .map(|(index, line)| format!("{:>5}: {}", index + 1, line))
-            .collect::<Vec<_>>()
-            .join("\n");
+            .collect::<Vec<_>>();
+        let page = page_lines(&lines, start_line - 1, limit);
+        let next_start_line = page.next_offset.map(|offset| offset + 1);
         Ok(result(
             call,
-            body,
-            json!({ "path": self.workspace.display(&path), "start_line": start_line, "limit": limit }),
+            page.text,
+            json!({
+                "path": self.workspace.display(&path),
+                "start_line": start_line,
+                "limit": limit,
+                "shown": page.shown,
+                "total_lines": page.total,
+                "next_start_line": next_start_line,
+                "truncated": next_start_line.is_some(),
+            }),
             false,
         ))
     }
@@ -84,11 +92,25 @@ impl ToolExecutor for ListFilesTool {
     fn spec(&self) -> ToolSpec {
         ToolSpec {
             name: "list_files".to_string(),
-            description: "List direct children of a workspace directory.".to_string(),
+            description: "List direct children of a workspace directory with paginated output."
+                .to_string(),
             parameters: json!({
                 "type": "object",
                 "properties": {
-                    "path": { "type": "string", "default": "." }
+                    "path": { "type": "string", "default": "." },
+                    "offset": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "default": 0,
+                        "description": "Zero-based line offset for pagination."
+                    },
+                    "limit": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "maximum": MAX_PAGE_LINES,
+                        "default": DEFAULT_PAGE_LINES,
+                        "description": "Maximum number of entries to return."
+                    }
                 },
                 "additionalProperties": false
             }),
@@ -114,12 +136,11 @@ impl ToolExecutor for ListFilesTool {
             names.push(name);
         }
         names.sort();
-        Ok(result(
-            call,
-            names.join("\n"),
-            json!({ "path": self.workspace.display(&path), "entries": names }),
-            false,
-        ))
+        let offset = args.offset.unwrap_or_default();
+        let limit = clamp_limit(args.limit);
+        let page = page_lines(&names, offset, limit);
+        let data = page_metadata(self.workspace.display(&path), offset, limit, &page);
+        Ok(result(call, page.text, data, false))
     }
 }
 
@@ -133,6 +154,8 @@ struct ReadFileArgs {
 #[derive(Deserialize)]
 struct ListFilesArgs {
     path: Option<String>,
+    offset: Option<usize>,
+    limit: Option<usize>,
 }
 
 pub(crate) fn parse<T: for<'de> Deserialize<'de>>(call: &ToolCall) -> anyhow::Result<T> {

@@ -7,9 +7,8 @@ use serde::Deserialize;
 use serde_json::json;
 
 use crate::files::{parse, require_nonempty, result};
+use crate::paging::{DEFAULT_PAGE_LINES, MAX_PAGE_LINES, clamp_limit, page_lines, page_metadata};
 use crate::workspace::Workspace;
-
-const MAX_MATCHES: usize = 200;
 
 pub(crate) fn register(registry: &mut ToolRegistry, workspace: Workspace) -> anyhow::Result<()> {
     registry.register(Arc::new(GrepTool {
@@ -28,12 +27,26 @@ impl ToolExecutor for GrepTool {
     fn spec(&self) -> ToolSpec {
         ToolSpec {
             name: "grep".to_string(),
-            description: "Search workspace text files for a literal query.".to_string(),
+            description: "Search workspace text files for a literal query with paginated output."
+                .to_string(),
             parameters: json!({
                 "type": "object",
                 "properties": {
                     "query": { "type": "string" },
-                    "path": { "type": "string", "default": "." }
+                    "path": { "type": "string", "default": "." },
+                    "offset": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "default": 0,
+                        "description": "Zero-based match offset for pagination."
+                    },
+                    "limit": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "maximum": MAX_PAGE_LINES,
+                        "default": DEFAULT_PAGE_LINES,
+                        "description": "Maximum number of matching lines to return."
+                    }
                 },
                 "required": ["query"],
                 "additionalProperties": false
@@ -52,8 +65,11 @@ impl ToolExecutor for GrepTool {
             .workspace
             .resolve_existing(args.path.as_deref().unwrap_or("."))?;
         let mut matches = Vec::new();
+        let offset = args.offset.unwrap_or_default();
+        let limit = clamp_limit(args.limit);
+        let collect_until = offset.saturating_add(limit).saturating_add(1);
         visit_files(&start, &mut |path| {
-            if matches.len() >= MAX_MATCHES {
+            if matches.len() >= collect_until {
                 return Ok(());
             }
             let Ok(text) = std::fs::read_to_string(path) else {
@@ -67,19 +83,16 @@ impl ToolExecutor for GrepTool {
                         line_index + 1,
                         line
                     ));
-                    if matches.len() >= MAX_MATCHES {
+                    if matches.len() >= collect_until {
                         break;
                     }
                 }
             }
             Ok(())
         })?;
-        Ok(result(
-            call,
-            matches.join("\n"),
-            json!({ "matches": matches, "truncated": matches.len() >= MAX_MATCHES }),
-            false,
-        ))
+        let page = page_lines(&matches, offset, limit);
+        let data = page_metadata(self.workspace.display(&start), offset, limit, &page);
+        Ok(result(call, page.text, data, false))
     }
 }
 
@@ -93,11 +106,25 @@ impl ToolExecutor for GlobTool {
     fn spec(&self) -> ToolSpec {
         ToolSpec {
             name: "glob".to_string(),
-            description: "Find workspace files matching a glob pattern.".to_string(),
+            description: "Find workspace files matching a glob pattern with paginated output."
+                .to_string(),
             parameters: json!({
                 "type": "object",
                 "properties": {
-                    "pattern": { "type": "string" }
+                    "pattern": { "type": "string" },
+                    "offset": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "default": 0,
+                        "description": "Zero-based match offset for pagination."
+                    },
+                    "limit": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "maximum": MAX_PAGE_LINES,
+                        "default": DEFAULT_PAGE_LINES,
+                        "description": "Maximum number of file paths to return."
+                    }
                 },
                 "required": ["pattern"],
                 "additionalProperties": false
@@ -121,12 +148,11 @@ impl ToolExecutor for GlobTool {
             Ok(())
         })?;
         matches.sort();
-        Ok(result(
-            call,
-            matches.join("\n"),
-            json!({ "matches": matches }),
-            false,
-        ))
+        let offset = args.offset.unwrap_or_default();
+        let limit = clamp_limit(args.limit);
+        let page = page_lines(&matches, offset, limit);
+        let data = page_metadata(".".to_string(), offset, limit, &page);
+        Ok(result(call, page.text, data, false))
     }
 }
 
@@ -134,11 +160,15 @@ impl ToolExecutor for GlobTool {
 struct GrepArgs {
     query: String,
     path: Option<String>,
+    offset: Option<usize>,
+    limit: Option<usize>,
 }
 
 #[derive(Deserialize)]
 struct GlobArgs {
     pattern: String,
+    offset: Option<usize>,
+    limit: Option<usize>,
 }
 
 fn visit_files(

@@ -1,5 +1,6 @@
 mod edit;
 mod files;
+mod paging;
 mod patch;
 mod search;
 mod workspace;
@@ -213,6 +214,7 @@ mod tests {
         )
         .await;
         assert!(read.text.contains("2: NEEDLE"));
+        assert_eq!(read.data["next_start_line"], 3);
 
         let relative_read = run_tool(
             &registry,
@@ -221,6 +223,48 @@ mod tests {
         )
         .await;
         assert!(relative_read.text.contains("1: patched"));
+
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[tokio::test]
+    async fn builtin_coding_tools_paginate_line_outputs() {
+        let root = test_workspace("paging");
+        std::fs::create_dir_all(root.join("src")).unwrap();
+        std::fs::write(root.join("src/a.rs"), "needle a\n").unwrap();
+        std::fs::write(root.join("src/b.rs"), "needle b\n").unwrap();
+        let mut registry = ToolRegistry::default();
+        BuiltinCodingToolsContributor::new(root.clone())
+            .unwrap()
+            .contribute(&mut registry)
+            .unwrap();
+
+        let files = run_tool(
+            &registry,
+            "list_files",
+            json!({ "path": "src", "limit": 1 }),
+        )
+        .await;
+        assert_eq!(files.text.lines().next(), Some("a.rs"));
+        assert_eq!(files.data["next_offset"], 1);
+
+        let grep = run_tool(
+            &registry,
+            "grep",
+            json!({ "query": "needle", "path": "src", "limit": 1 }),
+        )
+        .await;
+        assert!(grep.text.contains("src/a.rs:1:needle a"));
+        assert_eq!(grep.data["next_offset"], 1);
+
+        let glob = run_tool(
+            &registry,
+            "glob",
+            json!({ "pattern": "src/*.rs", "offset": 1, "limit": 1 }),
+        )
+        .await;
+        assert_eq!(glob.text.lines().next(), Some("src/b.rs"));
+        assert_eq!(glob.data["offset"], 1);
 
         let _ = std::fs::remove_dir_all(root);
     }
