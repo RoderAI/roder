@@ -12,16 +12,14 @@ import (
 
 	"github.com/pandelisz/gode/internal/godex/imageinput"
 	"github.com/pandelisz/gode/internal/godex/provider"
-	godeskills "github.com/pandelisz/gode/internal/godex/skills"
 )
 
 const maxLocalFileInputBytes = 512 * 1024
 
 type builtTurnInput struct {
-	Prompt          string
-	InputItems      []provider.Item
-	SkillSelections []godeskills.InvocationSelection
-	ReplacePrompt   bool
+	Prompt        string
+	InputItems    []provider.Item
+	ReplacePrompt bool
 }
 
 func buildTurnInput(prompt string, input []json.RawMessage) (builtTurnInput, error) {
@@ -33,12 +31,10 @@ func buildTurnInput(prompt string, input []json.RawMessage) (builtTurnInput, err
 		parts = append(parts, prompt)
 	}
 	images := make([]provider.Image, 0)
-	selections := make([]godeskills.InvocationSelection, 0)
 	for _, raw := range input {
 		var item struct {
 			Type     string `json:"type"`
 			Text     string `json:"text"`
-			Name     string `json:"name"`
 			Path     string `json:"path"`
 			URL      string `json:"url"`
 			ImageURL string `json:"image_url"`
@@ -52,11 +48,6 @@ func buildTurnInput(prompt string, input []json.RawMessage) (builtTurnInput, err
 			if item.Text != "" {
 				parts = append(parts, item.Text)
 			}
-		case "skill":
-			if strings.TrimSpace(item.Path) == "" && strings.TrimSpace(item.Name) == "" {
-				return builtTurnInput{}, fmt.Errorf("skill input requires path or name")
-			}
-			selections = append(selections, godeskills.InvocationSelection{Name: item.Name, Path: item.Path})
 		case "image":
 			url := firstTurnInputNonEmpty(item.ImageURL, item.URL)
 			if url == "" {
@@ -94,7 +85,7 @@ func buildTurnInput(prompt string, input []json.RawMessage) (builtTurnInput, err
 	}
 	text := strings.Join(parts, "\n")
 	if len(images) == 0 {
-		return builtTurnInput{Prompt: text, SkillSelections: selections}, nil
+		return builtTurnInput{Prompt: text}, nil
 	}
 	return builtTurnInput{
 		Prompt: text,
@@ -104,8 +95,7 @@ func buildTurnInput(prompt string, input []json.RawMessage) (builtTurnInput, err
 			Text:   strings.TrimSpace(text),
 			Images: images,
 		}},
-		SkillSelections: selections,
-		ReplacePrompt:   true,
+		ReplacePrompt: true,
 	}, nil
 }
 

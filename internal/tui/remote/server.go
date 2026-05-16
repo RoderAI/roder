@@ -31,7 +31,6 @@ type State struct {
 	TokenPreview     string
 	QR               string
 	AuthHeaderHint   string
-	AuthHeader       string
 	SubprotocolHint  string
 	ConnectedClients int
 	StartedAt        time.Time
@@ -145,7 +144,6 @@ func (c *Controller) stateLocked() State {
 		TokenPreview:    c.auth.TokenPreview,
 		QR:              c.qr,
 		AuthHeaderHint:  "Authorization: Bearer <token>",
-		AuthHeader:      authHeader(c.token),
 		SubprotocolHint: "gode.remote.v1, bearer.<token>",
 		StartedAt:       c.started,
 		Error:           c.err,
@@ -154,11 +152,4 @@ func (c *Controller) stateLocked() State {
 		state.ConnectedClients = c.server.ConnectionCount()
 	}
 	return state
-}
-
-func authHeader(token string) string {
-	if token == "" {
-		return ""
-	}
-	return "Authorization: Bearer " + token
 }

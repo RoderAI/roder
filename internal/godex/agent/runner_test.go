@@ -456,38 +456,6 @@ func TestRunnerPrependsContextMessages(t *testing.T) {
 	}
 }
 
-func TestRunnerInjectsRoadmapContextOnlyWhenProvided(t *testing.T) {
-	capture := &captureProvider{finalText: "done"}
-	runner := NewRunner(Config{
-		Bus:      eventbus.New(eventbus.WithSubscriberBuffer(16)),
-		Provider: capture,
-	})
-	defer runner.bus.Close()
-
-	if _, err := runner.Run(context.Background(), RunRequest{Prompt: "hello"}); err != nil {
-		t.Fatalf("run without roadmap context: %v", err)
-	}
-	if len(capture.request.Messages) != 1 || capture.request.Messages[0].Content != "hello" {
-		t.Fatalf("normal messages = %#v", capture.request.Messages)
-	}
-
-	if _, err := runner.Run(context.Background(), RunRequest{
-		Prompt:         "continue",
-		RoadmapContext: "roadmap context",
-	}); err != nil {
-		t.Fatalf("run with roadmap context: %v", err)
-	}
-	if len(capture.request.Messages) != 2 {
-		t.Fatalf("roadmap messages = %#v", capture.request.Messages)
-	}
-	if capture.request.Messages[0].Role != provider.RoleSystem || capture.request.Messages[0].Content != "roadmap context" {
-		t.Fatalf("roadmap context message = %#v", capture.request.Messages[0])
-	}
-	if capture.request.Messages[1].Role != provider.RoleUser || capture.request.Messages[1].Content != "continue" {
-		t.Fatalf("user message = %#v", capture.request.Messages[1])
-	}
-}
-
 func TestRunnerInjectsInvokedSkillsAndCleansPrompt(t *testing.T) {
 	capture := &captureProvider{finalText: "done"}
 	runner := NewRunner(Config{
@@ -510,37 +478,6 @@ func TestRunnerInjectsInvokedSkillsAndCleansPrompt(t *testing.T) {
 		t.Fatalf("available skills message = %#v", capture.request.Messages[0])
 	}
 	if capture.request.Messages[1].Role != provider.RoleUser || !strings.Contains(capture.request.Messages[1].Content, `<name>go-tests</name>`) {
-		t.Fatalf("skill message = %#v", capture.request.Messages[1])
-	}
-	if capture.request.Messages[2].Role != provider.RoleUser || capture.request.Messages[2].Content != "please check this" {
-		t.Fatalf("user message = %#v", capture.request.Messages[2])
-	}
-}
-
-func TestRunnerInjectsStructuredSkillSelection(t *testing.T) {
-	capture := &captureProvider{finalText: "done"}
-	skillPath := "/skills/go-tests/SKILL.md"
-	runner := NewRunner(Config{
-		Bus:      eventbus.New(eventbus.WithSubscriberBuffer(16)),
-		Provider: capture,
-		Skills: []godeskills.Skill{{
-			Name: "go-tests",
-			Path: skillPath,
-			Body: "Run Go tests before reporting completion.",
-		}},
-	})
-	defer runner.bus.Close()
-
-	if _, err := runner.Run(context.Background(), RunRequest{
-		Prompt:          "please check this",
-		SkillSelections: []godeskills.InvocationSelection{{Path: skillPath}},
-	}); err != nil {
-		t.Fatalf("run: %v", err)
-	}
-	if len(capture.request.Messages) != 3 {
-		t.Fatalf("messages = %#v", capture.request.Messages)
-	}
-	if capture.request.Messages[1].Role != provider.RoleUser || !strings.Contains(capture.request.Messages[1].Content, `<path>`+skillPath+`</path>`) {
 		t.Fatalf("skill message = %#v", capture.request.Messages[1])
 	}
 	if capture.request.Messages[2].Role != provider.RoleUser || capture.request.Messages[2].Content != "please check this" {

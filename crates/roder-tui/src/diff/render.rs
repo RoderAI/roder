@@ -116,8 +116,6 @@ fn hunk_header(index: usize, hunk: &Hunk, selected: bool, theme: DiffTheme) -> L
             Style::default().fg(theme.muted),
         ),
         Span::styled(status, Style::default().fg(status_color)),
-        Span::styled("  [accept]", Style::default().fg(theme.added)),
-        Span::styled(" [reject]", Style::default().fg(theme.removed)),
     ])
 }
 

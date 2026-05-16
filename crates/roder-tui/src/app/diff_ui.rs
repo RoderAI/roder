@@ -2,7 +2,6 @@ use super::*;
 use crate::diff::DiffViewerState;
 use crate::diff::keys::{DiffKey, DiffKeyOutcome, apply_key};
 use crate::diff::render::diff_viewer_widget;
-use roder_api::interactive::{HoverCursor, InteractiveRegion, RegionKind, RegionRect};
 
 impl TuiApp {
     pub(super) fn open_diff_preview(&mut self, preview: roder_api::events::FileChangePreviewReady) {
@@ -17,10 +16,6 @@ impl TuiApp {
         let Some(diff_key) = diff_key_from_event(key) else {
             return;
         };
-        self.apply_diff_key(diff_key).await;
-    }
-
-    async fn apply_diff_key(&mut self, diff_key: DiffKey) {
         let outcome = {
             let Some(state) = self.diff_viewer.as_mut() else {
                 return;
@@ -68,22 +63,6 @@ impl TuiApp {
         }
     }
 
-    pub(super) async fn handle_diff_region_click(&mut self, region_id: &str, hunk_idx: usize) {
-        let Some(state) = self.diff_viewer.as_mut() else {
-            return;
-        };
-        if state.hunk_count() == 0 {
-            return;
-        }
-        state.hunk_index = hunk_idx.min(state.hunk_count() - 1);
-        let key = if region_id.ends_with(":reject") {
-            DiffKey::RejectHunk
-        } else {
-            DiffKey::AcceptHunk
-        };
-        self.apply_diff_key(key).await;
-    }
-
     pub(super) async fn resolve_diff_approval(&mut self, approval_id: String, approved: bool) {
         let params = SessionResolveApprovalParams {
             approval_id: approval_id.clone(),
@@ -109,91 +88,9 @@ impl TuiApp {
         let Some(state) = self.diff_viewer.as_ref() else {
             return;
         };
-        let diff_area = diff_popup_area(area);
+        let diff_area = centered_rect(area, area.width.min(100), area.height.min(24));
         f.render_widget(Clear, diff_area);
         f.render_widget(diff_viewer_widget(state, self.theme.diff()), diff_area);
-    }
-
-    pub(super) fn diff_hunk_regions(&self, area: Rect) -> Vec<InteractiveRegion> {
-        let Some(state) = self.diff_viewer.as_ref() else {
-            return Vec::new();
-        };
-        diff_hunk_regions_for_state(state, diff_popup_area(area))
-    }
-}
-
-fn diff_popup_area(area: Rect) -> Rect {
-    centered_rect(area, area.width.min(100), area.height.min(24))
-}
-
-fn diff_hunk_regions_for_state(state: &DiffViewerState, diff_area: Rect) -> Vec<InteractiveRegion> {
-    let Some(file) = state.current_file() else {
-        return Vec::new();
-    };
-    let inner = Rect {
-        x: diff_area.x.saturating_add(1),
-        y: diff_area.y.saturating_add(1),
-        width: diff_area.width.saturating_sub(2),
-        height: diff_area.height.saturating_sub(2),
-    };
-    let mut row = 2usize;
-    let mut regions = Vec::new();
-    for (hunk_idx, hunk) in file.hunks.iter().enumerate() {
-        if row >= usize::from(inner.height) {
-            break;
-        }
-        let y = inner.y.saturating_add(row as u16);
-        let reject_width = 10.min(inner.width);
-        let accept_width = 10.min(inner.width.saturating_sub(reject_width));
-        let reject_x = inner
-            .x
-            .saturating_add(inner.width.saturating_sub(reject_width));
-        let accept_x = reject_x.saturating_sub(accept_width);
-        regions.push(diff_hunk_region(
-            state,
-            hunk_idx,
-            "accept",
-            RegionRect {
-                x: accept_x,
-                y,
-                width: accept_width,
-                height: 1,
-            },
-        ));
-        regions.push(diff_hunk_region(
-            state,
-            hunk_idx,
-            "reject",
-            RegionRect {
-                x: reject_x,
-                y,
-                width: reject_width,
-                height: 1,
-            },
-        ));
-        row = row.saturating_add(1 + hunk.lines.len());
-    }
-    regions
-}
-
-fn diff_hunk_region(
-    state: &DiffViewerState,
-    hunk_idx: usize,
-    action: &str,
-    rect: RegionRect,
-) -> InteractiveRegion {
-    let file = state.current_file().expect("diff hunk region needs file");
-    InteractiveRegion {
-        id: format!("diff:{}:{hunk_idx}:{action}", state.pending.call_id),
-        rect,
-        z: 20,
-        kind: RegionKind::DiffHunk {
-            call_id: state.pending.call_id.clone(),
-            file_path: file.path.clone(),
-            hunk_idx,
-        },
-        hover_cursor: HoverCursor::Pointer,
-        keyboard_binding: None,
     }
 }
 
@@ -238,40 +135,5 @@ mod tests {
             )),
             Some(DiffKey::Close)
         );
-    }
-
-    #[test]
-    fn diff_hunk_regions_cover_accept_and_reject_controls() {
-        let state = diff_region_state();
-
-        let regions = diff_hunk_regions_for_state(&state, Rect::new(4, 2, 80, 12));
-
-        assert_eq!(regions.len(), 2);
-        assert_eq!(regions[0].id, "diff:call-a:0:accept");
-        assert_eq!(regions[1].id, "diff:call-a:0:reject");
-        assert!(matches!(
-            regions[0].kind,
-            RegionKind::DiffHunk { hunk_idx: 0, .. }
-        ));
-        assert_eq!(regions[0].rect.y, 5);
-        assert_eq!(regions[1].rect.x, 73);
-    }
-
-    fn diff_region_state() -> DiffViewerState {
-        use crate::diff::compute::compute_diff;
-        use crate::diff::{FileDiff, PendingDiff};
-
-        DiffViewerState::new(PendingDiff {
-            call_id: "call-a".to_string(),
-            tool: "edit".to_string(),
-            files: vec![FileDiff {
-                path: "src/lib.rs".into(),
-                change_type: "modify".to_string(),
-                before: Some("one\ntwo\nthree\n".to_string()),
-                after: "one\nTWO\nthree\nfour\n".to_string(),
-                supports_partial: true,
-                hunks: compute_diff(Some("one\ntwo\nthree\n"), "one\nTWO\nthree\nfour\n"),
-            }],
-        })
     }
 }

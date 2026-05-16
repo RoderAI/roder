@@ -8,7 +8,7 @@ import (
 	godeskills "github.com/pandelisz/gode/internal/godex/skills"
 )
 
-func (r *Runner) skillContextMessages(ctx context.Context, prompt string, selections []godeskills.InvocationSelection) ([]provider.Message, string, error) {
+func (r *Runner) skillContextMessages(ctx context.Context, prompt string) ([]provider.Message, string, error) {
 	skillsConfig, err := r.activeSkillSettings(ctx)
 	if err != nil {
 		return nil, "", err
@@ -27,7 +27,7 @@ func (r *Runner) skillContextMessages(ctx context.Context, prompt string, select
 		messages = append(messages, provider.Message{Role: provider.RoleSystem, Content: "Skill warning: " + available.Report.Warning})
 	}
 
-	invocation := godeskills.ApplyInvocationsWithSelections(prompt, skillCatalog, skillsConfig, selections)
+	invocation := godeskills.ApplyInvocationsWithConfig(prompt, skillCatalog, skillsConfig)
 	invocation.Diagnostics = append(invocation.Diagnostics, godeskills.DisabledMentionDiagnostics(prompt, skillCatalog, skillsConfig)...)
 	messages = append(messages, invocation.Messages...)
 	messages = append(messages, skillDiagnosticMessages(invocation.Diagnostics)...)

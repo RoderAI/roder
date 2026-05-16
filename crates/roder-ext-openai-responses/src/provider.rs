@@ -7,6 +7,9 @@ use roder_api::inference::{
     ProviderAuthType, ReasoningDelta, TokenUsage, ToolCallCompleted,
 };
 use serde_json::{Value, json};
+use std::collections::{HashMap, HashSet};
+
+const FINAL_ANSWER_PHASE: &str = "final_answer";
 
 pub struct OpenAiResponsesEngine {
     api_key: String,
@@ -212,7 +215,13 @@ fn stream_responses_sse(response: reqwest::Response) -> InferenceEventStream {
 #[derive(Default)]
 struct ResponsesStreamState {
     terminal: bool,
-    streamed_text: bool,
+    streamed_final_text: bool,
+    current_message_phase: String,
+    message_phases: HashMap<String, String>,
+    tool_arguments: HashMap<String, String>,
+    tool_names: HashMap<String, String>,
+    tool_call_ids: HashMap<String, String>,
+    emitted_tool_call_ids: HashSet<String>,
 }
 
 #[derive(Debug, PartialEq)]
@@ -273,18 +282,24 @@ fn events_from_sse_event(
         .unwrap_or_default();
 
     match kind {
-        "response.output_text.delta" => event
-            .data
-            .get("delta")
-            .and_then(|value| value.as_str())
-            .map(|text| {
-                state.streamed_text = true;
-                InferenceEvent::MessageDelta(MessageDelta {
-                    text: text.to_string(),
+        "response.output_text.delta" => {
+            let phase = output_text_phase(&event.data, state);
+            if !is_final_answer_phase(&phase) {
+                return Vec::new();
+            }
+            event
+                .data
+                .get("delta")
+                .and_then(|value| value.as_str())
+                .map(|text| {
+                    state.streamed_final_text = true;
+                    InferenceEvent::MessageDelta(MessageDelta {
+                        text: text.to_string(),
+                    })
                 })
-            })
-            .into_iter()
-            .collect(),
+                .into_iter()
+                .collect()
+        }
         "response.reasoning_summary_text.delta" | "response.reasoning_text.delta" => event
             .data
             .get("delta")
@@ -296,23 +311,54 @@ fn events_from_sse_event(
             })
             .into_iter()
             .collect(),
-        "response.output_item.done" => event
-            .data
-            .get("item")
+        "response.output_item.added" => {
+            if let Some(item) = event.data.get("item") {
+                record_output_item(item, state);
+            }
+            Vec::new()
+        }
+        "response.function_call_arguments.delta" => {
+            if let Some(item_id) = event.data.get("item_id").and_then(Value::as_str)
+                && let Some(delta) = event.data.get("delta").and_then(Value::as_str)
+            {
+                state
+                    .tool_arguments
+                    .entry(item_id.to_string())
+                    .or_default()
+                    .push_str(delta);
+            }
+            Vec::new()
+        }
+        "response.function_call_arguments.done" => finalized_function_call(&event.data, state)
+            .and_then(|call| emit_tool_call_once(call, state))
             .into_iter()
-            .flat_map(extract_tool_calls_from_item)
-            .map(InferenceEvent::ToolCallCompleted)
             .collect(),
+        "response.output_item.done" => {
+            let calls = event
+                .data
+                .get("item")
+                .map(|item| {
+                    record_output_item(item, state);
+                    extract_tool_calls_from_item(item)
+                })
+                .unwrap_or_default();
+            calls
+                .into_iter()
+                .filter_map(|call| emit_tool_call_once(call, state))
+                .collect()
+        }
         "response.completed" => {
             state.terminal = true;
             let response = event.data.get("response").unwrap_or(&event.data);
             let mut events = Vec::new();
             let text = extract_response_text(response);
-            if !state.streamed_text && !text.is_empty() {
+            if !state.streamed_final_text && !text.is_empty() {
                 events.push(InferenceEvent::MessageDelta(MessageDelta { text }));
             }
             for call in extract_tool_calls(response) {
-                events.push(InferenceEvent::ToolCallCompleted(call));
+                if let Some(call) = emit_tool_call_once(call, state) {
+                    events.push(call);
+                }
             }
             if let Some(usage) = extract_usage(response) {
                 events.push(InferenceEvent::Usage(usage));
@@ -338,6 +384,104 @@ fn events_from_sse_event(
         }
         _ => Vec::new(),
     }
+}
+
+fn output_text_phase(data: &Value, state: &ResponsesStreamState) -> String {
+    data.get("item_id")
+        .and_then(Value::as_str)
+        .and_then(|item_id| state.message_phases.get(item_id))
+        .cloned()
+        .unwrap_or_else(|| state.current_message_phase.clone())
+}
+
+fn is_final_answer_phase(phase: &str) -> bool {
+    phase.is_empty() || phase == FINAL_ANSWER_PHASE
+}
+
+fn record_output_item(item: &Value, state: &mut ResponsesStreamState) {
+    match item.get("type").and_then(Value::as_str) {
+        Some("message") => {
+            let phase = item
+                .get("phase")
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .to_string();
+            state.current_message_phase = phase.clone();
+            if let Some(id) = item.get("id").and_then(Value::as_str) {
+                state.message_phases.insert(id.to_string(), phase);
+            }
+        }
+        Some("function_call") => {
+            let Some(id) = item.get("id").and_then(Value::as_str) else {
+                return;
+            };
+            if let Some(name) = item.get("name").and_then(Value::as_str) {
+                state.tool_names.insert(id.to_string(), name.to_string());
+            }
+            if let Some(call_id) = item
+                .get("call_id")
+                .or_else(|| item.get("id"))
+                .and_then(Value::as_str)
+            {
+                state
+                    .tool_call_ids
+                    .insert(id.to_string(), call_id.to_string());
+            }
+            if let Some(arguments) = item.get("arguments").and_then(Value::as_str) {
+                state
+                    .tool_arguments
+                    .insert(id.to_string(), arguments.to_string());
+            }
+        }
+        _ => {}
+    }
+}
+
+fn finalized_function_call(
+    data: &Value,
+    state: &mut ResponsesStreamState,
+) -> Option<ToolCallCompleted> {
+    let item_id = data.get("item_id").and_then(Value::as_str)?;
+    let arguments = data
+        .get("arguments")
+        .and_then(Value::as_str)
+        .map(str::to_string)
+        .unwrap_or_else(|| {
+            state
+                .tool_arguments
+                .get(item_id)
+                .cloned()
+                .unwrap_or_else(|| "{}".to_string())
+        });
+    state
+        .tool_arguments
+        .insert(item_id.to_string(), arguments.clone());
+    let name = data
+        .get("name")
+        .and_then(Value::as_str)
+        .map(str::to_string)
+        .or_else(|| state.tool_names.get(item_id).cloned())?;
+    let id = state
+        .tool_call_ids
+        .get(item_id)
+        .cloned()
+        .unwrap_or_else(|| item_id.to_string());
+
+    Some(ToolCallCompleted {
+        id,
+        name,
+        arguments,
+    })
+}
+
+fn emit_tool_call_once(
+    call: ToolCallCompleted,
+    state: &mut ResponsesStreamState,
+) -> Option<InferenceEvent> {
+    state
+        .emitted_tool_call_ids
+        .insert(call.id.clone())
+        .then_some(InferenceEvent::ToolCallCompleted(call))
 }
 
 fn extract_tool_calls_from_item(item: &Value) -> Vec<ToolCallCompleted> {
@@ -704,6 +848,109 @@ mod tests {
             events.first(),
             Some(InferenceEvent::MessageDelta(MessageDelta { text })) if text == "fallback"
         ));
+    }
+
+    #[test]
+    fn ignores_non_final_phase_text_deltas() {
+        let mut state = ResponsesStreamState::default();
+        let added = SseEvent {
+            event: Some("response.output_item.added".to_string()),
+            data: json!({
+                "type": "response.output_item.added",
+                "item": {
+                    "id": "msg_1",
+                    "type": "message",
+                    "role": "assistant",
+                    "phase": "commentary"
+                }
+            }),
+        };
+        assert!(events_from_sse_event(&added, &mut state).is_empty());
+
+        let commentary_delta = SseEvent {
+            event: Some("response.output_text.delta".to_string()),
+            data: json!({
+                "type": "response.output_text.delta",
+                "item_id": "msg_1",
+                "delta": "I will inspect first."
+            }),
+        };
+        assert!(events_from_sse_event(&commentary_delta, &mut state).is_empty());
+
+        let final_added = SseEvent {
+            event: Some("response.output_item.added".to_string()),
+            data: json!({
+                "type": "response.output_item.added",
+                "item": {
+                    "id": "msg_2",
+                    "type": "message",
+                    "role": "assistant",
+                    "phase": "final_answer"
+                }
+            }),
+        };
+        assert!(events_from_sse_event(&final_added, &mut state).is_empty());
+
+        let final_delta = SseEvent {
+            event: Some("response.output_text.delta".to_string()),
+            data: json!({
+                "type": "response.output_text.delta",
+                "item_id": "msg_2",
+                "delta": "Done."
+            }),
+        };
+        assert_eq!(
+            events_from_sse_event(&final_delta, &mut state),
+            vec![InferenceEvent::MessageDelta(MessageDelta {
+                text: "Done.".to_string(),
+            })]
+        );
+    }
+
+    #[test]
+    fn emits_tool_call_from_function_arguments_done() {
+        let mut state = ResponsesStreamState::default();
+        let added = SseEvent {
+            event: Some("response.output_item.added".to_string()),
+            data: json!({
+                "type": "response.output_item.added",
+                "item": {
+                    "id": "fc_1",
+                    "type": "function_call",
+                    "call_id": "call_1",
+                    "name": "echo"
+                }
+            }),
+        };
+        assert!(events_from_sse_event(&added, &mut state).is_empty());
+
+        let delta = SseEvent {
+            event: Some("response.function_call_arguments.delta".to_string()),
+            data: json!({
+                "type": "response.function_call_arguments.delta",
+                "item_id": "fc_1",
+                "delta": "{\"text\":"
+            }),
+        };
+        assert!(events_from_sse_event(&delta, &mut state).is_empty());
+
+        let done = SseEvent {
+            event: Some("response.function_call_arguments.done".to_string()),
+            data: json!({
+                "type": "response.function_call_arguments.done",
+                "item_id": "fc_1",
+                "name": "echo",
+                "arguments": "{\"text\":\"hello\"}"
+            }),
+        };
+        assert_eq!(
+            events_from_sse_event(&done, &mut state),
+            vec![InferenceEvent::ToolCallCompleted(ToolCallCompleted {
+                id: "call_1".to_string(),
+                name: "echo".to_string(),
+                arguments: "{\"text\":\"hello\"}".to_string(),
+            })]
+        );
     }
 
     #[test]

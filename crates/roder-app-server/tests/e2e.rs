@@ -1,11 +1,10 @@
 use roder_api::catalog::PROVIDER_MOCK;
 use roder_api::extension::{ExtensionRegistryBuilder, InferenceEngineId};
-use roder_api::extension::{ExtensionStateKey, ExtensionStateRecord, ExtensionStoreScope};
 use roder_api::inference::*;
 use roder_api::policy_mode::PolicyMode;
 use roder_api::subagents::{SubagentDefinition, SubagentPermissionMode};
 use roder_app_server::{AppServer, LocalAppClient};
-use roder_core::{PendingPlanExit, Runtime, RuntimeConfig, fake_provider::FakeInferenceEngine};
+use roder_core::{PendingPlanExit, Runtime, fake_provider::FakeInferenceEngine};
 use roder_ext_subagents::{
     InProcessDispatcher, InProcessDispatcherConfig, InferenceEngineRegistry, SubagentsExtension,
 };
@@ -14,16 +13,13 @@ use roder_extension_host::{
     build_default_registry,
 };
 use roder_protocol::{
-    AgentsListResult, CommandsExpandParams, CommandsExpandResult, CommandsListResult,
-    CreateSessionResult, ExtensionStateGetParams, ExtensionStateGetResult, ExtensionStateSetParams,
-    ExtensionStateSetResult, ExtensionsListResult, JsonRpcRequest, ProviderSelectParams,
-    ProviderSelectResult, ProvidersListResult, SessionExitPlanParams, SessionExitPlanResult,
-    SessionGetResult, SessionResolveApprovalParams, SessionResolveApprovalResult,
-    SessionSetModeParams, SessionSetModeResult, SessionsListResult, StartTurnParams,
-    StartTurnResult, SystemStatusResult, TasksGetParams, TasksGetResult, TasksSubmitParams,
-    TasksSubmitResult, ToolsListResult, TranscriptOpenFileParams, TranscriptOpenFileResult,
+    AgentsListResult, CreateSessionResult, ExtensionsListResult, JsonRpcRequest,
+    ProviderSelectParams, ProviderSelectResult, ProvidersListResult, SessionExitPlanParams,
+    SessionExitPlanResult, SessionGetResult, SessionSetModeParams, SessionSetModeResult,
+    SessionsListResult, StartTurnParams, StartTurnResult, SystemStatusResult, ToolsListResult,
 };
-use std::{path::PathBuf, sync::Arc, time::Duration};
+use std::sync::Arc;
+use std::time::Duration;
 use time::OffsetDateTime;
 use tokio::sync::Mutex;
 
@@ -104,73 +100,6 @@ impl InferenceEngine for TaskCallingEngine {
             Ok(Box::pin(futures::stream::iter(vec![
                 Ok(InferenceEvent::MessageDelta(MessageDelta {
                     text: "parent final".to_string(),
-                })),
-                Ok(InferenceEvent::Completed(CompletionMetadata {
-                    stop_reason: Some("stop".to_string()),
-                    provider_response_id: None,
-                })),
-            ])))
-        }
-    }
-}
-
-struct MultiEditApprovalEngine {
-    requests: Mutex<usize>,
-}
-
-#[async_trait::async_trait]
-impl InferenceEngine for MultiEditApprovalEngine {
-    fn id(&self) -> InferenceEngineId {
-        PROVIDER_MOCK.to_string()
-    }
-
-    fn capabilities(&self) -> InferenceCapabilities {
-        InferenceCapabilities::coding_agent_default()
-    }
-
-    async fn list_models(
-        &self,
-        _ctx: InferenceProviderContext<'_>,
-    ) -> anyhow::Result<Vec<ModelDescriptor>> {
-        Ok(Vec::new())
-    }
-
-    async fn stream_turn(
-        &self,
-        _ctx: InferenceTurnContext<'_>,
-        _request: AgentInferenceRequest,
-    ) -> anyhow::Result<InferenceEventStream> {
-        let mut requests = self.requests.lock().await;
-        *requests += 1;
-        if *requests == 1 {
-            Ok(Box::pin(futures::stream::iter(vec![
-                Ok(InferenceEvent::ToolCallCompleted(ToolCallCompleted {
-                    id: "multi-edit-approval-1".to_string(),
-                    name: "multi_edit".to_string(),
-                    arguments: serde_json::json!({
-                        "path": "src/lib.rs",
-                        "edits": [
-                            {
-                                "old_string": "old\n",
-                                "new_string": "new\n"
-                            },
-                            {
-                                "old_string": "middle\n",
-                                "new_string": "changed\n"
-                            }
-                        ]
-                    })
-                    .to_string(),
-                })),
-                Ok(InferenceEvent::Completed(CompletionMetadata {
-                    stop_reason: Some("tool_calls".to_string()),
-                    provider_response_id: None,
-                })),
-            ])))
-        } else {
-            Ok(Box::pin(futures::stream::iter(vec![
-                Ok(InferenceEvent::MessageDelta(MessageDelta {
-                    text: "done".to_string(),
                 })),
                 Ok(InferenceEvent::Completed(CompletionMetadata {
                     stop_reason: Some("stop".to_string()),
@@ -302,76 +231,115 @@ async fn test_app_server_e2e() {
 }
 
 #[tokio::test]
-async fn tasks_process_submit_runs_end_to_end_without_tui() {
-    let workspace = temp_workspace("tasks-process");
+async fn legacy_desktop_protocol_supports_threads_models_and_events() {
+    let session_dir = std::env::temp_dir().join(format!(
+        "roder-app-server-legacy-desktop-{}",
+        uuid::Uuid::new_v4()
+    ));
     let registry = build_default_registry(DefaultRegistryConfig {
-        workspace: Some(workspace.clone()),
+        session_dir: Some(session_dir.clone()),
         ..DefaultRegistryConfig::default()
     })
     .unwrap();
-    let runtime = Arc::new(
-        Runtime::new(
-            registry,
-            RuntimeConfig {
-                workspace: Some(workspace.display().to_string()),
-                ..RuntimeConfig::default()
-            },
-        )
-        .unwrap(),
-    );
+    let runtime = Arc::new(Runtime::new(registry, Default::default()).unwrap());
     let server = Arc::new(AppServer::new(runtime));
-    let client = LocalAppClient::new(server);
+    let client = LocalAppClient::new(Arc::clone(&server));
     let mut events = client.subscribe_events();
 
-    let submitted: TasksSubmitResult = request(
+    let initialized: serde_json::Value = request(&client, "initialize", None).await;
+    assert!(
+        initialized["capabilities"]["methods"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|method| method == "thread/start")
+    );
+
+    let models: serde_json::Value =
+        request(&client, "model/list", Some(serde_json::json!({}))).await;
+    assert!(
+        models["models"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|model| model["id"] == "mock" && model["modelProvider"] == "mock")
+    );
+
+    let started: serde_json::Value = request(
         &client,
-        "tasks/submit",
-        Some(
-            serde_json::to_value(TasksSubmitParams {
-                executor_id: "process".to_string(),
-                input: serde_json::json!({
-                    "command": "sh",
-                    "args": ["-c", "printf task-ok"],
-                    "cwd": "."
-                }),
-                thread_id: None,
-                turn_id: None,
-            })
-            .unwrap(),
-        ),
+        "thread/start",
+        Some(serde_json::json!({
+            "cwd": "/tmp/roder-desktop-workspace",
+            "model": "mock",
+            "modelProvider": "mock",
+        })),
     )
     .await;
+    let thread_id = started["thread"]["id"].as_str().unwrap().to_string();
+    assert_eq!(started["thread"]["cwd"], "/tmp/roder-desktop-workspace");
 
-    loop {
+    let turn: serde_json::Value = request(
+        &client,
+        "turn/start",
+        Some(serde_json::json!({
+            "threadId": thread_id,
+            "prompt": "Hello",
+        })),
+    )
+    .await;
+    assert!(turn["turnId"].as_str().is_some_and(|id| !id.is_empty()));
+
+    let mut legacy_methods = Vec::new();
+    for _ in 0..20 {
         let envelope = tokio::time::timeout(Duration::from_secs(2), events.recv())
             .await
             .unwrap()
             .unwrap();
-        if let roder_api::events::RoderEvent::TaskCompleted(done) = envelope.event
-            && done.task_id == submitted.task.task_id
+        for notification in server.legacy_notifications_for_event(envelope).await {
+            if let Some(method) = notification["method"].as_str() {
+                legacy_methods.push(method.to_string());
+            }
+        }
+        if legacy_methods
+            .iter()
+            .any(|method| method == "turn/completed")
         {
-            assert_eq!(done.exit_code, Some(0));
             break;
         }
     }
+    assert!(legacy_methods.iter().any(|method| method == "turn/started"));
+    assert!(
+        legacy_methods
+            .iter()
+            .any(|method| method == "item/agentMessage/delta")
+    );
+    assert!(
+        legacy_methods
+            .iter()
+            .any(|method| method == "turn/completed")
+    );
 
-    let result: TasksGetResult = request(
+    let read: serde_json::Value = request(
         &client,
-        "tasks/get",
-        Some(
-            serde_json::to_value(TasksGetParams {
-                task_id: submitted.task.task_id,
-            })
-            .unwrap(),
-        ),
+        "thread/read",
+        Some(serde_json::json!({
+            "threadId": started["thread"]["id"],
+            "includeTurns": true,
+        })),
     )
     .await;
+    assert_eq!(read["thread"]["id"], started["thread"]["id"]);
     assert!(
-        result
-            .logs
+        read["thread"]["turns"]
+            .as_array()
+            .unwrap()
             .iter()
-            .any(|entry| entry.chunk.contains("task-ok"))
+            .any(|turn| turn["items"]
+                .as_array()
+                .is_some_and(|items| items.iter().any(|item| item["type"] == "agentMessage")))
     );
+
+    let _ = tokio::fs::remove_dir_all(session_dir).await;
 }
 
 #[tokio::test]
@@ -410,84 +378,6 @@ async fn tools_list_discovers_configured_web_search_without_secret_material() {
 }
 
 #[tokio::test]
-async fn commands_list_and_expand_use_workspace_registry_without_leaking_include_body() {
-    let workspace = temp_workspace("commands_list_and_expand");
-    std::fs::create_dir_all(workspace.join(".roder").join("commands")).unwrap();
-    std::fs::write(workspace.join("notes.txt"), "abcdef".repeat(12_000)).unwrap();
-    std::fs::write(
-        workspace.join(".roder").join("commands").join("review.md"),
-        r#"---
-description: Review the selected area.
-argument-hint: "[area]"
-include:
-  files:
-    - id: notes
-      path: notes.txt
----
-Review {{arguments|default("the workspace")}}.
-
-Notes: {{include.files.notes}}
-"#,
-    )
-    .unwrap();
-
-    let mut builder = ExtensionRegistryBuilder::new();
-    builder.inference_engine(Arc::new(FakeInferenceEngine));
-    let runtime = Arc::new(
-        Runtime::new(
-            builder.build().unwrap(),
-            RuntimeConfig {
-                workspace: Some(workspace.display().to_string()),
-                ..RuntimeConfig::default()
-            },
-        )
-        .unwrap(),
-    );
-    let client = LocalAppClient::new(Arc::new(AppServer::new(runtime)));
-
-    let listed: CommandsListResult = request(&client, "commands/list", None).await;
-    let review = listed
-        .commands
-        .iter()
-        .find(|command| command.name == "review")
-        .expect("missing workspace command");
-    assert_eq!(
-        review.description.as_deref(),
-        Some("Review the selected area.")
-    );
-    assert_eq!(review.argument_hint.as_deref(), Some("[area]"));
-    assert_eq!(review.source, "workspace");
-    let serialized_list = serde_json::to_string(&listed).unwrap();
-    assert!(!serialized_list.contains("abcdefabcdef"));
-
-    let expanded: CommandsExpandResult = request(
-        &client,
-        "commands/expand",
-        Some(
-            serde_json::to_value(CommandsExpandParams {
-                name: "review".to_string(),
-                arguments: Some("api".to_string()),
-            })
-            .unwrap(),
-        ),
-    )
-    .await;
-    assert_eq!(expanded.name, "review");
-    assert!(expanded.message.contains("Review api."));
-    assert!(
-        expanded
-            .message
-            .contains("[context:command.review.files.notes]")
-    );
-    assert_eq!(expanded.context_blocks.len(), 1);
-    assert_eq!(expanded.context_blocks[0].text.len(), 65_536);
-    assert_eq!(
-        expanded.context_blocks[0].metadata["truncated"].as_bool(),
-        Some(true)
-    );
-}
-
-#[tokio::test]
 async fn tools_list_exposes_default_coding_tools() {
     let registry = build_default_registry(DefaultRegistryConfig::default()).unwrap();
     let runtime = Arc::new(Runtime::new(registry, Default::default()).unwrap());
@@ -514,96 +404,6 @@ async fn tools_list_exposes_default_coding_tools() {
             "tools/list should expose {expected}: {names:?}"
         );
     }
-}
-
-#[tokio::test]
-async fn transcript_open_file_emits_app_server_event() {
-    let runtime = Arc::new(Runtime::fake().unwrap());
-    let server = Arc::new(AppServer::new(runtime));
-    let client = LocalAppClient::new(server);
-    let mut events = client.subscribe_events();
-
-    let opened: TranscriptOpenFileResult = request(
-        &client,
-        "transcript/open_file",
-        Some(
-            serde_json::to_value(TranscriptOpenFileParams {
-                thread_id: "thread-open-file".to_string(),
-                path: "crates/roder-tui/src/app.rs".to_string(),
-                line: Some(42),
-            })
-            .unwrap(),
-        ),
-    )
-    .await;
-    assert!(opened.requested);
-
-    let envelope = tokio::time::timeout(Duration::from_secs(2), events.recv())
-        .await
-        .unwrap()
-        .unwrap();
-    assert_eq!(envelope.kind, "transcript.open_file_requested");
-    assert_eq!(envelope.source, roder_api::events::EventSource::AppServer);
-    assert_eq!(envelope.thread_id.as_deref(), Some("thread-open-file"));
-    assert_eq!(envelope.turn_id, None);
-    match envelope.event {
-        roder_api::events::RoderEvent::TranscriptOpenFileRequested(event) => {
-            assert_eq!(event.thread_id, "thread-open-file");
-            assert_eq!(event.path, "crates/roder-tui/src/app.rs");
-            assert_eq!(event.line, Some(42));
-        }
-        other => panic!("unexpected event: {other:?}"),
-    }
-}
-
-#[tokio::test]
-async fn extension_state_round_trips_through_app_server_session_store() {
-    let session_dir = temp_workspace("extension-state");
-    let mut builder = ExtensionRegistryBuilder::new();
-    builder.inference_engine(Arc::new(FakeInferenceEngine));
-    builder.session_store_factory(Arc::new(
-        roder_ext_jsonl_session::store::JsonlSessionStoreFactory {
-            base_path: session_dir.clone(),
-        },
-    ));
-    let runtime = Arc::new(Runtime::new(builder.build().unwrap(), Default::default()).unwrap());
-    let client = LocalAppClient::new(Arc::new(AppServer::new(runtime)));
-    let key = ExtensionStateKey {
-        extension_id: "roder-tui".to_string(),
-        scope: ExtensionStoreScope::Thread {
-            thread_id: "thread-fold".to_string(),
-        },
-        key: "transcript_fold".to_string(),
-    };
-    let record = ExtensionStateRecord {
-        key: key.clone(),
-        schema_version: 1,
-        value: serde_json::json!({"collapsed_tool_calls": ["call-1"]}),
-        updated_at: OffsetDateTime::UNIX_EPOCH,
-    };
-
-    let saved: ExtensionStateSetResult = request(
-        &client,
-        "extension_state/set",
-        Some(
-            serde_json::to_value(ExtensionStateSetParams {
-                record: record.clone(),
-            })
-            .unwrap(),
-        ),
-    )
-    .await;
-    assert!(saved.saved);
-
-    let loaded: ExtensionStateGetResult = request(
-        &client,
-        "extension_state/get",
-        Some(serde_json::to_value(ExtensionStateGetParams { key }).unwrap()),
-    )
-    .await;
-    assert_eq!(loaded.record, Some(record));
-
-    let _ = std::fs::remove_dir_all(session_dir);
 }
 
 #[tokio::test]
@@ -762,130 +562,6 @@ async fn session_exit_plan_timeout_rejects_late_approval() {
         }
     }
     assert!(saw_timeout_rejection);
-}
-
-#[tokio::test]
-async fn tui_integration_multi_edit_approval_pauses_tool_until_resolved() {
-    let workspace = temp_workspace("file-approval");
-    let file_path = workspace.join("src").join("lib.rs");
-    std::fs::create_dir_all(file_path.parent().unwrap()).unwrap();
-    std::fs::write(&file_path, "old\nmiddle\n").unwrap();
-    let mut builder = ExtensionRegistryBuilder::new();
-    builder.inference_engine(Arc::new(MultiEditApprovalEngine {
-        requests: Mutex::new(0),
-    }));
-    builder.tool_contributor(roder_tools::builtin_coding_tools_contributor(&workspace).unwrap());
-    let runtime = Arc::new(
-        Runtime::new(
-            builder.build().unwrap(),
-            RuntimeConfig {
-                workspace: Some(workspace.to_string_lossy().into_owned()),
-                policy_mode: PolicyMode::Default,
-                ..RuntimeConfig::default()
-            },
-        )
-        .unwrap(),
-    );
-    let server = Arc::new(AppServer::new(runtime));
-    let client = LocalAppClient::new(server);
-    let mut events = client.subscribe_events();
-    let session: CreateSessionResult = request(&client, "sessions/create", None).await;
-    let start_client = client.clone();
-    let thread_id = session.thread_id.clone();
-    let start = tokio::spawn(async move {
-        request::<StartTurnResult>(
-            &start_client,
-            "turns/start",
-            Some(
-                serde_json::to_value(StartTurnParams {
-                    thread_id,
-                    message: "edit file".to_string(),
-                    provider_override: None,
-                    model_override: None,
-                })
-                .unwrap(),
-            ),
-        )
-        .await
-    });
-
-    let mut saw_preview = false;
-    let mut saw_requested = false;
-    for _ in 0..20 {
-        let envelope = tokio::time::timeout(Duration::from_secs(2), events.recv())
-            .await
-            .unwrap()
-            .unwrap();
-        match envelope.event {
-            roder_api::events::RoderEvent::FileChangePreviewReady(preview) => {
-                saw_preview = preview.tool_id == "multi-edit-approval-1"
-                    && preview.tool_name == "multi_edit"
-                    && preview.before.as_deref() == Some("old\nmiddle\n")
-                    && preview.after == "new\nchanged\n"
-                    && !preview.supports_partial;
-            }
-            roder_api::events::RoderEvent::ApprovalRequested(requested) => {
-                saw_requested = requested.approval_id == "multi-edit-approval-1"
-                    && requested.tool_name == "multi_edit";
-                break;
-            }
-            _ => {}
-        }
-    }
-    assert!(saw_preview);
-    assert!(saw_requested);
-    assert_eq!(
-        std::fs::read_to_string(&file_path).unwrap(),
-        "old\nmiddle\n"
-    );
-
-    let state: SessionGetResult = request(&client, "session/get", None).await;
-    assert_eq!(
-        state
-            .pending_tool_approval
-            .as_ref()
-            .map(|pending| pending.approval_id.as_str()),
-        Some("multi-edit-approval-1")
-    );
-    let resolved: SessionResolveApprovalResult = request(
-        &client,
-        "session/resolve_approval",
-        Some(
-            serde_json::to_value(SessionResolveApprovalParams {
-                approval_id: "multi-edit-approval-1".to_string(),
-                approved: true,
-            })
-            .unwrap(),
-        ),
-    )
-    .await;
-    assert!(resolved.resolved);
-
-    let mut kinds = Vec::new();
-    for _ in 0..20 {
-        let Ok(Ok(envelope)) = tokio::time::timeout(Duration::from_secs(2), events.recv()).await
-        else {
-            break;
-        };
-        kinds.push(envelope.kind.clone());
-        if envelope.kind == "turn.completed" {
-            break;
-        }
-    }
-    let resolved_index = position(&kinds, "approval.resolved");
-    let started_index = position(&kinds, "tool.call_started");
-    assert!(resolved_index < started_index, "{kinds:?}");
-    assert!(
-        position(&kinds, "turn.completed") > started_index,
-        "{kinds:?}"
-    );
-    let started = start.await.unwrap();
-    assert!(!started.turn_id.is_empty());
-    assert_eq!(
-        std::fs::read_to_string(&file_path).unwrap(),
-        "new\nchanged\n"
-    );
-    let _ = std::fs::remove_dir_all(workspace);
 }
 
 #[tokio::test]
@@ -1060,13 +736,6 @@ fn position(kinds: &[String], kind: &str) -> usize {
         .iter()
         .position(|candidate| candidate == kind)
         .unwrap_or_else(|| panic!("missing {kind}: {kinds:?}"))
-}
-
-fn temp_workspace(name: &str) -> PathBuf {
-    let path =
-        std::env::temp_dir().join(format!("roder-app-server-{name}-{}", uuid::Uuid::new_v4()));
-    std::fs::create_dir_all(&path).unwrap();
-    path
 }
 
 async fn request<T: serde::de::DeserializeOwned>(

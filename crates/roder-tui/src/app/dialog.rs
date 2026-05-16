@@ -5,25 +5,25 @@ use ratatui::{
     widgets::{Block, BorderType, Borders, Clear, Padding, Paragraph, Wrap},
 };
 
-use super::{ConfirmDialog, Theme, centered_rect};
+use super::{ConfirmChoice, ConfirmDialog, ConfirmDialogState, Theme, centered_rect};
 
 struct DialogCopy {
-    title: &'static str,
-    context: &'static str,
-    heading: &'static str,
-    detail: &'static str,
-    confirm_label: &'static str,
+    title: String,
+    context: String,
+    heading: String,
+    detail: String,
+    confirm_label: String,
 }
 
 pub(super) fn render_confirm_dialog(
     f: &mut Frame<'_>,
     area: Rect,
-    dialog: ConfirmDialog,
+    state: ConfirmDialogState,
     theme: Theme,
 ) {
-    let dialog_area = centered_rect(area, dialog_width(area), 8.min(area.height));
+    let dialog_area = centered_rect(area, dialog_width(area), 9.min(area.height));
     let shadow_area = shadow_rect(dialog_area, area);
-    let copy = dialog_copy(dialog);
+    let copy = dialog_copy(&state.dialog);
 
     f.render_widget(Clear, shadow_area);
     f.render_widget(Paragraph::new("").style(theme.dialog_shadow()), shadow_area);
@@ -46,13 +46,18 @@ pub(super) fn render_confirm_dialog(
             Constraint::Length(1),
             Constraint::Min(1),
             Constraint::Length(1),
+            Constraint::Length(1),
         ])
         .split(inner);
 
-    f.render_widget(context_line(copy.context, theme), chunks[0]);
-    f.render_widget(heading_line(copy.heading, theme), chunks[1]);
-    f.render_widget(detail_text(copy.detail, theme), chunks[2]);
-    f.render_widget(action_line(copy.confirm_label, theme), chunks[3]);
+    f.render_widget(context_line(&copy.context, theme), chunks[0]);
+    f.render_widget(heading_line(&copy.heading, theme), chunks[1]);
+    f.render_widget(detail_text(&copy.detail, theme), chunks[2]);
+    f.render_widget(
+        action_line(&copy.confirm_label, state.selected, theme),
+        chunks[3],
+    );
+    f.render_widget(controls_line(theme), chunks[4]);
 }
 
 fn context_line(context: &str, theme: Theme) -> Paragraph<'static> {
@@ -80,40 +85,74 @@ fn detail_text(detail: &str, theme: Theme) -> Paragraph<'static> {
     .wrap(Wrap { trim: true })
 }
 
-fn action_line(confirm_label: &str, theme: Theme) -> Paragraph<'static> {
+fn action_line(confirm_label: &str, selected: ConfirmChoice, theme: Theme) -> Paragraph<'static> {
     Paragraph::new(Line::from(vec![
-        key_chip("Enter", theme),
-        Span::styled(" / ", theme.muted()),
-        key_chip("Y", theme),
-        Span::styled(format!(" {confirm_label}"), theme.accent()),
+        choice_chip("Yes", selected == ConfirmChoice::Yes, theme),
+        Span::styled(format!(" {confirm_label}  "), theme.accent()),
         Span::styled("    ", theme.dialog_surface()),
-        key_chip("Esc", theme),
-        Span::styled(" / ", theme.muted()),
-        key_chip("N", theme),
+        choice_chip("No", selected == ConfirmChoice::No, theme),
         Span::styled(" Cancel", theme.muted()),
     ]))
     .style(theme.dialog_surface())
 }
 
-fn key_chip(label: &'static str, theme: Theme) -> Span<'static> {
-    Span::styled(format!("[{label}]"), theme.dialog_key())
+fn controls_line(theme: Theme) -> Paragraph<'static> {
+    Paragraph::new(Line::from(vec![
+        key_hint("Left", theme),
+        Span::styled(" / ", theme.muted()),
+        key_hint("Right", theme),
+        Span::styled(" select   ", theme.muted()),
+        key_hint("Enter", theme),
+        Span::styled(" choose   ", theme.muted()),
+        key_hint("Y", theme),
+        Span::styled("/", theme.muted()),
+        key_hint("N", theme),
+    ]))
+    .style(theme.dialog_surface())
 }
 
-fn dialog_copy(dialog: ConfirmDialog) -> DialogCopy {
+fn choice_chip(label: &'static str, selected: bool, theme: Theme) -> Span<'static> {
+    let style = if selected {
+        theme.dialog_key()
+    } else {
+        theme.muted()
+    };
+    let marker = if selected { ">" } else { " " };
+
+    Span::styled(format!("{marker} {label} "), style)
+}
+
+fn key_hint(label: &'static str, theme: Theme) -> Span<'static> {
+    Span::styled(label.to_string(), theme.dialog_key())
+}
+
+fn dialog_copy(dialog: &ConfirmDialog) -> DialogCopy {
     match dialog {
         ConfirmDialog::Interrupt => DialogCopy {
-            title: "Interrupt turn",
-            context: "running model",
-            heading: "Stop the current response?",
-            detail: "Roder will ask the provider to stop this turn. The session stays open and any partial output remains visible.",
-            confirm_label: "Interrupt",
+            title: "Interrupt turn".to_string(),
+            context: "running model".to_string(),
+            heading: "Stop the current response?".to_string(),
+            detail: "Roder will ask the provider to stop this turn. The session stays open and any partial output remains visible.".to_string(),
+            confirm_label: "Interrupt".to_string(),
         },
         ConfirmDialog::Exit => DialogCopy {
-            title: "Exit Roder",
-            context: "terminal session",
-            heading: "Close the TUI?",
-            detail: "Roder will leave the alternate screen and return you to the terminal.",
-            confirm_label: "Exit",
+            title: "Exit Roder".to_string(),
+            context: "terminal session".to_string(),
+            heading: "Close the TUI?".to_string(),
+            detail: "Roder will leave the alternate screen and return you to the terminal."
+                .to_string(),
+            confirm_label: "Exit".to_string(),
+        },
+        ConfirmDialog::ToolApproval {
+            tool_name, reason, ..
+        } => DialogCopy {
+            title: "Approve tool".to_string(),
+            context: "tool approval".to_string(),
+            heading: format!("Run `{tool_name}`?"),
+            detail: reason
+                .clone()
+                .unwrap_or_else(|| "Roder wants to run a side-effecting tool.".to_string()),
+            confirm_label: "Approve".to_string(),
         },
     }
 }
@@ -146,7 +185,7 @@ mod tests {
 
     #[test]
     fn interrupt_dialog_copy_is_actionable() {
-        let copy = dialog_copy(ConfirmDialog::Interrupt);
+        let copy = dialog_copy(&ConfirmDialog::Interrupt);
 
         assert_eq!(copy.title, "Interrupt turn");
         assert_eq!(copy.confirm_label, "Interrupt");
@@ -164,12 +203,21 @@ mod tests {
     }
 
     #[test]
-    fn key_chip_uses_the_dialog_key_style() {
+    fn selected_choice_chip_uses_the_dialog_key_style() {
         let theme = Theme::for_dark_background(true);
-        let chip = key_chip("Enter", theme);
+        let chip = choice_chip("Yes", true, theme);
 
-        assert_eq!(chip.content.as_ref(), "[Enter]");
+        assert_eq!(chip.content.as_ref(), "> Yes ");
         assert_eq!(chip.style, theme.dialog_key());
+    }
+
+    #[test]
+    fn unselected_choice_chip_is_muted() {
+        let theme = Theme::for_dark_background(true);
+        let chip = choice_chip("No", false, theme);
+
+        assert_eq!(chip.content.as_ref(), "  No ");
+        assert_eq!(chip.style, theme.muted());
     }
 
     #[test]

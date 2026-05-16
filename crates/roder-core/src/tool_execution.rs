@@ -182,6 +182,38 @@ impl Runtime {
         .await;
     }
 
+    async fn request_tool_approval(
+        &self,
+        thread_id: &ThreadId,
+        turn_id: &TurnId,
+        call: &ToolCall,
+        reason: Option<String>,
+    ) -> anyhow::Result<bool> {
+        let approval_id = call.id.clone();
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        self.pending_tool_approvals.lock().await.insert(
+            approval_id.clone(),
+            crate::runtime::PendingToolApproval {
+                thread_id: thread_id.clone(),
+                turn_id: turn_id.clone(),
+                tool_id: call.id.clone(),
+                tool_name: call.name.clone(),
+                tx,
+            },
+        );
+        self.emit(RoderEvent::ApprovalRequested(ApprovalRequested {
+            thread_id: thread_id.clone(),
+            turn_id: turn_id.clone(),
+            approval_id,
+            tool_id: call.id.clone(),
+            tool_name: call.name.clone(),
+            reason,
+            timestamp: OffsetDateTime::now_utc(),
+        }))
+        .await;
+        Ok(rx.await.unwrap_or(false))
+    }
+
     async fn emit_subagent_events(
         &self,
         parent_thread_id: &ThreadId,

@@ -1,21 +1,24 @@
-use roder_api::context::ContextBlock;
 use roder_api::events::{ThreadId, TurnId};
-use roder_api::extension::{ExtensionManifest, ExtensionStateKey, ExtensionStateRecord};
+use roder_api::extension::ExtensionManifest;
 use roder_api::inference::{InferenceCapabilities, ModelDescriptor, ProviderAuthType};
 use roder_api::policy_mode::PolicyMode;
 use roder_api::session::{SessionMetadata, ThreadSnapshot};
 use roder_api::subagents::SubagentPermissionMode;
-use roder_api::tasks::{TaskHandle, TaskOutputStream};
 use roder_api::tools::ToolSpec;
 use serde::{Deserialize, Serialize};
 use time::OffsetDateTime;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct JsonRpcRequest {
+    #[serde(default = "default_jsonrpc_version")]
     pub jsonrpc: String,
     pub id: Option<serde_json::Value>,
     pub method: String,
     pub params: Option<serde_json::Value>,
+}
+
+fn default_jsonrpc_version() -> String {
+    "2.0".to_string()
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -92,6 +95,9 @@ pub struct CodexAuthResult {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CreateSessionParams {
     pub title: Option<String>,
+    pub workspace: Option<String>,
+    pub provider: Option<String>,
+    pub model: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -120,7 +126,6 @@ pub struct SessionLoadResult {
 pub struct SessionGetResult {
     pub mode: PolicyMode,
     pub pending_plan_exit: Option<PendingPlanExitDescriptor>,
-    pub pending_tool_approval: Option<PendingToolApprovalDescriptor>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -132,17 +137,6 @@ pub struct PendingPlanExitDescriptor {
     pub plan_summary: Option<String>,
     pub requested_at: OffsetDateTime,
     pub expires_at: Option<OffsetDateTime>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct PendingToolApprovalDescriptor {
-    pub thread_id: ThreadId,
-    pub turn_id: TurnId,
-    pub approval_id: String,
-    pub tool_id: String,
-    pub tool_name: String,
-    pub reason: Option<String>,
-    pub requested_at: OffsetDateTime,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -180,23 +174,15 @@ pub struct SessionResolveApprovalResult {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ExtensionStateGetParams {
-    pub key: ExtensionStateKey,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ExtensionStateGetResult {
-    pub record: Option<ExtensionStateRecord>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ExtensionStateSetParams {
-    pub record: ExtensionStateRecord,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ExtensionStateSetResult {
-    pub saved: bool,
+pub struct CommandDescriptor {
+    pub name: String,
+    pub description: Option<String>,
+    pub argument_hint: Option<String>,
+    pub source: String,
+    pub model: Option<String>,
+    pub agent: Option<String>,
+    pub has_shell_includes: bool,
+    pub has_url_includes: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -237,116 +223,4 @@ pub struct AgentDescriptor {
     pub permission_mode: SubagentPermissionMode,
     pub max_turns: Option<u32>,
     pub max_result_chars: Option<usize>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct CommandsListResult {
-    pub commands: Vec<CommandDescriptor>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct CommandDescriptor {
-    pub name: String,
-    pub description: Option<String>,
-    pub argument_hint: Option<String>,
-    pub source: String,
-    pub model: Option<String>,
-    pub agent: Option<String>,
-    pub has_shell_includes: bool,
-    pub has_url_includes: bool,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct CommandsExpandParams {
-    pub name: String,
-    pub arguments: Option<String>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct CommandsExpandResult {
-    pub name: String,
-    pub message: String,
-    pub context_blocks: Vec<ContextBlock>,
-    pub allowed_tools: Vec<String>,
-    pub model: Option<String>,
-    pub agent: Option<String>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct CommandsRunParams {
-    pub thread_id: ThreadId,
-    pub name: String,
-    pub arguments: Option<String>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct CommandsRunResult {
-    pub turn_id: TurnId,
-    pub expanded: CommandsExpandResult,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct TasksSubmitParams {
-    pub executor_id: String,
-    #[serde(default)]
-    pub input: serde_json::Value,
-    pub thread_id: Option<ThreadId>,
-    pub turn_id: Option<TurnId>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct TasksSubmitResult {
-    pub task: TaskHandle,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct TasksListResult {
-    pub tasks: Vec<TaskHandle>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct TasksGetParams {
-    pub task_id: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct TaskLogEntryDescriptor {
-    pub stream: TaskOutputStream,
-    pub chunk: String,
-    pub timestamp: OffsetDateTime,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct TasksGetResult {
-    pub task: Option<TaskHandle>,
-    pub logs: Vec<TaskLogEntryDescriptor>,
-    pub dropped_bytes: u64,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct TasksCancelParams {
-    pub task_id: String,
-    pub reason: Option<String>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct TasksCancelResult {
-    pub cancelled: bool,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct TasksSubscribeResult {
-    pub subscribed: bool,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct TranscriptOpenFileParams {
-    pub thread_id: ThreadId,
-    pub path: String,
-    pub line: Option<u32>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct TranscriptOpenFileResult {
-    pub requested: bool,
 }

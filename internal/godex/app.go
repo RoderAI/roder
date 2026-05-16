@@ -23,7 +23,6 @@ import (
 	"github.com/pandelisz/gode/internal/godex/permission"
 	"github.com/pandelisz/gode/internal/godex/provider"
 	"github.com/pandelisz/gode/internal/godex/repoconfig"
-	"github.com/pandelisz/gode/internal/godex/roadmap"
 	"github.com/pandelisz/gode/internal/godex/session"
 	godexshell "github.com/pandelisz/gode/internal/godex/shell"
 	godeskills "github.com/pandelisz/gode/internal/godex/skills"
@@ -46,7 +45,6 @@ type App struct {
 	Messages     *messagestore.Store
 	Tools        *tools.Registry
 	Goals        *goals.Runtime
-	Roadmaps     *roadmap.Runtime
 	Memory       *memory.Service
 	SkillManager *godeskills.Manager
 	MCP          *mcp.Manager
@@ -139,7 +137,6 @@ func New(ctx context.Context, cfg Config) (*App, error) {
 		return nil, err
 	}
 	goalRuntime := goals.NewRuntime(goalStore, bus, store)
-	roadmapRuntime := roadmap.NewRuntime(cfg.Workspace, cfg.DataDir, bus)
 	repoContext, err := loadContextMessages(cfg.Workspace)
 	if err != nil {
 		_ = store.Close()
@@ -191,7 +188,6 @@ func New(ctx context.Context, cfg Config) (*App, error) {
 		Messages:          messageStore,
 		Tools:             reg,
 		Goals:             goalRuntime,
-		Roadmaps:          roadmapRuntime,
 		Memory:            memoryService,
 		SkillManager:      skillManager,
 		MCP:               mcpManager,

@@ -1,10 +1,7 @@
 use std::sync::Arc;
 
 use semver::Version;
-use serde::{Deserialize, Serialize, de::DeserializeOwned};
-use time::OffsetDateTime;
-
-use crate::events::ThreadId;
+use serde::{Deserialize, Serialize};
 
 pub type ExtensionId = String;
 pub type ApiVersion = String;
@@ -20,70 +17,6 @@ pub type PolicyContributorId = String;
 pub type EventSinkId = String;
 pub type TaskExecutorId = String;
 pub type NotificationSinkId = String;
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(tag = "type", rename_all = "snake_case")]
-pub enum ExtensionStoreScope {
-    Process,
-    Thread { thread_id: ThreadId },
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-pub struct ExtensionStateKey {
-    pub extension_id: ExtensionId,
-    pub scope: ExtensionStoreScope,
-    pub key: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-pub struct ExtensionStateRecord {
-    pub key: ExtensionStateKey,
-    pub schema_version: u32,
-    pub value: serde_json::Value,
-    #[serde(with = "time::serde::rfc3339")]
-    pub updated_at: OffsetDateTime,
-}
-
-pub trait ExtensionStateCodec: Serialize + DeserializeOwned + Sized {
-    const EXTENSION_ID: &'static str;
-    const KEY: &'static str;
-    const SCHEMA_VERSION: u32;
-
-    fn state_key(scope: ExtensionStoreScope) -> ExtensionStateKey {
-        ExtensionStateKey {
-            extension_id: Self::EXTENSION_ID.to_string(),
-            scope,
-            key: Self::KEY.to_string(),
-        }
-    }
-
-    fn encode_state(&self, scope: ExtensionStoreScope) -> serde_json::Result<ExtensionStateRecord> {
-        Ok(ExtensionStateRecord {
-            key: Self::state_key(scope),
-            schema_version: Self::SCHEMA_VERSION,
-            value: serde_json::to_value(self)?,
-            updated_at: OffsetDateTime::now_utc(),
-        })
-    }
-
-    fn decode_state(record: ExtensionStateRecord) -> serde_json::Result<Self> {
-        let value = Self::migrate_state(record.value, record.schema_version)?;
-        serde_json::from_value(value)
-    }
-
-    fn migrate_state(
-        value: serde_json::Value,
-        schema_version: u32,
-    ) -> serde_json::Result<serde_json::Value> {
-        if schema_version == Self::SCHEMA_VERSION {
-            return Ok(value);
-        }
-        Err(serde::de::Error::custom(format!(
-            "unsupported {} state schema version {schema_version}",
-            Self::KEY
-        )))
-    }
-}
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct CapabilityRequest {
@@ -104,7 +37,6 @@ pub enum ProvidedService {
     EventSink(EventSinkId),
     TaskExecutor(TaskExecutorId),
     NotificationSink(NotificationSinkId),
-    InteractiveRegionHandler(crate::interactive::InteractiveRegionHandlerId),
     StatusSegment(crate::tui_status::StatusSegmentId),
     PaletteSource(crate::tui_status::PaletteSourceId),
 }
@@ -141,7 +73,6 @@ pub struct ExtensionRegistry {
     pub event_sinks: Vec<Arc<dyn crate::extension::EventSink>>,
     pub task_executors: Vec<Arc<dyn crate::tasks::TaskExecutor>>,
     pub notification_sinks: Vec<Arc<dyn crate::notifications::NotificationSink>>,
-    pub interactive_region_handlers: Vec<Arc<dyn crate::interactive::InteractiveRegionHandler>>,
     pub status_segments: Vec<crate::tui_status::StatusSegment>,
     pub palette_sources: Vec<crate::tui_status::PaletteSourceDescriptor>,
 }
@@ -190,7 +121,6 @@ pub struct ExtensionRegistryBuilder {
     pub event_sinks: Vec<Arc<dyn crate::extension::EventSink>>,
     pub task_executors: Vec<Arc<dyn crate::tasks::TaskExecutor>>,
     pub notification_sinks: Vec<Arc<dyn crate::notifications::NotificationSink>>,
-    pub interactive_region_handlers: Vec<Arc<dyn crate::interactive::InteractiveRegionHandler>>,
     pub status_segments: Vec<crate::tui_status::StatusSegment>,
     pub palette_sources: Vec<crate::tui_status::PaletteSourceDescriptor>,
 }
@@ -217,7 +147,6 @@ impl ExtensionRegistryBuilder {
             event_sinks: Vec::new(),
             task_executors: Vec::new(),
             notification_sinks: Vec::new(),
-            interactive_region_handlers: Vec::new(),
             status_segments: Vec::new(),
             palette_sources: Vec::new(),
         }
@@ -252,7 +181,6 @@ impl ExtensionRegistryBuilder {
             event_sinks: self.event_sinks,
             task_executors: self.task_executors,
             notification_sinks: self.notification_sinks,
-            interactive_region_handlers: self.interactive_region_handlers,
             status_segments: self.status_segments,
             palette_sources: self.palette_sources,
         })
@@ -316,13 +244,6 @@ impl ExtensionRegistryBuilder {
         self.notification_sinks.push(sink);
     }
 
-    pub fn interactive_region_handler(
-        &mut self,
-        handler: Arc<dyn crate::interactive::InteractiveRegionHandler>,
-    ) {
-        self.interactive_region_handlers.push(handler);
-    }
-
     pub fn status_segment(&mut self, segment: crate::tui_status::StatusSegment) {
         self.status_segments.push(segment);
     }
@@ -339,36 +260,9 @@ pub trait EventSink: Send + Sync + 'static {
 
 #[cfg(test)]
 mod tests {
-    use std::sync::Arc;
-
-    use crate::interactive::{
-        HandlerOutcome, InteractiveEvent, InteractiveRegion, InteractiveRegionHandler,
-        InteractiveRegionHandlerId,
-    };
     use crate::tui_status::{PaletteSourceDescriptor, StatusCell, StatusSegment, StatusStyle};
 
     use super::*;
-
-    struct NoopRegionHandler;
-
-    #[async_trait::async_trait]
-    impl InteractiveRegionHandler for NoopRegionHandler {
-        fn id(&self) -> InteractiveRegionHandlerId {
-            "noop-region".to_string()
-        }
-
-        fn kinds(&self) -> Vec<String> {
-            vec!["Composer".to_string()]
-        }
-
-        async fn handle(
-            &self,
-            _event: InteractiveEvent,
-            _region: &InteractiveRegion,
-        ) -> anyhow::Result<HandlerOutcome> {
-            Ok(HandlerOutcome::Passthrough)
-        }
-    }
 
     #[test]
     fn provided_service_status_segment_round_trips_json() {
@@ -418,45 +312,6 @@ mod tests {
     }
 
     #[test]
-    fn provided_service_interactive_region_handler_round_trips_json() {
-        let service = ProvidedService::InteractiveRegionHandler("transcript".to_string());
-        let encoded =
-            serde_json::to_value(&service).expect("serialize interactive region handler service");
-        assert_eq!(
-            encoded,
-            serde_json::json!({ "InteractiveRegionHandler": "transcript" })
-        );
-
-        let decoded = serde_json::from_value::<ProvidedService>(encoded)
-            .expect("deserialize interactive region handler service");
-        assert_eq!(decoded, service);
-    }
-
-    #[test]
-    fn extension_state_record_round_trips_json() {
-        let record = ExtensionStateRecord {
-            key: ExtensionStateKey {
-                extension_id: "roder-tui".to_string(),
-                scope: ExtensionStoreScope::Thread {
-                    thread_id: "thread-a".to_string(),
-                },
-                key: "transcript_fold".to_string(),
-            },
-            schema_version: 1,
-            value: serde_json::json!({"collapsed_tool_calls": ["call-1"]}),
-            updated_at: OffsetDateTime::UNIX_EPOCH,
-        };
-
-        let encoded = serde_json::to_value(&record).expect("serialize extension state");
-        assert_eq!(encoded["key"]["scope"]["type"], "thread");
-        assert_eq!(encoded["schema_version"], 1);
-
-        let decoded = serde_json::from_value::<ExtensionStateRecord>(encoded)
-            .expect("decode extension state");
-        assert_eq!(decoded, record);
-    }
-
-    #[test]
     fn registry_builder_records_status_segments() {
         let mut builder = ExtensionRegistryBuilder::new();
         builder.status_segment(StatusSegment::new("custom", 42, 6, |_| StatusCell {
@@ -486,16 +341,5 @@ mod tests {
         assert_eq!(registry.palette_sources[0].id, "commands");
         assert_eq!(registry.palette_sources[0].label, "Commands");
         assert_eq!(registry.palette_sources[0].priority, 100);
-    }
-
-    #[test]
-    fn registry_builder_records_interactive_region_handlers() {
-        let mut builder = ExtensionRegistryBuilder::new();
-        builder.interactive_region_handler(Arc::new(NoopRegionHandler));
-
-        let registry = builder.build().expect("build registry");
-
-        assert_eq!(registry.interactive_region_handlers.len(), 1);
-        assert_eq!(registry.interactive_region_handlers[0].id(), "noop-region");
     }
 }

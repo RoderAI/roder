@@ -6,11 +6,11 @@ usage() {
 Usage: VERSION=0.1.0 make release-brew
    or: scripts/release-brew.sh 0.1.0
 
-Creates a local Homebrew source release for gode:
-  - runs go test ./... unless RUN_TESTS=0
+Creates a local Homebrew source release for the Roder Rust CLI:
+  - runs cargo test --workspace unless RUN_TESTS=0
   - creates/uses git tag v$VERSION unless CREATE_TAG=0
   - writes dist/gode-v$VERSION.tar.gz from the tagged source
-  - updates Formula/gode.rb to build gode from source
+  - updates Formula/gode.rb to build roder from source
 
 Environment:
   MODE=local|git       local uses the dist tarball; git uses REPO_URL.git tag+revision
@@ -84,7 +84,7 @@ EOF
 fi
 
 if [[ "$run_tests" == "1" ]]; then
-  go test ./...
+  cargo test --workspace
 fi
 
 if [[ "$create_tag" == "1" ]]; then
@@ -123,21 +123,20 @@ fi
 
 cat > "$formula" <<EOF
 class Gode < Formula
-  desc "Go-native TUI coding agent and event-driven agent harness"
+  desc "Rust-native TUI coding agent and event-driven agent harness"
   homepage "$repo_url"
   version "$version"
 $url_block
   head "$repo_url.git", branch: "main"
 
-  depends_on "go" => :build
+  depends_on "rust" => :build
 
   def install
-    ldflags = "-s -w -X main.version=#{version}"
-    system "go", "build", "-trimpath", "-ldflags", ldflags, "-o", bin/"gode", "./cmd/gode"
+    system "cargo", "install", *std_cargo_args(path: "crates/roder-cli")
   end
 
   test do
-    assert_match "gode #{version}", shell_output("#{bin}/gode version")
+    assert_match "codex:", shell_output("#{bin}/roder auth status")
   end
 end
 EOF

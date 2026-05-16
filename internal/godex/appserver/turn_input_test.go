@@ -118,28 +118,6 @@ func TestBuildTurnInputAddsBinaryLocalFileMetadata(t *testing.T) {
 	}
 }
 
-func TestBuildTurnInputCollectsStructuredSkillSelections(t *testing.T) {
-	skillPath := filepath.Join(t.TempDir(), "SKILL.md")
-	input := rawInput(t,
-		map[string]any{"type": "text", "text": "use this skill"},
-		map[string]any{"type": "skill", "path": skillPath},
-		map[string]any{"type": "skill", "name": "go-tests"},
-	)
-	built, err := buildTurnInput("", input)
-	if err != nil {
-		t.Fatalf("build: %v", err)
-	}
-	if built.Prompt != "use this skill" {
-		t.Fatalf("prompt = %q", built.Prompt)
-	}
-	if len(built.SkillSelections) != 2 {
-		t.Fatalf("selections = %#v", built.SkillSelections)
-	}
-	if built.SkillSelections[0].Path != skillPath || built.SkillSelections[1].Name != "go-tests" {
-		t.Fatalf("selections = %#v", built.SkillSelections)
-	}
-}
-
 func rawInput(t *testing.T, values ...map[string]any) []json.RawMessage {
 	t.Helper()
 	out := make([]json.RawMessage, 0, len(values))

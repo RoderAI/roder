@@ -1,5 +1,3 @@
-use std::collections::HashMap;
-
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
@@ -10,8 +8,6 @@ pub struct TuiConfig {
     pub palette: TuiPaletteConfig,
     #[serde(default)]
     pub diff: TuiDiffConfig,
-    #[serde(default)]
-    pub keymap: TuiKeymapConfig,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
@@ -24,12 +20,6 @@ pub struct TuiStatusConfig {
 pub struct TuiPaletteConfig {
     #[serde(default)]
     pub disabled_sources: Vec<String>,
-}
-
-#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
-pub struct TuiKeymapConfig {
-    #[serde(default)]
-    pub bindings: HashMap<String, Vec<String>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

@@ -69,18 +69,16 @@ type Runner struct {
 }
 
 type RunRequest struct {
-	SessionID       string
-	RunID           string
-	Prompt          string
-	Resume          bool
-	ResumeMode      session.ResumeMode
-	Instructions    string
-	ResponseFormat  string
-	Messages        []provider.Message
-	InputItems      []provider.Item
-	RoadmapContext  string
-	SkillSelections []godeskills.InvocationSelection
-	ReplacePrompt   bool
+	SessionID      string
+	RunID          string
+	Prompt         string
+	Resume         bool
+	ResumeMode     session.ResumeMode
+	Instructions   string
+	ResponseFormat string
+	Messages       []provider.Message
+	InputItems     []provider.Item
+	ReplacePrompt  bool
 }
 
 type RunResult struct {
@@ -189,7 +187,7 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (RunResult, error) {
 	if err != nil {
 		return RunResult{}, r.fail(ctx, req, err)
 	}
-	runMessages, prompt, err := r.skillContextMessages(ctx, commandExpansion.Prompt, req.SkillSelections)
+	runMessages, prompt, err := r.skillContextMessages(ctx, commandExpansion.Prompt)
 	if err != nil {
 		return RunResult{}, r.fail(ctx, req, err)
 	}
@@ -299,9 +297,6 @@ type initialContext struct {
 
 func (r *Runner) initialContext(ctx context.Context, req RunRequest, runMessages []provider.Message, prompt string) (initialContext, error) {
 	messages := append([]provider.Message(nil), r.contextMessages...)
-	if strings.TrimSpace(req.RoadmapContext) != "" {
-		messages = append(messages, provider.Message{Role: provider.RoleSystem, Content: strings.TrimSpace(req.RoadmapContext)})
-	}
 	messages = append(messages, runMessages...)
 	messages = append(messages, req.Messages...)
 	inputItems := providerItemsFromProviderMessages(messages)

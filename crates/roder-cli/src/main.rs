@@ -1,7 +1,3 @@
-mod commands;
-mod tasks_cli;
-mod tui_config;
-
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -14,10 +10,11 @@ use roder_extension_host::{
     DefaultRegistryConfig, DefaultSubagentsConfig, DefaultWebSearchConfig,
     DefaultWebSearchProviderConfig, build_default_registry,
 };
+use roder_protocol::{JsonRpcError, JsonRpcRequest, JsonRpcResponse};
 use roder_tui::TuiApp;
 use roder_web_search::WebSearchProviderKind;
-use tasks_cli::run_tasks_cli;
-use tui_config::resolve_tui_app_config;
+use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+use tokio::sync::mpsc;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -25,21 +22,16 @@ async fn main() -> anyhow::Result<()> {
     if matches!(args.first().map(String::as_str), Some("auth")) {
         return run_auth(&args[1..]).await;
     }
-    if matches!(args.first().map(String::as_str), Some("commands")) {
-        let cfg = roder_config::load_config()?;
-        return commands::run_commands_cli(&args[1..], &cfg);
-    }
-    if matches!(args.first().map(String::as_str), Some("tasks")) {
-        let cli_options = parse_cli_options(&args[1..])?;
-        return run_tasks_cli(&args[1..], cli_options).await;
+    if matches!(args.first().map(String::as_str), Some("app-server")) {
+        return run_app_server(&args[1..]).await;
     }
 
     let cli_options = parse_cli_options(&args)?;
-    let (runtime, default_model, tui_config) = build_runtime_from_config(cli_options).await?;
+    let (runtime, default_model) = build_runtime_from_config(cli_options).await?;
     let app_server = Arc::new(AppServer::new(runtime).with_user_config_persistence());
     let client = LocalAppClient::new(app_server);
 
-    let mut tui = TuiApp::new_with_config(client, default_model, tui_config).await?;
+    let mut tui = TuiApp::new(client, default_model).await?;
     tui.run().await?;
     Ok(())
 }
@@ -49,9 +41,13 @@ struct CliOptions {
     policy_mode: Option<PolicyMode>,
 }
 
-async fn build_runtime_from_config(
-    options: CliOptions,
-) -> anyhow::Result<(Arc<Runtime>, String, roder_tui::TuiAppConfig)> {
+#[derive(Debug, Clone)]
+struct AppServerOptions {
+    listen: String,
+    cli_options: CliOptions,
+}
+
+async fn build_runtime_from_config(options: CliOptions) -> anyhow::Result<(Arc<Runtime>, String)> {
     let cfg = roder_config::load_config()?;
     let keys = provider_keys(&cfg);
     let web_search = cfg
@@ -60,8 +56,7 @@ async fn build_runtime_from_config(
         .map(resolve_web_search_config)
         .transpose()?;
     let policy_mode = resolve_policy_mode(&options, &cfg)?;
-    let (default_provider, configured_model) =
-        resolve_provider_model(cfg.provider.clone(), cfg.model.clone());
+    let (default_provider, configured_model) = resolve_provider_model(cfg.provider, cfg.model);
     let default_model = configured_model.clone().unwrap_or_else(|| {
         if default_provider == PROVIDER_MOCK {
             "mock".to_string()
@@ -95,27 +90,21 @@ async fn build_runtime_from_config(
         web_search,
         subagents,
         policy_mode,
-        disabled_notification_kinds: cfg
-            .notifications
-            .as_ref()
-            .map(|notifications| notifications.disabled_kinds.clone())
-            .unwrap_or_default(),
     })?;
-    let tui_config = resolve_tui_app_config(&cfg, &registry);
 
     let runtime = Arc::new(Runtime::new(
         registry,
         RuntimeConfig {
             default_provider,
             default_model: default_model.clone(),
-            reasoning: cfg.reasoning.clone(),
+            reasoning: cfg.reasoning,
             auto_compact_token_limit: cfg.auto_compact_token_limit,
             workspace: workspace.map(|p| p.display().to_string()),
             policy_mode,
         },
     )?);
 
-    Ok((runtime, default_model, tui_config))
+    Ok((runtime, default_model))
 }
 
 fn parse_cli_options(args: &[String]) -> anyhow::Result<CliOptions> {
@@ -139,6 +128,103 @@ fn parse_cli_options(args: &[String]) -> anyhow::Result<CliOptions> {
         i += 1;
     }
     Ok(options)
+}
+
+fn parse_app_server_options(args: &[String]) -> anyhow::Result<AppServerOptions> {
+    let mut listen = "stdio://".to_string();
+    let mut passthrough = Vec::new();
+    let mut i = 0;
+    while i < args.len() {
+        match args[i].as_str() {
+            "--listen" => {
+                let Some(value) = args.get(i + 1) else {
+                    anyhow::bail!("--listen requires a value");
+                };
+                listen = value.clone();
+                i += 1;
+            }
+            arg if arg.starts_with("--listen=") => {
+                listen = arg["--listen=".len()..].to_string();
+            }
+            other => passthrough.push(other.to_string()),
+        }
+        i += 1;
+    }
+
+    Ok(AppServerOptions {
+        listen,
+        cli_options: parse_cli_options(&passthrough)?,
+    })
+}
+
+async fn run_app_server(args: &[String]) -> anyhow::Result<()> {
+    let options = parse_app_server_options(args)?;
+    if options.listen != "stdio://" {
+        anyhow::bail!(
+            "unsupported app-server listen address {:?}; only stdio:// is currently supported",
+            options.listen
+        );
+    }
+
+    let (runtime, _) = build_runtime_from_config(options.cli_options).await?;
+    let app_server = Arc::new(AppServer::new(runtime).with_user_config_persistence());
+    run_stdio_app_server(app_server).await
+}
+
+async fn run_stdio_app_server(app_server: Arc<AppServer>) -> anyhow::Result<()> {
+    let (tx, mut rx) = mpsc::unbounded_channel::<serde_json::Value>();
+    let writer = tokio::spawn(async move {
+        let mut stdout = tokio::io::stdout();
+        while let Some(message) = rx.recv().await {
+            stdout
+                .write_all(serde_json::to_string(&message)?.as_bytes())
+                .await?;
+            stdout.write_all(b"\n").await?;
+            stdout.flush().await?;
+        }
+        anyhow::Ok(())
+    });
+
+    let mut events = app_server.subscribe_events();
+    let event_server = Arc::clone(&app_server);
+    let event_tx = tx.clone();
+    let event_task = tokio::spawn(async move {
+        while let Ok(envelope) = events.recv().await {
+            for message in event_server.legacy_notifications_for_event(envelope).await {
+                if event_tx.send(message).is_err() {
+                    return;
+                }
+            }
+        }
+    });
+
+    let stdin = BufReader::new(tokio::io::stdin());
+    let mut lines = stdin.lines();
+    while let Some(line) = lines.next_line().await? {
+        if line.trim().is_empty() {
+            continue;
+        }
+        let response = match serde_json::from_str::<JsonRpcRequest>(&line) {
+            Ok(request) => app_server.handle_request(request).await,
+            Err(err) => JsonRpcResponse {
+                jsonrpc: "2.0".to_string(),
+                id: None,
+                result: None,
+                error: Some(JsonRpcError {
+                    code: -32700,
+                    message: format!("Parse error: {err}"),
+                    data: None,
+                }),
+            },
+        };
+        if tx.send(serde_json::to_value(response)?).is_err() {
+            break;
+        }
+    }
+    event_task.abort();
+    drop(tx);
+    writer.await??;
+    Ok(())
 }
 
 fn parse_policy_mode(mode: &str) -> anyhow::Result<PolicyMode> {

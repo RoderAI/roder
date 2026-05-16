@@ -122,41 +122,6 @@ func TestApplyInvocationsReportsDisabledSkill(t *testing.T) {
 	}
 }
 
-func TestApplyInvocationsResolvesStructuredSelectionsLinksAndExactPaths(t *testing.T) {
-	root := t.TempDir()
-	firstPath := filepath.Join(root, "one", "SKILL.md")
-	secondPath := filepath.Join(root, "two", "SKILL.md")
-	thirdPath := filepath.Join(root, "three", "SKILL.md")
-	catalog := Catalog{Skills: []Skill{
-		{Name: "duplicate", Path: firstPath, Body: "first"},
-		{Name: "duplicate", Path: secondPath, Body: "second"},
-		{Name: "exact-path", Path: thirdPath, Body: "third"},
-	}}
-
-	result := ApplyInvocationsWithSelections(
-		"read [skill body]("+firstPath+") and "+thirdPath+" plus $duplicate",
-		catalog,
-		Config{},
-		[]InvocationSelection{{Path: "skill://" + secondPath}},
-	)
-
-	if strings.Contains(result.Prompt, firstPath) || strings.Contains(result.Prompt, thirdPath) {
-		t.Fatalf("prompt still contains selected paths: %q", result.Prompt)
-	}
-	if !strings.Contains(result.Prompt, "$duplicate") {
-		t.Fatalf("ambiguous plain name should remain in prompt: %q", result.Prompt)
-	}
-	if got := skillNames(result.Invoked); !reflect.DeepEqual(got, []string{"duplicate", "duplicate", "exact-path"}) {
-		t.Fatalf("invoked = %#v", got)
-	}
-	contents := []string{result.Messages[0].Content, result.Messages[1].Content, result.Messages[2].Content}
-	for _, want := range []string{"first", "second", "third"} {
-		if !strings.Contains(strings.Join(contents, "\n"), want) {
-			t.Fatalf("missing %q in messages %#v", want, contents)
-		}
-	}
-}
-
 func TestParseFrontmatterFields(t *testing.T) {
 	skill, err := Parse(`---
 name: go-tests

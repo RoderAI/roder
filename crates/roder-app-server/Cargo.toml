@@ -7,11 +7,9 @@ edition.workspace = true
 anyhow.workspace = true
 roder-api.workspace = true
 roder-codex-auth.workspace = true
-roder-commands.workspace = true
 roder-config.workspace = true
 roder-core.workspace = true
 roder-protocol.workspace = true
-roder-tasks.workspace = true
 serde = { workspace = true, features = ["derive"] }
 serde_json.workspace = true
 time.workspace = true
@@ -21,8 +19,6 @@ uuid = { workspace = true, features = ["v4"] }
 [dev-dependencies]
 async-trait.workspace = true
 futures.workspace = true
-roder-ext-jsonl-session.workspace = true
 roder-ext-subagents.workspace = true
 roder-extension-host.workspace = true
 roder-tools.workspace = true
-time.workspace = true

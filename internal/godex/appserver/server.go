@@ -3,7 +3,6 @@ package appserver
 import (
 	"context"
 	"sync"
-	"time"
 
 	"github.com/pandelisz/gode/internal/godex"
 )
@@ -14,12 +13,11 @@ type Server struct {
 	app     *godex.App
 	options Options
 
-	mu                sync.RWMutex
-	threads           map[string]*threadState
-	commands          map[string]*activeCommand
-	uploads           map[string]*activeUpload
-	conns             map[*Connection]struct{}
-	remoteAuthBackoff RemoteAuthBackoff
+	mu       sync.RWMutex
+	threads  map[string]*threadState
+	commands map[string]*activeCommand
+	uploads  map[string]*activeUpload
+	conns    map[*Connection]struct{}
 }
 
 type Connection struct {
@@ -32,18 +30,6 @@ type Connection struct {
 	clientInfo  ClientInfo
 	optOut      map[string]struct{}
 	subscribed  map[string]struct{}
-}
-
-func (s *Server) recordRemoteAuthFailure() time.Duration {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	return s.remoteAuthBackoff.RecordFailure()
-}
-
-func (s *Server) resetRemoteAuthBackoff() {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.remoteAuthBackoff.Reset()
 }
 
 type threadState struct {
