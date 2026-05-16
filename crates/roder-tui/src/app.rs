@@ -7,6 +7,7 @@ mod mouse_ui;
 mod palette_ui;
 mod policy_ui;
 mod selection_keyboard;
+mod transcript_open;
 
 use std::collections::BTreeSet;
 use std::io;
@@ -1611,14 +1612,38 @@ impl TuiApp {
                 ));
             }
             TranscriptAction::OpenUrl { url } => {
-                self.messages.push(format!("system: selected URL {url}."));
-                self.push_event(format!("url selected: {url}"));
+                match transcript_open::copy_url_fallback(&mut self.selection_keyboard, &url) {
+                    Ok(outcome) => {
+                        self.messages.push(outcome.message);
+                        self.push_event(outcome.event);
+                    }
+                    Err(err) => self.record_error(format!("URL open failed: {err}")),
+                }
             }
             TranscriptAction::OpenFile { path, line } => {
-                let suffix = line.map(|line| format!(":{line}")).unwrap_or_default();
-                self.messages
-                    .push(format!("system: selected file {path}{suffix}."));
-                self.push_event(format!("file selected: {path}{suffix}"));
+                match transcript_open::request_file_open(&self.client, &self.thread_id, &path, line)
+                    .await
+                {
+                    Ok(outcome) => {
+                        self.messages.push(outcome.message);
+                        self.push_event(outcome.event);
+                    }
+                    Err(open_err) => {
+                        match transcript_open::copy_file_fallback(
+                            &mut self.selection_keyboard,
+                            &path,
+                            line,
+                        ) {
+                            Ok(outcome) => {
+                                self.messages.push(outcome.message);
+                                self.push_event(outcome.event);
+                            }
+                            Err(copy_err) => self.record_error(format!(
+                                "file open failed: {open_err}; fallback copy failed: {copy_err}"
+                            )),
+                        }
+                    }
+                }
             }
             TranscriptAction::OpenContextMenu { message_idx, at } => {
                 self.transcript_context_menu =

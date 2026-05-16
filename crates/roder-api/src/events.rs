@@ -245,6 +245,15 @@ pub struct FileChangePreviewReady {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TranscriptOpenFileRequested {
+    pub thread_id: ThreadId,
+    pub path: String,
+    pub line: Option<u32>,
+    #[serde(with = "time::serde::rfc3339")]
+    pub timestamp: OffsetDateTime,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TurnItemAppended {
     pub thread_id: ThreadId,
     pub turn_id: TurnId,
@@ -312,6 +321,7 @@ pub enum RoderEvent {
     TaskCancelled(TaskCancelled),
     FileChangePreviewReady(FileChangePreviewReady),
     FileChanged(FileChanged),
+    TranscriptOpenFileRequested(TranscriptOpenFileRequested),
     TurnItemAppended(TurnItemAppended),
     TurnCompleted(TurnCompleted),
     TurnFailed(TurnFailed),
@@ -353,6 +363,7 @@ impl RoderEvent {
             RoderEvent::TaskCancelled(_) => "task.cancelled",
             RoderEvent::FileChangePreviewReady(_) => "file.change_preview_ready",
             RoderEvent::FileChanged(_) => "file.changed",
+            RoderEvent::TranscriptOpenFileRequested(_) => "transcript.open_file_requested",
             RoderEvent::TurnItemAppended(_) => "turn.item_appended",
             RoderEvent::TurnCompleted(_) => "turn.completed",
             RoderEvent::TurnFailed(_) => "turn.failed",
@@ -379,6 +390,7 @@ impl RoderEvent {
             | RoderEvent::TaskFailed(_)
             | RoderEvent::TaskCancelled(_) => EventSource::Extension,
             RoderEvent::FileChangePreviewReady(_) => EventSource::Tool,
+            RoderEvent::TranscriptOpenFileRequested(_) => EventSource::AppServer,
             RoderEvent::ExtensionRegistered(_) => EventSource::Extension,
             _ => EventSource::Core,
         }
@@ -416,6 +428,7 @@ impl RoderEvent {
             RoderEvent::TaskCancelled(e) => e.thread_id.as_ref(),
             RoderEvent::FileChangePreviewReady(e) => Some(&e.thread_id),
             RoderEvent::FileChanged(e) => Some(&e.thread_id),
+            RoderEvent::TranscriptOpenFileRequested(e) => Some(&e.thread_id),
             RoderEvent::TurnItemAppended(e) => Some(&e.thread_id),
             RoderEvent::TurnCompleted(e) => Some(&e.thread_id),
             RoderEvent::TurnFailed(e) => Some(&e.thread_id),
@@ -454,6 +467,7 @@ impl RoderEvent {
             RoderEvent::TaskCancelled(e) => e.turn_id.as_ref(),
             RoderEvent::FileChangePreviewReady(e) => Some(&e.turn_id),
             RoderEvent::FileChanged(e) => Some(&e.turn_id),
+            RoderEvent::TranscriptOpenFileRequested(_) => None,
             RoderEvent::TurnItemAppended(e) => Some(&e.turn_id),
             RoderEvent::TurnCompleted(e) => Some(&e.turn_id),
             RoderEvent::TurnFailed(e) => Some(&e.turn_id),

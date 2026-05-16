@@ -318,3 +318,15 @@ pub struct TasksCancelResult {
 pub struct TasksSubscribeResult {
     pub subscribed: bool,
 }
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TranscriptOpenFileParams {
+    pub thread_id: ThreadId,
+    pub path: String,
+    pub line: Option<u32>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TranscriptOpenFileResult {
+    pub requested: bool,
+}
