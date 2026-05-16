@@ -1,7 +1,10 @@
 use std::sync::Arc;
 
 use semver::Version;
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Serialize, de::DeserializeOwned};
+use time::OffsetDateTime;
+
+use crate::events::ThreadId;
 
 pub type ExtensionId = String;
 pub type ApiVersion = String;
@@ -17,6 +20,70 @@ pub type PolicyContributorId = String;
 pub type EventSinkId = String;
 pub type TaskExecutorId = String;
 pub type NotificationSinkId = String;
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum ExtensionStoreScope {
+    Process,
+    Thread { thread_id: ThreadId },
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ExtensionStateKey {
+    pub extension_id: ExtensionId,
+    pub scope: ExtensionStoreScope,
+    pub key: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct ExtensionStateRecord {
+    pub key: ExtensionStateKey,
+    pub schema_version: u32,
+    pub value: serde_json::Value,
+    #[serde(with = "time::serde::rfc3339")]
+    pub updated_at: OffsetDateTime,
+}
+
+pub trait ExtensionStateCodec: Serialize + DeserializeOwned + Sized {
+    const EXTENSION_ID: &'static str;
+    const KEY: &'static str;
+    const SCHEMA_VERSION: u32;
+
+    fn state_key(scope: ExtensionStoreScope) -> ExtensionStateKey {
+        ExtensionStateKey {
+            extension_id: Self::EXTENSION_ID.to_string(),
+            scope,
+            key: Self::KEY.to_string(),
+        }
+    }
+
+    fn encode_state(&self, scope: ExtensionStoreScope) -> serde_json::Result<ExtensionStateRecord> {
+        Ok(ExtensionStateRecord {
+            key: Self::state_key(scope),
+            schema_version: Self::SCHEMA_VERSION,
+            value: serde_json::to_value(self)?,
+            updated_at: OffsetDateTime::now_utc(),
+        })
+    }
+
+    fn decode_state(record: ExtensionStateRecord) -> serde_json::Result<Self> {
+        let value = Self::migrate_state(record.value, record.schema_version)?;
+        serde_json::from_value(value)
+    }
+
+    fn migrate_state(
+        value: serde_json::Value,
+        schema_version: u32,
+    ) -> serde_json::Result<serde_json::Value> {
+        if schema_version == Self::SCHEMA_VERSION {
+            return Ok(value);
+        }
+        Err(serde::de::Error::custom(format!(
+            "unsupported {} state schema version {schema_version}",
+            Self::KEY
+        )))
+    }
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct CapabilityRequest {
@@ -363,6 +430,30 @@ mod tests {
         let decoded = serde_json::from_value::<ProvidedService>(encoded)
             .expect("deserialize interactive region handler service");
         assert_eq!(decoded, service);
+    }
+
+    #[test]
+    fn extension_state_record_round_trips_json() {
+        let record = ExtensionStateRecord {
+            key: ExtensionStateKey {
+                extension_id: "roder-tui".to_string(),
+                scope: ExtensionStoreScope::Thread {
+                    thread_id: "thread-a".to_string(),
+                },
+                key: "transcript_fold".to_string(),
+            },
+            schema_version: 1,
+            value: serde_json::json!({"collapsed_tool_calls": ["call-1"]}),
+            updated_at: OffsetDateTime::UNIX_EPOCH,
+        };
+
+        let encoded = serde_json::to_value(&record).expect("serialize extension state");
+        assert_eq!(encoded["key"]["scope"]["type"], "thread");
+        assert_eq!(encoded["schema_version"], 1);
+
+        let decoded = serde_json::from_value::<ExtensionStateRecord>(encoded)
+            .expect("decode extension state");
+        assert_eq!(decoded, record);
     }
 
     #[test]

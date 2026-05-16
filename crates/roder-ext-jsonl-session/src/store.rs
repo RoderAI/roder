@@ -3,6 +3,7 @@ use std::sync::Arc;
 
 use roder_api::conversation::TurnItem;
 use roder_api::events::{EventEnvelope, RoderEvent, ThreadId, TurnId};
+use roder_api::extension::{ExtensionStateKey, ExtensionStateRecord, ExtensionStoreScope};
 use roder_api::session::{
     SessionMetadata, SessionStore, SessionStoreFactory, ThreadSnapshot, TurnRecord,
 };
@@ -49,6 +50,51 @@ impl JsonlSessionStore {
             }
         }
         Ok(turns)
+    }
+
+    fn extension_state_path(&self, scope: &ExtensionStoreScope) -> PathBuf {
+        match scope {
+            ExtensionStoreScope::Process => self.base_path.join("extension_state.json"),
+            ExtensionStoreScope::Thread { thread_id } => {
+                self.session_dir(thread_id).join("extension_state.json")
+            }
+        }
+    }
+
+    async fn read_extension_state_file(
+        &self,
+        scope: &ExtensionStoreScope,
+    ) -> anyhow::Result<Vec<ExtensionStateRecord>> {
+        let path = self.extension_state_path(scope);
+        if !path.exists() {
+            return Ok(Vec::new());
+        }
+        Ok(serde_json::from_slice::<Vec<ExtensionStateRecord>>(
+            &fs::read(path).await?,
+        )?)
+    }
+
+    async fn write_extension_state_file(
+        &self,
+        scope: &ExtensionStoreScope,
+        records: &[ExtensionStateRecord],
+    ) -> anyhow::Result<()> {
+        let path = self.extension_state_path(scope);
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent).await?;
+        }
+        fs::write(path, serde_json::to_vec_pretty(records)?).await?;
+        Ok(())
+    }
+
+    async fn load_thread_extension_state(
+        &self,
+        thread_id: &ThreadId,
+    ) -> anyhow::Result<Vec<ExtensionStateRecord>> {
+        self.read_extension_state_file(&ExtensionStoreScope::Thread {
+            thread_id: thread_id.clone(),
+        })
+        .await
     }
 }
 
@@ -101,10 +147,12 @@ impl SessionStore for JsonlSessionStore {
         let events = self.load_events(thread_id).await?;
         let mut turns = self.read_turns(thread_id).await?;
         project_turn_completion(&mut turns, &events);
+        let extension_state = self.load_thread_extension_state(thread_id).await?;
         Ok(Some(ThreadSnapshot {
             metadata,
             events,
             turns,
+            extension_state,
         }))
     }
 
@@ -150,6 +198,35 @@ impl SessionStore for JsonlSessionStore {
             .await?;
         file.write_all(b"\n").await?;
         Ok(())
+    }
+
+    async fn load_extension_state(
+        &self,
+        key: &ExtensionStateKey,
+    ) -> anyhow::Result<Option<ExtensionStateRecord>> {
+        Ok(self
+            .read_extension_state_file(&key.scope)
+            .await?
+            .into_iter()
+            .find(|record| record.key == *key))
+    }
+
+    async fn save_extension_state(&self, record: ExtensionStateRecord) -> anyhow::Result<bool> {
+        let mut records = self.read_extension_state_file(&record.key.scope).await?;
+        if let Some(existing) = records
+            .iter_mut()
+            .find(|existing| existing.key == record.key)
+        {
+            *existing = record;
+        } else {
+            records.push(record);
+        }
+        let scope = records
+            .first()
+            .map(|record| record.key.scope.clone())
+            .expect("extension state save has at least one record");
+        self.write_extension_state_file(&scope, &records).await?;
+        Ok(true)
     }
 }
 
@@ -314,6 +391,40 @@ mod tests {
                 .unwrap()
                 .is_none()
         );
+
+        let _ = fs::remove_dir_all(base_path).await;
+    }
+
+    #[tokio::test]
+    async fn extension_state_is_thread_scoped_and_loaded_with_snapshot() {
+        let base_path = std::env::temp_dir().join(format!(
+            "roder-jsonl-extension-state-test-{}",
+            uuid::Uuid::new_v4()
+        ));
+        let store = JsonlSessionStore {
+            base_path: base_path.clone(),
+        };
+        let thread_id = "thread-state".to_string();
+        let key = ExtensionStateKey {
+            extension_id: "roder-tui".to_string(),
+            scope: ExtensionStoreScope::Thread {
+                thread_id: thread_id.clone(),
+            },
+            key: "transcript_fold".to_string(),
+        };
+        let record = ExtensionStateRecord {
+            key: key.clone(),
+            schema_version: 1,
+            value: serde_json::json!({"collapsed_tool_calls": ["call-1"]}),
+            updated_at: OffsetDateTime::UNIX_EPOCH,
+        };
+
+        assert!(store.save_extension_state(record.clone()).await.unwrap());
+
+        let loaded = store.load_extension_state(&key).await.unwrap().unwrap();
+        assert_eq!(loaded, record);
+        let snapshot = store.load_session(&thread_id).await.unwrap().unwrap();
+        assert_eq!(snapshot.extension_state, vec![record]);
 
         let _ = fs::remove_dir_all(base_path).await;
     }

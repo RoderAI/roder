@@ -91,6 +91,18 @@ impl AppServer {
                 })
                 .await
             }
+            "extension_state/get" => {
+                self.decode_and(req.params, |p| async move {
+                    self.handle_extension_state_get(p).await
+                })
+                .await
+            }
+            "extension_state/set" => {
+                self.decode_and(req.params, |p| async move {
+                    self.handle_extension_state_set(p).await
+                })
+                .await
+            }
             "sessions/load" | "sessions/resume" => {
                 self.decode_and(
                     req.params,
@@ -406,6 +418,30 @@ impl AppServer {
             .map_err(internal_error)?
             .is_some();
         Ok(serde_json::to_value(SessionResolveApprovalResult { resolved }).unwrap())
+    }
+
+    async fn handle_extension_state_get(
+        &self,
+        params: ExtensionStateGetParams,
+    ) -> Result<serde_json::Value, JsonRpcError> {
+        let record = self
+            .runtime
+            .load_extension_state(&params.key)
+            .await
+            .map_err(internal_error)?;
+        Ok(serde_json::to_value(ExtensionStateGetResult { record }).unwrap())
+    }
+
+    async fn handle_extension_state_set(
+        &self,
+        params: ExtensionStateSetParams,
+    ) -> Result<serde_json::Value, JsonRpcError> {
+        let saved = self
+            .runtime
+            .save_extension_state(params.record)
+            .await
+            .map_err(internal_error)?;
+        Ok(serde_json::to_value(ExtensionStateSetResult { saved }).unwrap())
     }
 
     async fn handle_session_load(

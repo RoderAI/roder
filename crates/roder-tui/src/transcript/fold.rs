@@ -1,11 +1,18 @@
 use std::collections::BTreeSet;
 
+use roder_api::extension::ExtensionStateCodec;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
 pub struct TranscriptFoldState {
     collapsed_messages: BTreeSet<usize>,
     collapsed_tool_calls: BTreeSet<String>,
+}
+
+impl ExtensionStateCodec for TranscriptFoldState {
+    const EXTENSION_ID: &'static str = "roder-tui";
+    const KEY: &'static str = "transcript_fold";
+    const SCHEMA_VERSION: u32 = 1;
 }
 
 impl TranscriptFoldState {
