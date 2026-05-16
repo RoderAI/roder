@@ -6,6 +6,7 @@ mod palette_ui;
 
 use std::collections::BTreeSet;
 use std::io;
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use crossterm::{
@@ -23,7 +24,9 @@ use ratatui::{
 };
 use roder_api::events::RoderEvent;
 use roder_api::inference::ProviderAuthType;
-use roder_api::interactive::{InteractiveEvent, MouseButton};
+use roder_api::interactive::{
+    HandlerOutcome, InteractiveEvent, InteractiveRegionHandler, MouseButton, RegionKind,
+};
 use roder_api::policy_mode::PolicyMode;
 use roder_api::tui_status::{
     GitSnapshot, McpServerStatus, SessionSummary, StatusContext, StatusSegment,
@@ -341,6 +344,7 @@ pub struct TuiApp {
     diff_viewer: Option<DiffViewerState>,
     diff_enabled: bool,
     status_segments: Vec<StatusSegment>,
+    interactive_region_handlers: Vec<Arc<dyn InteractiveRegionHandler>>,
     status_config: StatusLineConfig,
     status_git: Option<GitSnapshot>,
     policy_mode: PolicyMode,
@@ -427,6 +431,7 @@ impl TuiApp {
             status_config: StatusLineConfig {
                 disabled_segments: config.disabled_status_segments,
             },
+            interactive_region_handlers: config.interactive_region_handlers,
             status_git,
             policy_mode: policy_state
                 .as_ref()
@@ -594,7 +599,7 @@ impl TuiApp {
                         let events = self
                             .mouse_feedback
                             .handle_mouse_event(mouse, Instant::now());
-                        self.handle_interactive_events(events, at);
+                        self.handle_interactive_events(events, at).await;
                     }
                     _ => {}
                 }
@@ -1316,16 +1321,16 @@ impl TuiApp {
         f.render_widget(widget, area);
     }
 
-    fn handle_interactive_events(&mut self, events: Vec<InteractiveEvent>, at: (u16, u16)) {
+    async fn handle_interactive_events(&mut self, events: Vec<InteractiveEvent>, at: (u16, u16)) {
         for event in events {
             self.handle_drag_selection_event(&event);
-            match event {
+            match &event {
                 InteractiveEvent::Scroll {
                     delta_lines,
                     modifiers,
                     ..
                 } => {
-                    self.handle_scroll_event(delta_lines, modifiers);
+                    self.handle_scroll_event(*delta_lines, *modifiers);
                 }
                 InteractiveEvent::Click {
                     region,
@@ -1334,14 +1339,54 @@ impl TuiApp {
                 }
                 | InteractiveEvent::DoubleClick { region, .. } => {
                     self.transcript_context_menu = None;
-                    self.handle_region_action(&region, None);
+                    self.handle_region_with_extensions(&event, region, None)
+                        .await;
                 }
                 InteractiveEvent::RightClick { region, .. } => {
-                    self.handle_region_action(&region, Some(at));
+                    self.handle_region_with_extensions(&event, region, Some(at))
+                        .await;
                 }
                 _ => {}
             }
         }
+    }
+
+    async fn handle_region_with_extensions(
+        &mut self,
+        event: &InteractiveEvent,
+        region: &str,
+        right_click_at: Option<(u16, u16)>,
+    ) {
+        if !self.dispatch_region_handlers(event, region).await {
+            self.handle_region_action(region, right_click_at);
+        }
+    }
+
+    async fn dispatch_region_handlers(
+        &mut self,
+        event: &InteractiveEvent,
+        region_id: &str,
+    ) -> bool {
+        let Some(region) = self.mouse_feedback.region(region_id).cloned() else {
+            return false;
+        };
+        let kind = region_kind_name(&region.kind);
+        let handlers = self.interactive_region_handlers.clone();
+        for handler in handlers {
+            if !handler.kinds().iter().any(|candidate| candidate == kind) {
+                continue;
+            }
+            match handler.handle(event.clone(), &region).await {
+                Ok(HandlerOutcome::Consumed) => return true,
+                Ok(HandlerOutcome::InvalidateRender) => {
+                    self.push_event(format!("interactive region invalidated: {region_id}"));
+                    return true;
+                }
+                Ok(HandlerOutcome::Passthrough) => {}
+                Err(err) => self.record_error(format!("interactive handler failed: {err}")),
+            }
+        }
+        false
     }
 
     fn handle_scroll_event(
@@ -2116,6 +2161,22 @@ fn interactive_region_id(event: &InteractiveEvent) -> Option<&str> {
         | InteractiveEvent::DragUpdate { region, .. }
         | InteractiveEvent::DragEnd { region, .. } => Some(region),
         InteractiveEvent::Scroll { region, .. } => region.as_deref(),
+    }
+}
+
+fn region_kind_name(kind: &RegionKind) -> &'static str {
+    match kind {
+        RegionKind::TranscriptMessage { .. } => "TranscriptMessage",
+        RegionKind::ToolCallBlock { .. } => "ToolCallBlock",
+        RegionKind::FileReference { .. } => "FileReference",
+        RegionKind::Url(_) => "Url",
+        RegionKind::AttachmentThumbnail { .. } => "AttachmentThumbnail",
+        RegionKind::StatusSegment { .. } => "StatusSegment",
+        RegionKind::PaletteItem { .. } => "PaletteItem",
+        RegionKind::DiffHunk { .. } => "DiffHunk",
+        RegionKind::PolicyApprovalButton { .. } => "PolicyApprovalButton",
+        RegionKind::Composer => "Composer",
+        RegionKind::Custom { .. } => "Custom",
     }
 }
 
