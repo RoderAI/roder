@@ -215,7 +215,7 @@ pub const BUILT_IN_MODELS: &[ModelCatalogEntry] = &[
         "GPT-5.5",
         "Frontier model for complex coding, research, and real-world work.",
         1_050_000,
-        600_000,
+        945_000,
         true,
         STANDARD_REASONING,
     ),
@@ -224,7 +224,7 @@ pub const BUILT_IN_MODELS: &[ModelCatalogEntry] = &[
         "GPT-5.4-Mini",
         "Small, fast, and cost-efficient model for simpler coding tasks.",
         400_000,
-        320_000,
+        360_000,
         true,
         STANDARD_REASONING,
     ),
@@ -237,7 +237,7 @@ pub const BUILT_IN_MODELS: &[ModelCatalogEntry] = &[
         supported_reasoning: STANDARD_REASONING,
         context_window: 128_000,
         max_context_window: 128_000,
-        auto_compact_token_limit: 102_400,
+        auto_compact_token_limit: 115_200,
         supports_compaction: true,
         supports_images: false,
         supports_tools: true,
@@ -254,7 +254,7 @@ pub const BUILT_IN_MODELS: &[ModelCatalogEntry] = &[
         supported_reasoning: STANDARD_REASONING,
         context_window: 272_000,
         max_context_window: 272_000,
-        auto_compact_token_limit: 217_600,
+        auto_compact_token_limit: 244_800,
         supports_compaction: false,
         supports_images: false,
         supports_tools: true,
@@ -267,7 +267,7 @@ pub const BUILT_IN_MODELS: &[ModelCatalogEntry] = &[
         "Claude Opus 4.7",
         "Most capable Claude model for complex reasoning and agentic coding.",
         1_000_000,
-        800_000,
+        900_000,
         REASONING_HIGH,
         STANDARD_REASONING,
     ),
@@ -276,7 +276,7 @@ pub const BUILT_IN_MODELS: &[ModelCatalogEntry] = &[
         "Claude Sonnet 4.6",
         "Balanced Claude model for coding, tool use, and everyday agent workflows.",
         1_000_000,
-        800_000,
+        900_000,
         REASONING_MEDIUM,
         STANDARD_REASONING,
     ),
@@ -285,7 +285,7 @@ pub const BUILT_IN_MODELS: &[ModelCatalogEntry] = &[
         "Claude Haiku 4.5",
         "Fast Claude model for lower-latency tool workflows.",
         200_000,
-        160_000,
+        180_000,
         REASONING_LOW,
         HAIKU_REASONING,
     ),
@@ -339,7 +339,7 @@ pub const BUILT_IN_MODELS: &[ModelCatalogEntry] = &[
         supported_reasoning: MOCK_REASONING,
         context_window: 128_000,
         max_context_window: 128_000,
-        auto_compact_token_limit: 102_400,
+        auto_compact_token_limit: 115_200,
         supports_compaction: false,
         supports_images: false,
         supports_tools: false,
@@ -420,7 +420,7 @@ const fn gemini_model(
         supported_reasoning: GEMINI_REASONING,
         context_window: 1_048_576,
         max_context_window: 1_048_576,
-        auto_compact_token_limit: 838_860,
+        auto_compact_token_limit: 943_718,
         supports_compaction: false,
         supports_images: true,
         supports_tools: true,
@@ -530,17 +530,32 @@ mod tests {
         let gpt55 = lookup_model("gpt-5.5").unwrap();
         assert_eq!(gpt55.context_window, 1_050_000);
         assert_eq!(gpt55.max_context_window, 1_050_000);
-        assert_eq!(gpt55.auto_compact_token_limit, 600_000);
+        assert_eq!(gpt55.auto_compact_token_limit, 945_000);
 
         let mini = lookup_model("gpt-5.4-mini").unwrap();
         assert_eq!(mini.context_window, 400_000);
         assert_eq!(mini.max_context_window, 400_000);
-        assert_eq!(mini.auto_compact_token_limit, 320_000);
+        assert_eq!(mini.auto_compact_token_limit, 360_000);
 
         let spark = lookup_model("gpt-5.3-codex-spark").unwrap();
         assert_eq!(spark.provider, PROVIDER_CODEX);
         assert_eq!(spark.context_window, 128_000);
         assert_eq!(spark.max_context_window, 128_000);
-        assert_eq!(spark.auto_compact_token_limit, 102_400);
+        assert_eq!(spark.auto_compact_token_limit, 115_200);
+    }
+
+    #[test]
+    fn auto_compact_defaults_to_ninety_percent_of_context_window() {
+        for model in BUILT_IN_MODELS {
+            if model.context_window == 0 || model.auto_compact_token_limit == 0 {
+                continue;
+            }
+            assert_eq!(
+                model.auto_compact_token_limit,
+                model.context_window.saturating_mul(9) / 10,
+                "{} should compact at 90% of its context window",
+                model.id
+            );
+        }
     }
 }

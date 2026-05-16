@@ -7,7 +7,7 @@ use ratatui::{
 use roder_api::policy_mode::PolicyMode;
 use tui_textarea::{CursorMove, TextArea, WrapMode};
 
-use super::{Theme, policy_mode_label};
+use super::{Theme, pretty_policy_mode_label};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(super) enum ComposerMode {
@@ -44,7 +44,7 @@ impl ComposerMode {
     fn title_spans(self, theme: Theme, policy_mode: PolicyMode) -> Option<Line<'static>> {
         let mode_label = match policy_mode {
             PolicyMode::Default => "",
-            _ => policy_mode_label(policy_mode),
+            _ => pretty_policy_mode_label(policy_mode),
         };
 
         Some(match self {
@@ -246,14 +246,18 @@ mod tests {
 
     #[test]
     fn non_default_chat_mode_title_only_shows_policy_mode() {
-        assert_eq!(ComposerMode::Chat.title_text(PolicyMode::Plan), " plan ");
+        assert_eq!(ComposerMode::Chat.title_text(PolicyMode::Plan), " Plan ");
+        assert_eq!(
+            ComposerMode::Chat.title_text(PolicyMode::AcceptEdits),
+            " Accept Edits "
+        );
     }
 
     #[test]
     fn shell_mode_title_is_not_labeled_as_chat() {
         assert_eq!(
             ComposerMode::Shell.title_text(PolicyMode::Plan),
-            " shell plan "
+            " shell Plan "
         );
     }
 

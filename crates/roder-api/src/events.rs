@@ -140,6 +140,26 @@ pub struct ApprovalResolved {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UserInputRequested {
+    pub thread_id: ThreadId,
+    pub turn_id: TurnId,
+    pub request_id: String,
+    pub questions: serde_json::Value,
+    #[serde(with = "time::serde::rfc3339")]
+    pub timestamp: OffsetDateTime,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UserInputResolved {
+    pub thread_id: ThreadId,
+    pub turn_id: TurnId,
+    pub request_id: String,
+    pub answers: serde_json::Value,
+    #[serde(with = "time::serde::rfc3339")]
+    pub timestamp: OffsetDateTime,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ToolCallStarted {
     pub thread_id: ThreadId,
     pub turn_id: TurnId,
@@ -306,6 +326,8 @@ pub enum RoderEvent {
     ToolCallRequested(ToolCallRequested),
     ApprovalRequested(ApprovalRequested),
     ApprovalResolved(ApprovalResolved),
+    UserInputRequested(UserInputRequested),
+    UserInputResolved(UserInputResolved),
     PolicyDecisionRecorded(PolicyDecisionRecorded),
     PolicyBypassActive(PolicyBypassActive),
     PolicyModeChanged(PolicyModeChanged),
@@ -348,6 +370,8 @@ impl RoderEvent {
             RoderEvent::ToolCallRequested(_) => "tool.call_requested",
             RoderEvent::ApprovalRequested(_) => "approval.requested",
             RoderEvent::ApprovalResolved(_) => "approval.resolved",
+            RoderEvent::UserInputRequested(_) => "user_input.requested",
+            RoderEvent::UserInputResolved(_) => "user_input.resolved",
             RoderEvent::PolicyDecisionRecorded(_) => "policy.decision",
             RoderEvent::PolicyBypassActive(_) => "policy.bypass_active",
             RoderEvent::PolicyModeChanged(_) => "policy.mode_changed",
@@ -394,6 +418,9 @@ impl RoderEvent {
             | RoderEvent::TaskFailed(_)
             | RoderEvent::TaskCancelled(_) => EventSource::Extension,
             RoderEvent::FileChangePreviewReady(_) => EventSource::Tool,
+            RoderEvent::UserInputRequested(_) | RoderEvent::UserInputResolved(_) => {
+                EventSource::Core
+            }
             RoderEvent::ExtensionRegistered(_) => EventSource::Extension,
             _ => EventSource::Core,
         }
@@ -412,6 +439,8 @@ impl RoderEvent {
             RoderEvent::ToolCallRequested(e) => Some(&e.thread_id),
             RoderEvent::ApprovalRequested(e) => Some(&e.thread_id),
             RoderEvent::ApprovalResolved(e) => Some(&e.thread_id),
+            RoderEvent::UserInputRequested(e) => Some(&e.thread_id),
+            RoderEvent::UserInputResolved(e) => Some(&e.thread_id),
             RoderEvent::PolicyDecisionRecorded(e) => Some(&e.thread_id),
             RoderEvent::PolicyBypassActive(e) => Some(&e.thread_id),
             RoderEvent::PolicyModeChanged(e) => Some(&e.thread_id),
@@ -451,6 +480,8 @@ impl RoderEvent {
             RoderEvent::ToolCallRequested(e) => Some(&e.turn_id),
             RoderEvent::ApprovalRequested(e) => Some(&e.turn_id),
             RoderEvent::ApprovalResolved(e) => Some(&e.turn_id),
+            RoderEvent::UserInputRequested(e) => Some(&e.turn_id),
+            RoderEvent::UserInputResolved(e) => Some(&e.turn_id),
             RoderEvent::PolicyDecisionRecorded(e) => Some(&e.turn_id),
             RoderEvent::PolicyBypassActive(e) => Some(&e.turn_id),
             RoderEvent::PolicyModeChanged(e) => e.turn_id.as_ref(),

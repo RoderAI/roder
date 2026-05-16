@@ -16,12 +16,17 @@ use ratatui::{
     style::Modifier,
     text::{Line, Span, Text},
 };
+use serde_json::Value;
 
 use super::{Theme, short_id};
 use preview::{argument_preview, tool_title};
 use render::{max_scroll, visible_hit_rows};
 
 const BOTTOM_PADDING_ROWS: usize = 3;
+const TOOL_COLLAPSE_LIMIT: usize = 6;
+const TOOL_OVERFLOW_INDEX: usize = usize::MAX;
+const MOUSE_SCROLL_ROWS: isize = 10;
+const MIN_PAGE_SCROLL_ROWS: isize = 12;
 
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub(super) struct ToolTimelineEntry {
@@ -70,6 +75,7 @@ pub(super) struct TurnCompletedSummary {
     pub elapsed: Duration,
     pub input_tokens: u32,
     pub output_tokens: u32,
+    pub reasoning_tokens: Option<u32>,
     pub session_tokens: u64,
 }
 
@@ -105,6 +111,15 @@ pub(super) struct TimelineRender {
     pub scroll: u16,
 }
 
+#[derive(Debug, Clone, Eq, PartialEq)]
+pub(super) struct ToolDetail {
+    pub title: String,
+    pub command: Option<String>,
+    pub arguments: String,
+    pub output: Option<String>,
+    pub failed: bool,
+}
+
 #[derive(Debug, Default)]
 pub(super) struct TimelineState {
     items: Vec<TimelineItem>,
@@ -114,7 +129,10 @@ pub(super) struct TimelineState {
     focus: TimelineFocus,
     auto_follow: bool,
     scroll_offset: usize,
+    last_viewport_height: u16,
     hit_rows: Vec<(u16, usize)>,
+    show_all_tools: bool,
+    requested_detail: Option<ToolDetail>,
 }
 
 impl TimelineState {
@@ -282,11 +300,11 @@ impl TimelineState {
                 true
             }
             KeyCode::PageDown => {
-                self.scroll_by(8);
+                self.scroll_by(self.page_scroll_rows());
                 true
             }
             KeyCode::PageUp => {
-                self.scroll_by(-8);
+                self.scroll_by(-self.page_scroll_rows());
                 true
             }
             KeyCode::Home => {
@@ -310,12 +328,12 @@ impl TimelineState {
         match event.kind {
             MouseEventKind::ScrollDown => {
                 self.focus = TimelineFocus::Timeline;
-                self.scroll_by(3);
+                self.scroll_by(MOUSE_SCROLL_ROWS);
                 return true;
             }
             MouseEventKind::ScrollUp => {
                 self.focus = TimelineFocus::Timeline;
-                self.scroll_by(-3);
+                self.scroll_by(-MOUSE_SCROLL_ROWS);
                 return true;
             }
             MouseEventKind::Down(MouseButton::Left) | MouseEventKind::Up(MouseButton::Left) => {}
@@ -329,19 +347,48 @@ impl TimelineState {
         else {
             return false;
         };
+        if index == TOOL_OVERFLOW_INDEX {
+            self.focus = TimelineFocus::Timeline;
+            self.show_all_tools = true;
+            self.auto_follow = false;
+            return true;
+        }
+        if !self.items.get(index).is_some_and(item_is_selectable) {
+            return false;
+        }
         let was_selected = self.selected == Some(index);
         self.focus = TimelineFocus::Timeline;
         self.selected = Some(index);
         self.auto_follow = index + 1 == self.items.len();
+        if let Some(detail) = self.detail_for_index(index) {
+            self.requested_detail = Some(detail);
+            return true;
+        }
         if was_selected && self.item_can_expand(index) {
             self.toggle_expansion(index);
         }
         true
     }
 
+    pub fn take_requested_detail(&mut self) -> Option<ToolDetail> {
+        self.requested_detail.take()
+    }
+
+    #[cfg(test)]
     pub fn render(&mut self, theme: Theme, area: Rect) -> TimelineRender {
-        let (lines, row_items) = self.build_lines(theme, area.width);
-        let max_scroll = max_scroll(lines.len(), area.height);
+        self.render_with_frame(theme, area, 0)
+    }
+
+    pub fn render_with_frame(
+        &mut self,
+        theme: Theme,
+        area: Rect,
+        animation_frame: u64,
+    ) -> TimelineRender {
+        let (lines, row_items, visual_height) =
+            self.build_lines(theme, area.width, animation_frame);
+        self.last_viewport_height = area.height;
+        let max_scroll = max_scroll(visual_height, area.height);
         let scroll = self.scroll_for(area.height, &row_items, max_scroll);
         self.hit_rows = visible_hit_rows(area, scroll, area.height, &row_items);
         self.scroll_offset = usize::from(scroll);
@@ -363,7 +410,11 @@ impl TimelineState {
     }
 
     fn selectable_indices(&self) -> Vec<usize> {
-        (0..self.items.len()).collect()
+        self.items
+            .iter()
+            .enumerate()
+            .filter_map(|(index, item)| item_is_selectable(item).then_some(index))
+            .collect()
     }
 
     fn select_next(&mut self) {
@@ -409,6 +460,12 @@ impl TimelineState {
         self.auto_follow = false;
     }
 
+    fn page_scroll_rows(&self) -> isize {
+        (self.last_viewport_height as isize)
+            .saturating_sub(1)
+            .max(MIN_PAGE_SCROLL_ROWS)
+    }
+
     fn scroll_to(&mut self, offset: usize) {
         self.scroll_offset = offset;
         self.selected = None;
@@ -431,6 +488,9 @@ impl TimelineState {
     }
 
     fn item_can_expand(&self, index: usize) -> bool {
+        if index == TOOL_OVERFLOW_INDEX {
+            return !self.show_all_tools && self.hidden_tool_count() > 0;
+        }
         matches!(
             self.items.get(index),
             Some(TimelineItem {
@@ -440,6 +500,36 @@ impl TimelineState {
                 }),
             }) if !output.trim().is_empty()
         )
+    }
+
+    fn detail_for_index(&self, index: usize) -> Option<ToolDetail> {
+        match self.items.get(index)? {
+            TimelineItem {
+                kind: TimelineItemKind::Tool(tool),
+            } => tool.detail(),
+            TimelineItem {
+                kind: TimelineItemKind::Shell(command),
+            } => Some(ToolDetail {
+                title: "Shell".to_string(),
+                command: Some(command.clone()),
+                arguments: String::new(),
+                output: self.shell_output_after(index),
+                failed: false,
+            }),
+            _ => None,
+        }
+    }
+
+    fn shell_output_after(&self, index: usize) -> Option<String> {
+        self.items
+            .iter()
+            .skip(index + 1)
+            .find_map(|item| match &item.kind {
+                TimelineItemKind::ShellOutput(output) if !output.trim().is_empty() => {
+                    Some(output.clone())
+                }
+                _ => None,
+            })
     }
 
     fn scroll_for(&self, height: u16, row_items: &[(usize, usize)], max_scroll: usize) -> u16 {
@@ -459,7 +549,12 @@ impl TimelineState {
         self.scroll_offset.min(max_scroll) as u16
     }
 
-    fn build_lines(&self, theme: Theme, width: u16) -> (Vec<Line<'static>>, Vec<(usize, usize)>) {
+    fn build_lines(
+        &self,
+        theme: Theme,
+        width: u16,
+        animation_frame: u64,
+    ) -> (Vec<Line<'static>>, Vec<(usize, usize)>, usize) {
         if self.items.is_empty() {
             return (
                 vec![
@@ -470,21 +565,220 @@ impl TimelineState {
                     )),
                 ],
                 Vec::new(),
+                2,
             );
         }
 
         let mut lines = Vec::new();
         let mut row_items = Vec::new();
+        let mut visual_row = 0;
+        let visible_tools = self.visible_tool_indices();
+        let hidden_tool_count = self.hidden_tool_count();
+        let overflow_insert_index = visible_tools.first().copied();
         for (index, item) in self.items.iter().enumerate() {
-            row_items.push((lines.len(), index));
-            let selected = self.focus == TimelineFocus::Timeline && self.selected == Some(index);
+            if Some(index) == overflow_insert_index && hidden_tool_count > 0 {
+                let line_start = lines.len();
+                render::push_tool_overflow_line(
+                    hidden_tool_count,
+                    self.focus == TimelineFocus::Timeline
+                        && self.selected == Some(TOOL_OVERFLOW_INDEX),
+                    theme,
+                    width,
+                    &mut lines,
+                );
+                visual_row = map_rendered_lines(
+                    &lines,
+                    line_start,
+                    visual_row,
+                    width,
+                    TOOL_OVERFLOW_INDEX,
+                    &mut row_items,
+                );
+            }
+            if matches!(item.kind, TimelineItemKind::Tool(_))
+                && !self.show_all_tools
+                && !visible_tools.contains(&index)
+            {
+                continue;
+            }
+            let line_start = lines.len();
+            let selected = self.focus == TimelineFocus::Timeline
+                && self.selected == Some(index)
+                && item_is_selectable(item);
             let expanded = self.expanded.contains(&index);
-            item.render(selected, expanded, theme, width, &mut lines);
-            if index + 1 < self.items.len() {
+            item.render(
+                selected,
+                expanded,
+                theme,
+                width,
+                animation_frame,
+                &mut lines,
+            );
+            visual_row =
+                map_rendered_lines(&lines, line_start, visual_row, width, index, &mut row_items);
+            if self.should_separate_visible_item(index, &visible_tools) {
                 lines.push(Line::raw(""));
+                visual_row += 1;
             }
         }
-        lines.extend((0..BOTTOM_PADDING_ROWS).map(|_| Line::raw("")));
-        (lines, row_items)
+        for _ in 0..BOTTOM_PADDING_ROWS {
+            lines.push(Line::raw(""));
+            visual_row += 1;
+        }
+        (lines, row_items, visual_row)
+    }
+
+    fn visible_tool_indices(&self) -> Vec<usize> {
+        let tools = self
+            .items
+            .iter()
+            .enumerate()
+            .filter_map(|(index, item)| {
+                matches!(item.kind, TimelineItemKind::Tool(_)).then_some(index)
+            })
+            .collect::<Vec<_>>();
+        if self.show_all_tools || tools.len() <= TOOL_COLLAPSE_LIMIT {
+            return tools;
+        }
+        tools[tools.len() - TOOL_COLLAPSE_LIMIT..].to_vec()
+    }
+
+    fn hidden_tool_count(&self) -> usize {
+        if self.show_all_tools {
+            return 0;
+        }
+        self.items
+            .iter()
+            .filter(|item| matches!(item.kind, TimelineItemKind::Tool(_)))
+            .count()
+            .saturating_sub(TOOL_COLLAPSE_LIMIT)
+    }
+
+    fn should_separate_visible_item(&self, index: usize, visible_tools: &[usize]) -> bool {
+        let Some(next_index) = self.next_visible_index(index, visible_tools) else {
+            return false;
+        };
+        should_separate_items(&self.items[index], &self.items[next_index])
+    }
+
+    fn next_visible_index(&self, index: usize, visible_tools: &[usize]) -> Option<usize> {
+        self.items
+            .iter()
+            .enumerate()
+            .skip(index + 1)
+            .find_map(|(candidate, item)| {
+                if matches!(item.kind, TimelineItemKind::Tool(_))
+                    && !self.show_all_tools
+                    && !visible_tools.contains(&candidate)
+                {
+                    return None;
+                }
+                Some(candidate)
+            })
+    }
+}
+
+impl ToolTimelineTool {
+    fn detail(&self) -> Option<ToolDetail> {
+        if !is_shell_like_tool(&self.entry.name) {
+            return None;
+        }
+
+        let (command, arguments) = command_and_arguments(&self.entry.arguments);
+        Some(ToolDetail {
+            title: self.entry.label(),
+            command,
+            arguments,
+            output: self.output.clone().filter(|text| !text.trim().is_empty()),
+            failed: self.status == ToolTimelineStatus::Failed,
+        })
+    }
+}
+
+fn is_shell_like_tool(name: &str) -> bool {
+    let normalized = name.to_ascii_lowercase();
+    normalized == "shell"
+        || normalized == "exec"
+        || normalized == "command"
+        || normalized.ends_with("_shell")
+        || normalized.ends_with(".shell")
+        || normalized.contains("shell_command")
+        || normalized.contains("exec_command")
+}
+
+fn command_and_arguments(arguments: &str) -> (Option<String>, String) {
+    let trimmed = arguments.trim();
+    if trimmed.is_empty() || trimmed == "{}" {
+        return (None, String::new());
+    }
+
+    let Ok(value) = serde_json::from_str::<Value>(trimmed) else {
+        return (Some(trimmed.to_string()), String::new());
+    };
+
+    let command = command_from_json(&value);
+    let pretty_arguments =
+        serde_json::to_string_pretty(&value).unwrap_or_else(|_| trimmed.to_string());
+    (command, pretty_arguments)
+}
+
+fn command_from_json(value: &Value) -> Option<String> {
+    let object = value.as_object()?;
+    for key in [
+        "command",
+        "cmd",
+        "shell_command",
+        "script",
+        "input",
+        "query",
+    ] {
+        if let Some(command) = object.get(key).and_then(Value::as_str)
+            && !command.trim().is_empty()
+        {
+            return Some(command.to_string());
+        }
+    }
+    None
+}
+
+fn map_rendered_lines(
+    lines: &[Line<'_>],
+    line_start: usize,
+    visual_row: usize,
+    width: u16,
+    index: usize,
+    row_items: &mut Vec<(usize, usize)>,
+) -> usize {
+    let mut visual_row = visual_row;
+    for line in &lines[line_start..] {
+        let height = line_visual_height(line, width);
+        for row in visual_row..visual_row + height {
+            row_items.push((row, index));
+        }
+        visual_row += height;
+    }
+    visual_row
+}
+
+fn line_visual_height(line: &Line<'_>, width: u16) -> usize {
+    let width = usize::from(width).max(1);
+    let line_width = line.width().max(1);
+    line_width.div_ceil(width)
+}
+
+fn item_is_selectable(item: &TimelineItem) -> bool {
+    matches!(
+        item.kind,
+        TimelineItemKind::Tool(_) | TimelineItemKind::Shell(_)
+    )
+}
+
+fn should_separate_items(current: &TimelineItem, next: &TimelineItem) -> bool {
+    match (&current.kind, &next.kind) {
+        (TimelineItemKind::Tool(_), TimelineItemKind::Tool(_)) => false,
+        (TimelineItemKind::Assistant { phase, .. }, TimelineItemKind::Tool(_)) => !phase
+            .as_deref()
+            .is_some_and(|phase| !phase.is_empty() && phase != "final_answer"),
+        _ => true,
     }
 }

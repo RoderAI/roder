@@ -210,8 +210,8 @@ impl InferenceEngine for CodexOAuthInferenceEngine {
 
     fn capabilities(&self) -> InferenceCapabilities {
         InferenceCapabilities {
-            streaming: false,
-            tool_calls: false,
+            streaming: true,
+            tool_calls: true,
             parallel_tool_calls: false,
             reasoning_summaries: true,
             structured_output: true,

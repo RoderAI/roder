@@ -30,7 +30,7 @@
 |╭──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮|
 |│ Ask Roder to work on this repo                                                                                       │|
 |╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯|
-| ready  mode:default  enter send  shift+enter newline  tab timeline  shift+tab mode  paste/drag images  ! shell  ctrl+p |
+| ready  mode:default  enter send  shift+enter newline  / commands  tab timeline  shift+tab mode  paste/drag images  ! sh|
 +────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────+
 {
   "2,0": {

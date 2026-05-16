@@ -64,10 +64,51 @@ pub struct OutputConfig {
     pub response_format: Option<serde_json::Value>,
 }
 
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum HostedWebSearchMode {
+    #[default]
+    Disabled,
+    Cached,
+    Live,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct HostedWebSearchConfig {
+    pub mode: HostedWebSearchMode,
+}
+
+impl HostedWebSearchConfig {
+    pub fn disabled() -> Self {
+        Self {
+            mode: HostedWebSearchMode::Disabled,
+        }
+    }
+
+    pub fn cached() -> Self {
+        Self {
+            mode: HostedWebSearchMode::Cached,
+        }
+    }
+
+    pub fn live() -> Self {
+        Self {
+            mode: HostedWebSearchMode::Live,
+        }
+    }
+
+    pub fn is_enabled(&self) -> bool {
+        self.mode != HostedWebSearchMode::Disabled
+    }
+}
+
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
 pub struct RuntimeHints {
     pub trace_id: Option<String>,
     pub prompt_cache_key: Option<String>,
+    pub auto_compact_token_limit: Option<u32>,
+    #[serde(default)]
+    pub hosted_web_search: HostedWebSearchConfig,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -132,6 +173,13 @@ pub struct InferenceFailure {
     pub message: String,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct CompactionProgress {
+    pub status: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub item_id: Option<String>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub enum InferenceEvent {
     MessageDelta(MessageDelta),
@@ -139,6 +187,7 @@ pub enum InferenceEvent {
     ToolCallStarted(ToolCallStarted),
     ToolCallDelta(ToolCallDelta),
     ToolCallCompleted(ToolCallCompleted),
+    Compaction(CompactionProgress),
     Usage(TokenUsage),
     Completed(CompletionMetadata),
     Failed(InferenceFailure),

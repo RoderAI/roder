@@ -274,6 +274,8 @@ impl InProcessDispatcher {
                 runtime: RuntimeHints {
                     trace_id: Some(format!("{parent_thread_id}:{parent_turn_id}")),
                     prompt_cache_key: None,
+                    auto_compact_token_limit: None,
+                    ..RuntimeHints::default()
                 },
                 metadata: serde_json::json!({
                     "subagent": {
@@ -310,6 +312,7 @@ impl InProcessDispatcher {
                     InferenceEvent::ReasoningDelta(_)
                     | InferenceEvent::ToolCallStarted(_)
                     | InferenceEvent::ToolCallDelta(_)
+                    | InferenceEvent::Compaction(_)
                     | InferenceEvent::ProviderMetadata(_) => {}
                 }
             }

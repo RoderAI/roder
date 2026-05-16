@@ -1,6 +1,19 @@
-# Roder Web Search Extensions
+# Roder Web Search
 
-Roder web search is installed through native extension crates. The canonical tool is `web_search`; provider-specific tools are only exposed when `namespaced_tools = true`.
+Roder uses Codex/OpenAI hosted web search by default. Hosted search is sent to the Responses API as a provider-native `web_search` tool, so it is not listed as a local `tools/list` executor.
+
+Use `mode = "live"` to allow live internet access, or `mode = "disabled"` to turn hosted web search off:
+
+```toml
+[web_search]
+mode = "live" # default is "codex", which uses cached hosted search
+```
+
+Set `RODER_WEB_SEARCH_MODE=live`, `codex`, `external`, or `disabled` to override this from the environment.
+
+## External Provider Router
+
+Roder can also install web search through native extension crates. In this mode the canonical local tool is `web_search`; provider-specific tools are only exposed when `namespaced_tools = true`.
 
 ## Config
 
@@ -8,7 +21,7 @@ Add one provider to `~/.roder/config.toml`:
 
 ```toml
 [web_search]
-enabled = true
+mode = "external"
 provider = "tavily"
 namespaced_tools = false
 max_results = 8

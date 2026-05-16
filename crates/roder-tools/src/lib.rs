@@ -1,8 +1,11 @@
 mod edit;
+mod exec;
 mod files;
 mod paging;
 mod patch;
 mod search;
+mod shell;
+mod workflow;
 mod workspace;
 
 use std::path::PathBuf;
@@ -92,10 +95,13 @@ impl ToolContributor for BuiltinCodingToolsContributor {
     fn contribute(&self, registry: &mut ToolRegistry) -> anyhow::Result<()> {
         files::register(registry, self.workspace.clone())?;
         search::register(registry, self.workspace.clone())?;
+        shell::register(registry, self.workspace.clone())?;
+        exec::register(registry, self.workspace.clone())?;
         registry.register(Arc::new(patch::ApplyPatchTool {
             workspace: self.workspace.clone(),
         }))?;
-        edit::register(registry, self.workspace.clone())
+        edit::register(registry, self.workspace.clone())?;
+        workflow::register(registry)
     }
 }
 

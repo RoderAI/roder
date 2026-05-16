@@ -6,7 +6,7 @@ use ratatui::{
 
 use super::super::Theme;
 use super::markdown::markdown_lines;
-use super::patch_preview::tool_diff_preview_lines;
+use super::patch_preview::{tool_diff_preview, tool_diff_preview_lines};
 use super::{TimelineItem, TimelineItemKind, ToolTimelineStatus, ToolTimelineTool};
 
 impl TimelineItem {
@@ -16,40 +16,21 @@ impl TimelineItem {
         expanded: bool,
         theme: Theme,
         width: u16,
+        animation_frame: u64,
         lines: &mut Vec<Line<'static>>,
     ) {
         match &self.kind {
-            TimelineItemKind::User(text) => push_body_lines(
-                lines,
-                "❯ ",
-                text,
-                theme.accent(),
-                item_style(theme.text(), selected, theme),
-            ),
-            TimelineItemKind::Assistant { text, phase } => {
-                if phase
-                    .as_deref()
-                    .is_some_and(|phase| !phase.is_empty() && phase != "final_answer")
-                {
-                    push_markdown_body_lines(
-                        lines,
-                        format!("  {} ", phase.as_deref().unwrap()),
-                        text,
-                        theme.accent_soft(),
-                        item_style(theme.muted(), selected, theme),
-                        theme,
-                    );
-                } else {
-                    push_markdown_body_lines(
-                        lines,
-                        "",
-                        text,
-                        theme.subtle(),
-                        item_style(theme.text(), selected, theme),
-                        theme,
-                    );
-                }
+            TimelineItemKind::User(text) => {
+                push_user_block_lines(lines, text, selected, theme, width)
             }
+            TimelineItemKind::Assistant { text, phase: _ } => push_markdown_body_lines(
+                lines,
+                "",
+                text,
+                theme.subtle(),
+                item_style(theme.text(), selected, theme),
+                theme,
+            ),
             TimelineItemKind::Reasoning(text) => push_body_lines(
                 lines,
                 "Thinking: ",
@@ -69,21 +50,23 @@ impl TimelineItem {
                 item_style(theme.muted(), selected, theme),
             ),
             TimelineItemKind::TurnCompleted(summary) => {
-                let left = "    Turn completed.";
-                let right = format!(
-                    "{}  in {}  out {}  session {} tokens",
+                let reasoning = summary
+                    .reasoning_tokens
+                    .filter(|tokens| *tokens > 0)
+                    .map(|tokens| format!("  thinking {}", format_compact_count(u64::from(tokens))))
+                    .unwrap_or_default();
+                let text = format!(
+                    "  Turn completed in {}.  ↑ {}  ↓ {}{}  session {} tokens",
                     format_duration(summary.elapsed),
                     format_compact_count(u64::from(summary.input_tokens)),
                     format_compact_count(u64::from(summary.output_tokens)),
+                    reasoning,
                     format_compact_count(summary.session_tokens),
                 );
-                push_aligned_line(
-                    lines,
-                    left,
-                    &right,
+                lines.push(Line::from(Span::styled(
+                    pad_to_width(&text, width),
                     item_style(theme.muted(), selected, theme),
-                    width,
-                );
+                )));
             }
             TimelineItemKind::Error(text) => push_body_lines(
                 lines,
@@ -107,16 +90,23 @@ impl TimelineItem {
                 item_style(theme.muted(), selected, theme),
             ),
             TimelineItemKind::Tool(tool) => {
-                tool.render(selected, expanded, theme, lines);
+                tool.render(selected, expanded, theme, animation_frame, lines);
             }
         }
     }
 }
 
 impl ToolTimelineTool {
-    fn render(&self, selected: bool, expanded: bool, theme: Theme, lines: &mut Vec<Line<'static>>) {
+    fn render(
+        &self,
+        selected: bool,
+        expanded: bool,
+        theme: Theme,
+        animation_frame: u64,
+        lines: &mut Vec<Line<'static>>,
+    ) {
         let marker_style = match self.status {
-            ToolTimelineStatus::Running => theme.running(),
+            ToolTimelineStatus::Running => running_tool_marker_style(animation_frame),
             ToolTimelineStatus::Completed => theme.tool(),
             ToolTimelineStatus::Failed => theme.error(),
         };
@@ -134,14 +124,18 @@ impl ToolTimelineTool {
         } else {
             " "
         };
-        let label = self.entry.label();
+        let diff_preview = tool_diff_preview(&self.entry);
+        let label = diff_preview
+            .as_ref()
+            .map(|preview| preview.title())
+            .unwrap_or_else(|| self.entry.label());
         let status = match self.status {
             ToolTimelineStatus::Running => " running",
             ToolTimelineStatus::Completed => "",
             ToolTimelineStatus::Failed => " failed",
         };
         lines.push(Line::from(vec![
-            Span::styled("◆ ", marker_style),
+            Span::styled("  ◆ ", marker_style),
             Span::styled(affordance.to_string(), theme.subtle()),
             Span::styled(
                 format!(" {label}{status}"),
@@ -149,7 +143,9 @@ impl ToolTimelineTool {
             ),
         ]));
 
-        lines.extend(tool_diff_preview_lines(&self.entry, theme));
+        if let Some(preview) = diff_preview.as_ref() {
+            lines.extend(tool_diff_preview_lines(preview, theme));
+        }
 
         if expanded && let Some(output) = self.output.as_deref() {
             for line in output.lines().take(24) {
@@ -175,6 +171,54 @@ impl ToolTimelineTool {
                 ]));
             }
         }
+    }
+}
+
+pub(super) fn push_tool_overflow_line(
+    hidden_count: usize,
+    selected: bool,
+    theme: Theme,
+    width: u16,
+    lines: &mut Vec<Line<'static>>,
+) {
+    let label = if hidden_count == 1 {
+        "  › 1 more".to_string()
+    } else {
+        format!("  › {hidden_count} more")
+    };
+    lines.push(Line::from(Span::styled(
+        pad_to_width(&label, width),
+        item_style(
+            Style::default()
+                .fg(theme.muted)
+                .bg(theme.user_bg)
+                .add_modifier(Modifier::BOLD),
+            selected,
+            theme,
+        ),
+    )));
+}
+
+fn running_tool_marker_style(animation_frame: u64) -> Style {
+    const PURPLE_FADE: [u8; 6] = [54, 91, 129, 135, 129, 91];
+    let color = PURPLE_FADE[(animation_frame as usize) % PURPLE_FADE.len()];
+    Style::default()
+        .fg(ratatui::style::Color::Indexed(color))
+        .add_modifier(Modifier::BOLD)
+}
+
+fn push_user_block_lines(
+    lines: &mut Vec<Line<'static>>,
+    body: &str,
+    selected: bool,
+    theme: Theme,
+    width: u16,
+) {
+    let style = item_style(theme.user_surface(), selected, theme);
+    for (line_index, line) in body.split('\n').enumerate() {
+        let prefix = if line_index == 0 { "  ❯ " } else { "    " };
+        let text = format!("{prefix}{line}");
+        lines.push(Line::from(Span::styled(pad_to_width(&text, width), style)));
     }
 }
 
@@ -224,20 +268,14 @@ fn push_markdown_body_lines(
     }
 }
 
-fn push_aligned_line(
-    lines: &mut Vec<Line<'static>>,
-    left: &str,
-    right: &str,
-    style: Style,
-    width: u16,
-) {
-    let used = left.chars().count() + right.chars().count();
-    let gap = usize::from(width).saturating_sub(used).max(1);
-    lines.push(Line::from(vec![
-        Span::styled(left.to_string(), style),
-        Span::styled(" ".repeat(gap), style),
-        Span::styled(right.to_string(), style),
-    ]));
+fn pad_to_width(text: &str, width: u16) -> String {
+    let width = usize::from(width);
+    let used = text.chars().count();
+    if used >= width {
+        text.to_string()
+    } else {
+        format!("{text}{}", " ".repeat(width - used))
+    }
 }
 
 fn format_duration(duration: std::time::Duration) -> String {
