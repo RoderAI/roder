@@ -1063,15 +1063,18 @@ impl TuiApp {
         }
         let composer_area = chunks[composer_index];
         let footer_area = chunks[composer_index + 1];
-        let transcript_regions = transcript_regions(
+        let mut interactive_regions = transcript_regions(
             &self.scrolled_transcript_messages(),
             &self.thread_id,
             self.active_turn_id.as_deref().unwrap_or("tui"),
             region_rect_from_ratatui(transcript_area),
             &self.transcript_fold,
         );
+        if self.show_palette {
+            interactive_regions.extend(self.palette_item_regions(area));
+        }
         self.mouse_feedback
-            .set_frame_regions(composer_area, footer_area, transcript_regions);
+            .set_frame_regions(composer_area, footer_area, interactive_regions);
         let composer_border_style = self
             .mouse_feedback
             .style_for_region(mouse_ui::COMPOSER_REGION_ID, self.theme.border());
@@ -1398,7 +1401,7 @@ impl TuiApp {
         right_click_at: Option<(u16, u16)>,
     ) {
         if !self.dispatch_region_handlers(event, region).await {
-            self.handle_region_action(region, right_click_at);
+            self.handle_region_action(region, right_click_at).await;
         }
     }
 
@@ -1509,10 +1512,14 @@ impl TuiApp {
         false
     }
 
-    fn handle_region_action(&mut self, region_id: &str, right_click_at: Option<(u16, u16)>) {
+    async fn handle_region_action(&mut self, region_id: &str, right_click_at: Option<(u16, u16)>) {
         let Some(region) = self.mouse_feedback.region(region_id).cloned() else {
             return;
         };
+        if let RegionKind::PaletteItem { source_id, item_id } = region.kind {
+            self.execute_palette_item(&source_id, &item_id).await;
+            return;
+        }
         let Some(action) = action_for_region(&region, right_click_at) else {
             return;
         };
