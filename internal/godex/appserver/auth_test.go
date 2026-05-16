@@ -63,3 +63,49 @@ func TestRemoteAuthDisabledPassThrough(t *testing.T) {
 		t.Fatal("disabled auth rejected request")
 	}
 }
+
+func TestRemoteAuthTokenTTLUsesInjectedClock(t *testing.T) {
+	auth, err := NewRemoteAuth("remote-secret", time.Unix(10, 0))
+	if err != nil {
+		t.Fatalf("new auth: %v", err)
+	}
+	expiresAt := time.Unix(20, 0)
+	auth.ExpiresAt = &expiresAt
+	now := time.Unix(19, 0)
+	auth.Now = func() time.Time { return now }
+	req, _ := http.NewRequest(http.MethodGet, "http://example.test", nil)
+	req.Header.Set("Authorization", "Bearer remote-secret")
+	if !auth.VerifyRequest(req) {
+		t.Fatal("token should be valid before expiry")
+	}
+	now = time.Unix(21, 0)
+	if auth.VerifyRequest(req) {
+		t.Fatal("token should be invalid after expiry")
+	}
+}
+
+func TestRemoteAuthBackoffState(t *testing.T) {
+	now := time.Unix(100, 0)
+	backoff := RemoteAuthBackoff{
+		BaseDelay: 100 * time.Millisecond,
+		MaxDelay:  350 * time.Millisecond,
+		Now:       func() time.Time { return now },
+	}
+	if delay := backoff.RecordFailure(); delay != 100*time.Millisecond {
+		t.Fatalf("first delay = %s", delay)
+	}
+	now = now.Add(time.Second)
+	if delay := backoff.RecordFailure(); delay != 200*time.Millisecond {
+		t.Fatalf("second delay = %s", delay)
+	}
+	if delay := backoff.RecordFailure(); delay != 350*time.Millisecond {
+		t.Fatalf("capped delay = %s", delay)
+	}
+	if backoff.LastFailure != now {
+		t.Fatalf("last failure = %s", backoff.LastFailure)
+	}
+	backoff.Reset()
+	if backoff.Failures != 0 || backoff.Delay() != 0 {
+		t.Fatalf("reset backoff = %#v delay=%s", backoff, backoff.Delay())
+	}
+}

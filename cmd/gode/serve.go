@@ -56,7 +56,7 @@ func serveWithConfig(ctx context.Context, command string, cfg godex.Config, list
 	remoteOptions := appserver.RemoteOptions{}
 	remoteToken := ""
 	if listen.Remote.Enabled {
-		token, auth, err := prepareRemoteAuth(listen.Remote.AuthToken)
+		token, auth, err := prepareRemoteAuth(listen.Remote.AuthToken, listen.Remote.TokenTTL)
 		if err != nil {
 			return err
 		}
@@ -101,12 +101,14 @@ func parseServeConfig(command string, args []string) (godex.Config, appserver.Li
 	remote := false
 	authToken := ""
 	printQR := true
+	tokenTTL := time.Duration(0)
 	var allowedOrigins commaListFlag
 	flags.StringVar(&listenRaw, "listen", listenRaw, "transport endpoint: stdio://, ws://IP:PORT, or off")
 	flags.StringVar(&mcpConfigPath, "mcp-config", mcpConfigPath, "path to an MCP config file")
 	flags.BoolVar(&remote, "remote", remote, "serve a remote websocket app-server with bearer authentication")
 	flags.StringVar(&authToken, "auth-token", authToken, "remote auth token literal or env:NAME")
 	flags.BoolVar(&printQR, "print-qr", printQR, "print a terminal QR code for remote pairing")
+	flags.DurationVar(&tokenTTL, "remote-token-ttl", tokenTTL, "optional remote auth token TTL, for example 1h")
 	flags.Var(&allowedOrigins, "allowed-origin", "allowed websocket Origin; may be repeated or comma-separated")
 	bindConfigFlags(flags, &cfg)
 	if err := flags.Parse(args); err != nil {
@@ -143,12 +145,13 @@ func parseServeConfig(command string, args []string) (godex.Config, appserver.Li
 			AuthToken:      resolvedToken,
 			PrintQR:        printQR,
 			AllowedOrigins: allowedOrigins,
+			TokenTTL:       tokenTTL,
 		}
 	}
 	return cfg, listen, nil
 }
 
-func prepareRemoteAuth(authToken string) (string, appserver.RemoteAuth, error) {
+func prepareRemoteAuth(authToken string, ttl time.Duration) (string, appserver.RemoteAuth, error) {
 	token := strings.TrimSpace(authToken)
 	if token == "" {
 		generated, err := appserver.GenerateRemoteToken(rand.Reader)
@@ -160,6 +163,10 @@ func prepareRemoteAuth(authToken string) (string, appserver.RemoteAuth, error) {
 	auth, err := appserver.NewRemoteAuth(token, time.Now())
 	if err != nil {
 		return "", appserver.RemoteAuth{}, err
+	}
+	if ttl > 0 {
+		expiresAt := auth.CreatedAt.Add(ttl)
+		auth.ExpiresAt = &expiresAt
 	}
 	return token, auth, nil
 }

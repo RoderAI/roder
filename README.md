@@ -133,6 +133,20 @@ The terminal UI keymap and `?` help overlay are documented in [`docs/roder-tui-k
 
 A more complete quick-start (configuration, providers, session resume, app-server transports, MCP) will land alongside the corresponding roadmap phases.
 
+### Legacy Go remote app-server
+
+The Go app-server can expose the same local protocol over a token-authenticated WebSocket for same-network or Tailscale clients:
+
+```sh
+go run ./cmd/gode app-server --remote --provider mock --model mock
+go run ./cmd/gode app-server --remote --listen ws://100.x.y.z:0 --print-qr=false
+GODE_REMOTE_TOKEN=... go run ./cmd/gode app-server --remote --auth-token env:GODE_REMOTE_TOKEN --remote-token-ttl 1h
+```
+
+Remote mode defaults to `ws://0.0.0.0:0`, prints usable connect URLs, and emits a `gode://connect?payload=...` QR payload. The WebSocket URL does not carry the bearer token in its query string; native clients should send `Authorization: Bearer <token>`, while browser-constrained clients can use subprotocols `gode.remote.v1, bearer.<token>`.
+
+Only `/readyz` and `/healthz` are unauthenticated. WebSocket upgrades require the token, Origin headers are rejected unless passed with `--allowed-origin`, and remote events/logs redact token material. Raw LAN WebSockets do not provide TLS; prefer a Tailscale address on shared networks or treat the bearer token as the full access secret.
+
 ---
 
 ## Extension authoring sketch

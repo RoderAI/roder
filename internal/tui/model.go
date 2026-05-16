@@ -413,6 +413,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.status = "remote stopped"
 		}
 		return m, nil
+	case remoteCopyMsg:
+		m.status = msg.Status
+		return m, nil
 	case mouseCaptureRestoreMsg:
 		m.restoreMouseCapture(msg)
 		return m, nil

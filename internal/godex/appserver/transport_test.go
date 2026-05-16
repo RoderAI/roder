@@ -93,8 +93,17 @@ func TestRemoteWebSocketRequiresAuth(t *testing.T) {
 	}
 
 	connectedCh := app.Bus.Subscribe(ctx, eventbus.Filter{Kinds: []eventbus.Kind{KindRemoteClientConnected}})
-	ws, _, err := websocket.Dial(ctx, listener.WebSocketURL(), &websocket.DialOptions{
-		HTTPHeader: http.Header{"Authorization": []string{"Bearer remote-secret"}},
+	pairing := BuildRemotePairingPayload("Gode Remote", listener.WebSocketURL(), "remote-secret", app.Config.Workspace)
+	link, err := RemoteDeepLink(pairing)
+	if err != nil {
+		t.Fatalf("remote deep link: %v", err)
+	}
+	decoded, err := DecodeRemoteDeepLink(link)
+	if err != nil {
+		t.Fatalf("decode remote deep link: %v", err)
+	}
+	ws, _, err := websocket.Dial(ctx, decoded.URL, &websocket.DialOptions{
+		HTTPHeader: http.Header{"Authorization": []string{decoded.Headers["Authorization"]}},
 	})
 	if err != nil {
 		t.Fatalf("authorized dial: %v", err)
@@ -141,7 +150,7 @@ func TestRemoteWebSocketSubprotocolAuth(t *testing.T) {
 	assertInitializeHasRemote(t, ctx, ws)
 }
 
-func TestRemoteWebSocketAllowsExpoOriginByDefault(t *testing.T) {
+func TestRemoteWebSocketRejectsOriginUnlessAllowed(t *testing.T) {
 	ctx := context.Background()
 	app, err := godex.New(ctx, godex.Config{
 		Workspace:   filepath.Join(t.TempDir(), "workspace"),
@@ -165,12 +174,33 @@ func TestRemoteWebSocketAllowsExpoOriginByDefault(t *testing.T) {
 	}
 	defer listener.Close(ctx)
 
-	ws, _, err := websocket.Dial(ctx, listener.WebSocketURL(), &websocket.DialOptions{
+	_, resp, err := websocket.Dial(ctx, listener.WebSocketURL(), &websocket.DialOptions{
+		HTTPHeader:   http.Header{"Origin": []string{"http://10.13.37.30:8081"}},
+		Subprotocols: []string{remoteSubprotocol, "bearer.remote-secret"},
+	})
+	if err == nil {
+		t.Fatal("origin dial should fail without allowlist")
+	}
+	if resp == nil || resp.StatusCode != http.StatusForbidden {
+		t.Fatalf("origin status = %v err=%v", statusCode(resp), err)
+	}
+
+	allowedServer := New(app, Options{Version: "test", Remote: RemoteOptions{
+		Enabled:        true,
+		Auth:           auth,
+		AllowedOrigins: []string{"http://10.13.37.30:8081"},
+	}})
+	allowedListener, err := allowedServer.ListenWebSocket(ctx, "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen allowed websocket: %v", err)
+	}
+	defer allowedListener.Close(ctx)
+	ws, _, err := websocket.Dial(ctx, allowedListener.WebSocketURL(), &websocket.DialOptions{
 		HTTPHeader:   http.Header{"Origin": []string{"http://10.13.37.30:8081"}},
 		Subprotocols: []string{remoteSubprotocol, "bearer.remote-secret"},
 	})
 	if err != nil {
-		t.Fatalf("expo-origin dial: %v", err)
+		t.Fatalf("allowed origin dial: %v", err)
 	}
 	defer ws.Close(websocket.StatusNormalClosure, "")
 	assertInitializeHasRemote(t, ctx, ws)
@@ -247,8 +277,17 @@ func TestRemoteWebSocketMockTurn(t *testing.T) {
 	}
 	defer listener.Close(ctx)
 
-	ws, _, err := websocket.Dial(ctx, listener.WebSocketURL(), &websocket.DialOptions{
-		HTTPHeader: http.Header{"Authorization": []string{"Bearer remote-secret"}},
+	pairing := BuildRemotePairingPayload("Gode Remote", listener.WebSocketURL(), "remote-secret", workspace)
+	link, err := RemoteDeepLink(pairing)
+	if err != nil {
+		t.Fatalf("remote deep link: %v", err)
+	}
+	decoded, err := DecodeRemoteDeepLink(link)
+	if err != nil {
+		t.Fatalf("decode remote deep link: %v", err)
+	}
+	ws, _, err := websocket.Dial(ctx, decoded.URL, &websocket.DialOptions{
+		HTTPHeader: http.Header{"Authorization": []string{decoded.Headers["Authorization"]}},
 	})
 	if err != nil {
 		t.Fatalf("authorized dial: %v", err)
