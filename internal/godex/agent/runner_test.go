@@ -456,6 +456,38 @@ func TestRunnerPrependsContextMessages(t *testing.T) {
 	}
 }
 
+func TestRunnerInjectsRoadmapContextOnlyWhenProvided(t *testing.T) {
+	capture := &captureProvider{finalText: "done"}
+	runner := NewRunner(Config{
+		Bus:      eventbus.New(eventbus.WithSubscriberBuffer(16)),
+		Provider: capture,
+	})
+	defer runner.bus.Close()
+
+	if _, err := runner.Run(context.Background(), RunRequest{Prompt: "hello"}); err != nil {
+		t.Fatalf("run without roadmap context: %v", err)
+	}
+	if len(capture.request.Messages) != 1 || capture.request.Messages[0].Content != "hello" {
+		t.Fatalf("normal messages = %#v", capture.request.Messages)
+	}
+
+	if _, err := runner.Run(context.Background(), RunRequest{
+		Prompt:         "continue",
+		RoadmapContext: "roadmap context",
+	}); err != nil {
+		t.Fatalf("run with roadmap context: %v", err)
+	}
+	if len(capture.request.Messages) != 2 {
+		t.Fatalf("roadmap messages = %#v", capture.request.Messages)
+	}
+	if capture.request.Messages[0].Role != provider.RoleSystem || capture.request.Messages[0].Content != "roadmap context" {
+		t.Fatalf("roadmap context message = %#v", capture.request.Messages[0])
+	}
+	if capture.request.Messages[1].Role != provider.RoleUser || capture.request.Messages[1].Content != "continue" {
+		t.Fatalf("user message = %#v", capture.request.Messages[1])
+	}
+}
+
 func TestRunnerInjectsInvokedSkillsAndCleansPrompt(t *testing.T) {
 	capture := &captureProvider{finalText: "done"}
 	runner := NewRunner(Config{

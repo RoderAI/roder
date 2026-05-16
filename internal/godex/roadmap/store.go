@@ -11,9 +11,9 @@ import (
 )
 
 type State struct {
-	FocusedDocument string            `json:"focusedDocument,omitempty"`
-	FocusedTaskID   string            `json:"focusedTaskId,omitempty"`
-	AttachedThreads map[string]string `json:"attachedThreads,omitempty"`
+	FocusedDocument string             `json:"focusedDocument,omitempty"`
+	FocusedTaskID   string             `json:"focusedTaskId,omitempty"`
+	AttachedThreads []ThreadAttachment `json:"attachedThreads,omitempty"`
 }
 
 func LoadState(dataDir string) (State, error) {
@@ -82,7 +82,7 @@ func SetTaskChecked(path string, taskID string, checked bool, evidence string) e
 	return os.WriteFile(path, []byte(output), 0o644)
 }
 
-func ListDocuments(workspace string, includeIndex bool) ([]string, error) {
+func ListDocumentPaths(workspace string, includeIndex bool) ([]string, error) {
 	matches, err := filepath.Glob(filepath.Join(workspace, "roadmap", "*.md"))
 	if err != nil {
 		return nil, err
@@ -102,6 +102,34 @@ func ListDocuments(workspace string, includeIndex bool) ([]string, error) {
 		return docs[i] < docs[j]
 	})
 	return docs, nil
+}
+
+func ListDocuments(workspace string, includeIndex bool) ([]DocumentSummary, error) {
+	paths, err := ListDocumentPaths(workspace, includeIndex)
+	if err != nil {
+		return nil, err
+	}
+	summaries := make([]DocumentSummary, 0, len(paths))
+	for _, path := range paths {
+		doc, err := ParseFile(path)
+		if err != nil {
+			return nil, err
+		}
+		summaryPath := path
+		if rel, err := filepath.Rel(workspace, path); err == nil && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) && rel != ".." {
+			summaryPath = filepath.ToSlash(rel)
+		}
+		summary := DocumentSummary{Path: summaryPath, Title: doc.Title}
+		for _, task := range doc.Tasks {
+			if task.Checked {
+				summary.Checked++
+			} else {
+				summary.Unchecked++
+			}
+		}
+		summaries = append(summaries, summary)
+	}
+	return summaries, nil
 }
 
 func statePath(dataDir string) string {
