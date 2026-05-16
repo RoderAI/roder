@@ -27,12 +27,14 @@ impl Runtime {
             ) {
                 conversation.push(ConversationItem::UserMessage(UserMessage {
                     text: block.text,
+                    images: Vec::new(),
                 }));
             }
         }
         conversation.extend(self.prior_conversation(&req.thread_id, turn_id).await?);
         conversation.push(ConversationItem::UserMessage(UserMessage {
             text: req.message.clone(),
+            images: req.images.clone(),
         }));
         self.compact_conversation_if_needed(&req.thread_id, turn_id, model, conversation)
             .await
@@ -229,12 +231,15 @@ mod tests {
                 vec![
                     ConversationItem::UserMessage(UserMessage {
                         text: "very large old context".repeat(20),
+                        images: Vec::new(),
                     }),
                     ConversationItem::AssistantMessage(AssistantMessage {
                         text: "old answer".to_string(),
+                        phase: None,
                     }),
                     ConversationItem::UserMessage(UserMessage {
                         text: "current prompt".to_string(),
+                        images: Vec::new(),
                     }),
                 ],
             )

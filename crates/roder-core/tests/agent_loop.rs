@@ -283,6 +283,7 @@ impl InferenceEngine for ToolLoopEngine {
             vec![
                 Ok(InferenceEvent::MessageDelta(MessageDelta {
                     text: "final after tool".to_string(),
+                    phase: None,
                 })),
                 Ok(InferenceEvent::Completed(CompletionMetadata {
                     stop_reason: Some("stop".to_string()),
@@ -295,6 +296,10 @@ impl InferenceEngine for ToolLoopEngine {
 }
 
 struct ErrorRecoveringEngine {
+    requests: Mutex<Vec<AgentInferenceRequest>>,
+}
+
+struct PhasePreservingEngine {
     requests: Mutex<Vec<AgentInferenceRequest>>,
 }
 
@@ -338,6 +343,7 @@ impl InferenceEngine for ErrorRecoveringEngine {
             vec![
                 Ok(InferenceEvent::MessageDelta(MessageDelta {
                     text: "recovered".to_string(),
+                    phase: None,
                 })),
                 Ok(InferenceEvent::Completed(CompletionMetadata {
                     stop_reason: Some("stop".to_string()),
@@ -354,6 +360,65 @@ impl InferenceEngine for ErrorRecoveringEngine {
                 Ok(InferenceEvent::Completed(CompletionMetadata {
                     stop_reason: Some("tool_calls".to_string()),
                     provider_response_id: Some("resp_tool".to_string()),
+                })),
+            ]
+        };
+        Ok(Box::pin(stream::iter(events)))
+    }
+}
+
+#[async_trait::async_trait]
+impl InferenceEngine for PhasePreservingEngine {
+    fn id(&self) -> InferenceEngineId {
+        PROVIDER_MOCK.to_string()
+    }
+
+    fn capabilities(&self) -> InferenceCapabilities {
+        InferenceCapabilities::coding_agent_default()
+    }
+
+    async fn list_models(
+        &self,
+        _ctx: InferenceProviderContext<'_>,
+    ) -> anyhow::Result<Vec<ModelDescriptor>> {
+        Ok(Vec::new())
+    }
+
+    async fn stream_turn(
+        &self,
+        _ctx: InferenceTurnContext<'_>,
+        request: AgentInferenceRequest,
+    ) -> anyhow::Result<InferenceEventStream> {
+        let mut requests = self.requests.lock().unwrap();
+        requests.push(request);
+        let turn = requests.len();
+        drop(requests);
+
+        let events = if turn == 1 {
+            vec![
+                Ok(InferenceEvent::MessageDelta(MessageDelta {
+                    text: "I will inspect first.".to_string(),
+                    phase: Some("commentary".to_string()),
+                })),
+                Ok(InferenceEvent::ToolCallCompleted(ToolCallCompleted {
+                    id: "call_1".to_string(),
+                    name: "echo".to_string(),
+                    arguments: r#"{"text":"from tool"}"#.to_string(),
+                })),
+                Ok(InferenceEvent::Completed(CompletionMetadata {
+                    stop_reason: Some("tool_calls".to_string()),
+                    provider_response_id: None,
+                })),
+            ]
+        } else {
+            vec![
+                Ok(InferenceEvent::MessageDelta(MessageDelta {
+                    text: "Done.".to_string(),
+                    phase: Some("final_answer".to_string()),
+                })),
+                Ok(InferenceEvent::Completed(CompletionMetadata {
+                    stop_reason: Some("stop".to_string()),
+                    provider_response_id: None,
                 })),
             ]
         };
@@ -417,6 +482,7 @@ async fn run_turn_continues_after_tool_result() {
         .start_turn(StartTurnRequest {
             thread_id: "thread_1".to_string(),
             message: "echo please".to_string(),
+            images: Vec::new(),
             provider_override: None,
             model_override: None,
             instructions: default_instructions(),
@@ -467,6 +533,7 @@ async fn provider_start_errors_are_emitted_for_the_active_thread() {
         .start_turn(StartTurnRequest {
             thread_id: "thread_context_error".to_string(),
             message: "short prompt".to_string(),
+            images: Vec::new(),
             provider_override: None,
             model_override: None,
             instructions: default_instructions(),
@@ -485,6 +552,59 @@ async fn provider_start_errors_are_emitted_for_the_active_thread() {
             break;
         }
     }
+}
+
+#[tokio::test]
+async fn commentary_phase_messages_are_preserved_for_next_provider_request() {
+    let engine = Arc::new(PhasePreservingEngine {
+        requests: Mutex::new(Vec::new()),
+    });
+    let mut builder = ExtensionRegistryBuilder::new();
+    builder.inference_engine(engine.clone());
+    builder.tool_contributor(Arc::new(EchoContributor));
+    let runtime = Arc::new(
+        Runtime::new(
+            builder.build().unwrap(),
+            RuntimeConfig {
+                default_provider: PROVIDER_MOCK.to_string(),
+                default_model: "mock".to_string(),
+                reasoning: None,
+                auto_compact_token_limit: None,
+                model_edit_tools: std::collections::HashMap::new(),
+                workspace: None,
+                policy_mode: roder_api::policy_mode::PolicyMode::Default,
+            },
+        )
+        .unwrap(),
+    );
+    let mut events = runtime.subscribe_events();
+
+    runtime
+        .start_turn(StartTurnRequest {
+            thread_id: "thread_phase_messages".to_string(),
+            message: "inspect".to_string(),
+            images: Vec::new(),
+            provider_override: None,
+            model_override: None,
+            instructions: default_instructions(),
+        })
+        .await
+        .unwrap();
+
+    wait_for_completed(&mut events, "thread_phase_messages").await;
+
+    let requests = engine.requests.lock().unwrap();
+    assert_eq!(requests.len(), 2);
+    assert!(
+        requests[1].conversation.iter().any(|item| matches!(
+            item,
+            ConversationItem::AssistantMessage(message)
+                if message.text == "I will inspect first."
+                    && message.phase.as_deref() == Some("commentary")
+        )),
+        "second request should preserve commentary assistant message: {:?}",
+        requests[1].conversation
+    );
 }
 
 #[tokio::test]
@@ -507,6 +627,7 @@ async fn steer_turn_is_included_in_next_provider_request() {
         .start_turn(StartTurnRequest {
             thread_id: "thread_steer".to_string(),
             message: "start".to_string(),
+            images: Vec::new(),
             provider_override: None,
             model_override: None,
             instructions: default_instructions(),
@@ -521,6 +642,7 @@ async fn steer_turn_is_included_in_next_provider_request() {
             "thread_steer".to_string(),
             turn_id,
             "use the new constraint".to_string(),
+            Vec::new(),
         )
         .await
         .unwrap();
@@ -568,6 +690,7 @@ async fn runtime_advertises_apply_patch_only_for_patch_models() {
         .start_turn(StartTurnRequest {
             thread_id: "thread_patch_tools".to_string(),
             message: "patch please".to_string(),
+            images: Vec::new(),
             provider_override: None,
             model_override: None,
             instructions: default_instructions(),
@@ -655,6 +778,7 @@ async fn tool_execution_errors_are_returned_to_model() {
         .start_turn(StartTurnRequest {
             thread_id: "thread_tool_error".to_string(),
             message: "read missing file".to_string(),
+            images: Vec::new(),
             provider_override: None,
             model_override: None,
             instructions: default_instructions(),
@@ -709,6 +833,7 @@ async fn run_turn_allows_more_than_eight_tool_rounds() {
         .start_turn(StartTurnRequest {
             thread_id: "thread_many_tools".to_string(),
             message: "keep using tools".to_string(),
+            images: Vec::new(),
             provider_override: None,
             model_override: None,
             instructions: default_instructions(),
@@ -760,6 +885,7 @@ async fn unknown_tool_completion_is_marked_as_error() {
         .start_turn(StartTurnRequest {
             thread_id: "thread_unknown_tool".to_string(),
             message: "echo please".to_string(),
+            images: Vec::new(),
             provider_override: None,
             model_override: None,
             instructions: default_instructions(),

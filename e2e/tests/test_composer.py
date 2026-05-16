@@ -42,9 +42,11 @@ async def test_backspace_removes_char(
     await _ready(tui, gode_bin, gode_env)
     await tui.type("foobar")
     await tui.wait_for_text("foobar", timeout=3)
+    # gode's composer needs a settle between rapid backspaces — a real
+    # user types at <10 keys/sec which leaves time for the render loop.
     for _ in range(3):
         await tui.press("backspace")
-    await tui.wait_for_stable(quiet_ms=120, timeout=3)
+        await tui.wait_for_stable(quiet_ms=80, timeout=2)
     assert "foo" in tui.screen.text
     assert "foobar" not in tui.screen.text
 

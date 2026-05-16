@@ -110,6 +110,7 @@ async fn filters_child_tools_through_definition_whitelist() {
     let dispatcher = dispatcher_with_engine(Arc::new(ScriptedEngine::new(vec![vec![
         Ok(InferenceEvent::MessageDelta(MessageDelta {
             text: "done".to_string(),
+            phase: None,
         })),
         Ok(InferenceEvent::Completed(CompletionMetadata {
             stop_reason: Some("stop".to_string()),
@@ -241,6 +242,7 @@ async fn fake_provider_child_run_returns_deterministic_result_and_truncates_tran
         vec![
             Ok(InferenceEvent::MessageDelta(MessageDelta {
                 text: "final child answer that is intentionally long".to_string(),
+                phase: None,
             })),
             Ok(InferenceEvent::Usage(TokenUsage {
                 prompt_tokens: 1,
@@ -408,6 +410,7 @@ impl InferenceEngine for BlockingEngine {
         Ok(Box::pin(stream::iter(vec![
             Ok(InferenceEvent::MessageDelta(MessageDelta {
                 text: "done".to_string(),
+                phase: None,
             })),
             Ok(InferenceEvent::Completed(CompletionMetadata {
                 stop_reason: Some("stop".to_string()),

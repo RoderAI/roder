@@ -1,14 +1,22 @@
+use roder_api::conversation::InputImage;
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(super) struct PendingPrompt {
     pub display: String,
     pub message: String,
+    pub images: Vec<InputImage>,
 }
 
 impl PendingPrompt {
-    pub fn new(display: impl Into<String>, message: impl Into<String>) -> Self {
+    pub fn with_images(
+        display: impl Into<String>,
+        message: impl Into<String>,
+        images: Vec<InputImage>,
+    ) -> Self {
         Self {
             display: display.into(),
             message: message.into(),
+            images,
         }
     }
 }
@@ -58,8 +66,16 @@ mod tests {
     #[test]
     fn queue_preserves_order_and_status() {
         let mut queue = PromptQueue::default();
-        queue.push(PendingPrompt::new("first", "first message"));
-        queue.push(PendingPrompt::new("second", "second message"));
+        queue.push(PendingPrompt::with_images(
+            "first",
+            "first message",
+            Vec::new(),
+        ));
+        queue.push(PendingPrompt::with_images(
+            "second",
+            "second message",
+            Vec::new(),
+        ));
 
         assert_eq!(queue.len(), 2);
         assert_eq!(queue_status(queue.len()), "queued 2 prompts");

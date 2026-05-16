@@ -124,7 +124,7 @@ impl InferenceEngine for OpenAiResponsesEngine {
             parallel_tool_calls: false,
             reasoning_summaries: true,
             structured_output: true,
-            image_input: false,
+            image_input: true,
             prompt_cache: true,
             provider_metadata: true,
         }
@@ -284,17 +284,17 @@ fn events_from_sse_event(
     match kind {
         "response.output_text.delta" => {
             let phase = output_text_phase(&event.data, state);
-            if !is_final_answer_phase(&phase) {
-                return Vec::new();
-            }
             event
                 .data
                 .get("delta")
                 .and_then(|value| value.as_str())
                 .map(|text| {
-                    state.streamed_final_text = true;
+                    if is_final_answer_phase(&phase) {
+                        state.streamed_final_text = true;
+                    }
                     InferenceEvent::MessageDelta(MessageDelta {
                         text: text.to_string(),
+                        phase: (!phase.is_empty()).then_some(phase),
                     })
                 })
                 .into_iter()
@@ -353,7 +353,10 @@ fn events_from_sse_event(
             let mut events = Vec::new();
             let text = extract_response_text(response);
             if !state.streamed_final_text && !text.is_empty() {
-                events.push(InferenceEvent::MessageDelta(MessageDelta { text }));
+                events.push(InferenceEvent::MessageDelta(MessageDelta {
+                    text,
+                    phase: Some(FINAL_ANSWER_PHASE.to_string()),
+                }));
             }
             for call in extract_tool_calls(response) {
                 if let Some(call) = emit_tool_call_once(call, state) {
@@ -534,11 +537,12 @@ fn response_input_items(request: &AgentInferenceRequest) -> Vec<Value> {
             roder_api::conversation::ConversationItem::UserMessage(message) => Some(json!({
                 "type": "message",
                 "role": "user",
-                "content": [{ "type": "input_text", "text": message.text }]
+                "content": user_message_content(message)
             })),
             roder_api::conversation::ConversationItem::AssistantMessage(message) => Some(json!({
                 "type": "message",
                 "role": "assistant",
+                "phase": message.phase.as_deref().unwrap_or(FINAL_ANSWER_PHASE),
                 "content": [{ "type": "output_text", "text": message.text }]
             })),
             roder_api::conversation::ConversationItem::ReasoningSummary(summary) => Some(json!({
@@ -584,6 +588,23 @@ fn response_input_items(request: &AgentInferenceRequest) -> Vec<Value> {
     }
 
     items
+}
+
+fn user_message_content(message: &roder_api::conversation::UserMessage) -> Vec<Value> {
+    let mut content = Vec::new();
+    if !message.text.is_empty() {
+        content.push(json!({ "type": "input_text", "text": message.text }));
+    }
+    content.extend(message.images.iter().map(|image| {
+        json!({
+            "type": "input_image",
+            "image_url": image.image_url,
+        })
+    }));
+    if content.is_empty() {
+        content.push(json!({ "type": "input_text", "text": "" }));
+    }
+    content
 }
 
 fn fallback_function_call_item_id(call_id: &str) -> String {
@@ -702,7 +723,8 @@ fn number_to_u32(value: Option<&Value>) -> Option<u32> {
 mod tests {
     use super::*;
     use roder_api::conversation::{
-        AssistantMessage, ConversationItem, ToolCallRecord, ToolResultRecord, UserMessage,
+        AssistantMessage, ConversationItem, InputImage, ToolCallRecord, ToolResultRecord,
+        UserMessage,
     };
     use roder_api::inference::{
         InstructionBundle, ModelSelection, OutputConfig, ReasoningConfig, RuntimeHints,
@@ -719,11 +741,10 @@ mod tests {
                 developer: None,
             },
             conversation: vec![
-                ConversationItem::UserMessage(UserMessage {
-                    text: "Hello".to_string(),
-                }),
+                ConversationItem::UserMessage(UserMessage::text("Hello")),
                 ConversationItem::AssistantMessage(AssistantMessage {
                     text: "Hi".to_string(),
+                    phase: None,
                 }),
             ],
             tools: vec![roder_api::tools::ToolSpec {
@@ -766,6 +787,42 @@ mod tests {
         assert_eq!(body["tool_choice"], "auto");
         assert_eq!(body["input"][0]["role"], "user");
         assert_eq!(body["input"][1]["role"], "assistant");
+        assert_eq!(body["input"][1]["phase"], "final_answer");
+    }
+
+    #[test]
+    fn preserves_assistant_message_phase_for_responses_replay() {
+        let mut request = request();
+        request.conversation = vec![ConversationItem::AssistantMessage(AssistantMessage {
+            text: "I will inspect first.".to_string(),
+            phase: Some("commentary".to_string()),
+        })];
+
+        let input = response_input_items(&request);
+        assert_eq!(input[0]["role"], "assistant");
+        assert_eq!(input[0]["phase"], "commentary");
+        assert_eq!(input[0]["content"][0]["text"], "I will inspect first.");
+    }
+
+    #[test]
+    fn maps_user_images_to_responses_input_image_content() {
+        let mut request = request();
+        request.conversation = vec![ConversationItem::UserMessage(UserMessage::with_images(
+            "what is shown?",
+            vec![InputImage {
+                image_url: "data:image/png;base64,YWJj".to_string(),
+            }],
+        ))];
+
+        let input = response_input_items(&request);
+        assert_eq!(input[0]["role"], "user");
+        assert_eq!(input[0]["content"][0]["type"], "input_text");
+        assert_eq!(input[0]["content"][0]["text"], "what is shown?");
+        assert_eq!(input[0]["content"][1]["type"], "input_image");
+        assert_eq!(
+            input[0]["content"][1]["image_url"],
+            "data:image/png;base64,YWJj"
+        );
     }
 
     #[test]
@@ -794,9 +851,7 @@ mod tests {
     fn replays_provider_function_call_items_before_tool_outputs() {
         let mut request = request();
         request.conversation = vec![
-            ConversationItem::UserMessage(UserMessage {
-                text: "List files".to_string(),
-            }),
+            ConversationItem::UserMessage(UserMessage::text("List files")),
             ConversationItem::ProviderMetadata(json!({
                 "output": [
                     {
@@ -847,9 +902,7 @@ mod tests {
     fn fallback_function_call_items_use_responses_item_id_prefix() {
         let mut request = request();
         request.conversation = vec![
-            ConversationItem::UserMessage(UserMessage {
-                text: "List files".to_string(),
-            }),
+            ConversationItem::UserMessage(UserMessage::text("List files")),
             ConversationItem::ToolCall(ToolCallRecord {
                 id: "call_1".to_string(),
                 name: "list_files".to_string(),
@@ -940,6 +993,7 @@ mod tests {
             events,
             vec![InferenceEvent::MessageDelta(MessageDelta {
                 text: "hello".to_string(),
+                phase: None,
             })]
         );
 
@@ -1003,12 +1057,12 @@ mod tests {
         let events = events_from_sse_event(&event, &mut state);
         assert!(matches!(
             events.first(),
-            Some(InferenceEvent::MessageDelta(MessageDelta { text })) if text == "fallback"
+            Some(InferenceEvent::MessageDelta(MessageDelta { text, phase })) if text == "fallback" && phase.as_deref() == Some("final_answer")
         ));
     }
 
     #[test]
-    fn ignores_non_final_phase_text_deltas() {
+    fn emits_phase_text_deltas() {
         let mut state = ResponsesStreamState::default();
         let added = SseEvent {
             event: Some("response.output_item.added".to_string()),
@@ -1032,7 +1086,13 @@ mod tests {
                 "delta": "I will inspect first."
             }),
         };
-        assert!(events_from_sse_event(&commentary_delta, &mut state).is_empty());
+        assert_eq!(
+            events_from_sse_event(&commentary_delta, &mut state),
+            vec![InferenceEvent::MessageDelta(MessageDelta {
+                text: "I will inspect first.".to_string(),
+                phase: Some("commentary".to_string()),
+            })]
+        );
 
         let final_added = SseEvent {
             event: Some("response.output_item.added".to_string()),
@@ -1060,6 +1120,7 @@ mod tests {
             events_from_sse_event(&final_delta, &mut state),
             vec![InferenceEvent::MessageDelta(MessageDelta {
                 text: "Done.".to_string(),
+                phase: Some("final_answer".to_string()),
             })]
         );
     }

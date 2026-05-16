@@ -138,7 +138,7 @@ edit_tool = "patch" # or "edit"
 
 `patch` advertises `apply_patch`; `edit` advertises `write_file`, `edit`, and `multi_edit`. Roder never advertises both edit surfaces to a single model request.
 
-The app-server run-control methods are `turns/start`, `turns/steer`, and `turns/interrupt`. Steering accepts `{ "thread_id": "...", "turn_id": "...", "message": "..." }`, emits `turn.steered`, and appends the steering message to the active turn before the next provider request.
+The app-server run-control methods are `turns/start`, `turns/steer`, and `turns/interrupt`. `turns/start` and `turns/steer` accept an optional `images` array of `{ "image_url": "data:image/png;base64,..." }` input images; image-capable providers receive those as structured image content instead of appended file-path text. Steering accepts `{ "thread_id": "...", "turn_id": "...", "message": "...", "images": [] }`, emits `turn.steered`, and appends the steering message to the active turn before the next provider request.
 
 A more complete quick-start (configuration, providers, session resume, app-server transports, MCP) will land alongside the corresponding roadmap phases.
 

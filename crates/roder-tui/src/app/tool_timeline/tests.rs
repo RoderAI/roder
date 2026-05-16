@@ -1,5 +1,6 @@
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 use ratatui::layout::Rect;
+use std::time::Duration;
 
 use super::super::Theme;
 use super::*;
@@ -97,6 +98,41 @@ fn keyboard_navigation_expands_selected_tool_output() {
             .iter()
             .any(|line| line.contains("src/lib.rs:1:needle"))
     );
+}
+
+#[test]
+fn commentary_phase_deltas_render_with_phase_label() {
+    let mut timeline = TimelineState::default();
+    timeline.push_assistant_delta("I will inspect first.", Some("commentary".to_string()));
+    timeline.push_assistant_delta(" Then run tests.", Some("commentary".to_string()));
+    timeline.push_assistant_delta("Done.", Some("final_answer".to_string()));
+
+    let lines = rendered_lines(&mut timeline);
+    assert!(
+        lines
+            .iter()
+            .any(|line| line.contains("commentary I will inspect first. Then run tests."))
+    );
+    assert!(lines.iter().any(|line| line == "Done."));
+}
+
+#[test]
+fn turn_completed_renders_right_aligned_usage_summary() {
+    let mut timeline = TimelineState::default();
+    timeline.push_turn_completed(TurnCompletedSummary {
+        elapsed: Duration::from_millis(1234),
+        turn_tokens: 42,
+        session_tokens: 100,
+    });
+
+    let lines = rendered_lines(&mut timeline);
+    let row = lines
+        .iter()
+        .find(|line| line.contains("Turn completed."))
+        .expect("turn completion row should be rendered");
+
+    assert!(row.starts_with("    Turn completed."));
+    assert!(row.ends_with("1.2s  turn:42 tok  session:100 tok"));
 }
 
 #[test]
