@@ -1,5 +1,7 @@
 use std::collections::BTreeSet;
+use std::sync::Arc;
 
+use roder_api::interactive::InteractiveRegionHandler;
 use roder_api::tui_status::{PaletteSourceDescriptor, StatusSegment};
 
 use crate::keymap::Keymap;
@@ -13,6 +15,7 @@ pub struct TuiAppConfig {
     pub disabled_palette_sources: BTreeSet<String>,
     pub diff_enabled: bool,
     pub keymap: Keymap,
+    pub interactive_region_handlers: Vec<Arc<dyn InteractiveRegionHandler>>,
 }
 
 impl Default for TuiAppConfig {
@@ -24,6 +27,7 @@ impl Default for TuiAppConfig {
             disabled_palette_sources: BTreeSet::new(),
             diff_enabled: true,
             keymap: Keymap::default(),
+            interactive_region_handlers: Vec::new(),
         }
     }
 }

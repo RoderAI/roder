@@ -12,6 +12,7 @@ pub(crate) fn resolve_tui_app_config(
         disabled_palette_sources: tui.palette.disabled_sources.into_iter().collect(),
         diff_enabled: tui.diff.enabled,
         keymap: roder_tui::keymap::Keymap::with_overrides(&tui.keymap.bindings),
+        interactive_region_handlers: registry.interactive_region_handlers.clone(),
     }
 }
 

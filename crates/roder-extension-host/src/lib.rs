@@ -7,6 +7,10 @@ use roder_api::extension::{
     ExtensionManifest, ExtensionRegistry, ExtensionRegistryBuilder, ProvidedService, RoderExtension,
 };
 use roder_api::inference::*;
+use roder_api::interactive::{
+    HandlerOutcome, InteractiveEvent, InteractiveRegion, InteractiveRegionHandler,
+    InteractiveRegionHandlerId,
+};
 use roder_api::notifications::NotificationKind;
 use roder_api::policy_mode::PolicyMode;
 use roder_api::tui_status::{PaletteSourceDescriptor, built_in_status_segments};
@@ -143,6 +147,7 @@ impl RoderExtension for DefaultTuiExtension {
         for source in built_in_palette_sources() {
             registry.palette_source(source);
         }
+        registry.interactive_region_handler(Arc::new(DefaultInteractiveRegionHandler));
         Ok(())
     }
 }
@@ -156,7 +161,43 @@ fn built_in_tui_services() -> Vec<ProvidedService> {
                 .into_iter()
                 .map(|source| ProvidedService::PaletteSource(source.id)),
         )
+        .chain(std::iter::once(ProvidedService::InteractiveRegionHandler(
+            "default-tui-regions".to_string(),
+        )))
         .collect()
+}
+
+struct DefaultInteractiveRegionHandler;
+
+#[async_trait::async_trait]
+impl InteractiveRegionHandler for DefaultInteractiveRegionHandler {
+    fn id(&self) -> InteractiveRegionHandlerId {
+        "default-tui-regions".to_string()
+    }
+
+    fn kinds(&self) -> Vec<String> {
+        [
+            "StatusSegment",
+            "PaletteItem",
+            "DiffHunk",
+            "PolicyApprovalButton",
+            "TranscriptMessage",
+            "ToolCallBlock",
+            "FileReference",
+            "Url",
+        ]
+        .into_iter()
+        .map(str::to_string)
+        .collect()
+    }
+
+    async fn handle(
+        &self,
+        _event: InteractiveEvent,
+        _region: &InteractiveRegion,
+    ) -> anyhow::Result<HandlerOutcome> {
+        Ok(HandlerOutcome::Passthrough)
+    }
 }
 
 fn built_in_palette_sources() -> Vec<PaletteSourceDescriptor> {
@@ -434,6 +475,11 @@ mod tests {
             .iter()
             .map(|source| source.id.as_str())
             .collect::<Vec<_>>();
+        let handler_ids = registry
+            .interactive_region_handlers
+            .iter()
+            .map(|handler| handler.id())
+            .collect::<Vec<_>>();
 
         for expected in ["mode", "model", "session", "branch", "usage", "mcp"] {
             assert!(
@@ -453,6 +499,10 @@ mod tests {
         }));
         assert!(services.iter().any(|service| {
             matches!(service, ProvidedService::PaletteSource(id) if id == "commands")
+        }));
+        assert!(handler_ids.contains(&"default-tui-regions".to_string()));
+        assert!(services.iter().any(|service| {
+            matches!(service, ProvidedService::InteractiveRegionHandler(id) if id == "default-tui-regions")
         }));
     }
 }
