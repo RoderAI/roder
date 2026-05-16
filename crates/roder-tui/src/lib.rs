@@ -1,6 +1,7 @@
 pub mod app;
 pub mod config;
 pub mod diff;
+pub mod keymap;
 pub mod mouse;
 pub mod palette;
 pub mod selection;

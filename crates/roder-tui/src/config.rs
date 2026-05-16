@@ -2,6 +2,7 @@ use std::collections::BTreeSet;
 
 use roder_api::tui_status::{PaletteSourceDescriptor, StatusSegment};
 
+use crate::keymap::Keymap;
 use crate::status_line::built_in_status_segments;
 
 #[derive(Clone)]
@@ -11,6 +12,7 @@ pub struct TuiAppConfig {
     pub palette_sources: Vec<PaletteSourceDescriptor>,
     pub disabled_palette_sources: BTreeSet<String>,
     pub diff_enabled: bool,
+    pub keymap: Keymap,
 }
 
 impl Default for TuiAppConfig {
@@ -21,6 +23,7 @@ impl Default for TuiAppConfig {
             palette_sources: built_in_palette_sources(),
             disabled_palette_sources: BTreeSet::new(),
             diff_enabled: true,
+            keymap: Keymap::default(),
         }
     }
 }
