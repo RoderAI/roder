@@ -191,7 +191,7 @@ mod runtime_tests {
             builder.build().unwrap(),
             RuntimeConfig {
                 workspace: Some(root.to_string_lossy().into_owned()),
-                policy_mode: PolicyMode::AcceptEdits,
+                policy_mode: PolicyMode::AcceptAll,
                 ..RuntimeConfig::default()
             },
         )

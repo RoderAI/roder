@@ -149,7 +149,7 @@ fn short_id(id: &str) -> &str {
 fn policy_mode_label(mode: PolicyMode) -> &'static str {
     match mode {
         PolicyMode::Default => "default",
-        PolicyMode::AcceptEdits => "accept_edits",
+        PolicyMode::AcceptAll => "accept_all",
         PolicyMode::Plan => "plan",
         PolicyMode::Bypass => "bypass",
     }

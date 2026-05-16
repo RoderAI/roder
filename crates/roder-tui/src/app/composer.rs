@@ -248,8 +248,8 @@ mod tests {
     fn non_default_chat_mode_title_only_shows_policy_mode() {
         assert_eq!(ComposerMode::Chat.title_text(PolicyMode::Plan), " Plan ");
         assert_eq!(
-            ComposerMode::Chat.title_text(PolicyMode::AcceptEdits),
-            " Accept Edits "
+            ComposerMode::Chat.title_text(PolicyMode::AcceptAll),
+            " Accept All "
         );
     }
 

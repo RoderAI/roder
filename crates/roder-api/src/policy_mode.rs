@@ -10,7 +10,8 @@ use crate::events::{ThreadId, TurnId};
 pub enum PolicyMode {
     #[default]
     Default,
-    AcceptEdits,
+    #[serde(alias = "accept_edits", alias = "accept-edits")]
+    AcceptAll,
     Plan,
     Bypass,
 }
@@ -32,7 +33,7 @@ impl AutoApproveSet {
         }
     }
 
-    pub fn accept_edits() -> Self {
+    pub fn accept_all() -> Self {
         Self {
             tools: vec![
                 "fs.write".to_string(),
@@ -42,6 +43,10 @@ impl AutoApproveSet {
                 "write_file".to_string(),
                 "edit".to_string(),
                 "multi_edit".to_string(),
+                "process.spawn".to_string(),
+                "shell".to_string(),
+                "exec_command".to_string(),
+                "write_stdin".to_string(),
             ],
         }
     }
@@ -67,7 +72,7 @@ impl PolicyModeConfig {
     pub fn for_mode(mode: PolicyMode) -> Self {
         match mode {
             PolicyMode::Default => Self::default_mode(),
-            PolicyMode::AcceptEdits => Self::accept_edits(),
+            PolicyMode::AcceptAll => Self::accept_all(),
             PolicyMode::Plan => Self::plan(),
             PolicyMode::Bypass => Self::bypass(),
         }
@@ -84,9 +89,9 @@ impl PolicyModeConfig {
         }
     }
 
-    pub fn accept_edits() -> Self {
+    pub fn accept_all() -> Self {
         Self {
-            auto_approve: AutoApproveSet::accept_edits(),
+            auto_approve: AutoApproveSet::accept_all(),
             denied_tools: Vec::new(),
             allow_writes: true,
             allow_process: true,
@@ -195,11 +200,14 @@ mod tests {
 
     #[test]
     fn policy_mode_serde_round_trips_as_snake_case() {
-        let serialized = serde_json::to_string(&PolicyMode::AcceptEdits).unwrap();
-        assert_eq!(serialized, "\"accept_edits\"");
+        let serialized = serde_json::to_string(&PolicyMode::AcceptAll).unwrap();
+        assert_eq!(serialized, "\"accept_all\"");
 
         let round_trip: PolicyMode = serde_json::from_str(&serialized).unwrap();
-        assert_eq!(round_trip, PolicyMode::AcceptEdits);
+        assert_eq!(round_trip, PolicyMode::AcceptAll);
+
+        let legacy: PolicyMode = serde_json::from_str("\"accept_edits\"").unwrap();
+        assert_eq!(legacy, PolicyMode::AcceptAll);
     }
 
     #[test]
@@ -266,18 +274,21 @@ mod tests {
         assert!(default.allow_network);
         assert!(!default.requires_user_to_exit);
 
-        let accept_edits = PolicyModeConfig::for_mode(PolicyMode::AcceptEdits);
-        assert!(accept_edits.auto_approve.contains_tool("fs.write"));
-        assert!(accept_edits.auto_approve.contains_tool("fs.edit"));
-        assert!(accept_edits.auto_approve.contains_tool("fs.multi_edit"));
-        assert!(accept_edits.auto_approve.contains_tool("apply_patch"));
-        assert!(accept_edits.auto_approve.contains_tool("write_file"));
-        assert!(accept_edits.auto_approve.contains_tool("edit"));
-        assert!(accept_edits.auto_approve.contains_tool("multi_edit"));
-        assert!(!accept_edits.auto_approve.contains_tool("process.spawn"));
-        assert!(accept_edits.allow_writes);
-        assert!(accept_edits.allow_process);
-        assert!(accept_edits.allow_network);
+        let accept_all = PolicyModeConfig::for_mode(PolicyMode::AcceptAll);
+        assert!(accept_all.auto_approve.contains_tool("fs.write"));
+        assert!(accept_all.auto_approve.contains_tool("fs.edit"));
+        assert!(accept_all.auto_approve.contains_tool("fs.multi_edit"));
+        assert!(accept_all.auto_approve.contains_tool("apply_patch"));
+        assert!(accept_all.auto_approve.contains_tool("write_file"));
+        assert!(accept_all.auto_approve.contains_tool("edit"));
+        assert!(accept_all.auto_approve.contains_tool("multi_edit"));
+        assert!(accept_all.auto_approve.contains_tool("process.spawn"));
+        assert!(accept_all.auto_approve.contains_tool("shell"));
+        assert!(accept_all.auto_approve.contains_tool("exec_command"));
+        assert!(accept_all.auto_approve.contains_tool("write_stdin"));
+        assert!(accept_all.allow_writes);
+        assert!(accept_all.allow_process);
+        assert!(accept_all.allow_network);
 
         let plan = PolicyModeConfig::for_mode(PolicyMode::Plan);
         assert_eq!(plan.auto_approve, AutoApproveSet::empty());

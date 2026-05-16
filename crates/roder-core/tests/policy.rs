@@ -30,14 +30,14 @@ fn plan_mode_denies_write_like_arguments_even_with_benign_tool_name() {
 }
 
 #[test]
-fn accept_edits_does_not_auto_approve_process_spawn() {
+fn accept_all_auto_approves_process_spawn() {
     let decision = DefaultPolicyGate::new().decide(
         &tool_call("process.spawn", json!({ "cmd": "cargo test" })),
-        PolicyMode::AcceptEdits,
-        &context(PolicyMode::AcceptEdits),
+        PolicyMode::AcceptAll,
+        &context(PolicyMode::AcceptAll),
     );
 
-    assert!(matches!(decision, PolicyDecision::RequiresApproval { .. }));
+    assert!(matches!(decision, PolicyDecision::AutoApproved { .. }));
 }
 
 #[tokio::test]
@@ -185,12 +185,12 @@ async fn policy_default_mode_process_waits_for_approval_before_executing() {
 }
 
 #[tokio::test]
-async fn switching_to_accept_edits_auto_approves_pending_write_tool() {
+async fn switching_to_accept_all_auto_approves_pending_shell_tool() {
     let seen_modes = Arc::new(Mutex::new(Vec::new()));
     let runtime = runtime_with_policy(
         PolicyMode::Default,
-        "write_file",
-        json!({ "path": "src/lib.rs", "content": "updated" }),
+        "shell",
+        json!({ "command": "cargo test" }),
         seen_modes.clone(),
     );
     let mut events = runtime.subscribe_events();
@@ -198,7 +198,7 @@ async fn switching_to_accept_edits_auto_approves_pending_write_tool() {
     runtime
         .start_turn(StartTurnRequest {
             thread_id: "thread-live-approval".to_string(),
-            message: "write file".to_string(),
+            message: "run tests".to_string(),
             images: Vec::new(),
             provider_override: None,
             model_override: None,
@@ -213,17 +213,14 @@ async fn switching_to_accept_edits_auto_approves_pending_write_tool() {
             .unwrap()
             .unwrap();
         if let RoderEvent::ApprovalRequested(event) = envelope.event {
-            assert_eq!(event.tool_name, "write_file");
+            assert_eq!(event.tool_name, "shell");
             break event.approval_id;
         }
     };
 
     assert!(seen_modes.lock().unwrap().is_empty());
     runtime
-        .set_policy_mode(
-            PolicyMode::AcceptEdits,
-            Some("test mode switch".to_string()),
-        )
+        .set_policy_mode(PolicyMode::AcceptAll, Some("test mode switch".to_string()))
         .await
         .unwrap();
 
@@ -243,7 +240,7 @@ async fn switching_to_accept_edits_auto_approves_pending_write_tool() {
     }
 
     assert!(saw_auto_approval_resolution);
-    assert_eq!(*seen_modes.lock().unwrap(), vec![PolicyMode::AcceptEdits]);
+    assert_eq!(*seen_modes.lock().unwrap(), vec![PolicyMode::AcceptAll]);
 }
 
 fn runtime_with_policy(

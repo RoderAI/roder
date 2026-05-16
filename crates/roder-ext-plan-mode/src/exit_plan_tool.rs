@@ -46,7 +46,7 @@ impl ToolExecutor for ExitPlanModeTool {
                     },
                     "target_mode": {
                         "type": "string",
-                        "enum": ["default", "accept_edits"],
+                        "enum": ["default", "accept_all", "accept_edits"],
                         "description": "Mode to enter after approval."
                     }
                 },
@@ -138,7 +138,7 @@ where
     value
         .map(|value| match value.as_str() {
             "default" => Ok(PolicyMode::Default),
-            "accept_edits" => Ok(PolicyMode::AcceptEdits),
+            "accept_all" | "accept_edits" => Ok(PolicyMode::AcceptAll),
             other => Err(serde::de::Error::custom(format!(
                 "unsupported target_mode {other:?}"
             ))),
