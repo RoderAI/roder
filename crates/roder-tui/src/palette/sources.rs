@@ -139,7 +139,7 @@ pub fn mode_source(active: PolicyMode) -> StaticPaletteSource {
         "Modes",
         [
             PolicyMode::Default,
-            PolicyMode::AcceptEdits,
+            PolicyMode::AcceptAll,
             PolicyMode::Plan,
             PolicyMode::Bypass,
         ]
@@ -313,7 +313,7 @@ fn short_id(id: &str) -> &str {
 fn policy_mode_label(mode: PolicyMode) -> &'static str {
     match mode {
         PolicyMode::Default => "default",
-        PolicyMode::AcceptEdits => "accept_edits",
+        PolicyMode::AcceptAll => "accept_all",
         PolicyMode::Plan => "plan",
         PolicyMode::Bypass => "bypass",
     }
@@ -322,7 +322,7 @@ fn policy_mode_label(mode: PolicyMode) -> &'static str {
 fn policy_mode_description(mode: PolicyMode) -> &'static str {
     match mode {
         PolicyMode::Default => "Ask before risky actions",
-        PolicyMode::AcceptEdits => "Accept file edits without prompting",
+        PolicyMode::AcceptAll => "Accept all tool approvals without prompting",
         PolicyMode::Plan => "Plan-only mode",
         PolicyMode::Bypass => "Bypass policy gates",
     }

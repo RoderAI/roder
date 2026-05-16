@@ -2,10 +2,12 @@ mod commands;
 mod composer;
 mod dialog;
 mod input_queue;
+mod plan_panel;
 mod tool_detail;
 mod tool_timeline;
 mod turn_timer;
 
+use std::collections::HashMap;
 use std::io;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
@@ -40,12 +42,12 @@ use roder_api::inference::{
 use roder_api::policy_mode::{PolicyDecision, PolicyMode};
 use roder_app_server::LocalAppClient;
 use roder_protocol::{
-    CodexAuthResult, CommandDescriptor, CreateSessionResult, InterruptTurnParams, JsonRpcRequest,
-    JsonRpcResponse, PendingPlanExitDescriptor, ProviderDescriptor, ProviderSelectParams,
-    ProviderSelectResult, ProvidersListResult, SessionExitPlanParams, SessionExitPlanResult,
-    SessionGetResult, SessionResolveApprovalParams, SessionResolveApprovalResult,
-    SessionSetModeParams, SessionSetModeResult, SettingsGetResult, SettingsSetWebSearchParams,
-    SettingsSetWebSearchResult, StartTurnParams, SteerTurnParams,
+    AgentsListResult, CodexAuthResult, CommandDescriptor, CreateSessionResult, InterruptTurnParams,
+    JsonRpcRequest, JsonRpcResponse, PendingPlanExitDescriptor, ProviderDescriptor,
+    ProviderSelectParams, ProviderSelectResult, ProvidersListResult, SessionExitPlanParams,
+    SessionExitPlanResult, SessionGetResult, SessionResolveApprovalParams,
+    SessionResolveApprovalResult, SessionSetModeParams, SessionSetModeResult, SettingsGetResult,
+    SettingsSetWebSearchParams, SettingsSetWebSearchResult, StartTurnParams, SteerTurnParams,
 };
 use tokio::io::AsyncWriteExt;
 use tokio::process::Command;
@@ -57,6 +59,9 @@ use composer::{
     shell_command_from_input, style_composer_for_current_mode,
 };
 use input_queue::{PendingPrompt, PromptQueue, queue_status};
+use plan_panel::{
+    PlanPanelState, plan_counter_area, plan_panel_height, render_plan_counter, render_plan_panel,
+};
 use tool_detail::{ToolDetailAction, ToolDetailModal, render_tool_detail_modal};
 use tool_timeline::{
     TimelineFocus, TimelineState, ToolTimelineEntry, TurnCompletedSummary, fallback_entry,
@@ -92,7 +97,7 @@ struct Theme {
     error: Color,
     border: Color,
     mode_default: Color,
-    mode_accept_edits: Color,
+    mode_accept_all: Color,
     mode_plan: Color,
     mode_bypass: Color,
     dialog: Color,
@@ -146,7 +151,7 @@ impl Theme {
                 error: Color::Indexed(196),
                 border: Color::Indexed(244),
                 mode_default: Color::Indexed(244),
-                mode_accept_edits: Color::Indexed(40),
+                mode_accept_all: Color::Indexed(40),
                 mode_plan: Color::Indexed(75),
                 mode_bypass: Color::Indexed(196),
                 dialog: Color::Indexed(62),
@@ -180,7 +185,7 @@ impl Theme {
             error: Color::Indexed(160),
             border: Color::Indexed(240),
             mode_default: Color::Indexed(240),
-            mode_accept_edits: Color::Indexed(28),
+            mode_accept_all: Color::Indexed(28),
             mode_plan: Color::Indexed(25),
             mode_bypass: Color::Indexed(160),
             dialog: Color::Indexed(62),
@@ -225,7 +230,10 @@ impl Theme {
         set!(border, "border");
         set!(mode_plan, "mode-plan");
         set!(mode_default, "mode-default");
-        set!(mode_accept_edits, "mode-accept-edits");
+        // Master renamed the field `mode_accept_edits` -> `mode_accept_all`.
+        // The CSS variable name stays `mode-accept-edits` for backwards
+        // compatibility with existing themes.
+        set!(mode_accept_all, "mode-accept-edits");
         set!(mode_bypass, "mode-bypass");
         set!(selection_bg, "selection-bg");
         set!(selection_fg, "selection-fg");
@@ -372,7 +380,7 @@ impl Theme {
     fn policy_mode(self, mode: PolicyMode) -> Style {
         let color = match mode {
             PolicyMode::Default => self.mode_default,
-            PolicyMode::AcceptEdits => self.mode_accept_edits,
+            PolicyMode::AcceptAll => self.mode_accept_all,
             PolicyMode::Plan => self.mode_plan,
             PolicyMode::Bypass => self.mode_bypass,
         };
@@ -610,6 +618,17 @@ fn is_policy_mode_switch_key(key: KeyEvent) -> bool {
     key.code == KeyCode::BackTab
 }
 
+fn is_plan_panel_toggle_key(key: KeyEvent) -> bool {
+    key.code == KeyCode::Char('t') && key.modifiers.contains(KeyModifiers::CONTROL)
+}
+
+fn is_raw_tool_name(name: &str) -> bool {
+    !name.trim().is_empty()
+        && name
+            .chars()
+            .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '_' | '-' | '.'))
+}
+
 fn confirm_dialog_allows_policy_switch(state: &ConfirmDialogState) -> bool {
     matches!(state.dialog, ConfirmDialog::ToolApproval { .. })
 }
@@ -737,6 +756,9 @@ pub struct TuiApp {
     reasoning_effort: String,
     composer: TextArea<'static>,
     timeline: TimelineState,
+    plan_panel: PlanPanelState,
+    tool_names: HashMap<String, String>,
+    last_plan_counter_area: Option<Rect>,
     events: Vec<String>,
     animation_frame: u64,
     show_event_log: bool,
@@ -834,6 +856,9 @@ impl TuiApp {
             reasoning_effort: session.reasoning,
             composer: composer_textarea(theme),
             timeline: TimelineState::default(),
+            plan_panel: PlanPanelState::default(),
+            tool_names: HashMap::new(),
+            last_plan_counter_area: None,
             events: Vec::new(),
             animation_frame: 0,
             show_event_log: false,
@@ -931,6 +956,8 @@ impl TuiApp {
                             } else {
                                 "event log hidden".to_string()
                             });
+                        } else if is_plan_panel_toggle_key(key) {
+                            self.toggle_plan_panel();
                         } else if key.modifiers.contains(KeyModifiers::CONTROL)
                             && key.code == KeyCode::Char('c')
                         {
@@ -985,7 +1012,7 @@ impl TuiApp {
                                 }
                                 continue;
                             }
-                            if self.handle_slash_command_key(key) {
+                            if self.handle_slash_command_key(key).await {
                                 continue;
                             }
                             if key.code == KeyCode::Tab {
@@ -1399,16 +1426,25 @@ impl TuiApp {
         }
     }
 
-    fn handle_slash_command_key(&mut self, key: KeyEvent) -> bool {
+    async fn handle_slash_command_key(&mut self, key: KeyEvent) -> bool {
         if key.modifiers != KeyModifiers::NONE {
             return false;
         }
         let input = composer_text(&self.composer);
-        if self.image_attachments.is_empty()
-            && key.code == KeyCode::Enter
-            && self.try_run_slash_command(&input)
-        {
-            return true;
+        if self.image_attachments.is_empty() && key.code == KeyCode::Enter {
+            if let Some((name, args)) = commands::command_invocation(&input, &self.command_catalog)
+            {
+                self.run_slash_command_invocation(name, args).await;
+                return true;
+            }
+            if let Some((name, args)) = commands::selected_invocation(
+                &input,
+                &self.command_catalog,
+                self.slash_command_selection,
+            ) {
+                self.run_slash_command_invocation(name, args).await;
+                return true;
+            }
         }
 
         let match_count = self
@@ -1459,22 +1495,107 @@ impl TuiApp {
             (self.slash_command_selection as isize + delta).rem_euclid(count as isize) as usize;
     }
 
-    fn try_run_slash_command(&mut self, input: &str) -> bool {
-        if self.image_attachments.is_empty()
-            && let Some((name, args)) = commands::command_invocation(input, &self.command_catalog)
-        {
-            self.composer = composer_textarea(self.theme);
-            self.slash_command_selection = 0;
-            let suffix = if args.is_empty() {
-                String::new()
-            } else {
-                format!(" {args}")
-            };
-            self.timeline
-                .push_system(format!("executed slash command: /{name}{suffix}"));
-            return true;
+    async fn run_slash_command_invocation(&mut self, name: String, args: String) {
+        self.composer = composer_textarea(self.theme);
+        self.slash_command_selection = 0;
+        match name.as_str() {
+            "clear" => {
+                self.timeline = TimelineState::default();
+                self.timeline.push_system("Conversation display cleared.");
+                self.push_event("slash command: /clear".to_string());
+            }
+            "help" => {
+                self.timeline
+                    .push_system(commands::help_text(&self.command_catalog));
+                self.push_event("slash command: /help".to_string());
+            }
+            "model" => {
+                self.run_model_slash_command(&args).await;
+            }
+            "agents" => {
+                self.run_agents_slash_command().await;
+            }
+            _ if let Some(prompt) = commands::built_in_prompt(&name, &args) => {
+                let suffix = slash_command_suffix(&args);
+                let pending =
+                    PendingPrompt::with_images(format!("/{name}{suffix}"), prompt, Vec::new());
+                if self.active_turn_id.is_some() {
+                    self.steer_prepared_prompt(pending).await;
+                } else {
+                    self.start_prepared_prompt(pending).await;
+                }
+                self.push_event(format!("slash command: /{name}{suffix}"));
+            }
+            _ => {
+                self.timeline
+                    .push_error(format!("unknown slash command: /{name}"));
+            }
         }
-        false
+    }
+
+    async fn run_model_slash_command(&mut self, args: &str) {
+        let model = args.trim();
+        if model.is_empty() {
+            self.timeline.push_system(format!(
+                "Active model: {}/{}. Opening model settings.",
+                self.provider, self.model
+            ));
+            self.open_provider_popup().await;
+            self.push_event("slash command: /model".to_string());
+            return;
+        }
+
+        match self.providers_list().await {
+            Ok(list) => {
+                let selected = list.providers.iter().find_map(|provider| {
+                    provider
+                        .models
+                        .iter()
+                        .find(|candidate| candidate.id == model)
+                        .map(|candidate| (provider.id.clone(), candidate.id.clone()))
+                });
+                if let Some((provider, model)) = selected {
+                    self.select_provider_model_params(ProviderSelectParams {
+                        provider,
+                        model: Some(model),
+                        reasoning: None,
+                    })
+                    .await;
+                } else {
+                    self.timeline
+                        .push_error(format!("model not found for /model {model}"));
+                }
+            }
+            Err(err) => self.record_error(format!("providers/list failed: {err}")),
+        }
+    }
+
+    async fn run_agents_slash_command(&mut self) {
+        match self.agents_list().await {
+            Ok(result) if result.agents.is_empty() => {
+                self.timeline.push_system("No configured subagents.");
+                self.push_event("slash command: /agents".to_string());
+            }
+            Ok(result) => {
+                let lines = result
+                    .agents
+                    .into_iter()
+                    .map(|agent| {
+                        let model = agent
+                            .model
+                            .as_deref()
+                            .map(|model| format!(" [{model}]"))
+                            .unwrap_or_default();
+                        format!("{}{} - {}", agent.agent_type, model, agent.description)
+                    })
+                    .collect::<Vec<_>>()
+                    .join("\n");
+                self.timeline
+                    .push_system(format!("Configured subagents:\n{lines}"));
+                self.push_event("slash command: /agents".to_string());
+            }
+            Err(err) => self.record_error(format!("agents/list failed: {err}")),
+        }
     }
 
     fn slash_command_matches(&self) -> Option<Vec<&CommandDescriptor>> {
@@ -1624,6 +1745,9 @@ impl TuiApp {
         if self.confirm_dialog.is_some() || self.show_provider_popup {
             return;
         }
+        if self.handle_plan_counter_mouse(mouse) {
+            return;
+        }
         if self.handle_mouse_selection(mouse) {
             return;
         }
@@ -1635,6 +1759,20 @@ impl TuiApp {
             }
             self.push_event("timeline selected".to_string());
         }
+    }
+
+    fn handle_plan_counter_mouse(&mut self, mouse: MouseEvent) -> bool {
+        if !matches!(mouse.kind, MouseEventKind::Down(MouseButton::Left)) {
+            return false;
+        }
+        let Some(area) = self.last_plan_counter_area else {
+            return false;
+        };
+        if !rect_contains(area, mouse.column, mouse.row) {
+            return false;
+        }
+        self.toggle_plan_panel();
+        true
     }
 
     fn handle_mouse_selection(&mut self, mouse: MouseEvent) -> bool {
@@ -1745,6 +1883,7 @@ impl TuiApp {
         let event_height = event_log_height(self.show_event_log, self.events.len());
         let attachment_height = image_attachment_height(self.image_attachments.len());
         let queue_height = queued_prompt_height(self.queued_prompts.len());
+        let plan_height = plan_panel_height(&self.plan_panel);
         let slash_matches = self
             .slash_command_matches()
             .map(|matches| matches.into_iter().cloned().collect::<Vec<_>>());
@@ -1762,6 +1901,9 @@ impl TuiApp {
         }
         if self.active_turn_id.is_some() {
             constraints.push(Constraint::Length(1));
+        }
+        if plan_height > 0 {
+            constraints.push(Constraint::Length(plan_height));
         }
         constraints.push(Constraint::Length(composer_height));
         if slash_height > 0 {
@@ -1799,8 +1941,16 @@ impl TuiApp {
             f.render_widget(self.working_line(), chunks[composer_index]);
             composer_index += 1;
         }
+        if plan_height > 0 {
+            f.render_widget(
+                render_plan_panel(&self.plan_panel, self.theme),
+                chunks[composer_index],
+            );
+            composer_index += 1;
+        }
         self.render_copied_helper(f, chunks[composer_index], Instant::now());
         f.render_widget(&self.composer, chunks[composer_index]);
+        self.render_plan_counter(f, chunks[composer_index]);
         composer_index += 1;
         if slash_height > 0 {
             f.render_widget(
@@ -1832,6 +1982,15 @@ impl TuiApp {
             return;
         };
         f.render_widget(copied_helper_widget(self.theme), area);
+    }
+
+    fn render_plan_counter(&mut self, f: &mut Frame<'_>, composer_area: Rect) {
+        let Some(area) = plan_counter_area(composer_area, &self.plan_panel) else {
+            self.last_plan_counter_area = None;
+            return;
+        };
+        self.last_plan_counter_area = Some(area);
+        f.render_widget(render_plan_counter(&self.plan_panel, self.theme), area);
     }
 
     fn working_line(&self) -> Paragraph<'static> {
@@ -2088,6 +2247,11 @@ impl TuiApp {
         } else {
             ""
         };
+        let todo_hint = if self.plan_panel.is_empty() {
+            ""
+        } else {
+            "  ctrl+t todos"
+        };
         let interaction_hint = match self.timeline.focus() {
             TimelineFocus::Timeline => {
                 "  j/k navigate tools  pgup/pgdn scroll  enter expand  click tools  wheel scroll  esc composer"
@@ -2103,7 +2267,7 @@ impl TuiApp {
         Paragraph::new(line_with_gap(
             vec![Span::styled(
                 format!(
-                    " {status}  mode:{}{queue_hint}{pending_hint}{shell_hint}{interaction_hint}",
+                    " {status}  mode:{}{queue_hint}{pending_hint}{shell_hint}{interaction_hint}{todo_hint}",
                     policy_mode_label(self.policy_mode),
                     queue_hint = if self.queued_prompts.is_empty() {
                         String::new()
@@ -2242,6 +2406,19 @@ impl TuiApp {
                 jsonrpc: "2.0".to_string(),
                 id: Some(serde_json::json!("providers/list")),
                 method: "providers/list".to_string(),
+                params: None,
+            })
+            .await;
+        decode_response(res)
+    }
+
+    async fn agents_list(&self) -> anyhow::Result<AgentsListResult> {
+        let res = self
+            .client
+            .send_request(JsonRpcRequest {
+                jsonrpc: "2.0".to_string(),
+                id: Some(serde_json::json!("agents/list")),
+                method: "agents/list".to_string(),
                 params: None,
             })
             .await;
@@ -2749,11 +2926,33 @@ impl TuiApp {
     }
 
     fn record_tool_requested_with_id(&mut self, tool_id: String, entry: ToolTimelineEntry) {
+        if is_raw_tool_name(&entry.name) {
+            self.tool_names.insert(tool_id.clone(), entry.name.clone());
+        }
         self.timeline.record_tool_requested(tool_id, entry);
     }
 
     fn record_tool_completed(&mut self, tool_id: &str, failed: bool, output: Option<String>) {
+        let tool_name = self.tool_names.remove(tool_id);
+        if !failed
+            && tool_name.as_deref() == Some("update_plan")
+            && let Some(text) = output.as_deref()
+        {
+            self.plan_panel.replace_from_update_plan_output(text);
+        }
         self.timeline.record_tool_completed(tool_id, failed, output);
+    }
+
+    fn toggle_plan_panel(&mut self) {
+        if self.plan_panel.is_empty() {
+            return;
+        }
+        self.plan_panel.toggle();
+        self.push_event(if self.plan_panel.is_visible() {
+            "todos shown".to_string()
+        } else {
+            "todos hidden".to_string()
+        });
     }
 
     fn record_compaction_progress(&mut self, status: &str) {
@@ -2968,6 +3167,14 @@ fn queued_prompt_height(count: usize) -> u16 {
     }
 }
 
+fn slash_command_suffix(args: &str) -> String {
+    if args.trim().is_empty() {
+        String::new()
+    } else {
+        format!(" {}", args.trim())
+    }
+}
+
 fn copied_helper_widget(theme: Theme) -> Paragraph<'static> {
     Paragraph::new(Line::from(vec![
         Span::styled("✓ ", theme.accent()),
@@ -2991,6 +3198,13 @@ fn copied_helper_area(composer_area: Rect) -> Option<Rect> {
 
 fn copied_helper_width() -> u16 {
     (2 + COPIED_HELPER_LABEL.chars().count()) as u16
+}
+
+fn rect_contains(area: Rect, column: u16, row: u16) -> bool {
+    row >= area.y
+        && row < area.y.saturating_add(area.height)
+        && column >= area.x
+        && column < area.x.saturating_add(area.width)
 }
 
 fn selectable_lines_from_text(text: &Text<'_>, area: Rect, scroll: u16) -> Vec<SelectableLine> {
@@ -3641,8 +3855,8 @@ async fn settings_get(client: &LocalAppClient) -> anyhow::Result<SettingsGetResu
 
 fn next_policy_mode(mode: PolicyMode) -> PolicyMode {
     match mode {
-        PolicyMode::Default => PolicyMode::AcceptEdits,
-        PolicyMode::AcceptEdits => PolicyMode::Plan,
+        PolicyMode::Default => PolicyMode::AcceptAll,
+        PolicyMode::AcceptAll => PolicyMode::Plan,
         PolicyMode::Plan | PolicyMode::Bypass => PolicyMode::Default,
     }
 }
@@ -3650,7 +3864,7 @@ fn next_policy_mode(mode: PolicyMode) -> PolicyMode {
 fn policy_mode_label(mode: PolicyMode) -> &'static str {
     match mode {
         PolicyMode::Default => "default",
-        PolicyMode::AcceptEdits => "accept_edits",
+        PolicyMode::AcceptAll => "accept_all",
         PolicyMode::Plan => "plan",
         PolicyMode::Bypass => "bypass",
     }
@@ -3667,7 +3881,7 @@ fn web_search_mode_label(mode: HostedWebSearchMode) -> &'static str {
 fn pretty_policy_mode_label(mode: PolicyMode) -> &'static str {
     match mode {
         PolicyMode::Default => "Default",
-        PolicyMode::AcceptEdits => "Accept Edits",
+        PolicyMode::AcceptAll => "Accept All",
         PolicyMode::Plan => "Plan",
         PolicyMode::Bypass => "Bypass",
     }
@@ -3975,7 +4189,7 @@ mod tests {
                 theme.error,
                 theme.border,
                 theme.mode_default,
-                theme.mode_accept_edits,
+                theme.mode_accept_all,
                 theme.mode_plan,
                 theme.mode_bypass,
                 theme.dialog,
@@ -4056,6 +4270,31 @@ mod tests {
             KeyCode::BackTab,
             KeyModifiers::SHIFT
         )));
+    }
+
+    #[test]
+    fn plan_panel_toggle_key_uses_ctrl_t() {
+        assert!(is_plan_panel_toggle_key(KeyEvent::new(
+            KeyCode::Char('t'),
+            KeyModifiers::CONTROL
+        )));
+        assert!(!is_plan_panel_toggle_key(KeyEvent::new(
+            KeyCode::Char('t'),
+            KeyModifiers::NONE
+        )));
+        assert!(!is_plan_panel_toggle_key(KeyEvent::new(
+            KeyCode::Char('l'),
+            KeyModifiers::CONTROL
+        )));
+    }
+
+    #[test]
+    fn raw_tool_name_accepts_plain_tool_ids_only() {
+        assert!(is_raw_tool_name("update_plan"));
+        assert!(is_raw_tool_name("web-search.v1"));
+        assert!(!is_raw_tool_name(""));
+        assert!(!is_raw_tool_name("Update Plan awaiting approval"));
+        assert!(!is_raw_tool_name("Grep path: crates query: thing"));
     }
 
     #[test]
@@ -4410,6 +4649,18 @@ mod tests {
     }
 
     #[test]
+    fn rect_contains_uses_half_open_bounds() {
+        let area = Rect::new(10, 20, 5, 3);
+
+        assert!(rect_contains(area, 10, 20));
+        assert!(rect_contains(area, 14, 22));
+        assert!(!rect_contains(area, 15, 22));
+        assert!(!rect_contains(area, 14, 23));
+        assert!(!rect_contains(area, 9, 20));
+        assert!(!rect_contains(area, 10, 19));
+    }
+
+    #[test]
     fn transcript_scroll_offset_follows_latest_lines() {
         assert_eq!(transcript_scroll_offset(3, 10), 0);
         assert_eq!(transcript_scroll_offset(10, 10), 0);
@@ -4418,11 +4669,8 @@ mod tests {
 
     #[test]
     fn policy_mode_switcher_cycles_non_bypass_modes() {
-        assert_eq!(
-            next_policy_mode(PolicyMode::Default),
-            PolicyMode::AcceptEdits
-        );
-        assert_eq!(next_policy_mode(PolicyMode::AcceptEdits), PolicyMode::Plan);
+        assert_eq!(next_policy_mode(PolicyMode::Default), PolicyMode::AcceptAll);
+        assert_eq!(next_policy_mode(PolicyMode::AcceptAll), PolicyMode::Plan);
         assert_eq!(next_policy_mode(PolicyMode::Plan), PolicyMode::Default);
         assert_eq!(next_policy_mode(PolicyMode::Bypass), PolicyMode::Default);
     }
@@ -4430,7 +4678,7 @@ mod tests {
     #[test]
     fn policy_mode_labels_match_protocol_values() {
         assert_eq!(policy_mode_label(PolicyMode::Default), "default");
-        assert_eq!(policy_mode_label(PolicyMode::AcceptEdits), "accept_edits");
+        assert_eq!(policy_mode_label(PolicyMode::AcceptAll), "accept_all");
         assert_eq!(policy_mode_label(PolicyMode::Plan), "plan");
         assert_eq!(policy_mode_label(PolicyMode::Bypass), "bypass");
     }
@@ -4439,8 +4687,8 @@ mod tests {
     fn pretty_policy_mode_labels_are_human_readable() {
         assert_eq!(pretty_policy_mode_label(PolicyMode::Default), "Default");
         assert_eq!(
-            pretty_policy_mode_label(PolicyMode::AcceptEdits),
-            "Accept Edits"
+            pretty_policy_mode_label(PolicyMode::AcceptAll),
+            "Accept All"
         );
         assert_eq!(pretty_policy_mode_label(PolicyMode::Plan), "Plan");
         assert_eq!(pretty_policy_mode_label(PolicyMode::Bypass), "Bypass");
@@ -4452,7 +4700,7 @@ mod tests {
             let theme = Theme::for_dark_background(dark);
             let colors = [
                 theme.policy_mode(PolicyMode::Default).fg,
-                theme.policy_mode(PolicyMode::AcceptEdits).fg,
+                theme.policy_mode(PolicyMode::AcceptAll).fg,
                 theme.policy_mode(PolicyMode::Plan).fg,
                 theme.policy_mode(PolicyMode::Bypass).fg,
             ];
