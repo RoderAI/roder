@@ -17,14 +17,21 @@ pub struct DiffTheme {
     pub warning: Color,
     pub border: Color,
     pub surface_bg: Color,
+    pub border_type: BorderType,
+    pub borders_visible: bool,
 }
 
 pub fn diff_viewer_widget(state: &DiffViewerState, theme: DiffTheme) -> Paragraph<'static> {
+    let borders = if theme.borders_visible {
+        Borders::ALL
+    } else {
+        Borders::NONE
+    };
     Paragraph::new(Text::from(render_lines(state, theme)))
         .block(
             Block::default()
-                .borders(Borders::ALL)
-                .border_type(BorderType::Rounded)
+                .borders(borders)
+                .border_type(theme.border_type)
                 .border_style(Style::default().fg(theme.border))
                 .style(Style::default().fg(theme.text).bg(theme.surface_bg))
                 .title(Span::styled(
@@ -256,6 +263,8 @@ mod tests {
             warning: Color::Indexed(214),
             border: Color::Indexed(244),
             surface_bg: Color::Reset,
+            border_type: BorderType::Rounded,
+            borders_visible: true,
         }
     }
 }

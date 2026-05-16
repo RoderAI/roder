@@ -101,6 +101,24 @@ struct Theme {
     dialog_key_bg: Color,
     selection_fg: Color,
     selection_bg: Color,
+    /// If true, renderers skip nodes whose CSS class would resolve to
+    /// `display: none`. The CSS engine populates this from the active
+    /// stylesheet — see `crate::theme::overrides::ThemeOverrides::hides`.
+    pub hide_thinking: bool,
+    /// Optional fill for the entire frame. `None` means the theme is
+    /// transparent and the terminal's native background bleeds through —
+    /// this is the default and matches `:root { background: transparent }`.
+    /// Themes set a concrete color via `:root { background: ... }`,
+    /// `:root { --background: ... }`, or `#body { background-color: ... }`.
+    pub body_background: Option<Color>,
+    /// Border shape applied to every framed widget (composer, popup, dialog,
+    /// tool detail, palette, diff). Themes set this via
+    /// `:root { border-radius: 0 }`, `:root { border-style: rounded }`, or
+    /// `#body { border: double }`.
+    pub border_type: BorderType,
+    /// When the theme requests `border: none` / `border-style: none`, framed
+    /// widgets render their inner area only and skip drawing the box.
+    pub borders_visible: bool,
 }
 
 impl Theme {
@@ -137,6 +155,10 @@ impl Theme {
                 dialog_key_bg: Color::Indexed(238),
                 selection_fg: Color::Reset,
                 selection_bg: Color::Indexed(212),
+                hide_thinking: false,
+                body_background: None,
+                border_type: BorderType::Rounded,
+                borders_visible: true,
             };
         }
 
@@ -167,7 +189,114 @@ impl Theme {
             dialog_key_bg: Color::Indexed(252),
             selection_fg: Color::Reset,
             selection_bg: Color::Indexed(198),
+            hide_thinking: false,
+            body_background: None,
+            border_type: BorderType::Rounded,
+            borders_visible: true,
         }
+    }
+
+    /// Patch fields from a parsed CSS theme. Variables that the theme does not
+    /// declare leave the baseline untouched. Hidden classes (`display: none`)
+    /// flip the matching renderer flags. This is the proof's stand-in for full
+    /// per-node cascade — see `crates/roder-tui/src/theme/overrides.rs`.
+    fn apply_overrides(mut self, overrides: &crate::theme::ThemeOverrides) -> Self {
+        macro_rules! set {
+            ($field:ident, $var:literal) => {
+                if let Some(c) = overrides.color($var) {
+                    self.$field = c;
+                }
+            };
+        }
+        set!(text, "text");
+        set!(text_strong, "text");
+        set!(muted, "muted");
+        set!(subtle, "subtle");
+        set!(accent, "accent");
+        set!(accent_soft, "accent-soft");
+        set!(tool, "tool");
+        set!(tool_running, "tool");
+        set!(diff_added, "diff-added");
+        set!(diff_added_bg, "diff-added-bg");
+        set!(diff_removed, "diff-removed");
+        set!(diff_removed_bg, "diff-removed-bg");
+        set!(shell, "shell");
+        set!(error, "error");
+        set!(border, "border");
+        set!(mode_plan, "mode-plan");
+        set!(mode_default, "mode-default");
+        set!(mode_accept_edits, "mode-accept-edits");
+        set!(mode_bypass, "mode-bypass");
+        set!(selection_bg, "selection-bg");
+        set!(selection_fg, "selection-fg");
+        set!(dialog, "dialog");
+        // NB: `dialog-bg` / `dialog-shadow` are deliberately *not* honored
+        // here even when set by the theme — see the auto-sync block below.
+        // The popup interior always matches the body so the popup reads as
+        // a framed cutout of the same surface, not as an elevated card.
+        // `dialog-key-bg` (hotkey chips on confirm dialogs) stays themable
+        // because those chips need contrast against the dialog body.
+        set!(dialog_key_bg, "dialog-key-bg");
+        if overrides.hides("timeline-thinking") {
+            self.hide_thinking = true;
+        }
+        // `None` from overrides means the theme is transparent — leave the
+        // baseline (also `None`) so the terminal's own background shows.
+        if overrides.background.is_some() {
+            self.body_background = overrides.background;
+        }
+        // Popup interior + shadow always mirror the body. Transparent body
+        // (`body_background == None`) resolves to `Color::Reset` so popups
+        // render against the terminal's native background.
+        let body_or_reset = self.body_background.unwrap_or(Color::Reset);
+        self.dialog_bg = body_or_reset;
+        self.dialog_shadow = body_or_reset;
+        if let Some(shape) = overrides.border_shape {
+            use roder_theme::BorderShape;
+            match shape {
+                BorderShape::None => {
+                    self.borders_visible = false;
+                }
+                BorderShape::Plain => {
+                    self.borders_visible = true;
+                    self.border_type = BorderType::Plain;
+                }
+                BorderShape::Rounded => {
+                    self.borders_visible = true;
+                    self.border_type = BorderType::Rounded;
+                }
+                BorderShape::Double => {
+                    self.borders_visible = true;
+                    self.border_type = BorderType::Double;
+                }
+                BorderShape::Thick => {
+                    self.borders_visible = true;
+                    self.border_type = BorderType::Thick;
+                }
+            }
+        }
+        self
+    }
+
+    /// Same as [`Self::for_terminal`] but layers any active CSS theme found in
+    /// the user's `~/.roder/themes/` directory, the project-local
+    /// `.roder/themes/` directory, or the repo's `themes/` directory.
+    fn for_terminal_themed() -> Self {
+        let base = Self::for_terminal();
+        match crate::theme::load_active_theme(&crate::theme::discovery::default_directories(), None) {
+            Some(overrides) => base.apply_overrides(&overrides),
+            None => base,
+        }
+    }
+
+    /// Public-within-crate handle so the palette can re-apply a freshly loaded
+    /// override set without touching `apply_overrides`'s private signature.
+    /// The `palette_ui` submodule is the only consumer today; it isn't wired
+    /// into the live input loop yet, so allow dead_code while the picker work
+    /// continues.
+    #[allow(dead_code)]
+    pub(crate) fn with_overrides(self, overrides: &crate::theme::ThemeOverrides) -> Self {
+        self.apply_overrides(overrides)
     }
 
     fn text(self) -> Style {
@@ -251,7 +380,16 @@ impl Theme {
     }
 
     fn dialog(self) -> Style {
-        Style::default().fg(self.dialog)
+        // Border glyphs (├ ┐ ╭ ┴ ...) should blend with the body fill so the
+        // popup frame looks like it floats on the body, not stamped with the
+        // terminal default. If the theme is transparent (`body_background ==
+        // None`) we leave the bg unset so true-transparent terminals stay
+        // transparent through the border cells too.
+        let mut style = Style::default().fg(self.dialog);
+        if let Some(bg) = self.body_background {
+            style = style.bg(bg);
+        }
+        style
     }
 
     fn dialog_surface(self) -> Style {
@@ -361,6 +499,7 @@ enum ProviderPopupScreen {
     Reasoning,
     Spinner,
     WebSearch,
+    Themes,
 }
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
@@ -501,11 +640,13 @@ enum ProviderMenuItem {
     Providers,
     SpinnerSettings,
     WebSearchSettings,
+    ThemesSettings,
     Spinner(WorkingSpinner),
     WebSearchMode(HostedWebSearchMode),
     Provider(ProviderChoice),
     Model(ProviderOption),
     Reasoning(ReasoningOptionChoice),
+    Theme(String),
     Back,
 }
 
@@ -538,11 +679,13 @@ impl ProviderMenuItem {
             Self::Providers => "Providers".to_string(),
             Self::SpinnerSettings => "Working spinner".to_string(),
             Self::WebSearchSettings => "Web search provider".to_string(),
+            Self::ThemesSettings => "Themes".to_string(),
             Self::Spinner(spinner) => spinner.label().to_string(),
             Self::WebSearchMode(mode) => web_search_mode_label(*mode).to_string(),
             Self::Provider(provider) => provider.label(),
             Self::Model(option) => option.label.clone(),
             Self::Reasoning(option) => format!("{} - {}", option.effort, option.description),
+            Self::Theme(id) => id.clone(),
             Self::Back => "Back".to_string(),
         }
     }
@@ -617,6 +760,18 @@ pub struct TuiApp {
     pending_plan_exit: Option<PendingPlanExitDescriptor>,
     compaction_active: bool,
     theme: Theme,
+    /// Id of the currently-applied theme (basename of the `.css` file). `None`
+    /// when running on the compiled-in baseline because no theme file was
+    /// discoverable at startup. The palette's Themes source consults this to
+    /// flag the active row. Read from `palette_ui::open_palette` (currently
+    /// orphan code awaiting input-loop wiring).
+    #[allow(dead_code)]
+    pub(crate) active_theme_id: Option<String>,
+    /// While the Themes submenu is open, this holds the `(theme,
+    /// active_theme_id)` pair from before the user entered it. Each navigation
+    /// in the submenu replaces `self.theme` with a live preview; `Esc` /
+    /// `Back` restores from this snapshot, `Enter` commits and clears it.
+    theme_preview_baseline: Option<(Theme, Option<String>)>,
 }
 
 impl TuiApp {
@@ -637,7 +792,16 @@ impl TuiApp {
 
         let mut provider_state = ListState::default();
         provider_state.select(Some(0));
-        let theme = Theme::for_terminal();
+        let theme = Theme::for_terminal_themed();
+        // Mirror the resolution that for_terminal_themed performed so the
+        // palette's Themes source can flag the active row consistently. If
+        // discovery yields nothing we leave this as `None` and the palette
+        // will show no row as active.
+        let active_theme_id = {
+            let dirs = crate::theme::discovery::default_directories();
+            let entries = crate::theme::discover_themes(&dirs);
+            crate::theme::discovery::active_theme(&entries, None).map(|e| e.id.clone())
+        };
         let policy_state = session_get(&client).await.ok();
         let settings_state = settings_get(&client).await.ok();
         let tui_config = load_tui_config().unwrap_or_default();
@@ -698,6 +862,8 @@ impl TuiApp {
             pending_plan_exit: policy_state.and_then(|state| state.pending_plan_exit),
             compaction_active: false,
             theme,
+            active_theme_id,
+            theme_preview_baseline: None,
         })
     }
 
@@ -748,6 +914,10 @@ impl TuiApp {
                             && key.code == KeyCode::Char('p')
                         {
                             if self.show_provider_popup {
+                                // Toggling the popup off short-circuits the
+                                // normal Esc path, so revert any in-progress
+                                // theme preview here too.
+                                self.cancel_theme_preview();
                                 self.show_provider_popup = false;
                             } else {
                                 self.open_provider_popup().await;
@@ -789,12 +959,14 @@ impl TuiApp {
                                 KeyCode::Backspace => {
                                     self.provider_menu_filter.pop();
                                     self.clamp_provider_menu_selection();
+                                    self.preview_highlighted_theme();
                                 }
                                 KeyCode::Char(c)
                                     if !key.modifiers.contains(KeyModifiers::CONTROL) =>
                                 {
                                     self.provider_menu_filter.push(c);
                                     self.clamp_provider_menu_selection();
+                                    self.preview_highlighted_theme();
                                 }
                                 _ => {}
                             }
@@ -1560,6 +1732,15 @@ impl TuiApp {
     fn render(&mut self, f: &mut Frame<'_>) {
         let area = f.area();
         self.last_frame_width = area.width;
+        if let Some(bg) = self.theme.body_background {
+            // Theme opted out of transparency — paint the whole frame so
+            // subsequent widgets (which mostly use Style::default()) sit on
+            // the themed surface instead of the terminal's native background.
+            f.render_widget(
+                Block::default().style(Style::default().bg(bg)),
+                area,
+            );
+        }
         style_composer_for_current_mode(&mut self.composer, self.theme, self.policy_mode);
         let event_height = event_log_height(self.show_event_log, self.events.len());
         let attachment_height = image_attachment_height(self.image_attachments.len());
@@ -1961,10 +2142,16 @@ impl TuiApp {
                         ProviderMenuItem::WebSearchMode(mode) if *mode == self.web_search_mode => {
                             "✓ "
                         }
+                        ProviderMenuItem::Theme(id)
+                            if self.active_theme_id.as_deref() == Some(id.as_str()) =>
+                        {
+                            "✓ "
+                        }
                         ProviderMenuItem::Models
                         | ProviderMenuItem::Providers
                         | ProviderMenuItem::SpinnerSettings
                         | ProviderMenuItem::WebSearchSettings
+                        | ProviderMenuItem::ThemesSettings
                         | ProviderMenuItem::Reasoning(_) => "› ",
                         ProviderMenuItem::Back => "‹ ",
                         _ => "• ",
@@ -1983,10 +2170,16 @@ impl TuiApp {
             ProviderPopupScreen::Reasoning => " Reasoning effort (Enter select, Esc back) ",
             ProviderPopupScreen::Spinner => " Working spinner (Enter select, Esc back) ",
             ProviderPopupScreen::WebSearch => " Web search provider (Enter select, Esc back) ",
+            ProviderPopupScreen::Themes => " Themes (Enter select, Esc back) ",
+        };
+        let borders = if self.theme.borders_visible {
+            Borders::ALL
+        } else {
+            Borders::NONE
         };
         let block = Block::default()
-            .borders(Borders::ALL)
-            .border_type(BorderType::Rounded)
+            .borders(borders)
+            .border_type(self.theme.border_type)
             .style(self.theme.dialog_surface())
             .border_style(self.theme.dialog())
             .title(Span::styled(title, self.theme.accent()));
@@ -2086,6 +2279,7 @@ impl TuiApp {
         if !self.provider_menu_filter.is_empty() {
             self.provider_menu_filter.clear();
             self.clamp_provider_menu_selection();
+            self.preview_highlighted_theme();
             return;
         }
         if self.provider_popup_screen == ProviderPopupScreen::Reasoning {
@@ -2099,6 +2293,15 @@ impl TuiApp {
             return;
         }
         if self.provider_popup_screen == ProviderPopupScreen::WebSearch {
+            self.provider_popup_screen = ProviderPopupScreen::Main;
+            self.provider_menu_items = main_provider_menu_items(&self.provider_choices);
+            self.provider_state.select(Some(0));
+            return;
+        }
+        if self.provider_popup_screen == ProviderPopupScreen::Themes {
+            // Leaving the themes screen without committing — revert any live
+            // preview before returning to the main menu.
+            self.cancel_theme_preview();
             self.provider_popup_screen = ProviderPopupScreen::Main;
             self.provider_menu_items = main_provider_menu_items(&self.provider_choices);
             self.provider_state.select(Some(0));
@@ -2124,6 +2327,7 @@ impl TuiApp {
             Some(i) => i - 1,
         };
         self.provider_state.select(Some(i));
+        self.preview_highlighted_theme();
     }
 
     fn select_next_provider_menu_item(&mut self) {
@@ -2138,6 +2342,7 @@ impl TuiApp {
             None => 0,
         };
         self.provider_state.select(Some(i));
+        self.preview_highlighted_theme();
     }
 
     async fn select_current_provider_menu_item(&mut self) {
@@ -2162,6 +2367,12 @@ impl TuiApp {
             }
             ProviderMenuItem::WebSearchSettings => {
                 self.open_web_search_submenu();
+            }
+            ProviderMenuItem::ThemesSettings => {
+                self.open_themes_submenu();
+            }
+            ProviderMenuItem::Theme(id) => {
+                self.select_theme(id);
             }
             ProviderMenuItem::Spinner(spinner) => {
                 self.select_working_spinner(spinner);
@@ -2261,6 +2472,112 @@ impl TuiApp {
             .position(|item| matches!(item, ProviderMenuItem::WebSearchMode(mode) if *mode == self.web_search_mode))
             .unwrap_or(0);
         self.provider_state.select(Some(selected));
+    }
+
+    fn open_themes_submenu(&mut self) {
+        // Snapshot the current theme so we can revert on Esc / Back. Only
+        // snapshot when arriving from a non-Themes screen — re-entering
+        // shouldn't clobber the original baseline.
+        if self.provider_popup_screen != ProviderPopupScreen::Themes {
+            self.theme_preview_baseline =
+                Some((self.theme.clone(), self.active_theme_id.clone()));
+        }
+        self.provider_popup_screen = ProviderPopupScreen::Themes;
+        self.provider_menu_filter.clear();
+        let directories = crate::theme::discovery::default_directories();
+        let entries = crate::theme::discover_themes(&directories);
+        self.provider_menu_items = entries
+            .iter()
+            .map(|e| ProviderMenuItem::Theme(e.id.clone()))
+            .chain(std::iter::once(ProviderMenuItem::Back))
+            .collect();
+        let selected = self
+            .active_theme_id
+            .as_deref()
+            .and_then(|active| entries.iter().position(|e| e.id == active))
+            .unwrap_or(0);
+        if self.provider_menu_items.is_empty() {
+            self.provider_state.select(None);
+        } else {
+            self.provider_state.select(Some(selected));
+        }
+        // Apply the initial highlight immediately so the user lands on a
+        // surface that matches what their Enter would commit.
+        self.preview_highlighted_theme();
+    }
+
+    /// Apply the theme highlighted in the Themes submenu without persisting.
+    /// Called after every navigation so the running TUI shows what the user
+    /// is about to choose. No-op outside the Themes screen.
+    fn preview_highlighted_theme(&mut self) {
+        if self.provider_popup_screen != ProviderPopupScreen::Themes {
+            return;
+        }
+        let Some(idx) = self.provider_state.selected() else {
+            return;
+        };
+        let Some(item) = self.filtered_provider_menu_items().get(idx).cloned() else {
+            return;
+        };
+        let ProviderMenuItem::Theme(id) = item else {
+            // Hovering over the Back row — restore the baseline so the user
+            // sees what they'd revert to.
+            self.revert_theme_preview_in_place();
+            return;
+        };
+        let directories = crate::theme::discovery::default_directories();
+        if let Some(overrides) = crate::theme::load_theme_by_id(&directories, &id) {
+            self.theme = Theme::for_terminal().with_overrides(&overrides);
+            self.active_theme_id = Some(id);
+        }
+    }
+
+    /// Restore the snapshot taken when the Themes submenu opened, but leave
+    /// the snapshot in place — used while still navigating (e.g. hovering the
+    /// Back row). For the final teardown use [`Self::cancel_theme_preview`].
+    fn revert_theme_preview_in_place(&mut self) {
+        if let Some((theme, id)) = &self.theme_preview_baseline {
+            self.theme = theme.clone();
+            self.active_theme_id = id.clone();
+        }
+    }
+
+    /// Cancel an in-progress theme preview: restore the baseline and clear it.
+    /// Safe to call when no preview is active.
+    fn cancel_theme_preview(&mut self) {
+        if let Some((theme, id)) = self.theme_preview_baseline.take() {
+            self.theme = theme;
+            self.active_theme_id = id;
+        }
+    }
+
+    fn select_theme(&mut self, id: String) {
+        let directories = crate::theme::discovery::default_directories();
+        let Some(state_path) = crate::theme::state::state_file_path() else {
+            self.record_error("could not resolve ~/.roder/state.toml".to_string());
+            self.theme_preview_baseline = None;
+            self.show_provider_popup = false;
+            return;
+        };
+        match crate::theme::apply_theme(&directories, &state_path, &id) {
+            Ok(overrides) => {
+                self.theme = Theme::for_terminal().with_overrides(&overrides);
+                self.active_theme_id = Some(id.clone());
+                self.timeline
+                    .push_system(format!("theme set to {id}."));
+                self.push_event(format!("theme applied: {id}"));
+                // Commit: drop the baseline so any subsequent Esc out of a
+                // different screen doesn't snap back to the previous theme.
+                self.theme_preview_baseline = None;
+            }
+            Err(err) => {
+                self.record_error(format!("failed to apply theme {id}: {err}"));
+                // Failed to commit — revert to the baseline so the user
+                // doesn't get stranded on a half-applied preview.
+                self.cancel_theme_preview();
+            }
+        }
+        self.show_provider_popup = false;
     }
 
     fn select_working_spinner(&mut self, spinner: WorkingSpinner) {
@@ -3230,6 +3547,7 @@ fn main_provider_menu_items(providers: &[ProviderChoice]) -> Vec<ProviderMenuIte
         ProviderMenuItem::Providers,
         ProviderMenuItem::WebSearchSettings,
         ProviderMenuItem::SpinnerSettings,
+        ProviderMenuItem::ThemesSettings,
     ]
 }
 
@@ -4389,6 +4707,17 @@ mod tests {
             items.get(3),
             Some(ProviderMenuItem::SpinnerSettings)
         ));
+        assert!(matches!(
+            items.get(4),
+            Some(ProviderMenuItem::ThemesSettings)
+        ));
+    }
+
+    #[test]
+    fn themes_submenu_label_matches_theme_id() {
+        let item = ProviderMenuItem::Theme("midnight".to_string());
+        assert_eq!(item.label(), "midnight");
+        assert_eq!(ProviderMenuItem::ThemesSettings.label(), "Themes");
     }
 
     #[test]

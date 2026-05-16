@@ -1,0 +1,65 @@
+/*
+ * light.css — a true light theme.
+ *
+ * Today's defaults assume a dark terminal. This palette is designed for
+ * daylight terminals: dark ink on a paper background, with errors and the
+ * assistant accent kept high-contrast against the bright canvas. Diff
+ * backgrounds use the GitHub-style pale green/red so they read on white.
+ *
+ * The dialog/popup surfaces (Ctrl+P menu, confirm dialogs, tool detail) are
+ * explicitly re-tinted to a light surface — without these, the popup keeps
+ * its dark baseline and renders illegibly on a light terminal.
+ */
+:root {
+    background:     #fafafa;
+    --paper:        #fafafa;
+    --paper-elev:   #f0eee6;
+    --paper-edge:   #e1ddd1;
+    --ink:          #1f1f1f;
+    --soft-ink:     #4a4a4a;
+    --rule:         #b8b3a8;
+    --blue:         #0550ae;
+    --indigo:       #5a32d6;
+    --pink:         #b6195e;
+    --red:          #b1102d;
+    --green:        #0a7d2a;
+    --amber:        #8a5a00;
+    --add-bg:       #d4f1d4;
+    --del-bg:       #ffd7d7;
+
+    --text:               var(--ink);
+    --muted:              var(--soft-ink);
+    --subtle:             #6b6b6b;
+    --accent:             var(--indigo);
+    --accent-soft:        var(--blue);
+    --tool:               var(--blue);
+    --diff-added:         var(--green);
+    --diff-added-bg:      var(--add-bg);
+    --diff-removed:       var(--red);
+    --diff-removed-bg:    var(--del-bg);
+    --shell:              var(--amber);
+    --error:              var(--red);
+    --border:             var(--rule);
+    --mode-plan:          var(--blue);
+    --mode-default:       var(--soft-ink);
+    --mode-accept-edits:  var(--green);
+    --mode-bypass:        var(--red);
+    --selection-bg:       #ffe7a0;
+    --selection-fg:       var(--ink);
+
+    /* Dialog / popup colors. The popup interior auto-syncs to `background`
+     * so it always reads as a framed cutout of the body — only the border
+     * and hotkey chips need their own colors. */
+    --dialog:             var(--indigo);
+    --dialog-key-bg:      #d8d3c3;
+}
+
+.error, .timeline-error {
+    color: var(--red);
+    font-weight: bold;
+}
+
+#status-line {
+    color: var(--ink);
+    background-color: var(--paper);
+}

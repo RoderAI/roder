@@ -595,6 +595,12 @@ impl TimelineState {
             {
                 continue;
             }
+            // Honor `display: none` for `.timeline-thinking`. This is the
+            // headline RFC demo — themes like minimal.css hide the model's
+            // chain-of-thought.
+            if matches!(item.kind, TimelineItemKind::Reasoning(_)) && theme.hide_thinking {
+                continue;
+            }
             let line_start = lines.len();
             let selected = self.focus == TimelineFocus::Timeline
                 && self.selected == Some(index)

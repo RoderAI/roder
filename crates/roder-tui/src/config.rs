@@ -43,6 +43,7 @@ pub fn built_in_palette_sources() -> Vec<PaletteSourceDescriptor> {
         ("models", "Models", 70),
         ("modes", "Modes", 60),
         ("settings", "Settings", 50),
+        ("themes", "Themes", 40),
     ]
     .into_iter()
     .map(|(id, label, priority)| PaletteSourceDescriptor {

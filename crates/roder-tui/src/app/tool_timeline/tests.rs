@@ -609,6 +609,65 @@ fn final_assistant_messages_render_markdown() {
 }
 
 #[test]
+fn applying_minimal_theme_removes_thinking_lines_from_timeline() {
+    // Headline RFC demo: `.timeline-thinking { display: none; }` removes the
+    // chain-of-thought block. We build the same transcript twice: once with
+    // the baseline theme, once with minimal.css applied. The thinking line
+    // exists in the first, vanishes in the second.
+    let mut timeline = TimelineState::default();
+    timeline.push_user("hello");
+    timeline.push_reasoning_delta("I am pondering.");
+    timeline.push_assistant_delta("hi", Some("final_answer".to_string()));
+
+    let baseline = Theme::for_dark_background(true);
+    let baseline_lines = timeline
+        .render(baseline, Rect::new(0, 0, 100, 20))
+        .text
+        .lines
+        .iter()
+        .map(|line| {
+            line.spans
+                .iter()
+                .map(|span| span.content.as_ref())
+                .collect::<String>()
+        })
+        .collect::<Vec<_>>();
+    assert!(baseline_lines.iter().any(|l| l.contains("I am pondering")));
+
+    let mut themed = baseline;
+    themed.hide_thinking = true;
+    let themed_lines = timeline
+        .render(themed, Rect::new(0, 0, 100, 20))
+        .text
+        .lines
+        .iter()
+        .map(|line| {
+            line.spans
+                .iter()
+                .map(|span| span.content.as_ref())
+                .collect::<String>()
+        })
+        .collect::<Vec<_>>();
+    assert!(!themed_lines.iter().any(|l| l.contains("I am pondering")));
+    assert!(themed_lines.iter().any(|l| l.contains("hi")));
+}
+
+#[test]
+fn loading_minimal_theme_from_disk_flips_hide_thinking() {
+    use crate::theme::overrides::ThemeOverrides;
+    let css = std::fs::read_to_string(
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("..")
+            .join("..")
+            .join("themes")
+            .join("minimal.css"),
+    )
+    .expect("minimal.css should exist");
+    let overrides = ThemeOverrides::from_css(&css).expect("parse");
+    assert!(overrides.hides("timeline-thinking"));
+}
+
+#[test]
 fn reasoning_deltas_render_live_as_thinking() {
     let mut timeline = TimelineState::default();
     timeline.push_reasoning_delta("The user is asking for ");

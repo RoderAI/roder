@@ -1,0 +1,53 @@
+/*
+ * dracula.css — purple/pink dark theme from dracula.io.
+ *
+ * Saturated magenta accent, cyan tools, green diffs against a deep violet
+ * gray. Higher contrast than nord; good for long sessions on a dim display.
+ */
+:root {
+    background: #282a36;
+    --bg:       #282a36;
+    --current:  #44475a;
+    --fg:       #f8f8f2;
+    --comment:  #6272a4;
+    --cyan:     #8be9fd;
+    --green:    #50fa7b;
+    --orange:   #ffb86c;
+    --pink:     #ff79c6;
+    --purple:   #bd93f9;
+    --red:      #ff5555;
+    --yellow:   #f1fa8c;
+
+    --text:               var(--fg);
+    --muted:              var(--comment);
+    --subtle:             var(--current);
+    --accent:             var(--pink);
+    --accent-soft:        var(--purple);
+    --tool:               var(--cyan);
+    --diff-added:         var(--green);
+    --diff-added-bg:      #1f3a26;
+    --diff-removed:       var(--red);
+    --diff-removed-bg:    #4a1c1c;
+    --shell:              var(--orange);
+    --error:              var(--red);
+    --border:             var(--current);
+    --mode-plan:          var(--cyan);
+    --mode-default:       var(--comment);
+    --mode-accept-edits:  var(--green);
+    --mode-bypass:        var(--red);
+    --selection-bg:       var(--current);
+    --selection-fg:       var(--fg);
+}
+
+.error, .timeline-error {
+    color: var(--red);
+    font-weight: bold;
+}
+
+.timeline-tool {
+    color: var(--cyan);
+}
+
+.timeline-assistant {
+    color: var(--pink);
+}

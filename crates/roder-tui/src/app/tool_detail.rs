@@ -3,7 +3,7 @@ use ratatui::{
     Frame,
     layout::{Constraint, Direction, Layout, Rect},
     text::{Line, Span, Text},
-    widgets::{Block, BorderType, Borders, Clear, Padding, Paragraph, Wrap},
+    widgets::{Block, Borders, Clear, Padding, Paragraph, Wrap},
 };
 
 use super::tool_timeline::ToolDetail;
@@ -91,9 +91,14 @@ pub(super) fn render_tool_detail_modal(
     let modal_area = tool_modal_area(area);
     f.render_widget(Clear, modal_area);
 
+    let borders = if theme.borders_visible {
+        Borders::ALL
+    } else {
+        Borders::NONE
+    };
     let block = Block::default()
-        .borders(Borders::ALL)
-        .border_type(BorderType::Rounded)
+        .borders(borders)
+        .border_type(theme.border_type)
         .border_style(theme.dialog())
         .style(theme.dialog_surface())
         .padding(Padding::horizontal(2))

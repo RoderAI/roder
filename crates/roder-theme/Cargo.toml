@@ -1,0 +1,10 @@
+[package]
+name = "roder-theme"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+thiserror = "2"
+ratatui.workspace = true
+
+[dev-dependencies]

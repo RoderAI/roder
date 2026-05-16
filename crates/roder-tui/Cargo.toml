@@ -13,6 +13,7 @@ ratatui.workspace = true
 roder-api.workspace = true
 roder-app-server.workspace = true
 roder-protocol.workspace = true
+roder-theme.workspace = true
 serde = { workspace = true, features = ["derive"] }
 serde_json.workspace = true
 similar.workspace = true

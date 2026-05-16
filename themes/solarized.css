@@ -1,0 +1,45 @@
+/*
+ * solarized.css — solarized-dark-ish palette
+ * (https://ethanschoonover.com/solarized/)
+ */
+:root {
+    --base03: #002b36;
+    --base02: #073642;
+    --base01: #586e75;
+    --base00: #657b83;
+    --base0: #839496;
+    --base1: #93a1a1;
+    --yellow: #b58900;
+    --orange: #cb4b16;
+    --red: #dc322f;
+    --magenta: #d33682;
+    --violet: #6c71c4;
+    --blue: #268bd2;
+    --cyan: #2aa198;
+    --green: #859900;
+
+    --text: var(--base0);
+    --muted: var(--base01);
+    --subtle: var(--base01);
+    --accent: var(--cyan);
+    --accent-soft: var(--violet);
+    --tool: var(--blue);
+    --diff-added: var(--green);
+    --diff-added-bg: var(--base02);
+    --diff-removed: var(--red);
+    --diff-removed-bg: var(--base02);
+    --shell: var(--yellow);
+    --error: var(--red);
+    --border: var(--base01);
+    --mode-plan: var(--blue);
+    --mode-default: var(--base00);
+    --mode-accept-edits: var(--green);
+    --mode-bypass: var(--red);
+    --selection-bg: var(--base02);
+    --selection-fg: var(--base1);
+}
+
+.error, .timeline-error {
+    color: var(--red);
+    background-color: var(--base02);
+}

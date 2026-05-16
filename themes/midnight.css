@@ -1,0 +1,39 @@
+/*
+ * midnight.css — dark surfaces with cool blue accents.
+ *
+ * The assistant text picks up the accent variable, errors stay loud, tool
+ * rows take a dim slate, and the policy-mode segment paints itself in blue.
+ */
+:root {
+    background: #011627;
+    --text: #d6deeb;
+    --muted: #5f7e97;
+    --subtle: #475a6b;
+    --accent: #6ccaff;
+    --accent-soft: #82aaff;
+    --tool: #7fdbca;
+    --diff-added: #addb67;
+    --diff-added-bg: #013427;
+    --diff-removed: #ef5350;
+    --diff-removed-bg: #4a1518;
+    --shell: #ffeb95;
+    --error: #ff6363;
+    --border: #4f7c9a;
+    --mode-plan: #6ccaff;
+    --mode-default: #82aaff;
+    --mode-accept-edits: #addb67;
+    --mode-bypass: #ff6363;
+    --selection-bg: #1a3a5a;
+    --selection-fg: #d6deeb;
+}
+
+/* Tone the timeline-tool rows in the accent. */
+.timeline-tool {
+    color: var(--accent);
+}
+
+/* A focused border for the composer. */
+#composer {
+    border-color: var(--accent);
+    padding: 1 2;
+}

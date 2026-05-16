@@ -2,7 +2,7 @@ use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::{
     style::{Color, Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, BorderType, Borders},
+    widgets::{Block, Borders},
 };
 use roder_api::policy_mode::PolicyMode;
 use tui_textarea::{CursorMove, TextArea, WrapMode};
@@ -208,10 +208,22 @@ fn style_composer_for_mode(
     mode: ComposerMode,
     policy_mode: PolicyMode,
 ) {
+    let borders = if theme.borders_visible {
+        Borders::ALL
+    } else {
+        Borders::NONE
+    };
+    // Inherit the body background on the border glyphs so the composer
+    // frame blends into the body fill instead of stamping the terminal
+    // default through each corner cell.
+    let mut border_style = mode.border_style(theme, policy_mode);
+    if let Some(bg) = theme.body_background {
+        border_style = border_style.bg(bg);
+    }
     let mut block = Block::default()
-        .borders(Borders::ALL)
-        .border_type(BorderType::Rounded)
-        .border_style(mode.border_style(theme, policy_mode));
+        .borders(borders)
+        .border_type(theme.border_type)
+        .border_style(border_style);
 
     if let Some(title) = mode.title_spans(theme, policy_mode) {
         block = block.title(title);
