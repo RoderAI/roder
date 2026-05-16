@@ -1,4 +1,5 @@
 mod commands;
+mod tasks_cli;
 mod tui_config;
 
 use std::path::{Path, PathBuf};
@@ -15,6 +16,7 @@ use roder_extension_host::{
 };
 use roder_tui::TuiApp;
 use roder_web_search::WebSearchProviderKind;
+use tasks_cli::run_tasks_cli;
 use tui_config::resolve_tui_app_config;
 
 #[tokio::main]
@@ -114,76 +116,6 @@ async fn build_runtime_from_config(
     )?);
 
     Ok((runtime, default_model, tui_config))
-}
-
-async fn run_tasks_cli(args: &[String], options: CliOptions) -> anyhow::Result<()> {
-    let (runtime, _default_model, _tui_config) = build_runtime_from_config(options).await?;
-    let client = LocalAppClient::new(Arc::new(AppServer::new(runtime)));
-    let Some(command) = args.first().map(String::as_str) else {
-        anyhow::bail!("tasks requires a subcommand: list, show, cancel, or submit");
-    };
-    let (method, params) = match command {
-        "list" => ("tasks/list", None),
-        "show" => {
-            let Some(task_id) = args.get(1) else {
-                anyhow::bail!("tasks show requires a task id");
-            };
-            (
-                "tasks/get",
-                Some(serde_json::to_value(roder_protocol::TasksGetParams {
-                    task_id: task_id.clone(),
-                })?),
-            )
-        }
-        "cancel" => {
-            let Some(task_id) = args.get(1) else {
-                anyhow::bail!("tasks cancel requires a task id");
-            };
-            (
-                "tasks/cancel",
-                Some(serde_json::to_value(roder_protocol::TasksCancelParams {
-                    task_id: task_id.clone(),
-                    reason: Some("cli".to_string()),
-                })?),
-            )
-        }
-        "submit" => {
-            let Some(executor_id) = args.get(1) else {
-                anyhow::bail!("tasks submit requires an executor id");
-            };
-            let input = args
-                .get(2)
-                .map(|raw| serde_json::from_str(raw))
-                .transpose()?
-                .unwrap_or_else(|| serde_json::json!({}));
-            (
-                "tasks/submit",
-                Some(serde_json::to_value(roder_protocol::TasksSubmitParams {
-                    executor_id: executor_id.clone(),
-                    input,
-                    thread_id: None,
-                    turn_id: None,
-                })?),
-            )
-        }
-        other => anyhow::bail!("unknown tasks subcommand {other:?}"),
-    };
-    let response = client
-        .send_request(roder_protocol::JsonRpcRequest {
-            jsonrpc: "2.0".to_string(),
-            id: Some(serde_json::json!(method)),
-            method: method.to_string(),
-            params,
-        })
-        .await;
-    if let Some(error) = response.error {
-        anyhow::bail!("{}", error.message);
-    }
-    println!(
-        "{}",
-        serde_json::to_string_pretty(&response.result.unwrap_or_else(|| serde_json::json!({})))?
-    );
-    Ok(())
 }
 
 fn parse_cli_options(args: &[String]) -> anyhow::Result<CliOptions> {
