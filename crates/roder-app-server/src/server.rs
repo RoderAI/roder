@@ -97,6 +97,13 @@ impl AppServer {
                 })
                 .await
             }
+            "turns/steer" => {
+                self.decode_and(
+                    req.params,
+                    |p| async move { self.handle_steer_turn(p).await },
+                )
+                .await
+            }
             "tools/list" => self.handle_tools_list().await,
             "agents/list" => self.handle_agents_list().await,
             _ => Err(JsonRpcError {
@@ -380,6 +387,18 @@ impl AppServer {
             .await
             .map_err(internal_error)?;
         Ok(serde_json::json!({}))
+    }
+
+    async fn handle_steer_turn(
+        &self,
+        params: SteerTurnParams,
+    ) -> Result<serde_json::Value, JsonRpcError> {
+        let turn_id = params.turn_id;
+        self.runtime
+            .steer_turn(params.thread_id, turn_id.clone(), params.message)
+            .await
+            .map_err(internal_error)?;
+        Ok(serde_json::to_value(SteerTurnResult { turn_id }).unwrap())
     }
 
     async fn handle_tools_list(&self) -> Result<serde_json::Value, JsonRpcError> {

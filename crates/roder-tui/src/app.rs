@@ -1,14 +1,18 @@
 mod composer;
 mod dialog;
+mod input_queue;
 mod tool_timeline;
 
-use std::collections::HashMap;
 use std::io;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use crossterm::{
-    event::{self, DisableBracketedPaste, EnableBracketedPaste, Event, KeyCode, KeyModifiers},
+    event::{
+        self, DisableBracketedPaste, DisableMouseCapture, EnableBracketedPaste, EnableMouseCapture,
+        Event, KeyCode, KeyModifiers, KeyboardEnhancementFlags, MouseEvent,
+        PopKeyboardEnhancementFlags, PushKeyboardEnhancementFlags,
+    },
     execute,
     terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
 };
@@ -29,16 +33,17 @@ use roder_protocol::{
     PendingPlanExitDescriptor, ProviderDescriptor, ProviderSelectParams, ProviderSelectResult,
     ProvidersListResult, SessionExitPlanParams, SessionExitPlanResult, SessionGetResult,
     SessionResolveApprovalParams, SessionResolveApprovalResult, SessionSetModeParams,
-    SessionSetModeResult, StartTurnParams,
+    SessionSetModeResult, StartTurnParams, SteerTurnParams,
 };
 use tokio::process::Command;
 use tui_textarea::TextArea;
 
 use composer::{
-    composer_mode, composer_text, composer_textarea, shell_command_from_input,
-    style_composer_for_current_mode,
+    ComposerKeyAction, composer_mode, composer_text, composer_textarea, handle_composer_key,
+    shell_command_from_input, style_composer_for_current_mode,
 };
-use tool_timeline::{ToolTimelineEntry, fallback_entry};
+use input_queue::{PendingPrompt, PromptQueue, queue_status};
+use tool_timeline::{TimelineFocus, TimelineState, ToolTimelineEntry, fallback_entry};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 struct Theme {
@@ -338,7 +343,7 @@ pub struct TuiApp {
     provider: String,
     model: String,
     composer: TextArea<'static>,
-    messages: Vec<String>,
+    timeline: TimelineState,
     events: Vec<String>,
     animation_frame: u64,
     show_event_log: bool,
@@ -351,7 +356,7 @@ pub struct TuiApp {
     provider_state: ListState,
     confirm_dialog: Option<ConfirmDialogState>,
     image_attachments: Vec<ImageAttachment>,
-    tool_call_entries: HashMap<String, (usize, ToolTimelineEntry)>,
+    queued_prompts: PromptQueue,
     policy_mode: PolicyMode,
     pending_plan_exit: Option<PendingPlanExitDescriptor>,
     theme: Theme,
@@ -389,7 +394,7 @@ impl TuiApp {
                 model
             },
             composer: composer_textarea(theme),
-            messages: Vec::new(),
+            timeline: TimelineState::default(),
             events: Vec::new(),
             animation_frame: 0,
             show_event_log: false,
@@ -402,7 +407,7 @@ impl TuiApp {
             provider_state,
             confirm_dialog: None,
             image_attachments: Vec::new(),
-            tool_call_entries: HashMap::new(),
+            queued_prompts: PromptQueue::default(),
             policy_mode: policy_state
                 .as_ref()
                 .map(|state| state.mode)
@@ -415,7 +420,13 @@ impl TuiApp {
     pub async fn run(&mut self) -> anyhow::Result<()> {
         enable_raw_mode()?;
         let mut stdout = io::stdout();
-        execute!(stdout, EnterAlternateScreen, EnableBracketedPaste)?;
+        execute!(
+            stdout,
+            EnterAlternateScreen,
+            EnableBracketedPaste,
+            EnableMouseCapture,
+            PushKeyboardEnhancementFlags(KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES)
+        )?;
         let backend = CrosstermBackend::new(stdout);
         let mut terminal = Terminal::new(backend)?;
 
@@ -483,14 +494,17 @@ impl TuiApp {
                                 _ => {}
                             }
                         } else {
-                            match key.code {
-                                KeyCode::Enter => {
-                                    if key.modifiers.contains(KeyModifiers::SHIFT) {
-                                        self.composer.insert_newline();
-                                        continue;
-                                    }
-                                    self.submit_prompt().await;
+                            if key.code == KeyCode::Tab {
+                                if self.active_turn_id.is_some() && self.queue_current_prompt() {
+                                    continue;
                                 }
+                                self.timeline.focus_latest();
+                                continue;
+                            }
+                            if self.timeline.is_focused() && self.timeline.handle_key(key) {
+                                continue;
+                            }
+                            match key.code {
                                 KeyCode::Esc => {
                                     self.confirm_dialog = if self.active_turn_id.is_some() {
                                         Some(ConfirmDialogState::new(ConfirmDialog::Interrupt))
@@ -509,13 +523,17 @@ impl TuiApp {
                                         ));
                                     }
                                 }
-                                _ => {
-                                    self.composer.input(key);
-                                }
+                                _ => match handle_composer_key(&mut self.composer, key) {
+                                    ComposerKeyAction::Submit => self.submit_prompt().await,
+                                    ComposerKeyAction::Edited | ComposerKeyAction::Ignored => {
+                                        self.timeline.focus_composer();
+                                    }
+                                },
                             }
                         }
                     }
                     Event::Paste(text) => self.handle_paste(text),
+                    Event::Mouse(mouse) => self.handle_mouse(mouse),
                     _ => {}
                 }
             }
@@ -529,6 +547,8 @@ impl TuiApp {
                         if self.active_turn_id.as_deref() == Some(&ev.turn_id) =>
                     {
                         self.active_turn_id = None;
+                        self.timeline.push_turn_completed();
+                        self.submit_next_queued_prompt().await;
                     }
                     RoderEvent::TurnInterrupted(ev)
                         if self.active_turn_id.as_deref() == Some(&ev.turn_id) =>
@@ -537,13 +557,7 @@ impl TuiApp {
                     }
                     RoderEvent::InferenceEventReceived(ev) => match ev.event {
                         roder_api::inference::InferenceEvent::MessageDelta(delta) => {
-                            if let Some(last) = self.messages.last_mut()
-                                && last.starts_with("assistant: ")
-                            {
-                                last.push_str(&delta.text);
-                                continue;
-                            }
-                            self.messages.push(format!("assistant: {}", delta.text));
+                            self.timeline.push_assistant_delta(&delta.text);
                         }
                         roder_api::inference::InferenceEvent::ToolCallCompleted(call) => {
                             self.record_tool_requested_with_id(
@@ -557,7 +571,7 @@ impl TuiApp {
                         if self.active_turn_id.as_deref() == Some(&ev.turn_id) {
                             self.active_turn_id = None;
                         }
-                        self.messages.push(format!("error: {}", ev.error))
+                        self.timeline.push_error(ev.error);
                     }
                     RoderEvent::ToolCallRequested(ev) => {
                         self.record_tool_requested_with_id(
@@ -567,7 +581,7 @@ impl TuiApp {
                     }
                     RoderEvent::PolicyDecisionRecorded(ev) => match ev.decision {
                         PolicyDecision::Denied { reason } => {
-                            self.record_tool_completed(&ev.tool_id, true);
+                            self.record_tool_completed(&ev.tool_id, true, None);
                             self.record_error(format!("tool {} denied: {reason}", ev.tool_name));
                         }
                         PolicyDecision::RequiresApproval { .. } => {
@@ -590,13 +604,11 @@ impl TuiApp {
                                 reason: ev.reason,
                             }));
                     }
-                    RoderEvent::ApprovalResolved(ev) => {
-                        if !ev.approved {
-                            self.record_tool_completed(&ev.tool_id, true);
-                        }
+                    RoderEvent::ApprovalResolved(ev) if !ev.approved => {
+                        self.record_tool_completed(&ev.tool_id, true, None);
                     }
                     RoderEvent::ToolCallCompleted(ev) => {
-                        self.record_tool_completed(&ev.tool_id, ev.is_error);
+                        self.record_tool_completed(&ev.tool_id, ev.is_error, ev.output);
                     }
                     RoderEvent::PolicyModeChanged(ev) => {
                         self.policy_mode = ev.new_mode;
@@ -620,6 +632,8 @@ impl TuiApp {
         execute!(
             terminal.backend_mut(),
             DisableBracketedPaste,
+            DisableMouseCapture,
+            PopKeyboardEnhancementFlags,
             LeaveAlternateScreen
         )?;
         terminal.show_cursor()?;
@@ -659,8 +673,8 @@ impl TuiApp {
 
     async fn interrupt_active_turn(&mut self) {
         let Some(turn_id) = self.active_turn_id.clone() else {
-            self.messages
-                .push("system: no running turn to interrupt.".to_string());
+            self.timeline
+                .push_system("no running turn to interrupt.".to_string());
             return;
         };
         let params = InterruptTurnParams {
@@ -732,8 +746,8 @@ impl TuiApp {
         match decode_response::<SessionSetModeResult>(res) {
             Ok(result) => {
                 self.policy_mode = result.mode;
-                self.messages.push(format!(
-                    "system: policy mode set to {}.",
+                self.timeline.push_system(format!(
+                    "policy mode set to {}.",
                     policy_mode_label(result.mode)
                 ));
                 self.push_event(format!(
@@ -766,8 +780,8 @@ impl TuiApp {
             Ok(result) => {
                 self.policy_mode = result.mode;
                 self.pending_plan_exit = None;
-                self.messages.push(format!(
-                    "system: {} plan exit request {}.",
+                self.timeline.push_system(format!(
+                    "{} plan exit request {}.",
                     if approved { "approved" } else { "rejected" },
                     short_id(&pending.request_id)
                 ));
@@ -777,32 +791,48 @@ impl TuiApp {
     }
 
     async fn submit_prompt(&mut self) {
-        let text = composer_text(&self.composer).trim().to_string();
-        let attachments = std::mem::take(&mut self.image_attachments);
-        self.composer = composer_textarea(self.theme);
-        if text.is_empty() && attachments.is_empty() {
-            return;
-        }
-        if attachments.is_empty() && text.starts_with('/') {
-            self.messages
-                .push(format!("executed slash command: {text}"));
-            return;
-        }
-        if attachments.is_empty()
-            && let Some(command) = shell_command_from_input(&text)
+        if self.active_turn_id.is_none()
+            && self.image_attachments.is_empty()
+            && let Some(command) = shell_command_from_input(&composer_text(&self.composer))
         {
+            self.composer = composer_textarea(self.theme);
             self.run_shell_command(command).await;
             return;
         }
 
+        let Some(pending) = self.take_prepared_prompt() else {
+            return;
+        };
+
+        if self.active_turn_id.is_some() {
+            self.steer_prepared_prompt(pending).await;
+        } else {
+            self.start_prepared_prompt(pending).await;
+        }
+    }
+
+    fn take_prepared_prompt(&mut self) -> Option<PendingPrompt> {
+        let text = composer_text(&self.composer).trim().to_string();
+        let attachments = std::mem::take(&mut self.image_attachments);
+        self.composer = composer_textarea(self.theme);
+        if text.is_empty() && attachments.is_empty() {
+            return None;
+        }
+        if attachments.is_empty() && text.starts_with('/') {
+            self.timeline
+                .push_system(format!("executed slash command: {text}"));
+            return None;
+        }
         let message = message_with_image_attachments(&text, &attachments);
-        self.messages.push(format!(
-            "user: {}",
-            transcript_message_with_image_attachments(&text, &attachments)
-        ));
+        let display = transcript_message_with_image_attachments(&text, &attachments);
+        Some(PendingPrompt::new(display, message))
+    }
+
+    async fn start_prepared_prompt(&mut self, pending: PendingPrompt) {
+        self.timeline.push_user(pending.display.clone());
         let params = StartTurnParams {
             thread_id: self.thread_id.clone(),
-            message,
+            message: pending.message,
             provider_override: None,
             model_override: Some(self.model.clone()),
         };
@@ -817,6 +847,51 @@ impl TuiApp {
                 })
                 .await;
         });
+    }
+
+    async fn steer_prepared_prompt(&mut self, pending: PendingPrompt) {
+        let Some(turn_id) = self.active_turn_id.clone() else {
+            self.queue_prepared_prompt(pending);
+            return;
+        };
+        self.timeline
+            .push_user(format!("steer: {}", pending.display));
+        self.push_event("steer queued for active turn".to_string());
+        let params = SteerTurnParams {
+            thread_id: self.thread_id.clone(),
+            turn_id,
+            message: pending.message,
+        };
+        let client = self.client.clone();
+        tokio::spawn(async move {
+            let _ = client
+                .send_request(JsonRpcRequest {
+                    jsonrpc: "2.0".to_string(),
+                    id: Some(serde_json::json!("turns/steer")),
+                    method: "turns/steer".to_string(),
+                    params: Some(serde_json::to_value(params).unwrap()),
+                })
+                .await;
+        });
+    }
+
+    fn queue_current_prompt(&mut self) -> bool {
+        let Some(pending) = self.take_prepared_prompt() else {
+            return false;
+        };
+        self.queue_prepared_prompt(pending);
+        true
+    }
+
+    fn queue_prepared_prompt(&mut self, pending: PendingPrompt) {
+        self.queued_prompts.push(pending);
+        self.push_event(queue_status(self.queued_prompts.len()));
+    }
+
+    async fn submit_next_queued_prompt(&mut self) {
+        if let Some(next) = self.queued_prompts.pop_front() {
+            self.start_prepared_prompt(next).await;
+        }
     }
 
     fn handle_paste(&mut self, text: String) {
@@ -850,12 +925,21 @@ impl TuiApp {
         self.composer.paste();
     }
 
+    fn handle_mouse(&mut self, mouse: MouseEvent) {
+        if self.confirm_dialog.is_some() || self.show_provider_popup {
+            return;
+        }
+        if self.timeline.handle_mouse(mouse) {
+            self.push_event("timeline selected".to_string());
+        }
+    }
+
     async fn run_shell_command(&mut self, command: String) {
-        self.messages.push(format!("shell: !{command}"));
+        self.timeline.push_shell(command.clone());
         self.push_event(format!("shell command started: {command}"));
         match run_shell_command(command.clone()).await {
             Ok(output) => {
-                self.messages.push(format!("shell output: {output}"));
+                self.timeline.push_shell_output(output);
                 self.push_event(format!("shell command finished: {command}"));
             }
             Err(err) => {
@@ -870,6 +954,7 @@ impl TuiApp {
         let event_height = event_log_height(self.show_event_log, self.events.len());
         let loader_height = if self.active_turn_id.is_some() { 1 } else { 0 };
         let attachment_height = image_attachment_height(self.image_attachments.len());
+        let queue_height = queued_prompt_height(self.queued_prompts.len());
         let composer_height = self.composer.measure(area.width).preferred_rows;
         let mut constraints = Vec::new();
         if loader_height > 0 {
@@ -881,6 +966,9 @@ impl TuiApp {
         }
         if attachment_height > 0 {
             constraints.push(Constraint::Length(attachment_height));
+        }
+        if queue_height > 0 {
+            constraints.push(Constraint::Length(queue_height));
         }
         constraints.extend([Constraint::Length(composer_height), Constraint::Length(1)]);
 
@@ -898,7 +986,7 @@ impl TuiApp {
         let transcript_index = header_index + 1;
         f.render_widget(self.header(area.width), chunks[header_index]);
         f.render_widget(
-            self.transcript(chunks[transcript_index].height),
+            self.transcript(chunks[transcript_index]),
             chunks[transcript_index],
         );
 
@@ -910,6 +998,10 @@ impl TuiApp {
         };
         if attachment_height > 0 {
             f.render_widget(self.image_attachment_bar(), chunks[composer_index]);
+            composer_index += 1;
+        }
+        if queue_height > 0 {
+            f.render_widget(self.queued_prompt_bar(), chunks[composer_index]);
             composer_index += 1;
         }
         f.render_widget(&self.composer, chunks[composer_index]);
@@ -960,30 +1052,11 @@ impl TuiApp {
         ))
     }
 
-    fn transcript(&self, height: u16) -> Paragraph<'static> {
-        let lines = if self.messages.is_empty() {
-            vec![
-                Line::raw(""),
-                Line::from(Span::styled(
-                    "No transcript yet. Ask Roder to inspect, edit, or run something.",
-                    self.theme.muted().add_modifier(Modifier::ITALIC),
-                )),
-            ]
-        } else {
-            self.messages
-                .iter()
-                .flat_map(|message| {
-                    let mut lines = message_lines(message, self.theme);
-                    lines.push(Line::raw(""));
-                    lines
-                })
-                .collect::<Vec<_>>()
-        };
-
-        let scroll = transcript_scroll_offset(lines.len(), height);
-        Paragraph::new(Text::from(lines))
+    fn transcript(&mut self, area: Rect) -> Paragraph<'static> {
+        let render = self.timeline.render(self.theme, area);
+        Paragraph::new(render.text)
             .style(self.theme.text())
-            .scroll((scroll, 0))
+            .scroll((render.scroll, 0))
             .wrap(Wrap { trim: false })
     }
 
@@ -1056,9 +1129,35 @@ impl TuiApp {
             .wrap(Wrap { trim: false })
     }
 
+    fn queued_prompt_bar(&self) -> Paragraph<'static> {
+        let hidden = self.queued_prompts.len().saturating_sub(3);
+        let mut lines = Vec::new();
+        lines.push(Line::from(Span::styled(
+            "Queued follow-up inputs",
+            self.theme.strong(),
+        )));
+        lines.extend(self.queued_prompts.displays().take(3).map(|display| {
+            Line::from(vec![
+                Span::styled("↳ ", self.theme.subtle()),
+                Span::styled(truncate(display, 96), self.theme.muted()),
+            ])
+        }));
+        if hidden > 0 {
+            lines.push(Line::from(Span::styled(
+                format!("↳ ... {hidden} more queued input{}", plural_s(hidden)),
+                self.theme.muted(),
+            )));
+        }
+        Paragraph::new(Text::from(lines))
+            .style(self.theme.text())
+            .wrap(Wrap { trim: false })
+    }
+
     fn footer(&self, width: u16) -> Paragraph<'static> {
         let status = if self.active_turn_id.is_some() {
             "running"
+        } else if !self.queued_prompts.is_empty() {
+            "queued"
         } else {
             "ready"
         };
@@ -1078,11 +1177,28 @@ impl TuiApp {
         } else {
             ""
         };
+        let interaction_hint = match self.timeline.focus() {
+            TimelineFocus::Timeline => {
+                "  j/k navigate  pgup/pgdn scroll  enter expand  click select  wheel scroll  esc composer"
+            }
+            TimelineFocus::Composer => {
+                if self.active_turn_id.is_some() {
+                    "  enter steer  tab queue message  shift+enter newline  shift+tab mode  paste/drag images  esc interrupt  ctrl+c exit"
+                } else {
+                    "  enter send  shift+enter newline  tab timeline  shift+tab mode  paste/drag images  ! shell  ctrl+p provider/model  ctrl+l events  esc interrupt  ctrl+c exit"
+                }
+            }
+        };
         Paragraph::new(line_with_gap(
             vec![Span::styled(
                 format!(
-                    " {status}  mode:{}{pending_hint}{shell_hint}  enter send  shift+enter newline  shift+tab mode  paste/drag images  ! shell  ctrl+p provider/model  ctrl+l events  esc interrupt  ctrl+c exit",
-                    policy_mode_label(self.policy_mode)
+                    " {status}  mode:{}{queue_hint}{pending_hint}{shell_hint}{interaction_hint}",
+                    policy_mode_label(self.policy_mode),
+                    queue_hint = if self.queued_prompts.is_empty() {
+                        String::new()
+                    } else {
+                        format!("  {}", queue_status(self.queued_prompts.len()))
+                    }
                 ),
                 self.theme.subtle(),
             )],
@@ -1335,8 +1451,8 @@ impl TuiApp {
             Ok(selected) => {
                 self.provider = selected.provider;
                 self.model = selected.model;
-                self.messages.push(format!(
-                    "system: switched provider/model to {}/{}.",
+                self.timeline.push_system(format!(
+                    "switched provider/model to {}/{}.",
                     self.provider, self.model
                 ));
                 self.push_event(format!(
@@ -1354,8 +1470,8 @@ impl TuiApp {
 
     async fn run_codex_auth(&mut self, method: &str) -> bool {
         if method == "auth/codex/login" {
-            self.messages
-                .push("system: opening browser for Codex sign-in.".to_string());
+            self.timeline
+                .push_system("opening browser for Codex sign-in.".to_string());
         }
         let res = self
             .client
@@ -1368,7 +1484,8 @@ impl TuiApp {
             .await;
         match decode_response::<CodexAuthResult>(res) {
             Ok(result) => {
-                self.messages.push(codex_auth_message(method, &result));
+                self.timeline
+                    .push_system(codex_auth_message(method, &result).replace("system: ", ""));
                 self.push_event(format!("codex auth: {}", codex_auth_event(&result)));
                 true
             }
@@ -1381,29 +1498,16 @@ impl TuiApp {
     }
 
     fn record_error(&mut self, message: String) {
-        self.messages.push(format!("error: {message}"));
+        self.timeline.push_error(message.clone());
         self.push_event(format!("error: {message}"));
     }
 
     fn record_tool_requested_with_id(&mut self, tool_id: String, entry: ToolTimelineEntry) {
-        if self.tool_call_entries.contains_key(&tool_id) {
-            return;
-        }
-
-        let index = self.messages.len();
-        self.messages.push(entry.running_message());
-        self.tool_call_entries.insert(tool_id, (index, entry));
+        self.timeline.record_tool_requested(tool_id, entry);
     }
 
-    fn record_tool_completed(&mut self, tool_id: &str, failed: bool) {
-        let Some((index, entry)) = self.tool_call_entries.get(tool_id) else {
-            let entry = fallback_entry(format!("tool {}", short_id(tool_id)));
-            self.messages.push(entry.completed_message(failed));
-            return;
-        };
-        if let Some(message) = self.messages.get_mut(*index) {
-            *message = entry.completed_message(failed);
-        }
+    fn record_tool_completed(&mut self, tool_id: &str, failed: bool, output: Option<String>) {
+        self.timeline.record_tool_completed(tool_id, failed, output);
     }
 
     fn push_event(&mut self, event: String) {
@@ -1465,6 +1569,7 @@ fn event_log_height(show_event_log: bool, event_count: usize) -> u16 {
     }
 }
 
+#[cfg(test)]
 fn transcript_scroll_offset(line_count: usize, height: u16) -> u16 {
     line_count.saturating_sub(usize::from(height)) as u16
 }
@@ -1474,6 +1579,14 @@ fn image_attachment_height(count: usize) -> u16 {
         0
     } else {
         (count as u16 + 1).clamp(2, 4)
+    }
+}
+
+fn queued_prompt_height(count: usize) -> u16 {
+    if count == 0 {
+        0
+    } else {
+        count.min(3) as u16 + 1 + u16::from(count > 3)
     }
 }
 
@@ -1826,6 +1939,7 @@ fn message_line(message: &str, theme: Theme) -> Line<'static> {
     lines.remove(0)
 }
 
+#[cfg(test)]
 fn message_lines(message: &str, theme: Theme) -> Vec<Line<'static>> {
     if let Some(body) = message.strip_prefix("user: ") {
         return role_message_lines("", "", body, theme.accent(), theme.accent(), theme.text());
@@ -1869,6 +1983,7 @@ fn message_lines(message: &str, theme: Theme) -> Vec<Line<'static>> {
         .collect()
 }
 
+#[cfg(test)]
 fn role_message_lines(
     marker: &'static str,
     label: &'static str,
@@ -1896,6 +2011,7 @@ fn role_message_lines(
         .collect()
 }
 
+#[cfg(test)]
 fn simple_message_lines(
     marker: &'static str,
     body: &str,
@@ -1914,6 +2030,7 @@ fn simple_message_lines(
         .collect()
 }
 
+#[cfg(test)]
 fn body_lines(body: &str) -> impl Iterator<Item = String> + '_ {
     body.split('\n').map(str::to_string)
 }
@@ -2195,6 +2312,14 @@ mod tests {
         assert_eq!(image_attachment_height(1), 2);
         assert_eq!(image_attachment_height(3), 4);
         assert_eq!(image_attachment_height(10), 4);
+    }
+
+    #[test]
+    fn queued_prompt_height_tracks_visible_rows_and_overflow() {
+        assert_eq!(queued_prompt_height(0), 0);
+        assert_eq!(queued_prompt_height(1), 2);
+        assert_eq!(queued_prompt_height(3), 4);
+        assert_eq!(queued_prompt_height(4), 5);
     }
 
     #[test]

@@ -565,11 +565,13 @@ fn response_input_items(request: &AgentInferenceRequest) -> Vec<Value> {
                 "call_id": result.id,
                 "output": result.result
             })),
-            roder_api::conversation::ConversationItem::ContextCompaction(compaction) => Some(json!({
-                "type": "message",
-                "role": "user",
-                "content": [{ "type": "input_text", "text": format!("Context summary:\n{}", compaction.summary) }]
-            })),
+            roder_api::conversation::ConversationItem::ContextCompaction(compaction) => {
+                Some(json!({
+                    "type": "message",
+                    "role": "user",
+                    "content": [{ "type": "input_text", "text": format!("Context summary:\n{}", compaction.summary) }]
+                }))
+            }
             roder_api::conversation::ConversationItem::ProviderMetadata(metadata) => {
                 append_provider_output_items(metadata, &mut items, &mut provider_output_call_ids);
                 None
