@@ -1,6 +1,7 @@
 mod commands;
 mod dialog;
 mod diff_ui;
+mod mouse_capture_runtime;
 mod mouse_ui;
 mod palette_ui;
 
@@ -43,6 +44,8 @@ use roder_protocol::{
 };
 use tokio::process::Command;
 use tui_textarea::TextArea;
+
+use mouse_capture_runtime::apply_mouse_capture_event;
 
 use crate::config::TuiAppConfig;
 use crate::diff::{DiffViewerState, render::DiffTheme};
@@ -466,6 +469,7 @@ impl TuiApp {
         loop {
             self.animation_frame = self.animation_frame.wrapping_add(1);
             if let Some(event) = self.mouse_capture.tick(self.animation_frame) {
+                apply_mouse_capture_event(terminal.backend_mut(), event)?;
                 self.push_event(mouse_capture_event_label(event).to_string());
             }
             terminal.draw(|f| self.render(f))?;
@@ -599,7 +603,10 @@ impl TuiApp {
                         let events = self
                             .mouse_feedback
                             .handle_mouse_event(mouse, Instant::now());
-                        self.handle_interactive_events(events, at).await;
+                        for event in self.handle_interactive_events(events, at).await {
+                            apply_mouse_capture_event(terminal.backend_mut(), event)?;
+                            self.push_event(mouse_capture_event_label(event).to_string());
+                        }
                     }
                     _ => {}
                 }
@@ -1321,7 +1328,12 @@ impl TuiApp {
         f.render_widget(widget, area);
     }
 
-    async fn handle_interactive_events(&mut self, events: Vec<InteractiveEvent>, at: (u16, u16)) {
+    async fn handle_interactive_events(
+        &mut self,
+        events: Vec<InteractiveEvent>,
+        at: (u16, u16),
+    ) -> Vec<MouseCaptureEvent> {
+        let mut capture_events = Vec::new();
         for event in events {
             self.handle_drag_selection_event(&event);
             match &event {
@@ -1330,7 +1342,9 @@ impl TuiApp {
                     modifiers,
                     ..
                 } => {
-                    self.handle_scroll_event(*delta_lines, *modifiers);
+                    if let Some(event) = self.handle_scroll_event(*delta_lines, *modifiers) {
+                        capture_events.push(event);
+                    }
                 }
                 InteractiveEvent::Click {
                     region,
@@ -1349,6 +1363,7 @@ impl TuiApp {
                 _ => {}
             }
         }
+        capture_events
     }
 
     async fn handle_region_with_extensions(
@@ -1393,17 +1408,16 @@ impl TuiApp {
         &mut self,
         delta_lines: i16,
         modifiers: roder_api::interactive::KeyModifiers,
-    ) {
+    ) -> Option<MouseCaptureEvent> {
         let outcome = self.transcript_scroll.scroll(delta_lines, modifiers);
         if outcome.at_boundary {
-            if let Some(event) = self
+            let event = self
                 .mouse_capture
-                .release_for_boundary_scroll(self.animation_frame)
-            {
-                self.push_event(mouse_capture_event_label(event).to_string());
-            }
+                .release_for_boundary_scroll(self.animation_frame);
             self.push_event(format!("scroll boundary: {:?}", outcome.target));
+            return event;
         }
+        None
     }
 
     fn handle_drag_selection_event(&mut self, event: &InteractiveEvent) {
