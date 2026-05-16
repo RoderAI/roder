@@ -10,6 +10,7 @@ use roder_api::{
     tui_status::{StatusCell, StatusSegment, StatusStyle},
 };
 
+use crate::keymap::FocusRing;
 use crate::mouse::{
     CursorFeedback, HoverState, MouseRouter, RegionFrame, region_rect_from_ratatui,
 };
@@ -22,6 +23,7 @@ pub struct MouseFeedbackState {
     router: MouseRouter,
     regions: RegionFrame,
     hover: HoverState,
+    focus: FocusRing,
     cursor: CursorFeedback,
 }
 
@@ -52,8 +54,21 @@ impl MouseFeedbackState {
             status,
             0,
         ));
+        let previous_focus = self.focused_region_id().map(str::to_string);
         self.regions = builder.build();
         self.router.set_frame(self.regions.clone());
+        self.focus.set_regions_preserving(
+            self.regions
+                .region_ids()
+                .filter(|id| {
+                    self.regions
+                        .get(id)
+                        .is_some_and(|region| focusable_region_kind(&region.kind))
+                })
+                .cloned()
+                .collect::<Vec<_>>(),
+            previous_focus.as_deref(),
+        );
         if self
             .hover
             .active()
@@ -81,16 +96,30 @@ impl MouseFeedbackState {
         self.regions.get(id)
     }
 
+    pub fn focused_region_id(&self) -> Option<&str> {
+        self.focus.current().map(String::as_str)
+    }
+
+    pub fn focus_next_region(&mut self) -> Option<&str> {
+        self.focus.focus_next().map(String::as_str)
+    }
+
+    pub fn focus_previous_region(&mut self) -> Option<&str> {
+        self.focus.focus_previous().map(String::as_str)
+    }
+
     pub fn style_for_region(&self, region_id: &str, base: Style) -> Style {
-        let Some(overlay) = self.hover.overlay_for(region_id) else {
-            return base;
-        };
         let mut style = base;
-        if overlay.style.underline {
-            style = style.add_modifier(Modifier::UNDERLINED);
+        if let Some(overlay) = self.hover.overlay_for(region_id) {
+            if overlay.style.underline {
+                style = style.add_modifier(Modifier::UNDERLINED);
+            }
+            if overlay.style.bold {
+                style = style.add_modifier(Modifier::BOLD);
+            }
         }
-        if overlay.style.bold {
-            style = style.add_modifier(Modifier::BOLD);
+        if self.focused_region_id() == Some(region_id) {
+            style = style.add_modifier(Modifier::REVERSED);
         }
         style
     }
@@ -108,6 +137,19 @@ impl MouseFeedbackState {
             tooltip: Some(format!("Hover {hover_label}")),
         }))
     }
+}
+
+fn focusable_region_kind(kind: &RegionKind) -> bool {
+    matches!(
+        kind,
+        RegionKind::TranscriptMessage { .. }
+            | RegionKind::ToolCallBlock { .. }
+            | RegionKind::FileReference { .. }
+            | RegionKind::Url(_)
+            | RegionKind::PaletteItem { .. }
+            | RegionKind::DiffHunk { .. }
+            | RegionKind::PolicyApprovalButton { .. }
+    )
 }
 
 fn region(
@@ -159,6 +201,34 @@ mod tests {
                 .style_for_region(COMPOSER_REGION_ID, Style::default())
                 .add_modifier
                 .contains(Modifier::UNDERLINED)
+        );
+    }
+
+    #[test]
+    fn keyboard_focus_traverses_frame_regions_and_styles_focus() {
+        let mut state = MouseFeedbackState::default();
+        state.set_frame_regions(
+            Rect::new(0, 0, 20, 3),
+            Rect::new(0, 4, 20, 1),
+            [region(
+                "message-0",
+                RegionKind::TranscriptMessage {
+                    thread_id: "thread".to_string(),
+                    turn_id: "turn".to_string(),
+                    message_idx: 0,
+                },
+                HoverCursor::Pointer,
+                Rect::new(0, 5, 20, 1),
+                0,
+            )],
+        );
+
+        assert_eq!(state.focus_next_region(), Some("message-0"));
+        assert!(
+            state
+                .style_for_region("message-0", Style::default())
+                .add_modifier
+                .contains(Modifier::REVERSED)
         );
     }
 

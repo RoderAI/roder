@@ -108,14 +108,14 @@ impl Default for Keymap {
             Action::OpenPalette,
             KeyBinding::modified("k", [KeyModifier::Control]),
         );
-        keymap.bind(Action::CycleMode, KeyBinding::plain("backtab"));
+        keymap.bind(
+            Action::CycleMode,
+            KeyBinding::modified("m", [KeyModifier::Control]),
+        );
         keymap.bind(Action::ScrollTranscript, KeyBinding::plain("pagedown"));
         keymap.bind(Action::ScrollTranscript, KeyBinding::plain("pageup"));
         keymap.bind(Action::FocusNextRegion, KeyBinding::plain("tab"));
-        keymap.bind(
-            Action::FocusPreviousRegion,
-            KeyBinding::modified("tab", [KeyModifier::Shift]),
-        );
+        keymap.bind(Action::FocusPreviousRegion, KeyBinding::plain("backtab"));
         keymap
     }
 }
@@ -186,8 +186,12 @@ impl KeyBinding {
     }
 
     pub fn matches_key_event(&self, event: &KeyEvent) -> bool {
-        self.normalized_key() == normalized_key_code(event.code)
-            && self.modifiers == key_modifiers_from_crossterm(event.modifiers)
+        let key = self.normalized_key();
+        let mut modifiers = key_modifiers_from_crossterm(event.modifiers);
+        if key == "backtab" && event.code == KeyCode::BackTab {
+            modifiers.remove(&KeyModifier::Shift);
+        }
+        key == normalized_key_code(event.code) && self.modifiers == modifiers
     }
 
     pub fn display_label(&self) -> String {
@@ -285,6 +289,16 @@ impl FocusRing {
 
     pub fn current(&self) -> Option<&RegionId> {
         self.selected.and_then(|idx| self.regions.get(idx))
+    }
+
+    pub fn set_regions_preserving(
+        &mut self,
+        regions: impl IntoIterator<Item = RegionId>,
+        preferred: Option<&str>,
+    ) {
+        self.regions = regions.into_iter().collect();
+        self.selected = preferred
+            .and_then(|preferred| self.regions.iter().position(|region| region == preferred));
     }
 
     pub fn focus_next(&mut self) -> Option<&RegionId> {
@@ -417,6 +431,19 @@ mod tests {
     }
 
     #[test]
+    fn focus_ring_preserves_region_when_frame_updates() {
+        let mut ring = FocusRing::new(["a".to_string(), "b".to_string()]);
+        ring.focus_next();
+
+        ring.set_regions_preserving(
+            ["c".to_string(), "b".to_string(), "d".to_string()],
+            Some("b"),
+        );
+
+        assert_eq!(ring.current().map(String::as_str), Some("b"));
+    }
+
+    #[test]
     fn keymap_matches_crossterm_key_events() {
         let keymap = Keymap::default();
 
@@ -430,6 +457,14 @@ mod tests {
         assert!(!keymap.matches_key_event(
             Action::CopySelection,
             &KeyEvent::new(KeyCode::Char('c'), CrosstermKeyModifiers::NONE),
+        ));
+        assert!(keymap.matches_key_event(
+            Action::FocusPreviousRegion,
+            &KeyEvent::new(KeyCode::BackTab, CrosstermKeyModifiers::SHIFT),
+        ));
+        assert!(!keymap.matches_key_event(
+            Action::CycleMode,
+            &KeyEvent::new(KeyCode::BackTab, CrosstermKeyModifiers::SHIFT),
         ));
     }
 

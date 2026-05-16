@@ -36,11 +36,16 @@ fn configurable_keymap_can_override_defaults() {
 fn focus_traversal_reaches_every_clickable_region() {
     let mut focus = FocusRing::new([
         "message-0".to_string(),
+        "tool-call-call-1".to_string(),
         "url-0".to_string(),
         "file-0".to_string(),
     ]);
 
     assert_eq!(focus.current().map(String::as_str), Some("message-0"));
+    assert_eq!(
+        focus.focus_next().map(String::as_str),
+        Some("tool-call-call-1")
+    );
     assert_eq!(focus.focus_next().map(String::as_str), Some("url-0"));
     assert_eq!(focus.focus_next().map(String::as_str), Some("file-0"));
     assert_eq!(focus.focus_next().map(String::as_str), Some("message-0"));
