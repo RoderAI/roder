@@ -872,12 +872,7 @@ impl Runtime {
                 conversation.push(tool_item);
             }
             let results = self
-                .route_tool_calls(
-                    &req.thread_id,
-                    &turn_id,
-                    tool_calls,
-                    parallel_tool_calls,
-                )
+                .route_tool_calls(&req.thread_id, &turn_id, tool_calls, parallel_tool_calls)
                 .await?;
             for result in results {
                 conversation.push(ConversationItem::ToolResult(result));
@@ -961,6 +956,29 @@ impl Runtime {
         };
         let mut steers = active.steers.lock().await;
         std::mem::take(&mut *steers)
+    }
+
+    async fn route_tool_calls(
+        &self,
+        thread_id: &ThreadId,
+        turn_id: &TurnId,
+        calls: Vec<ToolCallCompleted>,
+        parallel: bool,
+    ) -> anyhow::Result<Vec<ToolResultRecord>> {
+        if parallel {
+            try_join_all(
+                calls
+                    .into_iter()
+                    .map(|call| self.route_tool_call(thread_id, turn_id, call)),
+            )
+            .await
+        } else {
+            let mut results = Vec::with_capacity(calls.len());
+            for call in calls {
+                results.push(self.route_tool_call(thread_id, turn_id, call).await?);
+            }
+            Ok(results)
+        }
     }
 
     async fn fail_turn_with_error(
@@ -1096,6 +1114,13 @@ fn server_side_compaction_threshold(cfg: &RuntimeConfig, model: &str) -> Option<
         .filter(|threshold| *threshold > 0)
 }
 
+fn parallel_tool_calls_for_model(cfg: &RuntimeConfig, model: &str) -> bool {
+    cfg.model_parallel_tool_calls
+        .get(model)
+        .copied()
+        .unwrap_or(true)
+}
+
 fn effective_reasoning_for_model(cfg: &RuntimeConfig, model: &str) -> String {
     let Some(entry) = lookup_model(model) else {
         return cfg
@@ -1226,5 +1251,24 @@ mod tests {
             effective_reasoning_for_model(&cfg, "gpt-5.5"),
             REASONING_MEDIUM
         );
+    }
+
+    #[test]
+    fn parallel_tool_calls_default_on_with_model_override() {
+        assert!(parallel_tool_calls_for_model(
+            &RuntimeConfig::default(),
+            "custom-model"
+        ));
+
+        let cfg = RuntimeConfig {
+            model_parallel_tool_calls: std::collections::HashMap::from([(
+                "custom-model".to_string(),
+                false,
+            )]),
+            ..RuntimeConfig::default()
+        };
+
+        assert!(!parallel_tool_calls_for_model(&cfg, "custom-model"));
+        assert!(parallel_tool_calls_for_model(&cfg, "other-model"));
     }
 }

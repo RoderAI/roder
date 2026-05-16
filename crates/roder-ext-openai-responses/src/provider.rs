@@ -100,6 +100,10 @@ impl OpenAiResponsesEngine {
                     json!("auto")
                 }
             };
+            if !request.tools.is_empty() {
+                body["parallel_tool_calls"] =
+                    json!(request.runtime.parallel_tool_calls.unwrap_or(true));
+            }
         }
         if let Some(prompt_cache_key) = request.runtime.prompt_cache_key.as_deref() {
             body["prompt_cache_key"] = json!(prompt_cache_key);
@@ -150,7 +154,7 @@ impl InferenceEngine for OpenAiResponsesEngine {
         InferenceCapabilities {
             streaming: true,
             tool_calls: true,
-            parallel_tool_calls: false,
+            parallel_tool_calls: true,
             reasoning_summaries: true,
             structured_output: true,
             image_input: true,
@@ -959,6 +963,7 @@ mod tests {
                 trace_id: None,
                 prompt_cache_key: Some("cache-key".to_string()),
                 auto_compact_token_limit: Some(200_000),
+                parallel_tool_calls: Some(true),
                 hosted_web_search: roder_api::inference::HostedWebSearchConfig::disabled(),
             },
             metadata: json!({}),
@@ -985,9 +990,20 @@ mod tests {
         assert_eq!(body["text"]["format"]["type"], "json_object");
         assert_eq!(body["tools"][0]["name"], "echo");
         assert_eq!(body["tool_choice"], "auto");
+        assert_eq!(body["parallel_tool_calls"], true);
         assert_eq!(body["input"][0]["role"], "user");
         assert_eq!(body["input"][1]["role"], "assistant");
         assert_eq!(body["input"][1]["phase"], "final_answer");
+    }
+
+    #[test]
+    fn maps_parallel_tool_call_override_for_responses_requests() {
+        let mut request = request();
+        request.runtime.parallel_tool_calls = Some(false);
+
+        let body = OpenAiResponsesEngine::map_request(&request);
+
+        assert_eq!(body["parallel_tool_calls"], false);
     }
 
     #[test]

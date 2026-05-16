@@ -229,7 +229,7 @@ impl InferenceCapabilities {
         Self {
             streaming: true,
             tool_calls: true,
-            parallel_tool_calls: false,
+            parallel_tool_calls: true,
             reasoning_summaries: false,
             structured_output: false,
             image_input: false,
