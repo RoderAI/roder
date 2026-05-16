@@ -293,6 +293,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "bstr"
+version = "1.12.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "63044e1ae8e69f3b5a92c736ca6269b8d12fa7efe39bf34ddb06d102cf0e2cab"
+dependencies = [
+ "memchr",
+ "serde",
+]
+
+[[package]]
 name = "bumpalo"
 version = "3.20.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2295,14 +2305,11 @@ dependencies = [
  "futures",
  "roder-api",
  "roder-codex-auth",
- "roder-commands",
  "roder-config",
  "roder-core",
- "roder-ext-jsonl-session",
  "roder-ext-subagents",
  "roder-extension-host",
  "roder-protocol",
- "roder-tasks",
  "roder-tools",
  "serde",
  "serde_json",
@@ -2319,7 +2326,6 @@ dependencies = [
  "roder-api",
  "roder-app-server",
  "roder-codex-auth",
- "roder-commands",
  "roder-config",
  "roder-core",
  "roder-ext-anthropic",
@@ -2331,7 +2337,6 @@ dependencies = [
  "roder-ext-subagents",
  "roder-extension-host",
  "roder-protocol",
- "roder-tasks",
  "roder-tui",
  "roder-web-search",
  "serde",
@@ -2679,15 +2684,11 @@ dependencies = [
  "roder-ext-gemini",
  "roder-ext-jsonl-session",
  "roder-ext-memory",
- "roder-ext-notify-desktop",
- "roder-ext-notify-terminal",
  "roder-ext-openai-responses",
  "roder-ext-parallel-search",
  "roder-ext-perplexity-search",
  "roder-ext-plan-mode",
  "roder-ext-subagents",
- "roder-ext-task-process",
- "roder-ext-task-subagent",
  "roder-ext-tavily-search",
  "roder-ext-web-search",
  "roder-tools",
@@ -2784,7 +2785,6 @@ name = "roder-tui"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "async-trait",
  "crossterm",
  "futures",
  "ratatui",
@@ -2794,7 +2794,6 @@ dependencies = [
  "serde",
  "serde_json",
  "similar",
- "time",
  "tokio",
  "tui-textarea-2",
 ]
@@ -3147,9 +3146,12 @@ checksum = "e3a9fe34e3e7a50316060351f37187a3f546bce95496156754b601a5fa71b76e"
 
 [[package]]
 name = "similar"
-version = "2.7.0"
+version = "3.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bbbb5d9659141646ae647b42fe094daf6c6192d1620870b449d9557f748b2daa"
+checksum = "04d93e861ede2e497b47833469b8ec9d5c07fa4c78ce7a00f6eb7dd8168b4b3f"
+dependencies = [
+ "bstr",
+]
 
 [[package]]
 name = "siphasher"

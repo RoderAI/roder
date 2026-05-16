@@ -163,13 +163,8 @@ func (s *Server) handleWebSocket(ctx context.Context, w http.ResponseWriter, r *
 		s.logRemote("dial %s", remoteRequestSummary(requestInfo))
 	}
 	if s.options.Remote.Enabled && !s.options.Remote.Auth.VerifyRequest(r) {
-		backoff := s.recordRemoteAuthFailure()
 		s.logRemote("auth_failed %s", remoteRequestSummary(requestInfo))
-		payload := requestInfo.Payload()
-		if backoff > 0 {
-			payload["backoff_ms"] = backoff.Milliseconds()
-		}
-		s.publishRemoteEvent(ctx, KindRemoteAuthFailed, payload)
+		s.publishRemoteEvent(ctx, KindRemoteAuthFailed, requestInfo.Payload())
 		http.Error(w, "remote authentication required", http.StatusUnauthorized)
 		return
 	}
@@ -183,7 +178,6 @@ func (s *Server) handleWebSocket(ctx context.Context, w http.ResponseWriter, r *
 		return
 	}
 	if s.options.Remote.Enabled {
-		s.resetRemoteAuthBackoff()
 		s.logRemote("connected %s selected_subprotocol=%q", remoteRequestSummary(requestInfo), ws.Subprotocol())
 		s.publishRemoteEvent(ctx, KindRemoteClientConnected, requestInfo.Payload())
 		defer s.publishRemoteEvent(ctx, KindRemoteClientDisconnected, requestInfo.Payload())
@@ -217,6 +211,9 @@ func (s *Server) handleWebSocket(ctx context.Context, w http.ResponseWriter, r *
 
 func (s *Server) allowOrigin(origin string) bool {
 	if origin == "" {
+		return true
+	}
+	if s.options.Remote.Enabled && len(s.options.Remote.AllowedOrigins) == 0 {
 		return true
 	}
 	for _, allowed := range s.options.Remote.AllowedOrigins {

@@ -6,7 +6,6 @@ use time::OffsetDateTime;
 use crate::conversation::TurnItem;
 use crate::events::{EventEnvelope, ThreadId, TurnId};
 pub use crate::extension::{CheckpointStoreId, SessionStoreId};
-use crate::extension::{ExtensionStateKey, ExtensionStateRecord};
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct SessionMetadata {
@@ -38,8 +37,6 @@ pub struct ThreadSnapshot {
     pub metadata: Option<SessionMetadata>,
     pub events: Vec<EventEnvelope>,
     pub turns: Vec<TurnRecord>,
-    #[serde(default)]
-    pub extension_state: Vec<ExtensionStateRecord>,
 }
 
 #[async_trait::async_trait]
@@ -60,15 +57,6 @@ pub trait SessionStore: Send + Sync {
         turn_id: &TurnId,
         item: &TurnItem,
     ) -> anyhow::Result<()>;
-    async fn load_extension_state(
-        &self,
-        _key: &ExtensionStateKey,
-    ) -> anyhow::Result<Option<ExtensionStateRecord>> {
-        Ok(None)
-    }
-    async fn save_extension_state(&self, _record: ExtensionStateRecord) -> anyhow::Result<bool> {
-        Ok(false)
-    }
 }
 
 pub trait SessionStoreFactory: Send + Sync + 'static {

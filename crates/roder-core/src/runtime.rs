@@ -1,13 +1,15 @@
-use std::{collections::HashMap, sync::Arc};
+use std::collections::HashMap;
+use std::sync::Arc;
 
 use anyhow::Context;
 use futures::StreamExt;
+use futures::future::{AbortHandle, Abortable};
 use roder_api::catalog::{REASONING_NONE, lookup_model};
 use roder_api::conversation::{
     AssistantMessage, ConversationItem, ErrorRecord, ReasoningSummary, ToolCallRecord, UserMessage,
 };
 use roder_api::events::*;
-use roder_api::extension::{ExtensionRegistry, ExtensionStateKey, ExtensionStateRecord};
+use roder_api::extension::ExtensionRegistry;
 use roder_api::inference::{
     AgentInferenceRequest, InferenceEngine, InferenceEvent, InferenceTurnContext,
     InstructionBundle, ModelSelection, OutputConfig, ReasoningConfig, RuntimeHints,
@@ -15,14 +17,14 @@ use roder_api::inference::{
 use roder_api::policy_mode::PolicyMode;
 use roder_api::session::{SessionMetadata, SessionStore, ThreadSnapshot};
 use roder_api::subagents::SubagentDefinition;
-use roder_api::tools::{ToolCall, ToolChoice, ToolRegistry};
+use roder_api::tools::{ToolChoice, ToolRegistry};
 use time::{Duration, OffsetDateTime};
-use tokio::sync::{RwLock, oneshot};
+use tokio::sync::{Mutex, RwLock, oneshot};
 
 use crate::bus::EventBus;
 use crate::fake_provider::FakeInferenceEngine;
 
-const MAX_AGENTIC_MODEL_CALLS_PER_TURN: usize = 64;
+const MAX_TOOL_ROUNDS_PER_TURN: usize = 1024;
 
 #[derive(Debug, Clone)]
 pub struct RuntimeConfig {
@@ -56,6 +58,14 @@ pub struct StartTurnRequest {
     pub instructions: InstructionBundle,
 }
 
+#[derive(Debug, Clone, Default)]
+pub struct CreateSessionRequest {
+    pub title: Option<String>,
+    pub workspace: Option<String>,
+    pub provider: Option<String>,
+    pub model: Option<String>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PendingPlanExit {
     pub thread_id: ThreadId,
@@ -67,20 +77,12 @@ pub struct PendingPlanExit {
     pub expires_at: Option<OffsetDateTime>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct PendingToolApproval {
-    pub thread_id: ThreadId,
-    pub turn_id: TurnId,
-    pub approval_id: String,
-    pub tool_id: String,
-    pub tool_name: String,
-    pub reason: Option<String>,
-    pub requested_at: OffsetDateTime,
-}
-
-struct PendingToolApprovalWaiter {
-    descriptor: PendingToolApproval,
-    sender: oneshot::Sender<bool>,
+pub(crate) struct PendingToolApproval {
+    pub(crate) thread_id: ThreadId,
+    pub(crate) turn_id: TurnId,
+    pub(crate) tool_id: String,
+    pub(crate) tool_name: String,
+    pub(crate) tx: oneshot::Sender<bool>,
 }
 
 impl PendingPlanExit {
@@ -117,7 +119,8 @@ pub struct Runtime {
     pub registry: ExtensionRegistry,
     config: RwLock<RuntimeConfig>,
     pending_plan_exit: RwLock<Option<PendingPlanExit>>,
-    pending_tool_approvals: RwLock<HashMap<String, PendingToolApprovalWaiter>>,
+    pub(crate) pending_tool_approvals: Mutex<HashMap<String, PendingToolApproval>>,
+    active_turns: RwLock<HashMap<TurnId, AbortHandle>>,
     pub(crate) session_store: Option<Arc<dyn SessionStore>>,
     pub(crate) tool_registry: ToolRegistry,
 }
@@ -145,7 +148,8 @@ impl Runtime {
             registry,
             config: RwLock::new(config),
             pending_plan_exit: RwLock::new(None),
-            pending_tool_approvals: RwLock::new(HashMap::new()),
+            pending_tool_approvals: Mutex::new(HashMap::new()),
+            active_turns: RwLock::new(HashMap::new()),
             session_store,
             tool_registry,
         };
@@ -196,82 +200,6 @@ impl Runtime {
         self.emit_plan_exit_resolved(&current, false, self.status().await.policy_mode)
             .await;
         None
-    }
-
-    pub async fn pending_tool_approval(&self) -> Option<PendingToolApproval> {
-        self.pending_tool_approvals
-            .read()
-            .await
-            .values()
-            .next()
-            .map(|waiter| waiter.descriptor.clone())
-    }
-
-    pub async fn resolve_pending_tool_approval(
-        &self,
-        approval_id: &str,
-        approved: bool,
-    ) -> anyhow::Result<Option<PendingToolApproval>> {
-        let Some(waiter) = self
-            .pending_tool_approvals
-            .write()
-            .await
-            .remove(approval_id)
-        else {
-            return Ok(None);
-        };
-        let descriptor = waiter.descriptor;
-        let _ = waiter.sender.send(approved);
-        self.emit(RoderEvent::ApprovalResolved(ApprovalResolved {
-            thread_id: descriptor.thread_id.clone(),
-            turn_id: descriptor.turn_id.clone(),
-            approval_id: descriptor.approval_id.clone(),
-            tool_id: descriptor.tool_id.clone(),
-            tool_name: descriptor.tool_name.clone(),
-            approved,
-            timestamp: OffsetDateTime::now_utc(),
-        }))
-        .await;
-        Ok(Some(descriptor))
-    }
-
-    pub(crate) async fn request_tool_approval(
-        &self,
-        thread_id: &ThreadId,
-        turn_id: &TurnId,
-        call: &ToolCall,
-        reason: Option<String>,
-    ) -> anyhow::Result<bool> {
-        let approval_id = call.id.clone();
-        let requested_at = OffsetDateTime::now_utc();
-        let (sender, receiver) = oneshot::channel();
-        let descriptor = PendingToolApproval {
-            thread_id: thread_id.clone(),
-            turn_id: turn_id.clone(),
-            approval_id: approval_id.clone(),
-            tool_id: call.id.clone(),
-            tool_name: call.name.clone(),
-            reason: reason.clone(),
-            requested_at,
-        };
-        self.pending_tool_approvals.write().await.insert(
-            approval_id.clone(),
-            PendingToolApprovalWaiter {
-                descriptor: descriptor.clone(),
-                sender,
-            },
-        );
-        self.emit(RoderEvent::ApprovalRequested(ApprovalRequested {
-            thread_id: thread_id.clone(),
-            turn_id: turn_id.clone(),
-            approval_id,
-            tool_id: call.id.clone(),
-            tool_name: call.name.clone(),
-            reason,
-            timestamp: requested_at,
-        }))
-        .await;
-        Ok(receiver.await.unwrap_or(false))
     }
 
     pub async fn set_policy_mode(
@@ -350,6 +278,29 @@ impl Runtime {
         Ok(Some(current))
     }
 
+    pub async fn resolve_tool_approval(
+        &self,
+        approval_id: &str,
+        approved: bool,
+    ) -> anyhow::Result<bool> {
+        let pending = self.pending_tool_approvals.lock().await.remove(approval_id);
+        let Some(pending) = pending else {
+            return Ok(false);
+        };
+        self.emit(RoderEvent::ApprovalResolved(ApprovalResolved {
+            thread_id: pending.thread_id,
+            turn_id: pending.turn_id,
+            approval_id: approval_id.to_string(),
+            tool_id: pending.tool_id,
+            tool_name: pending.tool_name,
+            approved,
+            timestamp: OffsetDateTime::now_utc(),
+        }))
+        .await;
+        let _ = pending.tx.send(approved);
+        Ok(true)
+    }
+
     async fn emit_plan_exit_resolved(
         &self,
         current: &PendingPlanExit,
@@ -383,14 +334,25 @@ impl Runtime {
     }
 
     pub async fn create_session(&self, title: Option<String>) -> anyhow::Result<SessionMetadata> {
+        self.create_session_with(CreateSessionRequest {
+            title,
+            ..CreateSessionRequest::default()
+        })
+        .await
+    }
+
+    pub async fn create_session_with(
+        &self,
+        req: CreateSessionRequest,
+    ) -> anyhow::Result<SessionMetadata> {
         let cfg = self.config.read().await.clone();
         let now = OffsetDateTime::now_utc();
         let metadata = SessionMetadata {
             thread_id: uuid::Uuid::new_v4().to_string(),
-            title,
-            workspace: cfg.workspace,
-            provider: Some(cfg.default_provider),
-            model: Some(cfg.default_model),
+            title: req.title,
+            workspace: req.workspace.or(cfg.workspace),
+            provider: Some(req.provider.unwrap_or(cfg.default_provider)),
+            model: Some(req.model.unwrap_or(cfg.default_model)),
             created_at: now,
             updated_at: now,
             message_count: 0,
@@ -435,23 +397,6 @@ impl Runtime {
         Ok(loaded)
     }
 
-    pub async fn load_extension_state(
-        &self,
-        key: &ExtensionStateKey,
-    ) -> anyhow::Result<Option<ExtensionStateRecord>> {
-        let Some(store) = &self.session_store else {
-            return Ok(None);
-        };
-        store.load_extension_state(key).await
-    }
-
-    pub async fn save_extension_state(&self, record: ExtensionStateRecord) -> anyhow::Result<bool> {
-        let Some(store) = &self.session_store else {
-            return Ok(false);
-        };
-        store.save_extension_state(record).await
-    }
-
     pub async fn start_turn(self: &Arc<Self>, req: StartTurnRequest) -> anyhow::Result<TurnId> {
         let cfg = self.config.read().await.clone();
         let provider = req
@@ -460,26 +405,40 @@ impl Runtime {
             .unwrap_or_else(|| cfg.default_provider.clone());
         self.engine_for(&provider)?;
         let turn_id = uuid::Uuid::new_v4().to_string();
+        let (abort_handle, abort_registration) = AbortHandle::new_pair();
+        self.active_turns
+            .write()
+            .await
+            .insert(turn_id.clone(), abort_handle);
         let runtime = Arc::clone(self);
         let turn_req = req;
         let turn_id_for_task = turn_id.clone();
         tokio::spawn(async move {
-            if let Err(err) = runtime.run_turn(turn_req, turn_id_for_task.clone()).await {
+            let result = Abortable::new(
+                runtime.run_turn(turn_req, turn_id_for_task.clone()),
+                abort_registration,
+            )
+            .await;
+            if let Ok(Err(err)) = result {
                 let thread_id = runtime_thread_id_from_error_turn(&turn_id_for_task);
                 let _ = thread_id;
                 // run_turn emits failures after the turn has started; this is only a last-resort guard.
                 runtime.bus.emit(RoderEvent::TurnFailed(TurnFailed {
                     thread_id: "unknown".to_string(),
-                    turn_id: turn_id_for_task,
+                    turn_id: turn_id_for_task.clone(),
                     error: err.to_string(),
                     timestamp: OffsetDateTime::now_utc(),
                 }));
             }
+            runtime.active_turns.write().await.remove(&turn_id_for_task);
         });
         Ok(turn_id)
     }
 
     pub async fn interrupt_turn(&self, thread_id: ThreadId, turn_id: TurnId) -> anyhow::Result<()> {
+        if let Some(handle) = self.active_turns.write().await.remove(&turn_id) {
+            handle.abort();
+        }
         self.emit(RoderEvent::TurnInterrupted(TurnInterrupted {
             thread_id,
             turn_id,
@@ -530,9 +489,9 @@ impl Runtime {
         let mut conversation = self.conversation_for_turn(&req, &turn_id, &model).await?;
         let mut final_assistant_text = String::new();
         let mut final_reasoning_text = String::new();
+        let mut exhausted_tool_rounds = true;
 
-        let mut completed_without_follow_up = false;
-        for _ in 0..MAX_AGENTIC_MODEL_CALLS_PER_TURN {
+        for _ in 0..MAX_TOOL_ROUNDS_PER_TURN {
             self.emit(RoderEvent::InferenceStarted(InferenceStarted {
                 thread_id: req.thread_id.clone(),
                 turn_id: turn_id.clone(),
@@ -625,7 +584,7 @@ impl Runtime {
             if tool_calls.is_empty() {
                 final_assistant_text = assistant_text;
                 final_reasoning_text = reasoning_text;
-                completed_without_follow_up = true;
+                exhausted_tool_rounds = false;
                 break;
             }
 
@@ -651,10 +610,9 @@ impl Runtime {
                 .await?;
         }
 
-        if !completed_without_follow_up {
-            let message = format!(
-                "turn exceeded {MAX_AGENTIC_MODEL_CALLS_PER_TURN} model calls while waiting for a final assistant response"
-            );
+        if exhausted_tool_rounds {
+            let message =
+                format!("tool call limit reached after {MAX_TOOL_ROUNDS_PER_TURN} rounds");
             self.persist_turn_item(
                 &req.thread_id,
                 &turn_id,

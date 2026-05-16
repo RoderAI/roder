@@ -12,7 +12,6 @@ anyhow.workspace = true
 roder-api.workspace = true
 roder-app-server.workspace = true
 roder-codex-auth.workspace = true
-roder-commands.workspace = true
 roder-config.workspace = true
 roder-core.workspace = true
 roder-ext-anthropic.workspace = true
@@ -24,7 +23,6 @@ roder-ext-openai-responses.workspace = true
 roder-ext-subagents.workspace = true
 roder-extension-host.workspace = true
 roder-protocol.workspace = true
-roder-tasks.workspace = true
 roder-tui.workspace = true
 roder-web-search.workspace = true
 serde = { workspace = true, features = ["derive"] }

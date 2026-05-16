@@ -1,8 +1,6 @@
 package appserver
 
 import (
-	"encoding/base64"
-	"encoding/json"
 	"fmt"
 	"net"
 	"net/netip"
@@ -38,7 +36,8 @@ func BuildRemotePairingPayload(name, wsURL, token, workspace string) RemotePairi
 }
 
 func RemoteDeepLink(payload RemotePairingPayload) (string, error) {
-	if remotePairingBearerToken(payload) == "" {
+	token := remotePairingBearerToken(payload)
+	if token == "" {
 		return "", fmt.Errorf("remote pairing payload is missing bearer token")
 	}
 	wsURL, err := url.Parse(payload.URL)
@@ -48,37 +47,10 @@ func RemoteDeepLink(payload RemotePairingPayload) (string, error) {
 	if wsURL.Host == "" {
 		return "", fmt.Errorf("remote websocket url is missing host")
 	}
-	data, err := json.Marshal(payload)
-	if err != nil {
-		return "", fmt.Errorf("marshal remote pairing payload: %w", err)
-	}
 	values := url.Values{}
-	values.Set("payload", base64.RawURLEncoding.EncodeToString(data))
-	link := url.URL{Scheme: "gode", Host: "connect", RawQuery: values.Encode()}
+	values.Set("auth", token)
+	link := url.URL{Scheme: "gode", Host: wsURL.Host, RawQuery: values.Encode()}
 	return link.String(), nil
-}
-
-func DecodeRemoteDeepLink(link string) (RemotePairingPayload, error) {
-	parsed, err := url.Parse(link)
-	if err != nil {
-		return RemotePairingPayload{}, fmt.Errorf("parse remote deep link: %w", err)
-	}
-	if parsed.Scheme != "gode" || parsed.Host != "connect" {
-		return RemotePairingPayload{}, fmt.Errorf("remote deep link must use gode://connect")
-	}
-	encoded := parsed.Query().Get("payload")
-	if encoded == "" {
-		return RemotePairingPayload{}, fmt.Errorf("remote deep link is missing payload")
-	}
-	data, err := base64.RawURLEncoding.DecodeString(encoded)
-	if err != nil {
-		return RemotePairingPayload{}, fmt.Errorf("decode remote pairing payload: %w", err)
-	}
-	var payload RemotePairingPayload
-	if err := json.Unmarshal(data, &payload); err != nil {
-		return RemotePairingPayload{}, fmt.Errorf("unmarshal remote pairing payload: %w", err)
-	}
-	return payload, nil
 }
 
 func remotePairingBearerToken(payload RemotePairingPayload) string {
@@ -179,9 +151,9 @@ func sortedRemoteHosts(addrs []netip.Addr) []netip.Addr {
 func remoteAddrRank(addr netip.Addr) int {
 	tailscale := netip.MustParsePrefix("100.64.0.0/10")
 	switch {
-	case tailscale.Contains(addr):
-		return 0
 	case addr.IsPrivate():
+		return 0
+	case tailscale.Contains(addr):
 		return 1
 	case addr.IsLoopback():
 		return 3

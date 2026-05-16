@@ -58,15 +58,7 @@ fn deliver_desktop(notification: Notification) {
 #[cfg(not(feature = "desktop"))]
 fn deliver_desktop(_notification: Notification) {}
 
-pub struct DesktopNotifyExtension {
-    enabled_kinds: Vec<NotificationKind>,
-}
-
-impl DesktopNotifyExtension {
-    pub fn new(enabled_kinds: Vec<NotificationKind>) -> Self {
-        Self { enabled_kinds }
-    }
-}
+pub struct DesktopNotifyExtension;
 
 impl RoderExtension for DesktopNotifyExtension {
     fn manifest(&self) -> ExtensionManifest {
@@ -85,7 +77,7 @@ impl RoderExtension for DesktopNotifyExtension {
 
     fn install(&self, registry: &mut ExtensionRegistryBuilder) -> anyhow::Result<()> {
         registry.notification_sink(Arc::new(DesktopNotificationSink::new(
-            self.enabled_kinds.clone(),
+            DesktopNotificationSink::default_kinds(),
         )));
         Ok(())
     }

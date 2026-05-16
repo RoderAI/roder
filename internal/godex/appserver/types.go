@@ -1,9 +1,6 @@
 package appserver
 
-import (
-	"io"
-	"time"
-)
+import "io"
 
 type Options struct {
 	Version string
@@ -23,7 +20,6 @@ type RemoteListenConfig struct {
 	AuthToken      string
 	PrintQR        bool
 	AllowedOrigins []string
-	TokenTTL       time.Duration
 }
 
 type ClientInfo struct {

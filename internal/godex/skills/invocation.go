@@ -10,10 +10,8 @@ import (
 )
 
 var (
-	invocationPattern     = regexp.MustCompile(`\$([a-zA-Z0-9]+(?:-[a-zA-Z0-9]+)*)`)
-	namedSkillLinkPattern = regexp.MustCompile(`\[\$([a-zA-Z0-9]+(?:-[a-zA-Z0-9]+)*)\]\(([^)]+)\)`)
-	skillPathLinkPattern  = regexp.MustCompile(`\[[^\]]+\]\(([^)]+SKILL\.md)\)`)
-	rawSkillPathPattern   = regexp.MustCompile(`(?:skill://|file://)?(/[^\s]+/SKILL\.md)`)
+	invocationPattern = regexp.MustCompile(`\$([a-zA-Z0-9]+(?:-[a-zA-Z0-9]+)*)`)
+	skillLinkPattern  = regexp.MustCompile(`\[\$([a-zA-Z0-9]+(?:-[a-zA-Z0-9]+)*)\]\(([^)]+)\)`)
 )
 
 type InvocationResult struct {
@@ -23,20 +21,11 @@ type InvocationResult struct {
 	Diagnostics []Diagnostic
 }
 
-type InvocationSelection struct {
-	Name string
-	Path string
-}
-
 func ApplyInvocations(prompt string, catalog Catalog) InvocationResult {
 	return ApplyInvocationsWithConfig(prompt, catalog, Config{})
 }
 
 func ApplyInvocationsWithConfig(prompt string, catalog Catalog, config Config) InvocationResult {
-	return ApplyInvocationsWithSelections(prompt, catalog, config, nil)
-}
-
-func ApplyInvocationsWithSelections(prompt string, catalog Catalog, config Config, selections []InvocationSelection) InvocationResult {
 	disabled := DisabledSkillPaths(catalog.Skills, config)
 	byName := map[string][]Skill{}
 	byPath := map[string]Skill{}
@@ -50,60 +39,26 @@ func ApplyInvocationsWithSelections(prompt string, catalog Catalog, config Confi
 	}
 
 	selected := map[string]Skill{}
-	selectByName := func(name string) bool {
-		matches := byName[strings.TrimSpace(name)]
-		if len(matches) != 1 {
-			return false
-		}
-		selected[skillIdentity(matches[0])] = matches[0]
-		return true
-	}
-	selectByPath := func(path string) bool {
-		path = normalizeInvocationPath(path)
-		skill, ok := byPath[canonicalPath(path)]
-		if !ok {
-			return false
-		}
-		selected[skillIdentity(skill)] = skill
-		return true
-	}
-	for _, selection := range selections {
-		switch {
-		case strings.TrimSpace(selection.Path) != "":
-			selectByPath(selection.Path)
-		case strings.TrimSpace(selection.Name) != "":
-			selectByName(selection.Name)
-		}
-	}
-
-	cleaned := namedSkillLinkPattern.ReplaceAllStringFunc(prompt, func(match string) string {
-		parts := namedSkillLinkPattern.FindStringSubmatch(match)
+	cleaned := skillLinkPattern.ReplaceAllStringFunc(prompt, func(match string) string {
+		parts := skillLinkPattern.FindStringSubmatch(match)
 		if len(parts) != 3 {
 			return match
 		}
-		if !selectByPath(parts[2]) {
+		path := strings.TrimPrefix(strings.TrimSpace(parts[2]), "skill://")
+		skill, ok := byPath[canonicalPath(path)]
+		if !ok {
 			return match
 		}
-		return ""
-	})
-	cleaned = skillPathLinkPattern.ReplaceAllStringFunc(cleaned, func(match string) string {
-		parts := skillPathLinkPattern.FindStringSubmatch(match)
-		if len(parts) != 2 || !selectByPath(parts[1]) {
-			return match
-		}
-		return ""
-	})
-	cleaned = rawSkillPathPattern.ReplaceAllStringFunc(cleaned, func(match string) string {
-		if !selectByPath(match) {
-			return match
-		}
+		selected[skillIdentity(skill)] = skill
 		return ""
 	})
 	cleaned = invocationPattern.ReplaceAllStringFunc(cleaned, func(match string) string {
 		name := strings.TrimPrefix(match, "$")
-		if !selectByName(name) {
+		matches := byName[name]
+		if len(matches) != 1 {
 			return match
 		}
+		selected[skillIdentity(matches[0])] = matches[0]
 		return ""
 	})
 
@@ -124,13 +79,6 @@ func ApplyInvocationsWithSelections(prompt string, catalog Catalog, config Confi
 		}
 	}
 	return result
-}
-
-func normalizeInvocationPath(path string) string {
-	path = strings.TrimSpace(path)
-	path = strings.TrimPrefix(path, "skill://")
-	path = strings.TrimPrefix(path, "file://")
-	return path
 }
 
 func DisabledMentionDiagnostics(prompt string, catalog Catalog, config Config) []Diagnostic {

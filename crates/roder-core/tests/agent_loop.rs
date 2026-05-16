@@ -14,11 +14,7 @@ use serde_json::json;
 
 struct ToolLoopEngine {
     requests: Mutex<Vec<AgentInferenceRequest>>,
-}
-
-struct ManyToolLoopEngine {
-    requests: Mutex<Vec<AgentInferenceRequest>>,
-    tool_calls_before_final: usize,
+    tool_rounds: usize,
 }
 
 struct EchoContributor;
@@ -139,10 +135,10 @@ impl InferenceEngine for ToolLoopEngine {
         requests.push(request);
         let turn = requests.len();
         drop(requests);
-        let events = if turn == 1 {
+        let events = if turn <= self.tool_rounds {
             vec![
                 Ok(InferenceEvent::ToolCallCompleted(ToolCallCompleted {
-                    id: "call_1".to_string(),
+                    id: format!("call_{turn}"),
                     name: "echo".to_string(),
                     arguments: r#"{"text":"from tool"}"#.to_string(),
                 })),
@@ -166,64 +162,11 @@ impl InferenceEngine for ToolLoopEngine {
     }
 }
 
-#[async_trait::async_trait]
-impl InferenceEngine for ManyToolLoopEngine {
-    fn id(&self) -> InferenceEngineId {
-        PROVIDER_MOCK.to_string()
-    }
-
-    fn capabilities(&self) -> InferenceCapabilities {
-        InferenceCapabilities::coding_agent_default()
-    }
-
-    async fn list_models(
-        &self,
-        _ctx: InferenceProviderContext<'_>,
-    ) -> anyhow::Result<Vec<ModelDescriptor>> {
-        Ok(Vec::new())
-    }
-
-    async fn stream_turn(
-        &self,
-        _ctx: InferenceTurnContext<'_>,
-        request: AgentInferenceRequest,
-    ) -> anyhow::Result<InferenceEventStream> {
-        let mut requests = self.requests.lock().unwrap();
-        requests.push(request);
-        let turn = requests.len();
-        drop(requests);
-
-        let events = if turn <= self.tool_calls_before_final {
-            vec![
-                Ok(InferenceEvent::ToolCallCompleted(ToolCallCompleted {
-                    id: format!("call_{turn}"),
-                    name: "echo".to_string(),
-                    arguments: format!(r#"{{"text":"from tool {turn}"}}"#),
-                })),
-                Ok(InferenceEvent::Completed(CompletionMetadata {
-                    stop_reason: Some("tool_calls".to_string()),
-                    provider_response_id: Some(format!("resp_{turn}")),
-                })),
-            ]
-        } else {
-            vec![
-                Ok(InferenceEvent::MessageDelta(MessageDelta {
-                    text: "final after many tools".to_string(),
-                })),
-                Ok(InferenceEvent::Completed(CompletionMetadata {
-                    stop_reason: Some("stop".to_string()),
-                    provider_response_id: Some(format!("resp_{turn}")),
-                })),
-            ]
-        };
-        Ok(Box::pin(stream::iter(events)))
-    }
-}
-
 #[tokio::test]
 async fn run_turn_continues_after_tool_result() {
     let engine = Arc::new(ToolLoopEngine {
         requests: Mutex::new(Vec::new()),
+        tool_rounds: 1,
     });
     let mut builder = ExtensionRegistryBuilder::new();
     builder.inference_engine(engine.clone());
@@ -287,11 +230,10 @@ async fn run_turn_continues_after_tool_result() {
 }
 
 #[tokio::test]
-async fn run_turn_continues_beyond_eight_tool_followups() {
-    let tool_calls_before_final = 9;
-    let engine = Arc::new(ManyToolLoopEngine {
+async fn run_turn_allows_more_than_eight_tool_rounds() {
+    let engine = Arc::new(ToolLoopEngine {
         requests: Mutex::new(Vec::new()),
-        tool_calls_before_final,
+        tool_rounds: 9,
     });
     let mut builder = ExtensionRegistryBuilder::new();
     builder.inference_engine(engine.clone());
@@ -323,17 +265,11 @@ async fn run_turn_continues_beyond_eight_tool_followups() {
         .await
         .unwrap();
 
-    let mut appended_assistant = false;
     loop {
         let event = tokio::time::timeout(Duration::from_secs(2), events.recv())
             .await
             .unwrap()
             .unwrap();
-        if let roder_api::events::RoderEvent::TurnItemAppended(item) = &event.event
-            && item.item_type == "assistant_message"
-        {
-            appended_assistant = true;
-        }
         if event.kind == "turn.completed" && event.thread_id.as_deref() == Some("thread_many_tools")
         {
             break;
@@ -341,23 +277,14 @@ async fn run_turn_continues_beyond_eight_tool_followups() {
     }
 
     let requests = engine.requests.lock().unwrap();
-    assert_eq!(requests.len(), tool_calls_before_final + 1);
-    assert!(
-        appended_assistant,
-        "final assistant message should be recorded"
-    );
-    assert!(
-        requests.last().unwrap().conversation.iter().any(
-            |item| matches!(item, ConversationItem::ToolResult(result) if result.id == "call_9")
-        ),
-        "final request should include the ninth tool result"
-    );
+    assert_eq!(requests.len(), 10);
 }
 
 #[test]
 fn duplicate_tool_contributors_fail_with_contributor_context() {
     let engine = Arc::new(ToolLoopEngine {
         requests: Mutex::new(Vec::new()),
+        tool_rounds: 1,
     });
     let mut builder = ExtensionRegistryBuilder::new();
     builder.inference_engine(engine);

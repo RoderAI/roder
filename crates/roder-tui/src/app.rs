@@ -1,22 +1,13 @@
-mod commands;
+mod composer;
 mod dialog;
-mod diff_ui;
-mod help;
-mod mouse_capture_runtime;
-mod mouse_ui;
-mod palette_ui;
-mod policy_ui;
-mod selection_keyboard;
-mod transcript_fold_persistence;
-mod transcript_open;
 
-use std::collections::BTreeSet;
+use std::collections::HashMap;
 use std::io;
-use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::path::{Path, PathBuf};
+use std::time::Duration;
 
 use crossterm::{
-    event::{self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyModifiers},
+    event::{self, DisableBracketedPaste, EnableBracketedPaste, Event, KeyCode, KeyModifiers},
     execute,
     terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
 };
@@ -26,47 +17,25 @@ use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span, Text},
-    widgets::{Block, BorderType, Borders, Clear, List, ListItem, ListState, Paragraph},
+    widgets::{Block, BorderType, Borders, Clear, List, ListItem, ListState, Paragraph, Wrap},
 };
 use roder_api::events::RoderEvent;
 use roder_api::inference::ProviderAuthType;
-use roder_api::interactive::{
-    ApprovalVote, HandlerOutcome, InteractiveEvent, InteractiveRegion, InteractiveRegionHandler,
-    MouseButton, RegionKind, RegionRect,
-};
-use roder_api::policy_mode::PolicyMode;
-use roder_api::tui_status::{
-    GitSnapshot, McpServerStatus, SessionSummary, StatusContext, StatusSegment,
-};
+use roder_api::policy_mode::{PolicyDecision, PolicyMode};
 use roder_app_server::LocalAppClient;
 use roder_protocol::{
-    AgentDescriptor, AgentsListResult, CodexAuthResult, CommandDescriptor, CommandsExpandParams,
-    CommandsExpandResult, CommandsListResult, CreateSessionResult, InterruptTurnParams,
-    JsonRpcRequest, JsonRpcResponse, PendingPlanExitDescriptor, ProviderDescriptor,
-    ProviderSelectParams, ProviderSelectResult, ProvidersListResult, SessionExitPlanParams,
-    SessionExitPlanResult, SessionGetResult, SessionLoadParams, SessionLoadResult,
+    CodexAuthResult, CreateSessionResult, InterruptTurnParams, JsonRpcRequest, JsonRpcResponse,
+    PendingPlanExitDescriptor, ProviderDescriptor, ProviderSelectParams, ProviderSelectResult,
+    ProvidersListResult, SessionExitPlanParams, SessionExitPlanResult, SessionGetResult,
     SessionResolveApprovalParams, SessionResolveApprovalResult, SessionSetModeParams,
-    SessionSetModeResult, SessionsListResult, StartTurnParams, TasksListResult,
+    SessionSetModeResult, StartTurnParams,
 };
 use tokio::process::Command;
 use tui_textarea::TextArea;
 
-use mouse_capture_runtime::apply_mouse_capture_event;
-
-use crate::config::TuiAppConfig;
-use crate::diff::{DiffViewerState, render::DiffTheme};
-use crate::keymap::{Action, Keymap};
-use crate::mouse::{
-    DragSelectionOutcome, DragSelectionState, MouseCaptureController, MouseCaptureEvent,
-    ScrollState, ScrollTarget, SelectedText, region_rect_from_ratatui,
-};
-use crate::palette::{PaletteEntry, render::PaletteTheme};
-use crate::status_line::{
-    StatusLineConfig, StatusLineTheme, built_in_status_segments, render_status_line,
-};
-use crate::transcript::{
-    TranscriptAction, TranscriptContextMenu, TranscriptFoldState, action_for_region,
-    context_menu_region, link_spans, transcript_regions,
+use composer::{
+    composer_mode, composer_text, composer_textarea, shell_command_from_input,
+    style_composer_for_current_mode,
 };
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -79,6 +48,7 @@ struct Theme {
     accent_soft: Color,
     tool: Color,
     tool_running: Color,
+    shell: Color,
     error: Color,
     border: Color,
     dialog: Color,
@@ -107,6 +77,7 @@ impl Theme {
                 accent_soft: Color::Indexed(183),
                 tool: Color::Indexed(214),
                 tool_running: Color::Indexed(75),
+                shell: Color::Indexed(220),
                 error: Color::Indexed(196),
                 border: Color::Indexed(244),
                 dialog: Color::Indexed(62),
@@ -129,6 +100,7 @@ impl Theme {
             accent_soft: Color::Indexed(96),
             tool: Color::Indexed(172),
             tool_running: Color::Indexed(25),
+            shell: Color::Indexed(160),
             error: Color::Indexed(160),
             border: Color::Indexed(240),
             dialog: Color::Indexed(62),
@@ -182,6 +154,10 @@ impl Theme {
             .add_modifier(Modifier::BOLD)
     }
 
+    fn shell(self) -> Style {
+        Style::default().fg(self.shell).add_modifier(Modifier::BOLD)
+    }
+
     fn error(self) -> Style {
         Style::default().fg(self.error).add_modifier(Modifier::BOLD)
     }
@@ -212,42 +188,6 @@ impl Theme {
     fn selected(self) -> Style {
         Style::default().fg(self.selection_fg).bg(self.selection_bg)
     }
-
-    fn status_line(self) -> StatusLineTheme {
-        StatusLineTheme {
-            text: self.text,
-            muted: self.muted,
-            accent: self.accent,
-            warning: self.tool,
-            error: self.error,
-            separator: self.subtle,
-        }
-    }
-
-    fn palette(self) -> PaletteTheme {
-        PaletteTheme {
-            text: self.text,
-            muted: self.muted,
-            accent: self.accent,
-            border: self.border,
-            selection_fg: self.selection_fg,
-            selection_bg: self.selection_bg,
-            surface_bg: self.dialog_bg,
-        }
-    }
-
-    fn diff(self) -> DiffTheme {
-        DiffTheme {
-            text: self.text,
-            muted: self.muted,
-            accent: self.accent,
-            added: self.tool_running,
-            removed: self.error,
-            warning: self.tool,
-            border: self.border,
-            surface_bg: self.dialog_bg,
-        }
-    }
 }
 
 #[derive(Debug, Clone)]
@@ -269,16 +209,81 @@ struct ProviderChoice {
     recommended: bool,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ImageAttachment {
+    path: PathBuf,
+}
+
+impl ImageAttachment {
+    fn new(path: PathBuf) -> Self {
+        Self { path }
+    }
+
+    fn label(&self) -> String {
+        self.path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .map(str::to_string)
+            .unwrap_or_else(|| self.path.display().to_string())
+    }
+}
+
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
 enum ProviderPopupScreen {
     Main,
     Models,
 }
 
-#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+#[derive(Debug, Clone, Eq, PartialEq)]
 enum ConfirmDialog {
     Interrupt,
     Exit,
+    ToolApproval {
+        approval_id: String,
+        tool_name: String,
+        reason: Option<String>,
+    },
+}
+
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+enum ConfirmChoice {
+    Yes,
+    No,
+}
+
+#[derive(Debug, Clone, Eq, PartialEq)]
+struct ConfirmDialogState {
+    dialog: ConfirmDialog,
+    selected: ConfirmChoice,
+}
+
+impl ConfirmDialogState {
+    fn new(dialog: ConfirmDialog) -> Self {
+        Self {
+            dialog,
+            selected: ConfirmChoice::Yes,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+enum ConfirmKeyAction {
+    Confirm,
+    Cancel,
+    Select(ConfirmChoice),
+    Ignore,
+}
+
+fn confirm_action_for_key(key: KeyCode, selected: ConfirmChoice) -> ConfirmKeyAction {
+    match key {
+        KeyCode::Left => ConfirmKeyAction::Select(ConfirmChoice::Yes),
+        KeyCode::Right => ConfirmKeyAction::Select(ConfirmChoice::No),
+        KeyCode::Enter if selected == ConfirmChoice::Yes => ConfirmKeyAction::Confirm,
+        KeyCode::Enter => ConfirmKeyAction::Cancel,
+        KeyCode::Char('y') | KeyCode::Char('Y') => ConfirmKeyAction::Confirm,
+        KeyCode::Esc | KeyCode::Char('n') | KeyCode::Char('N') => ConfirmKeyAction::Cancel,
+        _ => ConfirmKeyAction::Ignore,
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -335,7 +340,6 @@ pub struct TuiApp {
     events: Vec<String>,
     animation_frame: u64,
     show_event_log: bool,
-    show_help: bool,
     show_provider_popup: bool,
     provider_popup_screen: ProviderPopupScreen,
     provider_choices: Vec<ProviderChoice>,
@@ -343,45 +347,16 @@ pub struct TuiApp {
     provider_menu_items: Vec<ProviderMenuItem>,
     provider_menu_filter: String,
     provider_state: ListState,
-    confirm_dialog: Option<ConfirmDialog>,
-    command_catalog: Vec<CommandDescriptor>,
-    slash_selected: usize,
-    show_palette: bool,
-    palette_entries: Vec<PaletteEntry>,
-    palette_query: String,
-    palette_source_filter: Option<String>,
-    palette_state: ListState,
-    enabled_palette_sources: BTreeSet<String>,
-    diff_viewer: Option<DiffViewerState>,
-    diff_enabled: bool,
-    status_segments: Vec<StatusSegment>,
-    interactive_region_handlers: Vec<Arc<dyn InteractiveRegionHandler>>,
-    keymap: Keymap,
-    status_config: StatusLineConfig,
-    status_git: Option<GitSnapshot>,
+    confirm_dialog: Option<ConfirmDialogState>,
+    image_attachments: Vec<ImageAttachment>,
+    tool_call_names: HashMap<String, String>,
     policy_mode: PolicyMode,
     pending_plan_exit: Option<PendingPlanExitDescriptor>,
-    mouse_feedback: mouse_ui::MouseFeedbackState,
-    drag_selection: DragSelectionState,
-    transcript_scroll: ScrollState,
-    mouse_capture: MouseCaptureController,
-    selection_keyboard: selection_keyboard::SelectionKeyboardState,
-    transcript_fold: TranscriptFoldState,
-    transcript_context_menu: Option<TranscriptContextMenu>,
-    terminal_area: roder_api::interactive::RegionRect,
     theme: Theme,
 }
 
 impl TuiApp {
     pub async fn new(client: LocalAppClient, model: String) -> anyhow::Result<Self> {
-        Self::new_with_config(client, model, TuiAppConfig::default()).await
-    }
-
-    pub async fn new_with_config(
-        client: LocalAppClient,
-        model: String,
-        config: TuiAppConfig,
-    ) -> anyhow::Result<Self> {
         let req = JsonRpcRequest {
             jsonrpc: "2.0".to_string(),
             id: Some(serde_json::json!(1)),
@@ -400,8 +375,6 @@ impl TuiApp {
         provider_state.select(Some(0));
         let theme = Theme::for_terminal();
         let policy_state = session_get(&client).await.ok();
-        let command_catalog = commands_list(&client).await.unwrap_or_default();
-        let status_git = current_git_snapshot();
 
         Ok(Self {
             client,
@@ -418,7 +391,6 @@ impl TuiApp {
             events: Vec::new(),
             animation_frame: 0,
             show_event_log: false,
-            show_help: false,
             show_provider_popup: false,
             provider_popup_screen: ProviderPopupScreen::Main,
             provider_choices: Vec::new(),
@@ -427,45 +399,13 @@ impl TuiApp {
             provider_menu_filter: String::new(),
             provider_state,
             confirm_dialog: None,
-            command_catalog,
-            slash_selected: 0,
-            show_palette: false,
-            palette_entries: Vec::new(),
-            palette_query: String::new(),
-            palette_source_filter: None,
-            palette_state: ListState::default(),
-            enabled_palette_sources: config.enabled_palette_source_ids(),
-            diff_viewer: None,
-            diff_enabled: config.diff_enabled,
-            status_segments: if config.status_segments.is_empty() {
-                built_in_status_segments()
-            } else {
-                config.status_segments
-            },
-            status_config: StatusLineConfig {
-                disabled_segments: config.disabled_status_segments,
-            },
-            interactive_region_handlers: config.interactive_region_handlers,
-            keymap: config.keymap,
-            status_git,
+            image_attachments: Vec::new(),
+            tool_call_names: HashMap::new(),
             policy_mode: policy_state
                 .as_ref()
                 .map(|state| state.mode)
                 .unwrap_or_default(),
             pending_plan_exit: policy_state.and_then(|state| state.pending_plan_exit),
-            mouse_feedback: mouse_ui::MouseFeedbackState::default(),
-            drag_selection: DragSelectionState::default(),
-            transcript_scroll: ScrollState::default(),
-            mouse_capture: MouseCaptureController::default(),
-            selection_keyboard: selection_keyboard::SelectionKeyboardState::default(),
-            transcript_fold: TranscriptFoldState::default(),
-            transcript_context_menu: None,
-            terminal_area: roder_api::interactive::RegionRect {
-                x: 0,
-                y: 0,
-                width: 0,
-                height: 0,
-            },
             theme,
         })
     }
@@ -473,7 +413,7 @@ impl TuiApp {
     pub async fn run(&mut self) -> anyhow::Result<()> {
         enable_raw_mode()?;
         let mut stdout = io::stdout();
-        execute!(stdout, EnterAlternateScreen, EnableMouseCapture)?;
+        execute!(stdout, EnterAlternateScreen, EnableBracketedPaste)?;
         let backend = CrosstermBackend::new(stdout);
         let mut terminal = Terminal::new(backend)?;
 
@@ -481,10 +421,6 @@ impl TuiApp {
 
         loop {
             self.animation_frame = self.animation_frame.wrapping_add(1);
-            if let Some(event) = self.mouse_capture.tick(self.animation_frame) {
-                apply_mouse_capture_event(terminal.backend_mut(), event)?;
-                self.push_event(mouse_capture_event_label(event).to_string());
-            }
             terminal.draw(|f| self.render(f))?;
 
             if event::poll(Duration::from_millis(50))? {
@@ -494,17 +430,6 @@ impl TuiApp {
                             if self.handle_confirm_key(key).await {
                                 break;
                             }
-                        } else if self.show_help {
-                            self.handle_help_key(key);
-                        } else if help::is_help_key(key) {
-                            self.show_help = true;
-                            self.push_event("help shown".to_string());
-                        } else if self.diff_viewer.is_some() {
-                            self.handle_diff_key(key).await;
-                        } else if self.show_palette {
-                            self.handle_palette_key(key).await;
-                        } else if palette_ui::is_palette_open_key(key) {
-                            self.open_palette().await;
                         } else if key.modifiers.contains(KeyModifiers::CONTROL)
                             && key.code == KeyCode::Char('p')
                         {
@@ -522,12 +447,12 @@ impl TuiApp {
                             } else {
                                 "event log hidden".to_string()
                             });
-                        } else if self.handle_selection_keyboard_action(key) {
                         } else if key.modifiers.contains(KeyModifiers::CONTROL)
                             && key.code == KeyCode::Char('c')
                         {
-                            self.confirm_dialog = Some(ConfirmDialog::Exit);
-                        } else if self.keymap.matches_key_event(Action::CycleMode, &key) {
+                            self.confirm_dialog =
+                                Some(ConfirmDialogState::new(ConfirmDialog::Exit));
+                        } else if key.code == KeyCode::BackTab {
                             self.cycle_policy_mode().await;
                         } else if self.pending_plan_exit.is_some()
                             && matches!(key.code, KeyCode::Char('y') | KeyCode::Char('Y'))
@@ -555,81 +480,40 @@ impl TuiApp {
                                 }
                                 _ => {}
                             }
-                        } else if self.command_menu_open() {
-                            match key.code {
-                                KeyCode::Up => self.move_slash_selection(-1),
-                                KeyCode::Down => self.move_slash_selection(1),
-                                KeyCode::Tab => self.accept_slash_completion(),
-                                KeyCode::Enter => {
-                                    if key.modifiers.contains(KeyModifiers::SHIFT) {
-                                        self.composer.insert_newline();
-                                        continue;
-                                    }
-                                    let text = composer_text(&self.composer).trim().to_string();
-                                    self.composer = composer_textarea(self.theme);
-                                    if text.is_empty() {
-                                        continue;
-                                    }
-                                    if self.try_run_slash_command(&text).await {
-                                        continue;
-                                    }
-                                    self.submit_user_text(text).await;
-                                }
-                                _ => {
-                                    self.composer.input(key);
-                                    self.clamp_slash_selection();
-                                }
-                            }
                         } else {
-                            if self.handle_focus_keyboard_action(key).await {
-                                continue;
-                            }
                             match key.code {
                                 KeyCode::Enter => {
                                     if key.modifiers.contains(KeyModifiers::SHIFT) {
                                         self.composer.insert_newline();
                                         continue;
                                     }
-                                    let text = composer_text(&self.composer).trim().to_string();
-                                    self.composer = composer_textarea(self.theme);
-                                    if text.is_empty() {
-                                        continue;
-                                    }
-                                    if text.starts_with('/')
-                                        && self.try_run_slash_command(&text).await
-                                    {
-                                        continue;
-                                    }
-                                    if let Some(command) = shell_command_from_input(&text) {
-                                        self.run_shell_command(command).await;
-                                        continue;
-                                    }
-                                    self.submit_user_text(text).await;
+                                    self.submit_prompt().await;
                                 }
                                 KeyCode::Esc => {
                                     self.confirm_dialog = if self.active_turn_id.is_some() {
-                                        Some(ConfirmDialog::Interrupt)
+                                        Some(ConfirmDialogState::new(ConfirmDialog::Interrupt))
                                     } else {
-                                        Some(ConfirmDialog::Exit)
+                                        Some(ConfirmDialogState::new(ConfirmDialog::Exit))
                                     };
+                                }
+                                KeyCode::Backspace
+                                    if composer_text(&self.composer).is_empty()
+                                        && !self.image_attachments.is_empty() =>
+                                {
+                                    if let Some(attachment) = self.image_attachments.pop() {
+                                        self.push_event(format!(
+                                            "detached image {}",
+                                            attachment.label()
+                                        ));
+                                    }
                                 }
                                 _ => {
                                     self.composer.input(key);
-                                    self.clamp_slash_selection();
                                 }
                             }
                         }
                     }
-                    Event::Mouse(mouse) => {
-                        let at = (mouse.column, mouse.row);
-                        let events = self
-                            .mouse_feedback
-                            .handle_mouse_event(mouse, Instant::now());
-                        for event in self.handle_interactive_events(events, at).await {
-                            apply_mouse_capture_event(terminal.backend_mut(), event)?;
-                            self.push_event(mouse_capture_event_label(event).to_string());
-                        }
-                    }
+                    Event::Paste(text) => self.handle_paste(text),
                     _ => {}
                 }
             }
@@ -649,8 +533,9 @@ impl TuiApp {
                     {
                         self.active_turn_id = None;
                     }
-                    RoderEvent::InferenceEventReceived(ev) => match ev.event {
-                        roder_api::inference::InferenceEvent::MessageDelta(delta) => {
+                    RoderEvent::InferenceEventReceived(ev) => {
+                        if let roder_api::inference::InferenceEvent::MessageDelta(delta) = ev.event
+                        {
                             if let Some(last) = self.messages.last_mut()
                                 && last.starts_with("assistant: ")
                             {
@@ -659,18 +544,52 @@ impl TuiApp {
                             }
                             self.messages.push(format!("assistant: {}", delta.text));
                         }
-                        roder_api::inference::InferenceEvent::ToolCallStarted(tool) => {
-                            self.messages
-                                .push(format!("tool call: {} {}", tool.id, tool.name));
-                        }
-                        roder_api::inference::InferenceEvent::ToolCallCompleted(tool) => {
-                            self.messages
-                                .push(format!("tool call: {} {} completed", tool.id, tool.name));
-                        }
-                        _ => {}
-                    },
+                    }
                     RoderEvent::TurnFailed(ev) => {
+                        if self.active_turn_id.as_deref() == Some(&ev.turn_id) {
+                            self.active_turn_id = None;
+                        }
                         self.messages.push(format!("error: {}", ev.error))
+                    }
+                    RoderEvent::ToolCallRequested(ev) => {
+                        self.tool_call_names
+                            .insert(ev.tool_id.clone(), ev.tool_name.clone());
+                        self.messages
+                            .push(format!("tool: {} requested", ev.tool_name));
+                    }
+                    RoderEvent::PolicyDecisionRecorded(ev) => match ev.decision {
+                        PolicyDecision::Denied { reason } => {
+                            self.record_error(format!("tool {} denied: {reason}", ev.tool_name));
+                        }
+                        PolicyDecision::RequiresApproval { .. } => {
+                            self.messages
+                                .push(format!("tool: {} awaiting approval", ev.tool_name));
+                        }
+                        PolicyDecision::Allowed | PolicyDecision::AutoApproved { .. } => {}
+                    },
+                    RoderEvent::ApprovalRequested(ev) => {
+                        self.messages
+                            .push(format!("tool: {} needs approval", ev.tool_name));
+                        self.confirm_dialog =
+                            Some(ConfirmDialogState::new(ConfirmDialog::ToolApproval {
+                                approval_id: ev.approval_id,
+                                tool_name: ev.tool_name,
+                                reason: ev.reason,
+                            }));
+                    }
+                    RoderEvent::ApprovalResolved(ev) => {
+                        self.messages.push(format!(
+                            "tool: {} approval {}",
+                            ev.tool_name,
+                            if ev.approved { "accepted" } else { "rejected" }
+                        ));
+                    }
+                    RoderEvent::ToolCallCompleted(ev) => {
+                        let name = self
+                            .tool_call_names
+                            .remove(&ev.tool_id)
+                            .unwrap_or_else(|| format!("tool {}", short_id(&ev.tool_id)));
+                        self.messages.push(format!("tool: {name} completed"));
                     }
                     RoderEvent::PolicyModeChanged(ev) => {
                         self.policy_mode = ev.new_mode;
@@ -685,12 +604,6 @@ impl TuiApp {
                     RoderEvent::PolicyExitPlanResolved(_) => {
                         self.refresh_session_state().await;
                     }
-                    RoderEvent::FileChangePreviewReady(ev) if self.diff_enabled => {
-                        self.open_diff_preview(ev);
-                    }
-                    RoderEvent::ApprovalRequested(ev) if !self.diff_enabled => {
-                        self.resolve_diff_approval(ev.approval_id, false).await;
-                    }
                     _ => {}
                 }
             }
@@ -699,7 +612,7 @@ impl TuiApp {
         disable_raw_mode()?;
         execute!(
             terminal.backend_mut(),
-            DisableMouseCapture,
+            DisableBracketedPaste,
             LeaveAlternateScreen
         )?;
         terminal.show_cursor()?;
@@ -708,30 +621,33 @@ impl TuiApp {
     }
 
     async fn handle_confirm_key(&mut self, key: crossterm::event::KeyEvent) -> bool {
-        let Some(dialog) = self.confirm_dialog else {
+        let Some(mut state) = self.confirm_dialog.clone() else {
             return false;
         };
-        match key.code {
-            KeyCode::Enter | KeyCode::Char('y') | KeyCode::Char('Y') => {
+        match confirm_action_for_key(key.code, state.selected) {
+            ConfirmKeyAction::Select(choice) => {
+                state.selected = choice;
+                self.confirm_dialog = Some(state);
+            }
+            ConfirmKeyAction::Confirm => {
                 self.confirm_dialog = None;
-                match dialog {
+                match state.dialog {
                     ConfirmDialog::Interrupt => self.interrupt_active_turn().await,
                     ConfirmDialog::Exit => return true,
+                    ConfirmDialog::ToolApproval { approval_id, .. } => {
+                        self.resolve_tool_approval(approval_id, true).await
+                    }
                 }
             }
-            KeyCode::Esc | KeyCode::Char('n') | KeyCode::Char('N') => {
+            ConfirmKeyAction::Cancel => {
+                if let ConfirmDialog::ToolApproval { approval_id, .. } = state.dialog {
+                    self.resolve_tool_approval(approval_id, false).await;
+                }
                 self.confirm_dialog = None;
             }
-            _ => {}
+            ConfirmKeyAction::Ignore => {}
         }
         false
-    }
-
-    fn handle_help_key(&mut self, key: crossterm::event::KeyEvent) {
-        if matches!(key.code, KeyCode::Esc | KeyCode::Char('?')) {
-            self.show_help = false;
-            self.push_event("help hidden".to_string());
-        }
     }
 
     async fn interrupt_active_turn(&mut self) {
@@ -760,6 +676,27 @@ impl TuiApp {
         }
     }
 
+    async fn resolve_tool_approval(&mut self, approval_id: String, approved: bool) {
+        let params = SessionResolveApprovalParams {
+            approval_id: approval_id.clone(),
+            approved,
+        };
+        let res = self
+            .client
+            .send_request(JsonRpcRequest {
+                jsonrpc: "2.0".to_string(),
+                id: Some(serde_json::json!("session/resolve_approval")),
+                method: "session/resolve_approval".to_string(),
+                params: Some(serde_json::to_value(params).unwrap()),
+            })
+            .await;
+        match decode_response::<SessionResolveApprovalResult>(res) {
+            Ok(result) if result.resolved => {}
+            Ok(_) => self.record_error(format!("approval not pending: {}", short_id(&approval_id))),
+            Err(err) => self.record_error(format!("session/resolve_approval failed: {err}")),
+        }
+    }
+
     async fn refresh_session_state(&mut self) {
         match session_get(&self.client).await {
             Ok(state) => {
@@ -772,13 +709,9 @@ impl TuiApp {
 
     async fn cycle_policy_mode(&mut self) {
         let next = next_policy_mode(self.policy_mode);
-        self.set_policy_mode(next, "tui mode switcher").await;
-    }
-
-    async fn set_policy_mode(&mut self, mode: PolicyMode, reason: &str) {
         let params = SessionSetModeParams {
-            mode,
-            reason: Some(reason.to_string()),
+            mode: next,
+            reason: Some("tui mode switcher".to_string()),
         };
         let res = self
             .client
@@ -802,57 +735,6 @@ impl TuiApp {
                 ));
             }
             Err(err) => self.record_error(format!("session/set_mode failed: {err}")),
-        }
-    }
-
-    async fn load_session(&mut self, thread_id: String) {
-        let res = self
-            .client
-            .send_request(JsonRpcRequest {
-                jsonrpc: "2.0".to_string(),
-                id: Some(serde_json::json!("sessions/load")),
-                method: "sessions/load".to_string(),
-                params: Some(
-                    serde_json::to_value(SessionLoadParams {
-                        thread_id: thread_id.clone(),
-                    })
-                    .unwrap(),
-                ),
-            })
-            .await;
-        match decode_response::<SessionLoadResult>(res) {
-            Ok(result) => {
-                let snapshot = result.snapshot;
-                self.thread_id = thread_id;
-                self.active_turn_id = None;
-                self.messages.clear();
-                match if let Some(snapshot) = snapshot.as_ref() {
-                    transcript_fold_persistence::from_snapshot(&self.thread_id, snapshot)
-                } else {
-                    Ok(None)
-                } {
-                    Ok(Some(fold_state)) => self.transcript_fold = fold_state,
-                    Ok(None) => self.transcript_fold = TranscriptFoldState::default(),
-                    Err(err) => {
-                        self.transcript_fold = TranscriptFoldState::default();
-                        self.record_error(format!("transcript fold state load failed: {err}"));
-                    }
-                }
-                if let Some(metadata) = snapshot.and_then(|snapshot| snapshot.metadata) {
-                    if let Some(provider) = metadata.provider {
-                        self.provider = provider;
-                    }
-                    if let Some(model) = metadata.model {
-                        self.model = model;
-                    }
-                }
-                self.messages.push(format!(
-                    "system: loaded session {}.",
-                    short_id(&self.thread_id)
-                ));
-                self.push_event(format!("session loaded: {}", short_id(&self.thread_id)));
-            }
-            Err(err) => self.record_error(format!("sessions/load failed: {err}")),
         }
     }
 
@@ -887,77 +769,35 @@ impl TuiApp {
         }
     }
 
-    async fn try_run_slash_command(&mut self, text: &str) -> bool {
-        if text.trim() == "/tasks" {
-            self.show_tasks().await;
-            return true;
+    async fn submit_prompt(&mut self) {
+        let text = composer_text(&self.composer).trim().to_string();
+        let attachments = std::mem::take(&mut self.image_attachments);
+        self.composer = composer_textarea(self.theme);
+        if text.is_empty() && attachments.is_empty() {
+            return;
         }
-        let Some((name, arguments)) = commands::command_invocation(text, &self.command_catalog)
-        else {
-            return false;
-        };
-
-        match commands_expand(&self.client, &name, &arguments).await {
-            Ok(expanded) => {
-                self.messages
-                    .push(format!("executed slash command: /{name}"));
-                self.messages.push(format!(
-                    "command preview: {}",
-                    truncate(&expanded.message.replace('\n', " "), 120)
-                ));
-                self.submit_user_message(
-                    expanded.message,
-                    expanded.model.or_else(|| Some(self.model.clone())),
-                )
-                .await;
-            }
-            Err(err) => self.record_error(format!("slash command failed: {err}")),
+        if attachments.is_empty() && text.starts_with('/') {
+            self.messages
+                .push(format!("executed slash command: {text}"));
+            return;
         }
-        true
-    }
-
-    async fn show_tasks(&mut self) {
-        let res = self
-            .client
-            .send_request(JsonRpcRequest {
-                jsonrpc: "2.0".to_string(),
-                id: Some(serde_json::json!("tasks/list")),
-                method: "tasks/list".to_string(),
-                params: None,
-            })
-            .await;
-        match decode_response::<TasksListResult>(res) {
-            Ok(result) if result.tasks.is_empty() => {
-                self.messages
-                    .push("system: no background tasks.".to_string());
-            }
-            Ok(result) => {
-                self.messages.push("system: background tasks".to_string());
-                for task in result.tasks.iter().rev().take(6).rev() {
-                    self.messages.push(format!(
-                        "task {} {} {:?}",
-                        short_id(&task.task_id),
-                        task.spec.kind,
-                        task.state
-                    ));
-                }
-            }
-            Err(err) => self.record_error(format!("tasks/list failed: {err}")),
+        if attachments.is_empty()
+            && let Some(command) = shell_command_from_input(&text)
+        {
+            self.run_shell_command(command).await;
+            return;
         }
-    }
 
-    async fn submit_user_text(&mut self, text: String) {
-        self.messages.push(format!("user: {text}"));
-        self.submit_user_message(text, Some(self.model.clone()))
-            .await;
-    }
-
-    async fn submit_user_message(&self, message: String, model_override: Option<String>) {
+        let message = message_with_image_attachments(&text, &attachments);
+        self.messages.push(format!(
+            "user: {}",
+            transcript_message_with_image_attachments(&text, &attachments)
+        ));
         let params = StartTurnParams {
             thread_id: self.thread_id.clone(),
             message,
             provider_override: None,
-            model_override,
+            model_override: Some(self.model.clone()),
         };
         let client = self.client.clone();
         tokio::spawn(async move {
@@ -972,43 +812,35 @@ impl TuiApp {
         });
     }
 
-    fn command_menu_open(&self) -> bool {
-        !self.matching_slash_commands().is_empty()
-    }
-
-    fn matching_slash_commands(&self) -> Vec<&CommandDescriptor> {
-        commands::matching_commands(&self.command_catalog, &composer_text(&self.composer))
-    }
-
-    fn move_slash_selection(&mut self, delta: isize) {
-        let count = self.matching_slash_commands().len();
-        if count == 0 {
-            self.slash_selected = 0;
+    fn handle_paste(&mut self, text: String) {
+        if self.confirm_dialog.is_some() {
             return;
         }
-        self.slash_selected =
-            (self.slash_selected as isize + delta).rem_euclid(count as isize) as usize;
-    }
-
-    fn clamp_slash_selection(&mut self) {
-        let count = self.matching_slash_commands().len();
-        if count == 0 {
-            self.slash_selected = 0;
-        } else {
-            self.slash_selected = self.slash_selected.min(count - 1);
+        if self.show_provider_popup {
+            self.provider_menu_filter
+                .push_str(&text.replace(['\r', '\n'], " "));
+            self.clamp_provider_menu_selection();
+            return;
         }
-    }
-
-    fn accept_slash_completion(&mut self) {
-        if let Some(completed) = commands::accepted_completion(
-            &composer_text(&self.composer),
-            &self.command_catalog,
-            self.slash_selected,
-        ) {
-            self.composer = composer_textarea(self.theme);
-            self.composer.insert_str(completed);
-            self.slash_selected = 0;
+        if let Some(attachments) = image_attachments_from_paste(&text) {
+            let mut added = 0usize;
+            for attachment in attachments {
+                if !self
+                    .image_attachments
+                    .iter()
+                    .any(|existing| existing.path == attachment.path)
+                {
+                    self.image_attachments.push(attachment);
+                    added += 1;
+                }
+            }
+            if added > 0 {
+                self.push_event(format!("attached {added} image{}", plural_s(added)));
+            }
+            return;
         }
+        self.composer.set_yank_text(text);
+        self.composer.paste();
     }
 
     async fn run_shell_command(&mut self, command: String) {
@@ -1027,10 +859,11 @@ impl TuiApp {
 
     fn render(&mut self, f: &mut Frame<'_>) {
         let area = f.area();
-        self.terminal_area = region_rect_from_ratatui(area);
+        style_composer_for_current_mode(&mut self.composer, self.theme);
         let event_height = event_log_height(self.show_event_log, self.events.len());
         let loader_height = if self.active_turn_id.is_some() { 1 } else { 0 };
-        let command_height = command_menu_height(self.command_menu_open());
+        let attachment_height = image_attachment_height(self.image_attachments.len());
+        let composer_height = self.composer.measure(area.width).preferred_rows;
         let mut constraints = Vec::new();
         if loader_height > 0 {
             constraints.push(Constraint::Length(loader_height));
@@ -1039,10 +872,10 @@ impl TuiApp {
         if event_height > 0 {
             constraints.push(Constraint::Length(event_height));
         }
-        if command_height > 0 {
-            constraints.push(Constraint::Length(command_height));
+        if attachment_height > 0 {
+            constraints.push(Constraint::Length(attachment_height));
         }
-        constraints.extend([Constraint::Length(3), Constraint::Length(1)]);
+        constraints.extend([Constraint::Length(composer_height), Constraint::Length(1)]);
 
         let chunks = Layout::default()
             .direction(Direction::Vertical)
@@ -1056,20 +889,11 @@ impl TuiApp {
             0
         };
         let transcript_index = header_index + 1;
-        let transcript_area = chunks[transcript_index];
-        self.transcript_scroll.set_target(if self.show_palette {
-            ScrollTarget::Palette
-        } else if self.diff_viewer.is_some() {
-            ScrollTarget::Diff
-        } else {
-            ScrollTarget::Transcript
-        });
-        self.transcript_scroll.set_bounds(
-            transcript_content_rows(self.visible_transcript_messages().len()),
-            usize::from(transcript_area.height),
-        );
         f.render_widget(self.header(area.width), chunks[header_index]);
-        f.render_widget(self.transcript(), chunks[transcript_index]);
+        f.render_widget(
+            self.transcript(chunks[transcript_index].height),
+            chunks[transcript_index],
+        );
 
         let mut composer_index = if event_height > 0 {
             f.render_widget(self.event_log(), chunks[transcript_index + 1]);
@@ -1077,57 +901,17 @@ impl TuiApp {
         } else {
             transcript_index + 1
         };
-        if command_height > 0 {
-            f.render_widget(self.command_menu(), chunks[composer_index]);
+        if attachment_height > 0 {
+            f.render_widget(self.image_attachment_bar(), chunks[composer_index]);
             composer_index += 1;
         }
-        let composer_area = chunks[composer_index];
-        let footer_area = chunks[composer_index + 1];
-        let mut interactive_regions = transcript_regions(
-            &self.scrolled_transcript_messages(),
-            &self.thread_id,
-            self.active_turn_id.as_deref().unwrap_or("tui"),
-            region_rect_from_ratatui(transcript_area),
-            &self.transcript_fold,
-        );
-        if self.show_palette {
-            interactive_regions.extend(self.palette_item_regions(area));
-        }
-        if self.diff_viewer.is_some() {
-            interactive_regions.extend(self.diff_hunk_regions(area));
-        }
-        if self.pending_plan_exit.is_some() {
-            interactive_regions.extend(self.policy_approval_regions(area));
-        }
-        self.mouse_feedback
-            .set_frame_regions(composer_area, footer_area, interactive_regions);
-        let composer_border_style = self
-            .mouse_feedback
-            .style_for_region(mouse_ui::COMPOSER_REGION_ID, self.theme.border());
-        self.composer
-            .set_block(composer_block(self.theme, composer_border_style));
         f.render_widget(&self.composer, chunks[composer_index]);
         f.render_widget(self.footer(area.width), chunks[composer_index + 1]);
 
         if self.show_provider_popup {
             self.render_provider_popup(f, area);
         }
-        if self.show_palette {
-            self.render_palette_popup(f, area);
-        }
-        if self.diff_viewer.is_some() {
-            self.render_diff_viewer(f, area);
-        }
-        if let Some(pending) = &self.pending_plan_exit {
-            policy_ui::render_policy_approval(f, area, pending, self.theme);
-        }
-        if self.show_help {
-            help::render_keymap_help(f, area, &self.keymap, self.theme);
-        }
-        if let Some(menu) = &self.transcript_context_menu {
-            self.render_transcript_context_menu(f, menu);
-        }
-        if let Some(dialog) = self.confirm_dialog {
+        if let Some(dialog) = self.confirm_dialog.clone() {
             self.render_confirm_dialog(f, area, dialog);
         }
     }
@@ -1169,42 +953,31 @@ impl TuiApp {
         ))
     }
 
-    fn transcript(&self) -> Paragraph<'static> {
-        let visible_messages = self.scrolled_transcript_messages();
-        let text = if visible_messages.is_empty() {
-            Text::from(vec![
+    fn transcript(&self, height: u16) -> Paragraph<'static> {
+        let lines = if self.messages.is_empty() {
+            vec![
                 Line::raw(""),
                 Line::from(Span::styled(
                     "No transcript yet. Ask Roder to inspect, edit, or run something.",
                     self.theme.muted().add_modifier(Modifier::ITALIC),
                 )),
-            ])
+            ]
         } else {
-            Text::from(
-                visible_messages
-                    .iter()
-                    .flat_map(|message| [message_line(message, self.theme), Line::raw("")])
-                    .collect::<Vec<_>>(),
-            )
+            self.messages
+                .iter()
+                .flat_map(|message| {
+                    let mut lines = message_lines(message, self.theme);
+                    lines.push(Line::raw(""));
+                    lines
+                })
+                .collect::<Vec<_>>()
         };
 
-        Paragraph::new(text).style(self.theme.text())
-    }
-
-    fn visible_transcript_messages(&self) -> Vec<String> {
-        self.messages
-            .iter()
-            .enumerate()
-            .map(|(idx, message)| self.transcript_fold.visible_message(idx, message))
-            .collect()
-    }
-
-    fn scrolled_transcript_messages(&self) -> Vec<String> {
-        let skip_messages = self.transcript_scroll.offset() / 2;
-        self.visible_transcript_messages()
-            .into_iter()
-            .skip(skip_messages)
-            .collect()
+        let scroll = transcript_scroll_offset(lines.len(), height);
+        Paragraph::new(Text::from(lines))
+            .style(self.theme.text())
+            .scroll((scroll, 0))
+            .wrap(Wrap { trim: false })
     }
 
     fn event_log(&self) -> Paragraph<'static> {
@@ -1231,83 +1004,88 @@ impl TuiApp {
             Text::from(lines)
         };
 
-        Paragraph::new(text).block(
-            Block::default()
-                .borders(Borders::TOP)
-                .border_style(self.theme.border())
-                .title(Span::styled(" events ", self.theme.muted())),
-        )
+        Paragraph::new(text)
+            .block(
+                Block::default()
+                    .borders(Borders::TOP)
+                    .border_style(self.theme.border())
+                    .title(Span::styled(" events ", self.theme.muted())),
+            )
+            .wrap(Wrap { trim: false })
     }
 
-    fn command_menu(&self) -> Paragraph<'static> {
-        let matches = self.matching_slash_commands();
-        let selected = self.slash_selected.min(matches.len().saturating_sub(1));
-        let lines = matches
-            .into_iter()
-            .take(4)
-            .enumerate()
-            .map(|(index, command)| {
-                let style = if index == selected {
-                    self.theme.selected()
-                } else {
-                    self.theme.text()
-                };
-                let mut spans = vec![
+    fn image_attachment_bar(&self) -> Paragraph<'static> {
+        let hidden = self.image_attachments.len().saturating_sub(3);
+        let mut lines = self
+            .image_attachments
+            .iter()
+            .rev()
+            .take(3)
+            .rev()
+            .map(|attachment| {
+                Line::from(vec![
+                    Span::styled("image ", self.theme.accent_soft()),
+                    Span::styled(attachment.label(), self.theme.text()),
                     Span::styled(
-                        if index == selected { "› " } else { "  " },
-                        self.theme.subtle(),
-                    ),
-                    Span::styled(format!("/{}", command.name), style),
-                ];
-                if let Some(hint) = &command.argument_hint {
-                    spans.push(Span::styled(format!(" {hint}"), self.theme.muted()));
-                }
-                if let Some(description) = &command.description {
-                    spans.push(Span::styled(
-                        format!("  {}", truncate(description, 44)),
+                        format!("  {}", attachment.path.display()),
                         self.theme.muted(),
-                    ));
-                }
-                if let Some(warning) = commands::command_warning(command) {
-                    spans.push(Span::styled(format!("  {warning}"), self.theme.tool()));
-                }
-                Line::from(spans)
+                    ),
+                ])
             })
             .collect::<Vec<_>>();
-
-        Paragraph::new(Text::from(lines)).block(
-            Block::default()
-                .borders(Borders::TOP)
-                .border_style(self.theme.border())
-                .title(Span::styled(" commands  tab complete ", self.theme.muted())),
-        )
+        if hidden > 0 {
+            lines.push(Line::from(Span::styled(
+                format!("+{hidden} more image{}", plural_s(hidden)),
+                self.theme.muted(),
+            )));
+        }
+        Paragraph::new(Text::from(lines))
+            .block(
+                Block::default()
+                    .borders(Borders::TOP)
+                    .border_style(self.theme.border())
+                    .title(Span::styled(" attached images ", self.theme.muted())),
+            )
+            .wrap(Wrap { trim: false })
     }
 
     fn footer(&self, width: u16) -> Paragraph<'static> {
-        let session = SessionSummary {
-            thread_id: self.thread_id.clone(),
-            title: None,
+        let status = if self.active_turn_id.is_some() {
+            "running"
+        } else {
+            "ready"
         };
-        let mcp: &[McpServerStatus] = &[];
-        let ctx = StatusContext {
-            session: &session,
-            policy_mode: self.policy_mode,
-            model: Some(&self.model),
-            usage: None,
-            git: self.status_git.as_ref(),
-            mcp,
+        let pending_hint = self
+            .pending_plan_exit
+            .as_ref()
+            .map(|pending| {
+                let summary = pending.plan_summary.as_deref().unwrap_or("plan exit");
+                format!(
+                    "  exit plan? y approve / n reject: {}",
+                    truncate(summary, 36)
+                )
+            })
+            .unwrap_or_default();
+        let shell_hint = if composer_mode(&self.composer).is_shell() {
+            "  shell mode"
+        } else {
+            ""
         };
-        let mut segments = self.status_segments.clone();
-        if let Some(segment) = self.mouse_feedback.status_segment() {
-            segments.push(segment);
-        }
-        render_status_line(
-            &segments,
-            &ctx,
+        Paragraph::new(line_with_gap(
+            vec![Span::styled(
+                format!(
+                    " {status}  mode:{}{pending_hint}{shell_hint}  enter send  shift+enter newline  shift+tab mode  paste/drag images  ! shell  ctrl+p provider/model  ctrl+l events  esc interrupt  ctrl+c exit",
+                    policy_mode_label(self.policy_mode)
+                ),
+                self.theme.subtle(),
+            )],
+            vec![Span::styled(
+                format!("events {} ", self.events.len()),
+                self.theme.muted(),
+            )],
             width,
-            &self.status_config,
-            self.theme.status_line(),
-        )
+            self.theme.subtle(),
+        ))
     }
 
     fn render_provider_popup(&mut self, f: &mut Frame<'_>, area: Rect) {
@@ -1358,314 +1136,8 @@ impl TuiApp {
         f.render_stateful_widget(menu, menu_area, &mut self.provider_state);
     }
 
-    fn render_confirm_dialog(&self, f: &mut Frame<'_>, area: Rect, dialog: ConfirmDialog) {
+    fn render_confirm_dialog(&self, f: &mut Frame<'_>, area: Rect, dialog: ConfirmDialogState) {
         dialog::render_confirm_dialog(f, area, dialog, self.theme);
-    }
-
-    fn render_transcript_context_menu(&self, f: &mut Frame<'_>, menu: &TranscriptContextMenu) {
-        let area = Rect::new(menu.area.x, menu.area.y, menu.area.width, menu.area.height);
-        let text = Text::from(vec![
-            Line::from(Span::styled("copy", self.theme.text())),
-            Line::from(Span::styled("fold", self.theme.text())),
-            Line::from(Span::styled("jump", self.theme.text())),
-        ]);
-        let widget = Paragraph::new(text)
-            .style(self.theme.dialog_surface())
-            .block(
-                Block::default()
-                    .borders(Borders::ALL)
-                    .border_type(BorderType::Rounded)
-                    .border_style(self.theme.dialog())
-                    .title(Span::styled(
-                        format!(" msg {} ", menu.message_idx),
-                        self.theme.accent(),
-                    )),
-            );
-        f.render_widget(Clear, area);
-        f.render_widget(widget, area);
-    }
-
-    async fn handle_interactive_events(
-        &mut self,
-        events: Vec<InteractiveEvent>,
-        at: (u16, u16),
-    ) -> Vec<MouseCaptureEvent> {
-        let mut capture_events = Vec::new();
-        for event in events {
-            self.handle_drag_selection_event(&event);
-            match &event {
-                InteractiveEvent::Scroll {
-                    delta_lines,
-                    modifiers,
-                    ..
-                } => {
-                    if let Some(event) = self.handle_scroll_event(*delta_lines, *modifiers) {
-                        capture_events.push(event);
-                    }
-                }
-                InteractiveEvent::Click {
-                    region,
-                    button: MouseButton::Left,
-                    ..
-                }
-                | InteractiveEvent::DoubleClick { region, .. } => {
-                    self.transcript_context_menu = None;
-                    self.handle_region_with_extensions(&event, region, None)
-                        .await;
-                }
-                InteractiveEvent::RightClick { region, .. } => {
-                    self.handle_region_with_extensions(&event, region, Some(at))
-                        .await;
-                }
-                _ => {}
-            }
-        }
-        capture_events
-    }
-
-    async fn handle_region_with_extensions(
-        &mut self,
-        event: &InteractiveEvent,
-        region: &str,
-        right_click_at: Option<(u16, u16)>,
-    ) {
-        if !self.dispatch_region_handlers(event, region).await {
-            self.handle_region_action(region, right_click_at).await;
-        }
-    }
-
-    async fn dispatch_region_handlers(
-        &mut self,
-        event: &InteractiveEvent,
-        region_id: &str,
-    ) -> bool {
-        let Some(region) = self.mouse_feedback.region(region_id).cloned() else {
-            return false;
-        };
-        let kind = region_kind_name(&region.kind);
-        let handlers = self.interactive_region_handlers.clone();
-        for handler in handlers {
-            if !handler.kinds().iter().any(|candidate| candidate == kind) {
-                continue;
-            }
-            match handler.handle(event.clone(), &region).await {
-                Ok(HandlerOutcome::Consumed) => return true,
-                Ok(HandlerOutcome::InvalidateRender) => {
-                    self.push_event(format!("interactive region invalidated: {region_id}"));
-                    return true;
-                }
-                Ok(HandlerOutcome::Passthrough) => {}
-                Err(err) => self.record_error(format!("interactive handler failed: {err}")),
-            }
-        }
-        false
-    }
-
-    fn handle_scroll_event(
-        &mut self,
-        delta_lines: i16,
-        modifiers: roder_api::interactive::KeyModifiers,
-    ) -> Option<MouseCaptureEvent> {
-        let outcome = self.transcript_scroll.scroll(delta_lines, modifiers);
-        if outcome.at_boundary {
-            let event = self
-                .mouse_capture
-                .release_for_boundary_scroll(self.animation_frame);
-            self.push_event(format!("scroll boundary: {:?}", outcome.target));
-            return event;
-        }
-        None
-    }
-
-    fn handle_drag_selection_event(&mut self, event: &InteractiveEvent) {
-        let Some(region_id) = interactive_region_id(event) else {
-            return;
-        };
-        let region = self.mouse_feedback.region(region_id).cloned();
-        let transcript_lines = self.visible_transcript_messages();
-        let composer_value = composer_text(&self.composer);
-        let Some(outcome) = self.drag_selection.apply_event(
-            event,
-            region.as_ref(),
-            &transcript_lines,
-            &composer_value,
-        ) else {
-            return;
-        };
-        match outcome {
-            DragSelectionOutcome::Started(_) | DragSelectionOutcome::Updated => {}
-            DragSelectionOutcome::Finalized(SelectedText::Transcript(text)) => {
-                self.selection_keyboard
-                    .remember(SelectedText::Transcript(text.clone()));
-                self.push_event(format!(
-                    "transcript selection finalized: {} chars",
-                    text.chars().count()
-                ));
-            }
-            DragSelectionOutcome::Finalized(SelectedText::Composer(text)) => {
-                self.selection_keyboard
-                    .remember(SelectedText::Composer(text.clone()));
-                self.push_event(format!(
-                    "composer selection finalized: {} chars",
-                    text.chars().count()
-                ));
-            }
-            DragSelectionOutcome::ClearedTooShort => {
-                self.push_event("selection cleared: too short".to_string());
-            }
-        }
-    }
-
-    fn handle_selection_keyboard_action(&mut self, key: crossterm::event::KeyEvent) -> bool {
-        if self.keymap.matches_key_event(Action::CopySelection, &key) {
-            match self.selection_keyboard.copy_last_selection() {
-                Ok(Some(chars)) => self.push_event(format!("selection copied: {chars} chars")),
-                Ok(None) => self.push_event("selection copy skipped: no selection".to_string()),
-                Err(err) => self.record_error(format!("selection copy failed: {err}")),
-            }
-            return true;
-        }
-
-        if self.keymap.matches_key_event(Action::PasteToComposer, &key) {
-            let Some(text) = self.selection_keyboard.paste_text() else {
-                self.push_event("selection paste skipped: empty clipboard".to_string());
-                return true;
-            };
-            let chars = text.chars().count();
-            self.composer.insert_str(text);
-            self.clamp_slash_selection();
-            self.push_event(format!("selection pasted: {chars} chars"));
-            return true;
-        }
-
-        false
-    }
-
-    async fn handle_focus_keyboard_action(&mut self, key: crossterm::event::KeyEvent) -> bool {
-        if self.keymap.matches_key_event(Action::FocusNextRegion, &key) {
-            if let Some(region) = self.mouse_feedback.focus_next_region().map(str::to_string) {
-                self.push_event(format!("focused region: {region}"));
-            }
-            return true;
-        }
-
-        if self
-            .keymap
-            .matches_key_event(Action::FocusPreviousRegion, &key)
-        {
-            if let Some(region) = self
-                .mouse_feedback
-                .focus_previous_region()
-                .map(str::to_string)
-            {
-                self.push_event(format!("focused region: {region}"));
-            }
-            return true;
-        }
-
-        let Some(region_id) = self.mouse_feedback.focused_region_id().map(str::to_string) else {
-            return false;
-        };
-        let Some(region) = self.mouse_feedback.region(&region_id).cloned() else {
-            return false;
-        };
-        let Some(activation) = focused_region_activation(&self.keymap, &key, &region) else {
-            return false;
-        };
-        let event = match activation {
-            FocusedRegionActivation::Click => InteractiveEvent::Click {
-                region: region_id.clone(),
-                modifiers: roder_api::interactive::KeyModifiers::default(),
-                button: MouseButton::Left,
-            },
-            FocusedRegionActivation::ContextMenu => InteractiveEvent::RightClick {
-                region: region_id.clone(),
-                modifiers: roder_api::interactive::KeyModifiers::default(),
-            },
-        };
-        let right_click_at = (activation == FocusedRegionActivation::ContextMenu)
-            .then(|| region_center(region.rect));
-        self.handle_region_with_extensions(&event, &region_id, right_click_at)
-            .await;
-        true
-    }
-
-    async fn handle_region_action(&mut self, region_id: &str, right_click_at: Option<(u16, u16)>) {
-        let Some(region) = self.mouse_feedback.region(region_id).cloned() else {
-            return;
-        };
-        if let RegionKind::PaletteItem { source_id, item_id } = region.kind {
-            self.execute_palette_item(&source_id, &item_id).await;
-            return;
-        }
-        if let RegionKind::DiffHunk { hunk_idx, .. } = region.kind {
-            self.handle_diff_region_click(&region.id, hunk_idx).await;
-            return;
-        }
-        if let RegionKind::PolicyApprovalButton { vote, .. } = region.kind {
-            self.resolve_pending_plan_exit(vote == ApprovalVote::Approve)
-                .await;
-            return;
-        }
-        let Some(action) = action_for_region(&region, right_click_at) else {
-            return;
-        };
-        match action {
-            TranscriptAction::ToggleToolCall { call_id } => {
-                let expanded = self.transcript_fold.toggle_tool_call(call_id.clone());
-                self.push_event(format!(
-                    "tool call {}: {call_id}",
-                    if expanded { "expanded" } else { "collapsed" }
-                ));
-                self.persist_transcript_fold().await;
-            }
-            TranscriptAction::ToggleMessage { message_idx } => {
-                let expanded = self.transcript_fold.toggle_message(message_idx);
-                self.push_event(format!(
-                    "message {}: {message_idx}",
-                    if expanded { "expanded" } else { "folded" }
-                ));
-                self.persist_transcript_fold().await;
-            }
-            TranscriptAction::OpenUrl { url } => {
-                match transcript_open::copy_url_fallback(&mut self.selection_keyboard, &url) {
-                    Ok(outcome) => {
-                        self.messages.push(outcome.message);
-                        self.push_event(outcome.event);
-                    }
-                    Err(err) => self.record_error(format!("URL open failed: {err}")),
-                }
-            }
-            TranscriptAction::OpenFile { path, line } => {
-                match transcript_open::request_file_open(&self.client, &self.thread_id, &path, line)
-                    .await
-                {
-                    Ok(outcome) => {
-                        self.messages.push(outcome.message);
-                        self.push_event(outcome.event);
-                    }
-                    Err(open_err) => {
-                        match transcript_open::copy_file_fallback(
-                            &mut self.selection_keyboard,
-                            &path,
-                            line,
-                        ) {
-                            Ok(outcome) => {
-                                self.messages.push(outcome.message);
-                                self.push_event(outcome.event);
-                            }
-                            Err(copy_err) => self.record_error(format!(
-                                "file open failed: {open_err}; fallback copy failed: {copy_err}"
-                            )),
-                        }
-                    }
-                }
-            }
-            TranscriptAction::OpenContextMenu { message_idx, at } => {
-                self.transcript_context_menu =
-                    Some(context_menu_region(message_idx, at, self.terminal_area));
-            }
-        }
     }
 
     async fn open_provider_popup(&mut self) {
@@ -1906,15 +1378,6 @@ impl TuiApp {
         self.push_event(format!("error: {message}"));
     }
 
-    async fn persist_transcript_fold(&mut self) {
-        if let Err(err) =
-            transcript_fold_persistence::save(&self.client, &self.thread_id, &self.transcript_fold)
-                .await
-        {
-            self.record_error(format!("transcript fold state save failed: {err}"));
-        }
-    }
-
     fn push_event(&mut self, event: String) {
         self.events.push(event);
         if self.events.len() > 12 {
@@ -1972,44 +1435,181 @@ fn event_log_height(show_event_log: bool, event_count: usize) -> u16 {
     }
 }
 
-fn transcript_content_rows(message_count: usize) -> usize {
-    message_count.saturating_mul(2)
+fn transcript_scroll_offset(line_count: usize, height: u16) -> u16 {
+    line_count.saturating_sub(usize::from(height)) as u16
 }
 
-fn command_menu_height(open: bool) -> u16 {
-    if open { 5 } else { 0 }
+fn image_attachment_height(count: usize) -> u16 {
+    if count == 0 {
+        0
+    } else {
+        (count as u16 + 1).clamp(2, 4)
+    }
 }
 
-fn composer_textarea(theme: Theme) -> TextArea<'static> {
-    let mut composer = TextArea::default();
-    composer.set_block(composer_block(theme, theme.border()));
-    composer.set_style(theme.text());
-    composer.set_cursor_line_style(theme.text());
-    composer.set_cursor_style(
-        Style::default()
-            .fg(theme.selection_fg)
-            .bg(theme.selection_bg),
+fn image_attachments_from_paste(text: &str) -> Option<Vec<ImageAttachment>> {
+    let tokens = shell_like_tokens(text);
+    if tokens.is_empty() {
+        return None;
+    }
+    let mut attachments = Vec::new();
+    for token in tokens {
+        let path = image_path_from_token(&token)?;
+        if !attachments
+            .iter()
+            .any(|existing: &ImageAttachment| existing.path == path)
+        {
+            attachments.push(ImageAttachment::new(path));
+        }
+    }
+    (!attachments.is_empty()).then_some(attachments)
+}
+
+fn image_path_from_token(token: &str) -> Option<PathBuf> {
+    let path = if let Some(uri) = token.strip_prefix("file://") {
+        PathBuf::from(percent_decode(uri)?)
+    } else {
+        expand_home_path(token)
+    };
+    is_image_path(&path).then_some(path)
+}
+
+fn is_image_path(path: &Path) -> bool {
+    let Some(ext) = path.extension().and_then(|ext| ext.to_str()) else {
+        return false;
+    };
+    let image_ext = matches!(
+        ext.to_ascii_lowercase().as_str(),
+        "png"
+            | "jpg"
+            | "jpeg"
+            | "gif"
+            | "webp"
+            | "bmp"
+            | "tif"
+            | "tiff"
+            | "heic"
+            | "heif"
+            | "avif"
+            | "svg"
     );
-    composer.set_placeholder_text("Ask Roder to work on this repo");
-    composer.set_placeholder_style(theme.muted().add_modifier(Modifier::ITALIC));
-    composer
+    if !image_ext {
+        return false;
+    }
+    path.is_absolute()
+        || path.exists()
+        || path.starts_with(".")
+        || path.starts_with("..")
+        || path.to_string_lossy().starts_with('~')
 }
 
-fn composer_block(theme: Theme, border_style: Style) -> Block<'static> {
-    Block::default()
-        .borders(Borders::ALL)
-        .border_type(BorderType::Rounded)
-        .border_style(border_style)
-        .title(Span::styled(" composer ", theme.muted()))
+fn shell_like_tokens(text: &str) -> Vec<String> {
+    let mut tokens = Vec::new();
+    let mut current = String::new();
+    let mut quote = None;
+    let mut chars = text.trim().chars().peekable();
+    while let Some(ch) = chars.next() {
+        match (ch, quote) {
+            ('\\', _) => {
+                if let Some(next) = chars.next() {
+                    current.push(next);
+                }
+            }
+            ('\'' | '"', None) => quote = Some(ch),
+            ('\'' | '"', Some(active)) if active == ch => quote = None,
+            (ch, None) if ch.is_whitespace() => {
+                if !current.is_empty() {
+                    tokens.push(std::mem::take(&mut current));
+                }
+            }
+            _ => current.push(ch),
+        }
+    }
+    if !current.is_empty() {
+        tokens.push(current);
+    }
+    tokens
 }
 
-fn composer_text(composer: &TextArea<'_>) -> String {
-    composer.lines().join("\n")
+fn percent_decode(value: &str) -> Option<String> {
+    let bytes = value.as_bytes();
+    let mut decoded = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'%' {
+            let hi = bytes.get(i + 1).copied()?;
+            let lo = bytes.get(i + 2).copied()?;
+            decoded.push(hex_value(hi)? * 16 + hex_value(lo)?);
+            i += 3;
+        } else {
+            decoded.push(bytes[i]);
+            i += 1;
+        }
+    }
+    String::from_utf8(decoded).ok()
 }
 
-fn shell_command_from_input(input: &str) -> Option<String> {
-    let command = input.strip_prefix('!')?.trim();
-    (!command.is_empty()).then(|| command.to_string())
+fn hex_value(byte: u8) -> Option<u8> {
+    match byte {
+        b'0'..=b'9' => Some(byte - b'0'),
+        b'a'..=b'f' => Some(byte - b'a' + 10),
+        b'A'..=b'F' => Some(byte - b'A' + 10),
+        _ => None,
+    }
+}
+
+fn expand_home_path(value: &str) -> PathBuf {
+    if let Some(stripped) = value.strip_prefix("~/")
+        && let Some(home) = std::env::var_os("HOME")
+    {
+        return PathBuf::from(home).join(stripped);
+    }
+    PathBuf::from(value)
+}
+
+fn message_with_image_attachments(text: &str, attachments: &[ImageAttachment]) -> String {
+    let mut message = text.to_string();
+    if attachments.is_empty() {
+        return message;
+    }
+    if !message.is_empty() {
+        message.push_str("\n\n");
+    }
+    message.push_str("Attached image file paths:");
+    for attachment in attachments {
+        message.push_str("\n- ");
+        message.push_str(&attachment.path.display().to_string());
+    }
+    message
+}
+
+fn transcript_message_with_image_attachments(
+    text: &str,
+    attachments: &[ImageAttachment],
+) -> String {
+    if attachments.is_empty() {
+        return text.to_string();
+    }
+    let image_labels = attachments
+        .iter()
+        .map(ImageAttachment::label)
+        .collect::<Vec<_>>()
+        .join(", ");
+    if text.is_empty() {
+        format!(
+            "attached image{}: {image_labels}",
+            plural_s(attachments.len())
+        )
+    } else {
+        format!(
+            "{text}\nattached image{}: {image_labels}",
+            plural_s(attachments.len())
+        )
+    }
+}
+
+fn plural_s(count: usize) -> &'static str {
+    if count == 1 { "" } else { "s" }
 }
 
 async fn run_shell_command(command: String) -> anyhow::Result<String> {
@@ -2162,66 +1762,6 @@ async fn session_get(client: &LocalAppClient) -> anyhow::Result<SessionGetResult
     decode_response(res)
 }
 
-async fn sessions_list(
-    client: &LocalAppClient,
-) -> anyhow::Result<Vec<roder_api::session::SessionMetadata>> {
-    let res = client
-        .send_request(JsonRpcRequest {
-            jsonrpc: "2.0".to_string(),
-            id: Some(serde_json::json!("sessions/list")),
-            method: "sessions/list".to_string(),
-            params: None,
-        })
-        .await;
-    Ok(decode_response::<SessionsListResult>(res)?.sessions)
-}
-
-async fn agents_list(client: &LocalAppClient) -> anyhow::Result<Vec<AgentDescriptor>> {
-    let res = client
-        .send_request(JsonRpcRequest {
-            jsonrpc: "2.0".to_string(),
-            id: Some(serde_json::json!("agents/list")),
-            method: "agents/list".to_string(),
-            params: None,
-        })
-        .await;
-    Ok(decode_response::<AgentsListResult>(res)?.agents)
-}
-
-async fn commands_list(client: &LocalAppClient) -> anyhow::Result<Vec<CommandDescriptor>> {
-    let res = client
-        .send_request(JsonRpcRequest {
-            jsonrpc: "2.0".to_string(),
-            id: Some(serde_json::json!("commands/list")),
-            method: "commands/list".to_string(),
-            params: None,
-        })
-        .await;
-    Ok(decode_response::<CommandsListResult>(res)?.commands)
-}
-
-async fn commands_expand(
-    client: &LocalAppClient,
-    name: &str,
-    arguments: &str,
-) -> anyhow::Result<CommandsExpandResult> {
-    let res = client
-        .send_request(JsonRpcRequest {
-            jsonrpc: "2.0".to_string(),
-            id: Some(serde_json::json!("commands/expand")),
-            method: "commands/expand".to_string(),
-            params: Some(
-                serde_json::to_value(CommandsExpandParams {
-                    name: name.to_string(),
-                    arguments: Some(arguments.to_string()),
-                })
-                .unwrap(),
-            ),
-        })
-        .await;
-    decode_response(res)
-}
-
 fn next_policy_mode(mode: PolicyMode) -> PolicyMode {
     match mode {
         PolicyMode::Default => PolicyMode::AcceptEdits,
@@ -2247,88 +1787,99 @@ fn truncate(value: &str, max_chars: usize) -> String {
     out
 }
 
+#[cfg(test)]
 fn message_line(message: &str, theme: Theme) -> Line<'static> {
-    if let Some(body) = message.strip_prefix("user: ") {
-        let mut spans = vec![
-            Span::styled("│ ", theme.accent()),
-            Span::styled("you ", theme.accent()),
-        ];
-        spans.extend(linked_body_spans(body, theme.text(), theme.accent_soft()));
-        return Line::from(spans);
+    let mut lines = message_lines(message, theme);
+    if lines.is_empty() {
+        return Line::raw("");
     }
-    if let Some(body) = message.strip_prefix("assistant: ") {
-        let mut spans = vec![
-            Span::styled("│ ", theme.accent_soft()),
-            Span::styled("roder ", theme.strong()),
-        ];
-        spans.extend(linked_body_spans(body, theme.text(), theme.accent_soft()));
-        return Line::from(spans);
-    }
-    if let Some(body) = message.strip_prefix("error: ") {
-        return Line::from(vec![
-            Span::styled("! ", theme.error()),
-            Span::styled(body.to_string(), theme.error()),
-        ]);
-    }
-    if let Some(body) = message.strip_prefix("executed slash command: ") {
-        return Line::from(vec![
-            Span::styled("/ ", theme.tool()),
-            Span::styled(body.to_string(), theme.muted()),
-        ]);
-    }
-    if let Some(body) = message.strip_prefix("command preview: ") {
-        return Line::from(vec![
-            Span::styled("↳ ", theme.subtle()),
-            Span::styled(body.to_string(), theme.muted()),
-        ]);
-    }
-    if let Some(body) = message.strip_prefix("shell: ") {
-        let mut spans = vec![Span::styled("$ ", theme.tool())];
-        spans.extend(linked_body_spans(body, theme.text(), theme.tool()));
-        return Line::from(spans);
-    }
-    if let Some(body) = message.strip_prefix("shell output: ") {
-        let mut spans = vec![Span::styled("↳ ", theme.subtle())];
-        spans.extend(linked_body_spans(body, theme.muted(), theme.tool()));
-        return Line::from(spans);
-    }
-    if let Some(body) = message.strip_prefix("system: ") {
-        return Line::from(vec![
-            Span::styled("• ", theme.subtle()),
-            Span::styled(body.to_string(), theme.muted()),
-        ]);
-    }
-    Line::from(Span::styled(message.to_string(), theme.text()))
+    lines.remove(0)
 }
 
-fn linked_body_spans(body: &str, default_style: Style, link_style: Style) -> Vec<Span<'static>> {
-    let mut spans = Vec::new();
-    let mut cursor = 0usize;
-    for link in link_spans(body) {
-        if link.start > body.len()
-            || link.end > body.len()
-            || link.start >= link.end
-            || !body.is_char_boundary(link.start)
-            || !body.is_char_boundary(link.end)
-        {
-            continue;
-        }
-        if cursor < link.start {
-            spans.push(Span::styled(
-                body[cursor..link.start].to_string(),
-                default_style,
-            ));
-        }
-        spans.push(Span::styled(
-            body[link.start..link.end].to_string(),
-            link_style.add_modifier(Modifier::UNDERLINED),
-        ));
-        cursor = link.end;
+fn message_lines(message: &str, theme: Theme) -> Vec<Line<'static>> {
+    if let Some(body) = message.strip_prefix("user: ") {
+        return role_message_lines("", "", body, theme.accent(), theme.accent(), theme.text());
     }
-    if cursor < body.len() {
-        spans.push(Span::styled(body[cursor..].to_string(), default_style));
+    if let Some(body) = message.strip_prefix("assistant: ") {
+        return role_message_lines(
+            "",
+            "",
+            body,
+            theme.accent_soft(),
+            theme.strong(),
+            theme.text(),
+        );
     }
-    spans
+    if let Some(body) = message.strip_prefix("error: ") {
+        return simple_message_lines("! ", body, theme.error(), theme.error());
+    }
+    if let Some(body) = message.strip_prefix("executed slash command: ") {
+        return simple_message_lines("/ ", body, theme.tool(), theme.muted());
+    }
+    if let Some(body) = message.strip_prefix("tool: ") {
+        return simple_message_lines("◆ ", body, theme.tool(), theme.muted());
+    }
+    if let Some(body) = message.strip_prefix("shell: ") {
+        return simple_message_lines("$ ", body, theme.tool(), theme.text());
+    }
+    if let Some(body) = message.strip_prefix("shell output: ") {
+        return simple_message_lines("↳ ", body, theme.subtle(), theme.muted());
+    }
+    if let Some(body) = message.strip_prefix("system: ") {
+        return simple_message_lines("• ", body, theme.subtle(), theme.muted());
+    }
+    body_lines(message)
+        .map(|line| Line::from(Span::styled(line, theme.text())))
+        .collect()
+}
+
+fn role_message_lines(
+    marker: &'static str,
+    label: &'static str,
+    body: &str,
+    marker_style: Style,
+    label_style: Style,
+    body_style: Style,
+) -> Vec<Line<'static>> {
+    body_lines(body)
+        .enumerate()
+        .map(|(index, line)| {
+            if index == 0 {
+                return Line::from(vec![
+                    Span::styled(marker, marker_style),
+                    Span::styled(label, label_style),
+                    Span::styled(line, body_style),
+                ]);
+            }
+            let continuation_marker = if marker.is_empty() { "" } else { "  " };
+            Line::from(vec![
+                Span::styled(continuation_marker, marker_style),
+                Span::styled(line, body_style),
+            ])
+        })
+        .collect()
+}
+
+fn simple_message_lines(
+    marker: &'static str,
+    body: &str,
+    marker_style: Style,
+    body_style: Style,
+) -> Vec<Line<'static>> {
+    body_lines(body)
+        .enumerate()
+        .map(|(index, line)| {
+            let marker = if index == 0 { marker } else { "  " };
+            Line::from(vec![
+                Span::styled(marker, marker_style),
+                Span::styled(line, body_style),
+            ])
+        })
+        .collect()
+}
+
+fn body_lines(body: &str) -> impl Iterator<Item = String> + '_ {
+    body.split('\n').map(str::to_string)
 }
 
 fn line_with_gap(
@@ -2345,94 +1896,6 @@ fn line_with_gap(
     left.push(Span::styled(" ".repeat(gap), gap_style));
     left.extend(right);
     Line::from(left)
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum FocusedRegionActivation {
-    Click,
-    ContextMenu,
-}
-
-fn focused_region_activation(
-    keymap: &Keymap,
-    key: &crossterm::event::KeyEvent,
-    region: &InteractiveRegion,
-) -> Option<FocusedRegionActivation> {
-    let click_action = match &region.kind {
-        RegionKind::ToolCallBlock { expanded, .. } => {
-            if *expanded {
-                Action::CollapseToolCall
-            } else {
-                Action::ExpandToolCall
-            }
-        }
-        RegionKind::Url(_) => Action::OpenUrl,
-        RegionKind::FileReference { .. } => Action::OpenFileRef,
-        RegionKind::TranscriptMessage { .. } => {
-            if keymap.matches_key_event(Action::OpenContextMenu, key) {
-                return Some(FocusedRegionActivation::ContextMenu);
-            }
-            Action::FoldMessage
-        }
-        RegionKind::DiffHunk { .. } if region.id.ends_with(":accept") => Action::ApproveHunk,
-        RegionKind::DiffHunk { .. } if region.id.ends_with(":reject") => Action::RejectHunk,
-        RegionKind::PolicyApprovalButton {
-            vote: ApprovalVote::Approve,
-            ..
-        } => Action::ApproveHunk,
-        RegionKind::PolicyApprovalButton {
-            vote: ApprovalVote::Reject,
-            ..
-        } => Action::RejectHunk,
-        _ => return None,
-    };
-    keymap
-        .matches_key_event(click_action, key)
-        .then_some(FocusedRegionActivation::Click)
-}
-
-fn region_center(rect: RegionRect) -> (u16, u16) {
-    (
-        rect.x.saturating_add(rect.width / 2),
-        rect.y.saturating_add(rect.height / 2),
-    )
-}
-
-fn interactive_region_id(event: &InteractiveEvent) -> Option<&str> {
-    match event {
-        InteractiveEvent::HoverEnter { region }
-        | InteractiveEvent::HoverLeave { region }
-        | InteractiveEvent::Click { region, .. }
-        | InteractiveEvent::DoubleClick { region, .. }
-        | InteractiveEvent::RightClick { region, .. }
-        | InteractiveEvent::DragStart { region, .. }
-        | InteractiveEvent::DragUpdate { region, .. }
-        | InteractiveEvent::DragEnd { region, .. } => Some(region),
-        InteractiveEvent::Scroll { region, .. } => region.as_deref(),
-    }
-}
-
-fn region_kind_name(kind: &RegionKind) -> &'static str {
-    match kind {
-        RegionKind::TranscriptMessage { .. } => "TranscriptMessage",
-        RegionKind::ToolCallBlock { .. } => "ToolCallBlock",
-        RegionKind::FileReference { .. } => "FileReference",
-        RegionKind::Url(_) => "Url",
-        RegionKind::AttachmentThumbnail { .. } => "AttachmentThumbnail",
-        RegionKind::StatusSegment { .. } => "StatusSegment",
-        RegionKind::PaletteItem { .. } => "PaletteItem",
-        RegionKind::DiffHunk { .. } => "DiffHunk",
-        RegionKind::PolicyApprovalButton { .. } => "PolicyApprovalButton",
-        RegionKind::Composer => "Composer",
-        RegionKind::Custom { .. } => "Custom",
-    }
-}
-
-fn mouse_capture_event_label(event: MouseCaptureEvent) -> &'static str {
-    match event {
-        MouseCaptureEvent::CaptureEnabled => "mouse capture enabled",
-        MouseCaptureEvent::CaptureDisabled => "mouse capture disabled",
-    }
 }
 
 fn spans_width(spans: &[Span<'_>]) -> usize {
@@ -2459,20 +1922,6 @@ fn detect_dark_background() -> bool {
         })
         .map(|bg| matches!(bg, 0..=6 | 8))
         .unwrap_or(true)
-}
-
-fn current_git_snapshot() -> Option<GitSnapshot> {
-    let output = std::process::Command::new("git")
-        .args(["branch", "--show-current"])
-        .output()
-        .ok()?;
-    if !output.status.success() {
-        return None;
-    }
-    let branch = String::from_utf8_lossy(&output.stdout).trim().to_string();
-    Some(GitSnapshot {
-        branch: (!branch.is_empty()).then_some(branch),
-    })
 }
 
 fn short_id(id: &str) -> &str {
@@ -2506,6 +1955,7 @@ mod tests {
                 theme.accent_soft,
                 theme.tool,
                 theme.tool_running,
+                theme.shell,
                 theme.error,
                 theme.border,
                 theme.dialog,
@@ -2520,6 +1970,45 @@ mod tests {
             assert!(!colors.contains(&Color::White));
             assert!(!colors.contains(&Color::Black));
         }
+    }
+
+    #[test]
+    fn confirm_dialog_defaults_to_yes_to_preserve_enter_confirm() {
+        let state = ConfirmDialogState::new(ConfirmDialog::Interrupt);
+
+        assert_eq!(state.selected, ConfirmChoice::Yes);
+        assert_eq!(
+            confirm_action_for_key(KeyCode::Enter, state.selected),
+            ConfirmKeyAction::Confirm
+        );
+    }
+
+    #[test]
+    fn confirm_dialog_arrow_keys_select_yes_and_no() {
+        assert_eq!(
+            confirm_action_for_key(KeyCode::Left, ConfirmChoice::No),
+            ConfirmKeyAction::Select(ConfirmChoice::Yes)
+        );
+        assert_eq!(
+            confirm_action_for_key(KeyCode::Right, ConfirmChoice::Yes),
+            ConfirmKeyAction::Select(ConfirmChoice::No)
+        );
+        assert_eq!(
+            confirm_action_for_key(KeyCode::Enter, ConfirmChoice::No),
+            ConfirmKeyAction::Cancel
+        );
+    }
+
+    #[test]
+    fn confirm_dialog_keeps_y_and_n_quickbinds() {
+        assert_eq!(
+            confirm_action_for_key(KeyCode::Char('y'), ConfirmChoice::No),
+            ConfirmKeyAction::Confirm
+        );
+        assert_eq!(
+            confirm_action_for_key(KeyCode::Char('n'), ConfirmChoice::Yes),
+            ConfirmKeyAction::Cancel
+        );
     }
 
     #[test]
@@ -2546,7 +2035,41 @@ mod tests {
             .iter()
             .map(|span| span.content.as_ref())
             .collect::<String>();
-        assert_eq!(rendered, "│ roder hello");
+        assert_eq!(rendered, "hello");
+    }
+
+    #[test]
+    fn message_lines_preserve_multiline_assistant_output() {
+        let lines = message_lines(
+            "assistant: Created files:\n\n- `Package.swift`",
+            Theme::for_dark_background(true),
+        );
+        let rendered = lines
+            .iter()
+            .map(|line| {
+                line.spans
+                    .iter()
+                    .map(|span| span.content.as_ref())
+                    .collect::<String>()
+            })
+            .collect::<Vec<_>>();
+
+        assert_eq!(rendered, vec!["Created files:", "", "- `Package.swift`"]);
+    }
+
+    #[test]
+    fn message_lines_format_tool_messages() {
+        let lines = message_lines(
+            "tool: write_file completed",
+            Theme::for_dark_background(true),
+        );
+        let rendered = lines[0]
+            .spans
+            .iter()
+            .map(|span| span.content.as_ref())
+            .collect::<String>();
+
+        assert_eq!(rendered, "◆ write_file completed");
     }
 
     #[test]
@@ -2574,6 +2097,13 @@ mod tests {
     }
 
     #[test]
+    fn transcript_scroll_offset_follows_latest_lines() {
+        assert_eq!(transcript_scroll_offset(3, 10), 0);
+        assert_eq!(transcript_scroll_offset(10, 10), 0);
+        assert_eq!(transcript_scroll_offset(14, 10), 4);
+    }
+
+    #[test]
     fn policy_mode_switcher_cycles_non_bypass_modes() {
         assert_eq!(
             next_policy_mode(PolicyMode::Default),
@@ -2590,6 +2120,51 @@ mod tests {
         assert_eq!(policy_mode_label(PolicyMode::AcceptEdits), "accept_edits");
         assert_eq!(policy_mode_label(PolicyMode::Plan), "plan");
         assert_eq!(policy_mode_label(PolicyMode::Bypass), "bypass");
+    }
+
+    #[test]
+    fn image_attachment_height_only_allocates_when_images_are_attached() {
+        assert_eq!(image_attachment_height(0), 0);
+        assert_eq!(image_attachment_height(1), 2);
+        assert_eq!(image_attachment_height(3), 4);
+        assert_eq!(image_attachment_height(10), 4);
+    }
+
+    #[test]
+    fn image_paste_detects_absolute_and_escaped_image_paths() {
+        let attachments = image_attachments_from_paste("/tmp/first.png /tmp/second\\ image.jpg")
+            .expect("expected image attachments");
+
+        assert_eq!(attachments.len(), 2);
+        assert_eq!(attachments[0].path, PathBuf::from("/tmp/first.png"));
+        assert_eq!(attachments[1].path, PathBuf::from("/tmp/second image.jpg"));
+    }
+
+    #[test]
+    fn image_paste_detects_file_uris() {
+        let attachments = image_attachments_from_paste("file:///tmp/Screen%20Shot.webp")
+            .expect("expected image attachment");
+
+        assert_eq!(attachments[0].path, PathBuf::from("/tmp/Screen Shot.webp"));
+    }
+
+    #[test]
+    fn image_paste_ignores_mixed_text() {
+        assert!(image_attachments_from_paste("look at /tmp/image.png please").is_none());
+    }
+
+    #[test]
+    fn prompt_message_includes_attached_image_paths() {
+        let attachments = vec![ImageAttachment::new(PathBuf::from("/tmp/diagram.png"))];
+
+        assert_eq!(
+            message_with_image_attachments("what is this?", &attachments),
+            "what is this?\n\nAttached image file paths:\n- /tmp/diagram.png"
+        );
+        assert_eq!(
+            transcript_message_with_image_attachments("", &attachments),
+            "attached image: diagram.png"
+        );
     }
 
     #[test]
@@ -2665,66 +2240,6 @@ mod tests {
     }
 
     #[test]
-    fn focused_tool_call_enter_uses_click_activation() {
-        let region = InteractiveRegion {
-            id: "tool-call-call-1".to_string(),
-            rect: RegionRect {
-                x: 0,
-                y: 0,
-                width: 20,
-                height: 1,
-            },
-            z: 1,
-            kind: RegionKind::ToolCallBlock {
-                call_id: "call-1".to_string(),
-                expanded: true,
-            },
-            hover_cursor: roder_api::interactive::HoverCursor::Pointer,
-            keyboard_binding: None,
-        };
-
-        assert_eq!(
-            focused_region_activation(
-                &Keymap::default(),
-                &crossterm::event::KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE),
-                &region,
-            ),
-            Some(FocusedRegionActivation::Click)
-        );
-    }
-
-    #[test]
-    fn focused_transcript_shift_f10_uses_context_menu_activation() {
-        let region = InteractiveRegion {
-            id: "transcript-message-0".to_string(),
-            rect: RegionRect {
-                x: 2,
-                y: 4,
-                width: 20,
-                height: 1,
-            },
-            z: 0,
-            kind: RegionKind::TranscriptMessage {
-                thread_id: "thread".to_string(),
-                turn_id: "turn".to_string(),
-                message_idx: 0,
-            },
-            hover_cursor: roder_api::interactive::HoverCursor::Pointer,
-            keyboard_binding: None,
-        };
-
-        assert_eq!(
-            focused_region_activation(
-                &Keymap::default(),
-                &crossterm::event::KeyEvent::new(KeyCode::F(10), KeyModifiers::SHIFT,),
-                &region,
-            ),
-            Some(FocusedRegionActivation::ContextMenu)
-        );
-        assert_eq!(region_center(region.rect), (12, 4));
-    }
-
-    #[test]
     fn shell_command_requires_non_empty_bang_prefix() {
         assert_eq!(
             shell_command_from_input("!echo hi").as_deref(),
@@ -2736,6 +2251,18 @@ mod tests {
         );
         assert_eq!(shell_command_from_input("!"), None);
         assert_eq!(shell_command_from_input("echo hi"), None);
+    }
+
+    #[test]
+    fn composer_mode_tracks_shell_prefix() {
+        assert_eq!(
+            composer::composer_mode_from_text("!echo hi"),
+            composer::ComposerMode::Shell
+        );
+        assert_eq!(
+            composer::composer_mode_from_text("echo hi"),
+            composer::ComposerMode::Chat
+        );
     }
 
     #[test]
