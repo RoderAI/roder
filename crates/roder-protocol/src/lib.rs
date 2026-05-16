@@ -102,6 +102,7 @@ pub struct ProviderSelectResult {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SettingsGetResult {
     pub web_search: WebSearchSettings,
+    pub default_mode: PolicyMode,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -112,6 +113,16 @@ pub struct SettingsSetWebSearchParams {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SettingsSetWebSearchResult {
     pub web_search: WebSearchSettings,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SettingsSetDefaultModeParams {
+    pub mode: PolicyMode,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SettingsSetDefaultModeResult {
+    pub default_mode: PolicyMode,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

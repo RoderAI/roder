@@ -107,7 +107,7 @@ impl PolicyModeConfig {
             allow_writes: false,
             allow_process: false,
             allow_network: true,
-            requires_user_to_exit: true,
+            requires_user_to_exit: false,
         }
     }
 
@@ -295,7 +295,7 @@ mod tests {
         assert!(!plan.allow_writes);
         assert!(!plan.allow_process);
         assert!(plan.allow_network);
-        assert!(plan.requires_user_to_exit);
+        assert!(!plan.requires_user_to_exit);
 
         let bypass = PolicyModeConfig::for_mode(PolicyMode::Bypass);
         assert!(bypass.auto_approve.contains_tool("any.tool"));

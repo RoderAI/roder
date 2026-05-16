@@ -41,8 +41,8 @@ pub fn apply_theme(
     state_path: &Path,
     id: &str,
 ) -> Result<ThemeOverrides, ApplyThemeError> {
-    let overrides =
-        load_theme_by_id(directories, id).ok_or_else(|| ApplyThemeError::NotFound(id.to_string()))?;
+    let overrides = load_theme_by_id(directories, id)
+        .ok_or_else(|| ApplyThemeError::NotFound(id.to_string()))?;
     state::write_active_theme_to(state_path, id)
         .map_err(|err| ApplyThemeError::Persist(err.to_string()))?;
     Ok(overrides)

@@ -86,7 +86,11 @@ pub fn compute<'a>(sheet: &Stylesheet, chain: &[&StyledNode<'a>]) -> ComputedSty
     // (important, specificity, source_order, declaration_index_within_rule, &Declaration)
     let mut hits: Vec<(bool, (u32, u32, u32), usize, usize, &Declaration)> = Vec::new();
     for rule in &sheet.rules {
-        if !rule.selectors.iter().any(|sel| selector_matches(sel, chain)) {
+        if !rule
+            .selectors
+            .iter()
+            .any(|sel| selector_matches(sel, chain))
+        {
             continue;
         }
         let spec = rule
@@ -233,8 +237,8 @@ fn selector_matches<'a>(sel: &Selector, chain: &[&StyledNode<'a>]) -> bool {
     while part_idx > 0 {
         let (simple, combinator_to_right) = &parts[part_idx - 1];
         // For the rightmost simple selector, only the target node may match.
-        let must_match_immediate = part_idx == parts.len()
-            || matches!(combinator_to_right, Combinator::Child);
+        let must_match_immediate =
+            part_idx == parts.len() || matches!(combinator_to_right, Combinator::Child);
         if chain_idx == 0 {
             return false;
         }
@@ -376,10 +380,7 @@ mod tests {
     fn variables_resolve() {
         let sheet = parse(":root { --accent: #ff0000; } .x { color: var(--accent); }").unwrap();
         let node = n(None, &["x"]);
-        assert_eq!(
-            compute(&sheet, &[&node]).color,
-            Some(Color::Rgb(255, 0, 0))
-        );
+        assert_eq!(compute(&sheet, &[&node]).color, Some(Color::Rgb(255, 0, 0)));
     }
 
     #[test]

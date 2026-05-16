@@ -19,8 +19,9 @@ use roder_protocol::{
     JsonRpcRequest, ProviderSelectParams, ProviderSelectResult, ProvidersListResult,
     SessionExitPlanParams, SessionExitPlanResult, SessionGetResult, SessionResolveUserInputParams,
     SessionResolveUserInputResult, SessionSetModeParams, SessionSetModeResult, SessionsListResult,
-    SettingsGetResult, SettingsSetWebSearchParams, SettingsSetWebSearchResult, StartTurnParams,
-    StartTurnResult, SteerTurnParams, SteerTurnResult, SystemStatusResult, ToolsListResult,
+    SettingsGetResult, SettingsSetDefaultModeParams, SettingsSetDefaultModeResult,
+    SettingsSetWebSearchParams, SettingsSetWebSearchResult, StartTurnParams, StartTurnResult,
+    SteerTurnParams, SteerTurnResult, SystemStatusResult, ToolsListResult,
 };
 use std::sync::Arc;
 use std::time::Duration;
@@ -711,6 +712,7 @@ async fn web_search_setting_can_be_set_and_observed() {
 
     let settings: SettingsGetResult = request(&client, "settings/get", None).await;
     assert_eq!(settings.web_search.mode, HostedWebSearchMode::Cached);
+    assert_eq!(settings.default_mode, PolicyMode::Default);
 
     let changed: SettingsSetWebSearchResult = request(
         &client,
@@ -731,6 +733,44 @@ async fn web_search_setting_can_be_set_and_observed() {
         runtime.status().await.hosted_web_search.mode,
         HostedWebSearchMode::Live
     );
+}
+
+#[tokio::test]
+async fn settings_default_mode_can_be_set_and_observed() {
+    let runtime = Arc::new(Runtime::fake().unwrap());
+    let server = Arc::new(AppServer::new(runtime.clone()));
+    let client = LocalAppClient::new(server);
+    let mut events = client.subscribe_events();
+
+    let changed: SettingsSetDefaultModeResult = request(
+        &client,
+        "settings/set_default_mode",
+        Some(
+            serde_json::to_value(SettingsSetDefaultModeParams {
+                mode: PolicyMode::AcceptAll,
+            })
+            .unwrap(),
+        ),
+    )
+    .await;
+    assert_eq!(changed.default_mode, PolicyMode::AcceptAll);
+
+    let settings: SettingsGetResult = request(&client, "settings/get", None).await;
+    assert_eq!(settings.default_mode, PolicyMode::AcceptAll);
+    assert_eq!(runtime.status().await.policy_mode, PolicyMode::AcceptAll);
+
+    let mut saw_mode_changed = false;
+    for _ in 0..8 {
+        let envelope = tokio::time::timeout(Duration::from_secs(2), events.recv())
+            .await
+            .unwrap()
+            .unwrap();
+        if let roder_api::events::RoderEvent::PolicyModeChanged(event) = envelope.event {
+            saw_mode_changed = event.new_mode == PolicyMode::AcceptAll;
+            break;
+        }
+    }
+    assert!(saw_mode_changed);
 }
 
 #[tokio::test]

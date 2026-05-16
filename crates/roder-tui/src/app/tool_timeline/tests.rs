@@ -684,6 +684,50 @@ fn reasoning_deltas_render_live_as_thinking() {
 }
 
 #[test]
+fn reasoning_heading_moves_to_working_status_and_is_removed_from_timeline() {
+    let mut timeline = TimelineState::default();
+    timeline.push_reasoning_delta(
+        "**Inspecting Code Modifications**\n\nI need to inspect the app.rs file.",
+    );
+
+    assert_eq!(
+        timeline.latest_reasoning_heading().as_deref(),
+        Some("Inspecting Code Modifications")
+    );
+    let lines = rendered_lines(&mut timeline);
+    assert!(
+        lines
+            .iter()
+            .any(|line| line == "Thinking: I need to inspect the app.rs file.")
+    );
+    assert!(
+        !lines
+            .iter()
+            .any(|line| line.contains("Inspecting Code Modifications"))
+    );
+}
+
+#[test]
+fn timeline_only_renders_the_most_recent_reasoning_block() {
+    let mut timeline = TimelineState::default();
+    timeline.push_reasoning_delta("first hidden thought");
+    timeline.push_assistant_delta("partial", Some("commentary".to_string()));
+    timeline.push_reasoning_delta("second visible thought");
+
+    let lines = rendered_lines(&mut timeline);
+    assert!(
+        !lines
+            .iter()
+            .any(|line| line.contains("first hidden thought"))
+    );
+    assert!(
+        lines
+            .iter()
+            .any(|line| line == "Thinking: second visible thought")
+    );
+}
+
+#[test]
 fn turn_completed_renders_right_aligned_usage_summary() {
     let mut timeline = TimelineState::default();
     timeline.push_turn_completed(TurnCompletedSummary {

@@ -301,7 +301,12 @@ fn parse_sse_frame(frame: &str) -> anyhow::Result<Option<SseEvent>> {
 
     Ok(Some(SseEvent {
         event,
-        data: serde_json::from_str(&data)?,
+        data: serde_json::from_str(&data).map_err(|err| {
+            anyhow::anyhow!(
+                "failed to parse Responses SSE data as JSON: {err}; data: {}",
+                error_body_excerpt(&data)
+            )
+        })?,
     }))
 }
 
@@ -664,6 +669,15 @@ fn stream_error_message(data: &Value, fallback: &str) -> String {
         .to_string()
 }
 
+fn error_body_excerpt(body: &str) -> String {
+    const MAX_ERROR_BODY_CHARS: usize = 2_000;
+    let mut excerpt = body.chars().take(MAX_ERROR_BODY_CHARS).collect::<String>();
+    if body.chars().count() > MAX_ERROR_BODY_CHARS {
+        excerpt.push_str(" ...");
+    }
+    excerpt
+}
+
 fn response_input_items(request: &AgentInferenceRequest) -> Vec<Value> {
     let mut items = Vec::new();
     let mut provider_output_call_ids = HashSet::new();
@@ -868,14 +882,20 @@ fn extract_output_text(value: &Value) -> Option<String> {
         if !is_final_answer {
             continue;
         }
-        if let Some(content) = item.get("content").and_then(|v| v.as_array()) {
-            for block in content {
-                if let Some(text) = block
-                    .get("text")
-                    .or_else(|| block.get("output_text"))
-                    .and_then(|v| v.as_str())
-                {
-                    parts.push(text.to_string());
+        if let Some(content) = item.get("content") {
+            if let Some(text) = content.as_str() {
+                parts.push(text.to_string());
+                continue;
+            }
+            if let Some(blocks) = content.as_array() {
+                for block in blocks {
+                    if let Some(text) = block
+                        .get("text")
+                        .or_else(|| block.get("output_text"))
+                        .and_then(|v| v.as_str())
+                    {
+                        parts.push(text.to_string());
+                    }
                 }
             }
         }
@@ -884,7 +904,11 @@ fn extract_output_text(value: &Value) -> Option<String> {
 }
 
 fn output_text_from_message_item(item: &Value) -> Option<String> {
-    let content = item.get("content")?.as_array()?;
+    let content = item.get("content")?;
+    if let Some(text) = content.as_str() {
+        return (!text.is_empty()).then(|| text.to_string());
+    }
+    let content = content.as_array()?;
     let mut parts = Vec::new();
     for block in content {
         if let Some(text) = block
@@ -1422,6 +1446,42 @@ mod tests {
                 phase: Some("commentary".to_string()),
             })]
         );
+    }
+
+    #[test]
+    fn emits_commentary_from_done_item_with_string_content() {
+        let mut state = ResponsesStreamState::default();
+        let done = SseEvent {
+            event: Some("response.output_item.done".to_string()),
+            data: json!({
+                "type": "response.output_item.done",
+                "item": {
+                    "id": "msg_1",
+                    "type": "message",
+                    "role": "assistant",
+                    "phase": "commentary",
+                    "content": "I’ll inspect the logs and then summarize root cause."
+                }
+            }),
+        };
+
+        assert_eq!(
+            events_from_sse_event(&done, &mut state),
+            vec![InferenceEvent::MessageDelta(MessageDelta {
+                text: "I’ll inspect the logs and then summarize root cause.".to_string(),
+                phase: Some("commentary".to_string()),
+            })]
+        );
+    }
+
+    #[test]
+    fn parse_sse_frame_error_includes_raw_data_excerpt() {
+        let err = parse_sse_frame("event: response.output_item.done\ndata: {\"ok\":true} trailing")
+            .unwrap_err()
+            .to_string();
+
+        assert!(err.contains("failed to parse Responses SSE data as JSON"));
+        assert!(err.contains("{\"ok\":true} trailing"));
     }
 
     #[test]

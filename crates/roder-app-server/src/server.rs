@@ -44,6 +44,12 @@ impl AppServer {
                 })
                 .await
             }
+            "settings/set_default_mode" => {
+                self.decode_and(req.params, |p| async move {
+                    self.handle_settings_set_default_mode(p).await
+                })
+                .await
+            }
             "auth/codex/login" => self.handle_codex_auth_login().await,
             "auth/codex/status" => self.handle_codex_auth_status().await,
             "auth/codex/logout" => self.handle_codex_auth_logout().await,
@@ -257,6 +263,7 @@ impl AppServer {
             web_search: WebSearchSettings {
                 mode: cfg.hosted_web_search.mode,
             },
+            default_mode: cfg.policy_mode,
         })
         .unwrap())
     }
@@ -280,6 +287,25 @@ impl AppServer {
             web_search: WebSearchSettings {
                 mode: cfg.hosted_web_search.mode,
             },
+        })
+        .unwrap())
+    }
+
+    async fn handle_settings_set_default_mode(
+        &self,
+        params: SettingsSetDefaultModeParams,
+    ) -> Result<serde_json::Value, JsonRpcError> {
+        let cfg = self
+            .runtime
+            .set_policy_mode(params.mode, Some("settings default mode".to_string()))
+            .await
+            .map_err(internal_error)?;
+        if self.persist_user_config {
+            roder_config::save_default_policy_mode(policy_mode_config_value(cfg.policy_mode))
+                .map_err(internal_error)?;
+        }
+        Ok(serde_json::to_value(SettingsSetDefaultModeResult {
+            default_mode: cfg.policy_mode,
         })
         .unwrap())
     }
@@ -531,6 +557,15 @@ fn web_search_mode_config_value(mode: HostedWebSearchMode) -> &'static str {
         HostedWebSearchMode::Disabled => "disabled",
         HostedWebSearchMode::Cached => "codex",
         HostedWebSearchMode::Live => "live",
+    }
+}
+
+fn policy_mode_config_value(mode: roder_api::policy_mode::PolicyMode) -> &'static str {
+    match mode {
+        roder_api::policy_mode::PolicyMode::Default => "default",
+        roder_api::policy_mode::PolicyMode::AcceptAll => "accept_edits",
+        roder_api::policy_mode::PolicyMode::Plan => "plan",
+        roder_api::policy_mode::PolicyMode::Bypass => "bypass",
     }
 }
 

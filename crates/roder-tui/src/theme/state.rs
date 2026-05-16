@@ -106,10 +106,7 @@ mod tests {
 
         // Overwrite preserves the key contract.
         write_active_theme_to(&path, "solarized").unwrap();
-        assert_eq!(
-            read_active_theme_from(&path).as_deref(),
-            Some("solarized")
-        );
+        assert_eq!(read_active_theme_from(&path).as_deref(), Some("solarized"));
 
         let _ = fs::remove_file(&path);
     }
@@ -124,11 +121,7 @@ mod tests {
         ));
         let _ = fs::remove_file(&path);
 
-        fs::write(
-            &path,
-            "[tui]\nspinner = \"dots\"\nactive_theme = \"old\"\n",
-        )
-        .unwrap();
+        fs::write(&path, "[tui]\nspinner = \"dots\"\nactive_theme = \"old\"\n").unwrap();
         write_active_theme_to(&path, "new").unwrap();
         let body = fs::read_to_string(&path).unwrap();
         assert!(body.contains("spinner"));

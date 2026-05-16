@@ -16,7 +16,7 @@ use roder_core::{Runtime, RuntimeConfig, StartTurnRequest, default_instructions}
 use serde_json::json;
 
 #[test]
-fn plan_mode_denies_write_like_arguments_even_with_benign_tool_name() {
+fn plan_mode_allows_read_like_tool_with_write_like_arguments() {
     let decision = DefaultPolicyGate::new().decide(
         &tool_call(
             "read_metadata",
@@ -26,7 +26,65 @@ fn plan_mode_denies_write_like_arguments_even_with_benign_tool_name() {
         &context(PolicyMode::Plan),
     );
 
+    assert!(matches!(decision, PolicyDecision::Allowed));
+}
+
+#[test]
+fn grep_query_containing_destructive_words_is_allowed() {
+    let decision = DefaultPolicyGate::new().decide(
+        &tool_call(
+            "grep",
+            json!({ "query": "edit command patch", "path": "." }),
+        ),
+        PolicyMode::Default,
+        &context(PolicyMode::Default),
+    );
+
+    assert!(matches!(decision, PolicyDecision::Allowed));
+}
+
+#[test]
+fn plan_mode_denies_write_tool_name() {
+    let decision = DefaultPolicyGate::new().decide(
+        &tool_call("fs.write", json!({ "path": "src/lib.rs" })),
+        PolicyMode::Plan,
+        &context(PolicyMode::Plan),
+    );
+
     assert!(matches!(decision, PolicyDecision::Denied { .. }));
+}
+
+#[test]
+fn plan_mode_denies_shell_tool_name() {
+    let decision = DefaultPolicyGate::new().decide(
+        &tool_call("shell", json!({ "command": "cargo test" })),
+        PolicyMode::Plan,
+        &context(PolicyMode::Plan),
+    );
+
+    assert!(matches!(decision, PolicyDecision::Denied { .. }));
+}
+
+#[test]
+fn default_mode_shell_still_requires_approval() {
+    let decision = DefaultPolicyGate::new().decide(
+        &tool_call("shell", json!({ "command": "cargo test" })),
+        PolicyMode::Default,
+        &context(PolicyMode::Default),
+    );
+
+    assert!(matches!(decision, PolicyDecision::RequiresApproval { .. }));
+}
+
+#[test]
+fn default_mode_edit_still_requires_approval() {
+    let decision = DefaultPolicyGate::new().decide(
+        &tool_call("fs.edit", json!({ "path": "src/lib.rs" })),
+        PolicyMode::Default,
+        &context(PolicyMode::Default),
+    );
+
+    assert!(matches!(decision, PolicyDecision::RequiresApproval { .. }));
 }
 
 #[test]
@@ -89,12 +147,12 @@ async fn policy_bypass_mode_emits_bypass_active_and_executes_with_effective_mode
 }
 
 #[tokio::test]
-async fn policy_plan_mode_denial_skips_tool_executor() {
+async fn policy_plan_mode_denies_write_tool_and_skips_executor() {
     let seen_modes = Arc::new(Mutex::new(Vec::new()));
     let runtime = runtime_with_policy(
         PolicyMode::Plan,
-        "read_metadata",
-        json!({ "requested_action": "fs.write", "path": "src/lib.rs" }),
+        "fs.write",
+        json!({ "path": "src/lib.rs" }),
         seen_modes.clone(),
     );
     let mut events = runtime.subscribe_events();
@@ -128,6 +186,46 @@ async fn policy_plan_mode_denial_skips_tool_executor() {
 
     assert!(saw_denied);
     assert!(seen_modes.lock().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn policy_default_mode_grep_executes_without_approval_for_destructive_query_text() {
+    let seen_modes = Arc::new(Mutex::new(Vec::new()));
+    let runtime = runtime_with_policy(
+        PolicyMode::Default,
+        "grep",
+        json!({ "query": "edit command patch", "path": "." }),
+        seen_modes.clone(),
+    );
+    let mut events = runtime.subscribe_events();
+
+    runtime
+        .start_turn(StartTurnRequest {
+            thread_id: "thread-grep".to_string(),
+            message: "search files".to_string(),
+            images: Vec::new(),
+            provider_override: None,
+            model_override: None,
+            instructions: default_instructions(),
+        })
+        .await
+        .unwrap();
+
+    let mut saw_approval = false;
+    loop {
+        let envelope = tokio::time::timeout(Duration::from_secs(2), events.recv())
+            .await
+            .unwrap()
+            .unwrap();
+        match envelope.event {
+            RoderEvent::ApprovalRequested(_) => saw_approval = true,
+            RoderEvent::TurnCompleted(_) => break,
+            _ => {}
+        }
+    }
+
+    assert!(!saw_approval);
+    assert_eq!(*seen_modes.lock().unwrap(), vec![PolicyMode::Default]);
 }
 
 #[tokio::test]

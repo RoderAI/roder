@@ -166,6 +166,10 @@ pub fn save_web_search_mode(mode: &str) -> anyhow::Result<()> {
     save_web_search_mode_to_path(config_path(), mode)
 }
 
+pub fn save_default_policy_mode(mode: &str) -> anyhow::Result<()> {
+    save_default_policy_mode_to_path(config_path(), mode)
+}
+
 pub fn save_default_provider_model_to_path(
     path: impl AsRef<Path>,
     provider: &str,
@@ -194,6 +198,16 @@ pub fn save_web_search_mode_to_path(path: impl AsRef<Path>, mode: &str) -> anyho
     let path = path.as_ref();
     let mut config = load_config_file_from_path(path)?;
     config.web_search.get_or_insert_with(Default::default).mode = Some(mode.to_string());
+    save_config_file_to_path(path, &config)
+}
+
+pub fn save_default_policy_mode_to_path(path: impl AsRef<Path>, mode: &str) -> anyhow::Result<()> {
+    let path = path.as_ref();
+    let mut config = load_config_file_from_path(path)?;
+    config
+        .policy_modes
+        .get_or_insert_with(Default::default)
+        .default = Some(mode.to_string());
     save_config_file_to_path(path, &config)
 }
 
@@ -573,6 +587,27 @@ mod tests {
 
         let config = load_config_file_from_path(&path).unwrap();
         assert_eq!(config.web_search.unwrap().mode.as_deref(), Some("live"));
+        let _ = fs::remove_file(&path);
+    }
+
+    #[test]
+    fn save_default_policy_mode_creates_or_updates_policy_modes_config() {
+        let path = std::env::temp_dir().join(format!(
+            "roder-config-policy-mode-{}.toml",
+            std::process::id()
+        ));
+        let _ = fs::remove_file(&path);
+
+        save_default_policy_mode_to_path(&path, "accept_edits").unwrap();
+
+        let config = load_config_file_from_path(&path).unwrap();
+        assert_eq!(
+            config
+                .policy_modes
+                .and_then(|policy| policy.default)
+                .as_deref(),
+            Some("accept_edits")
+        );
         let _ = fs::remove_file(&path);
     }
 }

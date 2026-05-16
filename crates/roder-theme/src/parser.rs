@@ -91,10 +91,7 @@ impl Selector {
     fn is_root_pseudo(&self) -> bool {
         self.parts.len() == 1 && {
             let (s, _) = &self.parts[0];
-            s.id.is_none()
-                && s.classes.is_empty()
-                && s.attrs.is_empty()
-                && s.pseudos == ["root"]
+            s.id.is_none() && s.classes.is_empty() && s.attrs.is_empty() && s.pseudos == ["root"]
         }
     }
 }
@@ -317,32 +314,31 @@ fn parse_selector(input: &str) -> Option<Selector> {
     let mut pending_combinator: Option<Combinator> = None;
     let mut chars = input.chars().peekable();
 
-    let flush =
-        |cur: &mut String,
-         parts: &mut Vec<(SimpleSelector, Combinator)>,
-         pending: &mut Option<Combinator>| {
-            let trimmed = cur.trim();
-            if !trimmed.is_empty() {
-                if let Some(prev_idx) = parts.len().checked_sub(1) {
-                    if let Some(c) = pending.take() {
-                        parts[prev_idx].1 = c;
-                    } else {
-                        // Implicit descendant if we have a previous and no
-                        // combinator was explicitly set.
-                        if parts[prev_idx].1 == Combinator::None {
-                            parts[prev_idx].1 = Combinator::Descendant;
-                        }
+    let flush = |cur: &mut String,
+                 parts: &mut Vec<(SimpleSelector, Combinator)>,
+                 pending: &mut Option<Combinator>| {
+        let trimmed = cur.trim();
+        if !trimmed.is_empty() {
+            if let Some(prev_idx) = parts.len().checked_sub(1) {
+                if let Some(c) = pending.take() {
+                    parts[prev_idx].1 = c;
+                } else {
+                    // Implicit descendant if we have a previous and no
+                    // combinator was explicitly set.
+                    if parts[prev_idx].1 == Combinator::None {
+                        parts[prev_idx].1 = Combinator::Descendant;
                     }
                 }
-                let simple = parse_simple_selector(trimmed)?;
-                parts.push((simple, Combinator::None));
-                cur.clear();
-            } else if pending.is_some() {
-                // dangling combinator without right side — invalid; drop.
-                return None;
             }
-            Some(())
-        };
+            let simple = parse_simple_selector(trimmed)?;
+            parts.push((simple, Combinator::None));
+            cur.clear();
+        } else if pending.is_some() {
+            // dangling combinator without right side — invalid; drop.
+            return None;
+        }
+        Some(())
+    };
 
     while let Some(&c) = chars.peek() {
         match c {
