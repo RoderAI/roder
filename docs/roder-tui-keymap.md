@@ -7,7 +7,7 @@ The default keymap keeps mouse interactions reachable from the keyboard:
 | Action | Default binding |
 | --- | --- |
 | Open palette | `Ctrl+K` |
-| Cycle mode | `Shift+Tab` |
+| Cycle mode | `Ctrl+M` |
 | Focus next region | `Tab` |
 | Focus previous region | `Shift+Tab` |
 | Scroll transcript | `PageDown`, `PageUp` |

@@ -29,8 +29,8 @@ use ratatui::{
 use roder_api::events::RoderEvent;
 use roder_api::inference::ProviderAuthType;
 use roder_api::interactive::{
-    ApprovalVote, HandlerOutcome, InteractiveEvent, InteractiveRegionHandler, MouseButton,
-    RegionKind,
+    ApprovalVote, HandlerOutcome, InteractiveEvent, InteractiveRegion, InteractiveRegionHandler,
+    MouseButton, RegionKind, RegionRect,
 };
 use roder_api::policy_mode::PolicyMode;
 use roder_api::tui_status::{
@@ -525,7 +525,7 @@ impl TuiApp {
                             && key.code == KeyCode::Char('c')
                         {
                             self.confirm_dialog = Some(ConfirmDialog::Exit);
-                        } else if key.code == KeyCode::BackTab {
+                        } else if self.keymap.matches_key_event(Action::CycleMode, &key) {
                             self.cycle_policy_mode().await;
                         } else if self.pending_plan_exit.is_some()
                             && matches!(key.code, KeyCode::Char('y') | KeyCode::Char('Y'))
@@ -579,6 +579,9 @@ impl TuiApp {
                                 }
                             }
                         } else {
+                            if self.handle_focus_keyboard_action(key).await {
+                                continue;
+                            }
                             match key.code {
                                 KeyCode::Enter => {
                                     if key.modifiers.contains(KeyModifiers::SHIFT) {
@@ -1523,6 +1526,55 @@ impl TuiApp {
         false
     }
 
+    async fn handle_focus_keyboard_action(&mut self, key: crossterm::event::KeyEvent) -> bool {
+        if self.keymap.matches_key_event(Action::FocusNextRegion, &key) {
+            if let Some(region) = self.mouse_feedback.focus_next_region().map(str::to_string) {
+                self.push_event(format!("focused region: {region}"));
+            }
+            return true;
+        }
+
+        if self
+            .keymap
+            .matches_key_event(Action::FocusPreviousRegion, &key)
+        {
+            if let Some(region) = self
+                .mouse_feedback
+                .focus_previous_region()
+                .map(str::to_string)
+            {
+                self.push_event(format!("focused region: {region}"));
+            }
+            return true;
+        }
+
+        let Some(region_id) = self.mouse_feedback.focused_region_id().map(str::to_string) else {
+            return false;
+        };
+        let Some(region) = self.mouse_feedback.region(&region_id).cloned() else {
+            return false;
+        };
+        let Some(activation) = focused_region_activation(&self.keymap, &key, &region) else {
+            return false;
+        };
+        let event = match activation {
+            FocusedRegionActivation::Click => InteractiveEvent::Click {
+                region: region_id.clone(),
+                modifiers: roder_api::interactive::KeyModifiers::default(),
+                button: MouseButton::Left,
+            },
+            FocusedRegionActivation::ContextMenu => InteractiveEvent::RightClick {
+                region: region_id.clone(),
+                modifiers: roder_api::interactive::KeyModifiers::default(),
+            },
+        };
+        let right_click_at = (activation == FocusedRegionActivation::ContextMenu)
+            .then(|| region_center(region.rect));
+        self.handle_region_with_extensions(&event, &region_id, right_click_at)
+            .await;
+        true
+    }
+
     async fn handle_region_action(&mut self, region_id: &str, right_click_at: Option<(u16, u16)>) {
         let Some(region) = self.mouse_feedback.region(region_id).cloned() else {
             return;
@@ -2245,6 +2297,57 @@ fn line_with_gap(
     Line::from(left)
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum FocusedRegionActivation {
+    Click,
+    ContextMenu,
+}
+
+fn focused_region_activation(
+    keymap: &Keymap,
+    key: &crossterm::event::KeyEvent,
+    region: &InteractiveRegion,
+) -> Option<FocusedRegionActivation> {
+    let click_action = match &region.kind {
+        RegionKind::ToolCallBlock { expanded, .. } => {
+            if *expanded {
+                Action::CollapseToolCall
+            } else {
+                Action::ExpandToolCall
+            }
+        }
+        RegionKind::Url(_) => Action::OpenUrl,
+        RegionKind::FileReference { .. } => Action::OpenFileRef,
+        RegionKind::TranscriptMessage { .. } => {
+            if keymap.matches_key_event(Action::OpenContextMenu, key) {
+                return Some(FocusedRegionActivation::ContextMenu);
+            }
+            Action::FoldMessage
+        }
+        RegionKind::DiffHunk { .. } if region.id.ends_with(":accept") => Action::ApproveHunk,
+        RegionKind::DiffHunk { .. } if region.id.ends_with(":reject") => Action::RejectHunk,
+        RegionKind::PolicyApprovalButton {
+            vote: ApprovalVote::Approve,
+            ..
+        } => Action::ApproveHunk,
+        RegionKind::PolicyApprovalButton {
+            vote: ApprovalVote::Reject,
+            ..
+        } => Action::RejectHunk,
+        _ => return None,
+    };
+    keymap
+        .matches_key_event(click_action, key)
+        .then_some(FocusedRegionActivation::Click)
+}
+
+fn region_center(rect: RegionRect) -> (u16, u16) {
+    (
+        rect.x.saturating_add(rect.width / 2),
+        rect.y.saturating_add(rect.height / 2),
+    )
+}
+
 fn interactive_region_id(event: &InteractiveEvent) -> Option<&str> {
     match event {
         InteractiveEvent::HoverEnter { region }
@@ -2509,6 +2612,66 @@ mod tests {
         let filtered = filter_provider_menu_items(&items, "5.5");
         assert_eq!(filtered.len(), 1);
         assert!(matches!(filtered[0], ProviderMenuItem::Model(_)));
+    }
+
+    #[test]
+    fn focused_tool_call_enter_uses_click_activation() {
+        let region = InteractiveRegion {
+            id: "tool-call-call-1".to_string(),
+            rect: RegionRect {
+                x: 0,
+                y: 0,
+                width: 20,
+                height: 1,
+            },
+            z: 1,
+            kind: RegionKind::ToolCallBlock {
+                call_id: "call-1".to_string(),
+                expanded: true,
+            },
+            hover_cursor: roder_api::interactive::HoverCursor::Pointer,
+            keyboard_binding: None,
+        };
+
+        assert_eq!(
+            focused_region_activation(
+                &Keymap::default(),
+                &crossterm::event::KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE),
+                &region,
+            ),
+            Some(FocusedRegionActivation::Click)
+        );
+    }
+
+    #[test]
+    fn focused_transcript_shift_f10_uses_context_menu_activation() {
+        let region = InteractiveRegion {
+            id: "transcript-message-0".to_string(),
+            rect: RegionRect {
+                x: 2,
+                y: 4,
+                width: 20,
+                height: 1,
+            },
+            z: 0,
+            kind: RegionKind::TranscriptMessage {
+                thread_id: "thread".to_string(),
+                turn_id: "turn".to_string(),
+                message_idx: 0,
+            },
+            hover_cursor: roder_api::interactive::HoverCursor::Pointer,
+            keyboard_binding: None,
+        };
+
+        assert_eq!(
+            focused_region_activation(
+                &Keymap::default(),
+                &crossterm::event::KeyEvent::new(KeyCode::F(10), KeyModifiers::SHIFT,),
+                &region,
+            ),
+            Some(FocusedRegionActivation::ContextMenu)
+        );
+        assert_eq!(region_center(region.rect), (12, 4));
     }
 
     #[test]
