@@ -4,6 +4,7 @@ mod diff_ui;
 mod mouse_capture_runtime;
 mod mouse_ui;
 mod palette_ui;
+mod selection_keyboard;
 
 use std::collections::BTreeSet;
 use std::io;
@@ -49,6 +50,7 @@ use mouse_capture_runtime::apply_mouse_capture_event;
 
 use crate::config::TuiAppConfig;
 use crate::diff::{DiffViewerState, render::DiffTheme};
+use crate::keymap::{Action, Keymap};
 use crate::mouse::{
     DragSelectionOutcome, DragSelectionState, MouseCaptureController, MouseCaptureEvent,
     ScrollState, ScrollTarget, SelectedText, region_rect_from_ratatui,
@@ -348,6 +350,7 @@ pub struct TuiApp {
     diff_enabled: bool,
     status_segments: Vec<StatusSegment>,
     interactive_region_handlers: Vec<Arc<dyn InteractiveRegionHandler>>,
+    keymap: Keymap,
     status_config: StatusLineConfig,
     status_git: Option<GitSnapshot>,
     policy_mode: PolicyMode,
@@ -356,6 +359,7 @@ pub struct TuiApp {
     drag_selection: DragSelectionState,
     transcript_scroll: ScrollState,
     mouse_capture: MouseCaptureController,
+    selection_keyboard: selection_keyboard::SelectionKeyboardState,
     transcript_fold: TranscriptFoldState,
     transcript_context_menu: Option<TranscriptContextMenu>,
     terminal_area: roder_api::interactive::RegionRect,
@@ -435,6 +439,7 @@ impl TuiApp {
                 disabled_segments: config.disabled_status_segments,
             },
             interactive_region_handlers: config.interactive_region_handlers,
+            keymap: config.keymap,
             status_git,
             policy_mode: policy_state
                 .as_ref()
@@ -445,6 +450,7 @@ impl TuiApp {
             drag_selection: DragSelectionState::default(),
             transcript_scroll: ScrollState::default(),
             mouse_capture: MouseCaptureController::default(),
+            selection_keyboard: selection_keyboard::SelectionKeyboardState::default(),
             transcript_fold: TranscriptFoldState::default(),
             transcript_context_menu: None,
             terminal_area: roder_api::interactive::RegionRect {
@@ -504,6 +510,7 @@ impl TuiApp {
                             } else {
                                 "event log hidden".to_string()
                             });
+                        } else if self.handle_selection_keyboard_action(key) {
                         } else if key.modifiers.contains(KeyModifiers::CONTROL)
                             && key.code == KeyCode::Char('c')
                         {
@@ -1438,12 +1445,16 @@ impl TuiApp {
         match outcome {
             DragSelectionOutcome::Started(_) | DragSelectionOutcome::Updated => {}
             DragSelectionOutcome::Finalized(SelectedText::Transcript(text)) => {
+                self.selection_keyboard
+                    .remember(SelectedText::Transcript(text.clone()));
                 self.push_event(format!(
                     "transcript selection finalized: {} chars",
                     text.chars().count()
                 ));
             }
             DragSelectionOutcome::Finalized(SelectedText::Composer(text)) => {
+                self.selection_keyboard
+                    .remember(SelectedText::Composer(text.clone()));
                 self.push_event(format!(
                     "composer selection finalized: {} chars",
                     text.chars().count()
@@ -1453,6 +1464,31 @@ impl TuiApp {
                 self.push_event("selection cleared: too short".to_string());
             }
         }
+    }
+
+    fn handle_selection_keyboard_action(&mut self, key: crossterm::event::KeyEvent) -> bool {
+        if self.keymap.matches_key_event(Action::CopySelection, &key) {
+            match self.selection_keyboard.copy_last_selection() {
+                Ok(Some(chars)) => self.push_event(format!("selection copied: {chars} chars")),
+                Ok(None) => self.push_event("selection copy skipped: no selection".to_string()),
+                Err(err) => self.record_error(format!("selection copy failed: {err}")),
+            }
+            return true;
+        }
+
+        if self.keymap.matches_key_event(Action::PasteToComposer, &key) {
+            let Some(text) = self.selection_keyboard.paste_text() else {
+                self.push_event("selection paste skipped: empty clipboard".to_string());
+                return true;
+            };
+            let chars = text.chars().count();
+            self.composer.insert_str(text);
+            self.clamp_slash_selection();
+            self.push_event(format!("selection pasted: {chars} chars"));
+            return true;
+        }
+
+        false
     }
 
     fn handle_region_action(&mut self, region_id: &str, right_click_at: Option<(u16, u16)>) {

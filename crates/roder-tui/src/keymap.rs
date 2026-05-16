@@ -1,5 +1,6 @@
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 
+use crossterm::event::{KeyCode, KeyEvent, KeyModifiers as CrosstermKeyModifiers};
 use roder_api::interactive::{RegionId, RegionKind};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -53,8 +54,14 @@ impl Default for Keymap {
             Action::OpenContextMenu,
             KeyBinding::modified("f10", [KeyModifier::Shift]),
         );
-        keymap.bind(Action::CopySelection, KeyBinding::plain("c"));
-        keymap.bind(Action::PasteToComposer, KeyBinding::plain("p"));
+        keymap.bind(
+            Action::CopySelection,
+            KeyBinding::modified("c", [KeyModifier::Control, KeyModifier::Shift]),
+        );
+        keymap.bind(
+            Action::PasteToComposer,
+            KeyBinding::modified("v", [KeyModifier::Control, KeyModifier::Shift]),
+        );
         keymap.bind(Action::ApproveHunk, KeyBinding::plain("y"));
         keymap.bind(Action::RejectHunk, KeyBinding::plain("n"));
         keymap.bind(
@@ -105,6 +112,12 @@ impl Keymap {
     pub fn actions(&self) -> BTreeSet<Action> {
         self.bindings.keys().copied().collect()
     }
+
+    pub fn matches_key_event(&self, action: Action, key: &KeyEvent) -> bool {
+        self.bindings_for(action)
+            .iter()
+            .any(|binding| binding.matches_key_event(key))
+    }
 }
 
 impl KeyBinding {
@@ -124,6 +137,60 @@ impl KeyBinding {
             modifiers: modifiers.into_iter().collect(),
         }
     }
+
+    pub fn matches_key_event(&self, event: &KeyEvent) -> bool {
+        self.normalized_key() == normalized_key_code(event.code)
+            && self.modifiers == key_modifiers_from_crossterm(event.modifiers)
+    }
+
+    fn normalized_key(&self) -> String {
+        self.key.to_lowercase()
+    }
+}
+
+fn normalized_key_code(code: KeyCode) -> String {
+    match code {
+        KeyCode::Backspace => "backspace".to_string(),
+        KeyCode::Enter => "enter".to_string(),
+        KeyCode::Left => "left".to_string(),
+        KeyCode::Right => "right".to_string(),
+        KeyCode::Up => "up".to_string(),
+        KeyCode::Down => "down".to_string(),
+        KeyCode::Home => "home".to_string(),
+        KeyCode::End => "end".to_string(),
+        KeyCode::PageUp => "pageup".to_string(),
+        KeyCode::PageDown => "pagedown".to_string(),
+        KeyCode::Tab => "tab".to_string(),
+        KeyCode::BackTab => "backtab".to_string(),
+        KeyCode::Delete => "delete".to_string(),
+        KeyCode::Insert => "insert".to_string(),
+        KeyCode::F(value) => format!("f{value}"),
+        KeyCode::Char(value) => value.to_lowercase().to_string(),
+        KeyCode::Null => "null".to_string(),
+        KeyCode::Esc => "esc".to_string(),
+        KeyCode::CapsLock => "capslock".to_string(),
+        KeyCode::ScrollLock => "scrolllock".to_string(),
+        KeyCode::NumLock => "numlock".to_string(),
+        KeyCode::PrintScreen => "printscreen".to_string(),
+        KeyCode::Pause => "pause".to_string(),
+        KeyCode::Menu => "menu".to_string(),
+        KeyCode::KeypadBegin => "keypadbegin".to_string(),
+        KeyCode::Media(_) | KeyCode::Modifier(_) => String::new(),
+    }
+}
+
+fn key_modifiers_from_crossterm(modifiers: CrosstermKeyModifiers) -> BTreeSet<KeyModifier> {
+    let mut out = BTreeSet::new();
+    if modifiers.contains(CrosstermKeyModifiers::CONTROL) {
+        out.insert(KeyModifier::Control);
+    }
+    if modifiers.contains(CrosstermKeyModifiers::SHIFT) {
+        out.insert(KeyModifier::Shift);
+    }
+    if modifiers.contains(CrosstermKeyModifiers::ALT) {
+        out.insert(KeyModifier::Alt);
+    }
+    out
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -272,5 +339,22 @@ mod tests {
         assert_eq!(ring.focus_next().map(String::as_str), Some("b"));
         assert_eq!(ring.focus_next().map(String::as_str), Some("a"));
         assert_eq!(ring.focus_previous().map(String::as_str), Some("b"));
+    }
+
+    #[test]
+    fn keymap_matches_crossterm_key_events() {
+        let keymap = Keymap::default();
+
+        assert!(keymap.matches_key_event(
+            Action::CopySelection,
+            &KeyEvent::new(
+                KeyCode::Char('C'),
+                CrosstermKeyModifiers::CONTROL | CrosstermKeyModifiers::SHIFT,
+            ),
+        ));
+        assert!(!keymap.matches_key_event(
+            Action::CopySelection,
+            &KeyEvent::new(KeyCode::Char('c'), CrosstermKeyModifiers::NONE),
+        ));
     }
 }
