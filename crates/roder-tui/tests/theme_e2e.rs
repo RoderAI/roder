@@ -215,7 +215,7 @@ fn cascading_a_theme_against_the_fake_timeline_finds_each_surface() {
     // The .timeline-tool node picked up the accent rule.
     let tool_hit = visited
         .iter()
-        .find(|(classes, _)| classes.iter().any(|c| *c == "timeline-tool"))
+        .find(|(classes, _)| classes.contains(&"timeline-tool"))
         .expect("tool node should exist");
     assert_eq!(tool_hit.1.color, Some(Color::Rgb(0x6c, 0xca, 0xff)));
 
@@ -223,7 +223,7 @@ fn cascading_a_theme_against_the_fake_timeline_finds_each_surface() {
     // resolves to display: block (default).
     let thinking_hit = visited
         .iter()
-        .find(|(classes, _)| classes.iter().any(|c| *c == "timeline-thinking"))
+        .find(|(classes, _)| classes.contains(&"timeline-thinking"))
         .expect("thinking node should exist");
     assert_eq!(thinking_hit.1.display, roder_theme::Display::Block);
 }

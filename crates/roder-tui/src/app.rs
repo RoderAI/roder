@@ -4,6 +4,7 @@ mod dialog;
 mod input_queue;
 mod plan_panel;
 mod session_resume;
+mod shortcuts;
 mod tool_detail;
 mod tool_timeline;
 mod turn_timer;
@@ -66,6 +67,7 @@ use input_queue::{PendingPrompt, PromptQueue, queue_status};
 use plan_panel::{
     PlanPanelState, plan_counter_area, plan_panel_height, render_plan_counter, render_plan_panel,
 };
+use shortcuts::FooterShortcutContext;
 use tool_detail::{ToolDetailAction, ToolDetailModal, render_tool_detail_modal};
 use tool_timeline::{
     TimelineFocus, TimelineState, ToolTimelineEntry, TurnCompletedSummary, fallback_entry,
@@ -811,6 +813,7 @@ pub struct TuiApp {
     animation_frame: u64,
     show_event_log: bool,
     show_provider_popup: bool,
+    show_shortcuts_dialog: bool,
     provider_popup_screen: ProviderPopupScreen,
     provider_choices: Vec<ProviderChoice>,
     model_options: Vec<ProviderOption>,
@@ -845,17 +848,12 @@ pub struct TuiApp {
     theme_preview_baseline: Option<(Theme, Option<String>)>,
 }
 
-#[derive(Debug, Clone, Eq, PartialEq)]
+#[derive(Debug, Clone, Default, Eq, PartialEq)]
 pub enum TuiStartup {
+    #[default]
     NewSession,
     ResumeMenu,
     ResumeSession(String),
-}
-
-impl Default for TuiStartup {
-    fn default() -> Self {
-        Self::NewSession
-    }
 }
 
 #[derive(Debug, Clone, Eq, PartialEq)]
@@ -865,6 +863,17 @@ pub struct TuiExitSummary {
     pub model: String,
     pub message_count: usize,
     pub resume_command: String,
+}
+
+#[derive(Debug, Clone, Eq, PartialEq)]
+struct SessionParts {
+    thread_id: String,
+    provider: String,
+    session_model: String,
+    requested_model: String,
+    reasoning: String,
+    session_title: Option<String>,
+    session_message_count: usize,
 }
 
 impl TuiApp {
@@ -895,13 +904,15 @@ impl TuiApp {
                 .unwrap_or_default();
             let mut app = Self::from_session_parts(
                 client,
-                thread_id.clone(),
-                provider,
-                session_model,
-                String::new(),
-                "medium".to_string(),
-                title,
-                message_count,
+                SessionParts {
+                    thread_id: thread_id.clone(),
+                    provider,
+                    session_model,
+                    requested_model: String::new(),
+                    reasoning: "medium".to_string(),
+                    session_title: title,
+                    session_message_count: message_count,
+                },
             )
             .await?;
             app.apply_snapshot(thread_id, snapshot);
@@ -929,13 +940,15 @@ impl TuiApp {
         };
         let mut app = Self::from_session_parts(
             client,
-            session.thread_id,
-            session.provider,
-            selected_model,
-            model,
-            session.reasoning,
-            None,
-            0,
+            SessionParts {
+                thread_id: session.thread_id,
+                provider: session.provider,
+                session_model: selected_model,
+                requested_model: model,
+                reasoning: session.reasoning,
+                session_title: None,
+                session_message_count: 0,
+            },
         )
         .await?;
 
@@ -954,14 +967,17 @@ impl TuiApp {
 
     async fn from_session_parts(
         client: LocalAppClient,
-        thread_id: String,
-        provider: String,
-        session_model: String,
-        requested_model: String,
-        reasoning: String,
-        session_title: Option<String>,
-        session_message_count: usize,
+        parts: SessionParts,
     ) -> anyhow::Result<Self> {
+        let SessionParts {
+            thread_id,
+            provider,
+            session_model,
+            requested_model,
+            reasoning,
+            session_title,
+            session_message_count,
+        } = parts;
         let mut provider_state = ListState::default();
         provider_state.select(Some(0));
         let theme = Theme::for_terminal_themed();
@@ -1015,6 +1031,7 @@ impl TuiApp {
             animation_frame: 0,
             show_event_log: false,
             show_provider_popup: false,
+            show_shortcuts_dialog: false,
             provider_popup_screen: ProviderPopupScreen::Main,
             provider_choices: Vec::new(),
             model_options: Vec::new(),
@@ -1092,6 +1109,16 @@ impl TuiApp {
                             if self.handle_confirm_key(key).await {
                                 break;
                             }
+                        } else if self.show_shortcuts_dialog {
+                            if key.modifiers.contains(KeyModifiers::CONTROL)
+                                && key.code == KeyCode::Char('c')
+                            {
+                                self.confirm_dialog =
+                                    Some(ConfirmDialogState::new(ConfirmDialog::Exit));
+                                self.show_shortcuts_dialog = false;
+                            } else if shortcuts::shortcut_dialog_close_key(key) {
+                                self.show_shortcuts_dialog = false;
+                            }
                         } else if key.modifiers.contains(KeyModifiers::CONTROL)
                             && key.code == KeyCode::Char('p')
                         {
@@ -1160,6 +1187,14 @@ impl TuiApp {
                             }
                             if composer_queue_key(key, self.has_prepared_prompt()) {
                                 self.queue_current_prompt();
+                                continue;
+                            }
+                            if shortcuts::should_open_shortcuts_dialog(
+                                key,
+                                composer_text(&self.composer).trim().is_empty(),
+                                self.timeline.focus() == TimelineFocus::Composer,
+                            ) {
+                                self.show_shortcuts_dialog = true;
                                 continue;
                             }
                             if self.active_turn_id.is_some()
@@ -1996,7 +2031,12 @@ impl TuiApp {
         if self.handle_plan_counter_mouse(mouse) {
             return;
         }
-        if self.handle_mouse_selection(mouse) {
+        // Give an in-progress text selection first chance to handle drag/up,
+        // but let fresh clicks hit interactive timeline rows before the
+        // transcript selection layer. Otherwise selectable transcript text
+        // swallows tool-row clicks and prevents the tool detail modal from
+        // opening.
+        if self.mouse_selection.is_some() && self.handle_mouse_selection(mouse) {
             return;
         }
         if self.timeline.handle_mouse(mouse) {
@@ -2006,7 +2046,9 @@ impl TuiApp {
                 return;
             }
             self.push_event("timeline selected".to_string());
+            return;
         }
+        let _ = self.handle_mouse_selection(mouse);
     }
 
     fn handle_plan_counter_mouse(&mut self, mouse: MouseEvent) -> bool {
@@ -2211,6 +2253,9 @@ impl TuiApp {
         }
         if let Some(dialog) = self.confirm_dialog.clone() {
             self.render_confirm_dialog(f, area, dialog);
+        }
+        if self.show_shortcuts_dialog {
+            shortcuts::render_shortcuts_dialog(f, area, self.theme);
         }
         if let Some(modal) = &self.tool_detail_modal {
             render_tool_detail_modal(f, area, modal, self.theme);
@@ -2495,27 +2540,19 @@ impl TuiApp {
         } else {
             ""
         };
-        let todo_hint = if self.plan_panel.is_empty() {
-            ""
-        } else {
-            "  ctrl+t todos"
-        };
-        let interaction_hint = match self.timeline.focus() {
-            TimelineFocus::Timeline => {
-                "  j/k navigate tools  pgup/pgdn scroll  enter expand  click tools  wheel scroll  esc composer"
+        let shortcut_context = match self.timeline.focus() {
+            TimelineFocus::Timeline => FooterShortcutContext::Timeline,
+            TimelineFocus::Composer if self.active_turn_id.is_some() => {
+                FooterShortcutContext::ComposerRunning
             }
-            TimelineFocus::Composer => {
-                if self.active_turn_id.is_some() {
-                    "  enter steer  tab queue message  shift+enter newline  shift+tab mode  paste/drag images  esc interrupt  ctrl+c exit"
-                } else {
-                    "  enter send  shift+enter newline  / commands  tab timeline  shift+tab mode  paste/drag images  ! shell  ctrl+p settings  ctrl+l events  esc interrupt  ctrl+c exit"
-                }
-            }
+            TimelineFocus::Composer => FooterShortcutContext::ComposerIdle,
         };
+        let interaction_hint =
+            shortcuts::footer_hint(shortcut_context, !self.plan_panel.is_empty());
         Paragraph::new(line_with_gap(
             vec![Span::styled(
                 format!(
-                    " {status}  mode:{}{queue_hint}{pending_hint}{shell_hint}{interaction_hint}{todo_hint}",
+                    " {status}  mode:{}{queue_hint}{pending_hint}{shell_hint}  {interaction_hint}",
                     policy_mode_label(self.policy_mode),
                     queue_hint = if self.queued_prompts.is_empty() {
                         String::new()
@@ -4569,7 +4606,72 @@ fn short_id(id: &str) -> &str {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::Arc;
+
+    use roder_app_server::AppServer;
+    use roder_core::Runtime;
     use roder_protocol::{ProviderDescriptor, ProvidersListResult};
+
+    fn test_app() -> TuiApp {
+        let theme = Theme::for_dark_background(true);
+        TuiApp {
+            client: LocalAppClient::new(Arc::new(AppServer::new(Arc::new(
+                Runtime::fake().expect("fake runtime"),
+            )))),
+            thread_id: "thread-test".to_string(),
+            session_title: None,
+            session_message_count: 0,
+            active_turn_id: None,
+            active_turn_timer: TurnTimer::default(),
+            current_turn_input_tokens: 0,
+            current_turn_output_tokens: 0,
+            current_turn_reasoning_tokens: None,
+            current_turn_total_tokens: 0,
+            session_tokens: 0,
+            context_window_tokens: 0,
+            provider: "mock".to_string(),
+            model: "mock".to_string(),
+            model_context_window: None,
+            context_counter_hovered: false,
+            last_frame_width: 100,
+            selectable_lines: Vec::new(),
+            mouse_selection: None,
+            copied_helper: None,
+            reasoning_effort: "medium".to_string(),
+            composer: composer_textarea(theme),
+            timeline: TimelineState::default(),
+            plan_panel: PlanPanelState::default(),
+            tool_names: HashMap::new(),
+            last_plan_counter_area: None,
+            events: Vec::new(),
+            animation_frame: 0,
+            show_event_log: false,
+            show_provider_popup: false,
+            show_shortcuts_dialog: false,
+            provider_popup_screen: ProviderPopupScreen::Main,
+            provider_choices: Vec::new(),
+            model_options: Vec::new(),
+            pending_reasoning_model: None,
+            provider_menu_items: Vec::new(),
+            provider_menu_filter: String::new(),
+            provider_state: ListState::default(),
+            working_spinner: WorkingSpinner::Dots,
+            web_search_mode: HostedWebSearchMode::Cached,
+            confirm_dialog: None,
+            tool_detail_modal: None,
+            image_attachments: Vec::new(),
+            queued_prompts: PromptQueue::default(),
+            last_user_prompt: None,
+            command_catalog: built_in_command_catalog(),
+            slash_command_selection: 0,
+            policy_mode: PolicyMode::Default,
+            pending_plan_exit: None,
+            compaction_active: false,
+            theme,
+            active_theme_id: None,
+            theme_preview_baseline: None,
+        }
+    }
 
     #[test]
     fn theme_primary_text_uses_terminal_default_for_contrast() {
@@ -4627,6 +4729,30 @@ mod tests {
             keyboard_enhancement_flags()
                 .contains(KeyboardEnhancementFlags::REPORT_ALL_KEYS_AS_ESCAPE_CODES)
         );
+    }
+
+    #[test]
+    fn timeline_mouse_click_takes_precedence_over_text_selection() {
+        let mut app = test_app();
+        app.timeline.record_tool_requested(
+            "call_1".to_string(),
+            ToolTimelineEntry::new("shell", r#"{"command":"printf hello"}"#),
+        );
+        app.timeline
+            .record_tool_completed("call_1", false, Some("hello".to_string()));
+
+        let transcript_area = Rect::new(0, 1, 100, 18);
+        let _ = app.transcript(transcript_area);
+
+        app.handle_mouse(MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column: 2,
+            row: transcript_area.y,
+            modifiers: KeyModifiers::empty(),
+        });
+
+        assert!(app.tool_detail_modal.is_some());
+        assert!(app.mouse_selection.is_none());
     }
 
     #[test]

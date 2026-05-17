@@ -138,9 +138,7 @@ fn unknown_theme_id_yields_a_not_found_error() {
     let state = unique_state_file("nope");
     let _ = fs::remove_file(&state);
 
-    let err = apply_theme(&dirs, &state, "this-theme-does-not-exist")
-        .err()
-        .expect("must error");
+    let err = apply_theme(&dirs, &state, "this-theme-does-not-exist").expect_err("must error");
     let msg = format!("{err}");
     assert!(msg.contains("this-theme-does-not-exist"), "msg={msg}");
     // No state file written.

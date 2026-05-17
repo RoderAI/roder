@@ -14,15 +14,21 @@ use time::UtcOffset;
 
 const MAX_VISIBLE_SESSIONS: usize = 10;
 const HEADER_ROWS: u16 = 3;
+const FOOTER_ROWS: u16 = 2;
 const ROW_HOT_ACCENT: Color = Color::Rgb {
     r: 46,
     g: 102,
     b: 161,
 };
-const ROW_BG: Color = Color::Rgb {
-    r: 37,
-    g: 44,
-    b: 64,
+const HEADER_ACCENT: Color = Color::Rgb {
+    r: 130,
+    g: 210,
+    b: 255,
+};
+const HINT_ACCENT: Color = Color::Rgb {
+    r: 140,
+    g: 220,
+    b: 195,
 };
 
 pub fn pick_session(sessions: &[SessionMetadata]) -> anyhow::Result<Option<String>> {
@@ -32,7 +38,7 @@ pub fn pick_session(sessions: &[SessionMetadata]) -> anyhow::Result<Option<Strin
     }
 
     let mut stdout = io::stdout();
-    let (_, start_row) = crossterm::cursor::position()?;
+    let start_row = reserve_picker_space(&mut stdout, picker_height(sessions.len()))?;
     let raw = RawModeGuard::enter()?;
     execute!(stdout, Hide)?;
     let current_dir = std::env::current_dir()
@@ -85,10 +91,8 @@ pub fn pick_session(sessions: &[SessionMetadata]) -> anyhow::Result<Option<Strin
             Event::Key(KeyEvent {
                 code: KeyCode::Down,
                 ..
-            }) => {
-                if selected + 1 < matches.len() {
-                    selected += 1;
-                }
+            }) if selected + 1 < matches.len() => {
+                selected += 1;
             }
             Event::Key(KeyEvent {
                 code: KeyCode::Char('f'),
@@ -152,17 +156,16 @@ pub fn pick_session(sessions: &[SessionMetadata]) -> anyhow::Result<Option<Strin
         Show
     )?;
     drop(raw);
-    if let Some(thread_id) = picked.as_deref() {
-        if let Some(session) = sessions
+    if let Some(thread_id) = picked.as_deref()
+        && let Some(session) = sessions
             .iter()
             .find(|session| session.thread_id == thread_id)
-        {
-            println!(
-                "Resuming {} ({})",
-                session_title(session),
-                short_id(&session.thread_id)
-            );
-        }
+    {
+        println!(
+            "Resuming {} ({})",
+            session_title(session),
+            short_id(&session.thread_id)
+        );
     }
     Ok(picked)
 }
@@ -222,7 +225,7 @@ fn render(
             break;
         };
         let session = &sessions[index];
-        let is_selected = index == selected;
+        let is_selected = scroll_start + row == selected;
         let mut line = session_line(session, width);
         if is_selected {
             line.insert_str(0, "> ");
@@ -278,7 +281,7 @@ fn render_line(
             SetAttribute(Attribute::Underlined),
         )?;
     } else {
-        execute!(stdout, SetForegroundColor(ROW_BG),)?;
+        execute!(stdout, ResetColor, SetAttribute(Attribute::Reset))?;
     }
     execute!(stdout, Print(fit_line(text, width)))?;
     execute!(stdout, SetAttribute(Attribute::Reset), ResetColor)?;
@@ -295,11 +298,7 @@ fn render_header_line(
     execute!(
         stdout,
         SetAttribute(Attribute::Bold),
-        SetForegroundColor(Color::Rgb {
-            r: 130,
-            g: 210,
-            b: 255
-        })
+        SetForegroundColor(HEADER_ACCENT)
     )?;
     execute!(
         stdout,
@@ -322,11 +321,7 @@ fn render_hint_line(
     execute!(stdout, MoveTo(0, row), Clear(ClearType::CurrentLine))?;
     execute!(
         stdout,
-        SetForegroundColor(Color::Rgb {
-            r: 130,
-            g: 200,
-            b: 180
-        }),
+        SetForegroundColor(HINT_ACCENT),
         SetAttribute(Attribute::Italic),
     )?;
     execute!(stdout, Print(fit_line(text, width)))?;
@@ -347,6 +342,36 @@ fn visible_session_count(match_count: usize, start_row: u16) -> usize {
         .saturating_sub(2);
     let visible_by_height = usize::from(available_rows.max(1));
     match_count.min(MAX_VISIBLE_SESSIONS).min(visible_by_height)
+}
+
+fn picker_height(match_count: usize) -> u16 {
+    HEADER_ROWS
+        .saturating_add(match_count.clamp(1, MAX_VISIBLE_SESSIONS) as u16)
+        .saturating_add(FOOTER_ROWS)
+}
+
+fn reserve_picker_space(stdout: &mut io::Stdout, desired_height: u16) -> anyhow::Result<u16> {
+    let (_, start_row) = crossterm::cursor::position()?;
+    let (_, terminal_height) = terminal::size().unwrap_or((80, 24));
+    let desired_height = desired_height.max(1).min(terminal_height.max(1));
+    if rows_available_from(start_row, terminal_height) >= desired_height {
+        return Ok(start_row);
+    }
+
+    for _ in 0..desired_height {
+        execute!(stdout, Print("\r\n"))?;
+    }
+    stdout.flush()?;
+    let (_, bottom_row) = crossterm::cursor::position()?;
+    Ok(reserved_start_row(bottom_row, desired_height))
+}
+
+fn rows_available_from(row: u16, terminal_height: u16) -> u16 {
+    terminal_height.saturating_sub(row)
+}
+
+fn reserved_start_row(bottom_row: u16, desired_height: u16) -> u16 {
+    bottom_row.saturating_sub(desired_height.saturating_sub(1))
 }
 
 fn clamp_selection(selected: usize, match_count: usize) -> usize {
@@ -373,19 +398,19 @@ fn filtered_sessions(
     only_current_directory: bool,
     current_dir: Option<&str>,
 ) -> Vec<usize> {
-    let current_path = current_dir.and_then(|dir| Some(normalize_path_for_filter(Path::new(dir))));
+    let current_path = current_dir.map(|dir| normalize_path_for_filter(Path::new(dir)));
     let query = query.trim().to_ascii_lowercase();
     let mut matches: Vec<_> = sessions
         .iter()
         .enumerate()
         .filter_map(|(index, session)| {
-            if only_current_directory {
-                if !session_in_current_directory(
+            if only_current_directory
+                && !session_in_current_directory(
                     session.workspace.as_deref(),
                     current_path.as_deref(),
-                ) {
-                    return None;
-                }
+                )
+            {
+                return None;
             }
             if query.is_empty() || searchable_text(session).contains(&query) {
                 Some(index)
@@ -595,6 +620,22 @@ mod tests {
         assert!(detail.contains("mock"));
         assert!(detail.contains("2 msg"));
         assert!(detail.contains("12345678"));
+    }
+
+    #[test]
+    fn picker_height_caps_to_visible_rows_plus_chrome() {
+        assert_eq!(picker_height(0), HEADER_ROWS + 1 + FOOTER_ROWS);
+        assert_eq!(picker_height(3), HEADER_ROWS + 3 + FOOTER_ROWS);
+        assert_eq!(
+            picker_height(MAX_VISIBLE_SESSIONS + 20),
+            HEADER_ROWS + MAX_VISIBLE_SESSIONS as u16 + FOOTER_ROWS
+        );
+    }
+
+    #[test]
+    fn reserved_start_row_moves_origin_above_reserved_space() {
+        assert_eq!(rows_available_from(20, 24), 4);
+        assert_eq!(reserved_start_row(23, 15), 9);
     }
 
     #[test]
