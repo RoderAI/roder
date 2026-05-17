@@ -42,6 +42,12 @@ impl PromptQueue {
         self.items.pop()
     }
 
+    pub fn clear(&mut self) -> usize {
+        let count = self.items.len();
+        self.items.clear();
+        count
+    }
+
     pub fn is_empty(&self) -> bool {
         self.items.is_empty()
     }
@@ -104,5 +110,16 @@ mod tests {
 
         assert_eq!(queue.pop_back().unwrap().message, "second message");
         assert_eq!(queue.pop_front().unwrap().message, "first message");
+    }
+
+    #[test]
+    fn queue_clear_returns_removed_count() {
+        let mut queue = PromptQueue::default();
+        queue.push(PendingPrompt::with_images("first", "first", Vec::new()));
+        queue.push(PendingPrompt::with_images("second", "second", Vec::new()));
+
+        assert_eq!(queue.clear(), 2);
+        assert_eq!(queue.len(), 0);
+        assert!(queue.pop_front().is_none());
     }
 }

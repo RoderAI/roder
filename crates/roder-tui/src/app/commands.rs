@@ -12,20 +12,25 @@ pub(super) fn built_in_command_catalog() -> Vec<CommandDescriptor> {
             "Summarize the current thread and continue with a smaller context.",
         ),
         ("help", "Show available commands and common workflows."),
+        ("goal", "Create a new active goal from an objective."),
+        ("retry", "Resubmit the last user message."),
         ("model", "Show or change the active model."),
         ("agents", "List configured subagents."),
         ("memory", "Inspect relevant project and user memory."),
     ]
     .into_iter()
-    .map(|(name, description)| CommandDescriptor {
-        name: name.to_string(),
-        description: Some(description.to_string()),
-        argument_hint: None,
-        source: "built-in".to_string(),
-        model: None,
-        agent: None,
-        has_shell_includes: false,
-        has_url_includes: false,
+    .map(|(name, description)| {
+        let argument_hint = (name == "goal").then(|| "<objective>".to_string());
+        CommandDescriptor {
+            name: name.to_string(),
+            description: Some(description.to_string()),
+            argument_hint,
+            source: "built-in".to_string(),
+            model: None,
+            agent: None,
+            has_shell_includes: false,
+            has_url_includes: false,
+        }
     })
     .collect()
 }
@@ -117,11 +122,16 @@ pub(super) fn help_text(commands: &[CommandDescriptor]) -> String {
     let mut lines = vec![
         "Slash commands:".to_string(),
         "/clear - Clear the visible conversation state.".to_string(),
+        "/goal <objective> - Create a new active goal.".to_string(),
+        "/retry - Resubmit the last user message.".to_string(),
         "/model - Show or change the active model.".to_string(),
         "/agents - List configured subagents.".to_string(),
     ];
     for command in commands {
-        if matches!(command.name.as_str(), "clear" | "model" | "agents") {
+        if matches!(
+            command.name.as_str(),
+            "clear" | "goal" | "retry" | "model" | "agents"
+        ) {
             continue;
         }
         let description = command.description.as_deref().unwrap_or("Run command.");
@@ -198,6 +208,8 @@ mod tests {
         let help = help_text(&sample_commands());
 
         assert!(help.contains("Slash commands:"));
+        assert!(help.contains("/goal <objective> - Create a new active goal."));
+        assert!(help.contains("/retry - Resubmit the last user message."));
         assert!(help.contains("/help - Run command."));
     }
 
@@ -212,8 +224,15 @@ mod tests {
         assert_eq!(
             names,
             [
-                "init", "clear", "compact", "help", "model", "agents", "memory"
+                "init", "clear", "compact", "help", "goal", "retry", "model", "agents", "memory"
             ]
+        );
+        assert_eq!(
+            commands
+                .iter()
+                .find(|command| command.name == "goal")
+                .and_then(|command| command.argument_hint.as_deref()),
+            Some("<objective>")
         );
     }
 

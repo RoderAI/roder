@@ -20,7 +20,7 @@ use roder_api::inference::{
 use roder_api::policy_mode::{PolicyDecision, PolicyMode};
 use roder_api::session::{SessionMetadata, SessionStore, ThreadSnapshot};
 use roder_api::subagents::SubagentDefinition;
-use roder_api::tools::{ToolChoice, ToolExecutionContext, ToolRegistry};
+use roder_api::tools::{ToolCall, ToolChoice, ToolExecutionContext, ToolRegistry, ToolResult};
 use time::{Duration, OffsetDateTime};
 use tokio::sync::{Mutex, RwLock, oneshot};
 
@@ -210,6 +210,31 @@ impl Runtime {
 
     pub fn registry(&self) -> &ExtensionRegistry {
         &self.registry
+    }
+
+    pub async fn execute_workflow_tool(
+        &self,
+        thread_id: ThreadId,
+        tool_name: &str,
+        arguments: serde_json::Value,
+    ) -> anyhow::Result<ToolResult> {
+        let Some(executor) = self.tool_registry.get(tool_name) else {
+            anyhow::bail!("tool not found: {tool_name}");
+        };
+        let tool_call = ToolCall {
+            id: format!("slash-{tool_name}"),
+            name: tool_name.to_string(),
+            raw_arguments: serde_json::to_string(&arguments)?,
+            arguments,
+            thread_id: thread_id.clone(),
+            turn_id: "slash-command".to_string(),
+        };
+        let ctx = ToolExecutionContext {
+            thread_id,
+            turn_id: "slash-command".to_string(),
+            effective_mode: self.status().await.policy_mode,
+        };
+        executor.execute(ctx, tool_call).await
     }
 
     pub async fn status(&self) -> RuntimeConfig {

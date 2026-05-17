@@ -1,6 +1,8 @@
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
+mod resume_picker;
+
 use roder_api::catalog::{DEFAULT_MODEL_ID, PROVIDER_MOCK};
 use roder_api::inference::HostedWebSearchConfig;
 use roder_api::policy_mode::PolicyMode;
@@ -11,8 +13,8 @@ use roder_extension_host::{
     DefaultRegistryConfig, DefaultSubagentsConfig, DefaultWebSearchConfig,
     DefaultWebSearchProviderConfig, build_default_registry,
 };
-use roder_protocol::{JsonRpcError, JsonRpcRequest, JsonRpcResponse};
-use roder_tui::TuiApp;
+use roder_protocol::{JsonRpcError, JsonRpcRequest, JsonRpcResponse, SessionsListResult};
+use roder_tui::{TuiApp, TuiStartup};
 use roder_web_search::WebSearchProviderKind;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::sync::mpsc;
@@ -28,18 +30,58 @@ async fn main() -> anyhow::Result<()> {
     }
 
     let cli_options = parse_cli_options(&args)?;
+    let mut startup = cli_options.startup.clone();
     let (runtime, default_model) = build_runtime_from_config(cli_options).await?;
     let app_server = Arc::new(AppServer::new(runtime).with_user_config_persistence());
     let client = LocalAppClient::new(app_server);
 
-    let mut tui = TuiApp::new(client, default_model).await?;
+    if matches!(startup, TuiStartup::ResumeMenu) {
+        let sessions = list_sessions(&client).await?;
+        let Some(thread_id) = resume_picker::pick_session(&sessions)? else {
+            return Ok(());
+        };
+        startup = TuiStartup::ResumeSession(thread_id);
+    }
+
+    let mut tui = TuiApp::new_with_startup(client, default_model, startup).await?;
     tui.run().await?;
+    print_tui_exit_summary(&tui);
     Ok(())
+}
+
+async fn list_sessions(
+    client: &LocalAppClient,
+) -> anyhow::Result<Vec<roder_api::session::SessionMetadata>> {
+    let res = client
+        .send_request(JsonRpcRequest {
+            jsonrpc: "2.0".to_string(),
+            id: Some(serde_json::json!("sessions/list")),
+            method: "sessions/list".to_string(),
+            params: None,
+        })
+        .await;
+    let mut sessions = decode_response::<SessionsListResult>(res).map(|result| result.sessions)?;
+    sessions.sort_by(|lhs, rhs| rhs.updated_at.cmp(&lhs.updated_at));
+    Ok(sessions)
+}
+
+fn decode_response<T: serde::de::DeserializeOwned>(res: JsonRpcResponse) -> anyhow::Result<T> {
+    if let Some(error) = res.error {
+        if let Some(data) = error.data {
+            anyhow::bail!("{} ({})\n{}", error.message, error.code, data);
+        }
+        anyhow::bail!("{} ({})", error.message, error.code);
+    }
+    let Some(result) = res.result else {
+        anyhow::bail!("missing result");
+    };
+    Ok(serde_json::from_value(result)?)
 }
 
 #[derive(Debug, Clone, Default)]
 struct CliOptions {
     policy_mode: Option<PolicyMode>,
+    startup: TuiStartup,
 }
 
 #[derive(Debug, Clone)]
@@ -143,6 +185,16 @@ fn parse_cli_options(args: &[String]) -> anyhow::Result<CliOptions> {
     let mut i = 0;
     while i < args.len() {
         match args[i].as_str() {
+            "resume" => {
+                let thread_id = args.get(i + 1).filter(|value| !value.starts_with("--"));
+                options.startup = match thread_id {
+                    Some(thread_id) => {
+                        i += 1;
+                        TuiStartup::ResumeSession(thread_id.clone())
+                    }
+                    None => TuiStartup::ResumeMenu,
+                };
+            }
             "--yolo" => options.policy_mode = Some(PolicyMode::Bypass),
             "--mode" => {
                 let Some(mode) = args.get(i + 1) else {
@@ -159,6 +211,19 @@ fn parse_cli_options(args: &[String]) -> anyhow::Result<CliOptions> {
         i += 1;
     }
     Ok(options)
+}
+
+fn print_tui_exit_summary(tui: &TuiApp) {
+    let summary = tui.exit_summary();
+    println!("Session: {}", summary.title);
+    println!(
+        "Saved as {} ({}, {} message{})",
+        summary.thread_id,
+        summary.model,
+        summary.message_count,
+        if summary.message_count == 1 { "" } else { "s" }
+    );
+    println!("Resume: {}", summary.resume_command);
 }
 
 fn parse_app_server_options(args: &[String]) -> anyhow::Result<AppServerOptions> {
@@ -659,6 +724,50 @@ mod tests {
 
         let options = parse_cli_options(&["--yolo".to_string()]).unwrap();
         assert_eq!(options.policy_mode, Some(PolicyMode::Bypass));
+    }
+
+    #[test]
+    fn parses_resume_menu_cli_command() {
+        let options = parse_cli_options(&["resume".to_string()]).unwrap();
+
+        assert_eq!(options.startup, TuiStartup::ResumeMenu);
+    }
+
+    #[test]
+    fn parses_resume_session_cli_command() {
+        let options = parse_cli_options(&[
+            "--mode=plan".to_string(),
+            "resume".to_string(),
+            "abc".to_string(),
+        ])
+        .unwrap();
+
+        assert_eq!(options.policy_mode, Some(PolicyMode::Plan));
+        assert_eq!(
+            options.startup,
+            TuiStartup::ResumeSession("abc".to_string())
+        );
+    }
+
+    #[test]
+    fn decode_response_includes_error_data() {
+        let err = decode_response::<serde_json::Value>(JsonRpcResponse {
+            jsonrpc: "2.0".to_string(),
+            id: Some(serde_json::json!(1)),
+            result: None,
+            error: Some(JsonRpcError {
+                code: -32000,
+                message: "parse failed".to_string(),
+                data: Some(serde_json::json!({
+                    "details": "parse session metadata /tmp/metadata.json"
+                })),
+            }),
+        })
+        .unwrap_err();
+
+        let rendered = err.to_string();
+        assert!(rendered.contains("parse failed (-32000)"));
+        assert!(rendered.contains("parse session metadata /tmp/metadata.json"));
     }
 
     #[test]

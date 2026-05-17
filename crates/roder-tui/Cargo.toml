@@ -17,6 +17,7 @@ roder-theme.workspace = true
 serde = { workspace = true, features = ["derive"] }
 serde_json.workspace = true
 similar.workspace = true
+time.workspace = true
 tokio = { workspace = true, features = ["full", "sync"] }
 toml.workspace = true
 tui-textarea = { version = "0.11.0", package = "tui-textarea-2" }

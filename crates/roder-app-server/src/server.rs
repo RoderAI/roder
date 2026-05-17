@@ -126,6 +126,13 @@ impl AppServer {
                 .await
             }
             "tools/list" => self.handle_tools_list().await,
+            "tools/call" => {
+                self.decode_and(
+                    req.params,
+                    |p| async move { self.handle_tool_call(p).await },
+                )
+                .await
+            }
             "agents/list" => self.handle_agents_list().await,
             _ => Err(JsonRpcError {
                 code: -32601,
@@ -511,6 +518,31 @@ impl AppServer {
         .unwrap())
     }
 
+    async fn handle_tool_call(
+        &self,
+        params: ToolCallParams,
+    ) -> Result<serde_json::Value, JsonRpcError> {
+        if !matches!(params.tool_name.as_str(), "get_goal" | "create_goal") {
+            return Err(JsonRpcError {
+                code: -32602,
+                message: format!("tool cannot be called directly: {}", params.tool_name),
+                data: None,
+            });
+        }
+
+        let result = self
+            .runtime
+            .execute_workflow_tool(params.thread_id, &params.tool_name, params.arguments)
+            .await
+            .map_err(internal_error)?;
+        Ok(serde_json::to_value(ToolCallResult {
+            text: result.text,
+            data: result.data,
+            is_error: result.is_error,
+        })
+        .unwrap())
+    }
+
     async fn handle_agents_list(&self) -> Result<serde_json::Value, JsonRpcError> {
         Ok(serde_json::to_value(AgentsListResult {
             agents: self
@@ -545,10 +577,11 @@ fn invalid_params(err: impl std::fmt::Display) -> JsonRpcError {
 }
 
 fn internal_error(err: impl std::fmt::Display) -> JsonRpcError {
+    let details = format!("{err:#}");
     JsonRpcError {
         code: -32000,
-        message: err.to_string(),
-        data: None,
+        message: details.clone(),
+        data: Some(serde_json::json!({ "details": details })),
     }
 }
 

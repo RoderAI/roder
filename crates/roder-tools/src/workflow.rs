@@ -191,6 +191,10 @@ impl ToolExecutor for CreateGoalTool {
                     "token_budget": {
                         "type": "integer",
                         "minimum": 1
+                    },
+                    "replace": {
+                        "type": "boolean",
+                        "description": "Replace an existing active goal when true."
                     }
                 },
                 "required": ["objective"],
@@ -211,7 +215,8 @@ impl ToolExecutor for CreateGoalTool {
         if matches!(
             state.active.as_ref().map(|goal| goal.status),
             Some(GoalStatus::Active)
-        ) {
+        ) && !args.replace.unwrap_or(false)
+        {
             return Ok(error_result(
                 call,
                 "an active goal already exists".to_string(),
@@ -364,6 +369,7 @@ struct UpdatePlanArgs {
 struct CreateGoalArgs {
     objective: String,
     token_budget: Option<u64>,
+    replace: Option<bool>,
 }
 
 #[derive(Deserialize)]

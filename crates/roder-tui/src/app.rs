@@ -3,6 +3,7 @@ mod composer;
 mod dialog;
 mod input_queue;
 mod plan_panel;
+mod session_resume;
 mod tool_detail;
 mod tool_timeline;
 mod turn_timer;
@@ -40,15 +41,17 @@ use roder_api::inference::{
     HostedWebSearchMode, ProviderAuthType, ReasoningEffortDescriptor, TokenUsage,
 };
 use roder_api::policy_mode::{PolicyDecision, PolicyMode};
+use roder_api::session::SessionMetadata;
 use roder_app_server::LocalAppClient;
 use roder_protocol::{
     AgentsListResult, CodexAuthResult, CommandDescriptor, CreateSessionResult, InterruptTurnParams,
     JsonRpcRequest, JsonRpcResponse, PendingPlanExitDescriptor, ProviderDescriptor,
     ProviderSelectParams, ProviderSelectResult, ProvidersListResult, SessionExitPlanParams,
-    SessionExitPlanResult, SessionGetResult, SessionResolveApprovalParams,
-    SessionResolveApprovalResult, SessionSetModeParams, SessionSetModeResult, SettingsGetResult,
-    SettingsSetDefaultModeParams, SettingsSetDefaultModeResult, SettingsSetWebSearchParams,
-    SettingsSetWebSearchResult, StartTurnParams, SteerTurnParams,
+    SessionExitPlanResult, SessionGetResult, SessionLoadParams, SessionLoadResult,
+    SessionResolveApprovalParams, SessionResolveApprovalResult, SessionSetModeParams,
+    SessionSetModeResult, SessionsListResult, SettingsGetResult, SettingsSetDefaultModeParams,
+    SettingsSetDefaultModeResult, SettingsSetWebSearchParams, SettingsSetWebSearchResult,
+    StartTurnParams, SteerTurnParams,
 };
 use tokio::io::AsyncWriteExt;
 use tokio::process::Command;
@@ -452,6 +455,12 @@ struct ProviderChoice {
     recommended: bool,
 }
 
+#[derive(Debug, Clone, serde::Deserialize)]
+struct WorkflowToolCallResult {
+    text: String,
+    is_error: bool,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct ImageAttachment {
     path: PathBuf,
@@ -510,6 +519,7 @@ enum ProviderPopupScreen {
     Settings,
     Spinner,
     WebSearch,
+    Resume,
     Themes,
 }
 
@@ -664,12 +674,14 @@ enum ProviderMenuItem {
     SpinnerSettings,
     WebSearchSettings,
     ThemesSettings,
+    ResumeSessions,
     DefaultMode(PolicyMode),
     Spinner(WorkingSpinner),
     WebSearchMode(HostedWebSearchMode),
     Provider(ProviderChoice),
     Model(ProviderOption),
     Reasoning(ReasoningOptionChoice),
+    Session(SessionMetadata),
     Theme(String),
     Back,
 }
@@ -709,6 +721,7 @@ impl ProviderMenuItem {
             Self::SpinnerSettings => "Working spinner".to_string(),
             Self::WebSearchSettings => "Web search provider".to_string(),
             Self::ThemesSettings => "Themes".to_string(),
+            Self::ResumeSessions => "Resume session".to_string(),
             Self::DefaultMode(mode) => {
                 format!("Default mode: {}", settings_policy_mode_label(*mode))
             }
@@ -717,6 +730,26 @@ impl ProviderMenuItem {
             Self::Provider(provider) => provider.label(),
             Self::Model(option) => option.label.clone(),
             Self::Reasoning(option) => format!("{} - {}", option.effort, option.description),
+            Self::Session(session) => {
+                let date = session.updated_at.date().to_string();
+                let workspace = session
+                    .workspace
+                    .as_ref()
+                    .filter(|workspace| !workspace.trim().is_empty())
+                    .map_or("(unknown)".to_string(), |workspace| workspace.clone());
+                format!(
+                    "{} [{} msgs] [{}] {}",
+                    date,
+                    session.message_count,
+                    short_id(&session.thread_id),
+                    session
+                        .title
+                        .clone()
+                        .filter(|title| !title.trim().is_empty())
+                        .unwrap_or_else(|| format!("Session {}", short_id(&session.thread_id)))
+                        + &format!(" - {workspace}")
+                )
+            }
             Self::Theme(id) => id.clone(),
             Self::Back => "Back".to_string(),
         }
@@ -750,6 +783,8 @@ impl ProviderChoice {
 pub struct TuiApp {
     client: LocalAppClient,
     thread_id: String,
+    session_title: Option<String>,
+    session_message_count: usize,
     active_turn_id: Option<String>,
     active_turn_timer: TurnTimer,
     current_turn_input_tokens: u32,
@@ -789,6 +824,7 @@ pub struct TuiApp {
     tool_detail_modal: Option<ToolDetailModal>,
     image_attachments: Vec<ImageAttachment>,
     queued_prompts: PromptQueue,
+    last_user_prompt: Option<PendingPrompt>,
     command_catalog: Vec<CommandDescriptor>,
     slash_command_selection: usize,
     policy_mode: PolicyMode,
@@ -809,8 +845,69 @@ pub struct TuiApp {
     theme_preview_baseline: Option<(Theme, Option<String>)>,
 }
 
+#[derive(Debug, Clone, Eq, PartialEq)]
+pub enum TuiStartup {
+    NewSession,
+    ResumeMenu,
+    ResumeSession(String),
+}
+
+impl Default for TuiStartup {
+    fn default() -> Self {
+        Self::NewSession
+    }
+}
+
+#[derive(Debug, Clone, Eq, PartialEq)]
+pub struct TuiExitSummary {
+    pub thread_id: String,
+    pub title: String,
+    pub model: String,
+    pub message_count: usize,
+    pub resume_command: String,
+}
+
 impl TuiApp {
     pub async fn new(client: LocalAppClient, model: String) -> anyhow::Result<Self> {
+        Self::new_with_startup(client, model, TuiStartup::NewSession).await
+    }
+
+    pub async fn new_with_startup(
+        client: LocalAppClient,
+        model: String,
+        startup: TuiStartup,
+    ) -> anyhow::Result<Self> {
+        if let TuiStartup::ResumeSession(thread_id) = startup {
+            let snapshot = session_resume::load_snapshot(&client, &thread_id)
+                .await?
+                .ok_or_else(|| anyhow::anyhow!("session not found: {}", short_id(&thread_id)))?;
+            let metadata = snapshot.metadata.as_ref();
+            let provider = metadata
+                .and_then(|metadata| metadata.provider.clone())
+                .unwrap_or_default();
+            let session_model = metadata
+                .and_then(|metadata| metadata.model.clone())
+                .filter(|value| !value.trim().is_empty())
+                .unwrap_or_else(|| model.clone());
+            let title = metadata.and_then(|metadata| metadata.title.clone());
+            let message_count = metadata
+                .map(|metadata| metadata.message_count as usize)
+                .unwrap_or_default();
+            let mut app = Self::from_session_parts(
+                client,
+                thread_id.clone(),
+                provider,
+                session_model,
+                String::new(),
+                "medium".to_string(),
+                title,
+                message_count,
+            )
+            .await?;
+            app.apply_snapshot(thread_id, snapshot);
+            return Ok(app);
+        }
+
         let req = JsonRpcRequest {
             jsonrpc: "2.0".to_string(),
             id: Some(serde_json::json!(1)),
@@ -825,6 +922,46 @@ impl TuiApp {
             anyhow::bail!("failed to create session: {:?}", res.error);
         };
 
+        let selected_model = if model.is_empty() {
+            session.model.clone()
+        } else {
+            model.clone()
+        };
+        let mut app = Self::from_session_parts(
+            client,
+            session.thread_id,
+            session.provider,
+            selected_model,
+            model,
+            session.reasoning,
+            None,
+            0,
+        )
+        .await?;
+
+        match startup {
+            TuiStartup::NewSession => {}
+            TuiStartup::ResumeMenu => {
+                app.open_resume_submenu().await;
+            }
+            TuiStartup::ResumeSession(thread_id) => {
+                app.load_session(thread_id).await;
+            }
+        }
+
+        Ok(app)
+    }
+
+    async fn from_session_parts(
+        client: LocalAppClient,
+        thread_id: String,
+        provider: String,
+        session_model: String,
+        requested_model: String,
+        reasoning: String,
+        session_title: Option<String>,
+        session_message_count: usize,
+    ) -> anyhow::Result<Self> {
         let mut provider_state = ListState::default();
         provider_state.select(Some(0));
         let theme = Theme::for_terminal_themed();
@@ -840,16 +977,18 @@ impl TuiApp {
         let policy_state = session_get(&client).await.ok();
         let settings_state = settings_get(&client).await.ok();
         let tui_config = load_tui_config().unwrap_or_default();
-        let selected_model = if model.is_empty() {
-            session.model
+        let selected_model = if requested_model.is_empty() {
+            session_model
         } else {
-            model
+            requested_model
         };
         let model_context_window = context_window_for_model(&selected_model);
 
         Ok(Self {
             client,
-            thread_id: session.thread_id,
+            thread_id,
+            session_title,
+            session_message_count,
             active_turn_id: None,
             active_turn_timer: TurnTimer::default(),
             current_turn_input_tokens: 0,
@@ -858,7 +997,7 @@ impl TuiApp {
             current_turn_total_tokens: 0,
             session_tokens: 0,
             context_window_tokens: 0,
-            provider: session.provider,
+            provider,
             model: selected_model,
             model_context_window,
             context_counter_hovered: false,
@@ -866,7 +1005,7 @@ impl TuiApp {
             selectable_lines: Vec::new(),
             mouse_selection: None,
             copied_helper: None,
-            reasoning_effort: session.reasoning,
+            reasoning_effort: reasoning,
             composer: composer_textarea(theme),
             timeline: TimelineState::default(),
             plan_panel: PlanPanelState::default(),
@@ -891,6 +1030,7 @@ impl TuiApp {
             tool_detail_modal: None,
             image_attachments: Vec::new(),
             queued_prompts: PromptQueue::default(),
+            last_user_prompt: None,
             command_catalog: built_in_command_catalog(),
             slash_command_selection: 0,
             policy_mode: policy_state
@@ -903,6 +1043,10 @@ impl TuiApp {
             active_theme_id,
             theme_preview_baseline: None,
         })
+    }
+
+    pub fn exit_summary(&self) -> TuiExitSummary {
+        self.session_exit_summary()
     }
 
     pub async fn run(&mut self) -> anyhow::Result<()> {
@@ -1530,6 +1674,12 @@ impl TuiApp {
                     .push_system(commands::help_text(&self.command_catalog));
                 self.push_event("slash command: /help".to_string());
             }
+            "goal" => {
+                self.run_goal_slash_command(&args).await;
+            }
+            "retry" => {
+                self.run_retry_slash_command().await;
+            }
             "model" => {
                 self.run_model_slash_command(&args).await;
             }
@@ -1552,6 +1702,55 @@ impl TuiApp {
                     .push_error(format!("unknown slash command: /{name}"));
             }
         }
+    }
+
+    async fn run_goal_slash_command(&mut self, args: &str) {
+        let objective = args.trim();
+        if objective.is_empty() {
+            match self.goal_get().await {
+                Ok(text) => self.timeline.push_system(text),
+                Err(err) => self.record_error(format!("get_goal failed: {err}")),
+            }
+            self.push_event("slash command: /goal".to_string());
+            return;
+        }
+
+        match self.goal_create(objective).await {
+            Ok(text) => self.timeline.push_system(text),
+            Err(err) => self.record_error(format!("create_goal failed: {err}")),
+        }
+        self.push_event(format!(
+            "slash command: /goal{}",
+            slash_command_suffix(args)
+        ));
+    }
+
+    async fn run_retry_slash_command(&mut self) {
+        if self.active_turn_id.is_some() {
+            self.record_error(
+                "retry unavailable while a turn is running; interrupt first.".to_string(),
+            );
+            return;
+        }
+
+        let Some(pending) = self.last_user_prompt.clone() else {
+            self.record_error("nothing to retry yet.".to_string());
+            return;
+        };
+
+        let cleared = self.queued_prompts.clear();
+        if cleared > 0 {
+            let plural = if cleared == 1 { "" } else { "s" };
+            self.timeline.push_system(format!(
+                "Cleared {cleared} queued follow-up input{plural} before retry."
+            ));
+            self.push_event(format!(
+                "cleared {cleared} queued follow-up input{plural} before retry"
+            ));
+        }
+
+        self.push_event("slash command: /retry".to_string());
+        self.start_prepared_prompt(pending).await;
     }
 
     async fn run_model_slash_command(&mut self, args: &str) {
@@ -1655,12 +1854,17 @@ impl TuiApp {
     }
 
     async fn start_prepared_prompt(&mut self, pending: PendingPrompt) {
+        self.last_user_prompt = Some(pending.clone());
         self.timeline.push_user(pending.display.clone());
+        self.session_message_count = self.session_message_count.saturating_add(1);
+        if self.session_title.is_none() {
+            self.session_title = Some(truncate(&pending.display, 72));
+        }
         let params = StartTurnParams {
             thread_id: self.thread_id.clone(),
             message: pending.message,
             images: pending.images,
-            provider_override: None,
+            provider_override: (!self.provider.trim().is_empty()).then(|| self.provider.clone()),
             model_override: Some(self.model.clone()),
         };
         let client = self.client.clone();
@@ -2351,6 +2555,11 @@ impl TuiApp {
                         ProviderMenuItem::WebSearchMode(mode) if *mode == self.web_search_mode => {
                             "✓ "
                         }
+                        ProviderMenuItem::Session(session)
+                            if session.thread_id == self.thread_id =>
+                        {
+                            "✓ "
+                        }
                         ProviderMenuItem::Theme(id)
                             if self.active_theme_id.as_deref() == Some(id.as_str()) =>
                         {
@@ -2362,6 +2571,7 @@ impl TuiApp {
                         | ProviderMenuItem::SpinnerSettings
                         | ProviderMenuItem::WebSearchSettings
                         | ProviderMenuItem::ThemesSettings
+                        | ProviderMenuItem::ResumeSessions
                         | ProviderMenuItem::Reasoning(_) => "› ",
                         ProviderMenuItem::Back => "‹ ",
                         _ => "• ",
@@ -2381,6 +2591,7 @@ impl TuiApp {
             ProviderPopupScreen::Settings => " Settings (Enter select, Esc back) ",
             ProviderPopupScreen::Spinner => " Working spinner (Enter select, Esc back) ",
             ProviderPopupScreen::WebSearch => " Web search provider (Enter select, Esc back) ",
+            ProviderPopupScreen::Resume => " Resume session (Enter select, Esc back) ",
             ProviderPopupScreen::Themes => " Themes (Enter select, Esc back) ",
         };
         let borders = if self.theme.borders_visible {
@@ -2472,6 +2683,47 @@ impl TuiApp {
         decode_response(res)
     }
 
+    async fn goal_get(&self) -> anyhow::Result<String> {
+        self.workflow_tool_text("get_goal", serde_json::json!({}))
+            .await
+    }
+
+    async fn goal_create(&self, objective: &str) -> anyhow::Result<String> {
+        self.workflow_tool_text(
+            "create_goal",
+            serde_json::json!({
+                "objective": objective,
+                "replace": true,
+            }),
+        )
+        .await
+    }
+
+    async fn workflow_tool_text(
+        &self,
+        tool_name: &str,
+        arguments: serde_json::Value,
+    ) -> anyhow::Result<String> {
+        let res = self
+            .client
+            .send_request(JsonRpcRequest {
+                jsonrpc: "2.0".to_string(),
+                id: Some(serde_json::json!(format!("workflow/{tool_name}"))),
+                method: "tools/call".to_string(),
+                params: Some(serde_json::json!({
+                    "thread_id": self.thread_id,
+                    "tool_name": tool_name,
+                    "arguments": arguments,
+                })),
+            })
+            .await;
+        let result = decode_response::<self::WorkflowToolCallResult>(res)?;
+        if result.is_error {
+            anyhow::bail!(result.text);
+        }
+        Ok(result.text)
+    }
+
     async fn set_web_search_mode(&mut self, mode: HostedWebSearchMode) {
         let res = self
             .client
@@ -2559,6 +2811,12 @@ impl TuiApp {
             self.provider_state.select(Some(0));
             return;
         }
+        if self.provider_popup_screen == ProviderPopupScreen::Resume {
+            self.provider_popup_screen = ProviderPopupScreen::Main;
+            self.provider_menu_items = main_provider_menu_items(&self.provider_choices);
+            self.provider_state.select(Some(0));
+            return;
+        }
         if self.provider_popup_screen == ProviderPopupScreen::Themes {
             // Leaving the themes screen without committing — revert any live
             // preview before returning to the main menu.
@@ -2635,6 +2893,9 @@ impl TuiApp {
             ProviderMenuItem::ThemesSettings => {
                 self.open_themes_submenu();
             }
+            ProviderMenuItem::ResumeSessions => {
+                self.open_resume_submenu().await;
+            }
             ProviderMenuItem::Theme(id) => {
                 self.select_theme(id);
             }
@@ -2660,6 +2921,10 @@ impl TuiApp {
                     reasoning: Some(option.effort),
                 })
                 .await;
+            }
+            ProviderMenuItem::Session(session) => {
+                self.show_provider_popup = false;
+                self.load_session(session.thread_id).await;
             }
             ProviderMenuItem::Back => {
                 self.close_or_back_provider_popup();
@@ -2760,6 +3025,34 @@ impl TuiApp {
             .position(|item| matches!(item, ProviderMenuItem::WebSearchMode(mode) if *mode == self.web_search_mode))
             .unwrap_or(0);
         self.provider_state.select(Some(selected));
+    }
+
+    async fn open_resume_submenu(&mut self) {
+        self.provider_popup_screen = ProviderPopupScreen::Resume;
+        self.provider_menu_filter.clear();
+        match session_resume::sessions_list(&self.client).await {
+            Ok(sessions) => {
+                self.provider_menu_items = sessions
+                    .into_iter()
+                    .map(ProviderMenuItem::Session)
+                    .chain(std::iter::once(ProviderMenuItem::Back))
+                    .collect();
+                let selected = self
+                    .provider_menu_items
+                    .iter()
+                    .position(|item| {
+                        matches!(item, ProviderMenuItem::Session(session) if session.thread_id == self.thread_id)
+                    })
+                    .unwrap_or(0);
+                self.provider_state.select(Some(selected));
+            }
+            Err(err) => {
+                self.provider_menu_items = vec![ProviderMenuItem::Back];
+                self.provider_state.select(Some(0));
+                self.record_error(format!("sessions/list failed: {err}"));
+            }
+        }
+        self.show_provider_popup = true;
     }
 
     fn open_themes_submenu(&mut self) {
@@ -3869,6 +4162,7 @@ fn main_provider_menu_items(providers: &[ProviderChoice]) -> Vec<ProviderMenuIte
         ProviderMenuItem::Models,
         ProviderMenuItem::Providers,
         ProviderMenuItem::Settings,
+        ProviderMenuItem::ResumeSessions,
         ProviderMenuItem::WebSearchSettings,
         ProviderMenuItem::SpinnerSettings,
         ProviderMenuItem::ThemesSettings,
@@ -4970,7 +5264,10 @@ mod tests {
             0
         );
         assert_eq!(slash_command_menu_height(Some(&matches[..1])), 2);
-        assert_eq!(slash_command_menu_height(Some(&matches)), 8);
+        assert_eq!(
+            slash_command_menu_height(Some(&matches)),
+            1 + MAX_VISIBLE_SLASH_COMMANDS as u16
+        );
     }
 
     #[test]
@@ -5069,14 +5366,18 @@ mod tests {
         assert!(matches!(items.get(2), Some(ProviderMenuItem::Settings)));
         assert!(matches!(
             items.get(3),
-            Some(ProviderMenuItem::WebSearchSettings)
+            Some(ProviderMenuItem::ResumeSessions)
         ));
         assert!(matches!(
             items.get(4),
-            Some(ProviderMenuItem::SpinnerSettings)
+            Some(ProviderMenuItem::WebSearchSettings)
         ));
         assert!(matches!(
             items.get(5),
+            Some(ProviderMenuItem::SpinnerSettings)
+        ));
+        assert!(matches!(
+            items.get(6),
             Some(ProviderMenuItem::ThemesSettings)
         ));
     }
