@@ -277,6 +277,20 @@ pub struct ToolsListResult {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ToolCallParams {
+    pub thread_id: ThreadId,
+    pub tool_name: String,
+    pub arguments: serde_json::Value,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ToolCallResult {
+    pub text: String,
+    pub data: serde_json::Value,
+    pub is_error: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AgentsListResult {
     pub agents: Vec<AgentDescriptor>,
 }

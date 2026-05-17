@@ -4,6 +4,7 @@ use roder_api::conversation::{ConversationItem, InputImage};
 use roder_api::extension::{ExtensionRegistryBuilder, InferenceEngineId};
 use roder_api::inference::*;
 use roder_api::policy_mode::PolicyMode;
+use roder_api::session::{SessionMetadata, SessionStore, SessionStoreFactory, ThreadSnapshot};
 use roder_api::subagents::{SubagentDefinition, SubagentPermissionMode};
 use roder_app_server::{AppServer, LocalAppClient};
 use roder_core::{PendingPlanExit, Runtime, fake_provider::FakeInferenceEngine};
@@ -21,7 +22,8 @@ use roder_protocol::{
     SessionResolveUserInputResult, SessionSetModeParams, SessionSetModeResult, SessionsListResult,
     SettingsGetResult, SettingsSetDefaultModeParams, SettingsSetDefaultModeResult,
     SettingsSetWebSearchParams, SettingsSetWebSearchResult, StartTurnParams, StartTurnResult,
-    SteerTurnParams, SteerTurnResult, SystemStatusResult, ToolsListResult,
+    SteerTurnParams, SteerTurnResult, SystemStatusResult, ToolCallParams, ToolCallResult,
+    ToolsListResult,
 };
 use std::sync::Arc;
 use std::time::Duration;
@@ -36,8 +38,63 @@ struct TaskCallingEngine {
 
 struct PendingEngine;
 
+struct FailingSessionStoreFactory;
+
+struct FailingSessionStore;
+
 struct ImageCaptureEngine {
     requests: Mutex<Vec<AgentInferenceRequest>>,
+}
+
+impl SessionStoreFactory for FailingSessionStoreFactory {
+    fn id(&self) -> roder_api::session::SessionStoreId {
+        "failing".to_string()
+    }
+
+    fn create(&self) -> Arc<dyn SessionStore> {
+        Arc::new(FailingSessionStore)
+    }
+}
+
+#[async_trait::async_trait]
+impl SessionStore for FailingSessionStore {
+    fn id(&self) -> roder_api::session::SessionStoreId {
+        "failing".to_string()
+    }
+
+    async fn create_session(&self, metadata: SessionMetadata) -> anyhow::Result<SessionMetadata> {
+        Ok(metadata)
+    }
+
+    async fn list_sessions(&self) -> anyhow::Result<Vec<SessionMetadata>> {
+        anyhow::bail!(
+            "parse session metadata /tmp/roder/sessions/bad/metadata.json: trailing characters at line 1 column 450"
+        );
+    }
+
+    async fn load_session(
+        &self,
+        _thread_id: &roder_api::events::ThreadId,
+    ) -> anyhow::Result<Option<ThreadSnapshot>> {
+        Ok(None)
+    }
+
+    async fn append_event(
+        &self,
+        _thread_id: &roder_api::events::ThreadId,
+        _envelope: &roder_api::events::EventEnvelope,
+    ) -> anyhow::Result<()> {
+        Ok(())
+    }
+
+    async fn append_turn_item(
+        &self,
+        _thread_id: &roder_api::events::ThreadId,
+        _turn_id: &roder_api::events::TurnId,
+        _item: &roder_api::conversation::TurnItem,
+    ) -> anyhow::Result<()> {
+        Ok(())
+    }
 }
 
 struct UserInputEngine {
@@ -381,6 +438,39 @@ async fn test_app_server_e2e() {
 }
 
 #[tokio::test]
+async fn internal_errors_include_structured_details() {
+    let engine = Arc::new(FakeInferenceEngine);
+    let mut builder = ExtensionRegistryBuilder::new();
+    builder.inference_engine(engine);
+    builder.session_store_factory(Arc::new(FailingSessionStoreFactory));
+    let runtime = Arc::new(Runtime::new(builder.build().unwrap(), Default::default()).unwrap());
+    let server = Arc::new(AppServer::new(runtime));
+    let client = LocalAppClient::new(server);
+
+    let response = client
+        .send_request(JsonRpcRequest {
+            jsonrpc: "2.0".to_string(),
+            id: Some(serde_json::json!("sessions/list")),
+            method: "sessions/list".to_string(),
+            params: None,
+        })
+        .await;
+
+    let error = response.error.expect("missing internal error");
+
+    assert_eq!(error.code, -32000);
+    assert!(error.message.contains("parse session metadata"));
+    assert!(
+        error
+            .data
+            .as_ref()
+            .and_then(|data| data.get("details"))
+            .and_then(serde_json::Value::as_str)
+            .is_some_and(|details| details.contains("metadata.json"))
+    );
+}
+
+#[tokio::test]
 async fn turns_steer_requires_active_turn() {
     let runtime = Arc::new(Runtime::fake().unwrap());
     let server = Arc::new(AppServer::new(runtime));
@@ -621,6 +711,52 @@ async fn tools_list_exposes_default_coding_tools() {
             "tools/list should expose {expected}: {names:?}"
         );
     }
+}
+
+#[tokio::test]
+async fn tools_call_can_create_and_get_goal() {
+    let registry = build_default_registry(DefaultRegistryConfig::default()).unwrap();
+    let runtime = Arc::new(Runtime::new(registry, Default::default()).unwrap());
+    let server = Arc::new(AppServer::new(runtime));
+    let client = LocalAppClient::new(server);
+
+    let session: CreateSessionResult = request(&client, "sessions/create", None).await;
+    let created: ToolCallResult = request(
+        &client,
+        "tools/call",
+        Some(
+            serde_json::to_value(ToolCallParams {
+                thread_id: session.thread_id.clone(),
+                tool_name: "create_goal".to_string(),
+                arguments: serde_json::json!({
+                    "objective": "Ship slash goal",
+                    "replace": true,
+                }),
+            })
+            .unwrap(),
+        ),
+    )
+    .await;
+
+    assert!(!created.is_error, "create_goal failed: {created:?}");
+    assert_eq!(created.text, "Goal active: Ship slash goal");
+
+    let current: ToolCallResult = request(
+        &client,
+        "tools/call",
+        Some(
+            serde_json::to_value(ToolCallParams {
+                thread_id: session.thread_id,
+                tool_name: "get_goal".to_string(),
+                arguments: serde_json::json!({}),
+            })
+            .unwrap(),
+        ),
+    )
+    .await;
+
+    assert!(!current.is_error, "get_goal failed: {current:?}");
+    assert_eq!(current.text, "Goal active: Ship slash goal");
 }
 
 #[tokio::test]

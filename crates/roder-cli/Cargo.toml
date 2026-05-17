@@ -9,6 +9,7 @@ path = "src/main.rs"
 
 [dependencies]
 anyhow.workspace = true
+crossterm.workspace = true
 roder-api.workspace = true
 roder-app-server.workspace = true
 roder-codex-auth.workspace = true
@@ -28,3 +29,6 @@ roder-web-search.workspace = true
 serde = { workspace = true, features = ["derive"] }
 serde_json.workspace = true
 tokio = { workspace = true, features = ["full"] }
+
+[dev-dependencies]
+time.workspace = true

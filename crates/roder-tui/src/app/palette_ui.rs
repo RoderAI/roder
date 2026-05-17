@@ -1,4 +1,5 @@
 use super::*;
+use super::session_resume::{agents_list, commands_list, sessions_list};
 use crate::palette::{
     PaletteAction, collect_entries, cycle_source_filter,
     index::{PaletteMatch, search as search_palette},
@@ -23,6 +24,17 @@ impl TuiApp {
         self.show_provider_popup = false;
         self.palette_query.clear();
         self.palette_source_filter = None;
+        self.populate_palette().await;
+    }
+
+    pub(super) async fn open_resume_palette(&mut self) {
+        self.show_provider_popup = false;
+        self.palette_query.clear();
+        self.palette_source_filter = Some("sessions".to_string());
+        self.populate_palette().await;
+    }
+
+    async fn populate_palette(&mut self) {
 
         if let Ok(commands) = commands_list(&self.client).await {
             self.command_catalog = commands;

@@ -219,8 +219,65 @@ async fn token_request(params: &[(&str, &str)]) -> anyhow::Result<Tokens> {
     if !status.is_success() {
         anyhow::bail!("codex token request failed: {status} {}", text.trim());
     }
-    let token_response: TokenResponse = serde_json::from_str(&text)?;
+    let token_response = parse_token_response(&text)?;
     tokens_from_response(token_response)
+}
+
+fn parse_token_response(text: &str) -> anyhow::Result<TokenResponse> {
+    serde_json::from_str(text).map_err(|err| {
+        anyhow::anyhow!(
+            "codex token response was not valid JSON: {err}; body: {}",
+            redacted_body_excerpt(text)
+        )
+    })
+}
+
+fn redacted_body_excerpt(body: &str) -> String {
+    const MAX_ERROR_BODY_CHARS: usize = 1_000;
+    let mut excerpt = body.chars().take(MAX_ERROR_BODY_CHARS).collect::<String>();
+    if body.chars().count() > MAX_ERROR_BODY_CHARS {
+        excerpt.push_str(" ...");
+    }
+    redact_json_string_field(&mut excerpt, "access_token");
+    redact_json_string_field(&mut excerpt, "refresh_token");
+    redact_json_string_field(&mut excerpt, "id_token");
+    redact_json_string_field(&mut excerpt, "access");
+    redact_json_string_field(&mut excerpt, "refresh");
+    excerpt
+}
+
+fn redact_json_string_field(body: &mut String, field: &str) {
+    let pattern = format!("\"{field}\"");
+    let mut search_from = 0;
+    while let Some(relative_key_start) = body[search_from..].find(&pattern) {
+        let key_start = search_from + relative_key_start;
+        let Some(relative_colon) = body[key_start + pattern.len()..].find(':') else {
+            return;
+        };
+        let value_scan_start = key_start + pattern.len() + relative_colon + 1;
+        let Some(relative_quote) = body[value_scan_start..].find('"') else {
+            search_from = value_scan_start;
+            continue;
+        };
+        let value_start = value_scan_start + relative_quote;
+        let mut escaped = false;
+        let mut value_end = None;
+        for (offset, ch) in body[value_start + 1..].char_indices() {
+            if escaped {
+                escaped = false;
+            } else if ch == '\\' {
+                escaped = true;
+            } else if ch == '"' {
+                value_end = Some(value_start + 1 + offset);
+                break;
+            }
+        }
+        let Some(value_end) = value_end else {
+            return;
+        };
+        body.replace_range(value_start + 1..value_end, "[redacted]");
+        search_from = value_start + "\"[redacted]\"".len();
+    }
 }
 
 fn tokens_from_response(response: TokenResponse) -> anyhow::Result<Tokens> {
@@ -431,5 +488,18 @@ mod tests {
         assert!(url.contains("api.connectors.read"));
         assert!(url.contains("codex_cli_simplified_flow=true"));
         assert!(url.contains("code_challenge_method=S256"));
+    }
+
+    #[test]
+    fn token_response_parse_error_names_boundary_and_redacts_tokens() {
+        let raw =
+            r#"{"access_token":"secret-access","refresh_token":"secret-refresh"}{"extra":true}"#;
+        let err = parse_token_response(raw).unwrap_err().to_string();
+
+        assert!(err.contains("codex token response was not valid JSON"));
+        assert!(err.contains("trailing characters"));
+        assert!(err.contains("[redacted]"));
+        assert!(!err.contains("secret-access"));
+        assert!(!err.contains("secret-refresh"));
     }
 }
