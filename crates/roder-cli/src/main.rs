@@ -145,7 +145,6 @@ async fn build_runtime_from_config(options: CliOptions) -> anyhow::Result<(Arc<R
             model_parallel_tool_calls,
             workspace: workspace.map(|p| p.display().to_string()),
             policy_mode,
-            team_member_turn_timeout: RuntimeConfig::default().team_member_turn_timeout,
         },
     )?);
 

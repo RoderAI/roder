@@ -239,7 +239,7 @@ impl JsonlSessionStore {
                 .await
                 .with_context(|| format!("read session metadata {}", metadata_path.display()))?;
             match parse_metadata_tolerant(&data) {
-                Ok(metadata) => (self.with_derived_title(metadata).await?, true),
+                Ok((metadata, _needs_repair)) => (self.with_derived_title(metadata).await?, true),
                 Err(_) => (self.infer_metadata(&session_dir, thread_id).await, false),
             }
         } else {
@@ -282,8 +282,12 @@ impl JsonlSessionStore {
                 .await
                 .with_context(|| format!("read session metadata {}", metadata_path.display()))?;
             match parse_metadata_tolerant(&data) {
-                Ok(metadata) => {
-                    return self.with_derived_title(metadata).await;
+                Ok((metadata, needs_repair)) => {
+                    let metadata = self.with_derived_title(metadata).await?;
+                    if needs_repair {
+                        self.repair_metadata_file(&metadata_path, &metadata).await;
+                    }
+                    return Ok(metadata);
                 }
                 Err(_) => {
                     let metadata = self.infer_metadata(dir, thread_id).await;
@@ -404,12 +408,16 @@ impl JsonlSessionStore {
     }
 }
 
-fn parse_metadata_tolerant(data: &[u8]) -> serde_json::Result<SessionMetadata> {
-    let mut stream = serde_json::Deserializer::from_slice(data).into_iter::<SessionMetadata>();
-    match stream.next() {
-        Some(Ok(metadata)) => Ok(metadata),
-        Some(Err(err)) => Err(err),
-        None => serde_json::from_slice(data),
+fn parse_metadata_tolerant(data: &[u8]) -> serde_json::Result<(SessionMetadata, bool)> {
+    match serde_json::from_slice::<SessionMetadata>(data) {
+        Ok(metadata) => Ok((metadata, false)),
+        Err(strict_err) => {
+            let mut deserializer = serde_json::Deserializer::from_slice(data);
+            match serde::Deserialize::deserialize(&mut deserializer) {
+                Ok(metadata) => Ok((metadata, true)),
+                Err(_) => Err(strict_err),
+            }
+        }
     }
 }
 
@@ -865,6 +873,51 @@ mod tests {
         assert_eq!(metadata.thread_id, thread_id);
         assert_eq!(metadata.title.as_deref(), Some("resume despite metadata"));
         assert_eq!(snapshot.turns.len(), 1);
+
+        let _ = fs::remove_dir_all(base_path).await;
+    }
+
+    #[tokio::test]
+    async fn load_session_accepts_valid_metadata_with_trailing_garbage_and_repairs_file() {
+        let base_path = std::env::temp_dir().join(format!(
+            "roder-jsonl-trailing-metadata-test-{}",
+            uuid::Uuid::new_v4()
+        ));
+        let store = JsonlSessionStore {
+            base_path: base_path.clone(),
+        };
+        let thread_id = "thread-trailing-metadata".to_string();
+        let now = OffsetDateTime::UNIX_EPOCH;
+
+        let metadata = SessionMetadata {
+            thread_id: thread_id.clone(),
+            title: Some("Recover trailing metadata".to_string()),
+            workspace: Some("/workspace".to_string()),
+            provider: Some("codex".to_string()),
+            model: Some("gpt-5.5".to_string()),
+            created_at: now,
+            updated_at: now,
+            message_count: 1,
+        };
+        let dir = store.session_dir(&thread_id);
+        fs::create_dir_all(&dir).await.unwrap();
+        let mut corrupted = serde_json::to_string_pretty(&metadata).unwrap();
+        corrupted.push('}');
+        fs::write(dir.join("metadata.json"), corrupted)
+            .await
+            .unwrap();
+
+        let snapshot = store.load_session(&thread_id).await.unwrap().unwrap();
+        let loaded = snapshot.metadata.unwrap();
+
+        assert_eq!(loaded.thread_id, thread_id);
+        assert_eq!(loaded.title.as_deref(), Some("Recover trailing metadata"));
+        assert_eq!(loaded.provider.as_deref(), Some("codex"));
+        assert_eq!(loaded.model.as_deref(), Some("gpt-5.5"));
+        assert_eq!(loaded.message_count, 1);
+
+        let repaired = fs::read(dir.join("metadata.json")).await.unwrap();
+        serde_json::from_slice::<SessionMetadata>(&repaired).unwrap();
 
         let _ = fs::remove_dir_all(base_path).await;
     }
