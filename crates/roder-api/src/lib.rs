@@ -10,6 +10,7 @@ pub mod policy_mode;
 pub mod session;
 pub mod subagents;
 pub mod tasks;
+pub mod teams;
 pub mod tools;
 pub mod tui_status;
 
@@ -24,5 +25,6 @@ pub use policy_mode::*;
 pub use session::*;
 pub use subagents::*;
 pub use tasks::*;
+pub use teams::*;
 pub use tools::*;
 pub use tui_status::*;

@@ -1,5 +1,6 @@
 use std::sync::Arc;
 
+use roder_api::catalog::lookup_model;
 use roder_api::events::EventEnvelope;
 use roder_api::inference::{
     HostedWebSearchMode, InferenceProviderContext, InferenceProviderMetadata, ProviderAuthType,
@@ -28,9 +29,12 @@ impl AppServer {
 
     pub async fn handle_request(&self, req: JsonRpcRequest) -> JsonRpcResponse {
         let result = match req.method.as_str() {
-            "system/initialize" | "system/status" => self.handle_system_status().await,
+            "initialize" | "system/initialize" | "system/status" => {
+                self.handle_system_status().await
+            }
             "extensions/list" => self.handle_extensions_list().await,
             "providers/list" => self.handle_providers_list().await,
+            "model/list" => self.handle_model_list().await,
             "providers/select" => {
                 self.decode_and(req.params, |p| async move {
                     self.handle_provider_select(p).await
@@ -122,6 +126,64 @@ impl AppServer {
                 self.decode_and(
                     req.params,
                     |p| async move { self.handle_steer_turn(p).await },
+                )
+                .await
+            }
+            "team/start" => {
+                let params = req
+                    .params
+                    .map(serde_json::from_value::<TeamStartParams>)
+                    .transpose()
+                    .map_err(invalid_params)
+                    .map(|p| {
+                        p.unwrap_or(TeamStartParams {
+                            name: None,
+                            workspace: None,
+                            provider: None,
+                            model: None,
+                        })
+                    });
+                match params {
+                    Ok(params) => self.handle_team_start(params).await,
+                    Err(err) => Err(err),
+                }
+            }
+            "team/list" => self.handle_team_list().await,
+            "team/read" => {
+                self.decode_and(
+                    req.params,
+                    |p| async move { self.handle_team_read(p).await },
+                )
+                .await
+            }
+            "team/channel/message" => {
+                self.decode_and(req.params, |p| async move {
+                    self.handle_team_channel_message(p).await
+                })
+                .await
+            }
+            "team/member/message" => {
+                self.decode_and(req.params, |p| async move {
+                    self.handle_team_member_message(p).await
+                })
+                .await
+            }
+            "team/member/interrupt" => {
+                self.decode_and(req.params, |p| async move {
+                    self.handle_team_member_interrupt(p).await
+                })
+                .await
+            }
+            "team/scheduler/set" => {
+                self.decode_and(req.params, |p| async move {
+                    self.handle_team_scheduler_set(p).await
+                })
+                .await
+            }
+            "team/cleanup" => {
+                self.decode_and(
+                    req.params,
+                    |p| async move { self.handle_team_cleanup(p).await },
                 )
                 .await
             }
@@ -237,6 +299,40 @@ impl AppServer {
             providers,
         })
         .unwrap())
+    }
+
+    async fn handle_model_list(&self) -> Result<serde_json::Value, JsonRpcError> {
+        let cfg = self.runtime.status().await;
+        let mut models = Vec::new();
+        for engine in &self.runtime.registry().inference_engines {
+            let provider_id = engine.id();
+            let provider_models = engine
+                .list_models(InferenceProviderContext {
+                    provider_id: &provider_id,
+                })
+                .await
+                .unwrap_or_default();
+
+            for model in provider_models {
+                let catalog_model = lookup_model(&model.id);
+                models.push(DesktopModelDescriptor {
+                    is_default: cfg.default_provider == provider_id
+                        && cfg.default_model == model.id,
+                    description: catalog_model.map(|entry| entry.description.to_string()),
+                    default_reasoning_effort: model.default_reasoning,
+                    reasoning_efforts: model
+                        .supported_reasoning
+                        .into_iter()
+                        .map(|reasoning| reasoning.effort)
+                        .collect(),
+                    id: model.id,
+                    name: model.name,
+                    model_provider: provider_id.clone(),
+                });
+            }
+        }
+
+        Ok(serde_json::to_value(ModelListResult { models }).unwrap())
     }
 
     async fn handle_provider_select(
@@ -576,7 +672,7 @@ fn invalid_params(err: impl std::fmt::Display) -> JsonRpcError {
     }
 }
 
-fn internal_error(err: impl std::fmt::Display) -> JsonRpcError {
+pub(crate) fn internal_error(err: impl std::fmt::Display) -> JsonRpcError {
     let details = format!("{err:#}");
     JsonRpcError {
         code: -32000,

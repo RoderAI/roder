@@ -13,22 +13,22 @@
     background: transparent;
 
     --text: reset;
-    --muted: ansi(244);
-    --subtle: ansi(245);
-    --accent: ansi(212);
-    --accent-soft: ansi(183);
-    --tool: ansi(244);
+    --muted: ansi(247);
+    --subtle: ansi(249);
+    --accent: ansi(81);
+    --accent-soft: ansi(109);
+    --tool: ansi(246);
     --diff-added: ansi(114);
     --diff-added-bg: ansi(22);
     --diff-removed: ansi(210);
     --diff-removed-bg: ansi(52);
-    --shell: ansi(220);
+    --shell: ansi(222);
     --error: ansi(196);
-    --border: ansi(244);
-    --mode-plan: ansi(75);
-    --mode-default: ansi(244);
-    --mode-accept-edits: ansi(40);
-    --mode-bypass: ansi(196);
-    --selection-bg: ansi(212);
+    --border: ansi(243);
+    --mode-plan: ansi(39);
+    --mode-default: ansi(250);
+    --mode-accept-edits: ansi(46);
+    --mode-bypass: ansi(203);
+    --selection-bg: ansi(238);
     --selection-fg: reset;
 }

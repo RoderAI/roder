@@ -7,6 +7,7 @@ use roder_api::inference::{
 use roder_api::policy_mode::PolicyMode;
 use roder_api::session::{SessionMetadata, ThreadSnapshot};
 use roder_api::subagents::SubagentPermissionMode;
+use roder_api::teams::{TeamChannelId, TeamMemberId, TeamMessage, TeamSnapshot};
 use roder_api::tools::ToolSpec;
 use serde::{Deserialize, Serialize};
 use time::OffsetDateTime;
@@ -83,6 +84,26 @@ pub struct ProvidersListResult {
     pub active_model: String,
     pub active_reasoning: String,
     pub providers: Vec<ProviderDescriptor>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DesktopModelDescriptor {
+    pub id: String,
+    pub name: String,
+    pub description: Option<String>,
+    #[serde(rename = "modelProvider")]
+    pub model_provider: String,
+    #[serde(rename = "defaultReasoningEffort")]
+    pub default_reasoning_effort: Option<String>,
+    #[serde(rename = "reasoningEfforts")]
+    pub reasoning_efforts: Vec<String>,
+    #[serde(rename = "isDefault")]
+    pub is_default: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ModelListResult {
+    pub models: Vec<DesktopModelDescriptor>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -269,6 +290,100 @@ pub struct SteerTurnParams {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SteerTurnResult {
     pub turn_id: TurnId,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TeamStartParams {
+    pub name: Option<String>,
+    pub workspace: Option<String>,
+    pub provider: Option<String>,
+    pub model: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TeamStartResult {
+    pub team: TeamSnapshot,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TeamListResult {
+    pub teams: Vec<TeamSnapshot>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TeamReadParams {
+    pub team_id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TeamReadResult {
+    pub team: TeamSnapshot,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TeamChannelMessageParams {
+    pub team_id: String,
+    pub channel_id: TeamChannelId,
+    pub text: String,
+    pub author_member_id: Option<TeamMemberId>,
+    pub project_context: Option<String>,
+    pub thread_ts: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TeamChannelMessageResult {
+    pub team: TeamSnapshot,
+    pub message: TeamMessage,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TeamMemberMessageParams {
+    pub team_id: String,
+    pub member_id: TeamMemberId,
+    pub channel_id: Option<TeamChannelId>,
+    pub text: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TeamMemberMessageResult {
+    pub team: TeamSnapshot,
+    pub member: roder_api::teams::TeamMember,
+    pub message: TeamMessage,
+    pub turn_id: Option<TurnId>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TeamMemberInterruptParams {
+    pub team_id: String,
+    pub member_id: TeamMemberId,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TeamMemberInterruptResult {
+    pub team: TeamSnapshot,
+    pub member: roder_api::teams::TeamMember,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TeamSchedulerSetParams {
+    pub team_id: String,
+    pub running: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TeamSchedulerSetResult {
+    pub team: TeamSnapshot,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TeamCleanupParams {
+    pub team_id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TeamCleanupResult {
+    pub team_id: String,
+    pub cleaned: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

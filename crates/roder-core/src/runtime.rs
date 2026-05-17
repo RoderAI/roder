@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::time::Duration as StdDuration;
 
 use anyhow::Context;
 use futures::StreamExt;
@@ -27,6 +28,7 @@ use tokio::sync::{Mutex, RwLock, oneshot};
 use crate::bus::EventBus;
 use crate::fake_provider::FakeInferenceEngine;
 use crate::policy_gate::DefaultPolicyGate;
+use crate::teams::TeamStore;
 
 const MAX_TOOL_ROUNDS_PER_TURN: usize = 1024;
 const FINAL_ANSWER_PHASE: &str = "final_answer";
@@ -42,6 +44,7 @@ pub struct RuntimeConfig {
     pub model_parallel_tool_calls: HashMap<String, bool>,
     pub workspace: Option<String>,
     pub policy_mode: PolicyMode,
+    pub team_member_turn_timeout: StdDuration,
 }
 
 impl Default for RuntimeConfig {
@@ -56,6 +59,7 @@ impl Default for RuntimeConfig {
             model_parallel_tool_calls: HashMap::new(),
             workspace: None,
             policy_mode: PolicyMode::Default,
+            team_member_turn_timeout: StdDuration::from_secs(40),
         }
     }
 }
@@ -147,6 +151,7 @@ pub struct Runtime {
     pub(crate) pending_tool_approvals: Mutex<HashMap<String, PendingToolApproval>>,
     pub(crate) pending_user_inputs: Mutex<HashMap<String, PendingUserInput>>,
     active_turns: RwLock<HashMap<TurnId, ActiveTurnHandle>>,
+    pub(crate) teams: TeamStore,
     pub(crate) session_store: Option<Arc<dyn SessionStore>>,
     pub(crate) tool_registry: ToolRegistry,
 }
@@ -177,6 +182,7 @@ impl Runtime {
             pending_tool_approvals: Mutex::new(HashMap::new()),
             pending_user_inputs: Mutex::new(HashMap::new()),
             active_turns: RwLock::new(HashMap::new()),
+            teams: TeamStore::default(),
             session_store,
             tool_registry,
         };
@@ -210,6 +216,10 @@ impl Runtime {
 
     pub fn registry(&self) -> &ExtensionRegistry {
         &self.registry
+    }
+
+    pub(crate) async fn team_member_turn_timeout(&self) -> StdDuration {
+        self.config.read().await.team_member_turn_timeout
     }
 
     pub async fn execute_workflow_tool(

@@ -7,7 +7,7 @@ use roder_api::policy_mode::PolicyMode;
 use roder_api::session::{SessionMetadata, SessionStore, SessionStoreFactory, ThreadSnapshot};
 use roder_api::subagents::{SubagentDefinition, SubagentPermissionMode};
 use roder_app_server::{AppServer, LocalAppClient};
-use roder_core::{PendingPlanExit, Runtime, fake_provider::FakeInferenceEngine};
+use roder_core::{PendingPlanExit, Runtime, RuntimeConfig, fake_provider::FakeInferenceEngine};
 use roder_ext_subagents::{
     InProcessDispatcher, InProcessDispatcherConfig, InferenceEngineRegistry, SubagentsExtension,
 };
@@ -17,12 +17,16 @@ use roder_extension_host::{
 };
 use roder_protocol::{
     AgentsListResult, CreateSessionResult, ExtensionsListResult, InterruptTurnParams,
-    JsonRpcRequest, ProviderSelectParams, ProviderSelectResult, ProvidersListResult,
-    SessionExitPlanParams, SessionExitPlanResult, SessionGetResult, SessionResolveUserInputParams,
-    SessionResolveUserInputResult, SessionSetModeParams, SessionSetModeResult, SessionsListResult,
-    SettingsGetResult, SettingsSetDefaultModeParams, SettingsSetDefaultModeResult,
-    SettingsSetWebSearchParams, SettingsSetWebSearchResult, StartTurnParams, StartTurnResult,
-    SteerTurnParams, SteerTurnResult, SystemStatusResult, ToolCallParams, ToolCallResult,
+    JsonRpcRequest, ModelListResult, ProviderSelectParams, ProviderSelectResult,
+    ProvidersListResult, SessionExitPlanParams, SessionExitPlanResult, SessionGetResult,
+    SessionResolveUserInputParams, SessionResolveUserInputResult, SessionSetModeParams,
+    SessionSetModeResult, SessionsListResult, SettingsGetResult, SettingsSetDefaultModeParams,
+    SettingsSetDefaultModeResult, SettingsSetWebSearchParams, SettingsSetWebSearchResult,
+    StartTurnParams, StartTurnResult, SteerTurnParams, SteerTurnResult, SystemStatusResult,
+    TeamChannelMessageParams, TeamChannelMessageResult, TeamCleanupParams, TeamCleanupResult,
+    TeamListResult, TeamMemberInterruptParams, TeamMemberInterruptResult, TeamMemberMessageParams,
+    TeamMemberMessageResult, TeamReadParams, TeamReadResult, TeamSchedulerSetParams,
+    TeamSchedulerSetResult, TeamStartParams, TeamStartResult, ToolCallParams, ToolCallResult,
     ToolsListResult,
 };
 use std::sync::Arc;
@@ -611,34 +615,429 @@ async fn turns_steer_accepts_active_turn() {
 }
 
 #[tokio::test]
-async fn desktop_protocol_methods_are_not_supported() {
+async fn desktop_bootstrap_protocol_methods_are_supported() {
     let runtime = Arc::new(Runtime::fake().unwrap());
     let server = Arc::new(AppServer::new(runtime));
     let client = LocalAppClient::new(server);
 
-    for method in [
-        "initialize",
-        "thread/start",
-        "thread/list",
-        "thread/read",
-        "turn/start",
-        "turn/steer",
-        "turn/interrupt",
-        "model/list",
-    ] {
-        let response = client
-            .send_request(JsonRpcRequest {
-                jsonrpc: "2.0".to_string(),
-                id: Some(serde_json::json!(method)),
-                method: method.to_string(),
-                params: None,
+    let status: SystemStatusResult =
+        request(&client, "initialize", Some(serde_json::json!({}))).await;
+    assert_eq!(status.provider, PROVIDER_MOCK);
+
+    let models: ModelListResult = request(&client, "model/list", Some(serde_json::json!({}))).await;
+    assert!(
+        models
+            .models
+            .iter()
+            .any(|model| model.model_provider == PROVIDER_MOCK && model.id == "mock")
+    );
+
+    let teams: TeamListResult = request(&client, "team/list", Some(serde_json::json!({}))).await;
+    assert!(teams.teams.is_empty());
+}
+
+#[tokio::test]
+async fn team_start_creates_default_free_flow_roster_and_channels() {
+    let runtime = Arc::new(Runtime::fake().unwrap());
+    let server = Arc::new(AppServer::new(runtime));
+    let client = LocalAppClient::new(server);
+
+    let started: TeamStartResult = request(
+        &client,
+        "team/start",
+        Some(
+            serde_json::to_value(TeamStartParams {
+                name: Some("Roder Lab".to_string()),
+                workspace: Some("/tmp/roder-lab".to_string()),
+                provider: Some(PROVIDER_MOCK.to_string()),
+                model: Some("mock".to_string()),
             })
-            .await;
-        let error = response
-            .error
-            .expect("old Desktop method should be rejected");
-        assert_eq!(error.code, -32601, "{method}");
+            .unwrap(),
+        ),
+    )
+    .await;
+
+    assert_eq!(started.team.name, "Roder Lab");
+    assert_eq!(started.team.members.len(), 12);
+    assert_eq!(started.team.channels.len(), 9);
+    assert!(started.team.aggressive_always_on);
+    assert!(
+        started
+            .team
+            .members
+            .iter()
+            .all(|member| member.provider == PROVIDER_MOCK)
+    );
+    assert!(
+        started
+            .team
+            .members
+            .iter()
+            .all(|member| member.model == "mock")
+    );
+    assert!(
+        started
+            .team
+            .members
+            .iter()
+            .all(|member| member.worktree_path.is_some())
+    );
+    assert!(
+        started
+            .team
+            .channels
+            .iter()
+            .any(|channel| channel.name == "architecture")
+    );
+
+    let read: TeamReadResult = request(
+        &client,
+        "team/read",
+        Some(
+            serde_json::to_value(TeamReadParams {
+                team_id: started.team.id.clone(),
+            })
+            .unwrap(),
+        ),
+    )
+    .await;
+    assert_eq!(read.team.id, started.team.id);
+    assert_eq!(read.team.messages.len(), 1);
+    assert_eq!(read.team.messages[0].channel_id.as_deref(), Some("general"));
+
+    let listed: TeamListResult = request(&client, "team/list", Some(serde_json::json!({}))).await;
+    assert_eq!(listed.teams.len(), 1);
+    assert_eq!(listed.teams[0].id, started.team.id);
+
+    let cleaned: TeamCleanupResult = request(
+        &client,
+        "team/cleanup",
+        Some(
+            serde_json::to_value(TeamCleanupParams {
+                team_id: started.team.id,
+            })
+            .unwrap(),
+        ),
+    )
+    .await;
+    assert!(cleaned.cleaned);
+
+    let listed: TeamListResult = request(&client, "team/list", Some(serde_json::json!({}))).await;
+    assert!(listed.teams.is_empty());
+}
+
+#[tokio::test]
+async fn team_channel_and_member_messages_update_shared_state() {
+    let runtime = Arc::new(Runtime::fake().unwrap());
+    let server = Arc::new(AppServer::new(runtime));
+    let client = LocalAppClient::new(server);
+
+    let started: TeamStartResult = request(
+        &client,
+        "team/start",
+        Some(
+            serde_json::to_value(TeamStartParams {
+                name: None,
+                workspace: Some("/tmp/roder-lab".to_string()),
+                provider: Some(PROVIDER_MOCK.to_string()),
+                model: Some("mock".to_string()),
+            })
+            .unwrap(),
+        ),
+    )
+    .await;
+    let reviewer = started
+        .team
+        .members
+        .iter()
+        .find(|member| member.role == "reviewer")
+        .unwrap()
+        .id
+        .clone();
+    assert_eq!(started.team.messages[0].author_kind, "system");
+
+    let channel_message: TeamChannelMessageResult = request(
+        &client,
+        "team/channel/message",
+        Some(
+            serde_json::to_value(TeamChannelMessageParams {
+                team_id: started.team.id.clone(),
+                channel_id: "reviews".to_string(),
+                text: "Can someone review the auth diff?".to_string(),
+                author_member_id: None,
+                project_context: Some("/tmp/roder-lab".to_string()),
+                thread_ts: None,
+            })
+            .unwrap(),
+        ),
+    )
+    .await;
+    assert_eq!(
+        channel_message.message.channel_id.as_deref(),
+        Some("reviews")
+    );
+    assert_eq!(channel_message.message.author_kind, "user");
+
+    let member_message: TeamMemberMessageResult = request(
+        &client,
+        "team/member/message",
+        Some(
+            serde_json::to_value(TeamMemberMessageParams {
+                team_id: started.team.id.clone(),
+                member_id: reviewer.clone(),
+                channel_id: Some("reviews".to_string()),
+                text: "Please take the first pass.".to_string(),
+            })
+            .unwrap(),
+        ),
+    )
+    .await;
+    assert_eq!(member_message.member.id, reviewer);
+    assert_eq!(member_message.message.author_kind, "user");
+    assert_eq!(member_message.message.author_member_id.as_deref(), None);
+    assert_eq!(
+        member_message.message.target_member_id.as_deref(),
+        Some(reviewer.as_str())
+    );
+    assert!(member_message.turn_id.is_some());
+    assert_eq!(member_message.member.status, "working");
+
+    let expected_turn_id = member_message.turn_id.clone().unwrap();
+    let mut agent_reply = None;
+    for _ in 0..20 {
+        let read: TeamReadResult = request(
+            &client,
+            "team/read",
+            Some(
+                serde_json::to_value(TeamReadParams {
+                    team_id: started.team.id.clone(),
+                })
+                .unwrap(),
+            ),
+        )
+        .await;
+        agent_reply = read
+            .team
+            .messages
+            .iter()
+            .find(|message| {
+                message.author_kind == "member"
+                    && message.author_member_id.as_deref() == Some(reviewer.as_str())
+                    && message.turn_id.as_deref() == Some(expected_turn_id.as_str())
+            })
+            .cloned();
+        if agent_reply.is_some() {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(25)).await;
     }
+
+    let agent_reply = agent_reply.expect("missing agent reply in team transcript");
+    assert_eq!(agent_reply.text, "hello from roder");
+    assert_eq!(agent_reply.target_member_id.as_deref(), None);
+    assert_eq!(agent_reply.channel_id.as_deref(), Some("reviews"));
+
+    let interrupted: TeamMemberInterruptResult = request(
+        &client,
+        "team/member/interrupt",
+        Some(
+            serde_json::to_value(TeamMemberInterruptParams {
+                team_id: started.team.id.clone(),
+                member_id: reviewer.clone(),
+            })
+            .unwrap(),
+        ),
+    )
+    .await;
+    assert_eq!(interrupted.member.status, "idle");
+
+    let paused: TeamSchedulerSetResult = request(
+        &client,
+        "team/scheduler/set",
+        Some(
+            serde_json::to_value(TeamSchedulerSetParams {
+                team_id: started.team.id.clone(),
+                running: false,
+            })
+            .unwrap(),
+        ),
+    )
+    .await;
+    assert!(!paused.team.scheduler_running);
+
+    let read: TeamReadResult = request(
+        &client,
+        "team/read",
+        Some(
+            serde_json::to_value(TeamReadParams {
+                team_id: started.team.id,
+            })
+            .unwrap(),
+        ),
+    )
+    .await;
+    assert!(
+        read.team
+            .messages
+            .iter()
+            .any(|message| message.text.contains("auth diff"))
+    );
+    assert!(
+        read.team
+            .messages
+            .iter()
+            .any(|message| message.text.contains("first pass"))
+    );
+}
+
+#[tokio::test]
+async fn team_channel_broadcast_invites_members_to_reply_in_channel() {
+    let runtime = Arc::new(Runtime::fake().unwrap());
+    let server = Arc::new(AppServer::new(runtime));
+    let client = LocalAppClient::new(server);
+
+    let started: TeamStartResult = request(
+        &client,
+        "team/start",
+        Some(
+            serde_json::to_value(TeamStartParams {
+                name: None,
+                workspace: Some("/tmp/roder-lab".to_string()),
+                provider: Some(PROVIDER_MOCK.to_string()),
+                model: Some("mock".to_string()),
+            })
+            .unwrap(),
+        ),
+    )
+    .await;
+
+    let channel_message: TeamChannelMessageResult = request(
+        &client,
+        "team/channel/message",
+        Some(
+            serde_json::to_value(TeamChannelMessageParams {
+                team_id: started.team.id.clone(),
+                channel_id: "general".to_string(),
+                text: "hey everyone, can you update me on what you are up to?".to_string(),
+                author_member_id: None,
+                project_context: None,
+                thread_ts: None,
+            })
+            .unwrap(),
+        ),
+    )
+    .await;
+    assert_eq!(channel_message.message.author_kind, "user");
+
+    let mut replies = Vec::new();
+    for _ in 0..20 {
+        let read: TeamReadResult = request(
+            &client,
+            "team/read",
+            Some(
+                serde_json::to_value(TeamReadParams {
+                    team_id: started.team.id.clone(),
+                })
+                .unwrap(),
+            ),
+        )
+        .await;
+        replies = read
+            .team
+            .messages
+            .iter()
+            .filter(|message| {
+                message.author_kind == "member"
+                    && message.channel_id.as_deref() == Some("general")
+                    && message.text == "hello from roder"
+            })
+            .cloned()
+            .collect();
+        if replies.len() == started.team.members.len() {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(25)).await;
+    }
+
+    assert_eq!(replies.len(), started.team.members.len());
+}
+
+#[tokio::test]
+async fn team_member_turn_timeout_marks_member_error() {
+    let mut builder = ExtensionRegistryBuilder::new();
+    builder.inference_engine(Arc::new(PendingEngine));
+    let runtime = Arc::new(
+        Runtime::new(
+            builder.build().unwrap(),
+            RuntimeConfig {
+                team_member_turn_timeout: Duration::from_millis(50),
+                ..Default::default()
+            },
+        )
+        .unwrap(),
+    );
+    let server = Arc::new(AppServer::new(runtime));
+    let client = LocalAppClient::new(server);
+
+    let started: TeamStartResult = request(
+        &client,
+        "team/start",
+        Some(
+            serde_json::to_value(TeamStartParams {
+                name: None,
+                workspace: Some("/tmp/roder-lab".to_string()),
+                provider: Some(PROVIDER_MOCK.to_string()),
+                model: Some("mock".to_string()),
+            })
+            .unwrap(),
+        ),
+    )
+    .await;
+    let member_id = started.team.members[0].id.clone();
+
+    let member_message: TeamMemberMessageResult = request(
+        &client,
+        "team/member/message",
+        Some(
+            serde_json::to_value(TeamMemberMessageParams {
+                team_id: started.team.id.clone(),
+                member_id: member_id.clone(),
+                channel_id: Some("general".to_string()),
+                text: "please respond".to_string(),
+            })
+            .unwrap(),
+        ),
+    )
+    .await;
+    assert_eq!(member_message.member.status, "working");
+
+    let mut final_status = "working".to_string();
+    for _ in 0..20 {
+        let read: TeamReadResult = request(
+            &client,
+            "team/read",
+            Some(
+                serde_json::to_value(TeamReadParams {
+                    team_id: started.team.id.clone(),
+                })
+                .unwrap(),
+            ),
+        )
+        .await;
+        final_status = read
+            .team
+            .members
+            .iter()
+            .find(|member| member.id == member_id)
+            .map(|member| member.status.clone())
+            .unwrap_or_default();
+        if final_status == "error" {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(25)).await;
+    }
+
+    assert_eq!(final_status, "error");
 }
 
 #[tokio::test]
