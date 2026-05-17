@@ -10,6 +10,7 @@ path = "src/main.rs"
 [dependencies]
 anyhow.workspace = true
 crossterm.workspace = true
+time.workspace = true
 roder-api.workspace = true
 roder-app-server.workspace = true
 roder-codex-auth.workspace = true
