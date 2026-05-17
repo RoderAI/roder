@@ -61,7 +61,7 @@ async fn list_sessions(
         })
         .await;
     let mut sessions = decode_response::<SessionsListResult>(res).map(|result| result.sessions)?;
-    sessions.sort_by(|lhs, rhs| rhs.updated_at.cmp(&lhs.updated_at));
+    sessions.sort_by_key(|session| std::cmp::Reverse(session.updated_at));
     Ok(sessions)
 }
 

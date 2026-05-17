@@ -75,7 +75,7 @@ impl ThemeOverrides {
     pub fn from_sheet(sheet: Stylesheet) -> Self {
         let mut colors = Vec::new();
         for (name, raw) in &sheet.variables {
-            if !KNOWN_VARS.iter().any(|k| *k == name.as_str()) {
+            if !KNOWN_VARS.contains(&name.as_str()) {
                 // Unknown variable — ignore for the proof; the inspector would
                 // warn here in the full RFC.
                 continue;
@@ -176,12 +176,12 @@ fn resolve_var_chain(raw: &str, vars: &[(String, String)], depth: usize) -> Stri
         return raw.to_string();
     }
     let trimmed = raw.trim();
-    if let Some(rest) = trimmed.strip_prefix("var(") {
-        if let Some(end) = rest.find(')') {
-            let name = rest[..end].trim().trim_start_matches("--");
-            if let Some((_, v)) = vars.iter().rev().find(|(n, _)| n == name) {
-                return resolve_var_chain(v, vars, depth + 1);
-            }
+    if let Some(rest) = trimmed.strip_prefix("var(")
+        && let Some(end) = rest.find(')')
+    {
+        let name = rest[..end].trim().trim_start_matches("--");
+        if let Some((_, v)) = vars.iter().rev().find(|(n, _)| n == name) {
+            return resolve_var_chain(v, vars, depth + 1);
         }
     }
     trimmed.to_string()

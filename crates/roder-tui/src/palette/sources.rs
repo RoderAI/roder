@@ -218,7 +218,7 @@ fn theme_preview_swatch(path: &std::path::Path) -> Option<String> {
     let chunks: Vec<String> = [primary, secondary, tertiary]
         .into_iter()
         .flatten()
-        .map(|c| swatch_hint(c))
+        .map(swatch_hint)
         .collect();
     if chunks.is_empty() {
         None

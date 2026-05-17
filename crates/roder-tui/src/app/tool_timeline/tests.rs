@@ -678,7 +678,7 @@ fn reasoning_deltas_render_live_as_thinking() {
     assert!(
         lines
             .iter()
-            .any(|line| line == "Thinking: The user is asking for visible thinking tokens.")
+            .any(|line| line == "The user is asking for visible thinking tokens.")
     );
     assert!(lines.iter().any(|line| line == "Done."));
 }
@@ -698,7 +698,7 @@ fn reasoning_heading_moves_to_working_status_and_is_removed_from_timeline() {
     assert!(
         lines
             .iter()
-            .any(|line| line == "Thinking: I need to inspect the app.rs file.")
+            .any(|line| line == "I need to inspect the app.rs file.")
     );
     assert!(
         !lines
@@ -720,11 +720,7 @@ fn timeline_only_renders_the_most_recent_reasoning_block() {
             .iter()
             .any(|line| line.contains("first hidden thought"))
     );
-    assert!(
-        lines
-            .iter()
-            .any(|line| line == "Thinking: second visible thought")
-    );
+    assert!(lines.iter().any(|line| line == "second visible thought"));
 }
 
 #[test]
@@ -889,7 +885,7 @@ fn timeline_auto_follows_streaming_deltas() {
 
     assert!(second.scroll > first_scroll);
     let visible = visible_lines(&mut timeline, 5);
-    assert!(visible.iter().any(|line| line == "    line 4"));
+    assert!(visible.iter().any(|line| line == "line 4"));
     assert_eq!(visible[2], "");
     assert_eq!(visible[3], "");
     assert_eq!(visible[4], "");

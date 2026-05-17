@@ -38,7 +38,7 @@ impl TimelineItem {
                 if !body.trim().is_empty() {
                     push_body_lines(
                         lines,
-                        "Thinking: ",
+                        "",
                         &body,
                         theme.accent_soft().add_modifier(Modifier::ITALIC),
                         item_style(
