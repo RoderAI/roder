@@ -1,6 +1,6 @@
 pub mod client;
-mod desktop_contract;
 mod command;
+mod desktop_contract;
 mod fs;
 mod notifications;
 pub mod remote;
