@@ -6,22 +6,25 @@ use roder_api::tools::{
 use serde::Deserialize;
 use serde_json::json;
 
+use crate::backend::{TextEdit, WorkspaceBackendHandle};
 use crate::files::{parse, require_nonempty, result};
-use crate::workspace::Workspace;
+use crate::hunk_output;
 
-pub(crate) fn register(registry: &mut ToolRegistry, workspace: Workspace) -> anyhow::Result<()> {
+pub(crate) fn register(
+    registry: &mut ToolRegistry,
+    backend: WorkspaceBackendHandle,
+) -> anyhow::Result<()> {
     registry.register(Arc::new(WriteFileTool {
-        workspace: workspace.clone(),
+        backend: backend.clone(),
     }))?;
     registry.register(Arc::new(EditTool {
-        workspace: workspace.clone(),
+        backend: backend.clone(),
     }))?;
-    registry.register(Arc::new(MultiEditTool { workspace }))
+    registry.register(Arc::new(MultiEditTool { backend }))
 }
 
-#[derive(Debug)]
 struct WriteFileTool {
-    workspace: Workspace,
+    backend: WorkspaceBackendHandle,
 }
 
 #[async_trait::async_trait]
@@ -44,16 +47,12 @@ impl ToolExecutor for WriteFileTool {
 
     async fn execute(
         &self,
-        _ctx: ToolExecutionContext,
+        ctx: ToolExecutionContext,
         call: ToolCall,
     ) -> anyhow::Result<ToolResult> {
+        ctx.require_workspace()?;
         let args = parse::<WriteFileArgs>(&call)?;
-        let path = self.workspace.resolve_for_write(&args.path)?;
-        if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent)?;
-        }
-        std::fs::write(&path, args.content)?;
-        let rel = self.workspace.display(&path);
+        let rel = self.backend.write_text(&args.path, args.content).await?;
         Ok(result(
             call,
             format!("wrote {rel}"),
@@ -63,9 +62,8 @@ impl ToolExecutor for WriteFileTool {
     }
 }
 
-#[derive(Debug)]
 struct EditTool {
-    workspace: Workspace,
+    backend: WorkspaceBackendHandle,
 }
 
 #[async_trait::async_trait]
@@ -89,14 +87,17 @@ impl ToolExecutor for EditTool {
 
     async fn execute(
         &self,
-        _ctx: ToolExecutionContext,
+        ctx: ToolExecutionContext,
         call: ToolCall,
     ) -> anyhow::Result<ToolResult> {
+        ctx.require_workspace()?;
         let args = parse::<EditArgs>(&call)?;
         require_nonempty(&args.old_string, "old_string")?;
-        let path = self.workspace.resolve_existing(&args.path)?;
-        let text = std::fs::read_to_string(&path)?;
-        let Some(index) = text.find(&args.old_string) else {
+        let Some(outcome) = self
+            .backend
+            .edit_text(&args.path, &args.old_string, &args.new_string)
+            .await?
+        else {
             return Ok(result(
                 call,
                 "old_string does not match file".to_string(),
@@ -104,22 +105,25 @@ impl ToolExecutor for EditTool {
                 true,
             ));
         };
-        let mut updated = text;
-        updated.replace_range(index..index + args.old_string.len(), &args.new_string);
-        std::fs::write(&path, updated)?;
-        let rel = self.workspace.display(&path);
+        let hunks = vec![hunk_output::record(
+            &ctx,
+            &call,
+            0,
+            outcome.path.clone(),
+            args.old_string.lines().map(str::to_string).collect(),
+            args.new_string.lines().map(str::to_string).collect(),
+        )];
         Ok(result(
             call,
-            format!("edited {rel}"),
-            json!({ "path": rel, "replacements": 1 }),
+            format!("edited {}", outcome.path),
+            json!({ "path": outcome.path, "replacements": outcome.replacements, "hunks": hunks }),
             false,
         ))
     }
 }
 
-#[derive(Debug)]
 struct MultiEditTool {
-    workspace: Workspace,
+    backend: WorkspaceBackendHandle,
 }
 
 #[async_trait::async_trait]
@@ -154,33 +158,58 @@ impl ToolExecutor for MultiEditTool {
 
     async fn execute(
         &self,
-        _ctx: ToolExecutionContext,
+        ctx: ToolExecutionContext,
         call: ToolCall,
     ) -> anyhow::Result<ToolResult> {
+        ctx.require_workspace()?;
         let args = parse::<MultiEditArgs>(&call)?;
         if args.edits.is_empty() {
             anyhow::bail!("edits are required");
         }
-        let path = self.workspace.resolve_existing(&args.path)?;
-        let mut text = std::fs::read_to_string(&path)?;
-        for (index, edit) in args.edits.iter().enumerate() {
+        for edit in &args.edits {
             require_nonempty(&edit.old_string, "old_string")?;
-            let Some(position) = text.find(&edit.old_string) else {
+        }
+        let hunk_edits = args.edits.clone();
+        let edits = args
+            .edits
+            .into_iter()
+            .map(|edit| TextEdit {
+                old_string: edit.old_string,
+                new_string: edit.new_string,
+            })
+            .collect::<Vec<_>>();
+        let outcome = match self.backend.multi_edit_text(&args.path, edits).await? {
+            Ok(outcome) => outcome,
+            Err(index) => {
                 return Ok(result(
                     call,
                     format!("edit {index} old_string does not match file"),
                     json!({ "error": { "kind": "old_string_not_found", "edit": index } }),
                     true,
                 ));
-            };
-            text.replace_range(position..position + edit.old_string.len(), &edit.new_string);
-        }
-        std::fs::write(&path, text)?;
-        let rel = self.workspace.display(&path);
+            }
+        };
+        let hunks = hunk_edits
+            .iter()
+            .enumerate()
+            .map(|(index, edit)| {
+                hunk_output::record(
+                    &ctx,
+                    &call,
+                    index,
+                    outcome.path.clone(),
+                    edit.old_string.lines().map(str::to_string).collect(),
+                    edit.new_string.lines().map(str::to_string).collect(),
+                )
+            })
+            .collect::<Vec<_>>();
         Ok(result(
             call,
-            format!("edited {rel} ({} replacements)", args.edits.len()),
-            json!({ "path": rel, "replacements": args.edits.len() }),
+            format!(
+                "edited {} ({} replacements)",
+                outcome.path, outcome.replacements
+            ),
+            json!({ "path": outcome.path, "replacements": outcome.replacements, "hunks": hunks }),
             false,
         ))
     }
@@ -205,7 +234,7 @@ struct MultiEditArgs {
     edits: Vec<TextEditArgs>,
 }
 
-#[derive(Deserialize)]
+#[derive(Clone, Deserialize)]
 struct TextEditArgs {
     old_string: String,
     new_string: String,

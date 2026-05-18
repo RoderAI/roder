@@ -8,7 +8,8 @@ use super::super::Theme;
 use super::markdown::markdown_lines;
 use super::patch_preview::{tool_diff_preview, tool_diff_preview_lines};
 use super::{
-    TimelineItem, TimelineItemKind, ToolTimelineStatus, ToolTimelineTool, reasoning_visible_body,
+    MESSAGE_FOLD_LINE_LIMIT, TimelineItem, TimelineItemKind, ToolTimelineStatus, ToolTimelineTool,
+    reasoning_visible_body,
 };
 
 impl TimelineItem {
@@ -23,23 +24,30 @@ impl TimelineItem {
     ) {
         match &self.kind {
             TimelineItemKind::User(text) => {
-                push_user_block_lines(lines, text, selected, theme, width)
+                let folded = fold_message_body(text, expanded);
+                push_user_block_lines(lines, &folded.body, selected, theme, width);
+                push_fold_notice(lines, folded.hidden_lines, theme);
             }
-            TimelineItemKind::Assistant { text, phase: _ } => push_markdown_body_lines(
-                lines,
-                "",
-                text,
-                theme.subtle(),
-                item_style(theme.text(), selected, theme),
-                theme,
-            ),
+            TimelineItemKind::Assistant { text, phase: _ } => {
+                let folded = fold_message_body(text, expanded);
+                push_markdown_body_lines(
+                    lines,
+                    "",
+                    &folded.body,
+                    theme.subtle(),
+                    item_style(theme.text(), selected, theme),
+                    theme,
+                );
+                push_fold_notice(lines, folded.hidden_lines, theme);
+            }
             TimelineItemKind::Reasoning(text) => {
                 let body = reasoning_visible_body(text);
                 if !body.trim().is_empty() {
+                    let folded = fold_message_body(&body, expanded);
                     push_body_lines(
                         lines,
                         "",
-                        &body,
+                        &folded.body,
                         theme.accent_soft().add_modifier(Modifier::ITALIC),
                         item_style(
                             theme.muted().add_modifier(Modifier::ITALIC),
@@ -47,15 +55,20 @@ impl TimelineItem {
                             theme,
                         ),
                     );
+                    push_fold_notice(lines, folded.hidden_lines, theme);
                 }
             }
-            TimelineItemKind::System(text) => push_body_lines(
-                lines,
-                "    ",
-                text,
-                theme.subtle(),
-                item_style(theme.muted(), selected, theme),
-            ),
+            TimelineItemKind::System(text) => {
+                let folded = fold_message_body(text, expanded);
+                push_body_lines(
+                    lines,
+                    "    ",
+                    &folded.body,
+                    theme.subtle(),
+                    item_style(theme.muted(), selected, theme),
+                );
+                push_fold_notice(lines, folded.hidden_lines, theme);
+            }
             TimelineItemKind::TurnCompleted(summary) => {
                 let reasoning = summary
                     .reasoning_tokens
@@ -75,13 +88,17 @@ impl TimelineItem {
                     item_style(theme.muted(), selected, theme),
                 )));
             }
-            TimelineItemKind::Error(text) => push_body_lines(
-                lines,
-                "! ",
-                text,
-                theme.error(),
-                item_style(theme.error(), selected, theme),
-            ),
+            TimelineItemKind::Error(text) => {
+                let folded = fold_message_body(text, expanded);
+                push_body_lines(
+                    lines,
+                    "! ",
+                    &folded.body,
+                    theme.error(),
+                    item_style(theme.error(), selected, theme),
+                );
+                push_fold_notice(lines, folded.hidden_lines, theme);
+            }
             TimelineItemKind::Shell(command) => push_body_lines(
                 lines,
                 "$ ",
@@ -89,18 +106,66 @@ impl TimelineItem {
                 theme.shell(),
                 item_style(theme.text(), selected, theme),
             ),
-            TimelineItemKind::ShellOutput(output) => push_body_lines(
-                lines,
-                "↳ ",
-                output,
-                theme.subtle(),
-                item_style(theme.muted(), selected, theme),
-            ),
+            TimelineItemKind::ShellOutput(output) => {
+                let folded = fold_message_body(output, expanded);
+                push_body_lines(
+                    lines,
+                    "↳ ",
+                    &folded.body,
+                    theme.subtle(),
+                    item_style(theme.muted(), selected, theme),
+                );
+                push_fold_notice(lines, folded.hidden_lines, theme);
+            }
             TimelineItemKind::Tool(tool) => {
                 tool.render(selected, expanded, theme, animation_frame, lines);
             }
+            TimelineItemKind::SubagentTrace(trace) => {
+                trace.render(selected, expanded, theme, animation_frame, lines);
+            }
+            TimelineItemKind::PlanReview(review) => {
+                review.render(selected, expanded, theme, lines);
+            }
+            TimelineItemKind::Hunk(hunk) => {
+                hunk.render(selected, expanded, theme, lines);
+            }
         }
     }
+}
+
+struct FoldedBody {
+    body: String,
+    hidden_lines: usize,
+}
+
+fn fold_message_body(body: &str, expanded: bool) -> FoldedBody {
+    let lines = body.lines().collect::<Vec<_>>();
+    if expanded || lines.len() <= MESSAGE_FOLD_LINE_LIMIT {
+        return FoldedBody {
+            body: body.to_string(),
+            hidden_lines: 0,
+        };
+    }
+
+    FoldedBody {
+        body: lines[..MESSAGE_FOLD_LINE_LIMIT].join("\n"),
+        hidden_lines: lines.len() - MESSAGE_FOLD_LINE_LIMIT,
+    }
+}
+
+fn push_fold_notice(lines: &mut Vec<Line<'static>>, hidden_lines: usize, theme: Theme) {
+    if hidden_lines == 0 {
+        return;
+    }
+    let label = if hidden_lines == 1 {
+        "  … 1 more line".to_string()
+    } else {
+        format!("  … {hidden_lines} more lines")
+    };
+    lines.push(Line::from(Span::styled(
+        label,
+        theme.muted().add_modifier(Modifier::ITALIC),
+    )));
 }
 
 impl ToolTimelineTool {

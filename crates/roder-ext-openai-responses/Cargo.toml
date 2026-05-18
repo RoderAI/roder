@@ -3,6 +3,19 @@ name = "roder-ext-openai-responses"
 version.workspace = true
 edition.workspace = true
 
+[package.metadata.roder.distribution]
+id = "openai-responses"
+category = "inference-engine"
+display_name = "OpenAI Responses"
+description = "OpenAI Responses-style inference with reasoning summaries and tool calls."
+default_in_profiles = ["full", "openai-only", "research-headless"]
+required_env = ["OPENAI_API_KEY"]
+optional_env = ["OPENAI_BASE_URL"]
+conflicts_with = []
+required_capabilities = ["network.api.openai.com", "secret.read.OPENAI_API_KEY"]
+extension_path = "::OpenAiResponsesExtension::new"
+docs_url = "https://platform.openai.com/docs/api-reference/responses"
+
 [dependencies]
 anyhow.workspace = true
 async-stream.workspace = true

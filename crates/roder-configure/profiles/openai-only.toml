@@ -1,0 +1,17 @@
+id = "openai-only"
+description = "OpenAI Responses distribution with local JSONL sessions and the standard CLI/TUI."
+
+[distribution]
+name = "openai-roder"
+version = "0.1.0"
+include_tui = true
+include_app_server = true
+include_cli = true
+extensions = [
+  "openai-responses",
+  "jsonl-session",
+  "plan-mode",
+  "notify-terminal",
+]
+default_provider = "openai-responses"
+default_session_store = "jsonl-session"

@@ -3,6 +3,19 @@ name = "roder-ext-notify-desktop"
 version.workspace = true
 edition.workspace = true
 
+[package.metadata.roder.distribution]
+id = "notify-desktop"
+category = "event-sink"
+display_name = "Desktop Notifications"
+description = "Desktop notification sink for task and turn events."
+default_in_profiles = ["full"]
+required_env = []
+optional_env = []
+conflicts_with = []
+required_capabilities = ["desktop.notification"]
+extension_path = "::DesktopNotifyExtension::default"
+docs_url = ""
+
 [features]
 default = []
 desktop = ["dep:notify-rust"]

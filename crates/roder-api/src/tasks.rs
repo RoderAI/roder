@@ -6,6 +6,7 @@ use time::OffsetDateTime;
 
 use crate::events::{ThreadId, TurnId};
 use crate::extension::TaskExecutorId;
+use crate::remote_runner::{RemoteRunnerSession, RunnerDestination};
 
 pub type TaskId = String;
 
@@ -50,6 +51,8 @@ pub struct TaskExecutionContext {
     pub thread_id: Option<ThreadId>,
     pub turn_id: Option<TurnId>,
     pub workspace_root: Option<String>,
+    pub runner_destination: Option<RunnerDestination>,
+    pub runner_session: Option<Arc<dyn RemoteRunnerSession>>,
     pub deadline: Option<OffsetDateTime>,
     pub metadata: serde_json::Value,
     pub output: TaskOutputSink,
@@ -79,6 +82,11 @@ impl fmt::Debug for TaskExecutionContext {
             .field("thread_id", &self.thread_id)
             .field("turn_id", &self.turn_id)
             .field("workspace_root", &self.workspace_root)
+            .field("runner_destination", &self.runner_destination)
+            .field(
+                "runner_session",
+                &self.runner_session.as_ref().map(|session| session.state()),
+            )
             .field("deadline", &self.deadline)
             .field("metadata", &self.metadata)
             .finish_non_exhaustive()
@@ -324,6 +332,8 @@ mod tests {
                     thread_id: None,
                     turn_id: None,
                     workspace_root: None,
+                    runner_destination: None,
+                    runner_session: None,
                     deadline: None,
                     metadata: serde_json::json!({}),
                     output: TaskOutputSink::default(),

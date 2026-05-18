@@ -3,13 +3,28 @@ name = "roder-ext-memory"
 version.workspace = true
 edition.workspace = true
 
+[package.metadata.roder.distribution]
+id = "memory"
+category = "memory-store"
+display_name = "Local Memory Store"
+description = "Local file-backed memory store extension."
+default_in_profiles = ["full", "research-headless"]
+required_env = []
+optional_env = []
+conflicts_with = []
+required_capabilities = ["fs.readwrite.roder-home"]
+extension_path = "::extension"
+docs_url = ""
+
 [dependencies]
 anyhow.workspace = true
 async-trait.workspace = true
 roder-api.workspace = true
+rusqlite.workspace = true
 semver.workspace = true
 serde = { workspace = true, features = ["derive"] }
 serde_json.workspace = true
+sha2.workspace = true
 time = { workspace = true, features = ["serde"] }
 tokio = { workspace = true, features = ["full"] }
 uuid = { workspace = true, features = ["v4"] }

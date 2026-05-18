@@ -4,7 +4,7 @@ use crate::events::{ThreadId, TurnId};
 use crate::policy_mode::{PolicyDecision, PolicyMode};
 use crate::tools::{ToolCall, ToolExecutionContext};
 
-pub use crate::extension::{ContextPlannerId, ContextProviderId};
+pub use crate::extension::{ContextPlannerId, ContextProviderId, PolicyContributorId};
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub enum ContextBlockKind {
@@ -61,7 +61,28 @@ pub trait ContextPlanner: Send + Sync + 'static {
     ) -> anyhow::Result<ContextPlan>;
 }
 
-pub trait PolicyContributor: Send + Sync + 'static {}
+#[derive(Debug, Clone)]
+pub struct PolicyReview {
+    pub call: ToolCall,
+    pub mode: PolicyMode,
+    pub context: ToolExecutionContext,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum PolicyContribution {
+    Abstain,
+    Allow { reason: Option<String> },
+    RequireApproval { reason: Option<String> },
+    Deny { reason: String },
+}
+
+#[async_trait::async_trait]
+pub trait PolicyContributor: Send + Sync + 'static {
+    fn id(&self) -> PolicyContributorId;
+
+    async fn review_tool(&self, review: PolicyReview) -> anyhow::Result<PolicyContribution>;
+}
 
 pub trait PolicyGate: Send + Sync + 'static {
     fn decide(

@@ -25,6 +25,10 @@ pub enum PaletteAction {
     },
     SetPolicyMode(PolicyMode),
     SetWebSearchMode(HostedWebSearchMode),
+    SelectRunner {
+        destination_id: String,
+        provider_id: String,
+    },
     InsertComposerText(String),
     /// Switch the active theme by id (basename of the `.css` file, no
     /// extension). The dispatcher reloads the stylesheet, restyles the next

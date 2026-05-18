@@ -145,53 +145,94 @@ make install
 
 By default this writes `roder` to `~/.local/bin`. Override the install target with `BINDIR=/path/to/bin make install`.
 
-## Roder installer configurator
+## Roder distribution configurator
 
-Roder's distribution configurator is tracked in [`roadmap/30-roder-distribution-configurator.md`](./roadmap/30-roder-distribution-configurator.md). The intended installed binary is `roder-configure`: it generates a small downstream distribution crate, an initial `config.toml`, and optionally builds the resulting binary.
+`roder-configure` generates a small downstream distribution crate, an initial `config.toml`, and optionally builds the resulting binary. It is the no-fork path for labs and products that want a tailored Roder build.
 
-Use a checked-in profile for reproducible, non-interactive builds:
+Built-in profiles:
 
-```sh
-roder-configure --profile ./profile.toml --out ./dist/lab-roder
-```
-
-Use the interactive wizard to create or adjust a profile:
-
-```sh
-roder-configure --interactive --emit-profile ./profile.toml
-```
-
-Validate a profile without generating files:
+- `minimal`
+- `openai-only`
+- `anthropic-only`
+- `research-headless`
+- `full`
 
 ```sh
-roder-configure validate ./profile.toml
+cargo run -p roder-configure -- profile list
+cargo run -p roder-configure -- profile show openai-only
+cargo run -p roder-configure -- validate ./profile.toml
+cargo run -p roder-configure -- generate --profile ./profile.toml --out ./dist/lab-roder
 ```
 
-A minimal profile looks like:
+Structured CI output is available with `--format json`:
+
+```sh
+cargo run -p roder-configure -- --format json validate ./profile.toml
+```
+
+See [`docs/distributions.md`](./docs/distributions.md) for built-in profiles, custom profile format, capability declarations, and worked examples for OpenAI-only, research-headless, and customer-facing no-TUI distributions.
+
+The configurator must not write API keys into generated files. Put secrets in environment variables such as `OPENAI_API_KEY`; generated docs and configs list the required env-var names instead of secret values.
+
+## Remote runner destinations
+
+Remote runner configuration is optional. When disabled or omitted, Roder keeps using the local filesystem and local tool execution path.
 
 ```toml
-[distribution]
-name = "lab-roder"
-version = "0.1.0"
-include_tui = true
-include_app_server = true
-include_cli = true
-
-extensions = [
-  "openai-responses",
-  "jsonl-session",
-  "disk-context",
-]
-
-default_provider = "openai-responses"
-default_session_store = "jsonl-session"
+[remote_runners]
+enabled = false
 ```
 
-The configurator must not write API keys into generated files. Put secrets in environment variables such as `OPENAI_API_KEY`, or reference env-var names in the generated/user `config.toml`.
+```toml
+[remote_runners]
+enabled = true
+default_destination = "unix-local"
+
+[remote_runners.destinations.unix-local]
+provider = "unix-local"
+```
+
+Destination-specific provider settings live under `config`, while secrets are referenced by environment variable name under `secret_env` instead of being written directly into `config.toml`:
+
+```toml
+[remote_runners]
+enabled = true
+default_destination = "docker-dev"
+
+[remote_runners.destinations.docker-dev]
+provider = "docker"
+config = { image = "rust:latest" }
+secret_env = { DOCKER_TOKEN = "RODER_DOCKER_TOKEN" }
+```
+
+Hosted providers use the same destination shape. Secrets stay in environment variables or secret references; do not put raw tokens in checked-in config:
+
+```toml
+[remote_runners]
+enabled = true
+default_destination = "blaxel-dev"
+
+[remote_runners.destinations.blaxel-dev]
+provider = "blaxel"
+secret_env = { BLAXEL_API_KEY = "BLAXEL_API_KEY" }
+config = { region = "iad" }
+```
+
+For local testing, override the selected destination without editing the file:
+
+```sh
+RODER_REMOTE_RUNNER=unix-local cargo run -p roder-cli --bin roder
+```
+
+The app-server exposes `runners/list`, `runners/select`, `runners/session`, `runners/snapshot`, `runners/delete`, and `runners/ports`. The TUI exposes runner selection from the `Ctrl+P` menu and shows the active runner in the status surface. Runner sessions own files, commands, ports, snapshots, mounts, artifacts, and provider state; Roder orchestrates and persists the selected destination/session boundary.
+
+See [`docs/roder-remote-runners.md`](./docs/roder-remote-runners.md) for mounts, artifacts, snapshots, ports, and secret-handling rules.
 
 Codex/OpenAI hosted web search is enabled by default. External web search provider setup is documented in [`docs/roder-web-search-extensions.md`](./docs/roder-web-search-extensions.md).
 
-Subagent setup for the `task` tool and disk-defined agents is documented in [`docs/roder-subagents.md`](./docs/roder-subagents.md).
+xAI Grok and SuperGrok provider setup is documented in [`docs/roder-xai-grok-providers.md`](./docs/roder-xai-grok-providers.md). Use `xai/grok-4.3` with `XAI_API_KEY` for direct xAI API-key auth, or `supergrok/grok-4.3` after `roder auth login supergrok` for SuperGrok OAuth.
+
+Subagent setup for the `task` tool and disk-defined agents is documented in [`docs/roder-subagents.md`](./docs/roder-subagents.md). Transparent child trace events, app-server trace read/list methods, persistence behavior, and TUI controls are documented in [`docs/roder-subagent-traces.md`](./docs/roder-subagent-traces.md). Plan review artifacts, hunk records, app-server methods, and deferred rollback behavior are documented in [`docs/roder-plan-review-hunk-tracker.md`](./docs/roder-plan-review-hunk-tracker.md). Workflow import for AGENTS.md, skills, MCP, hooks, commands, and plugins is documented in [`docs/roder-workflow-import.md`](./docs/roder-workflow-import.md). Terminal media generation, artifacts, previews, and generated-image attachments are documented in [`docs/roder-terminal-media-generation.md`](./docs/roder-terminal-media-generation.md). SQLite vector memories, project/global scopes, embedding providers, and memory CLI/app-server controls are documented in [`docs/roder-memories.md`](./docs/roder-memories.md).
 
 Custom model edit-tool preferences can be set in `~/.roder/config.toml`:
 

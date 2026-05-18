@@ -3,6 +3,19 @@ name = "roder-ext-notify-terminal"
 version.workspace = true
 edition.workspace = true
 
+[package.metadata.roder.distribution]
+id = "notify-terminal"
+category = "event-sink"
+display_name = "Terminal Notifications"
+description = "Terminal notification sink for task and turn events."
+default_in_profiles = ["full", "minimal", "openai-only", "anthropic-only", "research-headless"]
+required_env = []
+optional_env = []
+conflicts_with = []
+required_capabilities = ["terminal.write"]
+extension_path = "::TerminalNotifyExtension::default"
+docs_url = ""
+
 [dependencies]
 anyhow.workspace = true
 async-trait.workspace = true

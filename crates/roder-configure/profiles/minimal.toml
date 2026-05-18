@@ -1,0 +1,15 @@
+id = "minimal"
+description = "Small local Roder build with CLI, TUI, JSONL sessions, plan mode, and terminal notifications."
+
+[distribution]
+name = "minimal-roder"
+version = "0.1.0"
+include_tui = true
+include_app_server = false
+include_cli = true
+extensions = [
+  "jsonl-session",
+  "plan-mode",
+  "notify-terminal",
+]
+default_session_store = "jsonl-session"

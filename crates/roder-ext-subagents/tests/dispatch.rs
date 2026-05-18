@@ -11,6 +11,10 @@ use roder_api::subagents::{
 use roder_api::tools::{
     ToolCall, ToolExecutionContext, ToolExecutor, ToolRegistry, ToolResult, ToolSpec,
 };
+use roder_api::trace::{
+    ParentTurnRef, SubagentTraceDelta, SubagentTraceId, SubagentTraceSink, SubagentTraceStatus,
+    SubagentTraceSummary,
+};
 use roder_ext_subagents::{
     AgentLoadConfig, InProcessDispatcher, InProcessDispatcherConfig, InferenceEngineRegistry,
     load_agent_definitions, parse_agent_definition,
@@ -275,6 +279,67 @@ async fn fake_provider_child_run_returns_deterministic_result_and_truncates_tran
     assert_eq!(engine.requests.lock().unwrap().len(), 2);
 }
 
+#[tokio::test]
+async fn trace_sink_receives_child_status_and_tool_deltas() {
+    let engine = Arc::new(ScriptedEngine::new(vec![
+        vec![
+            Ok(InferenceEvent::ToolCallCompleted(ToolCallCompleted {
+                id: "call_1".to_string(),
+                name: "Read".to_string(),
+                arguments: r#"{"text":"tool output"}"#.to_string(),
+            })),
+            Ok(InferenceEvent::Completed(CompletionMetadata {
+                stop_reason: Some("tool_calls".to_string()),
+                provider_response_id: None,
+            })),
+        ],
+        vec![
+            Ok(InferenceEvent::ReasoningDelta(ReasoningDelta {
+                text: "thinking".to_string(),
+            })),
+            Ok(InferenceEvent::MessageDelta(MessageDelta {
+                text: "done".to_string(),
+                phase: None,
+            })),
+            Ok(InferenceEvent::Completed(CompletionMetadata {
+                stop_reason: Some("stop".to_string()),
+                provider_response_id: None,
+            })),
+        ],
+    ]));
+    let dispatcher = dispatcher_with_engine(engine);
+    let sink = Arc::new(CapturingTraceSink::default());
+
+    let result = dispatcher
+        .dispatch_traced(
+            "parent-thread".to_string(),
+            "parent-turn".to_string(),
+            request(),
+            Some(sink.clone()),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(
+        result.exit_reason,
+        roder_api::subagents::SubagentExitReason::Completed
+    );
+    let events = sink.events.lock().unwrap().clone();
+    assert!(matches!(
+        events.first().map(String::as_str),
+        Some("created:queued")
+    ));
+    assert!(events.contains(&"status:running".to_string()));
+    assert!(events.contains(&"delta:toolCall".to_string()));
+    assert!(events.contains(&"delta:toolResult".to_string()));
+    assert!(events.contains(&"delta:reasoning".to_string()));
+    assert!(events.contains(&"delta:message".to_string()));
+    assert!(matches!(
+        events.last().map(String::as_str),
+        Some("completed")
+    ));
+}
+
 fn dispatcher_with_engine(engine: Arc<dyn InferenceEngine>) -> InProcessDispatcher {
     dispatcher_with_config_and_engine(InProcessDispatcherConfig::default(), engine)
 }
@@ -459,6 +524,53 @@ impl InferenceEngine for CancellableEngine {
 struct ScriptedEngine {
     scripts: Mutex<Vec<Vec<anyhow::Result<InferenceEvent>>>>,
     requests: Mutex<Vec<AgentInferenceRequest>>,
+}
+
+#[derive(Default)]
+struct CapturingTraceSink {
+    events: Mutex<Vec<String>>,
+}
+
+#[async_trait::async_trait]
+impl SubagentTraceSink for CapturingTraceSink {
+    async fn trace_created(&self, summary: SubagentTraceSummary) {
+        self.events
+            .lock()
+            .unwrap()
+            .push(format!("created:{:?}", summary.status).to_lowercase());
+    }
+
+    async fn trace_delta(&self, delta: SubagentTraceDelta) {
+        let kind = match delta.item {
+            roder_api::trace::SubagentTraceItem::Message { .. } => "message",
+            roder_api::trace::SubagentTraceItem::Reasoning { .. } => "reasoning",
+            roder_api::trace::SubagentTraceItem::ToolCall { .. } => "toolCall",
+            roder_api::trace::SubagentTraceItem::ToolResult { .. } => "toolResult",
+            roder_api::trace::SubagentTraceItem::Status { .. } => "status",
+        };
+        self.events.lock().unwrap().push(format!("delta:{kind}"));
+    }
+
+    async fn trace_status_changed(
+        &self,
+        _trace_id: SubagentTraceId,
+        _parent: ParentTurnRef,
+        status: SubagentTraceStatus,
+        _detail: Option<String>,
+    ) {
+        self.events
+            .lock()
+            .unwrap()
+            .push(format!("status:{status:?}").to_lowercase());
+    }
+
+    async fn trace_completed(&self, _summary: SubagentTraceSummary) {
+        self.events.lock().unwrap().push("completed".to_string());
+    }
+
+    async fn trace_failed(&self, _summary: SubagentTraceSummary, error: String) {
+        self.events.lock().unwrap().push(format!("failed:{error}"));
+    }
 }
 
 impl ScriptedEngine {

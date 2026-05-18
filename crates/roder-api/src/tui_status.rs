@@ -47,6 +47,13 @@ pub struct McpServerStatus {
     pub state: String,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct RunnerSummary {
+    pub destination_id: String,
+    pub provider_id: String,
+    pub state: String,
+}
+
 pub struct StatusContext<'a> {
     pub session: &'a SessionSummary,
     pub policy_mode: PolicyMode,
@@ -54,6 +61,7 @@ pub struct StatusContext<'a> {
     pub usage: Option<&'a SessionUsage>,
     pub git: Option<&'a GitSnapshot>,
     pub mcp: &'a [McpServerStatus],
+    pub runner: Option<&'a RunnerSummary>,
 }
 
 pub struct StatusSegment {
@@ -138,6 +146,24 @@ pub fn built_in_status_segments() -> Vec<StatusSegment> {
             text: format!("mcp:{}", ctx.mcp.len()),
             style: StatusStyle::Muted,
             tooltip: Some("Configured MCP servers".to_string()),
+        }),
+        StatusSegment::new("runner", 45, 8, |ctx| {
+            let Some(runner) = ctx.runner else {
+                return StatusCell {
+                    text: "runner:local".to_string(),
+                    style: StatusStyle::Muted,
+                    tooltip: Some("Local filesystem and process execution".to_string()),
+                };
+            };
+            StatusCell {
+                text: format!("runner:{}", runner.destination_id),
+                style: if runner.state == "failed" {
+                    StatusStyle::Error
+                } else {
+                    StatusStyle::Accent
+                },
+                tooltip: Some(format!("{} via {}", runner.state, runner.provider_id)),
+            }
         }),
     ]
 }

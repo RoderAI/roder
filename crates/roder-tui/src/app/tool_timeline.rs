@@ -4,11 +4,9 @@ mod preview;
 mod render;
 #[cfg(test)]
 mod tests;
+mod virtualization;
 
-use std::{
-    collections::{HashMap, HashSet},
-    time::Duration,
-};
+use std::{collections::HashMap, time::Duration};
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 use ratatui::{
@@ -16,17 +14,29 @@ use ratatui::{
     style::Modifier,
     text::{Line, Span, Text},
 };
+use roder_api::events::{ThreadId, TurnId};
+use roder_api::extension_state::ExtensionStateRecord;
+use roder_api::interactive::{InteractiveRegion, RegionRect};
+use roder_api::trace::{
+    SubagentTraceDelta, SubagentTraceId, SubagentTraceStatus, SubagentTraceSummary,
+};
 use serde_json::Value;
 
+use super::subagent_trace::SubagentTraceRow;
 use super::{Theme, short_id};
+use super::{hunk_tracker::HunkTrackerRow, plan_review::PlanReviewRow};
+use crate::transcript::context_menu::TranscriptContextMenu;
+use crate::transcript::fold::{TranscriptFoldState, TranscriptFoldStateCodec};
 use preview::tool_label;
 use render::{max_scroll, visible_hit_rows};
 
 const BOTTOM_PADDING_ROWS: usize = 3;
+const MESSAGE_FOLD_LINE_LIMIT: usize = 8;
 const TOOL_COLLAPSE_LIMIT: usize = 6;
 const TOOL_OVERFLOW_INDEX: usize = usize::MAX;
 const MOUSE_SCROLL_ROWS: isize = 10;
 const MIN_PAGE_SCROLL_ROWS: isize = 12;
+const TIMELINE_OVERSCAN_ROWS: usize = 4;
 
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub(super) struct ToolTimelineEntry {
@@ -62,6 +72,9 @@ enum TimelineItemKind {
     Shell(String),
     ShellOutput(String),
     Tool(ToolTimelineTool),
+    SubagentTrace(Box<SubagentTraceRow>),
+    PlanReview(Box<PlanReviewRow>),
+    Hunk(Box<HunkTrackerRow>),
 }
 
 #[derive(Debug, Clone, Eq, PartialEq)]
@@ -102,7 +115,9 @@ pub(super) enum TimelineFocus {
 
 pub(super) struct TimelineRender {
     pub text: Text<'static>,
+    #[allow(dead_code)]
     pub scroll: u16,
+    pub text_scroll: u16,
 }
 
 #[derive(Debug, Clone, Eq, PartialEq)]
@@ -118,13 +133,18 @@ pub(super) struct ToolDetail {
 pub(super) struct TimelineState {
     items: Vec<TimelineItem>,
     tool_indices: HashMap<String, usize>,
+    subagent_trace_indices: HashMap<SubagentTraceId, usize>,
+    plan_review_indices: HashMap<String, usize>,
+    hunk_indices: HashMap<String, usize>,
     selected: Option<usize>,
-    expanded: HashSet<usize>,
+    fold_state: TranscriptFoldState,
     focus: TimelineFocus,
     auto_follow: bool,
     scroll_offset: usize,
     last_viewport_height: u16,
     hit_rows: Vec<(u16, usize)>,
+    last_area: Option<Rect>,
+    context_menu: Option<TranscriptContextMenu>,
     show_all_tools: bool,
     requested_detail: Option<ToolDetail>,
 }
@@ -282,6 +302,116 @@ impl TimelineState {
         self.push_item(TimelineItemKind::TurnCompleted(summary));
     }
 
+    pub fn record_subagent_trace_created(&mut self, summary: SubagentTraceSummary) {
+        if let Some(index) = self.subagent_trace_indices.get(&summary.trace_id).copied() {
+            if let Some(TimelineItem {
+                kind: TimelineItemKind::SubagentTrace(trace),
+            }) = self.items.get_mut(index)
+            {
+                trace.update_summary(summary);
+            }
+            return;
+        }
+
+        let index = self.items.len();
+        self.subagent_trace_indices
+            .insert(summary.trace_id.clone(), index);
+        self.items.push(TimelineItem {
+            kind: TimelineItemKind::SubagentTrace(Box::new(SubagentTraceRow::new(summary))),
+        });
+        self.follow_live_updates_from_composer();
+    }
+
+    pub fn record_subagent_trace_delta(&mut self, delta: SubagentTraceDelta) {
+        if let Some(index) = self.subagent_trace_indices.get(&delta.trace_id).copied()
+            && let Some(TimelineItem {
+                kind: TimelineItemKind::SubagentTrace(trace),
+            }) = self.items.get_mut(index)
+        {
+            trace.push_delta(delta);
+            self.follow_live_updates_from_composer();
+        }
+    }
+
+    pub fn record_subagent_trace_status(
+        &mut self,
+        trace_id: &str,
+        status: SubagentTraceStatus,
+        detail: Option<String>,
+    ) {
+        if let Some(index) = self.subagent_trace_indices.get(trace_id).copied()
+            && let Some(TimelineItem {
+                kind: TimelineItemKind::SubagentTrace(trace),
+            }) = self.items.get_mut(index)
+        {
+            trace.update_status(status, detail);
+            self.follow_live_updates_from_composer();
+        }
+    }
+
+    pub fn record_subagent_trace_completed(&mut self, summary: SubagentTraceSummary) {
+        self.record_subagent_trace_terminal(summary);
+    }
+
+    pub fn record_subagent_trace_failed(&mut self, summary: SubagentTraceSummary) {
+        self.record_subagent_trace_terminal(summary);
+    }
+
+    pub fn record_plan_review_created(&mut self, review: roder_api::plan_review::PlanReview) {
+        let index = self.items.len();
+        self.plan_review_indices.insert(review.id.clone(), index);
+        self.items.push(TimelineItem {
+            kind: TimelineItemKind::PlanReview(Box::new(PlanReviewRow::new(review))),
+        });
+        self.follow_live_updates_from_composer();
+    }
+
+    pub fn record_plan_review_status(
+        &mut self,
+        review_id: &str,
+        status: roder_api::plan_review::PlanReviewStatus,
+    ) {
+        if let Some(index) = self.plan_review_indices.get(review_id).copied()
+            && let Some(TimelineItem {
+                kind: TimelineItemKind::PlanReview(row),
+            }) = self.items.get_mut(index)
+        {
+            row.update_status(status);
+            self.follow_live_updates_from_composer();
+        }
+    }
+
+    pub fn record_plan_review_comment(&mut self, comment: roder_api::plan_review::PlanComment) {
+        if let Some(index) = self.plan_review_indices.get(&comment.review_id).copied()
+            && let Some(TimelineItem {
+                kind: TimelineItemKind::PlanReview(row),
+            }) = self.items.get_mut(index)
+        {
+            row.push_comment(comment);
+            self.follow_live_updates_from_composer();
+        }
+    }
+
+    pub fn record_plan_review_rewrite(&mut self, rewrite: roder_api::plan_review::PlanRewrite) {
+        if let Some(index) = self.plan_review_indices.get(&rewrite.review_id).copied()
+            && let Some(TimelineItem {
+                kind: TimelineItemKind::PlanReview(row),
+            }) = self.items.get_mut(index)
+        {
+            row.push_rewrite(rewrite);
+            self.follow_live_updates_from_composer();
+        }
+    }
+
+    pub fn record_hunk(&mut self, hunk: roder_api::plan_review::HunkRecord) {
+        let index = self.items.len();
+        self.hunk_indices.insert(hunk.id.clone(), index);
+        self.items.push(TimelineItem {
+            kind: TimelineItemKind::Hunk(Box::new(HunkTrackerRow::new(hunk))),
+        });
+        self.follow_live_updates_from_composer();
+    }
+
     pub fn handle_key(&mut self, key: KeyEvent) -> bool {
         if key.modifiers.contains(KeyModifiers::SHIFT) {
             return false;
@@ -338,6 +468,7 @@ impl TimelineState {
                 return true;
             }
             MouseEventKind::Down(MouseButton::Left) | MouseEventKind::Up(MouseButton::Left) => {}
+            MouseEventKind::Down(MouseButton::Right) | MouseEventKind::Up(MouseButton::Right) => {}
             _ => return false,
         }
         let Some((_, index)) = self
@@ -353,6 +484,12 @@ impl TimelineState {
             self.show_all_tools = true;
             self.auto_follow = false;
             return true;
+        }
+        if matches!(
+            event.kind,
+            MouseEventKind::Down(MouseButton::Right) | MouseEventKind::Up(MouseButton::Right)
+        ) {
+            return self.open_context_menu(index, event.column, event.row);
         }
         if !self.items.get(index).is_some_and(item_is_selectable) {
             return false;
@@ -375,6 +512,110 @@ impl TimelineState {
         self.requested_detail.take()
     }
 
+    #[allow(dead_code)]
+    pub fn fold_state_record(
+        &self,
+        thread_id: impl Into<ThreadId>,
+    ) -> anyhow::Result<ExtensionStateRecord> {
+        TranscriptFoldStateCodec::thread(thread_id).encode(&self.fold_state)
+    }
+
+    #[allow(dead_code)]
+    pub fn restore_fold_state_record(
+        &mut self,
+        record: &ExtensionStateRecord,
+        thread_id: impl Into<ThreadId>,
+    ) -> anyhow::Result<()> {
+        self.fold_state = TranscriptFoldStateCodec::thread(thread_id).decode(record)?;
+        Ok(())
+    }
+
+    #[allow(dead_code)]
+    pub fn interactive_regions(
+        &self,
+        area: Rect,
+        thread_id: &str,
+        turn_id: &str,
+    ) -> Vec<InteractiveRegion> {
+        use std::collections::BTreeMap;
+
+        let mut rows_by_index = BTreeMap::<usize, (u16, u16)>::new();
+        for (row, index) in &self.hit_rows {
+            rows_by_index
+                .entry(*index)
+                .and_modify(|range| range.1 = range.1.max(*row))
+                .or_insert((*row, *row));
+        }
+
+        let mut regions = rows_by_index
+            .into_iter()
+            .filter_map(|(index, (start, end))| {
+                let rect = RegionRect {
+                    x: area.x,
+                    y: start,
+                    width: area.width,
+                    height: end.saturating_sub(start).saturating_add(1),
+                };
+                let item = self.items.get(index)?;
+                let mut regions = match item {
+                    TimelineItem {
+                        kind: TimelineItemKind::Tool(tool),
+                    } => vec![crate::transcript::regions::tool_call_region(
+                        format!("tool-call-{}", tool.tool_id),
+                        rect,
+                        10,
+                        tool.tool_id.clone(),
+                        self.fold_state.is_expanded(&tool.tool_id),
+                    )],
+                    _ => vec![crate::transcript::regions::transcript_message_region(
+                        format!("transcript-message-{index}"),
+                        rect,
+                        0,
+                        ThreadId::from(thread_id),
+                        TurnId::from(turn_id),
+                        index,
+                    )],
+                };
+                if let Some(text) = item.transcript_text() {
+                    for (link_index, link) in
+                        crate::transcript::links::linkify_transcript_text(text)
+                            .into_iter()
+                            .enumerate()
+                    {
+                        match link {
+                            crate::transcript::links::TranscriptLink::Url { text } => {
+                                regions.push(crate::transcript::regions::url_region(
+                                    format!("transcript-url-{index}-{link_index}"),
+                                    rect,
+                                    20,
+                                    text,
+                                ));
+                            }
+                            crate::transcript::links::TranscriptLink::FileReference {
+                                path,
+                                line,
+                            } => regions.push(crate::transcript::regions::file_reference_region(
+                                format!("transcript-file-{index}-{link_index}"),
+                                rect,
+                                20,
+                                path,
+                                line,
+                            )),
+                        }
+                    }
+                }
+                Some(regions)
+            })
+            .flatten()
+            .collect::<Vec<_>>();
+
+        if let Some(context_menu) = &self.context_menu {
+            regions.extend(context_menu.regions());
+        }
+
+        regions
+    }
+
     #[cfg(test)]
     pub fn render(&mut self, theme: Theme, area: Rect) -> TimelineRender {
         self.render_with_frame(theme, area, 0)
@@ -389,13 +630,22 @@ impl TimelineState {
         let (lines, row_items, visual_height) =
             self.build_lines(theme, area.width, animation_frame);
         self.last_viewport_height = area.height;
+        self.last_area = Some(area);
         let max_scroll = max_scroll(visual_height, area.height);
         let scroll = self.scroll_for(area.height, &row_items, max_scroll);
         self.hit_rows = visible_hit_rows(area, scroll, area.height, &row_items);
         self.scroll_offset = usize::from(scroll);
+        let window = render_window_lines(
+            lines,
+            usize::from(scroll),
+            usize::from(area.height),
+            TIMELINE_OVERSCAN_ROWS,
+            area.width,
+        );
         TimelineRender {
-            text: Text::from(lines),
+            text: Text::from(window.lines),
             scroll,
+            text_scroll: window.text_scroll,
         }
     }
 
@@ -483,8 +733,48 @@ impl TimelineState {
     }
 
     fn toggle_expansion(&mut self, index: usize) {
-        if !self.expanded.insert(index) {
-            self.expanded.remove(&index);
+        if let Some(key) = self.fold_key_for_index(index) {
+            self.fold_state.toggle(key);
+        }
+    }
+
+    fn record_subagent_trace_terminal(&mut self, summary: SubagentTraceSummary) {
+        if let Some(index) = self.subagent_trace_indices.get(&summary.trace_id).copied()
+            && let Some(TimelineItem {
+                kind: TimelineItemKind::SubagentTrace(trace),
+            }) = self.items.get_mut(index)
+        {
+            trace.update_summary(summary);
+            self.follow_live_updates_from_composer();
+            return;
+        }
+        self.record_subagent_trace_created(summary);
+    }
+
+    fn fold_key_for_index(&self, index: usize) -> Option<String> {
+        match self.items.get(index)? {
+            TimelineItem {
+                kind: TimelineItemKind::Tool(tool),
+            } => Some(tool.tool_id.clone()),
+            TimelineItem {
+                kind: TimelineItemKind::SubagentTrace(trace),
+            } => Some(trace.trace_id().to_string()),
+            TimelineItem {
+                kind: TimelineItemKind::PlanReview(review),
+            } => Some(review.review_id().to_string()),
+            TimelineItem {
+                kind: TimelineItemKind::Hunk(hunk),
+            } => Some(hunk.hunk_id().to_string()),
+            TimelineItem {
+                kind:
+                    TimelineItemKind::User(_)
+                    | TimelineItemKind::Assistant { .. }
+                    | TimelineItemKind::System(_)
+                    | TimelineItemKind::Error(_)
+                    | TimelineItemKind::Shell(_)
+                    | TimelineItemKind::ShellOutput(_),
+            } => Some(format!("message-{index}")),
+            _ => None,
         }
     }
 
@@ -492,15 +782,46 @@ impl TimelineState {
         if index == TOOL_OVERFLOW_INDEX {
             return !self.show_all_tools && self.hidden_tool_count() > 0;
         }
-        matches!(
-            self.items.get(index),
+        match self.items.get(index) {
             Some(TimelineItem {
-                kind: TimelineItemKind::Tool(ToolTimelineTool {
-                    output: Some(output),
-                    ..
-                }),
-            }) if !output.trim().is_empty()
-        )
+                kind:
+                    TimelineItemKind::Tool(ToolTimelineTool {
+                        output: Some(output),
+                        ..
+                    }),
+            }) => !output.trim().is_empty(),
+            Some(TimelineItem {
+                kind: TimelineItemKind::SubagentTrace(trace),
+            }) => trace.has_items(),
+            Some(TimelineItem {
+                kind: TimelineItemKind::PlanReview(review),
+            }) => review.can_expand(),
+            Some(TimelineItem {
+                kind: TimelineItemKind::Hunk(hunk),
+            }) => hunk.can_expand(),
+            Some(item) => item_is_foldable_message(item),
+            None => false,
+        }
+    }
+
+    fn open_context_menu(&mut self, index: usize, column: u16, row: u16) -> bool {
+        let Some(item) = self.items.get(index) else {
+            return false;
+        };
+        if item.transcript_text().is_none() {
+            return false;
+        }
+        let viewport = self
+            .last_area
+            .unwrap_or_else(|| Rect::new(0, 0, u16::MAX, self.last_viewport_height.max(1)));
+        self.context_menu = Some(TranscriptContextMenu::at_message(
+            format!("transcript-message-{index}"),
+            (column, row),
+            viewport,
+            self.item_can_expand(index),
+            true,
+        ));
+        true
     }
 
     fn detail_for_index(&self, index: usize) -> Option<ToolDetail> {
@@ -613,7 +934,9 @@ impl TimelineState {
             let selected = self.focus == TimelineFocus::Timeline
                 && self.selected == Some(index)
                 && item_is_selectable(item);
-            let expanded = self.expanded.contains(&index);
+            let expanded = self
+                .fold_key_for_index(index)
+                .is_some_and(|key| self.fold_state.is_expanded(&key));
             item.render(
                 selected,
                 expanded,
@@ -799,6 +1122,51 @@ fn map_rendered_lines(
     visual_row
 }
 
+struct RenderWindowLines {
+    lines: Vec<Line<'static>>,
+    text_scroll: u16,
+}
+
+fn render_window_lines(
+    lines: Vec<Line<'static>>,
+    scroll: usize,
+    height: usize,
+    overscan_rows: usize,
+    width: u16,
+) -> RenderWindowLines {
+    if height == 0 || lines.is_empty() {
+        return RenderWindowLines {
+            lines: Vec::new(),
+            text_scroll: 0,
+        };
+    }
+
+    let render_top = scroll.saturating_sub(overscan_rows);
+    let render_bottom = scroll.saturating_add(height).saturating_add(overscan_rows);
+    let mut visual_row = 0usize;
+    let mut first_line_start = 0usize;
+    let mut window = Vec::new();
+    for line in lines {
+        let line_start = visual_row;
+        let line_height = line_visual_height(&line, width);
+        let line_end = line_start.saturating_add(line_height);
+        visual_row = line_end;
+        if line_end <= render_top {
+            first_line_start = line_end;
+            continue;
+        }
+        if line_start >= render_bottom {
+            break;
+        }
+        window.push(line);
+    }
+
+    RenderWindowLines {
+        lines: window,
+        text_scroll: scroll.saturating_sub(first_line_start) as u16,
+    }
+}
+
 fn line_visual_height(line: &Line<'_>, width: u16) -> usize {
     let width = usize::from(width).max(1);
     let line_width = line.width().max(1);
@@ -808,8 +1176,17 @@ fn line_visual_height(line: &Line<'_>, width: u16) -> usize {
 fn item_is_selectable(item: &TimelineItem) -> bool {
     matches!(
         item.kind,
-        TimelineItemKind::Tool(_) | TimelineItemKind::Shell(_)
-    )
+        TimelineItemKind::Tool(_)
+            | TimelineItemKind::Shell(_)
+            | TimelineItemKind::SubagentTrace(_)
+            | TimelineItemKind::PlanReview(_)
+            | TimelineItemKind::Hunk(_)
+    ) || item_is_foldable_message(item)
+}
+
+fn item_is_foldable_message(item: &TimelineItem) -> bool {
+    item.transcript_text()
+        .is_some_and(|text| text.lines().count() > MESSAGE_FOLD_LINE_LIMIT)
 }
 
 fn item_is_visible(
@@ -847,6 +1224,26 @@ pub(super) fn reasoning_visible_body(text: &str) -> String {
     lines[body_start..].join("\n")
 }
 
+#[allow(dead_code)]
+impl TimelineItem {
+    fn transcript_text(&self) -> Option<&str> {
+        match &self.kind {
+            TimelineItemKind::User(text)
+            | TimelineItemKind::Reasoning(text)
+            | TimelineItemKind::System(text)
+            | TimelineItemKind::Error(text)
+            | TimelineItemKind::Shell(text)
+            | TimelineItemKind::ShellOutput(text) => Some(text),
+            TimelineItemKind::Assistant { text, .. } => Some(text),
+            TimelineItemKind::Tool(_)
+            | TimelineItemKind::SubagentTrace(_)
+            | TimelineItemKind::PlanReview(_)
+            | TimelineItemKind::Hunk(_)
+            | TimelineItemKind::TurnCompleted(_) => None,
+        }
+    }
+}
+
 fn parse_bold_heading_line(line: &str) -> Option<String> {
     let trimmed = line.trim();
     let inner = trimmed.strip_prefix("**")?.strip_suffix("**")?.trim();
@@ -856,6 +1253,7 @@ fn parse_bold_heading_line(line: &str) -> Option<String> {
 fn should_separate_items(current: &TimelineItem, next: &TimelineItem) -> bool {
     match (&current.kind, &next.kind) {
         (TimelineItemKind::Tool(_), TimelineItemKind::Tool(_)) => false,
+        (TimelineItemKind::SubagentTrace(_), TimelineItemKind::SubagentTrace(_)) => false,
         (TimelineItemKind::Assistant { phase, .. }, TimelineItemKind::Tool(_)) => !phase
             .as_deref()
             .is_some_and(|phase| !phase.is_empty() && phase != "final_answer"),

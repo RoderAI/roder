@@ -3,6 +3,19 @@ name = "roder-ext-perplexity-search"
 version.workspace = true
 edition.workspace = true
 
+[package.metadata.roder.distribution]
+id = "perplexity-search"
+category = "tool-provider"
+display_name = "Perplexity Search"
+description = "Perplexity-backed web search tools."
+default_in_profiles = []
+required_env = ["PERPLEXITY_API_KEY"]
+optional_env = []
+conflicts_with = []
+required_capabilities = ["network.api.perplexity.ai", "secret.read.PERPLEXITY_API_KEY"]
+extension_path = "::PerplexitySearchExtension::new"
+docs_url = "https://docs.perplexity.ai"
+
 [dependencies]
 anyhow.workspace = true
 async-trait.workspace = true

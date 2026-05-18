@@ -2,7 +2,9 @@ mod task;
 
 use std::sync::Arc;
 
-use roder_api::{ExtensionManifest, ExtensionRegistryBuilder, ProvidedService, RoderExtension};
+use roder_api::{
+    CapabilityRequest, ExtensionManifest, ExtensionRegistryBuilder, ProvidedService, RoderExtension,
+};
 
 pub use task::{PROCESS_TASK_EXECUTOR_ID, ProcessTaskExecutor};
 
@@ -19,7 +21,7 @@ impl RoderExtension for ProcessTaskExtension {
             provides: vec![ProvidedService::TaskExecutor(
                 PROCESS_TASK_EXECUTOR_ID.to_string(),
             )],
-            required_capabilities: Vec::new(),
+            required_capabilities: vec![CapabilityRequest::new("process.spawn.shell")],
         }
     }
 

@@ -190,9 +190,8 @@ impl<'a> Parser<'a> {
                 None => return Err(ParseError::UnexpectedEof { line: self.line }),
                 _ => {}
             }
-            match self.parse_declaration() {
-                Some(d) => declarations.push(d),
-                None => {} // recovery
+            if let Some(d) = self.parse_declaration() {
+                declarations.push(d);
             }
         }
 
@@ -296,10 +295,10 @@ fn parse_selector_list(input: &str) -> Vec<Selector> {
             _ => {}
         }
     }
-    if start < input.len() {
-        if let Some(sel) = parse_selector(input[start..].trim()) {
-            out.push(sel);
-        }
+    if start < input.len()
+        && let Some(sel) = parse_selector(input[start..].trim())
+    {
+        out.push(sel);
     }
     out
 }
@@ -352,9 +351,7 @@ fn parse_selector(input: &str) -> Option<Selector> {
             }
             '>' => {
                 chars.next();
-                if flush(&mut cur, &mut parts, &mut pending_combinator).is_none() {
-                    return None;
-                }
+                flush(&mut cur, &mut parts, &mut pending_combinator)?;
                 pending_combinator = Some(Combinator::Child);
             }
             _ => {
@@ -363,9 +360,7 @@ fn parse_selector(input: &str) -> Option<Selector> {
             }
         }
     }
-    if flush(&mut cur, &mut parts, &mut pending_combinator).is_none() {
-        return None;
-    }
+    flush(&mut cur, &mut parts, &mut pending_combinator)?;
     if parts.is_empty() {
         return None;
     }

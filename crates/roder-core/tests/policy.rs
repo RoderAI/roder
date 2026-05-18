@@ -3,7 +3,7 @@ use std::time::Duration;
 
 use futures::stream;
 use roder_api::catalog::PROVIDER_MOCK;
-use roder_api::context::PolicyGate;
+use roder_api::context::{PolicyContribution, PolicyContributor, PolicyGate, PolicyReview};
 use roder_api::events::RoderEvent;
 use roder_api::extension::{ExtensionRegistryBuilder, InferenceEngineId, ToolProviderId};
 use roder_api::inference::*;
@@ -341,6 +341,120 @@ async fn switching_to_accept_all_auto_approves_pending_shell_tool() {
     assert_eq!(*seen_modes.lock().unwrap(), vec![PolicyMode::AcceptAll]);
 }
 
+#[tokio::test]
+async fn extension_policy_contributor_can_deny_tool_call() {
+    let seen_modes = Arc::new(Mutex::new(Vec::new()));
+    let runtime = runtime_with_policy_contributor(
+        PolicyMode::Default,
+        "grep",
+        json!({ "query": "needle" }),
+        seen_modes.clone(),
+        Arc::new(StaticPolicyContributor {
+            id: "deny-grep",
+            contribution: PolicyContribution::Deny {
+                reason: "extension policy blocked grep".to_string(),
+            },
+        }),
+    );
+    let mut events = runtime.subscribe_events();
+
+    runtime
+        .start_turn(StartTurnRequest {
+            thread_id: "thread-extension-policy".to_string(),
+            message: "search files".to_string(),
+            images: Vec::new(),
+            provider_override: None,
+            model_override: None,
+            instructions: default_instructions(),
+        })
+        .await
+        .unwrap();
+
+    let mut saw_denied = false;
+    loop {
+        let envelope = tokio::time::timeout(Duration::from_secs(2), events.recv())
+            .await
+            .unwrap()
+            .unwrap();
+        match envelope.event {
+            RoderEvent::PolicyDecisionRecorded(event) => {
+                saw_denied = matches!(
+                    event.decision,
+                    PolicyDecision::Denied { reason } if reason.contains("extension policy blocked grep")
+                );
+            }
+            RoderEvent::TurnCompleted(_) => break,
+            _ => {}
+        }
+    }
+
+    assert!(saw_denied);
+    assert!(seen_modes.lock().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn extension_policy_contributor_can_require_approval() {
+    let seen_modes = Arc::new(Mutex::new(Vec::new()));
+    let runtime = runtime_with_policy_contributor(
+        PolicyMode::Default,
+        "grep",
+        json!({ "query": "needle" }),
+        seen_modes.clone(),
+        Arc::new(StaticPolicyContributor {
+            id: "approve-grep",
+            contribution: PolicyContribution::RequireApproval {
+                reason: Some("extension policy wants review".to_string()),
+            },
+        }),
+    );
+    let mut events = runtime.subscribe_events();
+
+    runtime
+        .start_turn(StartTurnRequest {
+            thread_id: "thread-extension-approval".to_string(),
+            message: "search files".to_string(),
+            images: Vec::new(),
+            provider_override: None,
+            model_override: None,
+            instructions: default_instructions(),
+        })
+        .await
+        .unwrap();
+
+    let approval_id = loop {
+        let envelope = tokio::time::timeout(Duration::from_secs(2), events.recv())
+            .await
+            .unwrap()
+            .unwrap();
+        if let RoderEvent::ApprovalRequested(event) = envelope.event {
+            assert_eq!(event.tool_name, "grep");
+            assert_eq!(
+                event.reason.as_deref(),
+                Some("extension policy wants review")
+            );
+            break event.approval_id;
+        }
+    };
+    assert!(seen_modes.lock().unwrap().is_empty());
+
+    runtime
+        .resolve_tool_approval(&approval_id, true)
+        .await
+        .unwrap();
+
+    loop {
+        let envelope = tokio::time::timeout(Duration::from_secs(2), events.recv())
+            .await
+            .unwrap()
+            .unwrap();
+        if matches!(envelope.event, RoderEvent::TurnCompleted(_)) {
+            break;
+        }
+    }
+
+    assert_eq!(*seen_modes.lock().unwrap(), vec![PolicyMode::Default]);
+}
+
 fn runtime_with_policy(
     policy_mode: PolicyMode,
     tool_name: &'static str,
@@ -369,6 +483,36 @@ fn runtime_with_policy(
     )
 }
 
+fn runtime_with_policy_contributor(
+    policy_mode: PolicyMode,
+    tool_name: &'static str,
+    arguments: serde_json::Value,
+    seen_modes: Arc<Mutex<Vec<PolicyMode>>>,
+    contributor: Arc<dyn PolicyContributor>,
+) -> Arc<Runtime> {
+    let mut builder = ExtensionRegistryBuilder::new();
+    builder.inference_engine(Arc::new(SingleToolCallEngine {
+        tool_name,
+        arguments,
+        requests: Mutex::new(0),
+    }));
+    builder.tool_contributor(Arc::new(RecordingContributor {
+        tool_name,
+        seen_modes,
+    }));
+    builder.policy_contributor(contributor);
+    Arc::new(
+        Runtime::new(
+            builder.build().unwrap(),
+            RuntimeConfig {
+                policy_mode,
+                ..RuntimeConfig::default()
+            },
+        )
+        .unwrap(),
+    )
+}
+
 fn tool_call(name: &str, arguments: serde_json::Value) -> ToolCall {
     ToolCall {
         id: "call-policy".to_string(),
@@ -381,11 +525,7 @@ fn tool_call(name: &str, arguments: serde_json::Value) -> ToolCall {
 }
 
 fn context(mode: PolicyMode) -> ToolExecutionContext {
-    ToolExecutionContext {
-        thread_id: "thread".to_string(),
-        turn_id: "turn".to_string(),
-        effective_mode: mode,
-    }
+    ToolExecutionContext::new("thread", "turn", mode)
 }
 
 struct SingleToolCallEngine {
@@ -466,6 +606,22 @@ impl ToolContributor for RecordingContributor {
 struct RecordingTool {
     name: String,
     seen_modes: Arc<Mutex<Vec<PolicyMode>>>,
+}
+
+struct StaticPolicyContributor {
+    id: &'static str,
+    contribution: PolicyContribution,
+}
+
+#[async_trait::async_trait]
+impl PolicyContributor for StaticPolicyContributor {
+    fn id(&self) -> roder_api::extension::PolicyContributorId {
+        self.id.to_string()
+    }
+
+    async fn review_tool(&self, _review: PolicyReview) -> anyhow::Result<PolicyContribution> {
+        Ok(self.contribution.clone())
+    }
 }
 
 #[async_trait::async_trait]

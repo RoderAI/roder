@@ -1,4 +1,5 @@
 use crate::provider::OpenAiResponsesEngine;
+use roder_api::capabilities::CapabilityRequest;
 use roder_api::catalog::PROVIDER_OPENAI;
 use roder_api::extension::{
     ExtensionManifest, ExtensionRegistryBuilder, ProvidedService, RoderExtension,
@@ -51,7 +52,10 @@ impl RoderExtension for OpenAiResponsesExtension {
             api_version: "0.1.0".to_string(),
             description: Some("OpenAI Responses Provider".to_string()),
             provides: vec![ProvidedService::InferenceEngine(self.provider_id.clone())],
-            required_capabilities: vec![],
+            required_capabilities: vec![
+                CapabilityRequest::new("network.api.openai.com"),
+                CapabilityRequest::new("secret.read.OPENAI_API_KEY"),
+            ],
         }
     }
 

@@ -6,12 +6,13 @@ use serde::Deserialize;
 use serde_json::json;
 use tokio::io::AsyncWriteExt;
 
+use crate::backend::WorkspaceBackendHandle;
 use crate::files::{parse, result};
+use crate::hunk_output;
 use crate::workspace::Workspace;
 
-#[derive(Debug)]
 pub(crate) struct ApplyPatchTool {
-    pub(crate) workspace: Workspace,
+    pub(crate) backend: WorkspaceBackendHandle,
 }
 
 #[async_trait::async_trait]
@@ -36,9 +37,10 @@ impl ToolExecutor for ApplyPatchTool {
 
     async fn execute(
         &self,
-        _ctx: ToolExecutionContext,
+        ctx: ToolExecutionContext,
         call: ToolCall,
     ) -> anyhow::Result<ToolResult> {
+        ctx.require_workspace()?;
         let args = parse::<ApplyPatchArgs>(&call)?;
         if args.patch.trim().is_empty() {
             return Ok(result(
@@ -49,14 +51,11 @@ impl ToolExecutor for ApplyPatchTool {
             ));
         }
 
-        let outcome = if is_codex_patch(&args.patch) {
-            apply_codex_patch(&self.workspace, &args.patch).await
-        } else {
-            apply_unified_patch(&self.workspace, &args.patch).await
-        };
+        let hunks = hunk_records_from_patch(&ctx, &call, &args.patch).unwrap_or_default();
+        let outcome = self.backend.apply_patch(&args.patch).await;
 
         match outcome {
-            Ok(text) => Ok(result(call, text, json!({}), false)),
+            Ok(text) => Ok(result(call, text, json!({ "hunks": hunks }), false)),
             Err(err) => Ok(result(
                 call,
                 format!("failed to apply patch: {err}"),
@@ -96,6 +95,71 @@ struct CodexPatchHunk {
 
 fn is_codex_patch(patch: &str) -> bool {
     patch.trim_start().starts_with("*** Begin Patch")
+}
+
+fn hunk_records_from_patch(
+    ctx: &ToolExecutionContext,
+    call: &ToolCall,
+    patch: &str,
+) -> anyhow::Result<Vec<roder_api::plan_review::HunkRecord>> {
+    if !is_codex_patch(patch) {
+        return Ok(Vec::new());
+    }
+    let changes = parse_codex_patch(patch)?;
+    let mut records = Vec::new();
+    for change in changes {
+        let path = change
+            .move_to
+            .as_deref()
+            .unwrap_or(&change.path)
+            .to_string();
+        match change.op {
+            CodexPatchOp::Add => {
+                records.push(hunk_output::record(
+                    ctx,
+                    call,
+                    records.len(),
+                    path,
+                    Vec::new(),
+                    change.lines,
+                ));
+            }
+            CodexPatchOp::Delete => {
+                records.push(hunk_output::record(
+                    ctx,
+                    call,
+                    records.len(),
+                    path,
+                    Vec::new(),
+                    Vec::new(),
+                ));
+            }
+            CodexPatchOp::Update => {
+                for hunk in change.hunks {
+                    records.push(hunk_output::record(
+                        ctx,
+                        call,
+                        records.len(),
+                        path.clone(),
+                        hunk.old_lines,
+                        hunk.new_lines,
+                    ));
+                }
+            }
+        }
+    }
+    Ok(records)
+}
+
+pub(crate) async fn apply_patch_to_workspace(
+    workspace: &Workspace,
+    patch: &str,
+) -> anyhow::Result<String> {
+    if is_codex_patch(patch) {
+        apply_codex_patch(workspace, patch).await
+    } else {
+        apply_unified_patch(workspace, patch).await
+    }
 }
 
 async fn apply_unified_patch(workspace: &Workspace, patch: &str) -> anyhow::Result<String> {
@@ -398,5 +462,36 @@ fn join_patch_lines(lines: &[String]) -> String {
         String::new()
     } else {
         format!("{}\n", lines.join("\n"))
+    }
+}
+
+#[cfg(test)]
+mod hunk_tests {
+    use super::*;
+    use roder_api::policy_mode::PolicyMode;
+    use serde_json::json;
+
+    #[test]
+    fn codex_patch_produces_hunk_records() {
+        let ctx = ToolExecutionContext::new("thread-1", "turn-1", PolicyMode::Default);
+        let call = ToolCall {
+            id: "patch-1".to_string(),
+            name: "apply_patch".to_string(),
+            arguments: json!({}),
+            raw_arguments: "{}".to_string(),
+            thread_id: "thread-1".to_string(),
+            turn_id: "turn-1".to_string(),
+        };
+        let records = hunk_records_from_patch(
+            &ctx,
+            &call,
+            "*** Begin Patch\n*** Update File: src/lib.rs\n@@\n-old\n+new\n*** End Patch\n",
+        )
+        .unwrap();
+
+        assert_eq!(records.len(), 1);
+        assert_eq!(records[0].path, "src/lib.rs");
+        assert_eq!(records[0].tool_name, "apply_patch");
+        assert_eq!(records[0].diff.len(), 2);
     }
 }
