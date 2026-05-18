@@ -1135,7 +1135,7 @@ pub struct SettingsSetDefaultModeResult {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ProviderAuthResult {
+pub struct CodexAuthResult {
     pub signed_in: bool,
     pub account_id: Option<String>,
 }

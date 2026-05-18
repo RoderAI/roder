@@ -320,7 +320,10 @@ impl InferenceEngine for OpenAiResponsesEngine {
             }
             anyhow::bail!("OpenAI Responses error {}: {}", status, text);
         }
-        Ok(stream_responses_sse(response, tool_name_map.api_name_to_tool_name))
+        Ok(stream_responses_sse(
+            response,
+            tool_name_map.api_name_to_tool_name,
+        ))
     }
 }
 
@@ -1000,7 +1003,10 @@ fn message_deltas_from_response(
         .collect()
 }
 
-fn extract_tool_calls(value: &Value, tool_name_map: &HashMap<String, String>) -> Vec<ToolCallCompleted> {
+fn extract_tool_calls(
+    value: &Value,
+    tool_name_map: &HashMap<String, String>,
+) -> Vec<ToolCallCompleted> {
     let Some(output) = value.get("output").and_then(|v| v.as_array()) else {
         return Vec::new();
     };
@@ -1013,11 +1019,8 @@ fn extract_tool_calls(value: &Value, tool_name_map: &HashMap<String, String>) ->
                 .or_else(|| item.get("id"))
                 .and_then(|v| v.as_str())?
                 .to_string();
-            let name = map_tool_name(
-                item.get("name").and_then(|v| v.as_str())?,
-                tool_name_map,
-            )
-            .to_string();
+            let name = map_tool_name(item.get("name").and_then(|v| v.as_str())?, tool_name_map)
+                .to_string();
             let arguments = item
                 .get("arguments")
                 .and_then(|v| v.as_str())

@@ -181,24 +181,23 @@ pub async fn listen_remote_websocket(
                 let auth_events = app_server.clone();
                 let auth_remote_addr = remote_addr.clone();
                 #[allow(clippy::result_large_err)]
-                let callback =
-                    move |request: &Request,
-                          response: Response|
-                          -> Result<Response, ErrorResponse> {
-                        if auth.verify_request(request) {
-                            Ok(response)
-                        } else {
-                            auth_events.runtime.bus.emit(RoderEvent::RemoteAuthFailed(
-                                RemoteAuthFailed {
-                                    remote_addr: Some(auth_remote_addr.clone()),
-                                    timestamp: OffsetDateTime::now_utc(),
-                                },
-                            ));
-                            let mut response = ErrorResponse::new(Some("unauthorized".to_string()));
-                            *response.status_mut() = StatusCode::UNAUTHORIZED;
-                            Err(response)
-                        }
-                    };
+                let callback = move |request: &Request,
+                                     response: Response|
+                      -> Result<Response, ErrorResponse> {
+                    if auth.verify_request(request) {
+                        Ok(response)
+                    } else {
+                        auth_events.runtime.bus.emit(RoderEvent::RemoteAuthFailed(
+                            RemoteAuthFailed {
+                                remote_addr: Some(auth_remote_addr.clone()),
+                                timestamp: OffsetDateTime::now_utc(),
+                            },
+                        ));
+                        let mut response = ErrorResponse::new(Some("unauthorized".to_string()));
+                        *response.status_mut() = StatusCode::UNAUTHORIZED;
+                        Err(response)
+                    }
+                };
                 let Ok(mut websocket) = tokio_tungstenite::accept_hdr_async(stream, callback).await
                 else {
                     return;
@@ -244,12 +243,15 @@ pub async fn listen_remote_websocket(
                         let _ = websocket.send(Message::Text(text.into())).await;
                     }
                 }
-                app_server.runtime.bus.emit(RoderEvent::RemoteClientDisconnected(
-                    RemoteClientDisconnected {
-                        remote_addr: Some(remote_addr),
-                        timestamp: OffsetDateTime::now_utc(),
-                    },
-                ));
+                app_server
+                    .runtime
+                    .bus
+                    .emit(RoderEvent::RemoteClientDisconnected(
+                        RemoteClientDisconnected {
+                            remote_addr: Some(remote_addr),
+                            timestamp: OffsetDateTime::now_utc(),
+                        },
+                    ));
             });
         }
     });

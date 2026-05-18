@@ -25,7 +25,8 @@ use roder_tasks::{BackgroundRunner, BackgroundRunnerConfig, TaskExecutorRegistry
 use tokio::sync::{RwLock, broadcast};
 
 use crate::desktop_contract::{
-    desktop_thread_from_metadata, desktop_turn_from_record, desktop_turn_message, default_cwd_string,
+    default_cwd_string, desktop_thread_from_metadata, desktop_turn_from_record,
+    desktop_turn_message,
 };
 use crate::notifications;
 
@@ -840,7 +841,7 @@ impl AppServer {
 
     async fn handle_codex_auth_login(&self) -> Result<serde_json::Value, JsonRpcError> {
         let tokens = roder_codex_auth::login().await.map_err(internal_error)?;
-        Ok(serde_json::to_value(ProviderAuthResult {
+        Ok(serde_json::to_value(CodexAuthResult {
             signed_in: true,
             account_id: non_empty(tokens.account_id),
         })
@@ -849,7 +850,7 @@ impl AppServer {
 
     async fn handle_codex_auth_status(&self) -> Result<serde_json::Value, JsonRpcError> {
         let signed_in = roder_codex_auth::status().await.map_err(internal_error)?;
-        Ok(serde_json::to_value(ProviderAuthResult {
+        Ok(serde_json::to_value(CodexAuthResult {
             signed_in: signed_in.is_some(),
             account_id: signed_in.and_then(|tokens| non_empty(tokens.account_id)),
         })
@@ -858,7 +859,7 @@ impl AppServer {
 
     async fn handle_codex_auth_logout(&self) -> Result<serde_json::Value, JsonRpcError> {
         roder_codex_auth::logout().map_err(internal_error)?;
-        Ok(serde_json::to_value(ProviderAuthResult {
+        Ok(serde_json::to_value(CodexAuthResult {
             signed_in: false,
             account_id: None,
         })
