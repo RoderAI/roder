@@ -62,7 +62,7 @@ use roder_api::policy_mode::{PolicyDecision, PolicyMode};
 use roder_api::session::SessionMetadata;
 use roder_app_server::LocalAppClient;
 use roder_protocol::{
-    AgentsListResult, ProviderAuthResult, CommandDescriptor, CommandsExpandParams,
+    AgentsListResult, CodexAuthResult, CommandDescriptor, CommandsExpandParams,
     CommandsExpandResult, CommandsListResult, CreateSessionResult, InterruptTurnParams,
     JsonRpcRequest, JsonRpcResponse, PendingPlanExitDescriptor, ProviderDescriptor,
     ProviderSelectParams, ProviderSelectResult, ProvidersListResult, RunnersListResult,
@@ -3828,7 +3828,7 @@ impl TuiApp {
                 params: None,
             })
             .await;
-        match decode_response::<ProviderAuthResult>(res) {
+        match decode_response::<CodexAuthResult>(res) {
             Ok(result) => {
                 self.timeline
                     .push_system(codex_auth_message(method, &result).replace("system: ", ""));
@@ -4795,7 +4795,7 @@ fn provider_search_line(query: &str, theme: Theme) -> Line<'static> {
     ])
 }
 
-fn codex_auth_message(method: &str, result: &ProviderAuthResult) -> String {
+fn codex_auth_message(method: &str, result: &CodexAuthResult) -> String {
     match (method, result.signed_in, result.account_id.as_deref()) {
         ("auth/codex/logout", _, _) => "system: signed out of Codex.".to_string(),
         (_, true, Some(account_id)) => {
@@ -4806,7 +4806,7 @@ fn codex_auth_message(method: &str, result: &ProviderAuthResult) -> String {
     }
 }
 
-fn codex_auth_event(result: &ProviderAuthResult) -> &'static str {
+fn codex_auth_event(result: &CodexAuthResult) -> &'static str {
     if result.signed_in {
         "signed in"
     } else {
@@ -6418,23 +6418,23 @@ mod tests {
     }
 
     #[test]
-    fn provider_auth_messages_reflect_status() {
-        let signed_in = ProviderAuthResult {
+    fn codex_auth_messages_reflect_status() {
+        let signed_in = CodexAuthResult {
             signed_in: true,
             account_id: Some("acct".to_string()),
         };
         assert_eq!(
-            provider_auth_message("auth/openai/status", &signed_in),
-            "system: signed in with OpenAI account acct."
+            codex_auth_message("auth/codex/status", &signed_in),
+            "system: signed in with Codex account acct."
         );
 
-        let signed_out = ProviderAuthResult {
+        let signed_out = CodexAuthResult {
             signed_in: false,
             account_id: None,
         };
         assert_eq!(
-            provider_auth_message("auth/openai/status", &signed_out),
-            "system: signed out of OpenAI."
+            codex_auth_message("auth/codex/status", &signed_out),
+            "system: signed out of Codex."
         );
     }
 }

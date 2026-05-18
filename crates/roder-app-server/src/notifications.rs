@@ -307,7 +307,10 @@ pub(crate) fn desktop_notifications_for_event(event: &RoderEvent) -> Vec<JsonRpc
             )]
         }
         RoderEvent::SubagentTraceDelta(event) => {
-            vec![desktop_notification("turn/subagentTraceDelta", event.clone())]
+            vec![desktop_notification(
+                "turn/subagentTraceDelta",
+                event.clone(),
+            )]
         }
         RoderEvent::SubagentTraceStatusChanged(event) => vec![desktop_notification(
             "turn/subagentTraceStatusChanged",
@@ -335,7 +338,10 @@ pub(crate) fn desktop_notifications_for_event(event: &RoderEvent) -> Vec<JsonRpc
             )]
         }
         RoderEvent::PlanReviewCommentAdded(event) => {
-            vec![desktop_notification("plan/reviewCommentAdded", event.clone())]
+            vec![desktop_notification(
+                "plan/reviewCommentAdded",
+                event.clone(),
+            )]
         }
         RoderEvent::PlanReviewRewritten(event) => {
             vec![desktop_notification("plan/reviewRewritten", event.clone())]
@@ -346,12 +352,20 @@ pub(crate) fn desktop_notifications_for_event(event: &RoderEvent) -> Vec<JsonRpc
         RoderEvent::PlanReviewRejected(event) => {
             vec![desktop_notification("plan/reviewRejected", event.clone())]
         }
-        RoderEvent::HunkRecorded(event) => vec![desktop_notification("hunk/recorded", event.clone())],
+        RoderEvent::HunkRecorded(event) => {
+            vec![desktop_notification("hunk/recorded", event.clone())]
+        }
         RoderEvent::HunkRollbackRequested(event) => {
-            vec![desktop_notification("hunk/rollbackRequested", event.clone())]
+            vec![desktop_notification(
+                "hunk/rollbackRequested",
+                event.clone(),
+            )]
         }
         RoderEvent::HunkRollbackCompleted(event) => {
-            vec![desktop_notification("hunk/rollbackCompleted", event.clone())]
+            vec![desktop_notification(
+                "hunk/rollbackCompleted",
+                event.clone(),
+            )]
         }
         RoderEvent::WorkflowImportsDetected(event) => {
             vec![desktop_notification(
@@ -366,10 +380,16 @@ pub(crate) fn desktop_notifications_for_event(event: &RoderEvent) -> Vec<JsonRpc
             )]
         }
         RoderEvent::WorkflowImportEnabled(event) => {
-            vec![desktop_notification("workflow/importEnabled", event.clone())]
+            vec![desktop_notification(
+                "workflow/importEnabled",
+                event.clone(),
+            )]
         }
         RoderEvent::WorkflowImportDisabled(event) => {
-            vec![desktop_notification("workflow/importDisabled", event.clone())]
+            vec![desktop_notification(
+                "workflow/importDisabled",
+                event.clone(),
+            )]
         }
         RoderEvent::WorkflowImportStale(event) => {
             vec![desktop_notification("workflow/importStale", event.clone())]
@@ -406,7 +426,10 @@ pub(crate) fn desktop_notifications_for_event(event: &RoderEvent) -> Vec<JsonRpc
             vec![desktop_notification("memory/reembedQueued", event.clone())]
         }
         RoderEvent::MemoryProviderChanged(event) => {
-            vec![desktop_notification("memory/providerChanged", event.clone())]
+            vec![desktop_notification(
+                "memory/providerChanged",
+                event.clone(),
+            )]
         }
         RoderEvent::MemoryObservationRecorded(event) => {
             vec![desktop_notification(
