@@ -228,7 +228,7 @@ The app-server exposes `runners/list`, `runners/select`, `runners/session`, `run
 
 See [`docs/roder-remote-runners.md`](./docs/roder-remote-runners.md) for mounts, artifacts, snapshots, ports, and secret-handling rules.
 
-Codex/OpenAI hosted web search is enabled by default. External web search provider setup is documented in [`docs/roder-web-search-extensions.md`](./docs/roder-web-search-extensions.md).
+OpenAI hosted web search is enabled by default. External web search provider setup is documented in [`docs/roder-web-search-extensions.md`](./docs/roder-web-search-extensions.md).
 
 xAI Grok and SuperGrok provider setup is documented in [`docs/roder-xai-grok-providers.md`](./docs/roder-xai-grok-providers.md). Use `xai/grok-4.3` with `XAI_API_KEY` for direct xAI API-key auth, or `supergrok/grok-4.3` after `roder auth login supergrok` for SuperGrok OAuth.
 
@@ -249,7 +249,7 @@ The app-server run-control methods are `turns/start`, `turns/steer`, and `turns/
 
 `settings/get` returns runtime settings including hosted web search. `settings/set_web_search` accepts `{ "mode": "cached" }`, `{ "mode": "live" }`, or `{ "mode": "disabled" }`; the TUI exposes these under the Ctrl+P settings menu and the Ctrl+K palette Settings source, and persists the choice to `~/.roder/config.toml` when user config persistence is enabled.
 
-`tools/list` exposes the built-in coding tools plus Codex-compatible workflow helpers: `exec_command`, `write_stdin`, `update_plan`, `get_goal`, `create_goal`, `update_goal`, and `request_user_input`. `exec_command` starts a shell session and returns either final output or a `session_id`; `write_stdin` writes to or polls that session. When a model calls `request_user_input`, Roder emits `user_input.requested` and pauses the turn until a client answers with:
+`tools/list` exposes the built-in coding tools plus Roder workflow helpers: `exec_command`, `write_stdin`, `update_plan`, `get_goal`, `create_goal`, `update_goal`, and `request_user_input`. `exec_command` starts a shell session and returns either final output or a `session_id`; `write_stdin` writes to or polls that session. When a model calls `request_user_input`, Roder emits `user_input.requested` and pauses the turn until a client answers with:
 
 ```json
 {

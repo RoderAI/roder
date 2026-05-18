@@ -1,6 +1,6 @@
 # Roder App-Server Protocol
 
-Roder's desktop-facing app-server contract uses Codex-style thread, turn, item,
+Roder's desktop-facing app-server contract uses desktop thread, turn, item,
 model, filesystem, and command method names. Older Roder-only method names may
 remain as internal compatibility aliases for the TUI while desktop clients move
 to the canonical surface below.
@@ -13,14 +13,14 @@ to the canonical surface below.
 | `thread/start` | new chat | Create a Roder thread/session with `model`, optional `modelProvider`, `cwd`, and `ephemeral`. | Replaces `sessions/create` for desktop. |
 | `thread/list` | sidebar bootstrap/refresh | List persisted Roder sessions as stable desktop `Thread` objects. | Replaces `sessions/list` for desktop. |
 | `thread/read` | thread switch | Read a persisted thread by `threadId`; include turns/items when `includeTurns` is true. | Replaces `sessions/load` for desktop. |
-| `turn/start` | send prompt | Start a Roder turn on `threadId`, accepting Codex-style `input` text blocks and temporary `prompt` fallback. | Replaces `turns/start` for desktop. |
+| `turn/start` | send prompt | Start a Roder turn on `threadId`, accepting desktop `input` text blocks and temporary `prompt` fallback. | Replaces `turns/start` for desktop. |
 | `turn/steer` | steer active turn | Send additional user input to the active turn, enforcing `expectedTurnId` when provided. | Replaces `turns/steer` for desktop. |
 | `turn/interrupt` | stop button | Interrupt the active turn for a thread; `turnId` is optional when there is a single active turn. | Replaces `turns/interrupt` for desktop. |
 | `model/list` | model picker | Return visible model descriptors with `id`, `name`, `modelProvider`, reasoning efforts, and default flags. | Replaces `providers/list` for desktop model data. |
 | `fs/readFile` | file preview | Read an absolute host path and return base64 bytes as `dataBase64`. | Implemented as a read-only filesystem compatibility method. |
 | `fs/readDirectory` | file browser | List direct children of an absolute host directory with `fileName`, `isDirectory`, and `isFile`. | Implemented as a read-only filesystem compatibility method. |
 | `command/exec` | one-off command runner | Run an argv vector with optional absolute `cwd`, env overrides, timeout, output cap, and optional `command/exec/outputDelta` streaming. | PTY, streaming stdin, resize, write, and terminate are deferred. |
-| `team/start` | start an agent team | Create a lead thread plus long-lived teammate threads with `displayMode` `auto`, `in_process`, `tmux`, or `iterm2`. | Team control-plane methods use Codex-style singular names. |
+| `team/start` | start an agent team | Create a lead thread plus long-lived teammate threads with `displayMode` `auto`, `in_process`, `tmux`, or `iterm2`. | Team control-plane methods use desktop singular method names. |
 | `team/list` | team sidebar/bootstrap | List active or persisted teams as `TeamDescriptor` objects. | Supports optional `limit`; pagination cursors are reserved. |
 | `team/read` | attach/split-pane bootstrap | Read a team plus persisted mailbox messages by `teamId`. | Used by `roder team attach --team ... --member ...`. |
 | `team/member/start` | add teammate | Add a new long-lived teammate session to an existing team. | Returns the new `member` descriptor. |

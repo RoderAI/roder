@@ -5,7 +5,7 @@ use roder_api::inference::InferenceEvent;
 use roder_api::notifications::{Notification, NotificationKind};
 use roder_core::Runtime;
 use roder_protocol::{
-    AgentMessageDeltaNotification, CodexItem, CodexThread, CodexThreadStatus, CodexTurn,
+    AgentMessageDeltaNotification, DesktopItem, DesktopThread, DesktopThreadStatus, DesktopTurn,
     ItemCompletedNotification, ItemStartedNotification, JsonRpcNotification,
     TeamCleanupCompletedNotification, TeamMemberCompletedNotification,
     TeamMemberMessageDeltaNotification, TeamMemberStartedNotification,
@@ -25,28 +25,28 @@ pub(crate) fn spawn_task_event_bridge(runtime: Arc<Runtime>, tasks: BackgroundRu
     });
 }
 
-pub(crate) fn spawn_codex_notification_bridge(
+pub(crate) fn spawn_desktop_notification_bridge(
     runtime: Arc<Runtime>,
     notifications: broadcast::Sender<JsonRpcNotification>,
 ) {
     let mut events = runtime.subscribe_events();
     tokio::spawn(async move {
         while let Ok(envelope) = events.recv().await {
-            for notification in codex_notifications_for_event(&envelope.event) {
+            for notification in desktop_notifications_for_event(&envelope.event) {
                 let _ = notifications.send(notification);
             }
         }
     });
 }
 
-pub(crate) fn thread_started_notification(thread: CodexThread) -> JsonRpcNotification {
-    codex_notification("thread/started", ThreadStartedNotification { thread })
+pub(crate) fn thread_started_notification(thread: DesktopThread) -> JsonRpcNotification {
+    desktop_notification("thread/started", ThreadStartedNotification { thread })
 }
 
-pub(crate) fn codex_notifications_for_event(event: &RoderEvent) -> Vec<JsonRpcNotification> {
+pub(crate) fn desktop_notifications_for_event(event: &RoderEvent) -> Vec<JsonRpcNotification> {
     match event {
         RoderEvent::TurnStarted(event) => {
-            let turn = CodexTurn {
+            let turn = DesktopTurn {
                 id: event.turn_id.clone(),
                 items: Vec::new(),
                 items_view: "default".to_string(),
@@ -57,7 +57,7 @@ pub(crate) fn codex_notifications_for_event(event: &RoderEvent) -> Vec<JsonRpcNo
                 duration_ms: None,
             };
             vec![
-                codex_notification(
+                desktop_notification(
                     "turn/started",
                     TurnStartedNotification {
                         thread_id: event.thread_id.clone(),
@@ -68,7 +68,7 @@ pub(crate) fn codex_notifications_for_event(event: &RoderEvent) -> Vec<JsonRpcNo
             ]
         }
         RoderEvent::InferenceEventReceived(event) => match &event.event {
-            InferenceEvent::MessageDelta(delta) => vec![codex_notification(
+            InferenceEvent::MessageDelta(delta) => vec![desktop_notification(
                 "item/agentMessage/delta",
                 AgentMessageDeltaNotification {
                     thread_id: event.thread_id.clone(),
@@ -78,7 +78,7 @@ pub(crate) fn codex_notifications_for_event(event: &RoderEvent) -> Vec<JsonRpcNo
                     phase: delta.phase.clone(),
                 },
             )],
-            InferenceEvent::ReasoningDelta(delta) => vec![codex_notification(
+            InferenceEvent::ReasoningDelta(delta) => vec![desktop_notification(
                 "item/agentMessage/delta",
                 AgentMessageDeltaNotification {
                     thread_id: event.thread_id.clone(),
@@ -88,7 +88,7 @@ pub(crate) fn codex_notifications_for_event(event: &RoderEvent) -> Vec<JsonRpcNo
                     phase: Some("reasoning".to_string()),
                 },
             )],
-            InferenceEvent::ToolCallStarted(call) => vec![codex_notification(
+            InferenceEvent::ToolCallStarted(call) => vec![desktop_notification(
                 "item/started",
                 ItemStartedNotification {
                     thread_id: event.thread_id.clone(),
@@ -97,7 +97,7 @@ pub(crate) fn codex_notifications_for_event(event: &RoderEvent) -> Vec<JsonRpcNo
                 },
             )],
             InferenceEvent::ToolCallCompleted(call) => vec![
-                codex_notification(
+                desktop_notification(
                     "item/started",
                     ItemStartedNotification {
                         thread_id: event.thread_id.clone(),
@@ -111,7 +111,7 @@ pub(crate) fn codex_notifications_for_event(event: &RoderEvent) -> Vec<JsonRpcNo
                         ),
                     },
                 ),
-                codex_notification(
+                desktop_notification(
                     "item/completed",
                     ItemCompletedNotification {
                         thread_id: event.thread_id.clone(),
@@ -128,7 +128,7 @@ pub(crate) fn codex_notifications_for_event(event: &RoderEvent) -> Vec<JsonRpcNo
             ],
             _ => Vec::new(),
         },
-        RoderEvent::ToolCallRequested(event) => vec![codex_notification(
+        RoderEvent::ToolCallRequested(event) => vec![desktop_notification(
             "item/started",
             ItemStartedNotification {
                 thread_id: event.thread_id.clone(),
@@ -142,7 +142,7 @@ pub(crate) fn codex_notifications_for_event(event: &RoderEvent) -> Vec<JsonRpcNo
                 ),
             },
         )],
-        RoderEvent::ToolCallStarted(event) => vec![codex_notification(
+        RoderEvent::ToolCallStarted(event) => vec![desktop_notification(
             "item/started",
             ItemStartedNotification {
                 thread_id: event.thread_id.clone(),
@@ -150,7 +150,7 @@ pub(crate) fn codex_notifications_for_event(event: &RoderEvent) -> Vec<JsonRpcNo
                 item: tool_call_item(&event.tool_id, None, None, "inProgress", None),
             },
         )],
-        RoderEvent::ToolCallCompleted(event) => vec![codex_notification(
+        RoderEvent::ToolCallCompleted(event) => vec![desktop_notification(
             "item/completed",
             ItemCompletedNotification {
                 thread_id: event.thread_id.clone(),
@@ -167,9 +167,9 @@ pub(crate) fn codex_notifications_for_event(event: &RoderEvent) -> Vec<JsonRpcNo
             },
         )],
         RoderEvent::TurnCompleted(event) => {
-            let turn = CodexTurn {
+            let turn = DesktopTurn {
                 id: event.turn_id.clone(),
-                items: vec![CodexItem {
+                items: vec![DesktopItem {
                     id: agent_message_item_id(&event.turn_id, None),
                     kind: "agentMessage".to_string(),
                     text: None,
@@ -187,7 +187,7 @@ pub(crate) fn codex_notifications_for_event(event: &RoderEvent) -> Vec<JsonRpcNo
                 duration_ms: None,
             };
             vec![
-                codex_notification(
+                desktop_notification(
                     "item/completed",
                     ItemCompletedNotification {
                         thread_id: event.thread_id.clone(),
@@ -195,7 +195,7 @@ pub(crate) fn codex_notifications_for_event(event: &RoderEvent) -> Vec<JsonRpcNo
                         item: turn.items[0].clone(),
                     },
                 ),
-                codex_notification(
+                desktop_notification(
                     "turn/completed",
                     TurnCompletedNotification {
                         thread_id: event.thread_id.clone(),
@@ -206,7 +206,7 @@ pub(crate) fn codex_notifications_for_event(event: &RoderEvent) -> Vec<JsonRpcNo
             ]
         }
         RoderEvent::TurnFailed(event) => {
-            let turn = CodexTurn {
+            let turn = DesktopTurn {
                 id: event.turn_id.clone(),
                 items: Vec::new(),
                 items_view: "default".to_string(),
@@ -217,7 +217,7 @@ pub(crate) fn codex_notifications_for_event(event: &RoderEvent) -> Vec<JsonRpcNo
                 duration_ms: None,
             };
             vec![
-                codex_notification(
+                desktop_notification(
                     "turn/completed",
                     TurnCompletedNotification {
                         thread_id: event.thread_id.clone(),
@@ -228,7 +228,7 @@ pub(crate) fn codex_notifications_for_event(event: &RoderEvent) -> Vec<JsonRpcNo
             ]
         }
         RoderEvent::TurnInterrupted(event) => {
-            let turn = CodexTurn {
+            let turn = DesktopTurn {
                 id: event.turn_id.clone(),
                 items: Vec::new(),
                 items_view: "default".to_string(),
@@ -239,7 +239,7 @@ pub(crate) fn codex_notifications_for_event(event: &RoderEvent) -> Vec<JsonRpcNo
                 duration_ms: None,
             };
             vec![
-                codex_notification(
+                desktop_notification(
                     "turn/completed",
                     TurnCompletedNotification {
                         thread_id: event.thread_id.clone(),
@@ -249,7 +249,7 @@ pub(crate) fn codex_notifications_for_event(event: &RoderEvent) -> Vec<JsonRpcNo
                 thread_status_notification(&event.thread_id, "idle"),
             ]
         }
-        RoderEvent::TeamMemberStarted(event) => vec![codex_notification(
+        RoderEvent::TeamMemberStarted(event) => vec![desktop_notification(
             "team/member/started",
             TeamMemberStartedNotification {
                 team_id: event.team_id.clone(),
@@ -267,7 +267,7 @@ pub(crate) fn codex_notifications_for_event(event: &RoderEvent) -> Vec<JsonRpcNo
                 },
             },
         )],
-        RoderEvent::TeamMemberStatusChanged(event) => vec![codex_notification(
+        RoderEvent::TeamMemberStatusChanged(event) => vec![desktop_notification(
             "team/member/statusChanged",
             TeamMemberStatusChangedNotification {
                 team_id: event.team_id.clone(),
@@ -275,7 +275,7 @@ pub(crate) fn codex_notifications_for_event(event: &RoderEvent) -> Vec<JsonRpcNo
                 status: event.status,
             },
         )],
-        RoderEvent::TeamMemberMessageDelta(event) => vec![codex_notification(
+        RoderEvent::TeamMemberMessageDelta(event) => vec![desktop_notification(
             "team/member/messageDelta",
             TeamMemberMessageDeltaNotification {
                 team_id: event.team_id.clone(),
@@ -284,7 +284,7 @@ pub(crate) fn codex_notifications_for_event(event: &RoderEvent) -> Vec<JsonRpcNo
                 delta: event.delta.clone(),
             },
         )],
-        RoderEvent::TeamMemberCompleted(event) => vec![codex_notification(
+        RoderEvent::TeamMemberCompleted(event) => vec![desktop_notification(
             "team/member/completed",
             TeamMemberCompletedNotification {
                 team_id: event.team_id.clone(),
@@ -293,7 +293,7 @@ pub(crate) fn codex_notifications_for_event(event: &RoderEvent) -> Vec<JsonRpcNo
                 status: event.status,
             },
         )],
-        RoderEvent::TeamCleanupCompleted(event) => vec![codex_notification(
+        RoderEvent::TeamCleanupCompleted(event) => vec![desktop_notification(
             "team/cleanupCompleted",
             TeamCleanupCompletedNotification {
                 team_id: event.team_id.clone(),
@@ -301,115 +301,115 @@ pub(crate) fn codex_notifications_for_event(event: &RoderEvent) -> Vec<JsonRpcNo
             },
         )],
         RoderEvent::SubagentTraceCreated(event) => {
-            vec![codex_notification(
+            vec![desktop_notification(
                 "turn/subagentTraceCreated",
                 event.clone(),
             )]
         }
         RoderEvent::SubagentTraceDelta(event) => {
-            vec![codex_notification("turn/subagentTraceDelta", event.clone())]
+            vec![desktop_notification("turn/subagentTraceDelta", event.clone())]
         }
-        RoderEvent::SubagentTraceStatusChanged(event) => vec![codex_notification(
+        RoderEvent::SubagentTraceStatusChanged(event) => vec![desktop_notification(
             "turn/subagentTraceStatusChanged",
             event.clone(),
         )],
         RoderEvent::SubagentTraceCompleted(event) => {
-            vec![codex_notification(
+            vec![desktop_notification(
                 "turn/subagentTraceCompleted",
                 event.clone(),
             )]
         }
         RoderEvent::SubagentTraceFailed(event) => {
-            vec![codex_notification(
+            vec![desktop_notification(
                 "turn/subagentTraceFailed",
                 event.clone(),
             )]
         }
         RoderEvent::PlanReviewCreated(event) => {
-            vec![codex_notification("plan/reviewCreated", event.clone())]
+            vec![desktop_notification("plan/reviewCreated", event.clone())]
         }
         RoderEvent::PlanReviewStatusChanged(event) => {
-            vec![codex_notification(
+            vec![desktop_notification(
                 "plan/reviewStatusChanged",
                 event.clone(),
             )]
         }
         RoderEvent::PlanReviewCommentAdded(event) => {
-            vec![codex_notification("plan/reviewCommentAdded", event.clone())]
+            vec![desktop_notification("plan/reviewCommentAdded", event.clone())]
         }
         RoderEvent::PlanReviewRewritten(event) => {
-            vec![codex_notification("plan/reviewRewritten", event.clone())]
+            vec![desktop_notification("plan/reviewRewritten", event.clone())]
         }
         RoderEvent::PlanReviewApproved(event) => {
-            vec![codex_notification("plan/reviewApproved", event.clone())]
+            vec![desktop_notification("plan/reviewApproved", event.clone())]
         }
         RoderEvent::PlanReviewRejected(event) => {
-            vec![codex_notification("plan/reviewRejected", event.clone())]
+            vec![desktop_notification("plan/reviewRejected", event.clone())]
         }
-        RoderEvent::HunkRecorded(event) => vec![codex_notification("hunk/recorded", event.clone())],
+        RoderEvent::HunkRecorded(event) => vec![desktop_notification("hunk/recorded", event.clone())],
         RoderEvent::HunkRollbackRequested(event) => {
-            vec![codex_notification("hunk/rollbackRequested", event.clone())]
+            vec![desktop_notification("hunk/rollbackRequested", event.clone())]
         }
         RoderEvent::HunkRollbackCompleted(event) => {
-            vec![codex_notification("hunk/rollbackCompleted", event.clone())]
+            vec![desktop_notification("hunk/rollbackCompleted", event.clone())]
         }
         RoderEvent::WorkflowImportsDetected(event) => {
-            vec![codex_notification(
+            vec![desktop_notification(
                 "workflow/importsDetected",
                 event.clone(),
             )]
         }
         RoderEvent::WorkflowImportPreviewed(event) => {
-            vec![codex_notification(
+            vec![desktop_notification(
                 "workflow/importPreviewed",
                 event.clone(),
             )]
         }
         RoderEvent::WorkflowImportEnabled(event) => {
-            vec![codex_notification("workflow/importEnabled", event.clone())]
+            vec![desktop_notification("workflow/importEnabled", event.clone())]
         }
         RoderEvent::WorkflowImportDisabled(event) => {
-            vec![codex_notification("workflow/importDisabled", event.clone())]
+            vec![desktop_notification("workflow/importDisabled", event.clone())]
         }
         RoderEvent::WorkflowImportStale(event) => {
-            vec![codex_notification("workflow/importStale", event.clone())]
+            vec![desktop_notification("workflow/importStale", event.clone())]
         }
         RoderEvent::WorkflowImportFailed(event) => {
-            vec![codex_notification("workflow/importFailed", event.clone())]
+            vec![desktop_notification("workflow/importFailed", event.clone())]
         }
         RoderEvent::MediaArtifactCreated(event) => {
-            vec![codex_notification("media/artifactCreated", event.clone())]
+            vec![desktop_notification("media/artifactCreated", event.clone())]
         }
         RoderEvent::MediaArtifactUpdated(event) => {
-            vec![codex_notification("media/artifactUpdated", event.clone())]
+            vec![desktop_notification("media/artifactUpdated", event.clone())]
         }
         RoderEvent::MediaArtifactDeleted(event) => {
-            vec![codex_notification("media/artifactDeleted", event.clone())]
+            vec![desktop_notification("media/artifactDeleted", event.clone())]
         }
         RoderEvent::MediaPreviewReady(event) => {
-            vec![codex_notification("media/previewReady", event.clone())]
+            vec![desktop_notification("media/previewReady", event.clone())]
         }
-        RoderEvent::MemorySaved(event) => vec![codex_notification("memory/saved", event.clone())],
+        RoderEvent::MemorySaved(event) => vec![desktop_notification("memory/saved", event.clone())],
         RoderEvent::MemoryUpdated(event) => {
-            vec![codex_notification("memory/updated", event.clone())]
+            vec![desktop_notification("memory/updated", event.clone())]
         }
         RoderEvent::MemoryDeleted(event) => {
-            vec![codex_notification("memory/deleted", event.clone())]
+            vec![desktop_notification("memory/deleted", event.clone())]
         }
         RoderEvent::MemoryQueried(event) => {
-            vec![codex_notification("memory/queried", event.clone())]
+            vec![desktop_notification("memory/queried", event.clone())]
         }
         RoderEvent::MemoryRecallReady(event) => {
-            vec![codex_notification("memory/recallReady", event.clone())]
+            vec![desktop_notification("memory/recallReady", event.clone())]
         }
         RoderEvent::MemoryReembedQueued(event) => {
-            vec![codex_notification("memory/reembedQueued", event.clone())]
+            vec![desktop_notification("memory/reembedQueued", event.clone())]
         }
         RoderEvent::MemoryProviderChanged(event) => {
-            vec![codex_notification("memory/providerChanged", event.clone())]
+            vec![desktop_notification("memory/providerChanged", event.clone())]
         }
         RoderEvent::MemoryObservationRecorded(event) => {
-            vec![codex_notification(
+            vec![desktop_notification(
                 "memory/observationRecorded",
                 event.clone(),
             )]
@@ -418,7 +418,7 @@ pub(crate) fn codex_notifications_for_event(event: &RoderEvent) -> Vec<JsonRpcNo
     }
 }
 
-fn codex_notification<T: serde::Serialize>(method: &str, params: T) -> JsonRpcNotification {
+fn desktop_notification<T: serde::Serialize>(method: &str, params: T) -> JsonRpcNotification {
     JsonRpcNotification {
         jsonrpc: "2.0".to_string(),
         method: method.to_string(),
@@ -427,11 +427,11 @@ fn codex_notification<T: serde::Serialize>(method: &str, params: T) -> JsonRpcNo
 }
 
 fn thread_status_notification(thread_id: &str, status: &str) -> JsonRpcNotification {
-    codex_notification(
+    desktop_notification(
         "thread/status/changed",
         ThreadStatusChangedNotification {
             thread_id: thread_id.to_string(),
-            status: CodexThreadStatus {
+            status: DesktopThreadStatus {
                 kind: status.to_string(),
                 active_flags: Vec::new(),
             },
@@ -449,8 +449,8 @@ fn tool_call_item(
     payload: Option<serde_json::Value>,
     status: &str,
     text: Option<String>,
-) -> CodexItem {
-    CodexItem {
+) -> DesktopItem {
+    DesktopItem {
         id: tool_id.to_string(),
         kind: tool_name
             .map(|name| format!("tool.{name}"))
@@ -464,8 +464,8 @@ fn tool_call_item(
     }
 }
 
-fn tool_result_item(tool_id: &str, output: Option<String>, status: &str) -> CodexItem {
-    CodexItem {
+fn tool_result_item(tool_id: &str, output: Option<String>, status: &str) -> DesktopItem {
+    DesktopItem {
         id: format!("{tool_id}-result"),
         kind: "toolMessage".to_string(),
         text: output,
