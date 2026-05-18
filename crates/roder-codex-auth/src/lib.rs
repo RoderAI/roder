@@ -87,12 +87,7 @@ impl Store {
     }
 
     pub fn load(&self) -> anyhow::Result<Tokens> {
-        load_tokens_from(&self.path()).or_else(|err| {
-            if self.path().exists() {
-                return Err(err);
-            }
-            load_tokens_from(&gode_auth_path())
-        })
+        load_tokens_from(&self.path())
     }
 
     pub fn save(&self, mut tokens: Tokens) -> anyhow::Result<()> {
@@ -430,14 +425,6 @@ fn roder_data_dir() -> PathBuf {
         .join(".roder")
 }
 
-fn gode_auth_path() -> PathBuf {
-    dirs::home_dir()
-        .unwrap_or_else(|| PathBuf::from("."))
-        .join(".gode")
-        .join("auth")
-        .join("codex.json")
-}
-
 fn normalize(tokens: &mut Tokens) {
     if tokens.token_type.is_empty() {
         tokens.token_type = default_token_type();
@@ -466,6 +453,7 @@ fn non_empty(value: String) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::{Mutex, OnceLock};
 
     #[test]
     fn extracts_account_id_from_jwt_claims() {
@@ -501,5 +489,97 @@ mod tests {
         assert!(err.contains("[redacted]"));
         assert!(!err.contains("secret-access"));
         assert!(!err.contains("secret-refresh"));
+    }
+
+    #[test]
+    fn store_loads_roder_owned_tokens() {
+        let _guard = env_lock().lock().unwrap();
+        let previous_home = std::env::var_os("HOME");
+        let home = unique_test_home("roder-owned-store");
+        std::fs::create_dir_all(home.join(".roder").join("auth")).unwrap();
+        std::fs::write(
+            home.join(".roder").join("auth").join("codex.json"),
+            r#"{
+              "type": "oauth",
+              "access": " roder-access ",
+              "refresh": " roder-refresh ",
+              "account_id": " acct_roder ",
+              "expires": 123
+            }"#,
+        )
+        .unwrap();
+
+        // SAFETY: this test holds a process-wide mutex while mutating HOME.
+        unsafe {
+            std::env::set_var("HOME", &home);
+        }
+        let loaded = Store::new().load().unwrap();
+        restore_home(previous_home);
+
+        assert_eq!(loaded.access, "roder-access");
+        assert_eq!(loaded.refresh, "roder-refresh");
+        assert_eq!(loaded.account_id, "acct_roder");
+        assert_eq!(loaded.expires, 123);
+    }
+
+    #[test]
+    fn store_load_ignores_codex_cli_tokens_when_roder_store_is_missing() {
+        let _guard = env_lock().lock().unwrap();
+        let previous_home = std::env::var_os("HOME");
+        let home = unique_test_home("codex-cli-ignored");
+        std::fs::create_dir_all(home.join(".codex")).unwrap();
+        std::fs::write(
+            home.join(".codex").join("auth.json"),
+            r#"{
+              "auth_mode": "chatgpt",
+              "OPENAI_API_KEY": null,
+              "tokens": {
+                "access_token": " codex-access ",
+                "refresh_token": " codex-refresh ",
+                "account_id": " acct_codex "
+              },
+              "last_refresh": "2026-05-18T12:00:00Z"
+            }"#,
+        )
+        .unwrap();
+
+        // SAFETY: this test holds a process-wide mutex while mutating HOME.
+        unsafe {
+            std::env::set_var("HOME", &home);
+        }
+        let loaded = Store::new().load().unwrap();
+        restore_home(previous_home);
+
+        assert_eq!(loaded.access, "");
+        assert_eq!(loaded.refresh, "");
+        assert_eq!(loaded.account_id, "");
+    }
+
+    fn env_lock() -> &'static Mutex<()> {
+        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+        LOCK.get_or_init(|| Mutex::new(()))
+    }
+
+    fn unique_test_home(name: &str) -> PathBuf {
+        let root = std::env::temp_dir().join(format!(
+            "roder-codex-auth-{name}-{}",
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&root).unwrap();
+        root
+    }
+
+    fn restore_home(previous_home: Option<std::ffi::OsString>) {
+        // SAFETY: callers hold env_lock while restoring HOME.
+        unsafe {
+            if let Some(previous_home) = previous_home {
+                std::env::set_var("HOME", previous_home);
+            } else {
+                std::env::remove_var("HOME");
+            }
+        }
     }
 }
