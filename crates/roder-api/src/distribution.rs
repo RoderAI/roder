@@ -35,6 +35,7 @@ pub enum ExtensionCategory {
     SessionStore,
     CheckpointStore,
     MemoryStore,
+    EmbeddingProvider,
     ContextProvider,
     ContextPlanner,
     ToolProvider,
