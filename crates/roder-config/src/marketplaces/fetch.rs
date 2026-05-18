@@ -5,7 +5,7 @@ use roder_api::marketplace::{MarketplaceDescriptor, MarketplaceKind, Marketplace
 use sha2::{Digest, Sha256};
 use time::OffsetDateTime;
 
-use super::source::{marketplace_json_path, plugin_root, resolve_local_source};
+use super::source::{marketplace_json_path, plugin_root, resolve_marketplace_source};
 use super::store::{load_marketplace_store, save_marketplace_store};
 
 #[derive(Debug, Clone)]
@@ -24,7 +24,7 @@ pub fn refresh_marketplace(marketplace_id: &str) -> anyhow::Result<RawMarketplac
         .find(|marketplace| marketplace.id == marketplace_id)
         .cloned()
         .ok_or_else(|| anyhow::anyhow!("unknown marketplace {marketplace_id}"))?;
-    let root = resolve_local_source(&marketplace)?;
+    let root = resolve_marketplace_source(&marketplace)?;
     let mut catalog = read_catalog_from_root(marketplace.clone(), &root)?;
     catalog.marketplace.state = MarketplaceState::Refreshed;
     catalog.marketplace.last_refreshed_at = Some(OffsetDateTime::now_utc());

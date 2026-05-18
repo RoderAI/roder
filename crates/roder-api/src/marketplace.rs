@@ -257,6 +257,10 @@ pub struct MarketplacePluginVariant {
     pub plugin_id: String,
     pub kind: MarketplaceKind,
     pub source: PluginSource,
+    #[serde(default)]
+    pub component_hints: PluginComponentHints,
+    #[serde(default)]
+    pub capability_hints: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub version: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -272,6 +276,10 @@ pub struct DedupedMarketplacePlugin {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
     pub variants: Vec<MarketplacePluginVariant>,
+    #[serde(default)]
+    pub related_candidates: Vec<MarketplacePluginVariant>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub recommended_variant_key: Option<String>,
     #[serde(default)]
     pub installed_variants: Vec<String>,
 }
@@ -379,6 +387,122 @@ pub fn validate_plugin_id(id: &str) -> Result<(), MarketplaceError> {
     validate_slug(id).map_err(|_| MarketplaceError::InvalidPluginId { id: id.to_string() })
 }
 
+pub fn validate_identity_key(identity: &PluginIdentityKey) -> Result<(), MarketplaceError> {
+    if identity.canonical_slug.trim().is_empty()
+        || identity.normalized_name.trim().is_empty()
+        || normalize_slug(&identity.canonical_slug) != identity.canonical_slug
+        || normalize_slug(&identity.normalized_name).is_empty()
+    {
+        return Err(MarketplaceError::InvalidIdentityKey {
+            key: identity.canonical_slug.clone(),
+        });
+    }
+    for value in [
+        identity.repository.as_deref(),
+        identity.homepage_domain.as_deref(),
+        identity.author_name.as_deref(),
+    ]
+    .into_iter()
+    .flatten()
+    {
+        if value.trim().is_empty() {
+            return Err(MarketplaceError::InvalidIdentityKey {
+                key: identity.canonical_slug.clone(),
+            });
+        }
+    }
+    Ok(())
+}
+
+pub fn validate_marketplace_source(source: &MarketplaceSource) -> Result<(), MarketplaceError> {
+    match source {
+        MarketplaceSource::Github {
+            repo,
+            ref_name,
+            catalog_path,
+            plugin_root,
+        } => {
+            if repo.trim().is_empty()
+                || repo.starts_with('/')
+                || repo.contains("..")
+                || repo.split('/').count() != 2
+            {
+                return invalid_source("github repo must be owner/repo");
+            }
+            validate_optional_path(catalog_path.as_deref(), "catalogPath")?;
+            validate_optional_path(plugin_root.as_deref(), "pluginRoot")?;
+            validate_optional_ref(ref_name.as_deref())?;
+        }
+        MarketplaceSource::Git {
+            url,
+            ref_name,
+            catalog_path,
+        } => {
+            validate_url(url, &["https://", "ssh://", "git@", "file://"])?;
+            validate_optional_path(catalog_path.as_deref(), "catalogPath")?;
+            validate_optional_ref(ref_name.as_deref())?;
+        }
+        MarketplaceSource::HttpJson { url } => {
+            validate_url(url, &["https://", "http://", "file://"])?;
+        }
+        MarketplaceSource::LocalPath { path } => validate_path_text(path, "local path")?,
+    }
+    Ok(())
+}
+
+pub fn validate_plugin_source(source: &PluginSource) -> Result<(), MarketplaceError> {
+    match source {
+        PluginSource::MarketplacePath {
+            marketplace_id,
+            path,
+        } => {
+            validate_marketplace_id(marketplace_id)?;
+            validate_path_text(path, "marketplace path")?;
+        }
+        PluginSource::Git {
+            url,
+            path,
+            ref_name,
+            sha,
+        } => {
+            validate_url(url, &["https://", "ssh://", "git@", "file://"])?;
+            validate_optional_path(path.as_deref(), "path")?;
+            validate_optional_ref(ref_name.as_deref())?;
+            validate_optional_ref(sha.as_deref())?;
+        }
+        PluginSource::Http { url, sha } => {
+            validate_url(url, &["https://", "http://", "file://"])?;
+            validate_optional_ref(sha.as_deref())?;
+        }
+        PluginSource::Npm { package, version } => {
+            if package.trim().is_empty() || package.contains(char::is_whitespace) {
+                return invalid_source("npm package must be non-empty and whitespace-free");
+            }
+            validate_optional_ref(version.as_deref())?;
+        }
+        PluginSource::LocalPath { path } => validate_path_text(path, "local path")?,
+        PluginSource::Unsupported { value } => {
+            return Err(MarketplaceError::UnsupportedSource {
+                message: value.to_string(),
+            });
+        }
+    }
+    Ok(())
+}
+
+pub fn validate_plugin_entry(entry: &MarketplacePluginEntry) -> Result<(), MarketplaceError> {
+    validate_marketplace_id(&entry.marketplace_id)?;
+    validate_plugin_id(&entry.plugin_id)?;
+    validate_identity_key(&entry.identity_key)?;
+    validate_plugin_source(&entry.source)?;
+    if entry.display_name.trim().is_empty() {
+        return Err(MarketplaceError::InvalidPluginId {
+            id: entry.plugin_id.clone(),
+        });
+    }
+    Ok(())
+}
+
 fn validate_slug(value: &str) -> Result<(), ()> {
     let mut chars = value.chars();
     let Some(first) = chars.next() else {
@@ -398,6 +522,61 @@ fn validate_slug(value: &str) -> Result<(), ()> {
         return Err(());
     }
     Ok(())
+}
+
+fn validate_url(value: &str, allowed_prefixes: &[&str]) -> Result<(), MarketplaceError> {
+    let value = value.trim();
+    if value.is_empty() {
+        return invalid_source("url must be non-empty");
+    }
+    if allowed_prefixes
+        .iter()
+        .any(|prefix| value.starts_with(prefix))
+    {
+        Ok(())
+    } else {
+        invalid_source(format!("url has unsupported scheme: {value}"))
+    }
+}
+
+fn validate_optional_path(value: Option<&str>, label: &str) -> Result<(), MarketplaceError> {
+    if let Some(value) = value {
+        validate_relative_path_text(value, label)?;
+    }
+    Ok(())
+}
+
+fn validate_path_text(value: &str, label: &str) -> Result<(), MarketplaceError> {
+    if value.trim().is_empty() {
+        return invalid_source(format!("{label} must be non-empty"));
+    }
+    if value.split('/').any(|part| part == "..") {
+        return invalid_source(format!("{label} must not contain '..'"));
+    }
+    Ok(())
+}
+
+fn validate_relative_path_text(value: &str, label: &str) -> Result<(), MarketplaceError> {
+    validate_path_text(value, label)?;
+    if value.starts_with('/') {
+        return invalid_source(format!("{label} must be relative"));
+    }
+    Ok(())
+}
+
+fn validate_optional_ref(value: Option<&str>) -> Result<(), MarketplaceError> {
+    if let Some(value) = value
+        && (value.trim().is_empty() || value.contains(char::is_whitespace))
+    {
+        return invalid_source("ref, version, and sha values must be whitespace-free");
+    }
+    Ok(())
+}
+
+fn invalid_source(message: impl Into<String>) -> Result<(), MarketplaceError> {
+    Err(MarketplaceError::InvalidSource {
+        message: message.into(),
+    })
 }
 
 pub fn normalize_slug(value: &str) -> String {
@@ -497,6 +676,89 @@ mod tests {
             DefaultMarketplaceSelection::All
         );
         assert!("bogus".parse::<DefaultMarketplaceSelection>().is_err());
+    }
+
+    #[test]
+    fn marketplace_validation_rejects_unsafe_sources_and_ids() {
+        assert!(validate_marketplace_id("cursor-local").is_ok());
+        assert!(validate_marketplace_id("Cursor Local").is_err());
+        assert!(
+            validate_marketplace_source(&MarketplaceSource::Github {
+                repo: "owner/plugins".to_string(),
+                ref_name: Some("main".to_string()),
+                catalog_path: Some(".cursor-plugin/marketplace.json".to_string()),
+                plugin_root: None,
+            })
+            .is_ok()
+        );
+        assert!(
+            validate_marketplace_source(&MarketplaceSource::Github {
+                repo: "../plugins".to_string(),
+                ref_name: None,
+                catalog_path: None,
+                plugin_root: None,
+            })
+            .is_err()
+        );
+        assert!(
+            validate_marketplace_source(&MarketplaceSource::Git {
+                url: "ftp://example.test/plugins.git".to_string(),
+                ref_name: None,
+                catalog_path: None,
+            })
+            .is_err()
+        );
+        assert!(
+            validate_marketplace_source(&MarketplaceSource::Github {
+                repo: "owner/plugins".to_string(),
+                ref_name: None,
+                catalog_path: Some("../marketplace.json".to_string()),
+                plugin_root: None,
+            })
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn plugin_validation_rejects_bad_identity_and_unsupported_source() {
+        let mut entry = MarketplacePluginEntry {
+            marketplace_id: "cursor-local".to_string(),
+            plugin_id: "repo-tools".to_string(),
+            identity_key: PluginIdentityKey {
+                canonical_slug: "repo-tools".to_string(),
+                normalized_name: "repo tools".to_string(),
+                repository: Some("https://github.com/example/repo-tools".to_string()),
+                homepage_domain: Some("github.com".to_string()),
+                author_name: None,
+            },
+            display_name: "Repo Tools".to_string(),
+            description: None,
+            kind: MarketplaceKind::Cursor,
+            version: None,
+            source: PluginSource::MarketplacePath {
+                marketplace_id: "cursor-local".to_string(),
+                path: "repo-tools".to_string(),
+            },
+            homepage: None,
+            repository: None,
+            author_name: None,
+            category: None,
+            tags: Vec::new(),
+            component_hints: PluginComponentHints::default(),
+            capability_hints: Vec::new(),
+            risk: MarketplacePluginRisk::Passive,
+            raw_manifest: serde_json::json!({ "name": "repo-tools" }),
+        };
+        assert!(validate_plugin_entry(&entry).is_ok());
+
+        entry.identity_key.canonical_slug = "Repo Tools".to_string();
+        assert!(validate_plugin_entry(&entry).is_err());
+
+        entry.identity_key.canonical_slug = "repo-tools".to_string();
+        entry.source = PluginSource::Unsupported {
+            value: serde_json::json!({ "source": "unknown" }),
+        };
+        assert!(validate_plugin_entry(&entry).is_err());
     }
 
     #[test]

@@ -419,6 +419,12 @@ impl AppServer {
                 })
                 .await
             }
+            "marketplaces/remove" => {
+                self.decode_and(req.params, |p| async move {
+                    self.handle_marketplaces_remove(p).await
+                })
+                .await
+            }
             "marketplaces/refresh" => {
                 self.decode_and(req.params, |p| async move {
                     self.handle_marketplaces_refresh(p).await
@@ -449,7 +455,19 @@ impl AppServer {
                 })
                 .await
             }
+            "plugins/install_all_variants" => {
+                self.decode_and(req.params, |p| async move {
+                    self.handle_plugins_install_all_variants(p).await
+                })
+                .await
+            }
             "plugins/list_installed" => self.handle_plugins_list_installed().await,
+            "plugins/disable" => {
+                self.decode_and(req.params, |p| async move {
+                    self.handle_plugins_disable(p).await
+                })
+                .await
+            }
             "plugins/uninstall" => {
                 self.decode_and(req.params, |p| async move {
                     self.handle_plugins_uninstall(p).await

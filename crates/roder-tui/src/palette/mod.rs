@@ -30,6 +30,7 @@ pub enum PaletteAction {
         provider_id: String,
     },
     InsertComposerText(String),
+    OpenPluginBrowser,
     /// Switch the active theme by id (basename of the `.css` file, no
     /// extension). The dispatcher reloads the stylesheet, restyles the next
     /// frame, and persists the choice to `~/.roder/state.toml`.

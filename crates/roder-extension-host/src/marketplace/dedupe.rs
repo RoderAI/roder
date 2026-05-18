@@ -24,20 +24,17 @@ pub fn dedupe_plugins(
             let first = entries[0];
             let variants = entries
                 .iter()
-                .map(|entry| MarketplacePluginVariant {
-                    marketplace_id: entry.marketplace_id.clone(),
-                    plugin_id: entry.plugin_id.clone(),
-                    kind: entry.kind.clone(),
-                    source: entry.source.clone(),
-                    version: entry.version.clone(),
-                    content_hash: None,
-                    risk: entry.risk.clone(),
-                })
+                .map(|entry| variant_from_entry(entry))
                 .collect::<Vec<_>>();
+            let recommended_variant_key = variants
+                .first()
+                .map(|variant| variant_key(&variant.marketplace_id, &variant.plugin_id));
             DedupedMarketplacePlugin {
                 identity_key: first.identity_key.clone(),
                 display_name: first.display_name.clone(),
                 description: first.description.clone(),
+                related_candidates: Vec::new(),
+                recommended_variant_key,
                 installed_variants: variants
                     .iter()
                     .map(|variant| variant_key(&variant.marketplace_id, &variant.plugin_id))
@@ -47,8 +44,39 @@ pub fn dedupe_plugins(
             }
         })
         .collect::<Vec<_>>();
+    attach_related_candidates(&mut plugins);
     plugins.sort_by(|left, right| left.display_name.cmp(&right.display_name));
     plugins
+}
+
+fn variant_from_entry(entry: &MarketplacePluginEntry) -> MarketplacePluginVariant {
+    MarketplacePluginVariant {
+        marketplace_id: entry.marketplace_id.clone(),
+        plugin_id: entry.plugin_id.clone(),
+        kind: entry.kind.clone(),
+        source: entry.source.clone(),
+        component_hints: entry.component_hints.clone(),
+        capability_hints: entry.capability_hints.clone(),
+        version: entry.version.clone(),
+        content_hash: None,
+        risk: entry.risk.clone(),
+    }
+}
+
+fn attach_related_candidates(plugins: &mut [DedupedMarketplacePlugin]) {
+    for index in 0..plugins.len() {
+        let related = plugins
+            .iter()
+            .enumerate()
+            .filter(|(candidate_index, candidate)| {
+                *candidate_index != index
+                    && candidate.identity_key.normalized_name
+                        == plugins[index].identity_key.normalized_name
+            })
+            .flat_map(|(_, candidate)| candidate.variants.clone())
+            .collect::<Vec<_>>();
+        plugins[index].related_candidates = related;
+    }
 }
 
 fn group_key(identity: &PluginIdentityKey, kind: &MarketplaceKind) -> String {
@@ -90,6 +118,62 @@ mod tests {
 
         assert_eq!(grouped.len(), 1);
         assert_eq!(grouped[0].variants.len(), 3);
+        assert_eq!(
+            grouped[0].recommended_variant_key.as_deref(),
+            Some("claude-plugins-official:superpowers")
+        );
+    }
+
+    #[test]
+    fn groups_pairwise_default_provider_combinations() {
+        for pair in [
+            (MarketplaceKind::Claude, MarketplaceKind::Codex),
+            (MarketplaceKind::Cursor, MarketplaceKind::Codex),
+            (MarketplaceKind::Claude, MarketplaceKind::Cursor),
+        ] {
+            let entries = vec![
+                entry("left-marketplace", pair.0),
+                entry("right-marketplace", pair.1),
+            ];
+
+            let grouped = dedupe_plugins(&entries, &[]);
+
+            assert_eq!(grouped.len(), 1);
+            assert_eq!(grouped[0].variants.len(), 2);
+        }
+    }
+
+    #[test]
+    fn keeps_weak_name_only_matches_separate() {
+        let mut left = entry("claude-plugins-official", MarketplaceKind::Claude);
+        let mut right = entry("cursor-plugins", MarketplaceKind::Cursor);
+        left.identity_key.repository = None;
+        left.identity_key.homepage_domain = None;
+        right.identity_key.repository = None;
+        right.identity_key.homepage_domain = None;
+
+        let grouped = dedupe_plugins(&[left, right], &[]);
+
+        assert_eq!(grouped.len(), 2);
+        assert!(grouped.iter().all(|plugin| plugin.variants.len() == 1));
+        assert!(
+            grouped
+                .iter()
+                .all(|plugin| plugin.related_candidates.len() == 1)
+        );
+    }
+
+    #[test]
+    fn groups_custom_marketplace_variants_by_strong_identity() {
+        let entries = vec![
+            entry("codex-plugins", MarketplaceKind::Codex),
+            entry("team-marketplace", MarketplaceKind::Custom),
+        ];
+
+        let grouped = dedupe_plugins(&entries, &[]);
+
+        assert_eq!(grouped.len(), 1);
+        assert_eq!(grouped[0].variants.len(), 2);
     }
 
     fn entry(marketplace_id: &str, kind: MarketplaceKind) -> MarketplacePluginEntry {

@@ -7,6 +7,7 @@ use roder_api::catalog::{
 };
 use roder_api::extension::{ExtensionRegistryBuilder, InferenceEngineId};
 use roder_api::inference::*;
+use roder_api::marketplace::MarketplaceInstallState;
 use roder_api::media::{MediaDimensions, MediaGenerationRequest, MediaKind};
 use roder_api::memory::MemoryScope;
 use roder_api::plan_review::{
@@ -36,17 +37,20 @@ use roder_protocol::{
     AgentsListResult, CommandsExpandParams, CommandsExpandResult, CommandsListResult,
     CommandsRunParams, CommandsRunResult, ExtensionsListResult, HunkListParams, HunkListResult,
     HunkReadParams, HunkReadResult, HunkRollbackParams, HunkRollbackResult, InitializeResult,
-    JsonRpcRequest, MarketplacesAddParams, MarketplacesAddResult, MarketplacesRefreshParams,
-    MarketplacesRefreshResult, MarketplacesSearchParams, MarketplacesSearchResult,
-    MediaAttachToTurnParams, MediaAttachToTurnResult, MediaDeleteParams, MediaDeleteResult,
-    MediaListParams, MediaListResult, MediaReadParams, MediaReadResult, MediaThumbnailParams,
-    MediaThumbnailResult, MemoryDeleteParams, MemoryDeleteResult, MemoryListParams,
-    MemoryListResult, MemoryProviderListResult, MemoryQueryParams, MemoryQueryResult,
-    MemoryReadParams, MemoryReadResult, MemoryRecallPreviewParams, MemoryRecallPreviewResult,
-    MemorySaveParams, MemorySaveResult, MemoryUpdateParams, PlanReviewApproveParams,
-    PlanReviewCommentParams, PlanReviewCommentResult, PlanReviewReadParams, PlanReviewReadResult,
-    PluginInstallParams, PluginInstallResult, PluginListInstalledResult,
-    PluginPreviewInstallParams, PluginPreviewInstallResult, ProviderAuthResult,
+    JsonRpcError, JsonRpcRequest, MarketplacesAddParams, MarketplacesAddResult,
+    MarketplacesListResult, MarketplacesRefreshParams, MarketplacesRefreshResult,
+    MarketplacesRemoveParams, MarketplacesRemoveResult, MarketplacesSearchParams,
+    MarketplacesSearchResult, MediaAttachToTurnParams, MediaAttachToTurnResult, MediaDeleteParams,
+    MediaDeleteResult, MediaListParams, MediaListResult, MediaReadParams, MediaReadResult,
+    MediaThumbnailParams, MediaThumbnailResult, MemoryDeleteParams, MemoryDeleteResult,
+    MemoryListParams, MemoryListResult, MemoryProviderListResult, MemoryQueryParams,
+    MemoryQueryResult, MemoryReadParams, MemoryReadResult, MemoryRecallPreviewParams,
+    MemoryRecallPreviewResult, MemorySaveParams, MemorySaveResult, MemoryUpdateParams,
+    PlanReviewApproveParams, PlanReviewCommentParams, PlanReviewCommentResult,
+    PlanReviewReadParams, PlanReviewReadResult, PluginDisableParams, PluginDisableResult,
+    PluginInstallAllVariantsParams, PluginInstallAllVariantsResult, PluginInstallParams,
+    PluginInstallResult, PluginListInstalledResult, PluginPreviewInstallParams,
+    PluginPreviewInstallResult, PluginUninstallParams, PluginUninstallResult, ProviderAuthResult,
     ProviderSelectParams, ProviderSelectResult, ProvidersListResult, RunnersDeleteResult,
     RunnersListResult, RunnersSelectParams, RunnersSelectResult, RunnersSessionResult,
     SessionExitPlanParams, SessionExitPlanResult, SessionGetResult, SessionResolveUserInputParams,
@@ -672,10 +676,12 @@ async fn marketplace_methods_add_refresh_search_preview_and_install_plugins() {
     ));
     let store_path = root.join("state").join("marketplaces.json");
     let cache_dir = root.join("cache");
-    let marketplace_root = root.join("cursor-marketplace");
-    std::fs::create_dir_all(marketplace_root.join(".cursor-plugin")).unwrap();
+    let cursor_marketplace_root = root.join("cursor-marketplace");
+    let claude_marketplace_root = root.join("claude-marketplace");
+    std::fs::create_dir_all(cursor_marketplace_root.join(".cursor-plugin")).unwrap();
+    std::fs::create_dir_all(claude_marketplace_root.join(".claude-plugin")).unwrap();
     std::fs::write(
-        marketplace_root
+        cursor_marketplace_root
             .join(".cursor-plugin")
             .join("marketplace.json"),
         serde_json::json!({
@@ -686,7 +692,28 @@ async fn marketplace_methods_add_refresh_search_preview_and_install_plugins() {
                     "description": "Repository helper skills",
                     "repository": "https://github.com/example/repo-tools",
                     "tags": ["git", "repo"],
-                    "skills": ["review"]
+                    "skills": ["review"],
+                    "mcp": true
+                }
+            ]
+        })
+        .to_string(),
+    )
+    .unwrap();
+    std::fs::write(
+        claude_marketplace_root
+            .join(".claude-plugin")
+            .join("marketplace.json"),
+        serde_json::json!({
+            "plugins": [
+                {
+                    "name": "repo-tools-claude",
+                    "displayName": "Repo Tools",
+                    "description": "Repository helper skills for Claude",
+                    "repository": "https://github.com/example/repo-tools",
+                    "source": "repo-tools-claude",
+                    "skills": ["review"],
+                    "tags": ["git", "repo"]
                 }
             ]
         })
@@ -709,15 +736,35 @@ async fn marketplace_methods_add_refresh_search_preview_and_install_plugins() {
         Some(
             serde_json::to_value(MarketplacesAddParams {
                 id: "cursor-local".to_string(),
-                kind: roder_api::marketplace::MarketplaceKind::Cursor,
+                kind: Some(roder_api::marketplace::MarketplaceKind::Cursor),
                 display_name: "Cursor Local".to_string(),
-                local_path: marketplace_root.display().to_string(),
+                source: roder_api::marketplace::MarketplaceSource::LocalPath {
+                    path: cursor_marketplace_root.display().to_string(),
+                },
             })
             .unwrap(),
         ),
     )
     .await;
     assert_eq!(added.marketplace.id, "cursor-local");
+
+    let added_claude: MarketplacesAddResult = request(
+        &client,
+        "marketplaces/add",
+        Some(
+            serde_json::to_value(MarketplacesAddParams {
+                id: "claude-local".to_string(),
+                kind: Some(roder_api::marketplace::MarketplaceKind::Claude),
+                display_name: "Claude Local".to_string(),
+                source: roder_api::marketplace::MarketplaceSource::LocalPath {
+                    path: claude_marketplace_root.display().to_string(),
+                },
+            })
+            .unwrap(),
+        ),
+    )
+    .await;
+    assert_eq!(added_claude.marketplace.id, "claude-local");
 
     let refreshed: MarketplacesRefreshResult = request(
         &client,
@@ -733,6 +780,20 @@ async fn marketplace_methods_add_refresh_search_preview_and_install_plugins() {
     assert_eq!(refreshed.plugins.len(), 1);
     assert_eq!(refreshed.plugins[0].plugin_id, "repo-tools");
 
+    let refreshed_claude: MarketplacesRefreshResult = request(
+        &client,
+        "marketplaces/refresh",
+        Some(
+            serde_json::to_value(MarketplacesRefreshParams {
+                marketplace_id: "claude-local".to_string(),
+            })
+            .unwrap(),
+        ),
+    )
+    .await;
+    assert_eq!(refreshed_claude.plugins.len(), 1);
+    assert_eq!(refreshed_claude.plugins[0].plugin_id, "repo-tools-claude");
+
     let search: MarketplacesSearchResult = request(
         &client,
         "marketplaces/search",
@@ -745,7 +806,7 @@ async fn marketplace_methods_add_refresh_search_preview_and_install_plugins() {
     )
     .await;
     assert_eq!(search.plugins.len(), 1);
-    assert_eq!(search.plugins[0].variants.len(), 1);
+    assert_eq!(search.plugins[0].variants.len(), 2);
 
     let preview: PluginPreviewInstallResult = request(
         &client,
@@ -775,9 +836,244 @@ async fn marketplace_methods_add_refresh_search_preview_and_install_plugins() {
     .await;
     assert_eq!(installed.plugin.variant_key, "cursor-local:repo-tools");
 
+    let search_after_install: MarketplacesSearchResult = request(
+        &client,
+        "marketplaces/search",
+        Some(
+            serde_json::to_value(MarketplacesSearchParams {
+                query: Some("repo".to_string()),
+            })
+            .unwrap(),
+        ),
+    )
+    .await;
+    assert_eq!(search_after_install.plugins.len(), 1);
+    assert_eq!(search_after_install.plugins[0].variants.len(), 2);
+    assert_eq!(
+        search_after_install.plugins[0].installed_variants,
+        vec!["cursor-local:repo-tools".to_string()]
+    );
+
     let list: PluginListInstalledResult = request(&client, "plugins/list_installed", None).await;
     assert_eq!(list.plugins.len(), 1);
     assert!(cache_dir.join("cursor-local").join("repo-tools").exists());
+
+    let workflow_scan: WorkflowScanResult = request(
+        &client,
+        "workflow/scan",
+        Some(
+            serde_json::to_value(WorkflowScanParams {
+                workspace: Some(root.display().to_string()),
+                include_user: true,
+            })
+            .unwrap(),
+        ),
+    )
+    .await;
+    let plugin_import = workflow_scan
+        .scan
+        .items
+        .iter()
+        .find(|item| item.source.name.as_deref() == Some("cursor-local:repo-tools"))
+        .expect("installed marketplace plugin workflow import");
+    assert_eq!(plugin_import.preview["marketplaceId"], "cursor-local");
+    assert!(plugin_import.command_capable);
+    assert!(plugin_import.approval_required);
+
+    let installed_all: PluginInstallAllVariantsResult = request(
+        &client,
+        "plugins/install_all_variants",
+        Some(
+            serde_json::to_value(PluginInstallAllVariantsParams {
+                marketplace_id: "cursor-local".to_string(),
+                plugin_id: "repo-tools".to_string(),
+            })
+            .unwrap(),
+        ),
+    )
+    .await;
+    assert_eq!(installed_all.plugins.len(), 2);
+    assert!(
+        installed_all
+            .plugins
+            .iter()
+            .any(|plugin| plugin.variant_key == "cursor-local:repo-tools")
+    );
+    assert!(
+        installed_all
+            .plugins
+            .iter()
+            .any(|plugin| plugin.variant_key == "claude-local:repo-tools-claude")
+    );
+
+    let disabled: PluginDisableResult = request(
+        &client,
+        "plugins/disable",
+        Some(
+            serde_json::to_value(PluginDisableParams {
+                variant_key: "claude-local:repo-tools-claude".to_string(),
+            })
+            .unwrap(),
+        ),
+    )
+    .await;
+    assert_eq!(
+        disabled.plugin.as_ref().map(|plugin| &plugin.state),
+        Some(&MarketplaceInstallState::Disabled)
+    );
+
+    let uninstalled: PluginUninstallResult = request(
+        &client,
+        "plugins/uninstall",
+        Some(
+            serde_json::to_value(PluginUninstallParams {
+                variant_key: "claude-local:repo-tools-claude".to_string(),
+            })
+            .unwrap(),
+        ),
+    )
+    .await;
+    assert!(uninstalled.removed);
+
+    let removed: MarketplacesRemoveResult = request(
+        &client,
+        "marketplaces/remove",
+        Some(
+            serde_json::to_value(MarketplacesRemoveParams {
+                marketplace_id: "cursor-local".to_string(),
+            })
+            .unwrap(),
+        ),
+    )
+    .await;
+    assert!(removed.removed);
+
+    let marketplaces: MarketplacesListResult = request(&client, "marketplaces/list", None).await;
+    assert!(
+        !marketplaces
+            .marketplaces
+            .iter()
+            .any(|marketplace| marketplace.id == "cursor-local")
+    );
+}
+
+#[tokio::test]
+async fn marketplace_methods_reject_invalid_sources_and_duplicate_plugins() {
+    let root = std::env::temp_dir().join(format!(
+        "roder-marketplace-validation-e2e-{}",
+        uuid::Uuid::new_v4()
+    ));
+    let store_path = root.join("state").join("marketplaces.json");
+    let cache_dir = root.join("cache");
+    let marketplace_root = root.join("cursor-marketplace");
+    std::fs::create_dir_all(marketplace_root.join(".cursor-plugin")).unwrap();
+    std::fs::write(
+        marketplace_root
+            .join(".cursor-plugin")
+            .join("marketplace.json"),
+        serde_json::json!({
+            "plugins": [
+                {
+                    "id": "dupe-tools",
+                    "name": "Dupe Tools",
+                    "repository": "https://github.com/example/dupe-tools",
+                    "source": "dupe-tools-a"
+                },
+                {
+                    "id": "dupe-tools",
+                    "name": "Dupe Tools Copy",
+                    "repository": "https://github.com/example/dupe-tools-copy",
+                    "source": "dupe-tools-b"
+                }
+            ]
+        })
+        .to_string(),
+    )
+    .unwrap();
+    unsafe {
+        std::env::set_var("RODER_MARKETPLACES_PATH", &store_path);
+        std::env::set_var("RODER_MARKETPLACE_CACHE_DIR", &cache_dir);
+    }
+
+    let mut builder = ExtensionRegistryBuilder::new();
+    builder.inference_engine(Arc::new(FakeInferenceEngine));
+    let runtime = Arc::new(Runtime::new(builder.build().unwrap(), Default::default()).unwrap());
+    let client = LocalAppClient::new(Arc::new(AppServer::new(runtime)));
+
+    let invalid = request_error(
+        &client,
+        "marketplaces/add",
+        Some(
+            serde_json::to_value(MarketplacesAddParams {
+                id: "bad source".to_string(),
+                kind: Some(roder_api::marketplace::MarketplaceKind::Cursor),
+                display_name: "Bad Source".to_string(),
+                source: roder_api::marketplace::MarketplaceSource::Git {
+                    url: "ftp://example.test/plugins.git".to_string(),
+                    ref_name: None,
+                    catalog_path: None,
+                },
+            })
+            .unwrap(),
+        ),
+    )
+    .await;
+    assert_eq!(invalid.code, -32602);
+
+    let added: MarketplacesAddResult = request(
+        &client,
+        "marketplaces/add",
+        Some(
+            serde_json::to_value(MarketplacesAddParams {
+                id: "cursor-validation".to_string(),
+                kind: Some(roder_api::marketplace::MarketplaceKind::Cursor),
+                display_name: "Cursor Validation".to_string(),
+                source: roder_api::marketplace::MarketplaceSource::LocalPath {
+                    path: marketplace_root.display().to_string(),
+                },
+            })
+            .unwrap(),
+        ),
+    )
+    .await;
+    assert_eq!(added.marketplace.id, "cursor-validation");
+
+    let duplicate_marketplace = request_error(
+        &client,
+        "marketplaces/add",
+        Some(
+            serde_json::to_value(MarketplacesAddParams {
+                id: "cursor-validation".to_string(),
+                kind: Some(roder_api::marketplace::MarketplaceKind::Cursor),
+                display_name: "Cursor Validation Duplicate".to_string(),
+                source: roder_api::marketplace::MarketplaceSource::LocalPath {
+                    path: marketplace_root.display().to_string(),
+                },
+            })
+            .unwrap(),
+        ),
+    )
+    .await;
+    assert_eq!(duplicate_marketplace.code, -32602);
+    assert!(
+        duplicate_marketplace
+            .message
+            .contains("duplicate marketplace")
+    );
+
+    let duplicate_plugin = request_error(
+        &client,
+        "marketplaces/refresh",
+        Some(
+            serde_json::to_value(MarketplacesRefreshParams {
+                marketplace_id: "cursor-validation".to_string(),
+            })
+            .unwrap(),
+        ),
+    )
+    .await;
+    assert_eq!(duplicate_plugin.code, -32000);
+    assert!(duplicate_plugin.message.contains("duplicate plugin"));
 }
 
 #[tokio::test]
@@ -2134,6 +2430,24 @@ async fn commands_list_and_expand_are_deterministic() {
             .iter()
             .any(|command| command.name == "compact")
     );
+    let marketplace = first
+        .commands
+        .iter()
+        .find(|command| command.name == "marketplace")
+        .expect("missing marketplace slash command");
+    assert_eq!(
+        marketplace.argument_hint.as_deref(),
+        Some("list|install-default|add|remove|refresh|search|show [args]")
+    );
+    let plugin = first
+        .commands
+        .iter()
+        .find(|command| command.name == "plugin")
+        .expect("missing plugin slash command");
+    assert_eq!(
+        plugin.argument_hint.as_deref(),
+        Some("preview|install|install-all|list|disable|uninstall [args]")
+    );
 
     let expanded: CommandsExpandResult = request(
         &client,
@@ -3048,6 +3362,24 @@ async fn request<T: serde::de::DeserializeOwned>(
         res.error
     );
     serde_json::from_value(res.result.unwrap()).unwrap()
+}
+
+async fn request_error(
+    client: &LocalAppClient,
+    method: &str,
+    params: Option<serde_json::Value>,
+) -> JsonRpcError {
+    let req = JsonRpcRequest {
+        jsonrpc: "2.0".to_string(),
+        id: Some(serde_json::json!(method)),
+        method: method.to_string(),
+        params,
+    };
+    client
+        .send_request(req)
+        .await
+        .error
+        .unwrap_or_else(|| panic!("expected RPC error for {method}"))
 }
 
 fn text_input(text: &str) -> Vec<TurnInputItem> {
