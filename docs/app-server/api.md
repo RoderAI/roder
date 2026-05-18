@@ -80,7 +80,7 @@ Authorization: Bearer <token>
 or, for browser-constrained clients:
 
 ```text
-Sec-WebSocket-Protocol: gode.remote.v1, bearer.<token>
+Sec-WebSocket-Protocol: roder.remote.v1, bearer.<token>
 ```
 
 Provider auth is provider-specific:
@@ -237,12 +237,15 @@ Review, hunks, workflow imports, media, and memory:
 | `marketplaces/list` | List plugin marketplace descriptors. |
 | `marketplaces/install_default` | Install one or all baked-in marketplace descriptors. |
 | `marketplaces/add` | Add a local plugin marketplace descriptor. |
+| `marketplaces/remove` | Remove a custom marketplace or disable a baked-in default. |
 | `marketplaces/refresh` | Read and normalize a marketplace catalog. |
 | `marketplaces/search` | Search de-duplicated marketplace plugins. |
 | `marketplaces/plugin` | Read one marketplace plugin variant. |
 | `plugins/preview_install` | Preview plugin install metadata and risk hints. |
 | `plugins/install` | Record an installed marketplace plugin variant. |
+| `plugins/install_all_variants` | Install every variant in a de-duplicated plugin group. |
 | `plugins/list_installed` | List installed marketplace plugin variants. |
+| `plugins/disable` | Mark an installed marketplace plugin variant disabled. |
 | `plugins/uninstall` | Remove an installed marketplace plugin variant record. |
 | `media/list` | List media artifacts. |
 | `media/read` | Read artifact bytes as base64. |
@@ -1482,7 +1485,13 @@ Behavior:
 
 - When `workspace` is omitted, the handler uses runtime workspace then process
   cwd.
-- `includeUser: true` also scans `~/.roder` and `~/.agents`.
+- `includeUser: true` also scans `~/.roder`, `~/.agents`, and installed
+  marketplace plugin cache markers from `RODER_MARKETPLACES_PATH` or
+  `~/.roder/marketplaces.json`.
+- Installed marketplace plugins are returned as source-attributed
+  `sourceType: "plugin"` items with `variantKey`, `marketplaceId`, `pluginId`,
+  `identityKey`, `installPath`, and redacted manifest preview data. MCP,
+  hooks, apps, LSP, npm, script, and binary hints set `approvalRequired: true`.
 - `enable`, `ignore`, and `remove` persist decisions to
   `~/.roder/workflow-imports.json` unless overridden by
   `RODER_WORKFLOW_IMPORTS_PATH`.
@@ -1497,7 +1506,11 @@ installed plugin variants.
 
 Marketplace state is persisted under `~/.roder/marketplaces.json` unless
 `RODER_MARKETPLACES_PATH` is set. Plugin cache markers are written under
-`~/.roder/plugins/cache` unless `RODER_MARKETPLACE_CACHE_DIR` is set.
+`~/.roder/plugins/cache` unless `RODER_MARKETPLACE_CACHE_DIR` is set. Remote
+marketplace source checkouts and downloaded JSON catalogs are cached under
+`~/.roder/marketplaces/cache` unless `RODER_MARKETPLACE_SOURCE_CACHE_DIR` is
+set. Tests and offline fixture runs can map GitHub shorthand sources through
+`RODER_MARKETPLACE_GITHUB_FIXTURE_DIR`.
 
 #### `marketplaces/list`
 
@@ -1596,7 +1609,7 @@ Errors:
 
 #### `marketplaces/add`
 
-Purpose: Add a custom local marketplace descriptor.
+Purpose: Add a custom marketplace descriptor.
 
 Request:
 
@@ -1605,7 +1618,40 @@ Request:
   "id": "local-cursor",
   "kind": "cursor",
   "displayName": "Local Cursor",
-  "localPath": "/Users/pz/plugins/cursor"
+  "source": {
+    "kind": "localPath",
+    "path": "/Users/pz/plugins/cursor"
+  }
+}
+```
+
+GitHub shorthand source:
+
+```json
+{
+  "id": "team-plugins",
+  "kind": "claude",
+  "displayName": "Team Plugins",
+  "source": {
+    "kind": "github",
+    "repo": "example/plugins",
+    "refName": "main",
+    "catalogPath": ".claude-plugin/marketplace.json"
+  }
+}
+```
+
+Git URL and direct HTTP JSON sources use:
+
+```json
+{
+  "id": "remote-json",
+  "kind": "cursor",
+  "displayName": "Remote JSON",
+  "source": {
+    "kind": "httpJson",
+    "url": "https://example.test/marketplace.json"
+  }
 }
 ```
 
@@ -1632,13 +1678,67 @@ Behavior:
 
 - `id` must be a lowercase slug starting and ending with an ASCII letter or
   number. Interior `-` and `.` are allowed.
-- `kind` is one of `claude`, `cursor`, `codex`, `roder`, or `custom`.
-- `localPath` must exist when the request is handled.
-- Existing marketplace records with the same `id` are replaced.
+- `kind` is optional. When omitted, the server infers it from local catalog
+  markers or remote source hints. Local paths are inspected immediately.
+- Explicit `kind` values are `claude`, `cursor`, `codex`, `roder`, or
+  `custom`.
+- `source.kind` is `localPath`, `github`, `git`, or `httpJson`.
+- GitHub `repo` must be `owner/repo`; optional `catalogPath` and `pluginRoot`
+  must be relative and must not contain `..`.
+- Git and HTTP JSON sources require supported URL schemes. Git accepts
+  `https://`, `ssh://`, `git@`, and `file://`; HTTP JSON accepts `https://`,
+  `http://`, and `file://`.
+- Local `source.path` values must exist when the request is handled.
+- GitHub shorthand sources resolve as `https://github.com/{repo}.git` during
+  refresh unless `RODER_MARKETPLACE_GITHUB_FIXTURE_DIR` contains a matching
+  fixture path.
+- Git URL sources are cloned into the marketplace source cache. `refName`
+  checks out a branch, tag, or commit after clone/fetch.
+- HTTP JSON sources are fetched into the source cache as `marketplace.json`.
+  `file://` URLs are supported for tests and offline fixtures.
+- Existing marketplace records with the same `id` are rejected to avoid
+  ambiguous custom marketplace ids.
 
 Errors:
 
-- Invalid ids or missing local paths return code `-32602`.
+- Invalid ids, duplicate ids, unsafe source fields, unsupported source schemes,
+  or missing local paths return code `-32602`.
+- Store read/write failures return code `-32000`.
+- Remote clone/fetch/download failures are reported by `marketplaces/refresh`
+  as code `-32000`; `marketplaces/add` records the descriptor even when a
+  remote source is temporarily unavailable.
+
+#### `marketplaces/remove`
+
+Purpose: Remove one configured marketplace descriptor.
+
+Request:
+
+```json
+{
+  "marketplaceId": "local-cursor"
+}
+```
+
+Response:
+
+```json
+{
+  "removed": true
+}
+```
+
+Behavior:
+
+- Custom marketplaces are removed from marketplace state.
+- Baked-in default marketplaces are retained for discovery, but set to
+  `enabled: false` and `state: "removedByUser"`.
+- Returns `removed: false` when no matching marketplace id exists.
+- Removing a marketplace does not remove installed plugin records that were
+  installed from that marketplace.
+
+Errors:
+
 - Store read/write failures return code `-32000`.
 
 #### `marketplaces/refresh`
@@ -1714,11 +1814,12 @@ Behavior:
 - Local Cursor marketplaces read `.cursor-plugin/marketplace.json`.
 - Local Codex marketplaces scan plugin directories for
   `.codex-plugin/plugin.json`.
+- GitHub and git URL marketplaces are cloned or fetched into the source cache
+  before reading their catalog.
+- Direct HTTP JSON marketplaces download the JSON into the source cache before
+  normalization.
 - The marketplace record is updated to `state: "refreshed"` with
   `lastRefreshedAt` and `contentHash`.
-- Current refresh support is local-path based. GitHub, git URL, and HTTP JSON
-  descriptors may be listed, but refresh of those sources currently returns an
-  internal error instead of fetching the network.
 
 Errors:
 
@@ -1760,9 +1861,23 @@ Response:
             "marketplace_id": "local-cursor",
             "path": "Repo Tools"
           },
+          "componentHints": {
+            "skills": true,
+            "commands": false,
+            "agents": false,
+            "mcpServers": false,
+            "hooks": false,
+            "apps": false,
+            "lspServers": false,
+            "rules": false,
+            "assets": false
+          },
+          "capabilityHints": [],
           "risk": "passive"
         }
       ],
+      "relatedCandidates": [],
+      "recommendedVariantKey": "local-cursor:repo-tools",
       "installedVariants": []
     }
   ]
@@ -1775,6 +1890,13 @@ Behavior:
 - Search matches plugin id, display name, description, and tags.
 - Results are de-duplicated by strong identity signals: repository, homepage
   plus normalized name, or provider-local slug.
+- Weak name-only matches remain separate rows and appear in `relatedCandidates`
+  instead of being merged.
+- `recommendedVariantKey` is the default provider ordering choice for clients
+  that want a one-click install; clients can still install a selected variant
+  or call `plugins/install_all_variants` for every provider copy.
+- Each variant includes source, component hints, capability hints, and risk so
+  clients can show an install preview before activation.
 - Baked-in default descriptors are skipped until installed/refreshed and
   resolvable locally. Remote descriptor fetch is not implicit.
 
@@ -1950,6 +2072,70 @@ Errors:
 - Missing plugins return code `-32004` with message `plugin not found`.
 - Store, catalog, cache, and normalization failures return code `-32000`.
 
+#### `plugins/install_all_variants`
+
+Purpose: Install every marketplace variant in the same de-duplicated plugin
+group as a selected seed plugin.
+
+Request:
+
+```json
+{
+  "marketplaceId": "local-cursor",
+  "pluginId": "repo-tools"
+}
+```
+
+Response:
+
+```json
+{
+  "plugins": [
+    {
+      "marketplaceId": "local-cursor",
+      "pluginId": "repo-tools",
+      "identityKey": {
+        "canonicalSlug": "repo-tools",
+        "normalizedName": "repo-tools"
+      },
+      "variantKey": "local-cursor:repo-tools",
+      "installPath": "/Users/pz/.roder/plugins/cache/local-cursor/repo-tools/a275f0a3080931b1",
+      "contentHash": "a275f0a3080931b1...",
+      "state": "installed",
+      "installedAt": "2026-05-18T18:00:00Z"
+    },
+    {
+      "marketplaceId": "local-claude",
+      "pluginId": "repo-tools-claude",
+      "identityKey": {
+        "canonicalSlug": "repo-tools",
+        "normalizedName": "repo-tools"
+      },
+      "variantKey": "local-claude:repo-tools-claude",
+      "installPath": "/Users/pz/.roder/plugins/cache/local-claude/repo-tools-claude/6ac3f4c6936e",
+      "contentHash": "6ac3f4c6936e...",
+      "state": "installed",
+      "installedAt": "2026-05-18T18:00:00Z"
+    }
+  ]
+}
+```
+
+Behavior:
+
+- The selected `marketplaceId` and `pluginId` identify a seed variant.
+- The server rebuilds searchable marketplace entries, de-duplicates them by
+  identity key, then installs every variant in the seed's de-duped group.
+- Existing installed records with the same `variantKey` are replaced
+  idempotently.
+- Like `plugins/install`, this records cache state only; it does not enable
+  workflow imports or execute plugin-provided code.
+
+Errors:
+
+- Missing seed plugins return code `-32004` with message `plugin not found`.
+- Store, catalog, cache, and normalization failures return code `-32000`.
+
 #### `plugins/list_installed`
 
 Purpose: List installed marketplace plugin variant records.
@@ -1985,6 +2171,48 @@ Response:
 Errors:
 
 - Store read failures return code `-32000`.
+
+#### `plugins/disable`
+
+Purpose: Mark one installed plugin variant disabled while preserving its record.
+
+Request:
+
+```json
+{
+  "variantKey": "local-cursor:repo-tools"
+}
+```
+
+Response:
+
+```json
+{
+  "plugin": {
+    "marketplaceId": "local-cursor",
+    "pluginId": "repo-tools",
+    "identityKey": {
+      "canonicalSlug": "repo-tools",
+      "normalizedName": "repo-tools"
+    },
+    "variantKey": "local-cursor:repo-tools",
+    "installPath": "/Users/pz/.roder/plugins/cache/local-cursor/repo-tools/a275f0a3080931b1",
+    "contentHash": "a275f0a3080931b1...",
+    "state": "disabled",
+    "installedAt": "2026-05-18T18:00:00Z"
+  }
+}
+```
+
+Behavior:
+
+- Returns the updated plugin record when the `variantKey` exists.
+- Returns `{ "plugin": null }` when no matching installed variant exists.
+- Does not delete cache markers or remove marketplace entries.
+
+Errors:
+
+- Store read/write failures return code `-32000`.
 
 #### `plugins/uninstall`
 

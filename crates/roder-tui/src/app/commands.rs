@@ -18,11 +18,25 @@ pub(super) fn built_in_command_catalog() -> Vec<CommandDescriptor> {
         ("agents", "List configured subagents."),
         ("tasks", "Open the background task monitor."),
         ("memory", "Inspect relevant project and user memory."),
+        ("marketplace", "Manage plugin marketplaces."),
+        (
+            "plugin",
+            "Preview, install, list, disable, or uninstall marketplace plugins.",
+        ),
         ("remote", "Open the remote app-server pairing panel."),
     ]
     .into_iter()
     .map(|(name, description)| {
-        let argument_hint = (name == "goal").then(|| "<objective>".to_string());
+        let argument_hint = match name {
+            "goal" => Some("<objective>".to_string()),
+            "marketplace" => {
+                Some("list|install-default|add|remove|refresh|search|show [args]".to_string())
+            }
+            "plugin" => {
+                Some("preview|install|install-all|list|disable|uninstall [args]".to_string())
+            }
+            _ => None,
+        };
         CommandDescriptor {
             name: name.to_string(),
             description: Some(description.to_string()),
@@ -111,6 +125,12 @@ pub(super) fn built_in_prompt(name: &str, args: &str) -> Option<String> {
         "init" => "Inspect the workspace and draft concise project instructions.",
         "compact" => "Compact the current thread while preserving the working state.",
         "memory" => "Surface relevant memory for the current workspace and task.",
+        "marketplace" => {
+            "Use the Roder marketplace app-server methods to list defaults, install one or all defaults, add local marketplaces, refresh catalogs, search de-duplicated plugins, or show one plugin variant."
+        }
+        "plugin" => {
+            "Use the Roder plugin marketplace app-server methods to preview installs, install selected plugin variants, install all de-duplicated variants, list installed variants, disable an installed variant, or uninstall by variant key."
+        }
         "remote" => {
             "Open the remote app-server pairing workflow and show connection URLs, token preview, auth header guidance, and LAN/Tailscale safety notes."
         }
@@ -132,11 +152,13 @@ pub(super) fn help_text(commands: &[CommandDescriptor]) -> String {
         "/model - Show or change the active model.".to_string(),
         "/agents - List configured subagents.".to_string(),
         "/tasks - Open the background task monitor.".to_string(),
+        "/marketplace <command> - Manage plugin marketplaces.".to_string(),
+        "/plugin <command> - Manage marketplace plugin installs.".to_string(),
     ];
     for command in commands {
         if matches!(
             command.name.as_str(),
-            "clear" | "goal" | "retry" | "model" | "agents" | "tasks"
+            "clear" | "goal" | "retry" | "model" | "agents" | "tasks" | "marketplace" | "plugin"
         ) {
             continue;
         }
@@ -216,6 +238,8 @@ mod tests {
         assert!(help.contains("Slash commands:"));
         assert!(help.contains("/goal <objective> - Create a new active goal."));
         assert!(help.contains("/retry - Resubmit the last user message."));
+        assert!(help.contains("/marketplace <command> - Manage plugin marketplaces."));
+        assert!(help.contains("/plugin <command> - Manage marketplace plugin installs."));
         assert!(help.contains("/help - Run command."));
     }
 
@@ -230,8 +254,19 @@ mod tests {
         assert_eq!(
             names,
             [
-                "init", "clear", "compact", "help", "goal", "retry", "model", "agents", "tasks",
-                "memory", "remote"
+                "init",
+                "clear",
+                "compact",
+                "help",
+                "goal",
+                "retry",
+                "model",
+                "agents",
+                "tasks",
+                "memory",
+                "marketplace",
+                "plugin",
+                "remote"
             ]
         );
         assert_eq!(
@@ -240,6 +275,20 @@ mod tests {
                 .find(|command| command.name == "goal")
                 .and_then(|command| command.argument_hint.as_deref()),
             Some("<objective>")
+        );
+        assert_eq!(
+            commands
+                .iter()
+                .find(|command| command.name == "marketplace")
+                .and_then(|command| command.argument_hint.as_deref()),
+            Some("list|install-default|add|remove|refresh|search|show [args]")
+        );
+        assert_eq!(
+            commands
+                .iter()
+                .find(|command| command.name == "plugin")
+                .and_then(|command| command.argument_hint.as_deref()),
+            Some("preview|install|install-all|list|disable|uninstall [args]")
         );
     }
 

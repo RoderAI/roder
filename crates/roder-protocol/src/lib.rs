@@ -8,7 +8,7 @@ use roder_api::inference::{
 };
 use roder_api::marketplace::{
     DedupedMarketplacePlugin, DefaultMarketplaceSelection, InstalledPluginRecord,
-    MarketplaceDescriptor, MarketplaceKind, MarketplacePluginEntry,
+    MarketplaceDescriptor, MarketplaceKind, MarketplacePluginEntry, MarketplaceSource,
 };
 use roder_api::media::{MediaArtifact, MediaArtifactId, MediaAttachment, MediaPreview};
 use roder_api::memory::{
@@ -1120,15 +1120,28 @@ pub struct MarketplacesInstallDefaultResult {
 #[serde(rename_all = "camelCase")]
 pub struct MarketplacesAddParams {
     pub id: String,
-    pub kind: MarketplaceKind,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub kind: Option<MarketplaceKind>,
     pub display_name: String,
-    pub local_path: String,
+    pub source: MarketplaceSource,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct MarketplacesAddResult {
     pub marketplace: MarketplaceDescriptor,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MarketplacesRemoveParams {
+    pub marketplace_id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MarketplacesRemoveResult {
+    pub removed: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1198,8 +1211,33 @@ pub struct PluginInstallResult {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct PluginInstallAllVariantsParams {
+    pub marketplace_id: String,
+    pub plugin_id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PluginInstallAllVariantsResult {
+    pub plugins: Vec<InstalledPluginRecord>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct PluginListInstalledResult {
     pub plugins: Vec<InstalledPluginRecord>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PluginDisableParams {
+    pub variant_key: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PluginDisableResult {
+    pub plugin: Option<InstalledPluginRecord>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1641,11 +1679,39 @@ mod tests {
             "id": "local-cursor",
             "kind": "cursor",
             "displayName": "Local Cursor",
-            "localPath": "/tmp/cursor"
+            "source": {
+                "kind": "localPath",
+                "path": "/tmp/cursor"
+            }
         }))
         .unwrap();
         assert_eq!(add.id, "local-cursor");
-        assert_eq!(add.local_path, "/tmp/cursor");
+        assert_eq!(add.kind, Some(MarketplaceKind::Cursor));
+        assert_eq!(
+            add.source,
+            MarketplaceSource::LocalPath {
+                path: "/tmp/cursor".to_string()
+            }
+        );
+
+        let remove = MarketplacesRemoveParams {
+            marketplace_id: "local-cursor".to_string(),
+        };
+        let value = serde_json::to_value(remove).unwrap();
+        assert_eq!(value["marketplaceId"], "local-cursor");
+
+        let disable = PluginDisableParams {
+            variant_key: "codex-plugins:superpowers".to_string(),
+        };
+        let value = serde_json::to_value(disable).unwrap();
+        assert_eq!(value["variantKey"], "codex-plugins:superpowers");
+
+        let all = PluginInstallAllVariantsParams {
+            marketplace_id: "codex-plugins".to_string(),
+            plugin_id: "superpowers".to_string(),
+        };
+        let value = serde_json::to_value(all).unwrap();
+        assert_eq!(value["marketplaceId"], "codex-plugins");
 
         let uninstall = PluginUninstallParams {
             variant_key: "codex-plugins:superpowers".to_string(),

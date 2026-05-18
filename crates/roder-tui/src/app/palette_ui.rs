@@ -287,6 +287,9 @@ impl TuiApp {
             PaletteAction::SetTheme(id) => {
                 self.apply_theme_by_id(&id);
             }
+            PaletteAction::OpenPluginBrowser => {
+                self.open_plugin_browser().await;
+            }
         }
     }
 

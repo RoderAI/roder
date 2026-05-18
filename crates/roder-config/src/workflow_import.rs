@@ -54,6 +54,7 @@ pub fn scan_workflow_imports(options: WorkflowScanOptions) -> WorkflowImportScan
             scanner.scan_slash_commands(&root.join("commands"));
             scanner.scan_mcp_config(&root.join("mcp.json"));
         }
+        scanner.scan_installed_marketplace_plugins();
     }
 
     scanner.items.sort_by(|left, right| left.id.cmp(&right.id));
@@ -295,6 +296,50 @@ impl Scanner {
         }
     }
 
+    fn scan_installed_marketplace_plugins(&mut self) {
+        let Ok(store) = crate::marketplaces::load_marketplace_store() else {
+            return;
+        };
+        for plugin in store.installed_plugins.into_iter().filter(|plugin| {
+            plugin.state == roder_api::marketplace::MarketplaceInstallState::Installed
+        }) {
+            let marker_path = PathBuf::from(&plugin.install_path).join("install-preview.json");
+            let marker = fs::read_to_string(&marker_path)
+                .ok()
+                .and_then(|text| serde_json::from_str::<serde_json::Value>(&text).ok())
+                .unwrap_or_else(|| {
+                    serde_json::json!({
+                        "variantKey": plugin.variant_key,
+                        "marketplaceId": plugin.marketplace_id,
+                        "pluginId": plugin.plugin_id,
+                    })
+                });
+            let manifest = marker
+                .get("manifest")
+                .cloned()
+                .unwrap_or(serde_json::Value::Null);
+            let command_capable = manifest_has_command_capable_components(&manifest);
+            let risk = marketplace_manifest_risk(&manifest, command_capable);
+            self.push_named_item(
+                &marker_path,
+                WorkflowSourceType::Plugin,
+                &plugin.variant_key,
+                &format!("Marketplace plugin {}", plugin.plugin_id),
+                "Installed marketplace plugin detected; executable capabilities stay approval-gated.",
+                risk,
+                command_capable,
+                serde_json::json!({
+                    "variantKey": plugin.variant_key,
+                    "marketplaceId": plugin.marketplace_id,
+                    "pluginId": plugin.plugin_id,
+                    "identityKey": plugin.identity_key,
+                    "installPath": plugin.install_path,
+                    "manifest": redact_json(manifest),
+                }),
+            );
+        }
+    }
+
     #[allow(clippy::too_many_arguments)]
     fn push_named_item(
         &mut self,
@@ -456,6 +501,34 @@ fn redact_json(value: serde_json::Value) -> serde_json::Value {
     }
 }
 
+fn manifest_has_command_capable_components(value: &serde_json::Value) -> bool {
+    [
+        "mcp",
+        "mcpServers",
+        "hooks",
+        "apps",
+        "lspServers",
+        "npm",
+        "scripts",
+        "bin",
+    ]
+    .into_iter()
+    .any(|key| value.get(key).is_some())
+}
+
+fn marketplace_manifest_risk(
+    value: &serde_json::Value,
+    command_capable: bool,
+) -> WorkflowImportRisk {
+    if value.get("hooks").is_some() {
+        WorkflowImportRisk::RunsHook
+    } else if command_capable {
+        WorkflowImportRisk::StartsProcess
+    } else {
+        WorkflowImportRisk::Passive
+    }
+}
+
 fn is_secret_key(key: &str) -> bool {
     let key = key.to_ascii_lowercase();
     key.contains("token")
@@ -469,6 +542,12 @@ fn is_secret_key(key: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use roder_api::marketplace::{
+        InstalledPluginRecord, MarketplaceInstallState, PluginIdentityKey, variant_key,
+    };
+    use std::sync::Mutex;
+
+    static ENV_LOCK: Mutex<()> = Mutex::new(());
 
     #[test]
     fn workflow_import_scanner_finds_repo_conventions_and_redacts_secrets() {
@@ -544,6 +623,82 @@ mod tests {
         assert_eq!(scan.items.len(), 0);
         assert_eq!(scan.errors.len(), 1);
         assert!(scan.errors[0].path.ends_with(".mcp.json"));
+    }
+
+    #[test]
+    fn workflow_import_scanner_surfaces_installed_marketplace_plugins_with_gates() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        let repo = fixture_dir("installed-plugin-scan");
+        let store_path = repo.join("state").join("marketplaces.json");
+        let install_path = repo.join("cache").join("cursor-local").join("repo-tools");
+        fs::create_dir_all(&install_path).unwrap();
+        fs::write(
+            install_path.join("install-preview.json"),
+            serde_json::to_string_pretty(&serde_json::json!({
+                "variantKey": "cursor-local:repo-tools",
+                "marketplaceId": "cursor-local",
+                "pluginId": "repo-tools",
+                "manifest": {
+                    "name": "repo-tools",
+                    "skills": ["review"],
+                    "mcpServers": {
+                        "repo": {
+                            "command": "node",
+                            "env": { "API_KEY": "secret" }
+                        }
+                    }
+                }
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+        unsafe {
+            std::env::set_var("RODER_MARKETPLACES_PATH", &store_path);
+        }
+        crate::marketplaces::save_marketplace_store(&crate::marketplaces::MarketplaceStore {
+            marketplaces: Vec::new(),
+            installed_plugins: vec![InstalledPluginRecord {
+                marketplace_id: "cursor-local".to_string(),
+                plugin_id: "repo-tools".to_string(),
+                identity_key: PluginIdentityKey {
+                    canonical_slug: "repo-tools".to_string(),
+                    normalized_name: "repo-tools".to_string(),
+                    repository: Some("https://github.com/example/repo-tools".to_string()),
+                    homepage_domain: Some("github.com".to_string()),
+                    author_name: None,
+                },
+                variant_key: variant_key("cursor-local", "repo-tools"),
+                install_path: install_path.display().to_string(),
+                version: None,
+                content_hash: Some("hash".to_string()),
+                state: MarketplaceInstallState::Installed,
+                installed_at: OffsetDateTime::UNIX_EPOCH,
+            }],
+        })
+        .unwrap();
+
+        let mut options = WorkflowScanOptions::new(&repo);
+        options.include_user = true;
+        let scan = scan_workflow_imports(options);
+
+        let item = scan
+            .items
+            .iter()
+            .find(|item| item.source.name.as_deref() == Some("cursor-local:repo-tools"))
+            .expect("installed plugin import item");
+        assert_eq!(item.source.source_type, WorkflowSourceType::Plugin);
+        assert!(item.command_capable);
+        assert!(item.approval_required);
+        assert_eq!(item.risk, WorkflowImportRisk::StartsProcess);
+        assert_eq!(item.preview["marketplaceId"], "cursor-local");
+        assert_eq!(
+            item.preview["manifest"]["mcpServers"]["repo"]["env"],
+            "[redacted]"
+        );
+
+        unsafe {
+            std::env::remove_var("RODER_MARKETPLACES_PATH");
+        }
     }
 
     fn fixture_dir(name: &str) -> PathBuf {

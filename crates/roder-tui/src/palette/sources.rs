@@ -148,6 +148,83 @@ pub fn marketplace_source(marketplaces: &[MarketplaceDescriptor]) -> StaticPalet
         ),
         (
             PaletteItem {
+                id: "marketplaces-install-claude-default".to_string(),
+                title: "Install Claude marketplace".to_string(),
+                subtitle: Some("Add Anthropic Claude Plugins Official metadata".to_string()),
+                keywords: vec![
+                    "marketplace".to_string(),
+                    "plugins".to_string(),
+                    "claude".to_string(),
+                    "anthropic".to_string(),
+                ],
+                icon: Some('C'),
+            },
+            PaletteAction::InsertComposerText("/marketplace install-default anthropic".to_string()),
+        ),
+        (
+            PaletteItem {
+                id: "marketplaces-install-cursor-default".to_string(),
+                title: "Install Cursor marketplace".to_string(),
+                subtitle: Some("Add Cursor marketplace metadata".to_string()),
+                keywords: vec![
+                    "marketplace".to_string(),
+                    "plugins".to_string(),
+                    "cursor".to_string(),
+                ],
+                icon: Some('C'),
+            },
+            PaletteAction::InsertComposerText("/marketplace install-default cursor".to_string()),
+        ),
+        (
+            PaletteItem {
+                id: "marketplaces-install-codex-default".to_string(),
+                title: "Install Codex marketplace".to_string(),
+                subtitle: Some("Add Codex plugin directory metadata".to_string()),
+                keywords: vec![
+                    "marketplace".to_string(),
+                    "plugins".to_string(),
+                    "codex".to_string(),
+                    "openai".to_string(),
+                ],
+                icon: Some('C'),
+            },
+            PaletteAction::InsertComposerText("/marketplace install-default codex".to_string()),
+        ),
+        (
+            PaletteItem {
+                id: "marketplaces-add-custom".to_string(),
+                title: "Add custom marketplace".to_string(),
+                subtitle: Some("Seed marketplace add with id, kind, and source".to_string()),
+                keywords: vec![
+                    "marketplace".to_string(),
+                    "custom".to_string(),
+                    "add".to_string(),
+                    "github".to_string(),
+                    "local".to_string(),
+                ],
+                icon: Some('+'),
+            },
+            PaletteAction::InsertComposerText(
+                "/marketplace add <id> --kind auto --github owner/repo".to_string(),
+            ),
+        ),
+        (
+            PaletteItem {
+                id: "marketplaces-browse-plugins".to_string(),
+                title: "Browse installable plugins".to_string(),
+                subtitle: Some("Open the plugin marketplace browser".to_string()),
+                keywords: vec![
+                    "marketplace".to_string(),
+                    "plugin".to_string(),
+                    "install".to_string(),
+                    "browse".to_string(),
+                ],
+                icon: Some('P'),
+            },
+            PaletteAction::OpenPluginBrowser,
+        ),
+        (
+            PaletteItem {
                 id: "marketplaces-search".to_string(),
                 title: "Search plugin marketplaces".to_string(),
                 subtitle: Some(
@@ -162,6 +239,121 @@ pub fn marketplace_source(marketplaces: &[MarketplaceDescriptor]) -> StaticPalet
                 icon: Some('⌕'),
             },
             PaletteAction::InsertComposerText("/marketplace search ".to_string()),
+        ),
+        (
+            PaletteItem {
+                id: "marketplaces-remove".to_string(),
+                title: "Remove marketplace".to_string(),
+                subtitle: Some(
+                    "Remove a custom marketplace or disable a baked-in default".to_string(),
+                ),
+                keywords: vec![
+                    "marketplace".to_string(),
+                    "remove".to_string(),
+                    "disable".to_string(),
+                    "custom".to_string(),
+                ],
+                icon: Some('-'),
+            },
+            PaletteAction::InsertComposerText("/marketplace remove <marketplace-id>".to_string()),
+        ),
+        (
+            PaletteItem {
+                id: "plugins-preview-install".to_string(),
+                title: "Preview plugin install".to_string(),
+                subtitle: Some("Show source, component hints, capabilities, and risk".to_string()),
+                keywords: vec![
+                    "plugin".to_string(),
+                    "preview".to_string(),
+                    "install".to_string(),
+                    "marketplace".to_string(),
+                ],
+                icon: Some('P'),
+            },
+            PaletteAction::InsertComposerText(
+                "/plugin preview <marketplace-id> <plugin-id>".to_string(),
+            ),
+        ),
+        (
+            PaletteItem {
+                id: "plugins-install-selected".to_string(),
+                title: "Install selected plugin variant".to_string(),
+                subtitle: Some("Install one marketplace/provider variant".to_string()),
+                keywords: vec![
+                    "plugin".to_string(),
+                    "install".to_string(),
+                    "variant".to_string(),
+                    "marketplace".to_string(),
+                ],
+                icon: Some('I'),
+            },
+            PaletteAction::InsertComposerText(
+                "/plugin install <marketplace-id> <plugin-id>".to_string(),
+            ),
+        ),
+        (
+            PaletteItem {
+                id: "plugins-install-all-variants".to_string(),
+                title: "Install all plugin variants".to_string(),
+                subtitle: Some("Install every provider copy for a de-duped plugin row".to_string()),
+                keywords: vec![
+                    "plugin".to_string(),
+                    "install".to_string(),
+                    "all".to_string(),
+                    "variants".to_string(),
+                ],
+                icon: Some('A'),
+            },
+            PaletteAction::InsertComposerText(
+                "/plugin install-all <marketplace-id> <plugin-id>".to_string(),
+            ),
+        ),
+        (
+            PaletteItem {
+                id: "plugins-list-installed".to_string(),
+                title: "List installed plugins".to_string(),
+                subtitle: Some("Show installed plugin variants and cache paths".to_string()),
+                keywords: vec![
+                    "plugin".to_string(),
+                    "installed".to_string(),
+                    "list".to_string(),
+                    "cache".to_string(),
+                ],
+                icon: Some('L'),
+            },
+            PaletteAction::InsertComposerText("/plugin list".to_string()),
+        ),
+        (
+            PaletteItem {
+                id: "plugins-disable-installed".to_string(),
+                title: "Disable installed plugin".to_string(),
+                subtitle: Some(
+                    "Deactivate an installed variant without deleting cache data".to_string(),
+                ),
+                keywords: vec![
+                    "plugin".to_string(),
+                    "disable".to_string(),
+                    "installed".to_string(),
+                    "variant".to_string(),
+                ],
+                icon: Some('D'),
+            },
+            PaletteAction::InsertComposerText("/plugin disable <variant-key>".to_string()),
+        ),
+        (
+            PaletteItem {
+                id: "plugins-uninstall-installed".to_string(),
+                title: "Uninstall plugin".to_string(),
+                subtitle: Some("Remove an installed variant record".to_string()),
+                keywords: vec![
+                    "plugin".to_string(),
+                    "uninstall".to_string(),
+                    "remove".to_string(),
+                    "installed".to_string(),
+                ],
+                icon: Some('-'),
+            },
+            PaletteAction::InsertComposerText("/plugin uninstall <variant-key>".to_string()),
         ),
     ];
 
@@ -656,6 +848,9 @@ mod tests {
     use roder_api::inference::{
         HostedWebSearchMode, InferenceCapabilities, ModelDescriptor, ProviderAuthType,
     };
+    use roder_api::marketplace::{
+        MarketplaceDescriptor, MarketplaceKind, MarketplaceSource, MarketplaceState,
+    };
     use roder_api::remote_runner::RunnerCapabilities;
     use roder_api::subagents::SubagentPermissionMode;
     use roder_protocol::{ProviderDescriptor, RunnerProviderDescriptor, RunnerStatus};
@@ -740,6 +935,48 @@ mod tests {
             source.entries()[0].action,
             PaletteAction::InsertComposerText("/remote".to_string())
         );
+    }
+
+    #[test]
+    fn marketplace_source_exposes_install_add_search_and_plugin_rows() {
+        let source = marketplace_source(&[MarketplaceDescriptor {
+            id: "cursor-local".to_string(),
+            kind: MarketplaceKind::Cursor,
+            display_name: "Cursor Local".to_string(),
+            source: MarketplaceSource::LocalPath {
+                path: "/tmp/cursor".to_string(),
+            },
+            homepage: None,
+            owner_name: None,
+            owner_email: None,
+            description: None,
+            is_default: false,
+            enabled: true,
+            state: MarketplaceState::Installed,
+            last_refreshed_at: None,
+            content_hash: None,
+        }]);
+        let entries = source.entries();
+        let titles = entries
+            .iter()
+            .map(|entry| entry.item.title.as_str())
+            .collect::<Vec<_>>();
+
+        assert!(titles.contains(&"Install Claude marketplace"));
+        assert!(titles.contains(&"Add custom marketplace"));
+        assert!(titles.contains(&"Browse installable plugins"));
+        assert!(titles.contains(&"Remove marketplace"));
+        assert!(titles.contains(&"Preview plugin install"));
+        assert!(titles.contains(&"Install selected plugin variant"));
+        assert!(titles.contains(&"Install all plugin variants"));
+        assert!(titles.contains(&"List installed plugins"));
+        assert!(titles.contains(&"Disable installed plugin"));
+        assert!(titles.contains(&"Uninstall plugin"));
+        assert!(titles.iter().any(|title| title.contains("Cursor Local")));
+        assert!(entries.iter().any(|entry| entry.action
+            == PaletteAction::InsertComposerText(
+                "/marketplace add <id> --kind auto --github owner/repo".to_string()
+            )));
     }
 
     #[test]

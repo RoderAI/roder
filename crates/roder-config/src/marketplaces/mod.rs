@@ -8,7 +8,9 @@ pub mod store;
 pub use bootstrap::install_default_marketplaces;
 pub use defaults::{CLAUDE_DEFAULT_ID, CODEX_DEFAULT_ID, CURSOR_DEFAULT_ID, default_marketplaces};
 pub use fetch::{RawMarketplaceCatalog, read_catalog_from_root, refresh_marketplace};
-pub use source::resolve_local_source;
+pub use source::{
+    infer_kind_from_root, infer_kind_from_source, resolve_marketplace_source, resolve_source,
+};
 pub use store::{
     MarketplaceStore, load_marketplace_store, marketplace_store_path, save_marketplace_store,
 };

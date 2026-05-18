@@ -2,6 +2,8 @@ use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::sync::Arc;
 
 use futures::{SinkExt, StreamExt};
+use qrcode::QrCode;
+use qrcode::render::unicode;
 use roder_api::events::{
     RemoteAuthFailed, RemoteClientConnected, RemoteClientDisconnected, RemoteServerStarted,
     RoderEvent,
@@ -13,11 +15,11 @@ use time::OffsetDateTime;
 use tokio::net::TcpListener;
 use tokio_tungstenite::tungstenite::Message;
 use tokio_tungstenite::tungstenite::handshake::server::{ErrorResponse, Request, Response};
-use tokio_tungstenite::tungstenite::http::StatusCode;
+use tokio_tungstenite::tungstenite::http::{HeaderValue, StatusCode};
 
 use crate::AppServer;
 
-pub const REMOTE_PROTOCOL: &str = "gode.remote.v1";
+pub const REMOTE_PROTOCOL: &str = "roder.remote.v1";
 const TOKEN_BYTES: usize = 32;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -148,7 +150,7 @@ pub async fn listen_remote_websocket(
     let remote_initialize_metadata = serde_json::json!({
         "authenticated": true,
         "authSchemes": ["authorization_bearer", "websocket_subprotocol_bearer"],
-        "serverName": "Gode Remote",
+        "serverName": "Roder Go",
         "workspace": options.workspace.clone(),
     });
     let pairing_url = pairing_deep_link(&payload)?;
@@ -182,9 +184,15 @@ pub async fn listen_remote_websocket(
                 let auth_remote_addr = remote_addr.clone();
                 #[allow(clippy::result_large_err)]
                 let callback = move |request: &Request,
-                                     response: Response|
+                                     mut response: Response|
                       -> Result<Response, ErrorResponse> {
                     if auth.verify_request(request) {
+                        if request_supports_remote_protocol(request) {
+                            response.headers_mut().insert(
+                                "Sec-WebSocket-Protocol",
+                                HeaderValue::from_static(REMOTE_PROTOCOL),
+                            );
+                        }
                         Ok(response)
                     } else {
                         auth_events.runtime.bus.emit(RoderEvent::RemoteAuthFailed(
@@ -267,7 +275,7 @@ pub fn pairing_payload(
     headers.insert("Authorization".to_string(), format!("Bearer {token}"));
     RemotePairingPayload {
         kind: REMOTE_PROTOCOL.to_string(),
-        name: "Gode Remote".to_string(),
+        name: "Roder Go".to_string(),
         url,
         headers,
         subprotocols: vec![REMOTE_PROTOCOL.to_string(), format!("bearer.{token}")],
@@ -278,14 +286,17 @@ pub fn pairing_payload(
 pub fn pairing_deep_link(payload: &RemotePairingPayload) -> anyhow::Result<String> {
     let json = serde_json::to_vec(payload)?;
     Ok(format!(
-        "gode://connect?payload={}",
+        "roder://connect?payload={}",
         base64_url_no_pad(&json)
     ))
 }
 
 pub fn render_terminal_pairing(handle: &RemoteServerHandle) -> String {
+    let qr = render_pairing_qr(&handle.pairing_url)
+        .unwrap_or_else(|err| format!("QR unavailable: {err}"));
     format!(
-        "Remote app-server listening\nurls:\n{}\ntoken: {}\nconnect: {}\n",
+        "Remote app-server listening\n\n{}\nurls:\n{}\ntoken: {}\nconnect: {}\n",
+        qr,
         handle
             .connect_urls
             .iter()
@@ -295,6 +306,15 @@ pub fn render_terminal_pairing(handle: &RemoteServerHandle) -> String {
         handle.token_preview,
         handle.pairing_url
     )
+}
+
+pub fn render_pairing_qr(pairing_url: &str) -> anyhow::Result<String> {
+    let code = QrCode::new(pairing_url.as_bytes())?;
+    Ok(code
+        .render::<unicode::Dense1x2>()
+        .quiet_zone(true)
+        .module_dimensions(2, 1)
+        .build())
 }
 
 pub fn parse_ws_listen(listen: &str) -> anyhow::Result<SocketAddr> {
@@ -344,6 +364,19 @@ fn bearer_from_headers(request: &Request) -> Option<String> {
                         .map(str::trim)
                         .find_map(|part| part.strip_prefix("bearer.").map(ToString::to_string))
                 })
+        })
+}
+
+fn request_supports_remote_protocol(request: &Request) -> bool {
+    request
+        .headers()
+        .get("sec-websocket-protocol")
+        .and_then(|value| value.to_str().ok())
+        .is_some_and(|value| {
+            value
+                .split(',')
+                .map(str::trim)
+                .any(|part| part == REMOTE_PROTOCOL)
         })
 }
 
@@ -419,11 +452,12 @@ mod tests {
             .uri("ws://127.0.0.1")
             .header(
                 "Sec-WebSocket-Protocol",
-                "gode.remote.v1, bearer.secret-token",
+                "roder.remote.v1, bearer.secret-token",
             )
             .body(())
             .unwrap();
         assert!(auth.verify_request(&request));
+        assert!(request_supports_remote_protocol(&request));
     }
 
     #[test]
@@ -432,6 +466,23 @@ mod tests {
         assert_eq!(payload.url, "ws://127.0.0.1:1234");
         assert!(!payload.url.contains("secret-token"));
         let link = pairing_deep_link(&payload).unwrap();
-        assert!(link.starts_with("gode://connect?payload="));
+        assert!(link.starts_with("roder://connect?payload="));
+        assert_eq!(payload.kind, REMOTE_PROTOCOL);
+        assert_eq!(payload.name, "Roder Go");
+        assert_eq!(payload.subprotocols[0], REMOTE_PROTOCOL);
+    }
+
+    #[test]
+    fn terminal_pairing_renders_qr_and_roder_link() {
+        let handle = RemoteServerHandle {
+            listen_addr: "127.0.0.1:1234".parse().unwrap(),
+            connect_urls: vec!["ws://127.0.0.1:1234".to_string()],
+            token_preview: "secr...oken".to_string(),
+            pairing_url: "roder://connect?payload=test".to_string(),
+        };
+        let rendered = render_terminal_pairing(&handle);
+        assert!(rendered.contains("Remote app-server listening"));
+        assert!(rendered.contains("roder://connect?payload=test"));
+        assert!(rendered.contains("█"));
     }
 }

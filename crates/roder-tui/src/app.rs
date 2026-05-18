@@ -10,6 +10,7 @@ mod memories;
 mod plan_hunk_tests;
 mod plan_panel;
 mod plan_review;
+mod plugin_browser;
 #[allow(dead_code)]
 mod remote;
 mod runner;
@@ -86,6 +87,7 @@ use input_queue::{PendingPrompt, PromptQueue, queue_status};
 use plan_panel::{
     PlanPanelState, plan_counter_area, plan_panel_height, render_plan_counter, render_plan_panel,
 };
+use plugin_browser::PluginBrowserState;
 use shortcuts::FooterShortcutContext;
 use team_ui::{TeamUiState, is_team_focus_next_key, is_team_focus_previous_key};
 use tool_detail::{ToolDetailAction, ToolDetailModal, render_tool_detail_modal};
@@ -735,6 +737,7 @@ enum ProviderMenuItem {
     WebSearchSettings,
     ThemesSettings,
     MarketplacesSettings,
+    PluginBrowser,
     ResumeSessions,
     DefaultMode(PolicyMode),
     Spinner(WorkingSpinner),
@@ -799,6 +802,7 @@ impl ProviderMenuItem {
             Self::WebSearchSettings => "Web search provider".to_string(),
             Self::ThemesSettings => "Themes".to_string(),
             Self::MarketplacesSettings => "Plugin marketplaces".to_string(),
+            Self::PluginBrowser => "Browse installable plugins".to_string(),
             Self::ResumeSessions => "Resume session".to_string(),
             Self::DefaultMode(mode) => {
                 format!("Default mode: {}", settings_policy_mode_label(*mode))
@@ -912,6 +916,7 @@ pub struct TuiApp {
     web_search_mode: HostedWebSearchMode,
     confirm_dialog: Option<ConfirmDialogState>,
     tool_detail_modal: Option<ToolDetailModal>,
+    plugin_browser: Option<PluginBrowserState>,
     image_attachments: Vec<ImageAttachment>,
     queued_prompts: PromptQueue,
     last_user_prompt: Option<PendingPrompt>,
@@ -1214,6 +1219,7 @@ impl TuiApp {
                 .unwrap_or(HostedWebSearchMode::Cached),
             confirm_dialog: None,
             tool_detail_modal: None,
+            plugin_browser: None,
             image_attachments: Vec::new(),
             queued_prompts: PromptQueue::default(),
             last_user_prompt: None,
@@ -1287,6 +1293,16 @@ impl TuiApp {
                                 self.show_shortcuts_dialog = false;
                             } else if shortcuts::shortcut_dialog_close_key(key) {
                                 self.show_shortcuts_dialog = false;
+                            }
+                        } else if self.plugin_browser.is_some() {
+                            if key.modifiers.contains(KeyModifiers::CONTROL)
+                                && key.code == KeyCode::Char('c')
+                            {
+                                self.plugin_browser = None;
+                                self.confirm_dialog =
+                                    Some(ConfirmDialogState::new(ConfirmDialog::Exit));
+                            } else {
+                                self.handle_plugin_browser_key(key).await;
                             }
                         } else if key.modifiers.contains(KeyModifiers::CONTROL)
                             && key.code == KeyCode::Char('p')
@@ -2692,6 +2708,9 @@ impl TuiApp {
         if self.show_provider_popup {
             self.render_provider_popup(f, area);
         }
+        if self.plugin_browser.is_some() {
+            self.render_plugin_browser(f, area);
+        }
         if let Some(dialog) = self.confirm_dialog.clone() {
             self.render_confirm_dialog(f, area, dialog);
         }
@@ -3086,6 +3105,7 @@ impl TuiApp {
                         | ProviderMenuItem::WebSearchSettings
                         | ProviderMenuItem::ThemesSettings
                         | ProviderMenuItem::MarketplacesSettings
+                        | ProviderMenuItem::PluginBrowser
                         | ProviderMenuItem::ResumeSessions
                         | ProviderMenuItem::Reasoning(_) => "› ",
                         ProviderMenuItem::Back => "‹ ",
@@ -3530,6 +3550,9 @@ impl TuiApp {
             ProviderMenuItem::MarketplacesSettings => {
                 self.open_marketplaces_submenu();
             }
+            ProviderMenuItem::PluginBrowser => {
+                self.open_plugin_browser().await;
+            }
             ProviderMenuItem::ResumeSessions => {
                 self.open_resume_submenu().await;
             }
@@ -3763,6 +3786,7 @@ impl TuiApp {
         self.provider_popup_screen = ProviderPopupScreen::Marketplaces;
         self.provider_menu_filter.clear();
         self.provider_menu_items = vec![
+            ProviderMenuItem::PluginBrowser,
             ProviderMenuItem::MarketplaceInstallDefault {
                 selection: "all",
                 label: "Install all default marketplaces",
@@ -5657,6 +5681,7 @@ mod tests {
             web_search_mode: HostedWebSearchMode::Cached,
             confirm_dialog: None,
             tool_detail_modal: None,
+            plugin_browser: None,
             image_attachments: Vec::new(),
             queued_prompts: PromptQueue::default(),
             last_user_prompt: None,

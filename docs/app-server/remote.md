@@ -8,11 +8,11 @@ Start it explicitly:
 roder app-server --remote
 roder app-server --remote --listen ws://0.0.0.0:0
 roder app-server --remote --listen ws://100.x.y.z:0
-roder app-server --remote --auth-token env:GODE_REMOTE_TOKEN
+roder app-server --remote --auth-token env:RODER_REMOTE_TOKEN
 roder app-server --remote --print-qr=false
 ```
 
-Without `--remote`, `roder app-server` keeps using `stdio://`. Remote mode defaults to `ws://0.0.0.0:0` so the operating system picks a free port and Roder prints usable connection URLs plus a `gode://connect` pairing link.
+Without `--remote`, `roder app-server` keeps using `stdio://`. Remote mode defaults to `ws://0.0.0.0:0` so the operating system picks a free port and Roder prints a terminal QR code, usable connection URLs, and a `roder://connect` pairing link.
 
 ## Authentication
 
@@ -25,10 +25,10 @@ Authorization: Bearer <token>
 Browser-constrained clients that cannot set custom WebSocket headers can use subprotocol auth:
 
 ```text
-Sec-WebSocket-Protocol: gode.remote.v1, bearer.<token>
+Sec-WebSocket-Protocol: roder.remote.v1, bearer.<token>
 ```
 
-Tokens are not accepted in WebSocket query parameters. The pairing payload includes the token inside the encoded `gode://connect?payload=...` value, but logs, app-server events, and TUI summaries use the token preview only.
+Tokens are not accepted in WebSocket query parameters. The pairing payload includes the token inside the encoded `roder://connect?payload=...` value, but logs, app-server events, and TUI summaries use the token preview only.
 
 ## Security Model
 

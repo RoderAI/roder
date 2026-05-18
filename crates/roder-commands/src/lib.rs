@@ -68,12 +68,30 @@ pub fn built_in_commands() -> Vec<CommandSpec> {
             "Inspect relevant project and user memory.",
             "Surface relevant memory for the current workspace and task.",
         ),
+        (
+            "marketplace",
+            "Manage plugin marketplaces.",
+            "Use the Roder marketplace app-server methods to list default marketplaces, install one or all defaults, add local marketplaces, refresh catalogs, and search de-duplicated plugin results. Interpret arguments as a marketplace command, for example: list, install-default all, add <id> --kind <kind> --path <path>, refresh <id>, search <query>, or show <marketplace-id> <plugin-id>.",
+        ),
+        (
+            "plugin",
+            "Preview, install, list, disable, or uninstall marketplace plugins.",
+            "Use the Roder plugin marketplace app-server methods to preview installs, install selected plugin variants, install all de-duplicated variants, list installed variants, disable an installed variant, or uninstall by variant key. Interpret arguments as a plugin command, for example: preview <marketplace-id> <plugin-id>, install <marketplace-id> <plugin-id> [--all-variants], install-all <marketplace-id> <plugin-id>, list, disable <variant-key>, or uninstall <variant-key>.",
+        ),
     ]
     .into_iter()
     .map(|(name, description, body)| CommandSpec {
         name: name.to_string(),
         description: Some(description.to_string()),
-        argument_hint: None,
+        argument_hint: match name {
+            "marketplace" => Some(
+                "list|install-default|add|remove|refresh|search|show [args]".to_string(),
+            ),
+            "plugin" => {
+                Some("preview|install|install-all|list|disable|uninstall [args]".to_string())
+            }
+            _ => None,
+        },
         allowed_tools: Vec::new(),
         model: None,
         agent: None,

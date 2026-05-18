@@ -1988,6 +1988,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "qrcode"
+version = "0.14.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d68782463e408eb1e668cf6152704bd856c78c5b6417adaee3203d8f4c1fc9ec"
+
+[[package]]
 name = "quick-xml"
 version = "0.37.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2277,6 +2283,7 @@ dependencies = [
  "base64",
  "bytes",
  "encoding_rs",
+ "futures-channel",
  "futures-core",
  "futures-util",
  "h2",
@@ -2349,6 +2356,7 @@ dependencies = [
  "async-trait",
  "base64",
  "futures",
+ "qrcode",
  "rand 0.10.1",
  "roder-api",
  "roder-codex-auth",
@@ -2434,6 +2442,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "dirs",
+ "reqwest",
  "roder-api",
  "serde",
  "serde_json",

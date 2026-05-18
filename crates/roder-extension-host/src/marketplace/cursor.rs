@@ -32,11 +32,11 @@ fn normalize_plugin(
         plugin.get("source"),
         Some(name.clone()),
     );
-    let repository = match &source {
+    let repository = string_field(&plugin, "repository").or_else(|| match &source {
         PluginSource::MarketplacePath { .. } => catalog.marketplace.homepage.clone(),
         PluginSource::Git { url, .. } | PluginSource::Http { url, .. } => Some(url.clone()),
         _ => None,
-    };
+    });
     let homepage = string_field(&plugin, "homepage").or_else(|| repository.clone());
     let mut hints = component_hints(&plugin);
     hints.skills = true;

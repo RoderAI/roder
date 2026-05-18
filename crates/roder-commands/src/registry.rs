@@ -258,8 +258,18 @@ mod tests {
         let registry = CommandsRegistry::load(None::<&PathBuf>, None::<&PathBuf>, []).unwrap();
 
         for name in [
-            "init", "clear", "compact", "help", "goal", "retry", "model", "agents", "tasks",
+            "init",
+            "clear",
+            "compact",
+            "help",
+            "goal",
+            "retry",
+            "model",
+            "agents",
+            "tasks",
             "memory",
+            "marketplace",
+            "plugin",
         ] {
             let spec = registry
                 .get(name)
@@ -267,6 +277,18 @@ mod tests {
             assert_eq!(spec.source, CommandSource::BuiltIn);
             assert!(!spec.body.is_empty());
         }
+        assert_eq!(
+            registry
+                .get("marketplace")
+                .and_then(|spec| spec.argument_hint.as_deref()),
+            Some("list|install-default|add|remove|refresh|search|show [args]")
+        );
+        assert_eq!(
+            registry
+                .get("plugin")
+                .and_then(|spec| spec.argument_hint.as_deref()),
+            Some("preview|install|install-all|list|disable|uninstall [args]")
+        );
     }
 
     #[test]
