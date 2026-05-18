@@ -47,7 +47,7 @@ struct ArtifactArg {
 impl ToolExecutor for GenerateImageTool {
     fn spec(&self) -> ToolSpec {
         media_tool_spec(
-            "media.generate_image",
+            "media_generate_image",
             "Generates a deterministic offline image artifact for tests.",
         )
     }
@@ -78,7 +78,7 @@ impl ToolExecutor for GenerateImageTool {
 impl ToolExecutor for GenerateVideoTool {
     fn spec(&self) -> ToolSpec {
         media_tool_spec(
-            "media.generate_video",
+            "media_generate_video",
             "Generates a deterministic offline video artifact for tests.",
         )
     }
@@ -106,7 +106,7 @@ impl ToolExecutor for GenerateVideoTool {
 impl ToolExecutor for DescribeMediaTool {
     fn spec(&self) -> ToolSpec {
         ToolSpec {
-            name: "media.describe".to_string(),
+            name: "media_describe".to_string(),
             description: "Returns metadata for a media artifact.".to_string(),
             parameters: artifact_schema(),
         }
@@ -135,7 +135,7 @@ impl ToolExecutor for DescribeMediaTool {
 impl ToolExecutor for AttachMediaTool {
     fn spec(&self) -> ToolSpec {
         ToolSpec {
-            name: "media.attach".to_string(),
+            name: "media_attach".to_string(),
             description: "Converts generated media bytes into a later-turn attachment payload."
                 .to_string(),
             parameters: json!({
@@ -286,13 +286,13 @@ mod tests {
     async fn fake_image_tool_returns_media_artifact_payload() {
         let mut registry = ToolRegistry::default();
         register(&mut registry).unwrap();
-        let tool = registry.get("media.generate_image").unwrap();
+        let tool = registry.get("media_generate_image").unwrap();
         let result = tool
             .execute(
                 ToolExecutionContext::new("thread", "turn", PolicyMode::Default),
                 ToolCall {
                     id: "call".to_string(),
-                    name: "media.generate_image".to_string(),
+                    name: "media_generate_image".to_string(),
                     arguments: json!({ "prompt": "tiny" }),
                     raw_arguments: "{}".to_string(),
                     thread_id: "thread".to_string(),

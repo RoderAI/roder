@@ -2,9 +2,14 @@ use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::sync::Arc;
 
 use futures::{SinkExt, StreamExt};
+use roder_api::events::{
+    RemoteAuthFailed, RemoteClientConnected, RemoteClientDisconnected, RemoteServerStarted,
+    RoderEvent,
+};
 use roder_protocol::JsonRpcRequest;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
+use time::OffsetDateTime;
 use tokio::net::TcpListener;
 use tokio_tungstenite::tungstenite::Message;
 use tokio_tungstenite::tungstenite::handshake::server::{ErrorResponse, Request, Response};
@@ -138,8 +143,14 @@ pub async fn listen_remote_websocket(
             .cloned()
             .unwrap_or_else(|| format!("ws://{listen_addr}")),
         options.token.secret(),
-        options.workspace,
+        options.workspace.clone(),
     );
+    let remote_initialize_metadata = serde_json::json!({
+        "authenticated": true,
+        "authSchemes": ["authorization_bearer", "websocket_subprotocol_bearer"],
+        "serverName": "Gode Remote",
+        "workspace": options.workspace.clone(),
+    });
     let pairing_url = pairing_deep_link(&payload)?;
     let handle = RemoteServerHandle {
         listen_addr,
@@ -147,20 +158,42 @@ pub async fn listen_remote_websocket(
         token_preview: options.token.preview().to_string(),
         pairing_url,
     };
+    app_server
+        .runtime
+        .bus
+        .emit(RoderEvent::RemoteServerStarted(RemoteServerStarted {
+            listen_addr: listen_addr.to_string(),
+            connect_urls: handle.connect_urls.clone(),
+            token_preview: handle.token_preview.clone(),
+            timestamp: OffsetDateTime::now_utc(),
+        }));
     let auth = Arc::new(RemoteAuth::enabled(&options.token));
     tokio::spawn(async move {
         loop {
-            let Ok((stream, _)) = listener.accept().await else {
+            let Ok((stream, peer_addr)) = listener.accept().await else {
                 break;
             };
             let auth = auth.clone();
             let app_server = app_server.clone();
+            let remote_initialize_metadata = remote_initialize_metadata.clone();
             tokio::spawn(async move {
+                let remote_addr = peer_addr.to_string();
+                let auth_events = app_server.clone();
+                let auth_remote_addr = remote_addr.clone();
+                #[allow(clippy::result_large_err)]
                 let callback =
-                    |request: &Request, response: Response| -> Result<Response, ErrorResponse> {
+                    move |request: &Request,
+                          response: Response|
+                          -> Result<Response, ErrorResponse> {
                         if auth.verify_request(request) {
                             Ok(response)
                         } else {
+                            auth_events.runtime.bus.emit(RoderEvent::RemoteAuthFailed(
+                                RemoteAuthFailed {
+                                    remote_addr: Some(auth_remote_addr.clone()),
+                                    timestamp: OffsetDateTime::now_utc(),
+                                },
+                            ));
                             let mut response = ErrorResponse::new(Some("unauthorized".to_string()));
                             *response.status_mut() = StatusCode::UNAUTHORIZED;
                             Err(response)
@@ -170,12 +203,32 @@ pub async fn listen_remote_websocket(
                 else {
                     return;
                 };
+                app_server
+                    .runtime
+                    .bus
+                    .emit(RoderEvent::RemoteClientConnected(RemoteClientConnected {
+                        remote_addr: Some(remote_addr.clone()),
+                        timestamp: OffsetDateTime::now_utc(),
+                    }));
                 while let Some(message) = websocket.next().await {
                     let Ok(Message::Text(text)) = message else {
                         continue;
                     };
                     let response = match serde_json::from_str::<JsonRpcRequest>(&text) {
-                        Ok(request) => app_server.handle_request(request).await,
+                        Ok(request) => {
+                            let is_initialize = request.method == "initialize";
+                            let mut response = app_server.handle_request(request).await;
+                            if is_initialize
+                                && let Some(result) = response.result.as_mut()
+                                && let Some(object) = result.as_object_mut()
+                            {
+                                object.insert(
+                                    "remote".to_string(),
+                                    remote_initialize_metadata.clone(),
+                                );
+                            }
+                            response
+                        }
                         Err(err) => roder_protocol::JsonRpcResponse {
                             jsonrpc: "2.0".to_string(),
                             id: None,
@@ -191,6 +244,12 @@ pub async fn listen_remote_websocket(
                         let _ = websocket.send(Message::Text(text.into())).await;
                     }
                 }
+                app_server.runtime.bus.emit(RoderEvent::RemoteClientDisconnected(
+                    RemoteClientDisconnected {
+                        remote_addr: Some(remote_addr),
+                        timestamp: OffsetDateTime::now_utc(),
+                    },
+                ));
             });
         }
     });
