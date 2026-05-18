@@ -24,8 +24,8 @@ use roder_protocol::*;
 use roder_tasks::{BackgroundRunner, BackgroundRunnerConfig, TaskExecutorRegistry};
 use tokio::sync::{RwLock, broadcast};
 
-use crate::codex::{
-    codex_thread_from_metadata, codex_turn_from_record, codex_turn_message, default_cwd_string,
+use crate::desktop_contract::{
+    desktop_thread_from_metadata, desktop_turn_from_record, desktop_turn_message, default_cwd_string,
 };
 use crate::notifications;
 
@@ -33,10 +33,10 @@ pub struct AppServer {
     pub runtime: Arc<Runtime>,
     tasks: BackgroundRunner,
     persist_user_config: bool,
-    codex_threads: RwLock<std::collections::HashMap<String, CodexThread>>,
-    codex_thread_models: RwLock<std::collections::HashMap<String, (String, String)>>,
-    codex_active_turns: RwLock<std::collections::HashMap<String, String>>,
-    codex_notifications: broadcast::Sender<JsonRpcNotification>,
+    desktop_threads: RwLock<std::collections::HashMap<String, DesktopThread>>,
+    desktop_thread_models: RwLock<std::collections::HashMap<String, (String, String)>>,
+    desktop_active_turns: RwLock<std::collections::HashMap<String, String>>,
+    desktop_notifications: broadcast::Sender<JsonRpcNotification>,
 }
 
 impl AppServer {
@@ -46,23 +46,23 @@ impl AppServer {
             let _ = task_registry.register(Arc::clone(executor));
         }
         let tasks = BackgroundRunner::new(task_registry, BackgroundRunnerConfig::default());
-        let (codex_notifications, _) = broadcast::channel(1024);
+        let (desktop_notifications, _) = broadcast::channel(1024);
         if tokio::runtime::Handle::try_current().is_ok() {
             notifications::spawn_task_event_bridge(Arc::clone(&runtime), tasks.clone());
             notifications::spawn_runtime_event_handlers(Arc::clone(&runtime), tasks.clone());
-            notifications::spawn_codex_notification_bridge(
+            notifications::spawn_desktop_notification_bridge(
                 Arc::clone(&runtime),
-                codex_notifications.clone(),
+                desktop_notifications.clone(),
             );
         }
         Self {
             runtime,
             tasks,
             persist_user_config: false,
-            codex_threads: RwLock::new(std::collections::HashMap::new()),
-            codex_thread_models: RwLock::new(std::collections::HashMap::new()),
-            codex_active_turns: RwLock::new(std::collections::HashMap::new()),
-            codex_notifications,
+            desktop_threads: RwLock::new(std::collections::HashMap::new()),
+            desktop_thread_models: RwLock::new(std::collections::HashMap::new()),
+            desktop_active_turns: RwLock::new(std::collections::HashMap::new()),
+            desktop_notifications,
         }
     }
 
@@ -192,7 +192,7 @@ impl AppServer {
             }
             "turn/start" => {
                 self.decode_and(req.params, |p| async move {
-                    self.handle_codex_turn_start(p).await
+                    self.handle_desktop_turn_start(p).await
                 })
                 .await
             }
@@ -204,7 +204,7 @@ impl AppServer {
             }
             "turn/interrupt" => {
                 self.decode_and(req.params, |p| async move {
-                    self.handle_codex_turn_interrupt(p).await
+                    self.handle_desktop_turn_interrupt(p).await
                 })
                 .await
             }
@@ -217,7 +217,7 @@ impl AppServer {
             }
             "turn/steer" => {
                 self.decode_and(req.params, |p| async move {
-                    self.handle_codex_turn_steer(p).await
+                    self.handle_desktop_turn_steer(p).await
                 })
                 .await
             }
@@ -742,7 +742,7 @@ impl AppServer {
                 .unwrap_or_default();
             for model in provider_models {
                 let model_id = model.id;
-                models.push(CodexModel {
+                models.push(DesktopModel {
                     is_default: provider_id == cfg.default_provider
                         && model_id == cfg.default_model,
                     id: model_id,
@@ -840,7 +840,7 @@ impl AppServer {
 
     async fn handle_codex_auth_login(&self) -> Result<serde_json::Value, JsonRpcError> {
         let tokens = roder_codex_auth::login().await.map_err(internal_error)?;
-        Ok(serde_json::to_value(CodexAuthResult {
+        Ok(serde_json::to_value(ProviderAuthResult {
             signed_in: true,
             account_id: non_empty(tokens.account_id),
         })
@@ -849,7 +849,7 @@ impl AppServer {
 
     async fn handle_codex_auth_status(&self) -> Result<serde_json::Value, JsonRpcError> {
         let signed_in = roder_codex_auth::status().await.map_err(internal_error)?;
-        Ok(serde_json::to_value(CodexAuthResult {
+        Ok(serde_json::to_value(ProviderAuthResult {
             signed_in: signed_in.is_some(),
             account_id: signed_in.and_then(|tokens| non_empty(tokens.account_id)),
         })
@@ -858,7 +858,7 @@ impl AppServer {
 
     async fn handle_codex_auth_logout(&self) -> Result<serde_json::Value, JsonRpcError> {
         roder_codex_auth::logout().map_err(internal_error)?;
-        Ok(serde_json::to_value(CodexAuthResult {
+        Ok(serde_json::to_value(ProviderAuthResult {
             signed_in: false,
             account_id: None,
         })
@@ -905,10 +905,10 @@ impl AppServer {
         }
         let threads = sessions
             .into_iter()
-            .map(|metadata| codex_thread_from_metadata(metadata, None))
+            .map(|metadata| desktop_thread_from_metadata(metadata, None))
             .collect::<Vec<_>>();
         let mut threads = threads;
-        for thread in self.codex_threads.read().await.values() {
+        for thread in self.desktop_threads.read().await.values() {
             if !threads.iter().any(|candidate| candidate.id == thread.id) {
                 threads.push(thread.clone());
             }
@@ -942,17 +942,17 @@ impl AppServer {
             .cwd
             .or_else(|| metadata.workspace.clone())
             .unwrap_or_else(default_cwd_string);
-        let thread = codex_thread_from_metadata(metadata, None);
-        self.codex_threads
+        let thread = desktop_thread_from_metadata(metadata, None);
+        self.desktop_threads
             .write()
             .await
             .insert(thread.id.clone(), thread.clone());
-        self.codex_thread_models
+        self.desktop_thread_models
             .write()
             .await
             .insert(thread.id.clone(), (model_provider.clone(), model.clone()));
         let _ = self
-            .codex_notifications
+            .desktop_notifications
             .send(notifications::thread_started_notification(thread.clone()));
         Ok(serde_json::to_value(ThreadStartResult {
             thread,
@@ -977,12 +977,12 @@ impl AppServer {
                 snapshot
                     .turns
                     .into_iter()
-                    .map(codex_turn_from_record)
+                    .map(desktop_turn_from_record)
                     .collect()
             });
             snapshot
                 .metadata
-                .map(|metadata| codex_thread_from_metadata(metadata, turns))
+                .map(|metadata| desktop_thread_from_metadata(metadata, turns))
         });
         let thread = if thread.is_some() {
             thread
@@ -994,13 +994,13 @@ impl AppServer {
                 .into_iter()
                 .find(|metadata| metadata.thread_id == params.thread_id)
                 .map(|metadata| {
-                    codex_thread_from_metadata(metadata, params.include_turns.then(Vec::new))
+                    desktop_thread_from_metadata(metadata, params.include_turns.then(Vec::new))
                 })
         };
         let thread = if thread.is_some() {
             thread
         } else {
-            self.codex_threads
+            self.desktop_threads
                 .read()
                 .await
                 .get(params.thread_id.as_str())
@@ -1125,12 +1125,12 @@ impl AppServer {
         Ok(serde_json::to_value(StartTurnResult { turn_id }).unwrap())
     }
 
-    async fn handle_codex_turn_start(
+    async fn handle_desktop_turn_start(
         &self,
         params: TurnStartParams,
     ) -> Result<serde_json::Value, JsonRpcError> {
         let (provider_override, model_override) = self
-            .codex_thread_model(&params.thread_id)
+            .desktop_thread_model(&params.thread_id)
             .await
             .map(|(provider, model)| (Some(provider), Some(model)))
             .unwrap_or((None, None));
@@ -1138,7 +1138,7 @@ impl AppServer {
             .runtime
             .start_turn(StartTurnRequest {
                 thread_id: params.thread_id.clone(),
-                message: codex_turn_message(&params.input, params.prompt),
+                message: desktop_turn_message(&params.input, params.prompt),
                 images: Vec::new(),
                 provider_override,
                 model_override,
@@ -1146,7 +1146,7 @@ impl AppServer {
             })
             .await
             .map_err(internal_error)?;
-        self.codex_active_turns
+        self.desktop_active_turns
             .write()
             .await
             .insert(params.thread_id, turn_id.clone());
@@ -1164,14 +1164,14 @@ impl AppServer {
         Ok(serde_json::json!({}))
     }
 
-    async fn handle_codex_turn_interrupt(
+    async fn handle_desktop_turn_interrupt(
         &self,
         params: TurnInterruptParams,
     ) -> Result<serde_json::Value, JsonRpcError> {
         let turn_id = if let Some(turn_id) = params.turn_id.clone() {
             turn_id
         } else {
-            self.codex_active_turns
+            self.desktop_active_turns
                 .read()
                 .await
                 .get(&params.thread_id)
@@ -1186,7 +1186,7 @@ impl AppServer {
             .interrupt_turn(params.thread_id.clone(), turn_id.clone())
             .await
             .map_err(internal_error)?;
-        self.codex_active_turns
+        self.desktop_active_turns
             .write()
             .await
             .remove(&params.thread_id);
@@ -1213,7 +1213,7 @@ impl AppServer {
         Ok(serde_json::to_value(SteerTurnResult { turn_id }).unwrap())
     }
 
-    async fn handle_codex_turn_steer(
+    async fn handle_desktop_turn_steer(
         &self,
         params: TurnSteerParams,
     ) -> Result<serde_json::Value, JsonRpcError> {
@@ -1222,7 +1222,7 @@ impl AppServer {
             .steer_turn(
                 params.thread_id,
                 turn_id.clone(),
-                codex_turn_message(&params.input, params.prompt),
+                desktop_turn_message(&params.input, params.prompt),
                 Vec::new(),
             )
             .await
@@ -1392,9 +1392,9 @@ impl AppServer {
         Ok(serde_json::to_value(TeamCleanupResult { cleaned }).unwrap())
     }
 
-    async fn codex_thread_model(&self, thread_id: &str) -> Option<(String, String)> {
+    async fn desktop_thread_model(&self, thread_id: &str) -> Option<(String, String)> {
         if let Some(model) = self
-            .codex_thread_models
+            .desktop_thread_models
             .read()
             .await
             .get(thread_id)
@@ -2716,11 +2716,11 @@ impl AppServer {
     }
 
     pub fn subscribe_notifications(&self) -> broadcast::Receiver<JsonRpcNotification> {
-        self.codex_notifications.subscribe()
+        self.desktop_notifications.subscribe()
     }
 
     pub(crate) fn publish_notification(&self, notification: JsonRpcNotification) {
-        let _ = self.codex_notifications.send(notification);
+        let _ = self.desktop_notifications.send(notification);
     }
 }
 
@@ -2799,7 +2799,7 @@ fn runner_status(
 fn web_search_mode_config_value(mode: HostedWebSearchMode) -> &'static str {
     match mode {
         HostedWebSearchMode::Disabled => "disabled",
-        HostedWebSearchMode::Cached => "codex",
+        HostedWebSearchMode::Cached => "cached",
         HostedWebSearchMode::Live => "live",
     }
 }

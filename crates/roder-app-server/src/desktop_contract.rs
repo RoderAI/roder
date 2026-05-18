@@ -1,9 +1,9 @@
-use roder_protocol::{CodexItem, CodexThread, CodexThreadStatus, CodexTurn, TurnInputItem};
+use roder_protocol::{DesktopItem, DesktopThread, DesktopThreadStatus, DesktopTurn, TurnInputItem};
 
-pub(crate) fn codex_thread_from_metadata(
+pub(crate) fn desktop_thread_from_metadata(
     metadata: roder_api::session::SessionMetadata,
-    turns: Option<Vec<CodexTurn>>,
-) -> CodexThread {
+    turns: Option<Vec<DesktopTurn>>,
+) -> DesktopThread {
     let preview = metadata
         .title
         .clone()
@@ -13,14 +13,14 @@ pub(crate) fn codex_thread_from_metadata(
         .workspace
         .clone()
         .unwrap_or_else(default_cwd_string);
-    CodexThread {
+    DesktopThread {
         id: metadata.thread_id.clone(),
         session_id: metadata.thread_id,
         preview,
         model_provider: metadata.provider.unwrap_or_else(|| "mock".to_string()),
         created_at: metadata.created_at.unix_timestamp(),
         updated_at: metadata.updated_at.unix_timestamp(),
-        status: CodexThreadStatus {
+        status: DesktopThreadStatus {
             kind: "idle".to_string(),
             active_flags: Vec::new(),
         },
@@ -30,12 +30,12 @@ pub(crate) fn codex_thread_from_metadata(
     }
 }
 
-pub(crate) fn codex_turn_from_record(record: roder_api::session::TurnRecord) -> CodexTurn {
+pub(crate) fn desktop_turn_from_record(record: roder_api::session::TurnRecord) -> DesktopTurn {
     let items = record
         .items
         .into_iter()
         .enumerate()
-        .map(|(index, item)| codex_item_from_turn_item(record.turn_id.as_str(), index, item))
+        .map(|(index, item)| desktop_item_from_turn_item(record.turn_id.as_str(), index, item))
         .collect::<Vec<_>>();
     let status = if record.completed_at.is_some() {
         "completed"
@@ -46,7 +46,7 @@ pub(crate) fn codex_turn_from_record(record: roder_api::session::TurnRecord) -> 
     let duration_ms = record
         .completed_at
         .map(|completed| (completed - record.created_at).whole_milliseconds().max(0) as i64);
-    CodexTurn {
+    DesktopTurn {
         id: record.turn_id,
         items,
         items_view: "default".to_string(),
@@ -58,13 +58,13 @@ pub(crate) fn codex_turn_from_record(record: roder_api::session::TurnRecord) -> 
     }
 }
 
-fn codex_item_from_turn_item(
+fn desktop_item_from_turn_item(
     turn_id: &str,
     index: usize,
     item: roder_api::conversation::TurnItem,
-) -> CodexItem {
+) -> DesktopItem {
     match item {
-        roder_api::conversation::ConversationItem::UserMessage(message) => CodexItem {
+        roder_api::conversation::ConversationItem::UserMessage(message) => DesktopItem {
             id: format!("{turn_id}-user-{index}"),
             kind: "userMessage".to_string(),
             text: Some(message.text),
@@ -74,7 +74,7 @@ fn codex_item_from_turn_item(
             tool_call_id: None,
             payload: None,
         },
-        roder_api::conversation::ConversationItem::AssistantMessage(message) => CodexItem {
+        roder_api::conversation::ConversationItem::AssistantMessage(message) => DesktopItem {
             id: format!("{turn_id}-assistant-{index}"),
             kind: "agentMessage".to_string(),
             text: Some(message.text),
@@ -84,7 +84,7 @@ fn codex_item_from_turn_item(
             tool_call_id: None,
             payload: None,
         },
-        roder_api::conversation::ConversationItem::ReasoningSummary(summary) => CodexItem {
+        roder_api::conversation::ConversationItem::ReasoningSummary(summary) => DesktopItem {
             id: format!("{turn_id}-reasoning-{index}"),
             kind: "reasoning".to_string(),
             text: Some(summary.text),
@@ -94,7 +94,7 @@ fn codex_item_from_turn_item(
             tool_call_id: None,
             payload: None,
         },
-        roder_api::conversation::ConversationItem::ToolCall(call) => CodexItem {
+        roder_api::conversation::ConversationItem::ToolCall(call) => DesktopItem {
             id: call.id.clone(),
             kind: "toolCall".to_string(),
             text: None,
@@ -104,7 +104,7 @@ fn codex_item_from_turn_item(
             tool_call_id: Some(call.id),
             payload: serde_json::from_str(&call.arguments).ok(),
         },
-        roder_api::conversation::ConversationItem::ToolResult(result) => CodexItem {
+        roder_api::conversation::ConversationItem::ToolResult(result) => DesktopItem {
             id: result.id.clone(),
             kind: "toolMessage".to_string(),
             text: Some(result.result),
@@ -121,7 +121,7 @@ fn codex_item_from_turn_item(
             tool_call_id: Some(result.id),
             payload: None,
         },
-        other => CodexItem {
+        other => DesktopItem {
             id: format!("{turn_id}-item-{index}"),
             kind: "raw".to_string(),
             text: None,
@@ -134,7 +134,7 @@ fn codex_item_from_turn_item(
     }
 }
 
-pub(crate) fn codex_turn_message(input: &[TurnInputItem], prompt: Option<String>) -> String {
+pub(crate) fn desktop_turn_message(input: &[TurnInputItem], prompt: Option<String>) -> String {
     let text = input
         .iter()
         .filter(|item| item.kind == "text")

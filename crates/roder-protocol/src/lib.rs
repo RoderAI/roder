@@ -91,7 +91,7 @@ pub struct InitializeResult {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct CodexThreadStatus {
+pub struct DesktopThreadStatus {
     #[serde(rename = "type")]
     pub kind: String,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -100,26 +100,26 @@ pub struct CodexThreadStatus {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct CodexThread {
+pub struct DesktopThread {
     pub id: ThreadId,
     pub session_id: ThreadId,
     pub preview: String,
     pub model_provider: String,
     pub created_at: i64,
     pub updated_at: i64,
-    pub status: CodexThreadStatus,
+    pub status: DesktopThreadStatus,
     pub cwd: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub name: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub turns: Option<Vec<CodexTurn>>,
+    pub turns: Option<Vec<DesktopTurn>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct CodexTurn {
+pub struct DesktopTurn {
     pub id: TurnId,
-    pub items: Vec<CodexItem>,
+    pub items: Vec<DesktopItem>,
     pub items_view: String,
     pub status: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -134,7 +134,7 @@ pub struct CodexTurn {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct CodexItem {
+pub struct DesktopItem {
     pub id: String,
     #[serde(rename = "type")]
     pub kind: String,
@@ -165,7 +165,7 @@ pub struct ThreadStartParams {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ThreadStartResult {
-    pub thread: CodexThread,
+    pub thread: DesktopThread,
     pub model: String,
     pub model_provider: String,
     pub cwd: String,
@@ -180,7 +180,7 @@ pub struct ThreadListParams {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ThreadListResult {
-    pub data: Vec<CodexThread>,
+    pub data: Vec<DesktopThread>,
     pub next_cursor: Option<String>,
     pub backwards_cursor: Option<String>,
 }
@@ -196,7 +196,7 @@ pub struct ThreadReadParams {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ThreadReadResult {
-    pub thread: Option<CodexThread>,
+    pub thread: Option<DesktopThread>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -255,12 +255,12 @@ pub struct TurnInterruptResult {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ModelListResult {
-    pub models: Vec<CodexModel>,
+    pub models: Vec<DesktopModel>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct CodexModel {
+pub struct DesktopModel {
     pub id: String,
     pub name: String,
     pub model_provider: String,
@@ -382,28 +382,28 @@ pub struct MemoryRecallPreviewResult {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ThreadStartedNotification {
-    pub thread: CodexThread,
+    pub thread: DesktopThread,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ThreadStatusChangedNotification {
     pub thread_id: ThreadId,
-    pub status: CodexThreadStatus,
+    pub status: DesktopThreadStatus,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct TurnStartedNotification {
     pub thread_id: ThreadId,
-    pub turn: CodexTurn,
+    pub turn: DesktopTurn,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct TurnCompletedNotification {
     pub thread_id: ThreadId,
-    pub turn: CodexTurn,
+    pub turn: DesktopTurn,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -411,7 +411,7 @@ pub struct TurnCompletedNotification {
 pub struct ItemStartedNotification {
     pub thread_id: ThreadId,
     pub turn_id: TurnId,
-    pub item: CodexItem,
+    pub item: DesktopItem,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -419,7 +419,7 @@ pub struct ItemStartedNotification {
 pub struct ItemCompletedNotification {
     pub thread_id: ThreadId,
     pub turn_id: TurnId,
-    pub item: CodexItem,
+    pub item: DesktopItem,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1135,7 +1135,7 @@ pub struct SettingsSetDefaultModeResult {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct CodexAuthResult {
+pub struct ProviderAuthResult {
     pub signed_in: bool,
     pub account_id: Option<String>,
 }
@@ -1414,7 +1414,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn codex_turn_start_params_accept_desktop_input_shape() {
+    fn desktop_turn_start_params_accept_desktop_input_shape() {
         let params: TurnStartParams = serde_json::from_value(serde_json::json!({
             "threadId": "thread-1",
             "input": [{ "type": "text", "text": "hello" }]
@@ -1427,7 +1427,7 @@ mod tests {
     }
 
     #[test]
-    fn codex_notifications_serialize_with_json_rpc_method_and_camel_case_params() {
+    fn desktop_notifications_serialize_with_json_rpc_method_and_camel_case_params() {
         let notification = JsonRpcNotification {
             jsonrpc: "2.0".to_string(),
             method: "item/agentMessage/delta".to_string(),

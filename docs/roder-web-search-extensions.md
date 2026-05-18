@@ -1,17 +1,17 @@
 # Roder Web Search
 
-Roder uses Codex/OpenAI hosted web search by default. Hosted search is sent to the Responses API as a provider-native `web_search` tool, so it is not listed as a local `tools/list` executor.
+Roder uses OpenAI hosted web search by default. Hosted search is sent to the Responses API as a provider-native `web_search` tool, so it is not listed as a local `tools/list` executor.
 
 Use `mode = "live"` to allow live internet access, or `mode = "disabled"` to turn hosted web search off:
 
 ```toml
 [web_search]
-mode = "live" # default is "codex", which uses cached hosted search
+mode = "live" # default is "cached", which uses cached hosted search
 ```
 
-Set `RODER_WEB_SEARCH_MODE=live`, `codex`, `external`, or `disabled` to override this from the environment.
+Set `RODER_WEB_SEARCH_MODE=live`, `cached`, `external`, or `disabled` to override this from the environment.
 
-The TUI command palette (`Ctrl+P`) exposes hosted web search choices under Settings: Codex cached, Codex live, and Disabled. External provider-router mode still requires config because those local tools are installed when the registry is built.
+The TUI command palette (`Ctrl+P`) exposes hosted web search choices under Settings: Cached hosted, Live hosted, and Disabled. External provider-router mode still requires config because those local tools are installed when the registry is built.
 
 ## External Provider Router
 

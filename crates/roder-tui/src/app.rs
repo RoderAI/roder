@@ -62,7 +62,7 @@ use roder_api::policy_mode::{PolicyDecision, PolicyMode};
 use roder_api::session::SessionMetadata;
 use roder_app_server::LocalAppClient;
 use roder_protocol::{
-    AgentsListResult, CodexAuthResult, CommandDescriptor, CommandsExpandParams,
+    AgentsListResult, ProviderAuthResult, CommandDescriptor, CommandsExpandParams,
     CommandsExpandResult, CommandsListResult, CreateSessionResult, InterruptTurnParams,
     JsonRpcRequest, JsonRpcResponse, PendingPlanExitDescriptor, ProviderDescriptor,
     ProviderSelectParams, ProviderSelectResult, ProvidersListResult, RunnersListResult,
@@ -3828,7 +3828,7 @@ impl TuiApp {
                 params: None,
             })
             .await;
-        match decode_response::<CodexAuthResult>(res) {
+        match decode_response::<ProviderAuthResult>(res) {
             Ok(result) => {
                 self.timeline
                     .push_system(codex_auth_message(method, &result).replace("system: ", ""));
@@ -4795,7 +4795,7 @@ fn provider_search_line(query: &str, theme: Theme) -> Line<'static> {
     ])
 }
 
-fn codex_auth_message(method: &str, result: &CodexAuthResult) -> String {
+fn codex_auth_message(method: &str, result: &ProviderAuthResult) -> String {
     match (method, result.signed_in, result.account_id.as_deref()) {
         ("auth/codex/logout", _, _) => "system: signed out of Codex.".to_string(),
         (_, true, Some(account_id)) => {
@@ -4806,7 +4806,7 @@ fn codex_auth_message(method: &str, result: &CodexAuthResult) -> String {
     }
 }
 
-fn codex_auth_event(result: &CodexAuthResult) -> &'static str {
+fn codex_auth_event(result: &ProviderAuthResult) -> &'static str {
     if result.signed_in {
         "signed in"
     } else {
@@ -4885,8 +4885,8 @@ fn policy_mode_label(mode: PolicyMode) -> &'static str {
 fn web_search_mode_label(mode: HostedWebSearchMode) -> &'static str {
     match mode {
         HostedWebSearchMode::Disabled => "Disabled",
-        HostedWebSearchMode::Cached => "Codex cached",
-        HostedWebSearchMode::Live => "Codex live",
+        HostedWebSearchMode::Cached => "Cached hosted",
+        HostedWebSearchMode::Live => "Live hosted",
     }
 }
 
@@ -6239,8 +6239,8 @@ mod tests {
         .chain(std::iter::once(ProviderMenuItem::Back))
         .collect::<Vec<_>>();
 
-        assert_eq!(items[0].label(), "Codex cached");
-        assert_eq!(items[1].label(), "Codex live");
+        assert_eq!(items[0].label(), "Cached hosted");
+        assert_eq!(items[1].label(), "Live hosted");
         assert_eq!(items[2].label(), "Disabled");
         assert!(matches!(items[3], ProviderMenuItem::Back));
     }
@@ -6418,23 +6418,23 @@ mod tests {
     }
 
     #[test]
-    fn codex_auth_messages_reflect_status() {
-        let signed_in = CodexAuthResult {
+    fn provider_auth_messages_reflect_status() {
+        let signed_in = ProviderAuthResult {
             signed_in: true,
             account_id: Some("acct".to_string()),
         };
         assert_eq!(
-            codex_auth_message("auth/codex/status", &signed_in),
-            "system: signed in with Codex account acct."
+            provider_auth_message("auth/openai/status", &signed_in),
+            "system: signed in with OpenAI account acct."
         );
 
-        let signed_out = CodexAuthResult {
+        let signed_out = ProviderAuthResult {
             signed_in: false,
             account_id: None,
         };
         assert_eq!(
-            codex_auth_message("auth/codex/status", &signed_out),
-            "system: signed out of Codex."
+            provider_auth_message("auth/openai/status", &signed_out),
+            "system: signed out of OpenAI."
         );
     }
 }
