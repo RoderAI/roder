@@ -576,7 +576,7 @@ fn policy_mode_description(mode: PolicyMode) -> &'static str {
 fn web_search_mode_id(mode: HostedWebSearchMode) -> &'static str {
     match mode {
         HostedWebSearchMode::Disabled => "disabled",
-        HostedWebSearchMode::Cached => "codex",
+        HostedWebSearchMode::Cached => "cached",
         HostedWebSearchMode::Live => "live",
     }
 }

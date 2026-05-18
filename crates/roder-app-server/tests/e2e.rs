@@ -1376,7 +1376,7 @@ async fn turns_steer_accepts_active_turn() {
 }
 
 #[tokio::test]
-async fn codex_verbiage_methods_support_desktop_startup_contract() {
+async fn desktop_contract_methods_support_desktop_startup_contract() {
     let runtime = Arc::new(Runtime::fake().unwrap());
     let server = Arc::new(AppServer::new(runtime));
     let client = LocalAppClient::new(server);
@@ -1430,7 +1430,7 @@ async fn codex_verbiage_methods_support_desktop_startup_contract() {
 }
 
 #[tokio::test]
-async fn codex_verbiage_turn_methods_and_notifications_match_desktop_contract() {
+async fn desktop_contract_turn_methods_and_notifications_match_desktop_contract() {
     let runtime = Arc::new(Runtime::fake().unwrap());
     let server = Arc::new(AppServer::new(runtime));
     let client = LocalAppClient::new(server);
@@ -1526,7 +1526,7 @@ async fn codex_verbiage_turn_methods_and_notifications_match_desktop_contract() 
 }
 
 #[tokio::test]
-async fn codex_verbiage_turn_interrupt_uses_active_turn_when_turn_id_is_omitted() {
+async fn desktop_contract_turn_interrupt_uses_active_turn_when_turn_id_is_omitted() {
     let mut builder = ExtensionRegistryBuilder::new();
     builder.inference_engine(Arc::new(PendingEngine));
     let runtime = Arc::new(Runtime::new(builder.build().unwrap(), Default::default()).unwrap());
@@ -1587,7 +1587,7 @@ async fn codex_verbiage_turn_interrupt_uses_active_turn_when_turn_id_is_omitted(
 }
 
 #[tokio::test]
-async fn codex_verbiage_fs_and_command_methods_match_desktop_contract() {
+async fn desktop_contract_fs_and_command_methods_match_desktop_contract() {
     let runtime = Arc::new(Runtime::fake().unwrap());
     let server = Arc::new(AppServer::new(runtime.clone()));
     let client = LocalAppClient::new(server);

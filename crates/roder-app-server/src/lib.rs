@@ -1,5 +1,5 @@
 pub mod client;
-mod codex;
+mod desktop_contract;
 mod command;
 mod fs;
 mod notifications;
