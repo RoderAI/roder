@@ -97,7 +97,7 @@ Custom OpenAI-compatible providers configured under `[providers.<id>]` use the s
 
 ## Requests
 
-Inference uses the OpenCode Responses-compatible endpoint at the configured base URL and sends OpenCode request headers when values are available:
+Inference uses OpenCode's OpenAI-compatible streaming chat completions endpoint at the configured base URL. Roder requests token, tool-call, and usage chunks with `stream: true` and sends OpenCode request headers when values are available:
 
 ```text
 x-opencode-session

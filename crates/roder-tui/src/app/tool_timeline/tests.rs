@@ -1167,7 +1167,7 @@ fn clicking_long_message_body_toggles_message_fold() {
         modifiers: crossterm::event::KeyModifiers::empty(),
     };
     assert!(timeline.handle_mouse(click));
-    assert!(timeline.handle_mouse(click));
+    assert_eq!(timeline.selected, None);
 
     let expanded = rendered_lines(&mut timeline);
     assert!(expanded.iter().any(|line| line.contains("nine")));

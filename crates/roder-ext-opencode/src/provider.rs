@@ -1,19 +1,23 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fs;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
+use futures::StreamExt;
 use roder_api::catalog::{PROVIDER_OPENCODE, PROVIDER_OPENCODE_GO, models_for_provider};
+use roder_api::conversation::ConversationItem;
 use roder_api::extension::InferenceEngineId;
 use roder_api::inference::{
-    AgentInferenceRequest, InferenceCapabilities, InferenceEngine, InferenceEventStream,
-    InferenceProviderContext, InferenceProviderMetadata, InferenceTurnContext, ModelDescriptor,
-    ProviderAuthType,
+    AgentInferenceRequest, CompletionMetadata, InferenceCapabilities, InferenceEngine,
+    InferenceEvent, InferenceEventStream, InferenceProviderContext, InferenceProviderMetadata,
+    InferenceTurnContext, MessageDelta, ModelDescriptor, ProviderAuthType, TokenUsage,
+    ToolCallCompleted,
 };
-use roder_ext_openai_responses::OpenAiResponsesEngine;
+use roder_api::tools::ToolChoice;
 use serde::{Deserialize, Serialize};
+use serde_json::{Value, json};
 
 const DEFAULT_ZEN_BASE_URL: &str = "https://opencode.ai/zen/v1";
 const DEFAULT_GO_BASE_URL: &str = "https://opencode.ai/zen/go/v1";
@@ -155,10 +159,10 @@ impl InferenceEngine for OpenCodeInferenceEngine {
             streaming: true,
             tool_calls: true,
             parallel_tool_calls: true,
-            reasoning_summaries: true,
+            reasoning_summaries: false,
             structured_output: true,
             image_input: false,
-            prompt_cache: true,
+            prompt_cache: false,
             provider_metadata: true,
         }
     }
@@ -212,13 +216,13 @@ impl InferenceEngine for OpenCodeInferenceEngine {
                 self.spec.api_key_env
             )
         };
-        OpenAiResponsesEngine::new_with_config(
-            api_key,
-            self.spec.provider_id,
-            self.base_url(),
+        stream_chat_completions(
+            self.spec.name,
+            &self.base_url(),
+            &api_key,
             self.request_headers(&ctx),
+            request,
         )
-        .stream_turn(ctx, request)
         .await
     }
 }
@@ -292,6 +296,367 @@ async fn discover_models(
         anyhow::bail!("OpenCode model discovery returned no models");
     }
     Ok(models)
+}
+
+async fn stream_chat_completions(
+    provider_name: &str,
+    base_url: &str,
+    api_key: &str,
+    headers: Vec<(String, String)>,
+    request: AgentInferenceRequest,
+) -> anyhow::Result<InferenceEventStream> {
+    let (tools, tool_name_map) = chat_tools(&request);
+    let mut body = json!({
+        "model": request.model.model,
+        "messages": chat_messages(&request, &tool_name_map),
+        "stream": true,
+        "stream_options": { "include_usage": true },
+    });
+    if !tools.is_empty() {
+        body["tools"] = json!(tools);
+        body["tool_choice"] = chat_tool_choice(&request.tool_choice, &tool_name_map);
+        body["parallel_tool_calls"] = json!(request.runtime.parallel_tool_calls.unwrap_or(true));
+    }
+    if let Some(max_tokens) = request.output.max_tokens {
+        body["max_tokens"] = json!(max_tokens);
+    }
+    if let Some(temperature) = request.output.temperature {
+        body["temperature"] = json!(temperature);
+    }
+    if let Some(top_p) = request.output.top_p {
+        body["top_p"] = json!(top_p);
+    }
+    if let Some(response_format) = request.output.response_format {
+        body["response_format"] = response_format;
+    }
+
+    let client = reqwest::Client::new();
+    let mut http = client
+        .post(format!(
+            "{}/chat/completions",
+            base_url.trim_end_matches('/')
+        ))
+        .bearer_auth(api_key)
+        .json(&body);
+    for (key, value) in headers {
+        http = http.header(key, value);
+    }
+    let response = http.send().await?;
+    if !response.status().is_success() {
+        anyhow::bail!(
+            "{provider_name} Chat Completions error {}: {}",
+            response.status(),
+            response.text().await.unwrap_or_default()
+        );
+    }
+
+    let mut bytes = response.bytes_stream();
+    let stream = async_stream::try_stream! {
+        let mut state = ChatStreamState::new(tool_name_map);
+        while let Some(chunk) = bytes.next().await {
+            let chunk = chunk?;
+            for event in state.push_chunk(&chunk)? {
+                yield event;
+            }
+        }
+        for event in state.finish() {
+            yield event;
+        }
+    };
+
+    Ok(Box::pin(stream))
+}
+
+#[derive(Debug, Default)]
+struct ChatToolNameMap {
+    tool_name_to_api_name: HashMap<String, String>,
+    api_name_to_tool_name: HashMap<String, String>,
+}
+
+impl ChatToolNameMap {
+    fn register(&mut self, tool_name: &str, api_name: &str) {
+        self.tool_name_to_api_name
+            .insert(tool_name.to_string(), api_name.to_string());
+        self.api_name_to_tool_name
+            .insert(api_name.to_string(), tool_name.to_string());
+    }
+
+    fn api_name<'a>(&'a self, tool_name: &'a str) -> &'a str {
+        self.tool_name_to_api_name
+            .get(tool_name)
+            .map_or(tool_name, String::as_str)
+    }
+
+    fn canonical_name<'a>(&'a self, api_name: &'a str) -> &'a str {
+        self.api_name_to_tool_name
+            .get(api_name)
+            .map_or(api_name, String::as_str)
+    }
+}
+
+fn chat_tools(request: &AgentInferenceRequest) -> (Vec<Value>, ChatToolNameMap) {
+    let mut tools = Vec::new();
+    let mut used_tool_names = HashSet::new();
+    let mut tool_name_map = ChatToolNameMap::default();
+    for tool in &request.tools {
+        let api_name = chat_tool_name(&tool.name, &mut used_tool_names);
+        tool_name_map.register(&tool.name, &api_name);
+        tools.push(json!({
+            "type": "function",
+            "function": {
+                "name": api_name,
+                "description": tool.description,
+                "parameters": tool.parameters,
+            },
+        }));
+    }
+    (tools, tool_name_map)
+}
+
+fn chat_tool_name(tool_name: &str, used_tool_names: &mut HashSet<String>) -> String {
+    let base_name = tool_name
+        .chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || c == '_' || c == '-' {
+                c
+            } else {
+                '_'
+            }
+        })
+        .collect::<String>();
+    if used_tool_names.insert(base_name.clone()) {
+        return base_name;
+    }
+    for suffix in 2u32.. {
+        let candidate = format!("{base_name}_{suffix}");
+        if used_tool_names.insert(candidate.clone()) {
+            return candidate;
+        }
+    }
+    unreachable!()
+}
+
+fn chat_tool_choice(choice: &ToolChoice, tool_name_map: &ChatToolNameMap) -> Value {
+    match choice {
+        ToolChoice::Auto => json!("auto"),
+        ToolChoice::Any => json!("required"),
+        ToolChoice::None => json!("none"),
+        ToolChoice::Specific(name) => json!({
+            "type": "function",
+            "function": { "name": tool_name_map.api_name(name) },
+        }),
+    }
+}
+
+fn chat_messages(request: &AgentInferenceRequest, tool_name_map: &ChatToolNameMap) -> Vec<Value> {
+    let mut messages = Vec::new();
+    if let Some(system) = &request.instructions.system {
+        messages.push(json!({ "role": "system", "content": system }));
+    }
+    if let Some(developer) = &request.instructions.developer {
+        messages.push(json!({ "role": "system", "content": developer }));
+    }
+    for item in &request.conversation {
+        match item {
+            ConversationItem::UserMessage(message) => {
+                messages.push(json!({ "role": "user", "content": message.text }));
+            }
+            ConversationItem::AssistantMessage(message) => {
+                if !message.text.is_empty() {
+                    messages.push(json!({ "role": "assistant", "content": message.text }));
+                }
+            }
+            ConversationItem::ToolCall(call) => {
+                messages.push(json!({
+                    "role": "assistant",
+                    "content": null,
+                    "tool_calls": [{
+                        "id": call.id,
+                        "type": "function",
+                        "function": {
+                            "name": tool_name_map.api_name(&call.name),
+                            "arguments": call.arguments,
+                        },
+                    }],
+                }));
+            }
+            ConversationItem::ToolResult(result) => {
+                messages.push(json!({
+                    "role": "tool",
+                    "tool_call_id": result.id,
+                    "content": result.result,
+                }));
+            }
+            ConversationItem::ContextCompaction(compaction) => {
+                messages.push(json!({ "role": "system", "content": compaction.summary }));
+            }
+            ConversationItem::ReasoningSummary(summary) => {
+                messages.push(json!({ "role": "assistant", "content": summary.text }));
+            }
+            ConversationItem::FileChange(_)
+            | ConversationItem::Error(_)
+            | ConversationItem::ProviderMetadata(_) => {}
+        }
+    }
+    messages
+}
+
+#[derive(Debug)]
+struct ChatStreamState {
+    buffer: String,
+    tool_name_map: ChatToolNameMap,
+    tool_calls: BTreeMap<u64, PartialChatToolCall>,
+    stop_reason: Option<String>,
+    provider_response_id: Option<String>,
+    usage: Option<TokenUsage>,
+    metadata_chunks: Vec<Value>,
+}
+
+#[derive(Debug, Default)]
+struct PartialChatToolCall {
+    id: Option<String>,
+    name: Option<String>,
+    arguments: String,
+}
+
+impl ChatStreamState {
+    fn new(tool_name_map: ChatToolNameMap) -> Self {
+        Self {
+            buffer: String::new(),
+            tool_name_map,
+            tool_calls: BTreeMap::new(),
+            stop_reason: None,
+            provider_response_id: None,
+            usage: None,
+            metadata_chunks: Vec::new(),
+        }
+    }
+
+    fn push_chunk(&mut self, chunk: &[u8]) -> anyhow::Result<Vec<InferenceEvent>> {
+        self.buffer.push_str(&String::from_utf8_lossy(chunk));
+        let mut events = Vec::new();
+        while let Some((pos, separator_len)) = sse_frame_boundary(&self.buffer) {
+            let frame = self.buffer[..pos].to_string();
+            self.buffer.drain(..pos + separator_len);
+            events.extend(self.push_sse_frame(&frame)?);
+        }
+        Ok(events)
+    }
+
+    fn push_sse_frame(&mut self, frame: &str) -> anyhow::Result<Vec<InferenceEvent>> {
+        let mut events = Vec::new();
+        let data = frame
+            .lines()
+            .filter_map(|line| line.strip_prefix("data:").map(str::trim_start))
+            .collect::<Vec<_>>()
+            .join("\n");
+        if data.is_empty() || data == "[DONE]" {
+            return Ok(events);
+        }
+
+        let value: Value = serde_json::from_str(&data)?;
+        if let Some(id) = value.get("id").and_then(Value::as_str) {
+            self.provider_response_id = Some(id.to_string());
+        }
+        if let Some(usage) = extract_chat_usage(&value) {
+            self.usage = Some(usage);
+        }
+        self.metadata_chunks.push(value.clone());
+
+        let Some(choice) = value
+            .get("choices")
+            .and_then(Value::as_array)
+            .and_then(|choices| choices.first())
+        else {
+            return Ok(events);
+        };
+        if let Some(reason) = choice.get("finish_reason").and_then(Value::as_str) {
+            self.stop_reason = Some(reason.to_string());
+        }
+        let Some(delta) = choice.get("delta") else {
+            return Ok(events);
+        };
+        if let Some(content) = delta.get("content").and_then(Value::as_str)
+            && !content.is_empty()
+        {
+            events.push(InferenceEvent::MessageDelta(MessageDelta {
+                text: content.to_string(),
+                phase: None,
+            }));
+        }
+        for tool_call in delta
+            .get("tool_calls")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+        {
+            let index = tool_call.get("index").and_then(Value::as_u64).unwrap_or(0);
+            let partial = self.tool_calls.entry(index).or_default();
+            if let Some(id) = tool_call.get("id").and_then(Value::as_str) {
+                partial.id = Some(id.to_string());
+            }
+            if let Some(function) = tool_call.get("function") {
+                if let Some(name) = function.get("name").and_then(Value::as_str) {
+                    partial.name = Some(name.to_string());
+                }
+                if let Some(arguments) = function.get("arguments").and_then(Value::as_str) {
+                    partial.arguments.push_str(arguments);
+                }
+            }
+        }
+        Ok(events)
+    }
+
+    fn finish(self) -> Vec<InferenceEvent> {
+        let mut events = Vec::new();
+        for (_, call) in self.tool_calls {
+            let Some(id) = call.id else {
+                continue;
+            };
+            let Some(name) = call.name else {
+                continue;
+            };
+            events.push(InferenceEvent::ToolCallCompleted(ToolCallCompleted {
+                id,
+                name: self.tool_name_map.canonical_name(&name).to_string(),
+                arguments: call.arguments,
+            }));
+        }
+        if let Some(usage) = self.usage {
+            events.push(InferenceEvent::Usage(usage));
+        }
+        events.push(InferenceEvent::ProviderMetadata(json!({
+            "chunks": self.metadata_chunks,
+        })));
+        events.push(InferenceEvent::Completed(CompletionMetadata {
+            stop_reason: self.stop_reason,
+            provider_response_id: self.provider_response_id,
+        }));
+        events
+    }
+}
+
+fn extract_chat_usage(value: &Value) -> Option<TokenUsage> {
+    let usage = value.get("usage")?;
+    Some(TokenUsage {
+        prompt_tokens: number_to_u32(usage.get("prompt_tokens")).unwrap_or_default(),
+        completion_tokens: number_to_u32(usage.get("completion_tokens")).unwrap_or_default(),
+        total_tokens: number_to_u32(usage.get("total_tokens")).unwrap_or_default(),
+    })
+}
+
+fn number_to_u32(value: Option<&Value>) -> Option<u32> {
+    value?.as_u64().and_then(|n| u32::try_from(n).ok())
+}
+
+fn sse_frame_boundary(buffer: &str) -> Option<(usize, usize)> {
+    match (buffer.find("\n\n"), buffer.find("\r\n\r\n")) {
+        (Some(lf), Some(crlf)) if lf < crlf => Some((lf, 2)),
+        (Some(_), Some(crlf)) => Some((crlf, 4)),
+        (Some(lf), None) => Some((lf, 2)),
+        (None, Some(crlf)) => Some((crlf, 4)),
+        (None, None) => None,
+    }
 }
 
 fn config_api_key(provider_id: &str) -> Option<String> {
@@ -407,7 +772,15 @@ fn now_unix_secs() -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use futures::StreamExt;
+    use roder_api::conversation::{ConversationItem, UserMessage};
     use roder_api::inference::InferenceEngine;
+    use roder_api::inference::{
+        InstructionBundle, ModelSelection, OutputConfig, ReasoningConfig, RuntimeHints,
+    };
+    use roder_api::tools::{ToolChoice, ToolSpec};
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    use tokio::net::TcpListener;
 
     #[test]
     fn opencode_metadata_uses_single_provider_id() {
@@ -472,5 +845,122 @@ mod tests {
             std::env::remove_var("RODER_OPENCODE_MODELS_CACHE_TTL_SECONDS");
         }
         let _ = fs::remove_file(cache_file);
+    }
+
+    #[tokio::test]
+    async fn stream_turn_uses_chat_completions_for_opencode_models() {
+        let server = spawn_chat_server(
+            "/chat/completions",
+            concat!(
+                "data: {\"id\":\"chat-1\",\"choices\":[{\"delta\":{\"content\":\"Hel\"},\"finish_reason\":null}]}\r\n\r\n",
+                "data: {\"id\":\"chat-1\",\"choices\":[{\"delta\":{\"content\":\"lo\"},\"finish_reason\":null}]}\r\n\r\n",
+                "data: {\"id\":\"chat-1\",\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"call-1\",\"type\":\"function\",\"function\":{\"name\":\"exec_command\",\"arguments\":\"{\\\"cmd\\\":\"}}]},\"finish_reason\":null}]}\r\n\r\n",
+                "data: {\"id\":\"chat-1\",\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"function\":{\"arguments\":\"\\\"date\\\"}\"}}]},\"finish_reason\":\"tool_calls\"}]}\r\n\r\n",
+                "data: {\"choices\":[],\"usage\":{\"prompt_tokens\":3,\"completion_tokens\":4,\"total_tokens\":7}}\r\n\r\n",
+                "data: [DONE]\r\n\r\n",
+            ),
+        )
+        .await;
+        let engine = OpenCodeInferenceEngine::new(
+            OpenCodeConfig {
+                api_key: Some("secret".to_string()),
+                base_url: Some(server.base_url.clone()),
+                project_id: None,
+            },
+            OpenCodeProviderSpec::zen(),
+        );
+        let request = AgentInferenceRequest {
+            model: ModelSelection {
+                provider: PROVIDER_OPENCODE.to_string(),
+                model: "minimax-m2.5-free".to_string(),
+            },
+            instructions: InstructionBundle::default(),
+            conversation: vec![ConversationItem::UserMessage(UserMessage::text("hi"))],
+            tools: vec![ToolSpec {
+                name: "exec_command".to_string(),
+                description: "Run a command".to_string(),
+                parameters: json!({
+                    "type": "object",
+                    "properties": { "cmd": { "type": "string" } },
+                    "required": ["cmd"]
+                }),
+            }],
+            tool_choice: ToolChoice::Auto,
+            reasoning: ReasoningConfig::default(),
+            output: OutputConfig::default(),
+            runtime: RuntimeHints {
+                parallel_tool_calls: Some(false),
+                ..RuntimeHints::default()
+            },
+            metadata: json!({}),
+        };
+
+        let mut stream = engine
+            .stream_turn(
+                InferenceTurnContext {
+                    thread_id: "thread-1",
+                    turn_id: "turn-1",
+                },
+                request,
+            )
+            .await
+            .unwrap();
+        let mut events = Vec::new();
+        while let Some(event) = stream.next().await {
+            events.push(event.unwrap());
+        }
+        let request_body = server.request_body.await.unwrap();
+
+        assert_eq!(request_body["model"], "minimax-m2.5-free");
+        assert_eq!(request_body["stream"], true);
+        assert_eq!(request_body["stream_options"]["include_usage"], true);
+        assert_eq!(request_body["parallel_tool_calls"], false);
+        assert!(request_body.get("tools").is_some());
+        assert!(matches!(
+            events.first(),
+            Some(InferenceEvent::MessageDelta(delta)) if delta.text == "Hel"
+        ));
+        assert!(matches!(
+            events.iter().find(|event| matches!(event, InferenceEvent::ToolCallCompleted(_))),
+            Some(InferenceEvent::ToolCallCompleted(call))
+                if call.name == "exec_command" && call.arguments == "{\"cmd\":\"date\"}"
+        ));
+    }
+
+    struct CapturedChatServer {
+        base_url: String,
+        request_body: tokio::sync::oneshot::Receiver<Value>,
+    }
+
+    async fn spawn_chat_server(
+        expected_path: &'static str,
+        response_body: &'static str,
+    ) -> CapturedChatServer {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        tokio::spawn(async move {
+            let (mut stream, _) = listener.accept().await.unwrap();
+            let mut buf = vec![0_u8; 16 * 1024];
+            let n = stream.read(&mut buf).await.unwrap();
+            let request = String::from_utf8_lossy(&buf[..n]);
+            let path = request
+                .lines()
+                .next()
+                .and_then(|line| line.split_whitespace().nth(1))
+                .unwrap_or("");
+            assert_eq!(path, expected_path);
+            let body = request.split("\r\n\r\n").nth(1).unwrap_or_default();
+            tx.send(serde_json::from_str(body).unwrap()).unwrap();
+            let response = format!(
+                "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\nconnection: close\r\ncontent-length: {}\r\n\r\n{response_body}",
+                response_body.len()
+            );
+            stream.write_all(response.as_bytes()).await.unwrap();
+        });
+        CapturedChatServer {
+            base_url: format!("http://{addr}"),
+            request_body: rx,
+        }
     }
 }

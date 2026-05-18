@@ -2651,12 +2651,13 @@ name = "roder-ext-opencode"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "async-stream",
  "async-trait",
  "dirs",
+ "futures",
  "reqwest",
  "roder-api",
  "roder-config",
- "roder-ext-openai-responses",
  "semver",
  "serde",
  "serde_json",
