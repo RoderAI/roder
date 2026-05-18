@@ -20,6 +20,7 @@ roder-ext-notify-desktop.workspace = true
 roder-ext-notify-terminal.workspace = true
 roder-ext-openai-embeddings.workspace = true
 roder-ext-openai-responses.workspace = true
+roder-ext-opencode.workspace = true
 roder-ext-parallel-search.workspace = true
 roder-ext-perplexity-search.workspace = true
 roder-ext-plan-mode.workspace = true

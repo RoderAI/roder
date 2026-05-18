@@ -677,7 +677,11 @@ async fn build_runtime_from_config(options: CliOptions) -> anyhow::Result<(Arc<R
         xai_api_key: keys.xai,
         xai_base_url: keys.xai_base_url,
         opencode_api_key: keys.opencode,
+        opencode_base_url: keys.opencode_base_url,
+        opencode_project_id: keys.opencode_project_id,
         opencode_go_api_key: keys.opencode_go,
+        opencode_go_base_url: keys.opencode_go_base_url,
+        opencode_go_project_id: keys.opencode_go_project_id,
         session_dir: None,
         workspace: workspace.clone(),
         web_search: web_search.external,
@@ -1208,7 +1212,11 @@ struct ProviderKeys {
     xai: Option<String>,
     xai_base_url: Option<String>,
     opencode: Option<String>,
+    opencode_base_url: Option<String>,
+    opencode_project_id: Option<String>,
     opencode_go: Option<String>,
+    opencode_go_base_url: Option<String>,
+    opencode_go_project_id: Option<String>,
 }
 
 fn provider_keys(cfg: &roder_config::Config) -> ProviderKeys {
@@ -1243,6 +1251,7 @@ fn provider_keys(cfg: &roder_config::Config) -> ProviderKeys {
         opencode: std::env::var("OPENCODE_API_KEY")
             .ok()
             .or_else(|| std::env::var("OPENCODE_ZEN_API_KEY").ok())
+            .or_else(|| std::env::var("RODER_OPENCODE_API_KEY").ok())
             .or_else(|| {
                 cfg.providers
                     .get("opencode")
@@ -1250,14 +1259,58 @@ fn provider_keys(cfg: &roder_config::Config) -> ProviderKeys {
             })
             .or_else(|| {
                 cfg.providers
-                    .get("opencode-zen")
-                    .and_then(|p| p.api_key.clone())
+                    .get("opencode")
+                    .and_then(|p| p.api_key_env.as_deref())
+                    .and_then(env_nonempty)
             }),
-        opencode_go: std::env::var("OPENCODE_GO_API_KEY").ok().or_else(|| {
-            cfg.providers
-                .get("opencode-go")
-                .and_then(|p| p.api_key.clone())
-        }),
+        opencode_base_url: cfg
+            .providers
+            .get("opencode")
+            .and_then(|p| p.base_url.clone())
+            .or_else(|| std::env::var("RODER_OPENCODE_BASE_URL").ok())
+            .or_else(|| std::env::var("OPENCODE_BASE_URL").ok())
+            .or_else(|| std::env::var("OPENCODE_ZEN_BASE_URL").ok()),
+        opencode_project_id: cfg
+            .providers
+            .get("opencode")
+            .and_then(|p| p.project_id.clone())
+            .or_else(|| {
+                cfg.providers
+                    .get("opencode")
+                    .and_then(|p| p.project_id_env.as_deref())
+                    .and_then(env_nonempty)
+            }),
+        opencode_go: std::env::var("OPENCODE_GO_API_KEY")
+            .ok()
+            .or_else(|| std::env::var("RODER_OPENCODE_GO_API_KEY").ok())
+            .or_else(|| std::env::var("OPENCODE_API_KEY").ok())
+            .or_else(|| {
+                cfg.providers
+                    .get("opencode-go")
+                    .and_then(|p| p.api_key.clone())
+            })
+            .or_else(|| {
+                cfg.providers
+                    .get("opencode-go")
+                    .and_then(|p| p.api_key_env.as_deref())
+                    .and_then(env_nonempty)
+            }),
+        opencode_go_base_url: cfg
+            .providers
+            .get("opencode-go")
+            .and_then(|p| p.base_url.clone())
+            .or_else(|| std::env::var("RODER_OPENCODE_GO_BASE_URL").ok())
+            .or_else(|| std::env::var("OPENCODE_GO_BASE_URL").ok()),
+        opencode_go_project_id: cfg
+            .providers
+            .get("opencode-go")
+            .and_then(|p| p.project_id.clone())
+            .or_else(|| {
+                cfg.providers
+                    .get("opencode-go")
+                    .and_then(|p| p.project_id_env.as_deref())
+                    .and_then(env_nonempty)
+            }),
     }
 }
 

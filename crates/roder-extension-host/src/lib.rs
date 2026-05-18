@@ -4,10 +4,7 @@ use std::sync::Arc;
 use anyhow::Context;
 use futures::stream;
 use roder_api::capabilities::CapabilityRequest;
-use roder_api::catalog::{
-    PROVIDER_CODEX, PROVIDER_MOCK, PROVIDER_OPENCODE, PROVIDER_OPENCODE_GO, models_for_codex,
-    models_for_provider,
-};
+use roder_api::catalog::{PROVIDER_CODEX, PROVIDER_MOCK, models_for_codex, models_for_provider};
 use roder_api::extension::{
     ExtensionManifest, ExtensionRegistry, ExtensionRegistryBuilder, ProvidedService, RoderExtension,
 };
@@ -22,6 +19,7 @@ use roder_ext_jsonl_session::JsonlSessionExtension;
 use roder_ext_memory::MemoryExtension;
 use roder_ext_openai_embeddings::OpenAiEmbeddingsExtension;
 use roder_ext_openai_responses::{OpenAiResponsesEngine, OpenAiResponsesExtension};
+use roder_ext_opencode::{OpenCodeConfig, OpenCodeExtension};
 use roder_ext_runner_blaxel::BlaxelRunnerExtension;
 use roder_ext_runner_cloudflare::CloudflareRunnerExtension;
 use roder_ext_runner_daytona::DaytonaRunnerExtension;
@@ -33,7 +31,6 @@ use roder_ext_runner_unix_local::UnixLocalRunnerExtension;
 use roder_ext_runner_vercel::VercelRunnerExtension;
 use roder_ext_xai::XaiExtension;
 use semver::Version;
-use serde_json::json;
 
 mod subagents;
 mod web_search;
@@ -50,7 +47,11 @@ pub struct DefaultRegistryConfig {
     pub xai_api_key: Option<String>,
     pub xai_base_url: Option<String>,
     pub opencode_api_key: Option<String>,
+    pub opencode_base_url: Option<String>,
+    pub opencode_project_id: Option<String>,
     pub opencode_go_api_key: Option<String>,
+    pub opencode_go_base_url: Option<String>,
+    pub opencode_go_project_id: Option<String>,
     pub session_dir: Option<PathBuf>,
     pub workspace: Option<PathBuf>,
     pub web_search: Option<DefaultWebSearchConfig>,
@@ -69,7 +70,11 @@ impl Default for DefaultRegistryConfig {
             xai_api_key: None,
             xai_base_url: None,
             opencode_api_key: None,
+            opencode_base_url: None,
+            opencode_project_id: None,
             opencode_go_api_key: None,
+            opencode_go_base_url: None,
+            opencode_go_project_id: None,
             session_dir: None,
             workspace: None,
             web_search: None,
@@ -121,8 +126,18 @@ pub fn build_default_registry(config: DefaultRegistryConfig) -> anyhow::Result<E
         builder.install(GeminiExtension::new(gemini_key))?;
     }
     builder.install(XaiExtension::new(config.xai_api_key, config.xai_base_url))?;
-    builder.install(OpenCodeProviderExtension::zen(config.opencode_api_key))?;
-    builder.install(OpenCodeProviderExtension::go(config.opencode_go_api_key))?;
+    builder.install(OpenCodeExtension::new_with_go(
+        OpenCodeConfig {
+            api_key: config.opencode_api_key,
+            base_url: config.opencode_base_url,
+            project_id: config.opencode_project_id,
+        },
+        OpenCodeConfig {
+            api_key: config.opencode_go_api_key,
+            base_url: config.opencode_go_base_url,
+            project_id: config.opencode_go_project_id,
+        },
+    ))?;
 
     builder.install(roder_ext_plan_mode::PlanModeExtension::new(
         config.policy_mode,
@@ -402,248 +417,6 @@ impl InferenceEngine for CodexOAuthInferenceEngine {
     }
 }
 
-struct OpenCodeProviderExtension {
-    provider_id: &'static str,
-    name: &'static str,
-    base_url: &'static str,
-    configured_api_key: Option<String>,
-}
-
-impl OpenCodeProviderExtension {
-    fn zen(configured_api_key: Option<String>) -> Self {
-        Self {
-            provider_id: PROVIDER_OPENCODE,
-            name: "OpenCode Zen",
-            base_url: "https://opencode.ai/zen/v1",
-            configured_api_key,
-        }
-    }
-
-    fn go(configured_api_key: Option<String>) -> Self {
-        Self {
-            provider_id: PROVIDER_OPENCODE_GO,
-            name: "OpenCode Go",
-            base_url: "https://opencode.ai/zen/go/v1",
-            configured_api_key,
-        }
-    }
-}
-
-impl RoderExtension for OpenCodeProviderExtension {
-    fn manifest(&self) -> ExtensionManifest {
-        ExtensionManifest {
-            id: format!("roder-ext-{}-provider", self.provider_id),
-            name: format!("{} Provider", self.name),
-            version: Version::new(0, 1, 0),
-            api_version: "0.1.0".to_string(),
-            description: Some(format!("{} API key provider", self.name)),
-            provides: vec![ProvidedService::InferenceEngine(
-                self.provider_id.to_string(),
-            )],
-            required_capabilities: vec![CapabilityRequest::new("network.opencode.ai")],
-        }
-    }
-
-    fn install(&self, registry: &mut ExtensionRegistryBuilder) -> anyhow::Result<()> {
-        registry.inference_engine(Arc::new(OpenCodeInferenceEngine {
-            provider_id: self.provider_id.to_string(),
-            name: self.name.to_string(),
-            base_url: self.base_url.to_string(),
-            configured_api_key: self.configured_api_key.clone(),
-        }));
-        Ok(())
-    }
-}
-
-struct OpenCodeInferenceEngine {
-    provider_id: String,
-    name: String,
-    base_url: String,
-    configured_api_key: Option<String>,
-}
-
-impl OpenCodeInferenceEngine {
-    fn api_key(&self) -> Option<String> {
-        self.configured_api_key
-            .clone()
-            .filter(|key| !key.trim().is_empty())
-            .or_else(|| opencode_env_api_key(&self.provider_id))
-            .or_else(|| opencode_config_api_key(&self.provider_id))
-    }
-
-    fn uses_responses_api(&self, model: &str) -> bool {
-        self.provider_id == PROVIDER_OPENCODE && model.starts_with("gpt-")
-    }
-
-    async fn stream_chat_completion(
-        &self,
-        api_key: String,
-        request: AgentInferenceRequest,
-    ) -> anyhow::Result<InferenceEventStream> {
-        let mut messages = Vec::new();
-        if let Some(system) = request.instructions.system.as_ref() {
-            messages.push(json!({ "role": "system", "content": system }));
-        }
-        if let Some(developer) = request.instructions.developer.as_ref() {
-            messages.push(json!({ "role": "developer", "content": developer }));
-        }
-        for item in &request.conversation {
-            match item {
-                roder_api::conversation::ConversationItem::UserMessage(message) => {
-                    messages.push(json!({ "role": "user", "content": message.text.clone() }));
-                }
-                roder_api::conversation::ConversationItem::AssistantMessage(message) => {
-                    messages.push(json!({ "role": "assistant", "content": message.text.clone() }));
-                }
-                roder_api::conversation::ConversationItem::ToolResult(result) => {
-                    messages.push(json!({ "role": "tool", "content": result.result.clone() }));
-                }
-                _ => {}
-            }
-        }
-
-        let mut body = json!({
-            "model": request.model.model.clone(),
-            "messages": messages,
-            "stream": false,
-        });
-        if let Some(max_tokens) = request.output.max_tokens {
-            body["max_tokens"] = json!(max_tokens);
-        }
-        if let Some(temperature) = request.output.temperature {
-            body["temperature"] = json!(temperature);
-        }
-        if let Some(top_p) = request.output.top_p {
-            body["top_p"] = json!(top_p);
-        }
-        if let Some(response_format) = request.output.response_format.as_ref() {
-            body["response_format"] = response_format.clone();
-        }
-
-        let response = reqwest::Client::new()
-            .post(format!("{}/chat/completions", self.base_url))
-            .bearer_auth(api_key)
-            .json(&body)
-            .send()
-            .await?;
-        if !response.status().is_success() {
-            let status = response.status();
-            let text = response.text().await.unwrap_or_default();
-            anyhow::bail!("{} error {}: {}", self.name, status, text);
-        }
-        let value: serde_json::Value = response.json().await?;
-        let text = value
-            .pointer("/choices/0/message/content")
-            .and_then(|value| value.as_str())
-            .unwrap_or_default()
-            .to_string();
-        Ok(Box::pin(stream::iter(vec![
-            Ok(InferenceEvent::MessageDelta(MessageDelta {
-                text,
-                phase: None,
-            })),
-            Ok(InferenceEvent::ProviderMetadata(value.clone())),
-            Ok(InferenceEvent::Completed(CompletionMetadata {
-                stop_reason: value
-                    .pointer("/choices/0/finish_reason")
-                    .and_then(|value| value.as_str())
-                    .map(str::to_string),
-                provider_response_id: value.get("id").and_then(|v| v.as_str()).map(str::to_string),
-            })),
-        ])))
-    }
-}
-
-#[async_trait::async_trait]
-impl InferenceEngine for OpenCodeInferenceEngine {
-    fn id(&self) -> roder_api::extension::InferenceEngineId {
-        self.provider_id.clone()
-    }
-
-    fn capabilities(&self) -> InferenceCapabilities {
-        InferenceCapabilities {
-            streaming: true,
-            tool_calls: true,
-            parallel_tool_calls: true,
-            reasoning_summaries: true,
-            structured_output: true,
-            image_input: false,
-            prompt_cache: true,
-            provider_metadata: true,
-        }
-    }
-
-    fn metadata(&self) -> InferenceProviderMetadata {
-        InferenceProviderMetadata {
-            name: self.name.clone(),
-            description: Some(format!("{} API key provider", self.name)),
-            auth_type: ProviderAuthType::ApiKey,
-            auth_label: Some("API key".to_string()),
-            auth_configured: Some(self.api_key().is_some()),
-            recommended: self.provider_id == PROVIDER_OPENCODE,
-            sort_order: if self.provider_id == PROVIDER_OPENCODE {
-                15
-            } else {
-                16
-            },
-        }
-    }
-
-    async fn list_models(
-        &self,
-        _ctx: InferenceProviderContext<'_>,
-    ) -> anyhow::Result<Vec<ModelDescriptor>> {
-        Ok(models_for_provider(&self.provider_id, false))
-    }
-
-    async fn stream_turn(
-        &self,
-        ctx: InferenceTurnContext<'_>,
-        request: AgentInferenceRequest,
-    ) -> anyhow::Result<InferenceEventStream> {
-        let Some(api_key) = self.api_key() else {
-            anyhow::bail!(
-                "{} API key is missing; configure it from the provider menu",
-                self.name
-            )
-        };
-        if self.uses_responses_api(&request.model.model) {
-            return OpenAiResponsesEngine::new_with_config(
-                api_key,
-                self.provider_id.clone(),
-                self.base_url.clone(),
-                Vec::new(),
-            )
-            .stream_turn(ctx, request)
-            .await;
-        }
-        self.stream_chat_completion(api_key, request).await
-    }
-}
-
-fn opencode_env_api_key(provider_id: &str) -> Option<String> {
-    let keys: &[&str] = match provider_id {
-        PROVIDER_OPENCODE => &["OPENCODE_API_KEY", "OPENCODE_ZEN_API_KEY"],
-        PROVIDER_OPENCODE_GO => &["OPENCODE_GO_API_KEY"],
-        _ => &[],
-    };
-    keys.iter()
-        .find_map(|key| std::env::var(key).ok())
-        .filter(|key| !key.trim().is_empty())
-}
-
-fn opencode_config_api_key(provider_id: &str) -> Option<String> {
-    roder_config::load_config()
-        .ok()
-        .and_then(|config| {
-            config
-                .providers
-                .get(provider_id)
-                .and_then(|p| p.api_key.clone())
-        })
-        .filter(|key| !key.trim().is_empty())
-}
-
 struct FakeInferenceEngine;
 
 #[async_trait::async_trait]
@@ -794,7 +567,11 @@ mod tests {
             xai_api_key: Some("xai".to_string()),
             xai_base_url: None,
             opencode_api_key: Some("opencode".to_string()),
+            opencode_base_url: None,
+            opencode_project_id: None,
             opencode_go_api_key: Some("opencode-go".to_string()),
+            opencode_go_base_url: None,
+            opencode_go_project_id: None,
             session_dir: None,
             workspace: None,
             web_search: None,
