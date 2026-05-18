@@ -17,6 +17,9 @@ use roder_api::session::{SessionMetadata, SessionStore, SessionStoreFactory, Thr
 use roder_api::subagents::{SubagentDefinition, SubagentPermissionMode};
 use roder_api::tasks::TaskState;
 use roder_app_server::{AppServer, LocalAppClient};
+use roder_app_server::remote::{
+    RemoteServerOptions, RemoteToken, listen_remote_websocket,
+};
 use roder_core::{
     PendingPlanExit, Runtime, RuntimeConfig, fake_provider::FakeInferenceEngine,
     media_artifacts::MediaArtifactStore,
@@ -63,6 +66,7 @@ use std::sync::Arc;
 use std::time::Duration;
 use time::OffsetDateTime;
 use tokio::sync::Mutex;
+use tokio_tungstenite::tungstenite::Message;
 
 struct TaskCallingEngine {
     hang_child: bool,
