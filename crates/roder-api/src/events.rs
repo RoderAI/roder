@@ -703,6 +703,36 @@ pub struct MemoryObservationRecorded {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RemoteServerStarted {
+    pub listen_addr: String,
+    pub connect_urls: Vec<String>,
+    pub token_preview: String,
+    #[serde(with = "time::serde::rfc3339")]
+    pub timestamp: OffsetDateTime,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RemoteAuthFailed {
+    pub remote_addr: Option<String>,
+    #[serde(with = "time::serde::rfc3339")]
+    pub timestamp: OffsetDateTime,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RemoteClientConnected {
+    pub remote_addr: Option<String>,
+    #[serde(with = "time::serde::rfc3339")]
+    pub timestamp: OffsetDateTime,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RemoteClientDisconnected {
+    pub remote_addr: Option<String>,
+    #[serde(with = "time::serde::rfc3339")]
+    pub timestamp: OffsetDateTime,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum RoderEvent {
     RuntimeStarted(RuntimeStarted),
     ExtensionRegistered(ExtensionRegistered),
@@ -763,6 +793,10 @@ pub enum RoderEvent {
     MemoryReembedQueued(MemoryReembedQueued),
     MemoryProviderChanged(MemoryProviderChanged),
     MemoryObservationRecorded(MemoryObservationRecorded),
+    RemoteServerStarted(RemoteServerStarted),
+    RemoteAuthFailed(RemoteAuthFailed),
+    RemoteClientConnected(RemoteClientConnected),
+    RemoteClientDisconnected(RemoteClientDisconnected),
     TaskStarted(TaskStarted),
     TaskOutput(TaskOutput),
     TaskCompleted(TaskCompleted),
@@ -848,6 +882,10 @@ impl RoderEvent {
             RoderEvent::MemoryReembedQueued(_) => "memory/reembedQueued",
             RoderEvent::MemoryProviderChanged(_) => "memory/providerChanged",
             RoderEvent::MemoryObservationRecorded(_) => "memory/observationRecorded",
+            RoderEvent::RemoteServerStarted(_) => "remote/serverStarted",
+            RoderEvent::RemoteAuthFailed(_) => "remote/authFailed",
+            RoderEvent::RemoteClientConnected(_) => "remote/clientConnected",
+            RoderEvent::RemoteClientDisconnected(_) => "remote/clientDisconnected",
             RoderEvent::TaskStarted(_) => "task.started",
             RoderEvent::TaskOutput(_) => "task.output",
             RoderEvent::TaskCompleted(_) => "task.completed",
@@ -922,6 +960,10 @@ impl RoderEvent {
             | RoderEvent::TaskCompleted(_)
             | RoderEvent::TaskFailed(_)
             | RoderEvent::TaskCancelled(_) => EventSource::Extension,
+            RoderEvent::RemoteServerStarted(_)
+            | RoderEvent::RemoteAuthFailed(_)
+            | RoderEvent::RemoteClientConnected(_)
+            | RoderEvent::RemoteClientDisconnected(_) => EventSource::AppServer,
             RoderEvent::FileChangePreviewReady(_) => EventSource::Tool,
             RoderEvent::UserInputRequested(_) | RoderEvent::UserInputResolved(_) => {
                 EventSource::Core
