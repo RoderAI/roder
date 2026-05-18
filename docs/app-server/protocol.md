@@ -1,24 +1,23 @@
 # Roder App-Server Protocol
 
 Roder's desktop-facing app-server contract uses desktop thread, turn, item,
-model, filesystem, and command method names. Older Roder-only method names may
-remain as internal compatibility aliases for the TUI while desktop clients move
-to the canonical surface below.
+model, filesystem, and command method names. This is the canonical app-server
+surface for desktop, TUI, CLI, and sibling clients.
 
 ## Required Desktop Methods
 
-| Method | Desktop caller | Roder backing behavior | Compatibility note |
+| Method | Desktop caller | Roder backing behavior | Notes |
 | --- | --- | --- | --- |
-| `initialize` | startup handshake | Return app-server status, capabilities, cwd, active model, and provider metadata. | Replaces `system/initialize` as the desktop startup entrypoint. |
-| `thread/start` | new chat | Create a Roder thread/session with `model`, optional `modelProvider`, `cwd`, and `ephemeral`. | Replaces `sessions/create` for desktop. |
-| `thread/list` | sidebar bootstrap/refresh | List persisted Roder sessions as stable desktop `Thread` objects. | Replaces `sessions/list` for desktop. |
-| `thread/read` | thread switch | Read a persisted thread by `threadId`; include turns/items when `includeTurns` is true. | Replaces `sessions/load` for desktop. |
-| `turn/start` | send prompt | Start a Roder turn on `threadId`, accepting desktop `input` text blocks and temporary `prompt` fallback. | Replaces `turns/start` for desktop. |
-| `turn/steer` | steer active turn | Send additional user input to the active turn, enforcing `expectedTurnId` when provided. | Replaces `turns/steer` for desktop. |
-| `turn/interrupt` | stop button | Interrupt the active turn for a thread; `turnId` is optional when there is a single active turn. | Replaces `turns/interrupt` for desktop. |
-| `model/list` | model picker | Return visible model descriptors with `id`, `name`, `modelProvider`, reasoning efforts, and default flags. | Replaces `providers/list` for desktop model data. |
-| `fs/readFile` | file preview | Read an absolute host path and return base64 bytes as `dataBase64`. | Implemented as a read-only filesystem compatibility method. |
-| `fs/readDirectory` | file browser | List direct children of an absolute host directory with `fileName`, `isDirectory`, and `isFile`. | Implemented as a read-only filesystem compatibility method. |
+| `initialize` | startup handshake | Return app-server status, capabilities, cwd, active model, and provider metadata. | Startup entrypoint. |
+| `thread/start` | new chat | Create a Roder thread/session with `model`, optional `modelProvider`, `cwd`, and `ephemeral`. | Returns a desktop `Thread`. |
+| `thread/list` | sidebar bootstrap/refresh | List persisted Roder sessions as stable desktop `Thread` objects. | Pagination cursors are reserved. |
+| `thread/read` | thread switch | Read a persisted thread by `threadId`; include turns/items when `includeTurns` is true. | Returns `thread: null` when not found. |
+| `turn/start` | send prompt | Start a Roder turn on `threadId`, accepting desktop `input` text blocks and temporary `prompt` fallback. | Emits turn and item notifications. |
+| `turn/steer` | steer active turn | Send additional user input to the active turn, enforcing `expectedTurnId` when provided. | Requires an active turn. |
+| `turn/interrupt` | stop button | Interrupt the active turn for a thread; `turnId` is optional when there is a single active turn. | Uses the runtime interrupt path. |
+| `model/list` | model picker | Return visible model descriptors with `id`, `name`, `modelProvider`, reasoning efforts, and default flags. | Desktop model-picker data. |
+| `fs/readFile` | file preview | Read an absolute host path and return base64 bytes as `dataBase64`. | Read-only filesystem method. |
+| `fs/readDirectory` | file browser | List direct children of an absolute host directory with `fileName`, `isDirectory`, and `isFile`. | Read-only filesystem method. |
 | `command/exec` | one-off command runner | Run an argv vector with optional absolute `cwd`, env overrides, timeout, output cap, and optional `command/exec/outputDelta` streaming. | PTY, streaming stdin, resize, write, and terminate are deferred. |
 | `team/start` | start an agent team | Create a lead thread plus long-lived teammate threads with `displayMode` `auto`, `in_process`, `tmux`, or `iterm2`. | Team control-plane methods use desktop singular method names. |
 | `team/list` | team sidebar/bootstrap | List active or persisted teams as `TeamDescriptor` objects. | Supports optional `limit`; pagination cursors are reserved. |
@@ -84,5 +83,6 @@ accepting a no-op.
 }
 ```
 
-The temporary desktop shim may still send `{ "prompt": "..." }` when no rich
-input blocks are present. Roder accepts that only as a transition fallback.
+Clients should send `input` blocks for new code. `prompt` remains an accepted
+field on the canonical method while richer input blocks are rolled through the
+clients.

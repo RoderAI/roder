@@ -15,7 +15,6 @@ use roder_api::plan_review::{
     PlanRewrite,
 };
 use roder_api::policy_mode::PolicyMode;
-use roder_api::session::{SessionMetadata, ThreadSnapshot};
 use roder_api::subagents::SubagentPermissionMode;
 use roder_api::tasks::{TaskHandle, TaskOutputStream};
 use roder_api::teams::{
@@ -68,17 +67,6 @@ pub struct JsonRpcError {
     pub message: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub data: Option<serde_json::Value>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SystemStatusResult {
-    pub provider: String,
-    pub model: String,
-    pub reasoning: String,
-    pub web_search: WebSearchSettings,
-    pub runner: Option<RunnerStatus>,
-    pub extensions: usize,
-    pub providers: usize,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -789,6 +777,18 @@ pub struct ProvidersListResult {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProviderConfigureParams {
+    pub provider: String,
+    pub api_key: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProviderConfigureResult {
+    pub provider: String,
+    pub authenticated: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SubagentTracesListParams {
     pub thread_id: ThreadId,
@@ -1135,40 +1135,9 @@ pub struct SettingsSetDefaultModeResult {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct CodexAuthResult {
+pub struct ProviderAuthResult {
     pub signed_in: bool,
     pub account_id: Option<String>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct CreateSessionParams {
-    pub title: Option<String>,
-    pub workspace: Option<String>,
-    pub provider: Option<String>,
-    pub model: Option<String>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct CreateSessionResult {
-    pub thread_id: ThreadId,
-    pub provider: String,
-    pub model: String,
-    pub reasoning: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SessionsListResult {
-    pub sessions: Vec<SessionMetadata>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SessionLoadParams {
-    pub thread_id: ThreadId,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SessionLoadResult {
-    pub snapshot: Option<ThreadSnapshot>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1281,41 +1250,6 @@ pub struct CommandsRunParams {
 pub struct CommandsRunResult {
     pub turn_id: TurnId,
     pub expanded: CommandsExpandResult,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct StartTurnParams {
-    pub thread_id: ThreadId,
-    pub message: String,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub images: Vec<InputImage>,
-    pub provider_override: Option<String>,
-    pub model_override: Option<String>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct StartTurnResult {
-    pub turn_id: TurnId,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct InterruptTurnParams {
-    pub thread_id: ThreadId,
-    pub turn_id: TurnId,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SteerTurnParams {
-    pub thread_id: ThreadId,
-    pub turn_id: TurnId,
-    pub message: String,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub images: Vec<InputImage>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SteerTurnResult {
-    pub turn_id: TurnId,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

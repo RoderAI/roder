@@ -230,9 +230,11 @@ See [`docs/roder-remote-runners.md`](./docs/roder-remote-runners.md) for mounts,
 
 OpenAI hosted web search is enabled by default. External web search provider setup is documented in [`docs/roder-web-search-extensions.md`](./docs/roder-web-search-extensions.md).
 
-xAI Grok and SuperGrok provider setup is documented in [`docs/roder-xai-grok-providers.md`](./docs/roder-xai-grok-providers.md). Use `xai/grok-4.3` with `XAI_API_KEY` for direct xAI API-key auth, or `supergrok/grok-4.3` after `roder auth login supergrok` for SuperGrok OAuth.
+xAI Grok and SuperGrok provider setup is documented in [`docs/roder-xai-grok-providers.md`](./docs/roder-xai-grok-providers.md). Use `xai/grok-4.3` with `XAI_API_KEY` for direct xAI API-key auth, or select `supergrok/grok-4.3` in the TUI to start SuperGrok OAuth.
 
-Subagent setup for the `task` tool and disk-defined agents is documented in [`docs/roder-subagents.md`](./docs/roder-subagents.md). Transparent child trace events, app-server trace read/list methods, persistence behavior, and TUI controls are documented in [`docs/roder-subagent-traces.md`](./docs/roder-subagent-traces.md). Plan review artifacts, hunk records, app-server methods, and deferred rollback behavior are documented in [`docs/roder-plan-review-hunk-tracker.md`](./docs/roder-plan-review-hunk-tracker.md). Workflow import for AGENTS.md, skills, MCP, hooks, commands, and plugins is documented in [`docs/roder-workflow-import.md`](./docs/roder-workflow-import.md). Terminal media generation, artifacts, previews, and generated-image attachments are documented in [`docs/roder-terminal-media-generation.md`](./docs/roder-terminal-media-generation.md). SQLite vector memories, project/global scopes, embedding providers, and memory CLI/app-server controls are documented in [`docs/roder-memories.md`](./docs/roder-memories.md). Remote WebSocket app-server pairing, auth, and security assumptions are documented in [`docs/roder-remote-app-server.md`](./docs/roder-remote-app-server.md).
+App-server docs live under [`docs/app-server/`](./docs/app-server/): [`api.md`](./docs/app-server/api.md) is the integrator-facing JSON-RPC reference, [`protocol.md`](./docs/app-server/protocol.md) summarizes the desktop contract, and [`remote.md`](./docs/app-server/remote.md) covers remote WebSocket pairing, auth, and security assumptions.
+
+Subagent setup for the `task` tool and disk-defined agents is documented in [`docs/roder-subagents.md`](./docs/roder-subagents.md). Transparent child trace events, app-server trace read/list methods, persistence behavior, and TUI controls are documented in [`docs/roder-subagent-traces.md`](./docs/roder-subagent-traces.md). Plan review artifacts, hunk records, app-server methods, and deferred rollback behavior are documented in [`docs/roder-plan-review-hunk-tracker.md`](./docs/roder-plan-review-hunk-tracker.md). Workflow import for AGENTS.md, skills, MCP, hooks, commands, and plugins is documented in [`docs/roder-workflow-import.md`](./docs/roder-workflow-import.md). Terminal media generation, artifacts, previews, and generated-image attachments are documented in [`docs/roder-terminal-media-generation.md`](./docs/roder-terminal-media-generation.md). SQLite vector memories, project/global scopes, embedding providers, and memory CLI/app-server controls are documented in [`docs/roder-memories.md`](./docs/roder-memories.md).
 
 Custom model edit-tool preferences can be set in `~/.roder/config.toml`:
 
@@ -245,7 +247,7 @@ parallel_tool_calls = true # set false for custom models that need serial tool c
 `patch` advertises `apply_patch`; `edit` advertises `write_file`, `edit`, and `multi_edit`. Roder never advertises both edit surfaces to a single model request.
 Parallel tool calls are enabled by default. For OpenAI Responses-compatible providers, Roder sends the model-specific `parallel_tool_calls` setting with each tool-capable request and executes each returned tool-call batch concurrently unless that model override is set to `false`.
 
-The app-server run-control methods are `turns/start`, `turns/steer`, and `turns/interrupt`. `turns/start` and `turns/steer` accept an optional `images` array of `{ "image_url": "data:image/png;base64,..." }` input images; image-capable providers receive those as structured image content instead of appended file-path text. Steering accepts `{ "thread_id": "...", "turn_id": "...", "message": "...", "images": [] }`, emits `turn.steered`, and appends the steering message to the active turn before the next provider request.
+The app-server run-control methods are `turn/start`, `turn/steer`, and `turn/interrupt`. `turn/start` and `turn/steer` accept `input` blocks such as `{ "type": "text", "text": "..." }`. Steering accepts `{ "threadId": "...", "expectedTurnId": "...", "input": [...] }`, emits `turn.steered`, and appends the steering message to the active turn before the next provider request.
 
 `settings/get` returns runtime settings including hosted web search. `settings/set_web_search` accepts `{ "mode": "cached" }`, `{ "mode": "live" }`, or `{ "mode": "disabled" }`; the TUI exposes these under the Ctrl+P settings menu and the Ctrl+K palette Settings source, and persists the choice to `~/.roder/config.toml` when user config persistence is enabled.
 
@@ -320,7 +322,7 @@ No fork is required. The lab or product builds its own distribution.
 
 This repository started as `gode`, a Go-native TUI coding agent and event-driven harness. That implementation proved the core behaviors Roder is built around: event-driven sessions, provider abstraction, tool routing, session storage, policy modes, and the app-server control plane.
 
-Roder is now the active implementation. The legacy Go code has been removed from this repository; new work should land in `crates/roder-*`, `docs/`, `roadmap/`, or the Rust CLI/TUI surfaces.
+Roder is now the active implementation. The previous Go code has been removed from this repository; new work should land in `crates/roder-*`, `docs/`, `roadmap/`, or the Rust CLI/TUI surfaces.
 
 See [`roadmap/roder_rust_rewrite_plan.md`](./roadmap/roder_rust_rewrite_plan.md) for the historical rewrite sequence and the Rust crate mapping.
 

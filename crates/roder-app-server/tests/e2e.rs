@@ -2,9 +2,7 @@ use base64::Engine;
 use futures::{SinkExt, StreamExt, stream};
 use roder_api::capabilities::CapabilityDecision;
 use roder_api::catalog::{PROVIDER_MOCK, PROVIDER_SUPERGROK, PROVIDER_XAI};
-use roder_api::conversation::{ConversationItem, InputImage};
 use roder_api::extension::{ExtensionRegistryBuilder, InferenceEngineId};
-use roder_api::extension_state::{ExtensionStateRecord, ExtensionStoreScope};
 use roder_api::inference::*;
 use roder_api::media::{MediaDimensions, MediaGenerationRequest, MediaKind};
 use roder_api::memory::MemoryScope;
@@ -33,30 +31,30 @@ use roder_extension_host::{
 };
 use roder_protocol::{
     AgentsListResult, CommandsExpandParams, CommandsExpandResult, CommandsListResult,
-    CommandsRunParams, CommandsRunResult, CreateSessionResult, ExtensionsListResult,
-    HunkListParams, HunkListResult, HunkReadParams, HunkReadResult, HunkRollbackParams,
-    HunkRollbackResult, InterruptTurnParams, JsonRpcRequest, MediaAttachToTurnParams,
-    MediaAttachToTurnResult, MediaDeleteParams, MediaDeleteResult, MediaListParams,
-    MediaListResult, MediaReadParams, MediaReadResult, MediaThumbnailParams, MediaThumbnailResult,
-    MemoryDeleteParams, MemoryDeleteResult, MemoryListParams, MemoryListResult,
-    MemoryProviderListResult, MemoryQueryParams, MemoryQueryResult, MemoryReadParams,
-    MemoryReadResult, MemoryRecallPreviewParams, MemoryRecallPreviewResult, MemorySaveParams,
-    MemorySaveResult, MemoryUpdateParams, PlanReviewApproveParams, PlanReviewCommentParams,
-    PlanReviewCommentResult, PlanReviewReadParams, PlanReviewReadResult, ProviderSelectParams,
+    CommandsRunParams, CommandsRunResult, ExtensionsListResult, HunkListParams, HunkListResult,
+    HunkReadParams, HunkReadResult, HunkRollbackParams, HunkRollbackResult, InitializeResult,
+    JsonRpcRequest, MediaAttachToTurnParams, MediaAttachToTurnResult, MediaDeleteParams,
+    MediaDeleteResult, MediaListParams, MediaListResult, MediaReadParams, MediaReadResult,
+    MediaThumbnailParams, MediaThumbnailResult, MemoryDeleteParams, MemoryDeleteResult,
+    MemoryListParams, MemoryListResult, MemoryProviderListResult, MemoryQueryParams,
+    MemoryQueryResult, MemoryReadParams, MemoryReadResult, MemoryRecallPreviewParams,
+    MemoryRecallPreviewResult, MemorySaveParams, MemorySaveResult, MemoryUpdateParams,
+    PlanReviewApproveParams, PlanReviewCommentParams, PlanReviewCommentResult,
+    PlanReviewReadParams, PlanReviewReadResult, ProviderAuthResult, ProviderSelectParams,
     ProviderSelectResult, ProvidersListResult, RunnersDeleteResult, RunnersListResult,
     RunnersSelectParams, RunnersSelectResult, RunnersSessionResult, SessionExitPlanParams,
-    SessionExitPlanResult, SessionGetResult, SessionLoadParams, SessionLoadResult,
-    SessionResolveUserInputParams, SessionResolveUserInputResult, SessionSetModeParams,
-    SessionSetModeResult, SessionsListResult, SettingsGetResult, SettingsSetDefaultModeParams,
-    SettingsSetDefaultModeResult, SettingsSetWebSearchParams, SettingsSetWebSearchResult,
-    StartTurnParams, StartTurnResult, SteerTurnParams, SteerTurnResult, SubagentTraceReadParams,
-    SubagentTraceReadResult, SubagentTracesListParams, SubagentTracesListResult,
-    SystemStatusResult, TasksGetParams, TasksGetResult, TasksListResult, TasksSubmitParams,
-    TasksSubmitResult, TeamCleanupParams, TeamCleanupResult, TeamListParams, TeamListResult,
-    TeamMemberInterruptParams, TeamMemberInterruptResult, TeamMemberMessageParams,
-    TeamMemberMessageResult, TeamMemberStartParams, TeamMemberStartResult, TeamReadParams,
-    TeamReadResult, TeamStartMemberParams, TeamStartParams, TeamStartResult, ToolCallParams,
-    ToolCallResult, ToolsListResult, WorkflowEnableParams, WorkflowEnableResult,
+    SessionExitPlanResult, SessionGetResult, SessionResolveUserInputParams,
+    SessionResolveUserInputResult, SessionSetModeParams, SessionSetModeResult, SettingsGetResult,
+    SettingsSetDefaultModeParams, SettingsSetDefaultModeResult, SettingsSetWebSearchParams,
+    SettingsSetWebSearchResult, SubagentTraceReadParams, SubagentTraceReadResult,
+    SubagentTracesListParams, SubagentTracesListResult, TasksGetParams, TasksGetResult,
+    TasksListResult, TasksSubmitParams, TasksSubmitResult, TeamCleanupParams, TeamCleanupResult,
+    TeamListParams, TeamListResult, TeamMemberInterruptParams, TeamMemberInterruptResult,
+    TeamMemberMessageParams, TeamMemberMessageResult, TeamMemberStartParams, TeamMemberStartResult,
+    TeamReadParams, TeamReadResult, TeamStartMemberParams, TeamStartParams, TeamStartResult,
+    ThreadListParams, ThreadListResult, ThreadStartParams, ThreadStartResult, ToolCallParams,
+    ToolCallResult, ToolsListResult, TurnInputItem, TurnInterruptParams, TurnStartParams,
+    TurnStartResult, TurnSteerParams, TurnSteerResult, WorkflowEnableParams, WorkflowEnableResult,
     WorkflowPreviewParams, WorkflowPreviewResult, WorkflowScanParams, WorkflowScanResult,
 };
 use std::collections::HashMap;
@@ -79,10 +77,6 @@ struct FailingSessionStoreFactory;
 
 struct FailingSessionStore;
 
-struct ExtensionStateSessionStoreFactory;
-
-struct ExtensionStateSessionStore;
-
 #[derive(Clone, Default)]
 struct RecordingSessionStoreFactory {
     snapshots: Arc<Mutex<HashMap<String, ThreadSnapshot>>>,
@@ -90,10 +84,6 @@ struct RecordingSessionStoreFactory {
 
 struct RecordingSessionStore {
     snapshots: Arc<Mutex<HashMap<String, ThreadSnapshot>>>,
-}
-
-struct ImageCaptureEngine {
-    requests: Mutex<Vec<AgentInferenceRequest>>,
 }
 
 impl SessionStoreFactory for FailingSessionStoreFactory {
@@ -127,68 +117,6 @@ impl SessionStore for FailingSessionStore {
         _thread_id: &roder_api::events::ThreadId,
     ) -> anyhow::Result<Option<ThreadSnapshot>> {
         Ok(None)
-    }
-
-    async fn append_event(
-        &self,
-        _thread_id: &roder_api::events::ThreadId,
-        _envelope: &roder_api::events::EventEnvelope,
-    ) -> anyhow::Result<()> {
-        Ok(())
-    }
-
-    async fn append_turn_item(
-        &self,
-        _thread_id: &roder_api::events::ThreadId,
-        _turn_id: &roder_api::events::TurnId,
-        _item: &roder_api::conversation::TurnItem,
-    ) -> anyhow::Result<()> {
-        Ok(())
-    }
-}
-
-impl SessionStoreFactory for ExtensionStateSessionStoreFactory {
-    fn id(&self) -> roder_api::session::SessionStoreId {
-        "extension-state-test".to_string()
-    }
-
-    fn create(&self) -> Arc<dyn SessionStore> {
-        Arc::new(ExtensionStateSessionStore)
-    }
-}
-
-#[async_trait::async_trait]
-impl SessionStore for ExtensionStateSessionStore {
-    fn id(&self) -> roder_api::session::SessionStoreId {
-        "extension-state-test".to_string()
-    }
-
-    async fn create_session(&self, metadata: SessionMetadata) -> anyhow::Result<SessionMetadata> {
-        Ok(metadata)
-    }
-
-    async fn list_sessions(&self) -> anyhow::Result<Vec<SessionMetadata>> {
-        Ok(Vec::new())
-    }
-
-    async fn load_session(
-        &self,
-        thread_id: &roder_api::events::ThreadId,
-    ) -> anyhow::Result<Option<ThreadSnapshot>> {
-        Ok(Some(ThreadSnapshot {
-            metadata: None,
-            events: Vec::new(),
-            turns: Vec::new(),
-            extension_states: vec![ExtensionStateRecord {
-                extension_id: "demo".to_string(),
-                key: "prefs".to_string(),
-                scope: ExtensionStoreScope::Thread {
-                    thread_id: thread_id.clone(),
-                },
-                schema_version: 1,
-                value: serde_json::json!({ "theme": "dark" }),
-            }],
-        }))
     }
 
     async fn append_event(
@@ -323,45 +251,6 @@ impl InferenceEngine for PendingEngine {
         _request: AgentInferenceRequest,
     ) -> anyhow::Result<InferenceEventStream> {
         Ok(Box::pin(stream::pending()))
-    }
-}
-
-#[async_trait::async_trait]
-impl InferenceEngine for ImageCaptureEngine {
-    fn id(&self) -> InferenceEngineId {
-        PROVIDER_MOCK.to_string()
-    }
-
-    fn capabilities(&self) -> InferenceCapabilities {
-        InferenceCapabilities {
-            image_input: true,
-            ..InferenceCapabilities::text_only()
-        }
-    }
-
-    async fn list_models(
-        &self,
-        _ctx: InferenceProviderContext<'_>,
-    ) -> anyhow::Result<Vec<ModelDescriptor>> {
-        Ok(Vec::new())
-    }
-
-    async fn stream_turn(
-        &self,
-        _ctx: InferenceTurnContext<'_>,
-        request: AgentInferenceRequest,
-    ) -> anyhow::Result<InferenceEventStream> {
-        self.requests.lock().await.push(request);
-        Ok(Box::pin(stream::iter([
-            Ok(InferenceEvent::MessageDelta(MessageDelta {
-                text: "ok".to_string(),
-                phase: None,
-            })),
-            Ok(InferenceEvent::Completed(CompletionMetadata {
-                stop_reason: Some("stop".to_string()),
-                provider_response_id: None,
-            })),
-        ])))
     }
 }
 
@@ -521,10 +410,9 @@ async fn test_app_server_e2e() {
     let client = LocalAppClient::new(server);
     let mut events = client.subscribe_events();
 
-    let status: SystemStatusResult = request(&client, "system/status", None).await;
+    let status: InitializeResult = request(&client, "initialize", None).await;
     assert_eq!(status.provider, PROVIDER_MOCK);
     assert_eq!(status.model, "mock");
-    assert_eq!(status.web_search.mode, HostedWebSearchMode::Cached);
 
     let extensions: ExtensionsListResult = request(&client, "extensions/list", None).await;
     assert!(extensions.extensions.is_empty());
@@ -554,10 +442,9 @@ async fn test_app_server_e2e() {
     assert_eq!(selected.model, "alternate-mock-model");
     assert_eq!(selected.reasoning, "none");
 
-    let status: SystemStatusResult = request(&client, "system/status", None).await;
+    let status: InitializeResult = request(&client, "initialize", None).await;
     assert_eq!(status.provider, PROVIDER_MOCK);
     assert_eq!(status.model, "alternate-mock-model");
-    assert_eq!(status.reasoning, "none");
 
     let invalid_provider = client
         .send_request(JsonRpcRequest {
@@ -581,27 +468,25 @@ async fn test_app_server_e2e() {
     assert_eq!(error.code, -32000);
     assert!(error.message.contains("missing-provider"));
 
-    let session: CreateSessionResult = request(&client, "sessions/create", None).await;
-    assert_eq!(session.provider, PROVIDER_MOCK);
+    let session = start_thread(&client).await;
+    assert_eq!(session.model_provider, PROVIDER_MOCK);
     assert_eq!(session.model, "alternate-mock-model");
-    assert!(!session.thread_id.is_empty());
+    assert!(!session.thread.id.is_empty());
 
-    let sessions: SessionsListResult = request(&client, "sessions/list", None).await;
-    assert!(sessions.sessions.is_empty());
-
-    let params = StartTurnParams {
-        thread_id: session.thread_id.clone(),
-        message: "Hello".to_string(),
-        images: Vec::new(),
-        provider_override: None,
-        model_override: None,
-    };
-    let started: StartTurnResult = request(
+    let sessions: ThreadListResult = request(
         &client,
-        "turns/start",
-        Some(serde_json::to_value(params).unwrap()),
+        "thread/list",
+        Some(serde_json::to_value(ThreadListParams { limit: None }).unwrap()),
     )
     .await;
+    assert!(
+        sessions
+            .data
+            .iter()
+            .any(|thread| thread.id == session.thread.id)
+    );
+
+    let started = start_turn(&client, &session.thread.id, "Hello").await;
     assert!(!started.turn_id.is_empty());
 
     let mut kinds = Vec::new();
@@ -610,7 +495,7 @@ async fn test_app_server_e2e() {
             .await
             .unwrap()
             .unwrap();
-        if envelope.thread_id.as_deref() == Some(&session.thread_id) {
+        if envelope.thread_id.as_deref() == Some(&session.thread.id) {
             kinds.push(envelope.kind);
         }
         if kinds.iter().any(|kind| kind == "turn.completed") {
@@ -1053,15 +938,26 @@ async fn providers_list_exposes_xai_and_supergrok_auth_metadata() {
         .providers
         .iter()
         .find(|provider| provider.id == PROVIDER_SUPERGROK)
-        .expect("supergrok provider should be listed without OAuth tokens");
+        .expect("supergrok provider should be listed");
     assert_eq!(supergrok.auth_type, ProviderAuthType::OAuth);
-    assert!(!supergrok.authenticated);
     assert!(
         supergrok
             .models
             .iter()
             .any(|model| model.id == "grok-4.20-0309-reasoning")
     );
+}
+
+#[tokio::test]
+async fn supergrok_auth_status_is_exposed_through_app_server() {
+    let runtime = Arc::new(Runtime::fake().unwrap());
+    let server = Arc::new(AppServer::new(runtime));
+    let client = LocalAppClient::new(server);
+
+    let status: ProviderAuthResult = request(&client, "auth/supergrok/status", None).await;
+    if !status.signed_in {
+        assert_eq!(status.account_id, None);
+    }
 }
 
 #[tokio::test]
@@ -1104,15 +1000,6 @@ async fn runners_methods_list_select_status_and_delete_destination() {
         .unwrap();
     assert_eq!(event.kind, "runner.lifecycle");
 
-    let status: SystemStatusResult = request(&client, "system/status", None).await;
-    assert_eq!(
-        status
-            .runner
-            .as_ref()
-            .map(|runner| runner.provider_id.as_str()),
-        Some("unix-local")
-    );
-
     let session: RunnersSessionResult = request(&client, "runners/session", None).await;
     assert_eq!(
         session
@@ -1124,8 +1011,8 @@ async fn runners_methods_list_select_status_and_delete_destination() {
 
     let deleted: RunnersDeleteResult = request(&client, "runners/delete", None).await;
     assert!(deleted.deleted);
-    let status: SystemStatusResult = request(&client, "system/status", None).await;
-    assert!(status.runner.is_none());
+    let session: RunnersSessionResult = request(&client, "runners/session", None).await;
+    assert!(session.active.is_none());
 
     let missing_secret = client
         .send_request(JsonRpcRequest {
@@ -1169,9 +1056,9 @@ async fn runners_methods_list_select_status_and_delete_destination() {
             .map(|runner| runner.provider_id.as_str()),
         Some("blaxel")
     );
-    let status: SystemStatusResult = request(&client, "system/status", None).await;
-    let encoded_status = serde_json::to_string(&status).unwrap();
-    assert!(!encoded_status.contains("plain-token"));
+    let session: RunnersSessionResult = request(&client, "runners/session", None).await;
+    let encoded_session = serde_json::to_string(&session).unwrap();
+    assert!(!encoded_session.contains("plain-token"));
 }
 
 #[tokio::test]
@@ -1187,9 +1074,9 @@ async fn internal_errors_include_structured_details() {
     let response = client
         .send_request(JsonRpcRequest {
             jsonrpc: "2.0".to_string(),
-            id: Some(serde_json::json!("sessions/list")),
-            method: "sessions/list".to_string(),
-            params: None,
+            id: Some(serde_json::json!("thread/list")),
+            method: "thread/list".to_string(),
+            params: Some(serde_json::to_value(ThreadListParams { limit: None }).unwrap()),
         })
         .await;
 
@@ -1208,7 +1095,7 @@ async fn internal_errors_include_structured_details() {
 }
 
 #[tokio::test]
-async fn turns_steer_requires_active_turn() {
+async fn turn_steer_requires_active_turn() {
     let runtime = Arc::new(Runtime::fake().unwrap());
     let server = Arc::new(AppServer::new(runtime));
     let client = LocalAppClient::new(server);
@@ -1216,14 +1103,14 @@ async fn turns_steer_requires_active_turn() {
     let response = client
         .send_request(JsonRpcRequest {
             jsonrpc: "2.0".to_string(),
-            id: Some(serde_json::json!("turns/steer")),
-            method: "turns/steer".to_string(),
+            id: Some(serde_json::json!("turn/steer")),
+            method: "turn/steer".to_string(),
             params: Some(
-                serde_json::to_value(SteerTurnParams {
+                serde_json::to_value(TurnSteerParams {
                     thread_id: "thread_missing".to_string(),
-                    turn_id: "turn_missing".to_string(),
-                    message: "change direction".to_string(),
-                    images: Vec::new(),
+                    expected_turn_id: "turn_missing".to_string(),
+                    input: text_input("change direction"),
+                    prompt: None,
                 })
                 .unwrap(),
             ),
@@ -1237,86 +1124,7 @@ async fn turns_steer_requires_active_turn() {
 }
 
 #[tokio::test]
-async fn turns_start_preserves_image_payloads_for_provider_request() {
-    let engine = Arc::new(ImageCaptureEngine {
-        requests: Mutex::new(Vec::new()),
-    });
-    let mut builder = ExtensionRegistryBuilder::new();
-    builder.inference_engine(engine.clone());
-    let runtime = Arc::new(Runtime::new(builder.build().unwrap(), Default::default()).unwrap());
-    let server = Arc::new(AppServer::new(runtime));
-    let client = LocalAppClient::new(server);
-    let mut events = client.subscribe_events();
-
-    let session: CreateSessionResult = request(&client, "sessions/create", None).await;
-    let _: StartTurnResult = request(
-        &client,
-        "turns/start",
-        Some(
-            serde_json::to_value(StartTurnParams {
-                thread_id: session.thread_id.clone(),
-                message: "what is this?".to_string(),
-                images: vec![InputImage {
-                    image_url: "data:image/png;base64,YWJj".to_string(),
-                }],
-                provider_override: None,
-                model_override: None,
-            })
-            .unwrap(),
-        ),
-    )
-    .await;
-    wait_for_event(&mut events, &session.thread_id, "turn.completed").await;
-
-    let requests = engine.requests.lock().await;
-    assert_eq!(requests.len(), 1);
-    let user_message = requests[0]
-        .conversation
-        .iter()
-        .find_map(|item| match item {
-            ConversationItem::UserMessage(message) if message.text == "what is this?" => {
-                Some(message)
-            }
-            _ => None,
-        })
-        .expect("missing user message");
-    assert_eq!(user_message.images.len(), 1);
-    assert_eq!(
-        user_message.images[0].image_url,
-        "data:image/png;base64,YWJj"
-    );
-}
-
-#[tokio::test]
-async fn extension_state_is_exposed_through_session_load() {
-    let mut builder = ExtensionRegistryBuilder::new();
-    builder.inference_engine(Arc::new(FakeInferenceEngine));
-    builder.session_store_factory(Arc::new(ExtensionStateSessionStoreFactory));
-    let runtime =
-        Arc::new(Runtime::new(builder.build().unwrap(), RuntimeConfig::default()).unwrap());
-    let server = Arc::new(AppServer::new(runtime));
-    let client = LocalAppClient::new(server);
-
-    let loaded: SessionLoadResult = request(
-        &client,
-        "sessions/load",
-        Some(
-            serde_json::to_value(SessionLoadParams {
-                thread_id: "thread-extension-state".to_string(),
-            })
-            .unwrap(),
-        ),
-    )
-    .await;
-
-    let snapshot = loaded.snapshot.expect("expected snapshot");
-    assert_eq!(snapshot.extension_states.len(), 1);
-    assert_eq!(snapshot.extension_states[0].extension_id, "demo");
-    assert_eq!(snapshot.extension_states[0].value["theme"], "dark");
-}
-
-#[tokio::test]
-async fn turns_steer_accepts_active_turn() {
+async fn turn_steer_accepts_active_turn() {
     let mut builder = ExtensionRegistryBuilder::new();
     builder.inference_engine(Arc::new(PendingEngine));
     let runtime = Arc::new(Runtime::new(builder.build().unwrap(), Default::default()).unwrap());
@@ -1324,33 +1132,19 @@ async fn turns_steer_accepts_active_turn() {
     let client = LocalAppClient::new(server);
     let mut events = client.subscribe_events();
 
-    let session: CreateSessionResult = request(&client, "sessions/create", None).await;
-    let started: StartTurnResult = request(
-        &client,
-        "turns/start",
-        Some(
-            serde_json::to_value(StartTurnParams {
-                thread_id: session.thread_id.clone(),
-                message: "start".to_string(),
-                images: Vec::new(),
-                provider_override: None,
-                model_override: None,
-            })
-            .unwrap(),
-        ),
-    )
-    .await;
-    wait_for_event(&mut events, &session.thread_id, "turn.started").await;
+    let session = start_thread(&client).await;
+    let started = start_turn(&client, &session.thread.id, "start").await;
+    wait_for_event(&mut events, &session.thread.id, "turn.started").await;
 
-    let steered: SteerTurnResult = request(
+    let steered: TurnSteerResult = request(
         &client,
-        "turns/steer",
+        "turn/steer",
         Some(
-            serde_json::to_value(SteerTurnParams {
-                thread_id: session.thread_id.clone(),
-                turn_id: started.turn_id.clone(),
-                message: "change direction".to_string(),
-                images: Vec::new(),
+            serde_json::to_value(TurnSteerParams {
+                thread_id: session.thread.id.clone(),
+                expected_turn_id: started.turn_id.clone(),
+                input: text_input("change direction"),
+                prompt: None,
             })
             .unwrap(),
         ),
@@ -1358,16 +1152,16 @@ async fn turns_steer_accepts_active_turn() {
     .await;
     assert_eq!(steered.turn_id, started.turn_id);
 
-    let event = wait_for_event(&mut events, &session.thread_id, "turn.steered").await;
+    let event = wait_for_event(&mut events, &session.thread.id, "turn.steered").await;
     assert_eq!(event.turn_id.as_deref(), Some(started.turn_id.as_str()));
 
-    let _: serde_json::Value = request(
+    let _: roder_protocol::TurnInterruptResult = request(
         &client,
-        "turns/interrupt",
+        "turn/interrupt",
         Some(
-            serde_json::to_value(InterruptTurnParams {
-                thread_id: session.thread_id,
-                turn_id: started.turn_id,
+            serde_json::to_value(TurnInterruptParams {
+                thread_id: session.thread.id,
+                turn_id: Some(started.turn_id),
             })
             .unwrap(),
         ),
@@ -2100,13 +1894,13 @@ async fn commands_run_expands_and_starts_turn() {
     let client = LocalAppClient::new(server);
     let mut events = client.subscribe_events();
 
-    let session: CreateSessionResult = request(&client, "sessions/create", None).await;
+    let session = start_thread(&client).await;
     let result: CommandsRunResult = request(
         &client,
         "commands/run",
         Some(
             serde_json::to_value(CommandsRunParams {
-                thread_id: session.thread_id.clone(),
+                thread_id: session.thread.id.clone(),
                 name: "init".to_string(),
                 arguments: String::new(),
                 workspace: None,
@@ -2118,7 +1912,7 @@ async fn commands_run_expands_and_starts_turn() {
 
     assert!(!result.turn_id.is_empty());
     assert_eq!(result.expanded.command.name, "init");
-    wait_for_event(&mut events, &session.thread_id, "turn.completed").await;
+    wait_for_event(&mut events, &session.thread.id, "turn.completed").await;
 }
 
 #[tokio::test]
@@ -2208,13 +2002,13 @@ async fn tools_call_can_create_and_get_goal() {
     let server = Arc::new(AppServer::new(runtime));
     let client = LocalAppClient::new(server);
 
-    let session: CreateSessionResult = request(&client, "sessions/create", None).await;
+    let session = start_thread(&client).await;
     let created: ToolCallResult = request(
         &client,
         "tools/call",
         Some(
             serde_json::to_value(ToolCallParams {
-                thread_id: session.thread_id.clone(),
+                thread_id: session.thread.id.clone(),
                 tool_name: "create_goal".to_string(),
                 arguments: serde_json::json!({
                     "objective": "Ship slash goal",
@@ -2234,7 +2028,7 @@ async fn tools_call_can_create_and_get_goal() {
         "tools/call",
         Some(
             serde_json::to_value(ToolCallParams {
-                thread_id: session.thread_id,
+                thread_id: session.thread.id,
                 tool_name: "get_goal".to_string(),
                 arguments: serde_json::json!({}),
             })
@@ -2260,22 +2054,8 @@ async fn request_user_input_tool_waits_for_app_server_resolution() {
     let client = LocalAppClient::new(server);
     let mut events = client.subscribe_events();
 
-    let session: CreateSessionResult = request(&client, "sessions/create", None).await;
-    let _started: StartTurnResult = request(
-        &client,
-        "turns/start",
-        Some(
-            serde_json::to_value(StartTurnParams {
-                thread_id: session.thread_id,
-                message: "ask me".to_string(),
-                images: Vec::new(),
-                provider_override: None,
-                model_override: None,
-            })
-            .unwrap(),
-        ),
-    )
-    .await;
+    let session = start_thread(&client).await;
+    let _started = start_turn(&client, &session.thread.id, "ask me").await;
 
     let mut request_id = None;
     for _ in 0..20 {
@@ -2351,8 +2131,8 @@ async fn web_search_setting_can_be_set_and_observed() {
     .await;
     assert_eq!(changed.web_search.mode, HostedWebSearchMode::Live);
 
-    let status: SystemStatusResult = request(&client, "system/status", None).await;
-    assert_eq!(status.web_search.mode, HostedWebSearchMode::Live);
+    let settings: SettingsGetResult = request(&client, "settings/get", None).await;
+    assert_eq!(settings.web_search.mode, HostedWebSearchMode::Live);
     assert_eq!(
         runtime.status().await.hosted_web_search.mode,
         HostedWebSearchMode::Live
@@ -2562,22 +2342,8 @@ async fn task_tool_emits_subagent_events_before_tool_completion() {
     let client = LocalAppClient::new(server);
     let mut events = client.subscribe_events();
 
-    let session: CreateSessionResult = request(&client, "sessions/create", None).await;
-    let started: StartTurnResult = request(
-        &client,
-        "turns/start",
-        Some(
-            serde_json::to_value(StartTurnParams {
-                thread_id: session.thread_id.clone(),
-                message: "delegate this".to_string(),
-                images: Vec::new(),
-                provider_override: None,
-                model_override: None,
-            })
-            .unwrap(),
-        ),
-    )
-    .await;
+    let session = start_thread(&client).await;
+    let started = start_turn(&client, &session.thread.id, "delegate this").await;
 
     let mut kinds = Vec::new();
     let mut child_parent_ids = Vec::new();
@@ -2629,7 +2395,7 @@ async fn task_tool_emits_subagent_events_before_tool_completion() {
     assert!(
         child_parent_ids
             .iter()
-            .all(|(thread_id, turn_id)| thread_id == &session.thread_id
+            .all(|(thread_id, turn_id)| thread_id == &session.thread.id
                 && turn_id == &started.turn_id),
         "subagent events should carry parent ids: {child_parent_ids:?}"
     );
@@ -2648,41 +2414,27 @@ async fn subagent_trace_methods_list_read_and_stream_notifications() {
     let mut events = client.subscribe_events();
     let mut notifications = client.subscribe_notifications();
 
-    let session: CreateSessionResult = request(&client, "sessions/create", None).await;
-    let started: StartTurnResult = request(
-        &client,
-        "turns/start",
-        Some(
-            serde_json::to_value(StartTurnParams {
-                thread_id: session.thread_id.clone(),
-                message: "delegate this".to_string(),
-                images: Vec::new(),
-                provider_override: None,
-                model_override: None,
-            })
-            .unwrap(),
-        ),
-    )
-    .await;
+    let session = start_thread(&client).await;
+    let started = start_turn(&client, &session.thread.id, "delegate this").await;
 
     let trace_notification =
         wait_for_notification(&mut notifications, "turn/subagentTraceCreated", None).await;
     assert_eq!(
         trace_notification.params["summary"]["parent"]["threadId"],
-        session.thread_id
+        session.thread.id
     );
     assert_eq!(
         trace_notification.params["summary"]["parent"]["turnId"],
         started.turn_id
     );
-    wait_for_event(&mut events, &session.thread_id, "turn.completed").await;
+    wait_for_event(&mut events, &session.thread.id, "turn.completed").await;
 
     let traces: SubagentTracesListResult = request(
         &client,
         "turn/subagentTraces/list",
         Some(
             serde_json::to_value(SubagentTracesListParams {
-                thread_id: session.thread_id.clone(),
+                thread_id: session.thread.id.clone(),
                 turn_id: started.turn_id.clone(),
             })
             .unwrap(),
@@ -2690,7 +2442,7 @@ async fn subagent_trace_methods_list_read_and_stream_notifications() {
     )
     .await;
     assert_eq!(traces.traces.len(), 1);
-    assert_eq!(traces.traces[0].parent.thread_id, session.thread_id);
+    assert_eq!(traces.traces[0].parent.thread_id, session.thread.id);
     assert_eq!(traces.traces[0].parent.turn_id, started.turn_id);
 
     let page: SubagentTraceReadResult = request(
@@ -2698,7 +2450,7 @@ async fn subagent_trace_methods_list_read_and_stream_notifications() {
         "turn/subagentTrace/read",
         Some(
             serde_json::to_value(SubagentTraceReadParams {
-                thread_id: session.thread_id,
+                thread_id: session.thread.id,
                 trace_id: traces.traces[0].trace_id.clone(),
                 offset: 0,
                 limit: Some(1),
@@ -2736,11 +2488,11 @@ async fn plan_review_and_hunk_methods_round_trip_through_session_events() {
     let client = LocalAppClient::new(server);
     let mut notifications = client.subscribe_notifications();
 
-    let session: CreateSessionResult = request(&client, "sessions/create", None).await;
+    let session = start_thread(&client).await;
     let now = OffsetDateTime::now_utc();
     let review = PlanReview {
         id: "review-1".to_string(),
-        thread_id: session.thread_id.clone(),
+        thread_id: session.thread.id.clone(),
         turn_id: "turn-1".to_string(),
         status: PlanReviewStatus::AwaitingReview,
         title: "Review plan".to_string(),
@@ -2764,7 +2516,7 @@ async fn plan_review_and_hunk_methods_round_trip_through_session_events() {
             roder_api::events::HunkRecorded {
                 hunk: HunkRecord {
                     id: "hunk-1".to_string(),
-                    thread_id: session.thread_id.clone(),
+                    thread_id: session.thread.id.clone(),
                     turn_id: "turn-1".to_string(),
                     path: "src/lib.rs".to_string(),
                     old_start: 1,
@@ -2805,7 +2557,7 @@ async fn plan_review_and_hunk_methods_round_trip_through_session_events() {
         "plan/review/comment",
         Some(
             serde_json::to_value(PlanReviewCommentParams {
-                thread_id: session.thread_id.clone(),
+                thread_id: session.thread.id.clone(),
                 review_id: "review-1".to_string(),
                 anchor: PlanCommentAnchor::Hunk {
                     hunk_id: "hunk-1".to_string(),
@@ -2826,7 +2578,7 @@ async fn plan_review_and_hunk_methods_round_trip_through_session_events() {
         "plan/review/approve",
         Some(
             serde_json::to_value(PlanReviewApproveParams {
-                thread_id: session.thread_id.clone(),
+                thread_id: session.thread.id.clone(),
                 review_id: "review-1".to_string(),
             })
             .unwrap(),
@@ -2838,7 +2590,7 @@ async fn plan_review_and_hunk_methods_round_trip_through_session_events() {
         "plan/review/read",
         Some(
             serde_json::to_value(PlanReviewReadParams {
-                thread_id: session.thread_id.clone(),
+                thread_id: session.thread.id.clone(),
                 review_id: "review-1".to_string(),
             })
             .unwrap(),
@@ -2854,7 +2606,7 @@ async fn plan_review_and_hunk_methods_round_trip_through_session_events() {
         "hunk/list",
         Some(
             serde_json::to_value(HunkListParams {
-                thread_id: session.thread_id.clone(),
+                thread_id: session.thread.id.clone(),
                 turn_id: Some("turn-1".to_string()),
                 review_id: Some("review-1".to_string()),
             })
@@ -2869,7 +2621,7 @@ async fn plan_review_and_hunk_methods_round_trip_through_session_events() {
         "hunk/read",
         Some(
             serde_json::to_value(HunkReadParams {
-                thread_id: session.thread_id.clone(),
+                thread_id: session.thread.id.clone(),
                 hunk_id: "hunk-1".to_string(),
                 offset: 0,
                 limit: Some(1),
@@ -2885,7 +2637,7 @@ async fn plan_review_and_hunk_methods_round_trip_through_session_events() {
         "hunk/rollback",
         Some(
             serde_json::to_value(HunkRollbackParams {
-                thread_id: session.thread_id,
+                thread_id: session.thread.id,
                 hunk_id: "hunk-1".to_string(),
                 confirmed: true,
             })
@@ -2923,22 +2675,8 @@ async fn subagent_failed_events_redact_private_agent_material() {
     let client = LocalAppClient::new(server);
     let mut events = client.subscribe_events();
 
-    let session: CreateSessionResult = request(&client, "sessions/create", None).await;
-    let _: StartTurnResult = request(
-        &client,
-        "turns/start",
-        Some(
-            serde_json::to_value(StartTurnParams {
-                thread_id: session.thread_id,
-                message: "delegate this".to_string(),
-                images: Vec::new(),
-                provider_override: None,
-                model_override: None,
-            })
-            .unwrap(),
-        ),
-    )
-    .await;
+    let session = start_thread(&client).await;
+    let _: TurnStartResult = start_turn(&client, &session.thread.id, "delegate this").await;
 
     let failed = loop {
         let envelope = tokio::time::timeout(Duration::from_secs(2), events.recv())
@@ -3042,6 +2780,47 @@ async fn request<T: serde::de::DeserializeOwned>(
         res.error
     );
     serde_json::from_value(res.result.unwrap()).unwrap()
+}
+
+fn text_input(text: &str) -> Vec<TurnInputItem> {
+    vec![TurnInputItem {
+        kind: "text".to_string(),
+        text: Some(text.to_string()),
+        path: None,
+    }]
+}
+
+async fn start_thread(client: &LocalAppClient) -> ThreadStartResult {
+    request(
+        client,
+        "thread/start",
+        Some(
+            serde_json::to_value(ThreadStartParams {
+                model: None,
+                model_provider: None,
+                cwd: None,
+                ephemeral: false,
+            })
+            .unwrap(),
+        ),
+    )
+    .await
+}
+
+async fn start_turn(client: &LocalAppClient, thread_id: &str, text: &str) -> TurnStartResult {
+    request(
+        client,
+        "turn/start",
+        Some(
+            serde_json::to_value(TurnStartParams {
+                thread_id: thread_id.to_string(),
+                input: text_input(text),
+                prompt: None,
+            })
+            .unwrap(),
+        ),
+    )
+    .await
 }
 
 async fn wait_for_event(

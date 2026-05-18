@@ -7,7 +7,6 @@ mod resume_picker;
 mod tui_config;
 
 use roder_api::catalog::{DEFAULT_MODEL_ID, PROVIDER_MOCK, normalize_provider_id};
-use roder_api::conversation::ConversationItem;
 use roder_api::inference::HostedWebSearchConfig;
 use roder_api::notifications::NotificationKind;
 use roder_api::policy_mode::PolicyMode;
@@ -20,13 +19,14 @@ use roder_extension_host::{
     DefaultWebSearchConfig, DefaultWebSearchProviderConfig, build_default_registry,
 };
 use roder_protocol::{
-    JsonRpcError, JsonRpcRequest, JsonRpcResponse, MemoryDeleteParams, MemoryDeleteResult,
-    MemoryListParams, MemoryListResult, MemoryProviderListResult, MemoryProviderSetParams,
-    MemoryQueryParams, MemoryQueryResult, MemoryReadParams, MemoryReadResult, MemorySaveParams,
-    MemorySaveResult, MemoryUpdateParams, SessionLoadParams, SessionLoadResult, SessionsListResult,
-    TasksCancelParams, TasksCancelResult, TasksGetParams, TasksGetResult, TasksListResult,
-    TasksSubmitParams, TasksSubmitResult, WorkflowEnableParams, WorkflowEnableResult,
-    WorkflowPreviewParams, WorkflowPreviewResult, WorkflowScanParams, WorkflowScanResult,
+    DesktopThread, JsonRpcError, JsonRpcRequest, JsonRpcResponse, MemoryDeleteParams,
+    MemoryDeleteResult, MemoryListParams, MemoryListResult, MemoryProviderListResult,
+    MemoryProviderSetParams, MemoryQueryParams, MemoryQueryResult, MemoryReadParams,
+    MemoryReadResult, MemorySaveParams, MemorySaveResult, MemoryUpdateParams, TasksCancelParams,
+    TasksCancelResult, TasksGetParams, TasksGetResult, TasksListResult, TasksSubmitParams,
+    TasksSubmitResult, ThreadListParams, ThreadListResult, ThreadReadParams, ThreadReadResult,
+    WorkflowEnableParams, WorkflowEnableResult, WorkflowPreviewParams, WorkflowPreviewResult,
+    WorkflowScanParams, WorkflowScanResult,
 };
 use roder_tui::{TuiApp, TuiStartup};
 use roder_web_search::WebSearchProviderKind;
@@ -271,78 +271,59 @@ async fn run_memory_cli(args: &[String]) -> anyhow::Result<()> {
     Ok(())
 }
 
-async fn list_sessions(
-    client: &LocalAppClient,
-) -> anyhow::Result<Vec<roder_api::session::SessionMetadata>> {
+async fn list_sessions(client: &LocalAppClient) -> anyhow::Result<Vec<DesktopThread>> {
     let res = client
         .send_request(JsonRpcRequest {
             jsonrpc: "2.0".to_string(),
-            id: Some(serde_json::json!("sessions/list")),
-            method: "sessions/list".to_string(),
-            params: None,
+            id: Some(serde_json::json!("thread/list")),
+            method: "thread/list".to_string(),
+            params: Some(serde_json::to_value(ThreadListParams { limit: None })?),
         })
         .await;
-    let mut sessions = decode_response::<SessionsListResult>(res).map(|result| result.sessions)?;
-    sessions = resumable_sessions(client, sessions).await;
-    sessions.sort_by_key(|session| std::cmp::Reverse(session.updated_at));
-    Ok(sessions)
-}
-
-async fn resumable_sessions(
-    client: &LocalAppClient,
-    sessions: Vec<roder_api::session::SessionMetadata>,
-) -> Vec<roder_api::session::SessionMetadata> {
-    let mut filtered = Vec::new();
-    for mut session in sessions {
-        if let Some(message_count) =
-            resumable_session_message_count(client, &session.thread_id).await
+    let mut threads = Vec::new();
+    for thread in decode_response::<ThreadListResult>(res)?.data {
+        if let Ok(Some(full_thread)) = read_thread(client, &thread.id).await
+            && thread_has_user_message(&full_thread)
         {
-            if session.message_count == 0 {
-                session.message_count = message_count;
-            }
-            filtered.push(session);
+            threads.push(full_thread);
         }
     }
-    filtered
+    threads.sort_by_key(|thread| std::cmp::Reverse(thread.updated_at));
+    Ok(threads)
 }
 
-async fn resumable_session_message_count(client: &LocalAppClient, thread_id: &str) -> Option<u32> {
+async fn read_thread(
+    client: &LocalAppClient,
+    thread_id: &str,
+) -> anyhow::Result<Option<DesktopThread>> {
     let res = client
         .send_request(JsonRpcRequest {
             jsonrpc: "2.0".to_string(),
-            id: Some(serde_json::json!("sessions/load")),
-            method: "sessions/load".to_string(),
-            params: Some(
-                serde_json::to_value(SessionLoadParams {
-                    thread_id: thread_id.to_string(),
-                })
-                .unwrap(),
-            ),
+            id: Some(serde_json::json!("thread/read")),
+            method: "thread/read".to_string(),
+            params: Some(serde_json::to_value(ThreadReadParams {
+                thread_id: thread_id.to_string(),
+                include_turns: true,
+            })?),
         })
         .await;
-    let Ok(snapshot) = decode_response::<SessionLoadResult>(res) else {
-        return None;
-    };
-    let snapshot = snapshot.snapshot?;
-    let mut message_count = 0u32;
-    let mut has_user_message = false;
-    for turn in snapshot.turns {
-        for item in turn.items {
-            match item {
-                ConversationItem::UserMessage(message) => {
-                    message_count = message_count.saturating_add(1);
-                    if !message.text.trim().is_empty() || !message.images.is_empty() {
-                        has_user_message = true;
-                    }
-                }
-                ConversationItem::AssistantMessage(_) => {
-                    message_count = message_count.saturating_add(1);
-                }
-                _ => {}
-            }
-        }
-    }
-    (has_user_message && message_count > 0).then_some(message_count)
+    Ok(decode_response::<ThreadReadResult>(res)?.thread)
+}
+
+fn thread_has_user_message(thread: &DesktopThread) -> bool {
+    thread
+        .turns
+        .as_deref()
+        .unwrap_or_default()
+        .iter()
+        .flat_map(|turn| turn.items.iter())
+        .any(|item| {
+            item.kind == "userMessage"
+                && item
+                    .text
+                    .as_deref()
+                    .is_some_and(|text| !text.trim().is_empty())
+        })
 }
 
 async fn run_tasks_cli(args: &[String]) -> anyhow::Result<()> {
@@ -695,6 +676,8 @@ async fn build_runtime_from_config(options: CliOptions) -> anyhow::Result<(Arc<R
         gemini_api_key: keys.gemini,
         xai_api_key: keys.xai,
         xai_base_url: keys.xai_base_url,
+        opencode_api_key: keys.opencode,
+        opencode_go_api_key: keys.opencode_go,
         session_dir: None,
         workspace: workspace.clone(),
         web_search: web_search.external,
@@ -1224,6 +1207,8 @@ struct ProviderKeys {
     gemini: Option<String>,
     xai: Option<String>,
     xai_base_url: Option<String>,
+    opencode: Option<String>,
+    opencode_go: Option<String>,
 }
 
 fn provider_keys(cfg: &roder_config::Config) -> ProviderKeys {
@@ -1255,6 +1240,24 @@ fn provider_keys(cfg: &roder_config::Config) -> ProviderKeys {
         xai_base_url: std::env::var("RODER_XAI_BASE_URL")
             .ok()
             .or_else(|| std::env::var("XAI_BASE_URL").ok()),
+        opencode: std::env::var("OPENCODE_API_KEY")
+            .ok()
+            .or_else(|| std::env::var("OPENCODE_ZEN_API_KEY").ok())
+            .or_else(|| {
+                cfg.providers
+                    .get("opencode")
+                    .and_then(|p| p.api_key.clone())
+            })
+            .or_else(|| {
+                cfg.providers
+                    .get("opencode-zen")
+                    .and_then(|p| p.api_key.clone())
+            }),
+        opencode_go: std::env::var("OPENCODE_GO_API_KEY").ok().or_else(|| {
+            cfg.providers
+                .get("opencode-go")
+                .and_then(|p| p.api_key.clone())
+        }),
     }
 }
 

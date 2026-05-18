@@ -83,6 +83,7 @@ impl InferenceEngine for GeminiEngine {
             description: Some("Gemini API key provider".to_string()),
             auth_type: ProviderAuthType::ApiKey,
             auth_label: Some("API key".to_string()),
+            auth_configured: Some(true),
             recommended: false,
             sort_order: 40,
         }

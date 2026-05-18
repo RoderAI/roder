@@ -92,6 +92,7 @@ impl InferenceEngine for AnthropicEngine {
             description: Some("Anthropic API key provider".to_string()),
             auth_type: ProviderAuthType::ApiKey,
             auth_label: Some("API key".to_string()),
+            auth_configured: Some(true),
             recommended: true,
             sort_order: 30,
         }

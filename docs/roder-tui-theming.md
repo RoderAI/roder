@@ -185,7 +185,7 @@ Variables are the easiest way to retheme: every value below maps to a compiled-i
     --border:             ansi(244);
     --mode-plan:          ansi(75);
     --mode-default:       ansi(244);
-    --mode-accept-edits:  ansi(40);
+    --mode-accept-all:  ansi(40);
     --mode-bypass:        ansi(196);
     --selection-bg:       ansi(212);
     --selection-fg:       reset;

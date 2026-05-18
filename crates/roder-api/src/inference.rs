@@ -27,6 +27,7 @@ pub struct InferenceProviderMetadata {
     pub description: Option<String>,
     pub auth_type: ProviderAuthType,
     pub auth_label: Option<String>,
+    pub auth_configured: Option<bool>,
     pub recommended: bool,
     pub sort_order: i32,
 }
@@ -38,6 +39,7 @@ impl InferenceProviderMetadata {
             description: None,
             auth_type: ProviderAuthType::None,
             auth_label: None,
+            auth_configured: Some(true),
             recommended: false,
             sort_order: 100,
         }

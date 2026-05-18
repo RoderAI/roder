@@ -52,7 +52,7 @@ Responses echo the request `id` and contain either `result` or `error`:
 
 Local clients can call the in-process `LocalAppClient`. Remote mode exposes the
 same JSON-RPC method surface over an authenticated WebSocket; see
-`docs/roder-remote-app-server.md` for startup flags, bearer-token headers,
+`docs/app-server/remote.md` for startup flags, bearer-token headers,
 subprotocol auth, pairing URLs, and remote security assumptions.
 
 Notifications are JSON-RPC notification envelopes with no `id`:
@@ -98,8 +98,9 @@ write the selected defaults to `~/.roder/config.toml`.
 
 ## Core Concepts
 
-`session` is the persisted runtime conversation unit. The legacy session
-methods expose `SessionMetadata` and `ThreadSnapshot` from `roder-api`.
+`session` is the persisted runtime conversation unit used by the Roder runtime.
+App-server clients interact with sessions through the desktop-facing `thread/*`
+methods.
 
 `thread` is the desktop-facing view of a Roder session. It is shaped as:
 
@@ -143,13 +144,11 @@ can change it with `session/set_mode` or `settings/set_default_mode`.
 
 ## Method Index
 
-Core and compatibility:
+Core:
 
 | Method | Purpose |
 | --- | --- |
 | `initialize` | Desktop startup handshake with active provider, model, and cwd. |
-| `system/initialize` | Legacy status alias. |
-| `system/status` | Legacy status alias. |
 | `extensions/list` | List extension manifests and capability status. |
 | `providers/list` | List providers, auth status, capabilities, and models. |
 | `providers/select` | Select active default provider/model/reasoning. |
@@ -160,24 +159,20 @@ Core and compatibility:
 | `auth/codex/login` | Start Codex OAuth login. |
 | `auth/codex/status` | Read Codex OAuth status. |
 | `auth/codex/logout` | Clear Codex OAuth credentials. |
+| `auth/supergrok/login` | Start SuperGrok OAuth login. |
+| `auth/supergrok/status` | Read SuperGrok OAuth status. |
+| `auth/supergrok/logout` | Clear SuperGrok OAuth credentials. |
 
 Sessions, threads, and turns:
 
 | Method | Purpose |
 | --- | --- |
-| `sessions/create` | Legacy session creation. |
-| `sessions/list` | Legacy persisted session list. |
-| `sessions/load` | Legacy snapshot read. |
-| `sessions/resume` | Alias for `sessions/load`. |
 | `thread/start` | Create a desktop thread/session. |
 | `thread/list` | List desktop threads. |
 | `thread/read` | Read a desktop thread with optional turns. |
 | `turn/start` | Start a desktop turn from rich text input. |
 | `turn/steer` | Add user input to an active desktop turn. |
 | `turn/interrupt` | Interrupt an active desktop turn. |
-| `turns/start` | Legacy turn start with `message` and optional images. |
-| `turns/steer` | Legacy turn steering with `message` and optional images. |
-| `turns/interrupt` | Legacy turn interrupt with required `turnId`. |
 | `session/get` | Read policy mode and pending plan-exit state. |
 | `session/set_mode` | Set the live policy mode. |
 | `session/exit_plan` | Resolve a pending plan-exit request. |
@@ -283,35 +278,6 @@ Behavior:
 Errors:
 
 - None expected from the current handler beyond serialization/runtime failure.
-
-### `system/status`, `system/initialize`
-
-Purpose: Legacy status methods.
-
-Request:
-
-```json
-{}
-```
-
-Response:
-
-```json
-{
-  "provider": "openai",
-  "model": "gpt-5.5",
-  "reasoning": "high",
-  "web_search": { "mode": "cached" },
-  "runner": null,
-  "extensions": 4,
-  "providers": 3
-}
-```
-
-Behavior:
-
-- Returns counts from the extension and inference registries.
-- `runner` is null unless a remote runner destination is selected.
 
 ### `providers/list`
 
@@ -465,9 +431,9 @@ Behavior:
 - Calls runtime policy-mode update with reason `settings default mode`.
 - Persists a config value only when user-config persistence is enabled.
 
-### `auth/codex/login`, `auth/codex/status`, `auth/codex/logout`
+### `auth/codex/*`, `auth/supergrok/*`
 
-Purpose: Manage Codex OAuth credentials.
+Purpose: Manage provider OAuth credentials for Codex and SuperGrok.
 
 Request:
 
@@ -486,7 +452,7 @@ Response:
 
 Behavior:
 
-- `login` runs the Codex login flow and returns `signedIn: true`.
+- `login` runs the provider login flow and returns `signedIn: true`.
 - `status` returns whether tokens are present.
 - `logout` clears tokens and returns `signedIn: false`.
 
@@ -721,46 +687,6 @@ Errors:
 - If no `turnId` is supplied and no active turn is known, returns code
   `-32602` with message `no active turn for thread ...`.
 
-### Legacy `sessions/*` and `turns/*`
-
-Purpose: Maintain compatibility with older Roder TUI clients.
-
-Examples:
-
-```json
-{
-  "method": "sessions/create",
-  "params": {
-    "title": "Work item",
-    "workspace": "/Users/pz/w/gode",
-    "provider": "openai",
-    "model": "gpt-5.5"
-  }
-}
-```
-
-```json
-{
-  "method": "turns/start",
-  "params": {
-    "thread_id": "thread-123",
-    "message": "run tests",
-    "images": [],
-    "provider_override": null,
-    "model_override": null
-  }
-}
-```
-
-Behavior:
-
-- `sessions/create` returns `thread_id`, active `provider`, active `model`, and
-  active `reasoning`.
-- `sessions/list` returns raw session metadata.
-- `sessions/load` and `sessions/resume` return `snapshot`.
-- `turns/start`, `turns/steer`, and `turns/interrupt` call the runtime using
-  snake_case DTOs and support `images`.
-
 ### `session/get`
 
 Purpose: Read current policy mode and any pending plan-exit request.
@@ -917,7 +843,7 @@ Response:
 ```json
 {
   "entries": [
-    { "fileName": "roder-app-server-api.md", "isDirectory": false, "isFile": true }
+    { "fileName": "api.md", "isDirectory": false, "isFile": true }
   ]
 }
 ```
@@ -1791,14 +1717,12 @@ Error conventions:
 
 Cancellation and interruption:
 
-- `turn/interrupt` and `turns/interrupt` call the runtime interrupt path.
+- `turn/interrupt` calls the runtime interrupt path.
 - `team/member/interrupt` interrupts only the selected member.
 - `tasks/cancel` cancels a background task and returns `{ "cancelled": bool }`.
 
-## Persistence and Compatibility Notes
+## Persistence and Contract Notes
 
-- `sessions/*` and `turns/*` are legacy compatibility methods. New desktop
-  clients should prefer `thread/*` and singular `turn/*`.
 - `thread/list` and `thread/read` use persisted sessions first and in-memory
   desktop threads as a fallback.
 - `providers/select`, `settings/set_web_search`, and
@@ -1841,11 +1765,10 @@ Cancellation and interruption:
 
 ### Stop Work
 
-1. For normal desktop turns, call `turn/interrupt` with `threadId`; include
-   `turnId` when the client has it.
-2. For legacy turns, call `turns/interrupt` with both `thread_id` and `turn_id`.
-3. For teammate work, call `team/member/interrupt`.
-4. For background tasks, call `tasks/cancel`.
+1. Call `turn/interrupt` with `threadId`; include `turnId` when the client has
+   it.
+2. For teammate work, call `team/member/interrupt`.
+3. For background tasks, call `tasks/cancel`.
 
 ### Run a Command with Streaming Output
 
@@ -1884,4 +1807,4 @@ When changing the app-server surface, update this document after checking:
 - Notification mapping in `crates/roder-app-server/src/notifications.rs`.
 - E2E tests in `crates/roder-app-server/tests/e2e.rs`.
 - Auth/config persistence behavior and environment variables.
-- Backward-compatible aliases and explicitly unsupported methods.
+- Removed methods and explicitly unsupported methods.
