@@ -29,7 +29,7 @@ impl ToolExecutor for GrepTool {
     fn spec(&self) -> ToolSpec {
         ToolSpec {
             name: "grep".to_string(),
-            description: "Search workspace text files for a literal query with paginated output."
+            description: "Search text files for a literal query with paginated output. Relative paths resolve from the workspace root."
                 .to_string(),
             parameters: json!({
                 "type": "object",
@@ -85,8 +85,9 @@ impl ToolExecutor for GlobTool {
     fn spec(&self) -> ToolSpec {
         ToolSpec {
             name: "glob".to_string(),
-            description: "Find workspace files matching a glob pattern with paginated output."
-                .to_string(),
+            description:
+                "Find files under the workspace root matching a glob pattern with paginated output."
+                    .to_string(),
             parameters: json!({
                 "type": "object",
                 "properties": {

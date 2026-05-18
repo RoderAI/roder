@@ -60,6 +60,7 @@ pub struct DefaultRegistryConfig {
     pub custom_inference_providers: Vec<CustomInferenceProviderConfig>,
     pub session_dir: Option<PathBuf>,
     pub workspace: Option<PathBuf>,
+    pub tool_path_scope: roder_tools::ToolPathScope,
     pub web_search: Option<DefaultWebSearchConfig>,
     pub subagents: Option<DefaultSubagentsConfig>,
     pub policy_mode: PolicyMode,
@@ -84,6 +85,7 @@ impl Default for DefaultRegistryConfig {
             custom_inference_providers: Vec::new(),
             session_dir: None,
             workspace: None,
+            tool_path_scope: roder_tools::ToolPathScope::default(),
             web_search: None,
             subagents: None,
             policy_mode: PolicyMode::Default,
@@ -190,7 +192,10 @@ pub fn build_default_registry(config: DefaultRegistryConfig) -> anyhow::Result<E
         .workspace
         .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
     builder.install(EchoToolsExtension)?;
-    builder.install(BuiltinCodingToolsExtension { workspace })?;
+    builder.install(BuiltinCodingToolsExtension {
+        workspace,
+        path_scope: config.tool_path_scope,
+    })?;
 
     if let Some(subagents) = config.subagents {
         subagents::install_subagents(&mut builder, subagents)?;
@@ -242,6 +247,7 @@ struct EchoToolsExtension;
 
 struct BuiltinCodingToolsExtension {
     workspace: PathBuf,
+    path_scope: roder_tools::ToolPathScope,
 }
 
 struct DefaultTuiExtension;
@@ -285,9 +291,12 @@ impl RoderExtension for BuiltinCodingToolsExtension {
     }
 
     fn install(&self, registry: &mut ExtensionRegistryBuilder) -> anyhow::Result<()> {
-        registry.tool_contributor(roder_tools::builtin_coding_tools_contributor(
-            self.workspace.clone(),
-        )?);
+        registry.tool_contributor(
+            roder_tools::builtin_coding_tools_contributor_with_path_scope(
+                self.workspace.clone(),
+                self.path_scope,
+            )?,
+        );
         Ok(())
     }
 }
@@ -616,6 +625,7 @@ mod tests {
             custom_inference_providers: Vec::new(),
             session_dir: None,
             workspace: None,
+            tool_path_scope: roder_tools::ToolPathScope::default(),
             web_search: None,
             subagents: None,
             policy_mode: PolicyMode::Default,

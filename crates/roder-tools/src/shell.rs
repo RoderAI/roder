@@ -38,7 +38,7 @@ impl ToolExecutor for ShellTool {
                     },
                     "workdir": {
                         "type": "string",
-                        "description": "Optional working directory inside the workspace. Defaults to the workspace root."
+                        "description": "Optional working directory. Relative paths resolve from the workspace root. Defaults to the workspace root."
                     },
                     "timeout_seconds": {
                         "type": "integer",

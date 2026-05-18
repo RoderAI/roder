@@ -2402,6 +2402,7 @@ dependencies = [
  "roder-extension-host",
  "roder-protocol",
  "roder-supergrok-auth",
+ "roder-tools",
  "roder-tui",
  "roder-web-search",
  "serde",

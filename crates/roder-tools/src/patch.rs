@@ -164,6 +164,9 @@ pub(crate) async fn apply_patch_to_workspace(
 
 async fn apply_unified_patch(workspace: &Workspace, patch: &str) -> anyhow::Result<String> {
     validate_unified_patch_paths(workspace, patch)?;
+    if workspace.path_scope().allows_external_paths() && unified_patch_has_absolute_path(patch) {
+        return apply_unified_patch_with_system_patch(patch).await;
+    }
     let mut child = tokio::process::Command::new("git")
         .args(["apply", "--whitespace=nowarn", "-"])
         .current_dir(workspace.root())
@@ -201,6 +204,56 @@ async fn apply_unified_patch(workspace: &Workspace, patch: &str) -> anyhow::Resu
         "Success. Applied patch".to_string()
     } else {
         text
+    })
+}
+
+async fn apply_unified_patch_with_system_patch(patch: &str) -> anyhow::Result<String> {
+    let mut child = tokio::process::Command::new("patch")
+        .args(["-p0"])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()?;
+
+    let mut stdin = child
+        .stdin
+        .take()
+        .ok_or_else(|| anyhow::anyhow!("failed to open patch stdin"))?;
+    stdin.write_all(patch.as_bytes()).await?;
+    drop(stdin);
+
+    let output = child.wait_with_output().await?;
+    let text = format!(
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    )
+    .trim()
+    .to_string();
+    if !output.status.success() {
+        anyhow::bail!(
+            "{}",
+            if text.is_empty() {
+                format!("patch exited with {}", output.status)
+            } else {
+                text
+            }
+        );
+    }
+    Ok(if text.is_empty() {
+        "Success. Applied patch".to_string()
+    } else {
+        text
+    })
+}
+
+fn unified_patch_has_absolute_path(patch: &str) -> bool {
+    patch.lines().any(|line| {
+        line.strip_prefix("--- ")
+            .or_else(|| line.strip_prefix("+++ "))
+            .map(|path| path.split('\t').next().unwrap_or(path).trim())
+            .filter(|path| *path != "/dev/null")
+            .is_some_and(|path| Path::new(strip_diff_prefix(path)).is_absolute())
     })
 }
 

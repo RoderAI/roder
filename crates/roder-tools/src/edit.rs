@@ -32,7 +32,8 @@ impl ToolExecutor for WriteFileTool {
     fn spec(&self) -> ToolSpec {
         ToolSpec {
             name: "write_file".to_string(),
-            description: "Write a UTF-8 text file inside the workspace.".to_string(),
+            description: "Write a UTF-8 text file. Relative paths resolve from the workspace root."
+                .to_string(),
             parameters: json!({
                 "type": "object",
                 "properties": {
@@ -71,7 +72,8 @@ impl ToolExecutor for EditTool {
     fn spec(&self) -> ToolSpec {
         ToolSpec {
             name: "edit".to_string(),
-            description: "Replace one exact text range inside a workspace file.".to_string(),
+            description: "Replace one exact text range inside a file. Relative paths resolve from the workspace root."
+                .to_string(),
             parameters: json!({
                 "type": "object",
                 "properties": {
@@ -131,7 +133,7 @@ impl ToolExecutor for MultiEditTool {
     fn spec(&self) -> ToolSpec {
         ToolSpec {
             name: "multi_edit".to_string(),
-            description: "Apply multiple exact text replacements to one workspace file."
+            description: "Apply multiple exact text replacements to one file. Relative paths resolve from the workspace root."
                 .to_string(),
             parameters: json!({
                 "type": "object",

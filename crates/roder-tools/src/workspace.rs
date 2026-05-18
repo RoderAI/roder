@@ -2,13 +2,43 @@ use std::path::{Component, Path, PathBuf};
 
 use anyhow::{Context, bail};
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ToolPathScope {
+    /// Resolve relative paths from the workspace root, but allow absolute paths and
+    /// `..` segments to address files outside the workspace.
+    #[default]
+    Global,
+    /// Require every resolved path to stay under the workspace root.
+    Workspace,
+}
+
+impl ToolPathScope {
+    pub fn parse(value: &str) -> Option<Self> {
+        match value.trim().to_ascii_lowercase().as_str() {
+            "global" | "all" | "unrestricted" | "filesystem" | "fs" => Some(Self::Global),
+            "workspace" | "workspace-only" | "cwd" | "repo" | "root" => Some(Self::Workspace),
+            _ => None,
+        }
+    }
+
+    pub(crate) fn allows_external_paths(self) -> bool {
+        matches!(self, Self::Global)
+    }
+}
+
 #[derive(Debug, Clone)]
 pub(crate) struct Workspace {
     root: PathBuf,
+    path_scope: ToolPathScope,
 }
 
 impl Workspace {
+    #[cfg(test)]
     pub(crate) fn new(root: PathBuf) -> anyhow::Result<Self> {
+        Self::new_with_scope(root, ToolPathScope::default())
+    }
+
+    pub(crate) fn new_with_scope(root: PathBuf, path_scope: ToolPathScope) -> anyhow::Result<Self> {
         let root = if root.as_os_str().is_empty() {
             std::env::current_dir()?
         } else {
@@ -17,11 +47,15 @@ impl Workspace {
         let root = root
             .canonicalize()
             .with_context(|| format!("workspace root does not exist: {}", root.display()))?;
-        Ok(Self { root })
+        Ok(Self { root, path_scope })
     }
 
     pub(crate) fn root(&self) -> &Path {
         &self.root
+    }
+
+    pub(crate) fn path_scope(&self) -> ToolPathScope {
+        self.path_scope
     }
 
     pub(crate) fn resolve_existing(&self, input: &str) -> anyhow::Result<PathBuf> {
@@ -29,13 +63,13 @@ impl Workspace {
         let canonical = candidate
             .canonicalize()
             .with_context(|| format!("path does not exist: {input}"))?;
-        self.ensure_inside(&canonical)?;
+        self.ensure_allowed(&canonical)?;
         Ok(canonical)
     }
 
     pub(crate) fn resolve_for_write(&self, input: &str) -> anyhow::Result<PathBuf> {
         let candidate = self.normalize(self.candidate(input)?)?;
-        self.ensure_inside(&candidate)?;
+        self.ensure_allowed(&candidate)?;
         Ok(candidate)
     }
 
@@ -59,15 +93,15 @@ impl Workspace {
         }
     }
 
-    fn ensure_inside(&self, path: &Path) -> anyhow::Result<()> {
-        if !path.starts_with(&self.root) {
-            bail!(
-                "path {} is outside workspace {}",
-                path.display(),
-                self.root.display()
-            );
+    fn ensure_allowed(&self, path: &Path) -> anyhow::Result<()> {
+        if self.path_scope.allows_external_paths() || path.starts_with(&self.root) {
+            return Ok(());
         }
-        Ok(())
+        bail!(
+            "path {} is outside workspace {}",
+            path.display(),
+            self.root.display()
+        );
     }
 
     fn normalize(&self, path: PathBuf) -> anyhow::Result<PathBuf> {
@@ -80,7 +114,7 @@ impl Workspace {
                 Component::Normal(part) => normalized.push(part),
                 Component::ParentDir => {
                     if !normalized.pop() {
-                        bail!("path escapes workspace");
+                        bail!("path escapes filesystem root");
                     }
                 }
             }
