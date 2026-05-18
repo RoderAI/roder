@@ -1,0 +1,16 @@
+[package]
+name = "roder-configure"
+version.workspace = true
+edition.workspace = true
+
+[[bin]]
+name = "roder-configure"
+path = "src/main.rs"
+
+[dependencies]
+anyhow.workspace = true
+roder-api.workspace = true
+serde = { workspace = true, features = ["derive"] }
+serde_json.workspace = true
+tokio = { workspace = true, features = ["full"] }
+toml.workspace = true

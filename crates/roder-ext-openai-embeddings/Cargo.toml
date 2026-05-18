@@ -1,0 +1,30 @@
+[package]
+name = "roder-ext-openai-embeddings"
+version.workspace = true
+edition.workspace = true
+
+[package.metadata.roder.distribution]
+id = "openai-embeddings"
+category = "embedding-provider"
+display_name = "OpenAI Embeddings"
+description = "OpenAI embedding provider for Roder memories."
+default_in_profiles = ["full", "research-headless"]
+required_env = ["OPENAI_API_KEY"]
+optional_env = []
+conflicts_with = []
+required_capabilities = ["network.openai", "secrets.openai-api-key"]
+extension_path = "::extension"
+docs_url = ""
+
+[dependencies]
+anyhow.workspace = true
+async-trait.workspace = true
+reqwest.workspace = true
+roder-api.workspace = true
+semver.workspace = true
+serde = { workspace = true, features = ["derive"] }
+serde_json.workspace = true
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["full"] }
+

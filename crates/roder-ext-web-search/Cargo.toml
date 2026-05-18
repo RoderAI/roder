@@ -3,6 +3,19 @@ name = "roder-ext-web-search"
 version.workspace = true
 edition.workspace = true
 
+[package.metadata.roder.distribution]
+id = "web-search"
+category = "tool-provider"
+display_name = "Web Search Router"
+description = "Router extension for configured web search providers."
+default_in_profiles = ["full"]
+required_env = []
+optional_env = []
+conflicts_with = []
+required_capabilities = ["network.web"]
+extension_path = "::WebSearchRouterExtension::new"
+docs_url = ""
+
 [dependencies]
 anyhow.workspace = true
 async-trait.workspace = true

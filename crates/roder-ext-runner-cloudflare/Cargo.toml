@@ -1,0 +1,13 @@
+[package]
+name = "roder-ext-runner-cloudflare"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+roder-api.workspace = true
+roder-ext-runner-hosted-common.workspace = true
+semver.workspace = true
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["full"] }

@@ -13,6 +13,8 @@ use crate::properties::{
     parse_color, parse_display, parse_padding,
 };
 
+type DeclarationHit<'a> = (bool, (u32, u32, u32), usize, usize, &'a Declaration);
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum FontWeight {
     #[default]
@@ -84,7 +86,7 @@ impl ComputedStyle {
 pub fn compute<'a>(sheet: &Stylesheet, chain: &[&StyledNode<'a>]) -> ComputedStyle {
     debug_assert!(!chain.is_empty());
     // (important, specificity, source_order, declaration_index_within_rule, &Declaration)
-    let mut hits: Vec<(bool, (u32, u32, u32), usize, usize, &Declaration)> = Vec::new();
+    let mut hits: Vec<DeclarationHit<'_>> = Vec::new();
     for rule in &sheet.rules {
         if !rule
             .selectors
@@ -205,20 +207,20 @@ fn resolve_inner(input: &str, vars: &[(String, String)], depth: usize) -> String
     let bytes = input.as_bytes();
     let mut i = 0;
     while i < bytes.len() {
-        if bytes[i..].starts_with(b"var(") {
-            if let Some(end) = input[i..].find(')') {
-                let inner = &input[i + 4..i + end];
-                let name = inner.trim().trim_start_matches("--").trim();
-                let value = vars
-                    .iter()
-                    .rev()
-                    .find(|(n, _)| n == name)
-                    .map(|(_, v)| v.clone())
-                    .unwrap_or_default();
-                out.push_str(&resolve_inner(&value, vars, depth + 1));
-                i += end + 1;
-                continue;
-            }
+        if bytes[i..].starts_with(b"var(")
+            && let Some(end) = input[i..].find(')')
+        {
+            let inner = &input[i + 4..i + end];
+            let name = inner.trim().trim_start_matches("--").trim();
+            let value = vars
+                .iter()
+                .rev()
+                .find(|(n, _)| n == name)
+                .map(|(_, v)| v.clone())
+                .unwrap_or_default();
+            out.push_str(&resolve_inner(&value, vars, depth + 1));
+            i += end + 1;
+            continue;
         }
         out.push(bytes[i] as char);
         i += 1;
@@ -267,10 +269,10 @@ fn selector_matches<'a>(sel: &Selector, chain: &[&StyledNode<'a>]) -> bool {
 }
 
 fn simple_matches(simple: &SimpleSelector, node: &StyledNode<'_>) -> bool {
-    if let Some(id) = &simple.id {
-        if node.id != Some(id.as_str()) {
-            return false;
-        }
+    if let Some(id) = &simple.id
+        && node.id != Some(id.as_str())
+    {
+        return false;
     }
     for class in &simple.classes {
         if !node.classes.iter().any(|c| c == class) {
@@ -280,10 +282,10 @@ fn simple_matches(simple: &SimpleSelector, node: &StyledNode<'_>) -> bool {
     for attr in &simple.attrs {
         match node.data.iter().find(|(k, _)| *k == attr.name) {
             Some((_, v)) => {
-                if let Some(expected) = &attr.value {
-                    if v != expected {
-                        return false;
-                    }
+                if let Some(expected) = &attr.value
+                    && v != expected
+                {
+                    return false;
                 }
             }
             None => return false,

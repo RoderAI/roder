@@ -3,6 +3,7 @@ use std::sync::Arc;
 
 use roder_api::events::{EventEnvelope, RoderEvent, ThreadId, TurnId};
 use roder_api::extension::TaskExecutorId;
+use roder_api::remote_runner::{RemoteRunnerSession, RunnerDestination};
 use roder_api::tasks::{
     TaskCancelled, TaskCompleted, TaskExecutionContext, TaskFailed, TaskHandle, TaskId, TaskOutput,
     TaskOutputSink, TaskOutputStream, TaskOutputWriter, TaskStarted, TaskState,
@@ -31,11 +32,13 @@ impl Default for BackgroundRunnerConfig {
     }
 }
 
-#[derive(Debug, Clone, Default)]
+#[derive(Clone, Default)]
 pub struct TaskSubmitOptions {
     pub thread_id: Option<ThreadId>,
     pub turn_id: Option<TurnId>,
     pub workspace_root: Option<String>,
+    pub runner_destination: Option<RunnerDestination>,
+    pub runner_session: Option<Arc<dyn RemoteRunnerSession>>,
     pub deadline: Option<OffsetDateTime>,
     pub metadata: serde_json::Value,
 }
@@ -275,6 +278,8 @@ impl BackgroundRunner {
             thread_id: options.thread_id.clone(),
             turn_id: options.turn_id.clone(),
             workspace_root: options.workspace_root,
+            runner_destination: options.runner_destination,
+            runner_session: options.runner_session,
             deadline: options.deadline,
             metadata: options.metadata,
             output: TaskOutputSink::new(Arc::new(RunnerOutputWriter {

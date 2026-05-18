@@ -3,22 +3,37 @@ use std::sync::Arc;
 
 use anyhow::Context;
 use futures::stream;
+use roder_api::capabilities::CapabilityRequest;
 use roder_api::catalog::{PROVIDER_CODEX, PROVIDER_MOCK, models_for_codex, models_for_provider};
 use roder_api::extension::{
     ExtensionManifest, ExtensionRegistry, ExtensionRegistryBuilder, ProvidedService, RoderExtension,
 };
 use roder_api::inference::*;
+use roder_api::notifications::NotificationKind;
 use roder_api::policy_mode::PolicyMode;
+use roder_api::remote_runner::RunnerDestination;
 use roder_api::tui_status::{PaletteSourceDescriptor, built_in_status_segments};
 use roder_ext_anthropic::AnthropicExtension;
 use roder_ext_gemini::GeminiExtension;
 use roder_ext_jsonl_session::JsonlSessionExtension;
 use roder_ext_memory::MemoryExtension;
+use roder_ext_openai_embeddings::OpenAiEmbeddingsExtension;
 use roder_ext_openai_responses::{OpenAiResponsesEngine, OpenAiResponsesExtension};
+use roder_ext_runner_blaxel::BlaxelRunnerExtension;
+use roder_ext_runner_cloudflare::CloudflareRunnerExtension;
+use roder_ext_runner_daytona::DaytonaRunnerExtension;
+use roder_ext_runner_docker::DockerRunnerExtension;
+use roder_ext_runner_e2b::E2bRunnerExtension;
+use roder_ext_runner_modal::ModalRunnerExtension;
+use roder_ext_runner_runloop::RunloopRunnerExtension;
+use roder_ext_runner_unix_local::UnixLocalRunnerExtension;
+use roder_ext_runner_vercel::VercelRunnerExtension;
+use roder_ext_xai::XaiExtension;
 use semver::Version;
 
 mod subagents;
 mod web_search;
+pub mod workflow_import;
 
 pub use subagents::DefaultSubagentsConfig;
 pub use web_search::{DefaultWebSearchConfig, DefaultWebSearchProviderConfig};
@@ -28,11 +43,15 @@ pub struct DefaultRegistryConfig {
     pub openai_api_key: Option<String>,
     pub anthropic_api_key: Option<String>,
     pub gemini_api_key: Option<String>,
+    pub xai_api_key: Option<String>,
+    pub xai_base_url: Option<String>,
     pub session_dir: Option<PathBuf>,
     pub workspace: Option<PathBuf>,
     pub web_search: Option<DefaultWebSearchConfig>,
     pub subagents: Option<DefaultSubagentsConfig>,
     pub policy_mode: PolicyMode,
+    pub notifications: DefaultNotificationsConfig,
+    pub remote_runner_destination: Option<RunnerDestination>,
 }
 
 impl Default for DefaultRegistryConfig {
@@ -41,11 +60,39 @@ impl Default for DefaultRegistryConfig {
             openai_api_key: None,
             anthropic_api_key: None,
             gemini_api_key: None,
+            xai_api_key: None,
+            xai_base_url: None,
             session_dir: None,
             workspace: None,
             web_search: None,
             subagents: None,
             policy_mode: PolicyMode::Default,
+            notifications: DefaultNotificationsConfig::default(),
+            remote_runner_destination: None,
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct DefaultNotificationsConfig {
+    pub enabled: bool,
+    pub terminal: bool,
+    pub desktop: bool,
+    pub enabled_kinds: Vec<NotificationKind>,
+}
+
+impl Default for DefaultNotificationsConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            terminal: true,
+            desktop: true,
+            enabled_kinds: vec![
+                NotificationKind::NeedsInput,
+                NotificationKind::TurnIdle,
+                NotificationKind::TaskCompleted,
+                NotificationKind::TaskFailed,
+            ],
         }
     }
 }
@@ -65,21 +112,42 @@ pub fn build_default_registry(config: DefaultRegistryConfig) -> anyhow::Result<E
     if let Some(gemini_key) = config.gemini_api_key {
         builder.install(GeminiExtension::new(gemini_key))?;
     }
+    builder.install(XaiExtension::new(config.xai_api_key, config.xai_base_url))?;
 
     builder.install(roder_ext_plan_mode::PlanModeExtension::new(
         config.policy_mode,
     ))?;
+    builder.install(UnixLocalRunnerExtension)?;
+    builder.install(DockerRunnerExtension)?;
+    builder.install(BlaxelRunnerExtension)?;
+    builder.install(CloudflareRunnerExtension)?;
+    builder.install(DaytonaRunnerExtension)?;
+    builder.install(E2bRunnerExtension)?;
+    builder.install(ModalRunnerExtension)?;
+    builder.install(RunloopRunnerExtension)?;
+    builder.install(VercelRunnerExtension)?;
+    builder.install(roder_ext_task_process::ProcessTaskExtension)?;
+    if config.notifications.enabled && config.notifications.terminal {
+        builder.install(roder_ext_notify_terminal::TerminalNotifyExtension::new(
+            config.notifications.enabled_kinds.clone(),
+        ))?;
+    }
+    if config.notifications.enabled && config.notifications.desktop {
+        builder.install(roder_ext_notify_desktop::DesktopNotifyExtension::new(
+            config.notifications.enabled_kinds.clone(),
+        ))?;
+    }
     builder.install(DefaultTuiExtension)?;
 
     if let Some(web_search) = config.web_search {
         web_search::install_web_search(&mut builder, web_search)?;
     }
 
-    builder.tool_contributor(roder_tools::echo_tool_contributor());
     let workspace = config
         .workspace
         .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
-    builder.tool_contributor(roder_tools::builtin_coding_tools_contributor(workspace)?);
+    builder.install(EchoToolsExtension)?;
+    builder.install(BuiltinCodingToolsExtension { workspace })?;
 
     if let Some(subagents) = config.subagents {
         subagents::install_subagents(&mut builder, subagents)?;
@@ -91,6 +159,7 @@ pub fn build_default_registry(config: DefaultRegistryConfig) -> anyhow::Result<E
         .unwrap_or_else(|| roder_home.join("sessions"));
     builder.install(JsonlSessionExtension::new(session_dir))?;
     builder.install(MemoryExtension::new(roder_home.join("memory")))?;
+    builder.install(OpenAiEmbeddingsExtension::from_env())?;
 
     builder.build()
 }
@@ -103,7 +172,59 @@ fn roder_home_dir() -> anyhow::Result<PathBuf> {
 
 struct FakeProviderExtension;
 
+struct EchoToolsExtension;
+
+struct BuiltinCodingToolsExtension {
+    workspace: PathBuf,
+}
+
 struct DefaultTuiExtension;
+
+impl RoderExtension for EchoToolsExtension {
+    fn manifest(&self) -> ExtensionManifest {
+        ExtensionManifest {
+            id: "roder-ext-builtin-echo-tools".to_string(),
+            name: "Built-in Echo Tools".to_string(),
+            version: Version::new(0, 1, 0),
+            api_version: "0.1.0".to_string(),
+            description: Some("Offline echo tool provider".to_string()),
+            provides: vec![ProvidedService::ToolProvider("builtin-echo".to_string())],
+            required_capabilities: vec![],
+        }
+    }
+
+    fn install(&self, registry: &mut ExtensionRegistryBuilder) -> anyhow::Result<()> {
+        registry.tool_contributor(roder_tools::echo_tool_contributor());
+        Ok(())
+    }
+}
+
+impl RoderExtension for BuiltinCodingToolsExtension {
+    fn manifest(&self) -> ExtensionManifest {
+        ExtensionManifest {
+            id: "roder-ext-builtin-coding-tools".to_string(),
+            name: "Built-in Coding Tools".to_string(),
+            version: Version::new(0, 1, 0),
+            api_version: "0.1.0".to_string(),
+            description: Some("Workspace file, search, patch, and command tools".to_string()),
+            provides: vec![ProvidedService::ToolProvider(
+                "builtin-coding-tools".to_string(),
+            )],
+            required_capabilities: vec![
+                CapabilityRequest::new("fs.read.workspace"),
+                CapabilityRequest::new("fs.write.workspace"),
+                CapabilityRequest::new("process.spawn.shell"),
+            ],
+        }
+    }
+
+    fn install(&self, registry: &mut ExtensionRegistryBuilder) -> anyhow::Result<()> {
+        registry.tool_contributor(roder_tools::builtin_coding_tools_contributor(
+            self.workspace.clone(),
+        )?);
+        Ok(())
+    }
+}
 
 impl RoderExtension for DefaultTuiExtension {
     fn manifest(&self) -> ExtensionManifest {
@@ -148,6 +269,8 @@ fn built_in_palette_sources() -> Vec<PaletteSourceDescriptor> {
         ("agents", "Agents", 80),
         ("models", "Models", 70),
         ("modes", "Modes", 60),
+        ("workflow-imports", "Workflow Imports", 55),
+        ("media", "Media", 50),
     ]
     .into_iter()
     .map(|(id, label, priority)| PaletteSourceDescriptor {
@@ -326,8 +449,70 @@ impl InferenceEngine for FakeInferenceEngine {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::{
+        Arc,
+        atomic::{AtomicUsize, Ordering},
+    };
+
     use super::*;
-    use roder_api::catalog::{PROVIDER_ANTHROPIC, PROVIDER_GEMINI, PROVIDER_OPENAI};
+    use roder_api::catalog::{
+        PROVIDER_ANTHROPIC, PROVIDER_GEMINI, PROVIDER_OPENAI, PROVIDER_SUPERGROK, PROVIDER_XAI,
+    };
+    use roder_api::interactive::{
+        HandlerOutcome, HoverCursor, InteractiveEvent, InteractiveRegion, InteractiveRegionHandler,
+        RegionKind, RegionRect,
+    };
+
+    struct FakeInteractiveExtension {
+        calls: Arc<AtomicUsize>,
+    }
+
+    impl RoderExtension for FakeInteractiveExtension {
+        fn manifest(&self) -> ExtensionManifest {
+            ExtensionManifest {
+                id: "roder-ext-test-interactive".to_string(),
+                name: "Test Interactive Regions".to_string(),
+                version: Version::new(0, 1, 0),
+                api_version: "0.1.0".to_string(),
+                description: None,
+                provides: vec![ProvidedService::InteractiveRegionHandler(
+                    "test-composer-handler".to_string(),
+                )],
+                required_capabilities: vec![],
+            }
+        }
+
+        fn install(&self, registry: &mut ExtensionRegistryBuilder) -> anyhow::Result<()> {
+            registry.interactive_region_handler(Arc::new(FakeInteractiveRegionHandler {
+                calls: Arc::clone(&self.calls),
+            }));
+            Ok(())
+        }
+    }
+
+    struct FakeInteractiveRegionHandler {
+        calls: Arc<AtomicUsize>,
+    }
+
+    #[async_trait::async_trait]
+    impl InteractiveRegionHandler for FakeInteractiveRegionHandler {
+        fn id(&self) -> String {
+            "test-composer-handler".to_string()
+        }
+
+        fn kinds(&self) -> &[&'static str] {
+            &["Composer"]
+        }
+
+        async fn handle(
+            &self,
+            _event: InteractiveEvent,
+            _region: &InteractiveRegion,
+        ) -> anyhow::Result<HandlerOutcome> {
+            self.calls.fetch_add(1, Ordering::SeqCst);
+            Ok(HandlerOutcome::Consumed)
+        }
+    }
 
     #[test]
     fn default_registry_without_keys_has_mock_provider() {
@@ -351,11 +536,15 @@ mod tests {
             openai_api_key: Some("openai".to_string()),
             anthropic_api_key: Some("anthropic".to_string()),
             gemini_api_key: Some("gemini".to_string()),
+            xai_api_key: Some("xai".to_string()),
+            xai_base_url: None,
             session_dir: None,
             workspace: None,
             web_search: None,
             subagents: None,
             policy_mode: PolicyMode::Default,
+            notifications: DefaultNotificationsConfig::default(),
+            remote_runner_destination: None,
         })
         .unwrap();
         for provider in [
@@ -364,12 +553,22 @@ mod tests {
             PROVIDER_CODEX,
             PROVIDER_ANTHROPIC,
             PROVIDER_GEMINI,
+            PROVIDER_SUPERGROK,
+            PROVIDER_XAI,
         ] {
             assert!(
                 registry.inference_engine(provider).is_some(),
                 "missing {provider}"
             );
         }
+    }
+
+    #[test]
+    fn default_registry_exposes_supergrok_without_xai_api_key() {
+        let registry = build_default_registry(DefaultRegistryConfig::default()).unwrap();
+
+        assert!(registry.inference_engine(PROVIDER_SUPERGROK).is_some());
+        assert!(registry.inference_engine(PROVIDER_XAI).is_none());
     }
 
     #[test]
@@ -435,5 +634,53 @@ mod tests {
         assert!(services.iter().any(|service| {
             matches!(service, ProvidedService::PaletteSource(id) if id == "commands")
         }));
+    }
+
+    #[tokio::test]
+    async fn mouse_integration_extension_installs_interactive_region_handler() {
+        let calls = Arc::new(AtomicUsize::new(0));
+        let mut builder = ExtensionRegistryBuilder::new();
+        builder
+            .install(FakeInteractiveExtension {
+                calls: Arc::clone(&calls),
+            })
+            .unwrap();
+        let registry = builder.build().unwrap();
+
+        assert_eq!(registry.interactive_region_handlers.len(), 1);
+        assert!(
+            registry
+                .provided_services()
+                .contains(&ProvidedService::InteractiveRegionHandler(
+                    "test-composer-handler".to_string()
+                ))
+        );
+
+        let region = InteractiveRegion {
+            id: "composer".to_string(),
+            rect: RegionRect {
+                x: 0,
+                y: 0,
+                width: 10,
+                height: 1,
+            },
+            z: 0,
+            kind: RegionKind::Composer,
+            hover_cursor: HoverCursor::Text,
+            keyboard_binding: None,
+        };
+
+        let outcome = registry.interactive_region_handlers[0]
+            .handle(
+                InteractiveEvent::HoverEnter {
+                    region: "composer".to_string(),
+                },
+                &region,
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(outcome, HandlerOutcome::Consumed);
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
     }
 }

@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use roder_api::events::EventEnvelope;
-use roder_protocol::{JsonRpcRequest, JsonRpcResponse};
+use roder_protocol::{JsonRpcNotification, JsonRpcRequest, JsonRpcResponse};
 use tokio::sync::broadcast;
 
 use crate::AppServer;
@@ -22,5 +22,9 @@ impl LocalAppClient {
 
     pub fn subscribe_events(&self) -> broadcast::Receiver<EventEnvelope> {
         self.server.subscribe_events()
+    }
+
+    pub fn subscribe_notifications(&self) -> broadcast::Receiver<JsonRpcNotification> {
+        self.server.subscribe_notifications()
     }
 }

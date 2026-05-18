@@ -3,8 +3,8 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use roder_api::{
-    ExtensionManifest, ExtensionRegistryBuilder, Notification, NotificationKind, NotificationSink,
-    ProvidedService, RoderExtension,
+    CapabilityRequest, ExtensionManifest, ExtensionRegistryBuilder, Notification, NotificationKind,
+    NotificationSink, ProvidedService, RoderExtension,
 };
 use tokio::sync::Mutex;
 
@@ -45,6 +45,7 @@ impl TerminalBellSink {
     pub fn default_kinds() -> Vec<NotificationKind> {
         vec![
             NotificationKind::NeedsInput,
+            NotificationKind::TurnIdle,
             NotificationKind::TaskCompleted,
             NotificationKind::TaskFailed,
         ]
@@ -103,7 +104,21 @@ impl NotificationSink for CapturedNotificationSink {
     }
 }
 
-pub struct TerminalNotifyExtension;
+pub struct TerminalNotifyExtension {
+    enabled_kinds: Vec<NotificationKind>,
+}
+
+impl TerminalNotifyExtension {
+    pub fn new(enabled_kinds: Vec<NotificationKind>) -> Self {
+        Self { enabled_kinds }
+    }
+}
+
+impl Default for TerminalNotifyExtension {
+    fn default() -> Self {
+        Self::new(TerminalBellSink::default_kinds())
+    }
+}
 
 impl RoderExtension for TerminalNotifyExtension {
     fn manifest(&self) -> ExtensionManifest {
@@ -116,14 +131,14 @@ impl RoderExtension for TerminalNotifyExtension {
             provides: vec![ProvidedService::NotificationSink(
                 TERMINAL_BELL_SINK_ID.to_string(),
             )],
-            required_capabilities: Vec::new(),
+            required_capabilities: vec![CapabilityRequest::new("terminal.write")],
         }
     }
 
     fn install(&self, registry: &mut ExtensionRegistryBuilder) -> anyhow::Result<()> {
         registry.notification_sink(Arc::new(TerminalBellSink::new(
             Arc::new(StderrBellWriter),
-            TerminalBellSink::default_kinds(),
+            self.enabled_kinds.clone(),
         )));
         Ok(())
     }

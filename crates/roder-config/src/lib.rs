@@ -3,6 +3,10 @@ use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 
+pub mod workflow_import;
+
+pub use workflow_import::{WorkflowScanOptions, scan_workflow_imports};
+
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]
 pub struct Config {
     pub provider: Option<String>,
@@ -12,6 +16,15 @@ pub struct Config {
     pub web_search: Option<WebSearchConfig>,
     pub subagents: Option<SubagentsConfig>,
     pub policy_modes: Option<PolicyModesConfig>,
+    pub commands: Option<CommandsConfig>,
+    pub notifications: Option<NotificationsConfig>,
+    pub tui: Option<TuiConfig>,
+    pub remote_runners: Option<RemoteRunnersConfig>,
+    pub media: Option<MediaConfig>,
+    pub memories: Option<MemoriesConfig>,
+    #[serde(default)]
+    pub embedding_providers: HashMap<String, EmbeddingProviderConfig>,
+    pub agent_teams: Option<AgentTeamsConfig>,
     #[serde(default)]
     pub providers: HashMap<String, ProviderConfig>,
     #[serde(default)]
@@ -144,6 +157,244 @@ pub struct PolicyAutoApproveConfig {
     pub bypass: Vec<String>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct CommandsConfig {
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+    pub user_dir: Option<PathBuf>,
+    pub workspace_dir: Option<PathBuf>,
+    #[serde(default)]
+    pub allow_shell_includes: bool,
+    #[serde(default)]
+    pub allow_url_includes: bool,
+    #[serde(default)]
+    pub allowed_url_hosts: Vec<String>,
+    pub include_timeout_seconds: Option<u64>,
+    pub max_include_bytes: Option<usize>,
+    #[serde(default = "default_true")]
+    pub live_reload: bool,
+}
+
+impl Default for CommandsConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            user_dir: None,
+            workspace_dir: Some(PathBuf::from(".roder/commands")),
+            allow_shell_includes: false,
+            allow_url_includes: false,
+            allowed_url_hosts: Vec::new(),
+            include_timeout_seconds: Some(5),
+            max_include_bytes: Some(65_536),
+            live_reload: true,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct NotificationsConfig {
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+    #[serde(default)]
+    pub kinds: Vec<String>,
+    #[serde(default)]
+    pub terminal: NotificationSinkConfig,
+    #[serde(default)]
+    pub desktop: NotificationSinkConfig,
+    #[serde(default)]
+    pub live_notifications: bool,
+}
+
+impl Default for NotificationsConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            kinds: Vec::new(),
+            terminal: NotificationSinkConfig { enabled: true },
+            desktop: NotificationSinkConfig { enabled: true },
+            live_notifications: false,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct NotificationSinkConfig {
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+}
+
+impl Default for NotificationSinkConfig {
+    fn default() -> Self {
+        Self { enabled: true }
+    }
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct TuiConfig {
+    #[serde(default)]
+    pub status: TuiStatusConfig,
+    #[serde(default)]
+    pub palette: TuiPaletteConfig,
+    #[serde(default)]
+    pub diff: TuiDiffConfig,
+    #[serde(default)]
+    pub keymap: HashMap<String, Vec<String>>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct TuiStatusConfig {
+    #[serde(default)]
+    pub disabled_segments: Vec<String>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct TuiPaletteConfig {
+    #[serde(default)]
+    pub disabled_sources: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct TuiDiffConfig {
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct RemoteRunnersConfig {
+    #[serde(default)]
+    pub enabled: bool,
+    pub default_destination: Option<String>,
+    #[serde(default)]
+    pub destinations: HashMap<String, RemoteRunnerDestinationConfig>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct MediaConfig {
+    pub artifacts_dir: Option<PathBuf>,
+    pub max_read_bytes: Option<u64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct MemoriesConfig {
+    pub store_path: Option<PathBuf>,
+    pub embedding_provider: Option<String>,
+    pub embedding_model: Option<String>,
+    #[serde(default = "default_true")]
+    pub project_enabled: bool,
+    #[serde(default)]
+    pub global_enabled: bool,
+    #[serde(default)]
+    pub include_global_with_project: bool,
+}
+
+impl Default for MemoriesConfig {
+    fn default() -> Self {
+        Self {
+            store_path: None,
+            embedding_provider: Some("openai".to_string()),
+            embedding_model: Some("text-embedding-3-large".to_string()),
+            project_enabled: true,
+            global_enabled: false,
+            include_global_with_project: false,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct EmbeddingProviderConfig {
+    #[serde(default)]
+    pub enabled: bool,
+    pub model: Option<String>,
+    pub api_key_env: Option<String>,
+    pub command: Option<Vec<String>>,
+    pub dimensions: Option<usize>,
+}
+
+impl Default for EmbeddingProviderConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            model: None,
+            api_key_env: None,
+            command: None,
+            dimensions: None,
+        }
+    }
+}
+
+impl Default for MediaConfig {
+    fn default() -> Self {
+        Self {
+            artifacts_dir: None,
+            max_read_bytes: Some(10 * 1024 * 1024),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct AgentTeamsConfig {
+    #[serde(default)]
+    pub enabled: bool,
+    #[serde(default)]
+    pub display_mode: roder_api::teams::AgentTeamDisplayMode,
+    pub default_teammate_model: Option<String>,
+    #[serde(default)]
+    pub require_plan_approval: bool,
+    pub max_teammates: Option<usize>,
+    #[serde(default)]
+    pub split_panes: AgentTeamsSplitPaneConfig,
+}
+
+impl Default for AgentTeamsConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            display_mode: roder_api::teams::AgentTeamDisplayMode::Auto,
+            default_teammate_model: Some("lead".to_string()),
+            require_plan_approval: false,
+            max_teammates: Some(5),
+            split_panes: AgentTeamsSplitPaneConfig::default(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct AgentTeamsSplitPaneConfig {
+    #[serde(default = "default_true")]
+    pub reuse_existing_tmux_session: bool,
+    pub tmux_command: Option<String>,
+    pub iterm2_command: Option<String>,
+}
+
+impl Default for AgentTeamsSplitPaneConfig {
+    fn default() -> Self {
+        Self {
+            reuse_existing_tmux_session: true,
+            tmux_command: Some("tmux".to_string()),
+            iterm2_command: Some("it2".to_string()),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct RemoteRunnerDestinationConfig {
+    pub provider: String,
+    #[serde(default)]
+    pub config: serde_json::Value,
+    #[serde(default)]
+    pub secret_env: HashMap<String, String>,
+}
+
+impl Default for TuiDiffConfig {
+    fn default() -> Self {
+        Self { enabled: true }
+    }
+}
+
+fn default_true() -> bool {
+    true
+}
+
 pub fn load_config() -> anyhow::Result<Config> {
     let mut config = load_config_file()?;
     apply_env_overrides(&mut config);
@@ -168,6 +419,10 @@ pub fn save_web_search_mode(mode: &str) -> anyhow::Result<()> {
 
 pub fn save_default_policy_mode(mode: &str) -> anyhow::Result<()> {
     save_default_policy_mode_to_path(config_path(), mode)
+}
+
+pub fn save_memory_embedding_provider(provider: &str, model: &str) -> anyhow::Result<()> {
+    save_memory_embedding_provider_to_path(config_path(), provider, model)
 }
 
 pub fn save_default_provider_model_to_path(
@@ -208,6 +463,19 @@ pub fn save_default_policy_mode_to_path(path: impl AsRef<Path>, mode: &str) -> a
         .policy_modes
         .get_or_insert_with(Default::default)
         .default = Some(mode.to_string());
+    save_config_file_to_path(path, &config)
+}
+
+pub fn save_memory_embedding_provider_to_path(
+    path: impl AsRef<Path>,
+    provider: &str,
+    model: &str,
+) -> anyhow::Result<()> {
+    let path = path.as_ref();
+    let mut config = load_config_file_from_path(path)?;
+    let memories = config.memories.get_or_insert_with(Default::default);
+    memories.embedding_provider = Some(provider.to_string());
+    memories.embedding_model = Some(model.to_string());
     save_config_file_to_path(path, &config)
 }
 
@@ -313,6 +581,106 @@ fn apply_env_overrides_with(config: &mut Config, mut env: impl FnMut(&str) -> Op
     {
         config.web_search.get_or_insert_with(Default::default).mode = Some(mode);
     }
+    if let Some(disabled) = env("RODER_COMMANDS_DISABLED")
+        && parse_bool(&disabled).unwrap_or(false)
+    {
+        config.commands.get_or_insert_with(Default::default).enabled = false;
+    }
+    if let Some(allow_shell) = env("RODER_COMMANDS_ALLOW_SHELL")
+        && let Some(allow_shell) = parse_bool(&allow_shell)
+    {
+        config
+            .commands
+            .get_or_insert_with(Default::default)
+            .allow_shell_includes = allow_shell;
+    }
+    if let Some(allow_url) = env("RODER_COMMANDS_ALLOW_URL")
+        && let Some(allow_url) = parse_bool(&allow_url)
+    {
+        config
+            .commands
+            .get_or_insert_with(Default::default)
+            .allow_url_includes = allow_url;
+    }
+    if let Some(disabled) = env("RODER_NOTIFICATIONS_DISABLED")
+        && parse_bool(&disabled).unwrap_or(false)
+    {
+        config
+            .notifications
+            .get_or_insert_with(Default::default)
+            .enabled = false;
+    }
+    if let Some(terminal) = env("RODER_NOTIFY_TERMINAL")
+        && let Some(terminal) = parse_bool(&terminal)
+    {
+        config
+            .notifications
+            .get_or_insert_with(Default::default)
+            .terminal
+            .enabled = terminal;
+    }
+    if let Some(desktop) = env("RODER_NOTIFY_DESKTOP")
+        && let Some(desktop) = parse_bool(&desktop)
+    {
+        config
+            .notifications
+            .get_or_insert_with(Default::default)
+            .desktop
+            .enabled = desktop;
+    }
+    if let Some(kinds) = env("RODER_NOTIFY_KINDS") {
+        let kinds = kinds
+            .split(',')
+            .map(str::trim)
+            .filter(|kind| !kind.is_empty())
+            .map(ToString::to_string)
+            .collect::<Vec<_>>();
+        if !kinds.is_empty() {
+            config
+                .notifications
+                .get_or_insert_with(Default::default)
+                .kinds = kinds;
+        }
+    }
+    if let Some(live) = env("RODER_LIVE_NOTIFICATIONS")
+        && parse_bool(&live).unwrap_or(false)
+    {
+        config
+            .notifications
+            .get_or_insert_with(Default::default)
+            .live_notifications = true;
+    }
+    if let Some(destination) = env("RODER_REMOTE_RUNNER")
+        && !destination.trim().is_empty()
+    {
+        let remote = config.remote_runners.get_or_insert_with(Default::default);
+        remote.enabled = true;
+        remote.default_destination = Some(destination);
+    }
+    if let Some(path) = env("RODER_MEMORIES_PATH")
+        && !path.trim().is_empty()
+    {
+        config
+            .memories
+            .get_or_insert_with(Default::default)
+            .store_path = Some(PathBuf::from(path));
+    }
+    if let Some(provider) = env("RODER_MEMORY_EMBEDDING_PROVIDER")
+        && !provider.trim().is_empty()
+    {
+        config
+            .memories
+            .get_or_insert_with(Default::default)
+            .embedding_provider = Some(provider);
+    }
+    if let Some(model) = env("RODER_MEMORY_EMBEDDING_MODEL")
+        && !model.trim().is_empty()
+    {
+        config
+            .memories
+            .get_or_insert_with(Default::default)
+            .embedding_model = Some(model);
+    }
 }
 
 fn parse_bool(value: &str) -> Option<bool> {
@@ -337,6 +705,14 @@ mod tests {
             web_search: None,
             subagents: None,
             policy_modes: None,
+            commands: None,
+            notifications: None,
+            tui: None,
+            remote_runners: None,
+            media: None,
+            memories: None,
+            embedding_providers: HashMap::new(),
+            agent_teams: None,
             providers: HashMap::new(),
             models: HashMap::new(),
         };
@@ -352,6 +728,40 @@ mod tests {
         assert!(encoded.contains("model = \"gpt-5.5\""));
         assert!(encoded.contains("[providers.openai]"));
         assert!(encoded.contains("api_key = \"key\""));
+    }
+
+    #[test]
+    fn memories_embeddings_config_deserializes_and_env_overrides_apply() {
+        let mut config: Config = toml::from_str(
+            r#"
+            [memories]
+            store_path = "/tmp/roder-mem.sqlite3"
+            embedding_provider = "openai"
+            embedding_model = "text-embedding-3-large"
+            include_global_with_project = true
+
+            [embedding_providers.local]
+            enabled = true
+            command = ["embedder", "--json"]
+            dimensions = 384
+            "#,
+        )
+        .unwrap();
+        apply_env_overrides_with(&mut config, |key| match key {
+            "RODER_MEMORY_EMBEDDING_PROVIDER" => Some("local".to_string()),
+            "RODER_MEMORY_EMBEDDING_MODEL" => Some("mini".to_string()),
+            _ => None,
+        });
+        let memories = config.memories.unwrap();
+        assert_eq!(memories.embedding_provider.as_deref(), Some("local"));
+        assert_eq!(memories.embedding_model.as_deref(), Some("mini"));
+        assert_eq!(
+            config.embedding_providers["local"]
+                .command
+                .as_ref()
+                .unwrap()[0],
+            "embedder"
+        );
     }
 
     #[test]
@@ -461,6 +871,200 @@ mod tests {
         let policy_modes = config.policy_modes.unwrap();
         assert_eq!(policy_modes.default.as_deref(), Some("bypass"));
         assert_eq!(policy_modes.warn_on_bypass, Some(false));
+    }
+
+    #[test]
+    fn deserializes_commands_config_and_env_overrides() {
+        let config: Config = toml::from_str(
+            r#"
+            [commands]
+            enabled = true
+            user_dir = "~/.roder/commands"
+            workspace_dir = ".roder/commands"
+            allow_shell_includes = false
+            allow_url_includes = false
+            allowed_url_hosts = ["example.com"]
+            include_timeout_seconds = 7
+            max_include_bytes = 4096
+            live_reload = true
+            "#,
+        )
+        .unwrap();
+
+        let commands = config.commands.unwrap();
+        assert!(commands.enabled);
+        assert_eq!(
+            commands.workspace_dir.as_deref(),
+            Some(Path::new(".roder/commands"))
+        );
+        assert_eq!(commands.allowed_url_hosts, vec!["example.com".to_string()]);
+        assert_eq!(commands.include_timeout_seconds, Some(7));
+
+        let mut config = Config::default();
+        apply_env_overrides_with(&mut config, |key| match key {
+            "RODER_COMMANDS_DISABLED" => Some("true".to_string()),
+            "RODER_COMMANDS_ALLOW_SHELL" => Some("true".to_string()),
+            "RODER_COMMANDS_ALLOW_URL" => Some("true".to_string()),
+            _ => None,
+        });
+        let commands = config.commands.unwrap();
+        assert!(!commands.enabled);
+        assert!(commands.allow_shell_includes);
+        assert!(commands.allow_url_includes);
+    }
+
+    #[test]
+    fn deserializes_notifications_config_and_env_overrides() {
+        let config: Config = toml::from_str(
+            r#"
+            [notifications]
+            enabled = true
+            kinds = ["needs_input", "task_failed"]
+            live_notifications = true
+
+            [notifications.terminal]
+            enabled = false
+
+            [notifications.desktop]
+            enabled = true
+            "#,
+        )
+        .unwrap();
+
+        let notifications = config.notifications.unwrap();
+        assert!(notifications.enabled);
+        assert_eq!(
+            notifications.kinds,
+            vec!["needs_input".to_string(), "task_failed".to_string()]
+        );
+        assert!(!notifications.terminal.enabled);
+        assert!(notifications.desktop.enabled);
+        assert!(notifications.live_notifications);
+
+        let mut config = Config::default();
+        apply_env_overrides_with(&mut config, |key| match key {
+            "RODER_NOTIFICATIONS_DISABLED" => Some("true".to_string()),
+            "RODER_NOTIFY_TERMINAL" => Some("false".to_string()),
+            "RODER_NOTIFY_DESKTOP" => Some("true".to_string()),
+            "RODER_NOTIFY_KINDS" => Some("needs_input,task_completed".to_string()),
+            "RODER_LIVE_NOTIFICATIONS" => Some("true".to_string()),
+            _ => None,
+        });
+        let notifications = config.notifications.unwrap();
+        assert!(!notifications.enabled);
+        assert!(!notifications.terminal.enabled);
+        assert!(notifications.desktop.enabled);
+        assert_eq!(
+            notifications.kinds,
+            vec!["needs_input".to_string(), "task_completed".to_string()]
+        );
+        assert!(notifications.live_notifications);
+    }
+
+    #[test]
+    fn deserializes_tui_keymap_config() {
+        let config: Config = toml::from_str(
+            r#"
+            [tui.keymap]
+            "palette/open" = ["ctrl+k"]
+            "selection/copy" = ["y"]
+            "#,
+        )
+        .unwrap();
+
+        let keymap = config.tui.unwrap().keymap;
+        assert_eq!(
+            keymap.get("palette/open"),
+            Some(&vec!["ctrl+k".to_string()])
+        );
+        assert_eq!(keymap.get("selection/copy"), Some(&vec!["y".to_string()]));
+    }
+
+    #[test]
+    fn deserializes_agent_teams_config() {
+        let config: Config = toml::from_str(
+            r#"
+            [agent_teams]
+            enabled = true
+            display_mode = "in_process"
+            default_teammate_model = "lead"
+            require_plan_approval = true
+            max_teammates = 4
+
+            [agent_teams.split_panes]
+            reuse_existing_tmux_session = false
+            tmux_command = "tmux-custom"
+            iterm2_command = "it2-custom"
+            "#,
+        )
+        .unwrap();
+
+        let teams = config.agent_teams.unwrap();
+        assert!(teams.enabled);
+        assert_eq!(
+            teams.display_mode,
+            roder_api::teams::AgentTeamDisplayMode::InProcess
+        );
+        assert_eq!(teams.default_teammate_model.as_deref(), Some("lead"));
+        assert!(teams.require_plan_approval);
+        assert_eq!(teams.max_teammates, Some(4));
+        assert!(!teams.split_panes.reuse_existing_tmux_session);
+        assert_eq!(
+            teams.split_panes.tmux_command.as_deref(),
+            Some("tmux-custom")
+        );
+        assert_eq!(
+            teams.split_panes.iterm2_command.as_deref(),
+            Some("it2-custom")
+        );
+    }
+
+    #[test]
+    fn remote_runner_config_deserializes_and_serializes_secret_env_refs() {
+        let config: Config = toml::from_str(
+            r#"
+            [remote_runners]
+            enabled = true
+            default_destination = "docker-dev"
+
+            [remote_runners.destinations.docker-dev]
+            provider = "docker"
+            config = { image = "rust:latest" }
+            secret_env = { DOCKER_TOKEN = "RODER_DOCKER_TOKEN" }
+            "#,
+        )
+        .unwrap();
+
+        let remote = config.remote_runners.unwrap();
+        assert!(remote.enabled);
+        assert_eq!(remote.default_destination.as_deref(), Some("docker-dev"));
+        let destination = remote.destinations.get("docker-dev").unwrap();
+        assert_eq!(destination.provider, "docker");
+        assert_eq!(
+            destination
+                .secret_env
+                .get("DOCKER_TOKEN")
+                .map(String::as_str),
+            Some("RODER_DOCKER_TOKEN")
+        );
+
+        let encoded = toml::to_string(&remote).unwrap();
+        assert!(encoded.contains("RODER_DOCKER_TOKEN"));
+        assert!(!encoded.contains("actual-secret-value"));
+    }
+
+    #[test]
+    fn remote_runner_env_override_selects_destination() {
+        let mut config = Config::default();
+
+        apply_env_overrides_with(&mut config, |key| match key {
+            "RODER_REMOTE_RUNNER" => Some("unix-local".to_string()),
+            _ => None,
+        });
+
+        let remote = config.remote_runners.unwrap();
+        assert!(remote.enabled);
+        assert_eq!(remote.default_destination.as_deref(), Some("unix-local"));
     }
 
     #[test]

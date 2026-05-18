@@ -1,4 +1,5 @@
 use crate::provider::GeminiEngine;
+use roder_api::capabilities::CapabilityRequest;
 use roder_api::extension::{
     ExtensionManifest, ExtensionRegistryBuilder, ProvidedService, RoderExtension,
 };
@@ -24,7 +25,10 @@ impl RoderExtension for GeminiExtension {
             api_version: "0.1.0".to_string(),
             description: Some("Google Gemini Inference Provider".to_string()),
             provides: vec![ProvidedService::InferenceEngine("gemini".to_string())],
-            required_capabilities: vec![],
+            required_capabilities: vec![
+                CapabilityRequest::new("network.api.googleai"),
+                CapabilityRequest::new("secret.read.GEMINI_API_KEY"),
+            ],
         }
     }
 

@@ -1,5 +1,6 @@
 use std::sync::Arc;
 
+use roder_api::capabilities::CapabilityRequest;
 use roder_api::extension::{
     ExtensionManifest, ExtensionRegistryBuilder, ProvidedService, RoderExtension,
 };
@@ -33,7 +34,10 @@ impl RoderExtension for TavilySearchExtension {
             api_version: "0.1.0".to_string(),
             description: Some("Tavily web search tool provider".to_string()),
             provides: vec![ProvidedService::ToolProvider("tavily-search".to_string())],
-            required_capabilities: vec![],
+            required_capabilities: vec![
+                CapabilityRequest::new("network.api.tavily.com"),
+                CapabilityRequest::new("secret.read.TAVILY_API_KEY"),
+            ],
         }
     }
 

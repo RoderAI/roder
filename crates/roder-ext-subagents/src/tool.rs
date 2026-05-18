@@ -160,7 +160,12 @@ impl ToolExecutor for TaskTool {
 
         match self
             .dispatcher
-            .dispatch(ctx.thread_id, ctx.turn_id, request.clone())
+            .dispatch_traced(
+                ctx.thread_id,
+                ctx.turn_id,
+                request.clone(),
+                ctx.handles.subagent_trace_sink.clone(),
+            )
             .await
         {
             Ok(result) => Ok(result_to_tool_result(call.id, call.name, request, result)),

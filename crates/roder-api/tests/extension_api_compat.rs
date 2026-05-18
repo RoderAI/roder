@@ -1,0 +1,288 @@
+use std::sync::Arc;
+
+use roder_api::capabilities::{
+    CapabilityDecision, CapabilityDenial, CapabilityGrant, CapabilityRequest,
+};
+use roder_api::extension::{
+    ExtensionManifest, ExtensionRegistryBuilder, ProvidedService, RoderExtension,
+};
+use roder_api::tools::{
+    ToolCall, ToolContributor, ToolExecutionContext, ToolExecutor, ToolRegistry, ToolResult,
+    ToolSpec,
+};
+use roder_api::tui_status::{StatusCell, StatusSegment, StatusStyle};
+use semver::Version;
+
+#[test]
+fn registry_rejects_duplicate_extension_ids() {
+    let mut builder = ExtensionRegistryBuilder::new();
+    builder
+        .install(StatusExtension::new("dup", "status-a"))
+        .unwrap();
+
+    let err = builder
+        .install(StatusExtension::new("dup", "status-b"))
+        .unwrap_err();
+
+    assert!(err.to_string().contains("already installed"));
+}
+
+#[test]
+fn registry_build_rejects_duplicate_services() {
+    let mut builder = ExtensionRegistryBuilder::new();
+    builder
+        .install(StatusExtension::new("ext-a", "shared-status"))
+        .unwrap();
+    builder
+        .install(StatusExtension::new("ext-b", "shared-status"))
+        .unwrap();
+
+    let err = build_err(builder);
+
+    assert!(err.to_string().contains("duplicate provided service"));
+}
+
+#[test]
+fn registry_build_rejects_manifest_service_without_installed_service() {
+    let mut builder = ExtensionRegistryBuilder::new();
+    builder.install(UninstalledServiceExtension).unwrap();
+
+    let err = build_err(builder);
+
+    assert!(
+        err.to_string()
+            .contains("no matching service was installed")
+    );
+}
+
+#[test]
+fn registry_build_rejects_incompatible_api_versions() {
+    let mut builder = ExtensionRegistryBuilder::new();
+    builder
+        .install(StatusExtension::new("future-api", "status").with_api_version(">=99.0.0"))
+        .unwrap();
+
+    let err = build_err(builder);
+
+    assert!(err.to_string().contains("unsupported API version"));
+}
+
+#[test]
+fn registry_build_rejects_duplicate_tool_names() {
+    let mut builder = ExtensionRegistryBuilder::new();
+    builder
+        .install(ToolExtension::new("tool-a", "provider-a", "same_tool"))
+        .unwrap();
+    builder
+        .install(ToolExtension::new("tool-b", "provider-b", "same_tool"))
+        .unwrap();
+
+    let err = build_err(builder);
+
+    assert!(err.to_string().contains("already registered"));
+}
+
+#[test]
+fn registry_records_requested_and_granted_capabilities() {
+    let mut builder = ExtensionRegistryBuilder::new();
+    builder
+        .install(
+            StatusExtension::new("caps", "status").with_capabilities(vec![
+                CapabilityRequest::new("fs.read.workspace"),
+                CapabilityRequest::with_reason("network.http", "search extension"),
+            ]),
+        )
+        .unwrap();
+    builder.grant_capability("caps", CapabilityGrant::new("fs.read.workspace"));
+
+    let registry = builder.build().unwrap();
+    let statuses = registry.capability_statuses("caps");
+
+    assert_eq!(statuses.len(), 2);
+    assert_eq!(statuses[0].id, "fs.read.workspace");
+    assert_eq!(statuses[0].decision, CapabilityDecision::Granted);
+    assert_eq!(statuses[1].id, "network.http");
+    assert_eq!(statuses[1].decision, CapabilityDecision::Requested);
+    assert_eq!(statuses[1].reason.as_deref(), Some("search extension"));
+}
+
+#[test]
+fn registry_build_rejects_denied_required_capability() {
+    let mut builder = ExtensionRegistryBuilder::new();
+    builder
+        .install(
+            StatusExtension::new("denied", "status")
+                .with_capabilities(vec![CapabilityRequest::new("process.spawn")]),
+        )
+        .unwrap();
+    builder.deny_capability(
+        "denied",
+        CapabilityDenial::new("process.spawn", "disabled in distribution"),
+    );
+
+    let err = build_err(builder);
+
+    assert!(err.to_string().contains("requires denied capability"));
+}
+
+struct StatusExtension {
+    id: &'static str,
+    status_id: &'static str,
+    api_version: &'static str,
+    capabilities: Vec<CapabilityRequest>,
+}
+
+fn build_err(builder: ExtensionRegistryBuilder) -> anyhow::Error {
+    match builder.build() {
+        Ok(_) => panic!("expected registry build to fail"),
+        Err(err) => err,
+    }
+}
+
+impl StatusExtension {
+    fn new(id: &'static str, status_id: &'static str) -> Self {
+        Self {
+            id,
+            status_id,
+            api_version: "0.1.0",
+            capabilities: Vec::new(),
+        }
+    }
+
+    fn with_api_version(mut self, api_version: &'static str) -> Self {
+        self.api_version = api_version;
+        self
+    }
+
+    fn with_capabilities(mut self, capabilities: Vec<CapabilityRequest>) -> Self {
+        self.capabilities = capabilities;
+        self
+    }
+}
+
+impl RoderExtension for StatusExtension {
+    fn manifest(&self) -> ExtensionManifest {
+        ExtensionManifest {
+            id: self.id.to_string(),
+            name: self.id.to_string(),
+            version: Version::new(0, 1, 0),
+            api_version: self.api_version.to_string(),
+            description: None,
+            provides: vec![ProvidedService::StatusSegment(self.status_id.to_string())],
+            required_capabilities: self.capabilities.clone(),
+        }
+    }
+
+    fn install(&self, registry: &mut ExtensionRegistryBuilder) -> anyhow::Result<()> {
+        registry.status_segment(StatusSegment::new(self.status_id, 10, 4, |_| StatusCell {
+            text: "ok".to_string(),
+            style: StatusStyle::Default,
+            tooltip: None,
+        }));
+        Ok(())
+    }
+}
+
+struct UninstalledServiceExtension;
+
+impl RoderExtension for UninstalledServiceExtension {
+    fn manifest(&self) -> ExtensionManifest {
+        ExtensionManifest {
+            id: "uninstalled".to_string(),
+            name: "uninstalled".to_string(),
+            version: Version::new(0, 1, 0),
+            api_version: "0.1.0".to_string(),
+            description: None,
+            provides: vec![ProvidedService::StatusSegment("missing".to_string())],
+            required_capabilities: Vec::new(),
+        }
+    }
+
+    fn install(&self, _registry: &mut ExtensionRegistryBuilder) -> anyhow::Result<()> {
+        Ok(())
+    }
+}
+
+struct ToolExtension {
+    id: &'static str,
+    provider_id: &'static str,
+    tool_name: &'static str,
+}
+
+impl ToolExtension {
+    fn new(id: &'static str, provider_id: &'static str, tool_name: &'static str) -> Self {
+        Self {
+            id,
+            provider_id,
+            tool_name,
+        }
+    }
+}
+
+impl RoderExtension for ToolExtension {
+    fn manifest(&self) -> ExtensionManifest {
+        ExtensionManifest {
+            id: self.id.to_string(),
+            name: self.id.to_string(),
+            version: Version::new(0, 1, 0),
+            api_version: "0.1.0".to_string(),
+            description: None,
+            provides: vec![ProvidedService::ToolProvider(self.provider_id.to_string())],
+            required_capabilities: Vec::new(),
+        }
+    }
+
+    fn install(&self, registry: &mut ExtensionRegistryBuilder) -> anyhow::Result<()> {
+        registry.tool_contributor(Arc::new(TestToolContributor {
+            provider_id: self.provider_id,
+            tool_name: self.tool_name,
+        }));
+        Ok(())
+    }
+}
+
+struct TestToolContributor {
+    provider_id: &'static str,
+    tool_name: &'static str,
+}
+
+impl ToolContributor for TestToolContributor {
+    fn id(&self) -> roder_api::extension::ToolProviderId {
+        self.provider_id.to_string()
+    }
+
+    fn contribute(&self, registry: &mut ToolRegistry) -> anyhow::Result<()> {
+        registry.register(Arc::new(TestToolExecutor {
+            tool_name: self.tool_name,
+        }))
+    }
+}
+
+struct TestToolExecutor {
+    tool_name: &'static str,
+}
+
+#[async_trait::async_trait]
+impl ToolExecutor for TestToolExecutor {
+    fn spec(&self) -> ToolSpec {
+        ToolSpec {
+            name: self.tool_name.to_string(),
+            description: "test tool".to_string(),
+            parameters: serde_json::json!({ "type": "object" }),
+        }
+    }
+
+    async fn execute(
+        &self,
+        _ctx: ToolExecutionContext,
+        call: ToolCall,
+    ) -> anyhow::Result<ToolResult> {
+        Ok(ToolResult {
+            id: call.id,
+            name: self.tool_name.to_string(),
+            text: "ok".to_string(),
+            data: serde_json::json!({}),
+            is_error: false,
+        })
+    }
+}

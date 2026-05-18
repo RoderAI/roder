@@ -1,4 +1,6 @@
-use roder_api::context::PolicyGate;
+use std::sync::Arc;
+
+use roder_api::context::{PolicyContribution, PolicyContributor, PolicyGate, PolicyReview};
 use roder_api::policy_mode::{PolicyDecision, PolicyMode, PolicyModeConfig};
 use roder_api::tools::{ToolCall, ToolExecutionContext};
 
@@ -8,6 +10,27 @@ pub struct DefaultPolicyGate;
 impl DefaultPolicyGate {
     pub fn new() -> Self {
         Self
+    }
+
+    pub async fn decide_with_contributors(
+        &self,
+        call: &ToolCall,
+        mode: PolicyMode,
+        context: &ToolExecutionContext,
+        contributors: &[Arc<dyn PolicyContributor>],
+    ) -> anyhow::Result<PolicyDecision> {
+        let mut decision = self.decide(call, mode, context);
+        for contributor in contributors {
+            let contribution = contributor
+                .review_tool(PolicyReview {
+                    call: call.clone(),
+                    mode,
+                    context: context.clone(),
+                })
+                .await?;
+            decision = merge_policy_decision(decision, contributor.id(), contribution);
+        }
+        Ok(decision)
     }
 }
 
@@ -60,6 +83,33 @@ fn matching_rule(config: &PolicyModeConfig, tool_name: &str) -> Option<String> {
         .iter()
         .find(|tool| tool.as_str() == "*" || tool.as_str() == tool_name)
         .cloned()
+}
+
+fn merge_policy_decision(
+    current: PolicyDecision,
+    contributor_id: String,
+    contribution: PolicyContribution,
+) -> PolicyDecision {
+    match (current, contribution) {
+        (PolicyDecision::Denied { reason }, _) => PolicyDecision::Denied { reason },
+        (_, PolicyContribution::Deny { reason }) => PolicyDecision::Denied {
+            reason: format!("policy contributor {contributor_id} denied tool call: {reason}"),
+        },
+        (PolicyDecision::RequiresApproval { reason }, _) => {
+            PolicyDecision::RequiresApproval { reason }
+        }
+        (_, PolicyContribution::RequireApproval { reason }) => {
+            PolicyDecision::RequiresApproval { reason }
+        }
+        (decision @ PolicyDecision::AutoApproved { .. }, PolicyContribution::Abstain) => decision,
+        (decision @ PolicyDecision::AutoApproved { .. }, PolicyContribution::Allow { .. }) => {
+            decision
+        }
+        (
+            PolicyDecision::Allowed,
+            PolicyContribution::Abstain | PolicyContribution::Allow { .. },
+        ) => PolicyDecision::Allowed,
+    }
 }
 
 fn looks_like_side_effect(call: &ToolCall) -> bool {
@@ -221,10 +271,10 @@ mod tests {
     }
 
     fn context() -> ToolExecutionContext {
-        ToolExecutionContext {
-            thread_id: ThreadId::from("thread-1"),
-            turn_id: TurnId::from("turn-1"),
-            effective_mode: PolicyMode::Default,
-        }
+        ToolExecutionContext::new(
+            ThreadId::from("thread-1"),
+            TurnId::from("turn-1"),
+            PolicyMode::Default,
+        )
     }
 }

@@ -2,11 +2,13 @@ mod agent_def;
 mod dispatcher;
 mod loader;
 mod tool;
+mod trace;
 mod transcript;
 
 use std::path::PathBuf;
 use std::sync::Arc;
 
+use roder_api::capabilities::CapabilityRequest;
 use roder_api::extension::{
     ExtensionManifest, ExtensionRegistryBuilder, ProvidedService, RoderExtension,
 };
@@ -55,7 +57,7 @@ impl RoderExtension for SubagentsExtension {
                 ProvidedService::SubagentDispatcher(self.dispatcher.id()),
                 ProvidedService::ToolProvider(self.task_tool_config.provider_id.clone()),
             ],
-            required_capabilities: vec![],
+            required_capabilities: vec![CapabilityRequest::new("process.spawn.roder")],
         }
     }
 

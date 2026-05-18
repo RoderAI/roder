@@ -1,5 +1,6 @@
 use std::sync::Arc;
 
+use roder_api::capabilities::CapabilityRequest;
 use roder_api::extension::{
     ExtensionManifest, ExtensionRegistryBuilder, ProvidedService, RoderExtension,
 };
@@ -35,7 +36,10 @@ impl RoderExtension for FirecrawlSearchExtension {
             provides: vec![ProvidedService::ToolProvider(
                 "firecrawl-search".to_string(),
             )],
-            required_capabilities: vec![],
+            required_capabilities: vec![
+                CapabilityRequest::new("network.api.firecrawl.dev"),
+                CapabilityRequest::new("secret.read.FIRECRAWL_API_KEY"),
+            ],
         }
     }
 

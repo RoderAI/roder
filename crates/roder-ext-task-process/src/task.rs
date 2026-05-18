@@ -4,6 +4,7 @@ use std::process::Stdio;
 use std::sync::Arc;
 
 use anyhow::{Context, bail};
+use roder_api::remote_runner::RunnerCommandRequest;
 use roder_api::tasks::{
     TaskExecutionContext, TaskExecutionResult, TaskExecutor, TaskOutputStream, TaskSpec,
 };
@@ -66,6 +67,10 @@ impl TaskExecutor for ProcessTaskExecutor {
             bail!("process task command must not be empty");
         }
 
+        if ctx.runner_session.is_some() {
+            return execute_remote_process_task(ctx, input).await;
+        }
+
         let cwd = resolve_cwd(ctx.workspace_root.as_deref(), input.cwd.as_deref())?;
         let mut command = Command::new(&input.command);
         command
@@ -107,6 +112,45 @@ impl TaskExecutor for ProcessTaskExecutor {
             }),
         })
     }
+}
+
+async fn execute_remote_process_task(
+    ctx: TaskExecutionContext,
+    input: ProcessTaskInput,
+) -> anyhow::Result<TaskExecutionResult> {
+    let Some(session) = ctx.runner_session else {
+        bail!("remote process task requires runner session");
+    };
+    let output = session
+        .run_command(RunnerCommandRequest {
+            command_id: ctx.task_id.clone(),
+            program: input.command.clone(),
+            args: input.args.clone(),
+            cwd: input.cwd.as_deref().map(PathBuf::from),
+            env: input.env_overrides.clone().into_iter().collect(),
+        })
+        .await?;
+    if !output.stdout.is_empty() {
+        ctx.output
+            .write(TaskOutputStream::Stdout, output.stdout.clone())
+            .await?;
+    }
+    if !output.stderr.is_empty() {
+        ctx.output
+            .write(TaskOutputStream::Stderr, output.stderr.clone())
+            .await?;
+    }
+    Ok(TaskExecutionResult {
+        exit_code: output.exit_code,
+        payload: serde_json::json!({
+            "command": input.command,
+            "args": input.args,
+            "cwd": input.cwd.unwrap_or_else(|| ".".to_string()),
+            "runner_destination": ctx.runner_destination.as_ref().map(|destination| &destination.id),
+            "runner_session": session.state().session_id,
+            "success": output.exit_code == Some(0),
+        }),
+    })
 }
 
 async fn stream_pipe(

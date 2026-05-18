@@ -3,6 +3,19 @@ name = "roder-ext-tavily-search"
 version.workspace = true
 edition.workspace = true
 
+[package.metadata.roder.distribution]
+id = "tavily-search"
+category = "tool-provider"
+display_name = "Tavily Search"
+description = "Tavily-backed web search tools."
+default_in_profiles = []
+required_env = ["TAVILY_API_KEY"]
+optional_env = []
+conflicts_with = []
+required_capabilities = ["network.api.tavily.com", "secret.read.TAVILY_API_KEY"]
+extension_path = "::TavilySearchExtension::new"
+docs_url = "https://docs.tavily.com"
+
 [dependencies]
 anyhow.workspace = true
 async-trait.workspace = true

@@ -1,4 +1,9 @@
-use roder_tui::TuiAppConfig;
+use std::str::FromStr;
+
+use roder_tui::{
+    TuiAppConfig,
+    keymap::{Action, KeyBindingOverride, Keymap},
+};
 
 pub(crate) fn resolve_tui_app_config(
     cfg: &roder_config::Config,
@@ -11,7 +16,18 @@ pub(crate) fn resolve_tui_app_config(
         palette_sources: registry.palette_sources.clone(),
         disabled_palette_sources: tui.palette.disabled_sources.into_iter().collect(),
         diff_enabled: tui.diff.enabled,
+        keymap: resolve_keymap(tui.keymap),
     }
+}
+
+fn resolve_keymap(bindings: std::collections::HashMap<String, Vec<String>>) -> Keymap {
+    let overrides = bindings.into_iter().filter_map(|(action, keys)| {
+        Some(KeyBindingOverride {
+            action: Action::from_str(&action).ok()?,
+            keys,
+        })
+    });
+    Keymap::default().with_overrides(overrides)
 }
 
 #[cfg(test)]
@@ -51,6 +67,10 @@ mod tests {
                     disabled_sources: vec!["agents".to_string()],
                 },
                 diff: roder_config::TuiDiffConfig { enabled: false },
+                keymap: std::collections::HashMap::from([(
+                    "palette/open".to_string(),
+                    vec!["ctrl+k".to_string()],
+                )]),
             }),
             ..roder_config::Config::default()
         };
@@ -61,5 +81,11 @@ mod tests {
         assert!(tui.disabled_status_segments.contains("mcp"));
         assert!(tui.disabled_palette_sources.contains("agents"));
         assert!(!tui.diff_enabled);
+        assert_eq!(
+            tui.keymap
+                .bindings_for(roder_tui::keymap::Action::OpenPalette)[0]
+                .key,
+            "ctrl+k"
+        );
     }
 }

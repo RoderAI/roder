@@ -147,6 +147,44 @@ async fn subagent_task_forwards_result_and_transcript() {
 }
 
 #[tokio::test]
+async fn subagent_task_trace_payload_preserves_parent_child_ids() {
+    let (runner, _started, _dropped) = runner(Duration::from_millis(10));
+    let mut events = runner.subscribe();
+    let _handle = runner
+        .submit(
+            "subagent",
+            serde_json::json!({
+                "description": "Inspect",
+                "prompt": "Find context",
+                "subagent_type": "explore"
+            }),
+            TaskSubmitOptions {
+                thread_id: Some("thread-trace".to_string()),
+                turn_id: Some("turn-trace".to_string()),
+                ..TaskSubmitOptions::default()
+            },
+        )
+        .await
+        .unwrap();
+
+    let completed = loop {
+        if let RoderEvent::TaskCompleted(event) =
+            tokio::time::timeout(Duration::from_secs(2), events.recv())
+                .await
+                .unwrap()
+                .unwrap()
+        {
+            break event;
+        }
+    };
+
+    assert_eq!(completed.thread_id.as_deref(), Some("thread-trace"));
+    assert_eq!(completed.turn_id.as_deref(), Some("turn-trace"));
+    assert_eq!(completed.payload["thread_id"], "thread-trace-child");
+    assert_eq!(completed.payload["turn_id"], "turn-trace-child");
+}
+
+#[tokio::test]
 async fn cancelling_subagent_task_aborts_dispatch_future() {
     let (runner, started, dropped) = runner(Duration::from_secs(10));
     let handle = runner

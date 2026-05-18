@@ -4,6 +4,7 @@ use std::sync::Arc;
 use anyhow::Context;
 use roder_api::conversation::{ConversationItem, TurnItem};
 use roder_api::events::{EventEnvelope, RoderEvent, ThreadId, TurnId};
+use roder_api::extension_state::ExtensionStateRecord;
 use roder_api::session::{
     SessionMetadata, SessionStore, SessionStoreFactory, ThreadSnapshot, TurnRecord,
 };
@@ -91,6 +92,24 @@ impl SessionStore for JsonlSessionStore {
         Ok(metadata)
     }
 
+    async fn update_session_metadata(
+        &self,
+        metadata: SessionMetadata,
+    ) -> anyhow::Result<SessionMetadata> {
+        let dir = self.session_dir(&metadata.thread_id);
+        fs::create_dir_all(&dir)
+            .await
+            .with_context(|| format!("create session directory {}", dir.display()))?;
+        let metadata_path = dir.join("metadata.json");
+        fs::write(
+            &metadata_path,
+            serde_json::to_vec_pretty(&metadata).context("serialize session metadata")?,
+        )
+        .await
+        .with_context(|| format!("write session metadata {}", metadata_path.display()))?;
+        Ok(metadata)
+    }
+
     async fn list_sessions(&self) -> anyhow::Result<Vec<SessionMetadata>> {
         if !self.base_path.exists() {
             return Ok(Vec::new());
@@ -127,11 +146,13 @@ impl SessionStore for JsonlSessionStore {
         let metadata = Some(self.load_or_infer_metadata(&dir, thread_id).await?);
         let events = self.load_events(thread_id).await?;
         let mut turns = self.read_turns(thread_id).await?;
+        let extension_states = self.load_extension_states(thread_id).await?;
         project_turn_completion(&mut turns, &events);
         Ok(Some(ThreadSnapshot {
             metadata,
             events,
             turns,
+            extension_states,
         }))
     }
 
@@ -189,9 +210,72 @@ impl SessionStore for JsonlSessionStore {
         self.update_metadata_for_turn_item(thread_id, item).await?;
         Ok(())
     }
+
+    async fn append_extension_state(
+        &self,
+        thread_id: &ThreadId,
+        record: &ExtensionStateRecord,
+    ) -> anyhow::Result<()> {
+        let dir = self.session_dir(thread_id);
+        fs::create_dir_all(&dir)
+            .await
+            .with_context(|| format!("create session directory {}", dir.display()))?;
+        let file_path = dir.join("extension_state.jsonl");
+        let mut file = OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&file_path)
+            .await
+            .with_context(|| format!("open extension state log {}", file_path.display()))?;
+        let mut line = serde_json::to_vec(record).context("serialize extension state record")?;
+        line.push(b'\n');
+        file.write_all(&line)
+            .await
+            .with_context(|| format!("append extension state record to {}", file_path.display()))?;
+        Ok(())
+    }
 }
 
 impl JsonlSessionStore {
+    async fn load_extension_states(
+        &self,
+        thread_id: &ThreadId,
+    ) -> anyhow::Result<Vec<ExtensionStateRecord>> {
+        let file_path = self.session_dir(thread_id).join("extension_state.jsonl");
+        if !file_path.exists() {
+            return Ok(Vec::new());
+        }
+        let file = fs::File::open(&file_path)
+            .await
+            .with_context(|| format!("open extension state log {}", file_path.display()))?;
+        let reader = BufReader::new(file);
+        let mut lines = reader.lines();
+        let mut records = Vec::new();
+        let mut line_number = 0usize;
+        while let Some(line) = lines
+            .next_line()
+            .await
+            .with_context(|| format!("read extension state log {}", file_path.display()))?
+        {
+            line_number += 1;
+            if line.trim().is_empty() {
+                continue;
+            }
+            let stream =
+                serde_json::Deserializer::from_str(&line).into_iter::<ExtensionStateRecord>();
+            for record in stream {
+                records.push(record.with_context(|| {
+                    format!(
+                        "parse extension state record in {}:{}",
+                        file_path.display(),
+                        line_number
+                    )
+                })?);
+            }
+        }
+        Ok(records)
+    }
+
     async fn load_events(&self, thread_id: &ThreadId) -> anyhow::Result<Vec<EventEnvelope>> {
         let file_path = self.session_dir(thread_id).join("events.jsonl");
         if !file_path.exists() {
@@ -374,6 +458,8 @@ impl JsonlSessionStore {
             workspace: None,
             provider,
             model,
+            runner_destination: None,
+            runner_state: None,
             created_at: created_at.unwrap_or(fallback_time),
             updated_at: updated_at.unwrap_or(fallback_time),
             message_count,
@@ -513,7 +599,11 @@ impl SessionStoreFactory for JsonlSessionStoreFactory {
 mod tests {
     use super::*;
     use roder_api::conversation::{AssistantMessage, ConversationItem, UserMessage};
-    use roder_api::events::{EventSource, TurnCompleted};
+    use roder_api::events::{EventSource, SubagentTraceCreated, TurnCompleted};
+    use roder_api::trace::{
+        ParentTurnRef, SubagentDestination, SubagentDestinationKind, SubagentTraceStatus,
+        SubagentTraceSummary,
+    };
 
     #[tokio::test]
     async fn load_session_projects_turn_items_and_completion() {
@@ -533,6 +623,8 @@ mod tests {
                 workspace: Some("/workspace".to_string()),
                 provider: Some("mock".to_string()),
                 model: Some("mock".to_string()),
+                runner_destination: None,
+                runner_state: None,
                 created_at: now,
                 updated_at: now,
                 message_count: 0,
@@ -595,6 +687,152 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn extension_state_round_trips_through_thread_snapshot() {
+        let base_path = std::env::temp_dir().join(format!(
+            "roder-jsonl-extension-state-{}",
+            uuid::Uuid::new_v4()
+        ));
+        let store = JsonlSessionStore {
+            base_path: base_path.clone(),
+        };
+        let thread_id = "thread-state".to_string();
+        let now = OffsetDateTime::UNIX_EPOCH;
+
+        store
+            .create_session(SessionMetadata {
+                thread_id: thread_id.clone(),
+                title: None,
+                workspace: None,
+                provider: None,
+                model: None,
+                runner_destination: None,
+                runner_state: None,
+                created_at: now,
+                updated_at: now,
+                message_count: 0,
+            })
+            .await
+            .unwrap();
+        store
+            .append_extension_state(
+                &thread_id,
+                &roder_api::extension_state::ExtensionStateRecord {
+                    extension_id: "demo".to_string(),
+                    key: "prefs".to_string(),
+                    scope: roder_api::extension_state::ExtensionStoreScope::Thread {
+                        thread_id: thread_id.clone(),
+                    },
+                    schema_version: 2,
+                    value: serde_json::json!({ "theme": "dark" }),
+                },
+            )
+            .await
+            .unwrap();
+
+        let snapshot = store.load_session(&thread_id).await.unwrap().unwrap();
+
+        assert_eq!(snapshot.extension_states.len(), 1);
+        assert_eq!(snapshot.extension_states[0].extension_id, "demo");
+        assert_eq!(snapshot.extension_states[0].value["theme"], "dark");
+
+        let _ = fs::remove_dir_all(base_path).await;
+    }
+
+    #[tokio::test]
+    async fn subagent_trace_events_round_trip_through_thread_snapshot() {
+        let base_path = std::env::temp_dir().join(format!(
+            "roder-jsonl-subagent-trace-{}",
+            uuid::Uuid::new_v4()
+        ));
+        let store = JsonlSessionStore {
+            base_path: base_path.clone(),
+        };
+        let thread_id = "parent-thread".to_string();
+        let turn_id = "parent-turn".to_string();
+        let now = OffsetDateTime::UNIX_EPOCH;
+
+        store
+            .create_session(SessionMetadata {
+                thread_id: thread_id.clone(),
+                title: Some("Trace me".to_string()),
+                workspace: None,
+                provider: Some("mock".to_string()),
+                model: Some("mock".to_string()),
+                runner_destination: None,
+                runner_state: None,
+                created_at: now,
+                updated_at: now,
+                message_count: 0,
+            })
+            .await
+            .unwrap();
+        store
+            .append_event(
+                &thread_id,
+                &EventEnvelope {
+                    event_id: "trace-event".to_string(),
+                    seq: 1,
+                    timestamp: now,
+                    source: EventSource::Extension,
+                    kind: "turn/subagentTraceCreated".to_string(),
+                    thread_id: Some(thread_id.clone()),
+                    turn_id: Some(turn_id.clone()),
+                    event: RoderEvent::SubagentTraceCreated(SubagentTraceCreated {
+                        summary: SubagentTraceSummary {
+                            trace_id: "trace-1".to_string(),
+                            parent: ParentTurnRef {
+                                thread_id: thread_id.clone(),
+                                turn_id: turn_id.clone(),
+                            },
+                            child_thread_id: "child-thread".to_string(),
+                            child_turn_id: "child-turn".to_string(),
+                            title: "Inspect".to_string(),
+                            role: "explore".to_string(),
+                            model: Some("mock".to_string()),
+                            status: SubagentTraceStatus::Running,
+                            elapsed_ms: 0,
+                            usage: None,
+                            destination: Some(SubagentDestination {
+                                kind: SubagentDestinationKind::InProcess,
+                                label: "in-process".to_string(),
+                                path: None,
+                                provider_id: None,
+                                destination_id: None,
+                            }),
+                            latest_activity: Some("running".to_string()),
+                            error_summary: None,
+                        },
+                        timestamp: now,
+                    }),
+                },
+            )
+            .await
+            .unwrap();
+
+        let snapshot = store.load_session(&thread_id).await.unwrap().unwrap();
+
+        assert_eq!(snapshot.events.len(), 1);
+        assert_eq!(
+            snapshot.events[0].thread_id.as_deref(),
+            Some("parent-thread")
+        );
+        assert_eq!(snapshot.events[0].turn_id.as_deref(), Some("parent-turn"));
+        match &snapshot.events[0].event {
+            RoderEvent::SubagentTraceCreated(event) => {
+                assert_eq!(event.summary.trace_id, "trace-1");
+                assert_eq!(event.summary.child_thread_id, "child-thread");
+                assert_eq!(
+                    event.summary.destination.as_ref().unwrap().label,
+                    "in-process"
+                );
+            }
+            event => panic!("unexpected event: {event:?}"),
+        }
+
+        let _ = fs::remove_dir_all(base_path).await;
+    }
+
+    #[tokio::test]
     async fn load_session_preserves_provider_metadata_with_encrypted_reasoning() {
         let base_path =
             std::env::temp_dir().join(format!("roder-jsonl-session-test-{}", uuid::Uuid::new_v4()));
@@ -621,6 +859,8 @@ mod tests {
                 workspace: None,
                 provider: Some("openai".to_string()),
                 model: Some("gpt-5.5".to_string()),
+                runner_destination: None,
+                runner_state: None,
                 created_at: now,
                 updated_at: now,
                 message_count: 0,
@@ -666,6 +906,8 @@ mod tests {
                 workspace: None,
                 provider: Some("mock".to_string()),
                 model: Some("mock".to_string()),
+                runner_destination: None,
+                runner_state: None,
                 created_at: now,
                 updated_at: now,
                 message_count: 0,
@@ -726,6 +968,8 @@ mod tests {
                 workspace: Some("/workspace/gode".to_string()),
                 provider: Some("mock".to_string()),
                 model: Some("mock".to_string()),
+                runner_destination: None,
+                runner_state: None,
                 created_at: now,
                 updated_at: now,
                 message_count: 0,
@@ -778,6 +1022,8 @@ mod tests {
                 workspace: Some("/workspace".to_string()),
                 provider: Some("mock".to_string()),
                 model: Some("mock".to_string()),
+                runner_destination: None,
+                runner_state: None,
                 created_at: now,
                 updated_at: now,
                 message_count: 0,
@@ -846,6 +1092,8 @@ mod tests {
                 workspace: Some("/workspace".to_string()),
                 provider: Some("mock".to_string()),
                 model: Some("mock".to_string()),
+                runner_destination: None,
+                runner_state: None,
                 created_at: now,
                 updated_at: now,
                 message_count: 0,
@@ -895,6 +1143,8 @@ mod tests {
             workspace: Some("/workspace".to_string()),
             provider: Some("codex".to_string()),
             model: Some("gpt-5.5".to_string()),
+            runner_destination: None,
+            runner_state: None,
             created_at: now,
             updated_at: now,
             message_count: 1,
@@ -942,6 +1192,8 @@ mod tests {
                 workspace: None,
                 provider: None,
                 model: None,
+                runner_destination: None,
+                runner_state: None,
                 created_at: now,
                 updated_at: now,
                 message_count: 0,
@@ -991,6 +1243,8 @@ mod tests {
                 workspace: None,
                 provider: Some("mock".to_string()),
                 model: Some("mock".to_string()),
+                runner_destination: None,
+                runner_state: None,
                 created_at: now,
                 updated_at: now,
                 message_count: 0,
@@ -1048,6 +1302,8 @@ mod tests {
                 workspace: None,
                 provider: Some("mock".to_string()),
                 model: Some("mock".to_string()),
+                runner_destination: None,
+                runner_state: None,
                 created_at: now,
                 updated_at: now,
                 message_count: 0,

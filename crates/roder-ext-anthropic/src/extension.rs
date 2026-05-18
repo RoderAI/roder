@@ -1,4 +1,5 @@
 use crate::provider::AnthropicEngine;
+use roder_api::capabilities::CapabilityRequest;
 use roder_api::extension::{
     ExtensionManifest, ExtensionRegistryBuilder, ProvidedService, RoderExtension,
 };
@@ -24,7 +25,10 @@ impl RoderExtension for AnthropicExtension {
             api_version: "0.1.0".to_string(),
             description: Some("Anthropic Inference Provider".to_string()),
             provides: vec![ProvidedService::InferenceEngine("anthropic".to_string())],
-            required_capabilities: vec![],
+            required_capabilities: vec![
+                CapabilityRequest::new("network.api.anthropic.com"),
+                CapabilityRequest::new("secret.read.ANTHROPIC_API_KEY"),
+            ],
         }
     }
 

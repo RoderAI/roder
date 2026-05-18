@@ -225,6 +225,8 @@ mod tests {
                 model_parallel_tool_calls: std::collections::HashMap::new(),
                 workspace: None,
                 policy_mode: roder_api::policy_mode::PolicyMode::Default,
+                remote_runner_destination: None,
+                team_data_dir: None,
             },
         )
         .unwrap();
@@ -278,6 +280,8 @@ mod tests {
                 model_parallel_tool_calls: std::collections::HashMap::new(),
                 workspace: None,
                 policy_mode: roder_api::policy_mode::PolicyMode::Default,
+                remote_runner_destination: None,
+                team_data_dir: None,
             },
         )
         .unwrap();

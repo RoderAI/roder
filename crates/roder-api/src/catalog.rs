@@ -7,12 +7,15 @@ pub const PROVIDER_OPENAI: &str = "openai";
 pub const PROVIDER_CODEX: &str = "codex";
 pub const PROVIDER_ANTHROPIC: &str = "anthropic";
 pub const PROVIDER_GEMINI: &str = "gemini";
+pub const PROVIDER_XAI: &str = "xai";
+pub const PROVIDER_SUPERGROK: &str = "supergrok";
 
 pub const PROVIDER_KIND_MOCK: &str = "mock";
 pub const PROVIDER_KIND_OPENAI: &str = "openai";
 pub const PROVIDER_KIND_CHAT_COMPLETIONS: &str = "chat_completions";
 pub const PROVIDER_KIND_ANTHROPIC: &str = "anthropic";
 pub const PROVIDER_KIND_GEMINI: &str = "gemini";
+pub const PROVIDER_KIND_XAI: &str = "xai";
 
 pub const REASONING_NONE: &str = "none";
 pub const REASONING_MINIMAL: &str = "minimal";
@@ -151,6 +154,47 @@ pub const GEMINI_ENV_ALIASES: &[&str] = &[
     "GOOGLE_AI_API_KEY",
 ];
 
+pub const XAI_ENV_ALIASES: &[&str] = &["RODER_XAI_API_KEY"];
+
+pub const XAI_CONFIGURABLE_REASONING: &[ReasoningOption] = &[
+    ReasoningOption {
+        effort: REASONING_NONE,
+        description: "No xAI reasoning effort",
+    },
+    ReasoningOption {
+        effort: REASONING_LOW,
+        description: "Low xAI reasoning effort",
+    },
+    ReasoningOption {
+        effort: REASONING_MEDIUM,
+        description: "Medium xAI reasoning effort",
+    },
+    ReasoningOption {
+        effort: REASONING_HIGH,
+        description: "High xAI reasoning effort",
+    },
+];
+
+pub const XAI_REASONING: &[ReasoningOption] = &[
+    ReasoningOption {
+        effort: REASONING_LOW,
+        description: "Low xAI reasoning effort",
+    },
+    ReasoningOption {
+        effort: REASONING_MEDIUM,
+        description: "Medium xAI reasoning effort",
+    },
+    ReasoningOption {
+        effort: REASONING_HIGH,
+        description: "High xAI reasoning effort",
+    },
+];
+
+pub const XAI_NO_REASONING: &[ReasoningOption] = &[ReasoningOption {
+    effort: REASONING_NONE,
+    description: "No xAI reasoning effort",
+}];
+
 pub const BUILT_IN_PROVIDERS: &[ProviderCatalogEntry] = &[
     ProviderCatalogEntry {
         id: PROVIDER_MOCK,
@@ -204,6 +248,28 @@ pub const BUILT_IN_PROVIDERS: &[ProviderCatalogEntry] = &[
         base_url: None,
         env_key: Some("GEMINI_API_TOKEN"),
         env_aliases: GEMINI_ENV_ALIASES,
+        requires_auth: true,
+        supports_websockets: false,
+    },
+    ProviderCatalogEntry {
+        id: PROVIDER_XAI,
+        name: "xAI",
+        kind: PROVIDER_KIND_XAI,
+        default_model: "grok-4.3",
+        base_url: Some("https://api.x.ai/v1"),
+        env_key: Some("XAI_API_KEY"),
+        env_aliases: XAI_ENV_ALIASES,
+        requires_auth: true,
+        supports_websockets: false,
+    },
+    ProviderCatalogEntry {
+        id: PROVIDER_SUPERGROK,
+        name: "SuperGrok",
+        kind: PROVIDER_KIND_XAI,
+        default_model: "grok-4.3",
+        base_url: Some("https://api.x.ai/v1"),
+        env_key: None,
+        env_aliases: &[],
         requires_auth: true,
         supports_websockets: false,
     },
@@ -312,6 +378,78 @@ pub const BUILT_IN_MODELS: &[ModelCatalogEntry] = &[
         "Gemini 3.1 Flash-Lite Preview",
         "Lightweight Gemini model for low-latency coding and agent interactions.",
         REASONING_LOW,
+    ),
+    xai_model(
+        PROVIDER_XAI,
+        "grok-4.3",
+        "Grok 4.3",
+        "xAI flagship model for chat, coding, tool use, and configurable reasoning.",
+        1_000_000,
+        REASONING_LOW,
+        XAI_CONFIGURABLE_REASONING,
+    ),
+    xai_model(
+        PROVIDER_XAI,
+        "grok-4.20-multi-agent-0309",
+        "Grok 4.20 Multi-Agent",
+        "xAI long-context model with agentic tool-calling and reasoning.",
+        2_000_000,
+        REASONING_LOW,
+        XAI_REASONING,
+    ),
+    xai_model(
+        PROVIDER_XAI,
+        "grok-4.20-0309-reasoning",
+        "Grok 4.20 Reasoning",
+        "xAI long-context reasoning model for complex tool-heavy workflows.",
+        2_000_000,
+        REASONING_LOW,
+        XAI_REASONING,
+    ),
+    xai_model(
+        PROVIDER_XAI,
+        "grok-4.20-0309-non-reasoning",
+        "Grok 4.20 Non-Reasoning",
+        "xAI long-context model for lower-latency non-reasoning workflows.",
+        2_000_000,
+        REASONING_NONE,
+        XAI_NO_REASONING,
+    ),
+    xai_model(
+        PROVIDER_SUPERGROK,
+        "grok-4.3",
+        "Grok 4.3",
+        "SuperGrok OAuth access to xAI Grok 4.3.",
+        1_000_000,
+        REASONING_LOW,
+        XAI_CONFIGURABLE_REASONING,
+    ),
+    xai_model(
+        PROVIDER_SUPERGROK,
+        "grok-4.20-multi-agent-0309",
+        "Grok 4.20 Multi-Agent",
+        "SuperGrok OAuth access to xAI's long-context multi-agent model.",
+        2_000_000,
+        REASONING_LOW,
+        XAI_REASONING,
+    ),
+    xai_model(
+        PROVIDER_SUPERGROK,
+        "grok-4.20-0309-reasoning",
+        "Grok 4.20 Reasoning",
+        "SuperGrok OAuth access to xAI's long-context reasoning model.",
+        2_000_000,
+        REASONING_LOW,
+        XAI_REASONING,
+    ),
+    xai_model(
+        PROVIDER_SUPERGROK,
+        "grok-4.20-0309-non-reasoning",
+        "Grok 4.20 Non-Reasoning",
+        "SuperGrok OAuth access to xAI's long-context non-reasoning model.",
+        2_000_000,
+        REASONING_NONE,
+        XAI_NO_REASONING,
     ),
     ModelCatalogEntry {
         id: "text-embedding-3-large",
@@ -430,6 +568,34 @@ const fn gemini_model(
     }
 }
 
+const fn xai_model(
+    provider: &'static str,
+    id: &'static str,
+    display_name: &'static str,
+    description: &'static str,
+    context_window: u32,
+    default_reasoning: &'static str,
+    supported_reasoning: &'static [ReasoningOption],
+) -> ModelCatalogEntry {
+    ModelCatalogEntry {
+        id,
+        display_name,
+        description,
+        provider,
+        default_reasoning,
+        supported_reasoning,
+        context_window,
+        max_context_window: context_window,
+        auto_compact_token_limit: context_window.saturating_mul(9) / 10,
+        supports_compaction: false,
+        supports_images: true,
+        supports_tools: true,
+        supports_structured: true,
+        edit_tool: Some("edit"),
+        hidden: false,
+    }
+}
+
 pub fn built_in_providers() -> &'static [ProviderCatalogEntry] {
     BUILT_IN_PROVIDERS
 }
@@ -461,6 +627,16 @@ pub fn lookup_model(id: &str) -> Option<&'static ModelCatalogEntry> {
     BUILT_IN_MODELS.iter().find(|model| model.id == id)
 }
 
+pub fn normalize_provider_id(provider: &str) -> String {
+    match provider.trim().to_ascii_lowercase().as_str() {
+        "grok" | "x-ai" | "x.ai" => PROVIDER_XAI.to_string(),
+        "grok-oauth" | "xai-oauth" | "x-ai-oauth" | "xai-grok-oauth" => {
+            PROVIDER_SUPERGROK.to_string()
+        }
+        provider => provider.to_string(),
+    }
+}
+
 impl From<&ModelCatalogEntry> for ModelDescriptor {
     fn from(model: &ModelCatalogEntry) -> Self {
         Self {
@@ -490,7 +666,18 @@ mod tests {
             .iter()
             .map(|provider| provider.id)
             .collect::<Vec<_>>();
-        assert_eq!(ids, vec!["mock", "openai", "codex", "anthropic", "gemini"]);
+        assert_eq!(
+            ids,
+            vec![
+                "mock",
+                "openai",
+                "codex",
+                "anthropic",
+                "gemini",
+                "xai",
+                "supergrok"
+            ]
+        );
     }
 
     #[test]
@@ -512,6 +699,14 @@ mod tests {
                 "gemini-3.1-pro-preview-customtools",
                 "gemini-3-flash-preview",
                 "gemini-3.1-flash-lite-preview",
+                "grok-4.3",
+                "grok-4.20-multi-agent-0309",
+                "grok-4.20-0309-reasoning",
+                "grok-4.20-0309-non-reasoning",
+                "grok-4.3",
+                "grok-4.20-multi-agent-0309",
+                "grok-4.20-0309-reasoning",
+                "grok-4.20-0309-non-reasoning",
             ]
         );
     }
@@ -522,7 +717,47 @@ mod tests {
         assert_eq!(models_for_codex(false).len(), 3);
         assert_eq!(models_for_provider(PROVIDER_ANTHROPIC, false).len(), 3);
         assert_eq!(models_for_provider(PROVIDER_GEMINI, false).len(), 4);
+        assert_eq!(models_for_provider(PROVIDER_XAI, false).len(), 4);
+        assert_eq!(models_for_provider(PROVIDER_SUPERGROK, false).len(), 4);
         assert_eq!(models_for_provider(PROVIDER_MOCK, true).len(), 1);
+    }
+
+    #[test]
+    fn xai_catalog_entries_match_current_grok_contract() {
+        let grok43 = models_for_provider(PROVIDER_XAI, false)
+            .into_iter()
+            .find(|model| model.id == "grok-4.3")
+            .unwrap();
+        assert_eq!(grok43.context_window, Some(1_000_000));
+        assert_eq!(grok43.default_reasoning.as_deref(), Some(REASONING_LOW));
+        assert_eq!(
+            grok43
+                .supported_reasoning
+                .iter()
+                .map(|option| option.effort.as_str())
+                .collect::<Vec<_>>(),
+            vec![
+                REASONING_NONE,
+                REASONING_LOW,
+                REASONING_MEDIUM,
+                REASONING_HIGH
+            ]
+        );
+
+        let grok420 = lookup_model("grok-4.20-multi-agent-0309").unwrap();
+        assert_eq!(grok420.context_window, 2_000_000);
+        assert_eq!(grok420.auto_compact_token_limit, 1_800_000);
+        assert_eq!(grok420.provider, PROVIDER_XAI);
+    }
+
+    #[test]
+    fn provider_aliases_normalize_xai_and_supergrok() {
+        assert_eq!(normalize_provider_id("grok"), PROVIDER_XAI);
+        assert_eq!(normalize_provider_id("x.ai"), PROVIDER_XAI);
+        assert_eq!(normalize_provider_id("x-ai"), PROVIDER_XAI);
+        assert_eq!(normalize_provider_id("xai-oauth"), PROVIDER_SUPERGROK);
+        assert_eq!(normalize_provider_id("grok-oauth"), PROVIDER_SUPERGROK);
+        assert_eq!(normalize_provider_id("supergrok"), PROVIDER_SUPERGROK);
     }
 
     #[test]

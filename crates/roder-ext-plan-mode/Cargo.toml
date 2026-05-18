@@ -3,6 +3,19 @@ name = "roder-ext-plan-mode"
 version.workspace = true
 edition.workspace = true
 
+[package.metadata.roder.distribution]
+id = "plan-mode"
+category = "policy-contributor"
+display_name = "Plan Mode"
+description = "Plan-mode policy and exit-plan-mode tool support."
+default_in_profiles = ["full", "minimal", "openai-only", "anthropic-only", "research-headless"]
+required_env = []
+optional_env = []
+conflicts_with = []
+required_capabilities = []
+extension_path = "::extension"
+docs_url = ""
+
 [dependencies]
 anyhow.workspace = true
 async-trait.workspace = true

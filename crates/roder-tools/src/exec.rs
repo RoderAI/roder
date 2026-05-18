@@ -117,9 +117,11 @@ impl ToolExecutor for ExecCommandTool {
 
     async fn execute(
         &self,
-        _ctx: ToolExecutionContext,
+        ctx: ToolExecutionContext,
         call: ToolCall,
     ) -> anyhow::Result<ToolResult> {
+        ctx.require_workspace()?;
+        ctx.require_process_runner()?;
         let args = parse::<ExecCommandArgs>(&call)?;
         let command = args.cmd.trim().to_string();
         require_nonempty(&command, "cmd")?;
@@ -230,9 +232,10 @@ impl ToolExecutor for WriteStdinTool {
 
     async fn execute(
         &self,
-        _ctx: ToolExecutionContext,
+        ctx: ToolExecutionContext,
         call: ToolCall,
     ) -> anyhow::Result<ToolResult> {
+        ctx.require_process_runner()?;
         let args = parse::<WriteStdinArgs>(&call)?;
         let Some(session) = self
             .manager
@@ -510,6 +513,7 @@ fn format_exec_output(
 mod tests {
     use roder_api::events::{ThreadId, TurnId};
     use roder_api::policy_mode::PolicyMode;
+    use roder_api::tools::{LocalProcessRunnerHandle, LocalWorkspaceHandle};
 
     use super::*;
 
@@ -602,11 +606,13 @@ mod tests {
     }
 
     fn context() -> ToolExecutionContext {
-        ToolExecutionContext {
-            thread_id: ThreadId::from("thread-exec"),
-            turn_id: TurnId::from("turn-exec"),
-            effective_mode: PolicyMode::Default,
-        }
+        ToolExecutionContext::new(
+            ThreadId::from("thread-exec"),
+            TurnId::from("turn-exec"),
+            PolicyMode::Default,
+        )
+        .with_workspace_handle(Arc::new(LocalWorkspaceHandle::new(".")))
+        .with_process_runner(Arc::new(LocalProcessRunnerHandle))
     }
 
     fn temp_workspace(prefix: &str) -> std::path::PathBuf {

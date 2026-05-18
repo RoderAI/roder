@@ -618,10 +618,10 @@ mod tests {
     }
 
     fn context() -> ToolExecutionContext {
-        ToolExecutionContext {
-            thread_id: ThreadId::from("thread-workflow"),
-            turn_id: TurnId::from("turn-workflow"),
-            effective_mode: PolicyMode::Default,
-        }
+        ToolExecutionContext::new(
+            ThreadId::from("thread-workflow"),
+            TurnId::from("turn-workflow"),
+            PolicyMode::Default,
+        )
     }
 }

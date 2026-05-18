@@ -537,6 +537,8 @@ async fn run_turn_continues_after_tool_result() {
                 model_parallel_tool_calls: std::collections::HashMap::new(),
                 workspace: None,
                 policy_mode: roder_api::policy_mode::PolicyMode::Default,
+                remote_runner_destination: None,
+                team_data_dir: None,
             },
         )
         .unwrap(),
@@ -610,6 +612,8 @@ async fn run_turn_executes_parallel_tool_call_batch_concurrently() {
                 model_parallel_tool_calls: std::collections::HashMap::new(),
                 workspace: None,
                 policy_mode: roder_api::policy_mode::PolicyMode::Default,
+                remote_runner_destination: None,
+                team_data_dir: None,
             },
         )
         .unwrap(),
@@ -722,6 +726,8 @@ async fn commentary_phase_messages_are_preserved_for_next_provider_request() {
                 model_parallel_tool_calls: std::collections::HashMap::new(),
                 workspace: None,
                 policy_mode: roder_api::policy_mode::PolicyMode::Default,
+                remote_runner_destination: None,
+                team_data_dir: None,
             },
         )
         .unwrap(),
@@ -831,6 +837,8 @@ async fn runtime_advertises_apply_patch_only_for_patch_models() {
                 model_parallel_tool_calls: std::collections::HashMap::new(),
                 workspace: None,
                 policy_mode: roder_api::policy_mode::PolicyMode::Default,
+                remote_runner_destination: None,
+                team_data_dir: None,
             },
         )
         .unwrap(),
@@ -885,6 +893,8 @@ async fn runtime_uses_custom_model_edit_tool_override() {
                 model_parallel_tool_calls: std::collections::HashMap::new(),
                 workspace: None,
                 policy_mode: roder_api::policy_mode::PolicyMode::Default,
+                remote_runner_destination: None,
+                team_data_dir: None,
             },
         )
         .unwrap(),
@@ -923,6 +933,8 @@ async fn tool_execution_errors_are_returned_to_model() {
                 model_parallel_tool_calls: std::collections::HashMap::new(),
                 workspace: None,
                 policy_mode: roder_api::policy_mode::PolicyMode::Default,
+                remote_runner_destination: None,
+                team_data_dir: None,
             },
         )
         .unwrap(),
@@ -980,6 +992,8 @@ async fn run_turn_allows_more_than_eight_tool_rounds() {
                 model_parallel_tool_calls: std::collections::HashMap::new(),
                 workspace: None,
                 policy_mode: roder_api::policy_mode::PolicyMode::Default,
+                remote_runner_destination: None,
+                team_data_dir: None,
             },
         )
         .unwrap(),
@@ -1034,6 +1048,8 @@ async fn unknown_tool_completion_is_marked_as_error() {
                 model_parallel_tool_calls: std::collections::HashMap::new(),
                 workspace: None,
                 policy_mode: roder_api::policy_mode::PolicyMode::Default,
+                remote_runner_destination: None,
+                team_data_dir: None,
             },
         )
         .unwrap(),
@@ -1075,16 +1091,12 @@ fn duplicate_tool_contributors_fail_with_contributor_context() {
     builder.tool_contributor(Arc::new(DuplicateWebSearchContributor("search-a")));
     builder.tool_contributor(Arc::new(DuplicateWebSearchContributor("search-b")));
 
-    let err = match Runtime::new(builder.build().unwrap(), RuntimeConfig::default()) {
-        Ok(_) => panic!("duplicate web_search tools should fail runtime construction"),
+    let err = match builder.build() {
+        Ok(_) => panic!("duplicate web_search tools should fail registry construction"),
         Err(err) => err,
     };
     let message = format!("{err:#}");
 
-    assert!(
-        message.contains("tool contributor search-b failed"),
-        "{message}"
-    );
     assert!(
         message.contains("tool \"web_search\" is already registered"),
         "{message}"

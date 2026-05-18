@@ -3,7 +3,20 @@ use time::OffsetDateTime;
 
 use crate::extension::{ExtensionId, InferenceEngineId};
 use crate::inference::InferenceEvent;
+use crate::media::{MediaArtifact, MediaArtifactId, MediaPreview};
+use crate::memory::{MemoryCitation, MemoryId, MemoryProviderSelection, MemoryRecord, MemoryScope};
+use crate::plan_review::{
+    HunkId, HunkRecord, PlanComment, PlanReview, PlanReviewId, PlanReviewStatus, PlanRewrite,
+};
 use crate::subagents::SubagentExitReason;
+use crate::teams::{
+    AgentTeamDisplayMode, TeamId, TeamMemberId, TeamMemberRole, TeamMemberStatus,
+    TeamTaskDescriptor,
+};
+use crate::trace::{
+    ParentTurnRef, SubagentTraceDelta, SubagentTraceId, SubagentTraceStatus, SubagentTraceSummary,
+};
+use crate::workflow::{WorkflowImportDecision, WorkflowImportError, WorkflowImportItem};
 
 pub use crate::policy_mode::{
     PolicyBypassActive, PolicyDecisionRecorded, PolicyExitPlanRequested, PolicyExitPlanResolved,
@@ -244,6 +257,234 @@ pub struct SubagentFailed {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SubagentTraceCreated {
+    pub summary: SubagentTraceSummary,
+    #[serde(with = "time::serde::rfc3339")]
+    pub timestamp: OffsetDateTime,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SubagentTraceDeltaEvent {
+    pub delta: SubagentTraceDelta,
+    #[serde(with = "time::serde::rfc3339")]
+    pub timestamp: OffsetDateTime,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SubagentTraceStatusChanged {
+    pub trace_id: SubagentTraceId,
+    pub parent: ParentTurnRef,
+    pub status: SubagentTraceStatus,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub detail: Option<String>,
+    #[serde(with = "time::serde::rfc3339")]
+    pub timestamp: OffsetDateTime,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SubagentTraceCompleted {
+    pub summary: SubagentTraceSummary,
+    #[serde(with = "time::serde::rfc3339")]
+    pub timestamp: OffsetDateTime,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SubagentTraceFailed {
+    pub summary: SubagentTraceSummary,
+    pub error: String,
+    #[serde(with = "time::serde::rfc3339")]
+    pub timestamp: OffsetDateTime,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PlanReviewCreated {
+    pub review: PlanReview,
+    #[serde(with = "time::serde::rfc3339")]
+    pub timestamp: OffsetDateTime,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PlanReviewStatusChanged {
+    pub thread_id: ThreadId,
+    pub turn_id: TurnId,
+    pub review_id: PlanReviewId,
+    pub status: PlanReviewStatus,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub detail: Option<String>,
+    #[serde(with = "time::serde::rfc3339")]
+    pub timestamp: OffsetDateTime,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PlanReviewCommentAdded {
+    pub thread_id: ThreadId,
+    pub turn_id: TurnId,
+    pub review_id: PlanReviewId,
+    pub comment: PlanComment,
+    #[serde(with = "time::serde::rfc3339")]
+    pub timestamp: OffsetDateTime,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PlanReviewRewritten {
+    pub thread_id: ThreadId,
+    pub turn_id: TurnId,
+    pub review_id: PlanReviewId,
+    pub rewrite: PlanRewrite,
+    #[serde(with = "time::serde::rfc3339")]
+    pub timestamp: OffsetDateTime,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PlanReviewApproved {
+    pub thread_id: ThreadId,
+    pub turn_id: TurnId,
+    pub review_id: PlanReviewId,
+    #[serde(with = "time::serde::rfc3339")]
+    pub timestamp: OffsetDateTime,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PlanReviewRejected {
+    pub thread_id: ThreadId,
+    pub turn_id: TurnId,
+    pub review_id: PlanReviewId,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
+    #[serde(with = "time::serde::rfc3339")]
+    pub timestamp: OffsetDateTime,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HunkRecorded {
+    pub hunk: HunkRecord,
+    #[serde(with = "time::serde::rfc3339")]
+    pub timestamp: OffsetDateTime,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HunkRollbackRequested {
+    pub thread_id: ThreadId,
+    pub turn_id: TurnId,
+    pub hunk_id: HunkId,
+    #[serde(with = "time::serde::rfc3339")]
+    pub timestamp: OffsetDateTime,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HunkRollbackCompleted {
+    pub thread_id: ThreadId,
+    pub turn_id: TurnId,
+    pub hunk_id: HunkId,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+    #[serde(with = "time::serde::rfc3339")]
+    pub timestamp: OffsetDateTime,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkflowImportsDetected {
+    pub workspace: String,
+    pub items: Vec<WorkflowImportItem>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub errors: Vec<WorkflowImportError>,
+    #[serde(with = "time::serde::rfc3339")]
+    pub timestamp: OffsetDateTime,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkflowImportPreviewed {
+    pub item: WorkflowImportItem,
+    #[serde(with = "time::serde::rfc3339")]
+    pub timestamp: OffsetDateTime,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkflowImportEnabled {
+    pub item: WorkflowImportItem,
+    pub decision: WorkflowImportDecision,
+    #[serde(with = "time::serde::rfc3339")]
+    pub timestamp: OffsetDateTime,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkflowImportDisabled {
+    pub item_id: String,
+    pub decision: WorkflowImportDecision,
+    #[serde(with = "time::serde::rfc3339")]
+    pub timestamp: OffsetDateTime,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkflowImportStale {
+    pub item: WorkflowImportItem,
+    pub previous_hash: String,
+    #[serde(with = "time::serde::rfc3339")]
+    pub timestamp: OffsetDateTime,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkflowImportFailed {
+    pub item_id: Option<String>,
+    pub error: WorkflowImportError,
+    #[serde(with = "time::serde::rfc3339")]
+    pub timestamp: OffsetDateTime,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MediaArtifactCreated {
+    pub thread_id: ThreadId,
+    pub turn_id: TurnId,
+    pub artifact: MediaArtifact,
+    #[serde(with = "time::serde::rfc3339")]
+    pub timestamp: OffsetDateTime,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MediaArtifactUpdated {
+    pub thread_id: ThreadId,
+    pub turn_id: TurnId,
+    pub artifact: MediaArtifact,
+    #[serde(with = "time::serde::rfc3339")]
+    pub timestamp: OffsetDateTime,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MediaArtifactDeleted {
+    pub artifact_id: MediaArtifactId,
+    #[serde(with = "time::serde::rfc3339")]
+    pub timestamp: OffsetDateTime,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MediaPreviewReady {
+    pub thread_id: ThreadId,
+    pub turn_id: TurnId,
+    pub preview: MediaPreview,
+    #[serde(with = "time::serde::rfc3339")]
+    pub timestamp: OffsetDateTime,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FileChanged {
     pub thread_id: ThreadId,
     pub turn_id: TurnId,
@@ -312,6 +553,156 @@ pub struct TurnSteered {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RunnerLifecycle {
+    pub destination_id: String,
+    pub provider_id: String,
+    pub state: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub session_id: Option<String>,
+    #[serde(with = "time::serde::rfc3339")]
+    pub timestamp: OffsetDateTime,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TeamStarted {
+    pub team_id: TeamId,
+    pub lead_thread_id: ThreadId,
+    pub display_mode: AgentTeamDisplayMode,
+    #[serde(with = "time::serde::rfc3339")]
+    pub timestamp: OffsetDateTime,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TeamMemberStarted {
+    pub team_id: TeamId,
+    pub member_id: TeamMemberId,
+    pub member_thread_id: ThreadId,
+    pub role: TeamMemberRole,
+    pub name: String,
+    #[serde(with = "time::serde::rfc3339")]
+    pub timestamp: OffsetDateTime,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TeamMemberStatusChanged {
+    pub team_id: TeamId,
+    pub member_id: TeamMemberId,
+    pub member_thread_id: ThreadId,
+    pub status: TeamMemberStatus,
+    #[serde(with = "time::serde::rfc3339")]
+    pub timestamp: OffsetDateTime,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TeamMemberMessageDelta {
+    pub team_id: TeamId,
+    pub member_id: TeamMemberId,
+    pub member_thread_id: ThreadId,
+    pub turn_id: TurnId,
+    pub delta: String,
+    #[serde(with = "time::serde::rfc3339")]
+    pub timestamp: OffsetDateTime,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TeamMemberCompleted {
+    pub team_id: TeamId,
+    pub member_id: TeamMemberId,
+    pub member_thread_id: ThreadId,
+    pub turn_id: Option<TurnId>,
+    pub status: TeamMemberStatus,
+    #[serde(with = "time::serde::rfc3339")]
+    pub timestamp: OffsetDateTime,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TeamDisplayModeChanged {
+    pub team_id: TeamId,
+    pub display_mode: AgentTeamDisplayMode,
+    #[serde(with = "time::serde::rfc3339")]
+    pub timestamp: OffsetDateTime,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TeamTaskChanged {
+    pub team_id: TeamId,
+    pub task: TeamTaskDescriptor,
+    #[serde(with = "time::serde::rfc3339")]
+    pub timestamp: OffsetDateTime,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TeamCleanupCompleted {
+    pub team_id: TeamId,
+    pub forced: bool,
+    #[serde(with = "time::serde::rfc3339")]
+    pub timestamp: OffsetDateTime,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MemorySaved {
+    pub memory: MemoryRecord,
+    #[serde(with = "time::serde::rfc3339")]
+    pub timestamp: OffsetDateTime,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MemoryUpdated {
+    pub memory: MemoryRecord,
+    #[serde(with = "time::serde::rfc3339")]
+    pub timestamp: OffsetDateTime,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MemoryDeleted {
+    pub memory_id: MemoryId,
+    #[serde(with = "time::serde::rfc3339")]
+    pub timestamp: OffsetDateTime,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MemoryQueried {
+    pub scope: Option<MemoryScope>,
+    pub query: String,
+    pub result_count: usize,
+    #[serde(with = "time::serde::rfc3339")]
+    pub timestamp: OffsetDateTime,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MemoryRecallReady {
+    pub thread_id: ThreadId,
+    pub turn_id: TurnId,
+    pub citations: Vec<MemoryCitation>,
+    #[serde(with = "time::serde::rfc3339")]
+    pub timestamp: OffsetDateTime,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MemoryReembedQueued {
+    pub scope: Option<MemoryScope>,
+    pub provider: MemoryProviderSelection,
+    #[serde(with = "time::serde::rfc3339")]
+    pub timestamp: OffsetDateTime,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MemoryProviderChanged {
+    pub provider: MemoryProviderSelection,
+    #[serde(with = "time::serde::rfc3339")]
+    pub timestamp: OffsetDateTime,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MemoryObservationRecorded {
+    pub thread_id: ThreadId,
+    pub turn_id: TurnId,
+    pub memory_id: MemoryId,
+    #[serde(with = "time::serde::rfc3339")]
+    pub timestamp: OffsetDateTime,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum RoderEvent {
     RuntimeStarted(RuntimeStarted),
     ExtensionRegistered(ExtensionRegistered),
@@ -340,6 +731,38 @@ pub enum RoderEvent {
     SubagentToolCall(SubagentToolCall),
     SubagentCompleted(SubagentCompleted),
     SubagentFailed(SubagentFailed),
+    SubagentTraceCreated(SubagentTraceCreated),
+    SubagentTraceDelta(SubagentTraceDeltaEvent),
+    SubagentTraceStatusChanged(SubagentTraceStatusChanged),
+    SubagentTraceCompleted(SubagentTraceCompleted),
+    SubagentTraceFailed(SubagentTraceFailed),
+    PlanReviewCreated(PlanReviewCreated),
+    PlanReviewStatusChanged(PlanReviewStatusChanged),
+    PlanReviewCommentAdded(PlanReviewCommentAdded),
+    PlanReviewRewritten(PlanReviewRewritten),
+    PlanReviewApproved(PlanReviewApproved),
+    PlanReviewRejected(PlanReviewRejected),
+    HunkRecorded(HunkRecorded),
+    HunkRollbackRequested(HunkRollbackRequested),
+    HunkRollbackCompleted(HunkRollbackCompleted),
+    WorkflowImportsDetected(WorkflowImportsDetected),
+    WorkflowImportPreviewed(WorkflowImportPreviewed),
+    WorkflowImportEnabled(WorkflowImportEnabled),
+    WorkflowImportDisabled(WorkflowImportDisabled),
+    WorkflowImportStale(WorkflowImportStale),
+    WorkflowImportFailed(WorkflowImportFailed),
+    MediaArtifactCreated(MediaArtifactCreated),
+    MediaArtifactUpdated(MediaArtifactUpdated),
+    MediaArtifactDeleted(MediaArtifactDeleted),
+    MediaPreviewReady(MediaPreviewReady),
+    MemorySaved(MemorySaved),
+    MemoryUpdated(MemoryUpdated),
+    MemoryDeleted(MemoryDeleted),
+    MemoryQueried(MemoryQueried),
+    MemoryRecallReady(MemoryRecallReady),
+    MemoryReembedQueued(MemoryReembedQueued),
+    MemoryProviderChanged(MemoryProviderChanged),
+    MemoryObservationRecorded(MemoryObservationRecorded),
     TaskStarted(TaskStarted),
     TaskOutput(TaskOutput),
     TaskCompleted(TaskCompleted),
@@ -352,6 +775,15 @@ pub enum RoderEvent {
     TurnFailed(TurnFailed),
     TurnInterrupted(TurnInterrupted),
     TurnSteered(TurnSteered),
+    RunnerLifecycle(RunnerLifecycle),
+    TeamStarted(TeamStarted),
+    TeamMemberStarted(TeamMemberStarted),
+    TeamMemberStatusChanged(TeamMemberStatusChanged),
+    TeamMemberMessageDelta(TeamMemberMessageDelta),
+    TeamMemberCompleted(TeamMemberCompleted),
+    TeamDisplayModeChanged(TeamDisplayModeChanged),
+    TeamTaskChanged(TeamTaskChanged),
+    TeamCleanupCompleted(TeamCleanupCompleted),
 }
 
 impl RoderEvent {
@@ -384,6 +816,38 @@ impl RoderEvent {
             RoderEvent::SubagentToolCall(_) => "subagent.tool_call",
             RoderEvent::SubagentCompleted(_) => "subagent.completed",
             RoderEvent::SubagentFailed(_) => "subagent.failed",
+            RoderEvent::SubagentTraceCreated(_) => "turn/subagentTraceCreated",
+            RoderEvent::SubagentTraceDelta(_) => "turn/subagentTraceDelta",
+            RoderEvent::SubagentTraceStatusChanged(_) => "turn/subagentTraceStatusChanged",
+            RoderEvent::SubagentTraceCompleted(_) => "turn/subagentTraceCompleted",
+            RoderEvent::SubagentTraceFailed(_) => "turn/subagentTraceFailed",
+            RoderEvent::PlanReviewCreated(_) => "plan/reviewCreated",
+            RoderEvent::PlanReviewStatusChanged(_) => "plan/reviewStatusChanged",
+            RoderEvent::PlanReviewCommentAdded(_) => "plan/reviewCommentAdded",
+            RoderEvent::PlanReviewRewritten(_) => "plan/reviewRewritten",
+            RoderEvent::PlanReviewApproved(_) => "plan/reviewApproved",
+            RoderEvent::PlanReviewRejected(_) => "plan/reviewRejected",
+            RoderEvent::HunkRecorded(_) => "hunk/recorded",
+            RoderEvent::HunkRollbackRequested(_) => "hunk/rollbackRequested",
+            RoderEvent::HunkRollbackCompleted(_) => "hunk/rollbackCompleted",
+            RoderEvent::WorkflowImportsDetected(_) => "workflow/importsDetected",
+            RoderEvent::WorkflowImportPreviewed(_) => "workflow/importPreviewed",
+            RoderEvent::WorkflowImportEnabled(_) => "workflow/importEnabled",
+            RoderEvent::WorkflowImportDisabled(_) => "workflow/importDisabled",
+            RoderEvent::WorkflowImportStale(_) => "workflow/importStale",
+            RoderEvent::WorkflowImportFailed(_) => "workflow/importFailed",
+            RoderEvent::MediaArtifactCreated(_) => "media/artifactCreated",
+            RoderEvent::MediaArtifactUpdated(_) => "media/artifactUpdated",
+            RoderEvent::MediaArtifactDeleted(_) => "media/artifactDeleted",
+            RoderEvent::MediaPreviewReady(_) => "media/previewReady",
+            RoderEvent::MemorySaved(_) => "memory/saved",
+            RoderEvent::MemoryUpdated(_) => "memory/updated",
+            RoderEvent::MemoryDeleted(_) => "memory/deleted",
+            RoderEvent::MemoryQueried(_) => "memory/queried",
+            RoderEvent::MemoryRecallReady(_) => "memory/recallReady",
+            RoderEvent::MemoryReembedQueued(_) => "memory/reembedQueued",
+            RoderEvent::MemoryProviderChanged(_) => "memory/providerChanged",
+            RoderEvent::MemoryObservationRecorded(_) => "memory/observationRecorded",
             RoderEvent::TaskStarted(_) => "task.started",
             RoderEvent::TaskOutput(_) => "task.output",
             RoderEvent::TaskCompleted(_) => "task.completed",
@@ -396,6 +860,15 @@ impl RoderEvent {
             RoderEvent::TurnFailed(_) => "turn.failed",
             RoderEvent::TurnInterrupted(_) => "turn.interrupted",
             RoderEvent::TurnSteered(_) => "turn.steered",
+            RoderEvent::RunnerLifecycle(_) => "runner.lifecycle",
+            RoderEvent::TeamStarted(_) => "team.started",
+            RoderEvent::TeamMemberStarted(_) => "team.member_started",
+            RoderEvent::TeamMemberStatusChanged(_) => "team.member_status_changed",
+            RoderEvent::TeamMemberMessageDelta(_) => "team.member_message_delta",
+            RoderEvent::TeamMemberCompleted(_) => "team.member_completed",
+            RoderEvent::TeamDisplayModeChanged(_) => "team.display_mode_changed",
+            RoderEvent::TeamTaskChanged(_) => "team.task_changed",
+            RoderEvent::TeamCleanupCompleted(_) => "team.cleanup_completed",
         }
     }
 
@@ -412,6 +885,38 @@ impl RoderEvent {
             | RoderEvent::SubagentToolCall(_)
             | RoderEvent::SubagentCompleted(_)
             | RoderEvent::SubagentFailed(_)
+            | RoderEvent::SubagentTraceCreated(_)
+            | RoderEvent::SubagentTraceDelta(_)
+            | RoderEvent::SubagentTraceStatusChanged(_)
+            | RoderEvent::SubagentTraceCompleted(_)
+            | RoderEvent::SubagentTraceFailed(_)
+            | RoderEvent::PlanReviewCreated(_)
+            | RoderEvent::PlanReviewStatusChanged(_)
+            | RoderEvent::PlanReviewCommentAdded(_)
+            | RoderEvent::PlanReviewRewritten(_)
+            | RoderEvent::PlanReviewApproved(_)
+            | RoderEvent::PlanReviewRejected(_)
+            | RoderEvent::HunkRecorded(_)
+            | RoderEvent::HunkRollbackRequested(_)
+            | RoderEvent::HunkRollbackCompleted(_)
+            | RoderEvent::WorkflowImportsDetected(_)
+            | RoderEvent::WorkflowImportPreviewed(_)
+            | RoderEvent::WorkflowImportEnabled(_)
+            | RoderEvent::WorkflowImportDisabled(_)
+            | RoderEvent::WorkflowImportStale(_)
+            | RoderEvent::WorkflowImportFailed(_)
+            | RoderEvent::MediaArtifactCreated(_)
+            | RoderEvent::MediaArtifactUpdated(_)
+            | RoderEvent::MediaArtifactDeleted(_)
+            | RoderEvent::MediaPreviewReady(_)
+            | RoderEvent::MemorySaved(_)
+            | RoderEvent::MemoryUpdated(_)
+            | RoderEvent::MemoryDeleted(_)
+            | RoderEvent::MemoryQueried(_)
+            | RoderEvent::MemoryRecallReady(_)
+            | RoderEvent::MemoryReembedQueued(_)
+            | RoderEvent::MemoryProviderChanged(_)
+            | RoderEvent::MemoryObservationRecorded(_)
             | RoderEvent::TaskStarted(_)
             | RoderEvent::TaskOutput(_)
             | RoderEvent::TaskCompleted(_)
@@ -422,6 +927,15 @@ impl RoderEvent {
                 EventSource::Core
             }
             RoderEvent::ExtensionRegistered(_) => EventSource::Extension,
+            RoderEvent::RunnerLifecycle(_) => EventSource::Extension,
+            RoderEvent::TeamStarted(_)
+            | RoderEvent::TeamMemberStarted(_)
+            | RoderEvent::TeamMemberStatusChanged(_)
+            | RoderEvent::TeamMemberMessageDelta(_)
+            | RoderEvent::TeamMemberCompleted(_)
+            | RoderEvent::TeamDisplayModeChanged(_)
+            | RoderEvent::TeamTaskChanged(_)
+            | RoderEvent::TeamCleanupCompleted(_) => EventSource::Core,
             _ => EventSource::Core,
         }
     }
@@ -453,6 +967,25 @@ impl RoderEvent {
             RoderEvent::SubagentToolCall(e) => Some(&e.thread_id),
             RoderEvent::SubagentCompleted(e) => Some(&e.thread_id),
             RoderEvent::SubagentFailed(e) => Some(&e.thread_id),
+            RoderEvent::SubagentTraceCreated(e) => Some(&e.summary.parent.thread_id),
+            RoderEvent::SubagentTraceDelta(e) => Some(&e.delta.parent.thread_id),
+            RoderEvent::SubagentTraceStatusChanged(e) => Some(&e.parent.thread_id),
+            RoderEvent::SubagentTraceCompleted(e) => Some(&e.summary.parent.thread_id),
+            RoderEvent::SubagentTraceFailed(e) => Some(&e.summary.parent.thread_id),
+            RoderEvent::PlanReviewCreated(e) => Some(&e.review.thread_id),
+            RoderEvent::PlanReviewStatusChanged(e) => Some(&e.thread_id),
+            RoderEvent::PlanReviewCommentAdded(e) => Some(&e.thread_id),
+            RoderEvent::PlanReviewRewritten(e) => Some(&e.thread_id),
+            RoderEvent::PlanReviewApproved(e) => Some(&e.thread_id),
+            RoderEvent::PlanReviewRejected(e) => Some(&e.thread_id),
+            RoderEvent::HunkRecorded(e) => Some(&e.hunk.thread_id),
+            RoderEvent::HunkRollbackRequested(e) => Some(&e.thread_id),
+            RoderEvent::HunkRollbackCompleted(e) => Some(&e.thread_id),
+            RoderEvent::MediaArtifactCreated(e) => Some(&e.thread_id),
+            RoderEvent::MediaArtifactUpdated(e) => Some(&e.thread_id),
+            RoderEvent::MediaPreviewReady(e) => Some(&e.thread_id),
+            RoderEvent::MemoryRecallReady(e) => Some(&e.thread_id),
+            RoderEvent::MemoryObservationRecorded(e) => Some(&e.thread_id),
             RoderEvent::TaskStarted(e) => e.thread_id.as_ref(),
             RoderEvent::TaskOutput(e) => e.thread_id.as_ref(),
             RoderEvent::TaskCompleted(e) => e.thread_id.as_ref(),
@@ -465,7 +998,30 @@ impl RoderEvent {
             RoderEvent::TurnFailed(e) => Some(&e.thread_id),
             RoderEvent::TurnInterrupted(e) => Some(&e.thread_id),
             RoderEvent::TurnSteered(e) => Some(&e.thread_id),
-            RoderEvent::RuntimeStarted(_) | RoderEvent::ExtensionRegistered(_) => None,
+            RoderEvent::TeamStarted(e) => Some(&e.lead_thread_id),
+            RoderEvent::TeamMemberStarted(e) => Some(&e.member_thread_id),
+            RoderEvent::TeamMemberStatusChanged(e) => Some(&e.member_thread_id),
+            RoderEvent::TeamMemberMessageDelta(e) => Some(&e.member_thread_id),
+            RoderEvent::TeamMemberCompleted(e) => Some(&e.member_thread_id),
+            RoderEvent::RuntimeStarted(_)
+            | RoderEvent::ExtensionRegistered(_)
+            | RoderEvent::WorkflowImportsDetected(_)
+            | RoderEvent::WorkflowImportPreviewed(_)
+            | RoderEvent::WorkflowImportEnabled(_)
+            | RoderEvent::WorkflowImportDisabled(_)
+            | RoderEvent::WorkflowImportStale(_)
+            | RoderEvent::WorkflowImportFailed(_)
+            | RoderEvent::MediaArtifactDeleted(_)
+            | RoderEvent::MemorySaved(_)
+            | RoderEvent::MemoryUpdated(_)
+            | RoderEvent::MemoryDeleted(_)
+            | RoderEvent::MemoryQueried(_)
+            | RoderEvent::MemoryReembedQueued(_)
+            | RoderEvent::MemoryProviderChanged(_)
+            | RoderEvent::RunnerLifecycle(_)
+            | RoderEvent::TeamDisplayModeChanged(_)
+            | RoderEvent::TeamTaskChanged(_)
+            | RoderEvent::TeamCleanupCompleted(_) => None,
         }
     }
 
@@ -494,6 +1050,25 @@ impl RoderEvent {
             RoderEvent::SubagentToolCall(e) => Some(&e.turn_id),
             RoderEvent::SubagentCompleted(e) => Some(&e.turn_id),
             RoderEvent::SubagentFailed(e) => Some(&e.turn_id),
+            RoderEvent::SubagentTraceCreated(e) => Some(&e.summary.parent.turn_id),
+            RoderEvent::SubagentTraceDelta(e) => Some(&e.delta.parent.turn_id),
+            RoderEvent::SubagentTraceStatusChanged(e) => Some(&e.parent.turn_id),
+            RoderEvent::SubagentTraceCompleted(e) => Some(&e.summary.parent.turn_id),
+            RoderEvent::SubagentTraceFailed(e) => Some(&e.summary.parent.turn_id),
+            RoderEvent::PlanReviewCreated(e) => Some(&e.review.turn_id),
+            RoderEvent::PlanReviewStatusChanged(e) => Some(&e.turn_id),
+            RoderEvent::PlanReviewCommentAdded(e) => Some(&e.turn_id),
+            RoderEvent::PlanReviewRewritten(e) => Some(&e.turn_id),
+            RoderEvent::PlanReviewApproved(e) => Some(&e.turn_id),
+            RoderEvent::PlanReviewRejected(e) => Some(&e.turn_id),
+            RoderEvent::HunkRecorded(e) => Some(&e.hunk.turn_id),
+            RoderEvent::HunkRollbackRequested(e) => Some(&e.turn_id),
+            RoderEvent::HunkRollbackCompleted(e) => Some(&e.turn_id),
+            RoderEvent::MediaArtifactCreated(e) => Some(&e.turn_id),
+            RoderEvent::MediaArtifactUpdated(e) => Some(&e.turn_id),
+            RoderEvent::MediaPreviewReady(e) => Some(&e.turn_id),
+            RoderEvent::MemoryRecallReady(e) => Some(&e.turn_id),
+            RoderEvent::MemoryObservationRecorded(e) => Some(&e.turn_id),
             RoderEvent::TaskStarted(e) => e.turn_id.as_ref(),
             RoderEvent::TaskOutput(e) => e.turn_id.as_ref(),
             RoderEvent::TaskCompleted(e) => e.turn_id.as_ref(),
@@ -506,10 +1081,32 @@ impl RoderEvent {
             RoderEvent::TurnFailed(e) => Some(&e.turn_id),
             RoderEvent::TurnInterrupted(e) => Some(&e.turn_id),
             RoderEvent::TurnSteered(e) => Some(&e.turn_id),
+            RoderEvent::TeamMemberMessageDelta(e) => Some(&e.turn_id),
+            RoderEvent::TeamMemberCompleted(e) => e.turn_id.as_ref(),
             RoderEvent::RuntimeStarted(_)
             | RoderEvent::ExtensionRegistered(_)
             | RoderEvent::SessionCreated(_)
-            | RoderEvent::SessionLoaded(_) => None,
+            | RoderEvent::SessionLoaded(_)
+            | RoderEvent::WorkflowImportsDetected(_)
+            | RoderEvent::WorkflowImportPreviewed(_)
+            | RoderEvent::WorkflowImportEnabled(_)
+            | RoderEvent::WorkflowImportDisabled(_)
+            | RoderEvent::WorkflowImportStale(_)
+            | RoderEvent::WorkflowImportFailed(_)
+            | RoderEvent::MediaArtifactDeleted(_)
+            | RoderEvent::MemorySaved(_)
+            | RoderEvent::MemoryUpdated(_)
+            | RoderEvent::MemoryDeleted(_)
+            | RoderEvent::MemoryQueried(_)
+            | RoderEvent::MemoryReembedQueued(_)
+            | RoderEvent::MemoryProviderChanged(_)
+            | RoderEvent::RunnerLifecycle(_)
+            | RoderEvent::TeamStarted(_)
+            | RoderEvent::TeamMemberStarted(_)
+            | RoderEvent::TeamMemberStatusChanged(_)
+            | RoderEvent::TeamDisplayModeChanged(_)
+            | RoderEvent::TeamTaskChanged(_)
+            | RoderEvent::TeamCleanupCompleted(_) => None,
         }
     }
 }
@@ -696,6 +1293,37 @@ mod tests {
             }
             other => panic!("unexpected event: {other:?}"),
         }
+    }
+
+    #[test]
+    fn subagent_trace_event_uses_parent_turn_for_filtering() {
+        let summary = SubagentTraceSummary {
+            trace_id: "trace-1".to_string(),
+            parent: ParentTurnRef {
+                thread_id: "parent-thread".to_string(),
+                turn_id: "parent-turn".to_string(),
+            },
+            child_thread_id: "child-thread".to_string(),
+            child_turn_id: "child-turn".to_string(),
+            title: "Inspect repository".to_string(),
+            role: "explorer".to_string(),
+            model: Some("test-model".to_string()),
+            status: SubagentTraceStatus::Running,
+            elapsed_ms: 10,
+            usage: None,
+            destination: None,
+            latest_activity: None,
+            error_summary: None,
+        };
+        let event = RoderEvent::SubagentTraceCreated(SubagentTraceCreated {
+            summary,
+            timestamp: OffsetDateTime::UNIX_EPOCH,
+        });
+
+        assert_eq!(event.kind(), "turn/subagentTraceCreated");
+        assert_eq!(event.source(), EventSource::Extension);
+        assert_eq!(event.thread_id().map(String::as_str), Some("parent-thread"));
+        assert_eq!(event.turn_id().map(String::as_str), Some("parent-turn"));
     }
 
     #[test]

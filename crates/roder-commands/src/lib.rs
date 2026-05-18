@@ -39,6 +39,16 @@ pub fn built_in_commands() -> Vec<CommandSpec> {
             "List available commands and explain the current command surface.",
         ),
         (
+            "goal",
+            "Create a new active goal from an objective.",
+            "Create or inspect the current active goal.",
+        ),
+        (
+            "retry",
+            "Resubmit the last user message.",
+            "Retry the last user prompt.",
+        ),
+        (
             "model",
             "Show or change the active model.",
             "Show the active model and available model choices.",
@@ -47,6 +57,11 @@ pub fn built_in_commands() -> Vec<CommandSpec> {
             "agents",
             "List configured subagents.",
             "List available subagents and their intended uses.",
+        ),
+        (
+            "tasks",
+            "Open the background task monitor.",
+            "Show background tasks and their recent output.",
         ),
         (
             "memory",

@@ -3,6 +3,19 @@ name = "roder-ext-openai-chat-completions"
 version.workspace = true
 edition.workspace = true
 
+[package.metadata.roder.distribution]
+id = "openai-chat-completions"
+category = "inference-engine"
+display_name = "OpenAI Chat Completions"
+description = "OpenAI-compatible Chat Completions inference."
+default_in_profiles = []
+required_env = ["OPENAI_API_KEY"]
+optional_env = ["OPENAI_BASE_URL"]
+conflicts_with = []
+required_capabilities = ["network.api.openai.com", "secret.read.OPENAI_API_KEY"]
+extension_path = "::OpenAiChatCompletionsExtension::new"
+docs_url = "https://platform.openai.com/docs/api-reference/chat"
+
 [dependencies]
 anyhow.workspace = true
 async-trait.workspace = true

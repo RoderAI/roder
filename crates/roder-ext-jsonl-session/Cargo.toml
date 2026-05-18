@@ -3,6 +3,19 @@ name = "roder-ext-jsonl-session"
 version.workspace = true
 edition.workspace = true
 
+[package.metadata.roder.distribution]
+id = "jsonl-session"
+category = "session-store"
+display_name = "JSONL Session Store"
+description = "Durable local JSONL session persistence."
+default_in_profiles = ["full", "minimal", "openai-only", "anthropic-only", "research-headless"]
+required_env = []
+optional_env = []
+conflicts_with = []
+required_capabilities = ["fs.readwrite.roder-home"]
+extension_path = "::JsonlSessionExtension::new"
+docs_url = ""
+
 [dependencies]
 anyhow.workspace = true
 async-trait.workspace = true

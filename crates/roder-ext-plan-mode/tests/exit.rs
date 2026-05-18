@@ -119,11 +119,7 @@ fn tool_names(
 }
 
 fn context(mode: PolicyMode) -> ToolExecutionContext {
-    ToolExecutionContext {
-        thread_id: "thread".to_string(),
-        turn_id: "turn".to_string(),
-        effective_mode: mode,
-    }
+    ToolExecutionContext::new("thread", "turn", mode)
 }
 
 fn call(arguments: serde_json::Value) -> ToolCall {

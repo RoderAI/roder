@@ -1,13 +1,28 @@
 mod commands;
 mod composer;
 mod dialog;
+mod hunk_tracker;
 mod input_queue;
+mod media;
+#[allow(dead_code)]
+mod memories;
+#[cfg(test)]
+mod plan_hunk_tests;
 mod plan_panel;
+mod plan_review;
+mod runner;
 mod session_resume;
 mod shortcuts;
+mod subagent_trace;
+#[cfg(test)]
+mod subagent_trace_tests;
+#[allow(dead_code)]
+mod team_panes;
+mod team_ui;
 mod tool_detail;
 mod tool_timeline;
 mod turn_timer;
+mod workflow_import;
 
 use std::collections::HashMap;
 use std::io;
@@ -45,14 +60,16 @@ use roder_api::policy_mode::{PolicyDecision, PolicyMode};
 use roder_api::session::SessionMetadata;
 use roder_app_server::LocalAppClient;
 use roder_protocol::{
-    AgentsListResult, CodexAuthResult, CommandDescriptor, CreateSessionResult, InterruptTurnParams,
+    AgentsListResult, CodexAuthResult, CommandDescriptor, CommandsExpandParams,
+    CommandsExpandResult, CommandsListResult, CreateSessionResult, InterruptTurnParams,
     JsonRpcRequest, JsonRpcResponse, PendingPlanExitDescriptor, ProviderDescriptor,
-    ProviderSelectParams, ProviderSelectResult, ProvidersListResult, SessionExitPlanParams,
-    SessionExitPlanResult, SessionGetResult, SessionLoadParams, SessionLoadResult,
-    SessionResolveApprovalParams, SessionResolveApprovalResult, SessionSetModeParams,
-    SessionSetModeResult, SessionsListResult, SettingsGetResult, SettingsSetDefaultModeParams,
-    SettingsSetDefaultModeResult, SettingsSetWebSearchParams, SettingsSetWebSearchResult,
-    StartTurnParams, SteerTurnParams,
+    ProviderSelectParams, ProviderSelectResult, ProvidersListResult, RunnersListResult,
+    RunnersSelectParams, RunnersSelectResult, SessionExitPlanParams, SessionExitPlanResult,
+    SessionGetResult, SessionLoadParams, SessionLoadResult, SessionResolveApprovalParams,
+    SessionResolveApprovalResult, SessionSetModeParams, SessionSetModeResult, SessionsListResult,
+    SettingsGetResult, SettingsSetDefaultModeParams, SettingsSetDefaultModeResult,
+    SettingsSetWebSearchParams, SettingsSetWebSearchResult, StartTurnParams, SteerTurnParams,
+    TasksGetParams, TasksGetResult, TasksListResult, TeamReadParams, TeamReadResult,
 };
 use tokio::io::AsyncWriteExt;
 use tokio::process::Command;
@@ -68,6 +85,7 @@ use plan_panel::{
     PlanPanelState, plan_counter_area, plan_panel_height, render_plan_counter, render_plan_panel,
 };
 use shortcuts::FooterShortcutContext;
+use team_ui::{TeamUiState, is_team_focus_next_key, is_team_focus_previous_key};
 use tool_detail::{ToolDetailAction, ToolDetailModal, render_tool_detail_modal};
 use tool_timeline::{
     TimelineFocus, TimelineState, ToolTimelineEntry, TurnCompletedSummary, fallback_entry,
@@ -519,6 +537,7 @@ enum ProviderPopupScreen {
     Models,
     Reasoning,
     Settings,
+    Runners,
     Spinner,
     WebSearch,
     Resume,
@@ -673,6 +692,7 @@ enum ProviderMenuItem {
     Models,
     Providers,
     Settings,
+    RunnerSettings,
     SpinnerSettings,
     WebSearchSettings,
     ThemesSettings,
@@ -683,7 +703,12 @@ enum ProviderMenuItem {
     Provider(ProviderChoice),
     Model(ProviderOption),
     Reasoning(ReasoningOptionChoice),
-    Session(SessionMetadata),
+    Runner {
+        destination_id: String,
+        provider_id: String,
+        label: String,
+    },
+    Session(Box<SessionMetadata>),
     Theme(String),
     Back,
 }
@@ -720,6 +745,7 @@ impl ProviderMenuItem {
             Self::Models => "Models".to_string(),
             Self::Providers => "Providers".to_string(),
             Self::Settings => "Settings".to_string(),
+            Self::RunnerSettings => "Runners".to_string(),
             Self::SpinnerSettings => "Working spinner".to_string(),
             Self::WebSearchSettings => "Web search provider".to_string(),
             Self::ThemesSettings => "Themes".to_string(),
@@ -732,6 +758,7 @@ impl ProviderMenuItem {
             Self::Provider(provider) => provider.label(),
             Self::Model(option) => option.label.clone(),
             Self::Reasoning(option) => format!("{} - {}", option.effort, option.description),
+            Self::Runner { label, .. } => label.clone(),
             Self::Session(session) => {
                 let date = session.updated_at.date().to_string();
                 let workspace = session
@@ -806,6 +833,8 @@ pub struct TuiApp {
     reasoning_effort: String,
     composer: TextArea<'static>,
     timeline: TimelineState,
+    team_ui: TeamUiState,
+    team_timelines: HashMap<String, TimelineState>,
     plan_panel: PlanPanelState,
     tool_names: HashMap<String, String>,
     last_plan_counter_area: Option<Rect>,
@@ -854,6 +883,10 @@ pub enum TuiStartup {
     NewSession,
     ResumeMenu,
     ResumeSession(String),
+    TeamAttach {
+        team_id: String,
+        member_id: String,
+    },
 }
 
 #[derive(Debug, Clone, Eq, PartialEq)]
@@ -886,6 +919,58 @@ impl TuiApp {
         model: String,
         startup: TuiStartup,
     ) -> anyhow::Result<Self> {
+        if let TuiStartup::TeamAttach { team_id, member_id } = startup.clone() {
+            let team = team_read(&client, &team_id)
+                .await?
+                .team
+                .ok_or_else(|| anyhow::anyhow!("team not found: {}", short_id(&team_id)))?;
+            let member = team
+                .members
+                .iter()
+                .find(|member| member.id == member_id)
+                .cloned()
+                .ok_or_else(|| anyhow::anyhow!("team member not found: {member_id}"))?;
+            let snapshot = session_resume::load_snapshot(&client, &member.thread_id).await?;
+            let metadata = snapshot
+                .as_ref()
+                .and_then(|snapshot| snapshot.metadata.as_ref());
+            let session_model = member
+                .model
+                .clone()
+                .or_else(|| metadata.and_then(|metadata| metadata.model.clone()))
+                .filter(|value| !value.trim().is_empty())
+                .unwrap_or_else(|| model.clone());
+            let provider = member
+                .model_provider
+                .clone()
+                .or_else(|| metadata.and_then(|metadata| metadata.provider.clone()))
+                .unwrap_or_default();
+            let title = Some(format!("{} ({})", member.name, short_id(&team.id)));
+            let message_count = metadata
+                .map(|metadata| metadata.message_count as usize)
+                .unwrap_or_default();
+            let mut app = Self::from_session_parts(
+                client,
+                SessionParts {
+                    thread_id: member.thread_id.clone(),
+                    provider,
+                    session_model,
+                    requested_model: String::new(),
+                    reasoning: "medium".to_string(),
+                    session_title: title,
+                    session_message_count: message_count,
+                },
+            )
+            .await?;
+            app.team_ui.set_team(team.id, team.members);
+            app.team_ui.focus_member(&member_id);
+            app.load_focused_team_timeline();
+            if let Some(snapshot) = snapshot {
+                app.apply_snapshot(member.thread_id, snapshot);
+            }
+            return Ok(app);
+        }
+
         if let TuiStartup::ResumeSession(thread_id) = startup {
             let snapshot = session_resume::load_snapshot(&client, &thread_id)
                 .await?
@@ -960,6 +1045,7 @@ impl TuiApp {
             TuiStartup::ResumeSession(thread_id) => {
                 app.load_session(thread_id).await;
             }
+            TuiStartup::TeamAttach { .. } => {}
         }
 
         Ok(app)
@@ -1000,6 +1086,10 @@ impl TuiApp {
         };
         let model_context_window = context_window_for_model(&selected_model);
 
+        let command_catalog = session_resume::commands_list(&client)
+            .await
+            .unwrap_or_else(|_| built_in_command_catalog());
+
         Ok(Self {
             client,
             thread_id,
@@ -1024,6 +1114,8 @@ impl TuiApp {
             reasoning_effort: reasoning,
             composer: composer_textarea(theme),
             timeline: TimelineState::default(),
+            team_ui: TeamUiState::default(),
+            team_timelines: HashMap::new(),
             plan_panel: PlanPanelState::default(),
             tool_names: HashMap::new(),
             last_plan_counter_area: None,
@@ -1048,7 +1140,7 @@ impl TuiApp {
             image_attachments: Vec::new(),
             queued_prompts: PromptQueue::default(),
             last_user_prompt: None,
-            command_catalog: built_in_command_catalog(),
+            command_catalog,
             slash_command_selection: 0,
             policy_mode: policy_state
                 .as_ref()
@@ -1182,6 +1274,14 @@ impl TuiApp {
                                 _ => {}
                             }
                         } else {
+                            if is_team_focus_next_key(key) {
+                                self.cycle_team_focus(true);
+                                continue;
+                            }
+                            if is_team_focus_previous_key(key) {
+                                self.cycle_team_focus(false);
+                                continue;
+                            }
                             if self.handle_slash_command_key(key).await {
                                 continue;
                             }
@@ -1303,37 +1403,55 @@ impl TuiApp {
                         self.current_turn_total_tokens = 0;
                         self.compaction_active = false;
                     }
-                    RoderEvent::InferenceEventReceived(ev) => match ev.event {
-                        roder_api::inference::InferenceEvent::MessageDelta(delta) => {
-                            self.timeline.push_assistant_delta(&delta.text, delta.phase);
+                    RoderEvent::InferenceEventReceived(ev) => {
+                        self.team_ui.record_thread_activity(&ev.thread_id);
+                        match ev.event {
+                            roder_api::inference::InferenceEvent::MessageDelta(delta) => {
+                                if let Some(timeline) =
+                                    self.team_timeline_for_thread_mut(&ev.thread_id)
+                                {
+                                    timeline.push_assistant_delta(&delta.text, delta.phase);
+                                } else {
+                                    self.timeline.push_assistant_delta(&delta.text, delta.phase);
+                                }
+                            }
+                            roder_api::inference::InferenceEvent::ReasoningDelta(delta) => {
+                                if let Some(timeline) =
+                                    self.team_timeline_for_thread_mut(&ev.thread_id)
+                                {
+                                    timeline.push_reasoning_delta(&delta.text);
+                                } else {
+                                    self.timeline.push_reasoning_delta(&delta.text);
+                                }
+                            }
+                            roder_api::inference::InferenceEvent::Usage(usage) => {
+                                self.record_usage(usage);
+                            }
+                            roder_api::inference::InferenceEvent::ToolCallStarted(call) => {
+                                self.record_tool_requested_with_id(
+                                    call.id,
+                                    fallback_entry(call.name),
+                                );
+                            }
+                            roder_api::inference::InferenceEvent::ToolCallDelta(delta) => {
+                                self.timeline
+                                    .record_tool_delta(&delta.id, &delta.arguments_delta);
+                            }
+                            roder_api::inference::InferenceEvent::ToolCallCompleted(call) => {
+                                self.record_tool_requested_with_id(
+                                    call.id,
+                                    ToolTimelineEntry::new(call.name, call.arguments),
+                                );
+                            }
+                            roder_api::inference::InferenceEvent::Compaction(compaction) => {
+                                self.record_compaction_progress(&compaction.status);
+                            }
+                            roder_api::inference::InferenceEvent::ProviderMetadata(metadata) => {
+                                self.record_provider_metadata(&metadata);
+                            }
+                            _ => {}
                         }
-                        roder_api::inference::InferenceEvent::ReasoningDelta(delta) => {
-                            self.timeline.push_reasoning_delta(&delta.text);
-                        }
-                        roder_api::inference::InferenceEvent::Usage(usage) => {
-                            self.record_usage(usage);
-                        }
-                        roder_api::inference::InferenceEvent::ToolCallStarted(call) => {
-                            self.record_tool_requested_with_id(call.id, fallback_entry(call.name));
-                        }
-                        roder_api::inference::InferenceEvent::ToolCallDelta(delta) => {
-                            self.timeline
-                                .record_tool_delta(&delta.id, &delta.arguments_delta);
-                        }
-                        roder_api::inference::InferenceEvent::ToolCallCompleted(call) => {
-                            self.record_tool_requested_with_id(
-                                call.id,
-                                ToolTimelineEntry::new(call.name, call.arguments),
-                            );
-                        }
-                        roder_api::inference::InferenceEvent::Compaction(compaction) => {
-                            self.record_compaction_progress(&compaction.status);
-                        }
-                        roder_api::inference::InferenceEvent::ProviderMetadata(metadata) => {
-                            self.record_provider_metadata(&metadata);
-                        }
-                        _ => {}
-                    },
+                    }
                     RoderEvent::TurnFailed(ev) => {
                         if self.active_turn_id.as_deref() == Some(&ev.turn_id) {
                             self.active_turn_id = None;
@@ -1407,6 +1525,59 @@ impl TuiApp {
                     }
                     RoderEvent::ToolCallCompleted(ev) => {
                         self.record_tool_completed(&ev.tool_id, ev.is_error, ev.output);
+                    }
+                    RoderEvent::SubagentTraceCreated(ev) => {
+                        self.timeline.record_subagent_trace_created(ev.summary);
+                    }
+                    RoderEvent::SubagentTraceDelta(ev) => {
+                        self.timeline.record_subagent_trace_delta(ev.delta);
+                    }
+                    RoderEvent::SubagentTraceStatusChanged(ev) => {
+                        self.timeline.record_subagent_trace_status(
+                            &ev.trace_id,
+                            ev.status,
+                            ev.detail,
+                        );
+                    }
+                    RoderEvent::SubagentTraceCompleted(ev) => {
+                        self.timeline.record_subagent_trace_completed(ev.summary);
+                    }
+                    RoderEvent::SubagentTraceFailed(ev) => {
+                        self.timeline.record_subagent_trace_failed(ev.summary);
+                    }
+                    RoderEvent::PlanReviewCreated(ev) => {
+                        self.timeline.record_plan_review_created(ev.review);
+                    }
+                    RoderEvent::PlanReviewStatusChanged(ev) => {
+                        self.timeline
+                            .record_plan_review_status(&ev.review_id, ev.status);
+                    }
+                    RoderEvent::PlanReviewCommentAdded(ev) => {
+                        self.timeline.record_plan_review_comment(ev.comment);
+                    }
+                    RoderEvent::PlanReviewRewritten(ev) => {
+                        self.timeline.record_plan_review_rewrite(ev.rewrite);
+                    }
+                    RoderEvent::PlanReviewApproved(ev) => {
+                        self.timeline.record_plan_review_status(
+                            &ev.review_id,
+                            roder_api::plan_review::PlanReviewStatus::Approved,
+                        );
+                    }
+                    RoderEvent::PlanReviewRejected(ev) => {
+                        self.timeline.record_plan_review_status(
+                            &ev.review_id,
+                            roder_api::plan_review::PlanReviewStatus::Rejected,
+                        );
+                    }
+                    RoderEvent::HunkRecorded(ev) => {
+                        self.timeline.record_hunk(ev.hunk);
+                    }
+                    RoderEvent::TeamMemberStatusChanged(ev) => {
+                        self.team_ui.set_member_status(&ev.member_id, ev.status);
+                    }
+                    RoderEvent::TeamMemberCompleted(ev) => {
+                        self.team_ui.set_member_status(&ev.member_id, ev.status);
                     }
                     RoderEvent::PolicyModeChanged(ev) => {
                         self.policy_mode = ev.new_mode;
@@ -1491,10 +1662,7 @@ impl TuiApp {
                 .push_system("no running turn to interrupt.".to_string());
             return;
         };
-        let params = InterruptTurnParams {
-            thread_id: self.thread_id.clone(),
-            turn_id,
-        };
+        let params = self.interrupt_params(turn_id);
         let res = self
             .client
             .send_request(JsonRpcRequest {
@@ -1509,6 +1677,57 @@ impl TuiApp {
         } else {
             self.push_event("interrupt requested".to_string());
         }
+    }
+
+    fn interrupt_params(&self, turn_id: String) -> InterruptTurnParams {
+        InterruptTurnParams {
+            thread_id: self.focused_thread_id().to_string(),
+            turn_id,
+        }
+    }
+
+    fn focused_thread_id(&self) -> &str {
+        self.team_ui.focused_thread_id(&self.thread_id)
+    }
+
+    fn cycle_team_focus(&mut self, next: bool) {
+        self.save_focused_team_timeline();
+        let changed = if next {
+            self.team_ui.focus_next()
+        } else {
+            self.team_ui.focus_previous()
+        };
+        if !changed {
+            return;
+        }
+        self.load_focused_team_timeline();
+        if let Some(label) = self.team_ui.focused_label() {
+            self.push_event(format!("focused {label}"));
+        }
+        self.timeline.focus_composer();
+    }
+
+    fn save_focused_team_timeline(&mut self) {
+        let Some(member_id) = self.team_ui.focused_member_id() else {
+            return;
+        };
+        self.team_timelines
+            .insert(member_id.to_string(), std::mem::take(&mut self.timeline));
+    }
+
+    fn load_focused_team_timeline(&mut self) {
+        let Some(member_id) = self.team_ui.focused_member_id() else {
+            return;
+        };
+        self.timeline = self.team_timelines.remove(member_id).unwrap_or_default();
+    }
+
+    fn team_timeline_for_thread_mut(&mut self, thread_id: &str) -> Option<&mut TimelineState> {
+        let member_id = self.team_ui.member_id_for_thread(thread_id)?.to_string();
+        if Some(member_id.as_str()) == self.team_ui.focused_member_id() {
+            return Some(&mut self.timeline);
+        }
+        Some(self.team_timelines.entry(member_id).or_default())
     }
 
     async fn resolve_tool_approval(&mut self, approval_id: String, approved: bool) {
@@ -1631,6 +1850,9 @@ impl TuiApp {
             return false;
         }
         let input = composer_text(&self.composer);
+        if commands::slash_query(&input).is_some() {
+            self.refresh_command_catalog().await;
+        }
         if self.image_attachments.is_empty() && key.code == KeyCode::Enter {
             if let Some((name, args)) = commands::command_invocation(&input, &self.command_catalog)
             {
@@ -1721,6 +1943,9 @@ impl TuiApp {
             "agents" => {
                 self.run_agents_slash_command().await;
             }
+            "tasks" => {
+                self.run_tasks_slash_command().await;
+            }
             _ if let Some(prompt) = commands::built_in_prompt(&name, &args) => {
                 let suffix = slash_command_suffix(&args);
                 let pending =
@@ -1733,9 +1958,34 @@ impl TuiApp {
                 self.push_event(format!("slash command: /{name}{suffix}"));
             }
             _ => {
-                self.timeline
-                    .push_error(format!("unknown slash command: /{name}"));
+                self.run_custom_slash_command(name, args).await;
             }
+        }
+    }
+
+    async fn run_custom_slash_command(&mut self, name: String, args: String) {
+        let suffix = slash_command_suffix(&args);
+        match self.expand_slash_command(&name, &args).await {
+            Ok(expanded) => {
+                let pending = PendingPrompt::with_images(
+                    format!("/{name}{suffix}"),
+                    expanded.message,
+                    Vec::new(),
+                );
+                if self.active_turn_id.is_some() {
+                    self.steer_prepared_prompt(pending).await;
+                } else {
+                    self.start_prepared_prompt(pending).await;
+                }
+                self.push_event(format!("slash command: /{name}{suffix}"));
+            }
+            Err(err) => self.record_error(format!("commands/expand failed for /{name}: {err}")),
+        }
+    }
+
+    async fn refresh_command_catalog(&mut self) {
+        if let Ok(commands) = session_resume::commands_list(&self.client).await {
+            self.command_catalog = commands;
         }
     }
 
@@ -1853,6 +2103,80 @@ impl TuiApp {
         }
     }
 
+    async fn run_tasks_slash_command(&mut self) {
+        match self.tasks_list().await {
+            Ok(result) if result.tasks.is_empty() => {
+                self.timeline.push_system("No background tasks.");
+                self.push_event("slash command: /tasks".to_string());
+            }
+            Ok(result) => {
+                let mut lines = vec!["Background tasks:".to_string()];
+                for task in result.tasks {
+                    let logs = self
+                        .task_get(&task.task_id)
+                        .await
+                        .ok()
+                        .map(|result| {
+                            result
+                                .logs
+                                .into_iter()
+                                .map(|entry| entry.chunk)
+                                .collect::<String>()
+                        })
+                        .unwrap_or_default();
+                    let tail = truncate(logs.trim(), 80);
+                    let tail = if tail.is_empty() {
+                        String::new()
+                    } else {
+                        format!(" - {tail}")
+                    };
+                    lines.push(format!(
+                        "{}\t{}\t{:?}\t{}\tcreated:{} started:{} finished:{}{}",
+                        short_id(&task.task_id),
+                        task.executor_id,
+                        task.state,
+                        task.spec.kind,
+                        task.created_at.unix_timestamp(),
+                        task.started_at
+                            .map(|timestamp| timestamp.unix_timestamp().to_string())
+                            .unwrap_or_else(|| "-".to_string()),
+                        task.finished_at
+                            .map(|timestamp| timestamp.unix_timestamp().to_string())
+                            .unwrap_or_else(|| "-".to_string()),
+                        tail
+                    ));
+                }
+                self.timeline.push_system(lines.join("\n"));
+                self.push_event("slash command: /tasks".to_string());
+            }
+            Err(err) => self.record_error(format!("tasks/list failed: {err}")),
+        }
+    }
+
+    async fn expand_slash_command(
+        &self,
+        name: &str,
+        arguments: &str,
+    ) -> anyhow::Result<CommandsExpandResult> {
+        let res = self
+            .client
+            .send_request(JsonRpcRequest {
+                jsonrpc: "2.0".to_string(),
+                id: Some(serde_json::json!("commands/expand")),
+                method: "commands/expand".to_string(),
+                params: Some(
+                    serde_json::to_value(CommandsExpandParams {
+                        name: name.to_string(),
+                        arguments: arguments.to_string(),
+                        workspace: None,
+                    })
+                    .unwrap(),
+                ),
+            })
+            .await;
+        decode_response(res)
+    }
+
     fn slash_command_matches(&self) -> Option<Vec<&CommandDescriptor>> {
         if !self.image_attachments.is_empty() {
             return None;
@@ -1895,8 +2219,9 @@ impl TuiApp {
         if self.session_title.is_none() {
             self.session_title = Some(truncate(&pending.display, 72));
         }
+        let thread_id = self.focused_thread_id().to_string();
         let params = StartTurnParams {
-            thread_id: self.thread_id.clone(),
+            thread_id,
             message: pending.message,
             images: pending.images,
             provider_override: (!self.provider.trim().is_empty()).then(|| self.provider.clone()),
@@ -1923,8 +2248,9 @@ impl TuiApp {
         self.timeline
             .push_user(format!("steer: {}", pending.display));
         self.push_event("steer queued for active turn".to_string());
+        let thread_id = self.focused_thread_id().to_string();
         let params = SteerTurnParams {
-            thread_id: self.thread_id.clone(),
+            thread_id,
             turn_id,
             message: pending.message,
             images: pending.images,
@@ -2175,6 +2501,7 @@ impl TuiApp {
             .slash_command_matches()
             .map(|matches| matches.into_iter().cloned().collect::<Vec<_>>());
         let slash_height = slash_command_menu_height(slash_matches.as_deref());
+        let slash_preview_height = slash_command_preview_height(slash_matches.as_deref());
         let composer_height = self.composer.measure(area.width).preferred_rows;
         let mut constraints = top_layout_constraints().to_vec();
         if event_height > 0 {
@@ -2191,6 +2518,9 @@ impl TuiApp {
         }
         if plan_height > 0 {
             constraints.push(Constraint::Length(plan_height));
+        }
+        if slash_preview_height > 0 {
+            constraints.push(Constraint::Length(slash_preview_height));
         }
         constraints.push(Constraint::Length(composer_height));
         if slash_height > 0 {
@@ -2231,6 +2561,13 @@ impl TuiApp {
         if plan_height > 0 {
             f.render_widget(
                 render_plan_panel(&self.plan_panel, self.theme),
+                chunks[composer_index],
+            );
+            composer_index += 1;
+        }
+        if slash_preview_height > 0 {
+            f.render_widget(
+                self.slash_command_preview(slash_matches.as_deref()),
                 chunks[composer_index],
             );
             composer_index += 1;
@@ -2321,6 +2658,10 @@ impl TuiApp {
                 self.theme.muted(),
             ),
         ];
+        let mut left = left;
+        if let Some(label) = self.team_ui.focused_label() {
+            left.push(Span::styled(format!("  {label}"), self.theme.accent_soft()));
+        }
         let turn = self
             .active_turn_id
             .as_deref()
@@ -2352,10 +2693,10 @@ impl TuiApp {
         let render = self
             .timeline
             .render_with_frame(self.theme, area, self.animation_frame);
-        self.selectable_lines = selectable_lines_from_text(&render.text, area, render.scroll);
+        self.selectable_lines = selectable_lines_from_text(&render.text, area, render.text_scroll);
         let text = if let Some(selection) = &self.mouse_selection {
             if selection.dragging {
-                highlight_selection(render.text, area, render.scroll, selection, self.theme)
+                highlight_selection(render.text, area, render.text_scroll, selection, self.theme)
             } else {
                 render.text
             }
@@ -2364,7 +2705,7 @@ impl TuiApp {
         };
         Paragraph::new(text)
             .style(self.theme.text())
-            .scroll((render.scroll, 0))
+            .scroll((render.text_scroll, 0))
             .wrap(Wrap { trim: false })
     }
 
@@ -2516,6 +2857,34 @@ impl TuiApp {
             .wrap(Wrap { trim: false })
     }
 
+    fn slash_command_preview(&self, matches: Option<&[CommandDescriptor]>) -> Paragraph<'static> {
+        let command = matches.and_then(|matches| {
+            matches.get(
+                self.slash_command_selection
+                    .min(matches.len().saturating_sub(1)),
+            )
+        });
+        let Some(command) = command else {
+            return Paragraph::new(Text::default());
+        };
+        let mut spans = vec![
+            Span::styled(" Preview collapsed ", self.theme.subtle()),
+            Span::styled(format!("/{}", command.name), self.theme.accent()),
+        ];
+        if let Some(description) = command.description.as_deref() {
+            spans.push(Span::styled(
+                format!(" -> {}", truncate(description, 96)),
+                self.theme.muted(),
+            ));
+        }
+        if let Some(warning) = commands::command_warning(command) {
+            spans.push(Span::styled(format!("  {warning}"), self.theme.shell()));
+        }
+        Paragraph::new(Line::from(spans))
+            .style(self.theme.text())
+            .wrap(Wrap { trim: false })
+    }
+
     fn footer(&self, width: u16) -> Paragraph<'static> {
         let status = if self.active_turn_id.is_some() {
             "running"
@@ -2605,6 +2974,7 @@ impl TuiApp {
                         ProviderMenuItem::Models
                         | ProviderMenuItem::Providers
                         | ProviderMenuItem::Settings
+                        | ProviderMenuItem::RunnerSettings
                         | ProviderMenuItem::SpinnerSettings
                         | ProviderMenuItem::WebSearchSettings
                         | ProviderMenuItem::ThemesSettings
@@ -2626,6 +2996,7 @@ impl TuiApp {
             ProviderPopupScreen::Models => " Models (Enter select, Esc back) ",
             ProviderPopupScreen::Reasoning => " Reasoning effort (Enter select, Esc back) ",
             ProviderPopupScreen::Settings => " Settings (Enter select, Esc back) ",
+            ProviderPopupScreen::Runners => " Runners (Enter select, Esc back) ",
             ProviderPopupScreen::Spinner => " Working spinner (Enter select, Esc back) ",
             ProviderPopupScreen::WebSearch => " Web search provider (Enter select, Esc back) ",
             ProviderPopupScreen::Resume => " Resume session (Enter select, Esc back) ",
@@ -2715,6 +3086,77 @@ impl TuiApp {
                 id: Some(serde_json::json!("agents/list")),
                 method: "agents/list".to_string(),
                 params: None,
+            })
+            .await;
+        decode_response(res)
+    }
+
+    async fn tasks_list(&self) -> anyhow::Result<TasksListResult> {
+        let res = self
+            .client
+            .send_request(JsonRpcRequest {
+                jsonrpc: "2.0".to_string(),
+                id: Some(serde_json::json!("tasks/list")),
+                method: "tasks/list".to_string(),
+                params: None,
+            })
+            .await;
+        decode_response(res)
+    }
+
+    async fn runners_list(&self) -> anyhow::Result<RunnersListResult> {
+        let res = self
+            .client
+            .send_request(JsonRpcRequest {
+                jsonrpc: "2.0".to_string(),
+                id: Some(serde_json::json!("runners/list")),
+                method: "runners/list".to_string(),
+                params: None,
+            })
+            .await;
+        decode_response(res)
+    }
+
+    async fn select_runner(&mut self, destination_id: String, provider_id: String) {
+        let res = self
+            .client
+            .send_request(JsonRpcRequest {
+                jsonrpc: "2.0".to_string(),
+                id: Some(serde_json::json!("runners/select")),
+                method: "runners/select".to_string(),
+                params: Some(
+                    serde_json::to_value(RunnersSelectParams {
+                        destination_id: destination_id.clone(),
+                        provider_id: Some(provider_id.clone()),
+                        config: serde_json::Value::Null,
+                        manifest: roder_api::remote_runner::RunnerManifest::default(),
+                    })
+                    .unwrap(),
+                ),
+            })
+            .await;
+        match decode_response::<RunnersSelectResult>(res) {
+            Ok(result) => {
+                let label = runner::runner_status_label(result.active.as_ref());
+                self.timeline.push_system(label);
+                self.push_event(format!(
+                    "runner selected: {destination_id} via {provider_id}"
+                ));
+            }
+            Err(err) => self.record_error(format!("runners/select failed: {err}")),
+        }
+    }
+
+    async fn task_get(&self, task_id: &str) -> anyhow::Result<TasksGetResult> {
+        let res = self
+            .client
+            .send_request(JsonRpcRequest {
+                jsonrpc: "2.0".to_string(),
+                id: Some(serde_json::json!("tasks/get")),
+                method: "tasks/get".to_string(),
+                params: Some(serde_json::to_value(TasksGetParams {
+                    task_id: task_id.to_string(),
+                })?),
             })
             .await;
         decode_response(res)
@@ -2836,6 +3278,12 @@ impl TuiApp {
             self.provider_state.select(Some(0));
             return;
         }
+        if self.provider_popup_screen == ProviderPopupScreen::Runners {
+            self.provider_popup_screen = ProviderPopupScreen::Main;
+            self.provider_menu_items = main_provider_menu_items(&self.provider_choices);
+            self.provider_state.select(Some(0));
+            return;
+        }
         if self.provider_popup_screen == ProviderPopupScreen::Spinner {
             self.provider_popup_screen = ProviderPopupScreen::Main;
             self.provider_menu_items = main_provider_menu_items(&self.provider_choices);
@@ -2921,6 +3369,9 @@ impl TuiApp {
             ProviderMenuItem::Settings => {
                 self.open_settings_submenu();
             }
+            ProviderMenuItem::RunnerSettings => {
+                self.open_runners_submenu().await;
+            }
             ProviderMenuItem::SpinnerSettings => {
                 self.open_spinner_submenu();
             }
@@ -2958,6 +3409,14 @@ impl TuiApp {
                     reasoning: Some(option.effort),
                 })
                 .await;
+            }
+            ProviderMenuItem::Runner {
+                destination_id,
+                provider_id,
+                ..
+            } => {
+                self.show_provider_popup = false;
+                self.select_runner(destination_id, provider_id).await;
             }
             ProviderMenuItem::Session(session) => {
                 self.show_provider_popup = false;
@@ -3028,6 +3487,23 @@ impl TuiApp {
         self.provider_state.select(Some(selected));
     }
 
+    async fn open_runners_submenu(&mut self) {
+        self.provider_popup_screen = ProviderPopupScreen::Runners;
+        self.provider_menu_filter.clear();
+        match self.runners_list().await {
+            Ok(runners) => {
+                self.provider_menu_items = runner_menu_items(&runners);
+                self.provider_state.select(Some(0));
+            }
+            Err(err) => {
+                self.provider_menu_items = vec![ProviderMenuItem::Back];
+                self.provider_state.select(Some(0));
+                self.record_error(format!("runners/list failed: {err}"));
+            }
+        }
+        self.show_provider_popup = true;
+    }
+
     fn open_spinner_submenu(&mut self) {
         self.provider_popup_screen = ProviderPopupScreen::Spinner;
         self.provider_menu_filter.clear();
@@ -3071,6 +3547,7 @@ impl TuiApp {
             Ok(sessions) => {
                 self.provider_menu_items = sessions
                     .into_iter()
+                    .map(Box::new)
                     .map(ProviderMenuItem::Session)
                     .chain(std::iter::once(ProviderMenuItem::Back))
                     .collect();
@@ -3274,8 +3751,13 @@ impl TuiApp {
     async fn select_provider(&mut self, provider: ProviderChoice) {
         if provider.auth_type == ProviderAuthType::OAuth && !provider.authenticated {
             if provider.provider_id != "codex" {
+                let detail = if provider.provider_id == "supergrok" {
+                    "run `roder auth login supergrok`"
+                } else {
+                    "no login flow is available"
+                };
                 self.record_error(format!(
-                    "provider {} requires OAuth but has no login flow",
+                    "provider {} requires OAuth; {detail}",
                     provider.provider_id
                 ));
                 self.show_provider_popup = false;
@@ -3846,6 +4328,13 @@ fn slash_command_menu_height<T>(matches: Option<&[T]>) -> u16 {
     }
 }
 
+fn slash_command_preview_height<T>(matches: Option<&[T]>) -> u16 {
+    matches
+        .filter(|matches| !matches.is_empty())
+        .map(|_| 1)
+        .unwrap_or_default()
+}
+
 fn image_attachments_from_paste(text: &str) -> Option<Vec<ImageAttachment>> {
     let tokens = shell_like_tokens(text);
     if tokens.is_empty() {
@@ -4199,11 +4688,74 @@ fn main_provider_menu_items(providers: &[ProviderChoice]) -> Vec<ProviderMenuIte
         ProviderMenuItem::Models,
         ProviderMenuItem::Providers,
         ProviderMenuItem::Settings,
+        ProviderMenuItem::RunnerSettings,
         ProviderMenuItem::ResumeSessions,
         ProviderMenuItem::WebSearchSettings,
         ProviderMenuItem::SpinnerSettings,
         ProviderMenuItem::ThemesSettings,
     ]
+}
+
+fn runner_menu_items(runners: &RunnersListResult) -> Vec<ProviderMenuItem> {
+    runners
+        .providers
+        .iter()
+        .map(|provider| {
+            let destination_id = provider.provider_id.clone();
+            let provider_id = provider.provider_id.clone();
+            ProviderMenuItem::Runner {
+                destination_id,
+                provider_id,
+                label: runner_menu_label(provider, runners.active.as_ref()),
+            }
+        })
+        .chain(std::iter::once(ProviderMenuItem::Back))
+        .collect()
+}
+
+fn runner_menu_label(
+    provider: &roder_protocol::RunnerProviderDescriptor,
+    active: Option<&roder_protocol::RunnerStatus>,
+) -> String {
+    let active_suffix = if active.is_some_and(|status| {
+        status.provider_id == provider.provider_id && status.destination_id == provider.provider_id
+    }) {
+        " (active)"
+    } else {
+        ""
+    };
+    format!(
+        "{}{} - {}",
+        provider.provider_id,
+        active_suffix,
+        runner_capabilities_label(&provider.capabilities)
+    )
+}
+
+fn runner_capabilities_label(
+    capabilities: &roder_api::remote_runner::RunnerCapabilities,
+) -> String {
+    let mut labels = Vec::new();
+    if capabilities.command_exec {
+        labels.push("commands");
+    }
+    if capabilities.file_read || capabilities.file_write {
+        labels.push("files");
+    }
+    if capabilities.port_preview {
+        labels.push("ports");
+    }
+    if capabilities.snapshots {
+        labels.push("snapshots");
+    }
+    if capabilities.cancellation {
+        labels.push("cancel");
+    }
+    if labels.is_empty() {
+        "no capabilities".to_string()
+    } else {
+        labels.join(", ")
+    }
 }
 
 fn providers_menu_items(providers: &[ProviderChoice]) -> Vec<ProviderMenuItem> {
@@ -4277,6 +4829,23 @@ async fn session_get(client: &LocalAppClient) -> anyhow::Result<SessionGetResult
             id: Some(serde_json::json!("session/get")),
             method: "session/get".to_string(),
             params: None,
+        })
+        .await;
+    decode_response(res)
+}
+
+async fn team_read(client: &LocalAppClient, team_id: &str) -> anyhow::Result<TeamReadResult> {
+    let res = client
+        .send_request(JsonRpcRequest {
+            jsonrpc: "2.0".to_string(),
+            id: Some(serde_json::json!("team/read")),
+            method: "team/read".to_string(),
+            params: Some(
+                serde_json::to_value(TeamReadParams {
+                    team_id: team_id.to_string(),
+                })
+                .unwrap(),
+            ),
         })
         .await;
     decode_response(res)
@@ -4608,6 +5177,7 @@ mod tests {
     use super::*;
     use std::sync::Arc;
 
+    use roder_api::teams::{TeamMemberDescriptor, TeamMemberRole, TeamMemberStatus};
     use roder_app_server::AppServer;
     use roder_core::Runtime;
     use roder_protocol::{ProviderDescriptor, ProvidersListResult};
@@ -4640,6 +5210,8 @@ mod tests {
             reasoning_effort: "medium".to_string(),
             composer: composer_textarea(theme),
             timeline: TimelineState::default(),
+            team_ui: TeamUiState::default(),
+            team_timelines: HashMap::new(),
             plan_panel: PlanPanelState::default(),
             tool_names: HashMap::new(),
             last_plan_counter_area: None,
@@ -4674,11 +5246,82 @@ mod tests {
     }
 
     #[test]
+    fn team_focus_swaps_visible_timeline_state() {
+        let mut app = test_app();
+        app.team_ui.set_team("team-1".to_string(), test_members());
+        app.timeline.push_system("lead timeline");
+
+        app.cycle_team_focus(true);
+        assert!(app.team_timelines.contains_key("lead"));
+        app.timeline.push_system("builder timeline");
+
+        app.cycle_team_focus(false);
+        let render = app.timeline.render(app.theme, Rect::new(0, 0, 80, 8));
+        let rows = rendered_text_rows(&render.text, 80, 8, render.text_scroll);
+        assert!(rows.iter().any(|row| row.text.contains("lead timeline")));
+        assert!(!rows.iter().any(|row| row.text.contains("builder timeline")));
+    }
+
+    #[test]
+    fn team_thread_routing_targets_focused_member_thread() {
+        let mut app = test_app();
+        app.team_ui.set_team("team-1".to_string(), test_members());
+
+        assert_eq!(app.focused_thread_id(), "thread-lead");
+        app.cycle_team_focus(true);
+        assert_eq!(app.focused_thread_id(), "thread-builder");
+    }
+
+    #[test]
+    fn interrupt_params_target_focused_team_member() {
+        let mut app = test_app();
+        app.team_ui.set_team("team-1".to_string(), test_members());
+        app.cycle_team_focus(true);
+
+        let params = app.interrupt_params("turn-team".to_string());
+
+        assert_eq!(params.thread_id, "thread-builder");
+        assert_eq!(params.turn_id, "turn-team");
+    }
+
+    #[test]
     fn theme_primary_text_uses_terminal_default_for_contrast() {
         for dark in [true, false] {
             let theme = Theme::for_dark_background(dark);
             assert_eq!(theme.text, Color::Reset);
             assert_eq!(theme.text_strong, Color::Reset);
+        }
+    }
+
+    fn test_members() -> Vec<TeamMemberDescriptor> {
+        vec![
+            test_member("lead", TeamMemberRole::Lead, "Lead", "thread-lead"),
+            test_member(
+                "member-1",
+                TeamMemberRole::Teammate,
+                "Builder",
+                "thread-builder",
+            ),
+        ]
+    }
+
+    fn test_member(
+        id: &str,
+        role: TeamMemberRole,
+        name: &str,
+        thread_id: &str,
+    ) -> TeamMemberDescriptor {
+        TeamMemberDescriptor {
+            id: id.to_string(),
+            role,
+            name: name.to_string(),
+            thread_id: thread_id.to_string(),
+            current_turn_id: None,
+            model_provider: None,
+            model: None,
+            policy_mode: PolicyMode::Default,
+            status: TeamMemberStatus::Idle,
+            pane_id: None,
         }
     }
 
@@ -5397,6 +6040,20 @@ mod tests {
     }
 
     #[test]
+    fn slash_command_preview_height_is_collapsed_to_one_line() {
+        let commands = built_in_command_catalog();
+        assert_eq!(
+            slash_command_preview_height(None::<&[CommandDescriptor]>),
+            0
+        );
+        assert_eq!(
+            slash_command_preview_height(Some(&[] as &[CommandDescriptor])),
+            0
+        );
+        assert_eq!(slash_command_preview_height(Some(&commands)), 1);
+    }
+
+    #[test]
     fn image_paste_detects_absolute_and_escaped_image_paths() {
         let attachments = image_attachments_from_paste("/tmp/first.png /tmp/second\\ image.jpg")
             .expect("expected image attachments");
@@ -5492,20 +6149,63 @@ mod tests {
         assert!(matches!(items.get(2), Some(ProviderMenuItem::Settings)));
         assert!(matches!(
             items.get(3),
-            Some(ProviderMenuItem::ResumeSessions)
+            Some(ProviderMenuItem::RunnerSettings)
         ));
         assert!(matches!(
             items.get(4),
-            Some(ProviderMenuItem::WebSearchSettings)
+            Some(ProviderMenuItem::ResumeSessions)
         ));
         assert!(matches!(
             items.get(5),
-            Some(ProviderMenuItem::SpinnerSettings)
+            Some(ProviderMenuItem::WebSearchSettings)
         ));
         assert!(matches!(
             items.get(6),
+            Some(ProviderMenuItem::SpinnerSettings)
+        ));
+        assert!(matches!(
+            items.get(7),
             Some(ProviderMenuItem::ThemesSettings)
         ));
+    }
+
+    #[test]
+    fn runner_menu_items_select_runner_providers() {
+        let items = runner_menu_items(&RunnersListResult {
+            active: Some(roder_protocol::RunnerStatus {
+                destination_id: "unix-local".to_string(),
+                provider_id: "unix-local".to_string(),
+                state: "active".to_string(),
+                session_id: None,
+            }),
+            providers: vec![roder_protocol::RunnerProviderDescriptor {
+                provider_id: "unix-local".to_string(),
+                capabilities: roder_api::remote_runner::RunnerCapabilities {
+                    command_exec: true,
+                    file_read: true,
+                    file_write: true,
+                    port_preview: false,
+                    snapshots: false,
+                    cancellation: true,
+                    artifact_export: false,
+                    mounts: Default::default(),
+                },
+            }],
+        });
+
+        assert!(matches!(
+            &items[0],
+            ProviderMenuItem::Runner {
+                destination_id,
+                provider_id,
+                label
+            } if destination_id == "unix-local"
+                && provider_id == "unix-local"
+                && label.contains("(active)")
+                && label.contains("commands")
+                && label.contains("cancel")
+        ));
+        assert!(matches!(items.last(), Some(ProviderMenuItem::Back)));
     }
 
     #[test]

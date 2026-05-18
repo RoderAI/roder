@@ -3,6 +3,7 @@ use serde::{Deserialize, Serialize};
 use crate::events::{ThreadId, TurnId};
 use crate::extension::SubagentDispatcherId;
 use crate::inference::TokenUsage;
+use crate::trace::SubagentTraceSink;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct SubagentRequest {
@@ -74,6 +75,18 @@ pub trait SubagentDispatcher: Send + Sync + 'static {
         parent_turn_id: TurnId,
         request: SubagentRequest,
     ) -> anyhow::Result<SubagentResult>;
+
+    async fn dispatch_traced(
+        &self,
+        parent_thread_id: ThreadId,
+        parent_turn_id: TurnId,
+        request: SubagentRequest,
+        trace_sink: Option<std::sync::Arc<dyn SubagentTraceSink>>,
+    ) -> anyhow::Result<SubagentResult> {
+        let _ = trace_sink;
+        self.dispatch(parent_thread_id, parent_turn_id, request)
+            .await
+    }
 }
 
 #[cfg(test)]

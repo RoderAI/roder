@@ -1,5 +1,6 @@
 use std::sync::Arc;
 
+use roder_api::capabilities::CapabilityRequest;
 use roder_api::extension::{
     ExtensionManifest, ExtensionRegistryBuilder, ProvidedService, RoderExtension,
 };
@@ -35,7 +36,10 @@ impl RoderExtension for PerplexitySearchExtension {
             provides: vec![ProvidedService::ToolProvider(
                 "perplexity-search".to_string(),
             )],
-            required_capabilities: vec![],
+            required_capabilities: vec![
+                CapabilityRequest::new("network.api.perplexity.ai"),
+                CapabilityRequest::new("secret.read.PERPLEXITY_API_KEY"),
+            ],
         }
     }
 

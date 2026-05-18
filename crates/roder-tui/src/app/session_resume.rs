@@ -19,6 +19,20 @@ pub(super) async fn sessions_list(
     Ok(sessions)
 }
 
+pub(super) async fn commands_list(
+    client: &LocalAppClient,
+) -> anyhow::Result<Vec<CommandDescriptor>> {
+    let res = client
+        .send_request(JsonRpcRequest {
+            jsonrpc: "2.0".to_string(),
+            id: Some(serde_json::json!("commands/list")),
+            method: "commands/list".to_string(),
+            params: None,
+        })
+        .await;
+    Ok(decode_response::<CommandsListResult>(res)?.commands)
+}
+
 impl TuiApp {
     pub(super) async fn load_session(&mut self, thread_id: String) {
         match load_snapshot(&self.client, &thread_id).await {
@@ -232,6 +246,7 @@ mod tests {
         let snapshot = ThreadSnapshot {
             metadata: None,
             events: Vec::new(),
+            extension_states: Vec::new(),
             turns: vec![TurnRecord {
                 thread_id: "thread-a".to_string(),
                 turn_id: "turn-a".to_string(),
@@ -258,11 +273,14 @@ mod tests {
                 workspace: None,
                 provider: None,
                 model: None,
+                runner_destination: None,
+                runner_state: None,
                 created_at: OffsetDateTime::UNIX_EPOCH,
                 updated_at: OffsetDateTime::UNIX_EPOCH,
                 message_count: 0,
             }),
             events: Vec::new(),
+            extension_states: Vec::new(),
             turns: vec![TurnRecord {
                 thread_id: "thread-a".to_string(),
                 turn_id: "turn-a".to_string(),

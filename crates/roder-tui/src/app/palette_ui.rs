@@ -1,12 +1,12 @@
-use super::*;
 use super::session_resume::{agents_list, commands_list, sessions_list};
+use super::*;
 use crate::palette::{
     PaletteAction, collect_entries, cycle_source_filter,
     index::{PaletteMatch, search as search_palette},
     render::palette_list,
     sources::{
-        agent_source, command_source, mode_source, model_source, session_source, settings_source,
-        theme_source,
+        agent_source, command_source, media_source, memories_source, mode_source, model_source,
+        runner_source, session_source, settings_source, theme_source, workflow_import_source,
     },
 };
 use crate::theme::{discover_themes, discovery::default_directories};
@@ -35,7 +35,6 @@ impl TuiApp {
     }
 
     async fn populate_palette(&mut self) {
-
         if let Ok(commands) = commands_list(&self.client).await {
             self.command_catalog = commands;
         }
@@ -68,6 +67,13 @@ impl TuiApp {
                 None
             }
         };
+        let runners = match self.runners_list().await {
+            Ok(runners) => Some(runners),
+            Err(err) => {
+                self.push_event(format!("runners/list unavailable: {err}"));
+                None
+            }
+        };
 
         let mut sources = Vec::new();
         if self.palette_source_enabled("commands") {
@@ -87,6 +93,11 @@ impl TuiApp {
         {
             sources.push(settings_source(&settings.web_search));
         }
+        if self.palette_source_enabled("runners")
+            && let Some(runners) = runners.as_ref()
+        {
+            sources.push(runner_source(runners));
+        }
         if self.palette_source_enabled("models")
             && let Some(providers) = providers.as_ref()
         {
@@ -95,6 +106,15 @@ impl TuiApp {
         if self.palette_source_enabled("themes") {
             let entries = discover_themes(&default_directories());
             sources.push(theme_source(&entries, self.active_theme_id.as_deref()));
+        }
+        if self.palette_source_enabled("workflow-imports") {
+            sources.push(workflow_import_source());
+        }
+        if self.palette_source_enabled("media") {
+            sources.push(media_source());
+        }
+        if self.palette_source_enabled("memories") {
+            sources.push(memories_source());
         }
         self.palette_entries = collect_entries(&sources);
         self.palette_state
@@ -234,6 +254,12 @@ impl TuiApp {
             }
             PaletteAction::SetWebSearchMode(mode) => {
                 self.set_web_search_mode(mode).await;
+            }
+            PaletteAction::SelectRunner {
+                destination_id,
+                provider_id,
+            } => {
+                self.select_runner(destination_id, provider_id).await;
             }
             PaletteAction::InsertComposerText(text) => {
                 self.composer = composer_textarea(self.theme);

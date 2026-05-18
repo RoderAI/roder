@@ -1,4 +1,5 @@
 use crate::provider::OpenAiChatCompletionsEngine;
+use roder_api::capabilities::CapabilityRequest;
 use roder_api::extension::{
     ExtensionManifest, ExtensionRegistryBuilder, ProvidedService, RoderExtension,
 };
@@ -26,7 +27,10 @@ impl RoderExtension for OpenAiChatCompletionsExtension {
             provides: vec![ProvidedService::InferenceEngine(
                 "openai-chat-completions".to_string(),
             )],
-            required_capabilities: vec![],
+            required_capabilities: vec![
+                CapabilityRequest::new("network.api.openai.com"),
+                CapabilityRequest::new("secret.read.OPENAI_API_KEY"),
+            ],
         }
     }
 

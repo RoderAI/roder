@@ -168,11 +168,11 @@ async fn tool_result_contains_text_and_normalized_data() {
 
     let result = roder_api::tools::ToolExecutor::execute(
         &tool,
-        roder_api::tools::ToolExecutionContext {
-            thread_id: "thread-1".to_string(),
-            turn_id: "turn-1".to_string(),
-            effective_mode: roder_api::policy_mode::PolicyMode::Default,
-        },
+        roder_api::tools::ToolExecutionContext::new(
+            "thread-1",
+            "turn-1",
+            roder_api::policy_mode::PolicyMode::Default,
+        ),
         call,
     )
     .await

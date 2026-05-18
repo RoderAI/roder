@@ -1,4 +1,5 @@
 use crate::store::JsonlSessionStoreFactory;
+use roder_api::capabilities::CapabilityRequest;
 use roder_api::extension::{
     ExtensionManifest, ExtensionRegistryBuilder, ProvidedService, RoderExtension,
 };
@@ -25,7 +26,7 @@ impl RoderExtension for JsonlSessionExtension {
             api_version: "0.1.0".to_string(),
             description: Some("Append-only JSONL session persistence".to_string()),
             provides: vec![ProvidedService::SessionStore("jsonl".to_string())],
-            required_capabilities: vec![],
+            required_capabilities: vec![CapabilityRequest::new("fs.readwrite.roder-home")],
         }
     }
 

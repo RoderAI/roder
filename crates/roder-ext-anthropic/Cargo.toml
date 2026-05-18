@@ -3,6 +3,19 @@ name = "roder-ext-anthropic"
 version.workspace = true
 edition.workspace = true
 
+[package.metadata.roder.distribution]
+id = "anthropic"
+category = "inference-engine"
+display_name = "Anthropic Messages"
+description = "Anthropic Messages inference with streaming text and tool calls."
+default_in_profiles = ["full", "anthropic-only"]
+required_env = ["ANTHROPIC_API_KEY"]
+optional_env = []
+conflicts_with = []
+required_capabilities = ["network.api.anthropic.com", "secret.read.ANTHROPIC_API_KEY"]
+extension_path = "::AnthropicExtension::new"
+docs_url = "https://docs.anthropic.com/en/api/messages"
+
 [dependencies]
 anyhow.workspace = true
 async-trait.workspace = true

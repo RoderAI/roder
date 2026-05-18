@@ -3,6 +3,19 @@ name = "roder-ext-disk-context"
 version.workspace = true
 edition.workspace = true
 
+[package.metadata.roder.distribution]
+id = "disk-context"
+category = "context-provider"
+display_name = "Disk Context"
+description = "Local disk-backed context provider for workspace files."
+default_in_profiles = ["full", "research-headless"]
+required_env = []
+optional_env = []
+conflicts_with = []
+required_capabilities = ["fs.read.workspace"]
+extension_path = "::DiskContextExtension"
+docs_url = ""
+
 [dependencies]
 anyhow.workspace = true
 roder-api.workspace = true

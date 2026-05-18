@@ -55,9 +55,10 @@ impl ToolExecutor for ShellTool {
 
     async fn execute(
         &self,
-        _ctx: ToolExecutionContext,
+        ctx: ToolExecutionContext,
         call: ToolCall,
     ) -> anyhow::Result<ToolResult> {
+        ctx.require_process_runner()?;
         let args = parse::<ShellArgs>(&call)?;
         let command = args.command.trim().to_string();
         require_nonempty(&command, "command")?;
@@ -162,7 +163,10 @@ fn format_shell_output(exit_code: i32, duration_ms: u64, output: &str) -> String
 mod tests {
     use roder_api::events::{ThreadId, TurnId};
     use roder_api::policy_mode::PolicyMode;
-    use roder_api::tools::{ToolCall, ToolExecutionContext, ToolExecutor};
+    use roder_api::tools::{
+        LocalProcessRunnerHandle, LocalWorkspaceHandle, ToolCall, ToolExecutionContext,
+        ToolExecutor,
+    };
     use serde_json::json;
 
     use super::*;
@@ -227,11 +231,13 @@ mod tests {
     }
 
     fn context() -> ToolExecutionContext {
-        ToolExecutionContext {
-            thread_id: ThreadId::from("thread-shell"),
-            turn_id: TurnId::from("turn-shell"),
-            effective_mode: PolicyMode::Default,
-        }
+        ToolExecutionContext::new(
+            ThreadId::from("thread-shell"),
+            TurnId::from("turn-shell"),
+            PolicyMode::Default,
+        )
+        .with_workspace_handle(Arc::new(LocalWorkspaceHandle::new(".")))
+        .with_process_runner(Arc::new(LocalProcessRunnerHandle))
     }
 
     fn temp_workspace(prefix: &str) -> std::path::PathBuf {

@@ -3,7 +3,9 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use roder_api::events::RoderEvent;
+use roder_api::remote_runner::{RemoteRunnerProvider, RunnerDestination, RunnerManifest};
 use roder_api::tasks::TaskState;
+use roder_ext_runner_unix_local::UnixLocalRunnerProvider;
 use roder_ext_task_process::ProcessTaskExecutor;
 use roder_tasks::{
     BackgroundRunner, BackgroundRunnerConfig, TaskExecutorRegistry, TaskSubmitOptions,
@@ -100,6 +102,89 @@ async fn process_task_honors_cwd_and_env_overrides() {
             .map(|entry| entry.chunk.as_str())
             .collect::<String>(),
         "subdir:ok"
+    );
+}
+
+#[tokio::test]
+async fn process_task_routes_through_remote_runner_session_when_configured() {
+    let workspace = temp_workspace();
+    let runner = runner(1024);
+    let provider = UnixLocalRunnerProvider::default();
+    let destination = RunnerDestination {
+        id: "unix-local".to_string(),
+        provider_id: "unix-local".to_string(),
+        config: serde_json::json!({ "root": workspace.display().to_string() }),
+        default_manifest: RunnerManifest::default(),
+    };
+    let session = provider.create_session(destination.clone()).await.unwrap();
+    let handle = runner
+        .submit(
+            "process",
+            serde_json::json!({
+                "command": "sh",
+                "args": ["-c", "printf '%s:%s' \"$(basename \"$PWD\")\" \"$RODER_PROCESS_TEST\""],
+                "cwd": "subdir",
+                "env_overrides": { "RODER_PROCESS_TEST": "remote-ok" },
+            }),
+            TaskSubmitOptions {
+                workspace_root: Some(workspace.display().to_string()),
+                runner_destination: Some(destination),
+                runner_session: Some(session),
+                ..TaskSubmitOptions::default()
+            },
+        )
+        .await
+        .unwrap();
+    tokio::time::sleep(Duration::from_millis(100)).await;
+
+    let (logs, _) = runner.logs(&handle.task_id).await.unwrap();
+    assert_eq!(
+        logs.iter()
+            .map(|entry| entry.chunk.as_str())
+            .collect::<String>(),
+        "subdir:remote-ok"
+    );
+}
+
+#[tokio::test]
+async fn process_task_can_cancel_remote_runner_command_handle() {
+    let workspace = temp_workspace();
+    let runner = runner(1024);
+    let provider = UnixLocalRunnerProvider::default();
+    let destination = RunnerDestination {
+        id: "unix-local".to_string(),
+        provider_id: "unix-local".to_string(),
+        config: serde_json::json!({ "root": workspace.display().to_string() }),
+        default_manifest: RunnerManifest::default(),
+    };
+    let session = provider.create_session(destination.clone()).await.unwrap();
+    let handle = runner
+        .submit(
+            "process",
+            serde_json::json!({
+                "command": "sh",
+                "args": ["-c", "sleep 5"],
+            }),
+            TaskSubmitOptions {
+                workspace_root: Some(workspace.display().to_string()),
+                runner_destination: Some(destination),
+                runner_session: Some(session),
+                ..TaskSubmitOptions::default()
+            },
+        )
+        .await
+        .unwrap();
+
+    tokio::time::sleep(Duration::from_millis(25)).await;
+    assert!(
+        runner
+            .cancel(&handle.task_id, Some("test cancel".to_string()))
+            .await
+            .unwrap()
+    );
+    assert_eq!(
+        runner.get(&handle.task_id).await.unwrap().state,
+        TaskState::Cancelled
     );
 }
 

@@ -1,0 +1,26 @@
+[package]
+name = "roder-ext-xai"
+version.workspace = true
+edition.workspace = true
+
+[package.metadata.roder.distribution]
+id = "xai"
+category = "inference-engine"
+display_name = "xAI Grok"
+description = "xAI Grok inference through API-key and SuperGrok OAuth provider surfaces."
+default_in_profiles = ["full", "research-headless"]
+required_env = []
+optional_env = ["XAI_API_KEY", "RODER_XAI_API_KEY", "XAI_BASE_URL", "RODER_XAI_BASE_URL"]
+conflicts_with = []
+required_capabilities = ["network.api.x.ai"]
+extension_path = "::XaiExtension::new"
+docs_url = "https://docs.x.ai/"
+
+[dependencies]
+anyhow.workspace = true
+async-trait.workspace = true
+roder-api.workspace = true
+roder-ext-openai-responses.workspace = true
+roder-supergrok-auth.workspace = true
+semver.workspace = true
+tokio = { workspace = true, features = ["macros"] }

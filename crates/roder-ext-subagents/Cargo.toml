@@ -3,6 +3,19 @@ name = "roder-ext-subagents"
 version.workspace = true
 edition.workspace = true
 
+[package.metadata.roder.distribution]
+id = "subagents"
+category = "context-planner"
+display_name = "Subagents"
+description = "In-process subagent dispatcher and context integration."
+default_in_profiles = ["full", "research-headless"]
+required_env = []
+optional_env = []
+conflicts_with = []
+required_capabilities = ["process.spawn.roder"]
+extension_path = "::extension"
+docs_url = ""
+
 [dependencies]
 anyhow.workspace = true
 async-trait.workspace = true

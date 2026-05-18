@@ -1,4 +1,4 @@
-use roder_api::catalog::{PROVIDER_OPENAI, models_for_provider};
+use roder_api::catalog::{PROVIDER_OPENAI, PROVIDER_SUPERGROK, PROVIDER_XAI, models_for_provider};
 use roder_api::extension::InferenceEngineId;
 use roder_api::inference::CompactionProgress;
 use roder_api::inference::{
@@ -18,6 +18,7 @@ pub struct OpenAiResponsesEngine {
     provider_id: String,
     base_url: String,
     headers: Vec<(String, String)>,
+    xai_mode: bool,
 }
 
 impl OpenAiResponsesEngine {
@@ -40,15 +41,40 @@ impl OpenAiResponsesEngine {
         base_url: impl Into<String>,
         headers: Vec<(String, String)>,
     ) -> Self {
+        let provider_id = provider_id.into();
+        let xai_mode = provider_id == PROVIDER_XAI || provider_id == PROVIDER_SUPERGROK;
         Self {
             api_key,
-            provider_id: provider_id.into(),
+            provider_id,
             base_url: base_url.into().trim_end_matches('/').to_string(),
             headers,
+            xai_mode,
         }
     }
 
+    #[cfg(test)]
     fn map_request(request: &AgentInferenceRequest) -> Value {
+        Self::map_request_with_options(request, RequestMappingOptions::default())
+    }
+
+    fn map_request_for_turn(
+        &self,
+        ctx: &InferenceTurnContext<'_>,
+        request: &AgentInferenceRequest,
+    ) -> Value {
+        Self::map_request_with_options(
+            request,
+            RequestMappingOptions {
+                xai_mode: self.xai_mode,
+                thread_id: Some(ctx.thread_id),
+            },
+        )
+    }
+
+    fn map_request_with_options(
+        request: &AgentInferenceRequest,
+        options: RequestMappingOptions<'_>,
+    ) -> Value {
         let mut body = json!({
             "model": request.model.model,
             "input": response_input_items(request),
@@ -75,12 +101,25 @@ impl OpenAiResponsesEngine {
         if let Some(format) = request.output.response_format.as_ref() {
             body["text"] = json!({ "format": format });
         }
-        if request.reasoning.enabled {
-            body["reasoning"] = match request.reasoning.level.as_deref() {
-                Some(level) => json!({ "effort": level, "summary": "auto" }),
-                None => json!({ "summary": "auto" }),
-            };
-            body["include"] = json!(["reasoning.encrypted_content"]);
+        if request.reasoning.enabled
+            && (!options.xai_mode || xai_supports_reasoning(&request.model.model))
+        {
+            if options.xai_mode {
+                if let Some(level) = request
+                    .reasoning
+                    .level
+                    .as_deref()
+                    .filter(|level| *level != "none")
+                {
+                    body["reasoning"] = json!({ "effort": level });
+                }
+            } else {
+                body["reasoning"] = match request.reasoning.level.as_deref() {
+                    Some(level) => json!({ "effort": level, "summary": "auto" }),
+                    None => json!({ "summary": "auto" }),
+                };
+                body["include"] = json!(["reasoning.encrypted_content"]);
+            }
         }
         let tools = responses_tools(request);
         if !tools.is_empty() {
@@ -105,7 +144,12 @@ impl OpenAiResponsesEngine {
                     json!(request.runtime.parallel_tool_calls.unwrap_or(true));
             }
         }
-        if let Some(prompt_cache_key) = request.runtime.prompt_cache_key.as_deref() {
+        let prompt_cache_key = if options.xai_mode {
+            options.thread_id.filter(|thread_id| !thread_id.is_empty())
+        } else {
+            request.runtime.prompt_cache_key.as_deref()
+        };
+        if let Some(prompt_cache_key) = prompt_cache_key {
             body["prompt_cache_key"] = json!(prompt_cache_key);
         }
         if let Some(threshold) = request
@@ -118,6 +162,18 @@ impl OpenAiResponsesEngine {
         }
         body
     }
+}
+
+#[derive(Debug, Clone, Copy, Default)]
+struct RequestMappingOptions<'a> {
+    xai_mode: bool,
+    thread_id: Option<&'a str>,
+}
+
+fn xai_supports_reasoning(model: &str) -> bool {
+    model == "grok-4.3"
+        || model == "grok-4.20-0309-reasoning"
+        || model.starts_with("grok-4.20-multi-agent-")
 }
 
 fn responses_tools(request: &AgentInferenceRequest) -> Vec<Value> {
@@ -164,13 +220,23 @@ impl InferenceEngine for OpenAiResponsesEngine {
     }
 
     fn metadata(&self) -> InferenceProviderMetadata {
-        InferenceProviderMetadata {
-            name: "OpenAI".to_string(),
-            description: Some("OpenAI API key provider".to_string()),
-            auth_type: ProviderAuthType::ApiKey,
-            auth_label: Some("API key".to_string()),
-            recommended: true,
-            sort_order: 20,
+        match self.provider_id.as_str() {
+            PROVIDER_XAI => InferenceProviderMetadata {
+                name: "xAI".to_string(),
+                description: Some("xAI API key provider for Grok models".to_string()),
+                auth_type: ProviderAuthType::ApiKey,
+                auth_label: Some("XAI_API_KEY".to_string()),
+                recommended: false,
+                sort_order: 50,
+            },
+            _ => InferenceProviderMetadata {
+                name: "OpenAI".to_string(),
+                description: Some("OpenAI API key provider".to_string()),
+                auth_type: ProviderAuthType::ApiKey,
+                auth_label: Some("API key".to_string()),
+                recommended: true,
+                sort_order: 20,
+            },
         }
     }
 
@@ -178,7 +244,7 @@ impl InferenceEngine for OpenAiResponsesEngine {
         &self,
         _ctx: InferenceProviderContext<'_>,
     ) -> anyhow::Result<Vec<ModelDescriptor>> {
-        Ok(models_for_provider(PROVIDER_OPENAI, false))
+        Ok(models_for_provider(&self.provider_id, false))
     }
 
     async fn stream_turn(
@@ -186,7 +252,7 @@ impl InferenceEngine for OpenAiResponsesEngine {
         _ctx: InferenceTurnContext<'_>,
         request: AgentInferenceRequest,
     ) -> anyhow::Result<InferenceEventStream> {
-        let body = Self::map_request(&request);
+        let body = self.map_request_for_turn(&_ctx, &request);
         let client = reqwest::Client::new();
         let mut request = client
             .post(format!("{}/responses", self.base_url))
@@ -194,16 +260,40 @@ impl InferenceEngine for OpenAiResponsesEngine {
         for (key, value) in &self.headers {
             request = request.header(key, value);
         }
+        if self.xai_mode && !_ctx.thread_id.is_empty() {
+            request = request.header("x-grok-conv-id", _ctx.thread_id);
+        }
         let response = request.json(&body).send().await?;
         if !response.status().is_success() {
-            anyhow::bail!(
-                "OpenAI Responses error {}: {}",
-                response.status(),
-                response.text().await.unwrap_or_default()
-            );
+            let status = response.status();
+            let text = response.text().await.unwrap_or_default();
+            if self.xai_mode {
+                anyhow::bail!("{}", xai_error_message(status, &text));
+            }
+            anyhow::bail!("OpenAI Responses error {}: {}", status, text);
         }
         Ok(stream_responses_sse(response))
     }
+}
+
+fn xai_error_message(status: reqwest::StatusCode, body: &str) -> String {
+    let trimmed = body.trim();
+    let detail = if trimmed.is_empty() {
+        "empty response body"
+    } else {
+        trimmed
+    };
+    if status == reqwest::StatusCode::UNAUTHORIZED {
+        return format!(
+            "xAI auth failed ({status}): {detail}. Check XAI_API_KEY or run `roder auth login supergrok` for SuperGrok."
+        );
+    }
+    if status == reqwest::StatusCode::FORBIDDEN {
+        return format!(
+            "xAI entitlement or quota check failed ({status}): {detail}. X Premium+ may not include the required SuperGrok/API entitlement; verify Grok usage and subscription settings or switch providers."
+        );
+    }
+    format!("xAI Responses error {status}: {detail}")
 }
 
 fn stream_responses_sse(response: reqwest::Response) -> InferenceEventStream {
@@ -1113,6 +1203,56 @@ mod tests {
         assert_eq!(tools[0]["type"], "web_search");
         assert_eq!(tools[0]["external_web_access"], true);
         assert_eq!(body["tool_choice"], "auto");
+    }
+
+    #[test]
+    fn xai_mapping_uses_thread_cache_key_and_omits_encrypted_reasoning() {
+        let mut request = request();
+        request.model.provider = PROVIDER_XAI.to_string();
+        request.model.model = "grok-4.3".to_string();
+        request.runtime.prompt_cache_key = Some("openai-cache".to_string());
+
+        let body = OpenAiResponsesEngine::map_request_with_options(
+            &request,
+            RequestMappingOptions {
+                xai_mode: true,
+                thread_id: Some("thread-123"),
+            },
+        );
+
+        assert_eq!(body["prompt_cache_key"], "thread-123");
+        assert_eq!(body["reasoning"], json!({ "effort": "medium" }));
+        assert!(body.get("include").is_none());
+    }
+
+    #[test]
+    fn xai_mapping_omits_reasoning_for_non_reasoning_grok_models() {
+        let mut request = request();
+        request.model.provider = PROVIDER_XAI.to_string();
+        request.model.model = "grok-4.20-0309-non-reasoning".to_string();
+
+        let body = OpenAiResponsesEngine::map_request_with_options(
+            &request,
+            RequestMappingOptions {
+                xai_mode: true,
+                thread_id: Some("thread-123"),
+            },
+        );
+
+        assert!(body.get("reasoning").is_none());
+        assert!(body.get("include").is_none());
+    }
+
+    #[test]
+    fn xai_errors_explain_auth_and_entitlement_boundaries() {
+        let unauthorized = xai_error_message(reqwest::StatusCode::UNAUTHORIZED, "bad key");
+        assert!(unauthorized.contains("Check XAI_API_KEY"));
+        assert!(unauthorized.contains("roder auth login supergrok"));
+
+        let forbidden = xai_error_message(reqwest::StatusCode::FORBIDDEN, "subscription missing");
+        assert!(forbidden.contains("entitlement or quota"));
+        assert!(forbidden.contains("X Premium+ may not include"));
+        assert!(forbidden.contains("subscription missing"));
     }
 
     #[test]
