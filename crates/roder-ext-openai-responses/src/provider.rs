@@ -8,17 +8,27 @@ use roder_api::inference::{
     ModelDescriptor, ProviderAuthType, ReasoningDelta, TokenUsage, ToolCallCompleted,
     ToolCallDelta, ToolCallStarted,
 };
+use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
+use std::fs;
+use std::path::PathBuf;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 const FINAL_ANSWER_PHASE: &str = "final_answer";
+const DEFAULT_MODELS_CACHE_TTL: Duration = Duration::from_secs(6 * 60 * 60);
 
 pub struct OpenAiResponsesEngine {
-    api_key: String,
+    api_key: Option<String>,
     provider_id: String,
+    display_name: String,
     base_url: String,
     headers: Vec<(String, String)>,
     xai_mode: bool,
+    discover_models: bool,
+    refresh_in_flight: Arc<AtomicBool>,
 }
 
 impl OpenAiResponsesEngine {
@@ -43,13 +53,59 @@ impl OpenAiResponsesEngine {
     ) -> Self {
         let provider_id = provider_id.into();
         let xai_mode = provider_id == PROVIDER_XAI || provider_id == PROVIDER_SUPERGROK;
+        let display_name = match provider_id.as_str() {
+            PROVIDER_XAI => "xAI".to_string(),
+            _ => "OpenAI".to_string(),
+        };
         Self {
-            api_key,
+            api_key: Some(api_key),
             provider_id,
+            display_name,
             base_url: base_url.into().trim_end_matches('/').to_string(),
             headers,
             xai_mode,
+            discover_models: false,
+            refresh_in_flight: Arc::new(AtomicBool::new(false)),
         }
+    }
+
+    pub fn new_custom_provider(
+        api_key: Option<String>,
+        provider_id: impl Into<String>,
+        display_name: impl Into<String>,
+        base_url: impl Into<String>,
+    ) -> Self {
+        Self {
+            api_key,
+            provider_id: provider_id.into(),
+            display_name: display_name.into(),
+            base_url: base_url.into().trim_end_matches('/').to_string(),
+            headers: Vec::new(),
+            xai_mode: false,
+            discover_models: true,
+            refresh_in_flight: Arc::new(AtomicBool::new(false)),
+        }
+    }
+
+    fn schedule_model_refresh(&self) {
+        if self
+            .refresh_in_flight
+            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+            .is_err()
+        {
+            return;
+        }
+        let provider_id = self.provider_id.clone();
+        let base_url = self.base_url.clone();
+        let api_key = self.api_key.clone();
+        let refresh_in_flight = Arc::clone(&self.refresh_in_flight);
+        tokio::spawn(async move {
+            let result = discover_models(&base_url, api_key.as_deref()).await;
+            if let Ok(models) = result {
+                let _ = save_cached_models(&provider_id, &base_url, &models);
+            }
+            refresh_in_flight.store(false, Ordering::Release);
+        });
     }
 
     #[cfg(test)]
@@ -184,6 +240,174 @@ fn xai_supports_reasoning(model: &str) -> bool {
         || model.starts_with("grok-4.20-multi-agent-")
 }
 
+#[derive(Debug, Deserialize)]
+struct ModelsResponse {
+    #[serde(default)]
+    data: Vec<ModelEntry>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ModelEntry {
+    id: String,
+    #[serde(default)]
+    name: Option<String>,
+}
+
+#[derive(Debug, Default, Serialize, Deserialize)]
+struct ModelsCacheFile {
+    #[serde(default)]
+    providers: BTreeMap<String, CachedProviderModels>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct CachedProviderModels {
+    fetched_at: u64,
+    base_url: String,
+    models: Vec<ModelDescriptor>,
+}
+
+impl CachedProviderModels {
+    fn is_stale(&self, ttl: Duration) -> bool {
+        ttl.is_zero()
+            || now_unix_secs()
+                .saturating_sub(self.fetched_at)
+                .ge(&ttl.as_secs())
+    }
+}
+
+async fn discover_models(
+    base_url: &str,
+    api_key: Option<&str>,
+) -> anyhow::Result<Vec<ModelDescriptor>> {
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(8))
+        .build()?;
+    let mut last_error = None;
+    for url in model_discovery_urls(base_url) {
+        let mut request = client.get(&url);
+        if let Some(api_key) = api_key {
+            request = request.bearer_auth(api_key);
+        }
+        match request.send().await {
+            Ok(response) if response.status().is_success() => {
+                let body: ModelsResponse = response.json().await?;
+                let models = models_from_response(body);
+                if !models.is_empty() {
+                    return Ok(models);
+                }
+                last_error = Some(anyhow::anyhow!(
+                    "model discovery returned no models at {url}"
+                ));
+            }
+            Ok(response) => {
+                last_error = Some(anyhow::anyhow!(
+                    "model discovery failed at {url}: {}",
+                    response.status()
+                ));
+            }
+            Err(err) => {
+                last_error = Some(anyhow::anyhow!("model discovery failed at {url}: {err}"));
+            }
+        }
+    }
+    Err(last_error.unwrap_or_else(|| anyhow::anyhow!("model discovery failed")))
+}
+
+fn model_discovery_urls(base_url: &str) -> Vec<String> {
+    let base = base_url.trim_end_matches('/');
+    vec![format!("{base}/models"), format!("{base}/v1/models")]
+}
+
+fn models_from_response(body: ModelsResponse) -> Vec<ModelDescriptor> {
+    body.data
+        .into_iter()
+        .filter_map(|model| {
+            let id = model.id.trim();
+            (!id.is_empty()).then(|| ModelDescriptor {
+                id: id.to_string(),
+                name: model.name.unwrap_or_else(|| id.to_string()),
+                context_window: None,
+                default_reasoning: None,
+                supported_reasoning: Vec::new(),
+            })
+        })
+        .collect()
+}
+
+fn cached_models(provider_id: &str, base_url: &str) -> anyhow::Result<CachedProviderModels> {
+    let cache: ModelsCacheFile = serde_json::from_str(&fs::read_to_string(cache_path())?)?;
+    cache
+        .providers
+        .get(provider_id)
+        .filter(|entry| entry.base_url.trim_end_matches('/') == base_url.trim_end_matches('/'))
+        .cloned()
+        .ok_or_else(|| anyhow::anyhow!("no cached models for {provider_id}"))
+}
+
+fn save_cached_models(
+    provider_id: &str,
+    base_url: &str,
+    models: &[ModelDescriptor],
+) -> anyhow::Result<()> {
+    let path = cache_path();
+    let mut cache = fs::read_to_string(&path)
+        .ok()
+        .and_then(|body| serde_json::from_str::<ModelsCacheFile>(&body).ok())
+        .unwrap_or_default();
+    cache.providers.insert(
+        provider_id.to_string(),
+        CachedProviderModels {
+            fetched_at: now_unix_secs(),
+            base_url: base_url.trim_end_matches('/').to_string(),
+            models: models.to_vec(),
+        },
+    );
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    fs::write(path, serde_json::to_vec_pretty(&cache)?)?;
+    Ok(())
+}
+
+fn cache_path() -> PathBuf {
+    if let Some(path) = env_nonempty("RODER_MODELS_CACHE_PATH") {
+        return PathBuf::from(path);
+    }
+    dirs::home_dir()
+        .unwrap_or_else(|| PathBuf::from("."))
+        .join(".roder")
+        .join("models-cache.json")
+}
+
+fn cache_ttl() -> Duration {
+    env_nonempty("RODER_MODELS_CACHE_TTL_SECONDS")
+        .or_else(|| env_nonempty("RODER_OPENCODE_MODELS_CACHE_TTL_SECONDS"))
+        .and_then(|value| value.parse::<u64>().ok())
+        .map(Duration::from_secs)
+        .unwrap_or(DEFAULT_MODELS_CACHE_TTL)
+}
+
+fn force_refresh_requested() -> bool {
+    env_nonempty("RODER_MODELS_REFRESH")
+        .or_else(|| env_nonempty("RODER_OPENCODE_MODELS_REFRESH"))
+        .map(|value| matches!(value.as_str(), "1" | "true" | "TRUE" | "yes" | "YES"))
+        .unwrap_or(false)
+}
+
+fn env_nonempty(key: &str) -> Option<String> {
+    std::env::var(key)
+        .ok()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+}
+
+fn now_unix_secs() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs()
+}
+
 fn responses_tools(request: &AgentInferenceRequest) -> (Vec<Value>, ResponsesToolNameMap) {
     let mut tools = Vec::new();
     let mut used_tool_names = HashSet::new();
@@ -268,16 +492,16 @@ impl InferenceEngine for OpenAiResponsesEngine {
                 description: Some("xAI API key provider for Grok models".to_string()),
                 auth_type: ProviderAuthType::ApiKey,
                 auth_label: Some("XAI_API_KEY".to_string()),
-                auth_configured: Some(true),
+                auth_configured: Some(self.api_key.is_some()),
                 recommended: false,
                 sort_order: 50,
             },
             _ => InferenceProviderMetadata {
-                name: "OpenAI".to_string(),
-                description: Some("OpenAI API key provider".to_string()),
+                name: self.display_name.clone(),
+                description: Some(format!("{} OpenAI-compatible provider", self.display_name)),
                 auth_type: ProviderAuthType::ApiKey,
                 auth_label: Some("API key".to_string()),
-                auth_configured: Some(true),
+                auth_configured: Some(self.api_key.is_some()),
                 recommended: true,
                 sort_order: 20,
             },
@@ -288,6 +512,22 @@ impl InferenceEngine for OpenAiResponsesEngine {
         &self,
         _ctx: InferenceProviderContext<'_>,
     ) -> anyhow::Result<Vec<ModelDescriptor>> {
+        let cached = cached_models(&self.provider_id, &self.base_url).ok();
+        if self.discover_models {
+            let should_refresh = force_refresh_requested()
+                || cached
+                    .as_ref()
+                    .map(|entry| entry.is_stale(cache_ttl()))
+                    .unwrap_or(true);
+            if should_refresh {
+                self.schedule_model_refresh();
+            }
+        }
+        if let Some(entry) = cached
+            && !entry.models.is_empty()
+        {
+            return Ok(entry.models);
+        }
         Ok(models_for_provider(&self.provider_id, false))
     }
 
@@ -296,6 +536,12 @@ impl InferenceEngine for OpenAiResponsesEngine {
         _ctx: InferenceTurnContext<'_>,
         request: AgentInferenceRequest,
     ) -> anyhow::Result<InferenceEventStream> {
+        let Some(api_key) = self.api_key.as_ref() else {
+            anyhow::bail!(
+                "{} API key is missing; configure it from the provider menu or user config",
+                self.display_name
+            )
+        };
         let (body, tool_name_map) = Self::map_request_with_options(
             &request,
             RequestMappingOptions {
@@ -306,7 +552,7 @@ impl InferenceEngine for OpenAiResponsesEngine {
         let client = reqwest::Client::new();
         let mut request = client
             .post(format!("{}/responses", self.base_url))
-            .bearer_auth(&self.api_key);
+            .bearer_auth(api_key);
         for (key, value) in &self.headers {
             request = request.header(key, value);
         }
@@ -1116,6 +1362,8 @@ mod tests {
     use roder_api::inference::{
         InstructionBundle, ModelSelection, OutputConfig, ReasoningConfig, RuntimeHints,
     };
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    use tokio::net::TcpListener;
 
     fn request() -> AgentInferenceRequest {
         AgentInferenceRequest {
@@ -1159,6 +1407,118 @@ mod tests {
             },
             metadata: json!({}),
         }
+    }
+
+    #[tokio::test]
+    async fn model_discovery_reads_models_endpoint() {
+        let base_url = spawn_models_server(vec![(
+            "/models",
+            200,
+            r#"{"data":[{"id":"custom-alpha","name":"Custom Alpha"}]}"#,
+        )])
+        .await;
+
+        let models = discover_models(&base_url, Some("secret")).await.unwrap();
+
+        assert_eq!(models.len(), 1);
+        assert_eq!(models[0].id, "custom-alpha");
+        assert_eq!(models[0].name, "Custom Alpha");
+    }
+
+    #[tokio::test]
+    async fn model_discovery_falls_back_to_v1_models_endpoint() {
+        let base_url = spawn_models_server(vec![
+            ("/models", 404, r#"{"error":"missing"}"#),
+            (
+                "/v1/models",
+                200,
+                r#"{"data":[{"id":"custom-v1","name":"Custom V1"}]}"#,
+            ),
+        ])
+        .await;
+
+        let models = discover_models(&base_url, None).await.unwrap();
+
+        assert_eq!(models.len(), 1);
+        assert_eq!(models[0].id, "custom-v1");
+    }
+
+    #[tokio::test]
+    async fn custom_provider_list_models_returns_cached_models_without_waiting_for_refresh() {
+        let cache_file = std::env::temp_dir().join(format!(
+            "roder-custom-models-cache-{}-{}.json",
+            std::process::id(),
+            now_unix_secs()
+        ));
+        let cached_model = ModelDescriptor {
+            id: "cached-custom-model".to_string(),
+            name: "Cached Custom Model".to_string(),
+            context_window: None,
+            default_reasoning: None,
+            supported_reasoning: Vec::new(),
+        };
+        unsafe {
+            std::env::set_var("RODER_MODELS_CACHE_PATH", &cache_file);
+            std::env::set_var("RODER_MODELS_CACHE_TTL_SECONDS", "0");
+        }
+        save_cached_models(
+            "custom-provider",
+            "http://127.0.0.1:9",
+            std::slice::from_ref(&cached_model),
+        )
+        .unwrap();
+        let engine = OpenAiResponsesEngine::new_custom_provider(
+            Some("secret".to_string()),
+            "custom-provider",
+            "Custom Provider",
+            "http://127.0.0.1:9",
+        );
+
+        let models = tokio::time::timeout(
+            Duration::from_millis(100),
+            engine.list_models(InferenceProviderContext {
+                provider_id: "custom-provider",
+            }),
+        )
+        .await
+        .expect("cached custom model listing should not wait for background refresh")
+        .unwrap();
+
+        assert_eq!(models, vec![cached_model]);
+        unsafe {
+            std::env::remove_var("RODER_MODELS_CACHE_PATH");
+            std::env::remove_var("RODER_MODELS_CACHE_TTL_SECONDS");
+        }
+        let _ = fs::remove_file(cache_file);
+    }
+
+    async fn spawn_models_server(routes: Vec<(&'static str, u16, &'static str)>) -> String {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            let mut routes = routes.into_iter();
+            while let Some((expected_path, status, body)) = routes.next() {
+                let Ok((mut stream, _)) = listener.accept().await else {
+                    return;
+                };
+                let mut buf = [0_u8; 2048];
+                let n = stream.read(&mut buf).await.unwrap_or(0);
+                let request = String::from_utf8_lossy(&buf[..n]);
+                let path = request
+                    .lines()
+                    .next()
+                    .and_then(|line| line.split_whitespace().nth(1))
+                    .unwrap_or("");
+                assert_eq!(path, expected_path);
+                let status_text = if status == 200 { "OK" } else { "Not Found" };
+                let response = format!(
+                    "HTTP/1.1 {status} {status_text}\r\ncontent-type: application/json\r\nconnection: close\r\ncontent-length: {}\r\n\r\n{body}",
+                    body.len()
+                );
+                stream.write_all(response.as_bytes()).await.unwrap();
+            }
+        });
+        format!("http://{addr}")
     }
 
     #[test]

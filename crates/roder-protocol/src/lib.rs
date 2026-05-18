@@ -1099,6 +1099,8 @@ pub struct ProviderSelectParams {
     pub provider: String,
     pub model: Option<String>,
     pub reasoning: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub thread_id: Option<ThreadId>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

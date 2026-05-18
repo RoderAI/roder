@@ -15,8 +15,9 @@ use roder_app_server::{AppServer, LocalAppClient};
 use roder_core::{Runtime, RuntimeConfig, validate_edit_tool};
 use roder_ext_subagents::{AgentLoadConfig, load_agent_definitions};
 use roder_extension_host::{
-    DefaultNotificationsConfig, DefaultRegistryConfig, DefaultSubagentsConfig,
-    DefaultWebSearchConfig, DefaultWebSearchProviderConfig, build_default_registry,
+    CustomInferenceProviderConfig, DefaultNotificationsConfig, DefaultRegistryConfig,
+    DefaultSubagentsConfig, DefaultWebSearchConfig, DefaultWebSearchProviderConfig,
+    build_default_registry,
 };
 use roder_protocol::{
     DesktopThread, JsonRpcError, JsonRpcRequest, JsonRpcResponse, MemoryDeleteParams,
@@ -641,6 +642,7 @@ async fn build_runtime_from_config(options: CliOptions) -> anyhow::Result<(Arc<R
     let keys = provider_keys(&cfg);
     let web_search = resolve_web_search_config(cfg.web_search.as_ref())?;
     let policy_mode = resolve_policy_mode(&options, &cfg)?;
+    let custom_inference_provider_configs = custom_inference_providers(&cfg);
     let (default_provider, configured_model) = resolve_provider_model(cfg.provider, cfg.model);
     let default_model = configured_model.clone().unwrap_or_else(|| {
         if default_provider == PROVIDER_MOCK {
@@ -682,6 +684,7 @@ async fn build_runtime_from_config(options: CliOptions) -> anyhow::Result<(Arc<R
         opencode_go_api_key: keys.opencode_go,
         opencode_go_base_url: keys.opencode_go_base_url,
         opencode_go_project_id: keys.opencode_go_project_id,
+        custom_inference_providers: custom_inference_provider_configs,
         session_dir: None,
         workspace: workspace.clone(),
         web_search: web_search.external,
@@ -1314,6 +1317,42 @@ fn provider_keys(cfg: &roder_config::Config) -> ProviderKeys {
     }
 }
 
+fn custom_inference_providers(cfg: &roder_config::Config) -> Vec<CustomInferenceProviderConfig> {
+    cfg.providers
+        .iter()
+        .filter_map(|(id, provider)| {
+            let id = normalize_provider_id(id);
+            if is_builtin_provider_id(&id) {
+                return None;
+            }
+            let base_url = trim_nonempty(provider.base_url.clone())?;
+            let api_key = trim_nonempty(provider.api_key.clone())
+                .or_else(|| provider.api_key_env.as_deref().and_then(env_nonempty));
+            Some(CustomInferenceProviderConfig {
+                id: id.clone(),
+                name: Some(id),
+                api_key,
+                base_url,
+            })
+        })
+        .collect()
+}
+
+fn is_builtin_provider_id(id: &str) -> bool {
+    matches!(
+        id,
+        "mock"
+            | "openai"
+            | "codex"
+            | "anthropic"
+            | "gemini"
+            | "xai"
+            | "supergrok"
+            | "opencode"
+            | "opencode-go"
+    )
+}
+
 #[derive(Debug, Clone)]
 struct ResolvedWebSearchConfig {
     external: Option<DefaultWebSearchConfig>,
@@ -1655,6 +1694,34 @@ mod tests {
 
         assert_eq!(resolved.get("custom-serial"), Some(&false));
         assert!(!resolved.contains_key("custom-default"));
+    }
+
+    #[test]
+    fn custom_inference_providers_use_user_provider_base_urls() {
+        let mut cfg = roder_config::Config::default();
+        cfg.providers.insert(
+            "local-openai".to_string(),
+            roder_config::ProviderConfig {
+                api_key: Some("secret".to_string()),
+                base_url: Some("http://127.0.0.1:11434/v1".to_string()),
+                ..roder_config::ProviderConfig::default()
+            },
+        );
+        cfg.providers.insert(
+            "opencode".to_string(),
+            roder_config::ProviderConfig {
+                api_key: Some("builtin".to_string()),
+                base_url: Some("http://ignored.example/v1".to_string()),
+                ..roder_config::ProviderConfig::default()
+            },
+        );
+
+        let providers = custom_inference_providers(&cfg);
+
+        assert_eq!(providers.len(), 1);
+        assert_eq!(providers[0].id, "local-openai");
+        assert_eq!(providers[0].api_key.as_deref(), Some("secret"));
+        assert_eq!(providers[0].base_url, "http://127.0.0.1:11434/v1");
     }
 
     #[test]

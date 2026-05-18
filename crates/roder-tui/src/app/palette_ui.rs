@@ -250,6 +250,7 @@ impl TuiApp {
                     provider,
                     model: Some(model),
                     reasoning: None,
+                    thread_id: Some(self.focused_thread_id().to_string()),
                 })
                 .await;
             }
