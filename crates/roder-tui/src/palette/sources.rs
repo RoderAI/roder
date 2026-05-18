@@ -1,8 +1,8 @@
 use roder_api::inference::HostedWebSearchMode;
 use roder_api::policy_mode::PolicyMode;
-use roder_api::session::SessionMetadata;
 use roder_protocol::{
-    AgentDescriptor, CommandDescriptor, ProvidersListResult, RunnersListResult, WebSearchSettings,
+    AgentDescriptor, CommandDescriptor, DesktopThread, ProvidersListResult, RunnersListResult,
+    WebSearchSettings,
 };
 
 use super::{PaletteAction, PaletteItem, StaticPaletteSource};
@@ -229,37 +229,44 @@ pub fn remote_source() -> StaticPaletteSource {
     )
 }
 
-pub fn session_source(sessions: &[SessionMetadata]) -> StaticPaletteSource {
+pub fn session_source(sessions: &[DesktopThread]) -> StaticPaletteSource {
     StaticPaletteSource::new(
         "sessions",
         "Sessions",
         sessions
             .iter()
             .map(|session| {
-                let short_id = short_id(&session.thread_id).to_string();
+                let short_id = short_id(&session.id).to_string();
                 let title = session
-                    .title
+                    .name
                     .clone()
                     .filter(|title| !title.trim().is_empty())
+                    .or_else(|| {
+                        (!session.preview.trim().is_empty()).then(|| session.preview.clone())
+                    })
                     .unwrap_or_else(|| format!("Session {short_id}"));
-                let subtitle = session
-                    .workspace
-                    .clone()
-                    .or_else(|| session.model.clone())
-                    .map(|detail| format!("{detail} - {} messages", session.message_count));
+                let message_count = session
+                    .turns
+                    .as_deref()
+                    .unwrap_or_default()
+                    .iter()
+                    .flat_map(|turn| turn.items.iter())
+                    .filter(|item| matches!(item.kind.as_str(), "userMessage" | "agentMessage"))
+                    .count();
+                let subtitle = Some(format!("{} - {} messages", session.cwd, message_count));
                 (
                     PaletteItem {
-                        id: session.thread_id.clone(),
+                        id: session.id.clone(),
                         title,
                         subtitle,
                         keywords: vec![
-                            session.thread_id.clone(),
-                            session.provider.clone().unwrap_or_default(),
-                            session.model.clone().unwrap_or_default(),
+                            session.id.clone(),
+                            session.model_provider.clone(),
+                            session.cwd.clone(),
                         ],
                         icon: Some('#'),
                     },
-                    PaletteAction::SwitchSession(session.thread_id.clone()),
+                    PaletteAction::SwitchSession(session.id.clone()),
                 )
             })
             .collect(),

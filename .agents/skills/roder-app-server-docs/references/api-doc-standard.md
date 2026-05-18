@@ -1,6 +1,6 @@
 # Roder App-Server API Documentation Standard
 
-Use this standard when creating or maintaining `docs/roder-app-server-api.md`.
+Use this standard when creating or maintaining `docs/app-server/api.md`.
 
 ## Target Reader
 
@@ -8,7 +8,7 @@ Write for an API integrator building a client against the Roder app-server. Assu
 
 ## Required Document Shape
 
-`docs/roder-app-server-api.md` should include these sections when applicable:
+`docs/app-server/api.md` should include these sections when applicable:
 
 1. Overview
 2. Transport and base URL assumptions
@@ -18,7 +18,7 @@ Write for an API integrator building a client against the Roder app-server. Assu
 6. Detailed method reference
 7. Streaming/event reference
 8. Error model and cancellation semantics
-9. Persistence and compatibility notes
+9. Persistence and contract notes
 10. Integration recipes
 11. Maintenance checklist
 
@@ -54,7 +54,7 @@ Errors:
 - List known validation, not-found, auth, provider, cancellation, and runtime error behavior.
 
 Notes:
-- Include compatibility or experimental details only when useful.
+- Include experimental details or intentional breaking changes only when useful.
 ```
 
 ## Streaming/Event Reference Template
@@ -73,7 +73,7 @@ Use valid JSON examples for event payloads.
 
 Prefer short, end-to-end flows over scattered notes. Useful recipes include:
 
-- Create or resume a session.
+- Create or resume a session through the canonical thread methods.
 - Start a turn and consume events until terminal state.
 - Interrupt or cancel an active turn.
 - List/select providers and models.
@@ -85,12 +85,12 @@ Prefer short, end-to-end flows over scattered notes. Useful recipes include:
 - Every field in examples must be backed by source, tests, or existing docs.
 - Do not document internal-only structs unless a client sees them on the wire.
 - Use consistent names for `session`, `thread`, `turn`, `provider`, `model`, and `extension` concepts.
-- Mark removed or replaced behavior as deprecated only when the source still supports it.
+- Do not document removed methods as deprecated unless the source still supports them.
 - If source and existing docs disagree, update the docs to source truth and mention the discrepancy in the final summary.
 
 ## Maintenance Checklist
 
-When updating `docs/roder-app-server-api.md`, check whether the change affects:
+When updating `docs/app-server/api.md`, check whether the change affects:
 
 - Method index entries.
 - Request/response examples.

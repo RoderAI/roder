@@ -9,7 +9,7 @@ use crossterm::style::{
     Attribute, Color, Print, ResetColor, SetAttribute, SetBackgroundColor, SetForegroundColor,
 };
 use crossterm::terminal::{self, Clear, ClearType};
-use roder_api::session::SessionMetadata;
+use roder_protocol::DesktopThread;
 use time::UtcOffset;
 
 const MAX_VISIBLE_SESSIONS: usize = 10;
@@ -31,7 +31,7 @@ const HINT_ACCENT: Color = Color::Rgb {
     b: 195,
 };
 
-pub fn pick_session(sessions: &[SessionMetadata]) -> anyhow::Result<Option<String>> {
+pub fn pick_session(sessions: &[DesktopThread]) -> anyhow::Result<Option<String>> {
     if sessions.is_empty() {
         println!("No saved sessions found.");
         return Ok(None);
@@ -81,7 +81,7 @@ pub fn pick_session(sessions: &[SessionMetadata]) -> anyhow::Result<Option<Strin
                 let Some(index) = matches.get(selected).copied() else {
                     continue;
                 };
-                break Some(sessions[index].thread_id.clone());
+                break Some(sessions[index].id.clone());
             }
             Event::Key(KeyEvent {
                 code: KeyCode::Up, ..
@@ -157,14 +157,12 @@ pub fn pick_session(sessions: &[SessionMetadata]) -> anyhow::Result<Option<Strin
     )?;
     drop(raw);
     if let Some(thread_id) = picked.as_deref()
-        && let Some(session) = sessions
-            .iter()
-            .find(|session| session.thread_id == thread_id)
+        && let Some(session) = sessions.iter().find(|session| session.id == thread_id)
     {
         println!(
             "Resuming {} ({})",
             session_title(session),
-            short_id(&session.thread_id)
+            short_id(&session.id)
         );
     }
     Ok(picked)
@@ -174,7 +172,7 @@ fn render(
     stdout: &mut io::Stdout,
     start_row: u16,
     query: &str,
-    sessions: &[SessionMetadata],
+    sessions: &[DesktopThread],
     matches: &[usize],
     selected: usize,
     only_current_directory: bool,
@@ -393,7 +391,7 @@ fn session_window_start(selected: usize, match_count: usize, visible: usize) -> 
 }
 
 fn filtered_sessions(
-    sessions: &[SessionMetadata],
+    sessions: &[DesktopThread],
     query: &str,
     only_current_directory: bool,
     current_dir: Option<&str>,
@@ -406,7 +404,7 @@ fn filtered_sessions(
         .filter_map(|(index, session)| {
             if only_current_directory
                 && !session_in_current_directory(
-                    session.workspace.as_deref(),
+                    Some(session.cwd.as_str()),
                     current_path.as_deref(),
                 )
             {
@@ -442,33 +440,33 @@ fn normalize_path_for_filter(path: &Path) -> PathBuf {
     fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf())
 }
 
-fn searchable_text(session: &SessionMetadata) -> String {
+fn searchable_text(session: &DesktopThread) -> String {
     [
         session_title(session),
-        session.workspace.clone().unwrap_or_default(),
-        session.provider.clone().unwrap_or_default(),
-        session.model.clone().unwrap_or_default(),
-        session.thread_id.clone(),
+        session.cwd.clone(),
+        session.model_provider.clone(),
+        session.id.clone(),
     ]
     .join(" ")
     .to_ascii_lowercase()
 }
 
-fn session_title(session: &SessionMetadata) -> String {
+fn session_title(session: &DesktopThread) -> String {
     session
-        .title
+        .name
         .clone()
         .filter(|title| !title.trim().is_empty())
-        .unwrap_or_else(|| format!("Session {}", short_id(&session.thread_id)))
+        .or_else(|| (!session.preview.trim().is_empty()).then(|| session.preview.clone()))
+        .unwrap_or_else(|| format!("Session {}", short_id(&session.id)))
 }
 
-fn session_line(session: &SessionMetadata, width: usize) -> String {
-    let workspace = compacted_workspace(session.workspace.as_deref());
-    let model = session.model.as_deref().unwrap_or("unknown model");
+fn session_line(session: &DesktopThread, width: usize) -> String {
+    let workspace = compacted_workspace(Some(session.cwd.as_str()));
+    let model = session.model_provider.as_str();
     let date = human_time(session.updated_at);
-    let message_count = session.message_count;
+    let message_count = session_message_count(session);
     let title = session_title(session);
-    let short_id = short_id(&session.thread_id);
+    let short_id = short_id(&session.id);
 
     let reserved = 20 + 3; // date + separators.
     let free = width.saturating_sub(reserved.max(1));
@@ -495,7 +493,20 @@ fn session_line(session: &SessionMetadata, width: usize) -> String {
     fit_line(&line, width)
 }
 
-fn human_time(ts: time::OffsetDateTime) -> String {
+fn session_message_count(session: &DesktopThread) -> usize {
+    session
+        .turns
+        .as_deref()
+        .unwrap_or_default()
+        .iter()
+        .flat_map(|turn| turn.items.iter())
+        .filter(|item| matches!(item.kind.as_str(), "userMessage" | "agentMessage"))
+        .count()
+}
+
+fn human_time(ts: i64) -> String {
+    let ts =
+        time::OffsetDateTime::from_unix_timestamp(ts).unwrap_or(time::OffsetDateTime::UNIX_EPOCH);
     let local_ts = UtcOffset::current_local_offset()
         .ok()
         .map(|offset| ts.to_offset(offset))
@@ -565,6 +576,7 @@ impl Drop for RawModeGuard {
 
 #[cfg(test)]
 mod tests {
+    use roder_protocol::{DesktopItem, DesktopThreadStatus, DesktopTurn};
     use time::{Duration, OffsetDateTime};
 
     use super::*;
@@ -646,50 +658,80 @@ mod tests {
         assert_eq!(line, "abcdefg...");
     }
 
-    fn session(id: &str, title: Option<&str>, workspace: Option<&str>) -> SessionMetadata {
-        SessionMetadata {
-            thread_id: id.to_string(),
-            title: title.map(str::to_string),
-            workspace: workspace.map(str::to_string),
-            provider: Some("mock".to_string()),
-            model: Some("mock".to_string()),
-            runner_destination: None,
-            runner_state: None,
-            created_at: OffsetDateTime::UNIX_EPOCH,
-            updated_at: OffsetDateTime::UNIX_EPOCH + Duration::seconds(1),
-            message_count: 2,
-        }
+    fn session(id: &str, title: Option<&str>, workspace: Option<&str>) -> DesktopThread {
+        thread_with_updated_at(
+            id,
+            title,
+            workspace,
+            OffsetDateTime::UNIX_EPOCH + Duration::seconds(1),
+        )
     }
 
     #[test]
     fn sorts_filtered_sessions_by_updated_at_desc() {
-        let older = SessionMetadata {
-            thread_id: "thread-old".to_string(),
-            title: Some("Older session".to_string()),
-            workspace: Some(std::env::temp_dir().to_string_lossy().to_string()),
-            provider: Some("mock".to_string()),
-            model: Some("mock".to_string()),
-            runner_destination: None,
-            runner_state: None,
-            created_at: OffsetDateTime::UNIX_EPOCH,
-            updated_at: OffsetDateTime::UNIX_EPOCH + Duration::seconds(1),
-            message_count: 1,
-        };
-        let newer = SessionMetadata {
-            thread_id: "thread-new".to_string(),
-            title: Some("Newer session".to_string()),
-            workspace: Some(std::env::temp_dir().to_string_lossy().to_string()),
-            provider: Some("mock".to_string()),
-            model: Some("mock".to_string()),
-            runner_destination: None,
-            runner_state: None,
-            created_at: OffsetDateTime::UNIX_EPOCH,
-            updated_at: OffsetDateTime::UNIX_EPOCH + Duration::seconds(10),
-            message_count: 1,
-        };
+        let older = thread_with_updated_at(
+            "thread-old",
+            Some("Older session"),
+            Some(std::env::temp_dir().to_string_lossy().as_ref()),
+            OffsetDateTime::UNIX_EPOCH + Duration::seconds(1),
+        );
+        let newer = thread_with_updated_at(
+            "thread-new",
+            Some("Newer session"),
+            Some(std::env::temp_dir().to_string_lossy().as_ref()),
+            OffsetDateTime::UNIX_EPOCH + Duration::seconds(10),
+        );
         let sessions = vec![older, newer];
 
         let results = filtered_sessions(&sessions, "", false, None);
         assert_eq!(results, vec![1, 0]);
+    }
+
+    fn thread_with_updated_at(
+        id: &str,
+        title: Option<&str>,
+        workspace: Option<&str>,
+        updated_at: OffsetDateTime,
+    ) -> DesktopThread {
+        DesktopThread {
+            id: id.to_string(),
+            session_id: id.to_string(),
+            preview: title.unwrap_or("Untitled thread").to_string(),
+            model_provider: "mock".to_string(),
+            created_at: OffsetDateTime::UNIX_EPOCH.unix_timestamp(),
+            updated_at: updated_at.unix_timestamp(),
+            status: DesktopThreadStatus {
+                kind: "idle".to_string(),
+                active_flags: Vec::new(),
+            },
+            cwd: workspace.unwrap_or("/tmp").to_string(),
+            name: title.map(str::to_string),
+            turns: Some(vec![DesktopTurn {
+                id: "turn-a".to_string(),
+                items: vec![
+                    item("userMessage", Some("hi")),
+                    item("agentMessage", Some("hello")),
+                ],
+                items_view: "default".to_string(),
+                status: "completed".to_string(),
+                error: None,
+                started_at: None,
+                completed_at: None,
+                duration_ms: None,
+            }]),
+        }
+    }
+
+    fn item(kind: &str, text: Option<&str>) -> DesktopItem {
+        DesktopItem {
+            id: format!("{kind}-id"),
+            kind: kind.to_string(),
+            text: text.map(str::to_string),
+            status: None,
+            phase: None,
+            tool_name: None,
+            tool_call_id: None,
+            payload: None,
+        }
     }
 }

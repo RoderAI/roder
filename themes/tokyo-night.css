@@ -34,7 +34,7 @@
     --border:             var(--bg-elev);
     --mode-plan:          var(--cyan);
     --mode-default:       var(--comment);
-    --mode-accept-edits:  var(--green);
+    --mode-accept-all:  var(--green);
     --mode-bypass:        var(--red);
     --selection-bg:       var(--bg-elev);
     --selection-fg:       var(--fg);

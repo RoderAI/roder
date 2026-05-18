@@ -35,7 +35,7 @@ pub const KNOWN_VARS: &[&str] = &[
     "border",
     "mode-plan",
     "mode-default",
-    "mode-accept-edits",
+    "mode-accept-all",
     "mode-bypass",
     "selection-bg",
     "selection-fg",

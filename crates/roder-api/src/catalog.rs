@@ -9,6 +9,8 @@ pub const PROVIDER_ANTHROPIC: &str = "anthropic";
 pub const PROVIDER_GEMINI: &str = "gemini";
 pub const PROVIDER_XAI: &str = "xai";
 pub const PROVIDER_SUPERGROK: &str = "supergrok";
+pub const PROVIDER_OPENCODE: &str = "opencode";
+pub const PROVIDER_OPENCODE_GO: &str = "opencode-go";
 
 pub const PROVIDER_KIND_MOCK: &str = "mock";
 pub const PROVIDER_KIND_OPENAI: &str = "openai";
@@ -16,6 +18,7 @@ pub const PROVIDER_KIND_CHAT_COMPLETIONS: &str = "chat_completions";
 pub const PROVIDER_KIND_ANTHROPIC: &str = "anthropic";
 pub const PROVIDER_KIND_GEMINI: &str = "gemini";
 pub const PROVIDER_KIND_XAI: &str = "xai";
+pub const PROVIDER_KIND_OPENCODE: &str = "opencode";
 
 pub const REASONING_NONE: &str = "none";
 pub const REASONING_MINIMAL: &str = "minimal";
@@ -273,6 +276,28 @@ pub const BUILT_IN_PROVIDERS: &[ProviderCatalogEntry] = &[
         requires_auth: true,
         supports_websockets: false,
     },
+    ProviderCatalogEntry {
+        id: PROVIDER_OPENCODE,
+        name: "OpenCode Zen",
+        kind: PROVIDER_KIND_OPENCODE,
+        default_model: "gpt-5.5",
+        base_url: Some("https://opencode.ai/zen/v1"),
+        env_key: Some("OPENCODE_API_KEY"),
+        env_aliases: &["OPENCODE_ZEN_API_KEY"],
+        requires_auth: true,
+        supports_websockets: false,
+    },
+    ProviderCatalogEntry {
+        id: PROVIDER_OPENCODE_GO,
+        name: "OpenCode Go",
+        kind: PROVIDER_KIND_OPENCODE,
+        default_model: "kimi-k2.6",
+        base_url: Some("https://opencode.ai/zen/go/v1"),
+        env_key: Some("OPENCODE_GO_API_KEY"),
+        env_aliases: &[],
+        requires_auth: true,
+        supports_websockets: false,
+    },
 ];
 
 pub const BUILT_IN_MODELS: &[ModelCatalogEntry] = &[
@@ -451,6 +476,96 @@ pub const BUILT_IN_MODELS: &[ModelCatalogEntry] = &[
         REASONING_NONE,
         XAI_NO_REASONING,
     ),
+    opencode_model(
+        PROVIDER_OPENCODE,
+        "gpt-5.5",
+        "GPT 5.5",
+        "OpenCode Zen GPT 5.5 gateway model.",
+        1_050_000,
+        REASONING_MEDIUM,
+        STANDARD_REASONING,
+    ),
+    opencode_model(
+        PROVIDER_OPENCODE,
+        "gpt-5.3-codex-spark",
+        "GPT 5.3 Codex Spark",
+        "OpenCode Zen low-latency Codex model.",
+        128_000,
+        REASONING_HIGH,
+        STANDARD_REASONING,
+    ),
+    opencode_model(
+        PROVIDER_OPENCODE,
+        "big-pickle",
+        "Big Pickle",
+        "OpenCode Zen free coding model.",
+        256_000,
+        REASONING_NONE,
+        &[],
+    ),
+    opencode_model(
+        PROVIDER_OPENCODE,
+        "deepseek-v4-flash-free",
+        "DeepSeek V4 Flash Free",
+        "OpenCode Zen free DeepSeek coding model.",
+        128_000,
+        REASONING_NONE,
+        &[],
+    ),
+    opencode_model(
+        PROVIDER_OPENCODE,
+        "minimax-m2.5-free",
+        "MiniMax M2.5 Free",
+        "OpenCode Zen free MiniMax coding model.",
+        256_000,
+        REASONING_NONE,
+        &[],
+    ),
+    opencode_model(
+        PROVIDER_OPENCODE,
+        "nemotron-3-super-free",
+        "Nemotron 3 Super Free",
+        "OpenCode Zen free Nemotron coding model.",
+        128_000,
+        REASONING_NONE,
+        &[],
+    ),
+    opencode_model(
+        PROVIDER_OPENCODE_GO,
+        "kimi-k2.6",
+        "Kimi K2.6",
+        "OpenCode Go Kimi coding model.",
+        256_000,
+        REASONING_NONE,
+        &[],
+    ),
+    opencode_model(
+        PROVIDER_OPENCODE_GO,
+        "qwen3.6-plus",
+        "Qwen3.6 Plus",
+        "OpenCode Go Qwen coding model.",
+        256_000,
+        REASONING_NONE,
+        &[],
+    ),
+    opencode_model(
+        PROVIDER_OPENCODE_GO,
+        "glm-5.1",
+        "GLM-5.1",
+        "OpenCode Go GLM coding model.",
+        256_000,
+        REASONING_NONE,
+        &[],
+    ),
+    opencode_model(
+        PROVIDER_OPENCODE_GO,
+        "deepseek-v4-flash",
+        "DeepSeek V4 Flash",
+        "OpenCode Go DeepSeek coding model.",
+        128_000,
+        REASONING_NONE,
+        &[],
+    ),
     ModelCatalogEntry {
         id: "text-embedding-3-large",
         display_name: "Text Embedding 3 Large",
@@ -596,6 +711,34 @@ const fn xai_model(
     }
 }
 
+const fn opencode_model(
+    provider: &'static str,
+    id: &'static str,
+    display_name: &'static str,
+    description: &'static str,
+    context_window: u32,
+    default_reasoning: &'static str,
+    supported_reasoning: &'static [ReasoningOption],
+) -> ModelCatalogEntry {
+    ModelCatalogEntry {
+        id,
+        display_name,
+        description,
+        provider,
+        default_reasoning,
+        supported_reasoning,
+        context_window,
+        max_context_window: context_window,
+        auto_compact_token_limit: context_window.saturating_mul(9) / 10,
+        supports_compaction: false,
+        supports_images: false,
+        supports_tools: true,
+        supports_structured: true,
+        edit_tool: Some("edit"),
+        hidden: false,
+    }
+}
+
 pub fn built_in_providers() -> &'static [ProviderCatalogEntry] {
     BUILT_IN_PROVIDERS
 }
@@ -633,6 +776,8 @@ pub fn normalize_provider_id(provider: &str) -> String {
         "grok-oauth" | "xai-oauth" | "x-ai-oauth" | "xai-grok-oauth" => {
             PROVIDER_SUPERGROK.to_string()
         }
+        "opencode-zen" | "zen" => PROVIDER_OPENCODE.to_string(),
+        "go" | "opencode_go" | "opencode-go" => PROVIDER_OPENCODE_GO.to_string(),
         provider => provider.to_string(),
     }
 }
@@ -675,7 +820,9 @@ mod tests {
                 "anthropic",
                 "gemini",
                 "xai",
-                "supergrok"
+                "supergrok",
+                "opencode",
+                "opencode-go"
             ]
         );
     }
@@ -707,6 +854,16 @@ mod tests {
                 "grok-4.20-multi-agent-0309",
                 "grok-4.20-0309-reasoning",
                 "grok-4.20-0309-non-reasoning",
+                "gpt-5.5",
+                "gpt-5.3-codex-spark",
+                "big-pickle",
+                "deepseek-v4-flash-free",
+                "minimax-m2.5-free",
+                "nemotron-3-super-free",
+                "kimi-k2.6",
+                "qwen3.6-plus",
+                "glm-5.1",
+                "deepseek-v4-flash",
             ]
         );
     }
@@ -719,6 +876,8 @@ mod tests {
         assert_eq!(models_for_provider(PROVIDER_GEMINI, false).len(), 4);
         assert_eq!(models_for_provider(PROVIDER_XAI, false).len(), 4);
         assert_eq!(models_for_provider(PROVIDER_SUPERGROK, false).len(), 4);
+        assert_eq!(models_for_provider(PROVIDER_OPENCODE, false).len(), 6);
+        assert_eq!(models_for_provider(PROVIDER_OPENCODE_GO, false).len(), 4);
         assert_eq!(models_for_provider(PROVIDER_MOCK, true).len(), 1);
     }
 

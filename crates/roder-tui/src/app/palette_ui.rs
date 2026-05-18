@@ -1,4 +1,4 @@
-use super::session_resume::{agents_list, commands_list, sessions_list};
+use super::session_resume::{agents_list, commands_list, threads_list};
 use super::*;
 use crate::palette::{
     PaletteAction, collect_entries, cycle_source_filter,
@@ -40,10 +40,10 @@ impl TuiApp {
             self.command_catalog = commands;
         }
 
-        let sessions = match sessions_list(&self.client).await {
+        let sessions = match threads_list(&self.client).await {
             Ok(sessions) => sessions,
             Err(err) => {
-                self.push_event(format!("sessions/list unavailable: {err}"));
+                self.push_event(format!("thread/list unavailable: {err}"));
                 Vec::new()
             }
         };

@@ -36,6 +36,7 @@ impl InferenceEngine for SuperGrokEngine {
             description: Some("SuperGrok OAuth provider for xAI Grok models".to_string()),
             auth_type: ProviderAuthType::OAuth,
             auth_label: Some("SuperGrok subscription".to_string()),
+            auth_configured: None,
             recommended: false,
             sort_order: 55,
         }

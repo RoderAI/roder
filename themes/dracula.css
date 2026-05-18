@@ -33,7 +33,7 @@
     --border:             var(--current);
     --mode-plan:          var(--cyan);
     --mode-default:       var(--comment);
-    --mode-accept-edits:  var(--green);
+    --mode-accept-all:  var(--green);
     --mode-bypass:        var(--red);
     --selection-bg:       var(--current);
     --selection-fg:       var(--fg);

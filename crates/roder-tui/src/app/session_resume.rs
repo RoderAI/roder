@@ -1,23 +1,29 @@
-use roder_api::conversation::ConversationItem;
-use roder_api::session::ThreadSnapshot;
+use roder_protocol::{
+    DesktopItem, DesktopThread, ThreadListParams, ThreadListResult, ThreadReadParams,
+    ThreadReadResult,
+};
 
 use super::*;
 
-pub(super) async fn sessions_list(
-    client: &LocalAppClient,
-) -> anyhow::Result<Vec<roder_api::session::SessionMetadata>> {
+pub(super) async fn threads_list(client: &LocalAppClient) -> anyhow::Result<Vec<DesktopThread>> {
     let res = client
         .send_request(JsonRpcRequest {
             jsonrpc: "2.0".to_string(),
-            id: Some(serde_json::json!("sessions/list")),
-            method: "sessions/list".to_string(),
-            params: None,
+            id: Some(serde_json::json!("thread/list")),
+            method: "thread/list".to_string(),
+            params: Some(serde_json::to_value(ThreadListParams { limit: None }).unwrap()),
         })
         .await;
-    let mut sessions = decode_response::<SessionsListResult>(res)?.sessions;
-    sessions = resumable_sessions(client, sessions).await;
-    sessions.sort_by_key(|session| std::cmp::Reverse(session.updated_at));
-    Ok(sessions)
+    let mut threads = Vec::new();
+    for thread in decode_response::<ThreadListResult>(res)?.data {
+        if let Ok(Some(full_thread)) = load_thread(client, &thread.id).await {
+            if thread_has_user_message(&full_thread) {
+                threads.push(full_thread);
+            }
+        }
+    }
+    threads.sort_by_key(|thread| std::cmp::Reverse(thread.updated_at));
+    Ok(threads)
 }
 
 pub(super) async fn commands_list(
@@ -36,14 +42,15 @@ pub(super) async fn commands_list(
 
 impl TuiApp {
     pub(super) async fn load_session(&mut self, thread_id: String) {
-        match load_snapshot(&self.client, &thread_id).await {
-            Ok(Some(snapshot)) => self.apply_snapshot(thread_id, snapshot),
+        match load_thread(&self.client, &thread_id).await {
+            Ok(Some(thread)) => self.apply_thread(thread),
             Ok(None) => self.record_error(format!("session not found: {}", short_id(&thread_id))),
-            Err(err) => self.record_error(format!("sessions/load failed: {err}")),
+            Err(err) => self.record_error(format!("thread/read failed: {err}")),
         }
     }
 
-    pub(super) fn apply_snapshot(&mut self, thread_id: String, snapshot: ThreadSnapshot) {
+    pub(super) fn apply_thread(&mut self, thread: DesktopThread) {
+        let thread_id = thread.id.clone();
         self.thread_id = thread_id.clone();
         self.active_turn_id = None;
         self.active_turn_timer = TurnTimer::default();
@@ -58,42 +65,26 @@ impl TuiApp {
         self.image_attachments.clear();
         self.timeline = TimelineState::default();
 
-        if let Some(metadata) = snapshot.metadata.as_ref() {
-            if let Some(provider) = metadata
-                .provider
-                .as_ref()
-                .filter(|value| !value.trim().is_empty())
-            {
-                self.provider = provider.clone();
-            }
-            if let Some(model) = metadata
-                .model
-                .as_ref()
-                .filter(|value| !value.trim().is_empty())
-            {
-                self.model = model.clone();
-                self.model_context_window = context_window_for_model(model);
-            }
-            self.session_title = metadata.title.clone();
-            self.session_message_count = metadata.message_count as usize;
-        } else {
-            self.session_title = None;
-            self.session_message_count = 0;
+        if !thread.model_provider.trim().is_empty() {
+            self.provider = thread.model_provider.clone();
         }
+        self.session_title = thread
+            .name
+            .clone()
+            .filter(|title| !title.trim().is_empty())
+            .or_else(|| (!thread.preview.trim().is_empty()).then(|| thread.preview.clone()));
+        self.session_message_count = message_count_from_thread(&thread);
 
         let mut item_count = 0usize;
-        for turn in &snapshot.turns {
+        for turn in thread.turns.as_deref().unwrap_or_default() {
             for item in &turn.items {
                 item_count += 1;
-                self.push_snapshot_item(item);
+                self.push_desktop_item(item);
             }
         }
 
         if self.session_title.is_none() {
-            self.session_title = title_from_snapshot(&snapshot);
-        }
-        if self.session_message_count == 0 {
-            self.session_message_count = message_count_from_snapshot(&snapshot);
+            self.session_title = title_from_thread(&thread);
         }
 
         self.timeline.push_system(format!(
@@ -105,59 +96,73 @@ impl TuiApp {
         self.push_event(format!("resumed session {}", short_id(&thread_id)));
     }
 
-    fn push_snapshot_item(&mut self, item: &ConversationItem) {
-        match item {
-            ConversationItem::UserMessage(message) => {
-                let display = user_snapshot_text(message);
+    fn push_desktop_item(&mut self, item: &DesktopItem) {
+        match item.kind.as_str() {
+            "userMessage" => {
+                let display = item.text.clone().unwrap_or_default();
                 self.last_user_prompt = Some(PendingPrompt::with_images(
                     display.clone(),
-                    message.text.clone(),
-                    message.images.clone(),
+                    display.clone(),
+                    Vec::new(),
                 ));
                 self.timeline.push_user(display);
             }
-            ConversationItem::AssistantMessage(message) => {
-                self.timeline
-                    .push_assistant_delta(&message.text, message.phase.clone());
-            }
-            ConversationItem::ReasoningSummary(summary) => {
-                self.timeline.push_reasoning_delta(&summary.text);
-            }
-            ConversationItem::ToolCall(call) => {
-                self.record_tool_requested_with_id(
-                    call.id.clone(),
-                    ToolTimelineEntry::new(call.name.clone(), call.arguments.clone()),
+            "agentMessage" => {
+                self.timeline.push_assistant_delta(
+                    item.text.as_deref().unwrap_or_default(),
+                    item.phase.clone(),
                 );
             }
-            ConversationItem::ToolResult(result) => {
-                if !self.tool_names.contains_key(&result.id) {
-                    let name = result
-                        .name
+            "reasoning" => {
+                self.timeline
+                    .push_reasoning_delta(item.text.as_deref().unwrap_or_default());
+            }
+            "toolMessage" => {
+                let tool_id = item.tool_call_id.clone().unwrap_or_else(|| item.id.clone());
+                if !self.tool_names.contains_key(&tool_id) {
+                    let name = item
+                        .tool_name
                         .clone()
-                        .unwrap_or_else(|| format!("tool {}", short_id(&result.id)));
+                        .unwrap_or_else(|| format!("tool {}", short_id(&tool_id)));
                     self.record_tool_requested_with_id(
-                        result.id.clone(),
+                        tool_id.clone(),
                         ToolTimelineEntry::new(name, ""),
                     );
                 }
                 self.record_tool_completed(
-                    &result.id,
-                    result.is_error,
-                    Some(result.result.clone()),
+                    &tool_id,
+                    item.status.as_deref() == Some("failed"),
+                    item.text
+                        .clone()
+                        .or_else(|| item.payload.as_ref().map(ToString::to_string)),
                 );
             }
-            ConversationItem::FileChange(change) => {
+            kind if kind.starts_with("tool.") || kind == "toolCall" => {
+                let tool_id = item.tool_call_id.clone().unwrap_or_else(|| item.id.clone());
+                let name = item
+                    .tool_name
+                    .clone()
+                    .or_else(|| kind.strip_prefix("tool.").map(str::to_string))
+                    .unwrap_or_else(|| "tool".to_string());
+                let arguments = item
+                    .payload
+                    .as_ref()
+                    .map(ToString::to_string)
+                    .unwrap_or_default();
+                self.record_tool_requested_with_id(
+                    tool_id,
+                    ToolTimelineEntry::new(name, arguments),
+                );
+            }
+            "error" => {
                 self.timeline
-                    .push_system(format!("file {}: {}", change.change_type, change.path));
+                    .push_error(item.text.clone().unwrap_or_else(|| "error".to_string()));
             }
-            ConversationItem::ContextCompaction(compaction) => {
-                self.timeline.push_system(format!(
-                    "context compacted: {}",
-                    truncate(&compaction.summary, 160)
-                ));
+            _ => {
+                if let Some(text) = item.text.as_ref().filter(|text| !text.trim().is_empty()) {
+                    self.timeline.push_system(text.clone());
+                }
             }
-            ConversationItem::Error(error) => self.timeline.push_error(error.message.clone()),
-            ConversationItem::ProviderMetadata(_) => {}
         }
     }
 
@@ -177,191 +182,139 @@ impl TuiApp {
     }
 }
 
-pub(super) async fn load_snapshot(
+pub(super) async fn load_thread(
     client: &LocalAppClient,
     thread_id: &str,
-) -> anyhow::Result<Option<ThreadSnapshot>> {
+) -> anyhow::Result<Option<DesktopThread>> {
     let res = client
         .send_request(JsonRpcRequest {
             jsonrpc: "2.0".to_string(),
-            id: Some(serde_json::json!("sessions/load")),
-            method: "sessions/load".to_string(),
+            id: Some(serde_json::json!("thread/read")),
+            method: "thread/read".to_string(),
             params: Some(
-                serde_json::to_value(SessionLoadParams {
+                serde_json::to_value(ThreadReadParams {
                     thread_id: thread_id.to_string(),
+                    include_turns: true,
                 })
                 .unwrap(),
             ),
         })
         .await;
-    Ok(decode_response::<SessionLoadResult>(res)?.snapshot)
+    Ok(decode_response::<ThreadReadResult>(res)?.thread)
 }
 
-fn user_snapshot_text(message: &roder_api::conversation::UserMessage) -> String {
-    if message.images.is_empty() {
-        return message.text.clone();
-    }
-    format!(
-        "{}\n[{} image attachment{}]",
-        message.text,
-        message.images.len(),
-        if message.images.len() == 1 { "" } else { "s" }
-    )
-}
-
-fn title_from_snapshot(snapshot: &ThreadSnapshot) -> Option<String> {
-    snapshot.turns.iter().find_map(|turn| {
-        turn.items.iter().find_map(|item| match item {
-            ConversationItem::UserMessage(message) if !message.text.trim().is_empty() => {
-                Some(truncate(message.text.trim(), 72))
-            }
-            _ => None,
+fn title_from_thread(thread: &DesktopThread) -> Option<String> {
+    thread.turns.as_ref()?.iter().find_map(|turn| {
+        turn.items.iter().find_map(|item| {
+            (item.kind == "userMessage")
+                .then(|| item.text.as_deref())
+                .flatten()
+                .filter(|text| !text.trim().is_empty())
+                .map(|text| truncate(text.trim(), 72))
         })
     })
 }
 
-fn message_count_from_snapshot(snapshot: &ThreadSnapshot) -> usize {
-    snapshot
+fn message_count_from_thread(thread: &DesktopThread) -> usize {
+    thread
         .turns
+        .as_deref()
+        .unwrap_or_default()
         .iter()
         .flat_map(|turn| turn.items.iter())
-        .filter(|item| {
-            matches!(
-                item,
-                ConversationItem::UserMessage(_) | ConversationItem::AssistantMessage(_)
-            )
-        })
+        .filter(|item| matches!(item.kind.as_str(), "userMessage" | "agentMessage"))
         .count()
 }
 
-async fn resumable_sessions(
-    client: &LocalAppClient,
-    sessions: Vec<roder_api::session::SessionMetadata>,
-) -> Vec<roder_api::session::SessionMetadata> {
-    let mut filtered = Vec::new();
-    for mut session in sessions {
-        if let Ok(Some(snapshot)) = load_snapshot(client, &session.thread_id).await
-            && snapshot_has_user_message(&snapshot)
-        {
-            if session.message_count == 0 {
-                session.message_count = message_count_from_snapshot(&snapshot) as u32;
-            }
-            filtered.push(session);
-        }
-    }
-    filtered
-}
-
-fn snapshot_has_user_message(snapshot: &ThreadSnapshot) -> bool {
-    snapshot.turns.iter().any(|turn| {
-        turn.items.iter().any(|item| {
-            matches!(
-                item,
-                ConversationItem::UserMessage(message)
-                    if !message.text.trim().is_empty() || !message.images.is_empty()
-            )
+fn thread_has_user_message(thread: &DesktopThread) -> bool {
+    thread
+        .turns
+        .as_deref()
+        .unwrap_or_default()
+        .iter()
+        .flat_map(|turn| turn.items.iter())
+        .any(|item| {
+            item.kind == "userMessage"
+                && item
+                    .text
+                    .as_deref()
+                    .is_some_and(|text| !text.trim().is_empty())
         })
-    })
 }
 
 #[cfg(test)]
 mod tests {
-    use roder_api::conversation::{AssistantMessage, UserMessage};
-    use roder_api::session::{SessionMetadata, TurnRecord};
-    use time::OffsetDateTime;
+    use roder_protocol::{DesktopThreadStatus, DesktopTurn};
 
     use super::*;
 
+    fn test_thread(items: Vec<DesktopItem>) -> DesktopThread {
+        DesktopThread {
+            id: "thread-a".to_string(),
+            session_id: "thread-a".to_string(),
+            preview: String::new(),
+            model_provider: "mock".to_string(),
+            created_at: 0,
+            updated_at: 0,
+            status: DesktopThreadStatus {
+                kind: "idle".to_string(),
+                active_flags: Vec::new(),
+            },
+            cwd: "/tmp".to_string(),
+            name: None,
+            turns: Some(vec![DesktopTurn {
+                id: "turn-a".to_string(),
+                items,
+                items_view: "all".to_string(),
+                status: "completed".to_string(),
+                error: None,
+                started_at: None,
+                completed_at: None,
+                duration_ms: None,
+            }]),
+        }
+    }
+
+    fn item(kind: &str, text: Option<&str>) -> DesktopItem {
+        DesktopItem {
+            id: format!("{kind}-id"),
+            kind: kind.to_string(),
+            text: text.map(str::to_string),
+            status: None,
+            phase: None,
+            tool_name: None,
+            tool_call_id: None,
+            payload: None,
+        }
+    }
+
     #[test]
     fn derives_resume_title_from_first_user_message() {
-        let snapshot = ThreadSnapshot {
-            metadata: None,
-            events: Vec::new(),
-            extension_states: Vec::new(),
-            turns: vec![TurnRecord {
-                thread_id: "thread-a".to_string(),
-                turn_id: "turn-a".to_string(),
-                items: vec![ConversationItem::UserMessage(UserMessage::text(
-                    "explain this repository",
-                ))],
-                created_at: OffsetDateTime::UNIX_EPOCH,
-                completed_at: None,
-            }],
-        };
+        let thread = test_thread(vec![item("userMessage", Some("explain this repository"))]);
 
         assert_eq!(
-            title_from_snapshot(&snapshot).as_deref(),
+            title_from_thread(&thread).as_deref(),
             Some("explain this repository")
         );
     }
 
     #[test]
     fn counts_user_and_assistant_messages_only() {
-        let snapshot = ThreadSnapshot {
-            metadata: Some(SessionMetadata {
-                thread_id: "thread-a".to_string(),
-                title: None,
-                workspace: None,
-                provider: None,
-                model: None,
-                runner_destination: None,
-                runner_state: None,
-                created_at: OffsetDateTime::UNIX_EPOCH,
-                updated_at: OffsetDateTime::UNIX_EPOCH,
-                message_count: 0,
-            }),
-            events: Vec::new(),
-            extension_states: Vec::new(),
-            turns: vec![TurnRecord {
-                thread_id: "thread-a".to_string(),
-                turn_id: "turn-a".to_string(),
-                items: vec![
-                    ConversationItem::UserMessage(UserMessage::text("hi")),
-                    ConversationItem::AssistantMessage(AssistantMessage {
-                        text: "hello".to_string(),
-                        phase: None,
-                    }),
-                    ConversationItem::ProviderMetadata(serde_json::json!({"id": "resp_1"})),
-                ],
-                created_at: OffsetDateTime::UNIX_EPOCH,
-                completed_at: None,
-            }],
-        };
+        let thread = test_thread(vec![
+            item("userMessage", Some("hi")),
+            item("agentMessage", Some("hello")),
+            item("reasoning", Some("thinking")),
+        ]);
 
-        assert_eq!(message_count_from_snapshot(&snapshot), 2);
+        assert_eq!(message_count_from_thread(&thread), 2);
     }
 
     #[test]
-    fn detects_snapshots_with_user_messages() {
-        let with_user = ThreadSnapshot {
-            metadata: None,
-            events: Vec::new(),
-            extension_states: Vec::new(),
-            turns: vec![TurnRecord {
-                thread_id: "thread-a".to_string(),
-                turn_id: "turn-a".to_string(),
-                items: vec![ConversationItem::UserMessage(UserMessage::text("hi"))],
-                created_at: OffsetDateTime::UNIX_EPOCH,
-                completed_at: None,
-            }],
-        };
-        let assistant_only = ThreadSnapshot {
-            metadata: None,
-            events: Vec::new(),
-            extension_states: Vec::new(),
-            turns: vec![TurnRecord {
-                thread_id: "thread-b".to_string(),
-                turn_id: "turn-b".to_string(),
-                items: vec![ConversationItem::AssistantMessage(AssistantMessage {
-                    text: "hello".to_string(),
-                    phase: None,
-                })],
-                created_at: OffsetDateTime::UNIX_EPOCH,
-                completed_at: None,
-            }],
-        };
+    fn detects_threads_with_user_messages() {
+        let with_user = test_thread(vec![item("userMessage", Some("hi"))]);
+        let assistant_only = test_thread(vec![item("agentMessage", Some("hello"))]);
 
-        assert!(snapshot_has_user_message(&with_user));
-        assert!(!snapshot_has_user_message(&assistant_only));
+        assert!(thread_has_user_message(&with_user));
+        assert!(!thread_has_user_message(&assistant_only));
     }
 }

@@ -26,7 +26,7 @@ mod tool_timeline;
 mod turn_timer;
 mod workflow_import;
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::io;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
@@ -59,19 +59,19 @@ use roder_api::inference::{
     HostedWebSearchMode, ProviderAuthType, ReasoningEffortDescriptor, TokenUsage,
 };
 use roder_api::policy_mode::{PolicyDecision, PolicyMode};
-use roder_api::session::SessionMetadata;
 use roder_app_server::LocalAppClient;
 use roder_protocol::{
-    AgentsListResult, CodexAuthResult, CommandDescriptor, CommandsExpandParams,
-    CommandsExpandResult, CommandsListResult, CreateSessionResult, InterruptTurnParams,
-    JsonRpcRequest, JsonRpcResponse, PendingPlanExitDescriptor, ProviderDescriptor,
+    AgentsListResult, CommandDescriptor, CommandsExpandParams, CommandsExpandResult,
+    CommandsListResult, DesktopThread, JsonRpcRequest, JsonRpcResponse, PendingPlanExitDescriptor,
+    ProviderAuthResult, ProviderConfigureParams, ProviderConfigureResult, ProviderDescriptor,
     ProviderSelectParams, ProviderSelectResult, ProvidersListResult, RunnersListResult,
     RunnersSelectParams, RunnersSelectResult, SessionExitPlanParams, SessionExitPlanResult,
-    SessionGetResult, SessionLoadParams, SessionLoadResult, SessionResolveApprovalParams,
-    SessionResolveApprovalResult, SessionSetModeParams, SessionSetModeResult, SessionsListResult,
-    SettingsGetResult, SettingsSetDefaultModeParams, SettingsSetDefaultModeResult,
-    SettingsSetWebSearchParams, SettingsSetWebSearchResult, StartTurnParams, SteerTurnParams,
+    SessionGetResult, SessionResolveApprovalParams, SessionResolveApprovalResult,
+    SessionSetModeParams, SessionSetModeResult, SettingsGetResult, SettingsSetDefaultModeParams,
+    SettingsSetDefaultModeResult, SettingsSetWebSearchParams, SettingsSetWebSearchResult,
     TasksGetParams, TasksGetResult, TasksListResult, TeamReadParams, TeamReadResult,
+    ThreadStartParams, ThreadStartResult, TurnInputItem, TurnInterruptParams, TurnStartParams,
+    TurnSteerParams,
 };
 use tokio::io::AsyncWriteExt;
 use tokio::process::Command;
@@ -102,6 +102,14 @@ const COPIED_HELPER_DURATION: Duration = Duration::from_secs(2);
 fn keyboard_enhancement_flags() -> KeyboardEnhancementFlags {
     KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES
         | KeyboardEnhancementFlags::REPORT_ALL_KEYS_AS_ESCAPE_CODES
+}
+
+fn pending_text_input(text: String) -> Vec<TurnInputItem> {
+    vec![TurnInputItem {
+        kind: "text".to_string(),
+        text: Some(text),
+        path: None,
+    }]
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -256,10 +264,7 @@ impl Theme {
         set!(border, "border");
         set!(mode_plan, "mode-plan");
         set!(mode_default, "mode-default");
-        // Master renamed the field `mode_accept_edits` -> `mode_accept_all`.
-        // The CSS variable name stays `mode-accept-edits` for backwards
-        // compatibility with existing themes.
-        set!(mode_accept_all, "mode-accept-edits");
+        set!(mode_accept_all, "mode-accept-all");
         set!(mode_bypass, "mode-bypass");
         set!(selection_bg, "selection-bg");
         set!(selection_fg, "selection-fg");
@@ -477,6 +482,34 @@ struct ProviderChoice {
     recommended: bool,
 }
 
+#[derive(Debug, Clone, Copy)]
+struct ProviderAuthFlow {
+    provider_id: &'static str,
+    display_name: &'static str,
+    login_method: &'static str,
+    logout_method: &'static str,
+}
+
+impl ProviderAuthFlow {
+    fn for_provider(provider_id: &str) -> Option<Self> {
+        match provider_id {
+            "codex" => Some(Self {
+                provider_id: "codex",
+                display_name: "Codex",
+                login_method: "auth/codex/login",
+                logout_method: "auth/codex/logout",
+            }),
+            "supergrok" => Some(Self {
+                provider_id: "supergrok",
+                display_name: "SuperGrok",
+                login_method: "auth/supergrok/login",
+                logout_method: "auth/supergrok/logout",
+            }),
+            _ => None,
+        }
+    }
+}
+
 #[derive(Debug, Clone, serde::Deserialize)]
 struct WorkflowToolCallResult {
     text: String,
@@ -536,6 +569,7 @@ impl ImageAttachment {
 enum ProviderPopupScreen {
     Main,
     Providers,
+    ApiKey,
     Models,
     Reasoning,
     Settings,
@@ -691,6 +725,7 @@ fn is_dialog_menu_next_key(key: KeyEvent) -> bool {
 
 #[derive(Debug, Clone)]
 enum ProviderMenuItem {
+    Section(String),
     Models,
     Providers,
     Settings,
@@ -710,7 +745,7 @@ enum ProviderMenuItem {
         provider_id: String,
         label: String,
     },
-    Session(Box<SessionMetadata>),
+    Session(Box<DesktopThread>),
     Theme(String),
     Back,
 }
@@ -744,6 +779,7 @@ fn composer_queue_key(key: KeyEvent, has_prepared_prompt: bool) -> bool {
 impl ProviderMenuItem {
     fn label(&self) -> String {
         match self {
+            Self::Section(label) => label.clone(),
             Self::Models => "Models".to_string(),
             Self::Providers => "Providers".to_string(),
             Self::Settings => "Settings".to_string(),
@@ -762,28 +798,30 @@ impl ProviderMenuItem {
             Self::Reasoning(option) => format!("{} - {}", option.effort, option.description),
             Self::Runner { label, .. } => label.clone(),
             Self::Session(session) => {
-                let date = session.updated_at.date().to_string();
-                let workspace = session
-                    .workspace
-                    .as_ref()
-                    .filter(|workspace| !workspace.trim().is_empty())
-                    .map_or("(unknown)".to_string(), |workspace| workspace.clone());
+                let workspace = if session.cwd.trim().is_empty() {
+                    "(unknown)".to_string()
+                } else {
+                    session.cwd.clone()
+                };
                 format!(
-                    "{} [{} msgs] [{}] {}",
-                    date,
-                    session.message_count,
-                    short_id(&session.thread_id),
+                    "{} [{}] {}",
+                    session.updated_at,
+                    short_id(&session.id),
                     session
-                        .title
+                        .name
                         .clone()
                         .filter(|title| !title.trim().is_empty())
-                        .unwrap_or_else(|| format!("Session {}", short_id(&session.thread_id)))
+                        .unwrap_or_else(|| format!("Session {}", short_id(&session.id)))
                         + &format!(" - {workspace}")
                 )
             }
             Self::Theme(id) => id.clone(),
             Self::Back => "Back".to_string(),
         }
+    }
+
+    fn is_selectable(&self) -> bool {
+        !matches!(self, Self::Section(_))
     }
 }
 
@@ -802,8 +840,11 @@ impl ProviderChoice {
             ProviderAuthType::OAuth if self.auth_detail.is_some() => {
                 label.push_str(" - signed in");
             }
+            ProviderAuthType::ApiKey if self.authenticated => {
+                label.push_str(" - API key configured");
+            }
             ProviderAuthType::ApiKey => {
-                label.push_str(" - API key");
+                label.push_str(" - paste API key");
             }
             _ => {}
         }
@@ -849,6 +890,7 @@ pub struct TuiApp {
     provider_choices: Vec<ProviderChoice>,
     model_options: Vec<ProviderOption>,
     pending_reasoning_model: Option<ProviderOption>,
+    pending_api_key_provider: Option<ProviderChoice>,
     provider_menu_items: Vec<ProviderMenuItem>,
     provider_menu_filter: String,
     provider_state: ListState,
@@ -932,24 +974,28 @@ impl TuiApp {
                 .find(|member| member.id == member_id)
                 .cloned()
                 .ok_or_else(|| anyhow::anyhow!("team member not found: {member_id}"))?;
-            let snapshot = session_resume::load_snapshot(&client, &member.thread_id).await?;
-            let metadata = snapshot
-                .as_ref()
-                .and_then(|snapshot| snapshot.metadata.as_ref());
+            let thread = session_resume::load_thread(&client, &member.thread_id).await?;
             let session_model = member
                 .model
                 .clone()
-                .or_else(|| metadata.and_then(|metadata| metadata.model.clone()))
                 .filter(|value| !value.trim().is_empty())
                 .unwrap_or_else(|| model.clone());
             let provider = member
                 .model_provider
                 .clone()
-                .or_else(|| metadata.and_then(|metadata| metadata.provider.clone()))
+                .or_else(|| thread.as_ref().map(|thread| thread.model_provider.clone()))
                 .unwrap_or_default();
             let title = Some(format!("{} ({})", member.name, short_id(&team.id)));
-            let message_count = metadata
-                .map(|metadata| metadata.message_count as usize)
+            let message_count = thread
+                .as_ref()
+                .and_then(|thread| thread.turns.as_ref())
+                .map(|turns| {
+                    turns
+                        .iter()
+                        .flat_map(|turn| turn.items.iter())
+                        .filter(|item| matches!(item.kind.as_str(), "userMessage" | "agentMessage"))
+                        .count()
+                })
                 .unwrap_or_default();
             let mut app = Self::from_session_parts(
                 client,
@@ -967,27 +1013,33 @@ impl TuiApp {
             app.team_ui.set_team(team.id, team.members);
             app.team_ui.focus_member(&member_id);
             app.load_focused_team_timeline();
-            if let Some(snapshot) = snapshot {
-                app.apply_snapshot(member.thread_id, snapshot);
+            if let Some(thread) = thread {
+                app.apply_thread(thread);
             }
             return Ok(app);
         }
 
-        if let TuiStartup::ResumeSession(thread_id) = startup {
-            let snapshot = session_resume::load_snapshot(&client, &thread_id)
+        if let TuiStartup::ResumeSession(thread_id) = startup.clone() {
+            let thread = session_resume::load_thread(&client, &thread_id)
                 .await?
                 .ok_or_else(|| anyhow::anyhow!("session not found: {}", short_id(&thread_id)))?;
-            let metadata = snapshot.metadata.as_ref();
-            let provider = metadata
-                .and_then(|metadata| metadata.provider.clone())
-                .unwrap_or_default();
-            let session_model = metadata
-                .and_then(|metadata| metadata.model.clone())
-                .filter(|value| !value.trim().is_empty())
-                .unwrap_or_else(|| model.clone());
-            let title = metadata.and_then(|metadata| metadata.title.clone());
-            let message_count = metadata
-                .map(|metadata| metadata.message_count as usize)
+            let provider = thread.model_provider.clone();
+            let session_model = model.clone();
+            let title = thread
+                .name
+                .clone()
+                .filter(|title| !title.trim().is_empty())
+                .or_else(|| (!thread.preview.trim().is_empty()).then(|| thread.preview.clone()));
+            let message_count = thread
+                .turns
+                .as_ref()
+                .map(|turns| {
+                    turns
+                        .iter()
+                        .flat_map(|turn| turn.items.iter())
+                        .filter(|item| matches!(item.kind.as_str(), "userMessage" | "agentMessage"))
+                        .count()
+                })
                 .unwrap_or_default();
             let mut app = Self::from_session_parts(
                 client,
@@ -1002,20 +1054,28 @@ impl TuiApp {
                 },
             )
             .await?;
-            app.apply_snapshot(thread_id, snapshot);
+            app.apply_thread(thread);
             return Ok(app);
         }
 
         let req = JsonRpcRequest {
             jsonrpc: "2.0".to_string(),
             id: Some(serde_json::json!(1)),
-            method: "sessions/create".to_string(),
-            params: None,
+            method: "thread/start".to_string(),
+            params: Some(
+                serde_json::to_value(ThreadStartParams {
+                    model: (!model.trim().is_empty()).then(|| model.clone()),
+                    model_provider: None,
+                    cwd: None,
+                    ephemeral: false,
+                })
+                .unwrap(),
+            ),
         };
 
         let res = client.send_request(req).await;
         let session = if let Some(result) = res.result {
-            serde_json::from_value::<CreateSessionResult>(result)?
+            serde_json::from_value::<ThreadStartResult>(result)?
         } else {
             anyhow::bail!("failed to create session: {:?}", res.error);
         };
@@ -1028,11 +1088,11 @@ impl TuiApp {
         let mut app = Self::from_session_parts(
             client,
             SessionParts {
-                thread_id: session.thread_id,
-                provider: session.provider,
+                thread_id: session.thread.id,
+                provider: session.model_provider,
                 session_model: selected_model,
                 requested_model: model,
-                reasoning: session.reasoning,
+                reasoning: "medium".to_string(),
                 session_title: None,
                 session_message_count: 0,
             },
@@ -1130,6 +1190,7 @@ impl TuiApp {
             provider_choices: Vec::new(),
             model_options: Vec::new(),
             pending_reasoning_model: None,
+            pending_api_key_provider: None,
             provider_menu_items: Vec::new(),
             provider_menu_filter: String::new(),
             provider_state,
@@ -1254,6 +1315,32 @@ impl TuiApp {
                         } else if self.show_provider_popup {
                             match key.code {
                                 KeyCode::Esc => self.close_or_back_provider_popup(),
+                                KeyCode::Char('o')
+                                    if self.provider_popup_screen
+                                        == ProviderPopupScreen::ApiKey
+                                        && key.modifiers.contains(KeyModifiers::CONTROL) =>
+                                {
+                                    self.open_opencode_workspace().await;
+                                }
+                                KeyCode::Enter
+                                    if self.provider_popup_screen
+                                        == ProviderPopupScreen::ApiKey =>
+                                {
+                                    self.submit_provider_api_key().await;
+                                }
+                                KeyCode::Backspace
+                                    if self.provider_popup_screen
+                                        == ProviderPopupScreen::ApiKey =>
+                                {
+                                    self.provider_menu_filter.pop();
+                                }
+                                KeyCode::Char(c)
+                                    if self.provider_popup_screen
+                                        == ProviderPopupScreen::ApiKey
+                                        && !key.modifiers.contains(KeyModifiers::CONTROL) =>
+                                {
+                                    self.provider_menu_filter.push(c);
+                                }
                                 _ if is_dialog_menu_previous_key(key) => {
                                     self.select_previous_provider_menu_item();
                                 }
@@ -1670,7 +1757,7 @@ impl TuiApp {
             .send_request(JsonRpcRequest {
                 jsonrpc: "2.0".to_string(),
                 id: Some(serde_json::json!("interrupt")),
-                method: "turns/interrupt".to_string(),
+                method: "turn/interrupt".to_string(),
                 params: Some(serde_json::to_value(params).unwrap()),
             })
             .await;
@@ -1681,10 +1768,10 @@ impl TuiApp {
         }
     }
 
-    fn interrupt_params(&self, turn_id: String) -> InterruptTurnParams {
-        InterruptTurnParams {
+    fn interrupt_params(&self, turn_id: String) -> TurnInterruptParams {
+        TurnInterruptParams {
             thread_id: self.focused_thread_id().to_string(),
-            turn_id,
+            turn_id: Some(turn_id),
         }
     }
 
@@ -2222,20 +2309,18 @@ impl TuiApp {
             self.session_title = Some(truncate(&pending.display, 72));
         }
         let thread_id = self.focused_thread_id().to_string();
-        let params = StartTurnParams {
+        let params = TurnStartParams {
             thread_id,
-            message: pending.message,
-            images: pending.images,
-            provider_override: (!self.provider.trim().is_empty()).then(|| self.provider.clone()),
-            model_override: Some(self.model.clone()),
+            input: pending_text_input(pending.message),
+            prompt: None,
         };
         let client = self.client.clone();
         tokio::spawn(async move {
             let _ = client
                 .send_request(JsonRpcRequest {
                     jsonrpc: "2.0".to_string(),
-                    id: Some(serde_json::json!("turns/start")),
-                    method: "turns/start".to_string(),
+                    id: Some(serde_json::json!("turn/start")),
+                    method: "turn/start".to_string(),
                     params: Some(serde_json::to_value(params).unwrap()),
                 })
                 .await;
@@ -2251,19 +2336,19 @@ impl TuiApp {
             .push_user(format!("steer: {}", pending.display));
         self.push_event("steer queued for active turn".to_string());
         let thread_id = self.focused_thread_id().to_string();
-        let params = SteerTurnParams {
+        let params = TurnSteerParams {
             thread_id,
-            turn_id,
-            message: pending.message,
-            images: pending.images,
+            expected_turn_id: turn_id,
+            input: pending_text_input(pending.message),
+            prompt: None,
         };
         let client = self.client.clone();
         tokio::spawn(async move {
             let _ = client
                 .send_request(JsonRpcRequest {
                     jsonrpc: "2.0".to_string(),
-                    id: Some(serde_json::json!("turns/steer")),
-                    method: "turns/steer".to_string(),
+                    id: Some(serde_json::json!("turn/steer")),
+                    method: "turn/steer".to_string(),
                     params: Some(serde_json::to_value(params).unwrap()),
                 })
                 .await;
@@ -2322,7 +2407,9 @@ impl TuiApp {
         if self.show_provider_popup {
             self.provider_menu_filter
                 .push_str(&text.replace(['\r', '\n'], " "));
-            self.clamp_provider_menu_selection();
+            if self.provider_popup_screen != ProviderPopupScreen::ApiKey {
+                self.clamp_provider_menu_selection();
+            }
             return;
         }
         if let Some(attachments) = image_attachments_from_paste(&text) {
@@ -2945,7 +3032,13 @@ impl TuiApp {
     fn render_provider_popup(&mut self, f: &mut Frame<'_>, area: Rect) {
         let menu_area = centered_rect(area, area.width.min(72), area.height.min(16));
         let visible_items = self.filtered_provider_menu_items();
-        let items: Vec<ListItem> = if visible_items.is_empty() {
+        let items: Vec<ListItem> = if self.provider_popup_screen == ProviderPopupScreen::ApiKey {
+            provider_api_key_items(
+                self.pending_api_key_provider.as_ref(),
+                &self.provider_menu_filter,
+                self.theme,
+            )
+        } else if visible_items.is_empty() {
             vec![ListItem::new(Line::from(Span::styled(
                 "No matches",
                 self.theme.muted(),
@@ -2955,6 +3048,7 @@ impl TuiApp {
                 .iter()
                 .map(|item| {
                     let marker = match item {
+                        ProviderMenuItem::Section(_) => "  ",
                         ProviderMenuItem::Provider(provider) if provider.authenticated => "✓ ",
                         ProviderMenuItem::DefaultMode(mode) if *mode == self.policy_mode => "✓ ",
                         ProviderMenuItem::Spinner(spinner) if *spinner == self.working_spinner => {
@@ -2963,11 +3057,7 @@ impl TuiApp {
                         ProviderMenuItem::WebSearchMode(mode) if *mode == self.web_search_mode => {
                             "✓ "
                         }
-                        ProviderMenuItem::Session(session)
-                            if session.thread_id == self.thread_id =>
-                        {
-                            "✓ "
-                        }
+                        ProviderMenuItem::Session(session) if session.id == self.thread_id => "✓ ",
                         ProviderMenuItem::Theme(id)
                             if self.active_theme_id.as_deref() == Some(id.as_str()) =>
                         {
@@ -2985,9 +3075,14 @@ impl TuiApp {
                         ProviderMenuItem::Back => "‹ ",
                         _ => "• ",
                     };
+                    let label_style = if matches!(item, ProviderMenuItem::Section(_)) {
+                        self.theme.accent()
+                    } else {
+                        self.theme.text()
+                    };
                     ListItem::new(Line::from(vec![
                         Span::styled(marker, self.theme.subtle()),
-                        Span::styled(item.label(), self.theme.text()),
+                        Span::styled(item.label(), label_style),
                     ]))
                 })
                 .collect()
@@ -2995,7 +3090,8 @@ impl TuiApp {
         let title = match self.provider_popup_screen {
             ProviderPopupScreen::Main => " Menu (Enter select, Esc close) ",
             ProviderPopupScreen::Providers => " Providers (Enter select, Esc back) ",
-            ProviderPopupScreen::Models => " Models (Enter select, Esc back) ",
+            ProviderPopupScreen::ApiKey => " Paste API key (Enter save, Esc back) ",
+            ProviderPopupScreen::Models => " Models by provider (Enter select, Esc back) ",
             ProviderPopupScreen::Reasoning => " Reasoning effort (Enter select, Esc back) ",
             ProviderPopupScreen::Settings => " Settings (Enter select, Esc back) ",
             ProviderPopupScreen::Runners => " Runners (Enter select, Esc back) ",
@@ -3027,8 +3123,14 @@ impl TuiApp {
         f.render_widget(Clear, menu_area);
         f.render_widget(block, menu_area);
         f.render_widget(
-            Paragraph::new(provider_search_line(&self.provider_menu_filter, self.theme))
-                .style(self.theme.dialog_surface()),
+            Paragraph::new(
+                if self.provider_popup_screen == ProviderPopupScreen::ApiKey {
+                    provider_api_key_input_line(&self.provider_menu_filter, self.theme)
+                } else {
+                    provider_search_line(&self.provider_menu_filter, self.theme)
+                },
+            )
+            .style(self.theme.dialog_surface()),
             chunks[0],
         );
         f.render_stateful_widget(menu, chunks[1], &mut self.provider_state);
@@ -3050,6 +3152,7 @@ impl TuiApp {
                     context_window_from_options(&self.model_options, &self.provider, &self.model)
                         .or_else(|| context_window_for_model(&self.model));
                 self.pending_reasoning_model = None;
+                self.pending_api_key_provider = None;
                 self.provider_menu_items = main_provider_menu_items(&self.provider_choices);
                 self.provider_popup_screen = ProviderPopupScreen::Main;
                 self.provider_menu_filter.clear();
@@ -3274,6 +3377,11 @@ impl TuiApp {
             self.open_models_submenu();
             return;
         }
+        if self.provider_popup_screen == ProviderPopupScreen::ApiKey {
+            self.pending_api_key_provider = None;
+            self.open_providers_submenu();
+            return;
+        }
         if self.provider_popup_screen == ProviderPopupScreen::Settings {
             self.provider_popup_screen = ProviderPopupScreen::Main;
             self.provider_menu_items = main_provider_menu_items(&self.provider_choices);
@@ -3323,32 +3431,45 @@ impl TuiApp {
     }
 
     fn select_previous_provider_menu_item(&mut self) {
-        let visible_len = self.filtered_provider_menu_items().len();
-        if visible_len == 0 {
-            return;
-        }
-        let last = visible_len - 1;
-        let i = match self.provider_state.selected() {
-            Some(0) | None => last,
-            Some(i) => i - 1,
-        };
-        self.provider_state.select(Some(i));
-        self.preview_highlighted_theme();
+        self.select_provider_menu_item_delta(-1);
     }
 
     fn select_next_provider_menu_item(&mut self) {
-        let visible_len = self.filtered_provider_menu_items().len();
-        if visible_len == 0 {
+        self.select_provider_menu_item_delta(1);
+    }
+
+    fn select_provider_menu_item_delta(&mut self, delta: isize) {
+        let visible_items = self.filtered_provider_menu_items();
+        if visible_items.is_empty() {
+            self.provider_state.select(None);
             return;
         }
-        let last = visible_len - 1;
-        let i = match self.provider_state.selected() {
-            Some(i) if i >= last => 0,
-            Some(i) => i + 1,
-            None => 0,
+        let Some(mut i) = self.provider_state.selected() else {
+            self.provider_state
+                .select(first_selectable_provider_menu_index(&visible_items));
+            self.preview_highlighted_theme();
+            return;
         };
-        self.provider_state.select(Some(i));
-        self.preview_highlighted_theme();
+        i = i.min(visible_items.len() - 1);
+        for _ in 0..visible_items.len() {
+            i = if delta < 0 {
+                if i == 0 {
+                    visible_items.len() - 1
+                } else {
+                    i - 1
+                }
+            } else if i + 1 >= visible_items.len() {
+                0
+            } else {
+                i + 1
+            };
+            if visible_items[i].is_selectable() {
+                self.provider_state.select(Some(i));
+                self.preview_highlighted_theme();
+                return;
+            }
+        }
+        self.provider_state.select(None);
     }
 
     async fn select_current_provider_menu_item(&mut self) {
@@ -3404,6 +3525,7 @@ impl TuiApp {
             ProviderMenuItem::Model(option) => {
                 self.select_provider_model(option).await;
             }
+            ProviderMenuItem::Section(_) => {}
             ProviderMenuItem::Reasoning(option) => {
                 self.select_provider_model_params(ProviderSelectParams {
                     provider: option.provider_id,
@@ -3422,7 +3544,7 @@ impl TuiApp {
             }
             ProviderMenuItem::Session(session) => {
                 self.show_provider_popup = false;
-                self.load_session(session.thread_id).await;
+                self.load_session(session.id).await;
             }
             ProviderMenuItem::Back => {
                 self.close_or_back_provider_popup();
@@ -3433,23 +3555,19 @@ impl TuiApp {
     fn open_models_submenu(&mut self) {
         self.provider_popup_screen = ProviderPopupScreen::Models;
         self.provider_menu_filter.clear();
-        self.provider_menu_items = self
-            .model_options
-            .iter()
-            .cloned()
-            .map(ProviderMenuItem::Model)
-            .chain(std::iter::once(ProviderMenuItem::Back))
-            .collect();
+        self.provider_menu_items = models_menu_items(&self.model_options, &self.provider_choices);
         let selected = self
-            .model_options
+            .provider_menu_items
             .iter()
-            .position(|option| option.provider_id == self.provider && option.model_id == self.model)
-            .unwrap_or(0);
-        if self.provider_menu_items.is_empty() {
-            self.provider_state.select(None);
-        } else {
-            self.provider_state.select(Some(selected));
-        }
+            .position(|item| {
+                matches!(
+                    item,
+                    ProviderMenuItem::Model(option)
+                        if option.provider_id == self.provider && option.model_id == self.model
+                )
+            })
+            .or_else(|| first_selectable_provider_menu_index(&self.provider_menu_items));
+        self.provider_state.select(selected);
     }
 
     fn open_providers_submenu(&mut self) {
@@ -3545,7 +3663,7 @@ impl TuiApp {
     async fn open_resume_submenu(&mut self) {
         self.provider_popup_screen = ProviderPopupScreen::Resume;
         self.provider_menu_filter.clear();
-        match session_resume::sessions_list(&self.client).await {
+        match session_resume::threads_list(&self.client).await {
             Ok(sessions) => {
                 self.provider_menu_items = sessions
                     .into_iter()
@@ -3557,7 +3675,7 @@ impl TuiApp {
                     .provider_menu_items
                     .iter()
                     .position(|item| {
-                        matches!(item, ProviderMenuItem::Session(session) if session.thread_id == self.thread_id)
+                        matches!(item, ProviderMenuItem::Session(session) if session.id == self.thread_id)
                     })
                     .unwrap_or(0);
                 self.provider_state.select(Some(selected));
@@ -3565,7 +3683,7 @@ impl TuiApp {
             Err(err) => {
                 self.provider_menu_items = vec![ProviderMenuItem::Back];
                 self.provider_state.select(Some(0));
-                self.record_error(format!("sessions/list failed: {err}"));
+                self.record_error(format!("thread/list failed: {err}"));
             }
         }
         self.show_provider_popup = true;
@@ -3695,13 +3813,22 @@ impl TuiApp {
     }
 
     fn clamp_provider_menu_selection(&mut self) {
-        let len = self.filtered_provider_menu_items().len();
-        if len == 0 {
+        let visible_items = self.filtered_provider_menu_items();
+        if visible_items.is_empty() {
             self.provider_state.select(None);
             return;
         }
-        let selected = self.provider_state.selected().unwrap_or(0).min(len - 1);
-        self.provider_state.select(Some(selected));
+        let selected = self
+            .provider_state
+            .selected()
+            .unwrap_or(0)
+            .min(visible_items.len() - 1);
+        if visible_items[selected].is_selectable() {
+            self.provider_state.select(Some(selected));
+        } else {
+            self.provider_state
+                .select(first_selectable_provider_menu_index(&visible_items));
+        }
     }
 
     async fn select_provider_model(&mut self, option: ProviderOption) {
@@ -3751,21 +3878,20 @@ impl TuiApp {
     }
 
     async fn select_provider(&mut self, provider: ProviderChoice) {
+        if provider.auth_type == ProviderAuthType::ApiKey && !provider.authenticated {
+            self.open_provider_api_key_prompt(provider);
+            return;
+        }
         if provider.auth_type == ProviderAuthType::OAuth && !provider.authenticated {
-            if provider.provider_id != "codex" {
-                let detail = if provider.provider_id == "supergrok" {
-                    "run `roder auth login supergrok`"
-                } else {
-                    "no login flow is available"
-                };
+            let Some(auth_flow) = ProviderAuthFlow::for_provider(&provider.provider_id) else {
                 self.record_error(format!(
-                    "provider {} requires OAuth; {detail}",
+                    "provider {} requires OAuth; no login flow is available",
                     provider.provider_id
                 ));
                 self.show_provider_popup = false;
                 return;
-            }
-            if !self.run_codex_auth("auth/codex/login").await {
+            };
+            if !self.run_provider_auth(auth_flow).await {
                 return;
             }
         }
@@ -3775,6 +3901,69 @@ impl TuiApp {
             reasoning: None,
         };
         self.select_provider_model_params(params).await;
+    }
+
+    fn open_provider_api_key_prompt(&mut self, provider: ProviderChoice) {
+        self.provider_popup_screen = ProviderPopupScreen::ApiKey;
+        self.provider_menu_filter.clear();
+        self.provider_menu_items = Vec::new();
+        self.timeline.push_system(format!(
+            "open https://opencode.ai/workspace/ and copy an API key from {} > API Keys.",
+            provider.name
+        ));
+        self.pending_api_key_provider = Some(provider);
+        self.provider_state.select(None);
+    }
+
+    async fn open_opencode_workspace(&mut self) {
+        match open_url("https://opencode.ai/workspace/").await {
+            Ok(()) => self.push_event("opened OpenCode workspace".to_string()),
+            Err(err) => self.record_error(format!(
+                "failed to open https://opencode.ai/workspace/: {err}"
+            )),
+        }
+    }
+
+    async fn submit_provider_api_key(&mut self) {
+        let api_key = self.provider_menu_filter.trim().to_string();
+        if api_key.is_empty() {
+            self.record_error("API key is required.".to_string());
+            return;
+        }
+        let Some(provider) = self.pending_api_key_provider.clone() else {
+            self.close_or_back_provider_popup();
+            return;
+        };
+        let provider_id = provider.provider_id.clone();
+        let res = self
+            .client
+            .send_request(JsonRpcRequest {
+                jsonrpc: "2.0".to_string(),
+                id: Some(serde_json::json!("providers/configure")),
+                method: "providers/configure".to_string(),
+                params: Some(
+                    serde_json::to_value(ProviderConfigureParams {
+                        provider: provider_id.clone(),
+                        api_key,
+                    })
+                    .unwrap(),
+                ),
+            })
+            .await;
+        match decode_response::<ProviderConfigureResult>(res) {
+            Ok(_) => {
+                self.timeline
+                    .push_system(format!("configured API key for {}.", provider.name));
+                self.push_event(format!("provider configured: {provider_id}"));
+                self.provider_menu_filter.clear();
+                self.pending_api_key_provider = None;
+                self.open_provider_popup().await;
+            }
+            Err(err) => {
+                self.record_error(format!("providers/configure failed: {err}"));
+                self.show_provider_popup = false;
+            }
+        }
     }
 
     async fn select_provider_model_params(&mut self, params: ProviderSelectParams) {
@@ -3814,29 +4003,40 @@ impl TuiApp {
         }
     }
 
-    async fn run_codex_auth(&mut self, method: &str) -> bool {
-        if method == "auth/codex/login" {
-            self.timeline
-                .push_system("opening browser for Codex sign-in.".to_string());
-        }
+    async fn run_provider_auth(&mut self, flow: ProviderAuthFlow) -> bool {
+        self.timeline.push_system(format!(
+            "opening browser for {} sign-in.",
+            flow.display_name
+        ));
         let res = self
             .client
             .send_request(JsonRpcRequest {
                 jsonrpc: "2.0".to_string(),
-                id: Some(serde_json::json!(method)),
-                method: method.to_string(),
+                id: Some(serde_json::json!(flow.login_method)),
+                method: flow.login_method.to_string(),
                 params: None,
             })
             .await;
-        match decode_response::<CodexAuthResult>(res) {
+        match decode_response::<ProviderAuthResult>(res) {
             Ok(result) => {
-                self.timeline
-                    .push_system(codex_auth_message(method, &result).replace("system: ", ""));
-                self.push_event(format!("codex auth: {}", codex_auth_event(&result)));
+                self.timeline.push_system(
+                    provider_auth_message(
+                        flow.display_name,
+                        flow.logout_method,
+                        flow.login_method,
+                        &result,
+                    )
+                    .replace("system: ", ""),
+                );
+                self.push_event(format!(
+                    "{} auth: {}",
+                    flow.provider_id,
+                    provider_auth_event(&result)
+                ));
                 true
             }
             Err(err) => {
-                self.record_error(format!("codex auth failed: {err}"));
+                self.record_error(format!("{} auth failed: {err}", flow.display_name));
                 self.show_provider_popup = false;
                 false
             }
@@ -4769,6 +4969,48 @@ fn providers_menu_items(providers: &[ProviderChoice]) -> Vec<ProviderMenuItem> {
         .collect()
 }
 
+fn models_menu_items(
+    models: &[ProviderOption],
+    providers: &[ProviderChoice],
+) -> Vec<ProviderMenuItem> {
+    let mut items = Vec::new();
+    let mut grouped_provider_ids = HashSet::new();
+
+    for provider in providers {
+        let provider_models = models
+            .iter()
+            .filter(|model| model.provider_id == provider.provider_id)
+            .cloned()
+            .collect::<Vec<_>>();
+        if provider_models.is_empty() {
+            continue;
+        }
+
+        grouped_provider_ids.insert(provider.provider_id.clone());
+        items.push(ProviderMenuItem::Section(provider.name.clone()));
+        items.extend(provider_models.into_iter().map(ProviderMenuItem::Model));
+    }
+
+    for model in models {
+        if grouped_provider_ids.contains(&model.provider_id) {
+            continue;
+        }
+        let provider_id = model.provider_id.clone();
+        let provider_models = models
+            .iter()
+            .filter(|candidate| candidate.provider_id == provider_id)
+            .cloned()
+            .collect::<Vec<_>>();
+
+        grouped_provider_ids.insert(provider_id.clone());
+        items.push(ProviderMenuItem::Section(provider_id));
+        items.extend(provider_models.into_iter().map(ProviderMenuItem::Model));
+    }
+
+    items.push(ProviderMenuItem::Back);
+    items
+}
+
 fn filter_provider_menu_items(items: &[ProviderMenuItem], query: &str) -> Vec<ProviderMenuItem> {
     let query = query.trim().to_lowercase();
     if query.is_empty() {
@@ -4776,9 +5018,13 @@ fn filter_provider_menu_items(items: &[ProviderMenuItem], query: &str) -> Vec<Pr
     }
     items
         .iter()
-        .filter(|item| item.label().to_lowercase().contains(&query))
+        .filter(|item| item.is_selectable() && item.label().to_lowercase().contains(&query))
         .cloned()
         .collect()
+}
+
+fn first_selectable_provider_menu_index(items: &[ProviderMenuItem]) -> Option<usize> {
+    items.iter().position(ProviderMenuItem::is_selectable)
 }
 
 fn provider_search_line(query: &str, theme: Theme) -> Line<'static> {
@@ -4795,23 +5041,95 @@ fn provider_search_line(query: &str, theme: Theme) -> Line<'static> {
     ])
 }
 
-fn codex_auth_message(method: &str, result: &CodexAuthResult) -> String {
+fn provider_api_key_input_line(query: &str, theme: Theme) -> Line<'static> {
+    let value = if query.trim().is_empty() {
+        Span::styled("paste API key", theme.muted())
+    } else {
+        Span::styled("[api key hidden]", theme.text())
+    };
+    Line::from(vec![
+        Span::styled(" key ", theme.accent()),
+        value,
+        Span::styled("  enter save", theme.muted()),
+    ])
+}
+
+fn provider_api_key_items(
+    provider: Option<&ProviderChoice>,
+    query: &str,
+    theme: Theme,
+) -> Vec<ListItem<'static>> {
+    let provider_name = provider
+        .map(|provider| provider.name.clone())
+        .unwrap_or_else(|| "provider".to_string());
+    let key_status = if query.trim().is_empty() {
+        "waiting for key"
+    } else {
+        "key pasted"
+    };
+    vec![
+        ListItem::new(Line::from(vec![
+            Span::styled("Open ", theme.text()),
+            Span::styled("https://opencode.ai/workspace/", theme.accent()),
+        ])),
+        ListItem::new(Line::from(Span::styled(
+            format!("Go to {provider_name} > API Keys, copy a key, then paste it here."),
+            theme.text(),
+        ))),
+        ListItem::new(Line::from(vec![
+            Span::styled("Ctrl+O", theme.accent()),
+            Span::styled(" open workspace  ", theme.muted()),
+            Span::styled("Enter", theme.accent()),
+            Span::styled(" save  ", theme.muted()),
+            Span::styled("Esc", theme.accent()),
+            Span::styled(" back", theme.muted()),
+        ])),
+        ListItem::new(Line::from(Span::styled(key_status, theme.muted()))),
+    ]
+}
+
+fn provider_auth_message(
+    display_name: &str,
+    logout_method: &str,
+    method: &str,
+    result: &ProviderAuthResult,
+) -> String {
     match (method, result.signed_in, result.account_id.as_deref()) {
-        ("auth/codex/logout", _, _) => "system: signed out of Codex.".to_string(),
-        (_, true, Some(account_id)) => {
-            format!("system: signed in with Codex account {account_id}.")
+        (method, _, _) if method == logout_method => {
+            format!("system: signed out of {display_name}.")
         }
-        (_, true, None) => "system: signed in with Codex.".to_string(),
-        _ => "system: signed out of Codex.".to_string(),
+        (_, true, Some(account_id)) => {
+            format!("system: signed in with {display_name} account {account_id}.")
+        }
+        (_, true, None) => format!("system: signed in with {display_name}."),
+        _ => format!("system: signed out of {display_name}."),
     }
 }
 
-fn codex_auth_event(result: &CodexAuthResult) -> &'static str {
+fn provider_auth_event(result: &ProviderAuthResult) -> &'static str {
     if result.signed_in {
         "signed in"
     } else {
         "signed out"
     }
+}
+
+async fn open_url(url: &str) -> anyhow::Result<()> {
+    let mut command = if cfg!(target_os = "macos") {
+        let mut command = Command::new("open");
+        command.arg(url);
+        command
+    } else if cfg!(target_os = "windows") {
+        let mut command = Command::new("cmd");
+        command.args(["/C", "start", "", url]);
+        command
+    } else {
+        let mut command = Command::new("xdg-open");
+        command.arg(url);
+        command
+    };
+    command.spawn()?.wait().await?;
+    Ok(())
 }
 
 fn decode_response<T: serde::de::DeserializeOwned>(res: JsonRpcResponse) -> anyhow::Result<T> {
@@ -5226,6 +5544,7 @@ mod tests {
             provider_choices: Vec::new(),
             model_options: Vec::new(),
             pending_reasoning_model: None,
+            pending_api_key_provider: None,
             provider_menu_items: Vec::new(),
             provider_menu_filter: String::new(),
             provider_state: ListState::default(),
@@ -5283,7 +5602,7 @@ mod tests {
         let params = app.interrupt_params("turn-team".to_string());
 
         assert_eq!(params.thread_id, "thread-builder");
-        assert_eq!(params.turn_id, "turn-team");
+        assert_eq!(params.turn_id.as_deref(), Some("turn-team"));
     }
 
     #[test]
@@ -6274,6 +6593,74 @@ mod tests {
     }
 
     #[test]
+    fn model_menu_groups_models_under_provider_sections() {
+        let providers = vec![
+            ProviderChoice {
+                provider_id: "opencode".to_string(),
+                name: "OpenCode Zen".to_string(),
+                description: None,
+                auth_type: ProviderAuthType::ApiKey,
+                authenticated: true,
+                auth_detail: None,
+                default_model: Some("qwen3.6-plus".to_string()),
+                recommended: false,
+            },
+            ProviderChoice {
+                provider_id: "anthropic".to_string(),
+                name: "Anthropic".to_string(),
+                description: None,
+                auth_type: ProviderAuthType::ApiKey,
+                authenticated: true,
+                auth_detail: None,
+                default_model: Some("claude-opus-4.1".to_string()),
+                recommended: false,
+            },
+        ];
+        let models = vec![
+            ProviderOption {
+                provider_id: "opencode".to_string(),
+                model_id: "qwen3.6-plus".to_string(),
+                label: "opencode/qwen3.6-plus (Qwen3.6 Plus)".to_string(),
+                context_window: None,
+                default_reasoning: None,
+                reasoning_options: Vec::new(),
+            },
+            ProviderOption {
+                provider_id: "anthropic".to_string(),
+                model_id: "claude-opus-4.1".to_string(),
+                label: "anthropic/claude-opus-4.1 (Claude Opus 4.1)".to_string(),
+                context_window: None,
+                default_reasoning: None,
+                reasoning_options: Vec::new(),
+            },
+        ];
+
+        let items = models_menu_items(&models, &providers);
+
+        assert!(matches!(
+            &items[0],
+            ProviderMenuItem::Section(label) if label == "OpenCode Zen"
+        ));
+        assert!(matches!(
+            &items[1],
+            ProviderMenuItem::Model(option)
+                if option.provider_id == "opencode"
+                    && option.model_id == "qwen3.6-plus"
+        ));
+        assert!(matches!(
+            &items[2],
+            ProviderMenuItem::Section(label) if label == "Anthropic"
+        ));
+        assert!(matches!(
+            &items[3],
+            ProviderMenuItem::Model(option)
+                if option.provider_id == "anthropic"
+                    && option.model_id == "claude-opus-4.1"
+        ));
+        assert!(matches!(items.last(), Some(ProviderMenuItem::Back)));
+    }
+
+    #[test]
     fn provider_menu_filter_matches_labels_case_insensitively() {
         let items = providers_menu_items(&[ProviderChoice {
             provider_id: "codex".to_string(),
@@ -6298,6 +6685,7 @@ mod tests {
     fn provider_menu_filter_keeps_models_submenu_searchable() {
         let items = vec![
             ProviderMenuItem::Models,
+            ProviderMenuItem::Section("Codex".to_string()),
             ProviderMenuItem::Model(ProviderOption {
                 provider_id: "codex".to_string(),
                 model_id: "gpt-5.5".to_string(),
@@ -6310,6 +6698,76 @@ mod tests {
         let filtered = filter_provider_menu_items(&items, "5.5");
         assert_eq!(filtered.len(), 1);
         assert!(matches!(filtered[0], ProviderMenuItem::Model(_)));
+    }
+
+    #[test]
+    fn provider_menu_filter_does_not_return_section_headers() {
+        let items = vec![
+            ProviderMenuItem::Section("OpenCode Zen".to_string()),
+            ProviderMenuItem::Model(ProviderOption {
+                provider_id: "opencode".to_string(),
+                model_id: "qwen3.6-plus".to_string(),
+                label: "opencode/qwen3.6-plus (Qwen3.6 Plus)".to_string(),
+                context_window: None,
+                default_reasoning: None,
+                reasoning_options: Vec::new(),
+            }),
+        ];
+
+        let filtered = filter_provider_menu_items(&items, "opencode");
+
+        assert_eq!(filtered.len(), 1);
+        assert!(matches!(filtered[0], ProviderMenuItem::Model(_)));
+    }
+
+    #[test]
+    fn provider_choice_label_prompts_for_missing_api_key() {
+        let provider = ProviderChoice {
+            provider_id: "opencode".to_string(),
+            name: "OpenCode Zen".to_string(),
+            description: None,
+            auth_type: ProviderAuthType::ApiKey,
+            authenticated: false,
+            auth_detail: None,
+            default_model: Some("gpt-5.5".to_string()),
+            recommended: false,
+        };
+
+        assert_eq!(provider.label(), "OpenCode Zen - paste API key");
+    }
+
+    #[test]
+    fn provider_api_key_prompt_hides_pasted_key() {
+        let theme = Theme::for_dark_background(true);
+        let empty = provider_api_key_input_line("", theme);
+        assert_eq!(empty.spans[1].content, "paste API key");
+
+        let pasted = provider_api_key_input_line("sk-secret", theme);
+        assert_eq!(pasted.spans[1].content, "[api key hidden]");
+    }
+
+    #[test]
+    fn provider_menu_navigation_skips_section_headers() {
+        let mut app = test_app();
+        app.provider_menu_items = vec![
+            ProviderMenuItem::Section("Codex".to_string()),
+            ProviderMenuItem::Model(ProviderOption {
+                provider_id: "codex".to_string(),
+                model_id: "gpt-5.5".to_string(),
+                label: "codex/gpt-5.5 (GPT-5.5)".to_string(),
+                context_window: Some(1_000_000),
+                default_reasoning: Some("medium".to_string()),
+                reasoning_options: Vec::new(),
+            }),
+            ProviderMenuItem::Back,
+        ];
+        app.provider_state.select(Some(1));
+
+        app.select_previous_provider_menu_item();
+        assert_eq!(app.provider_state.selected(), Some(2));
+
+        app.select_next_provider_menu_item();
+        assert_eq!(app.provider_state.selected(), Some(1));
     }
 
     #[test]
@@ -6418,22 +6876,41 @@ mod tests {
     }
 
     #[test]
-    fn codex_auth_messages_reflect_status() {
-        let signed_in = CodexAuthResult {
+    fn provider_auth_messages_reflect_status() {
+        let signed_in = ProviderAuthResult {
             signed_in: true,
             account_id: Some("acct".to_string()),
         };
         assert_eq!(
-            codex_auth_message("auth/codex/status", &signed_in),
+            provider_auth_message(
+                "Codex",
+                "auth/codex/logout",
+                "auth/codex/status",
+                &signed_in
+            ),
             "system: signed in with Codex account acct."
         );
 
-        let signed_out = CodexAuthResult {
+        let signed_out = ProviderAuthResult {
             signed_in: false,
             account_id: None,
         };
         assert_eq!(
-            codex_auth_message("auth/codex/status", &signed_out),
+            provider_auth_message(
+                "SuperGrok",
+                "auth/supergrok/logout",
+                "auth/supergrok/status",
+                &signed_out
+            ),
+            "system: signed out of SuperGrok."
+        );
+        assert_eq!(
+            provider_auth_message(
+                "Codex",
+                "auth/codex/logout",
+                "auth/codex/logout",
+                &signed_in
+            ),
             "system: signed out of Codex."
         );
     }

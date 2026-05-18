@@ -22,7 +22,7 @@
     --border:             ansi(240);
     --mode-plan:          #00b894;
     --mode-default:       ansi(244);
-    --mode-accept-edits:  #00b894;
+    --mode-accept-all:  #00b894;
     --mode-bypass:        #ff3b3b;
     --selection-bg:       ansi(240);
     --selection-fg:       reset;

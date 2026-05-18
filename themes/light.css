@@ -42,7 +42,7 @@
     --border:             var(--rule);
     --mode-plan:          var(--blue);
     --mode-default:       var(--soft-ink);
-    --mode-accept-edits:  var(--green);
+    --mode-accept-all:  var(--green);
     --mode-bypass:        var(--red);
     --selection-bg:       #ffe7a0;
     --selection-fg:       var(--ink);

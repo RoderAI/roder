@@ -425,6 +425,10 @@ pub fn save_memory_embedding_provider(provider: &str, model: &str) -> anyhow::Re
     save_memory_embedding_provider_to_path(config_path(), provider, model)
 }
 
+pub fn save_provider_api_key(provider: &str, api_key: &str) -> anyhow::Result<()> {
+    save_provider_api_key_to_path(config_path(), provider, api_key)
+}
+
 pub fn save_default_provider_model_to_path(
     path: impl AsRef<Path>,
     provider: &str,
@@ -476,6 +480,21 @@ pub fn save_memory_embedding_provider_to_path(
     let memories = config.memories.get_or_insert_with(Default::default);
     memories.embedding_provider = Some(provider.to_string());
     memories.embedding_model = Some(model.to_string());
+    save_config_file_to_path(path, &config)
+}
+
+pub fn save_provider_api_key_to_path(
+    path: impl AsRef<Path>,
+    provider: &str,
+    api_key: &str,
+) -> anyhow::Result<()> {
+    let path = path.as_ref();
+    let mut config = load_config_file_from_path(path)?;
+    config
+        .providers
+        .entry(provider.to_string())
+        .or_default()
+        .api_key = Some(api_key.to_string());
     save_config_file_to_path(path, &config)
 }
 
@@ -1211,6 +1230,27 @@ mod tests {
                 .and_then(|policy| policy.default)
                 .as_deref(),
             Some("accept_edits")
+        );
+        let _ = fs::remove_file(&path);
+    }
+
+    #[test]
+    fn save_provider_api_key_creates_provider_config() {
+        let path = std::env::temp_dir().join(format!(
+            "roder-config-provider-key-{}.toml",
+            std::process::id()
+        ));
+        let _ = fs::remove_file(&path);
+
+        save_provider_api_key_to_path(&path, "opencode", "sk-test").unwrap();
+
+        let config = load_config_file_from_path(&path).unwrap();
+        assert_eq!(
+            config
+                .providers
+                .get("opencode")
+                .and_then(|provider| provider.api_key.as_deref()),
+            Some("sk-test")
         );
         let _ = fs::remove_file(&path);
     }

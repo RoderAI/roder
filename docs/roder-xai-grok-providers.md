@@ -41,6 +41,8 @@ roder auth status supergrok
 roder auth logout supergrok
 ```
 
+The TUI provider menu (`Ctrl+P`) starts the same browser OAuth flow when selecting SuperGrok while signed out.
+
 OAuth aliases `grok-oauth`, `xai-oauth`, `x-ai-oauth`, and `xai-grok-oauth` normalize to `supergrok`.
 
 ## Models

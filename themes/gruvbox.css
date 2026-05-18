@@ -34,7 +34,7 @@
     --border:             var(--bg2);
     --mode-plan:          var(--blue);
     --mode-default:       var(--gray);
-    --mode-accept-edits:  var(--green);
+    --mode-accept-all:  var(--green);
     --mode-bypass:        var(--red);
     --selection-bg:       var(--bg2);
     --selection-fg:       var(--fg0);

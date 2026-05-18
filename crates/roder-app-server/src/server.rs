@@ -75,9 +75,14 @@ impl AppServer {
     pub async fn handle_request(&self, req: JsonRpcRequest) -> JsonRpcResponse {
         let result = match req.method.as_str() {
             "initialize" => self.handle_initialize().await,
-            "system/initialize" | "system/status" => self.handle_system_status().await,
             "extensions/list" => self.handle_extensions_list().await,
             "providers/list" => self.handle_providers_list().await,
+            "providers/configure" => {
+                self.decode_and(req.params, |p| async move {
+                    self.handle_provider_configure(p).await
+                })
+                .await
+            }
             "providers/select" => {
                 self.decode_and(req.params, |p| async move {
                     self.handle_provider_select(p).await
@@ -111,26 +116,9 @@ impl AppServer {
             "auth/codex/login" => self.handle_codex_auth_login().await,
             "auth/codex/status" => self.handle_codex_auth_status().await,
             "auth/codex/logout" => self.handle_codex_auth_logout().await,
-            "sessions/create" => {
-                let params = req
-                    .params
-                    .map(serde_json::from_value::<CreateSessionParams>)
-                    .transpose()
-                    .map_err(invalid_params)
-                    .map(|p| {
-                        p.unwrap_or(CreateSessionParams {
-                            title: None,
-                            workspace: None,
-                            provider: None,
-                            model: None,
-                        })
-                    });
-                match params {
-                    Ok(params) => self.handle_create_session(params).await,
-                    Err(err) => Err(err),
-                }
-            }
-            "sessions/list" => self.handle_sessions_list().await,
+            "auth/supergrok/login" => self.handle_supergrok_auth_login().await,
+            "auth/supergrok/status" => self.handle_supergrok_auth_status().await,
+            "auth/supergrok/logout" => self.handle_supergrok_auth_logout().await,
             "thread/list" => {
                 self.decode_and(
                     req.params,
@@ -177,29 +165,9 @@ impl AppServer {
                 })
                 .await
             }
-            "sessions/load" | "sessions/resume" => {
-                self.decode_and(
-                    req.params,
-                    |p| async move { self.handle_session_load(p).await },
-                )
-                .await
-            }
-            "turns/start" => {
-                self.decode_and(
-                    req.params,
-                    |p| async move { self.handle_start_turn(p).await },
-                )
-                .await
-            }
             "turn/start" => {
                 self.decode_and(req.params, |p| async move {
                     self.handle_desktop_turn_start(p).await
-                })
-                .await
-            }
-            "turns/interrupt" => {
-                self.decode_and(req.params, |p| async move {
-                    self.handle_interrupt_turn(p).await
                 })
                 .await
             }
@@ -207,13 +175,6 @@ impl AppServer {
                 self.decode_and(req.params, |p| async move {
                     self.handle_desktop_turn_interrupt(p).await
                 })
-                .await
-            }
-            "turns/steer" => {
-                self.decode_and(
-                    req.params,
-                    |p| async move { self.handle_steer_turn(p).await },
-                )
                 .await
             }
             "turn/steer" => {
@@ -576,22 +537,6 @@ impl AppServer {
         f(params).await
     }
 
-    async fn handle_system_status(&self) -> Result<serde_json::Value, JsonRpcError> {
-        let cfg = self.runtime.status().await;
-        Ok(serde_json::to_value(SystemStatusResult {
-            provider: cfg.default_provider,
-            model: cfg.default_model,
-            reasoning: self.runtime.effective_reasoning().await,
-            web_search: WebSearchSettings {
-                mode: cfg.hosted_web_search.mode,
-            },
-            runner: runner_status(cfg.remote_runner_destination.as_ref(), None),
-            extensions: self.runtime.registry().manifests.len(),
-            providers: self.runtime.registry().inference_engines.len(),
-        })
-        .unwrap())
-    }
-
     async fn handle_initialize(&self) -> Result<serde_json::Value, JsonRpcError> {
         let cfg = self.runtime.status().await;
         Ok(serde_json::to_value(InitializeResult {
@@ -786,6 +731,40 @@ impl AppServer {
         .unwrap())
     }
 
+    async fn handle_provider_configure(
+        &self,
+        params: ProviderConfigureParams,
+    ) -> Result<serde_json::Value, JsonRpcError> {
+        let provider = roder_api::catalog::normalize_provider_id(params.provider.trim());
+        let api_key = params.api_key.trim();
+        if provider.is_empty() {
+            return Err(invalid_params("provider is required"));
+        }
+        if api_key.is_empty() {
+            return Err(invalid_params("api_key is required"));
+        }
+        if !self
+            .runtime
+            .registry()
+            .inference_engines
+            .iter()
+            .any(|engine| engine.id() == provider)
+        {
+            return Err(invalid_params(format!("unknown provider {provider:?}")));
+        }
+        if !self.persist_user_config {
+            return Err(internal_error(
+                "provider API key persistence is disabled for this app-server",
+            ));
+        }
+        roder_config::save_provider_api_key(&provider, api_key).map_err(internal_error)?;
+        Ok(serde_json::to_value(ProviderConfigureResult {
+            provider,
+            authenticated: true,
+        })
+        .unwrap())
+    }
+
     async fn handle_settings_get(&self) -> Result<serde_json::Value, JsonRpcError> {
         let cfg = self.runtime.status().await;
         Ok(serde_json::to_value(SettingsGetResult {
@@ -841,7 +820,7 @@ impl AppServer {
 
     async fn handle_codex_auth_login(&self) -> Result<serde_json::Value, JsonRpcError> {
         let tokens = roder_codex_auth::login().await.map_err(internal_error)?;
-        Ok(serde_json::to_value(CodexAuthResult {
+        Ok(serde_json::to_value(ProviderAuthResult {
             signed_in: true,
             account_id: non_empty(tokens.account_id),
         })
@@ -850,7 +829,7 @@ impl AppServer {
 
     async fn handle_codex_auth_status(&self) -> Result<serde_json::Value, JsonRpcError> {
         let signed_in = roder_codex_auth::status().await.map_err(internal_error)?;
-        Ok(serde_json::to_value(CodexAuthResult {
+        Ok(serde_json::to_value(ProviderAuthResult {
             signed_in: signed_in.is_some(),
             account_id: signed_in.and_then(|tokens| non_empty(tokens.account_id)),
         })
@@ -859,40 +838,42 @@ impl AppServer {
 
     async fn handle_codex_auth_logout(&self) -> Result<serde_json::Value, JsonRpcError> {
         roder_codex_auth::logout().map_err(internal_error)?;
-        Ok(serde_json::to_value(CodexAuthResult {
+        Ok(serde_json::to_value(ProviderAuthResult {
             signed_in: false,
             account_id: None,
         })
         .unwrap())
     }
 
-    async fn handle_create_session(
-        &self,
-        params: CreateSessionParams,
-    ) -> Result<serde_json::Value, JsonRpcError> {
-        let metadata = self
-            .runtime
-            .create_session_with(roder_core::CreateSessionRequest {
-                title: params.title,
-                workspace: params.workspace,
-                provider: params.provider,
-                model: params.model,
-            })
+    async fn handle_supergrok_auth_login(&self) -> Result<serde_json::Value, JsonRpcError> {
+        let tokens = roder_supergrok_auth::login()
             .await
             .map_err(internal_error)?;
-        let cfg = self.runtime.status().await;
-        Ok(serde_json::to_value(CreateSessionResult {
-            thread_id: metadata.thread_id,
-            provider: cfg.default_provider,
-            model: cfg.default_model,
-            reasoning: self.runtime.effective_reasoning().await,
+        Ok(serde_json::to_value(ProviderAuthResult {
+            signed_in: true,
+            account_id: non_empty(tokens.email),
         })
         .unwrap())
     }
 
-    async fn handle_sessions_list(&self) -> Result<serde_json::Value, JsonRpcError> {
-        let sessions = self.runtime.list_sessions().await.map_err(internal_error)?;
-        Ok(serde_json::to_value(SessionsListResult { sessions }).unwrap())
+    async fn handle_supergrok_auth_status(&self) -> Result<serde_json::Value, JsonRpcError> {
+        let signed_in = roder_supergrok_auth::status()
+            .await
+            .map_err(internal_error)?;
+        Ok(serde_json::to_value(ProviderAuthResult {
+            signed_in: signed_in.is_some(),
+            account_id: signed_in.and_then(|tokens| non_empty(tokens.email)),
+        })
+        .unwrap())
+    }
+
+    async fn handle_supergrok_auth_logout(&self) -> Result<serde_json::Value, JsonRpcError> {
+        roder_supergrok_auth::logout().map_err(internal_error)?;
+        Ok(serde_json::to_value(ProviderAuthResult {
+            signed_in: false,
+            account_id: None,
+        })
+        .unwrap())
     }
 
     async fn handle_thread_list(
@@ -1095,37 +1076,6 @@ impl AppServer {
         Ok(serde_json::to_value(SessionResolveUserInputResult { resolved }).unwrap())
     }
 
-    async fn handle_session_load(
-        &self,
-        params: SessionLoadParams,
-    ) -> Result<serde_json::Value, JsonRpcError> {
-        let snapshot = self
-            .runtime
-            .load_session(&params.thread_id)
-            .await
-            .map_err(internal_error)?;
-        Ok(serde_json::to_value(SessionLoadResult { snapshot }).unwrap())
-    }
-
-    async fn handle_start_turn(
-        &self,
-        params: StartTurnParams,
-    ) -> Result<serde_json::Value, JsonRpcError> {
-        let turn_id = self
-            .runtime
-            .start_turn(StartTurnRequest {
-                thread_id: params.thread_id,
-                message: params.message,
-                images: params.images,
-                provider_override: params.provider_override,
-                model_override: params.model_override,
-                instructions: default_instructions(),
-            })
-            .await
-            .map_err(internal_error)?;
-        Ok(serde_json::to_value(StartTurnResult { turn_id }).unwrap())
-    }
-
     async fn handle_desktop_turn_start(
         &self,
         params: TurnStartParams,
@@ -1152,17 +1102,6 @@ impl AppServer {
             .await
             .insert(params.thread_id, turn_id.clone());
         Ok(serde_json::to_value(TurnStartResult { turn_id }).unwrap())
-    }
-
-    async fn handle_interrupt_turn(
-        &self,
-        params: InterruptTurnParams,
-    ) -> Result<serde_json::Value, JsonRpcError> {
-        self.runtime
-            .interrupt_turn(params.thread_id, params.turn_id)
-            .await
-            .map_err(internal_error)?;
-        Ok(serde_json::json!({}))
     }
 
     async fn handle_desktop_turn_interrupt(
@@ -1195,23 +1134,6 @@ impl AppServer {
             turn_id: Some(turn_id),
         })
         .unwrap())
-    }
-
-    async fn handle_steer_turn(
-        &self,
-        params: SteerTurnParams,
-    ) -> Result<serde_json::Value, JsonRpcError> {
-        let turn_id = params.turn_id;
-        self.runtime
-            .steer_turn(
-                params.thread_id,
-                turn_id.clone(),
-                params.message,
-                params.images,
-            )
-            .await
-            .map_err(internal_error)?;
-        Ok(serde_json::to_value(SteerTurnResult { turn_id }).unwrap())
     }
 
     async fn handle_desktop_turn_steer(
@@ -2913,12 +2835,22 @@ async fn provider_auth_status(
 ) -> (bool, Option<String>) {
     match metadata.auth_type {
         ProviderAuthType::None => (true, None),
-        ProviderAuthType::ApiKey => (true, metadata.auth_label.clone()),
+        ProviderAuthType::ApiKey => (
+            metadata.auth_configured.unwrap_or(true),
+            metadata.auth_label.clone(),
+        ),
         ProviderAuthType::OAuth if provider_id == roder_api::catalog::PROVIDER_CODEX => {
             match roder_codex_auth::status().await {
                 Ok(Some(tokens)) if !tokens.account_id.is_empty() => {
                     (true, Some(tokens.account_id))
                 }
+                Ok(Some(_)) => (true, None),
+                Ok(None) | Err(_) => (false, None),
+            }
+        }
+        ProviderAuthType::OAuth if provider_id == roder_api::catalog::PROVIDER_SUPERGROK => {
+            match roder_supergrok_auth::status().await {
+                Ok(Some(tokens)) if !tokens.email.is_empty() => (true, Some(tokens.email)),
                 Ok(Some(_)) => (true, None),
                 Ok(None) | Err(_) => (false, None),
             }
