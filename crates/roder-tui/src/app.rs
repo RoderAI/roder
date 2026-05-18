@@ -2153,6 +2153,7 @@ impl TuiApp {
                         provider,
                         model: Some(model),
                         reasoning: None,
+                        thread_id: Some(self.focused_thread_id().to_string()),
                     })
                     .await;
                 } else {
@@ -3531,6 +3532,7 @@ impl TuiApp {
                     provider: option.provider_id,
                     model: Some(option.model_id),
                     reasoning: Some(option.effort),
+                    thread_id: Some(self.focused_thread_id().to_string()),
                 })
                 .await;
             }
@@ -3840,6 +3842,7 @@ impl TuiApp {
             provider: option.provider_id,
             model: Some(option.model_id),
             reasoning: option.default_reasoning,
+            thread_id: Some(self.focused_thread_id().to_string()),
         };
         self.select_provider_model_params(params).await;
     }
@@ -3899,6 +3902,7 @@ impl TuiApp {
             provider: provider.provider_id,
             model: provider.default_model,
             reasoning: None,
+            thread_id: Some(self.focused_thread_id().to_string()),
         };
         self.select_provider_model_params(params).await;
     }

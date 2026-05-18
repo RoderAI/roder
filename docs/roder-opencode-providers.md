@@ -91,7 +91,9 @@ Successful discovery writes a redacted cache to:
 ~/.roder/models-cache.json
 ```
 
-The default TTL is 6 hours. Set `RODER_OPENCODE_MODELS_CACHE_TTL_SECONDS=0` to refresh on every provider-list access, `RODER_OPENCODE_MODELS_REFRESH=1` for a manual refresh trigger, or `RODER_MODELS_CACHE_PATH=/path/to/models-cache.json` to override the cache file for diagnostics. Refresh is still backgrounded; Ctrl+P and provider menus continue to render from cache or built-ins without waiting for the network.
+The default TTL is 6 hours. Set `RODER_MODELS_CACHE_TTL_SECONDS=0` to refresh all provider model caches on every provider-list access, `RODER_MODELS_REFRESH=1` for a manual refresh trigger, or `RODER_MODELS_CACHE_PATH=/path/to/models-cache.json` to override the cache file for diagnostics. The older OpenCode-specific `RODER_OPENCODE_MODELS_CACHE_TTL_SECONDS` and `RODER_OPENCODE_MODELS_REFRESH` names are still accepted. Refresh is still backgrounded; Ctrl+P and provider menus continue to render from cache or built-ins without waiting for the network.
+
+Custom OpenAI-compatible providers configured under `[providers.<id>]` use the same cache path and TTL controls. For those providers, Roder tries both `GET <base_url>/models` and `GET <base_url>/v1/models` before leaving the existing cache unchanged.
 
 ## Requests
 

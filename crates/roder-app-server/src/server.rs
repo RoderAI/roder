@@ -22,6 +22,7 @@ use roder_core::{
 };
 use roder_protocol::*;
 use roder_tasks::{BackgroundRunner, BackgroundRunnerConfig, TaskExecutorRegistry};
+use time::OffsetDateTime;
 use tokio::sync::{RwLock, broadcast};
 
 use crate::desktop_contract::{
@@ -710,11 +711,22 @@ impl AppServer {
         &self,
         params: ProviderSelectParams,
     ) -> Result<serde_json::Value, JsonRpcError> {
+        let thread_id = params.thread_id.clone();
         let cfg = self
             .runtime
             .select_provider(params.provider, params.model, params.reasoning)
             .await
             .map_err(internal_error)?;
+        if let Some(thread_id) = thread_id {
+            self.desktop_thread_models.write().await.insert(
+                thread_id.clone(),
+                (cfg.default_provider.clone(), cfg.default_model.clone()),
+            );
+            if let Some(thread) = self.desktop_threads.write().await.get_mut(&thread_id) {
+                thread.model_provider = cfg.default_provider.clone();
+                thread.updated_at = OffsetDateTime::now_utc().unix_timestamp();
+            }
+        }
         if self.persist_user_config {
             roder_config::save_default_provider_model_reasoning(
                 &cfg.default_provider,

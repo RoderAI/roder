@@ -234,6 +234,16 @@ xAI Grok and SuperGrok provider setup is documented in [`docs/roder-xai-grok-pro
 
 OpenCode provider setup is documented in [`docs/roder-opencode-providers.md`](./docs/roder-opencode-providers.md). Use `opencode/<model>` for OpenCode Zen models or `opencode-go/<model>` for OpenCode Go models, with API keys from [`https://opencode.ai/auth`](https://opencode.ai/auth).
 
+Custom OpenAI-compatible providers can be added with a provider-specific base URL:
+
+```toml
+[providers.local-openai]
+base_url = "http://localhost:11434/v1"
+api_key_env = "LOCAL_OPENAI_API_KEY"
+```
+
+Roder discovers models for custom providers in the background by trying `GET <base_url>/models` and then `GET <base_url>/v1/models`, caches successful results in `~/.roder/models-cache.json`, and keeps provider/model picker calls responsive by returning cached models immediately.
+
 App-server docs live under [`docs/app-server/`](./docs/app-server/): [`api.md`](./docs/app-server/api.md) is the integrator-facing JSON-RPC reference, [`protocol.md`](./docs/app-server/protocol.md) summarizes the desktop contract, and [`remote.md`](./docs/app-server/remote.md) covers remote WebSocket pairing, auth, and security assumptions.
 
 Subagent setup for the `task` tool and disk-defined agents is documented in [`docs/roder-subagents.md`](./docs/roder-subagents.md). Transparent child trace events, app-server trace read/list methods, persistence behavior, and TUI controls are documented in [`docs/roder-subagent-traces.md`](./docs/roder-subagent-traces.md). Plan review artifacts, hunk records, app-server methods, and deferred rollback behavior are documented in [`docs/roder-plan-review-hunk-tracker.md`](./docs/roder-plan-review-hunk-tracker.md). Workflow import for AGENTS.md, skills, MCP, hooks, commands, and plugins is documented in [`docs/roder-workflow-import.md`](./docs/roder-workflow-import.md). Terminal media generation, artifacts, previews, and generated-image attachments are documented in [`docs/roder-terminal-media-generation.md`](./docs/roder-terminal-media-generation.md). SQLite vector memories, project/global scopes, embedding providers, and memory CLI/app-server controls are documented in [`docs/roder-memories.md`](./docs/roder-memories.md).

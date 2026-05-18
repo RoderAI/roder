@@ -436,6 +436,7 @@ async fn test_app_server_e2e() {
                 provider: PROVIDER_MOCK.to_string(),
                 model: Some("alternate-mock-model".to_string()),
                 reasoning: Some("none".to_string()),
+                thread_id: None,
             })
             .unwrap(),
         ),
@@ -459,6 +460,7 @@ async fn test_app_server_e2e() {
                     provider: "missing-provider".to_string(),
                     model: Some("missing-model".to_string()),
                     reasoning: None,
+                    thread_id: None,
                 })
                 .unwrap(),
             ),
@@ -522,6 +524,63 @@ async fn test_app_server_e2e() {
         kinds.iter().any(|kind| kind == "turn.completed"),
         "missing turn.completed: {kinds:?}"
     );
+}
+
+#[tokio::test]
+async fn providers_select_updates_desktop_thread_model_for_next_turn() {
+    let engine = Arc::new(TaskCallingEngine {
+        hang_child: false,
+        parent_calls: Mutex::new(0),
+        requests: Mutex::new(Vec::new()),
+    });
+    let mut builder = ExtensionRegistryBuilder::new();
+    builder.inference_engine(engine.clone());
+    let runtime = Arc::new(Runtime::new(builder.build().unwrap(), Default::default()).unwrap());
+    let server = Arc::new(AppServer::new(runtime));
+    let client = LocalAppClient::new(server);
+
+    let started: ThreadStartResult = request(
+        &client,
+        "thread/start",
+        Some(serde_json::json!({
+            "model": "mock",
+            "modelProvider": PROVIDER_MOCK,
+            "cwd": "/tmp",
+            "ephemeral": false
+        })),
+    )
+    .await;
+    let thread_id = started.thread.id.clone();
+
+    let selected: ProviderSelectResult = request(
+        &client,
+        "providers/select",
+        Some(
+            serde_json::to_value(ProviderSelectParams {
+                provider: PROVIDER_MOCK.to_string(),
+                model: Some("alternate-mock-model".to_string()),
+                reasoning: Some("none".to_string()),
+                thread_id: Some(thread_id.clone()),
+            })
+            .unwrap(),
+        ),
+    )
+    .await;
+    assert_eq!(selected.model, "alternate-mock-model");
+
+    let _: TurnStartResult = request(
+        &client,
+        "turn/start",
+        Some(serde_json::json!({
+            "threadId": thread_id,
+            "input": [{ "type": "text", "text": "hello" }]
+        })),
+    )
+    .await;
+
+    let request = wait_for_recorded_request(&engine).await;
+    assert_eq!(request.model.provider, PROVIDER_MOCK);
+    assert_eq!(request.model.model, "alternate-mock-model");
 }
 
 #[tokio::test]
@@ -979,6 +1038,7 @@ async fn providers_select_opencode_non_reasoning_model_preserves_reasoning_prefe
                 provider: PROVIDER_OPENCODE.to_string(),
                 model: Some("big-pickle".to_string()),
                 reasoning: Some("none".to_string()),
+                thread_id: None,
             })
             .unwrap(),
         ),
@@ -996,6 +1056,7 @@ async fn providers_select_opencode_non_reasoning_model_preserves_reasoning_prefe
                 provider: PROVIDER_CODEX.to_string(),
                 model: Some("gpt-5.5".to_string()),
                 reasoning: None,
+                thread_id: None,
             })
             .unwrap(),
         ),
@@ -2909,6 +2970,16 @@ async fn start_turn(client: &LocalAppClient, thread_id: &str, text: &str) -> Tur
         ),
     )
     .await
+}
+
+async fn wait_for_recorded_request(engine: &TaskCallingEngine) -> AgentInferenceRequest {
+    for _ in 0..20 {
+        if let Some(request) = engine.requests.lock().await.first().cloned() {
+            return request;
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    panic!("timed out waiting for recorded inference request");
 }
 
 async fn wait_for_event(

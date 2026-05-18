@@ -383,14 +383,16 @@ fn cache_path() -> PathBuf {
 }
 
 fn cache_ttl() -> Duration {
-    env_nonempty("RODER_OPENCODE_MODELS_CACHE_TTL_SECONDS")
+    env_nonempty("RODER_MODELS_CACHE_TTL_SECONDS")
+        .or_else(|| env_nonempty("RODER_OPENCODE_MODELS_CACHE_TTL_SECONDS"))
         .and_then(|value| value.parse::<u64>().ok())
         .map(Duration::from_secs)
         .unwrap_or(DEFAULT_MODELS_CACHE_TTL)
 }
 
 fn force_refresh_requested() -> bool {
-    env_nonempty("RODER_OPENCODE_MODELS_REFRESH")
+    env_nonempty("RODER_MODELS_REFRESH")
+        .or_else(|| env_nonempty("RODER_OPENCODE_MODELS_REFRESH"))
         .map(|value| matches!(value.as_str(), "1" | "true" | "TRUE" | "yes" | "YES"))
         .unwrap_or(false)
 }

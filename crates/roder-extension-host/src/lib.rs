@@ -4,7 +4,11 @@ use std::sync::Arc;
 use anyhow::Context;
 use futures::stream;
 use roder_api::capabilities::CapabilityRequest;
-use roder_api::catalog::{PROVIDER_CODEX, PROVIDER_MOCK, models_for_codex, models_for_provider};
+use roder_api::catalog::{
+    PROVIDER_ANTHROPIC, PROVIDER_CODEX, PROVIDER_GEMINI, PROVIDER_MOCK, PROVIDER_OPENAI,
+    PROVIDER_OPENCODE, PROVIDER_OPENCODE_GO, PROVIDER_SUPERGROK, PROVIDER_XAI, models_for_codex,
+    models_for_provider,
+};
 use roder_api::extension::{
     ExtensionManifest, ExtensionRegistry, ExtensionRegistryBuilder, ProvidedService, RoderExtension,
 };
@@ -52,6 +56,7 @@ pub struct DefaultRegistryConfig {
     pub opencode_go_api_key: Option<String>,
     pub opencode_go_base_url: Option<String>,
     pub opencode_go_project_id: Option<String>,
+    pub custom_inference_providers: Vec<CustomInferenceProviderConfig>,
     pub session_dir: Option<PathBuf>,
     pub workspace: Option<PathBuf>,
     pub web_search: Option<DefaultWebSearchConfig>,
@@ -75,6 +80,7 @@ impl Default for DefaultRegistryConfig {
             opencode_go_api_key: None,
             opencode_go_base_url: None,
             opencode_go_project_id: None,
+            custom_inference_providers: Vec::new(),
             session_dir: None,
             workspace: None,
             web_search: None,
@@ -138,6 +144,17 @@ pub fn build_default_registry(config: DefaultRegistryConfig) -> anyhow::Result<E
             project_id: config.opencode_go_project_id,
         },
     ))?;
+    for provider in config.custom_inference_providers {
+        if known_provider_id(&provider.id) {
+            continue;
+        }
+        builder.inference_engine(Arc::new(OpenAiResponsesEngine::new_custom_provider(
+            provider.api_key,
+            provider.id.clone(),
+            provider.name.unwrap_or(provider.id),
+            provider.base_url,
+        )));
+    }
 
     builder.install(roder_ext_plan_mode::PlanModeExtension::new(
         config.policy_mode,
@@ -187,6 +204,29 @@ pub fn build_default_registry(config: DefaultRegistryConfig) -> anyhow::Result<E
     builder.install(OpenAiEmbeddingsExtension::from_env())?;
 
     builder.build()
+}
+
+#[derive(Debug, Clone)]
+pub struct CustomInferenceProviderConfig {
+    pub id: String,
+    pub name: Option<String>,
+    pub api_key: Option<String>,
+    pub base_url: String,
+}
+
+fn known_provider_id(id: &str) -> bool {
+    matches!(
+        id,
+        PROVIDER_MOCK
+            | PROVIDER_OPENAI
+            | PROVIDER_CODEX
+            | PROVIDER_ANTHROPIC
+            | PROVIDER_GEMINI
+            | PROVIDER_XAI
+            | PROVIDER_SUPERGROK
+            | PROVIDER_OPENCODE
+            | PROVIDER_OPENCODE_GO
+    )
 }
 
 fn roder_home_dir() -> anyhow::Result<PathBuf> {
@@ -572,6 +612,7 @@ mod tests {
             opencode_go_api_key: Some("opencode-go".to_string()),
             opencode_go_base_url: None,
             opencode_go_project_id: None,
+            custom_inference_providers: Vec::new(),
             session_dir: None,
             workspace: None,
             web_search: None,
@@ -597,6 +638,27 @@ mod tests {
                 "missing {provider}"
             );
         }
+    }
+
+    #[test]
+    fn default_registry_installs_custom_openai_compatible_providers() {
+        let registry = build_default_registry(DefaultRegistryConfig {
+            custom_inference_providers: vec![CustomInferenceProviderConfig {
+                id: "local-openai".to_string(),
+                name: Some("Local OpenAI".to_string()),
+                api_key: None,
+                base_url: "http://127.0.0.1:8080".to_string(),
+            }],
+            ..DefaultRegistryConfig::default()
+        })
+        .unwrap();
+
+        let provider = registry
+            .inference_engine("local-openai")
+            .expect("custom provider should be registered");
+        let metadata = provider.metadata();
+        assert_eq!(metadata.name, "Local OpenAI");
+        assert_eq!(metadata.auth_configured, Some(false));
     }
 
     #[test]
