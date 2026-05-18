@@ -234,6 +234,16 @@ Review, hunks, workflow imports, media, and memory:
 | `workflow/ignore` | Ignore a workflow import. |
 | `workflow/refresh` | Re-scan and detect stale enabled imports. |
 | `workflow/remove` | Remove an enabled workflow import decision. |
+| `marketplaces/list` | List plugin marketplace descriptors. |
+| `marketplaces/install_default` | Install one or all baked-in marketplace descriptors. |
+| `marketplaces/add` | Add a local plugin marketplace descriptor. |
+| `marketplaces/refresh` | Read and normalize a marketplace catalog. |
+| `marketplaces/search` | Search de-duplicated marketplace plugins. |
+| `marketplaces/plugin` | Read one marketplace plugin variant. |
+| `plugins/preview_install` | Preview plugin install metadata and risk hints. |
+| `plugins/install` | Record an installed marketplace plugin variant. |
+| `plugins/list_installed` | List installed marketplace plugin variants. |
+| `plugins/uninstall` | Remove an installed marketplace plugin variant record. |
 | `media/list` | List media artifacts. |
 | `media/read` | Read artifact bytes as base64. |
 | `media/thumbnail` | Read an artifact preview. |
@@ -1478,6 +1488,533 @@ Behavior:
   `RODER_WORKFLOW_IMPORTS_PATH`.
 - Enabling an item that requires approval without `approveSideEffects` returns
   code `-32040` with `itemId`, `source`, and `risk` in `data`.
+
+### Plugin marketplace methods
+
+Purpose: Manage Claude, Cursor, Codex, and local plugin marketplace metadata,
+search de-duplicated plugin entries, preview plugin installs, and record local
+installed plugin variants.
+
+Marketplace state is persisted under `~/.roder/marketplaces.json` unless
+`RODER_MARKETPLACES_PATH` is set. Plugin cache markers are written under
+`~/.roder/plugins/cache` unless `RODER_MARKETPLACE_CACHE_DIR` is set.
+
+#### `marketplaces/list`
+
+Purpose: List configured marketplace descriptors, including baked-in defaults.
+
+Request:
+
+```json
+{}
+```
+
+Response:
+
+```json
+{
+  "marketplaces": [
+    {
+      "id": "cursor-plugins",
+      "kind": "cursor",
+      "displayName": "Cursor Marketplace",
+      "source": {
+        "kind": "github",
+        "repo": "cursor/plugins",
+        "catalogPath": ".cursor-plugin/marketplace.json"
+      },
+      "homepage": "https://cursor.com/en-US/marketplace",
+      "isDefault": true,
+      "enabled": true,
+      "state": "bakedIn"
+    }
+  ]
+}
+```
+
+Behavior:
+
+- Always merges the baked-in Claude, Cursor, and Codex marketplace descriptors
+  into the loaded store.
+- Does not refresh remote or local catalogs.
+- `state` is one of `bakedIn`, `installed`, `refreshed`, `disabled`, or
+  `removedByUser`.
+
+Errors:
+
+- Returns code `-32000` if the marketplace store cannot be read or parsed.
+
+#### `marketplaces/install_default`
+
+Purpose: Register one or more baked-in default marketplace descriptors.
+
+Request:
+
+```json
+{
+  "selection": "all"
+}
+```
+
+Response:
+
+```json
+{
+  "marketplaces": [
+    {
+      "id": "claude-plugins-official",
+      "kind": "claude",
+      "displayName": "Claude Plugins Official",
+      "source": {
+        "kind": "github",
+        "repo": "anthropics/claude-plugins-official",
+        "catalogPath": ".claude-plugin/marketplace.json"
+      },
+      "isDefault": true,
+      "enabled": true,
+      "state": "installed"
+    }
+  ]
+}
+```
+
+Behavior:
+
+- `selection` accepts `none`, `anthropic`, `cursor`, `codex`, and `all`.
+- This registers marketplace descriptors only; it does not install every plugin
+  in those catalogs.
+- Re-running the method is idempotent and updates matching descriptors instead
+  of duplicating them.
+- The current implementation records default GitHub-backed descriptors. It does
+  not fetch their remote catalogs during default installation.
+
+Errors:
+
+- Invalid `selection` values fail JSON deserialization and return code
+  `-32602`.
+- Store write failures return code `-32000`.
+
+#### `marketplaces/add`
+
+Purpose: Add a custom local marketplace descriptor.
+
+Request:
+
+```json
+{
+  "id": "local-cursor",
+  "kind": "cursor",
+  "displayName": "Local Cursor",
+  "localPath": "/Users/pz/plugins/cursor"
+}
+```
+
+Response:
+
+```json
+{
+  "marketplace": {
+    "id": "local-cursor",
+    "kind": "cursor",
+    "displayName": "Local Cursor",
+    "source": {
+      "kind": "localPath",
+      "path": "/Users/pz/plugins/cursor"
+    },
+    "isDefault": false,
+    "enabled": true,
+    "state": "installed"
+  }
+}
+```
+
+Behavior:
+
+- `id` must be a lowercase slug starting and ending with an ASCII letter or
+  number. Interior `-` and `.` are allowed.
+- `kind` is one of `claude`, `cursor`, `codex`, `roder`, or `custom`.
+- `localPath` must exist when the request is handled.
+- Existing marketplace records with the same `id` are replaced.
+
+Errors:
+
+- Invalid ids or missing local paths return code `-32602`.
+- Store read/write failures return code `-32000`.
+
+#### `marketplaces/refresh`
+
+Purpose: Read a marketplace catalog and return normalized plugin entries.
+
+Request:
+
+```json
+{
+  "marketplaceId": "local-cursor"
+}
+```
+
+Response:
+
+```json
+{
+  "marketplace": {
+    "id": "local-cursor",
+    "kind": "cursor",
+    "displayName": "Local Cursor",
+    "source": {
+      "kind": "localPath",
+      "path": "/Users/pz/plugins/cursor"
+    },
+    "enabled": true,
+    "state": "refreshed",
+    "lastRefreshedAt": "2026-05-18T18:00:00Z",
+    "contentHash": "a275f0a3080931b1..."
+  },
+  "plugins": [
+    {
+      "marketplaceId": "local-cursor",
+      "pluginId": "repo-tools",
+      "displayName": "Repo Tools",
+      "kind": "cursor",
+      "source": {
+        "kind": "marketplacePath",
+        "marketplace_id": "local-cursor",
+        "path": "Repo Tools"
+      },
+      "identityKey": {
+        "canonicalSlug": "repo-tools",
+        "normalizedName": "repo-tools"
+      },
+      "tags": ["repo"],
+      "componentHints": {
+        "skills": true,
+        "commands": false,
+        "agents": false,
+        "mcpServers": false,
+        "hooks": false,
+        "apps": false,
+        "lspServers": false,
+        "rules": false,
+        "assets": false
+      },
+      "capabilityHints": [],
+      "risk": "passive",
+      "rawManifest": {
+        "id": "repo-tools",
+        "name": "Repo Tools"
+      }
+    }
+  ]
+}
+```
+
+Behavior:
+
+- Local Claude marketplaces read `.claude-plugin/marketplace.json`.
+- Local Cursor marketplaces read `.cursor-plugin/marketplace.json`.
+- Local Codex marketplaces scan plugin directories for
+  `.codex-plugin/plugin.json`.
+- The marketplace record is updated to `state: "refreshed"` with
+  `lastRefreshedAt` and `contentHash`.
+- Current refresh support is local-path based. GitHub, git URL, and HTTP JSON
+  descriptors may be listed, but refresh of those sources currently returns an
+  internal error instead of fetching the network.
+
+Errors:
+
+- Unknown marketplace ids, unsupported source resolution, missing catalog files,
+  invalid JSON, and normalization failures return code `-32000`.
+
+#### `marketplaces/search`
+
+Purpose: Search installed/refreshed local marketplaces and return de-duplicated
+plugin rows.
+
+Request:
+
+```json
+{
+  "query": "repo"
+}
+```
+
+Response:
+
+```json
+{
+  "plugins": [
+    {
+      "identityKey": {
+        "canonicalSlug": "repo-tools",
+        "normalizedName": "repo-tools"
+      },
+      "displayName": "Repo Tools",
+      "description": "Repository helper skills",
+      "variants": [
+        {
+          "marketplaceId": "local-cursor",
+          "pluginId": "repo-tools",
+          "kind": "cursor",
+          "source": {
+            "kind": "marketplacePath",
+            "marketplace_id": "local-cursor",
+            "path": "Repo Tools"
+          },
+          "risk": "passive"
+        }
+      ],
+      "installedVariants": []
+    }
+  ]
+}
+```
+
+Behavior:
+
+- Omit `query` or pass an empty string to return every searchable plugin.
+- Search matches plugin id, display name, description, and tags.
+- Results are de-duplicated by strong identity signals: repository, homepage
+  plus normalized name, or provider-local slug.
+- Baked-in default descriptors are skipped until installed/refreshed and
+  resolvable locally. Remote descriptor fetch is not implicit.
+
+Errors:
+
+- Store read failures, catalog parse failures, and normalization failures return
+  code `-32000`.
+
+#### `marketplaces/plugin`
+
+Purpose: Return one normalized plugin variant by marketplace id and plugin id.
+
+Request:
+
+```json
+{
+  "marketplaceId": "local-cursor",
+  "pluginId": "repo-tools"
+}
+```
+
+Response:
+
+```json
+{
+  "plugin": {
+    "marketplaceId": "local-cursor",
+    "pluginId": "repo-tools",
+    "displayName": "Repo Tools",
+    "kind": "cursor",
+    "source": {
+      "kind": "marketplacePath",
+      "marketplace_id": "local-cursor",
+      "path": "Repo Tools"
+    },
+    "identityKey": {
+      "canonicalSlug": "repo-tools",
+      "normalizedName": "repo-tools"
+    },
+    "tags": [],
+    "componentHints": {
+      "skills": true,
+      "commands": false,
+      "agents": false,
+      "mcpServers": false,
+      "hooks": false,
+      "apps": false,
+      "lspServers": false,
+      "rules": false,
+      "assets": false
+    },
+    "capabilityHints": [],
+    "risk": "passive",
+    "rawManifest": {}
+  }
+}
+```
+
+Behavior:
+
+- Returns `{ "plugin": null }` when the marketplace can be read but no matching
+  plugin exists.
+
+Errors:
+
+- Store, catalog, and normalization failures return code `-32000`.
+
+#### `plugins/preview_install`
+
+Purpose: Return install metadata and risk/component hints for a plugin variant
+without recording an install.
+
+Request:
+
+```json
+{
+  "marketplaceId": "local-cursor",
+  "pluginId": "repo-tools"
+}
+```
+
+Response:
+
+```json
+{
+  "preview": {
+    "marketplaceId": "local-cursor",
+    "pluginId": "repo-tools",
+    "displayName": "Repo Tools",
+    "identityKey": {
+      "canonicalSlug": "repo-tools",
+      "normalizedName": "repo-tools"
+    },
+    "source": {
+      "kind": "marketplacePath",
+      "marketplace_id": "local-cursor",
+      "path": "Repo Tools"
+    },
+    "componentHints": {
+      "skills": true,
+      "commands": false,
+      "agents": false,
+      "mcpServers": false,
+      "hooks": false,
+      "apps": false,
+      "lspServers": false,
+      "rules": false,
+      "assets": false
+    },
+    "capabilityHints": [],
+    "risk": "passive",
+    "rawManifest": {}
+  }
+}
+```
+
+Behavior:
+
+- Does not execute package scripts, hooks, MCP servers, apps, or other
+  plugin-provided commands.
+- Preview currently reflects normalized catalog metadata and raw manifest data;
+  it does not activate workflow imports.
+
+Errors:
+
+- Missing plugins return code `-32004` with message `plugin not found`.
+- Store, catalog, and normalization failures return code `-32000`.
+
+#### `plugins/install`
+
+Purpose: Record one installed marketplace plugin variant in the local plugin
+cache.
+
+Request:
+
+```json
+{
+  "marketplaceId": "local-cursor",
+  "pluginId": "repo-tools"
+}
+```
+
+Response:
+
+```json
+{
+  "plugin": {
+    "marketplaceId": "local-cursor",
+    "pluginId": "repo-tools",
+    "identityKey": {
+      "canonicalSlug": "repo-tools",
+      "normalizedName": "repo-tools"
+    },
+    "variantKey": "local-cursor:repo-tools",
+    "installPath": "/Users/pz/.roder/plugins/cache/local-cursor/repo-tools/a275f0a3080931b1",
+    "contentHash": "a275f0a3080931b1...",
+    "state": "installed",
+    "installedAt": "2026-05-18T18:00:00Z"
+  }
+}
+```
+
+Behavior:
+
+- Records the installed variant separately from workflow import decisions.
+- Reinstalling the same `marketplaceId` and `pluginId` replaces the installed
+  record for the same `variantKey`.
+- Writes a cache marker under the configured marketplace cache dir.
+- Does not execute plugin-provided code and does not enable plugin components.
+
+Errors:
+
+- Missing plugins return code `-32004` with message `plugin not found`.
+- Store, catalog, cache, and normalization failures return code `-32000`.
+
+#### `plugins/list_installed`
+
+Purpose: List installed marketplace plugin variant records.
+
+Request:
+
+```json
+{}
+```
+
+Response:
+
+```json
+{
+  "plugins": [
+    {
+      "marketplaceId": "local-cursor",
+      "pluginId": "repo-tools",
+      "identityKey": {
+        "canonicalSlug": "repo-tools",
+        "normalizedName": "repo-tools"
+      },
+      "variantKey": "local-cursor:repo-tools",
+      "installPath": "/Users/pz/.roder/plugins/cache/local-cursor/repo-tools/a275f0a3080931b1",
+      "contentHash": "a275f0a3080931b1...",
+      "state": "installed",
+      "installedAt": "2026-05-18T18:00:00Z"
+    }
+  ]
+}
+```
+
+Errors:
+
+- Store read failures return code `-32000`.
+
+#### `plugins/uninstall`
+
+Purpose: Remove one installed plugin variant record.
+
+Request:
+
+```json
+{
+  "variantKey": "local-cursor:repo-tools"
+}
+```
+
+Response:
+
+```json
+{
+  "removed": true
+}
+```
+
+Behavior:
+
+- Removes only the installed plugin record from marketplace state.
+- Does not delete unrelated user data.
+- Returns `removed: false` when no matching `variantKey` exists.
+
+Errors:
+
+- Store read/write failures return code `-32000`.
 
 ### Media methods
 

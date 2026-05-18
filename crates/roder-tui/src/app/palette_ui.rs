@@ -5,12 +5,14 @@ use crate::palette::{
     index::{PaletteMatch, search as search_palette},
     render::palette_list,
     sources::{
-        agent_source, command_source, media_source, memories_source, mode_source, model_source,
-        remote_source, runner_source, session_source, settings_source, theme_source,
+        agent_source, command_source, marketplace_source, media_source, memories_source,
+        mode_source, model_source, remote_source, runner_source, session_source, settings_source,
+        theme_source,
         workflow_import_source,
     },
 };
 use crate::theme::{discover_themes, discovery::default_directories};
+use roder_protocol::MarketplacesListResult;
 
 pub(super) fn is_palette_open_key(key: crossterm::event::KeyEvent) -> bool {
     key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('k')
@@ -75,6 +77,13 @@ impl TuiApp {
                 None
             }
         };
+        let marketplaces = match self.marketplaces_list().await {
+            Ok(marketplaces) => Some(marketplaces),
+            Err(err) => {
+                self.push_event(format!("marketplaces/list unavailable: {err}"));
+                None
+            }
+        };
 
         let mut sources = Vec::new();
         if self.palette_source_enabled("commands") {
@@ -110,6 +119,11 @@ impl TuiApp {
         }
         if self.palette_source_enabled("workflow-imports") {
             sources.push(workflow_import_source());
+        }
+        if self.palette_source_enabled("marketplaces")
+            && let Some(marketplaces) = marketplaces.as_ref()
+        {
+            sources.push(marketplace_source(&marketplaces.marketplaces));
         }
         if self.palette_source_enabled("media") {
             sources.push(media_source());
@@ -300,6 +314,19 @@ impl TuiApp {
 
     fn palette_source_enabled(&self, source_id: &str) -> bool {
         self.enabled_palette_sources.is_empty() || self.enabled_palette_sources.contains(source_id)
+    }
+
+    async fn marketplaces_list(&self) -> anyhow::Result<MarketplacesListResult> {
+        let res = self
+            .client
+            .send_request(JsonRpcRequest {
+                jsonrpc: "2.0".to_string(),
+                id: Some(serde_json::json!("marketplaces/list")),
+                method: "marketplaces/list".to_string(),
+                params: None,
+            })
+            .await;
+        decode_response(res)
     }
 }
 

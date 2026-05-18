@@ -36,17 +36,20 @@ use roder_protocol::{
     AgentsListResult, CommandsExpandParams, CommandsExpandResult, CommandsListResult,
     CommandsRunParams, CommandsRunResult, ExtensionsListResult, HunkListParams, HunkListResult,
     HunkReadParams, HunkReadResult, HunkRollbackParams, HunkRollbackResult, InitializeResult,
-    JsonRpcRequest, MediaAttachToTurnParams, MediaAttachToTurnResult, MediaDeleteParams,
-    MediaDeleteResult, MediaListParams, MediaListResult, MediaReadParams, MediaReadResult,
-    MediaThumbnailParams, MediaThumbnailResult, MemoryDeleteParams, MemoryDeleteResult,
-    MemoryListParams, MemoryListResult, MemoryProviderListResult, MemoryQueryParams,
-    MemoryQueryResult, MemoryReadParams, MemoryReadResult, MemoryRecallPreviewParams,
-    MemoryRecallPreviewResult, MemorySaveParams, MemorySaveResult, MemoryUpdateParams,
-    PlanReviewApproveParams, PlanReviewCommentParams, PlanReviewCommentResult,
-    PlanReviewReadParams, PlanReviewReadResult, ProviderAuthResult, ProviderSelectParams,
-    ProviderSelectResult, ProvidersListResult, RunnersDeleteResult, RunnersListResult,
-    RunnersSelectParams, RunnersSelectResult, RunnersSessionResult, SessionExitPlanParams,
-    SessionExitPlanResult, SessionGetResult, SessionResolveUserInputParams,
+    JsonRpcRequest, MarketplacesAddParams, MarketplacesAddResult, MarketplacesRefreshParams,
+    MarketplacesRefreshResult, MarketplacesSearchParams, MarketplacesSearchResult,
+    MediaAttachToTurnParams, MediaAttachToTurnResult, MediaDeleteParams, MediaDeleteResult,
+    MediaListParams, MediaListResult, MediaReadParams, MediaReadResult, MediaThumbnailParams,
+    MediaThumbnailResult, MemoryDeleteParams, MemoryDeleteResult, MemoryListParams,
+    MemoryListResult, MemoryProviderListResult, MemoryQueryParams, MemoryQueryResult,
+    MemoryReadParams, MemoryReadResult, MemoryRecallPreviewParams, MemoryRecallPreviewResult,
+    MemorySaveParams, MemorySaveResult, MemoryUpdateParams, PlanReviewApproveParams,
+    PlanReviewCommentParams, PlanReviewCommentResult, PlanReviewReadParams, PlanReviewReadResult,
+    PluginInstallParams, PluginInstallResult, PluginListInstalledResult,
+    PluginPreviewInstallParams, PluginPreviewInstallResult, ProviderAuthResult,
+    ProviderSelectParams, ProviderSelectResult, ProvidersListResult, RunnersDeleteResult,
+    RunnersListResult, RunnersSelectParams, RunnersSelectResult, RunnersSessionResult,
+    SessionExitPlanParams, SessionExitPlanResult, SessionGetResult, SessionResolveUserInputParams,
     SessionResolveUserInputResult, SessionSetModeParams, SessionSetModeResult, SettingsGetResult,
     SettingsSetDefaultModeParams, SettingsSetDefaultModeResult, SettingsSetWebSearchParams,
     SettingsSetWebSearchResult, SubagentTraceReadParams, SubagentTraceReadResult,
@@ -659,6 +662,122 @@ async fn workflow_import_methods_scan_preview_and_enable_passive_items() {
     .await;
     assert_eq!(enabled.item.id, guidance.id);
     assert!(state_path.exists());
+}
+
+#[tokio::test]
+async fn marketplace_methods_add_refresh_search_preview_and_install_plugins() {
+    let root = std::env::temp_dir().join(format!(
+        "roder-marketplace-app-server-{}",
+        uuid::Uuid::new_v4()
+    ));
+    let store_path = root.join("state").join("marketplaces.json");
+    let cache_dir = root.join("cache");
+    let marketplace_root = root.join("cursor-marketplace");
+    std::fs::create_dir_all(marketplace_root.join(".cursor-plugin")).unwrap();
+    std::fs::write(
+        marketplace_root
+            .join(".cursor-plugin")
+            .join("marketplace.json"),
+        serde_json::json!({
+            "plugins": [
+                {
+                    "id": "repo-tools",
+                    "name": "Repo Tools",
+                    "description": "Repository helper skills",
+                    "repository": "https://github.com/example/repo-tools",
+                    "tags": ["git", "repo"],
+                    "skills": ["review"]
+                }
+            ]
+        })
+        .to_string(),
+    )
+    .unwrap();
+    unsafe {
+        std::env::set_var("RODER_MARKETPLACES_PATH", &store_path);
+        std::env::set_var("RODER_MARKETPLACE_CACHE_DIR", &cache_dir);
+    }
+
+    let mut builder = ExtensionRegistryBuilder::new();
+    builder.inference_engine(Arc::new(FakeInferenceEngine));
+    let runtime = Arc::new(Runtime::new(builder.build().unwrap(), Default::default()).unwrap());
+    let client = LocalAppClient::new(Arc::new(AppServer::new(runtime)));
+
+    let added: MarketplacesAddResult = request(
+        &client,
+        "marketplaces/add",
+        Some(
+            serde_json::to_value(MarketplacesAddParams {
+                id: "cursor-local".to_string(),
+                kind: roder_api::marketplace::MarketplaceKind::Cursor,
+                display_name: "Cursor Local".to_string(),
+                local_path: marketplace_root.display().to_string(),
+            })
+            .unwrap(),
+        ),
+    )
+    .await;
+    assert_eq!(added.marketplace.id, "cursor-local");
+
+    let refreshed: MarketplacesRefreshResult = request(
+        &client,
+        "marketplaces/refresh",
+        Some(
+            serde_json::to_value(MarketplacesRefreshParams {
+                marketplace_id: "cursor-local".to_string(),
+            })
+            .unwrap(),
+        ),
+    )
+    .await;
+    assert_eq!(refreshed.plugins.len(), 1);
+    assert_eq!(refreshed.plugins[0].plugin_id, "repo-tools");
+
+    let search: MarketplacesSearchResult = request(
+        &client,
+        "marketplaces/search",
+        Some(
+            serde_json::to_value(MarketplacesSearchParams {
+                query: Some("repo".to_string()),
+            })
+            .unwrap(),
+        ),
+    )
+    .await;
+    assert_eq!(search.plugins.len(), 1);
+    assert_eq!(search.plugins[0].variants.len(), 1);
+
+    let preview: PluginPreviewInstallResult = request(
+        &client,
+        "plugins/preview_install",
+        Some(
+            serde_json::to_value(PluginPreviewInstallParams {
+                marketplace_id: "cursor-local".to_string(),
+                plugin_id: "repo-tools".to_string(),
+            })
+            .unwrap(),
+        ),
+    )
+    .await;
+    assert_eq!(preview.preview["displayName"], "Repo Tools");
+
+    let installed: PluginInstallResult = request(
+        &client,
+        "plugins/install",
+        Some(
+            serde_json::to_value(PluginInstallParams {
+                marketplace_id: "cursor-local".to_string(),
+                plugin_id: "repo-tools".to_string(),
+            })
+            .unwrap(),
+        ),
+    )
+    .await;
+    assert_eq!(installed.plugin.variant_key, "cursor-local:repo-tools");
+
+    let list: PluginListInstalledResult = request(&client, "plugins/list_installed", None).await;
+    assert_eq!(list.plugins.len(), 1);
+    assert!(cache_dir.join("cursor-local").join("repo-tools").exists());
 }
 
 #[tokio::test]

@@ -578,6 +578,7 @@ enum ProviderPopupScreen {
     WebSearch,
     Resume,
     Themes,
+    Marketplaces,
 }
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
@@ -733,6 +734,7 @@ enum ProviderMenuItem {
     SpinnerSettings,
     WebSearchSettings,
     ThemesSettings,
+    MarketplacesSettings,
     ResumeSessions,
     DefaultMode(PolicyMode),
     Spinner(WorkingSpinner),
@@ -747,6 +749,15 @@ enum ProviderMenuItem {
     },
     Session(Box<DesktopThread>),
     Theme(String),
+    MarketplaceDefault {
+        id: &'static str,
+        kind: &'static str,
+        label: &'static str,
+    },
+    MarketplaceInstallDefault {
+        selection: &'static str,
+        label: &'static str,
+    },
     Back,
 }
 
@@ -787,6 +798,7 @@ impl ProviderMenuItem {
             Self::SpinnerSettings => "Working spinner".to_string(),
             Self::WebSearchSettings => "Web search provider".to_string(),
             Self::ThemesSettings => "Themes".to_string(),
+            Self::MarketplacesSettings => "Plugin marketplaces".to_string(),
             Self::ResumeSessions => "Resume session".to_string(),
             Self::DefaultMode(mode) => {
                 format!("Default mode: {}", settings_policy_mode_label(*mode))
@@ -816,6 +828,8 @@ impl ProviderMenuItem {
                 )
             }
             Self::Theme(id) => id.clone(),
+            Self::MarketplaceDefault { id, kind, label } => format!("{label} - {kind} ({id})"),
+            Self::MarketplaceInstallDefault { label, .. } => label.to_string(),
             Self::Back => "Back".to_string(),
         }
     }
@@ -3071,6 +3085,7 @@ impl TuiApp {
                         | ProviderMenuItem::SpinnerSettings
                         | ProviderMenuItem::WebSearchSettings
                         | ProviderMenuItem::ThemesSettings
+                        | ProviderMenuItem::MarketplacesSettings
                         | ProviderMenuItem::ResumeSessions
                         | ProviderMenuItem::Reasoning(_) => "› ",
                         ProviderMenuItem::Back => "‹ ",
@@ -3100,6 +3115,7 @@ impl TuiApp {
             ProviderPopupScreen::WebSearch => " Web search provider (Enter select, Esc back) ",
             ProviderPopupScreen::Resume => " Resume session (Enter select, Esc back) ",
             ProviderPopupScreen::Themes => " Themes (Enter select, Esc back) ",
+            ProviderPopupScreen::Marketplaces => " Plugin marketplaces (Enter select, Esc back) ",
         };
         let borders = if self.theme.borders_visible {
             Borders::ALL
@@ -3422,6 +3438,12 @@ impl TuiApp {
             self.provider_state.select(Some(0));
             return;
         }
+        if self.provider_popup_screen == ProviderPopupScreen::Marketplaces {
+            self.provider_popup_screen = ProviderPopupScreen::Main;
+            self.provider_menu_items = main_provider_menu_items(&self.provider_choices);
+            self.provider_state.select(Some(0));
+            return;
+        }
         if self.provider_popup_screen != ProviderPopupScreen::Main {
             self.provider_popup_screen = ProviderPopupScreen::Main;
             self.provider_menu_items = main_provider_menu_items(&self.provider_choices);
@@ -3505,11 +3527,26 @@ impl TuiApp {
             ProviderMenuItem::ThemesSettings => {
                 self.open_themes_submenu();
             }
+            ProviderMenuItem::MarketplacesSettings => {
+                self.open_marketplaces_submenu();
+            }
             ProviderMenuItem::ResumeSessions => {
                 self.open_resume_submenu().await;
             }
             ProviderMenuItem::Theme(id) => {
                 self.select_theme(id);
+            }
+            ProviderMenuItem::MarketplaceInstallDefault { selection, .. } => {
+                self.show_provider_popup = false;
+                self.composer = composer_textarea(self.theme);
+                self.composer
+                    .insert_str(format!("/marketplace install-default {selection}"));
+            }
+            ProviderMenuItem::MarketplaceDefault { id, .. } => {
+                self.show_provider_popup = false;
+                self.composer = composer_textarea(self.theme);
+                self.composer
+                    .insert_str(format!("/marketplace refresh {id}"));
             }
             ProviderMenuItem::Spinner(spinner) => {
                 self.select_working_spinner(spinner);
@@ -3720,6 +3757,50 @@ impl TuiApp {
         // Apply the initial highlight immediately so the user lands on a
         // surface that matches what their Enter would commit.
         self.preview_highlighted_theme();
+    }
+
+    fn open_marketplaces_submenu(&mut self) {
+        self.provider_popup_screen = ProviderPopupScreen::Marketplaces;
+        self.provider_menu_filter.clear();
+        self.provider_menu_items = vec![
+            ProviderMenuItem::MarketplaceInstallDefault {
+                selection: "all",
+                label: "Install all default marketplaces",
+            },
+            ProviderMenuItem::MarketplaceInstallDefault {
+                selection: "anthropic",
+                label: "Install Claude default marketplace",
+            },
+            ProviderMenuItem::MarketplaceInstallDefault {
+                selection: "cursor",
+                label: "Install Cursor default marketplace",
+            },
+            ProviderMenuItem::MarketplaceInstallDefault {
+                selection: "codex",
+                label: "Install Codex default marketplace",
+            },
+            ProviderMenuItem::Section("Default marketplace metadata".to_string()),
+            ProviderMenuItem::MarketplaceDefault {
+                id: "claude-plugins-official",
+                kind: "Claude",
+                label: "Anthropic Claude Plugins Official",
+            },
+            ProviderMenuItem::MarketplaceDefault {
+                id: "cursor-plugins",
+                kind: "Cursor",
+                label: "Cursor Marketplace",
+            },
+            ProviderMenuItem::MarketplaceDefault {
+                id: "codex-plugins",
+                kind: "Codex",
+                label: "Codex Plugins",
+            },
+            ProviderMenuItem::Back,
+        ];
+        self.provider_state
+            .select(first_selectable_provider_menu_index(
+                &self.provider_menu_items,
+            ));
     }
 
     /// Apply the theme highlighted in the Themes submenu without persisting.
@@ -4067,7 +4148,19 @@ impl TuiApp {
         {
             self.plan_panel.replace_from_update_plan_output(text);
         }
-        self.timeline.record_tool_completed(tool_id, failed, output);
+        let timeline_output = if tool_name
+            .as_deref()
+            .is_some_and(tool_timeline::is_shell_like_tool)
+        {
+            output
+                .as_deref()
+                .and_then(aggregated_output_from_tool_result)
+                .or(output)
+        } else {
+            output
+        };
+        self.timeline
+            .record_tool_completed(tool_id, failed, timeline_output);
     }
 
     fn toggle_plan_panel(&mut self) {
@@ -4766,6 +4859,13 @@ async fn run_shell_command(command: String) -> anyhow::Result<String> {
     }
 }
 
+fn aggregated_output_from_tool_result(output: &str) -> Option<String> {
+    let marker = "Output:\n";
+    let (_, tail) = output.split_once(marker)?;
+    let text = tail.trim_end().to_string();
+    (!text.is_empty()).then_some(text)
+}
+
 async fn copy_selection_to_clipboards(text: String) -> anyhow::Result<()> {
     let mut errors = Vec::new();
     if let Err(err) = copy_to_system_clipboard(&text).await {
@@ -4899,6 +4999,7 @@ fn main_provider_menu_items(providers: &[ProviderChoice]) -> Vec<ProviderMenuIte
         ProviderMenuItem::WebSearchSettings,
         ProviderMenuItem::SpinnerSettings,
         ProviderMenuItem::ThemesSettings,
+        ProviderMenuItem::MarketplacesSettings,
     ]
 }
 

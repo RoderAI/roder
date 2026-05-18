@@ -5,11 +5,12 @@ use ratatui::{
 };
 
 use super::super::Theme;
+use super::is_shell_like_tool;
 use super::markdown::markdown_lines;
 use super::patch_preview::{tool_diff_preview, tool_diff_preview_lines};
 use super::{
-    MESSAGE_FOLD_LINE_LIMIT, TimelineItem, TimelineItemKind, ToolTimelineStatus, ToolTimelineTool,
-    reasoning_visible_body,
+    MESSAGE_FOLD_LINE_LIMIT, RUNNING_SHELL_TAIL_ROWS, TimelineItem, TimelineItemKind,
+    ToolTimelineStatus, ToolTimelineTool, reasoning_visible_body,
 };
 
 impl TimelineItem {
@@ -133,6 +134,12 @@ impl TimelineItem {
     }
 }
 
+fn tail_lines(output: &str, limit: usize) -> Vec<&str> {
+    let lines = output.lines().collect::<Vec<_>>();
+    let start = lines.len().saturating_sub(limit);
+    lines[start..].to_vec()
+}
+
 struct FoldedBody {
     body: String,
     hidden_lines: usize,
@@ -219,8 +226,17 @@ impl ToolTimelineTool {
             lines.extend(tool_diff_preview_lines(preview, theme));
         }
 
-        if expanded && let Some(output) = self.output.as_deref() {
-            for line in output.lines().take(24) {
+        let live_tail =
+            self.status == ToolTimelineStatus::Running && is_shell_like_tool(&self.entry.name);
+        if (expanded || live_tail)
+            && let Some(output) = self.output.as_deref()
+        {
+            let output_lines = if live_tail {
+                tail_lines(output, RUNNING_SHELL_TAIL_ROWS)
+            } else {
+                output.lines().take(24).collect::<Vec<_>>()
+            };
+            for line in output_lines {
                 lines.push(Line::from(vec![
                     Span::styled("  ↳ ", theme.subtle()),
                     Span::styled(

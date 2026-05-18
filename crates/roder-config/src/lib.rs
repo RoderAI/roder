@@ -3,8 +3,10 @@ use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 
+pub mod marketplaces;
 pub mod workflow_import;
 
+pub use marketplaces::*;
 pub use workflow_import::{WorkflowScanOptions, scan_workflow_imports};
 
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]

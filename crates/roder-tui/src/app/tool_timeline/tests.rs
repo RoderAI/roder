@@ -941,6 +941,54 @@ fn mouse_click_selects_and_second_click_expands_tool() {
 }
 
 #[test]
+fn running_shell_tool_renders_live_last_twelve_output_rows() {
+    let mut timeline = TimelineState::default();
+    timeline.record_tool_requested(
+        "call_shell".to_string(),
+        ToolTimelineEntry::new("shell", r#"{"command":"make test"}"#),
+    );
+    let output = (1..=15)
+        .map(|index| format!("line {index}"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    timeline.record_tool_output_delta("call_shell", &output);
+
+    let lines = rendered_lines(&mut timeline);
+
+    let output_rows = lines
+        .iter()
+        .filter(|line| line.trim_start().starts_with("↳ line"))
+        .cloned()
+        .collect::<Vec<_>>();
+    assert_eq!(output_rows.len(), 12);
+    assert!(!output_rows.iter().any(|line| line.ends_with("line 1")));
+    assert!(!output_rows.iter().any(|line| line.ends_with("line 2")));
+    assert!(!output_rows.iter().any(|line| line.ends_with("line 3")));
+    assert!(output_rows.iter().any(|line| line.contains("line 4")));
+    assert!(output_rows.iter().any(|line| line.contains("line 15")));
+}
+
+#[test]
+fn new_shell_tool_collapses_previous_shell_output() {
+    let mut timeline = TimelineState::default();
+    timeline.record_tool_requested(
+        "call_one".to_string(),
+        ToolTimelineEntry::new("shell", r#"{"command":"first"}"#),
+    );
+    timeline.record_tool_completed("call_one", false, Some("previous output".to_string()));
+    timeline.fold_state.set_expanded("call_one", true);
+
+    timeline.record_tool_requested(
+        "call_two".to_string(),
+        ToolTimelineEntry::new("shell", r#"{"command":"second"}"#),
+    );
+
+    assert!(!timeline.fold_state.is_expanded("call_one"));
+    let lines = rendered_lines(&mut timeline);
+    assert!(!lines.iter().any(|line| line.contains("previous output")));
+}
+
+#[test]
 fn clicking_shell_tool_requests_detail_modal() {
     let mut timeline = TimelineState::default();
     timeline.record_tool_requested(

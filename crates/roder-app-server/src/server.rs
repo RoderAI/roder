@@ -406,6 +406,56 @@ impl AppServer {
                 })
                 .await
             }
+            "marketplaces/list" => self.handle_marketplaces_list().await,
+            "marketplaces/install_default" => {
+                self.decode_and(req.params, |p| async move {
+                    self.handle_marketplaces_install_default(p).await
+                })
+                .await
+            }
+            "marketplaces/add" => {
+                self.decode_and(req.params, |p| async move {
+                    self.handle_marketplaces_add(p).await
+                })
+                .await
+            }
+            "marketplaces/refresh" => {
+                self.decode_and(req.params, |p| async move {
+                    self.handle_marketplaces_refresh(p).await
+                })
+                .await
+            }
+            "marketplaces/search" => {
+                self.decode_and(req.params, |p| async move {
+                    self.handle_marketplaces_search(p).await
+                })
+                .await
+            }
+            "marketplaces/plugin" => {
+                self.decode_and(req.params, |p| async move {
+                    self.handle_marketplace_plugin(p).await
+                })
+                .await
+            }
+            "plugins/preview_install" => {
+                self.decode_and(req.params, |p| async move {
+                    self.handle_plugins_preview_install(p).await
+                })
+                .await
+            }
+            "plugins/install" => {
+                self.decode_and(req.params, |p| async move {
+                    self.handle_plugins_install(p).await
+                })
+                .await
+            }
+            "plugins/list_installed" => self.handle_plugins_list_installed().await,
+            "plugins/uninstall" => {
+                self.decode_and(req.params, |p| async move {
+                    self.handle_plugins_uninstall(p).await
+                })
+                .await
+            }
             "media/list" => {
                 self.decode_and(
                     req.params,
