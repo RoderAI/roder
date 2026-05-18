@@ -1,7 +1,10 @@
 use base64::Engine;
 use futures::{SinkExt, StreamExt, stream};
 use roder_api::capabilities::CapabilityDecision;
-use roder_api::catalog::{PROVIDER_MOCK, PROVIDER_SUPERGROK, PROVIDER_XAI};
+use roder_api::catalog::{
+    PROVIDER_CODEX, PROVIDER_MOCK, PROVIDER_OPENCODE, PROVIDER_OPENCODE_GO, PROVIDER_SUPERGROK,
+    PROVIDER_XAI,
+};
 use roder_api::extension::{ExtensionRegistryBuilder, InferenceEngineId};
 use roder_api::inference::*;
 use roder_api::media::{MediaDimensions, MediaGenerationRequest, MediaKind};
@@ -946,6 +949,91 @@ async fn providers_list_exposes_xai_and_supergrok_auth_metadata() {
             .iter()
             .any(|model| model.id == "grok-4.20-0309-reasoning")
     );
+}
+
+#[tokio::test]
+async fn providers_select_opencode_non_reasoning_model_preserves_reasoning_preference() {
+    let registry = build_default_registry(DefaultRegistryConfig {
+        opencode_api_key: Some("secret-opencode-key".to_string()),
+        ..DefaultRegistryConfig::default()
+    })
+    .unwrap();
+    let runtime = Arc::new(
+        Runtime::new(
+            registry,
+            RuntimeConfig {
+                reasoning: Some("high".to_string()),
+                ..RuntimeConfig::default()
+            },
+        )
+        .unwrap(),
+    );
+    let server = Arc::new(AppServer::new(runtime));
+    let client = LocalAppClient::new(server);
+
+    let selected: ProviderSelectResult = request(
+        &client,
+        "providers/select",
+        Some(
+            serde_json::to_value(ProviderSelectParams {
+                provider: PROVIDER_OPENCODE.to_string(),
+                model: Some("big-pickle".to_string()),
+                reasoning: Some("none".to_string()),
+            })
+            .unwrap(),
+        ),
+    )
+    .await;
+    assert_eq!(selected.provider, PROVIDER_OPENCODE);
+    assert_eq!(selected.model, "big-pickle");
+    assert_eq!(selected.reasoning, "none");
+
+    let selected: ProviderSelectResult = request(
+        &client,
+        "providers/select",
+        Some(
+            serde_json::to_value(ProviderSelectParams {
+                provider: PROVIDER_CODEX.to_string(),
+                model: Some("gpt-5.5".to_string()),
+                reasoning: None,
+            })
+            .unwrap(),
+        ),
+    )
+    .await;
+    assert_eq!(selected.provider, PROVIDER_CODEX);
+    assert_eq!(selected.model, "gpt-5.5");
+    assert_eq!(selected.reasoning, "high");
+}
+
+#[tokio::test]
+async fn providers_list_separates_opencode_zen_and_go_models() {
+    let registry = build_default_registry(DefaultRegistryConfig {
+        opencode_api_key: Some("secret-opencode-key".to_string()),
+        opencode_go_api_key: Some("secret-opencode-go-key".to_string()),
+        ..DefaultRegistryConfig::default()
+    })
+    .unwrap();
+    let runtime = Arc::new(Runtime::new(registry, Default::default()).unwrap());
+    let server = Arc::new(AppServer::new(runtime));
+    let client = LocalAppClient::new(server);
+
+    let providers: ProvidersListResult = request(&client, "providers/list", None).await;
+    let zen = providers
+        .providers
+        .iter()
+        .find(|provider| provider.id == PROVIDER_OPENCODE)
+        .expect("opencode provider should be listed");
+    assert!(zen.models.iter().any(|model| model.id == "big-pickle"));
+    assert!(!zen.models.iter().any(|model| model.id == "kimi-k2.6"));
+
+    let go = providers
+        .providers
+        .iter()
+        .find(|provider| provider.id == PROVIDER_OPENCODE_GO)
+        .expect("opencode-go provider should be listed");
+    assert!(go.models.iter().any(|model| model.id == "kimi-k2.6"));
+    assert!(!go.models.iter().any(|model| model.id == "big-pickle"));
 }
 
 #[tokio::test]

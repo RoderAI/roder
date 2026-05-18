@@ -545,6 +545,11 @@ impl Runtime {
             cfg.default_model = model;
         }
         if let Some(reasoning) = reasoning {
+            if reasoning == REASONING_NONE
+                && !model_supports_reasoning(&cfg.default_model, &reasoning)
+            {
+                return Ok(cfg.clone());
+            }
             validate_reasoning_effort(&cfg.default_model, &reasoning)?;
             cfg.reasoning = Some(reasoning);
         }
@@ -1650,6 +1655,9 @@ fn effective_reasoning_for_model(cfg: &RuntimeConfig, model: &str) -> String {
 }
 
 fn validate_reasoning_effort(model: &str, effort: &str) -> anyhow::Result<()> {
+    if effort == REASONING_NONE && !model_supports_reasoning(model, effort) {
+        return Ok(());
+    }
     let Some(entry) = lookup_model(model) else {
         return Ok(());
     };
@@ -1662,6 +1670,17 @@ fn validate_reasoning_effort(model: &str, effort: &str) -> anyhow::Result<()> {
     } else {
         anyhow::bail!("model {model} does not support reasoning effort {effort}")
     }
+}
+
+fn model_supports_reasoning(model: &str, effort: &str) -> bool {
+    lookup_model(model)
+        .map(|entry| {
+            entry
+                .supported_reasoning
+                .iter()
+                .any(|option| option.effort == effort)
+        })
+        .unwrap_or(false)
 }
 
 fn is_final_answer_phase(phase: Option<&str>) -> bool {
@@ -1688,7 +1707,7 @@ pub fn validate_edit_tool(value: &str) -> anyhow::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use roder_api::catalog::{REASONING_HIGH, REASONING_MEDIUM, REASONING_MINIMAL};
+    use roder_api::catalog::{REASONING_HIGH, REASONING_MEDIUM, REASONING_MINIMAL, REASONING_NONE};
 
     #[test]
     fn server_side_compaction_uses_catalog_ninety_percent_default() {
@@ -1757,6 +1776,53 @@ mod tests {
             effective_reasoning_for_model(&cfg, "gpt-5.5"),
             REASONING_MEDIUM
         );
+    }
+
+    #[tokio::test]
+    async fn selecting_none_for_non_reasoning_model_preserves_stored_preference() {
+        let runtime = Runtime::new(
+            Runtime::fake().unwrap().registry,
+            RuntimeConfig {
+                reasoning: Some(REASONING_HIGH.to_string()),
+                ..RuntimeConfig::default()
+            },
+        )
+        .unwrap();
+
+        let cfg = runtime
+            .select_provider(
+                roder_api::catalog::PROVIDER_MOCK.to_string(),
+                Some("claude-haiku-4-5-20251001".to_string()),
+                Some(REASONING_NONE.to_string()),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(cfg.reasoning.as_deref(), Some(REASONING_HIGH));
+        assert_eq!(runtime.effective_reasoning().await, REASONING_NONE);
+    }
+
+    #[tokio::test]
+    async fn selecting_none_for_model_that_supports_none_updates_preference() {
+        let runtime = Runtime::new(
+            Runtime::fake().unwrap().registry,
+            RuntimeConfig {
+                reasoning: Some(REASONING_HIGH.to_string()),
+                ..RuntimeConfig::default()
+            },
+        )
+        .unwrap();
+
+        let cfg = runtime
+            .select_provider(
+                roder_api::catalog::PROVIDER_MOCK.to_string(),
+                Some("mock".to_string()),
+                Some(REASONING_NONE.to_string()),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(cfg.reasoning.as_deref(), Some(REASONING_NONE));
     }
 
     #[test]

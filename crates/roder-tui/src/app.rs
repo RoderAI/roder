@@ -1320,7 +1320,7 @@ impl TuiApp {
                                         == ProviderPopupScreen::ApiKey
                                         && key.modifiers.contains(KeyModifiers::CONTROL) =>
                                 {
-                                    self.open_opencode_workspace().await;
+                                    self.open_opencode_auth().await;
                                 }
                                 KeyCode::Enter
                                     if self.provider_popup_screen
@@ -3908,19 +3908,19 @@ impl TuiApp {
         self.provider_menu_filter.clear();
         self.provider_menu_items = Vec::new();
         self.timeline.push_system(format!(
-            "open https://opencode.ai/workspace/ and copy an API key from {} > API Keys.",
+            "open https://opencode.ai/auth and copy an API key for {}.",
             provider.name
         ));
         self.pending_api_key_provider = Some(provider);
         self.provider_state.select(None);
     }
 
-    async fn open_opencode_workspace(&mut self) {
-        match open_url("https://opencode.ai/workspace/").await {
-            Ok(()) => self.push_event("opened OpenCode workspace".to_string()),
-            Err(err) => self.record_error(format!(
-                "failed to open https://opencode.ai/workspace/: {err}"
-            )),
+    async fn open_opencode_auth(&mut self) {
+        match open_url("https://opencode.ai/auth").await {
+            Ok(()) => self.push_event("opened OpenCode auth".to_string()),
+            Err(err) => {
+                self.record_error(format!("failed to open https://opencode.ai/auth: {err}"))
+            }
         }
     }
 
@@ -5070,10 +5070,10 @@ fn provider_api_key_items(
     vec![
         ListItem::new(Line::from(vec![
             Span::styled("Open ", theme.text()),
-            Span::styled("https://opencode.ai/workspace/", theme.accent()),
+            Span::styled("https://opencode.ai/auth", theme.accent()),
         ])),
         ListItem::new(Line::from(Span::styled(
-            format!("Go to {provider_name} > API Keys, copy a key, then paste it here."),
+            format!("Create or copy a {provider_name} API key, then paste it here."),
             theme.text(),
         ))),
         ListItem::new(Line::from(vec![
@@ -6602,6 +6602,16 @@ mod tests {
                 auth_type: ProviderAuthType::ApiKey,
                 authenticated: true,
                 auth_detail: None,
+                default_model: Some("big-pickle".to_string()),
+                recommended: false,
+            },
+            ProviderChoice {
+                provider_id: "opencode-go".to_string(),
+                name: "OpenCode Go".to_string(),
+                description: None,
+                auth_type: ProviderAuthType::ApiKey,
+                authenticated: true,
+                auth_detail: None,
                 default_model: Some("qwen3.6-plus".to_string()),
                 recommended: false,
             },
@@ -6619,8 +6629,16 @@ mod tests {
         let models = vec![
             ProviderOption {
                 provider_id: "opencode".to_string(),
+                model_id: "big-pickle".to_string(),
+                label: "opencode/big-pickle (Big Pickle)".to_string(),
+                context_window: None,
+                default_reasoning: None,
+                reasoning_options: Vec::new(),
+            },
+            ProviderOption {
+                provider_id: "opencode-go".to_string(),
                 model_id: "qwen3.6-plus".to_string(),
-                label: "opencode/qwen3.6-plus (Qwen3.6 Plus)".to_string(),
+                label: "opencode-go/qwen3.6-plus (Qwen3.6 Plus)".to_string(),
                 context_window: None,
                 default_reasoning: None,
                 reasoning_options: Vec::new(),
@@ -6645,14 +6663,24 @@ mod tests {
             &items[1],
             ProviderMenuItem::Model(option)
                 if option.provider_id == "opencode"
-                    && option.model_id == "qwen3.6-plus"
+                    && option.model_id == "big-pickle"
         ));
         assert!(matches!(
             &items[2],
-            ProviderMenuItem::Section(label) if label == "Anthropic"
+            ProviderMenuItem::Section(label) if label == "OpenCode Go"
         ));
         assert!(matches!(
             &items[3],
+            ProviderMenuItem::Model(option)
+                if option.provider_id == "opencode-go"
+                    && option.model_id == "qwen3.6-plus"
+        ));
+        assert!(matches!(
+            &items[4],
+            ProviderMenuItem::Section(label) if label == "Anthropic"
+        ));
+        assert!(matches!(
+            &items[5],
             ProviderMenuItem::Model(option)
                 if option.provider_id == "anthropic"
                     && option.model_id == "claude-opus-4.1"
@@ -6703,11 +6731,11 @@ mod tests {
     #[test]
     fn provider_menu_filter_does_not_return_section_headers() {
         let items = vec![
-            ProviderMenuItem::Section("OpenCode Zen".to_string()),
+            ProviderMenuItem::Section("OpenCode".to_string()),
             ProviderMenuItem::Model(ProviderOption {
-                provider_id: "opencode".to_string(),
+                provider_id: "opencode-go".to_string(),
                 model_id: "qwen3.6-plus".to_string(),
-                label: "opencode/qwen3.6-plus (Qwen3.6 Plus)".to_string(),
+                label: "opencode-go/qwen3.6-plus (Qwen3.6 Plus)".to_string(),
                 context_window: None,
                 default_reasoning: None,
                 reasoning_options: Vec::new(),
@@ -6724,7 +6752,7 @@ mod tests {
     fn provider_choice_label_prompts_for_missing_api_key() {
         let provider = ProviderChoice {
             provider_id: "opencode".to_string(),
-            name: "OpenCode Zen".to_string(),
+            name: "OpenCode".to_string(),
             description: None,
             auth_type: ProviderAuthType::ApiKey,
             authenticated: false,
@@ -6733,7 +6761,7 @@ mod tests {
             recommended: false,
         };
 
-        assert_eq!(provider.label(), "OpenCode Zen - paste API key");
+        assert_eq!(provider.label(), "OpenCode - paste API key");
     }
 
     #[test]

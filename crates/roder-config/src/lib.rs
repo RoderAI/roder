@@ -34,6 +34,10 @@ pub struct Config {
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]
 pub struct ProviderConfig {
     pub api_key: Option<String>,
+    pub api_key_env: Option<String>,
+    pub base_url: Option<String>,
+    pub project_id: Option<String>,
+    pub project_id_env: Option<String>,
 }
 
 #[derive(Debug, Default, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -739,6 +743,7 @@ mod tests {
             "openai".to_string(),
             ProviderConfig {
                 api_key: Some("key".to_string()),
+                ..ProviderConfig::default()
             },
         );
 
@@ -1196,6 +1201,28 @@ mod tests {
         assert!(contents.contains("model = \"gpt-5.5\""));
 
         let _ = fs::remove_dir_all(path.parent().unwrap().parent().unwrap());
+    }
+
+    #[test]
+    fn save_default_provider_model_preserves_stored_reasoning_preference() {
+        let path = std::env::temp_dir().join(format!(
+            "roder-config-clear-reasoning-{}.toml",
+            std::process::id()
+        ));
+        fs::write(
+            &path,
+            "provider = \"codex\"\nmodel = \"gpt-5.5\"\nreasoning = \"high\"\n",
+        )
+        .unwrap();
+
+        save_default_provider_model_to_path(&path, "opencode", "big-pickle").unwrap();
+        let config = load_config_file_from_path(&path).unwrap();
+
+        assert_eq!(config.provider.as_deref(), Some("opencode"));
+        assert_eq!(config.model.as_deref(), Some("big-pickle"));
+        assert_eq!(config.reasoning.as_deref(), Some("high"));
+
+        let _ = fs::remove_file(path);
     }
 
     #[test]

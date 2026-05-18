@@ -283,7 +283,7 @@ pub const BUILT_IN_PROVIDERS: &[ProviderCatalogEntry] = &[
         default_model: "gpt-5.5",
         base_url: Some("https://opencode.ai/zen/v1"),
         env_key: Some("OPENCODE_API_KEY"),
-        env_aliases: &["OPENCODE_ZEN_API_KEY"],
+        env_aliases: &["OPENCODE_ZEN_API_KEY", "RODER_OPENCODE_API_KEY"],
         requires_auth: true,
         supports_websockets: false,
     },
@@ -294,7 +294,7 @@ pub const BUILT_IN_PROVIDERS: &[ProviderCatalogEntry] = &[
         default_model: "kimi-k2.6",
         base_url: Some("https://opencode.ai/zen/go/v1"),
         env_key: Some("OPENCODE_GO_API_KEY"),
-        env_aliases: &[],
+        env_aliases: &["RODER_OPENCODE_GO_API_KEY", "OPENCODE_API_KEY"],
         requires_auth: true,
         supports_websockets: false,
     },
@@ -776,7 +776,7 @@ pub fn normalize_provider_id(provider: &str) -> String {
         "grok-oauth" | "xai-oauth" | "x-ai-oauth" | "xai-grok-oauth" => {
             PROVIDER_SUPERGROK.to_string()
         }
-        "opencode-zen" | "zen" => PROVIDER_OPENCODE.to_string(),
+        "opencode" => PROVIDER_OPENCODE.to_string(),
         "go" | "opencode_go" | "opencode-go" => PROVIDER_OPENCODE_GO.to_string(),
         provider => provider.to_string(),
     }
@@ -784,19 +784,21 @@ pub fn normalize_provider_id(provider: &str) -> String {
 
 impl From<&ModelCatalogEntry> for ModelDescriptor {
     fn from(model: &ModelCatalogEntry) -> Self {
+        let supported_reasoning = model
+            .supported_reasoning
+            .iter()
+            .map(|option| ReasoningEffortDescriptor {
+                effort: option.effort.to_string(),
+                description: option.description.to_string(),
+            })
+            .collect::<Vec<_>>();
         Self {
             id: model.id.to_string(),
             name: model.display_name.to_string(),
             context_window: (model.context_window > 0).then_some(model.context_window),
-            default_reasoning: Some(model.default_reasoning.to_string()),
-            supported_reasoning: model
-                .supported_reasoning
-                .iter()
-                .map(|option| ReasoningEffortDescriptor {
-                    effort: option.effort.to_string(),
-                    description: option.description.to_string(),
-                })
-                .collect(),
+            default_reasoning: (!supported_reasoning.is_empty())
+                .then(|| model.default_reasoning.to_string()),
+            supported_reasoning,
         }
     }
 }
@@ -927,6 +929,7 @@ mod tests {
         assert!(haiku.supported_reasoning.is_empty());
 
         let descriptor = ModelDescriptor::from(haiku);
+        assert_eq!(descriptor.default_reasoning, None);
         assert!(descriptor.supported_reasoning.is_empty());
     }
 

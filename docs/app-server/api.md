@@ -346,8 +346,6 @@ Response:
 
 Behavior:
 
-- Normalizes provider aliases before saving, so `opencode-zen` is stored as
-  `opencode`.
 - Requires the provider to be registered in the runtime inference registry.
 - Writes the key to the user config only when the app-server was created with
   user-config persistence enabled.
