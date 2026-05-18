@@ -151,6 +151,7 @@ Core:
 | `initialize` | Desktop startup handshake with active provider, model, and cwd. |
 | `extensions/list` | List extension manifests and capability status. |
 | `providers/list` | List providers, auth status, capabilities, and models. |
+| `providers/configure` | Persist an API key for an API-key provider. |
 | `providers/select` | Select active default provider/model/reasoning. |
 | `model/list` | List desktop model descriptors. |
 | `settings/get` | Read hosted web search mode and default policy mode. |
@@ -320,6 +321,42 @@ Behavior:
 - OAuth providers report `authenticated` by checking the relevant token store.
 - Model listing failures for an individual provider are treated as an empty
   model list.
+
+### `providers/configure`
+
+Purpose: Persist an API key for a registered API-key provider.
+
+Request:
+
+```json
+{
+  "provider": "opencode",
+  "api_key": "sk-..."
+}
+```
+
+Response:
+
+```json
+{
+  "provider": "opencode",
+  "authenticated": true
+}
+```
+
+Behavior:
+
+- Normalizes provider aliases before saving, so `opencode-zen` is stored as
+  `opencode`.
+- Requires the provider to be registered in the runtime inference registry.
+- Writes the key to the user config only when the app-server was created with
+  user-config persistence enabled.
+
+Errors:
+
+- Empty or unknown providers return code `-32602`.
+- Empty API keys return code `-32602`.
+- Disabled user-config persistence returns code `-32000`.
 
 ### `providers/select`
 
