@@ -15,6 +15,7 @@ pub(super) async fn sessions_list(
         })
         .await;
     let mut sessions = decode_response::<SessionsListResult>(res)?.sessions;
+    sessions = resumable_sessions(client, sessions).await;
     sessions.sort_by_key(|session| std::cmp::Reverse(session.updated_at));
     Ok(sessions)
 }
@@ -233,6 +234,36 @@ fn message_count_from_snapshot(snapshot: &ThreadSnapshot) -> usize {
         .count()
 }
 
+async fn resumable_sessions(
+    client: &LocalAppClient,
+    sessions: Vec<roder_api::session::SessionMetadata>,
+) -> Vec<roder_api::session::SessionMetadata> {
+    let mut filtered = Vec::new();
+    for mut session in sessions {
+        if let Ok(Some(snapshot)) = load_snapshot(client, &session.thread_id).await
+            && snapshot_has_user_message(&snapshot)
+        {
+            if session.message_count == 0 {
+                session.message_count = message_count_from_snapshot(&snapshot) as u32;
+            }
+            filtered.push(session);
+        }
+    }
+    filtered
+}
+
+fn snapshot_has_user_message(snapshot: &ThreadSnapshot) -> bool {
+    snapshot.turns.iter().any(|turn| {
+        turn.items.iter().any(|item| {
+            matches!(
+                item,
+                ConversationItem::UserMessage(message)
+                    if !message.text.trim().is_empty() || !message.images.is_empty()
+            )
+        })
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use roder_api::conversation::{AssistantMessage, UserMessage};
@@ -298,5 +329,39 @@ mod tests {
         };
 
         assert_eq!(message_count_from_snapshot(&snapshot), 2);
+    }
+
+    #[test]
+    fn detects_snapshots_with_user_messages() {
+        let with_user = ThreadSnapshot {
+            metadata: None,
+            events: Vec::new(),
+            extension_states: Vec::new(),
+            turns: vec![TurnRecord {
+                thread_id: "thread-a".to_string(),
+                turn_id: "turn-a".to_string(),
+                items: vec![ConversationItem::UserMessage(UserMessage::text("hi"))],
+                created_at: OffsetDateTime::UNIX_EPOCH,
+                completed_at: None,
+            }],
+        };
+        let assistant_only = ThreadSnapshot {
+            metadata: None,
+            events: Vec::new(),
+            extension_states: Vec::new(),
+            turns: vec![TurnRecord {
+                thread_id: "thread-b".to_string(),
+                turn_id: "turn-b".to_string(),
+                items: vec![ConversationItem::AssistantMessage(AssistantMessage {
+                    text: "hello".to_string(),
+                    phase: None,
+                })],
+                created_at: OffsetDateTime::UNIX_EPOCH,
+                completed_at: None,
+            }],
+        };
+
+        assert!(snapshot_has_user_message(&with_user));
+        assert!(!snapshot_has_user_message(&assistant_only));
     }
 }
