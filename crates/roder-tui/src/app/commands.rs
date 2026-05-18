@@ -231,7 +231,7 @@ mod tests {
             names,
             [
                 "init", "clear", "compact", "help", "goal", "retry", "model", "agents", "tasks",
-                "memory"
+                "memory", "remote"
             ]
         );
         assert_eq!(

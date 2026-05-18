@@ -7,6 +7,7 @@ mod resume_picker;
 mod tui_config;
 
 use roder_api::catalog::{DEFAULT_MODEL_ID, PROVIDER_MOCK, normalize_provider_id};
+use roder_api::conversation::ConversationItem;
 use roder_api::inference::HostedWebSearchConfig;
 use roder_api::notifications::NotificationKind;
 use roder_api::policy_mode::PolicyMode;
@@ -22,10 +23,10 @@ use roder_protocol::{
     JsonRpcError, JsonRpcRequest, JsonRpcResponse, MemoryDeleteParams, MemoryDeleteResult,
     MemoryListParams, MemoryListResult, MemoryProviderListResult, MemoryProviderSetParams,
     MemoryQueryParams, MemoryQueryResult, MemoryReadParams, MemoryReadResult, MemorySaveParams,
-    MemorySaveResult, MemoryUpdateParams, SessionsListResult, TasksCancelParams, TasksCancelResult,
-    TasksGetParams, TasksGetResult, TasksListResult, TasksSubmitParams, TasksSubmitResult,
-    WorkflowEnableParams, WorkflowEnableResult, WorkflowPreviewParams, WorkflowPreviewResult,
-    WorkflowScanParams, WorkflowScanResult,
+    MemorySaveResult, MemoryUpdateParams, SessionLoadParams, SessionLoadResult, SessionsListResult,
+    TasksCancelParams, TasksCancelResult, TasksGetParams, TasksGetResult, TasksListResult,
+    TasksSubmitParams, TasksSubmitResult, WorkflowEnableParams, WorkflowEnableResult,
+    WorkflowPreviewParams, WorkflowPreviewResult, WorkflowScanParams, WorkflowScanResult,
 };
 use roder_tui::{TuiApp, TuiStartup};
 use roder_web_search::WebSearchProviderKind;
@@ -282,8 +283,66 @@ async fn list_sessions(
         })
         .await;
     let mut sessions = decode_response::<SessionsListResult>(res).map(|result| result.sessions)?;
+    sessions = resumable_sessions(client, sessions).await;
     sessions.sort_by_key(|session| std::cmp::Reverse(session.updated_at));
     Ok(sessions)
+}
+
+async fn resumable_sessions(
+    client: &LocalAppClient,
+    sessions: Vec<roder_api::session::SessionMetadata>,
+) -> Vec<roder_api::session::SessionMetadata> {
+    let mut filtered = Vec::new();
+    for mut session in sessions {
+        if let Some(message_count) =
+            resumable_session_message_count(client, &session.thread_id).await
+        {
+            if session.message_count == 0 {
+                session.message_count = message_count;
+            }
+            filtered.push(session);
+        }
+    }
+    filtered
+}
+
+async fn resumable_session_message_count(client: &LocalAppClient, thread_id: &str) -> Option<u32> {
+    let res = client
+        .send_request(JsonRpcRequest {
+            jsonrpc: "2.0".to_string(),
+            id: Some(serde_json::json!("sessions/load")),
+            method: "sessions/load".to_string(),
+            params: Some(
+                serde_json::to_value(SessionLoadParams {
+                    thread_id: thread_id.to_string(),
+                })
+                .unwrap(),
+            ),
+        })
+        .await;
+    let Ok(snapshot) = decode_response::<SessionLoadResult>(res) else {
+        return None;
+    };
+    let snapshot = snapshot.snapshot?;
+    let mut message_count = 0u32;
+    let mut has_user_message = false;
+    for turn in snapshot.turns {
+        for item in turn.items {
+            match item {
+                ConversationItem::UserMessage(message) => {
+                    message_count = message_count.saturating_add(1);
+                    if !message.text.trim().is_empty() || !message.images.is_empty() {
+                        has_user_message = true;
+                    }
+                }
+                ConversationItem::AssistantMessage(_) => {
+                    message_count = message_count.saturating_add(1);
+                }
+                _ => {}
+            }
+        }
+    }
+    (has_user_message && message_count > 0).then_some(message_count)
 }
 
 async fn run_tasks_cli(args: &[String]) -> anyhow::Result<()> {
