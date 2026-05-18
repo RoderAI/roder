@@ -1,5 +1,5 @@
 use base64::Engine;
-use futures::stream;
+use futures::{SinkExt, StreamExt, stream};
 use roder_api::capabilities::CapabilityDecision;
 use roder_api::catalog::{PROVIDER_MOCK, PROVIDER_SUPERGROK, PROVIDER_XAI};
 use roder_api::conversation::{ConversationItem, InputImage};
@@ -16,10 +16,8 @@ use roder_api::policy_mode::PolicyMode;
 use roder_api::session::{SessionMetadata, SessionStore, SessionStoreFactory, ThreadSnapshot};
 use roder_api::subagents::{SubagentDefinition, SubagentPermissionMode};
 use roder_api::tasks::TaskState;
+use roder_app_server::remote::{RemoteServerOptions, RemoteToken, listen_remote_websocket};
 use roder_app_server::{AppServer, LocalAppClient};
-use roder_app_server::remote::{
-    RemoteServerOptions, RemoteToken, listen_remote_websocket,
-};
 use roder_core::{
     PendingPlanExit, Runtime, RuntimeConfig, fake_provider::FakeInferenceEngine,
     media_artifacts::MediaArtifactStore,
@@ -67,6 +65,7 @@ use std::time::Duration;
 use time::OffsetDateTime;
 use tokio::sync::Mutex;
 use tokio_tungstenite::tungstenite::Message;
+use tokio_tungstenite::tungstenite::client::IntoClientRequest;
 
 struct TaskCallingEngine {
     hang_child: bool,
@@ -948,6 +947,85 @@ async fn memory_methods_save_query_read_update_delete_and_preview() {
     )
     .await;
     assert!(deleted.deleted);
+}
+
+#[tokio::test]
+async fn remote_websocket_requires_auth_and_serves_initialize() {
+    let runtime = Arc::new(
+        Runtime::new(
+            build_default_registry(DefaultRegistryConfig::default()).unwrap(),
+            Default::default(),
+        )
+        .unwrap(),
+    );
+    let mut events = runtime.subscribe_events();
+    let app_server = Arc::new(AppServer::new(runtime));
+    let token = RemoteToken::new("remote-secret-token".to_string()).unwrap();
+    let handle = listen_remote_websocket(
+        app_server,
+        RemoteServerOptions {
+            listen: "ws://127.0.0.1:0".to_string(),
+            token,
+            print_qr: false,
+            workspace: Some("/tmp/gode".to_string()),
+        },
+    )
+    .await
+    .unwrap();
+    let started = wait_for_global_event(&mut events, "remote/serverStarted").await;
+    assert!(
+        !serde_json::to_string(&started.event)
+            .unwrap()
+            .contains("remote-secret-token")
+    );
+    let url = format!("ws://{}", handle.listen_addr);
+
+    let rejected = tokio_tungstenite::connect_async(&url).await;
+    assert!(rejected.is_err());
+    let auth_failed = wait_for_global_event(&mut events, "remote/authFailed").await;
+    assert!(
+        !serde_json::to_string(&auth_failed.event)
+            .unwrap()
+            .contains("remote-secret-token")
+    );
+
+    let mut request = url.clone().into_client_request().unwrap();
+    request.headers_mut().insert(
+        "Authorization",
+        "Bearer remote-secret-token".parse().unwrap(),
+    );
+    let (mut websocket, _) = tokio_tungstenite::connect_async(request).await.unwrap();
+    let connected = wait_for_global_event(&mut events, "remote/clientConnected").await;
+    assert_eq!(connected.source, roder_api::events::EventSource::AppServer);
+    websocket
+        .send(Message::Text(
+            serde_json::to_string(&JsonRpcRequest {
+                jsonrpc: "2.0".to_string(),
+                id: Some(serde_json::json!("init")),
+                method: "initialize".to_string(),
+                params: None,
+            })
+            .unwrap()
+            .into(),
+        ))
+        .await
+        .unwrap();
+    let message = websocket.next().await.unwrap().unwrap();
+    let Message::Text(text) = message else {
+        panic!("expected text response");
+    };
+    let response: roder_protocol::JsonRpcResponse = serde_json::from_str(&text).unwrap();
+    assert!(response.error.is_none(), "{:?}", response.error);
+    let result = response.result.unwrap();
+    assert_eq!(
+        result
+            .get("remote")
+            .and_then(|remote| remote.get("authenticated"))
+            .and_then(serde_json::Value::as_bool),
+        Some(true)
+    );
+    drop(websocket);
+    let _ = wait_for_global_event(&mut events, "remote/clientDisconnected").await;
 }
 
 #[tokio::test]
@@ -2977,6 +3055,21 @@ async fn wait_for_event(
             .unwrap()
             .unwrap();
         if envelope.thread_id.as_deref() == Some(thread_id) && envelope.kind == kind {
+            return envelope;
+        }
+    }
+}
+
+async fn wait_for_global_event(
+    events: &mut tokio::sync::broadcast::Receiver<roder_api::events::EventEnvelope>,
+    kind: &str,
+) -> roder_api::events::EventEnvelope {
+    loop {
+        let envelope = tokio::time::timeout(Duration::from_secs(2), events.recv())
+            .await
+            .unwrap()
+            .unwrap();
+        if envelope.kind == kind {
             return envelope;
         }
     }

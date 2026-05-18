@@ -137,7 +137,7 @@ pub fn media_source() -> StaticPaletteSource {
                     id: "media-image".to_string(),
                     title: "Generate image".to_string(),
                     subtitle: Some(
-                        "Use media.generate_image and save a Roder artifact".to_string(),
+                        "Use media_generate_image and save a Roder artifact".to_string(),
                     ),
                     keywords: vec![
                         "media".to_string(),
@@ -153,7 +153,7 @@ pub fn media_source() -> StaticPaletteSource {
                     id: "media-video".to_string(),
                     title: "Generate video".to_string(),
                     subtitle: Some(
-                        "Use media.generate_video and save a Roder artifact".to_string(),
+                        "Use media_generate_video and save a Roder artifact".to_string(),
                     ),
                     keywords: vec![
                         "media".to_string(),
@@ -204,6 +204,28 @@ pub fn memories_source() -> StaticPaletteSource {
                 PaletteAction::InsertComposerText("/memory providers list".to_string()),
             ),
         ],
+    )
+}
+
+pub fn remote_source() -> StaticPaletteSource {
+    StaticPaletteSource::new(
+        "remote",
+        "Remote",
+        vec![(
+            PaletteItem {
+                id: "remote-control".to_string(),
+                title: "Remote control".to_string(),
+                subtitle: Some("Open the remote app-server pairing panel".to_string()),
+                keywords: vec![
+                    "remote".to_string(),
+                    "phone".to_string(),
+                    "pairing".to_string(),
+                    "websocket".to_string(),
+                ],
+                icon: Some('R'),
+            },
+            PaletteAction::InsertComposerText("/remote".to_string()),
+        )],
     )
 }
 
@@ -637,6 +659,16 @@ mod tests {
         assert_eq!(
             entries[1].action,
             PaletteAction::SetWebSearchMode(HostedWebSearchMode::Live)
+        );
+    }
+
+    #[test]
+    fn remote_source_opens_remote_command() {
+        let source = remote_source();
+        assert_eq!(source.entries()[0].item.title, "Remote control");
+        assert_eq!(
+            source.entries()[0].action,
+            PaletteAction::InsertComposerText("/remote".to_string())
         );
     }
 

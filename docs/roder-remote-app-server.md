@@ -1,0 +1,48 @@
+# Roder Remote App-Server
+
+Remote app-server mode exposes the same JSON-RPC control plane over an authenticated WebSocket for same-network or Tailscale clients.
+
+Start it explicitly:
+
+```sh
+roder app-server --remote
+roder app-server --remote --listen ws://0.0.0.0:0
+roder app-server --remote --listen ws://100.x.y.z:0
+roder app-server --remote --auth-token env:GODE_REMOTE_TOKEN
+roder app-server --remote --print-qr=false
+```
+
+Without `--remote`, `roder app-server` keeps using `stdio://`. Remote mode defaults to `ws://0.0.0.0:0` so the operating system picks a free port and Roder prints usable connection URLs plus a `gode://connect` pairing link.
+
+## Authentication
+
+Remote WebSocket upgrades require a bearer token during the handshake. Native clients should send:
+
+```text
+Authorization: Bearer <token>
+```
+
+Browser-constrained clients that cannot set custom WebSocket headers can use subprotocol auth:
+
+```text
+Sec-WebSocket-Protocol: gode.remote.v1, bearer.<token>
+```
+
+Tokens are not accepted in WebSocket query parameters. The pairing payload includes the token inside the encoded `gode://connect?payload=...` value, but logs, app-server events, and TUI summaries use the token preview only.
+
+## Security Model
+
+Remote mode is intended for a trusted LAN or Tailscale network. Raw `ws://` over a LAN IP is not TLS-protected; use Tailscale or another trusted private tunnel when possible. Do not expose the remote app-server directly to the public internet.
+
+The local event stream records remote server starts, auth failures, client connects, and client disconnects as sanitized events:
+
+- `remote/serverStarted`
+- `remote/authFailed`
+- `remote/clientConnected`
+- `remote/clientDisconnected`
+
+These events include connection metadata and token previews only, never the full bearer token.
+
+## TUI
+
+Use `/remote` or `Ctrl+P -> Remote control` to open the remote pairing workflow. The TUI surface shows connection URLs, token preview, pairing payload, connected-client count, and a warning when the selected URL is a LAN WebSocket without TLS.

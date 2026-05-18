@@ -54,27 +54,13 @@ impl OpenAiResponsesEngine {
 
     #[cfg(test)]
     fn map_request(request: &AgentInferenceRequest) -> Value {
-        Self::map_request_with_options(request, RequestMappingOptions::default())
-    }
-
-    fn map_request_for_turn(
-        &self,
-        ctx: &InferenceTurnContext<'_>,
-        request: &AgentInferenceRequest,
-    ) -> Value {
-        Self::map_request_with_options(
-            request,
-            RequestMappingOptions {
-                xai_mode: self.xai_mode,
-                thread_id: Some(ctx.thread_id),
-            },
-        )
+        Self::map_request_with_options(request, RequestMappingOptions::default()).0
     }
 
     fn map_request_with_options(
         request: &AgentInferenceRequest,
         options: RequestMappingOptions<'_>,
-    ) -> Value {
+    ) -> (Value, ResponsesToolNameMap) {
         let mut body = json!({
             "model": request.model.model,
             "input": response_input_items(request),
@@ -121,7 +107,7 @@ impl OpenAiResponsesEngine {
                 body["include"] = json!(["reasoning.encrypted_content"]);
             }
         }
-        let tools = responses_tools(request);
+        let (tools, tool_name_map) = responses_tools(request);
         if !tools.is_empty() {
             body["tools"] = json!(tools);
             body["tool_choice"] = match &request.tool_choice {
@@ -133,6 +119,7 @@ impl OpenAiResponsesEngine {
                 }
                 roder_api::tools::ToolChoice::None => json!("none"),
                 roder_api::tools::ToolChoice::Specific(name) => {
+                    let name = tool_name_map.api_name(name);
                     json!({ "type": "function", "name": name })
                 }
                 roder_api::tools::ToolChoice::Auto | roder_api::tools::ToolChoice::Any => {
@@ -160,7 +147,7 @@ impl OpenAiResponsesEngine {
             body["context_management"] =
                 json!([{ "type": "compaction", "compact_threshold": threshold }]);
         }
-        body
+        (body, tool_name_map)
     }
 }
 
@@ -170,14 +157,37 @@ struct RequestMappingOptions<'a> {
     thread_id: Option<&'a str>,
 }
 
+#[derive(Debug, Default)]
+struct ResponsesToolNameMap {
+    tool_name_to_api_name: HashMap<String, String>,
+    api_name_to_tool_name: HashMap<String, String>,
+}
+
+impl ResponsesToolNameMap {
+    fn register(&mut self, tool_name: &str, api_name: &str) {
+        self.tool_name_to_api_name
+            .insert(tool_name.to_string(), api_name.to_string());
+        self.api_name_to_tool_name
+            .insert(api_name.to_string(), tool_name.to_string());
+    }
+
+    fn api_name<'a>(&'a self, tool_name: &'a str) -> &'a str {
+        self.tool_name_to_api_name
+            .get(tool_name)
+            .map_or(tool_name, String::as_str)
+    }
+}
+
 fn xai_supports_reasoning(model: &str) -> bool {
     model == "grok-4.3"
         || model == "grok-4.20-0309-reasoning"
         || model.starts_with("grok-4.20-multi-agent-")
 }
 
-fn responses_tools(request: &AgentInferenceRequest) -> Vec<Value> {
+fn responses_tools(request: &AgentInferenceRequest) -> (Vec<Value>, ResponsesToolNameMap) {
     let mut tools = Vec::new();
+    let mut used_tool_names = HashSet::new();
+    let mut tool_name_map = ResponsesToolNameMap::default();
     match request.runtime.hosted_web_search.mode {
         HostedWebSearchMode::Disabled => {}
         HostedWebSearchMode::Cached => tools.push(json!({
@@ -189,15 +199,47 @@ fn responses_tools(request: &AgentInferenceRequest) -> Vec<Value> {
             "external_web_access": true,
         })),
     }
-    tools.extend(request.tools.iter().map(|tool| {
-        json!({
+    for tool in &request.tools {
+        let api_name = responses_tool_name(&tool.name, &mut used_tool_names);
+        tool_name_map.register(&tool.name, &api_name);
+        tools.push(json!({
             "type": "function",
-            "name": tool.name,
+            "name": api_name,
             "description": tool.description,
             "parameters": tool.parameters,
+        }));
+    }
+    (tools, tool_name_map)
+}
+
+fn responses_tool_name(tool_name: &str, used_tool_names: &mut HashSet<String>) -> String {
+    let base_name = tool_name
+        .chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || c == '_' || c == '-' {
+                c
+            } else {
+                '_'
+            }
         })
-    }));
-    tools
+        .collect::<String>();
+    if used_tool_names.insert(base_name.clone()) {
+        return base_name;
+    }
+
+    for suffix in 2u32.. {
+        let candidate = format!("{base_name}_{suffix}");
+        if used_tool_names.insert(candidate.clone()) {
+            return candidate;
+        }
+    }
+    unreachable!()
+}
+
+fn map_tool_name<'a>(tool_name: &'a str, tool_name_map: &'a HashMap<String, String>) -> &'a str {
+    tool_name_map
+        .get(tool_name)
+        .map_or(tool_name, String::as_str)
 }
 
 #[async_trait::async_trait]
@@ -252,7 +294,13 @@ impl InferenceEngine for OpenAiResponsesEngine {
         _ctx: InferenceTurnContext<'_>,
         request: AgentInferenceRequest,
     ) -> anyhow::Result<InferenceEventStream> {
-        let body = self.map_request_for_turn(&_ctx, &request);
+        let (body, tool_name_map) = Self::map_request_with_options(
+            &request,
+            RequestMappingOptions {
+                xai_mode: self.xai_mode,
+                thread_id: Some(_ctx.thread_id),
+            },
+        );
         let client = reqwest::Client::new();
         let mut request = client
             .post(format!("{}/responses", self.base_url))
@@ -272,7 +320,7 @@ impl InferenceEngine for OpenAiResponsesEngine {
             }
             anyhow::bail!("OpenAI Responses error {}: {}", status, text);
         }
-        Ok(stream_responses_sse(response))
+        Ok(stream_responses_sse(response, tool_name_map.api_name_to_tool_name))
     }
 }
 
@@ -296,13 +344,19 @@ fn xai_error_message(status: reqwest::StatusCode, body: &str) -> String {
     format!("xAI Responses error {status}: {detail}")
 }
 
-fn stream_responses_sse(response: reqwest::Response) -> InferenceEventStream {
+fn stream_responses_sse(
+    response: reqwest::Response,
+    tool_name_map: HashMap<String, String>,
+) -> InferenceEventStream {
     Box::pin(async_stream::try_stream! {
         use futures::StreamExt as _;
 
         let mut chunks = response.bytes_stream();
         let mut buffer = String::new();
-        let mut state = ResponsesStreamState::default();
+        let mut state = ResponsesStreamState {
+            tool_name_map,
+            ..Default::default()
+        };
 
         while let Some(chunk) = chunks.next().await {
             let chunk = chunk?;
@@ -345,6 +399,7 @@ struct ResponsesStreamState {
     tool_arguments: HashMap<String, String>,
     tool_names: HashMap<String, String>,
     tool_call_ids: HashMap<String, String>,
+    tool_name_map: HashMap<String, String>,
     emitted_tool_call_ids: HashSet<String>,
     reasoning_delta_keys: HashSet<String>,
 }
@@ -517,7 +572,7 @@ fn events_from_sse_event(
                     events.push(message);
                 }
                 events.extend(
-                    extract_tool_calls_from_item(item)
+                    extract_tool_calls_from_item(item, &state.tool_name_map)
                         .into_iter()
                         .filter_map(|call| emit_tool_call_once(call, state)),
                 );
@@ -529,7 +584,7 @@ fn events_from_sse_event(
             let response = event.data.get("response").unwrap_or(&event.data);
             let mut events = Vec::new();
             events.extend(message_deltas_from_response(response, state));
-            for call in extract_tool_calls(response) {
+            for call in extract_tool_calls(response, &state.tool_name_map) {
                 if let Some(call) = emit_tool_call_once(call, state) {
                     events.push(call);
                 }
@@ -666,8 +721,13 @@ fn started_function_call(item: &Value, state: &ResponsesStreamState) -> Option<T
     let name = item
         .get("name")
         .and_then(Value::as_str)
-        .map(str::to_string)
-        .or_else(|| state.tool_names.get(item_id).cloned())?;
+        .map(|name| map_tool_name(name, &state.tool_name_map).to_string())
+        .or_else(|| {
+            state
+                .tool_names
+                .get(item_id)
+                .map(|name| map_tool_name(name, &state.tool_name_map).to_string())
+        })?;
     Some(ToolCallStarted { id, name })
 }
 
@@ -693,8 +753,13 @@ fn finalized_function_call(
     let name = data
         .get("name")
         .and_then(Value::as_str)
-        .map(str::to_string)
-        .or_else(|| state.tool_names.get(item_id).cloned())?;
+        .map(|name| map_tool_name(name, &state.tool_name_map).to_string())
+        .or_else(|| {
+            state
+                .tool_names
+                .get(item_id)
+                .map(|name| map_tool_name(name, &state.tool_name_map).to_string())
+        })?;
     let id = state
         .tool_call_ids
         .get(item_id)
@@ -718,7 +783,10 @@ fn emit_tool_call_once(
         .then_some(InferenceEvent::ToolCallCompleted(call))
 }
 
-fn extract_tool_calls_from_item(item: &Value) -> Vec<ToolCallCompleted> {
+fn extract_tool_calls_from_item(
+    item: &Value,
+    tool_name_map: &HashMap<String, String>,
+) -> Vec<ToolCallCompleted> {
     if item.get("type").and_then(|value| value.as_str()) != Some("function_call") {
         return Vec::new();
     }
@@ -735,7 +803,7 @@ fn extract_tool_calls_from_item(item: &Value) -> Vec<ToolCallCompleted> {
     };
     vec![ToolCallCompleted {
         id: id.to_string(),
-        name: name.to_string(),
+        name: map_tool_name(name, tool_name_map).to_string(),
         arguments: item
             .get("arguments")
             .and_then(|value| value.as_str())
@@ -932,7 +1000,7 @@ fn message_deltas_from_response(
         .collect()
 }
 
-fn extract_tool_calls(value: &Value) -> Vec<ToolCallCompleted> {
+fn extract_tool_calls(value: &Value, tool_name_map: &HashMap<String, String>) -> Vec<ToolCallCompleted> {
     let Some(output) = value.get("output").and_then(|v| v.as_array()) else {
         return Vec::new();
     };
@@ -945,7 +1013,11 @@ fn extract_tool_calls(value: &Value) -> Vec<ToolCallCompleted> {
                 .or_else(|| item.get("id"))
                 .and_then(|v| v.as_str())?
                 .to_string();
-            let name = item.get("name").and_then(|v| v.as_str())?.to_string();
+            let name = map_tool_name(
+                item.get("name").and_then(|v| v.as_str())?,
+                tool_name_map,
+            )
+            .to_string();
             let arguments = item
                 .get("arguments")
                 .and_then(|v| v.as_str())
@@ -1191,6 +1263,32 @@ mod tests {
     }
 
     #[test]
+    fn maps_unsafe_function_tool_names_to_openai_safe_names() {
+        let mut request = request();
+        request.tools = vec![
+            roder_api::tools::ToolSpec {
+                name: "memory.save".to_string(),
+                description: "save memory entry".to_string(),
+                parameters: json!({ "type": "object" }),
+            },
+            roder_api::tools::ToolSpec {
+                name: "memory.query".to_string(),
+                description: "query memory".to_string(),
+                parameters: json!({ "type": "object" }),
+            },
+        ];
+        request.tool_choice = roder_api::tools::ToolChoice::Specific("memory.save".to_string());
+
+        let body = OpenAiResponsesEngine::map_request(&request);
+        let tools = body["tools"].as_array().unwrap();
+        assert_eq!(tools[0]["type"], "function");
+        assert_eq!(tools[0]["name"], "memory_save");
+        assert_eq!(tools[1]["type"], "function");
+        assert_eq!(tools[1]["name"], "memory_query");
+        assert_eq!(body["tool_choice"]["name"], "memory_save");
+    }
+
+    #[test]
     fn hosted_web_search_without_function_tools_remains_available() {
         let mut request = request();
         request.tools.clear();
@@ -1212,7 +1310,7 @@ mod tests {
         request.model.model = "grok-4.3".to_string();
         request.runtime.prompt_cache_key = Some("openai-cache".to_string());
 
-        let body = OpenAiResponsesEngine::map_request_with_options(
+        let (body, _) = OpenAiResponsesEngine::map_request_with_options(
             &request,
             RequestMappingOptions {
                 xai_mode: true,
@@ -1231,7 +1329,7 @@ mod tests {
         request.model.provider = PROVIDER_XAI.to_string();
         request.model.model = "grok-4.20-0309-non-reasoning".to_string();
 
-        let body = OpenAiResponsesEngine::map_request_with_options(
+        let (body, _) = OpenAiResponsesEngine::map_request_with_options(
             &request,
             RequestMappingOptions {
                 xai_mode: true,
@@ -1397,11 +1495,59 @@ mod tests {
                 "arguments": "{\"text\":\"hello\"}"
             }]
         });
-        let calls = extract_tool_calls(&value);
+        let calls = extract_tool_calls(&value, &HashMap::new());
         assert_eq!(calls.len(), 1);
         assert_eq!(calls[0].id, "call_1");
         assert_eq!(calls[0].name, "echo");
         assert_eq!(calls[0].arguments, "{\"text\":\"hello\"}");
+    }
+
+    #[test]
+    fn remaps_api_tool_names_to_canonical_names_from_completed_output() {
+        let mut map = HashMap::new();
+        map.insert("memory_save".to_string(), "memory.save".to_string());
+        let value = json!({
+            "output": [{
+                "type": "function_call",
+                "call_id": "call_1",
+                "name": "memory_save",
+                "arguments": "{\"entry\":\"x\"}"
+            }]
+        });
+        let calls = extract_tool_calls(&value, &map);
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].name, "memory.save");
+    }
+
+    #[test]
+    fn remaps_api_tool_names_to_canonical_names_in_output_item_added() {
+        let mut state = ResponsesStreamState::default();
+        state
+            .tool_name_map
+            .insert("memory_save".to_string(), "memory.save".to_string());
+
+        let added = SseEvent {
+            event: Some("response.output_item.done".to_string()),
+            data: json!({
+                "type": "response.output_item.done",
+                "item": {
+                    "id": "fc_1",
+                    "type": "function_call",
+                    "call_id": "call_1",
+                    "name": "memory_save",
+                    "arguments": "{\"entry\":\"x\"}"
+                }
+            }),
+        };
+        let events = events_from_sse_event(&added, &mut state);
+        assert_eq!(
+            events,
+            vec![InferenceEvent::ToolCallCompleted(ToolCallCompleted {
+                id: "call_1".to_string(),
+                name: "memory.save".to_string(),
+                arguments: "{\"entry\":\"x\"}".to_string(),
+            })]
+        );
     }
 
     #[test]

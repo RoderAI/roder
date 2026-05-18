@@ -10,6 +10,8 @@ mod memories;
 mod plan_hunk_tests;
 mod plan_panel;
 mod plan_review;
+#[allow(dead_code)]
+mod remote;
 mod runner;
 mod session_resume;
 mod shortcuts;

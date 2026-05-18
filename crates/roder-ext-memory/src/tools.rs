@@ -26,43 +26,23 @@ impl roder_api::tools::ToolContributor for MemoryToolContributor {
     fn contribute(&self, registry: &mut ToolRegistry) -> anyhow::Result<()> {
         registry.register(Arc::new(MemorySaveTool {
             store: self.store.clone(),
-            name: "memory.save",
-        }))?;
-        registry.register(Arc::new(MemorySaveTool {
-            store: self.store.clone(),
-            name: "save_memory",
+            name: "memory_save",
         }))?;
         registry.register(Arc::new(MemoryQueryTool {
             store: self.store.clone(),
-            name: "memory.query",
-        }))?;
-        registry.register(Arc::new(MemoryQueryTool {
-            store: self.store.clone(),
-            name: "query_memories",
+            name: "memory_query",
         }))?;
         registry.register(Arc::new(MemoryReadTool {
             store: self.store.clone(),
-            name: "memory.read",
-        }))?;
-        registry.register(Arc::new(MemoryReadTool {
-            store: self.store.clone(),
-            name: "read_memory",
+            name: "memory_read",
         }))?;
         registry.register(Arc::new(MemoryDeleteTool {
             store: self.store.clone(),
-            name: "memory.delete",
-        }))?;
-        registry.register(Arc::new(MemoryDeleteTool {
-            store: self.store.clone(),
-            name: "delete_memory",
+            name: "memory_delete",
         }))?;
         registry.register(Arc::new(MemoryUpdateTool {
             store: self.store.clone(),
-            name: "memory.update",
-        }))?;
-        registry.register(Arc::new(MemoryUpdateTool {
-            store: self.store.clone(),
-            name: "update_memory",
+            name: "memory_update",
         }))
     }
 }

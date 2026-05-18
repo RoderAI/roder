@@ -1,0 +1,4 @@
+interface:
+  display_name: "Maintain Roder App-Server API Docs"
+  short_description: "Keep integrator API docs current"
+  default_prompt: "Use $roder-app-server-docs to update the roder app-server integrator API documentation."

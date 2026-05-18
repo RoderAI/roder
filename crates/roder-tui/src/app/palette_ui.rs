@@ -6,7 +6,8 @@ use crate::palette::{
     render::palette_list,
     sources::{
         agent_source, command_source, media_source, memories_source, mode_source, model_source,
-        runner_source, session_source, settings_source, theme_source, workflow_import_source,
+        remote_source, runner_source, session_source, settings_source, theme_source,
+        workflow_import_source,
     },
 };
 use crate::theme::{discover_themes, discovery::default_directories};
@@ -115,6 +116,9 @@ impl TuiApp {
         }
         if self.palette_source_enabled("memories") {
             sources.push(memories_source());
+        }
+        if self.palette_source_enabled("remote") {
+            sources.push(remote_source());
         }
         self.palette_entries = collect_entries(&sources);
         self.palette_state

@@ -18,6 +18,7 @@ pub(super) fn built_in_command_catalog() -> Vec<CommandDescriptor> {
         ("agents", "List configured subagents."),
         ("tasks", "Open the background task monitor."),
         ("memory", "Inspect relevant project and user memory."),
+        ("remote", "Open the remote app-server pairing panel."),
     ]
     .into_iter()
     .map(|(name, description)| {
@@ -110,6 +111,9 @@ pub(super) fn built_in_prompt(name: &str, args: &str) -> Option<String> {
         "init" => "Inspect the workspace and draft concise project instructions.",
         "compact" => "Compact the current thread while preserving the working state.",
         "memory" => "Surface relevant memory for the current workspace and task.",
+        "remote" => {
+            "Open the remote app-server pairing workflow and show connection URLs, token preview, auth header guidance, and LAN/Tailscale safety notes."
+        }
         _ => return None,
     };
     if args.trim().is_empty() {
