@@ -6,6 +6,8 @@ edition.workspace = true
 [dependencies]
 anyhow.workspace = true
 base64.workspace = true
+futures.workspace = true
+rand.workspace = true
 roder-api.workspace = true
 roder-codex-auth.workspace = true
 roder-commands.workspace = true
@@ -15,8 +17,10 @@ roder-protocol.workspace = true
 roder-tasks.workspace = true
 serde = { workspace = true, features = ["derive"] }
 serde_json.workspace = true
+sha2.workspace = true
 time.workspace = true
 tokio = { workspace = true, features = ["full"] }
+tokio-tungstenite.workspace = true
 uuid = { workspace = true, features = ["v4"] }
 
 [dev-dependencies]

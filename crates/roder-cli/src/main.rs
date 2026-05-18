@@ -590,6 +590,9 @@ struct CliOptions {
 #[derive(Debug, Clone)]
 struct AppServerOptions {
     listen: String,
+    remote: bool,
+    auth_token: Option<String>,
+    print_qr: bool,
     cli_options: CliOptions,
 }
 
@@ -869,10 +872,19 @@ fn print_tui_exit_summary(tui: &TuiApp) {
 
 fn parse_app_server_options(args: &[String]) -> anyhow::Result<AppServerOptions> {
     let mut listen = "stdio://".to_string();
+    let mut remote = false;
+    let mut auth_token = None;
+    let mut print_qr = true;
     let mut passthrough = Vec::new();
     let mut i = 0;
     while i < args.len() {
         match args[i].as_str() {
+            "--remote" => {
+                remote = true;
+                if listen == "stdio://" {
+                    listen = "ws://0.0.0.0:0".to_string();
+                }
+            }
             "--listen" => {
                 let Some(value) = args.get(i + 1) else {
                     anyhow::bail!("--listen requires a value");
@@ -883,6 +895,22 @@ fn parse_app_server_options(args: &[String]) -> anyhow::Result<AppServerOptions>
             arg if arg.starts_with("--listen=") => {
                 listen = arg["--listen=".len()..].to_string();
             }
+            "--auth-token" => {
+                let Some(value) = args.get(i + 1) else {
+                    anyhow::bail!("--auth-token requires a value");
+                };
+                auth_token = Some(resolve_auth_token_arg(value)?);
+                i += 1;
+            }
+            arg if arg.starts_with("--auth-token=") => {
+                auth_token = Some(resolve_auth_token_arg(&arg["--auth-token=".len()..])?);
+            }
+            "--print-qr=false" => {
+                print_qr = false;
+            }
+            "--print-qr=true" => {
+                print_qr = true;
+            }
             other => passthrough.push(other.to_string()),
         }
         i += 1;
@@ -890,13 +918,16 @@ fn parse_app_server_options(args: &[String]) -> anyhow::Result<AppServerOptions>
 
     Ok(AppServerOptions {
         listen,
+        remote,
+        auth_token,
+        print_qr,
         cli_options: parse_cli_options(&passthrough)?,
     })
 }
 
 async fn run_app_server(args: &[String]) -> anyhow::Result<()> {
     let options = parse_app_server_options(args)?;
-    if options.listen != "stdio://" {
+    if options.listen != "stdio://" && !options.remote {
         anyhow::bail!(
             "unsupported app-server listen address {:?}; only stdio:// is currently supported",
             options.listen
@@ -905,7 +936,54 @@ async fn run_app_server(args: &[String]) -> anyhow::Result<()> {
 
     let (runtime, _) = build_runtime_from_config(options.cli_options).await?;
     let app_server = Arc::new(AppServer::new(runtime).with_user_config_persistence());
+    if options.remote {
+        let token = match options.auth_token {
+            Some(token) => roder_app_server::remote::RemoteToken::new(token)?,
+            None => roder_app_server::remote::generate_remote_token_from_os()?,
+        };
+        let handle = roder_app_server::remote::listen_remote_websocket(
+            app_server,
+            roder_app_server::remote::RemoteServerOptions {
+                listen: options.listen,
+                token,
+                print_qr: options.print_qr,
+                workspace: std::env::current_dir()
+                    .ok()
+                    .map(|path| path.display().to_string()),
+            },
+        )
+        .await?;
+        if options.print_qr {
+            eprintln!(
+                "{}",
+                roder_app_server::remote::render_terminal_pairing(&handle)
+            );
+        } else {
+            eprintln!(
+                "Remote app-server listening at {}; token {}",
+                handle.listen_addr, handle.token_preview
+            );
+        }
+        std::future::pending::<()>().await;
+        return Ok(());
+    }
     run_stdio_app_server(app_server).await
+}
+
+fn resolve_auth_token_arg(value: &str) -> anyhow::Result<String> {
+    if let Some(env_name) = value.strip_prefix("env:") {
+        let token = std::env::var(env_name)
+            .map_err(|_| anyhow::anyhow!("--auth-token env:{env_name} is not set"))?;
+        if token.trim().is_empty() {
+            anyhow::bail!("--auth-token env:{env_name} is empty");
+        }
+        Ok(token)
+    } else {
+        if value.trim().is_empty() {
+            anyhow::bail!("--auth-token cannot be empty");
+        }
+        Ok(value.to_string())
+    }
 }
 
 async fn run_stdio_app_server(app_server: Arc<AppServer>) -> anyhow::Result<()> {
