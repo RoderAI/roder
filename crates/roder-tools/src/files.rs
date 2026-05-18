@@ -7,19 +7,21 @@ use roder_api::tools::{
 use serde::Deserialize;
 use serde_json::json;
 
+use crate::backend::WorkspaceBackendHandle;
 use crate::paging::{DEFAULT_PAGE_LINES, MAX_PAGE_LINES, clamp_limit, page_lines, page_metadata};
-use crate::workspace::Workspace;
 
-pub(crate) fn register(registry: &mut ToolRegistry, workspace: Workspace) -> anyhow::Result<()> {
+pub(crate) fn register(
+    registry: &mut ToolRegistry,
+    backend: WorkspaceBackendHandle,
+) -> anyhow::Result<()> {
     registry.register(Arc::new(ReadFileTool {
-        workspace: workspace.clone(),
+        backend: backend.clone(),
     }))?;
-    registry.register(Arc::new(ListFilesTool { workspace }))
+    registry.register(Arc::new(ListFilesTool { backend }))
 }
 
-#[derive(Debug)]
 struct ReadFileTool {
-    workspace: Workspace,
+    backend: WorkspaceBackendHandle,
 }
 
 #[async_trait::async_trait]
@@ -50,12 +52,12 @@ impl ToolExecutor for ReadFileTool {
 
     async fn execute(
         &self,
-        _ctx: ToolExecutionContext,
+        ctx: ToolExecutionContext,
         call: ToolCall,
     ) -> anyhow::Result<ToolResult> {
+        ctx.require_workspace()?;
         let args = parse::<ReadFileArgs>(&call)?;
-        let path = self.workspace.resolve_existing(&args.path)?;
-        let text = std::fs::read_to_string(&path)?;
+        let (path, text) = self.backend.read_text(&args.path).await?;
         let start_line = args.start_line.unwrap_or(1).max(1);
         let limit = clamp_limit(args.limit);
         let lines = text
@@ -69,7 +71,7 @@ impl ToolExecutor for ReadFileTool {
             call,
             page.text,
             json!({
-                "path": self.workspace.display(&path),
+                "path": path,
                 "start_line": start_line,
                 "limit": limit,
                 "shown": page.shown,
@@ -82,9 +84,8 @@ impl ToolExecutor for ReadFileTool {
     }
 }
 
-#[derive(Debug)]
 struct ListFilesTool {
-    workspace: Workspace,
+    backend: WorkspaceBackendHandle,
 }
 
 #[async_trait::async_trait]
@@ -119,27 +120,19 @@ impl ToolExecutor for ListFilesTool {
 
     async fn execute(
         &self,
-        _ctx: ToolExecutionContext,
+        ctx: ToolExecutionContext,
         call: ToolCall,
     ) -> anyhow::Result<ToolResult> {
+        ctx.require_workspace()?;
         let args = parse::<ListFilesArgs>(&call)?;
-        let path = self
-            .workspace
-            .resolve_existing(args.path.as_deref().unwrap_or("."))?;
-        let mut names = Vec::new();
-        for entry in std::fs::read_dir(&path)? {
-            let entry = entry?;
-            let mut name = entry.file_name().to_string_lossy().to_string();
-            if entry.file_type()?.is_dir() {
-                name.push('/');
-            }
-            names.push(name);
-        }
-        names.sort();
+        let (path, names) = self
+            .backend
+            .list_files(args.path.as_deref().unwrap_or("."))
+            .await?;
         let offset = args.offset.unwrap_or_default();
         let limit = clamp_limit(args.limit);
         let page = page_lines(&names, offset, limit);
-        let data = page_metadata(self.workspace.display(&path), offset, limit, &page);
+        let data = page_metadata(path, offset, limit, &page);
         Ok(result(call, page.text, data, false))
     }
 }

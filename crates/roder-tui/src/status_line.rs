@@ -215,6 +215,7 @@ mod tests {
                     state: "ready".to_string(),
                 }]
             }),
+            runner: None,
         }
     }
 }

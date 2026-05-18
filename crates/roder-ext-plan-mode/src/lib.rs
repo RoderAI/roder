@@ -2,7 +2,7 @@ mod exit_plan_tool;
 
 use std::sync::Arc;
 
-use roder_api::context::PolicyContributor;
+use roder_api::context::{PolicyContribution, PolicyContributor, PolicyReview};
 use roder_api::extension::{
     ExtensionManifest, ExtensionRegistryBuilder, ProvidedService, RoderExtension,
 };
@@ -44,7 +44,16 @@ impl RoderExtension for PlanModeExtension {
 
 struct PlanModePolicyContributor;
 
-impl PolicyContributor for PlanModePolicyContributor {}
+#[async_trait::async_trait]
+impl PolicyContributor for PlanModePolicyContributor {
+    fn id(&self) -> roder_api::extension::PolicyContributorId {
+        "plan-mode".to_string()
+    }
+
+    async fn review_tool(&self, _review: PolicyReview) -> anyhow::Result<PolicyContribution> {
+        Ok(PolicyContribution::Abstain)
+    }
+}
 
 pub fn extension(active_mode: PolicyMode) -> PlanModeExtension {
     PlanModeExtension::new(active_mode)

@@ -3,6 +3,19 @@ name = "roder-ext-task-subagent"
 version.workspace = true
 edition.workspace = true
 
+[package.metadata.roder.distribution]
+id = "task-subagent"
+category = "task-executor"
+display_name = "Subagent Task Executor"
+description = "Task executor that dispatches work to subagents."
+default_in_profiles = ["full"]
+required_env = []
+optional_env = []
+conflicts_with = []
+required_capabilities = ["process.spawn.roder"]
+extension_path = "::SubagentTaskExtension"
+docs_url = ""
+
 [dependencies]
 anyhow.workspace = true
 async-trait.workspace = true

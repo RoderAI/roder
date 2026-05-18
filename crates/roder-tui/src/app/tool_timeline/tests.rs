@@ -1,5 +1,7 @@
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 use ratatui::layout::Rect;
+use roder_api::extension_state::ExtensionStoreScope;
+use roder_api::interactive::RegionKind;
 use std::time::Duration;
 
 use super::super::Theme;
@@ -25,7 +27,7 @@ fn visible_lines(timeline: &mut TimelineState, height: u16) -> Vec<String> {
         Theme::for_dark_background(true),
         Rect::new(0, 0, 100, height),
     );
-    let scroll = usize::from(render.scroll);
+    let scroll = usize::from(render.text_scroll);
     render
         .text
         .lines
@@ -1010,4 +1012,410 @@ fn mouse_hit_testing_accounts_for_wrapped_tool_rows() {
 
     assert!(timeline.handle_mouse(click));
     assert_eq!(timeline.selected, Some(1));
+}
+
+#[test]
+fn timeline_emits_transcript_and_tool_regions_for_visible_rows() {
+    let mut timeline = TimelineState::default();
+    timeline.push_user("inspect this");
+    timeline.record_tool_requested(
+        "call_1".to_string(),
+        ToolTimelineEntry::new("read_file", r#"{"path":"README.md"}"#),
+    );
+    let area = Rect::new(0, 2, 80, 10);
+    timeline.render(Theme::for_dark_background(true), area);
+
+    let regions = timeline.interactive_regions(area, "thread-a", "turn-a");
+
+    assert!(
+        regions.iter().any(|region| matches!(
+            &region.kind,
+            RegionKind::TranscriptMessage {
+                thread_id,
+                turn_id,
+                message_idx: 0,
+            } if thread_id == "thread-a" && turn_id == "turn-a"
+        )),
+        "missing transcript message region: {regions:?}"
+    );
+    assert!(
+        regions.iter().any(|region| matches!(
+            &region.kind,
+            RegionKind::ToolCallBlock {
+                call_id,
+                expanded: false,
+            } if call_id == "call_1"
+        )),
+        "missing tool call region: {regions:?}"
+    );
+}
+
+#[test]
+fn tool_fold_state_is_keyed_by_stable_call_id() {
+    let mut timeline = TimelineState::default();
+    timeline.record_tool_requested(
+        "call_1".to_string(),
+        ToolTimelineEntry::new("read_file", r#"{"path":"README.md"}"#),
+    );
+    timeline.record_tool_completed("call_1", false, Some("contents".to_string()));
+    timeline.render(Theme::for_dark_background(true), Rect::new(0, 3, 80, 10));
+
+    let click = MouseEvent {
+        kind: MouseEventKind::Down(MouseButton::Left),
+        column: 2,
+        row: 3,
+        modifiers: crossterm::event::KeyModifiers::empty(),
+    };
+    assert!(timeline.handle_mouse(click));
+    assert!(timeline.handle_mouse(click));
+
+    let regions = timeline.interactive_regions(Rect::new(0, 3, 80, 10), "thread-a", "turn-a");
+    assert!(regions.iter().any(|region| matches!(
+        &region.kind,
+        RegionKind::ToolCallBlock {
+            call_id,
+            expanded: true,
+        } if call_id == "call_1"
+    )));
+}
+
+#[test]
+fn tool_fold_state_persists_through_thread_scoped_extension_state() {
+    let mut timeline = TimelineState::default();
+    timeline.record_tool_requested(
+        "call_1".to_string(),
+        ToolTimelineEntry::new("read_file", r#"{"path":"README.md"}"#),
+    );
+    timeline.record_tool_completed("call_1", false, Some("contents".to_string()));
+    timeline.render(Theme::for_dark_background(true), Rect::new(0, 3, 80, 10));
+
+    let click = MouseEvent {
+        kind: MouseEventKind::Down(MouseButton::Left),
+        column: 2,
+        row: 3,
+        modifiers: crossterm::event::KeyModifiers::empty(),
+    };
+    assert!(timeline.handle_mouse(click));
+    assert!(timeline.handle_mouse(click));
+
+    let record = timeline.fold_state_record("thread-a").unwrap();
+    assert_eq!(
+        record.scope,
+        ExtensionStoreScope::Thread {
+            thread_id: "thread-a".to_string()
+        }
+    );
+
+    let mut resumed = TimelineState::default();
+    resumed.record_tool_requested(
+        "call_1".to_string(),
+        ToolTimelineEntry::new("read_file", r#"{"path":"README.md"}"#),
+    );
+    resumed.record_tool_completed("call_1", false, Some("contents".to_string()));
+    resumed
+        .restore_fold_state_record(&record, "thread-a")
+        .unwrap();
+    resumed.render(Theme::for_dark_background(true), Rect::new(0, 3, 80, 10));
+
+    let regions = resumed.interactive_regions(Rect::new(0, 3, 80, 10), "thread-a", "turn-a");
+    assert!(regions.iter().any(|region| matches!(
+        &region.kind,
+        RegionKind::ToolCallBlock {
+            call_id,
+            expanded: true,
+        } if call_id == "call_1"
+    )));
+}
+
+#[test]
+fn timeline_emits_url_and_file_reference_regions_from_transcript_text() {
+    let mut timeline = TimelineState::default();
+    timeline.push_system("See https://example.com and crates/roder-tui/src/app.rs:42");
+    let area = Rect::new(0, 2, 100, 10);
+    timeline.render(Theme::for_dark_background(true), area);
+
+    let regions = timeline.interactive_regions(area, "thread-a", "turn-a");
+
+    assert!(regions.iter().any(|region| matches!(
+        &region.kind,
+        RegionKind::Url(url) if url == "https://example.com"
+    )));
+    assert!(regions.iter().any(|region| matches!(
+        &region.kind,
+        RegionKind::FileReference { path, line: Some(42) }
+            if path == std::path::Path::new("crates/roder-tui/src/app.rs")
+    )));
+}
+
+#[test]
+fn clicking_long_message_body_toggles_message_fold() {
+    let mut timeline = TimelineState::default();
+    timeline.push_assistant_delta(
+        "one\ntwo\nthree\nfour\nfive\nsix\nseven\neight\nnine\nten",
+        None,
+    );
+    timeline.render(Theme::for_dark_background(true), Rect::new(0, 2, 80, 12));
+
+    let collapsed = rendered_lines(&mut timeline);
+    assert!(collapsed.iter().any(|line| line.contains("2 more lines")));
+    assert!(!collapsed.iter().any(|line| line.contains("nine")));
+
+    let click = MouseEvent {
+        kind: MouseEventKind::Down(MouseButton::Left),
+        column: 2,
+        row: 2,
+        modifiers: crossterm::event::KeyModifiers::empty(),
+    };
+    assert!(timeline.handle_mouse(click));
+    assert!(timeline.handle_mouse(click));
+
+    let expanded = rendered_lines(&mut timeline);
+    assert!(expanded.iter().any(|line| line.contains("nine")));
+    assert!(!expanded.iter().any(|line| line.contains("more lines")));
+}
+
+#[test]
+fn timeline_virtualization_render_bounds_rendered_text_to_visible_window() {
+    let mut timeline = TimelineState::default();
+    for index in 0..1_000 {
+        timeline.push_system(format!("event {index}"));
+    }
+
+    let render = timeline.render(Theme::for_dark_background(true), Rect::new(0, 0, 100, 6));
+
+    assert!(render.scroll > 0);
+    assert!(
+        render.text.lines.len() <= 18,
+        "rendered {} lines instead of a viewport-sized window",
+        render.text.lines.len()
+    );
+    assert!(
+        visible_lines(&mut timeline, 6)
+            .iter()
+            .any(|line| line.contains("event 999"))
+    );
+}
+
+#[test]
+fn timeline_virtualization_render_keeps_bottom_padding_at_end() {
+    let mut timeline = TimelineState::default();
+    timeline.push_system("last visible event");
+
+    let visible = visible_lines(&mut timeline, 4);
+
+    assert!(
+        visible
+            .iter()
+            .any(|line| line.contains("last visible event"))
+    );
+    assert_eq!(visible.len(), 4);
+    assert_eq!(visible[1], "");
+    assert_eq!(visible[2], "");
+    assert_eq!(visible[3], "");
+}
+
+#[test]
+fn timeline_virtualization_interaction_keeps_visible_hit_rows_clickable() {
+    let mut timeline = TimelineState::default();
+    for index in 0..20 {
+        timeline.record_tool_requested(
+            format!("call_{index}"),
+            ToolTimelineEntry::new("shell", format!(r#"{{"command":"echo {index}"}}"#)),
+        );
+    }
+    let area = Rect::new(0, 0, 100, 5);
+    timeline.render(Theme::for_dark_background(true), area);
+
+    let visible_rows = timeline.hit_rows.clone();
+    assert!(!visible_rows.is_empty());
+    let (row, index) = *visible_rows.last().expect("visible row");
+    assert!(index < timeline.items.len());
+
+    let click = MouseEvent {
+        kind: MouseEventKind::Down(MouseButton::Left),
+        column: 2,
+        row,
+        modifiers: crossterm::event::KeyModifiers::empty(),
+    };
+    assert!(timeline.handle_mouse(click));
+    assert_eq!(timeline.selected, Some(index));
+}
+
+#[test]
+fn timeline_virtualization_interaction_does_not_click_offscreen_items() {
+    let mut timeline = TimelineState::default();
+    for index in 0..30 {
+        timeline.record_tool_requested(
+            format!("call_{index}"),
+            ToolTimelineEntry::new("shell", format!(r#"{{"command":"echo {index}"}}"#)),
+        );
+    }
+    let area = Rect::new(0, 10, 100, 4);
+    timeline.render(Theme::for_dark_background(true), area);
+
+    let offscreen_click = MouseEvent {
+        kind: MouseEventKind::Down(MouseButton::Left),
+        column: 2,
+        row: 0,
+        modifiers: crossterm::event::KeyModifiers::empty(),
+    };
+
+    assert!(!timeline.handle_mouse(offscreen_click));
+    assert_eq!(timeline.selected, None);
+}
+
+#[test]
+fn timeline_virtualization_interaction_overflow_row_still_reveals_tools() {
+    let mut timeline = TimelineState::default();
+    for index in 0..8 {
+        timeline.record_tool_requested(
+            format!("call_{index}"),
+            ToolTimelineEntry::new("read_file", format!(r#"{{"path":"file-{index}.rs"}}"#)),
+        );
+    }
+    timeline.focus_latest();
+    timeline.handle_key(key(KeyCode::Home));
+    timeline.render(Theme::for_dark_background(true), Rect::new(0, 0, 100, 5));
+
+    let overflow_row = timeline
+        .hit_rows
+        .iter()
+        .find_map(|(row, index)| (*index == TOOL_OVERFLOW_INDEX).then_some(*row))
+        .expect("overflow row should be visible");
+    let click = MouseEvent {
+        kind: MouseEventKind::Down(MouseButton::Left),
+        column: 2,
+        row: overflow_row,
+        modifiers: crossterm::event::KeyModifiers::empty(),
+    };
+
+    assert!(timeline.handle_mouse(click));
+    assert!(timeline.show_all_tools);
+}
+
+#[test]
+fn timeline_virtualization_interaction_auto_follow_uses_virtual_scroll() {
+    let mut timeline = TimelineState::default();
+    for index in 0..12 {
+        timeline.push_system(format!("event {index}"));
+    }
+    let area = Rect::new(0, 0, 100, 5);
+    let first_scroll = timeline
+        .render(Theme::for_dark_background(true), area)
+        .scroll;
+
+    timeline.push_system("latest event");
+    let followed = timeline.render(Theme::for_dark_background(true), area);
+
+    assert!(followed.scroll > first_scroll);
+    assert!(
+        visible_lines(&mut timeline, 5)
+            .iter()
+            .any(|line| line.contains("latest event"))
+    );
+}
+
+#[test]
+fn long_timeline_virtualization_bounds_mixed_transcript_output() {
+    let mut timeline = TimelineState::default();
+    for index in 0..250 {
+        timeline.push_user(format!("user message {index}"));
+        timeline.push_assistant_delta(&format!("assistant message {index}"), None);
+        timeline.record_tool_requested(
+            format!("call_{index}"),
+            ToolTimelineEntry::new("grep", format!(r#"{{"query":"{index}","path":"src"}}"#)),
+        );
+    }
+    timeline.record_tool_requested(
+        "call_expand".to_string(),
+        ToolTimelineEntry::new("shell", r#"{"command":"printf expanded"}"#),
+    );
+    timeline.record_tool_completed(
+        "call_expand",
+        false,
+        Some("expanded output\nsecond line".to_string()),
+    );
+    timeline.fold_state.toggle("call_expand".to_string());
+    timeline.record_tool_requested(
+        "call_diff".to_string(),
+        ToolTimelineEntry::new("apply_patch", ""),
+    );
+    timeline.record_tool_delta(
+        "call_diff",
+        "{\"patch\":\"*** Begin Patch\\n*** Update File: src/lib.rs\\n@@\\n-old\\n+new",
+    );
+
+    let render = timeline.render(Theme::for_dark_background(true), Rect::new(0, 0, 100, 20));
+    let lines = render
+        .text
+        .lines
+        .iter()
+        .map(|line| {
+            line.spans
+                .iter()
+                .map(|span| span.content.as_ref())
+                .collect::<String>()
+        })
+        .collect::<Vec<_>>();
+
+    assert!(
+        render.scroll > 700,
+        "scroll should reflect the full transcript height"
+    );
+    assert!(
+        lines.len() <= 36,
+        "rendered {} lines instead of a bounded viewport window",
+        lines.len()
+    );
+    assert!(lines.iter().any(|line| line.contains("expanded output")));
+    assert!(
+        lines
+            .iter()
+            .any(|line| line.contains("Edited src/lib.rs (+1 -1)"))
+    );
+}
+
+#[test]
+fn right_click_transcript_message_opens_context_menu_regions_near_edges() {
+    let mut timeline = TimelineState::default();
+    timeline.push_system("copyable message");
+    let area = Rect::new(0, 0, 40, 5);
+    timeline.render(Theme::for_dark_background(true), area);
+
+    let right_click = MouseEvent {
+        kind: MouseEventKind::Down(MouseButton::Right),
+        column: 39,
+        row: 0,
+        modifiers: crossterm::event::KeyModifiers::empty(),
+    };
+
+    assert!(timeline.handle_mouse(right_click));
+    let regions = timeline.interactive_regions(area, "thread-a", "turn-a");
+    let menu_regions = regions
+        .iter()
+        .filter(|region| {
+            matches!(
+                &region.kind,
+                RegionKind::Custom { extension_id, .. }
+                    if extension_id == "roder-tui/transcript-context-menu"
+            )
+        })
+        .collect::<Vec<_>>();
+
+    assert!(!menu_regions.is_empty());
+    assert!(
+        menu_regions
+            .iter()
+            .all(|region| region.rect.x + region.rect.width <= area.width)
+    );
+    assert!(menu_regions.iter().any(|region| matches!(
+        &region.kind,
+        RegionKind::Custom { payload, .. }
+            if payload["action"] == serde_json::json!("copy")
+    )));
+    assert!(menu_regions.iter().any(|region| matches!(
+        &region.kind,
+        RegionKind::Custom { payload, .. }
+            if payload["action"] == serde_json::json!("jump_to_tool_call")
+    )));
 }

@@ -6,6 +6,8 @@ use time::OffsetDateTime;
 use crate::conversation::TurnItem;
 use crate::events::{EventEnvelope, ThreadId, TurnId};
 pub use crate::extension::{CheckpointStoreId, SessionStoreId};
+use crate::extension_state::ExtensionStateRecord;
+use crate::remote_runner::{RunnerDestination, RunnerSessionState};
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct SessionMetadata {
@@ -14,6 +16,10 @@ pub struct SessionMetadata {
     pub workspace: Option<String>,
     pub provider: Option<String>,
     pub model: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub runner_destination: Option<RunnerDestination>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub runner_state: Option<RunnerSessionState>,
     #[serde(with = "time::serde::rfc3339")]
     pub created_at: OffsetDateTime,
     #[serde(with = "time::serde::rfc3339")]
@@ -37,6 +43,7 @@ pub struct ThreadSnapshot {
     pub metadata: Option<SessionMetadata>,
     pub events: Vec<EventEnvelope>,
     pub turns: Vec<TurnRecord>,
+    pub extension_states: Vec<ExtensionStateRecord>,
 }
 
 #[async_trait::async_trait]
@@ -44,6 +51,12 @@ pub trait SessionStore: Send + Sync {
     fn id(&self) -> SessionStoreId;
 
     async fn create_session(&self, metadata: SessionMetadata) -> anyhow::Result<SessionMetadata>;
+    async fn update_session_metadata(
+        &self,
+        metadata: SessionMetadata,
+    ) -> anyhow::Result<SessionMetadata> {
+        Ok(metadata)
+    }
     async fn list_sessions(&self) -> anyhow::Result<Vec<SessionMetadata>>;
     async fn load_session(&self, thread_id: &ThreadId) -> anyhow::Result<Option<ThreadSnapshot>>;
     async fn append_event(
@@ -57,6 +70,17 @@ pub trait SessionStore: Send + Sync {
         turn_id: &TurnId,
         item: &TurnItem,
     ) -> anyhow::Result<()>;
+    async fn append_extension_state(
+        &self,
+        thread_id: &ThreadId,
+        record: &ExtensionStateRecord,
+    ) -> anyhow::Result<()> {
+        let _ = (thread_id, record);
+        anyhow::bail!(
+            "session store {} does not support extension state",
+            self.id()
+        )
+    }
 }
 
 pub trait SessionStoreFactory: Send + Sync + 'static {
@@ -88,6 +112,8 @@ mod tests {
             workspace: None,
             provider: None,
             model: None,
+            runner_destination: None,
+            runner_state: None,
             created_at: OffsetDateTime::UNIX_EPOCH,
             updated_at: OffsetDateTime::UNIX_EPOCH,
             message_count: 0,

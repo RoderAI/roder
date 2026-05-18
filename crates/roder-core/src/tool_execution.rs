@@ -1,10 +1,9 @@
-use roder_api::context::PolicyGate;
 use roder_api::conversation::ToolResultRecord;
 use roder_api::events::*;
 use roder_api::policy_mode::{PolicyDecision, PolicyMode};
 use roder_api::subagents::SubagentExitReason;
+use roder_api::tools::ToolCall;
 use roder_api::tools::ToolResult;
-use roder_api::tools::{ToolCall, ToolExecutionContext};
 use serde_json::Value;
 use time::OffsetDateTime;
 
@@ -52,8 +51,9 @@ impl Runtime {
             .await;
             return Ok(item);
         };
-        let runtime_config = self.status().await;
-        let mode = runtime_config.policy_mode;
+        let mut runtime_config = self.status().await;
+        let mode = self.effective_policy_mode_for_thread(thread_id).await;
+        runtime_config.policy_mode = mode;
         let parsed_args = serde_json::from_str(&call.arguments)
             .unwrap_or_else(|_| serde_json::json!({ "raw": call.arguments }));
         let tool_call = ToolCall {
@@ -64,12 +64,15 @@ impl Runtime {
             thread_id: thread_id.clone(),
             turn_id: turn_id.clone(),
         };
-        let mut ctx = ToolExecutionContext {
-            thread_id: thread_id.clone(),
-            turn_id: turn_id.clone(),
-            effective_mode: mode,
-        };
-        let decision = DefaultPolicyGate::new().decide(&tool_call, mode, &ctx);
+        let mut ctx = self.tool_execution_context(
+            thread_id.clone(),
+            turn_id.clone(),
+            mode,
+            runtime_config.workspace.as_deref(),
+        );
+        let decision = DefaultPolicyGate::new()
+            .decide_with_contributors(&tool_call, mode, &ctx, &self.registry.policy_contributors)
+            .await?;
         self.emit_policy_decision(thread_id, turn_id, &tool_call, mode, decision.clone())
             .await;
         if matches!(decision, PolicyDecision::AutoApproved { .. }) && mode == PolicyMode::Bypass {
@@ -83,6 +86,11 @@ impl Runtime {
             .await;
         }
         if let PolicyDecision::Denied { reason } = decision {
+            if let Some(event) = crate::plan_review::plan_review_for_blocked_tool(
+                thread_id, turn_id, &tool_call, mode,
+            ) {
+                self.emit(event).await;
+            }
             let item = ToolResultRecord {
                 id: tool_call.id.clone(),
                 name: Some(tool_call.name.clone()),
@@ -140,7 +148,7 @@ impl Runtime {
             .await;
             return Ok(item);
         }
-        ctx.effective_mode = self.status().await.policy_mode;
+        ctx.effective_mode = self.effective_policy_mode_for_thread(thread_id).await;
 
         self.emit(RoderEvent::ToolCallStarted(ToolCallStarted {
             thread_id: thread_id.clone(),
@@ -171,6 +179,8 @@ impl Runtime {
             .await;
         self.emit_policy_exit_plan_request(thread_id, turn_id, &result)
             .await;
+        self.emit_hunk_records(&result).await;
+        self.emit_media_artifacts(thread_id, turn_id, &result).await;
         let item = ToolResultRecord {
             id: result.id.clone(),
             name: Some(result.name.clone()),
@@ -213,6 +223,61 @@ impl Runtime {
             timestamp: OffsetDateTime::now_utc(),
         }))
         .await;
+    }
+
+    async fn emit_hunk_records(&self, result: &ToolResult) {
+        let Some(value) = result.data.get("hunks") else {
+            return;
+        };
+        let Ok(hunks) =
+            serde_json::from_value::<Vec<roder_api::plan_review::HunkRecord>>(value.clone())
+        else {
+            return;
+        };
+        for hunk in hunks {
+            self.emit(RoderEvent::HunkRecorded(HunkRecorded {
+                hunk,
+                timestamp: OffsetDateTime::now_utc(),
+            }))
+            .await;
+        }
+    }
+
+    async fn emit_media_artifacts(
+        &self,
+        thread_id: &ThreadId,
+        turn_id: &TurnId,
+        result: &ToolResult,
+    ) {
+        let Some(value) = result.data.get("mediaArtifact") else {
+            return;
+        };
+        let Ok(artifact) = serde_json::from_value::<roder_api::media::MediaArtifact>(value.clone())
+        else {
+            return;
+        };
+        self.emit(RoderEvent::MediaArtifactCreated(
+            roder_api::events::MediaArtifactCreated {
+                thread_id: thread_id.clone(),
+                turn_id: turn_id.clone(),
+                artifact: artifact.clone(),
+                timestamp: OffsetDateTime::now_utc(),
+            },
+        ))
+        .await;
+        if let Ok(preview) = serde_json::from_value::<roder_api::media::MediaPreview>(
+            result.data.get("mediaPreview").cloned().unwrap_or_default(),
+        ) {
+            self.emit(RoderEvent::MediaPreviewReady(
+                roder_api::events::MediaPreviewReady {
+                    thread_id: thread_id.clone(),
+                    turn_id: turn_id.clone(),
+                    preview,
+                    timestamp: OffsetDateTime::now_utc(),
+                },
+            ))
+            .await;
+        }
     }
 
     async fn request_tool_approval(

@@ -6,20 +6,22 @@ use roder_api::tools::{
 use serde::Deserialize;
 use serde_json::json;
 
+use crate::backend::WorkspaceBackendHandle;
 use crate::files::{parse, require_nonempty, result};
 use crate::paging::{DEFAULT_PAGE_LINES, MAX_PAGE_LINES, clamp_limit, page_lines, page_metadata};
-use crate::workspace::Workspace;
 
-pub(crate) fn register(registry: &mut ToolRegistry, workspace: Workspace) -> anyhow::Result<()> {
+pub(crate) fn register(
+    registry: &mut ToolRegistry,
+    backend: WorkspaceBackendHandle,
+) -> anyhow::Result<()> {
     registry.register(Arc::new(GrepTool {
-        workspace: workspace.clone(),
+        backend: backend.clone(),
     }))?;
-    registry.register(Arc::new(GlobTool { workspace }))
+    registry.register(Arc::new(GlobTool { backend }))
 }
 
-#[derive(Debug)]
 struct GrepTool {
-    workspace: Workspace,
+    backend: WorkspaceBackendHandle,
 }
 
 #[async_trait::async_trait]
@@ -56,49 +58,26 @@ impl ToolExecutor for GrepTool {
 
     async fn execute(
         &self,
-        _ctx: ToolExecutionContext,
+        ctx: ToolExecutionContext,
         call: ToolCall,
     ) -> anyhow::Result<ToolResult> {
+        ctx.require_workspace()?;
         let args = parse::<GrepArgs>(&call)?;
         require_nonempty(&args.query, "query")?;
-        let start = self
-            .workspace
-            .resolve_existing(args.path.as_deref().unwrap_or("."))?;
-        let mut matches = Vec::new();
+        let (start, matches) = self
+            .backend
+            .grep_literal(&args.query, args.path.as_deref().unwrap_or("."))
+            .await?;
         let offset = args.offset.unwrap_or_default();
         let limit = clamp_limit(args.limit);
-        let collect_until = offset.saturating_add(limit).saturating_add(1);
-        visit_files(&start, &mut |path| {
-            if matches.len() >= collect_until {
-                return Ok(());
-            }
-            let Ok(text) = std::fs::read_to_string(path) else {
-                return Ok(());
-            };
-            for (line_index, line) in text.lines().enumerate() {
-                if line.contains(&args.query) {
-                    matches.push(format!(
-                        "{}:{}:{}",
-                        self.workspace.display(path),
-                        line_index + 1,
-                        line
-                    ));
-                    if matches.len() >= collect_until {
-                        break;
-                    }
-                }
-            }
-            Ok(())
-        })?;
         let page = page_lines(&matches, offset, limit);
-        let data = page_metadata(self.workspace.display(&start), offset, limit, &page);
+        let data = page_metadata(start, offset, limit, &page);
         Ok(result(call, page.text, data, false))
     }
 }
 
-#[derive(Debug)]
 struct GlobTool {
-    workspace: Workspace,
+    backend: WorkspaceBackendHandle,
 }
 
 #[async_trait::async_trait]
@@ -134,20 +113,13 @@ impl ToolExecutor for GlobTool {
 
     async fn execute(
         &self,
-        _ctx: ToolExecutionContext,
+        ctx: ToolExecutionContext,
         call: ToolCall,
     ) -> anyhow::Result<ToolResult> {
+        ctx.require_workspace()?;
         let args = parse::<GlobArgs>(&call)?;
         require_nonempty(&args.pattern, "pattern")?;
-        let mut matches = Vec::new();
-        visit_files(self.workspace.root(), &mut |path| {
-            let rel = self.workspace.display(path);
-            if wildcard_match(&args.pattern, &rel) {
-                matches.push(rel);
-            }
-            Ok(())
-        })?;
-        matches.sort();
+        let matches = self.backend.glob(&args.pattern).await?;
         let offset = args.offset.unwrap_or_default();
         let limit = clamp_limit(args.limit);
         let page = page_lines(&matches, offset, limit);
@@ -171,7 +143,7 @@ struct GlobArgs {
     limit: Option<usize>,
 }
 
-fn visit_files(
+pub(crate) fn visit_files(
     root: &std::path::Path,
     visitor: &mut dyn FnMut(&std::path::Path) -> anyhow::Result<()>,
 ) -> anyhow::Result<()> {
@@ -195,7 +167,7 @@ fn visit_files(
     Ok(())
 }
 
-fn wildcard_match(pattern: &str, text: &str) -> bool {
+pub(crate) fn wildcard_match(pattern: &str, text: &str) -> bool {
     let pattern = pattern.as_bytes();
     let text = text.as_bytes();
     let (mut p, mut t) = (0, 0);

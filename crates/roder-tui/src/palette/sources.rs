@@ -1,7 +1,9 @@
 use roder_api::inference::HostedWebSearchMode;
 use roder_api::policy_mode::PolicyMode;
 use roder_api::session::SessionMetadata;
-use roder_protocol::{AgentDescriptor, CommandDescriptor, ProvidersListResult, WebSearchSettings};
+use roder_protocol::{
+    AgentDescriptor, CommandDescriptor, ProvidersListResult, RunnersListResult, WebSearchSettings,
+};
 
 use super::{PaletteAction, PaletteItem, StaticPaletteSource};
 use crate::theme::{ThemeEntry, ThemeOverrides};
@@ -34,6 +36,174 @@ pub fn command_source(commands: &[CommandDescriptor]) -> StaticPaletteSource {
                 )
             })
             .collect(),
+    )
+}
+
+pub fn workflow_import_source() -> StaticPaletteSource {
+    StaticPaletteSource::new(
+        "workflow-imports",
+        "Workflow Imports",
+        vec![
+            (
+                PaletteItem {
+                    id: "workflow-scan".to_string(),
+                    title: "Workflow: scan repository".to_string(),
+                    subtitle: Some(
+                        "Detect AGENTS.md, skills, MCP, hooks, commands, and plugins".to_string(),
+                    ),
+                    keywords: vec![
+                        "workflow".to_string(),
+                        "import".to_string(),
+                        "agents".to_string(),
+                        "mcp".to_string(),
+                    ],
+                    icon: Some('W'),
+                },
+                PaletteAction::InsertComposerText(
+                    "Scan this repository for workflow imports and show a preview.".to_string(),
+                ),
+            ),
+            (
+                PaletteItem {
+                    id: "workflow-preview".to_string(),
+                    title: "Workflow: import preview".to_string(),
+                    subtitle: Some(
+                        "Review source attribution, conflicts, and approval-gated side effects"
+                            .to_string(),
+                    ),
+                    keywords: vec![
+                        "workflow".to_string(),
+                        "preview".to_string(),
+                        "hooks".to_string(),
+                        "skills".to_string(),
+                    ],
+                    icon: Some('W'),
+                },
+                PaletteAction::InsertComposerText(
+                    "Show the workflow import preview with conflicts and redacted values."
+                        .to_string(),
+                ),
+            ),
+            (
+                PaletteItem {
+                    id: "workflow-enable".to_string(),
+                    title: "Workflow: enable import".to_string(),
+                    subtitle: Some(
+                        "Enable a selected passive import or approval-gated item by id".to_string(),
+                    ),
+                    keywords: vec![
+                        "workflow".to_string(),
+                        "enable".to_string(),
+                        "import".to_string(),
+                    ],
+                    icon: Some('W'),
+                },
+                PaletteAction::InsertComposerText(
+                    "Enable workflow import ITEM_ID after showing any required approvals."
+                        .to_string(),
+                ),
+            ),
+            (
+                PaletteItem {
+                    id: "workflow-refresh-remove".to_string(),
+                    title: "Workflow: refresh or remove".to_string(),
+                    subtitle: Some(
+                        "Refresh stale imports or remove an enabled workflow item".to_string(),
+                    ),
+                    keywords: vec![
+                        "workflow".to_string(),
+                        "refresh".to_string(),
+                        "remove".to_string(),
+                        "ignore".to_string(),
+                    ],
+                    icon: Some('W'),
+                },
+                PaletteAction::InsertComposerText(
+                    "Refresh workflow imports and offer ignore or remove actions for stale items."
+                        .to_string(),
+                ),
+            ),
+        ],
+    )
+}
+
+pub fn media_source() -> StaticPaletteSource {
+    StaticPaletteSource::new(
+        "media",
+        "Media",
+        vec![
+            (
+                PaletteItem {
+                    id: "media-image".to_string(),
+                    title: "Generate image".to_string(),
+                    subtitle: Some(
+                        "Use media.generate_image and save a Roder artifact".to_string(),
+                    ),
+                    keywords: vec![
+                        "media".to_string(),
+                        "imagegen".to_string(),
+                        "artifact".to_string(),
+                    ],
+                    icon: Some('I'),
+                },
+                PaletteAction::InsertComposerText("/imagegen ".to_string()),
+            ),
+            (
+                PaletteItem {
+                    id: "media-video".to_string(),
+                    title: "Generate video".to_string(),
+                    subtitle: Some(
+                        "Use media.generate_video and save a Roder artifact".to_string(),
+                    ),
+                    keywords: vec![
+                        "media".to_string(),
+                        "videogen".to_string(),
+                        "artifact".to_string(),
+                    ],
+                    icon: Some('V'),
+                },
+                PaletteAction::InsertComposerText("/videogen ".to_string()),
+            ),
+        ],
+    )
+}
+
+pub fn memories_source() -> StaticPaletteSource {
+    StaticPaletteSource::new(
+        "memories",
+        "Memories",
+        vec![
+            (
+                PaletteItem {
+                    id: "memory-query".to_string(),
+                    title: "Memory: query".to_string(),
+                    subtitle: Some("Search project and global memories".to_string()),
+                    keywords: vec!["memory".to_string(), "query".to_string()],
+                    icon: Some('M'),
+                },
+                PaletteAction::InsertComposerText("/memory query ".to_string()),
+            ),
+            (
+                PaletteItem {
+                    id: "memory-save".to_string(),
+                    title: "Memory: save".to_string(),
+                    subtitle: Some("Save a project or global memory".to_string()),
+                    keywords: vec!["memory".to_string(), "save".to_string()],
+                    icon: Some('M'),
+                },
+                PaletteAction::InsertComposerText("/memory save ".to_string()),
+            ),
+            (
+                PaletteItem {
+                    id: "memory-providers".to_string(),
+                    title: "Memory: providers".to_string(),
+                    subtitle: Some("Select embedding provider and model".to_string()),
+                    keywords: vec!["memory".to_string(), "embedding".to_string()],
+                    icon: Some('M'),
+                },
+                PaletteAction::InsertComposerText("/memory providers list".to_string()),
+            ),
+        ],
     )
 }
 
@@ -285,6 +455,59 @@ pub fn settings_source(web_search: &WebSearchSettings) -> StaticPaletteSource {
     )
 }
 
+pub fn runner_source(runners: &RunnersListResult) -> StaticPaletteSource {
+    StaticPaletteSource::new(
+        "runners",
+        "Runners",
+        runners
+            .providers
+            .iter()
+            .map(|provider| {
+                let active = runners.active.as_ref().is_some_and(|runner| {
+                    runner.provider_id == provider.provider_id
+                        && runner.destination_id == provider.provider_id
+                });
+                let suffix = if active { " (active)" } else { "" };
+                (
+                    PaletteItem {
+                        id: provider.provider_id.clone(),
+                        title: format!("Runner: {}{suffix}", provider.provider_id),
+                        subtitle: Some(runner_capabilities_summary(provider)),
+                        keywords: vec!["runner".to_string(), provider.provider_id.clone()],
+                        icon: Some('>'),
+                    },
+                    PaletteAction::SelectRunner {
+                        destination_id: provider.provider_id.clone(),
+                        provider_id: provider.provider_id.clone(),
+                    },
+                )
+            })
+            .collect(),
+    )
+}
+
+fn runner_capabilities_summary(provider: &roder_protocol::RunnerProviderDescriptor) -> String {
+    let capabilities = &provider.capabilities;
+    let mut labels = Vec::new();
+    if capabilities.command_exec {
+        labels.push("commands");
+    }
+    if capabilities.file_read || capabilities.file_write {
+        labels.push("files");
+    }
+    if capabilities.port_preview {
+        labels.push("ports");
+    }
+    if capabilities.snapshots {
+        labels.push("snapshots");
+    }
+    if labels.is_empty() {
+        "No advertised capabilities".to_string()
+    } else {
+        labels.join(", ")
+    }
+}
+
 fn model_entry(
     provider_id: &str,
     model_id: &str,
@@ -341,8 +564,9 @@ mod tests {
     use roder_api::inference::{
         HostedWebSearchMode, InferenceCapabilities, ModelDescriptor, ProviderAuthType,
     };
+    use roder_api::remote_runner::RunnerCapabilities;
     use roder_api::subagents::SubagentPermissionMode;
-    use roder_protocol::ProviderDescriptor;
+    use roder_protocol::{ProviderDescriptor, RunnerProviderDescriptor, RunnerStatus};
 
     use super::*;
 
@@ -456,6 +680,42 @@ mod tests {
         assert_eq!(
             source.entries()[0].action,
             PaletteAction::InsertComposerText("Use the explorer subagent to ".to_string())
+        );
+    }
+
+    #[test]
+    fn runner_source_maps_providers_to_select_actions() {
+        let source = runner_source(&RunnersListResult {
+            active: Some(RunnerStatus {
+                destination_id: "unix-local".to_string(),
+                provider_id: "unix-local".to_string(),
+                state: "active".to_string(),
+                session_id: Some("runner-1".to_string()),
+            }),
+            providers: vec![RunnerProviderDescriptor {
+                provider_id: "unix-local".to_string(),
+                capabilities: RunnerCapabilities {
+                    file_read: true,
+                    file_write: true,
+                    command_exec: true,
+                    port_preview: false,
+                    snapshots: false,
+                    cancellation: true,
+                    artifact_export: false,
+                    mounts: Default::default(),
+                },
+            }],
+        });
+
+        let entries = source.entries();
+        assert_eq!(entries.len(), 1);
+        assert!(entries[0].item.title.contains("(active)"));
+        assert_eq!(
+            entries[0].action,
+            PaletteAction::SelectRunner {
+                destination_id: "unix-local".to_string(),
+                provider_id: "unix-local".to_string()
+            }
         );
     }
 }

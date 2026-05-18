@@ -16,6 +16,7 @@ pub(super) fn built_in_command_catalog() -> Vec<CommandDescriptor> {
         ("retry", "Resubmit the last user message."),
         ("model", "Show or change the active model."),
         ("agents", "List configured subagents."),
+        ("tasks", "Open the background task monitor."),
         ("memory", "Inspect relevant project and user memory."),
     ]
     .into_iter()
@@ -126,11 +127,12 @@ pub(super) fn help_text(commands: &[CommandDescriptor]) -> String {
         "/retry - Resubmit the last user message.".to_string(),
         "/model - Show or change the active model.".to_string(),
         "/agents - List configured subagents.".to_string(),
+        "/tasks - Open the background task monitor.".to_string(),
     ];
     for command in commands {
         if matches!(
             command.name.as_str(),
-            "clear" | "goal" | "retry" | "model" | "agents"
+            "clear" | "goal" | "retry" | "model" | "agents" | "tasks"
         ) {
             continue;
         }
@@ -224,7 +226,8 @@ mod tests {
         assert_eq!(
             names,
             [
-                "init", "clear", "compact", "help", "goal", "retry", "model", "agents", "memory"
+                "init", "clear", "compact", "help", "goal", "retry", "model", "agents", "tasks",
+                "memory"
             ]
         );
         assert_eq!(

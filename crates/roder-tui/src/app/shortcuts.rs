@@ -138,6 +138,37 @@ const TIMELINE_SHORTCUTS: &[Shortcut] = &[
     },
 ];
 
+const INTERACTIVE_SHORTCUTS: &[Shortcut] = &[
+    Shortcut {
+        keys: "tab / shift+tab",
+        action: "focus regions",
+    },
+    Shortcut {
+        keys: "enter",
+        action: "open or toggle focused region",
+    },
+    Shortcut {
+        keys: "o",
+        action: "open URL or file",
+    },
+    Shortcut {
+        keys: "c",
+        action: "copy selection",
+    },
+    Shortcut {
+        keys: "p",
+        action: "paste selection to composer",
+    },
+    Shortcut {
+        keys: "a / r",
+        action: "approve or reject hunk",
+    },
+    Shortcut {
+        keys: "wheel / ctrl+wheel",
+        action: "scroll or fast scroll",
+    },
+];
+
 const TODO_SHORTCUTS: &[Shortcut] = &[Shortcut {
     keys: "ctrl+t",
     action: "toggle todos",
@@ -163,6 +194,10 @@ const HELP_DIALOG_GROUPS: &[ShortcutGroup] = &[
     ShortcutGroup {
         title: "Timeline",
         shortcuts: TIMELINE_SHORTCUTS,
+    },
+    ShortcutGroup {
+        title: "Interactive Regions",
+        shortcuts: INTERACTIVE_SHORTCUTS,
     },
     ShortcutGroup {
         title: "Todos",
@@ -307,5 +342,24 @@ mod tests {
             KeyCode::Char('?'),
             KeyModifiers::SHIFT
         )));
+    }
+
+    #[test]
+    fn shortcut_dialog_documents_interactive_keymap() {
+        assert!(
+            HELP_DIALOG_GROUPS
+                .iter()
+                .any(|group| group.title == "Interactive Regions")
+        );
+        assert!(
+            INTERACTIVE_SHORTCUTS
+                .iter()
+                .any(|shortcut| shortcut.action == "copy selection")
+        );
+        assert!(
+            INTERACTIVE_SHORTCUTS
+                .iter()
+                .any(|shortcut| shortcut.keys == "wheel / ctrl+wheel")
+        );
     }
 }

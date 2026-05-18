@@ -258,7 +258,8 @@ mod tests {
         let registry = CommandsRegistry::load(None::<&PathBuf>, None::<&PathBuf>, []).unwrap();
 
         for name in [
-            "init", "clear", "compact", "help", "model", "agents", "memory",
+            "init", "clear", "compact", "help", "goal", "retry", "model", "agents", "tasks",
+            "memory",
         ] {
             let spec = registry
                 .get(name)

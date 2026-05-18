@@ -1,0 +1,24 @@
+id = "research-headless"
+description = "Headless research build with app-server, OpenAI Responses, context, memory, subagents, and process tasks."
+
+[distribution]
+name = "research-roder"
+version = "0.1.0"
+include_tui = false
+include_app_server = true
+include_cli = true
+extensions = [
+  "openai-responses",
+  "jsonl-session",
+  "disk-context",
+  "memory",
+  "subagents",
+  "task-process",
+  "plan-mode",
+  "notify-terminal",
+]
+default_provider = "openai-responses"
+default_session_store = "jsonl-session"
+
+[distribution.config_overrides.subagents]
+max_depth = 1

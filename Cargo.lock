@@ -766,6 +766,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "fallible-iterator"
+version = "0.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2acce4a10f12dc2fb14a218589d4f1f62ef011b2d0cc4b3cb1bba8e94da14649"
+
+[[package]]
+name = "fallible-streaming-iterator"
+version = "0.1.9"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7360491ce676a36bf9bb3c56c1aa791658183a54d2744120f27285738d90465a"
+
+[[package]]
 name = "fancy-regex"
 version = "0.11.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1039,6 +1051,15 @@ name = "hashbrown"
 version = "0.17.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ed5909b6e89a2db4456e54cd5f673791d7eca6732202bbf2a9cc504fe2f9b84a"
+
+[[package]]
+name = "hashlink"
+version = "0.11.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ea0b22561a9c04a7cb1a302c013e0259cd3b4bb619f145b32f72b8b4bcbed230"
+dependencies = [
+ "hashbrown 0.16.1",
+]
 
 [[package]]
 name = "heck"
@@ -1450,6 +1471,17 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e02f3bb43d335493c96bf3fd3a321600bf6bd07ed34bc64118e9293bdffea46c"
 dependencies = [
  "libc",
+]
+
+[[package]]
+name = "libsqlite3-sys"
+version = "0.36.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "95b4103cffefa72eb8428cb6b47d6627161e51c2739fc5e3b734584157bc642a"
+dependencies = [
+ "cc",
+ "pkg-config",
+ "vcpkg",
 ]
 
 [[package]]
@@ -1870,6 +1902,12 @@ dependencies = [
  "fastrand",
  "futures-io",
 ]
+
+[[package]]
+name = "pkg-config"
+version = "0.3.33"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "19f132c84eca552bf34cab8ec81f1c1dcc229b811638f9d283dceabe58c5569e"
 
 [[package]]
 name = "polling"
@@ -2294,6 +2332,7 @@ dependencies = [
  "serde_json",
  "time",
  "tokio",
+ "toml",
 ]
 
 [[package]]
@@ -2302,14 +2341,19 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "async-trait",
+ "base64",
  "futures",
  "roder-api",
  "roder-codex-auth",
+ "roder-commands",
  "roder-config",
  "roder-core",
+ "roder-ext-memory",
+ "roder-ext-openai-embeddings",
  "roder-ext-subagents",
  "roder-extension-host",
  "roder-protocol",
+ "roder-tasks",
  "roder-tools",
  "serde",
  "serde_json",
@@ -2327,6 +2371,7 @@ dependencies = [
  "roder-api",
  "roder-app-server",
  "roder-codex-auth",
+ "roder-commands",
  "roder-config",
  "roder-core",
  "roder-ext-anthropic",
@@ -2338,6 +2383,7 @@ dependencies = [
  "roder-ext-subagents",
  "roder-extension-host",
  "roder-protocol",
+ "roder-supergrok-auth",
  "roder-tui",
  "roder-web-search",
  "serde",
@@ -2378,7 +2424,25 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "dirs",
+ "roder-api",
  "serde",
+ "serde_json",
+ "serde_yaml",
+ "sha2 0.11.0",
+ "time",
+ "toml",
+ "uuid",
+]
+
+[[package]]
+name = "roder-configure"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "roder-api",
+ "serde",
+ "serde_json",
+ "tokio",
  "toml",
 ]
 
@@ -2401,6 +2465,9 @@ dependencies = [
  "async-trait",
  "futures",
  "roder-api",
+ "roder-ext-jsonl-session",
+ "roder-ext-runner-unix-local",
+ "roder-sandbox",
  "serde",
  "serde_json",
  "time",
@@ -2486,9 +2553,11 @@ dependencies = [
  "anyhow",
  "async-trait",
  "roder-api",
+ "rusqlite",
  "semver",
  "serde",
  "serde_json",
+ "sha2 0.11.0",
  "time",
  "tokio",
  "uuid",
@@ -2528,6 +2597,20 @@ dependencies = [
  "anyhow",
  "async-trait",
  "futures",
+ "reqwest",
+ "roder-api",
+ "semver",
+ "serde",
+ "serde_json",
+ "tokio",
+]
+
+[[package]]
+name = "roder-ext-openai-embeddings"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
  "reqwest",
  "roder-api",
  "semver",
@@ -2597,6 +2680,121 @@ dependencies = [
 ]
 
 [[package]]
+name = "roder-ext-runner-blaxel"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "roder-api",
+ "roder-ext-runner-hosted-common",
+ "semver",
+ "tokio",
+]
+
+[[package]]
+name = "roder-ext-runner-cloudflare"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "roder-api",
+ "roder-ext-runner-hosted-common",
+ "semver",
+ "tokio",
+]
+
+[[package]]
+name = "roder-ext-runner-daytona"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "roder-api",
+ "roder-ext-runner-hosted-common",
+ "semver",
+ "tokio",
+]
+
+[[package]]
+name = "roder-ext-runner-docker"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "roder-api",
+ "semver",
+ "serde_json",
+ "tokio",
+]
+
+[[package]]
+name = "roder-ext-runner-e2b"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "roder-api",
+ "roder-ext-runner-hosted-common",
+ "semver",
+ "tokio",
+]
+
+[[package]]
+name = "roder-ext-runner-hosted-common"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "reqwest",
+ "roder-api",
+ "serde",
+ "serde_json",
+ "tokio",
+ "urlencoding",
+]
+
+[[package]]
+name = "roder-ext-runner-modal"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "roder-api",
+ "roder-ext-runner-hosted-common",
+ "semver",
+ "tokio",
+]
+
+[[package]]
+name = "roder-ext-runner-runloop"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "roder-api",
+ "roder-ext-runner-hosted-common",
+ "semver",
+ "tokio",
+]
+
+[[package]]
+name = "roder-ext-runner-unix-local"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "roder-api",
+ "semver",
+ "serde_json",
+ "tokio",
+]
+
+[[package]]
+name = "roder-ext-runner-vercel"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "roder-api",
+ "roder-ext-runner-hosted-common",
+ "semver",
+ "tokio",
+]
+
+[[package]]
 name = "roder-ext-subagents"
 version = "0.1.0"
 dependencies = [
@@ -2619,6 +2817,7 @@ dependencies = [
  "anyhow",
  "async-trait",
  "roder-api",
+ "roder-ext-runner-unix-local",
  "roder-tasks",
  "semver",
  "serde",
@@ -2673,6 +2872,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "roder-ext-xai"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "roder-api",
+ "roder-ext-openai-responses",
+ "roder-supergrok-auth",
+ "semver",
+ "tokio",
+]
+
+[[package]]
 name = "roder-extension-host"
 version = "0.1.0"
 dependencies = [
@@ -2687,18 +2899,33 @@ dependencies = [
  "roder-ext-gemini",
  "roder-ext-jsonl-session",
  "roder-ext-memory",
+ "roder-ext-notify-desktop",
+ "roder-ext-notify-terminal",
+ "roder-ext-openai-embeddings",
  "roder-ext-openai-responses",
  "roder-ext-parallel-search",
  "roder-ext-perplexity-search",
  "roder-ext-plan-mode",
+ "roder-ext-runner-blaxel",
+ "roder-ext-runner-cloudflare",
+ "roder-ext-runner-daytona",
+ "roder-ext-runner-docker",
+ "roder-ext-runner-e2b",
+ "roder-ext-runner-modal",
+ "roder-ext-runner-runloop",
+ "roder-ext-runner-unix-local",
+ "roder-ext-runner-vercel",
  "roder-ext-subagents",
+ "roder-ext-task-process",
  "roder-ext-tavily-search",
  "roder-ext-web-search",
+ "roder-ext-xai",
  "roder-tools",
  "roder-web-search",
  "semver",
  "serde",
  "serde_json",
+ "time",
  "tokio",
 ]
 
@@ -2759,6 +2986,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "roder-supergrok-auth"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "base64",
+ "dirs",
+ "rand 0.10.1",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "sha2 0.11.0",
+ "urlencoding",
+]
+
+[[package]]
 name = "roder-tasks"
 version = "0.1.0"
 dependencies = [
@@ -2785,9 +3027,12 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "async-trait",
+ "base64",
  "roder-api",
+ "roder-ext-runner-unix-local",
  "serde",
  "serde_json",
+ "time",
  "tokio",
 ]
 
@@ -2796,6 +3041,7 @@ name = "roder-tui"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "async-trait",
  "base64",
  "crossterm",
  "dirs",
@@ -2824,6 +3070,31 @@ dependencies = [
  "serde",
  "serde_json",
  "tokio",
+]
+
+[[package]]
+name = "rsqlite-vfs"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a8a1f2315036ef6b1fbacd1972e8ee7688030b0a2121edfc2a6550febd41574d"
+dependencies = [
+ "hashbrown 0.16.1",
+ "thiserror 2.0.18",
+]
+
+[[package]]
+name = "rusqlite"
+version = "0.38.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f1c93dd1c9683b438c392c492109cb702b8090b2bfc8fed6f6e4eb4523f17af3"
+dependencies = [
+ "bitflags 2.11.1",
+ "fallible-iterator",
+ "fallible-streaming-iterator",
+ "hashlink",
+ "libsqlite3-sys",
+ "smallvec",
+ "sqlite-wasm-rs",
 ]
 
 [[package]]
@@ -3196,6 +3467,18 @@ checksum = "3a766e1110788c36f4fa1c2b71b387a7815aa65f88ce0229841826633d93723e"
 dependencies = [
  "libc",
  "windows-sys 0.61.2",
+]
+
+[[package]]
+name = "sqlite-wasm-rs"
+version = "0.5.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1b2c760607300407ddeaee518acf28c795661b7108c75421303dbefb237d3a36"
+dependencies = [
+ "cc",
+ "js-sys",
+ "rsqlite-vfs",
+ "wasm-bindgen",
 ]
 
 [[package]]
@@ -3802,6 +4085,12 @@ dependencies = [
  "serde_core",
  "wasm-bindgen",
 ]
+
+[[package]]
+name = "vcpkg"
+version = "0.2.15"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "accd4ea62f7bb7a82fe23066fb0957d48ef677f6eeb8215f372f52e48bb32426"
 
 [[package]]
 name = "version_check"

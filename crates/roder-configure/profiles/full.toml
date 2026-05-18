@@ -1,0 +1,31 @@
+id = "full"
+description = "Full first-party Roder distribution with all cataloged providers, tools, notifications, context, and memory."
+
+[distribution]
+name = "full-roder"
+version = "0.1.0"
+include_tui = true
+include_app_server = true
+include_cli = true
+extensions = [
+  "anthropic",
+  "disk-context",
+  "firecrawl-search",
+  "gemini",
+  "jsonl-session",
+  "memory",
+  "notify-desktop",
+  "notify-terminal",
+  "openai-chat-completions",
+  "openai-responses",
+  "parallel-search",
+  "perplexity-search",
+  "plan-mode",
+  "subagents",
+  "task-process",
+  "task-subagent",
+  "tavily-search",
+  "web-search",
+]
+default_provider = "openai-responses"
+default_session_store = "jsonl-session"

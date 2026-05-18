@@ -1,5 +1,6 @@
 use std::sync::Arc;
 
+use roder_api::capabilities::CapabilityRequest;
 use roder_api::extension::{
     ExtensionManifest, ExtensionRegistryBuilder, ProvidedService, RoderExtension,
 };
@@ -33,7 +34,7 @@ impl RoderExtension for ParallelSearchExtension {
             api_version: "0.1.0".to_string(),
             description: Some("Parallel.ai objective-oriented search tool provider".to_string()),
             provides: vec![ProvidedService::ToolProvider("parallel-search".to_string())],
-            required_capabilities: vec![],
+            required_capabilities: vec![CapabilityRequest::new("network.web")],
         }
     }
 

@@ -1,5 +1,16 @@
 use std::path::{Path, PathBuf};
 
+use roder_api::tools::ScopedWorkspaceHandle;
+
+pub mod manifest;
+pub mod mount;
+pub mod process;
+pub mod session;
+pub mod snapshot;
+
+pub use manifest::validate_manifest;
+pub use snapshot::{validate_snapshot_export, validate_snapshot_ref};
+
 #[derive(Debug, Clone)]
 pub struct ScopedFilesystem {
     workspace: PathBuf,
@@ -27,6 +38,12 @@ impl ScopedFilesystem {
             anyhow::bail!("path escapes scoped workspace: {}", normalized.display());
         }
         Ok(normalized)
+    }
+}
+
+impl ScopedWorkspaceHandle for ScopedFilesystem {
+    fn workspace_root(&self) -> Option<PathBuf> {
+        Some(self.workspace.clone())
     }
 }
 

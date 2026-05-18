@@ -3,6 +3,19 @@ name = "roder-ext-gemini"
 version.workspace = true
 edition.workspace = true
 
+[package.metadata.roder.distribution]
+id = "gemini"
+category = "inference-engine"
+display_name = "Gemini"
+description = "Google Gemini inference with streaming text and tool calls."
+default_in_profiles = ["full"]
+required_env = ["GEMINI_API_KEY"]
+optional_env = []
+conflicts_with = []
+required_capabilities = ["network.api.googleai", "secret.read.GEMINI_API_KEY"]
+extension_path = "::GeminiExtension::new"
+docs_url = "https://ai.google.dev/gemini-api/docs"
+
 [dependencies]
 anyhow.workspace = true
 async-trait.workspace = true

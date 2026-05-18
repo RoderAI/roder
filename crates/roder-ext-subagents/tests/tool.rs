@@ -189,11 +189,7 @@ fn task_tool_contributor_installs_namespaced_tools_only_when_enabled() {
 }
 
 fn context() -> ToolExecutionContext {
-    ToolExecutionContext {
-        thread_id: "parent-thread".to_string(),
-        turn_id: "parent-turn".to_string(),
-        effective_mode: PolicyMode::Default,
-    }
+    ToolExecutionContext::new("parent-thread", "parent-turn", PolicyMode::Default)
 }
 
 fn call(arguments: serde_json::Value) -> ToolCall {

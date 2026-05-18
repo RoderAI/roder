@@ -1,8 +1,8 @@
 use std::sync::Arc;
 
 use roder_api::{
-    ExtensionManifest, ExtensionRegistryBuilder, Notification, NotificationKind, NotificationSink,
-    ProvidedService, RoderExtension,
+    CapabilityRequest, ExtensionManifest, ExtensionRegistryBuilder, Notification, NotificationKind,
+    NotificationSink, ProvidedService, RoderExtension,
 };
 
 pub const DESKTOP_NOTIFICATION_SINK_ID: &str = "desktop";
@@ -20,6 +20,7 @@ impl DesktopNotificationSink {
     pub fn default_kinds() -> Vec<NotificationKind> {
         vec![
             NotificationKind::NeedsInput,
+            NotificationKind::TurnIdle,
             NotificationKind::TaskCompleted,
             NotificationKind::TaskFailed,
         ]
@@ -58,7 +59,21 @@ fn deliver_desktop(notification: Notification) {
 #[cfg(not(feature = "desktop"))]
 fn deliver_desktop(_notification: Notification) {}
 
-pub struct DesktopNotifyExtension;
+pub struct DesktopNotifyExtension {
+    enabled_kinds: Vec<NotificationKind>,
+}
+
+impl DesktopNotifyExtension {
+    pub fn new(enabled_kinds: Vec<NotificationKind>) -> Self {
+        Self { enabled_kinds }
+    }
+}
+
+impl Default for DesktopNotifyExtension {
+    fn default() -> Self {
+        Self::new(DesktopNotificationSink::default_kinds())
+    }
+}
 
 impl RoderExtension for DesktopNotifyExtension {
     fn manifest(&self) -> ExtensionManifest {
@@ -71,13 +86,13 @@ impl RoderExtension for DesktopNotifyExtension {
             provides: vec![ProvidedService::NotificationSink(
                 DESKTOP_NOTIFICATION_SINK_ID.to_string(),
             )],
-            required_capabilities: Vec::new(),
+            required_capabilities: vec![CapabilityRequest::new("desktop.notification")],
         }
     }
 
     fn install(&self, registry: &mut ExtensionRegistryBuilder) -> anyhow::Result<()> {
         registry.notification_sink(Arc::new(DesktopNotificationSink::new(
-            DesktopNotificationSink::default_kinds(),
+            self.enabled_kinds.clone(),
         )));
         Ok(())
     }
@@ -111,6 +126,18 @@ mod tests {
             .await
             .unwrap();
         sink.deliver(notification(NotificationKind::TurnIdle))
+            .await
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn live_desktop_notification_is_explicitly_opt_in() {
+        if std::env::var("RODER_LIVE_NOTIFICATIONS").ok().as_deref() != Some("1") {
+            return;
+        }
+
+        let sink = DesktopNotificationSink::new(vec![NotificationKind::NeedsInput]);
+        sink.deliver(notification(NotificationKind::NeedsInput))
             .await
             .unwrap();
     }

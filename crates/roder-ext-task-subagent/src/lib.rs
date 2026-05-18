@@ -2,7 +2,7 @@ mod task;
 
 use std::sync::Arc;
 
-use roder_api::{ExtensionManifest, ExtensionRegistryBuilder, ProvidedService, RoderExtension};
+use roder_api::{CapabilityRequest, ExtensionManifest, ExtensionRegistryBuilder, RoderExtension};
 
 pub use task::{SUBAGENT_TASK_EXECUTOR_ID, SubagentTaskExecutor};
 
@@ -16,10 +16,8 @@ impl RoderExtension for SubagentTaskExtension {
             version: semver::Version::new(0, 1, 0),
             api_version: "0.1.0".to_string(),
             description: Some("Background subagent task executor".to_string()),
-            provides: vec![ProvidedService::TaskExecutor(
-                SUBAGENT_TASK_EXECUTOR_ID.to_string(),
-            )],
-            required_capabilities: Vec::new(),
+            provides: Vec::new(),
+            required_capabilities: vec![CapabilityRequest::new("process.spawn.roder")],
         }
     }
 

@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use anyhow::Context;
@@ -18,15 +19,21 @@ use roder_api::inference::{
     ReasoningConfig, RuntimeHints, ToolCallCompleted,
 };
 use roder_api::policy_mode::{PolicyDecision, PolicyMode};
+use roder_api::remote_runner::{RemoteRunnerSession, RunnerDestination};
 use roder_api::session::{SessionMetadata, SessionStore, ThreadSnapshot};
 use roder_api::subagents::SubagentDefinition;
+use roder_api::teams::TeamMemberStatus;
 use roder_api::tools::{ToolCall, ToolChoice, ToolExecutionContext, ToolRegistry, ToolResult};
+use roder_sandbox::ScopedFilesystem;
+use roder_sandbox::process::LocalProcessRunner;
 use time::{Duration, OffsetDateTime};
 use tokio::sync::{Mutex, RwLock, oneshot};
 
 use crate::bus::EventBus;
 use crate::fake_provider::FakeInferenceEngine;
 use crate::policy_gate::DefaultPolicyGate;
+use crate::subagent_traces::RuntimeSubagentTraceSink;
+use crate::teams::{TeamManager, TeamMemberStartRequest, TeamStartRequest, TeamState};
 
 const MAX_TOOL_ROUNDS_PER_TURN: usize = 1024;
 const FINAL_ANSWER_PHASE: &str = "final_answer";
@@ -42,6 +49,8 @@ pub struct RuntimeConfig {
     pub model_parallel_tool_calls: HashMap<String, bool>,
     pub workspace: Option<String>,
     pub policy_mode: PolicyMode,
+    pub remote_runner_destination: Option<RunnerDestination>,
+    pub team_data_dir: Option<PathBuf>,
 }
 
 impl Default for RuntimeConfig {
@@ -56,6 +65,8 @@ impl Default for RuntimeConfig {
             model_parallel_tool_calls: HashMap::new(),
             workspace: None,
             policy_mode: PolicyMode::Default,
+            remote_runner_destination: None,
+            team_data_dir: None,
         }
     }
 }
@@ -147,6 +158,7 @@ pub struct Runtime {
     pub(crate) pending_tool_approvals: Mutex<HashMap<String, PendingToolApproval>>,
     pub(crate) pending_user_inputs: Mutex<HashMap<String, PendingUserInput>>,
     active_turns: RwLock<HashMap<TurnId, ActiveTurnHandle>>,
+    teams: TeamManager,
     pub(crate) session_store: Option<Arc<dyn SessionStore>>,
     pub(crate) tool_registry: ToolRegistry,
 }
@@ -169,6 +181,7 @@ impl Runtime {
                 .with_context(|| format!("tool contributor {} failed", contributor.id()))?;
         }
 
+        let team_data_dir = config.team_data_dir.clone();
         let runtime = Self {
             bus,
             registry,
@@ -177,6 +190,9 @@ impl Runtime {
             pending_tool_approvals: Mutex::new(HashMap::new()),
             pending_user_inputs: Mutex::new(HashMap::new()),
             active_turns: RwLock::new(HashMap::new()),
+            teams: TeamManager::new(
+                team_data_dir.unwrap_or_else(crate::teams::default_team_data_dir),
+            ),
             session_store,
             tool_registry,
         };
@@ -229,16 +245,60 @@ impl Runtime {
             thread_id: thread_id.clone(),
             turn_id: "slash-command".to_string(),
         };
-        let ctx = ToolExecutionContext {
+        let runtime_config = self.status().await;
+        let ctx = self.tool_execution_context(
             thread_id,
-            turn_id: "slash-command".to_string(),
-            effective_mode: self.status().await.policy_mode,
-        };
+            "slash-command".to_string(),
+            runtime_config.policy_mode,
+            runtime_config.workspace.as_deref(),
+        );
         executor.execute(ctx, tool_call).await
+    }
+
+    pub(crate) fn tool_execution_context(
+        &self,
+        thread_id: ThreadId,
+        turn_id: TurnId,
+        mode: PolicyMode,
+        workspace: Option<&str>,
+    ) -> ToolExecutionContext {
+        let mut ctx = ToolExecutionContext::new(thread_id, turn_id, mode)
+            .with_process_runner(Arc::new(LocalProcessRunner))
+            .with_subagent_trace_sink(Arc::new(RuntimeSubagentTraceSink::new(
+                self.bus.clone(),
+                self.session_store.clone(),
+            )));
+        if let Some(workspace) = workspace {
+            ctx = ctx.with_workspace_handle(Arc::new(ScopedFilesystem::new(workspace)));
+        }
+        ctx
     }
 
     pub async fn status(&self) -> RuntimeConfig {
         self.config.read().await.clone()
+    }
+
+    pub async fn set_remote_runner_destination(&self, destination: Option<RunnerDestination>) {
+        let lifecycle = destination.as_ref().map(|destination| RunnerLifecycle {
+            destination_id: destination.id.clone(),
+            provider_id: destination.provider_id.clone(),
+            state: "configured".to_string(),
+            session_id: None,
+            timestamp: OffsetDateTime::now_utc(),
+        });
+        self.config.write().await.remote_runner_destination = destination;
+        if let Some(lifecycle) = lifecycle {
+            self.emit(RoderEvent::RunnerLifecycle(lifecycle)).await;
+        } else {
+            self.emit(RoderEvent::RunnerLifecycle(RunnerLifecycle {
+                destination_id: "local".to_string(),
+                provider_id: "local".to_string(),
+                state: "local_fallback".to_string(),
+                session_id: None,
+                timestamp: OffsetDateTime::now_utc(),
+            }))
+            .await;
+        }
     }
 
     pub async fn pending_plan_exit(&self) -> Option<PendingPlanExit> {
@@ -293,11 +353,11 @@ impl Runtime {
         let approval_ids = pending
             .iter()
             .filter_map(|(approval_id, approval)| {
-                let ctx = ToolExecutionContext {
-                    thread_id: approval.thread_id.clone(),
-                    turn_id: approval.turn_id.clone(),
-                    effective_mode: mode,
-                };
+                let ctx = ToolExecutionContext::new(
+                    approval.thread_id.clone(),
+                    approval.turn_id.clone(),
+                    mode,
+                );
                 matches!(
                     gate.decide(&approval.call, mode, &ctx),
                     PolicyDecision::AutoApproved { .. }
@@ -316,11 +376,11 @@ impl Runtime {
         drop(pending);
 
         for (approval_id, approval) in approvals {
-            let ctx = ToolExecutionContext {
-                thread_id: approval.thread_id.clone(),
-                turn_id: approval.turn_id.clone(),
-                effective_mode: mode,
-            };
+            let ctx = ToolExecutionContext::new(
+                approval.thread_id.clone(),
+                approval.turn_id.clone(),
+                mode,
+            );
             let decision = gate.decide(&approval.call, mode, &ctx);
             self.emit(RoderEvent::PolicyDecisionRecorded(PolicyDecisionRecorded {
                 thread_id: approval.thread_id.clone(),
@@ -516,6 +576,8 @@ impl Runtime {
             workspace: req.workspace.or(cfg.workspace),
             provider: Some(req.provider.unwrap_or(cfg.default_provider)),
             model: Some(req.model.unwrap_or(cfg.default_model)),
+            runner_destination: cfg.remote_runner_destination.clone(),
+            runner_state: None,
             created_at: now,
             updated_at: now,
             message_count: 0,
@@ -541,6 +603,325 @@ impl Runtime {
         Ok(Vec::new())
     }
 
+    pub async fn start_team(&self, req: TeamStartRequest) -> anyhow::Result<TeamState> {
+        let cfg = self.config.read().await.clone();
+        let lead_thread_id = match req.lead_thread_id {
+            Some(thread_id) => thread_id,
+            None => {
+                self.create_session_with(CreateSessionRequest {
+                    title: Some("Team lead".to_string()),
+                    ..CreateSessionRequest::default()
+                })
+                .await?
+                .thread_id
+            }
+        };
+        let team_id = uuid::Uuid::new_v4().to_string();
+        let mut members = vec![crate::teams::lead_member(
+            lead_thread_id.clone(),
+            Some(cfg.default_provider.clone()),
+            Some(cfg.default_model.clone()),
+            cfg.policy_mode,
+        )];
+
+        for (index, member) in req.members.into_iter().enumerate() {
+            let thread = self
+                .create_session_with(CreateSessionRequest {
+                    title: Some(member.name.clone()),
+                    provider: member.model_provider.clone(),
+                    model: member.model.clone(),
+                    ..CreateSessionRequest::default()
+                })
+                .await?;
+            let member_id = format!("member-{}", index + 1);
+            let descriptor = crate::teams::teammate_member(
+                member_id.clone(),
+                member.name,
+                thread.thread_id.clone(),
+                member.model_provider.or(thread.provider),
+                member.model.or(thread.model),
+                cfg.policy_mode,
+            );
+            self.emit(RoderEvent::TeamMemberStarted(TeamMemberStarted {
+                team_id: team_id.clone(),
+                member_id,
+                member_thread_id: thread.thread_id,
+                role: descriptor.role,
+                name: descriptor.name.clone(),
+                timestamp: OffsetDateTime::now_utc(),
+            }))
+            .await;
+            members.push(descriptor);
+        }
+
+        let now = OffsetDateTime::now_utc();
+        let team = self
+            .teams
+            .insert(TeamState {
+                id: team_id.clone(),
+                lead_thread_id: lead_thread_id.clone(),
+                display_mode: req.display_mode,
+                members,
+                mailbox: Vec::new(),
+                tasks: Vec::new(),
+                created_at: now,
+                updated_at: now,
+            })
+            .await?;
+        self.emit(RoderEvent::TeamStarted(TeamStarted {
+            team_id,
+            lead_thread_id,
+            display_mode: team.display_mode,
+            timestamp: OffsetDateTime::now_utc(),
+        }))
+        .await;
+        Ok(team)
+    }
+
+    pub async fn list_teams(&self) -> Vec<TeamState> {
+        self.teams.list().await
+    }
+
+    pub async fn read_team(&self, team_id: &str) -> Option<TeamState> {
+        self.teams.get(team_id).await
+    }
+
+    pub async fn start_team_member(
+        &self,
+        team_id: &str,
+        req: TeamMemberStartRequest,
+    ) -> anyhow::Result<TeamState> {
+        let cfg = self.config.read().await.clone();
+        let thread = self
+            .create_session_with(CreateSessionRequest {
+                title: Some(req.name.clone()),
+                provider: req.model_provider.clone(),
+                model: req.model.clone(),
+                ..CreateSessionRequest::default()
+            })
+            .await?;
+        let team = self
+            .read_team(team_id)
+            .await
+            .ok_or_else(|| anyhow::anyhow!("unknown team {team_id:?}"))?;
+        let member_id = format!("member-{}", team.members.len());
+        let descriptor = crate::teams::teammate_member(
+            member_id.clone(),
+            req.name,
+            thread.thread_id.clone(),
+            req.model_provider.or(thread.provider),
+            req.model.or(thread.model),
+            cfg.policy_mode,
+        );
+        let mut next = team;
+        next.members.push(descriptor.clone());
+        next.updated_at = OffsetDateTime::now_utc();
+        let next = self.teams.insert(next).await?;
+        self.emit(RoderEvent::TeamMemberStarted(TeamMemberStarted {
+            team_id: next.id.clone(),
+            member_id,
+            member_thread_id: descriptor.thread_id,
+            role: descriptor.role,
+            name: descriptor.name,
+            timestamp: OffsetDateTime::now_utc(),
+        }))
+        .await;
+        Ok(next)
+    }
+
+    pub async fn message_team_member(
+        self: &Arc<Self>,
+        team_id: &str,
+        member_id: &str,
+        message: String,
+    ) -> anyhow::Result<TurnId> {
+        self.teams
+            .append_mailbox_message(team_id, None, member_id.to_string(), message.clone())
+            .await?;
+        let team = self
+            .read_team(team_id)
+            .await
+            .ok_or_else(|| anyhow::anyhow!("unknown team {team_id:?}"))?;
+        let member = team
+            .members
+            .iter()
+            .find(|member| member.id == member_id)
+            .ok_or_else(|| anyhow::anyhow!("unknown team member {member_id:?}"))?
+            .clone();
+        let turn_id = if member.status == TeamMemberStatus::Running {
+            if let Some(turn_id) = member.current_turn_id.clone() {
+                self.steer_turn(
+                    member.thread_id.clone(),
+                    turn_id.clone(),
+                    message,
+                    Vec::new(),
+                )
+                .await?;
+                turn_id
+            } else {
+                self.start_turn(StartTurnRequest {
+                    thread_id: member.thread_id.clone(),
+                    message,
+                    images: Vec::new(),
+                    provider_override: member.model_provider.clone(),
+                    model_override: member.model.clone(),
+                    instructions: crate::default_instructions(),
+                })
+                .await?
+            }
+        } else {
+            self.start_turn(StartTurnRequest {
+                thread_id: member.thread_id.clone(),
+                message,
+                images: Vec::new(),
+                provider_override: member.model_provider.clone(),
+                model_override: member.model.clone(),
+                instructions: crate::default_instructions(),
+            })
+            .await?
+        };
+        let is_active = self.active_turns.read().await.contains_key(&turn_id);
+        self.teams
+            .update_member(team_id, member_id, |member| {
+                if is_active {
+                    member.current_turn_id = Some(turn_id.clone());
+                    member.status = TeamMemberStatus::Running;
+                } else {
+                    member.current_turn_id = None;
+                    member.status = TeamMemberStatus::Completed;
+                }
+            })
+            .await?;
+        if is_active {
+            self.emit(RoderEvent::TeamMemberStatusChanged(
+                TeamMemberStatusChanged {
+                    team_id: team_id.to_string(),
+                    member_id: member_id.to_string(),
+                    member_thread_id: member.thread_id,
+                    status: TeamMemberStatus::Running,
+                    timestamp: OffsetDateTime::now_utc(),
+                },
+            ))
+            .await;
+        } else {
+            self.emit(RoderEvent::TeamMemberCompleted(TeamMemberCompleted {
+                team_id: team_id.to_string(),
+                member_id: member_id.to_string(),
+                member_thread_id: member.thread_id,
+                turn_id: Some(turn_id.clone()),
+                status: TeamMemberStatus::Completed,
+                timestamp: OffsetDateTime::now_utc(),
+            }))
+            .await;
+        }
+        Ok(turn_id)
+    }
+
+    pub async fn set_team_member_policy_mode(
+        &self,
+        team_id: &str,
+        member_id: &str,
+        policy_mode: PolicyMode,
+    ) -> anyhow::Result<TeamState> {
+        self.teams
+            .set_member_policy_mode(team_id, member_id, policy_mode)
+            .await
+    }
+
+    pub async fn interrupt_team_member(
+        &self,
+        team_id: &str,
+        member_id: &str,
+    ) -> anyhow::Result<Option<TurnId>> {
+        let team = self
+            .read_team(team_id)
+            .await
+            .ok_or_else(|| anyhow::anyhow!("unknown team {team_id:?}"))?;
+        let member = team
+            .members
+            .iter()
+            .find(|member| member.id == member_id)
+            .ok_or_else(|| anyhow::anyhow!("unknown team member {member_id:?}"))?
+            .clone();
+        let Some(turn_id) = member.current_turn_id.clone() else {
+            return Ok(None);
+        };
+        self.interrupt_turn(member.thread_id.clone(), turn_id.clone())
+            .await?;
+        self.teams
+            .update_member(team_id, member_id, |member| {
+                member.status = TeamMemberStatus::Interrupted;
+                member.current_turn_id = None;
+            })
+            .await?;
+        self.emit(RoderEvent::TeamMemberCompleted(TeamMemberCompleted {
+            team_id: team_id.to_string(),
+            member_id: member_id.to_string(),
+            member_thread_id: member.thread_id,
+            turn_id: Some(turn_id.clone()),
+            status: TeamMemberStatus::Interrupted,
+            timestamp: OffsetDateTime::now_utc(),
+        }))
+        .await;
+        Ok(Some(turn_id))
+    }
+
+    pub async fn cleanup_team(&self, team_id: &str, force: bool) -> anyhow::Result<bool> {
+        let Some(team) = self.read_team(team_id).await else {
+            return Ok(false);
+        };
+        if !force
+            && team
+                .members
+                .iter()
+                .any(|member| member.status == TeamMemberStatus::Running)
+        {
+            anyhow::bail!("team {team_id:?} has active teammates; use forced cleanup");
+        }
+        let removed = self.teams.remove(team_id).await?.is_some();
+        if removed {
+            self.emit(RoderEvent::TeamCleanupCompleted(TeamCleanupCompleted {
+                team_id: team_id.to_string(),
+                forced: force,
+                timestamp: OffsetDateTime::now_utc(),
+            }))
+            .await;
+        }
+        Ok(removed)
+    }
+
+    pub async fn effective_policy_mode_for_thread(&self, thread_id: &str) -> PolicyMode {
+        if let Some(mode) = self.teams.policy_mode_for_thread(thread_id).await {
+            return mode;
+        }
+        self.status().await.policy_mode
+    }
+
+    async fn complete_team_member_turn(
+        &self,
+        thread_id: &ThreadId,
+        turn_id: &TurnId,
+        status: TeamMemberStatus,
+    ) -> anyhow::Result<()> {
+        let Some((team_id, member)) = self
+            .teams
+            .complete_member_turn(thread_id, turn_id, status)
+            .await?
+        else {
+            return Ok(());
+        };
+        self.emit(RoderEvent::TeamMemberCompleted(TeamMemberCompleted {
+            team_id,
+            member_id: member.id,
+            member_thread_id: member.thread_id,
+            turn_id: Some(turn_id.clone()),
+            status,
+            timestamp: OffsetDateTime::now_utc(),
+        }))
+        .await;
+        Ok(())
+    }
+
     pub async fn load_session(
         &self,
         thread_id: &ThreadId,
@@ -558,6 +939,72 @@ impl Runtime {
             .await;
         }
         Ok(loaded)
+    }
+
+    async fn runner_session_for_thread(
+        &self,
+        thread_id: &ThreadId,
+    ) -> anyhow::Result<Option<(RunnerDestination, Arc<dyn RemoteRunnerSession>)>> {
+        let Some(destination) = self.config.read().await.remote_runner_destination.clone() else {
+            return Ok(None);
+        };
+        let provider = self
+            .registry
+            .remote_runner_providers
+            .iter()
+            .find(|provider| provider.id() == destination.provider_id)
+            .cloned()
+            .ok_or_else(|| {
+                anyhow::anyhow!(
+                    "remote runner provider {:?} is not installed",
+                    destination.provider_id
+                )
+            })?;
+        let persisted_state = if let Some(store) = &self.session_store {
+            store
+                .load_session(thread_id)
+                .await?
+                .and_then(|snapshot| snapshot.metadata)
+                .and_then(|metadata| metadata.runner_state)
+        } else {
+            None
+        };
+        let session = if let Some(state) = persisted_state
+            && state.provider_id == destination.provider_id
+            && state.destination_id == destination.id
+        {
+            match provider.resume_session(state).await {
+                Ok(session) => session,
+                Err(_) => provider.create_session(destination.clone()).await?,
+            }
+        } else {
+            provider.create_session(destination.clone()).await?
+        };
+        Ok(Some((destination, session)))
+    }
+
+    async fn persist_runner_state(
+        &self,
+        thread_id: &ThreadId,
+        runner: Option<&(RunnerDestination, Arc<dyn RemoteRunnerSession>)>,
+    ) -> anyhow::Result<()> {
+        let Some((destination, session)) = runner else {
+            return Ok(());
+        };
+        let Some(store) = &self.session_store else {
+            return Ok(());
+        };
+        let Some(snapshot) = store.load_session(thread_id).await? else {
+            return Ok(());
+        };
+        let Some(mut metadata) = snapshot.metadata else {
+            return Ok(());
+        };
+        metadata.runner_destination = Some(destination.clone());
+        metadata.runner_state = Some(session.state());
+        metadata.updated_at = OffsetDateTime::now_utc();
+        store.update_session_metadata(metadata).await?;
+        Ok(())
     }
 
     pub async fn start_turn(self: &Arc<Self>, req: StartTurnRequest) -> anyhow::Result<TurnId> {
@@ -695,6 +1142,7 @@ impl Runtime {
             ToolChoice::Auto
         };
         let mut conversation = self.conversation_for_turn(&req, &turn_id, &model).await?;
+        let runner_session = self.runner_session_for_thread(&req.thread_id).await?;
         if !capabilities.image_input && conversation_has_images(&conversation) {
             self.fail_turn_with_error(
                 &req.thread_id,
@@ -774,6 +1222,12 @@ impl Runtime {
                             timestamp: OffsetDateTime::now_utc(),
                         }))
                         .await;
+                        self.complete_team_member_turn(
+                            &req.thread_id,
+                            &turn_id,
+                            TeamMemberStatus::Failed,
+                        )
+                        .await?;
                         return Err(err);
                     }
                 };
@@ -788,6 +1242,19 @@ impl Runtime {
 
                 match event {
                     InferenceEvent::MessageDelta(delta) => {
+                        if let Some((team_id, member)) =
+                            self.teams.member_for_thread(&req.thread_id).await
+                        {
+                            self.emit(RoderEvent::TeamMemberMessageDelta(TeamMemberMessageDelta {
+                                team_id,
+                                member_id: member.id,
+                                member_thread_id: req.thread_id.clone(),
+                                turn_id: turn_id.clone(),
+                                delta: delta.text.clone(),
+                                timestamp: OffsetDateTime::now_utc(),
+                            }))
+                            .await;
+                        }
                         if is_final_answer_phase(delta.phase.as_deref()) {
                             assistant_text.push_str(&delta.text);
                         } else if let Some(last) = phase_messages.last_mut()
@@ -819,6 +1286,12 @@ impl Runtime {
                             timestamp: OffsetDateTime::now_utc(),
                         }))
                         .await;
+                        self.complete_team_member_turn(
+                            &req.thread_id,
+                            &turn_id,
+                            TeamMemberStatus::Failed,
+                        )
+                        .await?;
                         return Ok(());
                     }
                     InferenceEvent::Completed(_)
@@ -919,12 +1392,14 @@ impl Runtime {
             )
             .await?;
             self.emit(RoderEvent::TurnFailed(TurnFailed {
-                thread_id: req.thread_id,
-                turn_id,
+                thread_id: req.thread_id.clone(),
+                turn_id: turn_id.clone(),
                 error: message,
                 timestamp: OffsetDateTime::now_utc(),
             }))
             .await;
+            self.complete_team_member_turn(&req.thread_id, &turn_id, TeamMemberStatus::Failed)
+                .await?;
             return Ok(());
         }
 
@@ -967,11 +1442,15 @@ impl Runtime {
         }
 
         self.emit(RoderEvent::TurnCompleted(TurnCompleted {
-            thread_id: req.thread_id,
-            turn_id,
+            thread_id: req.thread_id.clone(),
+            turn_id: turn_id.clone(),
             timestamp: OffsetDateTime::now_utc(),
         }))
         .await;
+        self.complete_team_member_turn(&req.thread_id, &turn_id, TeamMemberStatus::Completed)
+            .await?;
+        self.persist_runner_state(&req.thread_id, runner_session.as_ref())
+            .await?;
         Ok(())
     }
 
@@ -1027,6 +1506,8 @@ impl Runtime {
             timestamp: OffsetDateTime::now_utc(),
         }))
         .await;
+        self.complete_team_member_turn(thread_id, turn_id, TeamMemberStatus::Failed)
+            .await?;
         Ok(())
     }
 
@@ -1070,7 +1551,7 @@ impl Runtime {
             .ok_or_else(|| anyhow::anyhow!("inference provider {provider:?} is not registered"))
     }
 
-    pub(crate) async fn emit(&self, event: RoderEvent) -> EventEnvelope {
+    pub async fn emit(&self, event: RoderEvent) -> EventEnvelope {
         let envelope = self.bus.emit(event);
         if let (Some(store), Some(thread_id)) = (&self.session_store, envelope.thread_id.as_ref()) {
             let _ = store.append_event(thread_id, &envelope).await;

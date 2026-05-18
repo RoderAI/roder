@@ -3,6 +3,19 @@ name = "roder-ext-firecrawl-search"
 version.workspace = true
 edition.workspace = true
 
+[package.metadata.roder.distribution]
+id = "firecrawl-search"
+category = "tool-provider"
+display_name = "Firecrawl Search"
+description = "Firecrawl-backed web search and retrieval tools."
+default_in_profiles = []
+required_env = ["FIRECRAWL_API_KEY"]
+optional_env = []
+conflicts_with = []
+required_capabilities = ["network.api.firecrawl.dev", "secret.read.FIRECRAWL_API_KEY"]
+extension_path = "::FirecrawlSearchExtension::new"
+docs_url = "https://docs.firecrawl.dev"
+
 [dependencies]
 anyhow.workspace = true
 async-trait.workspace = true

@@ -1,5 +1,6 @@
 use std::sync::Arc;
 
+use roder_api::capabilities::CapabilityRequest;
 use roder_api::extension::{
     ExtensionManifest, ExtensionRegistryBuilder, ProvidedService, RoderExtension, ToolProviderId,
 };
@@ -84,7 +85,7 @@ impl RoderExtension for WebSearchRouterExtension {
                 self.config.provider.id()
             )),
             provides: vec![ProvidedService::ToolProvider("web-search".to_string())],
-            required_capabilities: vec![],
+            required_capabilities: vec![CapabilityRequest::new("network.web")],
         }
     }
 

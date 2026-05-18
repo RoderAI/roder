@@ -1,0 +1,17 @@
+id = "anthropic-only"
+description = "Anthropic Messages distribution with local JSONL sessions and the standard CLI/TUI."
+
+[distribution]
+name = "anthropic-roder"
+version = "0.1.0"
+include_tui = true
+include_app_server = true
+include_cli = true
+extensions = [
+  "anthropic",
+  "jsonl-session",
+  "plan-mode",
+  "notify-terminal",
+]
+default_provider = "anthropic"
+default_session_store = "jsonl-session"
