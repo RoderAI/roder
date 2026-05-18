@@ -679,6 +679,7 @@ pub(crate) async fn build_runtime_from_config(
     let model_parallel_tool_calls = resolve_model_parallel_tool_calls(&cfg.models);
     let notifications = resolve_notifications_config(cfg.notifications.as_ref())?;
     let remote_runner_destination = resolve_remote_runner_destination(cfg.remote_runners.as_ref())?;
+    let tool_path_scope = resolve_tool_path_scope(cfg.tools.as_ref())?;
     if policy_mode == PolicyMode::Bypass
         && cfg
             .policy_modes
@@ -705,6 +706,7 @@ pub(crate) async fn build_runtime_from_config(
         custom_inference_providers: custom_inference_provider_configs,
         session_dir: None,
         workspace: workspace.clone(),
+        tool_path_scope,
         web_search: web_search.external,
         subagents,
         policy_mode,
@@ -730,6 +732,20 @@ pub(crate) async fn build_runtime_from_config(
     )?);
 
     Ok((runtime, default_model))
+}
+
+fn resolve_tool_path_scope(
+    config: Option<&roder_config::ToolsConfig>,
+) -> anyhow::Result<roder_tools::ToolPathScope> {
+    let Some(config) = config else {
+        return Ok(roder_tools::ToolPathScope::default());
+    };
+    roder_tools::ToolPathScope::parse(&config.path_scope).ok_or_else(|| {
+        anyhow::anyhow!(
+            "invalid tools.path_scope {:?}; expected global or workspace",
+            config.path_scope
+        )
+    })
 }
 
 fn resolve_notifications_config(

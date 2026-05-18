@@ -19,6 +19,7 @@ use serde_json::json;
 
 pub use roder_api::tools::*;
 
+pub use workspace::ToolPathScope;
 use workspace::Workspace;
 
 use backend::{LocalWorkspaceBackend, WorkspaceBackendHandle};
@@ -87,7 +88,14 @@ pub struct BuiltinCodingToolsContributor {
 
 impl BuiltinCodingToolsContributor {
     pub fn new(workspace: impl Into<PathBuf>) -> anyhow::Result<Self> {
-        let workspace = Workspace::new(workspace.into())?;
+        Self::new_with_path_scope(workspace, ToolPathScope::default())
+    }
+
+    pub fn new_with_path_scope(
+        workspace: impl Into<PathBuf>,
+        path_scope: ToolPathScope,
+    ) -> anyhow::Result<Self> {
+        let workspace = Workspace::new_with_scope(workspace.into(), path_scope)?;
         let backend = Arc::new(LocalWorkspaceBackend::new(workspace.clone()));
         Ok(Self { workspace, backend })
     }
@@ -131,6 +139,15 @@ pub fn builtin_coding_tools_contributor(
     workspace: impl Into<PathBuf>,
 ) -> anyhow::Result<Arc<dyn ToolContributor>> {
     Ok(Arc::new(BuiltinCodingToolsContributor::new(workspace)?))
+}
+
+pub fn builtin_coding_tools_contributor_with_path_scope(
+    workspace: impl Into<PathBuf>,
+    path_scope: ToolPathScope,
+) -> anyhow::Result<Arc<dyn ToolContributor>> {
+    Ok(Arc::new(
+        BuiltinCodingToolsContributor::new_with_path_scope(workspace, path_scope)?,
+    ))
 }
 
 #[cfg(test)]
@@ -326,11 +343,44 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn builtin_coding_tools_reject_paths_outside_workspace() {
+    async fn builtin_coding_tools_allow_paths_outside_workspace_by_default() {
+        let root = test_workspace("path-global-root");
+        let outside = test_workspace("path-global-outside");
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::create_dir_all(&outside).unwrap();
+        let outside_file = outside.join("outside.txt");
+        let mut registry = ToolRegistry::default();
+        BuiltinCodingToolsContributor::new(root.clone())
+            .unwrap()
+            .contribute(&mut registry)
+            .unwrap();
+
+        let write = run_tool(
+            &registry,
+            "write_file",
+            json!({ "path": outside_file.display().to_string(), "content": "yes" }),
+        )
+        .await;
+        assert_eq!(write.text, format!("wrote {}", outside_file.display()));
+
+        let list = run_tool(
+            &registry,
+            "list_files",
+            json!({ "path": outside.display().to_string() }),
+        )
+        .await;
+        assert_eq!(list.text, "outside.txt");
+
+        let _ = std::fs::remove_dir_all(root);
+        let _ = std::fs::remove_dir_all(outside);
+    }
+
+    #[tokio::test]
+    async fn builtin_coding_tools_can_restrict_paths_to_workspace() {
         let root = test_workspace("path-safety");
         std::fs::create_dir_all(&root).unwrap();
         let mut registry = ToolRegistry::default();
-        BuiltinCodingToolsContributor::new(root.clone())
+        BuiltinCodingToolsContributor::new_with_path_scope(root.clone(), ToolPathScope::Workspace)
             .unwrap()
             .contribute(&mut registry)
             .unwrap();

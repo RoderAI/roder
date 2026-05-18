@@ -29,7 +29,7 @@ impl ToolExecutor for ReadFileTool {
     fn spec(&self) -> ToolSpec {
         ToolSpec {
             name: "read_file".to_string(),
-            description: "Read a UTF-8 text file inside the workspace, optionally by line range."
+            description: "Read a UTF-8 text file, optionally by line range. Relative paths resolve from the workspace root."
                 .to_string(),
             parameters: json!({
                 "type": "object",
@@ -93,7 +93,7 @@ impl ToolExecutor for ListFilesTool {
     fn spec(&self) -> ToolSpec {
         ToolSpec {
             name: "list_files".to_string(),
-            description: "List direct children of a workspace directory with paginated output."
+            description: "List direct children of a directory with paginated output. Relative paths resolve from the workspace root."
                 .to_string(),
             parameters: json!({
                 "type": "object",

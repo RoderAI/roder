@@ -19,6 +19,7 @@ pub struct Config {
     pub subagents: Option<SubagentsConfig>,
     pub policy_modes: Option<PolicyModesConfig>,
     pub commands: Option<CommandsConfig>,
+    pub tools: Option<ToolsConfig>,
     pub notifications: Option<NotificationsConfig>,
     pub tui: Option<TuiConfig>,
     pub remote_runners: Option<RemoteRunnersConfig>,
@@ -193,6 +194,20 @@ impl Default for CommandsConfig {
             include_timeout_seconds: Some(5),
             max_include_bytes: Some(65_536),
             live_reload: true,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ToolsConfig {
+    #[serde(default = "default_tool_path_scope")]
+    pub path_scope: String,
+}
+
+impl Default for ToolsConfig {
+    fn default() -> Self {
+        Self {
+            path_scope: default_tool_path_scope(),
         }
     }
 }
@@ -399,6 +414,10 @@ impl Default for TuiDiffConfig {
 
 fn default_true() -> bool {
     true
+}
+
+fn default_tool_path_scope() -> String {
+    "global".to_string()
 }
 
 pub fn load_config() -> anyhow::Result<Config> {
@@ -627,6 +646,11 @@ fn apply_env_overrides_with(config: &mut Config, mut env: impl FnMut(&str) -> Op
             .get_or_insert_with(Default::default)
             .allow_url_includes = allow_url;
     }
+    if let Some(scope) = env("RODER_TOOLS_PATH_SCOPE")
+        && !scope.trim().is_empty()
+    {
+        config.tools.get_or_insert_with(Default::default).path_scope = scope;
+    }
     if let Some(disabled) = env("RODER_NOTIFICATIONS_DISABLED")
         && parse_bool(&disabled).unwrap_or(false)
     {
@@ -731,6 +755,7 @@ mod tests {
             subagents: None,
             policy_modes: None,
             commands: None,
+            tools: None,
             notifications: None,
             tui: None,
             remote_runners: None,
