@@ -37,6 +37,7 @@ const TOOL_OVERFLOW_INDEX: usize = usize::MAX;
 const MOUSE_SCROLL_ROWS: isize = 10;
 const MIN_PAGE_SCROLL_ROWS: isize = 12;
 const TIMELINE_OVERSCAN_ROWS: usize = 4;
+const RUNNING_SHELL_TAIL_ROWS: usize = 12;
 
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub(super) struct ToolTimelineEntry {
@@ -247,6 +248,9 @@ impl TimelineState {
             return;
         }
         let index = self.items.len();
+        if is_shell_like_tool(&entry.name) {
+            self.collapse_previous_shell_tools();
+        }
         self.items.push(TimelineItem {
             kind: TimelineItemKind::Tool(ToolTimelineTool {
                 tool_id: tool_id.clone(),
@@ -257,6 +261,25 @@ impl TimelineState {
         });
         self.tool_indices.insert(tool_id, index);
         self.follow_live_updates_from_composer();
+    }
+
+    #[allow(dead_code)]
+    pub fn record_tool_output_delta(&mut self, tool_id: &str, output_delta: &str) {
+        if output_delta.is_empty() {
+            return;
+        }
+        let Some(index) = self.tool_indices.get(tool_id).copied() else {
+            return;
+        };
+        if let Some(TimelineItem {
+            kind: TimelineItemKind::Tool(tool),
+        }) = self.items.get_mut(index)
+        {
+            tool.output
+                .get_or_insert_with(String::new)
+                .push_str(output_delta);
+            self.follow_live_updates_from_composer();
+        }
     }
 
     pub fn record_tool_delta(&mut self, tool_id: &str, arguments_delta: &str) {
@@ -491,7 +514,11 @@ impl TimelineState {
         ) {
             return self.open_context_menu(index, event.column, event.row);
         }
-        if self.items.get(index).is_some_and(item_is_foldable_assistant) {
+        if self
+            .items
+            .get(index)
+            .is_some_and(item_is_foldable_assistant)
+        {
             self.toggle_expansion(index);
             return true;
         }
@@ -739,6 +766,17 @@ impl TimelineState {
     fn toggle_expansion(&mut self, index: usize) {
         if let Some(key) = self.fold_key_for_index(index) {
             self.fold_state.toggle(key);
+        }
+    }
+
+    fn collapse_previous_shell_tools(&mut self) {
+        for item in &self.items {
+            let TimelineItemKind::Tool(tool) = &item.kind else {
+                continue;
+            };
+            if is_shell_like_tool(&tool.entry.name) {
+                self.fold_state.set_expanded(tool.tool_id.clone(), false);
+            }
         }
     }
 
@@ -1061,7 +1099,7 @@ impl ToolTimelineTool {
     }
 }
 
-fn is_shell_like_tool(name: &str) -> bool {
+pub(super) fn is_shell_like_tool(name: &str) -> bool {
     let normalized = name.to_ascii_lowercase();
     normalized == "shell"
         || normalized == "exec"

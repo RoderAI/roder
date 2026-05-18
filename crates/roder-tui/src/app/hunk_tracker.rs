@@ -2,7 +2,7 @@ use ratatui::{
     style::Modifier,
     text::{Line, Span},
 };
-use roder_api::plan_review::{HunkDiffLineKind, HunkRecord, HunkRollbackState};
+use roder_api::plan_review::{HunkDiffLineKind, HunkRecord};
 
 use super::Theme;
 
@@ -40,11 +40,7 @@ impl HunkTrackerRow {
         theme: Theme,
         lines: &mut Vec<Line<'static>>,
     ) {
-        let title = format!(
-            "hunk {} {}",
-            self.hunk.id,
-            rollback_label(&self.hunk.rollback)
-        );
+        let title = format!("hunk {}", self.hunk.id);
         lines.push(Line::from(vec![
             Span::styled("  Δ ", theme.tool()),
             Span::styled(
@@ -76,14 +72,5 @@ impl HunkTrackerRow {
                 ]));
             }
         }
-    }
-}
-
-fn rollback_label(state: &HunkRollbackState) -> &'static str {
-    match state {
-        HunkRollbackState::Available => "rollback available",
-        HunkRollbackState::Applied => "rolled back",
-        HunkRollbackState::Conflict { .. } => "rollback conflict",
-        HunkRollbackState::Unavailable { .. } => "rollback unavailable",
     }
 }

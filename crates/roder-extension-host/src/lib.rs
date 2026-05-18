@@ -36,6 +36,7 @@ use roder_ext_runner_vercel::VercelRunnerExtension;
 use roder_ext_xai::XaiExtension;
 use semver::Version;
 
+pub mod marketplace;
 mod subagents;
 mod web_search;
 pub mod workflow_import;

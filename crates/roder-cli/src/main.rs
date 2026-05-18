@@ -2,10 +2,12 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 mod commands;
+mod marketplace;
 mod resume_picker;
 #[cfg(test)]
 mod tui_config;
 
+use marketplace::{run_marketplace_cli, run_plugin_cli, run_setup_cli};
 use roder_api::catalog::{DEFAULT_MODEL_ID, PROVIDER_MOCK, normalize_provider_id};
 use roder_api::inference::HostedWebSearchConfig;
 use roder_api::notifications::NotificationKind;
@@ -52,6 +54,18 @@ async fn main() -> anyhow::Result<()> {
     }
     if matches!(args.first().map(String::as_str), Some("workflow")) {
         return run_workflow_cli(&args[1..]).await;
+    }
+    if matches!(
+        args.first().map(String::as_str),
+        Some("marketplace" | "marketplaces")
+    ) {
+        return run_marketplace_cli(&args[1..]).await;
+    }
+    if matches!(args.first().map(String::as_str), Some("plugin" | "plugins")) {
+        return run_plugin_cli(&args[1..]).await;
+    }
+    if matches!(args.first().map(String::as_str), Some("setup")) {
+        return run_setup_cli(&args[1..]).await;
     }
     if matches!(args.first().map(String::as_str), Some("memory")) {
         return run_memory_cli(&args[1..]).await;
@@ -608,7 +622,9 @@ async fn run_team_cli(args: &[String]) -> anyhow::Result<()> {
     }
 }
 
-fn decode_response<T: serde::de::DeserializeOwned>(res: JsonRpcResponse) -> anyhow::Result<T> {
+pub(crate) fn decode_response<T: serde::de::DeserializeOwned>(
+    res: JsonRpcResponse,
+) -> anyhow::Result<T> {
     if let Some(error) = res.error {
         if let Some(data) = error.data {
             anyhow::bail!("{} ({})\n{}", error.message, error.code, data);
@@ -622,7 +638,7 @@ fn decode_response<T: serde::de::DeserializeOwned>(res: JsonRpcResponse) -> anyh
 }
 
 #[derive(Debug, Clone, Default)]
-struct CliOptions {
+pub(crate) struct CliOptions {
     policy_mode: Option<PolicyMode>,
     team_display: Option<roder_api::teams::AgentTeamDisplayMode>,
     startup: TuiStartup,
@@ -637,7 +653,9 @@ struct AppServerOptions {
     cli_options: CliOptions,
 }
 
-async fn build_runtime_from_config(options: CliOptions) -> anyhow::Result<(Arc<Runtime>, String)> {
+pub(crate) async fn build_runtime_from_config(
+    options: CliOptions,
+) -> anyhow::Result<(Arc<Runtime>, String)> {
     let cfg = roder_config::load_config()?;
     let keys = provider_keys(&cfg);
     let web_search = resolve_web_search_config(cfg.web_search.as_ref())?;

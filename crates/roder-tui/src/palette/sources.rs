@@ -1,4 +1,5 @@
 use roder_api::inference::HostedWebSearchMode;
+use roder_api::marketplace::MarketplaceDescriptor;
 use roder_api::policy_mode::PolicyMode;
 use roder_protocol::{
     AgentDescriptor, CommandDescriptor, DesktopThread, ProvidersListResult, RunnersListResult,
@@ -125,6 +126,68 @@ pub fn workflow_import_source() -> StaticPaletteSource {
             ),
         ],
     )
+}
+
+pub fn marketplace_source(marketplaces: &[MarketplaceDescriptor]) -> StaticPaletteSource {
+    let mut entries = vec![
+        (
+            PaletteItem {
+                id: "marketplaces-install-all-defaults".to_string(),
+                title: "Install all default marketplaces".to_string(),
+                subtitle: Some("Claude, Cursor, and Codex marketplace metadata".to_string()),
+                keywords: vec![
+                    "marketplace".to_string(),
+                    "plugins".to_string(),
+                    "claude".to_string(),
+                    "cursor".to_string(),
+                    "codex".to_string(),
+                ],
+                icon: Some('◆'),
+            },
+            PaletteAction::InsertComposerText("/marketplace install-default all".to_string()),
+        ),
+        (
+            PaletteItem {
+                id: "marketplaces-search".to_string(),
+                title: "Search plugin marketplaces".to_string(),
+                subtitle: Some(
+                    "List de-duplicated plugin results across installed marketplaces".to_string(),
+                ),
+                keywords: vec![
+                    "marketplace".to_string(),
+                    "plugin".to_string(),
+                    "dedupe".to_string(),
+                    "search".to_string(),
+                ],
+                icon: Some('⌕'),
+            },
+            PaletteAction::InsertComposerText("/marketplace search ".to_string()),
+        ),
+    ];
+
+    entries.extend(marketplaces.iter().map(|marketplace| {
+        (
+            PaletteItem {
+                id: format!("marketplace-{}", marketplace.id),
+                title: format!("Marketplace: {}", marketplace.display_name),
+                subtitle: Some(format!(
+                    "{} · {:?} · {:?}",
+                    marketplace.id, marketplace.kind, marketplace.state
+                )),
+                keywords: vec![
+                    "marketplace".to_string(),
+                    "plugins".to_string(),
+                    marketplace.id.clone(),
+                    marketplace.display_name.clone(),
+                    format!("{:?}", marketplace.kind).to_ascii_lowercase(),
+                ],
+                icon: Some('◇'),
+            },
+            PaletteAction::InsertComposerText(format!("/marketplace refresh {}", marketplace.id)),
+        )
+    }));
+
+    StaticPaletteSource::new("marketplaces", "Marketplaces", entries)
 }
 
 pub fn media_source() -> StaticPaletteSource {
