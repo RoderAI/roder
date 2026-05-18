@@ -491,7 +491,11 @@ impl TimelineState {
         ) {
             return self.open_context_menu(index, event.column, event.row);
         }
-        if !self.items.get(index).is_some_and(item_is_selectable) {
+        if self.items.get(index).is_some_and(item_is_foldable_assistant) {
+            self.toggle_expansion(index);
+            return true;
+        }
+        if !self.items.get(index).is_some_and(item_is_mouse_selectable) {
             return false;
         }
         let was_selected = self.selected == Some(index);
@@ -1182,6 +1186,17 @@ fn item_is_selectable(item: &TimelineItem) -> bool {
             | TimelineItemKind::PlanReview(_)
             | TimelineItemKind::Hunk(_)
     ) || item_is_foldable_message(item)
+}
+
+fn item_is_mouse_selectable(item: &TimelineItem) -> bool {
+    if matches!(item.kind, TimelineItemKind::Assistant { .. }) {
+        return false;
+    }
+    item_is_selectable(item)
+}
+
+fn item_is_foldable_assistant(item: &TimelineItem) -> bool {
+    matches!(item.kind, TimelineItemKind::Assistant { .. }) && item_is_foldable_message(item)
 }
 
 fn item_is_foldable_message(item: &TimelineItem) -> bool {
