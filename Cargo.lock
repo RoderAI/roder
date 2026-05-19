@@ -3070,6 +3070,7 @@ dependencies = [
  "anyhow",
  "async-trait",
  "base64",
+ "dirs",
  "roder-api",
  "roder-ext-runner-unix-local",
  "serde",

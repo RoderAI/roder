@@ -6,7 +6,10 @@ mod render;
 mod tests;
 mod virtualization;
 
-use std::{collections::HashMap, time::Duration};
+use std::{
+    collections::HashMap,
+    time::{Duration, Instant},
+};
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 use ratatui::{
@@ -22,6 +25,8 @@ use roder_api::trace::{
 };
 use serde_json::Value;
 
+use super::scroll_accel::{ScrollAccelState, ScrollDirection, ScrollSettings};
+use super::stream_animation::StreamAnimator;
 use super::subagent_trace::SubagentTraceRow;
 use super::{Theme, short_id};
 use super::{hunk_tracker::HunkTrackerRow, plan_review::PlanReviewRow};
@@ -34,7 +39,6 @@ const BOTTOM_PADDING_ROWS: usize = 3;
 const MESSAGE_FOLD_LINE_LIMIT: usize = 8;
 const TOOL_COLLAPSE_LIMIT: usize = 6;
 const TOOL_OVERFLOW_INDEX: usize = usize::MAX;
-const MOUSE_SCROLL_ROWS: isize = 10;
 const MIN_PAGE_SCROLL_ROWS: isize = 12;
 const TIMELINE_OVERSCAN_ROWS: usize = 4;
 const RUNNING_SHELL_TAIL_ROWS: usize = 12;
@@ -65,7 +69,7 @@ pub(super) fn fallback_entry(name: impl Into<String>) -> ToolTimelineEntry {
 #[derive(Debug, Clone, Eq, PartialEq)]
 enum TimelineItemKind {
     User(String),
-    Assistant { text: String, phase: Option<String> },
+    Assistant(AssistantMessage),
     Reasoning(String),
     System(String),
     TurnCompleted(TurnCompletedSummary),
@@ -76,6 +80,62 @@ enum TimelineItemKind {
     SubagentTrace(Box<SubagentTraceRow>),
     PlanReview(Box<PlanReviewRow>),
     Hunk(Box<HunkTrackerRow>),
+}
+
+#[derive(Clone)]
+struct AssistantMessage {
+    text: String,
+    phase: Option<String>,
+    animator: StreamAnimator,
+}
+
+impl AssistantMessage {
+    fn streaming(text: &str, phase: Option<String>, now: Instant) -> Self {
+        let mut animator = StreamAnimator::default();
+        animator.push_delta(text, now);
+        Self {
+            text: text.to_string(),
+            phase,
+            animator,
+        }
+    }
+
+    fn complete(text: impl Into<String>, phase: Option<String>) -> Self {
+        let text = text.into();
+        let mut animator = StreamAnimator::default();
+        animator.set_full_text(text.clone());
+        Self {
+            text,
+            phase,
+            animator,
+        }
+    }
+
+    fn push_delta(&mut self, text: &str, now: Instant) {
+        self.text.push_str(text);
+        self.animator.push_delta(text, now);
+    }
+
+    fn sync_animation(&mut self) {
+        self.animator.sync_to_text(&self.text);
+    }
+}
+
+impl PartialEq for AssistantMessage {
+    fn eq(&self, other: &Self) -> bool {
+        self.text == other.text && self.phase == other.phase
+    }
+}
+
+impl Eq for AssistantMessage {}
+
+impl std::fmt::Debug for AssistantMessage {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("AssistantMessage")
+            .field("text", &self.text)
+            .field("phase", &self.phase)
+            .finish_non_exhaustive()
+    }
 }
 
 #[derive(Debug, Clone, Eq, PartialEq)]
@@ -148,9 +208,17 @@ pub(super) struct TimelineState {
     context_menu: Option<TranscriptContextMenu>,
     show_all_tools: bool,
     requested_detail: Option<ToolDetail>,
+    scroll_accel: ScrollAccelState,
 }
 
 impl TimelineState {
+    pub fn new(scroll_settings: ScrollSettings) -> Self {
+        Self {
+            scroll_accel: ScrollAccelState::new(scroll_settings),
+            ..Self::default()
+        }
+    }
+
     pub fn focus(&self) -> TimelineFocus {
         self.focus
     }
@@ -178,23 +246,55 @@ impl TimelineState {
     }
 
     pub fn push_assistant_delta(&mut self, text: &str, phase: Option<String>) {
+        self.push_assistant_delta_immediate(text, phase);
+    }
+
+    pub fn push_assistant_delta_streaming(&mut self, text: &str, phase: Option<String>) {
+        self.push_assistant_delta_at(text, phase, Instant::now());
+    }
+
+    #[cfg(test)]
+    fn push_assistant_delta_streaming_at(
+        &mut self,
+        text: &str,
+        phase: Option<String>,
+        now: Instant,
+    ) {
+        self.push_assistant_delta_at(text, phase, now);
+    }
+
+    pub fn push_assistant_delta_immediate(&mut self, text: &str, phase: Option<String>) {
         if let Some(TimelineItem {
-            kind:
-                TimelineItemKind::Assistant {
-                    text: existing,
-                    phase: existing_phase,
-                },
+            kind: TimelineItemKind::Assistant(existing),
         }) = self.items.last_mut()
-            && *existing_phase == phase
+            && existing.phase == phase
         {
-            existing.push_str(text);
+            existing.text.push_str(text);
+            existing.sync_animation();
             self.follow_live_updates_from_composer();
             return;
         }
-        self.push_item(TimelineItemKind::Assistant {
-            text: text.to_string(),
+        self.flush_streaming_animation();
+        self.push_item(TimelineItemKind::Assistant(AssistantMessage::complete(
+            text.to_string(),
             phase,
-        });
+        )));
+    }
+
+    fn push_assistant_delta_at(&mut self, text: &str, phase: Option<String>, now: Instant) {
+        if let Some(TimelineItem {
+            kind: TimelineItemKind::Assistant(existing),
+        }) = self.items.last_mut()
+            && existing.phase == phase
+        {
+            existing.push_delta(text, now);
+            self.follow_live_updates_from_composer();
+            return;
+        }
+        self.flush_streaming_animation();
+        self.push_item(TimelineItemKind::Assistant(AssistantMessage::streaming(
+            text, phase, now,
+        )));
     }
 
     pub fn push_reasoning_delta(&mut self, text: &str) {
@@ -233,6 +333,7 @@ impl TimelineState {
     }
 
     pub fn record_tool_requested(&mut self, tool_id: String, entry: ToolTimelineEntry) {
+        self.flush_streaming_animation();
         if let Some(index) = self.tool_indices.get(&tool_id).copied() {
             if let Some(TimelineItem {
                 kind: TimelineItemKind::Tool(tool),
@@ -322,7 +423,40 @@ impl TimelineState {
     }
 
     pub fn push_turn_completed(&mut self, summary: TurnCompletedSummary) {
+        self.flush_streaming_animation();
         self.push_item(TimelineItemKind::TurnCompleted(summary));
+    }
+
+    pub fn flush_streaming_animation(&mut self) -> bool {
+        let mut changed = false;
+        for item in &mut self.items {
+            if let TimelineItemKind::Assistant(message) = &mut item.kind {
+                changed |= message.animator.flush();
+            }
+        }
+        changed
+    }
+
+    pub fn tick_streaming_animation(&mut self, now: Instant, width: u16) -> bool {
+        let mut changed = false;
+        for item in &mut self.items {
+            if let TimelineItemKind::Assistant(message) = &mut item.kind {
+                changed |= message.animator.tick(now, width);
+            }
+        }
+        if changed {
+            self.follow_live_updates_from_composer();
+        }
+        changed
+    }
+
+    pub fn has_streaming_animation(&self) -> bool {
+        self.items.iter().any(|item| {
+            matches!(
+                &item.kind,
+                TimelineItemKind::Assistant(message) if message.animator.is_animating()
+            )
+        })
     }
 
     pub fn record_subagent_trace_created(&mut self, summary: SubagentTraceSummary) {
@@ -427,6 +561,9 @@ impl TimelineState {
     }
 
     pub fn record_hunk(&mut self, hunk: roder_api::plan_review::HunkRecord) {
+        if hunk.plan_review_id.is_some() {
+            return;
+        }
         let index = self.items.len();
         self.hunk_indices.insert(hunk.id.clone(), index);
         self.items.push(TimelineItem {
@@ -482,12 +619,12 @@ impl TimelineState {
         match event.kind {
             MouseEventKind::ScrollDown => {
                 self.focus = TimelineFocus::Timeline;
-                self.scroll_by(MOUSE_SCROLL_ROWS);
+                self.scroll_by_wheel(ScrollDirection::Down);
                 return true;
             }
             MouseEventKind::ScrollUp => {
                 self.focus = TimelineFocus::Timeline;
-                self.scroll_by(-MOUSE_SCROLL_ROWS);
+                self.scroll_by_wheel(ScrollDirection::Up);
                 return true;
             }
             MouseEventKind::Down(MouseButton::Left) | MouseEventKind::Up(MouseButton::Left) => {}
@@ -736,8 +873,21 @@ impl TimelineState {
     }
 
     fn scroll_by(&mut self, amount: isize) {
+        self.scroll_accel.reset();
         let current = self.scroll_offset as isize;
         self.scroll_offset = current.saturating_add(amount).max(0) as usize;
+        self.selected = None;
+        self.auto_follow = false;
+    }
+
+    fn scroll_by_wheel(&mut self, direction: ScrollDirection) {
+        let rows = self.scroll_accel.tick(direction, std::time::Instant::now());
+        let signed_rows = match direction {
+            ScrollDirection::Down => rows,
+            ScrollDirection::Up => -rows,
+        };
+        let current = self.scroll_offset as isize;
+        self.scroll_offset = current.saturating_add(signed_rows).max(0) as usize;
         self.selected = None;
         self.auto_follow = false;
     }
@@ -810,7 +960,7 @@ impl TimelineState {
             TimelineItem {
                 kind:
                     TimelineItemKind::User(_)
-                    | TimelineItemKind::Assistant { .. }
+                    | TimelineItemKind::Assistant(_)
                     | TimelineItemKind::System(_)
                     | TimelineItemKind::Error(_)
                     | TimelineItemKind::Shell(_)
@@ -1227,14 +1377,14 @@ fn item_is_selectable(item: &TimelineItem) -> bool {
 }
 
 fn item_is_mouse_selectable(item: &TimelineItem) -> bool {
-    if matches!(item.kind, TimelineItemKind::Assistant { .. }) {
+    if matches!(item.kind, TimelineItemKind::Assistant(_)) {
         return false;
     }
     item_is_selectable(item)
 }
 
 fn item_is_foldable_assistant(item: &TimelineItem) -> bool {
-    matches!(item.kind, TimelineItemKind::Assistant { .. }) && item_is_foldable_message(item)
+    matches!(item.kind, TimelineItemKind::Assistant(_)) && item_is_foldable_message(item)
 }
 
 fn item_is_foldable_message(item: &TimelineItem) -> bool {
@@ -1287,7 +1437,7 @@ impl TimelineItem {
             | TimelineItemKind::Error(text)
             | TimelineItemKind::Shell(text)
             | TimelineItemKind::ShellOutput(text) => Some(text),
-            TimelineItemKind::Assistant { text, .. } => Some(text),
+            TimelineItemKind::Assistant(message) => Some(&message.text),
             TimelineItemKind::Tool(_)
             | TimelineItemKind::SubagentTrace(_)
             | TimelineItemKind::PlanReview(_)
@@ -1307,7 +1457,8 @@ fn should_separate_items(current: &TimelineItem, next: &TimelineItem) -> bool {
     match (&current.kind, &next.kind) {
         (TimelineItemKind::Tool(_), TimelineItemKind::Tool(_)) => false,
         (TimelineItemKind::SubagentTrace(_), TimelineItemKind::SubagentTrace(_)) => false,
-        (TimelineItemKind::Assistant { phase, .. }, TimelineItemKind::Tool(_)) => !phase
+        (TimelineItemKind::Assistant(message), TimelineItemKind::Tool(_)) => !message
+            .phase
             .as_deref()
             .is_some_and(|phase| !phase.is_empty() && phase != "final_answer"),
         _ => true,

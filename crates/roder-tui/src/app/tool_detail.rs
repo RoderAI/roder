@@ -6,22 +6,25 @@ use ratatui::{
     widgets::{Block, Borders, Clear, Padding, Paragraph, Wrap},
 };
 
+use super::scroll_accel::{ScrollAccelState, ScrollDirection, ScrollSettings};
 use super::tool_timeline::ToolDetail;
 use super::{Theme, centered_rect};
 
-#[derive(Debug, Clone, Eq, PartialEq)]
+#[derive(Debug, Clone)]
 pub(super) struct ToolDetailModal {
     detail: ToolDetail,
     scroll: u16,
     wrap: bool,
+    scroll_accel: ScrollAccelState,
 }
 
 impl ToolDetailModal {
-    pub(super) fn new(detail: ToolDetail) -> Self {
+    pub(super) fn new(detail: ToolDetail, scroll_settings: ScrollSettings) -> Self {
         Self {
             detail,
             scroll: 0,
             wrap: false,
+            scroll_accel: ScrollAccelState::new(scroll_settings),
         }
     }
 
@@ -59,11 +62,11 @@ impl ToolDetailModal {
     pub(super) fn handle_mouse(&mut self, mouse: MouseEvent) -> bool {
         match mouse.kind {
             MouseEventKind::ScrollDown => {
-                self.scroll_by(3);
+                self.scroll_by_wheel(ScrollDirection::Down);
                 true
             }
             MouseEventKind::ScrollUp => {
-                self.scroll_by(-3);
+                self.scroll_by_wheel(ScrollDirection::Up);
                 true
             }
             _ => true,
@@ -71,7 +74,21 @@ impl ToolDetailModal {
     }
 
     fn scroll_by(&mut self, amount: i16) {
+        self.scroll_accel.reset();
         let next = i32::from(self.scroll) + i32::from(amount);
+        self.scroll = next.max(0).min(i32::from(u16::MAX)) as u16;
+    }
+
+    fn scroll_by_wheel(&mut self, direction: ScrollDirection) {
+        let rows = self
+            .scroll_accel
+            .tick(direction, std::time::Instant::now())
+            .min(i16::MAX as isize) as i16;
+        let signed_rows = match direction {
+            ScrollDirection::Down => rows,
+            ScrollDirection::Up => -rows,
+        };
+        let next = i32::from(self.scroll) + i32::from(signed_rows);
         self.scroll = next.max(0).min(i32::from(u16::MAX)) as u16;
     }
 }

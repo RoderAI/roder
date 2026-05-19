@@ -156,6 +156,7 @@ mod tests {
     use crate::backend::RunnerWorkspaceBackend;
     use roder_api::remote_runner::{RemoteRunnerProvider, RunnerDestination, RunnerManifest};
     use roder_ext_runner_unix_local::UnixLocalRunnerProvider;
+    use std::sync::{Mutex, OnceLock};
 
     #[test]
     fn echo_contributor_registers_echo_spec() {
@@ -376,6 +377,32 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn builtin_coding_tools_list_files_expands_home_directory() {
+        let _guard = env_lock().lock().unwrap();
+        let previous_home = std::env::var_os("HOME");
+        let root = test_workspace("home-root");
+        let home = test_workspace("home-dir");
+        std::fs::write(home.join("home-file.txt"), "yes").unwrap();
+        let mut registry = ToolRegistry::default();
+        BuiltinCodingToolsContributor::new(root.clone())
+            .unwrap()
+            .contribute(&mut registry)
+            .unwrap();
+
+        // SAFETY: this test holds a process-wide mutex while mutating HOME.
+        unsafe {
+            std::env::set_var("HOME", &home);
+        }
+        let list = run_tool(&registry, "list_files", json!({ "path": "~/" })).await;
+        restore_home(previous_home);
+
+        assert_eq!(list.text, "home-file.txt");
+
+        let _ = std::fs::remove_dir_all(root);
+        let _ = std::fs::remove_dir_all(home);
+    }
+
+    #[tokio::test]
     async fn builtin_coding_tools_can_restrict_paths_to_workspace() {
         let root = test_workspace("path-safety");
         std::fs::create_dir_all(&root).unwrap();
@@ -501,6 +528,22 @@ mod tests {
         let _ = std::fs::remove_dir_all(&path);
         std::fs::create_dir_all(&path).unwrap();
         path
+    }
+
+    fn env_lock() -> &'static Mutex<()> {
+        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+        LOCK.get_or_init(|| Mutex::new(()))
+    }
+
+    fn restore_home(previous_home: Option<std::ffi::OsString>) {
+        // SAFETY: callers hold env_lock while restoring HOME.
+        unsafe {
+            if let Some(previous_home) = previous_home {
+                std::env::set_var("HOME", previous_home);
+            } else {
+                std::env::remove_var("HOME");
+            }
+        }
     }
 
     async fn run_coding_tool_sequence(contributor: BuiltinCodingToolsContributor) -> Vec<String> {

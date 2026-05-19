@@ -14,8 +14,10 @@ mod plugin_browser;
 #[allow(dead_code)]
 mod remote;
 mod runner;
+mod scroll_accel;
 mod session_resume;
 mod shortcuts;
+mod stream_animation;
 mod subagent_trace;
 #[cfg(test)]
 mod subagent_trace_tests;
@@ -88,6 +90,7 @@ use plan_panel::{
     PlanPanelState, plan_counter_area, plan_panel_height, render_plan_counter, render_plan_panel,
 };
 use plugin_browser::PluginBrowserState;
+use scroll_accel::ScrollSettings;
 use shortcuts::FooterShortcutContext;
 use team_ui::{TeamUiState, is_team_focus_next_key, is_team_focus_previous_key};
 use tool_detail::{ToolDetailAction, ToolDetailModal, render_tool_detail_modal};
@@ -913,6 +916,7 @@ pub struct TuiApp {
     provider_menu_filter: String,
     provider_state: ListState,
     working_spinner: WorkingSpinner,
+    scroll_settings: ScrollSettings,
     web_search_mode: HostedWebSearchMode,
     confirm_dialog: Option<ConfirmDialogState>,
     tool_detail_modal: Option<ToolDetailModal>,
@@ -1170,6 +1174,7 @@ impl TuiApp {
         let command_catalog = session_resume::commands_list(&client)
             .await
             .unwrap_or_else(|_| built_in_command_catalog());
+        let scroll_settings = tui_config.scroll_settings();
 
         Ok(Self {
             client,
@@ -1194,7 +1199,7 @@ impl TuiApp {
             copied_helper: None,
             reasoning_effort: reasoning,
             composer: composer_textarea(theme),
-            timeline: TimelineState::default(),
+            timeline: TimelineState::new(scroll_settings),
             team_ui: TeamUiState::default(),
             team_timelines: HashMap::new(),
             plan_panel: PlanPanelState::default(),
@@ -1214,6 +1219,7 @@ impl TuiApp {
             provider_menu_filter: String::new(),
             provider_state,
             working_spinner: WorkingSpinner::from_config(tui_config.spinner.as_deref()),
+            scroll_settings,
             web_search_mode: settings_state
                 .map(|settings| settings.web_search.mode)
                 .unwrap_or(HostedWebSearchMode::Cached),
@@ -1258,17 +1264,12 @@ impl TuiApp {
         let mut next_animation_tick = Instant::now() + top_status_animation_interval();
 
         loop {
-            advance_top_status_animation(
-                &mut self.animation_frame,
-                &mut next_animation_tick,
-                Instant::now(),
-            );
+            let now = Instant::now();
+            advance_top_status_animation(&mut self.animation_frame, &mut next_animation_tick, now);
+            self.tick_streaming_animations(now, terminal.size()?.width);
             terminal.draw(|f| self.render(f))?;
 
-            if event::poll(top_status_animation_poll_timeout(
-                next_animation_tick,
-                Instant::now(),
-            ))? {
+            if event::poll(self.animation_poll_timeout(next_animation_tick, Instant::now()))? {
                 match event::read()? {
                     Event::Key(key) => {
                         if let Some(modal) = self.tool_detail_modal.as_mut() {
@@ -1495,6 +1496,7 @@ impl TuiApp {
                     RoderEvent::TurnCompleted(ev)
                         if self.active_turn_id.as_deref() == Some(&ev.turn_id) =>
                     {
+                        self.flush_streaming_animation_for_thread(&ev.thread_id);
                         let elapsed = self.active_turn_timer.finish(Instant::now());
                         self.active_turn_id = None;
                         self.timeline.push_turn_completed(TurnCompletedSummary {
@@ -1514,6 +1516,7 @@ impl TuiApp {
                     RoderEvent::TurnInterrupted(ev)
                         if self.active_turn_id.as_deref() == Some(&ev.turn_id) =>
                     {
+                        self.flush_streaming_animation_for_thread(&ev.thread_id);
                         self.active_turn_id = None;
                         self.active_turn_timer.reset();
                         self.current_turn_input_tokens = 0;
@@ -1529,9 +1532,11 @@ impl TuiApp {
                                 if let Some(timeline) =
                                     self.team_timeline_for_thread_mut(&ev.thread_id)
                                 {
-                                    timeline.push_assistant_delta(&delta.text, delta.phase);
+                                    timeline
+                                        .push_assistant_delta_streaming(&delta.text, delta.phase);
                                 } else {
-                                    self.timeline.push_assistant_delta(&delta.text, delta.phase);
+                                    self.timeline
+                                        .push_assistant_delta_streaming(&delta.text, delta.phase);
                                 }
                             }
                             roder_api::inference::InferenceEvent::ReasoningDelta(delta) => {
@@ -1572,6 +1577,7 @@ impl TuiApp {
                         }
                     }
                     RoderEvent::TurnFailed(ev) => {
+                        self.flush_streaming_animation_for_thread(&ev.thread_id);
                         if self.active_turn_id.as_deref() == Some(&ev.turn_id) {
                             self.active_turn_id = None;
                             self.active_turn_timer.reset();
@@ -1826,6 +1832,39 @@ impl TuiApp {
         self.timeline.focus_composer();
     }
 
+    fn flush_streaming_animation_for_thread(&mut self, thread_id: &str) {
+        if let Some(timeline) = self.team_timeline_for_thread_mut(thread_id) {
+            timeline.flush_streaming_animation();
+        } else {
+            self.timeline.flush_streaming_animation();
+        }
+    }
+
+    fn tick_streaming_animations(&mut self, now: Instant, width: u16) -> bool {
+        let mut changed = self.timeline.tick_streaming_animation(now, width);
+        for timeline in self.team_timelines.values_mut() {
+            changed |= timeline.tick_streaming_animation(now, width);
+        }
+        changed
+    }
+
+    fn has_streaming_animation(&self) -> bool {
+        self.timeline.has_streaming_animation()
+            || self
+                .team_timelines
+                .values()
+                .any(TimelineState::has_streaming_animation)
+    }
+
+    fn animation_poll_timeout(&self, next_tick: Instant, now: Instant) -> Duration {
+        if self.has_streaming_animation() {
+            stream_animation::STREAM_ANIMATION_FRAME_TIME
+                .min(top_status_animation_poll_timeout(next_tick, now))
+        } else {
+            top_status_animation_poll_timeout(next_tick, now)
+        }
+    }
+
     fn save_focused_team_timeline(&mut self) {
         let Some(member_id) = self.team_ui.focused_member_id() else {
             return;
@@ -1838,7 +1877,10 @@ impl TuiApp {
         let Some(member_id) = self.team_ui.focused_member_id() else {
             return;
         };
-        self.timeline = self.team_timelines.remove(member_id).unwrap_or_default();
+        self.timeline = self
+            .team_timelines
+            .remove(member_id)
+            .unwrap_or_else(|| TimelineState::new(self.scroll_settings));
     }
 
     fn team_timeline_for_thread_mut(&mut self, thread_id: &str) -> Option<&mut TimelineState> {
@@ -1846,7 +1888,11 @@ impl TuiApp {
         if Some(member_id.as_str()) == self.team_ui.focused_member_id() {
             return Some(&mut self.timeline);
         }
-        Some(self.team_timelines.entry(member_id).or_default())
+        Some(
+            self.team_timelines
+                .entry(member_id)
+                .or_insert_with(|| TimelineState::new(self.scroll_settings)),
+        )
     }
 
     async fn resolve_tool_approval(&mut self, approval_id: String, approved: bool) {
@@ -2041,7 +2087,7 @@ impl TuiApp {
         self.slash_command_selection = 0;
         match name.as_str() {
             "clear" => {
-                self.timeline = TimelineState::default();
+                self.timeline = TimelineState::new(self.scroll_settings);
                 self.timeline.push_system("Conversation display cleared.");
                 self.push_event("slash command: /clear".to_string());
             }
@@ -2487,7 +2533,7 @@ impl TuiApp {
         }
         if self.timeline.handle_mouse(mouse) {
             if let Some(detail) = self.timeline.take_requested_detail() {
-                self.tool_detail_modal = Some(ToolDetailModal::new(detail));
+                self.tool_detail_modal = Some(ToolDetailModal::new(detail, self.scroll_settings));
                 self.push_event("tool detail opened".to_string());
                 return;
             }
@@ -4288,6 +4334,28 @@ fn advance_top_status_animation(frame: &mut u64, next_tick: &mut Instant, now: I
 #[derive(Debug, Default)]
 struct TuiUserConfig {
     spinner: Option<String>,
+    scroll_acceleration: Option<TuiScrollAccelerationConfig>,
+    scroll_speed: Option<f32>,
+}
+
+#[derive(Debug, Clone, Copy, Default)]
+struct TuiScrollAccelerationConfig {
+    enabled: Option<bool>,
+}
+
+impl TuiUserConfig {
+    fn scroll_settings(&self) -> ScrollSettings {
+        ScrollSettings {
+            acceleration_enabled: self
+                .scroll_acceleration
+                .and_then(|config| config.enabled)
+                .unwrap_or(true),
+            fixed_rows_per_tick: self
+                .scroll_speed
+                .filter(|speed| speed.is_finite() && *speed >= 0.001)
+                .unwrap_or_else(|| ScrollSettings::default().fixed_rows_per_tick),
+        }
+    }
 }
 
 fn load_tui_config() -> anyhow::Result<TuiUserConfig> {
@@ -4303,6 +4371,21 @@ fn load_tui_config() -> anyhow::Result<TuiUserConfig> {
             .and_then(|tui| tui.get("spinner"))
             .and_then(|spinner| spinner.as_str())
             .map(str::to_string),
+        scroll_acceleration: value
+            .get("tui")
+            .and_then(|tui| tui.get("scroll_acceleration"))
+            .and_then(|config| config.as_table())
+            .map(|config| TuiScrollAccelerationConfig {
+                enabled: config.get("enabled").and_then(|enabled| enabled.as_bool()),
+            }),
+        scroll_speed: value
+            .get("tui")
+            .and_then(|tui| tui.get("scroll_speed"))
+            .and_then(|speed| match speed {
+                toml::Value::Float(value) if value.is_finite() => Some(*value as f32),
+                toml::Value::Integer(value) => Some(*value as f32),
+                _ => None,
+            }),
     })
 }
 
@@ -5678,6 +5761,7 @@ mod tests {
             provider_menu_filter: String::new(),
             provider_state: ListState::default(),
             working_spinner: WorkingSpinner::Dots,
+            scroll_settings: ScrollSettings::default(),
             web_search_mode: HostedWebSearchMode::Cached,
             confirm_dialog: None,
             tool_detail_modal: None,
@@ -6231,6 +6315,37 @@ mod tests {
             WorkingSpinner::Dots
         );
         assert_eq!(WorkingSpinner::from_config(None), WorkingSpinner::Dots);
+    }
+
+    #[test]
+    fn scroll_acceleration_is_enabled_by_default() {
+        assert!(
+            TuiUserConfig::default()
+                .scroll_settings()
+                .acceleration_enabled
+        );
+    }
+
+    #[test]
+    fn scroll_acceleration_can_be_disabled_in_config() {
+        let config = TuiUserConfig {
+            scroll_acceleration: Some(TuiScrollAccelerationConfig {
+                enabled: Some(false),
+            }),
+            ..TuiUserConfig::default()
+        };
+
+        assert!(!config.scroll_settings().acceleration_enabled);
+    }
+
+    #[test]
+    fn scroll_speed_config_sets_base_rows() {
+        let config = TuiUserConfig {
+            scroll_speed: Some(4.5),
+            ..TuiUserConfig::default()
+        };
+
+        assert_eq!(config.scroll_settings().fixed_rows_per_tick, 4.5);
     }
 
     #[test]

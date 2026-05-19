@@ -5,6 +5,7 @@ use ratatui::{
 };
 
 use super::super::Theme;
+use super::super::stream_animation::{AnimatedText, animated_markdown_lines};
 use super::is_shell_like_tool;
 use super::markdown::markdown_lines;
 use super::patch_preview::{tool_diff_preview, tool_diff_preview_lines};
@@ -29,16 +30,42 @@ impl TimelineItem {
                 push_user_block_lines(lines, &folded.body, selected, theme, width);
                 push_fold_notice(lines, folded.hidden_lines, theme);
             }
-            TimelineItemKind::Assistant { text, phase: _ } => {
-                let folded = fold_message_body(text, expanded);
-                push_markdown_body_lines(
-                    lines,
-                    "",
-                    &folded.body,
-                    theme.subtle(),
-                    item_style(theme.text(), selected, theme),
-                    theme,
-                );
+            TimelineItemKind::Assistant(message) => {
+                let rendered = message.animator.rendered_text();
+                let body = if rendered.is_animating() {
+                    rendered.as_str()
+                } else {
+                    &message.text
+                };
+                let folded = fold_message_body(body, expanded);
+                if rendered.is_animating() {
+                    let animated = message.animator.rendered_text();
+                    let animated = if folded.body.len() == animated.as_str().len() {
+                        animated
+                    } else {
+                        AnimatedText::from_visible(folded.body.clone())
+                    };
+                    push_rendered_body_lines(
+                        lines,
+                        "",
+                        animated_markdown_lines(
+                            &animated,
+                            item_style(theme.text(), selected, theme),
+                            theme,
+                            markdown_lines,
+                        ),
+                        theme.subtle(),
+                    );
+                } else {
+                    push_markdown_body_lines(
+                        lines,
+                        "",
+                        &folded.body,
+                        theme.subtle(),
+                        item_style(theme.text(), selected, theme),
+                        theme,
+                    );
+                }
                 push_fold_notice(lines, folded.hidden_lines, theme);
             }
             TimelineItemKind::Reasoning(text) => {
@@ -352,6 +379,29 @@ fn push_markdown_body_lines(
         spans.push(Span::styled(marker, marker_style));
         spans.extend(body_line.spans);
         lines.push(Line::from(spans));
+    }
+}
+
+fn push_rendered_body_lines(
+    lines: &mut Vec<Line<'static>>,
+    marker: impl Into<String>,
+    body_lines: Vec<Line<'static>>,
+    marker_style: Style,
+) {
+    let marker = marker.into();
+    for (line_index, body_line) in body_lines.into_iter().enumerate() {
+        let marker = if line_index == 0 || marker.is_empty() {
+            marker.clone()
+        } else {
+            "    ".to_string()
+        };
+        let mut spans = Vec::with_capacity(body_line.spans.len() + 1);
+        spans.push(Span::styled(marker, marker_style));
+        spans.extend(body_line.spans);
+        let mut line = Line::from(spans);
+        line.style = body_line.style;
+        line.alignment = body_line.alignment;
+        lines.push(line);
     }
 }
 
