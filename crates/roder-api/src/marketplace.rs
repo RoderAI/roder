@@ -257,6 +257,12 @@ pub struct MarketplacePluginVariant {
     pub plugin_id: String,
     pub kind: MarketplaceKind,
     pub source: PluginSource,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub homepage: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub category: Option<String>,
+    #[serde(default)]
+    pub tags: Vec<String>,
     #[serde(default)]
     pub component_hints: PluginComponentHints,
     #[serde(default)]

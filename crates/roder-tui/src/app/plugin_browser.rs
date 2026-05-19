@@ -779,6 +779,7 @@ mod tests {
                     marketplace_id: "claude-local".to_string(),
                     path: "repo-tools".to_string(),
                 },
+                homepage: Some("https://github.com/example/repo-tools".to_string()),
                 component_hints: roder_api::marketplace::PluginComponentHints {
                     mcp_servers: true,
                     ..Default::default()

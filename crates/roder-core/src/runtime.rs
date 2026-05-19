@@ -608,6 +608,13 @@ impl Runtime {
         Ok(Vec::new())
     }
 
+    pub async fn archive_session(&self, thread_id: &str) -> anyhow::Result<bool> {
+        if let Some(store) = &self.session_store {
+            return store.archive_session(&thread_id.to_string()).await;
+        }
+        Ok(false)
+    }
+
     pub async fn start_team(&self, req: TeamStartRequest) -> anyhow::Result<TeamState> {
         let cfg = self.config.read().await.clone();
         let lead_thread_id = match req.lead_thread_id {

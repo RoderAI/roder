@@ -62,10 +62,11 @@ use roder_protocol::{
     TeamListParams, TeamListResult, TeamMemberInterruptParams, TeamMemberInterruptResult,
     TeamMemberMessageParams, TeamMemberMessageResult, TeamMemberStartParams, TeamMemberStartResult,
     TeamReadParams, TeamReadResult, TeamStartMemberParams, TeamStartParams, TeamStartResult,
-    ThreadListParams, ThreadListResult, ThreadStartParams, ThreadStartResult, ToolCallParams,
-    ToolCallResult, ToolsListResult, TurnInputItem, TurnInterruptParams, TurnStartParams,
-    TurnStartResult, TurnSteerParams, TurnSteerResult, WorkflowEnableParams, WorkflowEnableResult,
-    WorkflowPreviewParams, WorkflowPreviewResult, WorkflowScanParams, WorkflowScanResult,
+    ThreadArchiveParams, ThreadArchiveResult, ThreadListParams, ThreadListResult,
+    ThreadStartParams, ThreadStartResult, ToolCallParams, ToolCallResult, ToolsListResult,
+    TurnInputItem, TurnInterruptParams, TurnStartParams, TurnStartResult, TurnSteerParams,
+    TurnSteerResult, WorkflowEnableParams, WorkflowEnableResult, WorkflowPreviewParams,
+    WorkflowPreviewResult, WorkflowScanParams, WorkflowScanResult,
 };
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -193,6 +194,13 @@ impl SessionStore for RecordingSessionStore {
         thread_id: &roder_api::events::ThreadId,
     ) -> anyhow::Result<Option<ThreadSnapshot>> {
         Ok(self.snapshots.lock().await.get(thread_id).cloned())
+    }
+
+    async fn archive_session(
+        &self,
+        thread_id: &roder_api::events::ThreadId,
+    ) -> anyhow::Result<bool> {
+        Ok(self.snapshots.lock().await.remove(thread_id).is_some())
     }
 
     async fn append_event(
@@ -1785,6 +1793,45 @@ async fn desktop_contract_methods_support_desktop_startup_contract() {
     )
     .await;
     assert_eq!(read["thread"]["id"], started["thread"]["id"]);
+}
+
+#[tokio::test]
+async fn thread_archive_removes_session_from_desktop_thread_list() {
+    let mut builder = ExtensionRegistryBuilder::new();
+    builder.inference_engine(Arc::new(FakeInferenceEngine));
+    builder.session_store_factory(Arc::new(RecordingSessionStoreFactory::default()));
+    let runtime = Arc::new(Runtime::new(builder.build().unwrap(), Default::default()).unwrap());
+    let server = Arc::new(AppServer::new(runtime));
+    let client = LocalAppClient::new(server);
+    let started = start_thread(&client).await;
+
+    let archived: ThreadArchiveResult = request(
+        &client,
+        "thread/archive",
+        Some(
+            serde_json::to_value(ThreadArchiveParams {
+                thread_id: started.thread.id.clone(),
+            })
+            .unwrap(),
+        ),
+    )
+    .await;
+
+    assert!(archived.archived);
+    assert_eq!(archived.thread_id, started.thread.id);
+
+    let sessions: ThreadListResult = request(
+        &client,
+        "thread/list",
+        Some(serde_json::to_value(ThreadListParams { limit: None }).unwrap()),
+    )
+    .await;
+    assert!(
+        !sessions
+            .data
+            .iter()
+            .any(|thread| thread.id == archived.thread_id)
+    );
 }
 
 #[tokio::test]
