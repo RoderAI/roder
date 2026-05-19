@@ -7,6 +7,12 @@ use ratatui::{
 
 use super::Theme;
 
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+pub(super) enum StreamFadePalette {
+    Accent,
+    Neutral,
+}
+
 /// Default time budget for a calm one-line reveal. Tune this to make streamed
 /// assistant text feel slower or faster without touching the catch-up policy.
 pub(super) const STREAM_ANIMATION_TIME: Duration = Duration::from_millis(620);
@@ -172,11 +178,29 @@ pub(super) fn animated_markdown_lines(
     rendered: &AnimatedText,
     base_style: Style,
     theme: Theme,
+    palette: StreamFadePalette,
     markdown: impl FnOnce(&str, Style, Theme) -> Vec<Line<'static>>,
 ) -> Vec<Line<'static>> {
     let mut lines = markdown(rendered.as_str(), base_style, theme);
     if rendered.gradient_len > 0 {
-        apply_gradient_to_tail(&mut lines, rendered.gradient_len, theme);
+        apply_gradient_to_tail(&mut lines, rendered.gradient_len, theme, palette);
+    }
+    lines
+}
+
+pub(super) fn animated_plain_lines(
+    rendered: &AnimatedText,
+    base_style: Style,
+    theme: Theme,
+    palette: StreamFadePalette,
+) -> Vec<Line<'static>> {
+    let mut lines = rendered
+        .as_str()
+        .split('\n')
+        .map(|line| Line::from(Span::styled(line.to_string(), base_style)))
+        .collect::<Vec<_>>();
+    if rendered.gradient_len > 0 {
+        apply_gradient_to_tail(&mut lines, rendered.gradient_len, theme, palette);
     }
     lines
 }
@@ -202,12 +226,17 @@ fn skip_chars(text: &str, count: usize) -> String {
     text.chars().skip(count).collect()
 }
 
-fn apply_gradient_to_tail(lines: &mut [Line<'static>], mut chars_left: usize, theme: Theme) {
+fn apply_gradient_to_tail(
+    lines: &mut [Line<'static>],
+    mut chars_left: usize,
+    theme: Theme,
+    palette: StreamFadePalette,
+) {
     for line in lines.iter_mut().rev() {
         if chars_left == 0 {
             break;
         }
-        let (line_spans, remaining) = gradient_line_tail(&line.spans, chars_left, theme);
+        let (line_spans, remaining) = gradient_line_tail(&line.spans, chars_left, theme, palette);
         line.spans = line_spans;
         chars_left = remaining;
     }
@@ -217,6 +246,7 @@ fn gradient_line_tail(
     spans: &[Span<'static>],
     chars_left: usize,
     theme: Theme,
+    palette: StreamFadePalette,
 ) -> (Vec<Span<'static>>, usize) {
     let line_chars = spans
         .iter()
@@ -243,6 +273,7 @@ fn gradient_line_tail(
                 span.style,
                 span_start.saturating_sub(split_at),
                 theme,
+                palette,
             );
         } else {
             let plain_len = split_at - span_start;
@@ -251,7 +282,7 @@ fn gradient_line_tail(
                 out.push(Span::styled(plain, span.style));
             }
             let gradient = span.content.chars().skip(plain_len).collect::<String>();
-            push_gradient_chars(&mut out, &gradient, span.style, 0, theme);
+            push_gradient_chars(&mut out, &gradient, span.style, 0, theme, palette);
         }
         seen = span_end;
     }
@@ -265,20 +296,31 @@ fn push_gradient_chars(
     base_style: Style,
     start_age: usize,
     theme: Theme,
+    palette: StreamFadePalette,
 ) {
     for (offset, ch) in text.chars().enumerate() {
-        let style =
-            base_style.patch(Style::default().fg(stream_gradient_color(start_age + offset, theme)));
+        let style = base_style.patch(Style::default().fg(stream_gradient_color(
+            start_age + offset,
+            theme,
+            palette,
+        )));
         spans.push(Span::styled(ch.to_string(), style));
     }
 }
 
-fn stream_gradient_color(age: usize, theme: Theme) -> Color {
-    match age {
-        0..=2 => theme.accent,
-        3..=5 => theme.accent_soft,
-        6..=9 => theme.text,
-        _ => theme.muted,
+fn stream_gradient_color(age: usize, theme: Theme, palette: StreamFadePalette) -> Color {
+    match palette {
+        StreamFadePalette::Accent => match age {
+            0..=2 => theme.accent,
+            3..=5 => theme.accent_soft,
+            6..=9 => theme.text,
+            _ => theme.muted,
+        },
+        StreamFadePalette::Neutral => match age {
+            0..=4 => theme.text,
+            5..=9 => theme.muted,
+            _ => theme.subtle,
+        },
     }
 }
 
@@ -334,9 +376,13 @@ mod tests {
     fn animated_markdown_applies_tail_gradient_without_revealing_pending_text() {
         let theme = Theme::for_dark_background(true);
         let rendered = AnimatedText::new("hello".to_string(), " world".to_string(), 3);
-        let lines = animated_markdown_lines(&rendered, theme.text(), theme, |body, style, _| {
-            vec![Line::from(Span::styled(body.to_string(), style))]
-        });
+        let lines = animated_markdown_lines(
+            &rendered,
+            theme.text(),
+            theme,
+            StreamFadePalette::Accent,
+            |body, style, _| vec![Line::from(Span::styled(body.to_string(), style))],
+        );
 
         let line = &lines[0];
         assert_eq!(
@@ -352,5 +398,23 @@ mod tests {
                 .any(|span| span.style.fg == Some(theme.accent))
         );
         assert!(rendered.is_animating());
+    }
+
+    #[test]
+    fn neutral_stream_fade_avoids_accent_colors() {
+        let theme = Theme::for_dark_background(true);
+        let rendered = AnimatedText::new("thinking".to_string(), String::new(), 8);
+        let lines =
+            animated_plain_lines(&rendered, theme.muted(), theme, StreamFadePalette::Neutral);
+
+        let colors = lines[0]
+            .spans
+            .iter()
+            .filter_map(|span| span.style.fg)
+            .collect::<Vec<_>>();
+        assert!(!colors.contains(&theme.accent));
+        assert!(!colors.contains(&theme.accent_soft));
+        assert!(colors.iter().any(|color| *color == theme.text));
+        assert!(colors.iter().any(|color| *color == theme.muted));
     }
 }
