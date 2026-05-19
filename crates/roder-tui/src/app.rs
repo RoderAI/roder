@@ -95,7 +95,8 @@ use shortcuts::FooterShortcutContext;
 use team_ui::{TeamUiState, is_team_focus_next_key, is_team_focus_previous_key};
 use tool_detail::{ToolDetailAction, ToolDetailModal, render_tool_detail_modal};
 use tool_timeline::{
-    TimelineFocus, TimelineState, ToolTimelineEntry, TurnCompletedSummary, fallback_entry,
+    TimelineFocus, TimelineSettings, TimelineState, ToolTimelineEntry, TurnCompletedSummary,
+    fallback_entry,
 };
 use turn_timer::TurnTimer;
 
@@ -738,6 +739,7 @@ enum ProviderMenuItem {
     RunnerSettings,
     SpinnerSettings,
     WebSearchSettings,
+    MessageFoldingToggle(bool),
     ThemesSettings,
     MarketplacesSettings,
     PluginBrowser,
@@ -803,6 +805,10 @@ impl ProviderMenuItem {
             Self::RunnerSettings => "Runners".to_string(),
             Self::SpinnerSettings => "Working spinner".to_string(),
             Self::WebSearchSettings => "Web search provider".to_string(),
+            Self::MessageFoldingToggle(enabled) => format!(
+                "Fold long messages: {}",
+                if *enabled { "on" } else { "off" }
+            ),
             Self::ThemesSettings => "Themes".to_string(),
             Self::MarketplacesSettings => "Plugin marketplaces".to_string(),
             Self::PluginBrowser => "Browse installable plugins".to_string(),
@@ -917,6 +923,7 @@ pub struct TuiApp {
     provider_state: ListState,
     working_spinner: WorkingSpinner,
     scroll_settings: ScrollSettings,
+    timeline_settings: TimelineSettings,
     web_search_mode: HostedWebSearchMode,
     confirm_dialog: Option<ConfirmDialogState>,
     tool_detail_modal: Option<ToolDetailModal>,
@@ -1175,6 +1182,7 @@ impl TuiApp {
             .await
             .unwrap_or_else(|_| built_in_command_catalog());
         let scroll_settings = tui_config.scroll_settings();
+        let timeline_settings = tui_config.timeline_settings();
 
         Ok(Self {
             client,
@@ -1199,7 +1207,7 @@ impl TuiApp {
             copied_helper: None,
             reasoning_effort: reasoning,
             composer: composer_textarea(theme),
-            timeline: TimelineState::new(scroll_settings),
+            timeline: TimelineState::new(scroll_settings, timeline_settings),
             team_ui: TeamUiState::default(),
             team_timelines: HashMap::new(),
             plan_panel: PlanPanelState::default(),
@@ -1220,6 +1228,7 @@ impl TuiApp {
             provider_state,
             working_spinner: WorkingSpinner::from_config(tui_config.spinner.as_deref()),
             scroll_settings,
+            timeline_settings,
             web_search_mode: settings_state
                 .map(|settings| settings.web_search.mode)
                 .unwrap_or(HostedWebSearchMode::Cached),
@@ -1543,9 +1552,9 @@ impl TuiApp {
                                 if let Some(timeline) =
                                     self.team_timeline_for_thread_mut(&ev.thread_id)
                                 {
-                                    timeline.push_reasoning_delta(&delta.text);
+                                    timeline.push_reasoning_delta_streaming(&delta.text);
                                 } else {
-                                    self.timeline.push_reasoning_delta(&delta.text);
+                                    self.timeline.push_reasoning_delta_streaming(&delta.text);
                                 }
                             }
                             roder_api::inference::InferenceEvent::Usage(usage) => {
@@ -1880,7 +1889,8 @@ impl TuiApp {
         self.timeline = self
             .team_timelines
             .remove(member_id)
-            .unwrap_or_else(|| TimelineState::new(self.scroll_settings));
+            .unwrap_or_else(|| TimelineState::new(self.scroll_settings, self.timeline_settings));
+        self.timeline.set_settings(self.timeline_settings);
     }
 
     fn team_timeline_for_thread_mut(&mut self, thread_id: &str) -> Option<&mut TimelineState> {
@@ -1889,9 +1899,9 @@ impl TuiApp {
             return Some(&mut self.timeline);
         }
         Some(
-            self.team_timelines
-                .entry(member_id)
-                .or_insert_with(|| TimelineState::new(self.scroll_settings)),
+            self.team_timelines.entry(member_id).or_insert_with(|| {
+                TimelineState::new(self.scroll_settings, self.timeline_settings)
+            }),
         )
     }
 
@@ -2087,7 +2097,7 @@ impl TuiApp {
         self.slash_command_selection = 0;
         match name.as_str() {
             "clear" => {
-                self.timeline = TimelineState::new(self.scroll_settings);
+                self.timeline = TimelineState::new(self.scroll_settings, self.timeline_settings);
                 self.timeline.push_system("Conversation display cleared.");
                 self.push_event("slash command: /clear".to_string());
             }
@@ -3137,6 +3147,7 @@ impl TuiApp {
                         ProviderMenuItem::WebSearchMode(mode) if *mode == self.web_search_mode => {
                             "✓ "
                         }
+                        ProviderMenuItem::MessageFoldingToggle(true) => "✓ ",
                         ProviderMenuItem::Session(session) if session.id == self.thread_id => "✓ ",
                         ProviderMenuItem::Theme(id)
                             if self.active_theme_id.as_deref() == Some(id.as_str()) =>
@@ -3623,6 +3634,9 @@ impl TuiApp {
             ProviderMenuItem::WebSearchMode(mode) => {
                 self.set_web_search_mode(mode).await;
             }
+            ProviderMenuItem::MessageFoldingToggle(enabled) => {
+                self.set_timeline_message_folding(!enabled);
+            }
             ProviderMenuItem::DefaultMode(mode) => {
                 self.set_default_mode(mode).await;
             }
@@ -3697,16 +3711,7 @@ impl TuiApp {
     fn open_settings_submenu(&mut self) {
         self.provider_popup_screen = ProviderPopupScreen::Settings;
         self.provider_menu_filter.clear();
-        self.provider_menu_items = [
-            PolicyMode::Default,
-            PolicyMode::AcceptAll,
-            PolicyMode::Plan,
-            PolicyMode::Bypass,
-        ]
-        .into_iter()
-        .map(ProviderMenuItem::DefaultMode)
-        .chain(std::iter::once(ProviderMenuItem::Back))
-        .collect();
+        self.provider_menu_items = settings_menu_items(self.timeline_settings);
         let selected = self
             .provider_menu_items
             .iter()
@@ -3959,6 +3964,34 @@ impl TuiApp {
             }
         }
         self.show_provider_popup = false;
+    }
+
+    fn set_timeline_message_folding(&mut self, enabled: bool) {
+        self.timeline_settings.message_folding = enabled;
+        self.timeline.set_settings(self.timeline_settings);
+        for timeline in self.team_timelines.values_mut() {
+            timeline.set_settings(self.timeline_settings);
+        }
+        self.provider_menu_items = settings_menu_items(self.timeline_settings);
+        if let Some(selected) = self.provider_state.selected() {
+            self.provider_state.select(Some(
+                selected.min(self.provider_menu_items.len().saturating_sub(1)),
+            ));
+        }
+        match save_tui_message_folding(enabled) {
+            Ok(()) => {
+                self.push_event(format!("message folding saved: {enabled}"));
+                self.timeline.push_system(format!(
+                    "long message folding {}.",
+                    if enabled { "enabled" } else { "disabled" }
+                ));
+            }
+            Err(err) => {
+                self.record_error(format!(
+                    "failed to save long message folding setting: {err}"
+                ));
+            }
+        }
     }
 
     fn filtered_provider_menu_items(&self) -> Vec<ProviderMenuItem> {
@@ -4336,11 +4369,17 @@ struct TuiUserConfig {
     spinner: Option<String>,
     scroll_acceleration: Option<TuiScrollAccelerationConfig>,
     scroll_speed: Option<f32>,
+    timeline: Option<TuiTimelineConfig>,
 }
 
 #[derive(Debug, Clone, Copy, Default)]
 struct TuiScrollAccelerationConfig {
     enabled: Option<bool>,
+}
+
+#[derive(Debug, Clone, Copy, Default)]
+struct TuiTimelineConfig {
+    message_folding: Option<bool>,
 }
 
 impl TuiUserConfig {
@@ -4354,6 +4393,15 @@ impl TuiUserConfig {
                 .scroll_speed
                 .filter(|speed| speed.is_finite() && *speed >= 0.001)
                 .unwrap_or_else(|| ScrollSettings::default().fixed_rows_per_tick),
+        }
+    }
+
+    fn timeline_settings(&self) -> TimelineSettings {
+        TimelineSettings {
+            message_folding: self
+                .timeline
+                .and_then(|config| config.message_folding)
+                .unwrap_or(false),
         }
     }
 }
@@ -4386,10 +4434,30 @@ fn load_tui_config() -> anyhow::Result<TuiUserConfig> {
                 toml::Value::Integer(value) => Some(*value as f32),
                 _ => None,
             }),
+        timeline: value
+            .get("tui")
+            .and_then(|tui| tui.get("timeline"))
+            .and_then(|config| config.as_table())
+            .map(|config| TuiTimelineConfig {
+                message_folding: config
+                    .get("message_folding")
+                    .and_then(|enabled| enabled.as_bool()),
+            }),
     })
 }
 
 fn save_tui_spinner(spinner: &str) -> anyhow::Result<()> {
+    save_tui_value(&["spinner"], toml::Value::String(spinner.to_string()))
+}
+
+fn save_tui_message_folding(enabled: bool) -> anyhow::Result<()> {
+    save_tui_value(
+        &["timeline", "message_folding"],
+        toml::Value::Boolean(enabled),
+    )
+}
+
+fn save_tui_value(path_segments: &[&str], saved_value: toml::Value) -> anyhow::Result<()> {
     let path = tui_config_path();
     let mut value = if path.exists() {
         std::fs::read_to_string(&path)?.parse::<toml::Value>()?
@@ -4406,16 +4474,34 @@ fn save_tui_spinner(spinner: &str) -> anyhow::Result<()> {
     let tui = tui
         .as_table_mut()
         .ok_or_else(|| anyhow::anyhow!("[tui] config must be a TOML table"))?;
-    tui.insert(
-        "spinner".to_string(),
-        toml::Value::String(spinner.to_string()),
-    );
+    insert_nested_toml_value(tui, path_segments, saved_value)?;
 
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)?;
     }
     std::fs::write(path, toml::to_string_pretty(&value)?)?;
     Ok(())
+}
+
+fn insert_nested_toml_value(
+    table: &mut toml::map::Map<String, toml::Value>,
+    path_segments: &[&str],
+    value: toml::Value,
+) -> anyhow::Result<()> {
+    let Some((first, rest)) = path_segments.split_first() else {
+        return Err(anyhow::anyhow!("config key path must not be empty"));
+    };
+    if rest.is_empty() {
+        table.insert((*first).to_string(), value);
+        return Ok(());
+    }
+    let child = table
+        .entry((*first).to_string())
+        .or_insert_with(|| toml::Value::Table(toml::map::Map::new()));
+    let child = child
+        .as_table_mut()
+        .ok_or_else(|| anyhow::anyhow!("[tui.{first}] config must be a TOML table"))?;
+    insert_nested_toml_value(child, rest, value)
 }
 
 fn tui_config_path() -> PathBuf {
@@ -5181,6 +5267,22 @@ fn providers_menu_items(providers: &[ProviderChoice]) -> Vec<ProviderMenuItem> {
         .collect()
 }
 
+fn settings_menu_items(timeline_settings: TimelineSettings) -> Vec<ProviderMenuItem> {
+    [
+        PolicyMode::Default,
+        PolicyMode::AcceptAll,
+        PolicyMode::Plan,
+        PolicyMode::Bypass,
+    ]
+    .into_iter()
+    .map(ProviderMenuItem::DefaultMode)
+    .chain([
+        ProviderMenuItem::MessageFoldingToggle(timeline_settings.message_folding),
+        ProviderMenuItem::Back,
+    ])
+    .collect()
+}
+
 fn models_menu_items(
     models: &[ProviderOption],
     providers: &[ProviderChoice],
@@ -5762,6 +5864,7 @@ mod tests {
             provider_state: ListState::default(),
             working_spinner: WorkingSpinner::Dots,
             scroll_settings: ScrollSettings::default(),
+            timeline_settings: TimelineSettings::default(),
             web_search_mode: HostedWebSearchMode::Cached,
             confirm_dialog: None,
             tool_detail_modal: None,
@@ -6349,6 +6452,23 @@ mod tests {
     }
 
     #[test]
+    fn message_folding_is_disabled_by_default() {
+        assert!(!TuiUserConfig::default().timeline_settings().message_folding);
+    }
+
+    #[test]
+    fn message_folding_can_be_enabled_in_config() {
+        let config = TuiUserConfig {
+            timeline: Some(TuiTimelineConfig {
+                message_folding: Some(true),
+            }),
+            ..TuiUserConfig::default()
+        };
+
+        assert!(config.timeline_settings().message_folding);
+    }
+
+    #[test]
     fn tui_config_path_targets_home_roder_config() {
         let rendered = tui_config_path().to_string_lossy().replace('\\', "/");
         assert!(rendered.ends_with("/.roder/config.toml"));
@@ -6733,6 +6853,10 @@ mod tests {
             items.get(7),
             Some(ProviderMenuItem::ThemesSettings)
         ));
+        assert!(matches!(
+            items.get(8),
+            Some(ProviderMenuItem::MarketplacesSettings)
+        ));
     }
 
     #[test]
@@ -6781,7 +6905,22 @@ mod tests {
             ProviderMenuItem::DefaultMode(PolicyMode::AcceptAll).label(),
             "Default mode: Accept edits"
         );
+        assert_eq!(
+            ProviderMenuItem::MessageFoldingToggle(false).label(),
+            "Fold long messages: off"
+        );
         assert_eq!(settings_policy_mode_label(PolicyMode::Default), "Default");
+    }
+
+    #[test]
+    fn settings_menu_includes_message_folding_toggle_before_back() {
+        let items = settings_menu_items(TimelineSettings::default());
+
+        assert!(matches!(
+            items.get(4),
+            Some(ProviderMenuItem::MessageFoldingToggle(false))
+        ));
+        assert!(matches!(items.get(5), Some(ProviderMenuItem::Back)));
     }
 
     #[test]

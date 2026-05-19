@@ -5,7 +5,9 @@ use ratatui::{
 };
 
 use super::super::Theme;
-use super::super::stream_animation::{AnimatedText, animated_markdown_lines};
+use super::super::stream_animation::{
+    AnimatedText, StreamFadePalette, animated_markdown_lines, animated_plain_lines,
+};
 use super::is_shell_like_tool;
 use super::markdown::markdown_lines;
 use super::patch_preview::{tool_diff_preview, tool_diff_preview_lines};
@@ -22,13 +24,14 @@ impl TimelineItem {
         theme: Theme,
         width: u16,
         animation_frame: u64,
+        message_folding: bool,
         lines: &mut Vec<Line<'static>>,
     ) {
         match &self.kind {
             TimelineItemKind::User(text) => {
-                let folded = fold_message_body(text, expanded);
+                let folded = fold_message_body(text, expanded || !message_folding);
                 push_user_block_lines(lines, &folded.body, selected, theme, width);
-                push_fold_notice(lines, folded.hidden_lines, theme);
+                push_fold_notice(lines, folded.hidden_lines, theme, message_folding);
             }
             TimelineItemKind::Assistant(message) => {
                 let rendered = message.animator.rendered_text();
@@ -37,7 +40,7 @@ impl TimelineItem {
                 } else {
                     &message.text
                 };
-                let folded = fold_message_body(body, expanded);
+                let folded = fold_message_body(body, expanded || !message_folding);
                 if rendered.is_animating() {
                     let animated = message.animator.rendered_text();
                     let animated = if folded.body.len() == animated.as_str().len() {
@@ -52,6 +55,7 @@ impl TimelineItem {
                             &animated,
                             item_style(theme.text(), selected, theme),
                             theme,
+                            StreamFadePalette::Accent,
                             markdown_lines,
                         ),
                         theme.subtle(),
@@ -66,28 +70,55 @@ impl TimelineItem {
                         theme,
                     );
                 }
-                push_fold_notice(lines, folded.hidden_lines, theme);
+                push_fold_notice(lines, folded.hidden_lines, theme, message_folding);
             }
-            TimelineItemKind::Reasoning(text) => {
+            TimelineItemKind::Reasoning(message) => {
+                let rendered = message.animator.rendered_text();
+                let text = if rendered.is_animating() {
+                    rendered.as_str()
+                } else {
+                    &message.text
+                };
                 let body = reasoning_visible_body(text);
                 if !body.trim().is_empty() {
-                    let folded = fold_message_body(&body, expanded);
-                    push_body_lines(
-                        lines,
-                        "",
-                        &folded.body,
-                        theme.accent_soft().add_modifier(Modifier::ITALIC),
-                        item_style(
-                            theme.muted().add_modifier(Modifier::ITALIC),
-                            selected,
-                            theme,
-                        ),
+                    let folded = fold_message_body(&body, expanded || !message_folding);
+                    let body_style = item_style(
+                        theme.muted().add_modifier(Modifier::ITALIC),
+                        selected,
+                        theme,
                     );
-                    push_fold_notice(lines, folded.hidden_lines, theme);
+                    if rendered.is_animating() {
+                        let animated = message.animator.rendered_text();
+                        let animated = if folded.body.len() == animated.as_str().len() {
+                            animated
+                        } else {
+                            AnimatedText::from_visible(folded.body.clone())
+                        };
+                        push_rendered_body_lines(
+                            lines,
+                            "",
+                            animated_plain_lines(
+                                &animated,
+                                body_style,
+                                theme,
+                                StreamFadePalette::Neutral,
+                            ),
+                            theme.subtle().add_modifier(Modifier::ITALIC),
+                        );
+                    } else {
+                        push_body_lines(
+                            lines,
+                            "",
+                            &folded.body,
+                            theme.accent_soft().add_modifier(Modifier::ITALIC),
+                            body_style,
+                        );
+                    }
+                    push_fold_notice(lines, folded.hidden_lines, theme, message_folding);
                 }
             }
             TimelineItemKind::System(text) => {
-                let folded = fold_message_body(text, expanded);
+                let folded = fold_message_body(text, expanded || !message_folding);
                 push_body_lines(
                     lines,
                     "    ",
@@ -95,7 +126,7 @@ impl TimelineItem {
                     theme.subtle(),
                     item_style(theme.muted(), selected, theme),
                 );
-                push_fold_notice(lines, folded.hidden_lines, theme);
+                push_fold_notice(lines, folded.hidden_lines, theme, message_folding);
             }
             TimelineItemKind::TurnCompleted(summary) => {
                 let reasoning = summary
@@ -117,7 +148,7 @@ impl TimelineItem {
                 )));
             }
             TimelineItemKind::Error(text) => {
-                let folded = fold_message_body(text, expanded);
+                let folded = fold_message_body(text, expanded || !message_folding);
                 push_body_lines(
                     lines,
                     "! ",
@@ -125,7 +156,7 @@ impl TimelineItem {
                     theme.error(),
                     item_style(theme.error(), selected, theme),
                 );
-                push_fold_notice(lines, folded.hidden_lines, theme);
+                push_fold_notice(lines, folded.hidden_lines, theme, message_folding);
             }
             TimelineItemKind::Shell(command) => push_body_lines(
                 lines,
@@ -135,7 +166,7 @@ impl TimelineItem {
                 item_style(theme.text(), selected, theme),
             ),
             TimelineItemKind::ShellOutput(output) => {
-                let folded = fold_message_body(output, expanded);
+                let folded = fold_message_body(output, expanded || !message_folding);
                 push_body_lines(
                     lines,
                     "↳ ",
@@ -143,7 +174,7 @@ impl TimelineItem {
                     theme.subtle(),
                     item_style(theme.muted(), selected, theme),
                 );
-                push_fold_notice(lines, folded.hidden_lines, theme);
+                push_fold_notice(lines, folded.hidden_lines, theme, message_folding);
             }
             TimelineItemKind::Tool(tool) => {
                 tool.render(selected, expanded, theme, animation_frame, lines);
@@ -187,8 +218,13 @@ fn fold_message_body(body: &str, expanded: bool) -> FoldedBody {
     }
 }
 
-fn push_fold_notice(lines: &mut Vec<Line<'static>>, hidden_lines: usize, theme: Theme) {
-    if hidden_lines == 0 {
+fn push_fold_notice(
+    lines: &mut Vec<Line<'static>>,
+    hidden_lines: usize,
+    theme: Theme,
+    enabled: bool,
+) {
+    if hidden_lines == 0 || !enabled {
         return;
     }
     let label = if hidden_lines == 1 {

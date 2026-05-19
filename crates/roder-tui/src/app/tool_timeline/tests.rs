@@ -667,6 +667,46 @@ fn streaming_assistant_flushes_before_tool_rows() {
 }
 
 #[test]
+fn streaming_reasoning_delta_buffers_with_neutral_fade() {
+    let mut timeline = TimelineState::default();
+    let start = Instant::now();
+    timeline.push_reasoning_delta_streaming_at_for_test("thinking through it", start);
+
+    let initial = timeline.render(Theme::for_dark_background(true), Rect::new(0, 0, 80, 8));
+    let initial_text = initial
+        .text
+        .lines
+        .iter()
+        .flat_map(|line| line.spans.iter())
+        .map(|span| span.content.as_ref())
+        .collect::<String>();
+    assert!(!initial_text.contains("thinking through it"));
+    assert!(timeline.has_streaming_animation());
+
+    assert!(timeline.tick_streaming_animation(start + Duration::from_millis(700), 80));
+    let theme = Theme::for_dark_background(true);
+    let rendered = timeline.render(theme, Rect::new(0, 0, 80, 8));
+    let text = rendered
+        .text
+        .lines
+        .iter()
+        .flat_map(|line| line.spans.iter())
+        .map(|span| span.content.as_ref())
+        .collect::<String>();
+    assert!(text.contains("thinking through it"));
+    let fade_colors = rendered
+        .text
+        .lines
+        .iter()
+        .flat_map(|line| line.spans.iter())
+        .filter_map(|span| span.style.fg)
+        .collect::<Vec<_>>();
+    assert!(!fade_colors.contains(&theme.accent));
+    assert!(!fade_colors.contains(&theme.accent_soft));
+    assert!(fade_colors.iter().any(|color| *color == theme.text));
+}
+
+#[test]
 fn applying_minimal_theme_removes_thinking_lines_from_timeline() {
     // Headline RFC demo: `.timeline-thinking { display: none; }` removes the
     // chain-of-thought block. We build the same transcript twice: once with
@@ -868,10 +908,13 @@ fn keyboard_and_mouse_can_scroll_timeline() {
 
 #[test]
 fn mouse_wheel_scrolls_fast_and_reverses_direction_immediately() {
-    let mut timeline = TimelineState::new(ScrollSettings {
-        acceleration_enabled: false,
-        fixed_rows_per_tick: 10.0,
-    });
+    let mut timeline = TimelineState::new(
+        ScrollSettings {
+            acceleration_enabled: false,
+            fixed_rows_per_tick: 10.0,
+        },
+        TimelineSettings::default(),
+    );
     for index in 0..40 {
         timeline.push_system(format!("event {index}"));
     }
@@ -1252,7 +1295,7 @@ fn timeline_emits_url_and_file_reference_regions_from_transcript_text() {
 }
 
 #[test]
-fn clicking_long_message_body_toggles_message_fold() {
+fn long_message_folding_is_disabled_by_default() {
     let mut timeline = TimelineState::default();
     timeline.push_assistant_delta(
         "one\ntwo\nthree\nfour\nfive\nsix\nseven\neight\nnine\nten",
@@ -1260,10 +1303,32 @@ fn clicking_long_message_body_toggles_message_fold() {
     );
     timeline.render(Theme::for_dark_background(true), Rect::new(0, 2, 80, 12));
 
+    let unfolded = rendered_lines(&mut timeline);
+    assert!(!unfolded.iter().any(|line| line.contains("2 more lines")));
+    assert!(unfolded.iter().any(|line| line.contains("nine")));
+
+    assert_eq!(timeline.selected, None);
+}
+
+#[test]
+fn long_message_folding_can_be_enabled() {
+    let mut timeline = TimelineState::new(
+        ScrollSettings::default(),
+        TimelineSettings {
+            message_folding: true,
+        },
+    );
+    timeline.push_assistant_delta(
+        "one\ntwo\nthree\nfour\nfive\nsix\nseven\neight\nnine\nten",
+        None,
+    );
+
     let collapsed = rendered_lines(&mut timeline);
+
     assert!(collapsed.iter().any(|line| line.contains("2 more lines")));
     assert!(!collapsed.iter().any(|line| line.contains("nine")));
 
+    timeline.render(Theme::for_dark_background(true), Rect::new(0, 2, 80, 12));
     let click = MouseEvent {
         kind: MouseEventKind::Down(MouseButton::Left),
         column: 2,
@@ -1271,7 +1336,6 @@ fn clicking_long_message_body_toggles_message_fold() {
         modifiers: crossterm::event::KeyModifiers::empty(),
     };
     assert!(timeline.handle_mouse(click));
-    assert_eq!(timeline.selected, None);
 
     let expanded = rendered_lines(&mut timeline);
     assert!(expanded.iter().any(|line| line.contains("nine")));
