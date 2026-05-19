@@ -59,6 +59,10 @@ pub trait SessionStore: Send + Sync {
     }
     async fn list_sessions(&self) -> anyhow::Result<Vec<SessionMetadata>>;
     async fn load_session(&self, thread_id: &ThreadId) -> anyhow::Result<Option<ThreadSnapshot>>;
+    async fn archive_session(&self, thread_id: &ThreadId) -> anyhow::Result<bool> {
+        let _ = thread_id;
+        anyhow::bail!("session store {} does not support archive", self.id())
+    }
     async fn append_event(
         &self,
         thread_id: &ThreadId,
