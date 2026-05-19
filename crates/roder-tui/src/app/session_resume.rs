@@ -108,7 +108,7 @@ impl TuiApp {
                 self.timeline.push_user(display);
             }
             "agentMessage" => {
-                self.timeline.push_assistant_delta(
+                self.timeline.push_assistant_delta_immediate(
                     item.text.as_deref().unwrap_or_default(),
                     item.phase.clone(),
                 );

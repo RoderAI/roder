@@ -1,4 +1,3 @@
-use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::layout::Rect;
 use roder_api::plan_review::{
     HunkDiffLine, HunkDiffLineKind, HunkRecord, HunkRollbackState, PlanReview, PlanReviewStatus,
@@ -83,18 +82,13 @@ fn hunk() -> HunkRecord {
 }
 
 #[test]
-fn plan_review_and_hunk_rows_render_and_expand() {
+fn plan_review_renders_without_standalone_hunk_rows() {
     let mut timeline = TimelineState::default();
     timeline.record_plan_review_created(review());
     timeline.record_hunk(hunk());
 
-    let collapsed = rendered_lines(&mut timeline);
-    assert!(collapsed.iter().any(|line| line.contains("plan review")));
-    assert!(collapsed.iter().any(|line| line.contains("hunk hunk-1")));
-    assert!(!collapsed.iter().any(|line| line.contains("+new")));
-
-    timeline.focus_latest();
-    assert!(timeline.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE)));
-    let expanded = rendered_lines(&mut timeline);
-    assert!(expanded.iter().any(|line| line.contains("new")));
+    let lines = rendered_lines(&mut timeline);
+    assert!(lines.iter().any(|line| line.contains("plan review")));
+    assert!(!lines.iter().any(|line| line.contains("hunk hunk-1")));
+    assert!(!lines.iter().any(|line| line.contains("+new")));
 }

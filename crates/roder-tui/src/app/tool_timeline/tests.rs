@@ -2,7 +2,7 @@ use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent,
 use ratatui::layout::Rect;
 use roder_api::extension_state::ExtensionStoreScope;
 use roder_api::interactive::RegionKind;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use super::super::Theme;
 use super::*;
@@ -611,6 +611,62 @@ fn final_assistant_messages_render_markdown() {
 }
 
 #[test]
+fn streaming_assistant_delta_buffers_then_reveals_with_gradient() {
+    let mut timeline = TimelineState::default();
+    let start = Instant::now();
+    timeline.push_assistant_delta_streaming_at("hello", None, start);
+
+    let initial = timeline.render(Theme::for_dark_background(true), Rect::new(0, 0, 80, 8));
+    let initial_text = initial
+        .text
+        .lines
+        .iter()
+        .flat_map(|line| line.spans.iter())
+        .map(|span| span.content.as_ref())
+        .collect::<String>();
+    assert!(!initial_text.contains("hello"));
+    assert!(timeline.has_streaming_animation());
+
+    assert!(timeline.tick_streaming_animation(start + Duration::from_millis(700), 80));
+    let rendered = timeline.render(Theme::for_dark_background(true), Rect::new(0, 0, 80, 8));
+    let text = rendered
+        .text
+        .lines
+        .iter()
+        .flat_map(|line| line.spans.iter())
+        .map(|span| span.content.as_ref())
+        .collect::<String>();
+    assert!(text.contains("hello"));
+    assert!(
+        rendered
+            .text
+            .lines
+            .iter()
+            .flat_map(|line| line.spans.iter())
+            .any(|span| span.style.fg == Some(Theme::for_dark_background(true).accent))
+    );
+}
+
+#[test]
+fn streaming_assistant_flushes_before_tool_rows() {
+    let mut timeline = TimelineState::default();
+    timeline.push_assistant_delta_streaming_at("I will inspect first.", None, Instant::now());
+    timeline.record_tool_requested(
+        "call_1".to_string(),
+        ToolTimelineEntry::new("read_file", r#"{"path":"README.md"}"#),
+    );
+
+    let lines = rendered_lines(&mut timeline);
+    assert!(lines.iter().any(|line| line == "I will inspect first."));
+    assert!(
+        lines
+            .iter()
+            .any(|line| line.contains("Read File: README.md"))
+    );
+    assert!(!timeline.has_streaming_animation());
+}
+
+#[test]
 fn applying_minimal_theme_removes_thinking_lines_from_timeline() {
     // Headline RFC demo: `.timeline-thinking { display: none; }` removes the
     // chain-of-thought block. We build the same transcript twice: once with
@@ -812,7 +868,10 @@ fn keyboard_and_mouse_can_scroll_timeline() {
 
 #[test]
 fn mouse_wheel_scrolls_fast_and_reverses_direction_immediately() {
-    let mut timeline = TimelineState::default();
+    let mut timeline = TimelineState::new(ScrollSettings {
+        acceleration_enabled: false,
+        fixed_rows_per_tick: 10.0,
+    });
     for index in 0..40 {
         timeline.push_system(format!("event {index}"));
     }
@@ -832,10 +891,7 @@ fn mouse_wheel_scrolls_fast_and_reverses_direction_immediately() {
         .render(Theme::for_dark_background(true), area)
         .scroll;
 
-    assert_eq!(
-        usize::from(at_bottom - after_up),
-        MOUSE_SCROLL_ROWS as usize
-    );
+    assert_eq!(usize::from(at_bottom - after_up), 10);
 
     let wheel_down = MouseEvent {
         kind: MouseEventKind::ScrollDown,

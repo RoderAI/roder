@@ -107,6 +107,30 @@ pub(crate) fn source_from_value(
                         .and_then(serde_json::Value::as_str)
                         .map(ToOwned::to_owned),
                 },
+                "github" => {
+                    let repo = map
+                        .get("repo")
+                        .and_then(serde_json::Value::as_str)
+                        .unwrap_or_default();
+                    PluginSource::Git {
+                        url: github_repo_url(repo),
+                        path: map
+                            .get("path")
+                            .and_then(serde_json::Value::as_str)
+                            .map(ToOwned::to_owned),
+                        ref_name: map
+                            .get("ref")
+                            .or_else(|| map.get("refName"))
+                            .or_else(|| map.get("commit"))
+                            .and_then(serde_json::Value::as_str)
+                            .map(ToOwned::to_owned),
+                        sha: map
+                            .get("sha")
+                            .or_else(|| map.get("commit"))
+                            .and_then(serde_json::Value::as_str)
+                            .map(ToOwned::to_owned),
+                    }
+                }
                 "npm" => PluginSource::Npm {
                     package: map
                         .get("package")
@@ -188,9 +212,9 @@ pub(crate) fn identity_key(
         .filter(|slug| !slug.is_empty())
         .unwrap_or_else(|| {
             if let Some(domain) = &homepage_domain {
-                format!("{domain}:{normalized_name}")
+                normalize_slug(&format!("{domain}-{normalized_name}"))
             } else if let Some(author) = &author_name {
-                format!("{}:{normalized_name}", normalize_slug(author))
+                normalize_slug(&format!("{}-{normalized_name}", normalize_slug(author)))
             } else {
                 normalized_name.clone()
             }
@@ -233,4 +257,83 @@ fn normalize_repo_url(value: &str) -> String {
         .trim_start_matches("git@")
         .replace(':', "/");
     normalize_slug(&value)
+}
+
+fn github_repo_url(repo: &str) -> String {
+    let trimmed = repo.trim();
+    if trimmed.starts_with("https://")
+        || trimmed.starts_with("http://")
+        || trimmed.starts_with("git@")
+    {
+        trimmed.to_string()
+    } else {
+        format!("https://github.com/{trimmed}.git")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use roder_api::marketplace::{PluginSource, validate_identity_key, validate_plugin_source};
+
+    use super::{identity_key, source_from_value};
+
+    #[test]
+    fn identity_key_fallbacks_are_valid_slugs() {
+        let source = PluginSource::MarketplacePath {
+            marketplace_id: "codex-plugins".to_string(),
+            path: "agent-sdk-dev".to_string(),
+        };
+
+        let homepage_identity = identity_key(
+            "agent-sdk-dev",
+            None,
+            Some("https://github.com/openai/plugins".to_string()),
+            None,
+            &source,
+        );
+        assert_eq!(homepage_identity.canonical_slug, "github-com-agent-sdk-dev");
+        validate_identity_key(&homepage_identity).unwrap();
+
+        let author_identity = identity_key(
+            "repo tools",
+            None,
+            None,
+            Some("Example Team".to_string()),
+            &source,
+        );
+        assert_eq!(author_identity.canonical_slug, "example-team-repo-tools");
+        validate_identity_key(&author_identity).unwrap();
+    }
+
+    #[test]
+    fn github_source_manifest_objects_normalize_to_git_sources() {
+        let source = source_from_value(
+            "codex-plugins",
+            Some(&serde_json::json!({
+                "source": "github",
+                "repo": "fullstorydev/fullstory-skills",
+                "sha": "1ec5865e7ab1449f9a0859d164c4b6a8c53b6e2f",
+                "path": "plugins/fullstory"
+            })),
+            None,
+        );
+
+        let PluginSource::Git {
+            url,
+            path,
+            ref_name,
+            sha,
+        } = &source
+        else {
+            panic!("expected github manifest source to normalize to git source");
+        };
+        assert_eq!(url, "https://github.com/fullstorydev/fullstory-skills.git");
+        assert_eq!(path.as_deref(), Some("plugins/fullstory"));
+        assert_eq!(ref_name.as_deref(), None);
+        assert_eq!(
+            sha.as_deref(),
+            Some("1ec5865e7ab1449f9a0859d164c4b6a8c53b6e2f")
+        );
+        validate_plugin_source(&source).unwrap();
+    }
 }

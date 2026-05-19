@@ -26,6 +26,23 @@ impl ToolPathScope {
     }
 }
 
+fn expand_home(input: &str) -> anyhow::Result<PathBuf> {
+    if input == "~" {
+        return home_dir();
+    }
+
+    if let Some(rest) = input.strip_prefix("~/") {
+        let home = home_dir()?;
+        return Ok(home.join(rest));
+    }
+
+    Ok(PathBuf::from(input))
+}
+
+fn home_dir() -> anyhow::Result<PathBuf> {
+    dirs::home_dir().ok_or_else(|| anyhow::anyhow!("home directory is not available"))
+}
+
 #[derive(Debug, Clone)]
 pub(crate) struct Workspace {
     root: PathBuf,
@@ -85,7 +102,7 @@ impl Workspace {
         if trimmed.is_empty() {
             bail!("path is required");
         }
-        let path = PathBuf::from(trimmed);
+        let path = expand_home(trimmed)?;
         if path.is_absolute() {
             Ok(path)
         } else {
