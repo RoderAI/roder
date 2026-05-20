@@ -557,6 +557,24 @@ mod tests {
     }
 
     #[test]
+    fn local_websocket_auth_disabled_accepts_missing_and_wrong_token() {
+        let auth = RemoteAuth::disabled();
+        let missing = Request::builder()
+            .uri("ws://127.0.0.1")
+            .body(())
+            .unwrap();
+        let wrong = Request::builder()
+            .uri("ws://127.0.0.1")
+            .header("Authorization", "Bearer wrong-token")
+            .body(())
+            .unwrap();
+
+        assert!(auth.verify_request(&missing));
+        assert!(auth.verify_request(&wrong));
+        assert_eq!(auth.token_preview(), "");
+    }
+
+    #[test]
     fn remote_auth_accepts_subprotocol_bearer() {
         let token = RemoteToken::new("secret-token".to_string()).unwrap();
         let auth = RemoteAuth::enabled(&token);
