@@ -401,22 +401,27 @@ fn random_string(len: usize) -> String {
 }
 
 fn open_browser(url: &str) -> anyhow::Result<()> {
+    let mut command = browser_command(url);
+    let status = command.status()?;
+    if !status.success() {
+        anyhow::bail!("failed to open browser");
+    }
+    Ok(())
+}
+
+fn browser_command(url: &str) -> std::process::Command {
     #[cfg(target_os = "macos")]
     let mut command = std::process::Command::new("open");
     #[cfg(target_os = "linux")]
     let mut command = std::process::Command::new("xdg-open");
     #[cfg(target_os = "windows")]
     let mut command = {
-        let mut command = std::process::Command::new("cmd");
-        command.arg("/C").arg("start");
+        let mut command = std::process::Command::new("rundll32");
+        command.arg("url.dll,FileProtocolHandler");
         command
     };
     command.arg(url);
-    let status = command.status()?;
-    if !status.success() {
-        anyhow::bail!("failed to open browser");
-    }
-    Ok(())
+    command
 }
 
 fn roder_data_dir() -> PathBuf {
@@ -453,7 +458,6 @@ fn non_empty(value: String) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::{Mutex, OnceLock};
 
     #[test]
     fn extracts_account_id_from_jwt_claims() {
@@ -479,6 +483,20 @@ mod tests {
     }
 
     #[test]
+    #[cfg(windows)]
+    fn windows_browser_command_does_not_shell_split_oauth_url() {
+        let url = "https://auth.openai.com/oauth/authorize?response_type=code&client_id=app";
+        let command = browser_command(url);
+        let args = command
+            .get_args()
+            .map(|arg| arg.to_string_lossy().into_owned())
+            .collect::<Vec<_>>();
+
+        assert_eq!(command.get_program().to_string_lossy(), "rundll32");
+        assert_eq!(args, vec!["url.dll,FileProtocolHandler", url]);
+    }
+
+    #[test]
     fn token_response_parse_error_names_boundary_and_redacts_tokens() {
         let raw =
             r#"{"access_token":"secret-access","refresh_token":"secret-refresh"}{"extra":true}"#;
@@ -493,8 +511,6 @@ mod tests {
 
     #[test]
     fn store_loads_roder_owned_tokens() {
-        let _guard = env_lock().lock().unwrap();
-        let previous_home = std::env::var_os("HOME");
         let home = unique_test_home("roder-owned-store");
         std::fs::create_dir_all(home.join(".roder").join("auth")).unwrap();
         std::fs::write(
@@ -509,12 +525,11 @@ mod tests {
         )
         .unwrap();
 
-        // SAFETY: this test holds a process-wide mutex while mutating HOME.
-        unsafe {
-            std::env::set_var("HOME", &home);
+        let loaded = Store {
+            data_dir: home.join(".roder"),
         }
-        let loaded = Store::new().load().unwrap();
-        restore_home(previous_home);
+        .load()
+        .unwrap();
 
         assert_eq!(loaded.access, "roder-access");
         assert_eq!(loaded.refresh, "roder-refresh");
@@ -524,8 +539,6 @@ mod tests {
 
     #[test]
     fn store_load_ignores_codex_cli_tokens_when_roder_store_is_missing() {
-        let _guard = env_lock().lock().unwrap();
-        let previous_home = std::env::var_os("HOME");
         let home = unique_test_home("codex-cli-ignored");
         std::fs::create_dir_all(home.join(".codex")).unwrap();
         std::fs::write(
@@ -543,21 +556,15 @@ mod tests {
         )
         .unwrap();
 
-        // SAFETY: this test holds a process-wide mutex while mutating HOME.
-        unsafe {
-            std::env::set_var("HOME", &home);
+        let loaded = Store {
+            data_dir: home.join(".roder"),
         }
-        let loaded = Store::new().load().unwrap();
-        restore_home(previous_home);
+        .load()
+        .unwrap();
 
         assert_eq!(loaded.access, "");
         assert_eq!(loaded.refresh, "");
         assert_eq!(loaded.account_id, "");
-    }
-
-    fn env_lock() -> &'static Mutex<()> {
-        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
-        LOCK.get_or_init(|| Mutex::new(()))
     }
 
     fn unique_test_home(name: &str) -> PathBuf {
@@ -570,16 +577,5 @@ mod tests {
         ));
         std::fs::create_dir_all(&root).unwrap();
         root
-    }
-
-    fn restore_home(previous_home: Option<std::ffi::OsString>) {
-        // SAFETY: callers hold env_lock while restoring HOME.
-        unsafe {
-            if let Some(previous_home) = previous_home {
-                std::env::set_var("HOME", previous_home);
-            } else {
-                std::env::remove_var("HOME");
-            }
-        }
     }
 }

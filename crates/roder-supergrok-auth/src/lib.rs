@@ -391,22 +391,27 @@ fn random_string(len: usize) -> String {
 }
 
 fn open_browser(url: &str) -> anyhow::Result<()> {
+    let mut command = browser_command(url);
+    let status = command.status()?;
+    if !status.success() {
+        anyhow::bail!("failed to open browser");
+    }
+    Ok(())
+}
+
+fn browser_command(url: &str) -> std::process::Command {
     #[cfg(target_os = "macos")]
     let mut command = std::process::Command::new("open");
     #[cfg(target_os = "linux")]
     let mut command = std::process::Command::new("xdg-open");
     #[cfg(target_os = "windows")]
     let mut command = {
-        let mut command = std::process::Command::new("cmd");
-        command.arg("/C").arg("start");
+        let mut command = std::process::Command::new("rundll32");
+        command.arg("url.dll,FileProtocolHandler");
         command
     };
     command.arg(url);
-    let status = command.status()?;
-    if !status.success() {
-        anyhow::bail!("failed to open browser");
-    }
-    Ok(())
+    command
 }
 
 fn redacted_body_excerpt(body: &str) -> String {
@@ -510,6 +515,20 @@ mod tests {
         assert!(url.contains("referrer=roder"));
         assert!(url.contains("nonce=nonce"));
         assert!(url.contains("code_challenge_method=S256"));
+    }
+
+    #[test]
+    #[cfg(windows)]
+    fn windows_browser_command_does_not_shell_split_oauth_url() {
+        let url = "https://auth.x.ai/oauth/authorize?response_type=code&client_id=app";
+        let command = browser_command(url);
+        let args = command
+            .get_args()
+            .map(|arg| arg.to_string_lossy().into_owned())
+            .collect::<Vec<_>>();
+
+        assert_eq!(command.get_program().to_string_lossy(), "rundll32");
+        assert_eq!(args, vec!["url.dll,FileProtocolHandler", url]);
     }
 
     #[test]

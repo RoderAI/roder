@@ -34,11 +34,15 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
 use base64::Engine;
+#[cfg(any(test, not(windows)))]
+use crossterm::event::KeyboardEnhancementFlags;
+#[cfg(not(windows))]
+use crossterm::event::{PopKeyboardEnhancementFlags, PushKeyboardEnhancementFlags};
 use crossterm::{
     event::{
         self, DisableBracketedPaste, DisableMouseCapture, EnableBracketedPaste, EnableMouseCapture,
-        Event, KeyCode, KeyEvent, KeyModifiers, KeyboardEnhancementFlags, MouseButton, MouseEvent,
-        MouseEventKind, PopKeyboardEnhancementFlags, PushKeyboardEnhancementFlags,
+        Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseButton, MouseEvent,
+        MouseEventKind,
     },
     execute,
     terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
@@ -104,9 +108,41 @@ const MAX_VISIBLE_SLASH_COMMANDS: usize = 8;
 const COPIED_HELPER_LABEL: &str = "Copied to clipboard";
 const COPIED_HELPER_DURATION: Duration = Duration::from_secs(2);
 
+#[cfg(any(test, not(windows)))]
 fn keyboard_enhancement_flags() -> KeyboardEnhancementFlags {
     KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES
         | KeyboardEnhancementFlags::REPORT_ALL_KEYS_AS_ESCAPE_CODES
+}
+
+fn should_handle_key_event(key: KeyEvent) -> bool {
+    matches!(key.kind, KeyEventKind::Press | KeyEventKind::Repeat)
+}
+
+#[cfg(not(windows))]
+fn push_keyboard_enhancements<W: io::Write>(writer: &mut W) -> io::Result<bool> {
+    execute!(
+        writer,
+        PushKeyboardEnhancementFlags(keyboard_enhancement_flags())
+    )?;
+    Ok(true)
+}
+
+#[cfg(windows)]
+fn push_keyboard_enhancements<W: io::Write>(_writer: &mut W) -> io::Result<bool> {
+    Ok(false)
+}
+
+#[cfg(not(windows))]
+fn pop_keyboard_enhancements<W: io::Write>(writer: &mut W, active: bool) -> io::Result<()> {
+    if active {
+        execute!(writer, PopKeyboardEnhancementFlags)?;
+    }
+    Ok(())
+}
+
+#[cfg(windows)]
+fn pop_keyboard_enhancements<W: io::Write>(_writer: &mut W, _active: bool) -> io::Result<()> {
+    Ok(())
 }
 
 fn pending_turn_input(text: String, images: Vec<InputImage>) -> Vec<TurnInputItem> {
@@ -1290,8 +1326,8 @@ impl TuiApp {
             EnterAlternateScreen,
             EnableBracketedPaste,
             EnableMouseCapture,
-            PushKeyboardEnhancementFlags(keyboard_enhancement_flags()),
         )?;
+        let keyboard_enhancements_active = push_keyboard_enhancements(&mut stdout)?;
         let backend = CrosstermBackend::new(stdout);
         let mut terminal = Terminal::new(backend)?;
 
@@ -1307,6 +1343,9 @@ impl TuiApp {
             if event::poll(self.animation_poll_timeout(next_animation_tick, Instant::now()))? {
                 match event::read()? {
                     Event::Key(key) => {
+                        if !should_handle_key_event(key) {
+                            continue;
+                        }
                         if let Some(modal) = self.tool_detail_modal.as_mut() {
                             match modal.handle_key(key) {
                                 ToolDetailAction::Close => self.tool_detail_modal = None,
@@ -1761,9 +1800,9 @@ impl TuiApp {
             terminal.backend_mut(),
             DisableBracketedPaste,
             DisableMouseCapture,
-            PopKeyboardEnhancementFlags,
-            LeaveAlternateScreen
         )?;
+        pop_keyboard_enhancements(terminal.backend_mut(), keyboard_enhancements_active)?;
+        execute!(terminal.backend_mut(), LeaveAlternateScreen)?;
         terminal.show_cursor()?;
 
         Ok(())
@@ -2146,19 +2185,20 @@ impl TuiApp {
             "tasks" => {
                 self.run_tasks_slash_command().await;
             }
-            _ if let Some(prompt) = commands::built_in_prompt(&name, &args) => {
-                let suffix = slash_command_suffix(&args);
-                let pending =
-                    PendingPrompt::with_images(format!("/{name}{suffix}"), prompt, Vec::new());
-                if self.active_turn_id.is_some() {
-                    self.steer_prepared_prompt(pending).await;
-                } else {
-                    self.start_prepared_prompt(pending).await;
-                }
-                self.push_event(format!("slash command: /{name}{suffix}"));
-            }
             _ => {
-                self.run_custom_slash_command(name, args).await;
+                if let Some(prompt) = commands::built_in_prompt(&name, &args) {
+                    let suffix = slash_command_suffix(&args);
+                    let pending =
+                        PendingPrompt::with_images(format!("/{name}{suffix}"), prompt, Vec::new());
+                    if self.active_turn_id.is_some() {
+                        self.steer_prepared_prompt(pending).await;
+                    } else {
+                        self.start_prepared_prompt(pending).await;
+                    }
+                    self.push_event(format!("slash command: /{name}{suffix}"));
+                } else {
+                    self.run_custom_slash_command(name, args).await;
+                }
             }
         }
     }
@@ -4969,11 +5009,27 @@ fn image_attachments_from_paste(text: &str) -> Option<Vec<ImageAttachment>> {
 
 fn image_path_from_token(token: &str) -> Option<PathBuf> {
     let path = if let Some(uri) = token.strip_prefix("file://") {
-        PathBuf::from(percent_decode(uri)?)
+        path_from_file_uri(uri)?
     } else {
         expand_home_path(token)
     };
     is_image_path(&path).then_some(path)
+}
+
+fn path_from_file_uri(uri: &str) -> Option<PathBuf> {
+    let decoded = percent_decode(uri)?;
+    #[cfg(windows)]
+    {
+        let path = decoded.strip_prefix('/').filter(|path| {
+            let bytes = path.as_bytes();
+            bytes.len() >= 2 && bytes[0].is_ascii_alphabetic() && bytes[1] == b':'
+        });
+        Some(PathBuf::from(path.unwrap_or(&decoded)))
+    }
+    #[cfg(not(windows))]
+    {
+        Some(PathBuf::from(decoded))
+    }
 }
 
 fn is_image_path(path: &Path) -> bool {
@@ -5013,8 +5069,11 @@ fn shell_like_tokens(text: &str) -> Vec<String> {
     while let Some(ch) = chars.next() {
         match (ch, quote) {
             ('\\', _) => {
-                if let Some(next) = chars.next() {
+                if chars.peek().is_some_and(|next| shell_escape_char(*next)) {
+                    let next = chars.next().expect("peeked next shell escape");
                     current.push(next);
+                } else {
+                    current.push(ch);
                 }
             }
             ('\'' | '"', None) => quote = Some(ch),
@@ -5031,6 +5090,10 @@ fn shell_like_tokens(text: &str) -> Vec<String> {
         tokens.push(current);
     }
     tokens
+}
+
+fn shell_escape_char(ch: char) -> bool {
+    ch.is_whitespace() || matches!(ch, '\\' | '\'' | '"')
 }
 
 fn percent_decode(value: &str) -> Option<String> {
@@ -6199,6 +6262,29 @@ mod tests {
     }
 
     #[test]
+    fn key_release_events_are_ignored() {
+        let press = KeyEvent::new_with_kind(
+            KeyCode::Char('p'),
+            KeyModifiers::CONTROL,
+            KeyEventKind::Press,
+        );
+        let repeat = KeyEvent::new_with_kind(
+            KeyCode::Char('p'),
+            KeyModifiers::CONTROL,
+            KeyEventKind::Repeat,
+        );
+        let release = KeyEvent::new_with_kind(
+            KeyCode::Char('p'),
+            KeyModifiers::CONTROL,
+            KeyEventKind::Release,
+        );
+
+        assert!(should_handle_key_event(press));
+        assert!(should_handle_key_event(repeat));
+        assert!(!should_handle_key_event(release));
+    }
+
+    #[test]
     fn timeline_mouse_click_takes_precedence_over_text_selection() {
         let mut app = test_app();
         app.timeline.record_tool_requested(
@@ -7054,20 +7140,42 @@ mod tests {
 
     #[test]
     fn image_paste_detects_absolute_and_escaped_image_paths() {
-        let attachments = image_attachments_from_paste("/tmp/first.png /tmp/second\\ image.jpg")
-            .expect("expected image attachments");
+        #[cfg(windows)]
+        let (paste, first, second) = (
+            r"C:\tmp\first.png C:\tmp\second\ image.jpg",
+            PathBuf::from(r"C:\tmp\first.png"),
+            PathBuf::from(r"C:\tmp\second image.jpg"),
+        );
+        #[cfg(not(windows))]
+        let (paste, first, second) = (
+            "/tmp/first.png /tmp/second\\ image.jpg",
+            PathBuf::from("/tmp/first.png"),
+            PathBuf::from("/tmp/second image.jpg"),
+        );
+
+        let attachments = image_attachments_from_paste(paste).expect("expected image attachments");
 
         assert_eq!(attachments.len(), 2);
-        assert_eq!(attachments[0].path, PathBuf::from("/tmp/first.png"));
-        assert_eq!(attachments[1].path, PathBuf::from("/tmp/second image.jpg"));
+        assert_eq!(attachments[0].path, first);
+        assert_eq!(attachments[1].path, second);
     }
 
     #[test]
     fn image_paste_detects_file_uris() {
-        let attachments = image_attachments_from_paste("file:///tmp/Screen%20Shot.webp")
-            .expect("expected image attachment");
+        #[cfg(windows)]
+        let (paste, path) = (
+            "file:///C:/tmp/Screen%20Shot.webp",
+            PathBuf::from("C:/tmp/Screen Shot.webp"),
+        );
+        #[cfg(not(windows))]
+        let (paste, path) = (
+            "file:///tmp/Screen%20Shot.webp",
+            PathBuf::from("/tmp/Screen Shot.webp"),
+        );
 
-        assert_eq!(attachments[0].path, PathBuf::from("/tmp/Screen Shot.webp"));
+        let attachments = image_attachments_from_paste(paste).expect("expected image attachment");
+
+        assert_eq!(attachments[0].path, path);
     }
 
     #[test]

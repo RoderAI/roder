@@ -705,8 +705,8 @@ mod tests {
 
     #[test]
     fn completed_tool_notification_carries_display_payload() {
-        let notifications = desktop_notifications_for_event(&RoderEvent::ToolCallCompleted(
-            ToolCallCompleted {
+        let notifications =
+            desktop_notifications_for_event(&RoderEvent::ToolCallCompleted(ToolCallCompleted {
                 thread_id: "thread-1".to_string(),
                 turn_id: "turn-1".to_string(),
                 tool_id: "tool-1".to_string(),
@@ -715,8 +715,7 @@ mod tests {
                 is_error: false,
                 output: Some("src\nCargo.toml".to_string()),
                 timestamp: OffsetDateTime::UNIX_EPOCH,
-            },
-        ));
+            }));
 
         assert_eq!(notifications.len(), 1);
         let item = &notifications[0].params["item"];
