@@ -9,13 +9,15 @@ use qrcode::QrCode;
 use qrcode::render::unicode;
 use roder_api::events::{
     RemoteAuthFailed, RemoteClientConnected, RemoteClientDisconnected, RemoteServerStarted,
-    RoderEvent,
+    RemoteServerStopped, RoderEvent,
 };
 use roder_protocol::JsonRpcRequest;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use time::OffsetDateTime;
 use tokio::net::TcpListener;
+use tokio::sync::oneshot;
+use tokio::task::JoinHandle;
 use tokio_tungstenite::tungstenite::Message;
 use tokio_tungstenite::tungstenite::handshake::server::{ErrorResponse, Request, Response};
 use tokio_tungstenite::tungstenite::http::{HeaderValue, StatusCode, header};
@@ -163,6 +165,27 @@ pub struct RemoteServerHandle {
     pub pairing_url: String,
 }
 
+#[derive(Debug)]
+pub struct RemoteServerController {
+    handle: RemoteServerHandle,
+    shutdown: Option<oneshot::Sender<()>>,
+    task: JoinHandle<()>,
+}
+
+impl RemoteServerController {
+    pub fn handle(&self) -> &RemoteServerHandle {
+        &self.handle
+    }
+
+    pub async fn stop(mut self) -> anyhow::Result<()> {
+        if let Some(shutdown) = self.shutdown.take() {
+            let _ = shutdown.send(());
+        }
+        self.task.await?;
+        Ok(())
+    }
+}
+
 pub fn generate_remote_token(mut rng: impl std::io::Read) -> anyhow::Result<RemoteToken> {
     let mut bytes = [0_u8; TOKEN_BYTES];
     rng.read_exact(&mut bytes)?;
@@ -178,6 +201,29 @@ pub async fn listen_remote_websocket(
     app_server: Arc<AppServer>,
     options: RemoteServerOptions,
 ) -> anyhow::Result<RemoteServerHandle> {
+    let (handle, task) = spawn_remote_websocket(app_server, options, None).await?;
+    drop(task);
+    Ok(handle)
+}
+
+pub async fn listen_remote_websocket_controller(
+    app_server: Arc<AppServer>,
+    options: RemoteServerOptions,
+) -> anyhow::Result<RemoteServerController> {
+    let (shutdown, shutdown_rx) = oneshot::channel();
+    let (handle, task) = spawn_remote_websocket(app_server, options, Some(shutdown_rx)).await?;
+    Ok(RemoteServerController {
+        handle,
+        shutdown: Some(shutdown),
+        task,
+    })
+}
+
+async fn spawn_remote_websocket(
+    app_server: Arc<AppServer>,
+    options: RemoteServerOptions,
+    mut shutdown: Option<oneshot::Receiver<()>>,
+) -> anyhow::Result<(RemoteServerHandle, JoinHandle<()>)> {
     let bind_addr = parse_ws_listen(&options.listen)?;
     let listener = TcpListener::bind(bind_addr).await?;
     let listen_addr = listener.local_addr()?;
@@ -218,9 +264,18 @@ pub async fn listen_remote_websocket(
     ));
     let auth_backoff = Arc::new(RemoteAuthBackoff::default());
     let allowed_origins = Arc::new(options.allowed_origins);
-    tokio::spawn(async move {
+    let stop_events = app_server.clone();
+    let task = tokio::spawn(async move {
         loop {
-            let Ok((stream, peer_addr)) = listener.accept().await else {
+            let accepted = if let Some(shutdown) = shutdown.as_mut() {
+                tokio::select! {
+                    _ = shutdown => break,
+                    accepted = listener.accept() => accepted,
+                }
+            } else {
+                listener.accept().await
+            };
+            let Ok((stream, peer_addr)) = accepted else {
                 break;
             };
             let auth = auth.clone();
@@ -324,8 +379,15 @@ pub async fn listen_remote_websocket(
                     ));
             });
         }
+        stop_events
+            .runtime
+            .bus
+            .emit(RoderEvent::RemoteServerStopped(RemoteServerStopped {
+                listen_addr: listen_addr.to_string(),
+                timestamp: OffsetDateTime::now_utc(),
+            }));
     });
-    Ok(handle)
+    Ok((handle, task))
 }
 
 pub fn pairing_payload(

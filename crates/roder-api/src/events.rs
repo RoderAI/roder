@@ -712,6 +712,13 @@ pub struct RemoteServerStarted {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RemoteServerStopped {
+    pub listen_addr: String,
+    #[serde(with = "time::serde::rfc3339")]
+    pub timestamp: OffsetDateTime,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RemoteAuthFailed {
     pub remote_addr: Option<String>,
     #[serde(with = "time::serde::rfc3339")]
@@ -794,6 +801,7 @@ pub enum RoderEvent {
     MemoryProviderChanged(MemoryProviderChanged),
     MemoryObservationRecorded(MemoryObservationRecorded),
     RemoteServerStarted(RemoteServerStarted),
+    RemoteServerStopped(RemoteServerStopped),
     RemoteAuthFailed(RemoteAuthFailed),
     RemoteClientConnected(RemoteClientConnected),
     RemoteClientDisconnected(RemoteClientDisconnected),
@@ -883,6 +891,7 @@ impl RoderEvent {
             RoderEvent::MemoryProviderChanged(_) => "memory/providerChanged",
             RoderEvent::MemoryObservationRecorded(_) => "memory/observationRecorded",
             RoderEvent::RemoteServerStarted(_) => "remote/serverStarted",
+            RoderEvent::RemoteServerStopped(_) => "remote/serverStopped",
             RoderEvent::RemoteAuthFailed(_) => "remote/authFailed",
             RoderEvent::RemoteClientConnected(_) => "remote/clientConnected",
             RoderEvent::RemoteClientDisconnected(_) => "remote/clientDisconnected",
@@ -961,6 +970,7 @@ impl RoderEvent {
             | RoderEvent::TaskFailed(_)
             | RoderEvent::TaskCancelled(_) => EventSource::Extension,
             RoderEvent::RemoteServerStarted(_)
+            | RoderEvent::RemoteServerStopped(_)
             | RoderEvent::RemoteAuthFailed(_)
             | RoderEvent::RemoteClientConnected(_)
             | RoderEvent::RemoteClientDisconnected(_) => EventSource::AppServer,
@@ -1061,6 +1071,7 @@ impl RoderEvent {
             | RoderEvent::MemoryReembedQueued(_)
             | RoderEvent::MemoryProviderChanged(_)
             | RoderEvent::RemoteServerStarted(_)
+            | RoderEvent::RemoteServerStopped(_)
             | RoderEvent::RemoteAuthFailed(_)
             | RoderEvent::RemoteClientConnected(_)
             | RoderEvent::RemoteClientDisconnected(_)
@@ -1147,6 +1158,7 @@ impl RoderEvent {
             | RoderEvent::MemoryReembedQueued(_)
             | RoderEvent::MemoryProviderChanged(_)
             | RoderEvent::RemoteServerStarted(_)
+            | RoderEvent::RemoteServerStopped(_)
             | RoderEvent::RemoteAuthFailed(_)
             | RoderEvent::RemoteClientConnected(_)
             | RoderEvent::RemoteClientDisconnected(_)

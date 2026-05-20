@@ -34,9 +34,10 @@ Tokens are not accepted in WebSocket query parameters. The pairing payload inclu
 
 Remote mode is intended for a trusted LAN or Tailscale network. Raw `ws://` over a LAN IP is not TLS-protected; use Tailscale or another trusted private tunnel when possible. Do not expose the remote app-server directly to the public internet.
 
-The local event stream records remote server starts, auth failures, client connects, and client disconnects as sanitized events:
+The local event stream records remote server starts and stops, auth failures, client connects, and client disconnects as sanitized events:
 
 - `remote/serverStarted`
+- `remote/serverStopped`
 - `remote/authFailed`
 - `remote/clientConnected`
 - `remote/clientDisconnected`
