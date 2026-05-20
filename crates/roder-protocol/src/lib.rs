@@ -211,6 +211,8 @@ pub struct TurnInputItem {
     pub kind: String,
     pub text: Option<String>,
     pub path: Option<String>,
+    #[serde(default, alias = "image_url", skip_serializing_if = "Option::is_none")]
+    pub image_url: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1587,13 +1589,21 @@ mod tests {
     fn desktop_turn_start_params_accept_desktop_input_shape() {
         let params: TurnStartParams = serde_json::from_value(serde_json::json!({
             "threadId": "thread-1",
-            "input": [{ "type": "text", "text": "hello" }]
+            "input": [
+                { "type": "text", "text": "hello" },
+                { "type": "image", "imageUrl": "data:image/png;base64,YWJj" }
+            ]
         }))
         .unwrap();
 
         assert_eq!(params.thread_id, "thread-1");
         assert_eq!(params.input[0].kind, "text");
         assert_eq!(params.input[0].text.as_deref(), Some("hello"));
+        assert_eq!(params.input[1].kind, "image");
+        assert_eq!(
+            params.input[1].image_url.as_deref(),
+            Some("data:image/png;base64,YWJj")
+        );
     }
 
     #[test]

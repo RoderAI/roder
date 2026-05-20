@@ -109,12 +109,23 @@ fn keyboard_enhancement_flags() -> KeyboardEnhancementFlags {
         | KeyboardEnhancementFlags::REPORT_ALL_KEYS_AS_ESCAPE_CODES
 }
 
-fn pending_text_input(text: String) -> Vec<TurnInputItem> {
-    vec![TurnInputItem {
-        kind: "text".to_string(),
-        text: Some(text),
+fn pending_turn_input(text: String, images: Vec<InputImage>) -> Vec<TurnInputItem> {
+    let mut input = Vec::new();
+    if !text.is_empty() {
+        input.push(TurnInputItem {
+            kind: "text".to_string(),
+            text: Some(text),
+            path: None,
+            image_url: None,
+        });
+    }
+    input.extend(images.into_iter().map(|image| TurnInputItem {
+        kind: "image".to_string(),
+        text: None,
         path: None,
-    }]
+        image_url: Some(image.image_url),
+    }));
+    input
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -1365,7 +1376,7 @@ impl TuiApp {
                                         == ProviderPopupScreen::ApiKey
                                         && key.modifiers.contains(KeyModifiers::CONTROL) =>
                                 {
-                                    self.open_opencode_auth().await;
+                                    self.open_provider_api_key_url().await;
                                 }
                                 KeyCode::Enter
                                     if self.provider_popup_screen
@@ -2402,7 +2413,7 @@ impl TuiApp {
         let thread_id = self.focused_thread_id().to_string();
         let params = TurnStartParams {
             thread_id,
-            input: pending_text_input(pending.message),
+            input: pending_turn_input(pending.message, pending.images),
             prompt: None,
         };
         let client = self.client.clone();
@@ -2430,7 +2441,7 @@ impl TuiApp {
         let params = TurnSteerParams {
             thread_id,
             expected_turn_id: turn_id,
-            input: pending_text_input(pending.message),
+            input: pending_turn_input(pending.message, pending.images),
             prompt: None,
         };
         let client = self.client.clone();
@@ -4099,20 +4110,23 @@ impl TuiApp {
         self.provider_popup_screen = ProviderPopupScreen::ApiKey;
         self.provider_menu_filter.clear();
         self.provider_menu_items = Vec::new();
+        let api_key_url = provider_api_key_url(&provider.provider_id);
         self.timeline.push_system(format!(
-            "open https://opencode.ai/auth and copy an API key for {}.",
-            provider.name
+            "open {api_key_url} and copy an API key for {}.",
+            provider.name,
         ));
         self.pending_api_key_provider = Some(provider);
         self.provider_state.select(None);
     }
 
-    async fn open_opencode_auth(&mut self) {
-        match open_url("https://opencode.ai/auth").await {
-            Ok(()) => self.push_event("opened OpenCode auth".to_string()),
-            Err(err) => {
-                self.record_error(format!("failed to open https://opencode.ai/auth: {err}"))
-            }
+    async fn open_provider_api_key_url(&mut self) {
+        let Some(provider) = self.pending_api_key_provider.as_ref() else {
+            return;
+        };
+        let url = provider_api_key_url(&provider.provider_id);
+        match open_url(url).await {
+            Ok(()) => self.push_event(format!("opened {} API keys", provider.name)),
+            Err(err) => self.record_error(format!("failed to open {url}: {err}")),
         }
     }
 
@@ -5220,7 +5234,7 @@ fn provider_options_from_list(list: &ProvidersListResult) -> Vec<ProviderOption>
             options.push(ProviderOption {
                 provider_id: provider.id.clone(),
                 model_id: list.active_model.clone(),
-                label: format!("{}/{}", provider.id, list.active_model),
+                label: provider_model_label(&provider.id, &list.active_model),
                 context_window: context_window_for_model(&list.active_model),
                 default_reasoning: Some(list.active_reasoning.clone()),
                 reasoning_options: Vec::new(),
@@ -5236,7 +5250,7 @@ fn provider_options_from_list(list: &ProvidersListResult) -> Vec<ProviderOption>
             options.push(ProviderOption {
                 provider_id: provider.id.clone(),
                 model_id: model.id.clone(),
-                label: format!("{}/{}", provider.id, model_name),
+                label: provider_model_label(&provider.id, &model_name),
                 context_window: model
                     .context_window
                     .or_else(|| context_window_for_model(&model.id)),
@@ -5246,6 +5260,14 @@ fn provider_options_from_list(list: &ProvidersListResult) -> Vec<ProviderOption>
         }
     }
     options
+}
+
+fn provider_model_label(provider_id: &str, model_name: &str) -> String {
+    if model_name.starts_with(&format!("{provider_id}/")) {
+        model_name.to_string()
+    } else {
+        format!("{provider_id}/{model_name}")
+    }
 }
 
 fn provider_choices_from_list(list: &ProvidersListResult) -> Vec<ProviderChoice> {
@@ -5471,7 +5493,12 @@ fn provider_api_key_items(
     vec![
         ListItem::new(Line::from(vec![
             Span::styled("Open ", theme.text()),
-            Span::styled("https://opencode.ai/auth", theme.accent()),
+            Span::styled(
+                provider
+                    .map(|provider| provider_api_key_url(&provider.provider_id))
+                    .unwrap_or("https://opencode.ai/auth"),
+                theme.accent(),
+            ),
         ])),
         ListItem::new(Line::from(Span::styled(
             format!("Create or copy a {provider_name} API key, then paste it here."),
@@ -5479,7 +5506,7 @@ fn provider_api_key_items(
         ))),
         ListItem::new(Line::from(vec![
             Span::styled("Ctrl+O", theme.accent()),
-            Span::styled(" open workspace  ", theme.muted()),
+            Span::styled(" open page  ", theme.muted()),
             Span::styled("Enter", theme.accent()),
             Span::styled(" save  ", theme.muted()),
             Span::styled("Esc", theme.accent()),
@@ -5487,6 +5514,14 @@ fn provider_api_key_items(
         ])),
         ListItem::new(Line::from(Span::styled(key_status, theme.muted()))),
     ]
+}
+
+fn provider_api_key_url(provider_id: &str) -> &'static str {
+    if provider_id == "poolside" {
+        "https://platform.poolside.ai/api-keys"
+    } else {
+        "https://opencode.ai/auth"
+    }
 }
 
 fn provider_auth_message(
@@ -7003,6 +7038,25 @@ mod tests {
             )
         );
         let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn pending_turn_input_preserves_images_as_input_items() {
+        let input = pending_turn_input(
+            "what do you see?".to_string(),
+            vec![InputImage {
+                image_url: "data:image/png;base64,YWJj".to_string(),
+            }],
+        );
+
+        assert_eq!(input.len(), 2);
+        assert_eq!(input[0].kind, "text");
+        assert_eq!(input[0].text.as_deref(), Some("what do you see?"));
+        assert_eq!(input[1].kind, "image");
+        assert_eq!(
+            input[1].image_url.as_deref(),
+            Some("data:image/png;base64,YWJj")
+        );
     }
 
     #[test]

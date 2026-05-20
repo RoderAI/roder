@@ -54,6 +54,7 @@ roder-ext-openai-embeddings = { path = "crates/roder-ext-openai-embeddings" }
 roder-ext-opencode = { path = "crates/roder-ext-opencode" }
 roder-ext-parallel-search = { path = "crates/roder-ext-parallel-search" }
 roder-ext-perplexity-search = { path = "crates/roder-ext-perplexity-search" }
+roder-ext-poolside = { path = "crates/roder-ext-poolside" }
 roder-ext-plan-mode = { path = "crates/roder-ext-plan-mode" }
 roder-ext-runner-blaxel = { path = "crates/roder-ext-runner-blaxel" }
 roder-ext-runner-cloudflare = { path = "crates/roder-ext-runner-cloudflare" }

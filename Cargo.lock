@@ -2719,6 +2719,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "roder-ext-poolside"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-stream",
+ "async-trait",
+ "dirs",
+ "futures",
+ "reqwest",
+ "roder-api",
+ "roder-config",
+ "semver",
+ "serde",
+ "serde_json",
+ "tokio",
+]
+
+[[package]]
 name = "roder-ext-runner-blaxel"
 version = "0.1.0"
 dependencies = [
@@ -2948,6 +2966,7 @@ dependencies = [
  "roder-ext-parallel-search",
  "roder-ext-perplexity-search",
  "roder-ext-plan-mode",
+ "roder-ext-poolside",
  "roder-ext-runner-blaxel",
  "roder-ext-runner-cloudflare",
  "roder-ext-runner-daytona",

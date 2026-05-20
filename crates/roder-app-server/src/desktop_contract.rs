@@ -1,3 +1,4 @@
+use roder_api::conversation::InputImage;
 use roder_protocol::{DesktopItem, DesktopThread, DesktopThreadStatus, DesktopTurn, TurnInputItem};
 
 pub(crate) fn desktop_thread_from_metadata(
@@ -146,6 +147,17 @@ pub(crate) fn desktop_turn_message(input: &[TurnInputItem], prompt: Option<Strin
     } else {
         text
     }
+}
+
+pub(crate) fn desktop_turn_images(input: &[TurnInputItem]) -> Vec<InputImage> {
+    input
+        .iter()
+        .filter(|item| matches!(item.kind.as_str(), "image" | "input_image"))
+        .filter_map(|item| item.image_url.as_ref())
+        .map(|image_url| InputImage {
+            image_url: image_url.clone(),
+        })
+        .collect()
 }
 
 pub(crate) fn default_cwd_string() -> String {

@@ -703,6 +703,8 @@ pub(crate) async fn build_runtime_from_config(
         opencode_go_api_key: keys.opencode_go,
         opencode_go_base_url: keys.opencode_go_base_url,
         opencode_go_project_id: keys.opencode_go_project_id,
+        poolside_api_key: keys.poolside,
+        poolside_base_url: keys.poolside_base_url,
         custom_inference_providers: custom_inference_provider_configs,
         session_dir: None,
         workspace: workspace.clone(),
@@ -1254,6 +1256,8 @@ struct ProviderKeys {
     opencode_go: Option<String>,
     opencode_go_base_url: Option<String>,
     opencode_go_project_id: Option<String>,
+    poolside: Option<String>,
+    poolside_base_url: Option<String>,
 }
 
 fn provider_keys(cfg: &roder_config::Config) -> ProviderKeys {
@@ -1348,6 +1352,26 @@ fn provider_keys(cfg: &roder_config::Config) -> ProviderKeys {
                     .and_then(|p| p.project_id_env.as_deref())
                     .and_then(env_nonempty)
             }),
+        poolside: std::env::var("POOLSIDE_API_KEY")
+            .ok()
+            .or_else(|| std::env::var("RODER_POOLSIDE_API_KEY").ok())
+            .or_else(|| {
+                cfg.providers
+                    .get("poolside")
+                    .and_then(|p| p.api_key.clone())
+            })
+            .or_else(|| {
+                cfg.providers
+                    .get("poolside")
+                    .and_then(|p| p.api_key_env.as_deref())
+                    .and_then(env_nonempty)
+            }),
+        poolside_base_url: cfg
+            .providers
+            .get("poolside")
+            .and_then(|p| p.base_url.clone())
+            .or_else(|| std::env::var("RODER_POOLSIDE_BASE_URL").ok())
+            .or_else(|| std::env::var("POOLSIDE_BASE_URL").ok()),
     }
 }
 
@@ -1384,6 +1408,7 @@ fn is_builtin_provider_id(id: &str) -> bool {
             | "supergrok"
             | "opencode"
             | "opencode-go"
+            | "poolside"
     )
 }
 

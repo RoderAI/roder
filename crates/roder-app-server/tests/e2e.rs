@@ -2,8 +2,8 @@ use base64::Engine;
 use futures::{SinkExt, StreamExt, stream};
 use roder_api::capabilities::CapabilityDecision;
 use roder_api::catalog::{
-    PROVIDER_CODEX, PROVIDER_MOCK, PROVIDER_OPENCODE, PROVIDER_OPENCODE_GO, PROVIDER_SUPERGROK,
-    PROVIDER_XAI,
+    PROVIDER_CODEX, PROVIDER_MOCK, PROVIDER_OPENCODE, PROVIDER_OPENCODE_GO, PROVIDER_POOLSIDE,
+    PROVIDER_SUPERGROK, PROVIDER_XAI,
 };
 use roder_api::extension::{ExtensionRegistryBuilder, InferenceEngineId};
 use roder_api::inference::*;
@@ -84,6 +84,10 @@ struct TaskCallingEngine {
 }
 
 struct PendingEngine;
+
+struct ImageRecordingEngine {
+    requests: Mutex<Vec<AgentInferenceRequest>>,
+}
 
 struct FailingSessionStoreFactory;
 
@@ -278,6 +282,40 @@ impl InferenceEngine for PendingEngine {
         _request: AgentInferenceRequest,
     ) -> anyhow::Result<InferenceEventStream> {
         Ok(Box::pin(stream::pending()))
+    }
+}
+
+#[async_trait::async_trait]
+impl InferenceEngine for ImageRecordingEngine {
+    fn id(&self) -> InferenceEngineId {
+        PROVIDER_MOCK.to_string()
+    }
+
+    fn capabilities(&self) -> InferenceCapabilities {
+        let mut capabilities = InferenceCapabilities::coding_agent_default();
+        capabilities.image_input = true;
+        capabilities
+    }
+
+    async fn list_models(
+        &self,
+        _ctx: InferenceProviderContext<'_>,
+    ) -> anyhow::Result<Vec<ModelDescriptor>> {
+        Ok(Vec::new())
+    }
+
+    async fn stream_turn(
+        &self,
+        _ctx: InferenceTurnContext<'_>,
+        request: AgentInferenceRequest,
+    ) -> anyhow::Result<InferenceEventStream> {
+        self.requests.lock().await.push(request);
+        Ok(Box::pin(futures::stream::iter(vec![Ok(
+            InferenceEvent::Completed(CompletionMetadata {
+                stop_reason: Some("stop".to_string()),
+                provider_response_id: None,
+            }),
+        )])))
     }
 }
 
@@ -716,7 +754,10 @@ async fn providers_select_updates_desktop_thread_model_for_next_turn() {
 
 #[tokio::test]
 async fn desktop_turn_uses_thread_cwd_for_workspace_tools() {
-    let root = std::env::temp_dir().join(format!("roder-thread-cwd-e2e-{}", uuid::Uuid::new_v4()));
+    let root = std::env::temp_dir().join(format!(
+        "roder-thread-cwd-e2e-{}",
+        uuid::Uuid::new_v4()
+    ));
     let process_workspace = root.join("process-workspace");
     let thread_workspace = root.join("thread-workspace");
     std::fs::create_dir_all(&process_workspace).unwrap();
@@ -801,6 +842,49 @@ async fn desktop_turn_uses_thread_cwd_for_workspace_tools() {
     assert!(!read_output.contains("process marker"));
 
     let _ = std::fs::remove_dir_all(root);
+}
+
+#[tokio::test]
+async fn turn_start_passes_image_input_to_model_request() {
+    let engine = Arc::new(ImageRecordingEngine {
+        requests: Mutex::new(Vec::new()),
+    });
+    let mut builder = ExtensionRegistryBuilder::new();
+    builder.inference_engine(engine.clone());
+    let runtime = Arc::new(Runtime::new(builder.build().unwrap(), Default::default()).unwrap());
+    let server = Arc::new(AppServer::new(runtime));
+    let client = LocalAppClient::new(server);
+
+    let started = start_thread(&client).await;
+    let _: TurnStartResult = request(
+        &client,
+        "turn/start",
+        Some(serde_json::json!({
+            "threadId": started.thread.id,
+            "input": [
+                { "type": "text", "text": "what do you see?" },
+                { "type": "image", "imageUrl": "data:image/png;base64,YWJj" }
+            ]
+        })),
+    )
+    .await;
+
+    let request = wait_for_image_recorded_request(&engine).await;
+    let user_message = request
+        .conversation
+        .iter()
+        .rev()
+        .find_map(|item| match item {
+            roder_api::conversation::ConversationItem::UserMessage(message) => Some(message),
+            _ => None,
+        })
+        .expect("user message in inference request");
+    assert_eq!(user_message.text, "what do you see?");
+    assert_eq!(user_message.images.len(), 1);
+    assert_eq!(
+        user_message.images[0].image_url,
+        "data:image/png;base64,YWJj"
+    );
 }
 
 #[tokio::test]
@@ -1723,6 +1807,33 @@ async fn providers_list_separates_opencode_zen_and_go_models() {
         .expect("opencode-go provider should be listed");
     assert!(go.models.iter().any(|model| model.id == "kimi-k2.6"));
     assert!(!go.models.iter().any(|model| model.id == "big-pickle"));
+}
+
+#[tokio::test]
+async fn providers_list_exposes_poolside_api_key_models() {
+    let registry = build_default_registry(DefaultRegistryConfig {
+        poolside_api_key: Some("secret-poolside-key".to_string()),
+        ..DefaultRegistryConfig::default()
+    })
+    .unwrap();
+    let runtime = Arc::new(Runtime::new(registry, Default::default()).unwrap());
+    let server = Arc::new(AppServer::new(runtime));
+    let client = LocalAppClient::new(server);
+
+    let providers: ProvidersListResult = request(&client, "providers/list", None).await;
+    let poolside = providers
+        .providers
+        .iter()
+        .find(|provider| provider.id == PROVIDER_POOLSIDE)
+        .expect("poolside provider should be listed");
+    assert_eq!(poolside.auth_type, ProviderAuthType::ApiKey);
+    assert!(poolside.authenticated);
+    assert!(
+        poolside
+            .models
+            .iter()
+            .any(|model| model.id == "poolside/laguna-m.1")
+    );
 }
 
 #[tokio::test]
@@ -3757,6 +3868,7 @@ fn text_input(text: &str) -> Vec<TurnInputItem> {
         kind: "text".to_string(),
         text: Some(text.to_string()),
         path: None,
+        image_url: None,
     }]
 }
 
@@ -3801,6 +3913,16 @@ async fn wait_for_recorded_request(engine: &TaskCallingEngine) -> AgentInference
         tokio::time::sleep(Duration::from_millis(50)).await;
     }
     panic!("timed out waiting for recorded inference request");
+}
+
+async fn wait_for_image_recorded_request(engine: &ImageRecordingEngine) -> AgentInferenceRequest {
+    for _ in 0..20 {
+        if let Some(request) = engine.requests.lock().await.first().cloned() {
+            return request;
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    panic!("timed out waiting for recorded image inference request");
 }
 
 async fn wait_for_event(
