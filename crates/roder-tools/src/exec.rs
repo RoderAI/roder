@@ -173,6 +173,7 @@ impl ToolExecutor for ExecCommandTool {
             .insert(session_id, session.clone());
 
         sleep_for(args.yield_time_ms).await;
+        settle_completed_exit(&session).await;
         let completed = session.exit.lock().await.is_some();
         let snapshot = session
             .snapshot(
@@ -467,6 +468,15 @@ async fn sleep_for(yield_time_ms: Option<u64>) {
     let millis = yield_time_ms.unwrap_or(DEFAULT_YIELD_MS);
     if millis > 0 {
         tokio::time::sleep(Duration::from_millis(millis)).await;
+    }
+}
+
+async fn settle_completed_exit(session: &ExecSession) {
+    for _ in 0..10 {
+        if session.exit.lock().await.is_some() {
+            return;
+        }
+        tokio::time::sleep(Duration::from_millis(1)).await;
     }
 }
 
