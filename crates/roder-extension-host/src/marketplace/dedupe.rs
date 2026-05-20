@@ -55,6 +55,9 @@ fn variant_from_entry(entry: &MarketplacePluginEntry) -> MarketplacePluginVarian
         plugin_id: entry.plugin_id.clone(),
         kind: entry.kind.clone(),
         source: entry.source.clone(),
+        homepage: entry.homepage.clone(),
+        category: entry.category.clone(),
+        tags: entry.tags.clone(),
         component_hints: entry.component_hints.clone(),
         capability_hints: entry.capability_hints.clone(),
         version: entry.version.clone(),
@@ -119,9 +122,15 @@ mod tests {
         assert_eq!(grouped.len(), 1);
         assert_eq!(grouped[0].variants.len(), 3);
         assert_eq!(
+            grouped[0].variants[0].homepage.as_deref(),
+            Some("https://github.com/obra/superpowers")
+        );
+        assert_eq!(
             grouped[0].recommended_variant_key.as_deref(),
             Some("claude-plugins-official:superpowers")
         );
+        assert_eq!(grouped[0].variants[0].category.as_deref(), Some("workflow"));
+        assert_eq!(grouped[0].variants[0].tags, vec!["skills"]);
     }
 
     #[test]
@@ -198,8 +207,8 @@ mod tests {
             homepage: Some("https://github.com/obra/superpowers".to_string()),
             repository: Some("https://github.com/obra/superpowers".to_string()),
             author_name: Some("Jesse Vincent".to_string()),
-            category: None,
-            tags: Vec::new(),
+            category: Some("workflow".to_string()),
+            tags: vec!["skills".to_string()],
             component_hints: PluginComponentHints {
                 skills: true,
                 ..PluginComponentHints::default()

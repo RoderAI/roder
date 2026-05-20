@@ -336,4 +336,29 @@ mod tests {
         );
         validate_plugin_source(&source).unwrap();
     }
+
+    #[test]
+    fn github_catalog_source_normalizes_to_supported_git_source() {
+        let source = source_from_value(
+            "cursor-plugins",
+            Some(&serde_json::json!({
+                "source": "github",
+                "repo": "fullstorydev/fullstory-skills",
+                "commit": "1ec5865e7ab1449f9a0859d164c4b6a8c53b6e2f",
+                "sha": "1ec5865e7ab1449f9a0859d164c4b6a8c53b6e2f"
+            })),
+            Some("fullstory".to_string()),
+        );
+
+        assert_eq!(
+            source,
+            PluginSource::Git {
+                url: "https://github.com/fullstorydev/fullstory-skills.git".to_string(),
+                path: None,
+                ref_name: Some("1ec5865e7ab1449f9a0859d164c4b6a8c53b6e2f".to_string()),
+                sha: Some("1ec5865e7ab1449f9a0859d164c4b6a8c53b6e2f".to_string()),
+            }
+        );
+        validate_plugin_source(&source).expect("github catalog source should be supported");
+    }
 }

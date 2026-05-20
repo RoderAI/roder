@@ -141,6 +141,12 @@ impl AppServer {
                 )
                 .await
             }
+            "thread/archive" => {
+                self.decode_and(req.params, |p| async move {
+                    self.handle_thread_archive(p).await
+                })
+                .await
+            }
             "session/get" => self.handle_session_get().await,
             "session/set_mode" => {
                 self.decode_and(req.params, |p| async move {
@@ -1075,6 +1081,31 @@ impl AppServer {
                 })
         };
         Ok(serde_json::to_value(ThreadReadResult { thread }).unwrap())
+    }
+
+    async fn handle_thread_archive(
+        &self,
+        params: ThreadArchiveParams,
+    ) -> Result<serde_json::Value, JsonRpcError> {
+        let archived = self
+            .runtime
+            .archive_session(&params.thread_id)
+            .await
+            .map_err(internal_error)?;
+        self.desktop_threads.write().await.remove(&params.thread_id);
+        self.desktop_thread_models
+            .write()
+            .await
+            .remove(&params.thread_id);
+        self.desktop_active_turns
+            .write()
+            .await
+            .remove(&params.thread_id);
+        Ok(serde_json::to_value(ThreadArchiveResult {
+            thread_id: params.thread_id,
+            archived,
+        })
+        .unwrap())
     }
 
     async fn handle_session_get(&self) -> Result<serde_json::Value, JsonRpcError> {

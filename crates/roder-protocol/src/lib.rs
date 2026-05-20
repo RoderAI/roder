@@ -193,6 +193,19 @@ pub struct ThreadReadResult {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct ThreadArchiveParams {
+    pub thread_id: ThreadId,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ThreadArchiveResult {
+    pub thread_id: ThreadId,
+    pub archived: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct TurnInputItem {
     #[serde(rename = "type")]
     pub kind: String,
