@@ -60,6 +60,7 @@ pub struct RemoteAuth {
     enabled: bool,
     token_hash: Vec<u8>,
     token_preview: String,
+    expires_at: Option<OffsetDateTime>,
 }
 
 impl RemoteAuth {
@@ -68,14 +69,20 @@ impl RemoteAuth {
             enabled: false,
             token_hash: Vec::new(),
             token_preview: String::new(),
+            expires_at: None,
         }
     }
 
     pub fn enabled(token: &RemoteToken) -> Self {
+        Self::enabled_until(token, None)
+    }
+
+    pub fn enabled_until(token: &RemoteToken, expires_at: Option<OffsetDateTime>) -> Self {
         Self {
             enabled: true,
             token_hash: token.hash.clone(),
             token_preview: token.preview.clone(),
+            expires_at,
         }
     }
 
@@ -84,8 +91,15 @@ impl RemoteAuth {
     }
 
     pub fn verify_request(&self, request: &Request) -> bool {
+        self.verify_request_at(request, OffsetDateTime::now_utc())
+    }
+
+    pub fn verify_request_at(&self, request: &Request, now: OffsetDateTime) -> bool {
         if !self.enabled {
             return true;
+        }
+        if self.expires_at.is_some_and(|expires_at| now >= expires_at) {
+            return false;
         }
         let Some(token) = bearer_from_headers(request) else {
             return false;
@@ -99,6 +113,7 @@ impl RemoteAuth {
 pub struct RemoteServerOptions {
     pub listen: String,
     pub token: RemoteToken,
+    pub token_ttl: Option<time::Duration>,
     pub print_qr: bool,
     pub workspace: Option<String>,
 }
@@ -172,7 +187,10 @@ pub async fn listen_remote_websocket(
             token_preview: handle.token_preview.clone(),
             timestamp: OffsetDateTime::now_utc(),
         }));
-    let auth = Arc::new(RemoteAuth::enabled(&options.token));
+    let auth = Arc::new(RemoteAuth::enabled_until(
+        &options.token,
+        options.token_ttl.map(|ttl| OffsetDateTime::now_utc() + ttl),
+    ));
     tokio::spawn(async move {
         loop {
             let Ok((stream, peer_addr)) = listener.accept().await else {
@@ -431,6 +449,27 @@ mod tests {
             .unwrap();
         assert!(auth.verify_request(&request));
         assert!(request_supports_remote_protocol(&request));
+    }
+
+    #[test]
+    fn remote_auth_rejects_expired_token_with_fake_clock() {
+        let token = RemoteToken::new("secret-token".to_string()).unwrap();
+        let expires_at = OffsetDateTime::UNIX_EPOCH + time::Duration::seconds(60);
+        let auth = RemoteAuth::enabled_until(&token, Some(expires_at));
+        let request = Request::builder()
+            .uri("ws://127.0.0.1")
+            .header("Authorization", "Bearer secret-token")
+            .body(())
+            .unwrap();
+
+        assert!(auth.verify_request_at(
+            &request,
+            OffsetDateTime::UNIX_EPOCH + time::Duration::seconds(59)
+        ));
+        assert!(!auth.verify_request_at(
+            &request,
+            OffsetDateTime::UNIX_EPOCH + time::Duration::seconds(60)
+        ));
     }
 
     #[test]
