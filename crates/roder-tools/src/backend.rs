@@ -1,11 +1,16 @@
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
+#[cfg(test)]
+use regex::RegexBuilder;
 #[cfg(test)]
 use roder_api::remote_runner::{
     RemoteRunnerSession, RunnerCommandRequest, RunnerFileReadRequest, RunnerFileWriteRequest,
 };
 use roder_api::tools::ToolExecutionContext;
+#[cfg(test)]
+use roder_search::{INDEX_VERSION, SearchEngine};
+use roder_search::{SearchMetadata, SearchOptions};
 
 use crate::workspace::Workspace;
 
@@ -44,16 +49,20 @@ pub(crate) trait WorkspaceBackend: Send + Sync + 'static {
         edits: Vec<TextEdit>,
     ) -> anyhow::Result<Result<EditOutcome, usize>>;
 
-    async fn grep_literal(&self, query: &str, path: &str) -> anyhow::Result<(String, Vec<String>)>;
+    async fn grep_search(
+        &self,
+        options: SearchOptions,
+    ) -> anyhow::Result<(String, Vec<String>, SearchMetadata)>;
 
     async fn glob(&self, pattern: &str) -> anyhow::Result<Vec<String>>;
 
     async fn apply_patch(&self, patch: &str) -> anyhow::Result<String>;
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub(crate) struct LocalWorkspaceBackend {
     workspace: Workspace,
+    searcher: Mutex<roder_search::WorkspaceSearcher>,
 }
 
 #[cfg(test)]
@@ -71,7 +80,19 @@ impl RunnerWorkspaceBackend {
 
 impl LocalWorkspaceBackend {
     pub(crate) fn new(workspace: Workspace) -> Self {
-        Self { workspace }
+        let searcher = Mutex::new(roder_search::WorkspaceSearcher::new(workspace.root()));
+        Self {
+            workspace,
+            searcher,
+        }
+    }
+
+    fn invalidate_search_index(&self) -> anyhow::Result<()> {
+        self.searcher
+            .lock()
+            .map_err(|_| anyhow::anyhow!("search index lock is poisoned"))?
+            .invalidate();
+        Ok(())
     }
 }
 
@@ -122,6 +143,7 @@ impl WorkspaceBackend for LocalWorkspaceBackend {
             std::fs::create_dir_all(parent)?;
         }
         std::fs::write(&path, content)?;
+        self.invalidate_search_index()?;
         Ok(self.workspace.display(&path))
     }
 
@@ -139,6 +161,7 @@ impl WorkspaceBackend for LocalWorkspaceBackend {
         let mut updated = text;
         updated.replace_range(index..index + old_string.len(), new_string);
         std::fs::write(&path, updated)?;
+        self.invalidate_search_index()?;
         Ok(Some(EditOutcome {
             path: self.workspace.display(&path),
             replacements: 1,
@@ -159,32 +182,29 @@ impl WorkspaceBackend for LocalWorkspaceBackend {
             text.replace_range(position..position + edit.old_string.len(), &edit.new_string);
         }
         std::fs::write(&path, text)?;
+        self.invalidate_search_index()?;
         Ok(Ok(EditOutcome {
             path: self.workspace.display(&path),
             replacements: edits.len(),
         }))
     }
 
-    async fn grep_literal(&self, query: &str, path: &str) -> anyhow::Result<(String, Vec<String>)> {
-        let start = self.workspace.resolve_existing(path)?;
-        let mut matches = Vec::new();
-        crate::search::visit_files(&start, &mut |path| {
-            let Ok(text) = std::fs::read_to_string(path) else {
-                return Ok(());
-            };
-            for (line_index, line) in text.lines().enumerate() {
-                if line.contains(query) {
-                    matches.push(format!(
-                        "{}:{}:{}",
-                        self.workspace.display(path),
-                        line_index + 1,
-                        line
-                    ));
-                }
-            }
-            Ok(())
-        })?;
-        Ok((self.workspace.display(&start), matches))
+    async fn grep_search(
+        &self,
+        options: SearchOptions,
+    ) -> anyhow::Result<(String, Vec<String>, SearchMetadata)> {
+        let input_path = options.path.to_string_lossy().to_string();
+        let start = self.workspace.resolve_existing(&input_path)?;
+        let mut searcher = self
+            .searcher
+            .lock()
+            .map_err(|_| anyhow::anyhow!("search index lock is poisoned"))?;
+        let output = searcher.search(&options)?;
+        Ok((
+            self.workspace.display(&start),
+            output.lines,
+            output.metadata,
+        ))
     }
 
     async fn glob(&self, pattern: &str) -> anyhow::Result<Vec<String>> {
@@ -201,7 +221,9 @@ impl WorkspaceBackend for LocalWorkspaceBackend {
     }
 
     async fn apply_patch(&self, patch: &str) -> anyhow::Result<String> {
-        crate::patch::apply_patch_to_workspace(&self.workspace, patch).await
+        let result = crate::patch::apply_patch_to_workspace(&self.workspace, patch).await?;
+        self.invalidate_search_index()?;
+        Ok(result)
     }
 }
 
@@ -293,11 +315,30 @@ impl WorkspaceBackend for RunnerWorkspaceBackend {
         }))
     }
 
-    async fn grep_literal(&self, query: &str, path: &str) -> anyhow::Result<(String, Vec<String>)> {
-        let start = self.guard.resolve_existing(path)?;
+    async fn grep_search(
+        &self,
+        options: SearchOptions,
+    ) -> anyhow::Result<(String, Vec<String>, SearchMetadata)> {
+        let started_at = std::time::Instant::now();
+        let input_path = options.path.to_string_lossy().to_string();
+        let start = self.guard.resolve_existing(&input_path)?;
         let start = self.guard.display(&start);
         let files = self.glob("*").await?;
         let mut matches = Vec::new();
+        let mut verified_files = 0;
+        let pattern = if options.regex {
+            options.query.clone()
+        } else {
+            regex::escape(&options.query)
+        };
+        let pattern = if options.word_boundary {
+            format!(r"\b(?:{})\b", pattern)
+        } else {
+            pattern
+        };
+        let matcher = RegexBuilder::new(&pattern)
+            .case_insensitive(!options.case_sensitive)
+            .build()?;
         for file in files.into_iter().filter(|file| {
             start.is_empty()
                 || start == "."
@@ -309,13 +350,24 @@ impl WorkspaceBackend for RunnerWorkspaceBackend {
             let Ok((_, text)) = self.read_text(&file).await else {
                 continue;
             };
+            verified_files += 1;
             for (line_index, line) in text.lines().enumerate() {
-                if line.contains(query) {
+                if matcher.is_match(line) {
                     matches.push(format!("{file}:{}:{line}", line_index + 1));
                 }
             }
         }
-        Ok((start, matches))
+        let metadata = SearchMetadata {
+            engine: SearchEngine::Fallback,
+            candidate_files: verified_files,
+            verified_files,
+            stale: false,
+            elapsed_ms: started_at.elapsed().as_millis(),
+            index_version: INDEX_VERSION.to_string(),
+            index_bytes: None,
+            index_build_time_ms: None,
+        };
+        Ok((start, matches, metadata))
     }
 
     async fn glob(&self, pattern: &str) -> anyhow::Result<Vec<String>> {

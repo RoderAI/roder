@@ -828,6 +828,11 @@ pub struct WebSearchSettings {
     pub mode: HostedWebSearchMode,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct SearchIndexSettings {
+    pub enabled: bool,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ExtensionsListResult {
     pub extensions: Vec<ExtensionManifest>,
@@ -1349,6 +1354,7 @@ pub struct ProviderSelectResult {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SettingsGetResult {
     pub web_search: WebSearchSettings,
+    pub search_index: SearchIndexSettings,
     pub default_mode: PolicyMode,
 }
 
@@ -1360,6 +1366,16 @@ pub struct SettingsSetWebSearchParams {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SettingsSetWebSearchResult {
     pub web_search: WebSearchSettings,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SettingsSetSearchIndexParams {
+    pub enabled: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SettingsSetSearchIndexResult {
+    pub search_index: SearchIndexSettings,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

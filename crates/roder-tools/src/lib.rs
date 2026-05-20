@@ -354,6 +354,97 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn builtin_grep_supports_regex_modes_and_metadata() {
+        let root = test_workspace("grep-search-index");
+        std::fs::create_dir_all(root.join("src")).unwrap();
+        std::fs::write(root.join("src/a.rs"), "ErrorKind\nterror\nerror\n").unwrap();
+        std::fs::write(root.join("src/b.rs"), "nothing\n").unwrap();
+        let mut registry = ToolRegistry::default();
+        BuiltinCodingToolsContributor::new(root.clone())
+            .unwrap()
+            .contribute(&mut registry)
+            .unwrap();
+
+        let grep = run_tool(
+            &registry,
+            &root,
+            "grep",
+            json!({
+                "query": "error",
+                "path": "src",
+                "regex": true,
+                "case_sensitive": false,
+                "word_boundary": true,
+                "mode": "auto"
+            }),
+        )
+        .await;
+
+        assert!(grep.text.contains("src/a.rs:3:error"));
+        assert!(!grep.text.contains("terror"));
+        assert_eq!(grep.data["engine"], "indexed");
+        assert_eq!(grep.data["candidate_files"], 1);
+        assert_eq!(grep.data["verified_files"], 1);
+        assert_eq!(grep.data["stale"], false);
+        assert_eq!(grep.data["index_version"], "roder-search-v1");
+
+        let scan = run_tool(
+            &registry,
+            &root,
+            "grep",
+            json!({ "query": "nothing", "path": "src", "mode": "scan" }),
+        )
+        .await;
+        assert!(scan.text.contains("src/b.rs:1:nothing"));
+        assert_eq!(scan.data["engine"], "scan");
+
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[tokio::test]
+    async fn builtin_grep_refreshes_index_after_workspace_writes() {
+        let root = test_workspace("grep-search-refresh");
+        std::fs::create_dir_all(root.join("src")).unwrap();
+        std::fs::write(root.join("src/a.rs"), "needle a\n").unwrap();
+        let mut registry = ToolRegistry::default();
+        BuiltinCodingToolsContributor::new(root.clone())
+            .unwrap()
+            .contribute(&mut registry)
+            .unwrap();
+
+        let first = run_tool(
+            &registry,
+            &root,
+            "grep",
+            json!({ "query": "needle", "mode": "indexed" }),
+        )
+        .await;
+        assert_eq!(first.data["engine"], "indexed");
+        assert!(first.text.contains("src/a.rs:1:needle a"));
+
+        let write = run_tool(
+            &registry,
+            &root,
+            "write_file",
+            json!({ "path": "src/b.rs", "content": "needle b\n" }),
+        )
+        .await;
+        assert_eq!(write.text, "wrote src/b.rs");
+
+        let second = run_tool(
+            &registry,
+            &root,
+            "grep",
+            json!({ "query": "needle", "mode": "indexed" }),
+        )
+        .await;
+        assert!(second.text.contains("src/a.rs:1:needle a"));
+        assert!(second.text.contains("src/b.rs:1:needle b"));
+
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[tokio::test]
     async fn builtin_coding_tools_allow_paths_outside_workspace_by_default() {
         let root = test_workspace("path-global-root");
         let outside = test_workspace("path-global-outside");
@@ -389,6 +480,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[allow(clippy::await_holding_lock)]
     async fn builtin_coding_tools_list_files_expands_home_directory() {
         let _guard = env_lock().lock().unwrap();
         let previous_home = std::env::var_os("HOME");
