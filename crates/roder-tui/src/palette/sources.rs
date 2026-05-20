@@ -3,7 +3,7 @@ use roder_api::marketplace::MarketplaceDescriptor;
 use roder_api::policy_mode::PolicyMode;
 use roder_protocol::{
     AgentDescriptor, CommandDescriptor, DesktopThread, ProvidersListResult, RunnersListResult,
-    WebSearchSettings,
+    SearchIndexSettings, WebSearchSettings,
 };
 
 use super::{PaletteAction, PaletteItem, StaticPaletteSource};
@@ -691,51 +691,93 @@ fn swatch_hint(color: ratatui::style::Color) -> String {
     }
 }
 
-pub fn settings_source(web_search: &WebSearchSettings) -> StaticPaletteSource {
+pub fn settings_source(
+    web_search: &WebSearchSettings,
+    search_index: &SearchIndexSettings,
+) -> StaticPaletteSource {
+    let search_index_items = [
+        (
+            true,
+            "Instant regex search: Enabled",
+            "Use the local fastregex index for grep when it can narrow candidates",
+        ),
+        (
+            false,
+            "Instant regex search: Disabled",
+            "Always scan files directly for grep",
+        ),
+    ];
+    let web_search_items = [
+        (
+            HostedWebSearchMode::Cached,
+            "Web search provider: Codex cached",
+            "Use Codex/OpenAI hosted web search over cached content",
+        ),
+        (
+            HostedWebSearchMode::Live,
+            "Web search provider: Codex live",
+            "Use Codex/OpenAI hosted web search with live internet access",
+        ),
+        (
+            HostedWebSearchMode::Disabled,
+            "Web search provider: Disabled",
+            "Do not send the hosted web_search tool to the provider",
+        ),
+    ];
     StaticPaletteSource::new(
         "settings",
         "Settings",
-        [
-            (
-                HostedWebSearchMode::Cached,
-                "Web search provider: Codex cached",
-                "Use Codex/OpenAI hosted web search over cached content",
-            ),
-            (
-                HostedWebSearchMode::Live,
-                "Web search provider: Codex live",
-                "Use Codex/OpenAI hosted web search with live internet access",
-            ),
-            (
-                HostedWebSearchMode::Disabled,
-                "Web search provider: Disabled",
-                "Do not send the hosted web_search tool to the provider",
-            ),
-        ]
-        .into_iter()
-        .map(|(mode, title, subtitle)| {
-            let active_suffix = if mode == web_search.mode {
-                " (active)"
-            } else {
-                ""
-            };
-            (
-                PaletteItem {
-                    id: format!("web_search:{}", web_search_mode_id(mode)),
-                    title: format!("{title}{active_suffix}"),
-                    subtitle: Some(subtitle.to_string()),
-                    keywords: vec![
-                        "web".to_string(),
-                        "search".to_string(),
-                        "provider".to_string(),
-                        web_search_mode_id(mode).to_string(),
-                    ],
-                    icon: Some('~'),
-                },
-                PaletteAction::SetWebSearchMode(mode),
-            )
-        })
-        .collect(),
+        search_index_items
+            .into_iter()
+            .map(|(enabled, title, subtitle)| {
+                let active_suffix = if enabled == search_index.enabled {
+                    " (active)"
+                } else {
+                    ""
+                };
+                (
+                    PaletteItem {
+                        id: format!(
+                            "search_index:{}",
+                            if enabled { "enabled" } else { "disabled" }
+                        ),
+                        title: format!("{title}{active_suffix}"),
+                        subtitle: Some(subtitle.to_string()),
+                        keywords: vec![
+                            "instant".to_string(),
+                            "regex".to_string(),
+                            "search".to_string(),
+                            "grep".to_string(),
+                            "index".to_string(),
+                        ],
+                        icon: Some('I'),
+                    },
+                    PaletteAction::SetSearchIndexEnabled(enabled),
+                )
+            })
+            .chain(web_search_items.into_iter().map(|(mode, title, subtitle)| {
+                let active_suffix = if mode == web_search.mode {
+                    " (active)"
+                } else {
+                    ""
+                };
+                (
+                    PaletteItem {
+                        id: format!("web_search:{}", web_search_mode_id(mode)),
+                        title: format!("{title}{active_suffix}"),
+                        subtitle: Some(subtitle.to_string()),
+                        keywords: vec![
+                            "web".to_string(),
+                            "search".to_string(),
+                            "provider".to_string(),
+                            web_search_mode_id(mode).to_string(),
+                        ],
+                        icon: Some('~'),
+                    },
+                    PaletteAction::SetWebSearchMode(mode),
+                )
+            }))
+            .collect(),
     )
 }
 
@@ -914,15 +956,23 @@ mod tests {
     }
 
     #[test]
-    fn settings_source_maps_web_search_modes_to_actions() {
-        let source = settings_source(&WebSearchSettings {
-            mode: HostedWebSearchMode::Cached,
-        });
+    fn settings_source_maps_search_index_and_web_search_modes_to_actions() {
+        let source = settings_source(
+            &WebSearchSettings {
+                mode: HostedWebSearchMode::Cached,
+            },
+            &SearchIndexSettings { enabled: true },
+        );
         let entries = source.entries();
 
         assert!(entries[0].item.title.contains("(active)"));
         assert_eq!(
             entries[1].action,
+            PaletteAction::SetSearchIndexEnabled(false)
+        );
+        assert!(entries[2].item.title.contains("(active)"));
+        assert_eq!(
+            entries[3].action,
             PaletteAction::SetWebSearchMode(HostedWebSearchMode::Live)
         );
     }

@@ -3,8 +3,9 @@ use std::sync::Arc;
 use roder_api::tools::{
     ToolCall, ToolExecutionContext, ToolExecutor, ToolRegistry, ToolResult, ToolSpec,
 };
+use roder_search::{DEFAULT_MAX_FILE_SIZE, SearchMode, SearchOptions};
 use serde::Deserialize;
-use serde_json::json;
+use serde_json::{Value, json};
 
 use crate::backend::{WorkspaceBackendHandle, backend_from_context_or_fallback};
 use crate::files::{parse, require_nonempty, result};
@@ -33,13 +34,34 @@ impl ToolExecutor for GrepTool {
     fn spec(&self) -> ToolSpec {
         ToolSpec {
             name: "grep".to_string(),
-            description: "Search text files for a literal query with paginated output. Relative paths resolve from the workspace root."
+            description: "Search text files for a literal or regex query with paginated output. Relative paths resolve from the workspace root."
                 .to_string(),
             parameters: json!({
                 "type": "object",
                 "properties": {
                     "query": { "type": "string" },
                     "path": { "type": "string", "default": "." },
+                    "regex": {
+                        "type": "boolean",
+                        "default": false,
+                        "description": "Treat query as a regular expression instead of a literal string."
+                    },
+                    "case_sensitive": {
+                        "type": "boolean",
+                        "default": true,
+                        "description": "Match case exactly when true."
+                    },
+                    "word_boundary": {
+                        "type": "boolean",
+                        "default": false,
+                        "description": "Require word boundaries around the query."
+                    },
+                    "mode": {
+                        "type": "string",
+                        "enum": ["auto", "indexed", "scan"],
+                        "default": "auto",
+                        "description": "Search engine preference. Auto uses the index when it can narrow candidates."
+                    },
                     "offset": {
                         "type": "integer",
                         "minimum": 0,
@@ -68,14 +90,14 @@ impl ToolExecutor for GrepTool {
         ctx.require_workspace()?;
         let args = parse::<GrepArgs>(&call)?;
         require_nonempty(&args.query, "query")?;
-        let backend = backend_from_context_or_fallback(&ctx, &self.workspace, &self.backend)?;
-        let (start, matches) = backend
-            .grep_literal(&args.query, args.path.as_deref().unwrap_or("."))
-            .await?;
         let offset = args.offset.unwrap_or_default();
         let limit = clamp_limit(args.limit);
+        let backend = backend_from_context_or_fallback(&ctx, &self.workspace, &self.backend)?;
+        let options = args.into_search_options()?;
+        let (start, matches, metadata) = backend.grep_search(options).await?;
         let page = page_lines(&matches, offset, limit);
-        let data = page_metadata(start, offset, limit, &page);
+        let mut data = page_metadata(start, offset, limit, &page);
+        merge_search_metadata(&mut data, &metadata);
         Ok(result(call, page.text, data, false))
     }
 }
@@ -139,8 +161,32 @@ impl ToolExecutor for GlobTool {
 struct GrepArgs {
     query: String,
     path: Option<String>,
+    regex: Option<bool>,
+    case_sensitive: Option<bool>,
+    word_boundary: Option<bool>,
+    mode: Option<String>,
     offset: Option<usize>,
     limit: Option<usize>,
+}
+
+impl GrepArgs {
+    fn into_search_options(self) -> anyhow::Result<SearchOptions> {
+        let mode = match self.mode.as_deref().unwrap_or("auto") {
+            "auto" => SearchMode::Auto,
+            "indexed" => SearchMode::Indexed,
+            "scan" => SearchMode::Scan,
+            other => anyhow::bail!("unsupported grep mode: {other}"),
+        };
+        Ok(SearchOptions {
+            query: self.query,
+            path: self.path.unwrap_or_else(|| ".".to_string()).into(),
+            mode,
+            regex: self.regex.unwrap_or(false),
+            case_sensitive: self.case_sensitive.unwrap_or(true),
+            word_boundary: self.word_boundary.unwrap_or(false),
+            max_file_size: DEFAULT_MAX_FILE_SIZE,
+        })
+    }
 }
 
 #[derive(Deserialize)]
@@ -172,6 +218,26 @@ pub(crate) fn visit_files(
         }
     }
     Ok(())
+}
+
+fn merge_search_metadata(data: &mut Value, metadata: &roder_search::SearchMetadata) {
+    let Some(object) = data.as_object_mut() else {
+        return;
+    };
+    object.insert("engine".to_string(), json!(metadata.engine.as_str()));
+    object.insert("index_version".to_string(), json!(metadata.index_version));
+    object.insert(
+        "candidate_files".to_string(),
+        json!(metadata.candidate_files),
+    );
+    object.insert("verified_files".to_string(), json!(metadata.verified_files));
+    object.insert("stale".to_string(), json!(metadata.stale));
+    object.insert("elapsed_ms".to_string(), json!(metadata.elapsed_ms));
+    object.insert("index_bytes".to_string(), json!(metadata.index_bytes));
+    object.insert(
+        "index_build_time_ms".to_string(),
+        json!(metadata.index_build_time_ms),
+    );
 }
 
 pub(crate) fn wildcard_match(pattern: &str, text: &str) -> bool {

@@ -108,6 +108,12 @@ impl AppServer {
                 })
                 .await
             }
+            "settings/set_search_index" => {
+                self.decode_and(req.params, |p| async move {
+                    self.handle_settings_set_search_index(p).await
+                })
+                .await
+            }
             "settings/set_default_mode" => {
                 self.decode_and(req.params, |p| async move {
                     self.handle_settings_set_default_mode(p).await
@@ -857,6 +863,9 @@ impl AppServer {
             web_search: WebSearchSettings {
                 mode: cfg.hosted_web_search.mode,
             },
+            search_index: SearchIndexSettings {
+                enabled: roder_search::search_index_enabled(),
+            },
             default_mode: cfg.policy_mode,
         })
         .unwrap())
@@ -880,6 +889,22 @@ impl AppServer {
         Ok(serde_json::to_value(SettingsSetWebSearchResult {
             web_search: WebSearchSettings {
                 mode: cfg.hosted_web_search.mode,
+            },
+        })
+        .unwrap())
+    }
+
+    async fn handle_settings_set_search_index(
+        &self,
+        params: SettingsSetSearchIndexParams,
+    ) -> Result<serde_json::Value, JsonRpcError> {
+        roder_search::set_search_index_enabled(params.enabled);
+        if self.persist_user_config {
+            roder_config::save_search_index_enabled(params.enabled).map_err(internal_error)?;
+        }
+        Ok(serde_json::to_value(SettingsSetSearchIndexResult {
+            search_index: SearchIndexSettings {
+                enabled: params.enabled,
             },
         })
         .unwrap())

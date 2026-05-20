@@ -17,6 +17,7 @@ roder-config.workspace = true
 roder-core.workspace = true
 roder-extension-host.workspace = true
 roder-protocol.workspace = true
+roder-search.workspace = true
 roder-supergrok-auth.workspace = true
 roder-tasks.workspace = true
 serde = { workspace = true, features = ["derive"] }

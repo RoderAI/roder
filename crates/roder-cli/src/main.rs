@@ -680,6 +680,12 @@ pub(crate) async fn build_runtime_from_config(
     let notifications = resolve_notifications_config(cfg.notifications.as_ref())?;
     let remote_runner_destination = resolve_remote_runner_destination(cfg.remote_runners.as_ref())?;
     let tool_path_scope = resolve_tool_path_scope(cfg.tools.as_ref())?;
+    let search_index_enabled = cfg
+        .search_index
+        .as_ref()
+        .map(|search_index| search_index.enabled)
+        .unwrap_or(true);
+    roder_search::set_search_index_enabled(search_index_enabled);
     if policy_mode == PolicyMode::Bypass
         && cfg
             .policy_modes

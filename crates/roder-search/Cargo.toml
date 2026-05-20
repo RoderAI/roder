@@ -1,0 +1,12 @@
+[package]
+name = "roder-search"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+regex = "1"
+
+[[bench]]
+name = "search"
+path = "../../benches/search/search.rs"
+harness = false

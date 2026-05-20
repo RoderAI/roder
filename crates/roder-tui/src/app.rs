@@ -70,10 +70,10 @@ use roder_protocol::{
     RunnersSelectParams, RunnersSelectResult, SessionExitPlanParams, SessionExitPlanResult,
     SessionGetResult, SessionResolveApprovalParams, SessionResolveApprovalResult,
     SessionSetModeParams, SessionSetModeResult, SettingsGetResult, SettingsSetDefaultModeParams,
-    SettingsSetDefaultModeResult, SettingsSetWebSearchParams, SettingsSetWebSearchResult,
-    TasksGetParams, TasksGetResult, TasksListResult, TeamReadParams, TeamReadResult,
-    ThreadStartParams, ThreadStartResult, TurnInputItem, TurnInterruptParams, TurnStartParams,
-    TurnSteerParams,
+    SettingsSetDefaultModeResult, SettingsSetSearchIndexParams, SettingsSetSearchIndexResult,
+    SettingsSetWebSearchParams, SettingsSetWebSearchResult, TasksGetParams, TasksGetResult,
+    TasksListResult, TeamReadParams, TeamReadResult, ThreadStartParams, ThreadStartResult,
+    TurnInputItem, TurnInterruptParams, TurnStartParams, TurnSteerParams,
 };
 use tokio::io::AsyncWriteExt;
 use tokio::process::Command;
@@ -749,6 +749,7 @@ enum ProviderMenuItem {
     RunnerSettings,
     SpinnerSettings,
     WebSearchSettings,
+    SearchIndexToggle(bool),
     MessageFoldingToggle(bool),
     ThemesSettings,
     MarketplacesSettings,
@@ -815,6 +816,10 @@ impl ProviderMenuItem {
             Self::RunnerSettings => "Runners".to_string(),
             Self::SpinnerSettings => "Working spinner".to_string(),
             Self::WebSearchSettings => "Web search provider".to_string(),
+            Self::SearchIndexToggle(enabled) => format!(
+                "Instant regex search: {}",
+                if *enabled { "on" } else { "off" }
+            ),
             Self::MessageFoldingToggle(enabled) => format!(
                 "Fold long messages: {}",
                 if *enabled { "on" } else { "off" }
@@ -938,6 +943,7 @@ pub struct TuiApp {
     scroll_settings: ScrollSettings,
     timeline_settings: TimelineSettings,
     web_search_mode: HostedWebSearchMode,
+    search_index_enabled: bool,
     confirm_dialog: Option<ConfirmDialogState>,
     tool_detail_modal: Option<ToolDetailModal>,
     plugin_browser: Option<PluginBrowserState>,
@@ -1246,8 +1252,12 @@ impl TuiApp {
             scroll_settings,
             timeline_settings,
             web_search_mode: settings_state
+                .as_ref()
                 .map(|settings| settings.web_search.mode)
                 .unwrap_or(HostedWebSearchMode::Cached),
+            search_index_enabled: settings_state
+                .map(|settings| settings.search_index.enabled)
+                .unwrap_or(true),
             confirm_dialog: None,
             tool_detail_modal: None,
             plugin_browser: None,
@@ -3444,6 +3454,47 @@ impl TuiApp {
         }
     }
 
+    async fn set_search_index_enabled(&mut self, enabled: bool) {
+        let res = self
+            .client
+            .send_request(JsonRpcRequest {
+                jsonrpc: "2.0".to_string(),
+                id: Some(serde_json::json!("settings/set_search_index")),
+                method: "settings/set_search_index".to_string(),
+                params: Some(
+                    serde_json::to_value(SettingsSetSearchIndexParams { enabled }).unwrap(),
+                ),
+            })
+            .await;
+
+        match decode_response::<SettingsSetSearchIndexResult>(res) {
+            Ok(result) => {
+                self.search_index_enabled = result.search_index.enabled;
+                self.provider_menu_items =
+                    settings_menu_items(self.timeline_settings, self.search_index_enabled);
+                self.timeline.push_system(format!(
+                    "instant regex search {}.",
+                    if self.search_index_enabled {
+                        "enabled"
+                    } else {
+                        "disabled"
+                    }
+                ));
+                self.push_event(format!(
+                    "instant regex search: {}",
+                    if self.search_index_enabled {
+                        "enabled"
+                    } else {
+                        "disabled"
+                    }
+                ));
+            }
+            Err(err) => {
+                self.record_error(format!("failed to set instant regex search: {err}"));
+            }
+        }
+    }
+
     async fn set_default_mode(&mut self, mode: PolicyMode) {
         let res = self
             .client
@@ -3649,6 +3700,9 @@ impl TuiApp {
             ProviderMenuItem::WebSearchMode(mode) => {
                 self.set_web_search_mode(mode).await;
             }
+            ProviderMenuItem::SearchIndexToggle(enabled) => {
+                self.set_search_index_enabled(!enabled).await;
+            }
             ProviderMenuItem::MessageFoldingToggle(enabled) => {
                 self.set_timeline_message_folding(!enabled);
             }
@@ -3726,7 +3780,8 @@ impl TuiApp {
     fn open_settings_submenu(&mut self) {
         self.provider_popup_screen = ProviderPopupScreen::Settings;
         self.provider_menu_filter.clear();
-        self.provider_menu_items = settings_menu_items(self.timeline_settings);
+        self.provider_menu_items =
+            settings_menu_items(self.timeline_settings, self.search_index_enabled);
         let selected = self
             .provider_menu_items
             .iter()
@@ -3987,7 +4042,8 @@ impl TuiApp {
         for timeline in self.team_timelines.values_mut() {
             timeline.set_settings(self.timeline_settings);
         }
-        self.provider_menu_items = settings_menu_items(self.timeline_settings);
+        self.provider_menu_items =
+            settings_menu_items(self.timeline_settings, self.search_index_enabled);
         if let Some(selected) = self.provider_state.selected() {
             self.provider_state.select(Some(
                 selected.min(self.provider_menu_items.len().saturating_sub(1)),
@@ -5376,7 +5432,10 @@ fn providers_menu_items(providers: &[ProviderChoice]) -> Vec<ProviderMenuItem> {
         .collect()
 }
 
-fn settings_menu_items(timeline_settings: TimelineSettings) -> Vec<ProviderMenuItem> {
+fn settings_menu_items(
+    timeline_settings: TimelineSettings,
+    search_index_enabled: bool,
+) -> Vec<ProviderMenuItem> {
     [
         PolicyMode::Default,
         PolicyMode::AcceptAll,
@@ -5386,6 +5445,7 @@ fn settings_menu_items(timeline_settings: TimelineSettings) -> Vec<ProviderMenuI
     .into_iter()
     .map(ProviderMenuItem::DefaultMode)
     .chain([
+        ProviderMenuItem::SearchIndexToggle(search_index_enabled),
         ProviderMenuItem::MessageFoldingToggle(timeline_settings.message_folding),
         ProviderMenuItem::Back,
     ])
@@ -5991,6 +6051,7 @@ mod tests {
             scroll_settings: ScrollSettings::default(),
             timeline_settings: TimelineSettings::default(),
             web_search_mode: HostedWebSearchMode::Cached,
+            search_index_enabled: true,
             confirm_dialog: None,
             tool_detail_modal: None,
             plugin_browser: None,
@@ -7180,18 +7241,26 @@ mod tests {
             ProviderMenuItem::MessageFoldingToggle(false).label(),
             "Fold long messages: off"
         );
+        assert_eq!(
+            ProviderMenuItem::SearchIndexToggle(true).label(),
+            "Instant regex search: on"
+        );
         assert_eq!(settings_policy_mode_label(PolicyMode::Default), "Default");
     }
 
     #[test]
-    fn settings_menu_includes_message_folding_toggle_before_back() {
-        let items = settings_menu_items(TimelineSettings::default());
+    fn settings_menu_includes_search_index_and_message_folding_toggles_before_back() {
+        let items = settings_menu_items(TimelineSettings::default(), true);
 
         assert!(matches!(
             items.get(4),
+            Some(ProviderMenuItem::SearchIndexToggle(true))
+        ));
+        assert!(matches!(
+            items.get(5),
             Some(ProviderMenuItem::MessageFoldingToggle(false))
         ));
-        assert!(matches!(items.get(5), Some(ProviderMenuItem::Back)));
+        assert!(matches!(items.get(6), Some(ProviderMenuItem::Back)));
     }
 
     #[test]

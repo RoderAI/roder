@@ -56,13 +56,14 @@ use roder_protocol::{
     SessionExitPlanParams, SessionExitPlanResult, SessionGetResult, SessionResolveApprovalParams,
     SessionResolveApprovalResult, SessionResolveUserInputParams, SessionResolveUserInputResult,
     SessionSetModeParams, SessionSetModeResult, SettingsGetResult, SettingsSetDefaultModeParams,
-    SettingsSetDefaultModeResult, SettingsSetWebSearchParams, SettingsSetWebSearchResult,
-    SubagentTraceReadParams, SubagentTraceReadResult, SubagentTracesListParams,
-    SubagentTracesListResult, TasksGetParams, TasksGetResult, TasksListResult, TasksSubmitParams,
-    TasksSubmitResult, TeamCleanupParams, TeamCleanupResult, TeamListParams, TeamListResult,
-    TeamMemberInterruptParams, TeamMemberInterruptResult, TeamMemberMessageParams,
-    TeamMemberMessageResult, TeamMemberStartParams, TeamMemberStartResult, TeamReadParams,
-    TeamReadResult, TeamStartMemberParams, TeamStartParams, TeamStartResult, ThreadArchiveParams,
+    SettingsSetDefaultModeResult, SettingsSetSearchIndexParams, SettingsSetSearchIndexResult,
+    SettingsSetWebSearchParams, SettingsSetWebSearchResult, SubagentTraceReadParams,
+    SubagentTraceReadResult, SubagentTracesListParams, SubagentTracesListResult, TasksGetParams,
+    TasksGetResult, TasksListResult, TasksSubmitParams, TasksSubmitResult, TeamCleanupParams,
+    TeamCleanupResult, TeamListParams, TeamListResult, TeamMemberInterruptParams,
+    TeamMemberInterruptResult, TeamMemberMessageParams, TeamMemberMessageResult,
+    TeamMemberStartParams, TeamMemberStartResult, TeamReadParams, TeamReadResult,
+    TeamStartMemberParams, TeamStartParams, TeamStartResult, ThreadArchiveParams,
     ThreadArchiveResult, ThreadListParams, ThreadListResult, ThreadStartParams, ThreadStartResult,
     ToolCallParams, ToolCallResult, ToolsListResult, TurnInputItem, TurnInterruptParams,
     TurnStartParams, TurnStartResult, TurnSteerParams, TurnSteerResult, WorkflowEnableParams,
@@ -754,10 +755,7 @@ async fn providers_select_updates_desktop_thread_model_for_next_turn() {
 
 #[tokio::test]
 async fn desktop_turn_uses_thread_cwd_for_workspace_tools() {
-    let root = std::env::temp_dir().join(format!(
-        "roder-thread-cwd-e2e-{}",
-        uuid::Uuid::new_v4()
-    ));
+    let root = std::env::temp_dir().join(format!("roder-thread-cwd-e2e-{}", uuid::Uuid::new_v4()));
     let process_workspace = root.join("process-workspace");
     let thread_workspace = root.join("thread-workspace");
     std::fs::create_dir_all(&process_workspace).unwrap();
@@ -2782,6 +2780,21 @@ async fn tools_list_exposes_default_coding_tools() {
     let client = LocalAppClient::new(server);
 
     let tools: ToolsListResult = request(&client, "tools/list", None).await;
+    let grep = tools
+        .tools
+        .iter()
+        .find(|tool| tool.name == "grep")
+        .expect("tools/list should expose grep");
+    let grep_properties = grep.parameters["properties"]
+        .as_object()
+        .expect("grep parameters should expose object properties");
+    assert!(grep_properties.contains_key("regex"));
+    assert!(grep_properties.contains_key("case_sensitive"));
+    assert!(grep_properties.contains_key("word_boundary"));
+    assert_eq!(
+        grep_properties["mode"]["enum"],
+        serde_json::json!(["auto", "indexed", "scan"])
+    );
     let names = tools
         .tools
         .into_iter()
@@ -3175,6 +3188,30 @@ async fn web_search_setting_can_be_set_and_observed() {
         runtime.status().await.hosted_web_search.mode,
         HostedWebSearchMode::Live
     );
+}
+
+#[tokio::test]
+async fn search_index_setting_can_be_set_and_observed() {
+    roder_search::set_search_index_enabled(true);
+    let runtime = Arc::new(Runtime::fake().unwrap());
+    let server = Arc::new(AppServer::new(runtime));
+    let client = LocalAppClient::new(server);
+
+    let settings: SettingsGetResult = request(&client, "settings/get", None).await;
+    assert!(settings.search_index.enabled);
+
+    let changed: SettingsSetSearchIndexResult = request(
+        &client,
+        "settings/set_search_index",
+        Some(serde_json::to_value(SettingsSetSearchIndexParams { enabled: false }).unwrap()),
+    )
+    .await;
+    assert!(!changed.search_index.enabled);
+    assert!(!roder_search::search_index_enabled());
+
+    let settings: SettingsGetResult = request(&client, "settings/get", None).await;
+    assert!(!settings.search_index.enabled);
+    roder_search::set_search_index_enabled(true);
 }
 
 #[tokio::test]
