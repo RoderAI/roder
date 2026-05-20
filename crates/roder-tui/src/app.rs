@@ -89,6 +89,7 @@ use plan_panel::{
     PlanPanelState, plan_counter_area, plan_panel_height, render_plan_counter, render_plan_panel,
 };
 use plugin_browser::PluginBrowserState;
+use remote::{RemotePanelController, render_remote_panel_lines};
 use scroll_accel::ScrollSettings;
 use shortcuts::FooterShortcutContext;
 use team_ui::{TeamUiState, is_team_focus_next_key, is_team_focus_previous_key};
@@ -941,6 +942,7 @@ pub struct TuiApp {
     confirm_dialog: Option<ConfirmDialogState>,
     tool_detail_modal: Option<ToolDetailModal>,
     plugin_browser: Option<PluginBrowserState>,
+    remote_panel: RemotePanelController,
     image_attachments: Vec<ImageAttachment>,
     queued_prompts: PromptQueue,
     last_user_prompt: Option<PendingPrompt>,
@@ -1172,6 +1174,12 @@ impl TuiApp {
         let mut provider_state = ListState::default();
         provider_state.select(Some(0));
         let theme = Theme::for_terminal_themed();
+        let remote_panel = RemotePanelController::new(
+            client.app_server(),
+            std::env::current_dir()
+                .ok()
+                .map(|path| path.display().to_string()),
+        );
         // Mirror the resolution that for_terminal_themed performed so the
         // palette's Themes source can flag the active row consistently. If
         // discovery yields nothing we leave this as `None` and the palette
@@ -1251,6 +1259,7 @@ impl TuiApp {
             confirm_dialog: None,
             tool_detail_modal: None,
             plugin_browser: None,
+            remote_panel,
             image_attachments: Vec::new(),
             queued_prompts: PromptQueue::default(),
             last_user_prompt: None,
@@ -1507,6 +1516,7 @@ impl TuiApp {
 
             while let Ok(envelope) = rx.try_recv() {
                 self.push_event(format!("{} #{}", envelope.kind, envelope.seq));
+                self.remote_panel.apply_event(&envelope);
 
                 match envelope.event {
                     RoderEvent::TurnStarted(ev) => {
@@ -2136,6 +2146,9 @@ impl TuiApp {
             "tasks" => {
                 self.run_tasks_slash_command().await;
             }
+            "remote" => {
+                self.run_remote_slash_command(&args).await;
+            }
             _ if let Some(prompt) = commands::built_in_prompt(&name, &args) => {
                 let suffix = slash_command_suffix(&args);
                 let pending =
@@ -2341,6 +2354,38 @@ impl TuiApp {
                 self.push_event("slash command: /tasks".to_string());
             }
             Err(err) => self.record_error(format!("tasks/list failed: {err}")),
+        }
+    }
+
+    async fn run_remote_slash_command(&mut self, args: &str) {
+        let action = args.split_whitespace().next().unwrap_or("status");
+        let result = match action {
+            "start" => self.remote_panel.start().await,
+            "stop" => self.remote_panel.stop().await,
+            "restart" | "regenerate" => self.remote_panel.start().await,
+            "status" | "" => {
+                if self.remote_panel.is_running() {
+                    Ok(())
+                } else {
+                    self.remote_panel.start().await
+                }
+            }
+            other => {
+                self.timeline.push_error(format!(
+                    "unknown /remote action: {other}. Use start, stop, restart, or status."
+                ));
+                return;
+            }
+        };
+
+        match result {
+            Ok(()) => {
+                self.timeline.push_system(
+                    render_remote_panel_lines(&self.remote_panel.snapshot()).join("\n"),
+                );
+                self.push_event(format!("slash command: /remote {action}"));
+            }
+            Err(err) => self.record_error(format!("remote {action} failed: {err}")),
         }
     }
 
@@ -5940,10 +5985,11 @@ mod tests {
 
     fn test_app() -> TuiApp {
         let theme = Theme::for_dark_background(true);
+        let server = Arc::new(AppServer::new(Arc::new(
+            Runtime::fake().expect("fake runtime"),
+        )));
         TuiApp {
-            client: LocalAppClient::new(Arc::new(AppServer::new(Arc::new(
-                Runtime::fake().expect("fake runtime"),
-            )))),
+            client: LocalAppClient::new(server.clone()),
             thread_id: "thread-test".to_string(),
             session_title: None,
             session_message_count: 0,
@@ -5994,6 +6040,11 @@ mod tests {
             confirm_dialog: None,
             tool_detail_modal: None,
             plugin_browser: None,
+            remote_panel: RemotePanelController::with_listen(
+                server,
+                "ws://127.0.0.1:0".to_string(),
+                Some("/tmp/gode".to_string()),
+            ),
             image_attachments: Vec::new(),
             queued_prompts: PromptQueue::default(),
             last_user_prompt: None,
@@ -6006,6 +6057,32 @@ mod tests {
             active_theme_id: None,
             theme_preview_baseline: None,
         }
+    }
+
+    #[tokio::test]
+    async fn remote_slash_command_starts_stops_and_displays_qr() {
+        let mut app = test_app();
+
+        app.run_remote_slash_command("start").await;
+        assert!(app.remote_panel.is_running());
+        let rendered = rendered_timeline_text(&mut app);
+        assert!(rendered.contains("Remote app-server: running"));
+        assert!(rendered.contains("QR:"));
+        assert!(rendered.contains("roder://connect"));
+
+        app.run_remote_slash_command("stop").await;
+        assert!(!app.remote_panel.is_running());
+        let rendered = rendered_timeline_text(&mut app);
+        assert!(rendered.contains("Remote app-server: stopped"));
+    }
+
+    fn rendered_timeline_text(app: &mut TuiApp) -> String {
+        let render = app.timeline.render(app.theme, Rect::new(0, 0, 100, 200));
+        rendered_text_rows(&render.text, 100, 200, render.text_scroll)
+            .into_iter()
+            .map(|row| row.text)
+            .collect::<Vec<_>>()
+            .join("\n")
     }
 
     #[test]

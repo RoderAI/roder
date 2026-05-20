@@ -4,7 +4,7 @@ use roder_api::events::EventEnvelope;
 use roder_app_server::AppServer;
 use roder_app_server::remote::{
     RemoteServerController, RemoteServerHandle, RemoteServerOptions, RemoteToken,
-    generate_remote_token_from_os, listen_remote_websocket_controller,
+    generate_remote_token_from_os, listen_remote_websocket_controller, render_pairing_qr,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -13,6 +13,7 @@ pub struct RemotePanelSnapshot {
     pub connect_urls: Vec<String>,
     pub token_preview: Option<String>,
     pub pairing_url: Option<String>,
+    pub pairing_qr: Option<String>,
     pub connected_clients: usize,
     pub tls_warning: Option<String>,
 }
@@ -127,6 +128,7 @@ impl RemotePanelSnapshot {
             connect_urls: Vec::new(),
             token_preview: None,
             pairing_url: None,
+            pairing_qr: None,
             connected_clients: 0,
             tls_warning: None,
         }
@@ -140,6 +142,7 @@ impl RemotePanelSnapshot {
             connect_urls,
             token_preview: Some(handle.token_preview.clone()),
             pairing_url: Some(handle.pairing_url.clone()),
+            pairing_qr: render_pairing_qr(&handle.pairing_url).ok(),
             connected_clients,
             tls_warning: handle
                 .connect_urls
@@ -176,6 +179,10 @@ pub fn render_remote_panel_lines(snapshot: &RemotePanelSnapshot) -> Vec<String> 
     );
     if let Some(pairing_url) = snapshot.pairing_url.as_ref() {
         lines.push(format!("Pairing: {pairing_url}"));
+    }
+    if let Some(pairing_qr) = snapshot.pairing_qr.as_ref() {
+        lines.push("QR:".to_string());
+        lines.extend(pairing_qr.lines().map(ToString::to_string));
     }
     if let Some(warning) = snapshot.tls_warning.as_ref() {
         lines.push(format!("Warning: {warning}"));
