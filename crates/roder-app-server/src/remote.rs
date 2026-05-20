@@ -1,4 +1,6 @@
-use std::net::{IpAddr, Ipv4Addr, SocketAddr};
+mod network;
+
+use std::net::SocketAddr;
 use std::sync::Arc;
 
 use futures::{SinkExt, StreamExt};
@@ -18,6 +20,7 @@ use tokio_tungstenite::tungstenite::handshake::server::{ErrorResponse, Request, 
 use tokio_tungstenite::tungstenite::http::{HeaderValue, StatusCode};
 
 use crate::AppServer;
+use network::connect_urls;
 
 pub const REMOTE_PROTOCOL: &str = "roder.remote.v1";
 const TOKEN_BYTES: usize = 32;
@@ -327,25 +330,6 @@ pub fn parse_ws_listen(listen: &str) -> anyhow::Result<SocketAddr> {
     Ok(addr)
 }
 
-fn connect_urls(listen: &str, actual: SocketAddr) -> Vec<String> {
-    let host = listen
-        .strip_prefix("ws://")
-        .and_then(|rest| rest.rsplit_once(':').map(|(host, _)| host))
-        .unwrap_or("127.0.0.1");
-    if host == "0.0.0.0" {
-        vec![
-            format!("ws://127.0.0.1:{}", actual.port()),
-            format!("ws://{}:{}", local_private_fallback(), actual.port()),
-        ]
-    } else {
-        vec![format!("ws://{}:{}", actual.ip(), actual.port())]
-    }
-}
-
-fn local_private_fallback() -> Ipv4Addr {
-    Ipv4Addr::new(192, 168, 0, 1)
-}
-
 fn bearer_from_headers(request: &Request) -> Option<String> {
     request
         .headers()
@@ -407,17 +391,6 @@ fn constant_time_eq(left: &[u8], right: &[u8]) -> bool {
 fn base64_url_no_pad(bytes: &[u8]) -> String {
     use base64::Engine;
     base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(bytes)
-}
-
-#[allow(dead_code)]
-fn is_tailscale(ip: IpAddr) -> bool {
-    match ip {
-        IpAddr::V4(ip) => {
-            let octets = ip.octets();
-            octets[0] == 100 && (64..=127).contains(&octets[1])
-        }
-        IpAddr::V6(_) => false,
-    }
 }
 
 #[cfg(test)]
