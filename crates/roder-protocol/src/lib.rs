@@ -1,3 +1,7 @@
+use roder_api::artifacts::{
+    ArtifactGrepPage, ArtifactReadPage, ArtifactTailPage, ContextArtifactDescriptor,
+    ContextArtifactKind,
+};
 use roder_api::capabilities::CapabilityStatus;
 use roder_api::context::ContextBlock;
 use roder_api::conversation::InputImage;
@@ -566,6 +570,10 @@ pub struct CommandExecResponse {
     pub exit_code: i32,
     pub stdout: String,
     pub stderr: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stdout_artifact: Option<ContextArtifactDescriptor>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stderr_artifact: Option<ContextArtifactDescriptor>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1040,6 +1048,85 @@ pub struct MediaListResult {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct ArtifactListParams {
+    pub thread_id: ThreadId,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub kind: Option<ContextArtifactKind>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub limit: Option<usize>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ArtifactListResult {
+    pub artifacts: Vec<ContextArtifactDescriptor>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ArtifactReadParams {
+    pub thread_id: ThreadId,
+    pub artifact_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub start_line: Option<usize>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub limit: Option<usize>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ArtifactReadResult {
+    pub page: ArtifactReadPage,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ArtifactGrepParams {
+    pub thread_id: ThreadId,
+    pub artifact_id: String,
+    pub query: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub offset: Option<usize>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub limit: Option<usize>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ArtifactGrepResult {
+    pub page: ArtifactGrepPage,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ArtifactTailParams {
+    pub thread_id: ThreadId,
+    pub artifact_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub lines: Option<usize>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ArtifactTailResult {
+    pub page: ArtifactTailPage,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ArtifactDeleteParams {
+    pub thread_id: ThreadId,
+    pub artifact_id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ArtifactDeleteResult {
+    pub deleted: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct MediaReadParams {
     pub artifact_id: MediaArtifactId,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -1350,6 +1437,7 @@ pub struct ProviderSelectResult {
 pub struct SettingsGetResult {
     pub web_search: WebSearchSettings,
     pub default_mode: PolicyMode,
+    pub file_backed_dynamic_context: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1370,6 +1458,16 @@ pub struct SettingsSetDefaultModeParams {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SettingsSetDefaultModeResult {
     pub default_mode: PolicyMode,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SettingsSetFileBackedDynamicContextParams {
+    pub enabled: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SettingsSetFileBackedDynamicContextResult {
+    pub enabled: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1684,6 +1782,33 @@ mod tests {
         let value = serde_json::to_value(result).unwrap();
         assert_eq!(value["traceId"], "trace-1");
         assert_eq!(value["nextOffset"], 30);
+    }
+
+    #[test]
+    fn artifacts_protocol_structs_use_camel_case_fields() {
+        let params: ArtifactReadParams = serde_json::from_value(serde_json::json!({
+            "threadId": "thread-1",
+            "artifactId": "artifact-1",
+            "startLine": 2,
+            "limit": 10
+        }))
+        .unwrap();
+
+        assert_eq!(params.thread_id, "thread-1");
+        assert_eq!(params.artifact_id, "artifact-1");
+        assert_eq!(params.start_line, Some(2));
+
+        let command = serde_json::to_value(CommandExecResponse {
+            exit_code: 0,
+            stdout: "short".to_string(),
+            stderr: String::new(),
+            stdout_artifact: None,
+            stderr_artifact: None,
+        })
+        .unwrap();
+
+        assert_eq!(command["exitCode"], 0);
+        assert!(command.get("stdoutArtifact").is_none());
     }
 
     #[test]

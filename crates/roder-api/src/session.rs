@@ -1,3 +1,4 @@
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
@@ -49,6 +50,10 @@ pub struct ThreadSnapshot {
 #[async_trait::async_trait]
 pub trait SessionStore: Send + Sync {
     fn id(&self) -> SessionStoreId;
+
+    fn local_session_root(&self) -> Option<PathBuf> {
+        None
+    }
 
     async fn create_session(&self, metadata: SessionMetadata) -> anyhow::Result<SessionMetadata>;
     async fn update_session_metadata(

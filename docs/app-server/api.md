@@ -93,8 +93,9 @@ Provider auth is provider-specific:
   surface.
 
 Config persistence is opt-in on the `AppServer` instance. When enabled,
-`providers/select`, `settings/set_web_search`, and `settings/set_default_mode`
-write the selected defaults to `~/.roder/config.toml`.
+`providers/select`, `settings/set_web_search`, `settings/set_default_mode`, and
+`settings/set_file_backed_dynamic_context` write the selected defaults to
+`~/.roder/config.toml`.
 
 ## Core Concepts
 
@@ -154,9 +155,10 @@ Core:
 | `providers/configure` | Persist an API key for an API-key provider. |
 | `providers/select` | Select active default provider/model/reasoning. |
 | `model/list` | List desktop model descriptors. |
-| `settings/get` | Read hosted web search mode and default policy mode. |
+| `settings/get` | Read hosted web search mode, default policy mode, and file-backed context status. |
 | `settings/set_web_search` | Set hosted web search mode. |
 | `settings/set_default_mode` | Set default policy mode. |
+| `settings/set_file_backed_dynamic_context` | Enable or disable file-backed dynamic context. |
 | `auth/codex/login` | Start Codex OAuth login. |
 | `auth/codex/status` | Read Codex OAuth status. |
 | `auth/codex/logout` | Clear Codex OAuth credentials. |
@@ -252,6 +254,11 @@ Review, hunks, workflow imports, media, and memory:
 | `media/thumbnail` | Read an artifact preview. |
 | `media/delete` | Delete an artifact. |
 | `media/attachToTurn` | Convert an artifact to a turn attachment/image. |
+| `artifact/list` | List thread-scoped file-backed context artifacts. |
+| `artifact/read` | Read a paged artifact line range. |
+| `artifact/grep` | Search an artifact with a literal query. |
+| `artifact/tail` | Read the final lines of an artifact. |
+| `artifact/delete` | Delete a Roder-owned context artifact. |
 | `memory/list` | List memory records. |
 | `memory/read` | Read one memory. |
 | `memory/save` | Save a memory. |
@@ -419,7 +426,8 @@ Response:
 ```json
 {
   "web_search": { "mode": "cached" },
-  "default_mode": "default"
+  "default_mode": "default",
+  "file_backed_dynamic_context": true
 }
 ```
 
@@ -427,6 +435,8 @@ Notes:
 
 - `web_search.mode` is one of `disabled`, `cached`, or `live`.
 - `default_mode` is a `PolicyMode` value from `roder-api`.
+- `file_backed_dynamic_context` controls whether long tool output, command
+  output, and compaction source material are written to context artifacts.
 
 ### `settings/set_web_search`
 
@@ -478,6 +488,35 @@ Behavior:
 
 - Calls runtime policy-mode update with reason `settings default mode`.
 - Persists a config value only when user-config persistence is enabled.
+
+### `settings/set_file_backed_dynamic_context`
+
+Purpose: Enable or disable file-backed dynamic context.
+
+Request:
+
+```json
+{
+  "enabled": false
+}
+```
+
+Response:
+
+```json
+{
+  "enabled": false
+}
+```
+
+Behavior:
+
+- Updates runtime state immediately.
+- When disabled, Roder falls back to bounded inline truncation and local
+  compaction summaries without writing new context artifacts.
+- Existing artifacts remain readable through `artifact/*` methods.
+- Persists `[context].file_backed_dynamic_context` when user-config persistence
+  is enabled.
 
 ### `auth/codex/*`, `auth/supergrok/*`
 
@@ -931,7 +970,18 @@ Response when `streamStdoutStderr` is false:
 {
   "exitCode": 0,
   "stdout": "ok\n",
-  "stderr": ""
+  "stderr": "",
+  "stdoutArtifact": {
+    "id": "artifact-123",
+    "kind": "command_stdout",
+    "threadId": "app-server",
+    "turnId": "process-123",
+    "byteCount": 2097152,
+    "lineCount": 1200,
+    "sourceToolId": "process-123",
+    "label": "stdout",
+    "createdAt": "2026-05-20T18:00:00Z"
+  }
 }
 ```
 
@@ -941,7 +991,18 @@ Response when `streamStdoutStderr` is true:
 {
   "exitCode": 0,
   "stdout": "",
-  "stderr": ""
+  "stderr": "",
+  "stdoutArtifact": {
+    "id": "artifact-123",
+    "kind": "command_stdout",
+    "threadId": "app-server",
+    "turnId": "process-123",
+    "byteCount": 2097152,
+    "lineCount": 1200,
+    "sourceToolId": "process-123",
+    "label": "stdout",
+    "createdAt": "2026-05-20T18:00:00Z"
+  }
 }
 ```
 
@@ -953,6 +1014,11 @@ Behavior:
 - Default output cap is 1048576 bytes unless `disableOutputCap` is true.
 - When streaming is enabled, `processId` is required and stdout/stderr are sent
   as `command/exec/outputDelta` notifications.
+- When stdout or stderr exceeds the output cap, the capped inline stream is
+  preserved and the full stream is written as a context artifact. Responses
+  include `stdoutArtifact` or `stderrArtifact` descriptors when those artifacts
+  are created. Command artifacts are scoped to thread `app-server` and turn
+  `processId`.
 - Command execution is checked by the runtime policy gate as a `shell` tool.
 
 Unsupported:
@@ -2286,6 +2352,133 @@ Behavior:
 - The media store root comes from config, `RODER_MEDIA_ARTIFACT_DIR`, or the
   default media artifact directory. Default max read size is 10 MiB.
 
+### Context artifact methods
+
+Purpose: Inspect file-backed dynamic context without giving clients direct
+filesystem paths.
+
+List request:
+
+```json
+{
+  "threadId": "app-server",
+  "kind": "command_stdout",
+  "limit": 50
+}
+```
+
+List response:
+
+```json
+{
+  "artifacts": [
+    {
+      "id": "artifact-123",
+      "kind": "command_stdout",
+      "threadId": "app-server",
+      "turnId": "process-123",
+      "byteCount": 2097152,
+      "lineCount": 1200,
+      "sourceToolId": "process-123",
+      "label": "stdout",
+      "createdAt": "2026-05-20T18:00:00Z"
+    }
+  ]
+}
+```
+
+Read request:
+
+```json
+{
+  "threadId": "app-server",
+  "artifactId": "artifact-123",
+  "startLine": 200,
+  "limit": 50
+}
+```
+
+Read response:
+
+```json
+{
+  "page": {
+    "artifact": {
+      "id": "artifact-123",
+      "kind": "command_stdout",
+      "threadId": "app-server",
+      "turnId": "process-123",
+      "byteCount": 2097152,
+      "lineCount": 1200,
+      "sourceToolId": "process-123",
+      "label": "stdout",
+      "createdAt": "2026-05-20T18:00:00Z"
+    },
+    "text": "  200: build output",
+    "startLine": 200,
+    "limit": 50,
+    "shown": 50,
+    "totalLines": 1200,
+    "nextStartLine": 250,
+    "truncated": true
+  }
+}
+```
+
+Grep request:
+
+```json
+{
+  "threadId": "app-server",
+  "artifactId": "artifact-123",
+  "query": "RECOVERY_TOKEN",
+  "offset": 0,
+  "limit": 20
+}
+```
+
+Tail request:
+
+```json
+{
+  "threadId": "app-server",
+  "artifactId": "artifact-123",
+  "lines": 100
+}
+```
+
+Delete request:
+
+```json
+{
+  "threadId": "app-server",
+  "artifactId": "artifact-123"
+}
+```
+
+Delete response:
+
+```json
+{
+  "deleted": true
+}
+```
+
+Behavior:
+
+- `kind` accepts `tool_output`, `command_stdout`, `command_stderr`,
+  `terminal_transcript`, `chat_history`, `compaction_source`, and
+  `context_provider_dump`.
+- `artifact/read`, `artifact/grep`, and `artifact/tail` cap pages at 200 lines.
+- Artifact descriptors intentionally omit `storePath`.
+- Every method is scoped by `threadId`; a mismatched artifact id returns code
+  `-32000` with a message that the artifact does not belong to the thread.
+- `artifact/delete` refuses non-Roder-owned artifacts and emits the runtime
+  `artifact/deleted` event when deletion succeeds.
+- In the normal JSONL session store, artifact files are stored under
+  `<sessionDir>/<threadId>/artifacts/<turnId>/`, beside the session's
+  `metadata.json`, `events.jsonl`, and `turn_items.jsonl`.
+
 ### Memory methods
 
 Purpose: Manage and search memories through the registered memory store.
@@ -2584,9 +2777,9 @@ Cancellation and interruption:
 
 - `thread/list` and `thread/read` use persisted sessions first and in-memory
   desktop threads as a fallback.
-- `providers/select`, `settings/set_web_search`, and
-  `settings/set_default_mode` persist only when the app-server instance enables
-  user-config persistence.
+- `providers/select`, `settings/set_web_search`, `settings/set_default_mode`,
+  and `settings/set_file_backed_dynamic_context` persist only when the
+  app-server instance enables user-config persistence.
 - Workflow import decisions are persisted under `~/.roder/workflow-imports.json`
   unless `RODER_WORKFLOW_IMPORTS_PATH` is set.
 - Media artifact storage is configured by `media.artifacts_dir`,

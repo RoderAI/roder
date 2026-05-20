@@ -1,10 +1,33 @@
 const MAX_TOOL_OUTPUT_LINES: usize = 200;
 const MAX_TOOL_OUTPUT_CHARS: usize = 20_000;
+const ARTIFACT_INLINE_CHARS: usize = 6_000;
 
 pub(crate) fn cap_tool_output_lines(output: String) -> String {
     let original_line_count = output.lines().count();
     let line_capped = cap_tool_output_line_count(output);
     cap_tool_output_chars(line_capped, original_line_count)
+}
+
+pub(crate) fn should_spill_tool_output(output: &str) -> bool {
+    output.lines().count() > MAX_TOOL_OUTPUT_LINES || output.chars().count() > MAX_TOOL_OUTPUT_CHARS
+}
+
+pub(crate) fn artifact_backed_tool_output(
+    output: &str,
+    artifact_reference: &str,
+    label: &str,
+) -> String {
+    let line_count = output.lines().count();
+    let byte_count = output.len();
+    let snippet = truncate_middle_chars(output, ARTIFACT_INLINE_CHARS);
+    format!(
+        "Tool output was stored in a local context artifact because it exceeded inline limits.\n\
+         Label: {label}\n\
+         Total output lines: {line_count}\n\
+         Total output bytes: {byte_count}\n\n\
+         {artifact_reference}\n\n\
+         Inline excerpt:\n{snippet}"
+    )
 }
 
 fn cap_tool_output_line_count(output: String) -> String {
@@ -112,5 +135,21 @@ mod tests {
         assert!(capped.chars().count() <= MAX_TOOL_OUTPUT_CHARS);
         assert!(capped.starts_with("Total output lines: 50\n\nline 1:"));
         assert!(capped.contains("chars omitted"));
+    }
+
+    #[test]
+    fn artifact_backed_summary_stays_bounded_and_names_reference() {
+        let output = format!("start{}end", "x".repeat(MAX_TOOL_OUTPUT_CHARS * 2));
+        let summary = artifact_backed_tool_output(
+            &output,
+            "[artifact: tool_output stdout lines=1 bytes=40008 id=artifact-1]",
+            "stdout",
+        );
+
+        assert!(should_spill_tool_output(&output));
+        assert!(summary.chars().count() < MAX_TOOL_OUTPUT_CHARS);
+        assert!(summary.contains("artifact-1"));
+        assert!(summary.contains("Inline excerpt"));
+        assert!(summary.ends_with("end"));
     }
 }
