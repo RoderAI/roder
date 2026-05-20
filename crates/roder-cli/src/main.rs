@@ -649,6 +649,7 @@ struct AppServerOptions {
     listen: String,
     remote: bool,
     auth_token: Option<String>,
+    remote_token_ttl: Option<time::Duration>,
     print_qr: bool,
     cli_options: CliOptions,
 }
@@ -959,6 +960,7 @@ fn parse_app_server_options(args: &[String]) -> anyhow::Result<AppServerOptions>
     let mut listen = "stdio://".to_string();
     let mut remote = false;
     let mut auth_token = None;
+    let mut remote_token_ttl = None;
     let mut print_qr = true;
     let mut passthrough = Vec::new();
     let mut i = 0;
@@ -990,6 +992,17 @@ fn parse_app_server_options(args: &[String]) -> anyhow::Result<AppServerOptions>
             arg if arg.starts_with("--auth-token=") => {
                 auth_token = Some(resolve_auth_token_arg(&arg["--auth-token=".len()..])?);
             }
+            "--remote-token-ttl" => {
+                let Some(value) = args.get(i + 1) else {
+                    anyhow::bail!("--remote-token-ttl requires seconds");
+                };
+                remote_token_ttl = Some(parse_remote_token_ttl(value)?);
+                i += 1;
+            }
+            arg if arg.starts_with("--remote-token-ttl=") => {
+                remote_token_ttl =
+                    Some(parse_remote_token_ttl(&arg["--remote-token-ttl=".len()..])?);
+            }
             "--print-qr=false" => {
                 print_qr = false;
             }
@@ -1005,6 +1018,7 @@ fn parse_app_server_options(args: &[String]) -> anyhow::Result<AppServerOptions>
         listen,
         remote,
         auth_token,
+        remote_token_ttl,
         print_qr,
         cli_options: parse_cli_options(&passthrough)?,
     })
@@ -1031,6 +1045,7 @@ async fn run_app_server(args: &[String]) -> anyhow::Result<()> {
             roder_app_server::remote::RemoteServerOptions {
                 listen: options.listen,
                 token,
+                token_ttl: options.remote_token_ttl,
                 print_qr: options.print_qr,
                 workspace: std::env::current_dir()
                     .ok()
@@ -1069,6 +1084,16 @@ fn resolve_auth_token_arg(value: &str) -> anyhow::Result<String> {
         }
         Ok(value.to_string())
     }
+}
+
+fn parse_remote_token_ttl(value: &str) -> anyhow::Result<time::Duration> {
+    let seconds = value
+        .parse::<i64>()
+        .map_err(|_| anyhow::anyhow!("--remote-token-ttl requires a positive second count"))?;
+    if seconds <= 0 {
+        anyhow::bail!("--remote-token-ttl requires a positive second count");
+    }
+    Ok(time::Duration::seconds(seconds))
 }
 
 async fn run_stdio_app_server(app_server: Arc<AppServer>) -> anyhow::Result<()> {
@@ -2053,6 +2078,23 @@ Report findings.
         .unwrap();
         assert_eq!(options.auth_token.as_deref(), Some("remote-secret"));
         assert!(!options.print_qr);
+    }
+
+    #[test]
+    fn app_server_remote_accepts_token_ttl_seconds() {
+        let options = parse_app_server_options(&[
+            "--remote".to_string(),
+            "--remote-token-ttl".to_string(),
+            "60".to_string(),
+        ])
+        .unwrap();
+        assert_eq!(options.remote_token_ttl, Some(time::Duration::seconds(60)));
+
+        let err =
+            parse_app_server_options(&["--remote".to_string(), "--remote-token-ttl=0".to_string()])
+                .unwrap_err()
+                .to_string();
+        assert!(err.contains("positive second count"));
     }
 
     #[test]

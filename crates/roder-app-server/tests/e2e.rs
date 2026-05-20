@@ -1623,6 +1623,7 @@ async fn remote_websocket_requires_auth_and_serves_thread_turn_flow() {
         RemoteServerOptions {
             listen: "ws://127.0.0.1:0".to_string(),
             token,
+            token_ttl: None,
             print_qr: false,
             workspace: Some("/tmp/gode".to_string()),
         },
