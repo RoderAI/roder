@@ -227,6 +227,7 @@ mod tests {
                 policy_mode: roder_api::policy_mode::PolicyMode::Default,
                 remote_runner_destination: None,
                 team_data_dir: None,
+                roadmap_data_dir: None,
             },
         )
         .unwrap();
@@ -282,6 +283,7 @@ mod tests {
                 policy_mode: roder_api::policy_mode::PolicyMode::Default,
                 remote_runner_destination: None,
                 team_data_dir: None,
+                roadmap_data_dir: None,
             },
         )
         .unwrap();

@@ -740,6 +740,16 @@ pub struct RemoteClientDisconnected {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RoadmapChanged {
+    pub event_kind: String,
+    pub path: String,
+    pub task_id: Option<String>,
+    pub thread_id: Option<String>,
+    #[serde(with = "time::serde::rfc3339")]
+    pub timestamp: OffsetDateTime,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum RoderEvent {
     RuntimeStarted(RuntimeStarted),
     ExtensionRegistered(ExtensionRegistered),
@@ -805,6 +815,7 @@ pub enum RoderEvent {
     RemoteAuthFailed(RemoteAuthFailed),
     RemoteClientConnected(RemoteClientConnected),
     RemoteClientDisconnected(RemoteClientDisconnected),
+    RoadmapChanged(RoadmapChanged),
     TaskStarted(TaskStarted),
     TaskOutput(TaskOutput),
     TaskCompleted(TaskCompleted),
@@ -895,6 +906,7 @@ impl RoderEvent {
             RoderEvent::RemoteAuthFailed(_) => "remote/authFailed",
             RoderEvent::RemoteClientConnected(_) => "remote/clientConnected",
             RoderEvent::RemoteClientDisconnected(_) => "remote/clientDisconnected",
+            RoderEvent::RoadmapChanged(_) => "roadmap.changed",
             RoderEvent::TaskStarted(_) => "task.started",
             RoderEvent::TaskOutput(_) => "task.output",
             RoderEvent::TaskCompleted(_) => "task.completed",
@@ -974,6 +986,7 @@ impl RoderEvent {
             | RoderEvent::RemoteAuthFailed(_)
             | RoderEvent::RemoteClientConnected(_)
             | RoderEvent::RemoteClientDisconnected(_) => EventSource::AppServer,
+            RoderEvent::RoadmapChanged(_) => EventSource::Core,
             RoderEvent::FileChangePreviewReady(_) => EventSource::Tool,
             RoderEvent::UserInputRequested(_) | RoderEvent::UserInputResolved(_) => {
                 EventSource::Core
@@ -1075,6 +1088,7 @@ impl RoderEvent {
             | RoderEvent::RemoteAuthFailed(_)
             | RoderEvent::RemoteClientConnected(_)
             | RoderEvent::RemoteClientDisconnected(_)
+            | RoderEvent::RoadmapChanged(_)
             | RoderEvent::RunnerLifecycle(_)
             | RoderEvent::TeamDisplayModeChanged(_)
             | RoderEvent::TeamTaskChanged(_)
@@ -1162,6 +1176,7 @@ impl RoderEvent {
             | RoderEvent::RemoteAuthFailed(_)
             | RoderEvent::RemoteClientConnected(_)
             | RoderEvent::RemoteClientDisconnected(_)
+            | RoderEvent::RoadmapChanged(_)
             | RoderEvent::RunnerLifecycle(_)
             | RoderEvent::TeamStarted(_)
             | RoderEvent::TeamMemberStarted(_)

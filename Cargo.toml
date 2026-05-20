@@ -41,6 +41,7 @@ roder-codex-auth = { path = "crates/roder-codex-auth" }
 roder-commands = { path = "crates/roder-commands" }
 roder-config = { path = "crates/roder-config" }
 roder-core = { path = "crates/roder-core" }
+roder-roadmap = { path = "crates/roder-roadmap" }
 roder-supergrok-auth = { path = "crates/roder-supergrok-auth" }
 roder-ext-anthropic = { path = "crates/roder-ext-anthropic" }
 roder-ext-disk-context = { path = "crates/roder-ext-disk-context" }

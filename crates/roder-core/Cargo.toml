@@ -8,6 +8,7 @@ anyhow.workspace = true
 async-trait.workspace = true
 futures.workspace = true
 roder-api.workspace = true
+roder-roadmap.workspace = true
 roder-sandbox.workspace = true
 serde = { workspace = true, features = ["derive"] }
 serde_json.workspace = true

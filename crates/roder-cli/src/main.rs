@@ -732,6 +732,7 @@ pub(crate) async fn build_runtime_from_config(
             policy_mode,
             remote_runner_destination,
             team_data_dir: None,
+            roadmap_data_dir: None,
         },
     )?);
 
