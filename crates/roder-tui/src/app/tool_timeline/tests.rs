@@ -703,7 +703,7 @@ fn streaming_reasoning_delta_buffers_with_neutral_fade() {
         .collect::<Vec<_>>();
     assert!(!fade_colors.contains(&theme.accent));
     assert!(!fade_colors.contains(&theme.accent_soft));
-    assert!(fade_colors.iter().any(|color| *color == theme.text));
+    assert!(fade_colors.contains(&theme.text));
 }
 
 #[test]

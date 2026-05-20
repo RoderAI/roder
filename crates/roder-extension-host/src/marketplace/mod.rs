@@ -156,26 +156,26 @@ pub(crate) fn source_from_value(
 }
 
 pub(crate) fn component_hints(value: &serde_json::Value) -> PluginComponentHints {
-    let mut hints = PluginComponentHints::default();
-    hints.skills = value.get("skills").is_some();
-    hints.commands = value.get("commands").is_some();
-    hints.agents = value.get("agents").is_some();
-    hints.mcp_servers = value.get("mcpServers").is_some() || value.get("mcp").is_some();
-    hints.hooks = value.get("hooks").is_some() || value.get("hooksJson").is_some();
-    hints.apps = value.get("app").is_some() || value.get("appJson").is_some();
-    hints.lsp_servers = value.get("lspServers").is_some();
-    hints.rules = value.get("rules").is_some();
-    hints.assets = value.get("assets").is_some()
-        || value
-            .get("interface")
-            .and_then(|interface| {
-                interface
-                    .get("logo")
-                    .or_else(|| interface.get("composerIcon"))
-                    .or_else(|| interface.get("screenshots"))
-            })
-            .is_some();
-    hints
+    PluginComponentHints {
+        skills: value.get("skills").is_some(),
+        commands: value.get("commands").is_some(),
+        agents: value.get("agents").is_some(),
+        mcp_servers: value.get("mcpServers").is_some() || value.get("mcp").is_some(),
+        hooks: value.get("hooks").is_some() || value.get("hooksJson").is_some(),
+        apps: value.get("app").is_some() || value.get("appJson").is_some(),
+        lsp_servers: value.get("lspServers").is_some(),
+        rules: value.get("rules").is_some(),
+        assets: value.get("assets").is_some()
+            || value
+                .get("interface")
+                .and_then(|interface| {
+                    interface
+                        .get("logo")
+                        .or_else(|| interface.get("composerIcon"))
+                        .or_else(|| interface.get("screenshots"))
+                })
+                .is_some(),
+    }
 }
 
 pub(crate) fn risk_for(

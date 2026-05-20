@@ -17,6 +17,7 @@ use super::{
 };
 
 impl TimelineItem {
+    #[allow(clippy::too_many_arguments)]
     pub(super) fn render(
         &self,
         selected: bool,
