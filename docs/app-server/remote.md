@@ -34,6 +34,8 @@ Tokens are not accepted in WebSocket query parameters. The pairing payload inclu
 
 Remote mode is intended for a trusted LAN or Tailscale network. Raw `ws://` over a LAN IP is not TLS-protected; use Tailscale or another trusted private tunnel when possible. Do not expose the remote app-server directly to the public internet.
 
+`GET /readyz` and `GET /healthz` return unauthenticated `200 OK` health responses on the same listener. WebSocket upgrades still require bearer auth in remote mode.
+
 The local event stream records remote server starts and stops, auth failures, client connects, and client disconnects as sanitized events:
 
 - `remote/serverStarted`

@@ -15,7 +15,8 @@ use roder_protocol::JsonRpcRequest;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use time::OffsetDateTime;
-use tokio::net::TcpListener;
+use tokio::io::AsyncWriteExt;
+use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::oneshot;
 use tokio::task::JoinHandle;
 use tokio_tungstenite::tungstenite::Message;
@@ -284,6 +285,10 @@ async fn spawn_remote_websocket(
             let auth_backoff = auth_backoff.clone();
             let allowed_origins = allowed_origins.clone();
             tokio::spawn(async move {
+                let mut stream = stream;
+                if respond_to_health_probe(&mut stream).await {
+                    return;
+                }
                 let remote_addr = peer_addr.to_string();
                 let auth_events = app_server.clone();
                 let auth_remote_addr = remote_addr.clone();
@@ -388,6 +393,26 @@ async fn spawn_remote_websocket(
             }));
     });
     Ok((handle, task))
+}
+
+async fn respond_to_health_probe(stream: &mut TcpStream) -> bool {
+    let mut buffer = [0_u8; 512];
+    let Ok(bytes_read) = stream.peek(&mut buffer).await else {
+        return false;
+    };
+    if !is_health_probe(&buffer[..bytes_read]) {
+        return false;
+    }
+    let response = b"HTTP/1.1 200 OK\r\ncontent-type: text/plain\r\ncontent-length: 3\r\nconnection: close\r\n\r\nok\n";
+    let _ = stream.write_all(response).await;
+    true
+}
+
+fn is_health_probe(buffer: &[u8]) -> bool {
+    buffer.starts_with(b"GET /readyz HTTP/1.1\r\n")
+        || buffer.starts_with(b"GET /readyz HTTP/1.0\r\n")
+        || buffer.starts_with(b"GET /healthz HTTP/1.1\r\n")
+        || buffer.starts_with(b"GET /healthz HTTP/1.0\r\n")
 }
 
 pub fn pairing_payload(
@@ -559,10 +584,7 @@ mod tests {
     #[test]
     fn local_websocket_auth_disabled_accepts_missing_and_wrong_token() {
         let auth = RemoteAuth::disabled();
-        let missing = Request::builder()
-            .uri("ws://127.0.0.1")
-            .body(())
-            .unwrap();
+        let missing = Request::builder().uri("ws://127.0.0.1").body(()).unwrap();
         let wrong = Request::builder()
             .uri("ws://127.0.0.1")
             .header("Authorization", "Bearer wrong-token")
