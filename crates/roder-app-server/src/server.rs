@@ -114,6 +114,13 @@ impl AppServer {
                 })
                 .await
             }
+            "settings/set_file_backed_dynamic_context" => {
+                self.decode_and(req.params, |p| async move {
+                    self.handle_settings_set_file_backed_dynamic_context(p)
+                        .await
+                })
+                .await
+            }
             "auth/codex/login" => self.handle_codex_auth_login().await,
             "auth/codex/status" => self.handle_codex_auth_status().await,
             "auth/codex/logout" => self.handle_codex_auth_logout().await,
@@ -513,6 +520,40 @@ impl AppServer {
                 })
                 .await
             }
+            "artifact/list" => {
+                self.decode_and(
+                    req.params,
+                    |p| async move { self.handle_artifact_list(p).await },
+                )
+                .await
+            }
+            "artifact/read" => {
+                self.decode_and(
+                    req.params,
+                    |p| async move { self.handle_artifact_read(p).await },
+                )
+                .await
+            }
+            "artifact/grep" => {
+                self.decode_and(
+                    req.params,
+                    |p| async move { self.handle_artifact_grep(p).await },
+                )
+                .await
+            }
+            "artifact/tail" => {
+                self.decode_and(
+                    req.params,
+                    |p| async move { self.handle_artifact_tail(p).await },
+                )
+                .await
+            }
+            "artifact/delete" => {
+                self.decode_and(req.params, |p| async move {
+                    self.handle_artifact_delete(p).await
+                })
+                .await
+            }
             "memory/list" => {
                 self.decode_and(
                     req.params,
@@ -858,6 +899,7 @@ impl AppServer {
                 mode: cfg.hosted_web_search.mode,
             },
             default_mode: cfg.policy_mode,
+            file_backed_dynamic_context: cfg.file_backed_dynamic_context,
         })
         .unwrap())
     }
@@ -902,6 +944,26 @@ impl AppServer {
             default_mode: cfg.policy_mode,
         })
         .unwrap())
+    }
+
+    async fn handle_settings_set_file_backed_dynamic_context(
+        &self,
+        params: SettingsSetFileBackedDynamicContextParams,
+    ) -> Result<serde_json::Value, JsonRpcError> {
+        let cfg = self
+            .runtime
+            .set_file_backed_dynamic_context(params.enabled)
+            .await;
+        if self.persist_user_config {
+            roder_config::save_file_backed_dynamic_context(cfg.file_backed_dynamic_context)
+                .map_err(internal_error)?;
+        }
+        Ok(
+            serde_json::to_value(SettingsSetFileBackedDynamicContextResult {
+                enabled: cfg.file_backed_dynamic_context,
+            })
+            .unwrap(),
+        )
     }
 
     async fn handle_codex_auth_login(&self) -> Result<serde_json::Value, JsonRpcError> {

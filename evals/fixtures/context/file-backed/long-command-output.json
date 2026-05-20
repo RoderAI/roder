@@ -1,0 +1,9 @@
+{
+  "id": "long-command-output",
+  "title": "Recover a value from long command output",
+  "prompt": "A command produced a context artifact because stdout exceeded inline limits. Use the artifact reference to find the RECOVERY_TOKEN value.",
+  "tags": ["file-backed-context", "command-output"],
+  "expectedAnswerContains": "RECOVERY_TOKEN=roder-file-backed-context",
+  "expectedArtifactQuery": "RECOVERY_TOKEN",
+  "expectedTool": "grep"
+}

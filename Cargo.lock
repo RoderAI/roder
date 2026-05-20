@@ -2374,6 +2374,7 @@ dependencies = [
  "roder-commands",
  "roder-config",
  "roder-core",
+ "roder-ext-jsonl-session",
  "roder-ext-memory",
  "roder-ext-openai-embeddings",
  "roder-ext-subagents",
@@ -2403,6 +2404,7 @@ dependencies = [
  "roder-commands",
  "roder-config",
  "roder-core",
+ "roder-evals",
  "roder-ext-anthropic",
  "roder-ext-disk-context",
  "roder-ext-gemini",
@@ -2504,6 +2506,18 @@ dependencies = [
  "time",
  "tokio",
  "uuid",
+]
+
+[[package]]
+name = "roder-evals"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "roder-api",
+ "roder-core",
+ "serde",
+ "serde_json",
+ "time",
 ]
 
 [[package]]

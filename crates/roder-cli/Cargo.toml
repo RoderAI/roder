@@ -17,6 +17,7 @@ roder-codex-auth.workspace = true
 roder-commands.workspace = true
 roder-config.workspace = true
 roder-core.workspace = true
+roder-evals.workspace = true
 roder-ext-anthropic.workspace = true
 roder-ext-disk-context.workspace = true
 roder-ext-gemini.workspace = true

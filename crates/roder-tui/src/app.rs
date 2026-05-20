@@ -70,10 +70,11 @@ use roder_protocol::{
     RunnersSelectParams, RunnersSelectResult, SessionExitPlanParams, SessionExitPlanResult,
     SessionGetResult, SessionResolveApprovalParams, SessionResolveApprovalResult,
     SessionSetModeParams, SessionSetModeResult, SettingsGetResult, SettingsSetDefaultModeParams,
-    SettingsSetDefaultModeResult, SettingsSetWebSearchParams, SettingsSetWebSearchResult,
-    TasksGetParams, TasksGetResult, TasksListResult, TeamReadParams, TeamReadResult,
-    ThreadStartParams, ThreadStartResult, TurnInputItem, TurnInterruptParams, TurnStartParams,
-    TurnSteerParams,
+    SettingsSetDefaultModeResult, SettingsSetFileBackedDynamicContextParams,
+    SettingsSetFileBackedDynamicContextResult, SettingsSetWebSearchParams,
+    SettingsSetWebSearchResult, TasksGetParams, TasksGetResult, TasksListResult, TeamReadParams,
+    TeamReadResult, ThreadStartParams, ThreadStartResult, TurnInputItem, TurnInterruptParams,
+    TurnStartParams, TurnSteerParams,
 };
 use tokio::io::AsyncWriteExt;
 use tokio::process::Command;
@@ -749,6 +750,7 @@ enum ProviderMenuItem {
     RunnerSettings,
     SpinnerSettings,
     WebSearchSettings,
+    FileBackedDynamicContextToggle(bool),
     MessageFoldingToggle(bool),
     ThemesSettings,
     MarketplacesSettings,
@@ -815,6 +817,10 @@ impl ProviderMenuItem {
             Self::RunnerSettings => "Runners".to_string(),
             Self::SpinnerSettings => "Working spinner".to_string(),
             Self::WebSearchSettings => "Web search provider".to_string(),
+            Self::FileBackedDynamicContextToggle(enabled) => format!(
+                "File-backed dynamic context: {}",
+                if *enabled { "on" } else { "off" }
+            ),
             Self::MessageFoldingToggle(enabled) => format!(
                 "Fold long messages: {}",
                 if *enabled { "on" } else { "off" }
@@ -938,6 +944,7 @@ pub struct TuiApp {
     scroll_settings: ScrollSettings,
     timeline_settings: TimelineSettings,
     web_search_mode: HostedWebSearchMode,
+    file_backed_dynamic_context: bool,
     confirm_dialog: Option<ConfirmDialogState>,
     tool_detail_modal: Option<ToolDetailModal>,
     plugin_browser: Option<PluginBrowserState>,
@@ -1246,8 +1253,12 @@ impl TuiApp {
             scroll_settings,
             timeline_settings,
             web_search_mode: settings_state
+                .as_ref()
                 .map(|settings| settings.web_search.mode)
                 .unwrap_or(HostedWebSearchMode::Cached),
+            file_backed_dynamic_context: settings_state
+                .map(|settings| settings.file_backed_dynamic_context)
+                .unwrap_or(true),
             confirm_dialog: None,
             tool_detail_modal: None,
             plugin_browser: None,
@@ -3162,6 +3173,7 @@ impl TuiApp {
                         ProviderMenuItem::WebSearchMode(mode) if *mode == self.web_search_mode => {
                             "✓ "
                         }
+                        ProviderMenuItem::FileBackedDynamicContextToggle(true) => "✓ ",
                         ProviderMenuItem::MessageFoldingToggle(true) => "✓ ",
                         ProviderMenuItem::Session(session) if session.id == self.thread_id => "✓ ",
                         ProviderMenuItem::Theme(id)
@@ -3475,6 +3487,42 @@ impl TuiApp {
         }
     }
 
+    async fn set_file_backed_dynamic_context(&mut self, enabled: bool) {
+        let res = self
+            .client
+            .send_request(JsonRpcRequest {
+                jsonrpc: "2.0".to_string(),
+                id: Some(serde_json::json!(
+                    "settings/set_file_backed_dynamic_context"
+                )),
+                method: "settings/set_file_backed_dynamic_context".to_string(),
+                params: Some(
+                    serde_json::to_value(SettingsSetFileBackedDynamicContextParams { enabled })
+                        .unwrap(),
+                ),
+            })
+            .await;
+
+        match decode_response::<SettingsSetFileBackedDynamicContextResult>(res) {
+            Ok(result) => {
+                self.file_backed_dynamic_context = result.enabled;
+                let state = if result.enabled {
+                    "enabled"
+                } else {
+                    "disabled"
+                };
+                self.timeline
+                    .push_system(format!("file-backed dynamic context {state}."));
+                self.push_event(format!("file-backed dynamic context {state}"));
+                self.show_provider_popup = false;
+            }
+            Err(err) => {
+                self.record_error(format!("failed to set file-backed dynamic context: {err}"));
+                self.show_provider_popup = false;
+            }
+        }
+    }
+
     fn close_or_back_provider_popup(&mut self) {
         if !self.provider_menu_filter.is_empty() {
             self.provider_menu_filter.clear();
@@ -3652,6 +3700,9 @@ impl TuiApp {
             ProviderMenuItem::MessageFoldingToggle(enabled) => {
                 self.set_timeline_message_folding(!enabled);
             }
+            ProviderMenuItem::FileBackedDynamicContextToggle(enabled) => {
+                self.set_file_backed_dynamic_context(!enabled).await;
+            }
             ProviderMenuItem::DefaultMode(mode) => {
                 self.set_default_mode(mode).await;
             }
@@ -3726,7 +3777,8 @@ impl TuiApp {
     fn open_settings_submenu(&mut self) {
         self.provider_popup_screen = ProviderPopupScreen::Settings;
         self.provider_menu_filter.clear();
-        self.provider_menu_items = settings_menu_items(self.timeline_settings);
+        self.provider_menu_items =
+            settings_menu_items(self.timeline_settings, self.file_backed_dynamic_context);
         let selected = self
             .provider_menu_items
             .iter()
@@ -3987,7 +4039,8 @@ impl TuiApp {
         for timeline in self.team_timelines.values_mut() {
             timeline.set_settings(self.timeline_settings);
         }
-        self.provider_menu_items = settings_menu_items(self.timeline_settings);
+        self.provider_menu_items =
+            settings_menu_items(self.timeline_settings, self.file_backed_dynamic_context);
         if let Some(selected) = self.provider_state.selected() {
             self.provider_state.select(Some(
                 selected.min(self.provider_menu_items.len().saturating_sub(1)),
@@ -5376,7 +5429,10 @@ fn providers_menu_items(providers: &[ProviderChoice]) -> Vec<ProviderMenuItem> {
         .collect()
 }
 
-fn settings_menu_items(timeline_settings: TimelineSettings) -> Vec<ProviderMenuItem> {
+fn settings_menu_items(
+    timeline_settings: TimelineSettings,
+    file_backed_dynamic_context: bool,
+) -> Vec<ProviderMenuItem> {
     [
         PolicyMode::Default,
         PolicyMode::AcceptAll,
@@ -5386,6 +5442,7 @@ fn settings_menu_items(timeline_settings: TimelineSettings) -> Vec<ProviderMenuI
     .into_iter()
     .map(ProviderMenuItem::DefaultMode)
     .chain([
+        ProviderMenuItem::FileBackedDynamicContextToggle(file_backed_dynamic_context),
         ProviderMenuItem::MessageFoldingToggle(timeline_settings.message_folding),
         ProviderMenuItem::Back,
     ])
@@ -5991,6 +6048,7 @@ mod tests {
             scroll_settings: ScrollSettings::default(),
             timeline_settings: TimelineSettings::default(),
             web_search_mode: HostedWebSearchMode::Cached,
+            file_backed_dynamic_context: true,
             confirm_dialog: None,
             tool_detail_modal: None,
             plugin_browser: None,
@@ -7180,18 +7238,26 @@ mod tests {
             ProviderMenuItem::MessageFoldingToggle(false).label(),
             "Fold long messages: off"
         );
+        assert_eq!(
+            ProviderMenuItem::FileBackedDynamicContextToggle(true).label(),
+            "File-backed dynamic context: on"
+        );
         assert_eq!(settings_policy_mode_label(PolicyMode::Default), "Default");
     }
 
     #[test]
-    fn settings_menu_includes_message_folding_toggle_before_back() {
-        let items = settings_menu_items(TimelineSettings::default());
+    fn settings_menu_includes_context_and_message_folding_toggles_before_back() {
+        let items = settings_menu_items(TimelineSettings::default(), true);
 
         assert!(matches!(
             items.get(4),
+            Some(ProviderMenuItem::FileBackedDynamicContextToggle(true))
+        ));
+        assert!(matches!(
+            items.get(5),
             Some(ProviderMenuItem::MessageFoldingToggle(false))
         ));
-        assert!(matches!(items.get(5), Some(ProviderMenuItem::Back)));
+        assert!(matches!(items.get(6), Some(ProviderMenuItem::Back)));
     }
 
     #[test]

@@ -52,6 +52,9 @@ async fn main() -> anyhow::Result<()> {
     if matches!(args.first().map(String::as_str), Some("tasks")) {
         return run_tasks_cli(&args[1..]).await;
     }
+    if matches!(args.first().map(String::as_str), Some("eval")) {
+        return run_eval_cli(&args[1..]).await;
+    }
     if matches!(args.first().map(String::as_str), Some("workflow")) {
         return run_workflow_cli(&args[1..]).await;
     }
@@ -91,6 +94,42 @@ async fn main() -> anyhow::Result<()> {
     let mut tui = TuiApp::new_with_startup(client, default_model, startup).await?;
     tui.run().await?;
     print_tui_exit_summary(&tui);
+    Ok(())
+}
+
+async fn run_eval_cli(args: &[String]) -> anyhow::Result<()> {
+    match args.first().map(String::as_str) {
+        Some("run") => {
+            let Some(path) = args.get(1) else {
+                anyhow::bail!("usage: roder eval run FIXTURE_DIR --offline");
+            };
+            let offline = args.iter().any(|arg| arg == "--offline");
+            if !offline {
+                anyhow::bail!("roder eval run currently requires --offline");
+            }
+            let output_dir = std::env::var_os("RODER_EVAL_OUTPUT_DIR")
+                .map(PathBuf::from)
+                .unwrap_or_else(|| std::env::temp_dir().join("roder-evals"));
+            let report = roder_evals::run_file_backed_context_eval(
+                Path::new(path),
+                roder_evals::EvalRunOptions {
+                    offline,
+                    output_dir: output_dir.clone(),
+                },
+            )?;
+            let benchmark_dir = std::env::var_os("RODER_BENCHMARK_OUTPUT_DIR")
+                .map(PathBuf::from)
+                .unwrap_or_else(|| PathBuf::from("benchmark").join("file-backed-dynamic-context"));
+            roder_evals::write_file_backed_context_benchmark_markdown(&report, &benchmark_dir)?;
+            println!(
+                "evaluated {} fixtures; report={}; benchmark={}",
+                report.results.len(),
+                output_dir.join("file-backed-context-report.json").display(),
+                benchmark_dir.display()
+            );
+        }
+        _ => anyhow::bail!("usage: roder eval run FIXTURE_DIR --offline"),
+    }
     Ok(())
 }
 
@@ -723,6 +762,11 @@ pub(crate) async fn build_runtime_from_config(
             default_model: default_model.clone(),
             reasoning: cfg.reasoning,
             auto_compact_token_limit: cfg.auto_compact_token_limit,
+            file_backed_dynamic_context: cfg
+                .context
+                .as_ref()
+                .map(|context| context.file_backed_dynamic_context)
+                .unwrap_or(true),
             hosted_web_search: web_search.hosted,
             model_edit_tools,
             model_parallel_tool_calls,

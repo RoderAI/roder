@@ -1,3 +1,4 @@
+pub mod artifacts;
 pub mod bus;
 mod conversation;
 pub mod fake_provider;
