@@ -20,6 +20,7 @@ pub struct Config {
     pub policy_modes: Option<PolicyModesConfig>,
     pub commands: Option<CommandsConfig>,
     pub tools: Option<ToolsConfig>,
+    pub search_index: Option<SearchIndexConfig>,
     pub notifications: Option<NotificationsConfig>,
     pub tui: Option<TuiConfig>,
     pub remote_runners: Option<RemoteRunnersConfig>,
@@ -208,6 +209,29 @@ impl Default for ToolsConfig {
     fn default() -> Self {
         Self {
             path_scope: default_tool_path_scope(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct SearchIndexConfig {
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+    pub max_file_bytes: Option<u64>,
+    #[serde(default)]
+    pub ignored_globs: Vec<String>,
+    pub rebuild_concurrency: Option<usize>,
+    pub max_index_bytes: Option<u64>,
+}
+
+impl Default for SearchIndexConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            max_file_bytes: Some(1_048_576),
+            ignored_globs: Vec::new(),
+            rebuild_concurrency: Some(4),
+            max_index_bytes: Some(512 * 1_048_576),
         }
     }
 }
@@ -442,6 +466,10 @@ pub fn save_web_search_mode(mode: &str) -> anyhow::Result<()> {
     save_web_search_mode_to_path(config_path(), mode)
 }
 
+pub fn save_search_index_enabled(enabled: bool) -> anyhow::Result<()> {
+    save_search_index_enabled_to_path(config_path(), enabled)
+}
+
 pub fn save_default_policy_mode(mode: &str) -> anyhow::Result<()> {
     save_default_policy_mode_to_path(config_path(), mode)
 }
@@ -482,6 +510,19 @@ pub fn save_web_search_mode_to_path(path: impl AsRef<Path>, mode: &str) -> anyho
     let path = path.as_ref();
     let mut config = load_config_file_from_path(path)?;
     config.web_search.get_or_insert_with(Default::default).mode = Some(mode.to_string());
+    save_config_file_to_path(path, &config)
+}
+
+pub fn save_search_index_enabled_to_path(
+    path: impl AsRef<Path>,
+    enabled: bool,
+) -> anyhow::Result<()> {
+    let path = path.as_ref();
+    let mut config = load_config_file_from_path(path)?;
+    config
+        .search_index
+        .get_or_insert_with(Default::default)
+        .enabled = enabled;
     save_config_file_to_path(path, &config)
 }
 
@@ -651,6 +692,22 @@ fn apply_env_overrides_with(config: &mut Config, mut env: impl FnMut(&str) -> Op
     {
         config.tools.get_or_insert_with(Default::default).path_scope = scope;
     }
+    if let Some(disabled) = env("RODER_SEARCH_INDEX_DISABLED")
+        && parse_bool(&disabled).unwrap_or(false)
+    {
+        config
+            .search_index
+            .get_or_insert_with(Default::default)
+            .enabled = false;
+    }
+    if let Some(max_file_bytes) = env("RODER_SEARCH_INDEX_MAX_FILE_BYTES")
+        && let Ok(max_file_bytes) = max_file_bytes.trim().parse::<u64>()
+    {
+        config
+            .search_index
+            .get_or_insert_with(Default::default)
+            .max_file_bytes = Some(max_file_bytes);
+    }
     if let Some(disabled) = env("RODER_NOTIFICATIONS_DISABLED")
         && parse_bool(&disabled).unwrap_or(false)
     {
@@ -756,6 +813,7 @@ mod tests {
             policy_modes: None,
             commands: None,
             tools: None,
+            search_index: None,
             notifications: None,
             tui: None,
             remote_runners: None,
@@ -962,6 +1020,41 @@ mod tests {
         assert!(!commands.enabled);
         assert!(commands.allow_shell_includes);
         assert!(commands.allow_url_includes);
+    }
+
+    #[test]
+    fn deserializes_search_index_config_and_env_overrides() {
+        let config: Config = toml::from_str(
+            r#"
+            [search_index]
+            enabled = true
+            max_file_bytes = 2097152
+            ignored_globs = ["vendor/**", "*.min.js"]
+            rebuild_concurrency = 8
+            max_index_bytes = 10485760
+            "#,
+        )
+        .unwrap();
+
+        let search_index = config.search_index.unwrap();
+        assert!(search_index.enabled);
+        assert_eq!(search_index.max_file_bytes, Some(2_097_152));
+        assert_eq!(
+            search_index.ignored_globs,
+            vec!["vendor/**".to_string(), "*.min.js".to_string()]
+        );
+        assert_eq!(search_index.rebuild_concurrency, Some(8));
+        assert_eq!(search_index.max_index_bytes, Some(10_485_760));
+
+        let mut config = Config::default();
+        apply_env_overrides_with(&mut config, |key| match key {
+            "RODER_SEARCH_INDEX_DISABLED" => Some("true".to_string()),
+            "RODER_SEARCH_INDEX_MAX_FILE_BYTES" => Some("4096".to_string()),
+            _ => None,
+        });
+        let search_index = config.search_index.unwrap();
+        assert!(!search_index.enabled);
+        assert_eq!(search_index.max_file_bytes, Some(4096));
     }
 
     #[test]
@@ -1264,6 +1357,21 @@ mod tests {
 
         let config = load_config_file_from_path(&path).unwrap();
         assert_eq!(config.web_search.unwrap().mode.as_deref(), Some("live"));
+        let _ = fs::remove_file(&path);
+    }
+
+    #[test]
+    fn save_search_index_enabled_creates_or_updates_search_index_config() {
+        let path = std::env::temp_dir().join(format!(
+            "roder-config-search-index-{}.toml",
+            std::process::id()
+        ));
+        let _ = fs::remove_file(&path);
+
+        save_search_index_enabled_to_path(&path, false).unwrap();
+
+        let config = load_config_file_from_path(&path).unwrap();
+        assert!(!config.search_index.unwrap().enabled);
         let _ = fs::remove_file(&path);
     }
 

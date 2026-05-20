@@ -2379,6 +2379,7 @@ dependencies = [
  "roder-ext-subagents",
  "roder-extension-host",
  "roder-protocol",
+ "roder-search",
  "roder-supergrok-auth",
  "roder-tasks",
  "roder-tools",
@@ -2412,6 +2413,7 @@ dependencies = [
  "roder-ext-subagents",
  "roder-extension-host",
  "roder-protocol",
+ "roder-search",
  "roder-supergrok-auth",
  "roder-tools",
  "roder-tui",
@@ -3047,6 +3049,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "roder-search"
+version = "0.1.0"
+dependencies = [
+ "regex",
+]
+
+[[package]]
 name = "roder-session"
 version = "0.1.0"
 dependencies = [
@@ -3101,8 +3110,10 @@ dependencies = [
  "async-trait",
  "base64",
  "dirs",
+ "regex",
  "roder-api",
  "roder-ext-runner-unix-local",
+ "roder-search",
  "serde",
  "serde_json",
  "time",

@@ -101,7 +101,7 @@ impl TuiApp {
         if self.palette_source_enabled("settings")
             && let Some(settings) = settings.as_ref()
         {
-            sources.push(settings_source(&settings.web_search));
+            sources.push(settings_source(&settings.web_search, &settings.search_index));
         }
         if self.palette_source_enabled("runners")
             && let Some(runners) = runners.as_ref()
@@ -273,6 +273,9 @@ impl TuiApp {
             }
             PaletteAction::SetWebSearchMode(mode) => {
                 self.set_web_search_mode(mode).await;
+            }
+            PaletteAction::SetSearchIndexEnabled(enabled) => {
+                self.set_search_index_enabled(enabled).await;
             }
             PaletteAction::SelectRunner {
                 destination_id,

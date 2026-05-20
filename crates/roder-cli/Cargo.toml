@@ -27,6 +27,7 @@ roder-ext-subagents.workspace = true
 roder-extension-host.workspace = true
 roder-protocol.workspace = true
 roder-supergrok-auth.workspace = true
+roder-search.workspace = true
 roder-tui.workspace = true
 roder-tools.workspace = true
 roder-web-search.workspace = true

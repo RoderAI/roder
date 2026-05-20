@@ -25,6 +25,7 @@ pub enum PaletteAction {
     },
     SetPolicyMode(PolicyMode),
     SetWebSearchMode(HostedWebSearchMode),
+    SetSearchIndexEnabled(bool),
     SelectRunner {
         destination_id: String,
         provider_id: String,

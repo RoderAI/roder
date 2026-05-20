@@ -75,6 +75,7 @@ roder-ext-xai = { path = "crates/roder-ext-xai" }
 roder-extension-host = { path = "crates/roder-extension-host" }
 roder-protocol = { path = "crates/roder-protocol" }
 roder-sandbox = { path = "crates/roder-sandbox" }
+roder-search = { path = "crates/roder-search" }
 roder-theme = { path = "crates/roder-theme" }
 roder-tasks = { path = "crates/roder-tasks" }
 roder-tools = { path = "crates/roder-tools" }

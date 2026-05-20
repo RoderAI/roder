@@ -780,6 +780,8 @@ mod tests {
                     path: "repo-tools".to_string(),
                 },
                 homepage: Some("https://github.com/example/repo-tools".to_string()),
+                category: None,
+                tags: Vec::new(),
                 component_hints: roder_api::marketplace::PluginComponentHints {
                     mcp_servers: true,
                     ..Default::default()
