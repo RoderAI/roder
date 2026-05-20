@@ -60,6 +60,9 @@ impl TuiApp {
         self.current_turn_total_tokens = 0;
         self.context_counter_hovered = false;
         self.tool_names.clear();
+        self.exec_session_tools.clear();
+        self.stdin_tool_sessions.clear();
+        self.hidden_stdin_tools.clear();
         self.queued_prompts = PromptQueue::default();
         self.last_user_prompt = None;
         self.image_attachments.clear();

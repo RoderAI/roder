@@ -1068,6 +1068,32 @@ fn running_shell_tool_renders_live_last_twelve_output_rows() {
 }
 
 #[test]
+fn stdin_session_updates_append_to_original_exec_row() {
+    let mut timeline = TimelineState::default();
+    timeline.record_tool_requested(
+        "call_exec".to_string(),
+        ToolTimelineEntry::new("exec_command", r#"{"cmd":"npm test"}"#),
+    );
+    timeline.record_tool_completed("call_exec", false, Some("first chunk".to_string()));
+
+    timeline.record_tool_session_update("call_exec", false, Some("second chunk".to_string()), true);
+
+    assert_eq!(
+        timeline
+            .items
+            .iter()
+            .filter(|item| matches!(item.kind, TimelineItemKind::Tool(_)))
+            .count(),
+        1
+    );
+    let lines = rendered_lines(&mut timeline);
+    assert!(lines.iter().any(|line| line.contains("Exec Command")));
+    assert!(lines.iter().any(|line| line.contains("first chunk")));
+    assert!(lines.iter().any(|line| line.contains("second chunk")));
+    assert!(!lines.iter().any(|line| line.contains("Write Stdin")));
+}
+
+#[test]
 fn new_shell_tool_collapses_previous_shell_output() {
     let mut timeline = TimelineState::default();
     timeline.record_tool_requested(

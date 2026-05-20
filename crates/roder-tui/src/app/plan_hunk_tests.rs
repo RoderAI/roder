@@ -92,3 +92,17 @@ fn plan_review_renders_without_standalone_hunk_rows() {
     assert!(!lines.iter().any(|line| line.contains("hunk hunk-1")));
     assert!(!lines.iter().any(|line| line.contains("+new")));
 }
+
+#[test]
+fn standalone_hunk_records_are_not_rendered() {
+    let mut timeline = TimelineState::default();
+    let mut standalone = hunk();
+    standalone.plan_review_id = None;
+
+    timeline.record_hunk(standalone);
+
+    let lines = rendered_lines(&mut timeline);
+    assert!(!lines.iter().any(|line| line.contains("hunk hunk-1")));
+    assert!(!lines.iter().any(|line| line.contains("src/lib.rs")));
+    assert!(!lines.iter().any(|line| line.contains("+new")));
+}

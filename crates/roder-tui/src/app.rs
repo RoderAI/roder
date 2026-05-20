@@ -1,7 +1,6 @@
 mod commands;
 mod composer;
 mod dialog;
-mod hunk_tracker;
 mod input_queue;
 mod media;
 #[allow(dead_code)]
@@ -907,6 +906,9 @@ pub struct TuiApp {
     team_timelines: HashMap<String, TimelineState>,
     plan_panel: PlanPanelState,
     tool_names: HashMap<String, String>,
+    exec_session_tools: HashMap<u64, String>,
+    stdin_tool_sessions: HashMap<String, u64>,
+    hidden_stdin_tools: HashSet<String>,
     last_plan_counter_area: Option<Rect>,
     events: Vec<String>,
     animation_frame: u64,
@@ -1212,6 +1214,9 @@ impl TuiApp {
             team_timelines: HashMap::new(),
             plan_panel: PlanPanelState::default(),
             tool_names: HashMap::new(),
+            exec_session_tools: HashMap::new(),
+            stdin_tool_sessions: HashMap::new(),
+            hidden_stdin_tools: HashSet::new(),
             last_plan_counter_area: None,
             events: Vec::new(),
             animation_frame: 0,
@@ -1567,8 +1572,7 @@ impl TuiApp {
                                 );
                             }
                             roder_api::inference::InferenceEvent::ToolCallDelta(delta) => {
-                                self.timeline
-                                    .record_tool_delta(&delta.id, &delta.arguments_delta);
+                                self.record_tool_delta(&delta.id, &delta.arguments_delta);
                             }
                             roder_api::inference::InferenceEvent::ToolCallCompleted(call) => {
                                 self.record_tool_requested_with_id(
@@ -4240,11 +4244,52 @@ impl TuiApp {
         if is_raw_tool_name(&entry.name) {
             self.tool_names.insert(tool_id.clone(), entry.name.clone());
         }
+        if is_stdin_tool(&entry.name) {
+            if let Some(session_id) = session_id_from_tool_arguments(&entry.arguments) {
+                self.stdin_tool_sessions.insert(tool_id.clone(), session_id);
+            }
+            self.hidden_stdin_tools.insert(tool_id.clone());
+            self.timeline.remove_tool(&tool_id);
+            return;
+        }
         self.timeline.record_tool_requested(tool_id, entry);
+    }
+
+    fn record_tool_delta(&mut self, tool_id: &str, arguments_delta: &str) {
+        if self.hidden_stdin_tools.contains(tool_id) {
+            return;
+        }
+        self.timeline.record_tool_delta(tool_id, arguments_delta);
     }
 
     fn record_tool_completed(&mut self, tool_id: &str, failed: bool, output: Option<String>) {
         let tool_name = self.tool_names.remove(tool_id);
+        let hidden_stdin = self.hidden_stdin_tools.remove(tool_id);
+        let raw_session_id = output.as_deref().and_then(session_id_from_tool_result);
+        let raw_still_running = output.as_deref().is_some_and(tool_result_is_running);
+        if hidden_stdin {
+            if let Some(session_id) = self.stdin_tool_sessions.remove(tool_id).or(raw_session_id)
+                && let Some(exec_tool_id) = self.exec_session_tools.get(&session_id).cloned()
+            {
+                let output_delta = output
+                    .as_deref()
+                    .and_then(aggregated_output_from_tool_result);
+                if !raw_still_running {
+                    self.exec_session_tools.remove(&session_id);
+                }
+                self.timeline.record_tool_session_update(
+                    &exec_tool_id,
+                    failed,
+                    output_delta,
+                    raw_still_running,
+                );
+                return;
+            }
+            return;
+        }
+        if tool_name.as_deref().is_some_and(is_stdin_tool) {
+            self.stdin_tool_sessions.remove(tool_id);
+        }
         if !failed
             && tool_name.as_deref() == Some("update_plan")
             && let Some(text) = output.as_deref()
@@ -4262,6 +4307,13 @@ impl TuiApp {
         } else {
             output
         };
+        let exec_session_is_running = tool_name.as_deref().is_some_and(is_exec_session_tool)
+            && raw_session_id.is_some()
+            && raw_still_running;
+        if exec_session_is_running && let Some(session_id) = raw_session_id {
+            self.exec_session_tools
+                .insert(session_id, tool_id.to_string());
+        }
         self.timeline
             .record_tool_completed(tool_id, failed, timeline_output);
     }
@@ -5059,6 +5111,41 @@ fn aggregated_output_from_tool_result(output: &str) -> Option<String> {
     (!text.is_empty()).then_some(text)
 }
 
+fn session_id_from_tool_result(output: &str) -> Option<u64> {
+    output.lines().find_map(|line| {
+        line.trim()
+            .strip_prefix("Session id:")
+            .and_then(|value| value.trim().parse::<u64>().ok())
+    })
+}
+
+fn session_id_from_tool_arguments(arguments: &str) -> Option<u64> {
+    serde_json::from_str::<serde_json::Value>(arguments)
+        .ok()?
+        .get("session_id")?
+        .as_u64()
+}
+
+fn tool_result_is_running(output: &str) -> bool {
+    output
+        .lines()
+        .any(|line| line.trim().eq_ignore_ascii_case("Status: running"))
+}
+
+fn is_stdin_tool(name: &str) -> bool {
+    let normalized = name.to_ascii_lowercase();
+    normalized == "write_stdin"
+        || normalized.ends_with(".write_stdin")
+        || normalized.ends_with("_write_stdin")
+}
+
+fn is_exec_session_tool(name: &str) -> bool {
+    let normalized = name.to_ascii_lowercase();
+    normalized == "exec_command"
+        || normalized.ends_with(".exec_command")
+        || normalized.ends_with("_exec_command")
+}
+
 async fn copy_selection_to_clipboards(text: String) -> anyhow::Result<()> {
     let mut errors = Vec::new();
     if let Err(err) = copy_to_system_clipboard(&text).await {
@@ -5848,6 +5935,9 @@ mod tests {
             team_timelines: HashMap::new(),
             plan_panel: PlanPanelState::default(),
             tool_names: HashMap::new(),
+            exec_session_tools: HashMap::new(),
+            stdin_tool_sessions: HashMap::new(),
+            hidden_stdin_tools: HashSet::new(),
             last_plan_counter_area: None,
             events: Vec::new(),
             animation_frame: 0,
@@ -6115,6 +6205,133 @@ mod tests {
         assert!(!is_raw_tool_name(""));
         assert!(!is_raw_tool_name("Update Plan awaiting approval"));
         assert!(!is_raw_tool_name("Grep path: crates query: thing"));
+    }
+
+    #[test]
+    fn session_tool_helpers_accept_namespaced_tool_ids() {
+        assert!(is_stdin_tool("write_stdin"));
+        assert!(is_stdin_tool("functions.write_stdin"));
+        assert!(is_exec_session_tool("exec_command"));
+        assert!(is_exec_session_tool("functions.exec_command"));
+        assert!(!is_exec_session_tool("shell"));
+    }
+
+    #[test]
+    fn write_stdin_updates_original_exec_tool_in_timeline() {
+        let mut app = test_app();
+        app.record_tool_requested_with_id(
+            "call_exec".to_string(),
+            ToolTimelineEntry::new("exec_command", r#"{"cmd":"npm test"}"#),
+        );
+        app.record_tool_completed(
+            "call_exec",
+            false,
+            Some(
+                "Exit code: still running\nStatus: running\nWall time: 0.100 seconds\nSession id: 7\nOutput:\nstart"
+                    .to_string(),
+            ),
+        );
+        app.record_tool_requested_with_id(
+            "call_stdin".to_string(),
+            ToolTimelineEntry::new("write_stdin", r#"{"session_id":7}"#),
+        );
+        app.record_tool_completed(
+            "call_stdin",
+            false,
+            Some(
+                "Exit code: still running\nStatus: running\nWall time: 0.200 seconds\nSession id: 7\nOutput:\ndone"
+                    .to_string(),
+            ),
+        );
+
+        let rows = app
+            .timeline
+            .render(app.theme, Rect::new(0, 0, 100, 20))
+            .text
+            .lines
+            .iter()
+            .map(|line| {
+                line.spans
+                    .iter()
+                    .map(|span| span.content.as_ref())
+                    .collect::<String>()
+            })
+            .collect::<Vec<_>>();
+
+        assert_eq!(rows.iter().filter(|row| row.contains("◆")).count(), 1);
+        assert!(rows.iter().any(|row| row.contains("Exec Command")));
+        assert!(rows.iter().any(|row| row.contains("done")));
+        assert!(!rows.iter().any(|row| row.contains("Write Stdin")));
+        assert!(app.exec_session_tools.contains_key(&7));
+
+        app.record_tool_requested_with_id(
+            "call_stdin_done".to_string(),
+            ToolTimelineEntry::new("write_stdin", r#"{"session_id":7}"#),
+        );
+        app.record_tool_completed(
+            "call_stdin_done",
+            false,
+            Some(
+                "Exit code: 0\nStatus: completed\nWall time: 0.300 seconds\nSession id: 7\nOutput:\n(no output)"
+                    .to_string(),
+            ),
+        );
+        assert!(!app.exec_session_tools.contains_key(&7));
+    }
+
+    #[test]
+    fn write_stdin_started_without_args_stays_hidden_and_updates_exec_row() {
+        let mut app = test_app();
+        app.record_tool_requested_with_id(
+            "call_exec".to_string(),
+            ToolTimelineEntry::new("exec_command", r#"{"cmd":"cargo test"}"#),
+        );
+        app.record_tool_completed(
+            "call_exec",
+            false,
+            Some(
+                "Exit code: still running\nStatus: running\nWall time: 0.100 seconds\nSession id: 9\nOutput:\ncompiling"
+                    .to_string(),
+            ),
+        );
+
+        app.record_tool_requested_with_id(
+            "call_stdin".to_string(),
+            ToolTimelineEntry::new("write_stdin", ""),
+        );
+        app.record_tool_delta("call_stdin", r#"{"session_id":9}"#);
+        app.record_tool_requested_with_id(
+            "call_stdin".to_string(),
+            ToolTimelineEntry::new("write_stdin", r#"{"session_id":9}"#),
+        );
+        app.record_tool_completed(
+            "call_stdin",
+            false,
+            Some(
+                "Exit code: still running\nStatus: running\nWall time: 0.200 seconds\nSession id: 9\nOutput:\nfinished"
+                    .to_string(),
+            ),
+        );
+
+        let rows = app
+            .timeline
+            .render(app.theme, Rect::new(0, 0, 100, 20))
+            .text
+            .lines
+            .iter()
+            .map(|line| {
+                line.spans
+                    .iter()
+                    .map(|span| span.content.as_ref())
+                    .collect::<String>()
+            })
+            .collect::<Vec<_>>();
+
+        assert_eq!(rows.iter().filter(|row| row.contains("◆")).count(), 1);
+        assert!(rows.iter().any(|row| row.contains("Exec Command")));
+        assert!(rows.iter().any(|row| row.contains("finished")));
+        assert!(!rows.iter().any(|row| row.contains("Write Stdin")));
+        assert!(!rows.iter().any(|row| row.contains("tool call_stdin")));
     }
 
     #[test]

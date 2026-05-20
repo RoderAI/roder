@@ -185,9 +185,6 @@ impl TimelineItem {
             TimelineItemKind::PlanReview(review) => {
                 review.render(selected, expanded, theme, lines);
             }
-            TimelineItemKind::Hunk(hunk) => {
-                hunk.render(selected, expanded, theme, lines);
-            }
         }
     }
 }
