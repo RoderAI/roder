@@ -24,6 +24,7 @@ pub(super) fn built_in_command_catalog() -> Vec<CommandDescriptor> {
             "Preview, install, list, disable, or uninstall marketplace plugins.",
         ),
         ("remote", "Open the remote app-server pairing panel."),
+        ("roadmap", "Open document-first roadmapping mode."),
     ]
     .into_iter()
     .map(|(name, description)| {
@@ -35,6 +36,7 @@ pub(super) fn built_in_command_catalog() -> Vec<CommandDescriptor> {
             "plugin" => {
                 Some("preview|install|install-all|list|disable|uninstall [args]".to_string())
             }
+            "roadmap" => Some("[plan]".to_string()),
             _ => None,
         };
         CommandDescriptor {
@@ -134,6 +136,7 @@ pub(super) fn built_in_prompt(name: &str, args: &str) -> Option<String> {
         "remote" => {
             "Open the remote app-server pairing workflow and show connection URLs, token preview, auth header guidance, and LAN/Tailscale safety notes."
         }
+        "roadmap" => "Open roadmapping mode, optionally with a specific roadmap plan.",
         _ => return None,
     };
     if args.trim().is_empty() {
@@ -266,7 +269,8 @@ mod tests {
                 "memory",
                 "marketplace",
                 "plugin",
-                "remote"
+                "remote",
+                "roadmap"
             ]
         );
         assert_eq!(
@@ -289,6 +293,13 @@ mod tests {
                 .find(|command| command.name == "plugin")
                 .and_then(|command| command.argument_hint.as_deref()),
             Some("preview|install|install-all|list|disable|uninstall [args]")
+        );
+        assert_eq!(
+            commands
+                .iter()
+                .find(|command| command.name == "roadmap")
+                .and_then(|command| command.argument_hint.as_deref()),
+            Some("[plan]")
         );
     }
 

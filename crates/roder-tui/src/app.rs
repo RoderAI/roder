@@ -1288,7 +1288,13 @@ impl TuiApp {
 
     pub fn enter_roadmap_mode(&mut self, path: Option<String>) {
         let label = path.clone().unwrap_or_else(|| "roadmap".to_string());
-        self.roadmap_mode = Some(RoadmapModeState::new(path));
+        let workspace = std::env::current_dir();
+        let state = workspace
+            .as_deref()
+            .ok()
+            .and_then(|workspace| RoadmapModeState::load(workspace, path.clone()).ok())
+            .unwrap_or_else(|| RoadmapModeState::new(path));
+        self.roadmap_mode = Some(state);
         self.push_event(format!("Roadmapping mode: {label}"));
     }
 
@@ -2164,6 +2170,9 @@ impl TuiApp {
             "remote" => {
                 self.run_remote_slash_command(&args).await;
             }
+            "roadmap" => {
+                self.run_roadmap_slash_command(&args);
+            }
             _ if let Some(prompt) = commands::built_in_prompt(&name, &args) => {
                 let suffix = slash_command_suffix(&args);
                 let pending =
@@ -2404,6 +2413,15 @@ impl TuiApp {
         }
     }
 
+    fn run_roadmap_slash_command(&mut self, args: &str) {
+        let path = args
+            .split_whitespace()
+            .next()
+            .filter(|value| !value.is_empty())
+            .map(roadmap_slash_path);
+        self.enter_roadmap_mode(path);
+    }
+
     async fn expand_slash_command(
         &self,
         name: &str,
@@ -2456,7 +2474,12 @@ impl TuiApp {
         self.composer = composer_textarea(self.theme);
         self.slash_command_selection = 0;
         let display = transcript_message_with_image_attachments(&text, &attachments);
-        Some(PendingPrompt::with_images(display, text, images))
+        let message = self
+            .roadmap_mode
+            .as_ref()
+            .map(|roadmap| roadmap.prompt_context(&text))
+            .unwrap_or(text);
+        Some(PendingPrompt::with_images(display, message, images))
     }
 
     fn has_prepared_prompt(&self) -> bool {
@@ -2744,6 +2767,10 @@ impl TuiApp {
             f.render_widget(Block::default().style(Style::default().bg(bg)), area);
         }
         style_composer_for_current_mode(&mut self.composer, self.theme, self.policy_mode);
+        if let Some(roadmap) = self.roadmap_mode.as_ref() {
+            self.composer
+                .set_placeholder_text(roadmap.composer_placeholder());
+        }
         let event_height = event_log_height(self.show_event_log, self.events.len());
         let attachment_height = image_attachment_height(self.image_attachments.len());
         let queue_height = queued_prompt_height(self.queued_prompts.len());
@@ -2786,10 +2813,14 @@ impl TuiApp {
 
         let transcript_index = 1;
         f.render_widget(self.header(area.width), chunks[0]);
-        f.render_widget(
-            self.transcript(chunks[transcript_index]),
-            chunks[transcript_index],
-        );
+        if self.roadmap_mode.is_some() {
+            f.render_widget(self.roadmap_document(), chunks[transcript_index]);
+        } else {
+            f.render_widget(
+                self.transcript(chunks[transcript_index]),
+                chunks[transcript_index],
+            );
+        }
 
         let mut composer_index = if event_height > 0 {
             f.render_widget(self.event_log(), chunks[transcript_index + 1]);
@@ -2960,6 +2991,18 @@ impl TuiApp {
         Paragraph::new(text)
             .style(self.theme.text())
             .scroll((render.text_scroll, 0))
+            .wrap(Wrap { trim: false })
+    }
+
+    fn roadmap_document(&mut self) -> Paragraph<'static> {
+        self.selectable_lines = Vec::new();
+        let text = self
+            .roadmap_mode
+            .as_ref()
+            .map(RoadmapModeState::render_text)
+            .unwrap_or_else(|| Text::from("Roadmap mode"));
+        Paragraph::new(text)
+            .style(self.theme.text())
             .wrap(Wrap { trim: false })
     }
 
@@ -5993,6 +6036,16 @@ fn short_id(id: &str) -> &str {
     id.get(..8).unwrap_or(id)
 }
 
+fn roadmap_slash_path(plan: &str) -> String {
+    if plan.starts_with("roadmap/") {
+        plan.to_string()
+    } else if plan.ends_with(".md") {
+        format!("roadmap/{plan}")
+    } else {
+        format!("roadmap/{plan}.md")
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -6146,6 +6199,34 @@ mod tests {
             .map(|cell| cell.symbol.as_str())
             .collect::<String>();
         assert!(footer.contains("roadmap:20-roadmapping-mode.md"));
+    }
+
+    #[test]
+    fn roadmap_slash_command_enters_mode_with_plan() {
+        let mut app = test_app();
+
+        app.run_roadmap_slash_command("20-roadmapping-mode.md");
+
+        assert_eq!(
+            app.roadmap_mode
+                .as_ref()
+                .and_then(|state| state.selected_plan.as_deref()),
+            Some("roadmap/20-roadmapping-mode.md")
+        );
+    }
+
+    #[test]
+    fn roadmap_prompt_submission_adds_context() {
+        let mut app = test_app();
+        app.enter_roadmap_mode(Some("roadmap/20-roadmapping-mode.md".to_string()));
+        app.composer.insert_str("continue the selected task");
+
+        let pending = app.take_prepared_prompt().unwrap();
+
+        assert_eq!(pending.display, "continue the selected task");
+        assert!(pending.message.contains("Roadmapping mode is active"));
+        assert!(pending.message.contains("Selected roadmap:"));
+        assert!(pending.message.contains("continue the selected task"));
     }
 
     #[test]

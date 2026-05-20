@@ -3140,6 +3140,7 @@ dependencies = [
  "roder-app-server",
  "roder-core",
  "roder-protocol",
+ "roder-roadmap",
  "roder-theme",
  "serde",
  "serde_json",
