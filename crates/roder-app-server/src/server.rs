@@ -1196,6 +1196,20 @@ impl AppServer {
             .await
             .map(|(provider, model)| (Some(provider), Some(model)))
             .unwrap_or((None, None));
+        let mut workspace = self
+            .runtime
+            .load_session(&params.thread_id)
+            .await
+            .map_err(internal_error)?
+            .and_then(|snapshot| snapshot.metadata.and_then(|metadata| metadata.workspace));
+        if workspace.is_none() {
+            workspace = self
+                .desktop_threads
+                .read()
+                .await
+                .get(&params.thread_id)
+                .map(|thread| thread.cwd.clone());
+        }
         let turn_id = self
             .runtime
             .start_turn(StartTurnRequest {
@@ -1204,6 +1218,7 @@ impl AppServer {
                 images: Vec::new(),
                 provider_override,
                 model_override,
+                workspace,
                 instructions: default_instructions(),
             })
             .await
@@ -1601,6 +1616,7 @@ impl AppServer {
         &self,
         params: CommandsRunParams,
     ) -> Result<serde_json::Value, JsonRpcError> {
+        let workspace = params.workspace.clone();
         let expanded = self
             .expand_command(CommandsExpandParams {
                 name: params.name,
@@ -1616,6 +1632,7 @@ impl AppServer {
                 images: Vec::new(),
                 provider_override: None,
                 model_override: expanded.model.clone(),
+                workspace,
                 instructions: default_instructions(),
             })
             .await

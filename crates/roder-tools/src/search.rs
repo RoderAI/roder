@@ -6,21 +6,25 @@ use roder_api::tools::{
 use serde::Deserialize;
 use serde_json::json;
 
-use crate::backend::WorkspaceBackendHandle;
+use crate::backend::{WorkspaceBackendHandle, backend_from_context_or_fallback};
 use crate::files::{parse, require_nonempty, result};
 use crate::paging::{DEFAULT_PAGE_LINES, MAX_PAGE_LINES, clamp_limit, page_lines, page_metadata};
+use crate::workspace::Workspace;
 
 pub(crate) fn register(
     registry: &mut ToolRegistry,
+    workspace: Workspace,
     backend: WorkspaceBackendHandle,
 ) -> anyhow::Result<()> {
     registry.register(Arc::new(GrepTool {
+        workspace: workspace.clone(),
         backend: backend.clone(),
     }))?;
-    registry.register(Arc::new(GlobTool { backend }))
+    registry.register(Arc::new(GlobTool { workspace, backend }))
 }
 
 struct GrepTool {
+    workspace: Workspace,
     backend: WorkspaceBackendHandle,
 }
 
@@ -64,8 +68,8 @@ impl ToolExecutor for GrepTool {
         ctx.require_workspace()?;
         let args = parse::<GrepArgs>(&call)?;
         require_nonempty(&args.query, "query")?;
-        let (start, matches) = self
-            .backend
+        let backend = backend_from_context_or_fallback(&ctx, &self.workspace, &self.backend)?;
+        let (start, matches) = backend
             .grep_literal(&args.query, args.path.as_deref().unwrap_or("."))
             .await?;
         let offset = args.offset.unwrap_or_default();
@@ -77,6 +81,7 @@ impl ToolExecutor for GrepTool {
 }
 
 struct GlobTool {
+    workspace: Workspace,
     backend: WorkspaceBackendHandle,
 }
 
@@ -120,7 +125,8 @@ impl ToolExecutor for GlobTool {
         ctx.require_workspace()?;
         let args = parse::<GlobArgs>(&call)?;
         require_nonempty(&args.pattern, "pattern")?;
-        let matches = self.backend.glob(&args.pattern).await?;
+        let backend = backend_from_context_or_fallback(&ctx, &self.workspace, &self.backend)?;
+        let matches = backend.glob(&args.pattern).await?;
         let offset = args.offset.unwrap_or_default();
         let limit = clamp_limit(args.limit);
         let page = page_lines(&matches, offset, limit);

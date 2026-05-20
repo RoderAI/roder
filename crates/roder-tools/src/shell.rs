@@ -59,15 +59,14 @@ impl ToolExecutor for ShellTool {
         call: ToolCall,
     ) -> anyhow::Result<ToolResult> {
         ctx.require_process_runner()?;
+        let workspace = Workspace::from_context_or_fallback(&ctx, &self.workspace)?;
         let args = parse::<ShellArgs>(&call)?;
         let command = args.command.trim().to_string();
         require_nonempty(&command, "command")?;
 
         let cwd = match args.workdir.as_deref() {
-            Some(workdir) if !workdir.trim().is_empty() => {
-                self.workspace.resolve_existing(workdir)?
-            }
-            _ => self.workspace.root().to_path_buf(),
+            Some(workdir) if !workdir.trim().is_empty() => workspace.resolve_existing(workdir)?,
+            _ => workspace.root().to_path_buf(),
         };
         let timeout = args
             .timeout_seconds
@@ -180,7 +179,7 @@ mod tests {
         };
 
         let result = tool
-            .execute(context(), call(json!({ "command": "printf hi" })))
+            .execute(context(&root), call(json!({ "command": "printf hi" })))
             .await
             .unwrap();
 
@@ -204,7 +203,7 @@ mod tests {
 
         let result = tool
             .execute(
-                context(),
+                context(&root),
                 call(json!({ "command": "echo nope >&2; exit 7" })),
             )
             .await
@@ -230,13 +229,13 @@ mod tests {
         }
     }
 
-    fn context() -> ToolExecutionContext {
+    fn context(workspace: &std::path::Path) -> ToolExecutionContext {
         ToolExecutionContext::new(
             ThreadId::from("thread-shell"),
             TurnId::from("turn-shell"),
             PolicyMode::Default,
         )
-        .with_workspace_handle(Arc::new(LocalWorkspaceHandle::new(".")))
+        .with_workspace_handle(Arc::new(LocalWorkspaceHandle::new(workspace)))
         .with_process_runner(Arc::new(LocalProcessRunnerHandle))
     }
 
