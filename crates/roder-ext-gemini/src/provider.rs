@@ -340,6 +340,7 @@ mod tests {
                     id: "call_1".to_string(),
                     name: Some("shell".to_string()),
                     result: "ok".to_string(),
+                    display_payload: None,
                     is_error: false,
                 }),
             ],

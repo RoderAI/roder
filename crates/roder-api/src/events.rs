@@ -124,6 +124,8 @@ pub struct ToolCallRequested {
     pub turn_id: TurnId,
     pub tool_id: String,
     pub tool_name: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub display_payload: Option<serde_json::Value>,
     #[serde(with = "time::serde::rfc3339")]
     pub timestamp: OffsetDateTime,
 }
@@ -177,6 +179,10 @@ pub struct ToolCallStarted {
     pub thread_id: ThreadId,
     pub turn_id: TurnId,
     pub tool_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tool_name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub display_payload: Option<serde_json::Value>,
     #[serde(with = "time::serde::rfc3339")]
     pub timestamp: OffsetDateTime,
 }
@@ -186,6 +192,10 @@ pub struct ToolCallCompleted {
     pub thread_id: ThreadId,
     pub turn_id: TurnId,
     pub tool_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tool_name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub display_payload: Option<serde_json::Value>,
     #[serde(default)]
     pub is_error: bool,
     #[serde(default)]
@@ -1421,6 +1431,8 @@ mod tests {
             thread_id: "thread-a".to_string(),
             turn_id: "turn-a".to_string(),
             tool_id: "tool-a".to_string(),
+            tool_name: Some("list_files".to_string()),
+            display_payload: Some(serde_json::json!({ "path": "." })),
             is_error: true,
             output: Some("tool failed".to_string()),
             timestamp: OffsetDateTime::UNIX_EPOCH,

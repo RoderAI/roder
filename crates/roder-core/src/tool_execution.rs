@@ -1,4 +1,4 @@
-use roder_api::conversation::ToolResultRecord;
+use roder_api::conversation::{ToolResultRecord, tool_display_payload};
 use roder_api::events::*;
 use roder_api::policy_mode::{PolicyDecision, PolicyMode};
 use roder_api::subagents::SubagentExitReason;
@@ -20,11 +20,14 @@ impl Runtime {
         call: roder_api::inference::ToolCallCompleted,
         workspace: Option<&str>,
     ) -> anyhow::Result<ToolResultRecord> {
+        let parsed_args = serde_json::from_str(&call.arguments)
+            .unwrap_or_else(|_| serde_json::json!({ "raw": call.arguments }));
         self.emit(RoderEvent::ToolCallRequested(ToolCallRequested {
             thread_id: thread_id.clone(),
             turn_id: turn_id.clone(),
             tool_id: call.id.clone(),
             tool_name: call.name.clone(),
+            display_payload: tool_display_payload(Some(&call.name), Some(&parsed_args), None),
             timestamp: OffsetDateTime::now_utc(),
         }))
         .await;
@@ -33,6 +36,7 @@ impl Runtime {
                 id: call.id.clone(),
                 name: Some(call.name),
                 result: "tool not found".to_string(),
+                display_payload: tool_display_payload(None, Some(&parsed_args), None),
                 is_error: true,
             };
             self.persist_turn_item(
@@ -45,6 +49,8 @@ impl Runtime {
                 thread_id: thread_id.clone(),
                 turn_id: turn_id.clone(),
                 tool_id: call.id,
+                tool_name: item.name.clone(),
+                display_payload: item.display_payload.clone(),
                 is_error: true,
                 output: Some(item.result.clone()),
                 timestamp: OffsetDateTime::now_utc(),
@@ -55,8 +61,6 @@ impl Runtime {
         let mut runtime_config = self.status().await;
         let mode = self.effective_policy_mode_for_thread(thread_id).await;
         runtime_config.policy_mode = mode;
-        let parsed_args = serde_json::from_str(&call.arguments)
-            .unwrap_or_else(|_| serde_json::json!({ "raw": call.arguments }));
         let tool_call = ToolCall {
             id: call.id.clone(),
             name: call.name.clone(),
@@ -96,6 +100,11 @@ impl Runtime {
                 id: tool_call.id.clone(),
                 name: Some(tool_call.name.clone()),
                 result: format!("policy denied tool call: {reason}"),
+                display_payload: tool_display_payload(
+                    Some(&tool_call.name),
+                    Some(&parsed_args),
+                    None,
+                ),
                 is_error: true,
             };
             self.persist_turn_item(
@@ -108,6 +117,8 @@ impl Runtime {
                 thread_id: thread_id.clone(),
                 turn_id: turn_id.clone(),
                 tool_id: tool_call.id,
+                tool_name: item.name.clone(),
+                display_payload: item.display_payload.clone(),
                 is_error: true,
                 output: Some(item.result.clone()),
                 timestamp: OffsetDateTime::now_utc(),
@@ -133,6 +144,11 @@ impl Runtime {
                 id: tool_call.id.clone(),
                 name: Some(tool_call.name.clone()),
                 result: "policy rejected tool call: approval denied".to_string(),
+                display_payload: tool_display_payload(
+                    Some(&tool_call.name),
+                    Some(&parsed_args),
+                    None,
+                ),
                 is_error: true,
             };
             self.persist_turn_item(
@@ -145,6 +161,8 @@ impl Runtime {
                 thread_id: thread_id.clone(),
                 turn_id: turn_id.clone(),
                 tool_id: tool_call.id,
+                tool_name: item.name.clone(),
+                display_payload: item.display_payload.clone(),
                 is_error: true,
                 output: Some(item.result.clone()),
                 timestamp: OffsetDateTime::now_utc(),
@@ -158,6 +176,12 @@ impl Runtime {
             thread_id: thread_id.clone(),
             turn_id: turn_id.clone(),
             tool_id: tool_call.id.clone(),
+            tool_name: Some(tool_call.name.clone()),
+            display_payload: tool_display_payload(
+                Some(&tool_call.name),
+                Some(&tool_call.arguments),
+                None,
+            ),
             timestamp: OffsetDateTime::now_utc(),
         }))
         .await;
@@ -189,6 +213,11 @@ impl Runtime {
             id: result.id.clone(),
             name: Some(result.name.clone()),
             result: cap_tool_output_lines(result.text),
+            display_payload: tool_display_payload(
+                Some(&result.name),
+                Some(&parsed_args),
+                Some(&result.data),
+            ),
             is_error: result.is_error,
         };
         self.persist_turn_item(
@@ -201,6 +230,8 @@ impl Runtime {
             thread_id: thread_id.clone(),
             turn_id: turn_id.clone(),
             tool_id: result.id,
+            tool_name: Some(result.name.clone()),
+            display_payload: item.display_payload.clone(),
             is_error: item.is_error,
             output: Some(item.result.clone()),
             timestamp: OffsetDateTime::now_utc(),
