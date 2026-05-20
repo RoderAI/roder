@@ -3036,6 +3036,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "roder-roadmap"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "serde",
+ "serde_json",
+ "time",
+ "uuid",
+]
+
+[[package]]
 name = "roder-sandbox"
 version = "0.1.0"
 dependencies = [
