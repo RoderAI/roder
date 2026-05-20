@@ -1,7 +1,8 @@
 mod network;
 
+use std::collections::HashMap;
 use std::net::SocketAddr;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use futures::{SinkExt, StreamExt};
 use qrcode::QrCode;
@@ -17,7 +18,7 @@ use time::OffsetDateTime;
 use tokio::net::TcpListener;
 use tokio_tungstenite::tungstenite::Message;
 use tokio_tungstenite::tungstenite::handshake::server::{ErrorResponse, Request, Response};
-use tokio_tungstenite::tungstenite::http::{HeaderValue, StatusCode};
+use tokio_tungstenite::tungstenite::http::{HeaderValue, StatusCode, header};
 
 use crate::AppServer;
 use network::connect_urls;
@@ -118,6 +119,29 @@ pub struct RemoteServerOptions {
     pub workspace: Option<String>,
 }
 
+#[derive(Debug, Default)]
+struct RemoteAuthBackoff {
+    failures: Mutex<HashMap<String, u32>>,
+}
+
+impl RemoteAuthBackoff {
+    fn record_failure(&self, key: &str) -> Option<u64> {
+        let mut failures = self.failures.lock().expect("remote auth backoff poisoned");
+        let count = failures
+            .entry(key.to_string())
+            .and_modify(|count| *count = count.saturating_add(1))
+            .or_insert(1);
+        retry_after_seconds(*count)
+    }
+
+    fn reset(&self, key: &str) {
+        self.failures
+            .lock()
+            .expect("remote auth backoff poisoned")
+            .remove(key);
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct RemotePairingPayload {
@@ -191,6 +215,7 @@ pub async fn listen_remote_websocket(
         &options.token,
         options.token_ttl.map(|ttl| OffsetDateTime::now_utc() + ttl),
     ));
+    let auth_backoff = Arc::new(RemoteAuthBackoff::default());
     tokio::spawn(async move {
         loop {
             let Ok((stream, peer_addr)) = listener.accept().await else {
@@ -199,6 +224,7 @@ pub async fn listen_remote_websocket(
             let auth = auth.clone();
             let app_server = app_server.clone();
             let remote_initialize_metadata = remote_initialize_metadata.clone();
+            let auth_backoff = auth_backoff.clone();
             tokio::spawn(async move {
                 let remote_addr = peer_addr.to_string();
                 let auth_events = app_server.clone();
@@ -208,6 +234,7 @@ pub async fn listen_remote_websocket(
                                      mut response: Response|
                       -> Result<Response, ErrorResponse> {
                     if auth.verify_request(request) {
+                        auth_backoff.reset(&auth_remote_addr);
                         if request_supports_remote_protocol(request) {
                             response.headers_mut().insert(
                                 "Sec-WebSocket-Protocol",
@@ -224,6 +251,11 @@ pub async fn listen_remote_websocket(
                         ));
                         let mut response = ErrorResponse::new(Some("unauthorized".to_string()));
                         *response.status_mut() = StatusCode::UNAUTHORIZED;
+                        if let Some(retry_after) = auth_backoff.record_failure(&auth_remote_addr)
+                            && let Ok(value) = HeaderValue::from_str(&retry_after.to_string())
+                        {
+                            response.headers_mut().insert(header::RETRY_AFTER, value);
+                        }
                         Err(response)
                     }
                 };
@@ -411,6 +443,13 @@ fn base64_url_no_pad(bytes: &[u8]) -> String {
     base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(bytes)
 }
 
+fn retry_after_seconds(failure_count: u32) -> Option<u64> {
+    match failure_count {
+        0..=2 => None,
+        count => Some(1_u64 << (count - 3).min(5)),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -470,6 +509,20 @@ mod tests {
             &request,
             OffsetDateTime::UNIX_EPOCH + time::Duration::seconds(60)
         ));
+    }
+
+    #[test]
+    fn remote_auth_backoff_adds_retry_after_after_repeated_failures_and_resets() {
+        let backoff = RemoteAuthBackoff::default();
+
+        assert_eq!(backoff.record_failure("127.0.0.1:1234"), None);
+        assert_eq!(backoff.record_failure("127.0.0.1:1234"), None);
+        assert_eq!(backoff.record_failure("127.0.0.1:1234"), Some(1));
+        assert_eq!(backoff.record_failure("127.0.0.1:1234"), Some(2));
+        assert_eq!(backoff.record_failure("127.0.0.1:1234"), Some(4));
+
+        backoff.reset("127.0.0.1:1234");
+        assert_eq!(backoff.record_failure("127.0.0.1:1234"), None);
     }
 
     #[test]
