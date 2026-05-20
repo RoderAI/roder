@@ -5,12 +5,14 @@ use roder_api::inference::InferenceEvent;
 use roder_api::notifications::{Notification, NotificationKind};
 use roder_core::Runtime;
 use roder_protocol::{
-    AgentMessageDeltaNotification, DesktopItem, DesktopThread, DesktopThreadStatus, DesktopTurn,
-    ItemCompletedNotification, ItemStartedNotification, JsonRpcNotification,
-    TeamCleanupCompletedNotification, TeamMemberCompletedNotification,
-    TeamMemberMessageDeltaNotification, TeamMemberStartedNotification,
-    TeamMemberStatusChangedNotification, ThreadStartedNotification,
+    AgentMessageDeltaNotification, ApprovalRequestedNotification, ApprovalResolvedNotification,
+    DesktopItem, DesktopThread, DesktopThreadStatus, DesktopTurn, ItemCompletedNotification,
+    ItemStartedNotification, JsonRpcNotification, PlanExitRequestedNotification,
+    PlanExitResolvedNotification, TeamCleanupCompletedNotification,
+    TeamMemberCompletedNotification, TeamMemberMessageDeltaNotification,
+    TeamMemberStartedNotification, TeamMemberStatusChangedNotification, ThreadStartedNotification,
     ThreadStatusChangedNotification, TurnCompletedNotification, TurnStartedNotification,
+    UserInputRequestedNotification, UserInputResolvedNotification,
 };
 use roder_tasks::BackgroundRunner;
 use time::OffsetDateTime;
@@ -166,6 +168,97 @@ pub(crate) fn desktop_notifications_for_event(event: &RoderEvent) -> Vec<JsonRpc
                 ),
             },
         )],
+        RoderEvent::ApprovalRequested(event) => vec![
+            desktop_notification(
+                "session/approvalRequested",
+                ApprovalRequestedNotification {
+                    thread_id: event.thread_id.clone(),
+                    turn_id: event.turn_id.clone(),
+                    approval_id: event.approval_id.clone(),
+                    tool_id: event.tool_id.clone(),
+                    tool_name: event.tool_name.clone(),
+                    reason: event.reason.clone(),
+                },
+            ),
+            thread_status_notification_with_flags(
+                &event.thread_id,
+                "running",
+                vec!["approvalRequired".to_string()],
+            ),
+        ],
+        RoderEvent::ApprovalResolved(event) => vec![
+            desktop_notification(
+                "session/approvalResolved",
+                ApprovalResolvedNotification {
+                    thread_id: event.thread_id.clone(),
+                    turn_id: event.turn_id.clone(),
+                    approval_id: event.approval_id.clone(),
+                    tool_id: event.tool_id.clone(),
+                    tool_name: event.tool_name.clone(),
+                    approved: event.approved,
+                },
+            ),
+            thread_status_notification(&event.thread_id, "running"),
+        ],
+        RoderEvent::UserInputRequested(event) => vec![
+            desktop_notification(
+                "session/userInputRequested",
+                UserInputRequestedNotification {
+                    thread_id: event.thread_id.clone(),
+                    turn_id: event.turn_id.clone(),
+                    request_id: event.request_id.clone(),
+                    questions: event.questions.clone(),
+                },
+            ),
+            thread_status_notification_with_flags(
+                &event.thread_id,
+                "running",
+                vec!["userInputRequired".to_string()],
+            ),
+        ],
+        RoderEvent::UserInputResolved(event) => vec![
+            desktop_notification(
+                "session/userInputResolved",
+                UserInputResolvedNotification {
+                    thread_id: event.thread_id.clone(),
+                    turn_id: event.turn_id.clone(),
+                    request_id: event.request_id.clone(),
+                    answers: event.answers.clone(),
+                },
+            ),
+            thread_status_notification(&event.thread_id, "running"),
+        ],
+        RoderEvent::PolicyExitPlanRequested(event) => vec![
+            desktop_notification(
+                "session/planExitRequested",
+                PlanExitRequestedNotification {
+                    thread_id: event.thread_id.clone(),
+                    turn_id: event.turn_id.clone(),
+                    request_id: event.request_id.clone(),
+                    target_mode: event.target_mode,
+                    plan_summary: event.plan_summary.clone(),
+                },
+            ),
+            thread_status_notification_with_flags(
+                &event.thread_id,
+                "running",
+                vec!["planExitRequired".to_string()],
+            ),
+        ],
+        RoderEvent::PolicyExitPlanResolved(event) => vec![
+            desktop_notification(
+                "session/planExitResolved",
+                PlanExitResolvedNotification {
+                    thread_id: event.thread_id.clone(),
+                    turn_id: event.turn_id.clone(),
+                    request_id: event.request_id.clone(),
+                    approved: event.approved,
+                    target_mode: event.target_mode,
+                    resolved_mode: event.resolved_mode,
+                },
+            ),
+            thread_status_notification(&event.thread_id, "running"),
+        ],
         RoderEvent::TurnCompleted(event) => {
             let turn = DesktopTurn {
                 id: event.turn_id.clone(),
@@ -450,13 +543,21 @@ fn desktop_notification<T: serde::Serialize>(method: &str, params: T) -> JsonRpc
 }
 
 fn thread_status_notification(thread_id: &str, status: &str) -> JsonRpcNotification {
+    thread_status_notification_with_flags(thread_id, status, Vec::new())
+}
+
+fn thread_status_notification_with_flags(
+    thread_id: &str,
+    status: &str,
+    active_flags: Vec<String>,
+) -> JsonRpcNotification {
     desktop_notification(
         "thread/status/changed",
         ThreadStatusChangedNotification {
             thread_id: thread_id.to_string(),
             status: DesktopThreadStatus {
                 kind: status.to_string(),
-                active_flags: Vec::new(),
+                active_flags,
             },
         },
     )
