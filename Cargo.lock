@@ -2498,6 +2498,7 @@ dependencies = [
  "roder-api",
  "roder-ext-jsonl-session",
  "roder-ext-runner-unix-local",
+ "roder-roadmap",
  "roder-sandbox",
  "serde",
  "serde_json",

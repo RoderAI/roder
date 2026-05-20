@@ -51,6 +51,7 @@ pub struct RuntimeConfig {
     pub policy_mode: PolicyMode,
     pub remote_runner_destination: Option<RunnerDestination>,
     pub team_data_dir: Option<PathBuf>,
+    pub roadmap_data_dir: Option<PathBuf>,
 }
 
 impl Default for RuntimeConfig {
@@ -67,6 +68,7 @@ impl Default for RuntimeConfig {
             policy_mode: PolicyMode::Default,
             remote_runner_destination: None,
             team_data_dir: None,
+            roadmap_data_dir: None,
         }
     }
 }
@@ -160,6 +162,7 @@ pub struct Runtime {
     pub(crate) pending_user_inputs: Mutex<HashMap<String, PendingUserInput>>,
     active_turns: RwLock<HashMap<TurnId, ActiveTurnHandle>>,
     teams: TeamManager,
+    pub(crate) roadmaps: Mutex<roder_roadmap::RoadmapRuntime>,
     pub(crate) session_store: Option<Arc<dyn SessionStore>>,
     pub(crate) tool_registry: ToolRegistry,
 }
@@ -183,6 +186,15 @@ impl Runtime {
         }
 
         let team_data_dir = config.team_data_dir.clone();
+        let workspace = config
+            .workspace
+            .clone()
+            .map(PathBuf::from)
+            .unwrap_or(std::env::current_dir()?);
+        let roadmap_data_dir = config
+            .roadmap_data_dir
+            .clone()
+            .unwrap_or_else(|| workspace.join(".roder"));
         let runtime = Self {
             bus,
             registry,
@@ -194,6 +206,10 @@ impl Runtime {
             teams: TeamManager::new(
                 team_data_dir.unwrap_or_else(crate::teams::default_team_data_dir),
             ),
+            roadmaps: Mutex::new(roder_roadmap::RoadmapRuntime::new(
+                workspace,
+                roadmap_data_dir,
+            )),
             session_store,
             tool_registry,
         };
