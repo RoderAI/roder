@@ -13,8 +13,9 @@ roder-sandbox.workspace = true
 serde = { workspace = true, features = ["derive"] }
 serde_json.workspace = true
 time.workspace = true
-tokio = { workspace = true, features = ["full", "sync"] }
+tokio.workspace = true
 uuid = { workspace = true, features = ["v4"] }
+workspace-hack = { version = "0.1", path = "../../workspace-hack" }
 
 [dev-dependencies]
 roder-ext-jsonl-session.workspace = true

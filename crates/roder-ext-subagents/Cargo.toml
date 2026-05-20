@@ -25,5 +25,6 @@ semver.workspace = true
 serde = { workspace = true, features = ["derive"] }
 serde_json.workspace = true
 time = { workspace = true, features = ["serde"] }
-tokio = { workspace = true, features = ["full"] }
+tokio.workspace = true
 uuid = { workspace = true, features = ["v4"] }
+workspace-hack = { version = "0.1", path = "../../workspace-hack" }

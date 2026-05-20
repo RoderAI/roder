@@ -2,6 +2,16 @@
 name = "roder-app-server"
 version.workspace = true
 edition.workspace = true
+autotests = false
+
+[features]
+# Opt in for the large JSON-RPC integration suite (tests/e2e.rs).
+e2e-tests = []
+
+[[test]]
+name = "e2e"
+path = "tests/e2e.rs"
+required-features = ["e2e-tests"]
 
 [dependencies]
 anyhow.workspace = true
@@ -24,9 +34,10 @@ serde = { workspace = true, features = ["derive"] }
 serde_json.workspace = true
 sha2.workspace = true
 time.workspace = true
-tokio = { workspace = true, features = ["full"] }
+tokio.workspace = true
 tokio-tungstenite.workspace = true
 uuid = { workspace = true, features = ["v4"] }
+workspace-hack = { version = "0.1", path = "../../workspace-hack" }
 
 [dev-dependencies]
 async-trait.workspace = true

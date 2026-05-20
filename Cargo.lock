@@ -2356,6 +2356,7 @@ dependencies = [
  "time",
  "tokio",
  "toml",
+ "workspace-hack",
 ]
 
 [[package]]
@@ -2390,6 +2391,7 @@ dependencies = [
  "tokio",
  "tokio-tungstenite",
  "uuid",
+ "workspace-hack",
 ]
 
 [[package]]
@@ -2422,6 +2424,7 @@ dependencies = [
  "serde_json",
  "time",
  "tokio",
+ "workspace-hack",
 ]
 
 [[package]]
@@ -2437,6 +2440,7 @@ dependencies = [
  "serde_json",
  "sha2 0.11.0",
  "urlencoding",
+ "workspace-hack",
 ]
 
 [[package]]
@@ -2448,6 +2452,7 @@ dependencies = [
  "serde",
  "serde_json",
  "serde_yaml",
+ "workspace-hack",
 ]
 
 [[package]]
@@ -2465,6 +2470,7 @@ dependencies = [
  "time",
  "toml",
  "uuid",
+ "workspace-hack",
 ]
 
 [[package]]
@@ -2477,6 +2483,7 @@ dependencies = [
  "serde_json",
  "tokio",
  "toml",
+ "workspace-hack",
 ]
 
 [[package]]
@@ -2488,6 +2495,7 @@ dependencies = [
  "serde",
  "serde_json",
  "tokio",
+ "workspace-hack",
 ]
 
 [[package]]
@@ -2507,6 +2515,7 @@ dependencies = [
  "time",
  "tokio",
  "uuid",
+ "workspace-hack",
 ]
 
 [[package]]
@@ -2522,6 +2531,7 @@ dependencies = [
  "serde",
  "serde_json",
  "tokio",
+ "workspace-hack",
 ]
 
 [[package]]
@@ -2533,6 +2543,7 @@ dependencies = [
  "serde",
  "serde_json",
  "tokio",
+ "workspace-hack",
 ]
 
 [[package]]
@@ -2548,6 +2559,7 @@ dependencies = [
  "serde",
  "serde_json",
  "tokio",
+ "workspace-hack",
 ]
 
 [[package]]
@@ -2563,6 +2575,7 @@ dependencies = [
  "serde",
  "serde_json",
  "tokio",
+ "workspace-hack",
 ]
 
 [[package]]
@@ -2578,6 +2591,7 @@ dependencies = [
  "time",
  "tokio",
  "uuid",
+ "workspace-hack",
 ]
 
 [[package]]
@@ -2595,6 +2609,7 @@ dependencies = [
  "time",
  "tokio",
  "uuid",
+ "workspace-hack",
 ]
 
 [[package]]
@@ -2609,6 +2624,7 @@ dependencies = [
  "serde_json",
  "time",
  "tokio",
+ "workspace-hack",
 ]
 
 [[package]]
@@ -2622,6 +2638,7 @@ dependencies = [
  "serde_json",
  "time",
  "tokio",
+ "workspace-hack",
 ]
 
 [[package]]
@@ -2637,6 +2654,7 @@ dependencies = [
  "serde",
  "serde_json",
  "tokio",
+ "workspace-hack",
 ]
 
 [[package]]
@@ -2651,6 +2669,7 @@ dependencies = [
  "serde",
  "serde_json",
  "tokio",
+ "workspace-hack",
 ]
 
 [[package]]
@@ -2668,6 +2687,7 @@ dependencies = [
  "serde",
  "serde_json",
  "tokio",
+ "workspace-hack",
 ]
 
 [[package]]
@@ -2686,6 +2706,7 @@ dependencies = [
  "serde",
  "serde_json",
  "tokio",
+ "workspace-hack",
 ]
 
 [[package]]
@@ -2701,6 +2722,7 @@ dependencies = [
  "serde",
  "serde_json",
  "tokio",
+ "workspace-hack",
 ]
 
 [[package]]
@@ -2716,6 +2738,7 @@ dependencies = [
  "serde",
  "serde_json",
  "tokio",
+ "workspace-hack",
 ]
 
 [[package]]
@@ -2730,6 +2753,7 @@ dependencies = [
  "serde_json",
  "tokio",
  "uuid",
+ "workspace-hack",
 ]
 
 [[package]]
@@ -2748,6 +2772,7 @@ dependencies = [
  "serde",
  "serde_json",
  "tokio",
+ "workspace-hack",
 ]
 
 [[package]]
@@ -2759,6 +2784,7 @@ dependencies = [
  "roder-ext-runner-hosted-common",
  "semver",
  "tokio",
+ "workspace-hack",
 ]
 
 [[package]]
@@ -2770,6 +2796,7 @@ dependencies = [
  "roder-ext-runner-hosted-common",
  "semver",
  "tokio",
+ "workspace-hack",
 ]
 
 [[package]]
@@ -2781,6 +2808,7 @@ dependencies = [
  "roder-ext-runner-hosted-common",
  "semver",
  "tokio",
+ "workspace-hack",
 ]
 
 [[package]]
@@ -2793,6 +2821,7 @@ dependencies = [
  "semver",
  "serde_json",
  "tokio",
+ "workspace-hack",
 ]
 
 [[package]]
@@ -2804,6 +2833,7 @@ dependencies = [
  "roder-ext-runner-hosted-common",
  "semver",
  "tokio",
+ "workspace-hack",
 ]
 
 [[package]]
@@ -2818,6 +2848,7 @@ dependencies = [
  "serde_json",
  "tokio",
  "urlencoding",
+ "workspace-hack",
 ]
 
 [[package]]
@@ -2829,6 +2860,7 @@ dependencies = [
  "roder-ext-runner-hosted-common",
  "semver",
  "tokio",
+ "workspace-hack",
 ]
 
 [[package]]
@@ -2840,6 +2872,7 @@ dependencies = [
  "roder-ext-runner-hosted-common",
  "semver",
  "tokio",
+ "workspace-hack",
 ]
 
 [[package]]
@@ -2852,6 +2885,7 @@ dependencies = [
  "semver",
  "serde_json",
  "tokio",
+ "workspace-hack",
 ]
 
 [[package]]
@@ -2863,6 +2897,7 @@ dependencies = [
  "roder-ext-runner-hosted-common",
  "semver",
  "tokio",
+ "workspace-hack",
 ]
 
 [[package]]
@@ -2879,6 +2914,7 @@ dependencies = [
  "time",
  "tokio",
  "uuid",
+ "workspace-hack",
 ]
 
 [[package]]
@@ -2895,6 +2931,7 @@ dependencies = [
  "serde_json",
  "tokio",
  "uuid",
+ "workspace-hack",
 ]
 
 [[package]]
@@ -2909,6 +2946,7 @@ dependencies = [
  "serde",
  "serde_json",
  "tokio",
+ "workspace-hack",
 ]
 
 [[package]]
@@ -2924,6 +2962,7 @@ dependencies = [
  "serde",
  "serde_json",
  "tokio",
+ "workspace-hack",
 ]
 
 [[package]]
@@ -2940,6 +2979,7 @@ dependencies = [
  "roder-web-search",
  "semver",
  "serde_json",
+ "workspace-hack",
 ]
 
 [[package]]
@@ -2953,6 +2993,7 @@ dependencies = [
  "roder-supergrok-auth",
  "semver",
  "tokio",
+ "workspace-hack",
 ]
 
 [[package]]
@@ -3002,6 +3043,7 @@ dependencies = [
  "serde_json",
  "time",
  "tokio",
+ "workspace-hack",
 ]
 
 [[package]]
@@ -3013,6 +3055,7 @@ dependencies = [
  "serde",
  "serde_json",
  "tokio",
+ "workspace-hack",
 ]
 
 [[package]]
@@ -3024,6 +3067,7 @@ dependencies = [
  "serde",
  "serde_json",
  "tokio",
+ "workspace-hack",
 ]
 
 [[package]]
@@ -3036,6 +3080,7 @@ dependencies = [
  "serde_json",
  "time",
  "tokio",
+ "workspace-hack",
 ]
 
 [[package]]
@@ -3050,6 +3095,7 @@ dependencies = [
  "time",
  "tokio",
  "uuid",
+ "workspace-hack",
 ]
 
 [[package]]
@@ -3061,6 +3107,7 @@ dependencies = [
  "serde",
  "serde_json",
  "tokio",
+ "workspace-hack",
 ]
 
 [[package]]
@@ -3072,6 +3119,7 @@ dependencies = [
  "serde",
  "serde_json",
  "tokio",
+ "workspace-hack",
 ]
 
 [[package]]
@@ -3087,6 +3135,7 @@ dependencies = [
  "serde_json",
  "sha2 0.11.0",
  "urlencoding",
+ "workspace-hack",
 ]
 
 [[package]]
@@ -3100,6 +3149,7 @@ dependencies = [
  "time",
  "tokio",
  "uuid",
+ "workspace-hack",
 ]
 
 [[package]]
@@ -3108,6 +3158,7 @@ version = "0.1.0"
 dependencies = [
  "ratatui",
  "thiserror 2.0.18",
+ "workspace-hack",
 ]
 
 [[package]]
@@ -3124,6 +3175,7 @@ dependencies = [
  "serde_json",
  "time",
  "tokio",
+ "workspace-hack",
 ]
 
 [[package]]
@@ -3150,6 +3202,7 @@ dependencies = [
  "tokio",
  "toml",
  "tui-textarea-2",
+ "workspace-hack",
 ]
 
 [[package]]
@@ -3161,6 +3214,7 @@ dependencies = [
  "serde",
  "serde_json",
  "tokio",
+ "workspace-hack",
 ]
 
 [[package]]
@@ -3886,7 +3940,6 @@ dependencies = [
  "bytes",
  "libc",
  "mio",
- "parking_lot",
  "pin-project-lite",
  "signal-hook-registry",
  "socket2",
@@ -4933,6 +4986,42 @@ dependencies = [
  "serde_json",
  "unicode-xid",
  "wasmparser",
+]
+
+[[package]]
+name = "workspace-hack"
+version = "0.1.0"
+dependencies = [
+ "bitflags 2.11.1",
+ "cc",
+ "deranged",
+ "futures-channel",
+ "futures-core",
+ "futures-io",
+ "futures-sink",
+ "futures-task",
+ "futures-util",
+ "getrandom 0.4.2",
+ "hashbrown 0.16.1",
+ "linux-raw-sys",
+ "memchr",
+ "mio",
+ "proc-macro2",
+ "quote",
+ "reqwest",
+ "rustix",
+ "serde",
+ "serde_core",
+ "slab",
+ "smallvec",
+ "syn 2.0.117",
+ "time",
+ "tokio",
+ "toml_datetime",
+ "toml_parser",
+ "tracing",
+ "uuid",
+ "winnow",
 ]
 
 [[package]]

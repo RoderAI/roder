@@ -23,4 +23,5 @@ roder-api.workspace = true
 roder-ext-openai-responses.workspace = true
 roder-supergrok-auth.workspace = true
 semver.workspace = true
-tokio = { workspace = true, features = ["macros"] }
+tokio.workspace = true
+workspace-hack = { version = "0.1", path = "../../workspace-hack" }
