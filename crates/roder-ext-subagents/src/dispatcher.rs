@@ -6,6 +6,7 @@ use anyhow::{Context, bail};
 use futures::StreamExt;
 use roder_api::conversation::{
     AssistantMessage, ConversationItem, ToolCallRecord, ToolResultRecord, UserMessage,
+    tool_display_payload,
 };
 use roder_api::events::{ThreadId, TurnId};
 use roder_api::extension::{InferenceEngineId, SubagentDispatcherId};
@@ -672,6 +673,7 @@ async fn execute_tool(
         id: result.id,
         name: Some(result.name),
         result: result.text,
+        display_payload: tool_display_payload(None, None, Some(&result.data)),
         is_error: result.is_error,
     })
 }

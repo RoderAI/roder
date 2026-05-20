@@ -120,7 +120,7 @@ fn desktop_item_from_turn_item(
             phase: None,
             tool_name: result.name,
             tool_call_id: Some(result.id),
-            payload: None,
+            payload: result.display_payload,
         },
         other => DesktopItem {
             id: format!("{turn_id}-item-{index}"),
@@ -164,4 +164,38 @@ pub(crate) fn default_cwd_string() -> String {
     std::env::current_dir()
         .map(|path| path.display().to_string())
         .unwrap_or_else(|_| ".".to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use roder_api::conversation::{ConversationItem, ToolResultRecord};
+    use roder_api::session::TurnRecord;
+    use serde_json::json;
+    use time::OffsetDateTime;
+
+    #[test]
+    fn persisted_tool_result_rehydrates_payload_for_desktop() {
+        let turn = desktop_turn_from_record(TurnRecord {
+            thread_id: "thread-1".to_string(),
+            turn_id: "turn-1".to_string(),
+            items: vec![ConversationItem::ToolResult(ToolResultRecord {
+                id: "tool-1".to_string(),
+                name: Some("list_files".to_string()),
+                result: "src\nCargo.toml".to_string(),
+                display_payload: Some(json!({ "path": ".", "shown": 2 })),
+                is_error: false,
+            })],
+            created_at: OffsetDateTime::UNIX_EPOCH,
+            completed_at: Some(OffsetDateTime::UNIX_EPOCH),
+        });
+
+        let item = turn.items.first().expect("tool item");
+        assert_eq!(item.kind, "toolMessage");
+        assert_eq!(item.tool_name.as_deref(), Some("list_files"));
+        assert_eq!(item.payload.as_ref().unwrap()["path"], ".");
+        assert_eq!(item.payload.as_ref().unwrap()["shown"], 2);
+        assert!(item.payload.as_ref().unwrap().get("input").is_none());
+        assert!(item.payload.as_ref().unwrap().get("arguments").is_none());
+    }
 }
