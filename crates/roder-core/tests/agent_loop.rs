@@ -552,6 +552,8 @@ async fn run_turn_continues_after_tool_result() {
             images: Vec::new(),
             provider_override: None,
             model_override: None,
+            workspace: None,
+
             instructions: default_instructions(),
         })
         .await
@@ -627,6 +629,8 @@ async fn run_turn_executes_parallel_tool_call_batch_concurrently() {
             images: Vec::new(),
             provider_override: None,
             model_override: None,
+            workspace: None,
+
             instructions: default_instructions(),
         })
         .await
@@ -687,6 +691,8 @@ async fn provider_start_errors_are_emitted_for_the_active_thread() {
             images: Vec::new(),
             provider_override: None,
             model_override: None,
+            workspace: None,
+
             instructions: default_instructions(),
         })
         .await
@@ -741,6 +747,8 @@ async fn commentary_phase_messages_are_preserved_for_next_provider_request() {
             images: Vec::new(),
             provider_override: None,
             model_override: None,
+            workspace: None,
+
             instructions: default_instructions(),
         })
         .await
@@ -785,6 +793,8 @@ async fn steer_turn_is_included_in_next_provider_request() {
             images: Vec::new(),
             provider_override: None,
             model_override: None,
+            workspace: None,
+
             instructions: default_instructions(),
         })
         .await
@@ -852,6 +862,8 @@ async fn runtime_advertises_apply_patch_only_for_patch_models() {
             images: Vec::new(),
             provider_override: None,
             model_override: None,
+            workspace: None,
+
             instructions: default_instructions(),
         })
         .await
@@ -948,6 +960,8 @@ async fn tool_execution_errors_are_returned_to_model() {
             images: Vec::new(),
             provider_override: None,
             model_override: None,
+            workspace: None,
+
             instructions: default_instructions(),
         })
         .await
@@ -1007,6 +1021,8 @@ async fn run_turn_allows_more_than_eight_tool_rounds() {
             images: Vec::new(),
             provider_override: None,
             model_override: None,
+            workspace: None,
+
             instructions: default_instructions(),
         })
         .await
@@ -1063,6 +1079,8 @@ async fn unknown_tool_completion_is_marked_as_error() {
             images: Vec::new(),
             provider_override: None,
             model_override: None,
+            workspace: None,
+
             instructions: default_instructions(),
         })
         .await

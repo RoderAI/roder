@@ -440,6 +440,69 @@ pub struct AgentMessageDeltaNotification {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct ApprovalRequestedNotification {
+    pub thread_id: ThreadId,
+    pub turn_id: TurnId,
+    pub approval_id: String,
+    pub tool_id: String,
+    pub tool_name: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ApprovalResolvedNotification {
+    pub thread_id: ThreadId,
+    pub turn_id: TurnId,
+    pub approval_id: String,
+    pub tool_id: String,
+    pub tool_name: String,
+    pub approved: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UserInputRequestedNotification {
+    pub thread_id: ThreadId,
+    pub turn_id: TurnId,
+    pub request_id: String,
+    pub questions: serde_json::Value,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UserInputResolvedNotification {
+    pub thread_id: ThreadId,
+    pub turn_id: TurnId,
+    pub request_id: String,
+    pub answers: serde_json::Value,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PlanExitRequestedNotification {
+    pub thread_id: ThreadId,
+    pub turn_id: TurnId,
+    pub request_id: String,
+    pub target_mode: roder_api::policy_mode::PolicyMode,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub plan_summary: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PlanExitResolvedNotification {
+    pub thread_id: ThreadId,
+    pub turn_id: TurnId,
+    pub request_id: String,
+    pub approved: bool,
+    pub target_mode: roder_api::policy_mode::PolicyMode,
+    pub resolved_mode: roder_api::policy_mode::PolicyMode,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct FsReadFileParams {
     pub path: String,
 }

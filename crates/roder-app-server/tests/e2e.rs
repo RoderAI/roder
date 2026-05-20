@@ -53,20 +53,21 @@ use roder_protocol::{
     PluginPreviewInstallResult, PluginUninstallParams, PluginUninstallResult, ProviderAuthResult,
     ProviderSelectParams, ProviderSelectResult, ProvidersListResult, RunnersDeleteResult,
     RunnersListResult, RunnersSelectParams, RunnersSelectResult, RunnersSessionResult,
-    SessionExitPlanParams, SessionExitPlanResult, SessionGetResult, SessionResolveUserInputParams,
-    SessionResolveUserInputResult, SessionSetModeParams, SessionSetModeResult, SettingsGetResult,
-    SettingsSetDefaultModeParams, SettingsSetDefaultModeResult, SettingsSetWebSearchParams,
-    SettingsSetWebSearchResult, SubagentTraceReadParams, SubagentTraceReadResult,
-    SubagentTracesListParams, SubagentTracesListResult, TasksGetParams, TasksGetResult,
-    TasksListResult, TasksSubmitParams, TasksSubmitResult, TeamCleanupParams, TeamCleanupResult,
-    TeamListParams, TeamListResult, TeamMemberInterruptParams, TeamMemberInterruptResult,
-    TeamMemberMessageParams, TeamMemberMessageResult, TeamMemberStartParams, TeamMemberStartResult,
-    TeamReadParams, TeamReadResult, TeamStartMemberParams, TeamStartParams, TeamStartResult,
-    ThreadArchiveParams, ThreadArchiveResult, ThreadListParams, ThreadListResult,
-    ThreadStartParams, ThreadStartResult, ToolCallParams, ToolCallResult, ToolsListResult,
-    TurnInputItem, TurnInterruptParams, TurnStartParams, TurnStartResult, TurnSteerParams,
-    TurnSteerResult, WorkflowEnableParams, WorkflowEnableResult, WorkflowPreviewParams,
-    WorkflowPreviewResult, WorkflowScanParams, WorkflowScanResult,
+    SessionExitPlanParams, SessionExitPlanResult, SessionGetResult, SessionResolveApprovalParams,
+    SessionResolveApprovalResult, SessionResolveUserInputParams, SessionResolveUserInputResult,
+    SessionSetModeParams, SessionSetModeResult, SettingsGetResult, SettingsSetDefaultModeParams,
+    SettingsSetDefaultModeResult, SettingsSetWebSearchParams, SettingsSetWebSearchResult,
+    SubagentTraceReadParams, SubagentTraceReadResult, SubagentTracesListParams,
+    SubagentTracesListResult, TasksGetParams, TasksGetResult, TasksListResult, TasksSubmitParams,
+    TasksSubmitResult, TeamCleanupParams, TeamCleanupResult, TeamListParams, TeamListResult,
+    TeamMemberInterruptParams, TeamMemberInterruptResult, TeamMemberMessageParams,
+    TeamMemberMessageResult, TeamMemberStartParams, TeamMemberStartResult, TeamReadParams,
+    TeamReadResult, TeamStartMemberParams, TeamStartParams, TeamStartResult, ThreadArchiveParams,
+    ThreadArchiveResult, ThreadListParams, ThreadListResult, ThreadStartParams, ThreadStartResult,
+    ToolCallParams, ToolCallResult, ToolsListResult, TurnInputItem, TurnInterruptParams,
+    TurnStartParams, TurnStartResult, TurnSteerParams, TurnSteerResult, WorkflowEnableParams,
+    WorkflowEnableResult, WorkflowPreviewParams, WorkflowPreviewResult, WorkflowScanParams,
+    WorkflowScanResult,
 };
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -246,6 +247,14 @@ struct UserInputEngine {
     calls: Mutex<usize>,
 }
 
+struct ApprovalRequiredEngine {
+    calls: Mutex<usize>,
+}
+
+struct WorkspaceToolsEngine {
+    calls: Mutex<usize>,
+}
+
 #[async_trait::async_trait]
 impl InferenceEngine for PendingEngine {
     fn id(&self) -> InferenceEngineId {
@@ -279,6 +288,113 @@ impl TaskCallingEngine {
             parent_calls: Mutex::new(0),
             requests: Mutex::new(Vec::new()),
         }
+    }
+}
+
+#[async_trait::async_trait]
+impl InferenceEngine for ApprovalRequiredEngine {
+    fn id(&self) -> InferenceEngineId {
+        PROVIDER_MOCK.to_string()
+    }
+
+    fn capabilities(&self) -> InferenceCapabilities {
+        InferenceCapabilities::coding_agent_default()
+    }
+
+    async fn list_models(
+        &self,
+        _ctx: InferenceProviderContext<'_>,
+    ) -> anyhow::Result<Vec<ModelDescriptor>> {
+        Ok(Vec::new())
+    }
+
+    async fn stream_turn(
+        &self,
+        _ctx: InferenceTurnContext<'_>,
+        _request: AgentInferenceRequest,
+    ) -> anyhow::Result<InferenceEventStream> {
+        let mut calls = self.calls.lock().await;
+        *calls += 1;
+        if *calls == 1 {
+            return Ok(Box::pin(futures::stream::iter(vec![
+                Ok(InferenceEvent::ToolCallCompleted(ToolCallCompleted {
+                    id: "approval-shell-1".to_string(),
+                    name: "shell".to_string(),
+                    arguments: serde_json::json!({ "command": "printf hi" }).to_string(),
+                })),
+                Ok(InferenceEvent::Completed(CompletionMetadata {
+                    stop_reason: Some("tool_calls".to_string()),
+                    provider_response_id: None,
+                })),
+            ])));
+        }
+
+        Ok(Box::pin(futures::stream::iter(vec![
+            Ok(InferenceEvent::MessageDelta(MessageDelta {
+                text: "approval handled".to_string(),
+                phase: None,
+            })),
+            Ok(InferenceEvent::Completed(CompletionMetadata {
+                stop_reason: Some("stop".to_string()),
+                provider_response_id: None,
+            })),
+        ])))
+    }
+}
+
+#[async_trait::async_trait]
+impl InferenceEngine for WorkspaceToolsEngine {
+    fn id(&self) -> InferenceEngineId {
+        PROVIDER_MOCK.to_string()
+    }
+
+    fn capabilities(&self) -> InferenceCapabilities {
+        InferenceCapabilities::coding_agent_default()
+    }
+
+    async fn list_models(
+        &self,
+        _ctx: InferenceProviderContext<'_>,
+    ) -> anyhow::Result<Vec<ModelDescriptor>> {
+        Ok(Vec::new())
+    }
+
+    async fn stream_turn(
+        &self,
+        _ctx: InferenceTurnContext<'_>,
+        _request: AgentInferenceRequest,
+    ) -> anyhow::Result<InferenceEventStream> {
+        let mut calls = self.calls.lock().await;
+        *calls += 1;
+        if *calls == 1 {
+            return Ok(Box::pin(futures::stream::iter(vec![
+                Ok(InferenceEvent::ToolCallCompleted(ToolCallCompleted {
+                    id: "workspace-pwd".to_string(),
+                    name: "shell".to_string(),
+                    arguments: serde_json::json!({ "command": "pwd" }).to_string(),
+                })),
+                Ok(InferenceEvent::ToolCallCompleted(ToolCallCompleted {
+                    id: "workspace-read".to_string(),
+                    name: "read_file".to_string(),
+                    arguments: serde_json::json!({ "path": "marker.txt" }).to_string(),
+                })),
+                Ok(InferenceEvent::Completed(CompletionMetadata {
+                    stop_reason: Some("tool_calls".to_string()),
+                    provider_response_id: None,
+                })),
+            ])));
+        }
+
+        Ok(Box::pin(futures::stream::iter(vec![
+            Ok(InferenceEvent::MessageDelta(MessageDelta {
+                text: "done".to_string(),
+                phase: None,
+            })),
+            Ok(InferenceEvent::Completed(CompletionMetadata {
+                stop_reason: Some("stop".to_string()),
+                provider_response_id: None,
+            })),
+        ])))
     }
 }
 
@@ -596,6 +712,95 @@ async fn providers_select_updates_desktop_thread_model_for_next_turn() {
     let request = wait_for_recorded_request(&engine).await;
     assert_eq!(request.model.provider, PROVIDER_MOCK);
     assert_eq!(request.model.model, "alternate-mock-model");
+}
+
+#[tokio::test]
+async fn desktop_turn_uses_thread_cwd_for_workspace_tools() {
+    let root = std::env::temp_dir().join(format!("roder-thread-cwd-e2e-{}", uuid::Uuid::new_v4()));
+    let process_workspace = root.join("process-workspace");
+    let thread_workspace = root.join("thread-workspace");
+    std::fs::create_dir_all(&process_workspace).unwrap();
+    std::fs::create_dir_all(&thread_workspace).unwrap();
+    std::fs::write(process_workspace.join("marker.txt"), "process marker").unwrap();
+    std::fs::write(thread_workspace.join("marker.txt"), "thread marker").unwrap();
+
+    let mut builder = ExtensionRegistryBuilder::new();
+    builder.inference_engine(Arc::new(WorkspaceToolsEngine {
+        calls: Mutex::new(0),
+    }));
+    builder.tool_contributor(
+        roder_tools::builtin_coding_tools_contributor(&process_workspace).unwrap(),
+    );
+    let runtime = Arc::new(
+        Runtime::new(
+            builder.build().unwrap(),
+            RuntimeConfig {
+                workspace: Some(process_workspace.display().to_string()),
+                policy_mode: PolicyMode::AcceptAll,
+                ..RuntimeConfig::default()
+            },
+        )
+        .unwrap(),
+    );
+    let server = Arc::new(AppServer::new(runtime));
+    let client = LocalAppClient::new(server);
+    let mut events = client.subscribe_events();
+
+    let started: ThreadStartResult = request(
+        &client,
+        "thread/start",
+        Some(serde_json::json!({
+            "model": "mock",
+            "modelProvider": PROVIDER_MOCK,
+            "cwd": thread_workspace.display().to_string(),
+            "ephemeral": false
+        })),
+    )
+    .await;
+
+    let _: TurnStartResult = request(
+        &client,
+        "turn/start",
+        Some(serde_json::json!({
+            "threadId": started.thread.id,
+            "input": [{ "type": "text", "text": "where are you?" }]
+        })),
+    )
+    .await;
+
+    let mut shell_output = None;
+    let mut read_output = None;
+    for _ in 0..30 {
+        let envelope = tokio::time::timeout(Duration::from_secs(2), events.recv())
+            .await
+            .unwrap()
+            .unwrap();
+        if let roder_api::events::RoderEvent::ToolCallCompleted(event) = envelope.event {
+            match event.tool_id.as_str() {
+                "workspace-pwd" => shell_output = event.output,
+                "workspace-read" => read_output = event.output,
+                _ => {}
+            }
+            if shell_output.is_some() && read_output.is_some() {
+                break;
+            }
+        }
+    }
+
+    let shell_output = shell_output.expect("missing shell tool output");
+    assert!(
+        shell_output.contains(&thread_workspace.display().to_string()),
+        "shell should run in thread workspace {thread_workspace:?}, got {shell_output:?}"
+    );
+    assert!(
+        !shell_output.contains(&process_workspace.display().to_string()),
+        "shell leaked process workspace {process_workspace:?}: {shell_output:?}"
+    );
+    let read_output = read_output.expect("missing read_file tool output");
+    assert!(read_output.contains("thread marker"));
+    assert!(!read_output.contains("process marker"));
+
+    let _ = std::fs::remove_dir_all(root);
 }
 
 #[tokio::test]
@@ -1992,6 +2197,71 @@ async fn desktop_contract_turn_interrupt_uses_active_turn_when_turn_id_is_omitte
 }
 
 #[tokio::test]
+async fn desktop_notifications_surface_tool_approval_requests_and_resolution() {
+    let mut builder = ExtensionRegistryBuilder::new();
+    builder.inference_engine(Arc::new(ApprovalRequiredEngine {
+        calls: Mutex::new(0),
+    }));
+    builder.tool_contributor(roder_tools::builtin_coding_tools_contributor(".").unwrap());
+    let runtime = Arc::new(Runtime::new(builder.build().unwrap(), Default::default()).unwrap());
+    let server = Arc::new(AppServer::new(runtime));
+    let client = LocalAppClient::new(server);
+    let mut notifications = client.subscribe_notifications();
+
+    let session = start_thread(&client).await;
+    let _started = start_turn(&client, &session.thread.id, "what branch are you on?").await;
+
+    let approval = wait_for_notification(
+        &mut notifications,
+        "session/approvalRequested",
+        Some(&session.thread.id),
+    )
+    .await;
+    assert_eq!(approval.params["turnId"].as_str().is_some(), true);
+    assert_eq!(approval.params["approvalId"], "approval-shell-1");
+    assert_eq!(approval.params["toolId"], "approval-shell-1");
+    assert_eq!(approval.params["toolName"], "shell");
+
+    let waiting_status = wait_for_notification(
+        &mut notifications,
+        "thread/status/changed",
+        Some(&session.thread.id),
+    )
+    .await;
+    assert_eq!(waiting_status.params["status"]["type"], "running");
+    assert_eq!(
+        waiting_status.params["status"]["activeFlags"],
+        serde_json::json!(["approvalRequired"])
+    );
+
+    let resolved: SessionResolveApprovalResult = request(
+        &client,
+        "session/resolve_approval",
+        Some(
+            serde_json::to_value(SessionResolveApprovalParams {
+                approval_id: "approval-shell-1".to_string(),
+                approved: false,
+            })
+            .unwrap(),
+        ),
+    )
+    .await;
+    assert!(resolved.resolved);
+
+    let resolved_notification = wait_for_notification(
+        &mut notifications,
+        "session/approvalResolved",
+        Some(&session.thread.id),
+    )
+    .await;
+    assert_eq!(
+        resolved_notification.params["approvalId"],
+        "approval-shell-1"
+    );
+    assert_eq!(resolved_notification.params["approved"], false);
+}
+
+#[tokio::test]
 async fn desktop_contract_fs_and_command_methods_match_desktop_contract() {
     let runtime = Arc::new(Runtime::fake().unwrap());
     let server = Arc::new(AppServer::new(runtime.clone()));
@@ -2682,9 +2952,24 @@ async fn request_user_input_tool_waits_for_app_server_resolution() {
     let server = Arc::new(AppServer::new(runtime));
     let client = LocalAppClient::new(server);
     let mut events = client.subscribe_events();
+    let mut notifications = client.subscribe_notifications();
 
     let session = start_thread(&client).await;
     let _started = start_turn(&client, &session.thread.id, "ask me").await;
+
+    let requested_notification = wait_for_notification(
+        &mut notifications,
+        "session/userInputRequested",
+        Some(&session.thread.id),
+    )
+    .await;
+    assert_eq!(requested_notification.params["questions"][0]["id"], "mode");
+    assert_eq!(
+        requested_notification.params["requestId"]
+            .as_str()
+            .is_some(),
+        true
+    );
 
     let mut request_id = None;
     for _ in 0..20 {
@@ -2699,6 +2984,10 @@ async fn request_user_input_tool_waits_for_app_server_resolution() {
         }
     }
     let request_id = request_id.expect("missing user input request event");
+    assert_eq!(
+        requested_notification.params["requestId"].as_str(),
+        Some(request_id.as_str())
+    );
 
     let resolved: SessionResolveUserInputResult = request(
         &client,
@@ -2713,6 +3002,15 @@ async fn request_user_input_tool_waits_for_app_server_resolution() {
     )
     .await;
     assert!(resolved.resolved);
+
+    let resolved_notification = wait_for_notification(
+        &mut notifications,
+        "session/userInputResolved",
+        Some(&session.thread.id),
+    )
+    .await;
+    assert_eq!(resolved_notification.params["requestId"], request_id);
+    assert_eq!(resolved_notification.params["answers"]["mode"], "Safe");
 
     let mut saw_resolved = false;
     let mut saw_turn_completed = false;
@@ -2854,6 +3152,11 @@ async fn session_exit_plan_resolves_pending_request() {
         .set_policy_mode(PolicyMode::Plan, Some("test setup".to_string()))
         .await
         .unwrap();
+    let server = Arc::new(AppServer::new(runtime.clone()));
+    let client = LocalAppClient::new(server);
+    let mut events = client.subscribe_events();
+    let mut notifications = client.subscribe_notifications();
+
     runtime
         .record_pending_plan_exit(PendingPlanExit::new(
             "thread-plan".to_string(),
@@ -2863,9 +3166,19 @@ async fn session_exit_plan_resolves_pending_request() {
             Some("Implement approved edits".to_string()),
         ))
         .await;
-    let server = Arc::new(AppServer::new(runtime));
-    let client = LocalAppClient::new(server);
-    let mut events = client.subscribe_events();
+
+    let requested_notification = wait_for_notification(
+        &mut notifications,
+        "session/planExitRequested",
+        Some("thread-plan"),
+    )
+    .await;
+    assert_eq!(requested_notification.params["requestId"], "exit-plan-1");
+    assert_eq!(requested_notification.params["targetMode"], "default");
+    assert_eq!(
+        requested_notification.params["planSummary"],
+        "Implement approved edits"
+    );
 
     let state: SessionGetResult = request(&client, "session/get", None).await;
     assert_eq!(
@@ -2890,6 +3203,16 @@ async fn session_exit_plan_resolves_pending_request() {
     .await;
     assert!(resolved.resolved);
     assert_eq!(resolved.mode, PolicyMode::Default);
+
+    let resolved_notification = wait_for_notification(
+        &mut notifications,
+        "session/planExitResolved",
+        Some("thread-plan"),
+    )
+    .await;
+    assert_eq!(resolved_notification.params["requestId"], "exit-plan-1");
+    assert_eq!(resolved_notification.params["approved"], true);
+    assert_eq!(resolved_notification.params["resolvedMode"], "default");
 
     let state: SessionGetResult = request(&client, "session/get", None).await;
     assert_eq!(state.mode, PolicyMode::Default);

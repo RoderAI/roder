@@ -122,16 +122,15 @@ impl ToolExecutor for ExecCommandTool {
     ) -> anyhow::Result<ToolResult> {
         ctx.require_workspace()?;
         ctx.require_process_runner()?;
+        let workspace = Workspace::from_context_or_fallback(&ctx, &self.workspace)?;
         let args = parse::<ExecCommandArgs>(&call)?;
         let command = args.cmd.trim().to_string();
         require_nonempty(&command, "cmd")?;
         let cwd_path = match args.workdir.as_deref() {
-            Some(workdir) if !workdir.trim().is_empty() => {
-                self.workspace.resolve_existing(workdir)?
-            }
-            _ => self.workspace.root().to_path_buf(),
+            Some(workdir) if !workdir.trim().is_empty() => workspace.resolve_existing(workdir)?,
+            _ => workspace.root().to_path_buf(),
         };
-        let cwd = self.workspace.display(&cwd_path);
+        let cwd = workspace.display(&cwd_path);
         let session_id = self.manager.next_session_id();
         let shell = args
             .shell
@@ -529,10 +528,10 @@ mod tests {
 
         let result = tool
             .execute(
-                context(),
+                context(&root),
                 call(
                     "exec_command",
-                    json!({ "cmd": "printf hi", "yield_time_ms": 50 }),
+                    json!({ "cmd": "printf hi", "yield_time_ms": 50, "login": false }),
                 ),
             )
             .await
@@ -558,7 +557,7 @@ mod tests {
 
         let started = exec
             .execute(
-                context(),
+                context(&root),
                 call(
                     "exec_command",
                     json!({
@@ -574,7 +573,7 @@ mod tests {
 
         let polled = stdin
             .execute(
-                context(),
+                context(&root),
                 call(
                     "write_stdin",
                     json!({
@@ -605,13 +604,13 @@ mod tests {
         }
     }
 
-    fn context() -> ToolExecutionContext {
+    fn context(workspace: &std::path::Path) -> ToolExecutionContext {
         ToolExecutionContext::new(
             ThreadId::from("thread-exec"),
             TurnId::from("turn-exec"),
             PolicyMode::Default,
         )
-        .with_workspace_handle(Arc::new(LocalWorkspaceHandle::new(".")))
+        .with_workspace_handle(Arc::new(LocalWorkspaceHandle::new(workspace)))
         .with_process_runner(Arc::new(LocalProcessRunnerHandle))
     }
 

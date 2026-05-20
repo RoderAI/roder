@@ -7,20 +7,24 @@ use roder_api::tools::{
 use serde::Deserialize;
 use serde_json::json;
 
-use crate::backend::WorkspaceBackendHandle;
+use crate::backend::{WorkspaceBackendHandle, backend_from_context_or_fallback};
 use crate::paging::{DEFAULT_PAGE_LINES, MAX_PAGE_LINES, clamp_limit, page_lines, page_metadata};
+use crate::workspace::Workspace;
 
 pub(crate) fn register(
     registry: &mut ToolRegistry,
+    workspace: Workspace,
     backend: WorkspaceBackendHandle,
 ) -> anyhow::Result<()> {
     registry.register(Arc::new(ReadFileTool {
+        workspace: workspace.clone(),
         backend: backend.clone(),
     }))?;
-    registry.register(Arc::new(ListFilesTool { backend }))
+    registry.register(Arc::new(ListFilesTool { workspace, backend }))
 }
 
 struct ReadFileTool {
+    workspace: Workspace,
     backend: WorkspaceBackendHandle,
 }
 
@@ -57,7 +61,8 @@ impl ToolExecutor for ReadFileTool {
     ) -> anyhow::Result<ToolResult> {
         ctx.require_workspace()?;
         let args = parse::<ReadFileArgs>(&call)?;
-        let (path, text) = self.backend.read_text(&args.path).await?;
+        let backend = backend_from_context_or_fallback(&ctx, &self.workspace, &self.backend)?;
+        let (path, text) = backend.read_text(&args.path).await?;
         let start_line = args.start_line.unwrap_or(1).max(1);
         let limit = clamp_limit(args.limit);
         let lines = text
@@ -85,6 +90,7 @@ impl ToolExecutor for ReadFileTool {
 }
 
 struct ListFilesTool {
+    workspace: Workspace,
     backend: WorkspaceBackendHandle,
 }
 
@@ -125,8 +131,8 @@ impl ToolExecutor for ListFilesTool {
     ) -> anyhow::Result<ToolResult> {
         ctx.require_workspace()?;
         let args = parse::<ListFilesArgs>(&call)?;
-        let (path, names) = self
-            .backend
+        let backend = backend_from_context_or_fallback(&ctx, &self.workspace, &self.backend)?;
+        let (path, names) = backend
             .list_files(args.path.as_deref().unwrap_or("."))
             .await?;
         let offset = args.offset.unwrap_or_default();

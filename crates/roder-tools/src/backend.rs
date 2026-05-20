@@ -5,6 +5,7 @@ use async_trait::async_trait;
 use roder_api::remote_runner::{
     RemoteRunnerSession, RunnerCommandRequest, RunnerFileReadRequest, RunnerFileWriteRequest,
 };
+use roder_api::tools::ToolExecutionContext;
 
 use crate::workspace::Workspace;
 
@@ -72,6 +73,24 @@ impl LocalWorkspaceBackend {
     pub(crate) fn new(workspace: Workspace) -> Self {
         Self { workspace }
     }
+}
+
+pub(crate) fn backend_from_context_or_fallback(
+    ctx: &ToolExecutionContext,
+    fallback_workspace: &Workspace,
+    fallback_backend: &WorkspaceBackendHandle,
+) -> anyhow::Result<WorkspaceBackendHandle> {
+    let Some(handle) = ctx.handles.workspace.as_ref() else {
+        return Ok(fallback_backend.clone());
+    };
+    let Some(root) = handle.workspace_root() else {
+        return Ok(fallback_backend.clone());
+    };
+    let workspace = Workspace::new_with_scope(root, fallback_workspace.path_scope())?;
+    if workspace.root() == fallback_workspace.root() {
+        return Ok(fallback_backend.clone());
+    }
+    Ok(Arc::new(LocalWorkspaceBackend::new(workspace)))
 }
 
 #[async_trait]

@@ -18,6 +18,7 @@ impl Runtime {
         thread_id: &ThreadId,
         turn_id: &TurnId,
         call: roder_api::inference::ToolCallCompleted,
+        workspace: Option<&str>,
     ) -> anyhow::Result<ToolResultRecord> {
         self.emit(RoderEvent::ToolCallRequested(ToolCallRequested {
             thread_id: thread_id.clone(),
@@ -68,7 +69,7 @@ impl Runtime {
             thread_id.clone(),
             turn_id.clone(),
             mode,
-            runtime_config.workspace.as_deref(),
+            workspace.or(runtime_config.workspace.as_deref()),
         );
         let decision = DefaultPolicyGate::new()
             .decide_with_contributors(&tool_call, mode, &ctx, &self.registry.policy_contributors)
@@ -115,7 +116,10 @@ impl Runtime {
             return Ok(item);
         }
 
-        let preview = file_change_preview(&tool_call, runtime_config.workspace.as_deref());
+        let preview = file_change_preview(
+            &tool_call,
+            workspace.or(runtime_config.workspace.as_deref()),
+        );
         if let Some(preview) = preview.clone() {
             self.emit(RoderEvent::FileChangePreviewReady(preview)).await;
         }
