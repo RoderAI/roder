@@ -3041,9 +3041,12 @@ name = "roder-roadmap"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "async-trait",
+ "roder-api",
  "serde",
  "serde_json",
  "time",
+ "tokio",
  "uuid",
 ]
 
