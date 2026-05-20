@@ -78,6 +78,7 @@ pub struct StartTurnRequest {
     pub images: Vec<InputImage>,
     pub provider_override: Option<String>,
     pub model_override: Option<String>,
+    pub workspace: Option<String>,
     pub instructions: InstructionBundle,
 }
 
@@ -777,6 +778,7 @@ impl Runtime {
                     images: Vec::new(),
                     provider_override: member.model_provider.clone(),
                     model_override: member.model.clone(),
+                    workspace: None,
                     instructions: crate::default_instructions(),
                 })
                 .await?
@@ -788,6 +790,7 @@ impl Runtime {
                 images: Vec::new(),
                 provider_override: member.model_provider.clone(),
                 model_override: member.model.clone(),
+                workspace: None,
                 instructions: crate::default_instructions(),
             })
             .await?
@@ -1147,6 +1150,7 @@ impl Runtime {
         let engine = self.engine_for(&provider)?;
         let capabilities = engine.capabilities();
         let tools = self.filtered_tool_specs(&cfg, &model);
+        let workspace = req.workspace.clone().or_else(|| cfg.workspace.clone());
         let parallel_tool_calls = parallel_tool_calls_for_model(&cfg, &model);
         let tool_choice = if tools.is_empty() {
             ToolChoice::None
@@ -1382,7 +1386,13 @@ impl Runtime {
                 conversation.push(tool_item);
             }
             let results = self
-                .route_tool_calls(&req.thread_id, &turn_id, tool_calls, parallel_tool_calls)
+                .route_tool_calls(
+                    &req.thread_id,
+                    &turn_id,
+                    tool_calls,
+                    parallel_tool_calls,
+                    workspace.as_deref(),
+                )
                 .await?;
             for result in results {
                 conversation.push(ConversationItem::ToolResult(result));
@@ -1480,18 +1490,22 @@ impl Runtime {
         turn_id: &TurnId,
         calls: Vec<ToolCallCompleted>,
         parallel: bool,
+        workspace: Option<&str>,
     ) -> anyhow::Result<Vec<ToolResultRecord>> {
         if parallel {
             try_join_all(
                 calls
                     .into_iter()
-                    .map(|call| self.route_tool_call(thread_id, turn_id, call)),
+                    .map(|call| self.route_tool_call(thread_id, turn_id, call, workspace)),
             )
             .await
         } else {
             let mut results = Vec::with_capacity(calls.len());
             for call in calls {
-                results.push(self.route_tool_call(thread_id, turn_id, call).await?);
+                results.push(
+                    self.route_tool_call(thread_id, turn_id, call, workspace)
+                        .await?,
+                );
             }
             Ok(results)
         }

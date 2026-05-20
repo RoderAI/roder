@@ -118,14 +118,15 @@ impl ToolContributor for BuiltinCodingToolsContributor {
     }
 
     fn contribute(&self, registry: &mut ToolRegistry) -> anyhow::Result<()> {
-        files::register(registry, self.backend.clone())?;
-        search::register(registry, self.backend.clone())?;
+        files::register(registry, self.workspace.clone(), self.backend.clone())?;
+        search::register(registry, self.workspace.clone(), self.backend.clone())?;
         shell::register(registry, self.workspace.clone())?;
         exec::register(registry, self.workspace.clone())?;
         registry.register(Arc::new(patch::ApplyPatchTool {
+            workspace: self.workspace.clone(),
             backend: self.backend.clone(),
         }))?;
-        edit::register(registry, self.backend.clone())?;
+        edit::register(registry, self.workspace.clone(), self.backend.clone())?;
         workflow::register(registry)?;
         media::register(registry)
     }
@@ -204,20 +205,22 @@ mod tests {
 
         let write = run_tool(
             &registry,
+            &root,
             "write_file",
             json!({ "path": "src/main.rs", "content": "alpha\nneedle\nomega\n" }),
         )
         .await;
         assert_eq!(write.text, "wrote src/main.rs");
 
-        let grep = run_tool(&registry, "grep", json!({ "query": "needle" })).await;
+        let grep = run_tool(&registry, &root, "grep", json!({ "query": "needle" })).await;
         assert!(grep.text.contains("src/main.rs:2:needle"));
 
-        let glob = run_tool(&registry, "glob", json!({ "pattern": "src/*.rs" })).await;
+        let glob = run_tool(&registry, &root, "glob", json!({ "pattern": "src/*.rs" })).await;
         assert_eq!(glob.text, "src/main.rs");
 
         let edit = run_tool(
             &registry,
+            &root,
             "edit",
             json!({ "path": "src/main.rs", "old_string": "needle", "new_string": "NEEDLE" }),
         )
@@ -226,6 +229,7 @@ mod tests {
 
         let multi_edit = run_tool(
             &registry,
+            &root,
             "multi_edit",
             json!({
                 "path": "src/main.rs",
@@ -240,6 +244,7 @@ mod tests {
 
         let patch = run_tool(
             &registry,
+            &root,
             "apply_patch",
             json!({
                 "patch": "*** Begin Patch\n*** Update File: src/main.rs\n@@\n-ALPHA\n+patched\n*** End Patch\n"
@@ -250,6 +255,7 @@ mod tests {
 
         let read = run_tool(
             &registry,
+            &root,
             "read_file",
             json!({ "path": "src/main.rs", "start_line": 2, "limit": 1 }),
         )
@@ -259,6 +265,7 @@ mod tests {
 
         let relative_read = run_tool(
             &registry,
+            &root,
             "read_file",
             json!({ "path": "./src/../src/main.rs", "start_line": 1, "limit": 1 }),
         )
@@ -315,6 +322,7 @@ mod tests {
 
         let files = run_tool(
             &registry,
+            &root,
             "list_files",
             json!({ "path": "src", "limit": 1 }),
         )
@@ -324,6 +332,7 @@ mod tests {
 
         let grep = run_tool(
             &registry,
+            &root,
             "grep",
             json!({ "query": "needle", "path": "src", "limit": 1 }),
         )
@@ -333,6 +342,7 @@ mod tests {
 
         let glob = run_tool(
             &registry,
+            &root,
             "glob",
             json!({ "pattern": "src/*.rs", "offset": 1, "limit": 1 }),
         )
@@ -358,6 +368,7 @@ mod tests {
 
         let write = run_tool(
             &registry,
+            &root,
             "write_file",
             json!({ "path": outside_file.display().to_string(), "content": "yes" }),
         )
@@ -366,6 +377,7 @@ mod tests {
 
         let list = run_tool(
             &registry,
+            &root,
             "list_files",
             json!({ "path": outside.display().to_string() }),
         )
@@ -393,7 +405,7 @@ mod tests {
         unsafe {
             std::env::set_var("HOME", &home);
         }
-        let list = run_tool(&registry, "list_files", json!({ "path": "~/" })).await;
+        let list = run_tool(&registry, &root, "list_files", json!({ "path": "~/" })).await;
         restore_home(previous_home);
 
         assert_eq!(list.text, "home-file.txt");
@@ -416,7 +428,7 @@ mod tests {
             .get("write_file")
             .unwrap()
             .execute(
-                context(),
+                context_with_workspace(&root),
                 call(
                     "write_file",
                     json!({ "path": "../outside.txt", "content": "nope" }),
@@ -483,20 +495,25 @@ mod tests {
 
     async fn run_tool(
         registry: &ToolRegistry,
+        workspace: &std::path::Path,
         name: &str,
         arguments: serde_json::Value,
     ) -> ToolResult {
         registry
             .get(name)
             .unwrap_or_else(|| panic!("missing tool {name}"))
-            .execute(context(), call(name, arguments))
+            .execute(context_with_workspace(workspace), call(name, arguments))
             .await
             .unwrap()
     }
 
     fn context() -> ToolExecutionContext {
+        context_with_workspace(std::path::Path::new("."))
+    }
+
+    fn context_with_workspace(workspace: &std::path::Path) -> ToolExecutionContext {
         context_without_handles()
-            .with_workspace_handle(Arc::new(LocalWorkspaceHandle::new(".")))
+            .with_workspace_handle(Arc::new(LocalWorkspaceHandle::new(workspace)))
             .with_process_runner(Arc::new(LocalProcessRunnerHandle))
     }
 
@@ -547,6 +564,7 @@ mod tests {
     }
 
     async fn run_coding_tool_sequence(contributor: BuiltinCodingToolsContributor) -> Vec<String> {
+        let workspace = contributor.workspace.root().to_path_buf();
         let mut registry = ToolRegistry::default();
         contributor.contribute(&mut registry).unwrap();
         let calls = [
@@ -584,7 +602,7 @@ mod tests {
         ];
         let mut outputs = Vec::new();
         for (name, args) in calls {
-            let result = run_tool(&registry, name, args).await;
+            let result = run_tool(&registry, &workspace, name, args).await;
             assert!(!result.is_error, "{name}: {}", result.text);
             outputs.push(format!("{}\n{}", result.text, result.data));
         }
