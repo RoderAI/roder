@@ -1,5 +1,6 @@
 use std::sync::Arc;
 
+use roder_api::conversation::tool_display_payload;
 use roder_api::events::RoderEvent;
 use roder_api::inference::InferenceEvent;
 use roder_api::notifications::{Notification, NotificationKind};
@@ -105,7 +106,7 @@ pub(crate) fn desktop_notifications_for_event(event: &RoderEvent) -> Vec<JsonRpc
                         item: tool_call_item(
                             &call.id,
                             Some(&call.name),
-                            serde_json::from_str(&call.arguments).ok(),
+                            parsed_tool_display_payload(&call.name, &call.arguments),
                             "inProgress",
                             None,
                         ),
@@ -119,7 +120,7 @@ pub(crate) fn desktop_notifications_for_event(event: &RoderEvent) -> Vec<JsonRpc
                         item: tool_call_item(
                             &call.id,
                             Some(&call.name),
-                            serde_json::from_str(&call.arguments).ok(),
+                            parsed_tool_display_payload(&call.name, &call.arguments),
                             "completed",
                             None,
                         ),
@@ -136,7 +137,7 @@ pub(crate) fn desktop_notifications_for_event(event: &RoderEvent) -> Vec<JsonRpc
                 item: tool_call_item(
                     &event.tool_id,
                     Some(&event.tool_name),
-                    None,
+                    event.display_payload.clone(),
                     "inProgress",
                     None,
                 ),
@@ -147,7 +148,13 @@ pub(crate) fn desktop_notifications_for_event(event: &RoderEvent) -> Vec<JsonRpc
             ItemStartedNotification {
                 thread_id: event.thread_id.clone(),
                 turn_id: event.turn_id.clone(),
-                item: tool_call_item(&event.tool_id, None, None, "inProgress", None),
+                item: tool_call_item(
+                    &event.tool_id,
+                    event.tool_name.as_deref(),
+                    event.display_payload.clone(),
+                    "inProgress",
+                    None,
+                ),
             },
         )],
         RoderEvent::ToolCallCompleted(event) => vec![desktop_notification(
@@ -157,6 +164,8 @@ pub(crate) fn desktop_notifications_for_event(event: &RoderEvent) -> Vec<JsonRpc
                 turn_id: event.turn_id.clone(),
                 item: tool_result_item(
                     &event.tool_id,
+                    event.tool_name.as_deref(),
+                    event.display_payload.clone(),
                     event.output.clone(),
                     if event.is_error {
                         "failed"
@@ -487,17 +496,28 @@ fn tool_call_item(
     }
 }
 
-fn tool_result_item(tool_id: &str, output: Option<String>, status: &str) -> DesktopItem {
+fn tool_result_item(
+    tool_id: &str,
+    tool_name: Option<&str>,
+    payload: Option<serde_json::Value>,
+    output: Option<String>,
+    status: &str,
+) -> DesktopItem {
     DesktopItem {
         id: format!("{tool_id}-result"),
         kind: "toolMessage".to_string(),
         text: output,
         status: Some(status.to_string()),
         phase: None,
-        tool_name: None,
+        tool_name: tool_name.map(str::to_string),
         tool_call_id: Some(tool_id.to_string()),
-        payload: None,
+        payload,
     }
+}
+
+fn parsed_tool_display_payload(tool_name: &str, arguments: &str) -> Option<serde_json::Value> {
+    let arguments = serde_json::from_str(arguments).ok();
+    tool_display_payload(Some(tool_name), arguments.as_ref(), None)
 }
 
 pub(crate) fn spawn_runtime_event_handlers(runtime: Arc<Runtime>, tasks: BackgroundRunner) {
@@ -573,5 +593,37 @@ fn notification_for_event(event: &RoderEvent) -> Option<Notification> {
             metadata: serde_json::json!({}),
         }),
         _ => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use roder_api::events::ToolCallCompleted;
+    use serde_json::json;
+
+    #[test]
+    fn completed_tool_notification_carries_display_payload() {
+        let notifications = desktop_notifications_for_event(&RoderEvent::ToolCallCompleted(
+            ToolCallCompleted {
+                thread_id: "thread-1".to_string(),
+                turn_id: "turn-1".to_string(),
+                tool_id: "tool-1".to_string(),
+                tool_name: Some("list_files".to_string()),
+                display_payload: Some(json!({ "path": ".", "shown": 3 })),
+                is_error: false,
+                output: Some("src\nCargo.toml".to_string()),
+                timestamp: OffsetDateTime::UNIX_EPOCH,
+            },
+        ));
+
+        assert_eq!(notifications.len(), 1);
+        let item = &notifications[0].params["item"];
+        assert_eq!(item["type"], "toolMessage");
+        assert_eq!(item["toolName"], "list_files");
+        assert_eq!(item["payload"]["path"], ".");
+        assert_eq!(item["payload"]["shown"], 3);
+        assert!(item["payload"].get("input").is_none());
+        assert!(item["payload"].get("arguments").is_none());
     }
 }

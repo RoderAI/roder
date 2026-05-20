@@ -1750,6 +1750,7 @@ mod tests {
                 id: "call_1".to_string(),
                 name: Some("list_files".to_string()),
                 result: "Cargo.toml".to_string(),
+                display_payload: None,
                 is_error: false,
             }),
         ];
@@ -1807,6 +1808,7 @@ mod tests {
                 id: "call_1".to_string(),
                 name: Some("list_files".to_string()),
                 result: "Cargo.toml".to_string(),
+                display_payload: None,
                 is_error: false,
             }),
         ];
