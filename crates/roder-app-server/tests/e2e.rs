@@ -63,19 +63,21 @@ use roder_protocol::{
     TeamMemberInterruptParams, TeamMemberInterruptResult, TeamMemberMessageParams,
     TeamMemberMessageResult, TeamMemberStartParams, TeamMemberStartResult, TeamReadParams,
     TeamReadResult, TeamStartMemberParams, TeamStartParams, TeamStartResult, ThreadArchiveParams,
-    ThreadArchiveResult, ThreadListParams, ThreadListResult, ThreadStartParams, ThreadStartResult,
-    ToolCallParams, ToolCallResult, ToolsListResult, TurnInputItem, TurnInterruptParams,
-    TurnStartParams, TurnStartResult, TurnSteerParams, TurnSteerResult, WorkflowEnableParams,
-    WorkflowEnableResult, WorkflowPreviewParams, WorkflowPreviewResult, WorkflowScanParams,
-    WorkflowScanResult,
+    ThreadArchiveResult, ThreadListParams, ThreadListResult, ThreadReadResult, ThreadStartParams,
+    ThreadStartResult, ToolCallParams, ToolCallResult, ToolsListResult, TurnInputItem,
+    TurnInterruptParams, TurnStartParams, TurnStartResult, TurnSteerParams, TurnSteerResult,
+    WorkflowEnableParams, WorkflowEnableResult, WorkflowPreviewParams, WorkflowPreviewResult,
+    WorkflowScanParams, WorkflowScanResult,
 };
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
 use time::OffsetDateTime;
+use tokio::net::TcpStream;
 use tokio::sync::Mutex;
 use tokio_tungstenite::tungstenite::Message;
 use tokio_tungstenite::tungstenite::client::IntoClientRequest;
+use tokio_tungstenite::{MaybeTlsStream, WebSocketStream};
 
 struct TaskCallingEngine {
     hang_child: bool,
@@ -1609,14 +1611,10 @@ async fn memory_methods_save_query_read_update_delete_and_preview() {
 }
 
 #[tokio::test]
-async fn remote_websocket_requires_auth_and_serves_initialize() {
-    let runtime = Arc::new(
-        Runtime::new(
-            build_default_registry(DefaultRegistryConfig::default()).unwrap(),
-            Default::default(),
-        )
-        .unwrap(),
-    );
+async fn remote_websocket_requires_auth_and_serves_thread_turn_flow() {
+    let mut builder = ExtensionRegistryBuilder::new();
+    builder.inference_engine(Arc::new(FakeInferenceEngine));
+    let runtime = Arc::new(Runtime::new(builder.build().unwrap(), Default::default()).unwrap());
     let mut events = runtime.subscribe_events();
     let app_server = Arc::new(AppServer::new(runtime));
     let token = RemoteToken::new("remote-secret-token".to_string()).unwrap();
@@ -1683,6 +1681,61 @@ async fn remote_websocket_requires_auth_and_serves_initialize() {
             .and_then(serde_json::Value::as_bool),
         Some(true)
     );
+
+    let started: ThreadStartResult = remote_request(
+        &mut websocket,
+        "thread-start",
+        "thread/start",
+        Some(serde_json::json!({
+            "model": "mock",
+            "modelProvider": PROVIDER_MOCK,
+            "cwd": "/tmp",
+            "ephemeral": false
+        })),
+    )
+    .await;
+    let thread_id = started.thread.id.clone();
+
+    let turn: TurnStartResult = remote_request(
+        &mut websocket,
+        "turn-start",
+        "turn/start",
+        Some(serde_json::json!({
+            "threadId": thread_id,
+            "input": [{ "type": "text", "text": "hello remote" }]
+        })),
+    )
+    .await;
+    assert!(!turn.turn_id.is_empty());
+
+    let mut saw_completed = false;
+    for _ in 0..20 {
+        let envelope = tokio::time::timeout(Duration::from_secs(2), events.recv())
+            .await
+            .unwrap()
+            .unwrap();
+        if envelope.thread_id.as_deref() == Some(&started.thread.id)
+            && envelope.kind == "turn.completed"
+        {
+            saw_completed = true;
+            break;
+        }
+    }
+    assert!(saw_completed, "remote turn did not complete");
+
+    let read: ThreadReadResult = remote_request(
+        &mut websocket,
+        "thread-read",
+        "thread/read",
+        Some(serde_json::json!({
+            "threadId": started.thread.id,
+            "includeTurns": true
+        })),
+    )
+    .await;
+    let thread = read.thread.expect("remote thread/read returns thread");
+    assert_eq!(thread.id, started.thread.id);
+
     drop(websocket);
     let _ = wait_for_global_event(&mut events, "remote/clientDisconnected").await;
 }
@@ -3843,6 +3896,34 @@ async fn request<T: serde::de::DeserializeOwned>(
         res.error
     );
     serde_json::from_value(res.result.unwrap()).unwrap()
+}
+
+async fn remote_request<T: serde::de::DeserializeOwned>(
+    websocket: &mut WebSocketStream<MaybeTlsStream<TcpStream>>,
+    id: &str,
+    method: &str,
+    params: Option<serde_json::Value>,
+) -> T {
+    websocket
+        .send(Message::Text(
+            serde_json::to_string(&JsonRpcRequest {
+                jsonrpc: "2.0".to_string(),
+                id: Some(serde_json::json!(id)),
+                method: method.to_string(),
+                params,
+            })
+            .unwrap()
+            .into(),
+        ))
+        .await
+        .unwrap();
+    let message = websocket.next().await.unwrap().unwrap();
+    let Message::Text(text) = message else {
+        panic!("expected text response for {method}");
+    };
+    let response: roder_protocol::JsonRpcResponse = serde_json::from_str(&text).unwrap();
+    assert!(response.error.is_none(), "{:?}", response.error);
+    serde_json::from_value(response.result.unwrap()).unwrap()
 }
 
 async fn request_error(
