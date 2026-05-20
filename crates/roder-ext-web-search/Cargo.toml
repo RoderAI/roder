@@ -27,3 +27,4 @@ roder-ext-tavily-search.workspace = true
 roder-web-search.workspace = true
 semver.workspace = true
 serde_json.workspace = true
+workspace-hack = { version = "0.1", path = "../../workspace-hack" }

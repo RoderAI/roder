@@ -2,6 +2,20 @@
 python = "3.12"
 rust = "1.95.0"
 uv = "0.11.7"
+sccache = "latest"
+
+[env]
+# Homebrew lld (user-installed); mise enter ensures these bins are on PATH.
+_.path = [
+    "{{env.HOME}}/opt/homebrew/opt/lld/bin",
+    "{{env.HOME}}/opt/homebrew/bin",
+]
+# Used by local scripts; cargo uses lld from PATH via .cargo/config.toml (-fuse-ld=lld).
+LLD_PREFIX = "{{env.HOME}}/opt/homebrew/opt/lld"
+
+[hooks]
+# Ensure brew lld is present when entering the project directory.
+enter = "command -v lld >/dev/null 2>&1 || brew install lld"
 
 [tasks.build]
 description = "Build the local roder binary used by tests"
@@ -24,8 +38,21 @@ description = "Run Rust clippy across the workspace"
 run = "cargo clippy --workspace --all-targets -- -D warnings"
 
 [tasks."rust:test"]
-description = "Run Rust tests across the workspace"
-run = "cargo test --workspace"
+description = "Run Rust tests across the workspace (nextest + app-server e2e)"
+run = "make test"
+
+[tasks."rust:test:fast"]
+description = "Run unit tests only (skip integration binaries)"
+run = "make test-fast"
+
+[tasks."rust:setup"]
+description = "Install Rust build tools (nextest, hakari) and ensure brew lld"
+run = [
+    "brew list lld >/dev/null 2>&1 || brew install lld",
+    "make dev-deps",
+    "cargo hakari generate",
+    "cargo hakari manage-deps -y",
+]
 
 [tasks."python:sync"]
 description = "Install/sync Python e2e test dependencies"
