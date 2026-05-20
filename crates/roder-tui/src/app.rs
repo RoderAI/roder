@@ -80,6 +80,7 @@ use tokio::process::Command;
 use tui_textarea::TextArea;
 
 use self::commands::built_in_command_catalog;
+use crate::roadmap::RoadmapModeState;
 use composer::{
     ComposerKeyAction, composer_mode, composer_text, composer_textarea, handle_composer_key,
     shell_command_from_input, style_composer_for_current_mode,
@@ -943,6 +944,7 @@ pub struct TuiApp {
     tool_detail_modal: Option<ToolDetailModal>,
     plugin_browser: Option<PluginBrowserState>,
     remote_panel: RemotePanelController,
+    roadmap_mode: Option<RoadmapModeState>,
     image_attachments: Vec<ImageAttachment>,
     queued_prompts: PromptQueue,
     last_user_prompt: Option<PendingPrompt>,
@@ -972,6 +974,9 @@ pub enum TuiStartup {
     NewSession,
     ResumeMenu,
     ResumeSession(String),
+    RoadmapOpen {
+        path: Option<String>,
+    },
     TeamAttach {
         team_id: String,
         member_id: String,
@@ -1152,6 +1157,9 @@ impl TuiApp {
             TuiStartup::ResumeSession(thread_id) => {
                 app.load_session(thread_id).await;
             }
+            TuiStartup::RoadmapOpen { path } => {
+                app.enter_roadmap_mode(path);
+            }
             TuiStartup::TeamAttach { .. } => {}
         }
 
@@ -1260,6 +1268,7 @@ impl TuiApp {
             tool_detail_modal: None,
             plugin_browser: None,
             remote_panel,
+            roadmap_mode: None,
             image_attachments: Vec::new(),
             queued_prompts: PromptQueue::default(),
             last_user_prompt: None,
@@ -1275,6 +1284,12 @@ impl TuiApp {
             active_theme_id,
             theme_preview_baseline: None,
         })
+    }
+
+    pub fn enter_roadmap_mode(&mut self, path: Option<String>) {
+        let label = path.clone().unwrap_or_else(|| "roadmap".to_string());
+        self.roadmap_mode = Some(RoadmapModeState::new(path));
+        self.push_event(format!("Roadmapping mode: {label}"));
     }
 
     pub fn exit_summary(&self) -> TuiExitSummary {
@@ -3148,6 +3163,11 @@ impl TuiApp {
         } else {
             ""
         };
+        let roadmap_hint = self
+            .roadmap_mode
+            .as_ref()
+            .map(|state| format!("  roadmap:{}", state.label()))
+            .unwrap_or_default();
         let shortcut_context = match self.timeline.focus() {
             TimelineFocus::Timeline => FooterShortcutContext::Timeline,
             TimelineFocus::Composer if self.active_turn_id.is_some() => {
@@ -3160,13 +3180,13 @@ impl TuiApp {
         Paragraph::new(line_with_gap(
             vec![Span::styled(
                 format!(
-                    " {status}  mode:{}{queue_hint}{pending_hint}{shell_hint}  {interaction_hint}",
+                    " {status}  mode:{}{queue_hint}{pending_hint}{shell_hint}{roadmap_hint}  {interaction_hint}",
                     policy_mode_label(self.policy_mode),
                     queue_hint = if self.queued_prompts.is_empty() {
                         String::new()
                     } else {
                         format!("  {}", queue_status(self.queued_prompts.len()))
-                    }
+                    },
                 ),
                 self.theme.subtle(),
             )],
@@ -6045,6 +6065,7 @@ mod tests {
                 "ws://127.0.0.1:0".to_string(),
                 Some("/tmp/gode".to_string()),
             ),
+            roadmap_mode: None,
             image_attachments: Vec::new(),
             queued_prompts: PromptQueue::default(),
             last_user_prompt: None,
@@ -6110,6 +6131,21 @@ mod tests {
         assert_eq!(app.focused_thread_id(), "thread-lead");
         app.cycle_team_focus(true);
         assert_eq!(app.focused_thread_id(), "thread-builder");
+    }
+
+    #[test]
+    fn roadmap_mode_is_visible_in_footer() {
+        let mut app = test_app();
+
+        app.enter_roadmap_mode(Some("roadmap/20-roadmapping-mode.md".to_string()));
+
+        let mut buffer = Buffer::empty(Rect::new(0, 0, 100, 1));
+        app.footer(100).render(buffer.area, &mut buffer);
+        let footer = buffer_row_cells(&buffer, 0)
+            .iter()
+            .map(|cell| cell.symbol.as_str())
+            .collect::<String>();
+        assert!(footer.contains("roadmap:20-roadmapping-mode.md"));
     }
 
     #[test]

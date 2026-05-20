@@ -57,7 +57,7 @@ async fn main() -> anyhow::Result<()> {
         return run_workflow_cli(&args[1..]).await;
     }
     if matches!(args.first().map(String::as_str), Some("roadmap")) {
-        return roadmap_cli::run_roadmap_cli(&args[1..]).await;
+        return run_roadmap_entrypoint(&args[1..]).await;
     }
     if matches!(
         args.first().map(String::as_str),
@@ -288,6 +288,52 @@ async fn run_memory_cli(args: &[String]) -> anyhow::Result<()> {
         ),
     }
     Ok(())
+}
+
+async fn run_roadmap_entrypoint(args: &[String]) -> anyhow::Result<()> {
+    if args.is_empty() {
+        return run_roadmap_tui(None).await;
+    }
+    if matches!(args.first().map(String::as_str), Some("open")) {
+        let Some(plan) = args.get(1) else {
+            anyhow::bail!("usage: roder roadmap open <plan>");
+        };
+        return run_roadmap_tui(Some(roadmap_tui_plan_path(plan))).await;
+    }
+    roadmap_cli::run_roadmap_cli(args).await
+}
+
+async fn run_roadmap_tui(plan: Option<String>) -> anyhow::Result<()> {
+    let cli_options = CliOptions {
+        startup: TuiStartup::RoadmapOpen { path: plan.clone() },
+        ..CliOptions::default()
+    };
+    let (runtime, default_model) = build_runtime_from_config(cli_options).await?;
+    if let Some(path) = plan.as_deref() {
+        runtime.open_roadmap(path).await?;
+        runtime.enter_roadmap_mode(path).await?;
+    }
+    let app_server = Arc::new(AppServer::new(runtime).with_user_config_persistence());
+    let client = LocalAppClient::new(app_server);
+    let mut tui = TuiApp::new_with_startup(
+        client,
+        default_model,
+        TuiStartup::RoadmapOpen { path: plan },
+    )
+    .await?;
+    tui.run().await?;
+    print_tui_exit_summary(&tui);
+    Ok(())
+}
+
+fn roadmap_tui_plan_path(plan: &str) -> String {
+    if plan.starts_with("roadmap/") {
+        plan.to_string()
+    } else if plan.ends_with(".md") {
+        format!("roadmap/{plan}")
+    } else {
+        format!("roadmap/{plan}.md")
+    }
 }
 
 async fn list_sessions(client: &LocalAppClient) -> anyhow::Result<Vec<DesktopThread>> {
@@ -1888,6 +1934,22 @@ mod tests {
         assert_eq!(
             options.startup,
             TuiStartup::ResumeSession("abc".to_string())
+        );
+    }
+
+    #[test]
+    fn roadmap_tui_plan_paths_are_normalized() {
+        assert_eq!(
+            roadmap_tui_plan_path("20-roadmapping-mode.md"),
+            "roadmap/20-roadmapping-mode.md"
+        );
+        assert_eq!(
+            roadmap_tui_plan_path("roadmap/20-roadmapping-mode.md"),
+            "roadmap/20-roadmapping-mode.md"
+        );
+        assert_eq!(
+            roadmap_tui_plan_path("20-roadmapping-mode"),
+            "roadmap/20-roadmapping-mode.md"
         );
     }
 
