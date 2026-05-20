@@ -1867,6 +1867,13 @@ impl TuiApp {
     }
 
     fn focused_thread_id(&self) -> &str {
+        if let Some(thread_id) = self
+            .roadmap_mode
+            .as_ref()
+            .and_then(|roadmap| roadmap.selected_thread_id.as_deref())
+        {
+            return thread_id;
+        }
         self.team_ui.focused_thread_id(&self.thread_id)
     }
 
@@ -2814,7 +2821,10 @@ impl TuiApp {
         let transcript_index = 1;
         f.render_widget(self.header(area.width), chunks[0]);
         if self.roadmap_mode.is_some() {
-            f.render_widget(self.roadmap_document(), chunks[transcript_index]);
+            f.render_widget(
+                self.roadmap_document(chunks[transcript_index]),
+                chunks[transcript_index],
+            );
         } else {
             f.render_widget(
                 self.transcript(chunks[transcript_index]),
@@ -2994,13 +3004,21 @@ impl TuiApp {
             .wrap(Wrap { trim: false })
     }
 
-    fn roadmap_document(&mut self) -> Paragraph<'static> {
+    fn roadmap_document(&mut self, area: Rect) -> Paragraph<'static> {
         self.selectable_lines = Vec::new();
-        let text = self
+        let mut text = self
             .roadmap_mode
             .as_ref()
             .map(RoadmapModeState::render_text)
             .unwrap_or_else(|| Text::from("Roadmap mode"));
+        let activity = self
+            .timeline
+            .render_with_frame(self.theme, area, self.animation_frame);
+        if !activity.text.lines.is_empty() {
+            text.lines.push(Line::from(""));
+            text.lines.push(Line::from("Activity Evidence"));
+            text.lines.extend(activity.text.lines.into_iter().take(6));
+        }
         Paragraph::new(text)
             .style(self.theme.text())
             .wrap(Wrap { trim: false })
@@ -6227,6 +6245,41 @@ mod tests {
         assert!(pending.message.contains("Roadmapping mode is active"));
         assert!(pending.message.contains("Selected roadmap:"));
         assert!(pending.message.contains("continue the selected task"));
+    }
+
+    #[test]
+    fn roadmap_attached_thread_becomes_prompt_target() {
+        let mut app = test_app();
+        app.enter_roadmap_mode(Some("roadmap/20-roadmapping-mode.md".to_string()));
+        app.roadmap_mode
+            .as_mut()
+            .unwrap()
+            .attach_thread("thread-roadmap");
+
+        assert_eq!(app.focused_thread_id(), "thread-roadmap");
+    }
+
+    #[test]
+    fn roadmap_document_keeps_activity_as_secondary_evidence() {
+        let mut app = test_app();
+        app.enter_roadmap_mode(Some("roadmap/20-roadmapping-mode.md".to_string()));
+        app.timeline.push_system("worker evidence");
+
+        let mut buffer = Buffer::empty(Rect::new(0, 0, 100, 80));
+        app.roadmap_document(buffer.area)
+            .render(buffer.area, &mut buffer);
+        let rows = (0..buffer.area.height)
+            .map(|row| {
+                buffer_row_cells(&buffer, row)
+                    .iter()
+                    .map(|cell| cell.symbol.as_str())
+                    .collect::<String>()
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(rows.contains("Roadmap"));
+        assert!(rows.contains("Activity Evidence"));
+        assert!(rows.contains("worker evidence"));
     }
 
     #[test]

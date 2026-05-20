@@ -6,6 +6,7 @@ use roder_roadmap::{
     Diagnostic, Document, DocumentSummary, ListOptions, ThreadAttachment, list_documents,
     parse_document, validate_document,
 };
+use time::OffsetDateTime;
 
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub struct RoadmapModeState {
@@ -88,6 +89,95 @@ impl RoadmapModeState {
             .iter()
             .find(|task| task.id == focused)
             .map(|task| task.heading.as_str())
+    }
+
+    pub fn focus_next_task(&mut self) -> Option<&str> {
+        let document = self.selected_document.as_ref()?;
+        if document.tasks.is_empty() {
+            self.focused_task_id = None;
+            return None;
+        }
+        let current = self
+            .focused_task_id
+            .as_deref()
+            .and_then(|id| document.tasks.iter().position(|task| task.id == id))
+            .unwrap_or(0);
+        let next = (current + 1).min(document.tasks.len().saturating_sub(1));
+        self.focused_task_id = Some(document.tasks[next].id.clone());
+        self.focused_task_id.as_deref()
+    }
+
+    pub fn focus_previous_task(&mut self) -> Option<&str> {
+        let document = self.selected_document.as_ref()?;
+        if document.tasks.is_empty() {
+            self.focused_task_id = None;
+            return None;
+        }
+        let current = self
+            .focused_task_id
+            .as_deref()
+            .and_then(|id| document.tasks.iter().position(|task| task.id == id))
+            .unwrap_or(0);
+        let previous = current.saturating_sub(1);
+        self.focused_task_id = Some(document.tasks[previous].id.clone());
+        self.focused_task_id.as_deref()
+    }
+
+    pub fn attach_thread(&mut self, thread_id: impl Into<String>) {
+        let thread_id = thread_id.into();
+        let now = OffsetDateTime::now_utc();
+        let attachment = ThreadAttachment {
+            thread_id: thread_id.clone(),
+            task_id: self.focused_task_id.clone(),
+            title: Some("Roadmap thread".to_string()),
+            status: Some("attached".to_string()),
+            created_at: now,
+            updated_at: now,
+        };
+        self.selected_thread_id = Some(thread_id);
+        self.attached_threads.push(attachment);
+    }
+
+    pub fn detach_selected_thread(&mut self) -> Option<String> {
+        let thread_id = self.selected_thread_id.take()?;
+        self.attached_threads
+            .retain(|thread| thread.thread_id != thread_id);
+        Some(thread_id)
+    }
+
+    pub fn select_next_thread(&mut self) -> Option<&str> {
+        if self.attached_threads.is_empty() {
+            self.selected_thread_id = None;
+            return None;
+        }
+        let current = self
+            .selected_thread_id
+            .as_deref()
+            .and_then(|id| {
+                self.attached_threads
+                    .iter()
+                    .position(|thread| thread.thread_id == id)
+            })
+            .unwrap_or(0);
+        let next = (current + 1) % self.attached_threads.len();
+        self.selected_thread_id = Some(self.attached_threads[next].thread_id.clone());
+        self.selected_thread_id.as_deref()
+    }
+
+    pub fn validate_selected_document(&mut self) {
+        self.validation_diagnostics = self
+            .selected_document
+            .as_ref()
+            .map(validate_document)
+            .map(|result| result.diagnostics)
+            .unwrap_or_default();
+    }
+
+    pub fn checkbox_toggle_confirmation(&self) -> Option<String> {
+        let task = self.focused_task_heading()?;
+        Some(format!(
+            "Toggle roadmap task '{task}'? Evidence is required before marking done."
+        ))
     }
 
     pub fn prompt_context(&self, input: &str) -> String {
@@ -295,6 +385,30 @@ mod tests {
         assert!(prompt.ends_with("continue"));
     }
 
+    #[test]
+    fn roadmap_model_supports_navigation_threads_validation_and_confirmation() {
+        let workspace = temp_workspace();
+        fs::write(workspace.join("roadmap/20-roadmapping-mode.md"), fixture()).unwrap();
+        let mut state =
+            RoadmapModeState::load(&workspace, Some("20-roadmapping-mode.md".to_string())).unwrap();
+
+        assert_eq!(state.focus_next_task(), Some("task-wire-roadmap-keys"));
+        assert_eq!(state.focus_previous_task(), Some("task-add-roadmap-tests"));
+        state.attach_thread("thread-a");
+        state.attach_thread("thread-b");
+        assert_eq!(state.selected_thread_id.as_deref(), Some("thread-b"));
+        assert_eq!(state.select_next_thread(), Some("thread-a"));
+        assert_eq!(state.detach_selected_thread().as_deref(), Some("thread-a"));
+        state.validate_selected_document();
+        assert!(state.validation_diagnostics.is_empty());
+        assert!(
+            state
+                .checkbox_toggle_confirmation()
+                .unwrap()
+                .contains("Evidence is required")
+        );
+    }
+
     fn temp_workspace() -> PathBuf {
         let unique = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -306,6 +420,6 @@ mod tests {
     }
 
     fn fixture() -> String {
-        "# Roadmapping Mode Implementation Plan\n\n**Goal:** Add roadmapping mode.\n**Architecture:** Roadmap documents are first-class state.\n**Tech Stack:** Rust.\n\n## Owned Paths\n\n- Modify: `crates/roder-tui/src/roadmap.rs`\n\n## Tasks\n\n- [ ] Add roadmap tests\n\nRun:\n\n```sh\ncargo test -p roder-tui roadmap\n```\n\nAcceptance:\n- Roadmap mode renders.\n\n## Phase Acceptance\n\n- [ ] TUI works.\n".to_string()
+        "# Roadmapping Mode Implementation Plan\n\n**Goal:** Add roadmapping mode.\n**Architecture:** Roadmap documents are first-class state.\n**Tech Stack:** Rust.\n\n## Owned Paths\n\n- Modify: `crates/roder-tui/src/roadmap.rs`\n\n## Tasks\n\n- [ ] Add roadmap tests\n- [ ] Wire roadmap keys\n\nRun:\n\n```sh\ncargo test -p roder-tui roadmap\n```\n\nAcceptance:\n- Roadmap mode renders.\n\n## Phase Acceptance\n\n- [ ] TUI works.\n".to_string()
     }
 }
