@@ -21,6 +21,10 @@ impl JsonlSessionStore {
         self.base_path.join(thread_id)
     }
 
+    fn archived_session_dir(&self, thread_id: &ThreadId) -> PathBuf {
+        archived_sessions_root(&self.base_path).join(thread_id)
+    }
+
     async fn read_turns(&self, thread_id: &ThreadId) -> anyhow::Result<Vec<TurnRecord>> {
         let file_path = self.session_dir(thread_id).join("turn_items.jsonl");
         if !file_path.exists() {
@@ -154,6 +158,33 @@ impl SessionStore for JsonlSessionStore {
             turns,
             extension_states,
         }))
+    }
+
+    async fn archive_session(&self, thread_id: &ThreadId) -> anyhow::Result<bool> {
+        let source = self.session_dir(thread_id);
+        if !source.exists() {
+            return Ok(false);
+        }
+        let archive_root = archived_sessions_root(&self.base_path);
+        fs::create_dir_all(&archive_root).await.with_context(|| {
+            format!(
+                "create archived sessions directory {}",
+                archive_root.display()
+            )
+        })?;
+        let destination = self.archived_session_dir(thread_id);
+        if destination.exists() {
+            anyhow::bail!("archived session already exists: {}", destination.display());
+        }
+        fs::rename(&source, &destination).await.with_context(|| {
+            format!(
+                "archive session {} from {} to {}",
+                thread_id,
+                source.display(),
+                destination.display()
+            )
+        })?;
+        Ok(true)
     }
 
     async fn append_event(
@@ -557,6 +588,13 @@ fn truncate_chars(value: &str, max: usize) -> String {
     out
 }
 
+fn archived_sessions_root(active_sessions_root: &Path) -> PathBuf {
+    active_sessions_root
+        .parent()
+        .map(|parent| parent.join("archived_sessions"))
+        .unwrap_or_else(|| active_sessions_root.with_file_name("archived_sessions"))
+}
+
 #[derive(serde::Serialize, serde::Deserialize)]
 struct PersistedTurnItem {
     turn_id: TurnId,
@@ -683,6 +721,49 @@ mod tests {
         assert_eq!(snapshot.turns[0].items.len(), 2);
         assert_eq!(snapshot.turns[0].completed_at, Some(now));
 
+        let _ = fs::remove_dir_all(base_path).await;
+    }
+
+    #[tokio::test]
+    async fn archive_session_moves_session_out_of_active_list() {
+        let base_path =
+            std::env::temp_dir().join(format!("roder-jsonl-archive-test-{}", uuid::Uuid::new_v4()));
+        let store = JsonlSessionStore {
+            base_path: base_path.clone(),
+        };
+        let thread_id = "thread-archive".to_string();
+        let now = OffsetDateTime::UNIX_EPOCH;
+
+        store
+            .create_session(SessionMetadata {
+                thread_id: thread_id.clone(),
+                title: Some("Archive me".to_string()),
+                workspace: Some("/workspace".to_string()),
+                provider: Some("mock".to_string()),
+                model: Some("mock".to_string()),
+                runner_destination: None,
+                runner_state: None,
+                created_at: now,
+                updated_at: now,
+                message_count: 0,
+            })
+            .await
+            .unwrap();
+
+        assert!(store.archive_session(&thread_id).await.unwrap());
+        assert!(store.list_sessions().await.unwrap().is_empty());
+        assert!(store.load_session(&thread_id).await.unwrap().is_none());
+        assert!(
+            base_path
+                .parent()
+                .unwrap()
+                .join("archived_sessions")
+                .join(&thread_id)
+                .join("metadata.json")
+                .exists()
+        );
+
+        let _ = fs::remove_dir_all(base_path.parent().unwrap().join("archived_sessions")).await;
         let _ = fs::remove_dir_all(base_path).await;
     }
 

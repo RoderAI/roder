@@ -1861,6 +1861,7 @@ Response:
             "marketplace_id": "local-cursor",
             "path": "Repo Tools"
           },
+          "homepage": "https://example.com/repo-tools",
           "componentHints": {
             "skills": true,
             "commands": false,
@@ -1895,8 +1896,8 @@ Behavior:
 - `recommendedVariantKey` is the default provider ordering choice for clients
   that want a one-click install; clients can still install a selected variant
   or call `plugins/install_all_variants` for every provider copy.
-- Each variant includes source, component hints, capability hints, and risk so
-  clients can show an install preview before activation.
+- Each variant includes source, optional homepage, component hints, capability
+  hints, and risk so clients can show an install preview before activation.
 - Baked-in default descriptors are skipped until installed/refreshed and
   resolvable locally. Remote descriptor fetch is not implicit.
 
