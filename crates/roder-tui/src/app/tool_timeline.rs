@@ -25,11 +25,11 @@ use roder_api::trace::{
 };
 use serde_json::Value;
 
+use super::plan_review::PlanReviewRow;
 use super::scroll_accel::{ScrollAccelState, ScrollDirection, ScrollSettings};
 use super::stream_animation::StreamAnimator;
 use super::subagent_trace::SubagentTraceRow;
 use super::{Theme, short_id};
-use super::{hunk_tracker::HunkTrackerRow, plan_review::PlanReviewRow};
 use crate::transcript::context_menu::TranscriptContextMenu;
 use crate::transcript::fold::{TranscriptFoldState, TranscriptFoldStateCodec};
 use preview::tool_label;
@@ -92,7 +92,6 @@ enum TimelineItemKind {
     Tool(ToolTimelineTool),
     SubagentTrace(Box<SubagentTraceRow>),
     PlanReview(Box<PlanReviewRow>),
-    Hunk(Box<HunkTrackerRow>),
 }
 
 #[derive(Clone)]
@@ -258,7 +257,6 @@ pub(super) struct TimelineState {
     tool_indices: HashMap<String, usize>,
     subagent_trace_indices: HashMap<SubagentTraceId, usize>,
     plan_review_indices: HashMap<String, usize>,
-    hunk_indices: HashMap<String, usize>,
     selected: Option<usize>,
     fold_state: TranscriptFoldState,
     focus: TimelineFocus,
@@ -459,6 +457,24 @@ impl TimelineState {
         self.follow_live_updates_from_composer();
     }
 
+    pub fn remove_tool(&mut self, tool_id: &str) -> bool {
+        let Some(index) = self.tool_indices.remove(tool_id) else {
+            return false;
+        };
+        self.items.remove(index);
+        shift_indices_after_removal(&mut self.tool_indices, index);
+        shift_indices_after_removal(&mut self.subagent_trace_indices, index);
+        shift_indices_after_removal(&mut self.plan_review_indices, index);
+        self.selected = match self.selected {
+            Some(selected) if selected == index => None,
+            Some(selected) if selected > index => Some(selected - 1),
+            selected => selected,
+        };
+        self.hit_rows.clear();
+        self.follow_live_updates_from_composer();
+        true
+    }
+
     #[allow(dead_code)]
     pub fn record_tool_output_delta(&mut self, tool_id: &str, output_delta: &str) {
         if output_delta.is_empty() {
@@ -474,6 +490,37 @@ impl TimelineState {
             tool.output
                 .get_or_insert_with(String::new)
                 .push_str(output_delta);
+            self.follow_live_updates_from_composer();
+        }
+    }
+
+    pub fn record_tool_session_update(
+        &mut self,
+        tool_id: &str,
+        failed: bool,
+        output_delta: Option<String>,
+        still_running: bool,
+    ) {
+        let Some(index) = self.tool_indices.get(tool_id).copied() else {
+            return;
+        };
+        if let Some(TimelineItem {
+            kind: TimelineItemKind::Tool(tool),
+        }) = self.items.get_mut(index)
+        {
+            tool.status = if failed {
+                ToolTimelineStatus::Failed
+            } else if still_running {
+                ToolTimelineStatus::Running
+            } else {
+                ToolTimelineStatus::Completed
+            };
+            if let Some(delta) = output_delta
+                .as_deref()
+                .filter(|text| !text.trim().is_empty())
+            {
+                append_tool_output(&mut tool.output, delta);
+            }
             self.follow_live_updates_from_composer();
         }
     }
@@ -666,16 +713,8 @@ impl TimelineState {
         }
     }
 
-    pub fn record_hunk(&mut self, hunk: roder_api::plan_review::HunkRecord) {
-        if hunk.plan_review_id.is_some() {
-            return;
-        }
-        let index = self.items.len();
-        self.hunk_indices.insert(hunk.id.clone(), index);
-        self.items.push(TimelineItem {
-            kind: TimelineItemKind::Hunk(Box::new(HunkTrackerRow::new(hunk))),
-        });
-        self.follow_live_updates_from_composer();
+    pub fn record_hunk(&mut self, _hunk: roder_api::plan_review::HunkRecord) {
+        // Hunk records are rollback metadata; rendering them produced noisy restore rows.
     }
 
     pub fn handle_key(&mut self, key: KeyEvent) -> bool {
@@ -1083,9 +1122,6 @@ impl TimelineState {
                 kind: TimelineItemKind::PlanReview(review),
             } => Some(review.review_id().to_string()),
             TimelineItem {
-                kind: TimelineItemKind::Hunk(hunk),
-            } => Some(hunk.hunk_id().to_string()),
-            TimelineItem {
                 kind:
                     TimelineItemKind::User(_)
                     | TimelineItemKind::Assistant(_)
@@ -1116,9 +1152,6 @@ impl TimelineState {
             Some(TimelineItem {
                 kind: TimelineItemKind::PlanReview(review),
             }) => review.can_expand(),
-            Some(TimelineItem {
-                kind: TimelineItemKind::Hunk(hunk),
-            }) => hunk.can_expand(),
             Some(item) => self.settings.message_folding && item_is_foldable_message(item),
             None => false,
         }
@@ -1424,6 +1457,26 @@ fn command_from_json(value: &Value) -> Option<String> {
     None
 }
 
+fn append_tool_output(output: &mut Option<String>, delta: &str) {
+    if delta.trim() == "(no output)" && output.as_ref().is_some_and(|text| !text.trim().is_empty())
+    {
+        return;
+    }
+    let existing = output.get_or_insert_with(String::new);
+    if !existing.is_empty() && !existing.ends_with('\n') {
+        existing.push('\n');
+    }
+    existing.push_str(delta);
+}
+
+fn shift_indices_after_removal<K>(indices: &mut HashMap<K, usize>, removed_index: usize) {
+    for index in indices.values_mut() {
+        if *index > removed_index {
+            *index -= 1;
+        }
+    }
+}
+
 fn map_rendered_lines(
     lines: &[Line<'_>],
     line_start: usize,
@@ -1501,7 +1554,6 @@ fn item_is_non_message_selectable(item: &TimelineItem) -> bool {
             | TimelineItemKind::Shell(_)
             | TimelineItemKind::SubagentTrace(_)
             | TimelineItemKind::PlanReview(_)
-            | TimelineItemKind::Hunk(_)
     )
 }
 
@@ -1559,7 +1611,6 @@ impl TimelineItem {
             TimelineItemKind::Tool(_)
             | TimelineItemKind::SubagentTrace(_)
             | TimelineItemKind::PlanReview(_)
-            | TimelineItemKind::Hunk(_)
             | TimelineItemKind::TurnCompleted(_) => None,
         }
     }
