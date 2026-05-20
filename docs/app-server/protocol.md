@@ -38,7 +38,13 @@ surface for desktop, TUI, CLI, and sibling clients.
 | `item/agentMessage/delta` | `threadId`, `turnId`, `itemId`, `delta`, optional `phase`; appends assistant text. | Inference text/commentary/reasoning deltas. |
 | `item/completed` | `params.item` converts to one or more completed conversation messages. | Runtime assistant/tool completion. |
 | `turn/completed` | `params.turn.id`; busy state clears when it matches the active turn. | Runtime turn completion. |
-| `thread/status/changed` | `threadId`, `status`; sidebar status updates. | Runtime active/idle state changes. |
+| `thread/status/changed` | `threadId`, `status`; sidebar status updates. `activeFlags` marks wait states such as `approvalRequired`, `userInputRequired`, and `planExitRequired`. | Runtime active/idle/wait state changes. |
+| `session/approvalRequested` | `approvalId`, `toolId`, `toolName`, `threadId`, and `turnId`; clients should prompt and answer with `session/resolve_approval`. | Runtime tool policy approval request. |
+| `session/approvalResolved` | `approvalId`, `approved`, `threadId`, and `turnId`; clients clear the approval prompt. | Runtime tool policy approval resolution. |
+| `session/userInputRequested` | `requestId`, `questions`, `threadId`, and `turnId`; clients should prompt and answer with `session/resolve_user_input`. | Runtime `request_user_input` tool request. |
+| `session/userInputResolved` | `requestId`, `answers`, `threadId`, and `turnId`; clients clear the input prompt. | Runtime user-input resolution. |
+| `session/planExitRequested` | `requestId`, `targetMode`, optional `planSummary`, `threadId`, and `turnId`; clients should prompt and answer with `session/exit_plan`. | Runtime plan-mode exit request. |
+| `session/planExitResolved` | `requestId`, `approved`, `targetMode`, `resolvedMode`, `threadId`, and `turnId`; clients clear the plan-exit prompt. | Runtime plan-mode exit resolution. |
 | `command/exec/outputDelta` | `processId`, `stream`, `deltaBase64`, and `capReached`; appends streamed command output. | `command/exec` with `streamStdoutStderr: true`. |
 | `team/started` | `params.team` is a `TeamDescriptor`; clients can render the roster. | `team/start`. |
 | `team/member/started` | `teamId` plus a member descriptor; roster grows. | Runtime team member creation. |
