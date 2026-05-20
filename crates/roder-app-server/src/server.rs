@@ -27,7 +27,7 @@ use tokio::sync::{RwLock, broadcast};
 
 use crate::desktop_contract::{
     default_cwd_string, desktop_thread_from_metadata, desktop_turn_from_record,
-    desktop_turn_message,
+    desktop_turn_images, desktop_turn_message,
 };
 use crate::notifications;
 
@@ -1215,7 +1215,7 @@ impl AppServer {
             .start_turn(StartTurnRequest {
                 thread_id: params.thread_id.clone(),
                 message: desktop_turn_message(&params.input, params.prompt),
-                images: Vec::new(),
+                images: desktop_turn_images(&params.input),
                 provider_override,
                 model_override,
                 workspace,
@@ -1272,7 +1272,7 @@ impl AppServer {
                 params.thread_id,
                 turn_id.clone(),
                 desktop_turn_message(&params.input, params.prompt),
-                Vec::new(),
+                desktop_turn_images(&params.input),
             )
             .await
             .map_err(internal_error)?;

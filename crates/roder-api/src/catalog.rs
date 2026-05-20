@@ -11,6 +11,7 @@ pub const PROVIDER_XAI: &str = "xai";
 pub const PROVIDER_SUPERGROK: &str = "supergrok";
 pub const PROVIDER_OPENCODE: &str = "opencode";
 pub const PROVIDER_OPENCODE_GO: &str = "opencode-go";
+pub const PROVIDER_POOLSIDE: &str = "poolside";
 
 pub const PROVIDER_KIND_MOCK: &str = "mock";
 pub const PROVIDER_KIND_OPENAI: &str = "openai";
@@ -19,6 +20,7 @@ pub const PROVIDER_KIND_ANTHROPIC: &str = "anthropic";
 pub const PROVIDER_KIND_GEMINI: &str = "gemini";
 pub const PROVIDER_KIND_XAI: &str = "xai";
 pub const PROVIDER_KIND_OPENCODE: &str = "opencode";
+pub const PROVIDER_KIND_POOLSIDE: &str = "poolside";
 
 pub const REASONING_NONE: &str = "none";
 pub const REASONING_MINIMAL: &str = "minimal";
@@ -149,6 +151,17 @@ pub const MOCK_REASONING: &[ReasoningOption] = &[ReasoningOption {
     effort: REASONING_NONE,
     description: "No model-side reasoning",
 }];
+
+pub const POOLSIDE_REASONING: &[ReasoningOption] = &[
+    ReasoningOption {
+        effort: REASONING_NONE,
+        description: "Disable Poolside thinking for lower latency",
+    },
+    ReasoningOption {
+        effort: REASONING_MEDIUM,
+        description: "Enable Poolside thinking",
+    },
+];
 
 pub const GEMINI_ENV_ALIASES: &[&str] = &[
     "GEMINI_API_KEY",
@@ -295,6 +308,17 @@ pub const BUILT_IN_PROVIDERS: &[ProviderCatalogEntry] = &[
         base_url: Some("https://opencode.ai/zen/go/v1"),
         env_key: Some("OPENCODE_GO_API_KEY"),
         env_aliases: &["RODER_OPENCODE_GO_API_KEY", "OPENCODE_API_KEY"],
+        requires_auth: true,
+        supports_websockets: false,
+    },
+    ProviderCatalogEntry {
+        id: PROVIDER_POOLSIDE,
+        name: "Poolside",
+        kind: PROVIDER_KIND_POOLSIDE,
+        default_model: "poolside/laguna-m.1",
+        base_url: Some("https://inference.poolside.ai/v1"),
+        env_key: Some("POOLSIDE_API_KEY"),
+        env_aliases: &["RODER_POOLSIDE_API_KEY"],
         requires_auth: true,
         supports_websockets: false,
     },
@@ -566,6 +590,18 @@ pub const BUILT_IN_MODELS: &[ModelCatalogEntry] = &[
         REASONING_NONE,
         &[],
     ),
+    poolside_model(
+        "poolside/laguna-m.1",
+        "Laguna M.1",
+        "Poolside flagship agentic coding model.",
+        REASONING_MEDIUM,
+    ),
+    poolside_model(
+        "poolside/laguna-xs.2",
+        "Laguna XS.2",
+        "Poolside lightweight agentic coding model.",
+        REASONING_MEDIUM,
+    ),
     ModelCatalogEntry {
         id: "text-embedding-3-large",
         display_name: "Text Embedding 3 Large",
@@ -739,6 +775,31 @@ const fn opencode_model(
     }
 }
 
+const fn poolside_model(
+    id: &'static str,
+    display_name: &'static str,
+    description: &'static str,
+    default_reasoning: &'static str,
+) -> ModelCatalogEntry {
+    ModelCatalogEntry {
+        id,
+        display_name,
+        description,
+        provider: PROVIDER_POOLSIDE,
+        default_reasoning,
+        supported_reasoning: POOLSIDE_REASONING,
+        context_window: 131_072,
+        max_context_window: 131_072,
+        auto_compact_token_limit: 117_964,
+        supports_compaction: false,
+        supports_images: false,
+        supports_tools: true,
+        supports_structured: true,
+        edit_tool: Some("edit"),
+        hidden: false,
+    }
+}
+
 pub fn built_in_providers() -> &'static [ProviderCatalogEntry] {
     BUILT_IN_PROVIDERS
 }
@@ -778,6 +839,7 @@ pub fn normalize_provider_id(provider: &str) -> String {
         }
         "opencode" => PROVIDER_OPENCODE.to_string(),
         "go" | "opencode_go" | "opencode-go" => PROVIDER_OPENCODE_GO.to_string(),
+        "laguna" | "poolside" => PROVIDER_POOLSIDE.to_string(),
         provider => provider.to_string(),
     }
 }
@@ -824,7 +886,8 @@ mod tests {
                 "xai",
                 "supergrok",
                 "opencode",
-                "opencode-go"
+                "opencode-go",
+                "poolside"
             ]
         );
     }
@@ -866,6 +929,8 @@ mod tests {
                 "qwen3.6-plus",
                 "glm-5.1",
                 "deepseek-v4-flash",
+                "poolside/laguna-m.1",
+                "poolside/laguna-xs.2",
             ]
         );
     }
@@ -880,7 +945,22 @@ mod tests {
         assert_eq!(models_for_provider(PROVIDER_SUPERGROK, false).len(), 4);
         assert_eq!(models_for_provider(PROVIDER_OPENCODE, false).len(), 6);
         assert_eq!(models_for_provider(PROVIDER_OPENCODE_GO, false).len(), 4);
+        assert_eq!(models_for_provider(PROVIDER_POOLSIDE, false).len(), 2);
         assert_eq!(models_for_provider(PROVIDER_MOCK, true).len(), 1);
+    }
+
+    #[test]
+    fn poolside_catalog_defaults_to_thinking_enabled() {
+        let laguna = lookup_model("poolside/laguna-m.1").unwrap();
+        assert_eq!(laguna.default_reasoning, REASONING_MEDIUM);
+        assert_eq!(
+            laguna
+                .supported_reasoning
+                .iter()
+                .map(|option| option.effort)
+                .collect::<Vec<_>>(),
+            vec![REASONING_NONE, REASONING_MEDIUM]
+        );
     }
 
     #[test]
@@ -919,6 +999,7 @@ mod tests {
         assert_eq!(normalize_provider_id("xai-oauth"), PROVIDER_SUPERGROK);
         assert_eq!(normalize_provider_id("grok-oauth"), PROVIDER_SUPERGROK);
         assert_eq!(normalize_provider_id("supergrok"), PROVIDER_SUPERGROK);
+        assert_eq!(normalize_provider_id("laguna"), PROVIDER_POOLSIDE);
     }
 
     #[test]

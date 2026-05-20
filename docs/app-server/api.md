@@ -343,7 +343,7 @@ Request:
 
 ```json
 {
-  "provider": "opencode",
+  "provider": "poolside",
   "api_key": "sk-..."
 }
 ```
@@ -352,7 +352,7 @@ Response:
 
 ```json
 {
-  "provider": "opencode",
+  "provider": "poolside",
   "authenticated": true
 }
 ```

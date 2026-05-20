@@ -6,8 +6,8 @@ use futures::stream;
 use roder_api::capabilities::CapabilityRequest;
 use roder_api::catalog::{
     PROVIDER_ANTHROPIC, PROVIDER_CODEX, PROVIDER_GEMINI, PROVIDER_MOCK, PROVIDER_OPENAI,
-    PROVIDER_OPENCODE, PROVIDER_OPENCODE_GO, PROVIDER_SUPERGROK, PROVIDER_XAI, models_for_codex,
-    models_for_provider,
+    PROVIDER_OPENCODE, PROVIDER_OPENCODE_GO, PROVIDER_POOLSIDE, PROVIDER_SUPERGROK, PROVIDER_XAI,
+    models_for_codex, models_for_provider,
 };
 use roder_api::extension::{
     ExtensionManifest, ExtensionRegistry, ExtensionRegistryBuilder, ProvidedService, RoderExtension,
@@ -24,6 +24,7 @@ use roder_ext_memory::MemoryExtension;
 use roder_ext_openai_embeddings::OpenAiEmbeddingsExtension;
 use roder_ext_openai_responses::{OpenAiResponsesEngine, OpenAiResponsesExtension};
 use roder_ext_opencode::{OpenCodeConfig, OpenCodeExtension};
+use roder_ext_poolside::{PoolsideConfig, PoolsideExtension};
 use roder_ext_runner_blaxel::BlaxelRunnerExtension;
 use roder_ext_runner_cloudflare::CloudflareRunnerExtension;
 use roder_ext_runner_daytona::DaytonaRunnerExtension;
@@ -57,6 +58,8 @@ pub struct DefaultRegistryConfig {
     pub opencode_go_api_key: Option<String>,
     pub opencode_go_base_url: Option<String>,
     pub opencode_go_project_id: Option<String>,
+    pub poolside_api_key: Option<String>,
+    pub poolside_base_url: Option<String>,
     pub custom_inference_providers: Vec<CustomInferenceProviderConfig>,
     pub session_dir: Option<PathBuf>,
     pub workspace: Option<PathBuf>,
@@ -82,6 +85,8 @@ impl Default for DefaultRegistryConfig {
             opencode_go_api_key: None,
             opencode_go_base_url: None,
             opencode_go_project_id: None,
+            poolside_api_key: None,
+            poolside_base_url: None,
             custom_inference_providers: Vec::new(),
             session_dir: None,
             workspace: None,
@@ -147,6 +152,10 @@ pub fn build_default_registry(config: DefaultRegistryConfig) -> anyhow::Result<E
             project_id: config.opencode_go_project_id,
         },
     ))?;
+    builder.install(PoolsideExtension::new(PoolsideConfig {
+        api_key: config.poolside_api_key,
+        base_url: config.poolside_base_url,
+    }))?;
     for provider in config.custom_inference_providers {
         if known_provider_id(&provider.id) {
             continue;
@@ -232,6 +241,7 @@ fn known_provider_id(id: &str) -> bool {
             | PROVIDER_SUPERGROK
             | PROVIDER_OPENCODE
             | PROVIDER_OPENCODE_GO
+            | PROVIDER_POOLSIDE
     )
 }
 
@@ -534,7 +544,7 @@ mod tests {
     use super::*;
     use roder_api::catalog::{
         PROVIDER_ANTHROPIC, PROVIDER_GEMINI, PROVIDER_OPENAI, PROVIDER_OPENCODE,
-        PROVIDER_OPENCODE_GO, PROVIDER_SUPERGROK, PROVIDER_XAI,
+        PROVIDER_OPENCODE_GO, PROVIDER_POOLSIDE, PROVIDER_SUPERGROK, PROVIDER_XAI,
     };
     use roder_api::interactive::{
         HandlerOutcome, HoverCursor, InteractiveEvent, InteractiveRegion, InteractiveRegionHandler,
@@ -622,6 +632,8 @@ mod tests {
             opencode_go_api_key: Some("opencode-go".to_string()),
             opencode_go_base_url: None,
             opencode_go_project_id: None,
+            poolside_api_key: Some("poolside".to_string()),
+            poolside_base_url: None,
             custom_inference_providers: Vec::new(),
             session_dir: None,
             workspace: None,
@@ -643,6 +655,7 @@ mod tests {
             PROVIDER_XAI,
             PROVIDER_OPENCODE,
             PROVIDER_OPENCODE_GO,
+            PROVIDER_POOLSIDE,
         ] {
             assert!(
                 registry.inference_engine(provider).is_some(),

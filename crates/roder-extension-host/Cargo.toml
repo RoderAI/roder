@@ -23,6 +23,7 @@ roder-ext-openai-responses.workspace = true
 roder-ext-opencode.workspace = true
 roder-ext-parallel-search.workspace = true
 roder-ext-perplexity-search.workspace = true
+roder-ext-poolside.workspace = true
 roder-ext-plan-mode.workspace = true
 roder-ext-runner-blaxel.workspace = true
 roder-ext-runner-cloudflare.workspace = true
