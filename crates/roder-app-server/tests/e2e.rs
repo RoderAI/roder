@@ -1624,6 +1624,7 @@ async fn remote_websocket_requires_auth_and_serves_thread_turn_flow() {
             listen: "ws://127.0.0.1:0".to_string(),
             token,
             token_ttl: None,
+            allowed_origins: Vec::new(),
             print_qr: false,
             workspace: Some("/tmp/gode".to_string()),
         },
@@ -1646,6 +1647,18 @@ async fn remote_websocket_requires_auth_and_serves_thread_turn_flow() {
             .unwrap()
             .contains("remote-secret-token")
     );
+
+    let mut origin_request = url.clone().into_client_request().unwrap();
+    origin_request.headers_mut().insert(
+        "Authorization",
+        "Bearer remote-secret-token".parse().unwrap(),
+    );
+    origin_request
+        .headers_mut()
+        .insert("Origin", "https://client.example".parse().unwrap());
+    assert!(tokio_tungstenite::connect_async(origin_request)
+        .await
+        .is_err());
 
     let mut request = url.clone().into_client_request().unwrap();
     request.headers_mut().insert(
