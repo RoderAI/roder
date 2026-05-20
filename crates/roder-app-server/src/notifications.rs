@@ -490,6 +490,13 @@ pub(crate) fn desktop_notifications_for_event(event: &RoderEvent) -> Vec<JsonRpc
         RoderEvent::WorkflowImportFailed(event) => {
             vec![desktop_notification("workflow/importFailed", event.clone())]
         }
+        RoderEvent::RoadmapChanged(event) => {
+            vec![
+                desktop_notification("roadmap/changed", event.clone()),
+                desktop_notification("roadmap/taskChanged", event.clone()),
+                desktop_notification("roadmap/threadChanged", event.clone()),
+            ]
+        }
         RoderEvent::MediaArtifactCreated(event) => {
             vec![desktop_notification("media/artifactCreated", event.clone())]
         }

@@ -758,11 +758,181 @@ async fn providers_select_updates_desktop_thread_model_for_next_turn() {
 }
 
 #[tokio::test]
+async fn roadmap_methods_update_documents_threads_and_notifications() {
+    let root =
+        std::env::temp_dir().join(format!("roder-roadmap-app-server-{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir_all(root.join("roadmap")).unwrap();
+    std::fs::write(
+        root.join("roadmap/20-roadmapping-mode.md"),
+        roadmap_fixture(),
+    )
+    .unwrap();
+
+    let mut builder = ExtensionRegistryBuilder::new();
+    builder.inference_engine(Arc::new(FakeInferenceEngine));
+    let runtime = Arc::new(
+        Runtime::new(
+            builder.build().unwrap(),
+            RuntimeConfig {
+                workspace: Some(root.display().to_string()),
+                ..RuntimeConfig::default()
+            },
+        )
+        .unwrap(),
+    );
+    let server = Arc::new(AppServer::new(runtime));
+    let client = LocalAppClient::new(server.clone());
+    let mut notifications = client.subscribe_notifications();
+
+    let listed: serde_json::Value = request(&client, "roadmap/list", None).await;
+    assert_eq!(listed["documents"].as_array().unwrap().len(), 1);
+
+    let read: serde_json::Value = request(
+        &client,
+        "roadmap/read",
+        Some(serde_json::json!({ "path": "roadmap/20-roadmapping-mode.md" })),
+    )
+    .await;
+    assert_eq!(
+        read["document"]["title"],
+        "Roadmapping Mode Implementation Plan"
+    );
+    let task_id = read["document"]["tasks"][0]["id"].as_str().unwrap();
+
+    let created: serde_json::Value = request(
+        &client,
+        "roadmap/create",
+        Some(serde_json::json!({
+            "slug": "new-plan",
+            "title": "New Plan",
+            "goal": "Create a new plan."
+        })),
+    )
+    .await;
+    assert_eq!(created["path"], "roadmap/21-new-plan.md");
+
+    let patched: serde_json::Value = request(
+        &client,
+        "roadmap/patch",
+        Some(serde_json::json!({
+            "path": "roadmap/21-new-plan.md",
+            "oldText": "Create a new plan.",
+            "newText": "Create a patched plan."
+        })),
+    )
+    .await;
+    assert_eq!(patched["changed"], true);
+
+    let updated: serde_json::Value = request(
+        &client,
+        "roadmap/task/update",
+        Some(serde_json::json!({
+            "path": "roadmap/20-roadmapping-mode.md",
+            "taskId": task_id,
+            "checked": true,
+            "evidence": "app-server test evidence"
+        })),
+    )
+    .await;
+    assert_eq!(updated["checked"], true);
+
+    let opened: serde_json::Value = request(
+        &client,
+        "thread/roadmap/open",
+        Some(serde_json::json!({ "path": "roadmap/20-roadmapping-mode.md" })),
+    )
+    .await;
+    assert_eq!(
+        opened["document"]["path"],
+        root.join("roadmap/20-roadmapping-mode.md")
+            .display()
+            .to_string()
+    );
+
+    let spawned: serde_json::Value = request(
+        &client,
+        "roadmap/thread/spawn",
+        Some(serde_json::json!({
+            "path": "roadmap/20-roadmapping-mode.md",
+            "taskId": task_id
+        })),
+    )
+    .await;
+    assert!(
+        spawned["thread"]["thread_id"]
+            .as_str()
+            .unwrap()
+            .starts_with("thread-")
+    );
+
+    let attached: serde_json::Value = request(
+        &client,
+        "thread/attach",
+        Some(serde_json::json!({
+            "path": "roadmap/20-roadmapping-mode.md",
+            "taskId": task_id,
+            "threadId": "thread-existing",
+            "title": "Existing worker"
+        })),
+    )
+    .await;
+    assert_eq!(attached["thread"]["thread_id"], "thread-existing");
+
+    let threads: serde_json::Value = request(
+        &client,
+        "roadmap/thread/list",
+        Some(serde_json::json!({ "path": "roadmap/20-roadmapping-mode.md" })),
+    )
+    .await;
+    assert!(threads["threads"].as_array().unwrap().len() >= 2);
+
+    let validation: serde_json::Value = request(
+        &client,
+        "roadmap/validate",
+        Some(serde_json::json!({ "path": "roadmap/20-roadmapping-mode.md" })),
+    )
+    .await;
+    assert!(
+        validation["results"][0]["diagnostics"]
+            .as_array()
+            .unwrap()
+            .is_empty()
+    );
+
+    let mut methods = Vec::new();
+    for _ in 0..8 {
+        let notification = tokio::time::timeout(Duration::from_secs(2), notifications.recv())
+            .await
+            .unwrap()
+            .unwrap();
+        methods.push(notification.method);
+        if methods
+            .iter()
+            .any(|method| method == "roadmap/threadChanged")
+        {
+            break;
+        }
+    }
+    assert!(methods.iter().any(|method| method == "roadmap/changed"));
+    assert!(methods.iter().any(|method| method == "roadmap/taskChanged"));
+    assert!(
+        methods
+            .iter()
+            .any(|method| method == "roadmap/threadChanged")
+    );
+
+    let unsupported = request_error(
+        &client,
+        "acp/roadmap/open",
+        Some(serde_json::json!({ "path": "roadmap/20-roadmapping-mode.md" })),
+    )
+    .await;
+    assert_eq!(unsupported.code, -32601);
+}
+
+#[tokio::test]
 async fn desktop_turn_uses_thread_cwd_for_workspace_tools() {
-    let root = std::env::temp_dir().join(format!(
-        "roder-thread-cwd-e2e-{}",
-        uuid::Uuid::new_v4()
-    ));
+    let root = std::env::temp_dir().join(format!("roder-thread-cwd-e2e-{}", uuid::Uuid::new_v4()));
     let process_workspace = root.join("process-workspace");
     let thread_workspace = root.join("thread-workspace");
     std::fs::create_dir_all(&process_workspace).unwrap();
@@ -1659,9 +1829,11 @@ async fn remote_websocket_requires_auth_and_serves_thread_turn_flow() {
     origin_request
         .headers_mut()
         .insert("Origin", "https://client.example".parse().unwrap());
-    assert!(tokio_tungstenite::connect_async(origin_request)
-        .await
-        .is_err());
+    assert!(
+        tokio_tungstenite::connect_async(origin_request)
+            .await
+            .is_err()
+    );
 
     let mut request = url.clone().into_client_request().unwrap();
     request.headers_mut().insert(
@@ -4041,6 +4213,10 @@ async fn request_error(
         .await
         .error
         .unwrap_or_else(|| panic!("expected RPC error for {method}"))
+}
+
+fn roadmap_fixture() -> &'static str {
+    "# Roadmapping Mode Implementation Plan\n\n**Goal:** Add roadmapping mode.\n**Architecture:** Roadmap documents are first-class state.\n**Tech Stack:** Rust.\n\n## Owned Paths\n\n- Modify: `crates/roder-app-server/src/server.rs`\n\n## Tasks\n\n- [ ] Add app-server tests\n- [ ] Wire roadmap methods\n\nRun:\n\n```sh\ncargo test -p roder-app-server --test e2e roadmap_methods\n```\n\nAcceptance:\n- App-server roadmap behavior is covered.\n\n## Phase Acceptance\n\n- [ ] App-server works.\n"
 }
 
 fn text_input(text: &str) -> Vec<TurnInputItem> {

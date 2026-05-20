@@ -161,6 +161,7 @@ pub struct Runtime {
     pub(crate) pending_tool_approvals: Mutex<HashMap<String, PendingToolApproval>>,
     pub(crate) pending_user_inputs: Mutex<HashMap<String, PendingUserInput>>,
     active_turns: RwLock<HashMap<TurnId, ActiveTurnHandle>>,
+    workspace: PathBuf,
     teams: TeamManager,
     pub(crate) roadmaps: Mutex<roder_roadmap::RoadmapRuntime>,
     pub(crate) session_store: Option<Arc<dyn SessionStore>>,
@@ -203,6 +204,7 @@ impl Runtime {
             pending_tool_approvals: Mutex::new(HashMap::new()),
             pending_user_inputs: Mutex::new(HashMap::new()),
             active_turns: RwLock::new(HashMap::new()),
+            workspace: workspace.clone(),
             teams: TeamManager::new(
                 team_data_dir.unwrap_or_else(crate::teams::default_team_data_dir),
             ),
@@ -293,6 +295,10 @@ impl Runtime {
 
     pub async fn status(&self) -> RuntimeConfig {
         self.config.read().await.clone()
+    }
+
+    pub fn workspace(&self) -> PathBuf {
+        self.workspace.clone()
     }
 
     pub async fn set_remote_runner_destination(&self, destination: Option<RunnerDestination>) {
