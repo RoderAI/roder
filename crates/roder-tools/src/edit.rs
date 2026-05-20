@@ -6,24 +6,29 @@ use roder_api::tools::{
 use serde::Deserialize;
 use serde_json::json;
 
-use crate::backend::{TextEdit, WorkspaceBackendHandle};
+use crate::backend::{TextEdit, WorkspaceBackendHandle, backend_from_context_or_fallback};
 use crate::files::{parse, require_nonempty, result};
 use crate::hunk_output;
+use crate::workspace::Workspace;
 
 pub(crate) fn register(
     registry: &mut ToolRegistry,
+    workspace: Workspace,
     backend: WorkspaceBackendHandle,
 ) -> anyhow::Result<()> {
     registry.register(Arc::new(WriteFileTool {
+        workspace: workspace.clone(),
         backend: backend.clone(),
     }))?;
     registry.register(Arc::new(EditTool {
+        workspace: workspace.clone(),
         backend: backend.clone(),
     }))?;
-    registry.register(Arc::new(MultiEditTool { backend }))
+    registry.register(Arc::new(MultiEditTool { workspace, backend }))
 }
 
 struct WriteFileTool {
+    workspace: Workspace,
     backend: WorkspaceBackendHandle,
 }
 
@@ -53,7 +58,8 @@ impl ToolExecutor for WriteFileTool {
     ) -> anyhow::Result<ToolResult> {
         ctx.require_workspace()?;
         let args = parse::<WriteFileArgs>(&call)?;
-        let rel = self.backend.write_text(&args.path, args.content).await?;
+        let backend = backend_from_context_or_fallback(&ctx, &self.workspace, &self.backend)?;
+        let rel = backend.write_text(&args.path, args.content).await?;
         Ok(result(
             call,
             format!("wrote {rel}"),
@@ -64,6 +70,7 @@ impl ToolExecutor for WriteFileTool {
 }
 
 struct EditTool {
+    workspace: Workspace,
     backend: WorkspaceBackendHandle,
 }
 
@@ -95,8 +102,8 @@ impl ToolExecutor for EditTool {
         ctx.require_workspace()?;
         let args = parse::<EditArgs>(&call)?;
         require_nonempty(&args.old_string, "old_string")?;
-        let Some(outcome) = self
-            .backend
+        let backend = backend_from_context_or_fallback(&ctx, &self.workspace, &self.backend)?;
+        let Some(outcome) = backend
             .edit_text(&args.path, &args.old_string, &args.new_string)
             .await?
         else {
@@ -125,6 +132,7 @@ impl ToolExecutor for EditTool {
 }
 
 struct MultiEditTool {
+    workspace: Workspace,
     backend: WorkspaceBackendHandle,
 }
 
@@ -180,7 +188,8 @@ impl ToolExecutor for MultiEditTool {
                 new_string: edit.new_string,
             })
             .collect::<Vec<_>>();
-        let outcome = match self.backend.multi_edit_text(&args.path, edits).await? {
+        let backend = backend_from_context_or_fallback(&ctx, &self.workspace, &self.backend)?;
+        let outcome = match backend.multi_edit_text(&args.path, edits).await? {
             Ok(outcome) => outcome,
             Err(index) => {
                 return Ok(result(

@@ -1,6 +1,7 @@
 use std::path::{Component, Path, PathBuf};
 
 use anyhow::{Context, bail};
+use roder_api::tools::ToolExecutionContext;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum ToolPathScope {
@@ -73,6 +74,19 @@ impl Workspace {
 
     pub(crate) fn path_scope(&self) -> ToolPathScope {
         self.path_scope
+    }
+
+    pub(crate) fn from_context_or_fallback(
+        ctx: &ToolExecutionContext,
+        fallback: &Workspace,
+    ) -> anyhow::Result<Self> {
+        let Some(handle) = ctx.handles.workspace.as_ref() else {
+            return Ok(fallback.clone());
+        };
+        let Some(root) = handle.workspace_root() else {
+            return Ok(fallback.clone());
+        };
+        Self::new_with_scope(root, fallback.path_scope)
     }
 
     pub(crate) fn resolve_existing(&self, input: &str) -> anyhow::Result<PathBuf> {

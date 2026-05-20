@@ -6,12 +6,13 @@ use serde::Deserialize;
 use serde_json::json;
 use tokio::io::AsyncWriteExt;
 
-use crate::backend::WorkspaceBackendHandle;
+use crate::backend::{WorkspaceBackendHandle, backend_from_context_or_fallback};
 use crate::files::{parse, result};
 use crate::hunk_output;
 use crate::workspace::Workspace;
 
 pub(crate) struct ApplyPatchTool {
+    pub(crate) workspace: Workspace,
     pub(crate) backend: WorkspaceBackendHandle,
 }
 
@@ -52,7 +53,8 @@ impl ToolExecutor for ApplyPatchTool {
         }
 
         let hunks = hunk_records_from_patch(&ctx, &call, &args.patch).unwrap_or_default();
-        let outcome = self.backend.apply_patch(&args.patch).await;
+        let backend = backend_from_context_or_fallback(&ctx, &self.workspace, &self.backend)?;
+        let outcome = backend.apply_patch(&args.patch).await;
 
         match outcome {
             Ok(text) => Ok(result(call, text, json!({ "hunks": hunks }), false)),

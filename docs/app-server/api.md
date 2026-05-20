@@ -671,6 +671,9 @@ Notifications:
 - `turn/started`
 - `thread/status/changed` with status `running`
 - zero or more `item/agentMessage/delta`, `item/started`, and `item/completed`
+- optional wait-state notifications: `session/approvalRequested`,
+  `session/userInputRequested`, or `session/planExitRequested`, paired with
+  their corresponding resolved notifications when the client answers
 - terminal `turn/completed`
 - `thread/status/changed` with status `idle`
 
@@ -2407,14 +2410,69 @@ or the remote WebSocket notification stream for remote clients.
 ```json
 {
   "threadId": "thread-123",
-  "status": { "type": "running", "activeFlags": [] }
+  "status": { "type": "running", "activeFlags": ["approvalRequired"] }
 }
 ```
+
+`session/approvalRequested`:
+
+```json
+{
+  "threadId": "thread-123",
+  "turnId": "turn-123",
+  "approvalId": "tool-call-123",
+  "toolId": "tool-call-123",
+  "toolName": "shell",
+  "reason": "shell commands require approval"
+}
+```
+
+Clients answer with `session/resolve_approval`. `session/approvalResolved`
+echoes `threadId`, `turnId`, `approvalId`, `toolId`, `toolName`, and
+`approved`.
+
+`session/userInputRequested`:
+
+```json
+{
+  "threadId": "thread-123",
+  "turnId": "turn-123",
+  "requestId": "input-123",
+  "questions": [
+    {
+      "id": "mode",
+      "question": "Which mode?",
+      "options": []
+    }
+  ]
+}
+```
+
+Clients answer with `session/resolve_user_input`. `session/userInputResolved`
+echoes `threadId`, `turnId`, `requestId`, and `answers`.
+
+`session/planExitRequested`:
+
+```json
+{
+  "threadId": "thread-123",
+  "turnId": "turn-123",
+  "requestId": "exit-plan-123",
+  "targetMode": "default",
+  "planSummary": "Implement approved edits"
+}
+```
+
+Clients answer with `session/exit_plan`. `session/planExitResolved` echoes
+`threadId`, `turnId`, `requestId`, `approved`, `targetMode`, and
+`resolvedMode`.
 
 Ordering:
 
 - `turn/started` is emitted before terminal `turn/completed`.
 - A running status notification is emitted when a turn starts.
+- Wait states keep `status.type` as `running` and set `activeFlags` to
+  `approvalRequired`, `userInputRequired`, or `planExitRequired`.
 - An idle status notification is emitted after completed, failed, or
   interrupted terminal turn notifications.
 
