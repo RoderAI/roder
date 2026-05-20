@@ -18,7 +18,9 @@ use roder_api::policy_mode::PolicyMode;
 use roder_api::session::{SessionMetadata, SessionStore, SessionStoreFactory, ThreadSnapshot};
 use roder_api::subagents::{SubagentDefinition, SubagentPermissionMode};
 use roder_api::tasks::TaskState;
-use roder_app_server::remote::{RemoteServerOptions, RemoteToken, listen_remote_websocket};
+use roder_app_server::remote::{
+    RemoteServerOptions, RemoteToken, listen_remote_websocket, listen_remote_websocket_controller,
+};
 use roder_app_server::{AppServer, LocalAppClient};
 use roder_core::{
     PendingPlanExit, Runtime, RuntimeConfig, fake_provider::FakeInferenceEngine,
@@ -1752,6 +1754,44 @@ async fn remote_websocket_requires_auth_and_serves_thread_turn_flow() {
 
     drop(websocket);
     let _ = wait_for_global_event(&mut events, "remote/clientDisconnected").await;
+}
+
+#[tokio::test]
+async fn remote_server_controller_stop_emits_stopped_event() {
+    let mut builder = ExtensionRegistryBuilder::new();
+    builder.inference_engine(Arc::new(FakeInferenceEngine));
+    let runtime = Arc::new(Runtime::new(builder.build().unwrap(), Default::default()).unwrap());
+    let mut events = runtime.subscribe_events();
+    let app_server = Arc::new(AppServer::new(runtime));
+    let token = RemoteToken::new("remote-secret-token".to_string()).unwrap();
+
+    let controller = listen_remote_websocket_controller(
+        app_server,
+        RemoteServerOptions {
+            listen: "ws://127.0.0.1:0".to_string(),
+            token,
+            token_ttl: None,
+            allowed_origins: Vec::new(),
+            print_qr: false,
+            workspace: Some("/tmp/gode".to_string()),
+        },
+    )
+    .await
+    .unwrap();
+    let listen_addr = controller.handle().listen_addr.to_string();
+
+    let started = wait_for_global_event(&mut events, "remote/serverStarted").await;
+    assert_eq!(started.source, roder_api::events::EventSource::AppServer);
+
+    controller.stop().await.unwrap();
+
+    let stopped = wait_for_global_event(&mut events, "remote/serverStopped").await;
+    assert_eq!(stopped.source, roder_api::events::EventSource::AppServer);
+    assert!(
+        serde_json::to_string(&stopped.event)
+            .unwrap()
+            .contains(&listen_addr)
+    );
 }
 
 #[tokio::test]
