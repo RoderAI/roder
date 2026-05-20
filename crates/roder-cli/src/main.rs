@@ -1067,21 +1067,31 @@ async fn run_app_server(args: &[String]) -> anyhow::Result<()> {
             },
         )
         .await?;
-        if options.print_qr {
-            eprintln!(
-                "{}",
-                roder_app_server::remote::render_terminal_pairing(&handle)
-            );
-        } else {
-            eprintln!(
-                "Remote app-server listening at {}; token {}",
-                handle.listen_addr, handle.token_preview
-            );
-        }
+        eprintln!(
+            "{}",
+            render_remote_app_server_start(&handle, options.print_qr, |handle| {
+                roder_app_server::remote::render_terminal_pairing(handle)
+            })
+        );
         std::future::pending::<()>().await;
         return Ok(());
     }
     run_stdio_app_server(app_server).await
+}
+
+fn render_remote_app_server_start(
+    handle: &roder_app_server::remote::RemoteServerHandle,
+    print_qr: bool,
+    render_pairing: impl FnOnce(&roder_app_server::remote::RemoteServerHandle) -> String,
+) -> String {
+    if print_qr {
+        render_pairing(handle)
+    } else {
+        format!(
+            "Remote app-server listening at {}; token {}",
+            handle.listen_addr, handle.token_preview
+        )
+    }
 }
 
 fn resolve_auth_token_arg(value: &str) -> anyhow::Result<String> {
@@ -2149,6 +2159,29 @@ Report findings.
                 "https://client.example".to_string(),
                 "https://second.example".to_string(),
             ]
+        );
+    }
+
+    #[test]
+    fn app_server_remote_start_message_supports_fake_qr_renderer() {
+        let handle = roder_app_server::remote::RemoteServerHandle {
+            listen_addr: "127.0.0.1:49152".parse().unwrap(),
+            connect_urls: vec!["ws://127.0.0.1:49152".to_string()],
+            token_preview: "secr...oken".to_string(),
+            pairing_url: "roder://connect?payload=test".to_string(),
+        };
+
+        let rendered = render_remote_app_server_start(&handle, true, |handle| {
+            format!("fake qr for {}", handle.pairing_url)
+        });
+        assert_eq!(rendered, "fake qr for roder://connect?payload=test");
+
+        let rendered = render_remote_app_server_start(&handle, false, |_| {
+            panic!("text mode must not render QR")
+        });
+        assert_eq!(
+            rendered,
+            "Remote app-server listening at 127.0.0.1:49152; token secr...oken"
         );
     }
 
