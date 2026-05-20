@@ -19,8 +19,7 @@ pub fn dedupe_plugins(
     let mut plugins = groups
         .into_values()
         .map(|mut entries| {
-            entries
-                .sort_by(|left, right| variant_order(&left.kind).cmp(&variant_order(&right.kind)));
+            entries.sort_by_key(|entry| variant_order(&entry.kind));
             let first = entries[0];
             let variants = entries
                 .iter()

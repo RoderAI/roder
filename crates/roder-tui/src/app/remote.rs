@@ -23,9 +23,11 @@ impl RemotePanelSnapshot {
     }
 
     pub fn from_handle(handle: &RemoteServerHandle, connected_clients: usize) -> Self {
+        let mut connect_urls = handle.connect_urls.clone();
+        connect_urls.sort_by_key(|url| (remote_url_rank(url), url.clone()));
         Self {
             running: true,
-            connect_urls: handle.connect_urls.clone(),
+            connect_urls,
             token_preview: Some(handle.token_preview.clone()),
             pairing_url: Some(handle.pairing_url.clone()),
             connected_clients,
@@ -71,6 +73,21 @@ pub fn render_remote_panel_lines(snapshot: &RemotePanelSnapshot) -> Vec<String> 
     lines
 }
 
+fn remote_url_rank(url: &str) -> u8 {
+    if url
+        .strip_prefix("ws://100.")
+        .and_then(|rest| rest.split('.').next())
+        .and_then(|octet| octet.parse::<u8>().ok())
+        .is_some_and(|octet| (64..=127).contains(&octet))
+    {
+        0
+    } else if url.starts_with("ws://127.") || url.starts_with("ws://[::1]") {
+        2
+    } else {
+        1
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -99,5 +116,29 @@ mod tests {
         let rendered = render_remote_panel_lines(&RemotePanelSnapshot::stopped()).join("\n");
 
         assert!(rendered.contains("Remote app-server: stopped"));
+    }
+
+    #[test]
+    fn remote_panel_prefers_tailscale_urls_before_lan_and_loopback() {
+        let handle = RemoteServerHandle {
+            listen_addr: SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 4545),
+            connect_urls: vec![
+                "ws://127.0.0.1:4545".to_string(),
+                "ws://192.168.1.20:4545".to_string(),
+                "ws://100.90.80.70:4545".to_string(),
+            ],
+            token_preview: "secr...oken".to_string(),
+            pairing_url: "gode://connect?payload=redacted-fixture".to_string(),
+        };
+        let snapshot = RemotePanelSnapshot::from_handle(&handle, 0);
+
+        assert_eq!(
+            snapshot.connect_urls,
+            vec![
+                "ws://100.90.80.70:4545",
+                "ws://192.168.1.20:4545",
+                "ws://127.0.0.1:4545",
+            ]
+        );
     }
 }
