@@ -2412,6 +2412,7 @@ dependencies = [
  "roder-ext-subagents",
  "roder-extension-host",
  "roder-protocol",
+ "roder-roadmap",
  "roder-supergrok-auth",
  "roder-tools",
  "roder-tui",

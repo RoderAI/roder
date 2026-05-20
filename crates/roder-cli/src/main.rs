@@ -4,6 +4,7 @@ use std::sync::Arc;
 mod commands;
 mod marketplace;
 mod resume_picker;
+mod roadmap_cli;
 #[cfg(test)]
 mod tui_config;
 
@@ -54,6 +55,9 @@ async fn main() -> anyhow::Result<()> {
     }
     if matches!(args.first().map(String::as_str), Some("workflow")) {
         return run_workflow_cli(&args[1..]).await;
+    }
+    if matches!(args.first().map(String::as_str), Some("roadmap")) {
+        return roadmap_cli::run_roadmap_cli(&args[1..]).await;
     }
     if matches!(
         args.first().map(String::as_str),
