@@ -2079,6 +2079,29 @@ Report findings.
     }
 
     #[test]
+    fn app_server_remote_options_do_not_change_stdio_default() {
+        let options = parse_app_server_options(&[
+            "--auth-token".to_string(),
+            "remote-secret".to_string(),
+            "--remote-token-ttl".to_string(),
+            "60".to_string(),
+            "--allowed-origin=https://client.example".to_string(),
+            "--print-qr=false".to_string(),
+        ])
+        .unwrap();
+
+        assert!(!options.remote);
+        assert_eq!(options.listen, "stdio://");
+        assert_eq!(options.auth_token.as_deref(), Some("remote-secret"));
+        assert_eq!(options.remote_token_ttl, Some(time::Duration::seconds(60)));
+        assert_eq!(
+            options.allowed_origins,
+            vec!["https://client.example".to_string()]
+        );
+        assert!(!options.print_qr);
+    }
+
+    #[test]
     fn app_server_remote_accepts_auth_token_env() {
         unsafe {
             std::env::set_var("RODER_TEST_REMOTE_TOKEN", "remote-secret");
