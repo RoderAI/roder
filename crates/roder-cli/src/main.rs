@@ -650,6 +650,7 @@ struct AppServerOptions {
     remote: bool,
     auth_token: Option<String>,
     remote_token_ttl: Option<time::Duration>,
+    allowed_origins: Vec<String>,
     print_qr: bool,
     cli_options: CliOptions,
 }
@@ -961,6 +962,7 @@ fn parse_app_server_options(args: &[String]) -> anyhow::Result<AppServerOptions>
     let mut remote = false;
     let mut auth_token = None;
     let mut remote_token_ttl = None;
+    let mut allowed_origins = Vec::new();
     let mut print_qr = true;
     let mut passthrough = Vec::new();
     let mut i = 0;
@@ -1003,6 +1005,16 @@ fn parse_app_server_options(args: &[String]) -> anyhow::Result<AppServerOptions>
                 remote_token_ttl =
                     Some(parse_remote_token_ttl(&arg["--remote-token-ttl=".len()..])?);
             }
+            "--allowed-origin" => {
+                let Some(value) = args.get(i + 1) else {
+                    anyhow::bail!("--allowed-origin requires a value");
+                };
+                allowed_origins.push(value.clone());
+                i += 1;
+            }
+            arg if arg.starts_with("--allowed-origin=") => {
+                allowed_origins.push(arg["--allowed-origin=".len()..].to_string());
+            }
             "--print-qr=false" => {
                 print_qr = false;
             }
@@ -1019,6 +1031,7 @@ fn parse_app_server_options(args: &[String]) -> anyhow::Result<AppServerOptions>
         remote,
         auth_token,
         remote_token_ttl,
+        allowed_origins,
         print_qr,
         cli_options: parse_cli_options(&passthrough)?,
     })
@@ -1046,6 +1059,7 @@ async fn run_app_server(args: &[String]) -> anyhow::Result<()> {
                 listen: options.listen,
                 token,
                 token_ttl: options.remote_token_ttl,
+                allowed_origins: options.allowed_origins,
                 print_qr: options.print_qr,
                 workspace: std::env::current_dir()
                     .ok()
@@ -2095,6 +2109,24 @@ Report findings.
                 .unwrap_err()
                 .to_string();
         assert!(err.contains("positive second count"));
+    }
+
+    #[test]
+    fn app_server_remote_accepts_allowed_origins() {
+        let options = parse_app_server_options(&[
+            "--remote".to_string(),
+            "--allowed-origin".to_string(),
+            "https://client.example".to_string(),
+            "--allowed-origin=https://second.example".to_string(),
+        ])
+        .unwrap();
+        assert_eq!(
+            options.allowed_origins,
+            vec![
+                "https://client.example".to_string(),
+                "https://second.example".to_string(),
+            ]
+        );
     }
 
     #[test]

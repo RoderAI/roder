@@ -115,6 +115,7 @@ pub struct RemoteServerOptions {
     pub listen: String,
     pub token: RemoteToken,
     pub token_ttl: Option<time::Duration>,
+    pub allowed_origins: Vec<String>,
     pub print_qr: bool,
     pub workspace: Option<String>,
 }
@@ -216,6 +217,7 @@ pub async fn listen_remote_websocket(
         options.token_ttl.map(|ttl| OffsetDateTime::now_utc() + ttl),
     ));
     let auth_backoff = Arc::new(RemoteAuthBackoff::default());
+    let allowed_origins = Arc::new(options.allowed_origins);
     tokio::spawn(async move {
         loop {
             let Ok((stream, peer_addr)) = listener.accept().await else {
@@ -225,6 +227,7 @@ pub async fn listen_remote_websocket(
             let app_server = app_server.clone();
             let remote_initialize_metadata = remote_initialize_metadata.clone();
             let auth_backoff = auth_backoff.clone();
+            let allowed_origins = allowed_origins.clone();
             tokio::spawn(async move {
                 let remote_addr = peer_addr.to_string();
                 let auth_events = app_server.clone();
@@ -233,6 +236,12 @@ pub async fn listen_remote_websocket(
                 let callback = move |request: &Request,
                                      mut response: Response|
                       -> Result<Response, ErrorResponse> {
+                    if !origin_allowed(request, &allowed_origins) {
+                        let mut response =
+                            ErrorResponse::new(Some("origin not allowed".to_string()));
+                        *response.status_mut() = StatusCode::FORBIDDEN;
+                        return Err(response);
+                    }
                     if auth.verify_request(request) {
                         auth_backoff.reset(&auth_remote_addr);
                         if request_supports_remote_protocol(request) {
@@ -414,6 +423,17 @@ fn request_supports_remote_protocol(request: &Request) -> bool {
         })
 }
 
+fn origin_allowed(request: &Request, allowed_origins: &[String]) -> bool {
+    let Some(origin) = request
+        .headers()
+        .get(header::ORIGIN)
+        .and_then(|value| value.to_str().ok())
+    else {
+        return true;
+    };
+    allowed_origins.iter().any(|allowed| allowed == origin)
+}
+
 fn token_preview(token: &str) -> String {
     let prefix = token.chars().take(4).collect::<String>();
     let suffix = token
@@ -523,6 +543,20 @@ mod tests {
 
         backoff.reset("127.0.0.1:1234");
         assert_eq!(backoff.record_failure("127.0.0.1:1234"), None);
+    }
+
+    #[test]
+    fn remote_origin_rejection_is_default_with_explicit_allowlist() {
+        let request = Request::builder()
+            .uri("ws://127.0.0.1")
+            .header("Origin", "https://client.example")
+            .body(())
+            .unwrap();
+        assert!(!origin_allowed(&request, &[]));
+        assert!(origin_allowed(
+            &request,
+            &["https://client.example".to_string()]
+        ));
     }
 
     #[test]
