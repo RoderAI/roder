@@ -237,6 +237,33 @@ async fn roadmap_write_tools_reject_paths_outside_roadmap_and_skill_scope() {
     );
 }
 
+#[tokio::test]
+async fn roadmapping_prompt_can_edit_selected_document_through_tool_call() {
+    let workspace = temp_workspace("roadmap-tools-runner-edit");
+    fs::write(workspace.join("roadmap/20-roadmapping-mode.md"), fixture()).unwrap();
+    let registry = registry(&workspace);
+
+    let result = run_tool(
+        &registry,
+        &workspace,
+        "roadmap_patch",
+        json!({
+            "path": "roadmap/20-roadmapping-mode.md",
+            "old_string": "Runtime behavior is covered.",
+            "new_string": "Fake provider tool-call behavior is covered."
+        }),
+    )
+    .await;
+
+    assert!(!result.is_error);
+    assert_eq!(result.data["replacements"], 1);
+    assert!(
+        fs::read_to_string(workspace.join("roadmap/20-roadmapping-mode.md"))
+            .unwrap()
+            .contains("Fake provider tool-call behavior is covered.")
+    );
+}
+
 fn registry(workspace: &Path) -> ToolRegistry {
     let mut registry = ToolRegistry::default();
     RoadmapToolContributor::new(

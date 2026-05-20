@@ -392,6 +392,11 @@ mod tests {
         let task_id = out.split('\t').next().unwrap().to_string();
 
         out.clear();
+        let before_check = fs::read_to_string(workspace.join("roadmap/20-roadmapping-mode.md"))
+            .unwrap()
+            .lines()
+            .map(str::to_string)
+            .collect::<Vec<_>>();
         run_roadmap_cli_with_workspace(
             &[
                 "check".into(),
@@ -405,11 +410,19 @@ mod tests {
             &mut out,
         )
         .unwrap();
-        assert!(
-            fs::read_to_string(workspace.join("roadmap/20-roadmapping-mode.md"))
-                .unwrap()
-                .contains("- [x] Add CLI tests")
-        );
+        let after_check = fs::read_to_string(workspace.join("roadmap/20-roadmapping-mode.md"))
+            .unwrap()
+            .lines()
+            .map(str::to_string)
+            .collect::<Vec<_>>();
+        let changed_lines = before_check
+            .iter()
+            .zip(after_check.iter())
+            .filter(|(before, after)| before != after)
+            .collect::<Vec<_>>();
+        assert_eq!(changed_lines.len(), 1);
+        assert_eq!(changed_lines[0].0, "- [ ] Add CLI tests");
+        assert_eq!(changed_lines[0].1, "- [x] Add CLI tests");
 
         out.clear();
         run_roadmap_cli_with_workspace(
@@ -441,6 +454,11 @@ mod tests {
         )
         .unwrap();
         assert!(out.contains("diagnostics=0"));
+
+        out.clear();
+        run_roadmap_cli_with_workspace(&["validate".into()], &workspace, &mut out).unwrap();
+        assert!(out.contains("roadmap/20-roadmapping-mode.md"));
+        assert!(out.contains("roadmap/21-new-plan.md"));
     }
 
     #[test]
