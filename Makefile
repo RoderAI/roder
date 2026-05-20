@@ -10,7 +10,23 @@ REASONING ?=
 LISTEN ?= stdio://
 VERSION ?=
 
-.PHONY: build install run app-server mock-run mock-app-server jaeger dev-deps test test-fast smoke release-brew clean hakari-update
+.PHONY: build install run app-server mock-run mock-app-server jaeger dev-deps test test-fast smoke release-brew clean hakari-update cargo-unlock
+
+# Drop stale target locks when no cargo/rustc is using this repo (see `make cargo-unlock-help`).
+cargo-unlock:
+	@if pgrep -f "$(CURDIR)/target" >/dev/null 2>&1; then \
+		echo "Refusing: cargo/rustc still running for this repo. Check: pgrep -fl '$(CURDIR)/target'" >&2; \
+		exit 1; \
+	fi
+	@rm -f target/debug/.cargo-lock target/release/.cargo-lock
+	@echo "Removed target/debug and target/release .cargo-lock files."
+
+cargo-unlock-help:
+	@echo "If make build says 'Blocking waiting for file lock on artifact directory':"
+	@echo "  1. pgrep -fl 'gode/target|cargo.*roder'   # find the holder (often rust-analyzer)"
+	@echo "  2. Wait for it, or stop that job / reload the Cursor window"
+	@echo "  3. make cargo-unlock   # only when step 1 shows nothing"
+	@echo "rust-analyzer uses target/rust-analyzer (see .vscode/settings.json) to avoid fighting make build."
 
 CARGO_TEST ?= $(shell command -v cargo-nextest >/dev/null 2>&1 && echo "cargo nextest run" || echo "cargo test")
 

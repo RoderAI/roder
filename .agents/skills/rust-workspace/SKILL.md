@@ -27,6 +27,18 @@ Local build acceleration (already configured; do not duplicate in per-crate file
 
 Optional roadmap experiments: `CARGO_TARGET_DIR=.target-roadmap-local` (gitignored).
 
+### Artifact directory lock (`Blocking waiting for file lock`)
+
+Usually another job holds `target/` — often **rust-analyzer** (`cargo check`), not a visible terminal process.
+
+```sh
+pgrep -fl 'gode/target|cargo.*roder'
+```
+
+- Wait for it to finish, or reload the Cursor window / pause rust-analyzer.
+- This repo sets `rust-analyzer.cargo.targetDir` → `target/rust-analyzer` (`.vscode/settings.json`) so IDE checks do not fight `make build`.
+- If nothing is running and the lock is stale: `make cargo-unlock` (see `make cargo-unlock-help`).
+
 ## Running tests
 
 Prefer **Makefile / mise** over ad-hoc full-workspace `cargo test`.
