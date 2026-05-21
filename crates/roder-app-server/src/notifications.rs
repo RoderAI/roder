@@ -7,6 +7,7 @@ use roder_api::notifications::{Notification, NotificationKind};
 use roder_core::Runtime;
 use roder_protocol::{
     AgentMessageDeltaNotification, ApprovalRequestedNotification, ApprovalResolvedNotification,
+    AutomationRunFailedNotification, AutomationRunNotification, AutomationRunSkippedNotification,
     DesktopItem, DesktopThread, DesktopThreadStatus, DesktopTurn, ItemCompletedNotification,
     ItemStartedNotification, JsonRpcNotification, PlanExitRequestedNotification,
     PlanExitResolvedNotification, TeamCleanupCompletedNotification,
@@ -341,6 +342,48 @@ pub(crate) fn desktop_notifications_for_event(event: &RoderEvent) -> Vec<JsonRpc
                 reason: event.reason.clone(),
             },
         )],
+        RoderEvent::AutomationStarted(event) => vec![desktop_notification(
+            "automations/runStarted",
+            AutomationRunNotification {
+                run: event.run.clone(),
+            },
+        )],
+        RoderEvent::AutomationCompleted(event) => vec![desktop_notification(
+            "automations/runCompleted",
+            AutomationRunNotification {
+                run: event.run.clone(),
+            },
+        )],
+        RoderEvent::AutomationFailed(event) => {
+            let failed = desktop_notification(
+                "automations/runFailed",
+                AutomationRunFailedNotification {
+                    run: event.run.clone(),
+                    error: event.error.clone(),
+                },
+            );
+            if automation_needs_input(&event.error) {
+                vec![
+                    failed,
+                    desktop_notification(
+                        "automations/needsInput",
+                        AutomationRunFailedNotification {
+                            run: event.run.clone(),
+                            error: event.error.clone(),
+                        },
+                    ),
+                ]
+            } else {
+                vec![failed]
+            }
+        }
+        RoderEvent::AutomationSkipped(event) => vec![desktop_notification(
+            "automations/runSkipped",
+            AutomationRunSkippedNotification {
+                run: event.run.clone(),
+                reason: event.reason.clone(),
+            },
+        )],
         RoderEvent::TurnFailed(event) => {
             let turn = DesktopTurn {
                 id: event.turn_id.clone(),
@@ -592,6 +635,13 @@ fn desktop_notification<T: serde::Serialize>(method: &str, params: T) -> JsonRpc
     }
 }
 
+fn automation_needs_input(error: &str) -> bool {
+    let error = error.to_ascii_lowercase();
+    error.contains("interactive input")
+        || error.contains("user input")
+        || error.contains("approval")
+}
+
 fn thread_status_notification(thread_id: &str, status: &str) -> JsonRpcNotification {
     thread_status_notification_with_flags(thread_id, status, Vec::new())
 }
@@ -734,6 +784,63 @@ fn notification_for_event(event: &RoderEvent) -> Option<Notification> {
             timestamp,
             metadata: serde_json::json!({}),
         }),
+        RoderEvent::AutomationStarted(event) => Some(Notification {
+            id: format!("automation-started-{}", event.run.run_id),
+            kind: NotificationKind::Custom("automation_started".to_string()),
+            title: "Automation started".to_string(),
+            body: Some(format!("{} is running", event.run.automation_id)),
+            task_id: event.run.task_id.clone(),
+            thread_id: event.run.thread_id.clone(),
+            turn_id: event.run.turn_id.clone(),
+            timestamp,
+            metadata: serde_json::json!({ "automation_id": event.run.automation_id, "run_id": event.run.run_id }),
+        }),
+        RoderEvent::AutomationCompleted(event) => Some(Notification {
+            id: format!("automation-completed-{}", event.run.run_id),
+            kind: NotificationKind::Custom("automation_completed".to_string()),
+            title: "Automation completed".to_string(),
+            body: Some(format!("{} completed", event.run.automation_id)),
+            task_id: event.run.task_id.clone(),
+            thread_id: event.run.thread_id.clone(),
+            turn_id: event.run.turn_id.clone(),
+            timestamp,
+            metadata: serde_json::json!({ "automation_id": event.run.automation_id, "run_id": event.run.run_id }),
+        }),
+        RoderEvent::AutomationFailed(event) if automation_needs_input(&event.error) => {
+            Some(Notification {
+                id: format!("automation-needs-input-{}", event.run.run_id),
+                kind: NotificationKind::NeedsInput,
+                title: "Automation needs input".to_string(),
+                body: Some(event.error.clone()),
+                task_id: event.run.task_id.clone(),
+                thread_id: event.run.thread_id.clone(),
+                turn_id: event.run.turn_id.clone(),
+                timestamp,
+                metadata: serde_json::json!({ "automation_id": event.run.automation_id, "run_id": event.run.run_id }),
+            })
+        }
+        RoderEvent::AutomationFailed(event) => Some(Notification {
+            id: format!("automation-failed-{}", event.run.run_id),
+            kind: NotificationKind::Custom("automation_failed".to_string()),
+            title: "Automation failed".to_string(),
+            body: Some(event.error.clone()),
+            task_id: event.run.task_id.clone(),
+            thread_id: event.run.thread_id.clone(),
+            turn_id: event.run.turn_id.clone(),
+            timestamp,
+            metadata: serde_json::json!({ "automation_id": event.run.automation_id, "run_id": event.run.run_id }),
+        }),
+        RoderEvent::AutomationSkipped(event) => Some(Notification {
+            id: format!("automation-skipped-{}", event.run.run_id),
+            kind: NotificationKind::Custom("automation_skipped".to_string()),
+            title: "Automation skipped".to_string(),
+            body: Some(event.reason.clone()),
+            task_id: event.run.task_id.clone(),
+            thread_id: event.run.thread_id.clone(),
+            turn_id: event.run.turn_id.clone(),
+            timestamp,
+            metadata: serde_json::json!({ "automation_id": event.run.automation_id, "run_id": event.run.run_id }),
+        }),
         _ => None,
     }
 }
@@ -741,8 +848,34 @@ fn notification_for_event(event: &RoderEvent) -> Option<Notification> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use roder_api::automations::{
+        AutomationCompleted, AutomationFailed, AutomationRunState, AutomationRunSummary,
+        AutomationSkipped, AutomationStarted,
+    };
     use roder_api::events::{ToolCallCompleted, VerificationRequired};
+    use roder_api::notifications::NotificationKind;
     use serde_json::json;
+
+    fn automation_run(state: AutomationRunState) -> AutomationRunSummary {
+        AutomationRunSummary {
+            run_id: "run-1".to_string(),
+            automation_id: "automation-1".to_string(),
+            occurrence_key: "automation-1:1770000000".to_string(),
+            state,
+            scheduled_for: OffsetDateTime::UNIX_EPOCH,
+            queued_at: None,
+            started_at: None,
+            finished_at: None,
+            thread_id: Some("thread-1".to_string()),
+            turn_id: Some("turn-1".to_string()),
+            task_id: Some("task-1".to_string()),
+            server_id: Some("server-1".to_string()),
+            server_role: Some("desktop".to_string()),
+            exit_code: None,
+            error: None,
+            skip_reason: None,
+        }
+    }
 
     #[test]
     fn completed_tool_notification_carries_display_payload() {
@@ -791,5 +924,70 @@ mod tests {
             notifications[0].params["reason"],
             "code_changes_without_verification"
         );
+    }
+
+    #[test]
+    fn automations_notifications_cover_terminal_and_wait_states() {
+        let started =
+            desktop_notifications_for_event(&RoderEvent::AutomationStarted(AutomationStarted {
+                run: automation_run(AutomationRunState::Running),
+                timestamp: OffsetDateTime::UNIX_EPOCH,
+            }));
+        assert_eq!(started[0].method, "automations/runStarted");
+        assert_eq!(started[0].params["run"]["automationId"], "automation-1");
+        assert_eq!(started[0].params["run"]["state"], "running");
+
+        let completed = desktop_notifications_for_event(&RoderEvent::AutomationCompleted(
+            AutomationCompleted {
+                run: automation_run(AutomationRunState::Completed),
+                timestamp: OffsetDateTime::UNIX_EPOCH,
+            },
+        ));
+        assert_eq!(completed[0].method, "automations/runCompleted");
+
+        let failed =
+            desktop_notifications_for_event(&RoderEvent::AutomationFailed(AutomationFailed {
+                run: automation_run(AutomationRunState::Failed),
+                error: "provider returned 500".to_string(),
+                timestamp: OffsetDateTime::UNIX_EPOCH,
+            }));
+        assert_eq!(failed.len(), 1);
+        assert_eq!(failed[0].method, "automations/runFailed");
+        assert_eq!(failed[0].params["error"], "provider returned 500");
+
+        let needs_input =
+            desktop_notifications_for_event(&RoderEvent::AutomationFailed(AutomationFailed {
+                run: automation_run(AutomationRunState::Failed),
+                error: "automation run blocked waiting for interactive input".to_string(),
+                timestamp: OffsetDateTime::UNIX_EPOCH,
+            }));
+        assert_eq!(needs_input.len(), 2);
+        assert_eq!(needs_input[0].method, "automations/runFailed");
+        assert_eq!(needs_input[1].method, "automations/needsInput");
+
+        let skipped =
+            desktop_notifications_for_event(&RoderEvent::AutomationSkipped(AutomationSkipped {
+                run: automation_run(AutomationRunState::Skipped),
+                reason: "missed run expired".to_string(),
+                timestamp: OffsetDateTime::UNIX_EPOCH,
+            }));
+        assert_eq!(skipped[0].method, "automations/runSkipped");
+        assert_eq!(skipped[0].params["reason"], "missed run expired");
+    }
+
+    #[test]
+    fn automations_notifications_map_to_runtime_sinks() {
+        let notice = notification_for_event(&RoderEvent::AutomationFailed(AutomationFailed {
+            run: automation_run(AutomationRunState::Failed),
+            error: "automation run blocked waiting for interactive input".to_string(),
+            timestamp: OffsetDateTime::UNIX_EPOCH,
+        }))
+        .expect("automation needs-input notification");
+
+        assert_eq!(notice.kind, NotificationKind::NeedsInput);
+        assert_eq!(notice.title, "Automation needs input");
+        assert_eq!(notice.thread_id.as_deref(), Some("thread-1"));
+        assert_eq!(notice.metadata["automation_id"], "automation-1");
+        assert_eq!(notice.metadata["run_id"], "run-1");
     }
 }
