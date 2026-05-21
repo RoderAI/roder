@@ -3726,7 +3726,7 @@ async fn extensions_list_exposes_capability_statuses() {
 }
 
 #[tokio::test]
-async fn commands_list_and_expand_are_deterministic() {
+async fn commands_list_expand_and_skills_are_deterministic() {
     let runtime = Arc::new(Runtime::fake().unwrap());
     let server = Arc::new(AppServer::new(runtime));
     let client = LocalAppClient::new(server);
@@ -3769,6 +3769,12 @@ async fn commands_list_and_expand_are_deterministic() {
         plugin.argument_hint.as_deref(),
         Some("preview|install|install-all|list|disable|uninstall [args]")
     );
+    assert!(
+        first
+            .commands
+            .iter()
+            .any(|command| command.name == "commit")
+    );
 
     let expanded: CommandsExpandResult = request(
         &client,
@@ -3788,6 +3794,25 @@ async fn commands_list_and_expand_are_deterministic() {
     assert!(expanded.context_blocks.is_empty());
     let encoded = serde_json::to_string(&expanded).unwrap();
     assert!(!encoded.contains("secret-include-content"));
+
+    let commit: CommandsExpandResult = request(
+        &client,
+        "commands/expand",
+        Some(
+            serde_json::to_value(CommandsExpandParams {
+                name: "commit".to_string(),
+                arguments: "src/lib.rs".to_string(),
+                workspace: None,
+            })
+            .unwrap(),
+        ),
+    )
+    .await;
+    assert_eq!(commit.command.name, "commit");
+    assert!(commit.message.contains("bound commit skill"));
+    assert!(commit.context_blocks.iter().any(|block| {
+        block.text.starts_with("<skill name=\"commit\"") && block.text.contains("git status")
+    }));
 }
 
 #[tokio::test]

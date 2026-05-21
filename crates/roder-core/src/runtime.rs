@@ -348,6 +348,10 @@ impl Runtime {
         *self.skills.write().await = skills;
     }
 
+    pub async fn skills_snapshot(&self) -> SkillRegistry {
+        self.skills.read().await.clone()
+    }
+
     pub fn workspace(&self) -> PathBuf {
         self.workspace.clone()
     }

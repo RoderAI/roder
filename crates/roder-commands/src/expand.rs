@@ -8,7 +8,9 @@ use anyhow::{Context, Result, bail};
 use roder_api::{
     context::{ContextBlock, ContextBlockKind},
     policy_mode::{PolicyMode, PolicyModeConfig},
+    skills::SkillSelector,
 };
+use roder_skills::{SkillRegistry, SkillResolutionError, render_skill_body};
 use serde_json::json;
 
 use crate::{
@@ -57,6 +59,7 @@ pub struct CommandExpansionRequest<'a> {
     pub options: CommandExpansionOptions,
     pub shell_runner: Option<&'a dyn ShellRunner>,
     pub url_fetcher: Option<&'a dyn UrlFetcher>,
+    pub skill_registry: Option<&'a SkillRegistry>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -70,7 +73,8 @@ pub struct CommandExpansion {
 }
 
 pub fn expand_command(request: CommandExpansionRequest<'_>) -> Result<CommandExpansion> {
-    let resolved = resolve_includes(&request)?;
+    let mut resolved = resolve_includes(&request)?;
+    resolve_feature_skill_bindings(&request, &mut resolved)?;
     let template_context = TemplateContext {
         arguments: request.arguments.trim().to_string(),
         includes: resolved.references,
@@ -108,6 +112,57 @@ fn resolve_includes(request: &CommandExpansionRequest<'_>) -> Result<ResolvedInc
     }
 
     Ok(resolved)
+}
+
+fn resolve_feature_skill_bindings(
+    request: &CommandExpansionRequest<'_>,
+    resolved: &mut ResolvedIncludes,
+) -> Result<()> {
+    if request.spec.feature_skill_bindings.is_empty() {
+        return Ok(());
+    }
+    let registry = request.skill_registry.ok_or_else(|| {
+        anyhow::anyhow!(
+            "command `{}` requires skill bindings but no skill registry is configured",
+            request.spec.name
+        )
+    })?;
+    for binding in &request.spec.feature_skill_bindings {
+        match registry.resolve(&binding.skill_selector) {
+            Ok(skill) => resolved.blocks.push(render_skill_body(skill)),
+            Err(err) if binding.required => {
+                bail!(
+                    "command `{}` required skill {} could not be activated: {}",
+                    request.spec.name,
+                    selector_label(&binding.skill_selector),
+                    skill_resolution_error_message(&err)
+                );
+            }
+            Err(_) => {}
+        }
+    }
+    Ok(())
+}
+
+fn selector_label(selector: &SkillSelector) -> String {
+    match selector {
+        SkillSelector::Name { name } => name.clone(),
+        SkillSelector::Path { path } => path.clone(),
+    }
+}
+
+fn skill_resolution_error_message(error: &SkillResolutionError) -> String {
+    match error {
+        SkillResolutionError::Missing(_) => "skill not found".to_string(),
+        SkillResolutionError::Disabled(path) => format!("skill disabled: {path}"),
+        SkillResolutionError::Ambiguous {
+            name,
+            canonical_paths,
+        } => format!(
+            "skill name {name} is ambiguous; select by canonical path: {}",
+            canonical_paths.join(", ")
+        ),
+    }
 }
 
 fn canonical_workspace_root(root: &Path) -> Result<PathBuf> {
