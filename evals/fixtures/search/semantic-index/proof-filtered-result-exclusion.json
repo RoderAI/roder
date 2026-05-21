@@ -1,0 +1,39 @@
+{
+  "id": "semantic-index-proof-filtered-result-exclusion",
+  "title": "Semantic index proof-filtered result exclusion",
+  "prompt": "Use only proof-verified semantic code-index results when searching for the allowed capability marker.",
+  "tags": ["search", "semantic-index", "code-index", "proof-filter", "fixture:security"],
+  "workspace": {
+    "files": [
+      {
+        "path": "src/allowed/capability.rs",
+        "contents": "pub fn allowed_capability_marker() -> &'static str { \"ALLOW_RESULT\" }\n"
+      },
+      {
+        "path": "src/denied/readme.md",
+        "contents": "This fixture represents data that must not be exposed without a matching content proof.\n"
+      }
+    ]
+  },
+  "timeoutMs": 10000,
+  "expected": {
+    "finalAnswerContains": ["hello from roder"],
+    "files": [
+      {
+        "path": "src/allowed/capability.rs",
+        "exists": true,
+        "contains": ["allowed_capability_marker"]
+      }
+    ],
+    "commandChecks": [
+      {
+        "command": "! grep -R \"SECRET_PROOF_DENIED\" -n .",
+        "expectedExitCode": 0
+      }
+    ]
+  },
+  "constraints": [
+    "offline fake provider fixture",
+    "proof-filtered results must not become model-visible without local content proof"
+  ]
+}
