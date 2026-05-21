@@ -1,0 +1,39 @@
+{
+  "id": "semantic-index-conceptual-auth-query",
+  "title": "Semantic index conceptual auth query",
+  "prompt": "Find the code most relevant to refreshing OAuth credentials using the semantic code index.",
+  "tags": ["search", "semantic-index", "code-index", "fixture:conceptual"],
+  "workspace": {
+    "files": [
+      {
+        "path": "src/auth/oauth.rs",
+        "contents": "pub fn oauth_refresh_token() -> &'static str { \"refresh-token-flow\" }\n"
+      },
+      {
+        "path": "src/billing/invoice.rs",
+        "contents": "pub fn invoice_total() -> u64 { 42 }\n"
+      }
+    ]
+  },
+  "timeoutMs": 10000,
+  "expected": {
+    "finalAnswerContains": ["hello from roder"],
+    "files": [
+      {
+        "path": "src/auth/oauth.rs",
+        "exists": true,
+        "contains": ["oauth_refresh_token"]
+      }
+    ],
+    "commandChecks": [
+      {
+        "command": "grep -R \"oauth_refresh_token\" -n src | grep -q \"src/auth/oauth.rs\"",
+        "expectedExitCode": 0
+      }
+    ]
+  },
+  "constraints": [
+    "offline fake provider fixture",
+    "conceptual query should prefer semantic-index context over broad regex exploration"
+  ]
+}
