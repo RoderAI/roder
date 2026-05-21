@@ -233,6 +233,9 @@ async fn run_offline_fixture(
 fn build_fake_runtime(workspace: &Path, provider: &str, model: &str) -> anyhow::Result<Runtime> {
     let mut builder = ExtensionRegistryBuilder::new();
     builder.inference_engine(Arc::new(FakeInferenceEngine));
+    builder.context_planner(Arc::new(roder_context::EntrypointContextPlanner::new(
+        workspace.to_path_buf(),
+    )));
     Runtime::new(
         builder.build()?,
         RuntimeConfig {

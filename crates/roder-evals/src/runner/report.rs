@@ -132,6 +132,52 @@ pub(super) fn eval_metrics(
             _ => None,
         })
         .sum::<u64>();
+    let context_tokens = events
+        .iter()
+        .filter_map(|event| match event {
+            RoderEvent::ContextAssemblyCompleted(completed) => {
+                Some(u64::from(completed.estimated_tokens))
+            }
+            _ => None,
+        })
+        .max()
+        .unwrap_or(0);
+    let context_bytes = events
+        .iter()
+        .filter_map(|event| match event {
+            RoderEvent::ContextAssemblyCompleted(completed) => Some(completed.total_byte_count),
+            _ => None,
+        })
+        .max()
+        .unwrap_or(0);
+    let entrypoint_candidates = events
+        .iter()
+        .filter_map(|event| match event {
+            RoderEvent::ContextEntrypointCandidatesInjected(injected) => {
+                Some(injected.candidate_count)
+            }
+            _ => None,
+        })
+        .sum::<u64>();
+    let entrypoint_injection_event = events
+        .iter()
+        .position(|event| matches!(event, RoderEvent::ContextEntrypointCandidatesInjected(_)))
+        .map(|index| index as u64 + 1)
+        .unwrap_or(0);
+    let first_relevant_file_read = events
+        .iter()
+        .position(is_relevant_file_read)
+        .map(|index| index as u64 + 1)
+        .unwrap_or(0);
+    let irrelevant_file_reads = events
+        .iter()
+        .filter(|event| is_file_read(event) && !is_relevant_file_read(event))
+        .count() as u64;
+    let truncation_follow_ups = count_truncation_follow_ups(events);
+    let tool_output_truncations = events
+        .iter()
+        .filter(|event| matches!(event, RoderEvent::ToolOutputTruncated(_)))
+        .count() as u64;
     vec![
         EvalMetric {
             name: "outcome_pass".to_string(),
@@ -173,7 +219,94 @@ pub(super) fn eval_metrics(
             value: total_tokens as f64,
             unit: Some("tokens".to_string()),
         },
+        EvalMetric {
+            name: "context_estimated_tokens".to_string(),
+            kind: EvalMetricKind::Tokens,
+            value: context_tokens as f64,
+            unit: Some("tokens".to_string()),
+        },
+        EvalMetric {
+            name: "context_bytes".to_string(),
+            kind: EvalMetricKind::Bytes,
+            value: context_bytes as f64,
+            unit: Some("bytes".to_string()),
+        },
+        EvalMetric {
+            name: "entrypoint_candidates".to_string(),
+            kind: EvalMetricKind::Count,
+            value: entrypoint_candidates as f64,
+            unit: None,
+        },
+        EvalMetric {
+            name: "entrypoint_injection_event".to_string(),
+            kind: EvalMetricKind::Count,
+            value: entrypoint_injection_event as f64,
+            unit: None,
+        },
+        EvalMetric {
+            name: "first_relevant_file_read_event".to_string(),
+            kind: EvalMetricKind::Count,
+            value: first_relevant_file_read as f64,
+            unit: None,
+        },
+        EvalMetric {
+            name: "irrelevant_file_reads".to_string(),
+            kind: EvalMetricKind::Count,
+            value: irrelevant_file_reads as f64,
+            unit: None,
+        },
+        EvalMetric {
+            name: "truncation_follow_ups".to_string(),
+            kind: EvalMetricKind::Count,
+            value: truncation_follow_ups as f64,
+            unit: None,
+        },
+        EvalMetric {
+            name: "tool_output_truncations".to_string(),
+            kind: EvalMetricKind::Count,
+            value: tool_output_truncations as f64,
+            unit: None,
+        },
     ]
+}
+
+fn is_file_read(event: &RoderEvent) -> bool {
+    matches!(
+        event,
+        RoderEvent::ToolCallCompleted(completed)
+            if completed.tool_name.as_deref() == Some("read_file")
+    )
+}
+
+fn is_relevant_file_read(event: &RoderEvent) -> bool {
+    matches!(
+        event,
+        RoderEvent::ToolCallCompleted(completed)
+            if completed.tool_name.as_deref() == Some("read_file")
+                && completed
+                    .display_payload
+                    .as_ref()
+                    .is_some_and(|payload| payload.to_string().contains("relevant"))
+    )
+}
+
+fn count_truncation_follow_ups(events: &[RoderEvent]) -> u64 {
+    let mut saw_truncation = false;
+    let mut follow_ups = 0u64;
+    for event in events {
+        match event {
+            RoderEvent::ToolOutputTruncated(_) => saw_truncation = true,
+            RoderEvent::ToolCallRequested(requested)
+                if saw_truncation
+                    && matches!(requested.tool_name.as_str(), "read_file" | "grep" | "glob") =>
+            {
+                follow_ups += 1;
+                saw_truncation = false;
+            }
+            _ => {}
+        }
+    }
+    follow_ups
 }
 
 fn collect_eval_reports(
@@ -282,6 +415,23 @@ fn eval_report_markdown(report: &EvalSuiteReport) -> String {
             ));
         }
     }
+    text.push_str(
+        "\n## Context Metrics\n\n| Fixture | Context tokens | Context bytes | Entrypoint candidates | Entrypoint injection event | First relevant read event | Irrelevant reads | Truncation follow-ups | Tool output truncations |\n| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |\n",
+    );
+    for result in &report.results {
+        text.push_str(&format!(
+            "| `{}` | {:.0} | {:.0} | {:.0} | {:.0} | {:.0} | {:.0} | {:.0} | {:.0} |\n",
+            result.fixture_id,
+            metric_value(result, "context_estimated_tokens"),
+            metric_value(result, "context_bytes"),
+            metric_value(result, "entrypoint_candidates"),
+            metric_value(result, "entrypoint_injection_event"),
+            metric_value(result, "first_relevant_file_read_event"),
+            metric_value(result, "irrelevant_file_reads"),
+            metric_value(result, "truncation_follow_ups"),
+            metric_value(result, "tool_output_truncations"),
+        ));
+    }
     let groups = failure_groups(report);
     if !groups.is_empty() {
         text.push_str("\n## Failure Groups\n\n| Tool | Model | Failure class | Count |\n| --- | --- | --- | --- |\n");
@@ -290,6 +440,16 @@ fn eval_report_markdown(report: &EvalSuiteReport) -> String {
         }
     }
     text
+}
+
+fn metric_value(result: &EvalFixtureResult, name: &str) -> f64 {
+    result
+        .report
+        .metrics
+        .iter()
+        .find(|metric| metric.name == name)
+        .map(|metric| metric.value)
+        .unwrap_or(0.0)
 }
 
 fn pass_rate_rows(report: &EvalSuiteReport) -> Vec<(String, usize, usize)> {
@@ -341,4 +501,71 @@ fn failure_groups(report: &EvalSuiteReport) -> BTreeMap<(String, String, String)
         *groups.entry((tool, model, class)).or_insert(0) += 1;
     }
     groups
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use roder_api::events::{
+        ContextAssemblyCompleted, ContextEntrypointCandidatesInjected, RoderEvent,
+        ToolCallRequested, ToolOutputTruncated,
+    };
+
+    #[test]
+    fn context_eval_metrics_track_budget_entrypoints_and_truncation_follow_up() {
+        let events = vec![
+            RoderEvent::ContextAssemblyCompleted(ContextAssemblyCompleted {
+                thread_id: "thread-a".to_string(),
+                turn_id: "turn-a".to_string(),
+                block_count: 1,
+                total_byte_count: 800,
+                estimated_tokens: 200,
+                token_budget: Some(1_000),
+                timestamp: OffsetDateTime::UNIX_EPOCH,
+            }),
+            RoderEvent::ContextEntrypointCandidatesInjected(ContextEntrypointCandidatesInjected {
+                thread_id: "thread-a".to_string(),
+                turn_id: "turn-a".to_string(),
+                candidate_count: 3,
+                block_byte_count: 120,
+                estimated_tokens: 30,
+                timestamp: OffsetDateTime::UNIX_EPOCH,
+            }),
+            RoderEvent::ToolOutputTruncated(ToolOutputTruncated {
+                thread_id: "thread-a".to_string(),
+                turn_id: "turn-a".to_string(),
+                tool_id: "tool-a".to_string(),
+                tool_name: Some("grep".to_string()),
+                original_line_count: 1_000,
+                original_char_count: 40_000,
+                inline_char_count: 2_000,
+                artifact_backed: false,
+                timestamp: OffsetDateTime::UNIX_EPOCH,
+            }),
+            RoderEvent::ToolCallRequested(ToolCallRequested {
+                thread_id: "thread-a".to_string(),
+                turn_id: "turn-a".to_string(),
+                tool_id: "tool-b".to_string(),
+                tool_name: "grep".to_string(),
+                display_payload: None,
+                timestamp: OffsetDateTime::UNIX_EPOCH,
+            }),
+        ];
+
+        let metrics = eval_metrics(&events, 42, &EvalOutcome::Pass);
+        let value = |name: &str| {
+            metrics
+                .iter()
+                .find(|metric| metric.name == name)
+                .map(|metric| metric.value)
+                .unwrap()
+        };
+
+        assert_eq!(value("context_estimated_tokens"), 200.0);
+        assert_eq!(value("context_bytes"), 800.0);
+        assert_eq!(value("entrypoint_candidates"), 3.0);
+        assert_eq!(value("entrypoint_injection_event"), 2.0);
+        assert_eq!(value("truncation_follow_ups"), 1.0);
+        assert_eq!(value("tool_output_truncations"), 1.0);
+    }
 }
