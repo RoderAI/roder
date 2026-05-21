@@ -2,6 +2,10 @@ use roder_api::artifacts::{
     ArtifactGrepPage, ArtifactReadPage, ArtifactTailPage, ContextArtifactDescriptor,
     ContextArtifactKind,
 };
+use roder_api::automations::{
+    AutomationConcurrencyPolicy, AutomationDefinition, AutomationId, AutomationProject,
+    AutomationRunId, AutomationRunState, AutomationRunSummary, AutomationSchedule, CatchUpPolicy,
+};
 use roder_api::capabilities::CapabilityStatus;
 use roder_api::code_index::{
     CodeChunk, CodeIndexGenerationId, CodeIndexSearchResponse, CodeIndexStats, CodeIndexStatus,
@@ -2147,6 +2151,164 @@ pub struct SkillsUpdateResult {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AutomationsListParams {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub project_cwd: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub include_disabled: Option<bool>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AutomationsListResult {
+    pub automations: Vec<AutomationDefinition>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AutomationsCreateParams {
+    pub name: String,
+    pub project: AutomationProject,
+    pub schedule: AutomationSchedule,
+    pub prompt: String,
+    #[serde(default = "default_true_bool")]
+    pub enabled: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model_provider: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub policy_mode: Option<roder_api::policy_mode::PolicyMode>,
+    pub catch_up: CatchUpPolicy,
+    pub concurrency: AutomationConcurrencyPolicy,
+}
+
+fn default_true_bool() -> bool {
+    true
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AutomationsCreateResult {
+    pub automation: AutomationDefinition,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct AutomationsUpdatePatch {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub project: Option<AutomationProject>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub schedule: Option<AutomationSchedule>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub prompt: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub enabled: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model_provider: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub policy_mode: Option<roder_api::policy_mode::PolicyMode>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub catch_up: Option<CatchUpPolicy>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub concurrency: Option<AutomationConcurrencyPolicy>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AutomationsUpdateParams {
+    pub automation_id: AutomationId,
+    pub patch: AutomationsUpdatePatch,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AutomationsUpdateResult {
+    pub automation: AutomationDefinition,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AutomationsDeleteParams {
+    pub automation_id: AutomationId,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AutomationsDeleteResult {
+    pub automation_id: AutomationId,
+    pub deleted: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AutomationsRunNowParams {
+    pub automation_id: AutomationId,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub prompt_override: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AutomationsRunNowResult {
+    pub run: AutomationRunSummary,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AutomationsRunsParams {
+    pub automation_id: AutomationId,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub state: Option<AutomationRunState>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub limit: Option<usize>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AutomationsRunsResult {
+    pub runs: Vec<AutomationRunSummary>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub next_cursor: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AutomationsCancelRunParams {
+    pub run_id: AutomationRunId,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AutomationsCancelRunResult {
+    pub run_id: AutomationRunId,
+    pub cancelled: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AutomationsStatusResult {
+    pub scheduler_enabled: bool,
+    pub read_api_enabled: bool,
+    pub server_id: String,
+    pub server_role: String,
+    pub store_path: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_tick_at: Option<OffsetDateTime>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub next_tick_at: Option<OffsetDateTime>,
+    #[serde(default)]
+    pub active_runs: usize,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ToolsListResult {
     pub tools: Vec<ToolSpec>,
 }
@@ -2660,6 +2822,45 @@ mod tests {
             "roder-builtin://commit/SKILL.md"
         );
         assert_eq!(value["enabled"], false);
+    }
+
+    #[test]
+    fn automations_protocol_structs_use_camel_case_fields() {
+        let create: AutomationsCreateParams = serde_json::from_value(serde_json::json!({
+            "name": "Nightly cleanup",
+            "project": { "cwd": "/repo", "displayName": "repo" },
+            "schedule": { "interval": { "seconds": 300 } },
+            "prompt": "summarize status",
+            "modelProvider": "codex",
+            "model": "gpt-5.5",
+            "policyMode": "plan",
+            "catchUp": { "runLatestOnly": null },
+            "concurrency": "forbid"
+        }))
+        .unwrap();
+
+        assert_eq!(create.name, "Nightly cleanup");
+        assert_eq!(create.project.display_name.as_deref(), Some("repo"));
+        assert_eq!(create.model_provider.as_deref(), Some("codex"));
+        assert_eq!(
+            create.policy_mode,
+            Some(roder_api::policy_mode::PolicyMode::Plan)
+        );
+        assert_eq!(create.catch_up, CatchUpPolicy::RunLatestOnly);
+
+        let update = AutomationsUpdateParams {
+            automation_id: "automation-1".to_string(),
+            patch: AutomationsUpdatePatch {
+                model_provider: Some("codex".to_string()),
+                catch_up: Some(CatchUpPolicy::SkipExpired { grace_seconds: 60 }),
+                ..AutomationsUpdatePatch::default()
+            },
+        };
+        let value = serde_json::to_value(update).unwrap();
+        assert_eq!(value["automationId"], "automation-1");
+        assert_eq!(value["patch"]["modelProvider"], "codex");
+        assert_eq!(value["patch"]["catchUp"]["skipExpired"]["graceSeconds"], 60);
+        assert!(value.get("automation_id").is_none());
     }
 
     #[test]

@@ -27,6 +27,7 @@ pub struct Config {
     pub search_index: Option<SearchIndexConfig>,
     pub notifications: Option<NotificationsConfig>,
     pub tui: Option<TuiConfig>,
+    pub app_server: Option<AppServerConfig>,
     pub remote_runners: Option<RemoteRunnersConfig>,
     pub media: Option<MediaConfig>,
     pub memories: Option<MemoriesConfig>,
@@ -382,6 +383,53 @@ pub struct TuiDiffConfig {
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct AppServerConfig {
+    #[serde(default)]
+    pub automations: AppServerAutomationsConfig,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct AppServerAutomationsConfig {
+    #[serde(default)]
+    pub enabled: bool,
+    #[serde(default = "default_automation_server_id")]
+    pub server_id: String,
+    #[serde(default = "default_automation_server_role")]
+    pub server_role: String,
+    #[serde(default = "default_automation_store_path")]
+    pub store_path: PathBuf,
+    #[serde(default = "default_automation_tick_seconds")]
+    pub tick_seconds: u64,
+    #[serde(default = "default_automation_lease_seconds")]
+    pub lease_seconds: u64,
+    #[serde(default = "default_automation_max_due_per_tick")]
+    pub max_due_per_tick: u32,
+    #[serde(default = "default_true")]
+    pub run_missed_on_startup: bool,
+    #[serde(default = "default_true")]
+    pub read_api_when_disabled: bool,
+    #[serde(default)]
+    pub allowed_project_roots: Vec<PathBuf>,
+}
+
+impl Default for AppServerAutomationsConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            server_id: default_automation_server_id(),
+            server_role: default_automation_server_role(),
+            store_path: default_automation_store_path(),
+            tick_seconds: default_automation_tick_seconds(),
+            lease_seconds: default_automation_lease_seconds(),
+            max_due_per_tick: default_automation_max_due_per_tick(),
+            run_missed_on_startup: true,
+            read_api_when_disabled: true,
+            allowed_project_roots: Vec::new(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
 pub struct RemoteRunnersConfig {
     #[serde(default)]
     pub enabled: bool,
@@ -519,6 +567,30 @@ fn default_true() -> bool {
 
 fn default_tool_path_scope() -> String {
     "global".to_string()
+}
+
+fn default_automation_server_id() -> String {
+    "desktop-main".to_string()
+}
+
+fn default_automation_server_role() -> String {
+    "desktop".to_string()
+}
+
+fn default_automation_store_path() -> PathBuf {
+    PathBuf::from("~/.roder/automations.sqlite3")
+}
+
+fn default_automation_tick_seconds() -> u64 {
+    30
+}
+
+fn default_automation_lease_seconds() -> u64 {
+    900
+}
+
+fn default_automation_max_due_per_tick() -> u32 {
+    10
 }
 
 pub fn load_config() -> anyhow::Result<Config> {
@@ -918,6 +990,42 @@ fn apply_env_overrides_with(config: &mut Config, mut env: impl FnMut(&str) -> Op
             .get_or_insert_with(Default::default)
             .live_notifications = true;
     }
+    if let Some(enabled) = env("RODER_AUTOMATIONS_ENABLED")
+        && let Some(enabled) = parse_bool(&enabled)
+    {
+        config
+            .app_server
+            .get_or_insert_with(Default::default)
+            .automations
+            .enabled = enabled;
+    }
+    if let Some(server_id) = env("RODER_AUTOMATIONS_SERVER_ID")
+        && !server_id.trim().is_empty()
+    {
+        config
+            .app_server
+            .get_or_insert_with(Default::default)
+            .automations
+            .server_id = server_id;
+    }
+    if let Some(server_role) = env("RODER_AUTOMATIONS_SERVER_ROLE")
+        && !server_role.trim().is_empty()
+    {
+        config
+            .app_server
+            .get_or_insert_with(Default::default)
+            .automations
+            .server_role = server_role;
+    }
+    if let Some(store) = env("RODER_AUTOMATIONS_STORE")
+        && !store.trim().is_empty()
+    {
+        config
+            .app_server
+            .get_or_insert_with(Default::default)
+            .automations
+            .store_path = PathBuf::from(store);
+    }
     if let Some(destination) = env("RODER_REMOTE_RUNNER")
         && !destination.trim().is_empty()
     {
@@ -982,6 +1090,7 @@ mod tests {
             search_index: None,
             notifications: None,
             tui: None,
+            app_server: None,
             remote_runners: None,
             media: None,
             memories: None,
@@ -1367,6 +1476,47 @@ mod tests {
             vec!["needs_input".to_string(), "task_completed".to_string()]
         );
         assert!(notifications.live_notifications);
+    }
+
+    #[test]
+    fn automations_config_defaults_keep_scheduler_disabled() {
+        let config = AppServerAutomationsConfig::default();
+
+        assert!(!config.enabled);
+        assert_eq!(config.server_id, "desktop-main");
+        assert_eq!(config.server_role, "desktop");
+        assert_eq!(
+            config.store_path,
+            PathBuf::from("~/.roder/automations.sqlite3")
+        );
+        assert_eq!(config.tick_seconds, 30);
+        assert_eq!(config.lease_seconds, 900);
+        assert_eq!(config.max_due_per_tick, 10);
+        assert!(config.run_missed_on_startup);
+        assert!(config.read_api_when_disabled);
+        assert!(config.allowed_project_roots.is_empty());
+    }
+
+    #[test]
+    fn automations_env_overrides_enable_selected_app_server() {
+        let mut config = Config::default();
+
+        apply_env_overrides_with(&mut config, |key| match key {
+            "RODER_AUTOMATIONS_ENABLED" => Some("1".to_string()),
+            "RODER_AUTOMATIONS_SERVER_ID" => Some("desktop-main".to_string()),
+            "RODER_AUTOMATIONS_SERVER_ROLE" => Some("desktop".to_string()),
+            "RODER_AUTOMATIONS_STORE" => Some("/tmp/automations.sqlite3".to_string()),
+            _ => None,
+        });
+
+        let automations = &config.app_server.unwrap().automations;
+        assert!(automations.enabled);
+        assert_eq!(automations.server_id, "desktop-main");
+        assert_eq!(automations.server_role, "desktop");
+        assert_eq!(
+            automations.store_path,
+            PathBuf::from("/tmp/automations.sqlite3")
+        );
     }
 
     #[test]
