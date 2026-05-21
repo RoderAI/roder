@@ -558,6 +558,7 @@ async fn run_turn_continues_after_tool_result() {
             workspace: None,
 
             instructions: default_instructions(),
+            task_ledger_required: false,
         })
         .await
         .unwrap();
@@ -638,6 +639,7 @@ async fn run_turn_executes_parallel_tool_call_batch_concurrently() {
             workspace: None,
 
             instructions: default_instructions(),
+            task_ledger_required: false,
         })
         .await
         .unwrap();
@@ -700,6 +702,7 @@ async fn provider_start_errors_are_emitted_for_the_active_thread() {
             workspace: None,
 
             instructions: default_instructions(),
+            task_ledger_required: false,
         })
         .await
         .unwrap();
@@ -759,6 +762,7 @@ async fn commentary_phase_messages_are_preserved_for_next_provider_request() {
             workspace: None,
 
             instructions: default_instructions(),
+            task_ledger_required: false,
         })
         .await
         .unwrap();
@@ -805,6 +809,7 @@ async fn steer_turn_is_included_in_next_provider_request() {
             workspace: None,
 
             instructions: default_instructions(),
+            task_ledger_required: false,
         })
         .await
         .unwrap();
@@ -877,6 +882,7 @@ async fn runtime_advertises_apply_patch_only_for_patch_models() {
             workspace: None,
 
             instructions: default_instructions(),
+            task_ledger_required: false,
         })
         .await
         .unwrap();
@@ -981,6 +987,7 @@ async fn tool_execution_errors_are_returned_to_model() {
             workspace: None,
 
             instructions: default_instructions(),
+            task_ledger_required: false,
         })
         .await
         .unwrap();
@@ -1045,6 +1052,7 @@ async fn run_turn_allows_more_than_eight_tool_rounds() {
             workspace: None,
 
             instructions: default_instructions(),
+            task_ledger_required: false,
         })
         .await
         .unwrap();
@@ -1106,6 +1114,7 @@ async fn unknown_tool_completion_is_marked_as_error() {
             workspace: None,
 
             instructions: default_instructions(),
+            task_ledger_required: false,
         })
         .await
         .unwrap();

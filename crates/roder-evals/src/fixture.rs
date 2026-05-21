@@ -47,6 +47,8 @@ pub struct EvalExpectedEvidence {
     pub command_checks: Vec<EvalExpectedCommand>,
     #[serde(default)]
     pub verification_required: bool,
+    #[serde(default)]
+    pub task_ledger_required: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -108,6 +110,7 @@ mod tests {
                     stderr_contains: Vec::new(),
                 }],
                 verification_required: true,
+                task_ledger_required: true,
             },
             constraints: vec!["do not ask the user".to_string()],
         };

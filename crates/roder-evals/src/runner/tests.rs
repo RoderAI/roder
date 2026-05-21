@@ -40,6 +40,7 @@ async fn runner_creates_report_files_from_fake_provider_fixture() {
                 stderr_contains: Vec::new(),
             }],
             verification_required: true,
+            task_ledger_required: false,
         },
         constraints: Vec::new(),
     };
@@ -84,6 +85,7 @@ async fn eval_runtime_profile_fails_clarification_waits_without_hanging() {
             files: Vec::new(),
             command_checks: Vec::new(),
             verification_required: false,
+            task_ledger_required: false,
         },
         constraints: Vec::new(),
     };
@@ -124,6 +126,90 @@ async fn eval_runtime_profile_fails_clarification_waits_without_hanging() {
 }
 
 #[tokio::test]
+async fn task_ledger_required_fixtures_grade_missing_and_complete_state() {
+    let root = std::env::temp_dir().join(format!("roder-evals-test-{}", uuid::Uuid::new_v4()));
+    let fixture_dir = root.join("fixtures");
+    let output_dir = root.join("reports");
+    std::fs::create_dir_all(&fixture_dir).unwrap();
+    for (id, prompt) in [
+        (
+            "task-ledger-complete",
+            "FAKE_TASK_LEDGER_COMPLETE: complete a decomposed task.",
+        ),
+        ("task-ledger-missing", "complete a decomposed task."),
+    ] {
+        let fixture = EvalFixture {
+            id: id.to_string(),
+            title: id.to_string(),
+            prompt: prompt.to_string(),
+            tags: vec!["task-ledger".to_string()],
+            workspace: EvalWorkspaceSetup::default(),
+            timeout_ms: Some(10_000),
+            expected: EvalExpectedEvidence {
+                final_answer_contains: vec!["hello from roder".to_string()],
+                files: Vec::new(),
+                command_checks: Vec::new(),
+                verification_required: false,
+                task_ledger_required: true,
+            },
+            constraints: Vec::new(),
+        };
+        std::fs::write(
+            fixture_dir.join(format!("{id}.json")),
+            serde_json::to_string_pretty(&fixture).unwrap(),
+        )
+        .unwrap();
+    }
+
+    let report = run_offline_eval_suite(
+        &fixture_dir,
+        OfflineEvalRunnerOptions {
+            output_dir: output_dir.clone(),
+            runtime_profile: RuntimeProfile::Eval,
+            ..OfflineEvalRunnerOptions::default()
+        },
+    )
+    .await
+    .unwrap();
+
+    let complete = report
+        .results
+        .iter()
+        .find(|result| result.fixture_id == "task-ledger-complete")
+        .unwrap();
+    assert_eq!(complete.report.outcome, EvalOutcome::Pass);
+    assert!(
+        complete
+            .report
+            .trajectory
+            .events
+            .iter()
+            .any(|event| event.event_type == "task_ledger_updated")
+    );
+
+    let missing = report
+        .results
+        .iter()
+        .find(|result| result.fixture_id == "task-ledger-missing")
+        .unwrap();
+    assert_eq!(missing.report.outcome, EvalOutcome::Fail);
+    assert_eq!(
+        missing.report.failure_class,
+        Some(EvalFailureClass::Verifier)
+    );
+    assert!(
+        missing
+            .failure_message
+            .as_deref()
+            .unwrap_or_default()
+            .contains("task ledger was required")
+    );
+    let markdown = std::fs::read_to_string(output_dir.join("eval-report.md")).unwrap();
+    assert!(markdown.contains("Task Ledger Metrics"));
+    let _ = std::fs::remove_dir_all(root);
+}
+
+#[tokio::test]
 async fn failed_fixture_reports_failure_class_and_trace_excerpt() {
     let root = std::env::temp_dir().join(format!("roder-evals-test-{}", uuid::Uuid::new_v4()));
     let fixture_dir = root.join("fixtures");
@@ -141,6 +227,7 @@ async fn failed_fixture_reports_failure_class_and_trace_excerpt() {
             files: Vec::new(),
             command_checks: Vec::new(),
             verification_required: false,
+            task_ledger_required: false,
         },
         constraints: Vec::new(),
     };
