@@ -632,6 +632,7 @@ async fn start_and_wait(
             workspace: None,
 
             instructions: default_instructions(),
+            task_ledger_required: false,
         })
         .await
         .unwrap();

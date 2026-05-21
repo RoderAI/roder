@@ -2411,6 +2411,7 @@ dependencies = [
  "roder-api",
  "roder-context",
  "roder-core",
+ "roder-ext-task-ledger",
  "roder-tools",
  "serde",
  "serde_json",

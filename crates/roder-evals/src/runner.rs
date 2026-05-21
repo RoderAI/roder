@@ -181,6 +181,7 @@ async fn run_offline_fixture(
                 model_override: Some(model.to_string()),
                 workspace: Some(workspace.path.display().to_string()),
                 instructions: InstructionBundle::default(),
+                task_ledger_required: fixture.expected.task_ledger_required,
             })
             .await?;
         let timeout_ms = fixture.timeout_ms.unwrap_or(DEFAULT_TIMEOUT_MS);
@@ -215,6 +216,13 @@ async fn run_offline_fixture(
         failure_class = Some(failure_class_for_fixture(fixture));
         failure_message = Some(err.to_string());
     }
+    if outcome == EvalOutcome::Pass
+        && let Err(err) = grade_task_ledger_requirement(fixture, &events)
+    {
+        outcome = EvalOutcome::Fail;
+        failure_class = Some(EvalFailureClass::Verifier);
+        failure_message = Some(err.to_string());
+    }
     let trajectory = EvalTrajectory::from_events(thread_id.clone(), turn_id.clone(), &events);
     let trace_excerpt = trajectory_excerpt(&trajectory);
     let report = EvalReport {
@@ -242,6 +250,39 @@ async fn run_offline_fixture(
     })
 }
 
+fn grade_task_ledger_requirement(
+    fixture: &EvalFixture,
+    events: &[RoderEvent],
+) -> anyhow::Result<()> {
+    if !fixture.expected.task_ledger_required {
+        return Ok(());
+    }
+    let Some(snapshot) = events.iter().rev().find_map(|event| match event {
+        RoderEvent::TaskLedgerUpdated(updated) => Some(updated),
+        _ => None,
+    }) else {
+        anyhow::bail!("task ledger was required but was not created");
+    };
+    if snapshot.tasks.is_empty() {
+        anyhow::bail!("task ledger was required but contained no tasks");
+    }
+    let incomplete = snapshot
+        .tasks
+        .iter()
+        .filter(|task| {
+            !matches!(
+                task.status,
+                roder_api::task_ledger::TaskLedgerStatus::Completed
+            )
+        })
+        .map(|task| task.id.as_str())
+        .collect::<Vec<_>>();
+    if !incomplete.is_empty() {
+        anyhow::bail!("task ledger incomplete: {}", incomplete.join(", "));
+    }
+    Ok(())
+}
+
 fn build_fake_runtime(
     workspace: &Path,
     provider: &str,
@@ -253,6 +294,9 @@ fn build_fake_runtime(
     builder.tool_contributor(Arc::new(roder_tools::BuiltinCodingToolsContributor::new(
         workspace.to_path_buf(),
     )?));
+    builder.tool_contributor(Arc::new(
+        roder_ext_task_ledger::TaskLedgerToolContributor::default(),
+    ));
     builder.context_planner(Arc::new(roder_context::EntrypointContextPlanner::new(
         workspace.to_path_buf(),
     )));

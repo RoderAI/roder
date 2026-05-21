@@ -1,0 +1,14 @@
+{
+  "id": "task-ledger-complete",
+  "title": "Task ledger complete",
+  "prompt": "FAKE_TASK_LEDGER_COMPLETE: perform a decomposed eval task and keep a completed task ledger.",
+  "tags": ["verification", "task-ledger"],
+  "timeoutMs": 10000,
+  "expected": {
+    "finalAnswerContains": ["hello from roder"],
+    "taskLedgerRequired": true
+  },
+  "constraints": [
+    "eval mode requires durable task tracking for decomposed work"
+  ]
+}

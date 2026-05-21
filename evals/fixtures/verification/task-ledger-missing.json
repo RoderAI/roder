@@ -1,0 +1,14 @@
+{
+  "id": "task-ledger-missing",
+  "title": "Task ledger missing",
+  "prompt": "Handle this decomposed eval task without any explicit task ledger marker.",
+  "tags": ["verification", "task-ledger", "failure:missing-task-ledger"],
+  "timeoutMs": 10000,
+  "expected": {
+    "finalAnswerContains": ["hello from roder"],
+    "taskLedgerRequired": true
+  },
+  "constraints": [
+    "missing task ledger should be graded as an eval failure"
+  ]
+}
