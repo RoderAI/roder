@@ -1,0 +1,11 @@
+[package]
+name = "roder-api-transcript"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+serde = { workspace = true, features = ["derive"] }
+serde_json.workspace = true
+time = { workspace = true, features = ["serde", "serde-well-known"] }
+
