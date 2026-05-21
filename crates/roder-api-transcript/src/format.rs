@@ -104,6 +104,14 @@ pub enum ApiTranscriptRecord {
         at_ms: u64,
         artifact: RecordedArtifactRef,
     },
+    #[serde(rename = "broadcast.lag", rename_all = "camelCase")]
+    BroadcastLag {
+        seq: u64,
+        #[serde(rename = "atMs")]
+        at_ms: u64,
+        stream: String,
+        skipped: u64,
+    },
 }
 
 impl ApiTranscriptRecord {
@@ -124,7 +132,8 @@ impl ApiTranscriptRecord {
             | Self::ExtensionEvent { seq, .. }
             | Self::UiInput { seq, .. }
             | Self::UiFrame { seq, .. }
-            | Self::Artifact { seq, .. } => Some(*seq),
+            | Self::Artifact { seq, .. }
+            | Self::BroadcastLag { seq, .. } => Some(*seq),
         }
     }
 
@@ -139,6 +148,7 @@ impl ApiTranscriptRecord {
             Self::UiInput { .. } => ApiTranscriptKind::UiInput,
             Self::UiFrame { .. } => ApiTranscriptKind::UiFrame,
             Self::Artifact { .. } => ApiTranscriptKind::Artifact,
+            Self::BroadcastLag { .. } => ApiTranscriptKind::BroadcastLag,
         }
     }
 }
@@ -155,6 +165,7 @@ pub enum ApiTranscriptKind {
     UiInput,
     UiFrame,
     Artifact,
+    BroadcastLag,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -383,6 +394,12 @@ mod tests {
                     }],
                 },
             },
+            ApiTranscriptRecord::BroadcastLag {
+                seq: 9,
+                at_ms: 80,
+                stream: "runtime.events".to_string(),
+                skipped: 3,
+            },
         ];
 
         for record in records {
@@ -408,4 +425,3 @@ mod tests {
         }
     }
 }
-

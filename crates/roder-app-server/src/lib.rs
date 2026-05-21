@@ -17,6 +17,7 @@ mod retrieval;
 mod search_index;
 pub mod server;
 mod skills;
+pub mod transcript;
 
 pub use automations::AppServerFeatureConfig;
 pub use client::*;
