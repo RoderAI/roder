@@ -7,6 +7,7 @@ use roder_api::discovery::{
     DiscoveryPromotionRecord, DiscoveryPromotionState, DiscoverySourceKind,
 };
 use roder_api::extension::ExtensionRegistryBuilder;
+use roder_api::skills::{SkillActivationState, SkillDescriptor, SkillExposure, SkillSource};
 use roder_api::subagents::{
     SubagentDefinition, SubagentDispatcher, SubagentPermissionMode, SubagentRequest, SubagentResult,
 };
@@ -211,6 +212,65 @@ fn subagent_definitions_and_promotions_are_persisted() {
     assert!(root.join("session/discovery/promotions.json").exists());
 }
 
+#[test]
+fn skills_are_grouped_with_enabled_and_exposure_state() {
+    let root = temp_dir("catalog-skills");
+    let registry = ExtensionRegistryBuilder::new().build().expect("registry");
+    let skills = vec![
+        skill_descriptor(
+            "commit",
+            "roder-builtin://commit/SKILL.md",
+            SkillSource::BuiltIn,
+            SkillActivationState::Enabled,
+            SkillExposure::DirectOnly,
+        ),
+        skill_descriptor(
+            "review",
+            "workspace://.agents/skills/review/SKILL.md",
+            SkillSource::Workspace,
+            SkillActivationState::Disabled,
+            SkillExposure::Global,
+        ),
+    ];
+
+    let result = build_file_backed_catalog_with_skills(
+        &registry,
+        &[],
+        &skills,
+        &DiscoveryCatalogBuildOptions::new(root.join("catalog"), root.join("session")),
+    )
+    .expect("build catalog");
+
+    let group = result
+        .catalog
+        .groups
+        .iter()
+        .find(|group| group.id == "skills:registry")
+        .expect("skills group");
+    assert_eq!(group.item_count, 2);
+    let commit = group
+        .items
+        .iter()
+        .find(|item| item.name == "commit")
+        .expect("commit skill");
+    assert_eq!(commit.source.kind, DiscoverySourceKind::Skills);
+    assert_eq!(commit.status, DiscoveryItemStatus::Available);
+    assert!(commit.tags.contains(&"built-in".to_string()));
+    assert!(commit.tags.contains(&"direct-only".to_string()));
+    let review = group
+        .items
+        .iter()
+        .find(|item| item.name == "review")
+        .expect("review skill");
+    assert_eq!(review.status, DiscoveryItemStatus::Disabled);
+    assert!(review.tags.contains(&"global".to_string()));
+    assert!(
+        root.join("catalog")
+            .join(commit.schema.as_ref().unwrap().uri.as_str())
+            .exists()
+    );
+}
+
 fn workflow_item(
     name: &str,
     source_type: WorkflowSourceType,
@@ -239,6 +299,28 @@ fn workflow_item(
         preview,
         conflicts: Vec::new(),
         enabled_at: None,
+    }
+}
+
+fn skill_descriptor(
+    name: &str,
+    path: &str,
+    source: SkillSource,
+    activation: SkillActivationState,
+    exposure: SkillExposure,
+) -> SkillDescriptor {
+    SkillDescriptor {
+        id: path.to_string(),
+        name: name.to_string(),
+        canonical_path: path.to_string(),
+        source,
+        exposure,
+        activation,
+        description: format!("{name} skill"),
+        short_description: None,
+        experimental: false,
+        diagnostics: Vec::new(),
+        agent_metadata: None,
     }
 }
 

@@ -1,13 +1,38 @@
 use std::path::PathBuf;
 
 use crate::runner::{
-    EvalProfileMode, EvalSpeedPolicyMode, OfflineEvalRunnerOptions, run_offline_eval_suite,
+    EvalProfileMode, EvalSpeedPolicyMode, OfflineEvalRunnerOptions, load_eval_fixtures,
+    run_offline_eval_suite,
 };
 use crate::{
     EvalExpectedCommand, EvalExpectedEvidence, EvalExpectedFile, EvalFailureClass, EvalFixture,
     EvalOutcome, EvalWorkspaceFile, EvalWorkspaceSetup,
 };
 use roder_api::inference::RuntimeProfile;
+
+#[test]
+fn built_in_skills_fixtures_load_and_measure_context_modes() {
+    let fixture_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../evals/fixtures/context/built-in-skills");
+    let fixtures = load_eval_fixtures(&fixture_dir).unwrap();
+    assert_eq!(fixtures.len(), 2);
+    assert!(
+        fixtures
+            .iter()
+            .any(|fixture| fixture.tags.contains(&"global".to_string()))
+    );
+    assert!(
+        fixtures
+            .iter()
+            .any(|fixture| fixture.tags.contains(&"direct-only".to_string()))
+    );
+    assert!(fixtures.iter().all(|fixture| {
+        fixture
+            .lazy_discovery
+            .as_ref()
+            .is_some_and(|discovery| discovery.catalog_shape.skills == 1)
+    }));
+}
 
 #[tokio::test]
 async fn runner_creates_report_files_from_fake_provider_fixture() {

@@ -1,0 +1,37 @@
+{
+  "id": "built-in-commit-direct-only-skill",
+  "title": "Built-in commit skill direct-only exposure stays out of global context",
+  "tags": ["built-in-skills", "skills", "direct-only", "lazy-discovery", "context-budget"],
+  "prompt": "Use ${commit} to prepare a scoped commit plan. The direct-only built-in skill should inject only after direct invocation.",
+  "timeoutMs": 10000,
+  "expected": {
+    "finalAnswerContains": ["hello from roder"],
+    "verificationRequired": false
+  },
+  "lazyDiscovery": {
+    "hiddenDeferredCapabilities": 8,
+    "catalogShape": {
+      "internalTools": 6,
+      "mcpTools": 0,
+      "skills": 1,
+      "plugins": 0
+    },
+    "compactIndexContains": ["skill.commit", "direct-only"],
+    "expectedDiscoveryQuery": "direct-only commit skill",
+    "expectedPromotion": "skill.commit",
+    "expectedToolCall": "discovery.read",
+    "metrics": {
+      "baselineSchemaTokens": 1800,
+      "deferredPromptTokens": 620,
+      "expectedPromotionCount": 1,
+      "expectedWarmCacheHits": 0,
+      "maxWrongToolCalls": 0,
+      "maxUnknownToolCalls": 0,
+      "maxCallsBeforePromotion": 0
+    }
+  },
+  "constraints": [
+    "measure direct-only skill token impact",
+    "direct invocation succeeds without global skill index exposure"
+  ]
+}
