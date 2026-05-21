@@ -8,6 +8,7 @@ use serde::{Deserialize, Serialize};
 use crate::artifacts::ContextArtifactAccess;
 use crate::events::{ThreadId, TurnId};
 use crate::extension::ToolProviderId;
+use crate::inference::ModelSchemaPolicy;
 use crate::media::{MediaGenerationRequest, MediaGenerationResponse};
 use crate::policy_mode::PolicyMode;
 use crate::trace::SubagentTraceSink;
@@ -25,6 +26,17 @@ impl ToolSpec {
         let mut spec = self.clone();
         spec.parameters = normalize_tool_schema(&spec.name, &spec.parameters, policy).schema;
         spec
+    }
+
+    pub fn normalized_for_model_profile(&self, policy: ModelSchemaPolicy) -> Self {
+        match policy {
+            ModelSchemaPolicy::StandardRequiredFirst => {
+                self.normalized_for_model(ToolSchemaPolicy::warning())
+            }
+            ModelSchemaPolicy::RequiredFirstFlat => {
+                self.normalized_for_model(ToolSchemaPolicy::strict())
+            }
+        }
     }
 }
 
@@ -209,11 +221,19 @@ impl ToolRegistry {
     }
 
     pub fn specs_for_edit_tool(&self, edit_tool: Option<&str>) -> Vec<ToolSpec> {
+        self.specs_for_edit_tool_with_schema_policy(edit_tool, ModelSchemaPolicy::RequiredFirstFlat)
+    }
+
+    pub fn specs_for_edit_tool_with_schema_policy(
+        &self,
+        edit_tool: Option<&str>,
+        schema_policy: ModelSchemaPolicy,
+    ) -> Vec<ToolSpec> {
         self.tools
             .values()
             .map(|tool| tool.spec())
             .filter(|spec| keep_tool_for_edit_tool(&spec.name, edit_tool))
-            .map(|spec| spec.normalized_for_model(ToolSchemaPolicy::strict()))
+            .map(|spec| spec.normalized_for_model_profile(schema_policy))
             .collect()
     }
 
