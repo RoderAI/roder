@@ -90,6 +90,35 @@ impl InferenceEngine for FakeInferenceEngine {
             ))]);
             return Ok(Box::pin(stream));
         }
+        if should_discovery_read(&request) {
+            let stream = stream::iter(vec![Ok(InferenceEvent::ToolCallCompleted(
+                ToolCallCompleted {
+                    id: "fake-discovery-read".to_string(),
+                    name: "discovery.read".to_string(),
+                    arguments: serde_json::json!({
+                        "item_id": "tool:builtin-coding-tools/grep",
+                        "promote": true,
+                        "limit": 20
+                    })
+                    .to_string(),
+                },
+            ))]);
+            return Ok(Box::pin(stream));
+        }
+        if should_discovery_search(&request) {
+            let stream = stream::iter(vec![Ok(InferenceEvent::ToolCallCompleted(
+                ToolCallCompleted {
+                    id: "fake-discovery-search".to_string(),
+                    name: "discovery.search".to_string(),
+                    arguments: serde_json::json!({
+                        "query": "grep",
+                        "limit": 20
+                    })
+                    .to_string(),
+                },
+            ))]);
+            return Ok(Box::pin(stream));
+        }
         if should_complete_verification(&request) {
             let failed = prompt_contains(&request, "FAKE_VERIFICATION_FAILED");
             let stream = stream::iter(vec![Ok(InferenceEvent::ToolCallCompleted(
@@ -188,6 +217,35 @@ fn should_grep(request: &AgentInferenceRequest) -> bool {
             matches!(
                 item,
                 ConversationItem::ToolResult(result) if result.name.as_deref() == Some("grep")
+            )
+        })
+}
+
+fn should_discovery_search(request: &AgentInferenceRequest) -> bool {
+    prompt_contains(request, "FAKE_DISCOVERY_SEARCH")
+        && !request.conversation.iter().any(|item| {
+            matches!(
+                item,
+                ConversationItem::ToolResult(result)
+                    if result.name.as_deref() == Some("discovery.search")
+            )
+        })
+}
+
+fn should_discovery_read(request: &AgentInferenceRequest) -> bool {
+    prompt_contains(request, "FAKE_DISCOVERY_PROMOTE")
+        && request.conversation.iter().any(|item| {
+            matches!(
+                item,
+                ConversationItem::ToolResult(result)
+                    if result.name.as_deref() == Some("discovery.search")
+            )
+        })
+        && !request.conversation.iter().any(|item| {
+            matches!(
+                item,
+                ConversationItem::ToolResult(result)
+                    if result.name.as_deref() == Some("discovery.read")
             )
         })
 }

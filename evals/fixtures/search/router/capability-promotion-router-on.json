@@ -1,0 +1,28 @@
+{
+  "id": "router-capability-promotion-on",
+  "title": "Router on capability promotion",
+  "prompt": "FAKE_DISCOVERY_SEARCH FAKE_DISCOVERY_PROMOTE Use the grep capability after discovering and promoting its schema.",
+  "tags": ["search", "retrieval-router", "router:on", "context:deferred", "bucket:50-100", "route:capability-promotion", "lazy-discovery"],
+  "timeoutMs": 10000,
+  "expected": {
+    "finalAnswerContains": ["hello from roder"],
+    "verificationRequired": false
+  },
+  "lazyDiscovery": {
+    "hiddenDeferredCapabilities": 88,
+    "catalogShape": { "internalTools": 12, "mcpTools": 48, "skills": 16, "plugins": 12 },
+    "expectedDiscoveryQuery": "grep",
+    "expectedPromotion": "tool:builtin-coding-tools/grep",
+    "expectedToolCall": "discovery.read",
+    "metrics": {
+      "baselineSchemaTokens": 9600,
+      "deferredPromptTokens": 2100,
+      "expectedPromotionCount": 1,
+      "expectedWarmCacheHits": 0,
+      "maxWrongToolCalls": 0,
+      "maxUnknownToolCalls": 0,
+      "maxCallsBeforePromotion": 0
+    }
+  },
+  "constraints": ["grade promotion-before-tool-use", "identify missing-promotion and excessive tool-selection noise"]
+}

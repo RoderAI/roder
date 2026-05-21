@@ -1,0 +1,26 @@
+{
+  "id": "router-terminal-log-on",
+  "title": "Router on terminal log inspection",
+  "prompt": "A command failed with panic in the captured terminal log. Find BUG_ROOT_CAUSE_TOKEN and explain the failure.",
+  "tags": ["search", "retrieval-router", "router:on", "context:deferred", "route:terminal-log"],
+  "workspace": {
+    "files": [
+      {
+        "path": "logs/terminal.txt",
+        "contents": "thread panicked at src/main.rs:7\nBUG_ROOT_CAUSE_TOKEN=terminal-log\n"
+      }
+    ]
+  },
+  "timeoutMs": 10000,
+  "expected": {
+    "finalAnswerContains": ["hello from roder"],
+    "files": [
+      {
+        "path": "logs/terminal.txt",
+        "exists": true,
+        "contains": ["BUG_ROOT_CAUSE_TOKEN"]
+      }
+    ]
+  },
+  "constraints": ["grade artifact or terminal transcript routing pressure"]
+}

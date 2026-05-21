@@ -42,6 +42,7 @@ use workspace::{
     create_workspace, failure_class_for_fixture, grade_expected_evidence, run_workspace_setup,
 };
 
+use crate::retrieval_router::grade_retrieval_router_fixture;
 use crate::{EvalFailureClass, EvalFixture, EvalOutcome, EvalReport, EvalRun, EvalTrajectory};
 
 const DEFAULT_TIMEOUT_MS: u64 = 30_000;
@@ -293,6 +294,7 @@ async fn run_offline_fixture(
     let mut turn_id = "setup-failed".to_string();
     if outcome == EvalOutcome::Pass {
         let runtime = Arc::new(build_fake_runtime(
+            fixture,
             &workspace.path,
             provider,
             &profile_run.model,
@@ -372,6 +374,7 @@ async fn run_offline_fixture(
     let trace_excerpt = trajectory_excerpt(&trajectory);
     let mut metrics = eval_metrics(&events, start.elapsed().as_millis(), &outcome);
     metrics.extend(lazy_discovery_metrics(fixture, &events, &outcome));
+    metrics.extend(grade_retrieval_router_fixture(fixture, &events, &outcome));
     let report = EvalReport {
         run: EvalRun {
             suite_id: suite_id.to_string(),
@@ -438,6 +441,7 @@ fn grade_task_ledger_requirement(
 }
 
 fn build_fake_runtime(
+    fixture: &EvalFixture,
     workspace: &Path,
     provider: &str,
     model: &str,
@@ -456,6 +460,9 @@ fn build_fake_runtime(
     builder.tool_contributor(Arc::new(
         roder_ext_verification::VerificationToolContributor,
     ));
+    if !fixture.tags.iter().any(|tag| tag == "router:off") {
+        builder.context_planner(Arc::new(roder_context::RetrievalRouterPlanner));
+    }
     builder.context_planner(Arc::new(roder_context::EntrypointContextPlanner::new(
         workspace.to_path_buf(),
     )));
