@@ -2,6 +2,10 @@ use serde::{Deserialize, Serialize};
 use time::OffsetDateTime;
 
 use crate::artifacts::{ContextArtifact, ContextArtifactId};
+use crate::code_index::{
+    CodeIndexChunked, CodeIndexEmbedded, CodeIndexFailed, CodeIndexProofFilteredResultDropped,
+    CodeIndexReady, CodeIndexStale, CodeIndexingStarted,
+};
 use crate::extension::{ExtensionId, InferenceEngineId};
 use crate::inference::{InferenceEvent, RuntimeProfile, SpeedPolicyDecision};
 use crate::media::{MediaArtifact, MediaArtifactId, MediaPreview};
@@ -998,6 +1002,13 @@ pub enum RoderEvent {
     ReliabilityRetryRecorded(ReliabilityRetryRecorded),
     ReliabilityLimitRecorded(ReliabilityLimitRecorded),
     ReliabilityMetricRecorded(ReliabilityMetricRecorded),
+    CodeIndexingStarted(CodeIndexingStarted),
+    CodeIndexChunked(CodeIndexChunked),
+    CodeIndexEmbedded(CodeIndexEmbedded),
+    CodeIndexReady(CodeIndexReady),
+    CodeIndexStale(CodeIndexStale),
+    CodeIndexFailed(CodeIndexFailed),
+    CodeIndexProofFilteredResultDropped(CodeIndexProofFilteredResultDropped),
     ApprovalRequested(ApprovalRequested),
     ApprovalResolved(ApprovalResolved),
     UserInputRequested(UserInputRequested),
@@ -1110,6 +1121,15 @@ impl RoderEvent {
             RoderEvent::ReliabilityRetryRecorded(_) => "reliability.retry",
             RoderEvent::ReliabilityLimitRecorded(_) => "reliability.limit",
             RoderEvent::ReliabilityMetricRecorded(_) => "reliability.metric",
+            RoderEvent::CodeIndexingStarted(_) => "code_index.started",
+            RoderEvent::CodeIndexChunked(_) => "code_index.chunked",
+            RoderEvent::CodeIndexEmbedded(_) => "code_index.embedded",
+            RoderEvent::CodeIndexReady(_) => "code_index.ready",
+            RoderEvent::CodeIndexStale(_) => "code_index.stale",
+            RoderEvent::CodeIndexFailed(_) => "code_index.failed",
+            RoderEvent::CodeIndexProofFilteredResultDropped(_) => {
+                "code_index.proof_filtered_result_dropped"
+            }
             RoderEvent::ApprovalRequested(_) => "approval.requested",
             RoderEvent::ApprovalResolved(_) => "approval.resolved",
             RoderEvent::UserInputRequested(_) => "user_input.requested",
@@ -1307,6 +1327,13 @@ impl RoderEvent {
             RoderEvent::ReliabilityRetryRecorded(e) => Some(&e.context.thread_id),
             RoderEvent::ReliabilityLimitRecorded(e) => Some(&e.context.thread_id),
             RoderEvent::ReliabilityMetricRecorded(e) => Some(&e.context.thread_id),
+            RoderEvent::CodeIndexingStarted(e) => e.context.thread_id.as_ref(),
+            RoderEvent::CodeIndexChunked(e) => e.context.thread_id.as_ref(),
+            RoderEvent::CodeIndexEmbedded(e) => e.context.thread_id.as_ref(),
+            RoderEvent::CodeIndexReady(_) => None,
+            RoderEvent::CodeIndexStale(e) => e.context.thread_id.as_ref(),
+            RoderEvent::CodeIndexFailed(e) => e.context.thread_id.as_ref(),
+            RoderEvent::CodeIndexProofFilteredResultDropped(e) => e.context.thread_id.as_ref(),
             RoderEvent::ApprovalRequested(e) => Some(&e.thread_id),
             RoderEvent::ApprovalResolved(e) => Some(&e.thread_id),
             RoderEvent::UserInputRequested(e) => Some(&e.thread_id),
@@ -1415,6 +1442,13 @@ impl RoderEvent {
             RoderEvent::ReliabilityRetryRecorded(e) => Some(&e.context.turn_id),
             RoderEvent::ReliabilityLimitRecorded(e) => Some(&e.context.turn_id),
             RoderEvent::ReliabilityMetricRecorded(e) => Some(&e.context.turn_id),
+            RoderEvent::CodeIndexingStarted(e) => e.context.turn_id.as_ref(),
+            RoderEvent::CodeIndexChunked(e) => e.context.turn_id.as_ref(),
+            RoderEvent::CodeIndexEmbedded(e) => e.context.turn_id.as_ref(),
+            RoderEvent::CodeIndexReady(_) => None,
+            RoderEvent::CodeIndexStale(e) => e.context.turn_id.as_ref(),
+            RoderEvent::CodeIndexFailed(e) => e.context.turn_id.as_ref(),
+            RoderEvent::CodeIndexProofFilteredResultDropped(e) => e.context.turn_id.as_ref(),
             RoderEvent::ApprovalRequested(e) => Some(&e.turn_id),
             RoderEvent::ApprovalResolved(e) => Some(&e.turn_id),
             RoderEvent::UserInputRequested(e) => Some(&e.turn_id),
@@ -1640,6 +1674,32 @@ mod tests {
     #[test]
     fn empty_event_filter_matches_everything() {
         assert!(EventFilter::default().matches(&envelope(None, None, "runtime.started")));
+    }
+
+    #[test]
+    fn code_index_event_kind_and_scope_are_visible() {
+        let event = RoderEvent::CodeIndexProofFilteredResultDropped(
+            crate::code_index::CodeIndexProofFilteredResultDropped {
+                context: crate::code_index::CodeIndexEventContext {
+                    workspace_root: std::path::PathBuf::from("/repo"),
+                    generation_id: Some("gen-1".to_string()),
+                    thread_id: Some("thread-1".to_string()),
+                    turn_id: Some("turn-1".to_string()),
+                },
+                drop: crate::code_index::ProofFilteredDrop {
+                    query_id: "query-1".to_string(),
+                    path_hash: "path-hash".to_string(),
+                    content_hash: "content-hash".to_string(),
+                    reason: "proof missing".to_string(),
+                },
+                timestamp: OffsetDateTime::UNIX_EPOCH,
+            },
+        );
+
+        assert_eq!(event.kind(), "code_index.proof_filtered_result_dropped");
+        assert_eq!(event.thread_id().map(String::as_str), Some("thread-1"));
+        assert_eq!(event.turn_id().map(String::as_str), Some("turn-1"));
+        assert_eq!(event.source(), EventSource::Core);
     }
 
     #[test]
