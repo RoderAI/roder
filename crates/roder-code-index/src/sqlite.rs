@@ -38,6 +38,13 @@ pub struct SqliteCodeIndexStore {
     conn: Mutex<Connection>,
 }
 
+pub fn default_store_path(base_dir: impl AsRef<Path>, workspace_root: impl AsRef<Path>) -> PathBuf {
+    base_dir
+        .as_ref()
+        .join(workspace_key(workspace_root.as_ref()))
+        .join("code-index.sqlite3")
+}
+
 impl SqliteCodeIndexStore {
     pub fn open(path: impl AsRef<Path>) -> anyhow::Result<Self> {
         let path = path.as_ref().to_path_buf();
@@ -314,6 +321,10 @@ fn index_bytes(conn: &Connection) -> anyhow::Result<u64> {
 
 fn generation_id(root_hash: &str) -> String {
     format!("gen-{}", &root_hash[..16.min(root_hash.len())])
+}
+
+fn workspace_key(workspace_root: &Path) -> String {
+    crate::hex_sha256(workspace_root.to_string_lossy().as_bytes())
 }
 
 fn path_to_string(path: &Path) -> String {
