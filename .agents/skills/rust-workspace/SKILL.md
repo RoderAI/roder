@@ -1,29 +1,30 @@
 ---
 name: rust-workspace
-description: Runs and extends the Gode/Roder Rust workspace using mise, sccache, lld, hakari, and Makefile test targets. Use when adding crates or dependencies, running Rust tests, building roder-cli, or configuring local Rust tooling in this repo.
+description: Runs and extends the Gode/Roder Rust workspace using mise, lld, Cargo incremental builds, and Makefile test targets. Use when adding crates or dependencies, running Rust tests, building roder-cli, or configuring local Rust tooling in this repo.
 ---
 
 # Rust workspace (Gode / Roder)
 
 ## Environment
 
-Work from the repo root with **mise** active (`rust 1.95.0`, `sccache`, `uv`, `python`).
+Work from the repo root with **mise** active (`rust 1.95.0`, `uv`, `python`).
 
 ```sh
 cd /path/to/gode   # mise enter hook installs brew lld if missing
-mise run rust:setup   # first time / after dep changes: lld, nextest, hakari, workspace-hack
+mise run rust:setup   # first time: lld and nextest
 ```
 
-**First-time / after changing workspace deps:** `mise run rust:setup` (or `make dev-deps` + `make hakari-update`).
+**First-time setup:** `mise run rust:setup` (or `make dev-deps`).
 
 Local build acceleration (already configured; do not duplicate in per-crate files):
 
 | Piece | Location |
 |-------|----------|
-| `sccache` | `.cargo/config.toml` → `rustc-wrapper = "sccache"` |
 | `lld` (macOS) | mise `PATH` + `.cargo/config.toml` → `clang` + `-fuse-ld=lld` |
-| `workspace-hack` | `workspace-hack/` + `.config/hakari.toml` |
-| Dev profiles | root `Cargo.toml` → `debug = 1`, `split-debuginfo = "unpacked"` |
+| Dev profiles | root `Cargo.toml` → `debug = 0`, `split-debuginfo = "unpacked"` |
+| Incremental | `.cargo/config.toml` → `incremental = true` |
+
+Do not enable `sccache` by default for local dev: it can defeat incremental rebuild behavior and make edit/build loops slower. Use `RUSTC_WRAPPER=sccache ...` only for deliberate clean/shared-cache builds.
 
 Optional roadmap experiments: `CARGO_TARGET_DIR=.target-roadmap-local` (gitignored).
 
@@ -64,14 +65,7 @@ Prefer **Makefile / mise** over ad-hoc full-workspace `cargo test`.
 
 1. Add the version (and shared features) to **`[workspace.dependencies]`** in the **root** `Cargo.toml`.
 2. In the target crate: `some-crate.workspace = true` (add extra features only if this crate needs more than the workspace default).
-3. Regenerate hakari:
-
-```sh
-cargo hakari generate
-cargo hakari manage-deps -y
-```
-
-Or: `make hakari-update` / `mise run rust:setup` (includes hakari).
+3. Run `cargo check -p <target-crate>`.
 
 **Do not** `cargo add` into a leaf crate without updating the workspace root for shared deps — that duplicates versions and slows builds.
 
@@ -86,24 +80,19 @@ Or: `make hakari-update` / `mise run rust:setup` (includes hakari).
 1. Add `roder-foo = { path = "crates/roder-foo" }` under **`[workspace.dependencies]`** in root `Cargo.toml` (if new crate).
 2. Add `crates/roder-foo` to workspace members (glob `crates/*` usually picks it up).
 3. In dependents: `roder-foo.workspace = true`.
-4. Run hakari generate + manage-deps (new crate gets `workspace-hack` via `manage-deps`).
-
-### `workspace-hack`
-
-- Managed by **cargo hakari** — edit only the `BEGIN HAKARI SECTION` via `cargo hakari generate`, not by hand.
-- Every workspace crate should keep `workspace-hack = { version = "0.1", path = "../../workspace-hack" }` (path depth varies by crate dir).
+4. Run `cargo check -p roder-foo`.
 
 ## New workspace crate checklist
 
 - [ ] `crates/<name>/Cargo.toml` with `version.workspace = true`, `edition.workspace = true`
 - [ ] Root `Cargo.toml` `[workspace.dependencies]` entry for the package path
-- [ ] `cargo hakari generate && cargo hakari manage-deps -y`
 - [ ] `cargo check -p <name>` then targeted tests
 
 ## Building the product binary
 
 ```sh
 make build          # bin/roder debug
+make run-existing   # run bin/roder without invoking cargo
 make install        # release → ~/.local/bin/roder
 cargo build -p roder-cli --bin roder
 ```

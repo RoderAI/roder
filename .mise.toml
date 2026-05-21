@@ -2,7 +2,6 @@
 python = "3.12"
 rust = "1.95.0"
 uv = "0.11.7"
-sccache = "latest"
 
 [env]
 # Homebrew lld (user-installed); mise enter ensures these bins are on PATH.
@@ -46,12 +45,10 @@ description = "Run unit tests only (skip integration binaries)"
 run = "make test-fast"
 
 [tasks."rust:setup"]
-description = "Install Rust build tools (nextest, hakari) and ensure brew lld"
+description = "Install Rust build tools (nextest) and ensure brew lld"
 run = [
     "brew list lld >/dev/null 2>&1 || brew install lld",
     "make dev-deps",
-    "cargo hakari generate",
-    "cargo hakari manage-deps -y",
 ]
 
 [tasks."python:sync"]

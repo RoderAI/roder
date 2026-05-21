@@ -6,6 +6,5 @@ edition.workspace = true
 [dependencies]
 thiserror = "2"
 ratatui.workspace = true
-workspace-hack = { version = "0.1", path = "../../workspace-hack" }
 
 [dev-dependencies]
