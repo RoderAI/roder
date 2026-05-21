@@ -35,6 +35,28 @@ pub enum Freshness {
     Year,
 }
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ResponseFormat {
+    Concise,
+    Detailed,
+}
+
+impl Default for ResponseFormat {
+    fn default() -> Self {
+        Self::Concise
+    }
+}
+
+impl ResponseFormat {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Concise => "concise",
+            Self::Detailed => "detailed",
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct WebSearchRequest {
     pub query: String,
@@ -48,6 +70,8 @@ pub struct WebSearchRequest {
     pub country: Option<String>,
     #[serde(default)]
     pub include_content: bool,
+    #[serde(default)]
+    pub response_format: ResponseFormat,
 }
 
 impl WebSearchRequest {
@@ -60,6 +84,7 @@ impl WebSearchRequest {
             freshness: None,
             country: None,
             include_content: false,
+            response_format: ResponseFormat::default(),
         }
     }
 
@@ -201,6 +226,12 @@ pub fn canonical_web_search_schema() -> Value {
             "include_content": {
                 "type": "boolean",
                 "default": false
+            },
+            "response_format": {
+                "type": "string",
+                "enum": ["concise", "detailed"],
+                "default": "concise",
+                "description": "concise keeps answer and result snippets compact; detailed allows larger answer and snippet text."
             }
         },
         "required": ["query"]
@@ -284,6 +315,7 @@ mod tests {
             freshness: Some(Freshness::Week),
             country: Some(" us ".to_string()),
             include_content: true,
+            response_format: ResponseFormat::Concise,
         }
         .validate_and_normalize()
         .unwrap();
@@ -308,6 +340,10 @@ mod tests {
         assert_eq!(
             schema["properties"]["freshness"]["enum"],
             json!(["day", "week", "month", "year"])
+        );
+        assert_eq!(
+            schema["properties"]["response_format"]["enum"],
+            json!(["concise", "detailed"])
         );
     }
 

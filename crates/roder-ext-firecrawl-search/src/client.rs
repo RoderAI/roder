@@ -336,6 +336,7 @@ mod tests {
             freshness: None,
             country: None,
             include_content: true,
+            response_format: roder_web_search::ResponseFormat::Concise,
         };
 
         let body = firecrawl_request_body(&request, 12);
