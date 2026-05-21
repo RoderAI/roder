@@ -215,6 +215,7 @@ pub fn build_default_registry(config: DefaultRegistryConfig) -> anyhow::Result<E
     }
 
     let roder_home = roder_home_dir()?;
+    context::install_code_index_context_provider(&mut builder, &workspace, &roder_home)?;
     let session_dir = config
         .session_dir
         .unwrap_or_else(|| roder_home.join("sessions"));
