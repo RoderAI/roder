@@ -1,4 +1,4 @@
-use crate::types::WebSearchResponse;
+use crate::types::{ResponseFormat, WebSearchResponse};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct RenderOptions {
@@ -13,6 +13,23 @@ impl Default for RenderOptions {
             max_answer_chars: 1_200,
             max_excerpt_chars: 500,
             max_warning_chars: 240,
+        }
+    }
+}
+
+impl RenderOptions {
+    pub fn for_response_format(response_format: ResponseFormat) -> Self {
+        match response_format {
+            ResponseFormat::Concise => Self {
+                max_answer_chars: 600,
+                max_excerpt_chars: 180,
+                max_warning_chars: 160,
+            },
+            ResponseFormat::Detailed => Self {
+                max_answer_chars: 2_400,
+                max_excerpt_chars: 900,
+                max_warning_chars: 400,
+            },
         }
     }
 }
@@ -109,5 +126,25 @@ mod tests {
         assert!(text.contains("bbbbbbbbb..."));
         assert!(text.contains("Warnings:\nccccc..."));
         assert!(text.contains("https://example.com/roder"));
+    }
+
+    #[test]
+    fn response_format_controls_rendered_text_budget() {
+        let mut response = crate::testing::sample_response();
+        response.answer = Some("a ".repeat(1_500));
+        response.results[0].snippet = Some("b ".repeat(1_000));
+
+        let concise = render_web_search_response(
+            &response,
+            RenderOptions::for_response_format(ResponseFormat::Concise),
+        );
+        let detailed = render_web_search_response(
+            &response,
+            RenderOptions::for_response_format(ResponseFormat::Detailed),
+        );
+
+        assert!(concise.len() < detailed.len());
+        assert!(concise.contains("..."));
+        assert!(detailed.contains("Results:"));
     }
 }

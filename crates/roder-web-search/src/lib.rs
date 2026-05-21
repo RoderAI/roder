@@ -9,6 +9,6 @@ pub use http::{
 };
 pub use render::{RenderOptions, render_web_search_response};
 pub use types::{
-    Freshness, WebSearchProviderConfig, WebSearchProviderKind, WebSearchRequest, WebSearchResponse,
-    WebSearchResult, WebSearchUsage, canonical_web_search_schema,
+    Freshness, ResponseFormat, WebSearchProviderConfig, WebSearchProviderKind, WebSearchRequest,
+    WebSearchResponse, WebSearchResult, WebSearchUsage, canonical_web_search_schema,
 };
