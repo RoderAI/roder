@@ -195,18 +195,68 @@ async fn execute_remote_process_task(
     ctx: TaskExecutionContext,
     input: ProcessTaskInput,
 ) -> anyhow::Result<TaskExecutionResult> {
-    let Some(session) = ctx.runner_session else {
+    let Some(session) = ctx.runner_session.clone() else {
         bail!("remote process task requires runner session");
     };
-    let output = session
+    let command_id = ctx.task_id.clone();
+    let command_parts = std::iter::once(input.command.clone())
+        .chain(input.args.clone())
+        .collect::<Vec<_>>();
+    let state = session.state();
+    let process_id = format!("remote-{}", ctx.task_id);
+    if let Some(registry) = ctx.process_registry.as_ref() {
+        registry
+            .register_process(
+                ProcessDescriptor {
+                    process_id: process_id.clone(),
+                    origin: ProcessOrigin::RemoteRunner,
+                    state: ProcessState::Running,
+                    command: command_parts.clone(),
+                    command_summary: command_summary(&command_parts),
+                    cwd: input.cwd.clone(),
+                    pid: None,
+                    task_id: Some(ctx.task_id.clone()),
+                    thread_id: ctx.thread_id.clone(),
+                    turn_id: ctx.turn_id.clone(),
+                    runner_destination_id: ctx
+                        .runner_destination
+                        .as_ref()
+                        .map(|destination| destination.id.clone())
+                        .or_else(|| Some(state.destination_id.clone())),
+                    runner_session_id: Some(state.session_id.clone()),
+                    stoppable: true,
+                    started_at: time::OffsetDateTime::now_utc(),
+                    updated_at: time::OffsetDateTime::now_utc(),
+                    stdout_tail: None,
+                    stderr_tail: None,
+                },
+                Some(Arc::new(RemoteCommandStopper {
+                    session: Arc::clone(&session),
+                    command_id: command_id.clone(),
+                })),
+            )
+            .await?;
+    }
+    let output = match session
         .run_command(RunnerCommandRequest {
-            command_id: ctx.task_id.clone(),
+            command_id: command_id.clone(),
             program: input.command.clone(),
             args: input.args.clone(),
             cwd: input.cwd.as_deref().map(PathBuf::from),
             env: input.env_overrides.clone().into_iter().collect(),
         })
-        .await?;
+        .await
+    {
+        Ok(output) => output,
+        Err(error) => {
+            if let Some(registry) = ctx.process_registry.as_ref() {
+                let _ = registry
+                    .mark_process_failed(&process_id, error.to_string())
+                    .await;
+            }
+            return Err(error);
+        }
+    };
     if !output.stdout.is_empty() {
         ctx.output
             .write(TaskOutputStream::Stdout, output.stdout.clone())
@@ -216,6 +266,11 @@ async fn execute_remote_process_task(
         ctx.output
             .write(TaskOutputStream::Stderr, output.stderr.clone())
             .await?;
+    }
+    if let Some(registry) = ctx.process_registry.as_ref() {
+        let _ = registry
+            .mark_process_exited(&process_id, output.exit_code)
+            .await;
     }
     Ok(TaskExecutionResult {
         exit_code: output.exit_code,
@@ -228,6 +283,23 @@ async fn execute_remote_process_task(
             "success": output.exit_code == Some(0),
         }),
     })
+}
+
+struct RemoteCommandStopper {
+    session: Arc<dyn roder_api::remote_runner::RemoteRunnerSession>,
+    command_id: String,
+}
+
+#[async_trait::async_trait]
+impl ProcessStopper for RemoteCommandStopper {
+    async fn stop(&self, _reason: Option<String>) -> anyhow::Result<()> {
+        let cancelled = self.session.cancel_command(&self.command_id).await?;
+        if cancelled {
+            Ok(())
+        } else {
+            bail!("remote runner did not cancel command {:?}", self.command_id)
+        }
+    }
 }
 
 async fn stream_pipe(
