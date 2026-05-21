@@ -58,6 +58,8 @@ pub struct StatusContext<'a> {
     pub session: &'a SessionSummary,
     pub policy_mode: PolicyMode,
     pub model: Option<&'a str>,
+    pub model_profile: Option<&'a str>,
+    pub model_switch_summary: Option<&'a str>,
     pub usage: Option<&'a SessionUsage>,
     pub git: Option<&'a GitSnapshot>,
     pub mcp: &'a [McpServerStatus],
@@ -119,6 +121,21 @@ pub fn built_in_status_segments() -> Vec<StatusSegment> {
                 .unwrap_or_else(|| "model:-".to_string()),
             style: StatusStyle::Default,
             tooltip: Some("Active model".to_string()),
+        }),
+        StatusSegment::new("profile", 85, 8, |ctx| StatusCell {
+            text: ctx
+                .model_profile
+                .map(|profile| format!("profile:{profile}"))
+                .unwrap_or_else(|| "profile:-".to_string()),
+            style: if ctx.model_switch_summary.is_some() {
+                StatusStyle::Warning
+            } else {
+                StatusStyle::Muted
+            },
+            tooltip: ctx
+                .model_switch_summary
+                .map(str::to_string)
+                .or_else(|| Some("Active model harness profile".to_string())),
         }),
         StatusSegment::new("session", 80, 8, |ctx| StatusCell {
             text: format!("session:{}", short_id(&ctx.session.thread_id)),

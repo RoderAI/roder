@@ -48,6 +48,8 @@ use crate::verification_gate::VerificationGateState;
 const MAX_TOOL_ROUNDS_PER_TURN: usize = 1024;
 const FINAL_ANSWER_PHASE: &str = "final_answer";
 pub(crate) const MIN_CHILD_DEADLINE_SECONDS: u64 = 2;
+const MODEL_PROFILE_TRACE_KIND: &str = "model_profile_segment";
+const MODEL_SWITCH_SUMMARY_PREFIX: &str = "Model switch summary:";
 
 #[derive(Debug, Clone)]
 pub struct RuntimeConfig {
@@ -1230,6 +1232,18 @@ impl Runtime {
             ToolChoice::Auto
         };
         let mut conversation = self.conversation_for_turn(&req, &turn_id, &model).await?;
+        if let Some(summary) = model_switch_summary(
+            &conversation,
+            model_profile.as_ref(),
+            &provider,
+            &model,
+            &tools,
+        ) {
+            let item = ConversationItem::UserMessage(UserMessage::text(summary));
+            self.persist_turn_item(&req.thread_id, &turn_id, &item)
+                .await?;
+            conversation.push(item);
+        }
         let runner_session = self.runner_session_for_thread(&req.thread_id).await?;
         if !capabilities.image_input && conversation_has_images(&conversation) {
             self.fail_turn_with_error(
@@ -1493,6 +1507,15 @@ impl Runtime {
                         self.persist_turn_item(&req.thread_id, &turn_id, &item)
                             .await?;
                         conversation.push(item);
+                        self.persist_model_profile_segment(
+                            &req.thread_id,
+                            &turn_id,
+                            model_profile.as_ref(),
+                            &provider,
+                            &model,
+                            "assistant",
+                        )
+                        .await?;
                     }
                     if !assistant_text.is_empty() {
                         let assistant = ConversationItem::AssistantMessage(AssistantMessage {
@@ -1502,6 +1525,15 @@ impl Runtime {
                         self.persist_turn_item(&req.thread_id, &turn_id, &assistant)
                             .await?;
                         conversation.push(assistant);
+                        self.persist_model_profile_segment(
+                            &req.thread_id,
+                            &turn_id,
+                            model_profile.as_ref(),
+                            &provider,
+                            &model,
+                            "assistant",
+                        )
+                        .await?;
                     }
                     if let Some(metadata) = provider_metadata {
                         let item = ConversationItem::ProviderMetadata(metadata);
@@ -1545,12 +1577,30 @@ impl Runtime {
                 self.persist_turn_item(&req.thread_id, &turn_id, &item)
                     .await?;
                 conversation.push(item);
+                self.persist_model_profile_segment(
+                    &req.thread_id,
+                    &turn_id,
+                    model_profile.as_ref(),
+                    &provider,
+                    &model,
+                    "assistant",
+                )
+                .await?;
             }
             if !assistant_text.is_empty() {
                 conversation.push(ConversationItem::AssistantMessage(AssistantMessage {
                     text: assistant_text,
                     phase: Some(FINAL_ANSWER_PHASE.to_string()),
                 }));
+                self.persist_model_profile_segment(
+                    &req.thread_id,
+                    &turn_id,
+                    model_profile.as_ref(),
+                    &provider,
+                    &model,
+                    "assistant",
+                )
+                .await?;
             }
             if let Some(metadata) = provider_metadata {
                 let item = ConversationItem::ProviderMetadata(metadata);
@@ -1567,6 +1617,15 @@ impl Runtime {
                 self.persist_turn_item(&req.thread_id, &turn_id, &tool_item)
                     .await?;
                 conversation.push(tool_item);
+                self.persist_model_profile_segment(
+                    &req.thread_id,
+                    &turn_id,
+                    model_profile.as_ref(),
+                    &provider,
+                    &model,
+                    "tool_call",
+                )
+                .await?;
             }
             if let Some(deadline) = turn_deadline
                 && deadline_expired(deadline)
@@ -1588,6 +1647,15 @@ impl Runtime {
             for result in results {
                 verification_gate.record_tool_result(&result);
                 conversation.push(ConversationItem::ToolResult(result));
+                self.persist_model_profile_segment(
+                    &req.thread_id,
+                    &turn_id,
+                    model_profile.as_ref(),
+                    &provider,
+                    &model,
+                    "tool_result",
+                )
+                .await?;
             }
             conversation = self
                 .compact_conversation_if_needed(&req.thread_id, &turn_id, &model, conversation)
@@ -1635,6 +1703,15 @@ impl Runtime {
                 &ConversationItem::AssistantMessage(message),
             )
             .await?;
+            self.persist_model_profile_segment(
+                &req.thread_id,
+                &turn_id,
+                model_profile.as_ref(),
+                &provider,
+                &model,
+                "assistant",
+            )
+            .await?;
         }
         if !final_assistant_text.is_empty() {
             self.persist_turn_item(
@@ -1644,6 +1721,15 @@ impl Runtime {
                     text: final_assistant_text,
                     phase: Some(FINAL_ANSWER_PHASE.to_string()),
                 }),
+            )
+            .await?;
+            self.persist_model_profile_segment(
+                &req.thread_id,
+                &turn_id,
+                model_profile.as_ref(),
+                &provider,
+                &model,
+                "assistant",
             )
             .await?;
         }
@@ -1795,6 +1881,21 @@ impl Runtime {
             conversation.push(item);
         }
         Ok(())
+    }
+
+    async fn persist_model_profile_segment(
+        &self,
+        thread_id: &ThreadId,
+        turn_id: &TurnId,
+        profile: Option<&ModelHarnessProfile>,
+        provider: &str,
+        model: &str,
+        segment: &str,
+    ) -> anyhow::Result<()> {
+        let item = ConversationItem::ProviderMetadata(model_profile_segment_metadata(
+            profile, provider, model, segment,
+        ));
+        self.persist_turn_item(thread_id, turn_id, &item).await
     }
 
     fn filtered_tool_specs(
@@ -2052,6 +2153,87 @@ fn schema_policy_for_model(profile: Option<&ModelHarnessProfile>) -> ModelSchema
         .unwrap_or_default()
 }
 
+fn model_profile_segment_metadata(
+    profile: Option<&ModelHarnessProfile>,
+    provider: &str,
+    model: &str,
+    segment: &str,
+) -> serde_json::Value {
+    serde_json::json!({
+        "kind": MODEL_PROFILE_TRACE_KIND,
+        "segment": segment,
+        "provider": provider,
+        "model": model,
+        "profileModel": profile.map(|profile| profile.model.as_str()).unwrap_or(model),
+        "providerFamily": profile.map(|profile| profile.provider_family),
+        "editTool": profile.and_then(|profile| profile.edit_tool.as_deref()),
+        "schemaPolicy": profile.map(|profile| profile.schema_policy),
+        "instructionOverlay": profile.map(|profile| profile.instruction_overlay),
+        "parallelToolCalls": profile.and_then(|profile| profile.parallel_tool_calls),
+        "autoCompactTokenLimit": profile.and_then(|profile| profile.auto_compact_token_limit),
+    })
+}
+
+fn model_switch_summary(
+    conversation: &[ConversationItem],
+    profile: Option<&ModelHarnessProfile>,
+    provider: &str,
+    model: &str,
+    tools: &[roder_api::tools::ToolSpec],
+) -> Option<String> {
+    let previous = latest_model_profile_segment(conversation)?;
+    let previous_model = previous
+        .get("model")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or_default();
+    let previous_provider = previous
+        .get("provider")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or_default();
+    if previous_model == model && previous_provider == provider {
+        return None;
+    }
+
+    let previous_profile = previous
+        .get("profileModel")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or(previous_model);
+    let current_profile = profile
+        .map(|profile| profile.model.as_str())
+        .unwrap_or(model);
+    let previous_edit_tool = previous
+        .get("editTool")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or("none");
+    let current_edit_tool = profile
+        .and_then(|profile| profile.edit_tool.as_deref())
+        .unwrap_or("none");
+    let tool_names = tools
+        .iter()
+        .map(|tool| tool.name.as_str())
+        .take(12)
+        .collect::<Vec<_>>()
+        .join(", ");
+    Some(format!(
+        "{MODEL_SWITCH_SUMMARY_PREFIX} previous profile {previous_provider}/{previous_profile} used edit tool {previous_edit_tool}. Current profile {provider}/{current_profile} uses edit tool {current_edit_tool}. Available tools now: {}.",
+        if tool_names.is_empty() {
+            "none"
+        } else {
+            &tool_names
+        }
+    ))
+}
+
+fn latest_model_profile_segment(conversation: &[ConversationItem]) -> Option<&serde_json::Value> {
+    conversation.iter().rev().find_map(|item| {
+        let ConversationItem::ProviderMetadata(value) = item else {
+            return None;
+        };
+        (value.get("kind").and_then(serde_json::Value::as_str) == Some(MODEL_PROFILE_TRACE_KIND))
+            .then_some(value)
+    })
+}
+
 pub fn validate_edit_tool(value: &str) -> anyhow::Result<()> {
     match value.trim() {
         EDIT_TOOL_PATCH | EDIT_TOOL_EDIT => Ok(()),
@@ -2075,6 +2257,7 @@ mod tests {
         ModelProfileReasoning, ModelSchemaPolicy, ProviderFamily,
     };
     use roder_api::tools::{ToolContributor, ToolExecutor, ToolSpec};
+    use roder_ext_jsonl_session::store::JsonlSessionStoreFactory;
     use std::sync::Mutex as StdMutex;
 
     #[test]
@@ -2438,6 +2621,49 @@ mod tests {
         }
     }
 
+    struct SwitchCaptureEngine {
+        requests: Arc<StdMutex<Vec<AgentInferenceRequest>>>,
+    }
+
+    #[async_trait::async_trait]
+    impl InferenceEngine for SwitchCaptureEngine {
+        fn id(&self) -> String {
+            roder_api::catalog::PROVIDER_MOCK.to_string()
+        }
+
+        fn capabilities(&self) -> InferenceCapabilities {
+            InferenceCapabilities::coding_agent_default()
+        }
+
+        async fn list_models(
+            &self,
+            _ctx: InferenceProviderContext<'_>,
+        ) -> anyhow::Result<Vec<roder_api::inference::ModelDescriptor>> {
+            Ok(roder_api::catalog::models_for_provider(
+                roder_api::catalog::PROVIDER_MOCK,
+                true,
+            ))
+        }
+
+        async fn stream_turn(
+            &self,
+            _ctx: InferenceTurnContext<'_>,
+            request: AgentInferenceRequest,
+        ) -> anyhow::Result<InferenceEventStream> {
+            self.requests.lock().unwrap().push(request);
+            Ok(Box::pin(stream::iter(vec![
+                Ok(InferenceEvent::MessageDelta(MessageDelta {
+                    text: "done".to_string(),
+                    phase: None,
+                })),
+                Ok(InferenceEvent::Completed(CompletionMetadata {
+                    stop_reason: Some("stop".to_string()),
+                    provider_response_id: None,
+                })),
+            ])))
+        }
+    }
+
     struct DeadlineEngine;
 
     #[async_trait::async_trait]
@@ -2717,6 +2943,114 @@ mod tests {
         assert_eq!(request.reasoning.level.as_deref(), Some(REASONING_HIGH));
         assert_eq!(request.runtime.parallel_tool_calls, Some(true));
         assert_eq!(request.runtime.auto_compact_token_limit, Some(999));
+    }
+
+    #[tokio::test]
+    async fn model_switch_injects_summary_and_records_profile_segments() {
+        let requests = Arc::new(StdMutex::new(Vec::new()));
+        let session_root = std::env::temp_dir().join(format!(
+            "roder-model-switch-session-{}",
+            uuid::Uuid::new_v4()
+        ));
+        let mut builder = ExtensionRegistryBuilder::new();
+        builder.inference_engine(Arc::new(SwitchCaptureEngine {
+            requests: requests.clone(),
+        }));
+        builder.session_store_factory(Arc::new(JsonlSessionStoreFactory {
+            base_path: session_root.clone(),
+        }));
+        builder.tool_contributor(Arc::new(ProfileToolContributor));
+        let mut claude_profile = test_model_profile("claude-haiku-4-5-20251001");
+        claude_profile.provider_family = ProviderFamily::Anthropic;
+        claude_profile.edit_tool = Some(EDIT_TOOL_EDIT.to_string());
+        let runtime = Arc::new(
+            Runtime::new(
+                builder.build().unwrap(),
+                RuntimeConfig {
+                    default_provider: roder_api::catalog::PROVIDER_MOCK.to_string(),
+                    default_model: "gpt-5.5".to_string(),
+                    model_profiles: std::collections::HashMap::from([
+                        ("gpt-5.5".to_string(), test_model_profile("gpt-5.5")),
+                        ("claude-haiku-4-5-20251001".to_string(), claude_profile),
+                    ]),
+                    ..RuntimeConfig::default()
+                },
+            )
+            .unwrap(),
+        );
+        let mut rx = runtime.subscribe_events();
+        for (message, model_override) in [
+            ("first turn", None),
+            ("second turn", Some("claude-haiku-4-5-20251001".to_string())),
+        ] {
+            let turn_id = runtime
+                .start_turn(StartTurnRequest {
+                    thread_id: "thread-model-switch".to_string(),
+                    message: message.to_string(),
+                    images: Vec::new(),
+                    provider_override: None,
+                    model_override,
+                    workspace: None,
+                    instructions: InstructionBundle::default(),
+                    task_ledger_required: false,
+                })
+                .await
+                .unwrap();
+            tokio::time::timeout(std::time::Duration::from_secs(5), async {
+                loop {
+                    let envelope = rx.recv().await.unwrap();
+                    if envelope.turn_id.as_deref() != Some(&turn_id) {
+                        continue;
+                    }
+                    match envelope.event {
+                        RoderEvent::TurnCompleted(_) => break,
+                        RoderEvent::TurnFailed(event) => panic!("turn failed: {}", event.error),
+                        _ => {}
+                    }
+                }
+            })
+            .await
+            .unwrap();
+        }
+
+        let captured = requests.lock().unwrap().clone();
+        assert_eq!(captured.len(), 2);
+        assert!(captured[1].conversation.iter().any(|item| {
+            matches!(
+                item,
+                ConversationItem::UserMessage(message)
+                    if message.text.starts_with(MODEL_SWITCH_SUMMARY_PREFIX)
+                        && message.text.contains("previous profile mock/gpt-5.5")
+                        && message.text.contains("Current profile mock/claude-haiku-4-5-20251001")
+                        && message.text.contains("Available tools now:")
+            )
+        }));
+
+        let snapshot = runtime
+            .session_store
+            .as_ref()
+            .unwrap()
+            .load_session(&"thread-model-switch".to_string())
+            .await
+            .unwrap()
+            .unwrap();
+        let trace_segments = snapshot
+            .turns
+            .iter()
+            .flat_map(|turn| &turn.items)
+            .filter(|item| {
+                matches!(
+                    item,
+                    ConversationItem::ProviderMetadata(value)
+                        if value.get("kind").and_then(serde_json::Value::as_str)
+                            == Some(MODEL_PROFILE_TRACE_KIND)
+                            && value.get("segment").and_then(serde_json::Value::as_str)
+                                == Some("assistant")
+                )
+            })
+            .count();
+        assert!(trace_segments >= 2);
+        let _ = std::fs::remove_dir_all(session_root);
     }
 
     struct CountingTaskTool {
