@@ -1,0 +1,342 @@
+use roder_api::events::{RoderEvent, ThreadId, TurnId};
+use roder_api::inference::InferenceEvent;
+use serde::{Deserialize, Serialize};
+use time::OffsetDateTime;
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct EvalRun {
+    pub suite_id: String,
+    pub run_id: String,
+    pub provider: String,
+    pub model: String,
+    #[serde(with = "time::serde::rfc3339")]
+    pub started_at: OffsetDateTime,
+    #[serde(default)]
+    pub tags: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct EvalTrajectory {
+    pub thread_id: ThreadId,
+    pub turn_id: TurnId,
+    #[serde(default)]
+    pub events: Vec<EvalTrajectoryEvent>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct EvalTrajectoryEvent {
+    #[serde(with = "time::serde::rfc3339")]
+    pub timestamp: OffsetDateTime,
+    pub event_type: String,
+    pub thread_id: ThreadId,
+    pub turn_id: TurnId,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tool_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tool_name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub token_usage: Option<EvalTokenUsage>,
+    #[serde(default)]
+    pub is_error: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct EvalTokenUsage {
+    pub prompt_tokens: u32,
+    pub completion_tokens: u32,
+    pub total_tokens: u32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct EvalMetric {
+    pub name: String,
+    pub kind: EvalMetricKind,
+    pub value: f64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub unit: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum EvalMetricKind {
+    Outcome,
+    Count,
+    Duration,
+    Tokens,
+    Flag,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum EvalOutcome {
+    Pass,
+    Fail,
+    Timeout,
+    HarnessError,
+    VerifierUncertain,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum EvalFailureClass {
+    Model,
+    ToolSchema,
+    Runtime,
+    Environment,
+    Provider,
+    Verifier,
+    Unknown,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct EvalReport {
+    pub run: EvalRun,
+    pub outcome: EvalOutcome,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub failure_class: Option<EvalFailureClass>,
+    pub trajectory: EvalTrajectory,
+    #[serde(default)]
+    pub metrics: Vec<EvalMetric>,
+}
+
+impl EvalTrajectory {
+    pub fn from_events(
+        thread_id: impl Into<ThreadId>,
+        turn_id: impl Into<TurnId>,
+        events: &[RoderEvent],
+    ) -> Self {
+        let thread_id = thread_id.into();
+        let turn_id = turn_id.into();
+        let events = events
+            .iter()
+            .filter_map(EvalTrajectoryEvent::from_event)
+            .collect();
+        Self {
+            thread_id,
+            turn_id,
+            events,
+        }
+    }
+}
+
+impl EvalTrajectoryEvent {
+    pub fn from_event(event: &RoderEvent) -> Option<Self> {
+        match event {
+            RoderEvent::TurnStarted(e) => Some(Self::basic(
+                "turn_started",
+                &e.thread_id,
+                &e.turn_id,
+                e.timestamp,
+            )),
+            RoderEvent::InferenceStarted(e) => Some(Self::basic(
+                "inference_started",
+                &e.thread_id,
+                &e.turn_id,
+                e.timestamp,
+            )),
+            RoderEvent::InferenceEventReceived(e) => {
+                let mut event =
+                    Self::basic("inference_event", &e.thread_id, &e.turn_id, e.timestamp);
+                if let InferenceEvent::Usage(usage) = &e.event {
+                    event.token_usage = Some(EvalTokenUsage {
+                        prompt_tokens: usage.prompt_tokens,
+                        completion_tokens: usage.completion_tokens,
+                        total_tokens: usage.total_tokens,
+                    });
+                }
+                Some(event)
+            }
+            RoderEvent::ToolCallRequested(e) => {
+                let mut event =
+                    Self::basic("tool_call_requested", &e.thread_id, &e.turn_id, e.timestamp);
+                event.tool_id = Some(e.tool_id.clone());
+                event.tool_name = Some(e.tool_name.clone());
+                Some(event)
+            }
+            RoderEvent::ToolCallStarted(e) => {
+                let mut event =
+                    Self::basic("tool_call_started", &e.thread_id, &e.turn_id, e.timestamp);
+                event.tool_id = Some(e.tool_id.clone());
+                event.tool_name = e.tool_name.clone();
+                Some(event)
+            }
+            RoderEvent::ToolCallCompleted(e) => {
+                let mut event =
+                    Self::basic("tool_call_completed", &e.thread_id, &e.turn_id, e.timestamp);
+                event.tool_id = Some(e.tool_id.clone());
+                event.tool_name = e.tool_name.clone();
+                event.is_error = e.is_error;
+                Some(event)
+            }
+            _ => None,
+        }
+    }
+
+    fn basic(
+        event_type: impl Into<String>,
+        thread_id: &ThreadId,
+        turn_id: &TurnId,
+        timestamp: OffsetDateTime,
+    ) -> Self {
+        Self {
+            timestamp,
+            event_type: event_type.into(),
+            thread_id: thread_id.clone(),
+            turn_id: turn_id.clone(),
+            tool_id: None,
+            tool_name: None,
+            token_usage: None,
+            is_error: false,
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use roder_api::events::{
+        InferenceEventReceived, RoderEvent, ToolCallCompleted, ToolCallRequested, TurnStarted,
+    };
+    use roder_api::inference::{InferenceEvent, TokenUsage};
+
+    use super::*;
+
+    #[test]
+    fn trajectory_preserves_turn_tool_and_token_usage_ids() {
+        let events = vec![
+            RoderEvent::TurnStarted(TurnStarted {
+                thread_id: "thread-1".to_string(),
+                turn_id: "turn-1".to_string(),
+                timestamp: OffsetDateTime::UNIX_EPOCH,
+            }),
+            RoderEvent::ToolCallRequested(ToolCallRequested {
+                thread_id: "thread-1".to_string(),
+                turn_id: "turn-1".to_string(),
+                tool_id: "tool-1".to_string(),
+                tool_name: "exec_command".to_string(),
+                display_payload: None,
+                timestamp: OffsetDateTime::UNIX_EPOCH,
+            }),
+            RoderEvent::ToolCallCompleted(ToolCallCompleted {
+                thread_id: "thread-1".to_string(),
+                turn_id: "turn-1".to_string(),
+                tool_id: "tool-1".to_string(),
+                tool_name: Some("exec_command".to_string()),
+                display_payload: None,
+                is_error: true,
+                output: Some("missing cmd".to_string()),
+                timestamp: OffsetDateTime::UNIX_EPOCH,
+            }),
+            RoderEvent::InferenceEventReceived(InferenceEventReceived {
+                thread_id: "thread-1".to_string(),
+                turn_id: "turn-1".to_string(),
+                event: InferenceEvent::Usage(TokenUsage {
+                    prompt_tokens: 10,
+                    completion_tokens: 5,
+                    total_tokens: 15,
+                }),
+                timestamp: OffsetDateTime::UNIX_EPOCH,
+            }),
+        ];
+
+        let trajectory = EvalTrajectory::from_events("thread-1", "turn-1", &events);
+
+        assert_eq!(trajectory.events.len(), 4);
+        assert_eq!(trajectory.events[1].tool_id.as_deref(), Some("tool-1"));
+        assert!(trajectory.events[2].is_error);
+        assert_eq!(
+            trajectory.events[3]
+                .token_usage
+                .as_ref()
+                .unwrap()
+                .total_tokens,
+            15
+        );
+        let json = serde_json::to_value(&trajectory).unwrap();
+        assert_eq!(json["events"][1]["toolName"], "exec_command");
+    }
+
+    #[test]
+    fn eval_reports_round_trip_failure_classes() {
+        let report = EvalReport {
+            run: EvalRun {
+                suite_id: "tool-schema".to_string(),
+                run_id: "run-1".to_string(),
+                provider: "mock".to_string(),
+                model: "mock".to_string(),
+                started_at: OffsetDateTime::UNIX_EPOCH,
+                tags: vec!["offline".to_string()],
+            },
+            outcome: EvalOutcome::Fail,
+            failure_class: Some(EvalFailureClass::ToolSchema),
+            trajectory: EvalTrajectory {
+                thread_id: "thread-1".to_string(),
+                turn_id: "turn-1".to_string(),
+                events: Vec::new(),
+            },
+            metrics: vec![EvalMetric {
+                name: "tool_errors".to_string(),
+                kind: EvalMetricKind::Count,
+                value: 1.0,
+                unit: None,
+            }],
+        };
+
+        let json = serde_json::to_string(&report).unwrap();
+        let round_trip: EvalReport = serde_json::from_str(&json).unwrap();
+
+        assert_eq!(round_trip.outcome, EvalOutcome::Fail);
+        assert_eq!(round_trip.failure_class, Some(EvalFailureClass::ToolSchema));
+        assert_eq!(round_trip.metrics[0].name, "tool_errors");
+    }
+
+    #[test]
+    fn eval_report_serde_fixtures_cover_core_outcomes() {
+        let cases = [
+            (EvalOutcome::Pass, None),
+            (EvalOutcome::Fail, Some(EvalFailureClass::ToolSchema)),
+            (EvalOutcome::Timeout, Some(EvalFailureClass::Runtime)),
+            (
+                EvalOutcome::VerifierUncertain,
+                Some(EvalFailureClass::Verifier),
+            ),
+        ];
+
+        for (index, (outcome, failure_class)) in cases.into_iter().enumerate() {
+            let report = EvalReport {
+                run: EvalRun {
+                    suite_id: "phase44-fixtures".to_string(),
+                    run_id: format!("run-{index}"),
+                    provider: "mock".to_string(),
+                    model: "mock".to_string(),
+                    started_at: OffsetDateTime::UNIX_EPOCH,
+                    tags: vec!["offline".to_string()],
+                },
+                outcome,
+                failure_class,
+                trajectory: EvalTrajectory {
+                    thread_id: "thread-1".to_string(),
+                    turn_id: "turn-1".to_string(),
+                    events: Vec::new(),
+                },
+                metrics: vec![EvalMetric {
+                    name: "wall_time_ms".to_string(),
+                    kind: EvalMetricKind::Duration,
+                    value: 12.0,
+                    unit: Some("ms".to_string()),
+                }],
+            };
+
+            let value = serde_json::to_value(&report).unwrap();
+            let round_trip: EvalReport = serde_json::from_value(value).unwrap();
+
+            assert_eq!(round_trip.outcome, report.outcome);
+            assert_eq!(round_trip.failure_class, report.failure_class);
+        }
+    }
+}

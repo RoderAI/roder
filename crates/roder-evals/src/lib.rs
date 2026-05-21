@@ -6,11 +6,16 @@ use roder_core::artifacts::{ContextArtifactStore, CreateArtifactRequest};
 use serde::{Deserialize, Serialize};
 use time::OffsetDateTime;
 
+pub mod fixture;
 pub mod graders;
+pub mod trace;
+
+pub use fixture::*;
+pub use trace::*;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
-pub struct EvalFixture {
+pub struct FileBackedContextFixture {
     pub id: String,
     pub title: String,
     pub prompt: String,
@@ -40,7 +45,7 @@ pub struct EvalRunOptions {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
-pub struct EvalReport {
+pub struct FileBackedContextReport {
     pub fixture_dir: PathBuf,
     pub offline: bool,
     #[serde(with = "time::serde::rfc3339")]
@@ -68,7 +73,7 @@ pub struct FileBackedContextResult {
     pub recovered_detail: Option<String>,
 }
 
-pub fn load_fixtures(dir: &Path) -> anyhow::Result<Vec<EvalFixture>> {
+pub fn load_fixtures(dir: &Path) -> anyhow::Result<Vec<FileBackedContextFixture>> {
     let mut fixtures = Vec::new();
     for entry in std::fs::read_dir(dir)? {
         let path = entry?.path();
@@ -78,14 +83,14 @@ pub fn load_fixtures(dir: &Path) -> anyhow::Result<Vec<EvalFixture>> {
         let text = std::fs::read_to_string(&path)?;
         fixtures.push(serde_json::from_str(&text)?);
     }
-    fixtures.sort_by(|left: &EvalFixture, right| left.id.cmp(&right.id));
+    fixtures.sort_by(|left: &FileBackedContextFixture, right| left.id.cmp(&right.id));
     Ok(fixtures)
 }
 
 pub fn run_file_backed_context_eval(
     fixture_dir: &Path,
     options: EvalRunOptions,
-) -> anyhow::Result<EvalReport> {
+) -> anyhow::Result<FileBackedContextReport> {
     if !options.offline {
         anyhow::bail!("file-backed context evals currently require --offline");
     }
@@ -94,7 +99,7 @@ pub fn run_file_backed_context_eval(
         .iter()
         .map(run_file_backed_fixture_benchmark)
         .collect::<anyhow::Result<Vec<_>>>()?;
-    let report = EvalReport {
+    let report = FileBackedContextReport {
         fixture_dir: fixture_dir.to_path_buf(),
         offline: options.offline,
         generated_at: OffsetDateTime::now_utc(),
@@ -107,7 +112,7 @@ pub fn run_file_backed_context_eval(
 }
 
 pub fn write_file_backed_context_benchmark_markdown(
-    report: &EvalReport,
+    report: &FileBackedContextReport,
     output_dir: &Path,
 ) -> anyhow::Result<()> {
     std::fs::create_dir_all(output_dir)?;
@@ -123,7 +128,7 @@ pub fn write_file_backed_context_benchmark_markdown(
 }
 
 fn run_file_backed_fixture_benchmark(
-    fixture: &EvalFixture,
+    fixture: &FileBackedContextFixture,
 ) -> anyhow::Result<FileBackedContextResult> {
     let start = Instant::now();
     let payload = fixture_payload(fixture);
@@ -194,7 +199,7 @@ fn run_file_backed_fixture_benchmark(
     Ok(result)
 }
 
-fn fixture_payload(fixture: &EvalFixture) -> String {
+fn fixture_payload(fixture: &FileBackedContextFixture) -> String {
     match fixture.id.as_str() {
         "long-command-output" => {
             let mut lines = Vec::with_capacity(2_400);
@@ -234,7 +239,7 @@ fn fixture_payload(fixture: &EvalFixture) -> String {
     }
 }
 
-fn fixture_kind(fixture: &EvalFixture) -> ContextArtifactKind {
+fn fixture_kind(fixture: &FileBackedContextFixture) -> ContextArtifactKind {
     if fixture.tags.iter().any(|tag| tag == "compaction") {
         ContextArtifactKind::ChatHistory
     } else {
@@ -242,14 +247,14 @@ fn fixture_kind(fixture: &EvalFixture) -> ContextArtifactKind {
     }
 }
 
-fn inline_after_text(fixture: &EvalFixture, reference: &str) -> String {
+fn inline_after_text(fixture: &FileBackedContextFixture, reference: &str) -> String {
     format!(
         "{}\n\nStored dynamic context externally.\n{}",
         fixture.prompt, reference
     )
 }
 
-fn recover_detail(text: &str, fixture: &EvalFixture) -> Option<String> {
+fn recover_detail(text: &str, fixture: &FileBackedContextFixture) -> Option<String> {
     text.lines()
         .find(|line| line.contains(&fixture.expected_answer_contains))
         .map(ToOwned::to_owned)
@@ -265,7 +270,7 @@ fn format_rfc3339(timestamp: OffsetDateTime) -> String {
         .unwrap_or_else(|_| timestamp.to_string())
 }
 
-fn benchmark_results_markdown(report: &EvalReport) -> String {
+fn benchmark_results_markdown(report: &FileBackedContextReport) -> String {
     let mut out = String::new();
     out.push_str("# File-Backed Dynamic Context Benchmark Results\n\n");
     out.push_str(&format!(
@@ -308,7 +313,7 @@ fn benchmark_results_markdown(report: &EvalReport) -> String {
     out
 }
 
-fn benchmark_findings_markdown(report: &EvalReport) -> String {
+fn benchmark_findings_markdown(report: &FileBackedContextReport) -> String {
     let fixture_count = report.results.len() as u64;
     let correct = report
         .results
