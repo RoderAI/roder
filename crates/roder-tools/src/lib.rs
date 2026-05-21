@@ -843,8 +843,28 @@ mod tests {
         for (name, args) in calls {
             let result = run_tool(&registry, &workspace, name, args).await;
             assert!(!result.is_error, "{name}: {}", result.text);
-            outputs.push(format!("{}\n{}", result.text, result.data));
+            outputs.push(format!("{}\n{}", result.text, redact_volatile(result.data)));
         }
         outputs
+    }
+
+    /// Strip search-index metadata that legitimately varies between backends
+    /// (the local backend can build an on-disk index; the runner backend falls
+    /// back to scanning) or between runs (timings), so the comparison checks the
+    /// tool results themselves rather than these implementation details.
+    fn redact_volatile(mut data: serde_json::Value) -> serde_json::Value {
+        if let Some(obj) = data.as_object_mut() {
+            for key in [
+                "engine",
+                "elapsed_ms",
+                "index_build_time_ms",
+                "index_bytes",
+            ] {
+                if obj.contains_key(key) {
+                    obj.insert(key.to_string(), serde_json::Value::Null);
+                }
+            }
+        }
+        data
     }
 }
