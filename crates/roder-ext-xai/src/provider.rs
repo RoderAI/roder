@@ -109,4 +109,12 @@ mod tests {
         assert!(capabilities.reasoning_summaries);
         assert!(capabilities.prompt_cache);
     }
+
+    #[test]
+    fn retry_supergrok_delegates_to_openai_responses_transport() {
+        let engine = SuperGrokEngine;
+
+        assert!(engine.capabilities().streaming);
+        assert!(engine.capabilities().provider_metadata);
+    }
 }

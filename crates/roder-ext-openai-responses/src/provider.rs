@@ -8,6 +8,10 @@ use roder_api::inference::{
     ModelDescriptor, ProviderAuthType, ReasoningDelta, TokenUsage, ToolCallCompleted,
     ToolCallDelta, ToolCallStarted,
 };
+use roder_api::reliability::{
+    ReliabilityRequestPolicy, provider_retry_delay_ms, provider_retry_metadata,
+    provider_retry_status_cause,
+};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::collections::{BTreeMap, HashMap, HashSet};
@@ -550,32 +554,114 @@ impl InferenceEngine for OpenAiResponsesEngine {
                 thread_id: Some(_ctx.thread_id),
             },
         );
-        let client = reqwest::Client::new();
-        let mut request = client
-            .post(format!("{}/responses", self.base_url))
-            .bearer_auth(api_key);
-        for (key, value) in &self.headers {
-            request = request.header(key, value);
-        }
-        if self.xai_mode && !_ctx.thread_id.is_empty() {
-            request = request.header("x-grok-conv-id", _ctx.thread_id);
-        }
-        let response = request.json(&body).send().await?;
-        if !response.status().is_success() {
-            let status = response.status();
-            let text = response.text().await.unwrap_or_default();
+        let response = send_responses_request(
+            &self.base_url,
+            api_key,
+            &self.headers,
+            self.xai_mode.then_some(_ctx.thread_id),
+            &body,
+            request.runtime.reliability.as_ref(),
+        )
+        .await
+        .map_err(|err| {
             if self.xai_mode {
-                anyhow::bail!("{}", xai_error_message(status, &text));
+                anyhow::anyhow!("xAI Responses error: {err}")
+            } else {
+                err
             }
-            anyhow::bail!("OpenAI Responses error {}: {}", status, text);
-        }
+        })?;
         Ok(stream_responses_sse(
-            response,
+            response.response,
             tool_name_map.api_name_to_tool_name,
+            response.retry_events,
         ))
     }
 }
 
+struct RetriedResponse {
+    response: reqwest::Response,
+    retry_events: Vec<Value>,
+}
+
+async fn send_responses_request(
+    base_url: &str,
+    api_key: &str,
+    headers: &[(String, String)],
+    grok_conversation_id: Option<&str>,
+    body: &Value,
+    policy: Option<&ReliabilityRequestPolicy>,
+) -> anyhow::Result<RetriedResponse> {
+    let policy = policy.cloned().unwrap_or_default();
+    let attempts = policy.provider_retry_max_attempts.max(1);
+    let client = reqwest::Client::new();
+    let mut last_error = None;
+    let mut retry_events = Vec::new();
+    for attempt in 1..=attempts {
+        let mut request = client
+            .post(format!("{}/responses", base_url))
+            .bearer_auth(api_key);
+        for (key, value) in headers {
+            request = request.header(key, value);
+        }
+        if let Some(thread_id) = grok_conversation_id.filter(|id| !id.is_empty()) {
+            request = request.header("x-grok-conv-id", thread_id);
+        }
+        match request.json(body).send().await {
+            Ok(response) if response.status().is_success() => {
+                return Ok(RetriedResponse {
+                    response,
+                    retry_events,
+                });
+            }
+            Ok(response) => {
+                let status = response.status();
+                let text = response.text().await.unwrap_or_default();
+                let retryable = policy
+                    .provider_retry_status_codes
+                    .contains(&status.as_u16());
+                last_error = Some(format!("OpenAI Responses error {status}: {text}"));
+                if retryable && attempt < attempts {
+                    push_retry_event(
+                        &mut retry_events,
+                        attempt,
+                        &provider_retry_status_cause(status.as_u16()),
+                        &policy,
+                    );
+                    retry_sleep(&policy, attempt).await;
+                    continue;
+                }
+            }
+            Err(err) => {
+                last_error = Some(err.to_string());
+                if attempt < attempts {
+                    push_retry_event(&mut retry_events, attempt, "transport_error", &policy);
+                    retry_sleep(&policy, attempt).await;
+                    continue;
+                }
+            }
+        }
+        break;
+    }
+    anyhow::bail!(last_error.unwrap_or_else(|| "OpenAI Responses request failed".to_string()))
+}
+
+fn push_retry_event(
+    events: &mut Vec<Value>,
+    attempt: u32,
+    cause: &str,
+    policy: &ReliabilityRequestPolicy,
+) {
+    events.push(provider_retry_metadata(attempt, cause, policy));
+}
+
+async fn retry_sleep(policy: &ReliabilityRequestPolicy, attempt: u32) {
+    let delay = provider_retry_delay_ms(policy, attempt);
+    if delay > 0 {
+        tokio::time::sleep(Duration::from_millis(delay)).await;
+    }
+}
+
+#[cfg(test)]
 fn xai_error_message(status: reqwest::StatusCode, body: &str) -> String {
     let trimmed = body.trim();
     let detail = if trimmed.is_empty() {
@@ -599,9 +685,14 @@ fn xai_error_message(status: reqwest::StatusCode, body: &str) -> String {
 fn stream_responses_sse(
     response: reqwest::Response,
     tool_name_map: HashMap<String, String>,
+    retry_events: Vec<Value>,
 ) -> InferenceEventStream {
     Box::pin(async_stream::try_stream! {
         use futures::StreamExt as _;
+
+        for retry_event in retry_events {
+            yield InferenceEvent::ProviderMetadata(retry_event);
+        }
 
         let mut chunks = response.bytes_stream();
         let mut buffer = String::new();
@@ -1363,6 +1454,7 @@ mod tests {
     use roder_api::inference::{
         InstructionBundle, ModelSelection, OutputConfig, ReasoningConfig, RuntimeHints,
     };
+    use roder_api::reliability::ReliabilityRequestPolicy;
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     use tokio::net::TcpListener;
 
@@ -1443,6 +1535,42 @@ mod tests {
 
         assert_eq!(models.len(), 1);
         assert_eq!(models[0].id, "custom-v1");
+    }
+
+    #[tokio::test]
+    async fn retry_recovers_responses_request_after_retryable_status() {
+        let base_url = spawn_models_server(vec![
+            ("/responses", 429, r#"{"error":"busy"}"#),
+            (
+                "/responses",
+                200,
+                "data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_1\"}}\n\n",
+            ),
+        ])
+        .await;
+        let policy = ReliabilityRequestPolicy {
+            provider_retry_max_attempts: 2,
+            provider_retry_initial_backoff_ms: 0,
+            provider_retry_status_codes: vec![429],
+            ..ReliabilityRequestPolicy::default()
+        };
+
+        let response = send_responses_request(
+            &base_url,
+            "secret",
+            &[],
+            None,
+            &json!({ "model": "gpt-5.5" }),
+            Some(&policy),
+        )
+        .await
+        .unwrap();
+
+        assert!(response.response.status().is_success());
+        assert_eq!(
+            response.retry_events[0]["kind"],
+            "reliability_retry_attempt"
+        );
     }
 
     #[tokio::test]
