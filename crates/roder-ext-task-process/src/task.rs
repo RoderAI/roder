@@ -40,6 +40,7 @@ impl TaskExecutor for ProcessTaskExecutor {
             description: "Run a background process inside the workspace.".to_string(),
             input_schema: serde_json::json!({
                 "type": "object",
+                "required": ["command"],
                 "properties": {
                     "command": { "type": "string" },
                     "args": { "type": "array", "items": { "type": "string" } },
@@ -49,7 +50,7 @@ impl TaskExecutor for ProcessTaskExecutor {
                         "additionalProperties": { "type": "string" }
                     }
                 },
-                "required": ["command"]
+                "additionalProperties": false
             }),
             default_timeout_seconds: None,
             metadata: serde_json::json!({ "category": "process" }),
@@ -222,5 +223,20 @@ mod tests {
         .unwrap_err();
 
         assert!(err.to_string().contains("escapes workspace root"));
+    }
+
+    #[test]
+    fn schema_snapshot_covers_process_task_input() {
+        let executor = ProcessTaskExecutor;
+        let spec = executor
+            .spec()
+            .normalized_for_model(roder_api::ToolSchemaPolicy::strict());
+        let schema = serde_json::to_string(&spec.input_schema).unwrap();
+
+        assert!(schema.starts_with(r#"{"type":"object","required":["command"],"properties":"#));
+        assert!(schema.contains(
+            r#""env_overrides":{"type":"object","additionalProperties":{"type":"string"}}"#
+        ));
+        assert!(schema.contains(r#""additionalProperties":false"#));
     }
 }
