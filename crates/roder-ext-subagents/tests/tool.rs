@@ -1,6 +1,7 @@
 use std::sync::{Arc, Mutex};
 
 use anyhow::anyhow;
+use roder_api::ToolSchemaPolicy;
 use roder_api::events::{ThreadId, TurnId};
 use roder_api::inference::TokenUsage;
 use roder_api::policy_mode::PolicyMode;
@@ -186,6 +187,22 @@ fn task_tool_contributor_installs_namespaced_tools_only_when_enabled() {
         tool_names(&registry),
         ["task", "task_explore", "task_review"]
     );
+}
+
+#[test]
+fn schema_snapshot_covers_model_facing_task_tool() {
+    let spec = TaskTool::canonical(Arc::new(FakeDispatcher::default()))
+        .spec()
+        .normalized_for_model(ToolSchemaPolicy::strict());
+    let schema = serde_json::to_string(&spec.parameters).unwrap();
+
+    assert!(
+        schema.starts_with(r#"{"type":"object","required":["description","prompt"],"properties":"#)
+    );
+    assert!(schema.contains(
+        r#""inputs":{"type":"object","description":"Optional freeform structured context for the child task."}"#
+    ));
+    assert!(schema.contains(r#""additionalProperties":false"#));
 }
 
 fn context() -> ToolExecutionContext {

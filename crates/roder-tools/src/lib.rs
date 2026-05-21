@@ -277,6 +277,70 @@ mod tests {
         let _ = std::fs::remove_dir_all(root);
     }
 
+    #[test]
+    fn schema_snapshots_cover_model_facing_builtin_coding_tools() {
+        let root = test_workspace("schema-snapshots");
+        let mut registry = ToolRegistry::default();
+        BuiltinCodingToolsContributor::new(root.clone())
+            .unwrap()
+            .contribute(&mut registry)
+            .unwrap();
+        let schemas = registry
+            .specs()
+            .into_iter()
+            .filter(|spec| {
+                matches!(
+                    spec.name.as_str(),
+                    "read_file"
+                        | "grep"
+                        | "glob"
+                        | "edit"
+                        | "multi_edit"
+                        | "apply_patch"
+                        | "shell"
+                        | "exec_command"
+                )
+            })
+            .map(|spec| (spec.name, serde_json::to_string(&spec.parameters).unwrap()))
+            .collect::<std::collections::BTreeMap<_, _>>();
+
+        assert!(
+            schemas["read_file"]
+                .starts_with(r#"{"type":"object","required":["path"],"properties":"#)
+        );
+        assert!(
+            schemas["grep"].starts_with(r#"{"type":"object","required":["query"],"properties":"#)
+        );
+        assert!(
+            schemas["glob"].starts_with(r#"{"type":"object","required":["pattern"],"properties":"#)
+        );
+        assert!(schemas["edit"].starts_with(
+            r#"{"type":"object","required":["path","old_string","new_string"],"properties":"#
+        ));
+        assert!(
+            schemas["apply_patch"]
+                .starts_with(r#"{"type":"object","required":["patch"],"properties":"#)
+        );
+        assert!(
+            schemas["shell"]
+                .starts_with(r#"{"type":"object","required":["command"],"properties":"#)
+        );
+        assert!(
+            schemas["exec_command"]
+                .starts_with(r#"{"type":"object","required":["cmd"],"properties":"#)
+        );
+        assert_eq!(
+            schemas["multi_edit"],
+            r#"{"type":"object","required":["path","edits"],"properties":{"edits":{"type":"array","items":{"type":"object","required":["old_string","new_string"],"properties":{"new_string":{"type":"string"},"old_string":{"type":"string"}},"additionalProperties":false}},"path":{"type":"string"}},"additionalProperties":false}"#
+        );
+        assert!(
+            schemas
+                .values()
+                .all(|schema| schema.contains(r#""additionalProperties":false"#))
+        );
+        let _ = std::fs::remove_dir_all(root);
+    }
+
     #[tokio::test]
     async fn builtin_coding_tools_match_direct_local_and_unix_local_runner_backends() {
         let direct_root = test_workspace("coding-tools-direct");
@@ -854,12 +918,7 @@ mod tests {
     /// tool results themselves rather than these implementation details.
     fn redact_volatile(mut data: serde_json::Value) -> serde_json::Value {
         if let Some(obj) = data.as_object_mut() {
-            for key in [
-                "engine",
-                "elapsed_ms",
-                "index_build_time_ms",
-                "index_bytes",
-            ] {
+            for key in ["engine", "elapsed_ms", "index_build_time_ms", "index_bytes"] {
                 if obj.contains_key(key) {
                     obj.insert(key.to_string(), serde_json::Value::Null);
                 }

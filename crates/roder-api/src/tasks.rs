@@ -7,6 +7,7 @@ use time::OffsetDateTime;
 use crate::events::{ThreadId, TurnId};
 use crate::extension::TaskExecutorId;
 use crate::remote_runner::{RemoteRunnerSession, RunnerDestination};
+use crate::{ToolSchemaPolicy, normalize_tool_schema};
 
 pub type TaskId = String;
 
@@ -19,6 +20,14 @@ pub struct TaskSpec {
     pub default_timeout_seconds: Option<u64>,
     #[serde(default)]
     pub metadata: serde_json::Value,
+}
+
+impl TaskSpec {
+    pub fn normalized_for_model(&self, policy: ToolSchemaPolicy) -> Self {
+        let mut spec = self.clone();
+        spec.input_schema = normalize_tool_schema(&spec.kind, &spec.input_schema, policy).schema;
+        spec
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
