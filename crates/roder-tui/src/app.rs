@@ -3227,7 +3227,6 @@ impl TuiApp {
 
         Paragraph::new(Text::from(lines))
             .style(self.theme.text())
-            .wrap(Wrap { trim: false })
     }
 
     fn slash_command_preview(&self, matches: Option<&[CommandDescriptor]>) -> Paragraph<'static> {
@@ -3255,7 +3254,6 @@ impl TuiApp {
         }
         Paragraph::new(Line::from(spans))
             .style(self.theme.text())
-            .wrap(Wrap { trim: false })
     }
 
     fn footer(&self, width: u16) -> Paragraph<'static> {
