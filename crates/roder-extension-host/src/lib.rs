@@ -38,6 +38,7 @@ use roder_ext_xai::XaiExtension;
 use semver::Version;
 
 mod context;
+pub mod discovery_catalog;
 pub mod marketplace;
 mod subagents;
 mod web_search;
