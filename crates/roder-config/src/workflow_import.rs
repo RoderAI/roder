@@ -65,6 +65,30 @@ pub fn scan_workflow_imports(options: WorkflowScanOptions) -> WorkflowImportScan
     }
 }
 
+pub fn enabled_workflow_skill_import_paths(
+    workspace: &Path,
+    scan: &WorkflowImportScan,
+) -> Vec<PathBuf> {
+    scan.items
+        .iter()
+        .filter_map(|item| workflow_skill_import_path(workspace, item))
+        .collect()
+}
+
+pub fn workflow_skill_import_path(workspace: &Path, item: &WorkflowImportItem) -> Option<PathBuf> {
+    if item.state != WorkflowImportState::Enabled
+        || item.source.source_type != WorkflowSourceType::Skill
+    {
+        return None;
+    }
+    let path = PathBuf::from(&item.source.path);
+    Some(if path.is_absolute() {
+        path
+    } else {
+        workspace.join(path)
+    })
+}
+
 struct Scanner {
     workspace: PathBuf,
     detected_at: OffsetDateTime,
@@ -699,6 +723,41 @@ mod tests {
         unsafe {
             std::env::remove_var("RODER_MARKETPLACES_PATH");
         }
+    }
+
+    #[test]
+    fn enabled_workflow_skill_import_paths_resolve_relative_skill_files() {
+        let repo = fixture_dir("enabled-skill-paths");
+        let mut item = WorkflowImportItem {
+            id: "skill-demo".to_string(),
+            title: "demo".to_string(),
+            summary: "summary".to_string(),
+            source: WorkflowSource {
+                source_type: WorkflowSourceType::Skill,
+                path: ".agents/skills/demo/SKILL.md".to_string(),
+                name: Some("demo".to_string()),
+                hash: "hash".to_string(),
+                detected_at: OffsetDateTime::UNIX_EPOCH,
+            },
+            state: WorkflowImportState::Detected,
+            risk: WorkflowImportRisk::Passive,
+            command_capable: false,
+            approval_required: false,
+            preview: serde_json::Value::Null,
+            conflicts: Vec::new(),
+            enabled_at: None,
+        };
+
+        assert!(workflow_skill_import_path(&repo, &item).is_none());
+        item.state = WorkflowImportState::Enabled;
+        let scan = WorkflowImportScan {
+            workspace: repo.display().to_string(),
+            items: vec![item],
+            errors: Vec::new(),
+        };
+
+        let paths = enabled_workflow_skill_import_paths(&repo, &scan);
+        assert_eq!(paths, vec![repo.join(".agents/skills/demo/SKILL.md")]);
     }
 
     fn fixture_dir(name: &str) -> PathBuf {
