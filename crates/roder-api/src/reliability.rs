@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use serde_json::{Value, json};
 use time::OffsetDateTime;
 
 use crate::events::{ThreadId, TurnId};
@@ -147,6 +148,32 @@ impl Default for ReliabilityRequestPolicy {
     }
 }
 
+pub fn provider_retry_delay_ms(policy: &ReliabilityRequestPolicy, attempt: u32) -> u64 {
+    let factor = policy.provider_retry_backoff_factor.max(1) as u64;
+    policy
+        .provider_retry_initial_backoff_ms
+        .saturating_mul(factor.saturating_pow(attempt.saturating_sub(1)))
+}
+
+pub fn provider_retry_status_cause(status: u16) -> String {
+    format!("status_{status}")
+}
+
+pub fn provider_retry_metadata(
+    attempt: u32,
+    cause: &str,
+    policy: &ReliabilityRequestPolicy,
+) -> Value {
+    json!({
+        "kind": "reliability_retry_attempt",
+        "errorClass": ReliabilityErrorClass::ProviderError,
+        "decision": ReliabilityRetryDecision::Retry,
+        "attempt": attempt,
+        "delayMs": provider_retry_delay_ms(policy, attempt),
+        "cause": cause,
+    })
+}
+
 fn redact_secret_like_text(input: &str) -> String {
     input
         .split_whitespace()
@@ -212,6 +239,24 @@ mod tests {
         assert_eq!(json["context"]["model"], "gpt-5.5");
         let rendered = serde_json::to_string(&json).unwrap();
         assert!(!rendered.contains("sk-secret-token"));
+    }
+
+    #[test]
+    fn provider_retry_metadata_is_classified_and_redacted() {
+        let policy = ReliabilityRequestPolicy {
+            provider_retry_initial_backoff_ms: 250,
+            provider_retry_backoff_factor: 3,
+            ..ReliabilityRequestPolicy::default()
+        };
+
+        let metadata = provider_retry_metadata(2, &provider_retry_status_cause(429), &policy);
+
+        assert_eq!(metadata["kind"], "reliability_retry_attempt");
+        assert_eq!(metadata["errorClass"], "provider_error");
+        assert_eq!(metadata["decision"], "retry");
+        assert_eq!(metadata["attempt"], 2);
+        assert_eq!(metadata["delayMs"], 750);
+        assert_eq!(metadata["cause"], "status_429");
     }
 
     #[test]
