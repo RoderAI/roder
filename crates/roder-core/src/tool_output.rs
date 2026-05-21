@@ -1,6 +1,7 @@
 const MAX_TOOL_OUTPUT_LINES: usize = 200;
 const MAX_TOOL_OUTPUT_CHARS: usize = 20_000;
 const ARTIFACT_INLINE_CHARS: usize = 6_000;
+const NO_CONTINUATION_NOTE: &str = "No continuation cursor is available for this capped aggregate output; rerun the original tool with narrower pagination or filters when available.";
 
 pub(crate) fn cap_tool_output_lines(output: String) -> String {
     let original_line_count = output.lines().count();
@@ -46,7 +47,7 @@ fn cap_tool_output_line_count(output: String) -> String {
     }
 
     kept.push(format!(
-        "[tool output truncated after {MAX_TOOL_OUTPUT_LINES} lines; {remaining} more lines omitted. Use the tool's pagination arguments when available.]"
+        "[tool output truncated after {MAX_TOOL_OUTPUT_LINES} lines; {remaining} more lines omitted. {NO_CONTINUATION_NOTE}]"
     ));
     kept.join("\n")
 }
@@ -68,7 +69,7 @@ fn truncate_middle_chars(text: &str, max_chars: usize) -> String {
     }
 
     let marker = format!(
-        "\n[tool output truncated; {} chars omitted. Use the tool's pagination arguments when available.]\n",
+        "\n[tool output truncated; {} chars omitted. {NO_CONTINUATION_NOTE}]\n",
         total_chars.saturating_sub(max_chars)
     );
     let marker_chars = marker.chars().count();
@@ -108,6 +109,7 @@ mod tests {
         assert_eq!(capped.lines().count(), 201);
         assert!(capped.contains("line 200"));
         assert!(capped.contains("5 more lines omitted"));
+        assert!(capped.contains("No continuation cursor is available"));
     }
 
     #[test]
@@ -120,7 +122,7 @@ mod tests {
         assert!(capped.starts_with("Total output lines: 1\n\nstart"));
         assert!(capped.ends_with("end"));
         assert!(capped.contains("chars omitted"));
-        assert!(capped.contains("Use the tool's pagination arguments when available."));
+        assert!(capped.contains("No continuation cursor is available"));
     }
 
     #[test]
@@ -135,6 +137,14 @@ mod tests {
         assert!(capped.chars().count() <= MAX_TOOL_OUTPUT_CHARS);
         assert!(capped.starts_with("Total output lines: 50\n\nline 1:"));
         assert!(capped.contains("chars omitted"));
+        assert!(capped.contains("No continuation cursor is available"));
+    }
+
+    #[test]
+    fn leaves_empty_tool_output_unchanged() {
+        let capped = cap_tool_output_lines(String::new());
+
+        assert_eq!(capped, "");
     }
 
     #[test]
