@@ -1,0 +1,15 @@
+{
+  "id": "extra-fields",
+  "title": "Tool schema extra fields",
+  "prompt": "Call first-party tools with only documented properties and no provider-invented metadata fields.",
+  "tags": ["micro", "tool-schema", "tool:grep", "failure:extra-fields"],
+  "timeoutMs": 10000,
+  "expected": {
+    "finalAnswerContains": ["hello from roder"],
+    "verificationRequired": false
+  },
+  "constraints": [
+    "grep requires query",
+    "first-party tool schemas reject unexpected properties with additionalProperties false"
+  ]
+}

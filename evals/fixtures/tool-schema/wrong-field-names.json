@@ -1,0 +1,15 @@
+{
+  "id": "wrong-field-names",
+  "title": "Tool schema wrong field names",
+  "prompt": "Use canonical coding-agent field names such as path, old_string, new_string, command, query, and pattern when planning tool calls.",
+  "tags": ["micro", "tool-schema", "tool:edit", "failure:wrong-field-names"],
+  "timeoutMs": 10000,
+  "expected": {
+    "finalAnswerContains": ["hello from roder"],
+    "verificationRequired": false
+  },
+  "constraints": [
+    "do not use ambiguous field names such as file, text, input, or value",
+    "edit requires path, old_string, and new_string"
+  ]
+}

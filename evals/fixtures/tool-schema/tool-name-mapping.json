@@ -1,0 +1,15 @@
+{
+  "id": "tool-name-mapping",
+  "title": "Tool schema provider tool-name mapping",
+  "prompt": "Keep provider-safe tool names mapped back to canonical Roder names in traces and reports.",
+  "tags": ["micro", "tool-schema", "tool:exec_command", "failure:tool-name-mapping"],
+  "timeoutMs": 10000,
+  "expected": {
+    "finalAnswerContains": ["hello from roder"],
+    "verificationRequired": false
+  },
+  "constraints": [
+    "exec_command requires cmd",
+    "provider-specific tool-name mangling must remain trace-readable as the canonical Roder tool"
+  ]
+}
