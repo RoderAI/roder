@@ -17,6 +17,7 @@ pub enum ContextBlockKind {
     SafetyPolicy,
     TaskMetadata,
     PriorSummary,
+    EntrypointHint,
     Other(String),
 }
 

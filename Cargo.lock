@@ -2376,7 +2376,9 @@ name = "roder-context"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "async-trait",
  "roder-api",
+ "roder-search",
  "serde",
  "serde_json",
  "tokio",
@@ -2874,6 +2876,7 @@ dependencies = [
  "roder-api",
  "roder-codex-auth",
  "roder-config",
+ "roder-context",
  "roder-ext-anthropic",
  "roder-ext-firecrawl-search",
  "roder-ext-gemini",

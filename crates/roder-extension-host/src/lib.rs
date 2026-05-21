@@ -37,6 +37,7 @@ use roder_ext_runner_vercel::VercelRunnerExtension;
 use roder_ext_xai::XaiExtension;
 use semver::Version;
 
+mod context;
 pub mod marketplace;
 mod subagents;
 mod web_search;
@@ -202,9 +203,10 @@ pub fn build_default_registry(config: DefaultRegistryConfig) -> anyhow::Result<E
         .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
     builder.install(EchoToolsExtension)?;
     builder.install(BuiltinCodingToolsExtension {
-        workspace,
+        workspace: workspace.clone(),
         path_scope: config.tool_path_scope,
     })?;
+    context::install_context_planner(&mut builder, &workspace);
 
     if let Some(subagents) = config.subagents {
         subagents::install_subagents(&mut builder, subagents)?;
