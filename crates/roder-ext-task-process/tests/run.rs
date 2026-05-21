@@ -1,15 +1,23 @@
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use roder_api::events::RoderEvent;
-use roder_api::remote_runner::{RemoteRunnerProvider, RunnerDestination, RunnerManifest};
+use roder_api::processes::{ProcessOrigin, ProcessState};
+use roder_api::remote_runner::{
+    RemoteRunnerProvider, RemoteRunnerSession, RunnerArtifactExportRequest,
+    RunnerArtifactExportResult, RunnerCommandId, RunnerCommandRequest, RunnerCommandResult,
+    RunnerDestination, RunnerFileReadRequest, RunnerFileReadResult, RunnerFileWriteRequest,
+    RunnerManifest, RunnerPortRequest, RunnerPortResult, RunnerSessionState, RunnerSnapshotRef,
+};
 use roder_api::tasks::TaskState;
 use roder_ext_runner_unix_local::UnixLocalRunnerProvider;
 use roder_ext_task_process::ProcessTaskExecutor;
 use roder_tasks::{
     BackgroundRunner, BackgroundRunnerConfig, TaskExecutorRegistry, TaskSubmitOptions,
 };
+use tokio::sync::Notify;
 
 fn temp_workspace() -> PathBuf {
     let dir = std::env::temp_dir().join(format!("roder-process-task-{}", uuid::Uuid::new_v4()));
@@ -209,6 +217,107 @@ async fn process_task_routes_through_remote_runner_session_when_configured() {
 }
 
 #[tokio::test]
+async fn remote_process_descriptor_uses_runner_ids_and_provider_cancel() {
+    let workspace = temp_workspace();
+    let runner = runner(1024);
+    let session = Arc::new(FakeRemoteSession::new("fake-destination", true));
+    let destination = RunnerDestination {
+        id: "fake-destination".to_string(),
+        provider_id: "fake".to_string(),
+        config: serde_json::Value::Null,
+        default_manifest: RunnerManifest::default(),
+    };
+    let handle = runner
+        .submit(
+            "process",
+            serde_json::json!({
+                "command": "remote-program",
+                "args": ["--long"],
+            }),
+            TaskSubmitOptions {
+                workspace_root: Some(workspace.display().to_string()),
+                runner_destination: Some(destination),
+                runner_session: Some(session.clone()),
+                ..TaskSubmitOptions::default()
+            },
+        )
+        .await
+        .unwrap();
+    let registry = runner.processes();
+
+    let process = wait_for_task_process(&registry, &handle.task_id).await;
+    assert_eq!(process.origin, ProcessOrigin::RemoteRunner);
+    assert_eq!(process.pid, None);
+    assert_eq!(
+        process.runner_destination_id.as_deref(),
+        Some("fake-destination")
+    );
+    assert_eq!(process.runner_session_id.as_deref(), Some("fake-session"));
+
+    let stopped = registry
+        .stop(&process.process_id, Some("test remote cancel".to_string()))
+        .await
+        .unwrap();
+    assert!(stopped.stopped);
+    assert!(session.cancel_called.load(Ordering::SeqCst));
+
+    for _ in 0..50 {
+        if let Some(process) = registry.get(&process.process_id).await
+            && matches!(process.state, ProcessState::Exited { exit_code: None })
+        {
+            return;
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    panic!("remote process did not record provider completion");
+}
+
+#[tokio::test]
+async fn remote_process_cancel_failure_leaves_process_running() {
+    let workspace = temp_workspace();
+    let runner = runner(1024);
+    let session = Arc::new(FakeRemoteSession::new("fake-destination", false));
+    let destination = RunnerDestination {
+        id: "fake-destination".to_string(),
+        provider_id: "fake".to_string(),
+        config: serde_json::Value::Null,
+        default_manifest: RunnerManifest::default(),
+    };
+    let handle = runner
+        .submit(
+            "process",
+            serde_json::json!({
+                "command": "remote-program",
+                "args": ["--long"],
+            }),
+            TaskSubmitOptions {
+                workspace_root: Some(workspace.display().to_string()),
+                runner_destination: Some(destination),
+                runner_session: Some(session.clone()),
+                ..TaskSubmitOptions::default()
+            },
+        )
+        .await
+        .unwrap();
+    let registry = runner.processes();
+    let process = wait_for_task_process(&registry, &handle.task_id).await;
+
+    let err = registry
+        .stop(&process.process_id, Some("test remote cancel".to_string()))
+        .await
+        .unwrap_err();
+    assert!(err.to_string().contains("did not cancel"));
+    assert!(session.cancel_called.load(Ordering::SeqCst));
+    let process = registry.get(&process.process_id).await.unwrap();
+    assert!(matches!(process.state, ProcessState::Running));
+
+    runner
+        .cancel(&handle.task_id, Some("cleanup".to_string()))
+        .await
+        .unwrap();
+}
+
+#[tokio::test]
 async fn process_task_can_cancel_remote_runner_command_handle() {
     let workspace = temp_workspace();
     let runner = runner(1024);
@@ -312,4 +421,106 @@ async fn process_task_buffers_slow_output_with_drops() {
         "34567890"
     );
     assert!(dropped > 0);
+}
+
+async fn wait_for_task_process(
+    registry: &roder_tasks::ProcessRegistry,
+    task_id: &str,
+) -> roder_api::processes::ProcessDescriptor {
+    for _ in 0..50 {
+        if let Some(process) = registry
+            .list(false)
+            .await
+            .into_iter()
+            .find(|process| process.task_id.as_deref() == Some(task_id))
+        {
+            return process;
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    panic!("process descriptor for task {task_id} not found");
+}
+
+struct FakeRemoteSession {
+    state: RunnerSessionState,
+    cancel_succeeds: bool,
+    cancel_called: AtomicBool,
+    cancelled: Notify,
+}
+
+impl FakeRemoteSession {
+    fn new(destination_id: &str, cancel_succeeds: bool) -> Self {
+        Self {
+            state: RunnerSessionState {
+                provider_id: "fake".to_string(),
+                session_id: "fake-session".to_string(),
+                destination_id: destination_id.to_string(),
+                snapshot: None,
+                metadata: serde_json::Value::Null,
+            },
+            cancel_succeeds,
+            cancel_called: AtomicBool::new(false),
+            cancelled: Notify::new(),
+        }
+    }
+}
+
+#[async_trait::async_trait]
+impl RemoteRunnerSession for FakeRemoteSession {
+    fn state(&self) -> RunnerSessionState {
+        self.state.clone()
+    }
+
+    async fn run_command(
+        &self,
+        request: RunnerCommandRequest,
+    ) -> anyhow::Result<RunnerCommandResult> {
+        self.cancelled.notified().await;
+        Ok(RunnerCommandResult {
+            command_id: request.command_id,
+            exit_code: None,
+            stdout: "remote cancelled\n".to_string(),
+            stderr: String::new(),
+        })
+    }
+
+    async fn cancel_command(&self, _command_id: &RunnerCommandId) -> anyhow::Result<bool> {
+        self.cancel_called.store(true, Ordering::SeqCst);
+        if self.cancel_succeeds {
+            self.cancelled.notify_waiters();
+            Ok(true)
+        } else {
+            Ok(false)
+        }
+    }
+
+    async fn read_file(
+        &self,
+        _request: RunnerFileReadRequest,
+    ) -> anyhow::Result<RunnerFileReadResult> {
+        anyhow::bail!("not implemented")
+    }
+
+    async fn write_file(&self, _request: RunnerFileWriteRequest) -> anyhow::Result<()> {
+        anyhow::bail!("not implemented")
+    }
+
+    async fn expose_port(&self, _request: RunnerPortRequest) -> anyhow::Result<RunnerPortResult> {
+        anyhow::bail!("not implemented")
+    }
+
+    async fn export_artifact(
+        &self,
+        _request: RunnerArtifactExportRequest,
+    ) -> anyhow::Result<RunnerArtifactExportResult> {
+        anyhow::bail!("not implemented")
+    }
+
+    async fn snapshot(&self) -> anyhow::Result<Option<RunnerSnapshotRef>> {
+        Ok(None)
+    }
+
+    async fn close(&self) -> anyhow::Result<()> {
+        Ok(())
+    }
 }
