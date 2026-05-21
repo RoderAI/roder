@@ -149,6 +149,7 @@ fn runtime_for(workspace: &std::path::Path) -> Runtime {
             workspace: Some(workspace.display().to_string()),
             policy_mode: PolicyMode::Default,
             runtime_profile: roder_api::inference::RuntimeProfile::Interactive,
+            turn_deadline_seconds: None,
             remote_runner_destination: None,
             team_data_dir: Some(workspace.join(".teams")),
             roadmap_data_dir: Some(workspace.join(".data")),
