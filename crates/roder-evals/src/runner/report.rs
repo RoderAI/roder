@@ -198,6 +198,41 @@ pub(super) fn eval_metrics(
         })
         .last()
         .unwrap_or(0);
+    let verification_required = events
+        .iter()
+        .filter(|event| matches!(event, RoderEvent::VerificationRequired(_)))
+        .count() as u64;
+    let verification_completed = events
+        .iter()
+        .filter(|event| {
+            matches!(
+                event,
+                RoderEvent::VerificationCompleted(completed) if completed.passed
+            )
+        })
+        .count() as u64;
+    let verification_failed = events
+        .iter()
+        .filter(|event| {
+            matches!(
+                event,
+                RoderEvent::VerificationCompleted(completed) if !completed.passed
+            )
+        })
+        .count() as u64;
+    let verification_skipped = events
+        .iter()
+        .filter(|event| matches!(event, RoderEvent::VerificationSkipped(_)))
+        .count() as u64;
+    let verification_open_gaps = events
+        .iter()
+        .filter_map(|event| match event {
+            RoderEvent::VerificationCompleted(completed) => Some(completed.open_gaps.len() as u64),
+            RoderEvent::VerificationRequired(required) => Some(required.open_gaps.len() as u64),
+            _ => None,
+        })
+        .last()
+        .unwrap_or(0);
     vec![
         EvalMetric {
             name: "outcome_pass".to_string(),
@@ -303,6 +338,36 @@ pub(super) fn eval_metrics(
             name: "task_ledger_completed".to_string(),
             kind: EvalMetricKind::Count,
             value: task_ledger_completed as f64,
+            unit: None,
+        },
+        EvalMetric {
+            name: "verification_required".to_string(),
+            kind: EvalMetricKind::Count,
+            value: verification_required as f64,
+            unit: None,
+        },
+        EvalMetric {
+            name: "verification_completed".to_string(),
+            kind: EvalMetricKind::Count,
+            value: verification_completed as f64,
+            unit: None,
+        },
+        EvalMetric {
+            name: "verification_failed".to_string(),
+            kind: EvalMetricKind::Count,
+            value: verification_failed as f64,
+            unit: None,
+        },
+        EvalMetric {
+            name: "verification_skipped".to_string(),
+            kind: EvalMetricKind::Count,
+            value: verification_skipped as f64,
+            unit: None,
+        },
+        EvalMetric {
+            name: "verification_open_gaps".to_string(),
+            kind: EvalMetricKind::Count,
+            value: verification_open_gaps as f64,
             unit: None,
         },
     ]
@@ -482,6 +547,23 @@ fn eval_report_markdown(report: &EvalSuiteReport) -> String {
             metric_value(result, "task_ledger_completed"),
         ));
     }
+    text.push_str(
+        "\n## Verification Metrics\n\n| Fixture | Required | Completed | Failed | Skipped | Open gaps | Remaining gaps |\n| --- | ---: | ---: | ---: | ---: | ---: | --- |\n",
+    );
+    for result in &report.results {
+        text.push_str(&format!(
+            "| `{}` | {:.0} | {:.0} | {:.0} | {:.0} | {:.0} | {} |\n",
+            result.fixture_id,
+            metric_value(result, "verification_required"),
+            metric_value(result, "verification_completed"),
+            metric_value(result, "verification_failed"),
+            metric_value(result, "verification_skipped"),
+            metric_value(result, "verification_open_gaps"),
+            markdown_cell(&verification_remaining_gaps(
+                &result.report.trajectory.events
+            )),
+        ));
+    }
     let groups = failure_groups(report);
     if !groups.is_empty() {
         text.push_str("\n## Failure Groups\n\n| Tool | Model | Failure class | Count |\n| --- | --- | --- | --- |\n");
@@ -500,6 +582,19 @@ fn metric_value(result: &EvalFixtureResult, name: &str) -> f64 {
         .find(|metric| metric.name == name)
         .map(|metric| metric.value)
         .unwrap_or(0.0)
+}
+
+fn verification_remaining_gaps(events: &[crate::EvalTrajectoryEvent]) -> String {
+    events
+        .iter()
+        .rev()
+        .find(|event| event.event_type == "verification_completed" && event.is_error)
+        .map(|_| "see failure message or verification trace".to_string())
+        .unwrap_or_else(|| "-".to_string())
+}
+
+fn markdown_cell(value: &str) -> String {
+    value.replace('|', "\\|").replace('\n', " ")
 }
 
 fn pass_rate_rows(report: &EvalSuiteReport) -> Vec<(String, usize, usize)> {
@@ -558,7 +653,7 @@ mod tests {
     use super::*;
     use roder_api::events::{
         ContextAssemblyCompleted, ContextEntrypointCandidatesInjected, RoderEvent,
-        ToolCallRequested, ToolOutputTruncated,
+        ToolCallRequested, ToolOutputTruncated, VerificationCompleted, VerificationRequired,
     };
 
     #[test]
@@ -617,5 +712,45 @@ mod tests {
         assert_eq!(value("entrypoint_injection_event"), 2.0);
         assert_eq!(value("truncation_follow_ups"), 1.0);
         assert_eq!(value("tool_output_truncations"), 1.0);
+    }
+
+    #[test]
+    fn verification_eval_metrics_track_required_completed_and_gaps() {
+        let events = vec![
+            RoderEvent::VerificationRequired(VerificationRequired {
+                thread_id: "thread-a".to_string(),
+                turn_id: "turn-a".to_string(),
+                reason: "code_changes_without_verification".to_string(),
+                changed_files: vec!["src/lib.rs".to_string()],
+                tool_evidence: vec!["write_file: wrote src/lib.rs".to_string()],
+                tests_run: Vec::new(),
+                open_gaps: Vec::new(),
+                timestamp: OffsetDateTime::UNIX_EPOCH,
+            }),
+            RoderEvent::VerificationCompleted(VerificationCompleted {
+                thread_id: "thread-a".to_string(),
+                turn_id: "turn-a".to_string(),
+                passed: false,
+                changed_files: vec!["src/lib.rs".to_string()],
+                tool_evidence: vec!["write_file: wrote src/lib.rs".to_string()],
+                tests_run: Vec::new(),
+                open_gaps: vec!["tests not run".to_string()],
+                timestamp: OffsetDateTime::UNIX_EPOCH,
+            }),
+        ];
+
+        let metrics = eval_metrics(&events, 42, &EvalOutcome::Fail);
+        let value = |name: &str| {
+            metrics
+                .iter()
+                .find(|metric| metric.name == name)
+                .map(|metric| metric.value)
+                .unwrap()
+        };
+
+        assert_eq!(value("verification_required"), 1.0);
+        assert_eq!(value("verification_completed"), 0.0);
+        assert_eq!(value("verification_failed"), 1.0);
+        assert_eq!(value("verification_open_gaps"), 1.0);
     }
 }
