@@ -928,6 +928,83 @@ mod tests {
         ));
     }
 
+    #[tokio::test]
+    async fn profile_request_snapshot_maps_opencode_edit_tool_and_parallel_flag() {
+        let server = spawn_chat_server(
+            "/chat/completions",
+            "data: {\"choices\":[],\"usage\":{\"prompt_tokens\":1,\"completion_tokens\":0,\"total_tokens\":1}}\r\n\r\ndata: [DONE]\r\n\r\n",
+        )
+        .await;
+        let engine = OpenCodeInferenceEngine::new(
+            OpenCodeConfig {
+                api_key: Some("secret".to_string()),
+                base_url: Some(server.base_url.clone()),
+                project_id: None,
+            },
+            OpenCodeProviderSpec::zen(),
+        );
+        let request = AgentInferenceRequest {
+            model: ModelSelection {
+                provider: PROVIDER_OPENCODE.to_string(),
+                model: "minimax-m2.5-free".to_string(),
+            },
+            instructions: InstructionBundle {
+                system: None,
+                developer: Some("profile overlay".to_string()),
+            },
+            conversation: vec![ConversationItem::UserMessage(UserMessage::text("edit"))],
+            tools: vec![ToolSpec {
+                name: "edit".to_string(),
+                description: "Edit a file".to_string(),
+                parameters: json!({
+                    "type": "object",
+                    "required": ["path", "old_string", "new_string"],
+                    "properties": {
+                        "path": { "type": "string" },
+                        "old_string": { "type": "string" },
+                        "new_string": { "type": "string" }
+                    },
+                    "additionalProperties": false
+                }),
+            }],
+            tool_choice: ToolChoice::Specific("edit".to_string()),
+            reasoning: ReasoningConfig::default(),
+            output: OutputConfig::default(),
+            runtime: RuntimeHints {
+                parallel_tool_calls: Some(false),
+                ..RuntimeHints::default()
+            },
+            metadata: json!({
+                "modelProfile": {
+                    "editTool": "edit",
+                    "schemaPolicy": "standard_required_first",
+                    "parallelToolCalls": false
+                }
+            }),
+        };
+
+        let mut stream = engine
+            .stream_turn(
+                InferenceTurnContext {
+                    thread_id: "thread-profile",
+                    turn_id: "turn-profile",
+                },
+                request,
+            )
+            .await
+            .unwrap();
+        while stream.next().await.is_some() {}
+        let request_body = server.request_body.await.unwrap();
+
+        assert_eq!(request_body["tools"][0]["function"]["name"], "edit");
+        assert_eq!(request_body["tool_choice"]["function"]["name"], "edit");
+        assert_eq!(request_body["parallel_tool_calls"], false);
+        assert_eq!(
+            request_body["tools"][0]["function"]["parameters"]["required"],
+            json!(["path", "old_string", "new_string"])
+        );
+    }
+
     #[test]
     fn normalizes_tool_schema_order_for_opencode_tools() {
         let mut request = AgentInferenceRequest {
