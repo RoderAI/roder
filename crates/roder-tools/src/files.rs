@@ -12,6 +12,7 @@ use crate::paging::{
     DEFAULT_PAGE_LINES, MAX_PAGE_LINES, append_continuation_instruction, clamp_limit,
     omitted_lines, page_lines, page_metadata_with_continuation,
 };
+use crate::response_format::ResponseFormat;
 use crate::workspace::Workspace;
 
 pub(crate) fn register(
@@ -49,7 +50,8 @@ impl ToolExecutor for ReadFileTool {
                         "maximum": MAX_PAGE_LINES,
                         "default": DEFAULT_PAGE_LINES,
                         "description": "Maximum number of lines to return. Use start_line from the response to continue reading."
-                    }
+                    },
+                    "response_format": ResponseFormat::schema_property()
                 },
                 "required": ["path"],
                 "additionalProperties": false
@@ -68,10 +70,11 @@ impl ToolExecutor for ReadFileTool {
         let (path, text) = backend.read_text(&args.path).await?;
         let start_line = args.start_line.unwrap_or(1).max(1);
         let limit = clamp_limit(args.limit);
+        let response_format = args.response_format.unwrap_or_default();
         let lines = text
             .lines()
             .enumerate()
-            .map(|(index, line)| format!("{:>5}: {}", index + 1, line))
+            .map(|(index, line)| format!("{:>5}: {}", index + 1, response_format.format_line(line)))
             .collect::<Vec<_>>();
         let page = page_lines(&lines, start_line - 1, limit);
         let next_start_line = page.next_offset.map(|offset| offset + 1);
@@ -80,6 +83,7 @@ impl ToolExecutor for ReadFileTool {
                 "path": path.clone(),
                 "start_line": next,
                 "limit": limit,
+                "response_format": response_format.as_str(),
             })
         });
         let mut text = page.text.clone();
@@ -93,6 +97,7 @@ impl ToolExecutor for ReadFileTool {
                 "path": path,
                 "start_line": start_line,
                 "limit": limit,
+                "response_format": response_format.as_str(),
                 "shown": page.shown,
                 "total_lines": page.total,
                 "omitted_lines": omitted_lines(&page),
@@ -134,7 +139,8 @@ impl ToolExecutor for ListFilesTool {
                         "maximum": MAX_PAGE_LINES,
                         "default": DEFAULT_PAGE_LINES,
                         "description": "Maximum number of entries to return."
-                    }
+                    },
+                    "response_format": ResponseFormat::schema_property()
                 },
                 "additionalProperties": false
             }),
@@ -154,12 +160,14 @@ impl ToolExecutor for ListFilesTool {
             .await?;
         let offset = args.offset.unwrap_or_default();
         let limit = clamp_limit(args.limit);
+        let response_format = args.response_format.unwrap_or_default();
         let page = page_lines(&names, offset, limit);
         let continuation_args = page.next_offset.map(|next| {
             json!({
                 "path": path.clone(),
                 "offset": next,
                 "limit": limit,
+                "response_format": response_format.as_str(),
             })
         });
         let mut text = page.text.clone();
@@ -174,6 +182,8 @@ impl ToolExecutor for ListFilesTool {
             "list_files",
             continuation_args.unwrap_or(serde_json::Value::Null),
         );
+        let mut data = data;
+        data["response_format"] = json!(response_format.as_str());
         Ok(result(call, text, data, false))
     }
 }
@@ -183,6 +193,7 @@ struct ReadFileArgs {
     path: String,
     start_line: Option<usize>,
     limit: Option<usize>,
+    response_format: Option<ResponseFormat>,
 }
 
 #[derive(Deserialize)]
@@ -190,6 +201,7 @@ struct ListFilesArgs {
     path: Option<String>,
     offset: Option<usize>,
     limit: Option<usize>,
+    response_format: Option<ResponseFormat>,
 }
 
 pub(crate) fn parse<T: for<'de> Deserialize<'de>>(call: &ToolCall) -> anyhow::Result<T> {
@@ -285,6 +297,44 @@ mod tests {
         assert_eq!(result.data["omitted_lines"], 1);
         assert_eq!(result.data["continuation_tool"], "list_files");
         assert_eq!(result.data["continuation_args"]["offset"], 1);
+
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[tokio::test]
+    async fn read_file_response_format_concise_truncates_long_lines() {
+        let root = test_workspace("read-file-response-format");
+        let file = root.join("notes.txt");
+        std::fs::write(&file, format!("prefix {}\n", "x".repeat(400))).unwrap();
+        let workspace = Workspace::new(root.clone()).unwrap();
+        let tool = ReadFileTool {
+            workspace: workspace.clone(),
+            backend: Arc::new(LocalWorkspaceBackend::new(workspace)),
+        };
+
+        let concise = tool
+            .execute(
+                context(&root),
+                call("read_file", json!({"path": "notes.txt"})),
+            )
+            .await
+            .unwrap();
+        let detailed = tool
+            .execute(
+                context(&root),
+                call(
+                    "read_file",
+                    json!({"path": "notes.txt", "response_format": "detailed"}),
+                ),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(concise.data["response_format"], "concise");
+        assert!(concise.text.contains("..."));
+        assert!(concise.text.len() < detailed.text.len());
+        assert_eq!(detailed.data["response_format"], "detailed");
+        assert!(!detailed.text.contains("..."));
 
         let _ = std::fs::remove_dir_all(root);
     }

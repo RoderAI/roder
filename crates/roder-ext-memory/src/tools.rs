@@ -8,6 +8,8 @@ use serde::Deserialize;
 use serde_json::json;
 use time::OffsetDateTime;
 
+use crate::response_format::{ResponseFormat, render_memory_query_results};
+
 pub struct MemoryToolContributor {
     store: Arc<dyn MemoryStore>,
 }
@@ -65,11 +67,15 @@ struct QueryArgs {
     include_global: bool,
     #[serde(default)]
     limit: Option<usize>,
+    #[serde(default)]
+    response_format: ResponseFormat,
 }
 
 #[derive(Debug, Deserialize)]
 struct IdArgs {
     id: String,
+    #[serde(default)]
+    response_format: ResponseFormat,
 }
 
 #[derive(Debug, Deserialize)]
@@ -169,10 +175,14 @@ impl ToolExecutor for MemoryQueryTool {
                 model: None,
             })
             .await?;
+        let text = render_memory_query_results(&results, args.response_format);
         Ok(result(
             call,
-            format!("{} memories", results.len()),
-            json!({ "results": results }),
+            text,
+            json!({
+                "response_format": args.response_format.as_str(),
+                "results": results
+            }),
         ))
     }
 }
@@ -190,10 +200,17 @@ impl ToolExecutor for MemoryReadTool {
     ) -> anyhow::Result<ToolResult> {
         let args = parse::<IdArgs>(&call)?;
         let record = self.store.get(&args.id).await?;
+        let text = record
+            .as_ref()
+            .map(|r| args.response_format.format_memory_text(&r.text))
+            .unwrap_or_default();
         Ok(result(
             call,
-            record.as_ref().map(|r| r.text.clone()).unwrap_or_default(),
-            json!({ "memory": record }),
+            text,
+            json!({
+                "response_format": args.response_format.as_str(),
+                "memory": record
+            }),
         ))
     }
 }
@@ -317,7 +334,8 @@ fn query_schema() -> serde_json::Value {
             "query": { "type": "string" },
             "scope": { "type": "string" },
             "includeGlobal": { "type": "boolean" },
-            "limit": { "type": "integer", "minimum": 1, "maximum": 50 }
+            "limit": { "type": "integer", "minimum": 1, "maximum": 50 },
+            "response_format": response_format_schema()
         },
         "required": ["query"],
         "additionalProperties": false
@@ -330,9 +348,137 @@ fn id_spec(name: &str, description: &str) -> ToolSpec {
         description: description.to_string(),
         parameters: json!({
             "type": "object",
-            "properties": { "id": { "type": "string" } },
+            "properties": {
+                "id": { "type": "string" },
+                "response_format": response_format_schema()
+            },
             "required": ["id"],
             "additionalProperties": false
         }),
+    }
+}
+
+fn response_format_schema() -> serde_json::Value {
+    json!({
+        "type": "string",
+        "enum": ["concise", "detailed"],
+        "default": "concise",
+        "description": "concise keeps model-facing memory text bounded; detailed returns full memory text."
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::SqliteMemoryStore;
+    use roder_api::memory::MemoryRecord;
+    use roder_api::tools::ToolExecutionContext;
+    use std::sync::Arc;
+
+    #[tokio::test]
+    async fn memory_query_response_format_includes_ids_and_bounds_text() {
+        let store = Arc::new(test_store());
+        let id = seed_memory(store.as_ref(), "sqlite memory ".repeat(80)).await;
+        let tool = MemoryQueryTool {
+            store,
+            name: "memory_query",
+        };
+
+        let concise = tool
+            .execute(
+                context(),
+                call("memory_query", json!({"query": "sqlite memory"})),
+            )
+            .await
+            .unwrap();
+        let detailed = tool
+            .execute(
+                context(),
+                call(
+                    "memory_query",
+                    json!({"query": "sqlite memory", "response_format": "detailed"}),
+                ),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(concise.data["response_format"], "concise");
+        assert!(concise.text.contains(&id));
+        assert!(concise.text.contains("..."));
+        assert!(concise.text.len() < detailed.text.len());
+        assert_eq!(detailed.data["response_format"], "detailed");
+    }
+
+    #[tokio::test]
+    async fn memory_read_response_format_controls_text() {
+        let store = Arc::new(test_store());
+        let id = seed_memory(store.as_ref(), "read memory ".repeat(80)).await;
+        let tool = MemoryReadTool {
+            store,
+            name: "memory_read",
+        };
+
+        let concise = tool
+            .execute(context(), call("memory_read", json!({"id": id})))
+            .await
+            .unwrap();
+        let detailed = tool
+            .execute(
+                context(),
+                call(
+                    "memory_read",
+                    json!({"id": id, "response_format": "detailed"}),
+                ),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(concise.data["response_format"], "concise");
+        assert!(concise.text.contains("..."));
+        assert!(concise.text.len() < detailed.text.len());
+        assert_eq!(detailed.data["response_format"], "detailed");
+    }
+
+    async fn seed_memory(store: &SqliteMemoryStore, text: String) -> String {
+        let now = OffsetDateTime::now_utc();
+        store
+            .put(MemoryRecord {
+                id: None,
+                scope: MemoryScope::Project("p".to_string()),
+                text,
+                content_hash: None,
+                metadata: json!({}),
+                usage: None,
+                deleted: false,
+                created_at: now,
+                updated_at: now,
+            })
+            .await
+            .unwrap()
+    }
+
+    fn test_store() -> SqliteMemoryStore {
+        let path =
+            std::env::temp_dir().join(format!("roder-memory-{}.sqlite3", uuid::Uuid::new_v4()));
+        SqliteMemoryStore::open(path).unwrap()
+    }
+
+    fn context() -> ToolExecutionContext {
+        ToolExecutionContext::new(
+            "thread-a",
+            "turn-a",
+            roder_api::policy_mode::PolicyMode::Default,
+        )
+    }
+
+    fn call(name: &str, arguments: serde_json::Value) -> ToolCall {
+        ToolCall {
+            id: format!("call-{name}"),
+            name: name.to_string(),
+            raw_arguments: arguments.to_string(),
+            arguments,
+            thread_id: "thread-a".to_string(),
+            turn_id: "turn-a".to_string(),
+        }
     }
 }

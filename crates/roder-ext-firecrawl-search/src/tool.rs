@@ -67,10 +67,15 @@ impl ToolExecutor for FirecrawlSearchTool {
         call: ToolCall,
     ) -> anyhow::Result<ToolResult> {
         let request: WebSearchRequest = serde_json::from_value(call.arguments)?;
+        let response_format = request.response_format;
         let response = self.client.search(request).await?;
         let provider_config = self.config.provider_config();
-        let text = render_web_search_response(&response, RenderOptions::default());
-        let data = response.data(&provider_config);
+        let text = render_web_search_response(
+            &response,
+            RenderOptions::for_response_format(response_format),
+        );
+        let mut data = response.data(&provider_config);
+        data["response_format"] = serde_json::json!(response_format.as_str());
 
         Ok(ToolResult {
             id: call.id,

@@ -13,6 +13,7 @@ use crate::paging::{
     DEFAULT_PAGE_LINES, MAX_PAGE_LINES, append_continuation_instruction, clamp_limit, page_lines,
     page_metadata_with_continuation,
 };
+use crate::response_format::ResponseFormat;
 use crate::workspace::Workspace;
 
 pub(crate) fn register(
@@ -77,7 +78,8 @@ impl ToolExecutor for GrepTool {
                         "maximum": MAX_PAGE_LINES,
                         "default": DEFAULT_PAGE_LINES,
                         "description": "Maximum number of matching lines to return."
-                    }
+                    },
+                    "response_format": ResponseFormat::schema_property()
                 },
                 "required": ["query"],
                 "additionalProperties": false
@@ -101,9 +103,14 @@ impl ToolExecutor for GrepTool {
         let case_sensitive = args.case_sensitive.unwrap_or(true);
         let word_boundary = args.word_boundary.unwrap_or(false);
         let mode = args.mode.clone().unwrap_or_else(|| "auto".to_string());
+        let response_format = args.response_format.unwrap_or_default();
         let backend = backend_from_context_or_fallback(&ctx, &self.workspace, &self.backend)?;
         let options = args.into_search_options()?;
         let (start, matches, metadata) = backend.grep_search(options).await?;
+        let matches = matches
+            .iter()
+            .map(|line| response_format.format_line(line))
+            .collect::<Vec<_>>();
         let page = page_lines(&matches, offset, limit);
         let continuation_args = page.next_offset.map(|next| {
             json!({
@@ -115,6 +122,7 @@ impl ToolExecutor for GrepTool {
                 "mode": mode,
                 "offset": next,
                 "limit": limit,
+                "response_format": response_format.as_str(),
             })
         });
         let mut text = page.text.clone();
@@ -129,6 +137,7 @@ impl ToolExecutor for GrepTool {
             "grep",
             continuation_args.unwrap_or(Value::Null),
         );
+        data["response_format"] = json!(response_format.as_str());
         merge_search_metadata(&mut data, &metadata);
         Ok(result(call, text, data, false))
     }
@@ -163,7 +172,8 @@ impl ToolExecutor for GlobTool {
                         "maximum": MAX_PAGE_LINES,
                         "default": DEFAULT_PAGE_LINES,
                         "description": "Maximum number of file paths to return."
-                    }
+                    },
+                    "response_format": ResponseFormat::schema_property()
                 },
                 "required": ["pattern"],
                 "additionalProperties": false
@@ -183,12 +193,14 @@ impl ToolExecutor for GlobTool {
         let matches = backend.glob(&args.pattern).await?;
         let offset = args.offset.unwrap_or_default();
         let limit = clamp_limit(args.limit);
+        let response_format = args.response_format.unwrap_or_default();
         let page = page_lines(&matches, offset, limit);
         let continuation_args = page.next_offset.map(|next| {
             json!({
                 "pattern": args.pattern,
                 "offset": next,
                 "limit": limit,
+                "response_format": response_format.as_str(),
             })
         });
         let mut text = page.text.clone();
@@ -203,6 +215,8 @@ impl ToolExecutor for GlobTool {
             "glob",
             continuation_args.unwrap_or(Value::Null),
         );
+        let mut data = data;
+        data["response_format"] = json!(response_format.as_str());
         Ok(result(call, text, data, false))
     }
 }
@@ -217,6 +231,7 @@ struct GrepArgs {
     mode: Option<String>,
     offset: Option<usize>,
     limit: Option<usize>,
+    response_format: Option<ResponseFormat>,
 }
 
 impl GrepArgs {
@@ -244,6 +259,7 @@ struct GlobArgs {
     pattern: String,
     offset: Option<usize>,
     limit: Option<usize>,
+    response_format: Option<ResponseFormat>,
 }
 
 pub(crate) fn visit_files(
@@ -394,6 +410,45 @@ mod tests {
         assert_eq!(result.data["continuation_tool"], "glob");
         assert_eq!(result.data["continuation_args"]["pattern"], "src/*.rs");
         assert_eq!(result.data["continuation_args"]["offset"], 1);
+
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[tokio::test]
+    async fn grep_response_format_concise_truncates_long_matches() {
+        let root = test_workspace("grep-response-format");
+        let dir = root.join("src");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("a.rs"), format!("needle {}\n", "x".repeat(400))).unwrap();
+        let workspace = Workspace::new(root.clone()).unwrap();
+        let tool = GrepTool {
+            workspace: workspace.clone(),
+            backend: Arc::new(LocalWorkspaceBackend::new(workspace)),
+        };
+
+        let concise = tool
+            .execute(
+                context(&root),
+                call("grep", json!({"query": "needle", "path": "src"})),
+            )
+            .await
+            .unwrap();
+        let detailed = tool
+            .execute(
+                context(&root),
+                call(
+                    "grep",
+                    json!({"query": "needle", "path": "src", "response_format": "detailed"}),
+                ),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(concise.data["response_format"], "concise");
+        assert!(concise.text.contains("..."));
+        assert!(concise.text.len() < detailed.text.len());
+        assert_eq!(detailed.data["response_format"], "detailed");
+        assert!(!detailed.text.contains("..."));
 
         let _ = std::fs::remove_dir_all(root);
     }

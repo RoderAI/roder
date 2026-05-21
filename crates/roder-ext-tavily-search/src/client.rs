@@ -380,6 +380,7 @@ mod tests {
             freshness: Some(Freshness::Week),
             country: Some("US".to_string()),
             include_content: true,
+            response_format: roder_web_search::ResponseFormat::Concise,
         };
         let config = TavilySearchConfig::new("key").with_search_depth("advanced");
 

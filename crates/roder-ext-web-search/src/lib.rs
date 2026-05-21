@@ -15,8 +15,8 @@ use roder_ext_parallel_search::{
 use roder_ext_perplexity_search::{PerplexitySearchClient, PerplexitySearchConfig};
 use roder_ext_tavily_search::{TavilySearchClient, TavilySearchConfig};
 use roder_web_search::{
-    RenderOptions, WebSearchProviderConfig, WebSearchRequest, canonical_web_search_schema,
-    render_web_search_response,
+    RenderOptions, ResponseFormat, WebSearchProviderConfig, WebSearchRequest,
+    canonical_web_search_schema, render_web_search_response,
 };
 use semver::Version;
 
@@ -183,6 +183,7 @@ impl ToolExecutor for WebSearchRouterTool {
         if call.arguments.get("max_results").is_none() {
             request.max_results = self.max_results;
         }
+        let response_format = request.response_format;
 
         let (response, provider_config) = match &self.backend {
             WebSearchBackend::Firecrawl(client, config) => {
@@ -208,7 +209,12 @@ impl ToolExecutor for WebSearchRouterTool {
                 (response, config.provider_config_with_request_id(request_id))
             }
         };
-        Ok(tool_result(call, &response, &provider_config))
+        Ok(tool_result(
+            call,
+            &response,
+            &provider_config,
+            response_format,
+        ))
     }
 }
 
@@ -216,12 +222,50 @@ fn tool_result(
     call: ToolCall,
     response: &roder_web_search::WebSearchResponse,
     provider_config: &WebSearchProviderConfig,
+    response_format: ResponseFormat,
 ) -> ToolResult {
+    let mut data = response.data(provider_config);
+    data["response_format"] = serde_json::json!(response_format.as_str());
     ToolResult {
         id: call.id,
         name: call.name,
-        text: render_web_search_response(response, RenderOptions::default()),
-        data: response.data(provider_config),
+        text: render_web_search_response(
+            response,
+            RenderOptions::for_response_format(response_format),
+        ),
+        data,
         is_error: false,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn response_format_controls_web_search_result_text() {
+        let mut response = roder_web_search::testing::sample_response();
+        response.answer = Some("answer ".repeat(1_200));
+        response.results[0].snippet = Some("snippet ".repeat(800));
+        let config = WebSearchProviderConfig::new(
+            roder_web_search::WebSearchProviderKind::Parallel,
+            "https://api.example",
+        );
+        let call = ToolCall {
+            id: "call-web".to_string(),
+            name: WEB_SEARCH_TOOL_NAME.to_string(),
+            raw_arguments: "{}".to_string(),
+            arguments: serde_json::json!({}),
+            thread_id: "thread-a".to_string(),
+            turn_id: "turn-a".to_string(),
+        };
+
+        let concise = tool_result(call.clone(), &response, &config, ResponseFormat::Concise);
+        let detailed = tool_result(call, &response, &config, ResponseFormat::Detailed);
+
+        assert_eq!(concise.data["response_format"], "concise");
+        assert_eq!(detailed.data["response_format"], "detailed");
+        assert!(concise.text.len() < detailed.text.len());
+        assert!(concise.text.contains("..."));
     }
 }

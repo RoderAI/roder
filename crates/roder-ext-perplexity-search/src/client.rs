@@ -379,6 +379,7 @@ mod tests {
             freshness: Some(Freshness::Week),
             country: Some("US".to_string()),
             include_content: true,
+            response_format: roder_web_search::ResponseFormat::Concise,
         };
 
         let body = perplexity_request_body(&request).unwrap();

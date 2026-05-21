@@ -75,12 +75,17 @@ impl ToolExecutor for ParallelSearchTool {
         call: ToolCall,
     ) -> anyhow::Result<ToolResult> {
         let request: WebSearchRequest = serde_json::from_value(call.arguments.clone())?;
+        let response_format = request.response_format;
         let options = ParallelSearchOptions::from_tool_arguments(&call.arguments);
         let response = self.client.search(request, options).await?;
         let request_id = parallel_request_id(&response.raw);
         let provider_config = self.config.provider_config_with_request_id(request_id);
-        let text = render_web_search_response(&response, RenderOptions::default());
-        let data = response.data(&provider_config);
+        let text = render_web_search_response(
+            &response,
+            RenderOptions::for_response_format(response_format),
+        );
+        let mut data = response.data(&provider_config);
+        data["response_format"] = serde_json::json!(response_format.as_str());
 
         Ok(ToolResult {
             id: call.id,

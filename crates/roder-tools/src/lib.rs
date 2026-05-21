@@ -7,6 +7,7 @@ mod hunk_output;
 mod media;
 mod paging;
 mod patch;
+mod response_format;
 mod search;
 mod shell;
 mod workflow;
