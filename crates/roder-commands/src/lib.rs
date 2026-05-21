@@ -69,6 +69,11 @@ pub fn built_in_commands() -> Vec<CommandSpec> {
             "Surface relevant memory for the current workspace and task.",
         ),
         (
+            "commit",
+            "Create a scoped git commit.",
+            "Create a scoped git commit using the bound commit skill. Inspect the current git state, include only requested changes, and report the commit outcome.",
+        ),
+        (
             "marketplace",
             "Manage plugin marketplaces.",
             "Use the Roder marketplace app-server methods to list default marketplaces, install one or all defaults, add local marketplaces, refresh catalogs, and search de-duplicated plugin results. Interpret arguments as a marketplace command, for example: list, install-default all, add <id> --kind <kind> --path <path>, refresh <id>, search <query>, or show <marketplace-id> <plugin-id>.",
@@ -96,9 +101,24 @@ pub fn built_in_commands() -> Vec<CommandSpec> {
         model: None,
         agent: None,
         include: CommandInclude::default(),
+        feature_skill_bindings: feature_skill_bindings(name),
         body: body.to_string(),
         source: CommandSource::BuiltIn,
         path: None,
     })
     .collect()
+}
+
+fn feature_skill_bindings(name: &str) -> Vec<roder_api::skills::FeatureSkillBinding> {
+    match name {
+        "commit" => vec![roder_api::skills::FeatureSkillBinding {
+            feature_id: "command:commit".to_string(),
+            skill_selector: roder_api::skills::SkillSelector::Name {
+                name: "commit".to_string(),
+            },
+            required: true,
+            activation_reason: roder_api::skills::SkillActivationReason::FeatureBinding,
+        }],
+        _ => Vec::new(),
+    }
 }

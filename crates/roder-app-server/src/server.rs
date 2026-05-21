@@ -2170,6 +2170,7 @@ impl AppServer {
                 message: "could not resolve command workspace".to_string(),
                 data: None,
             })?;
+        let skills = self.runtime.skills_snapshot().await;
         let expansion = expand_command(CommandExpansionRequest {
             spec,
             arguments: &params.arguments,
@@ -2184,6 +2185,7 @@ impl AppServer {
             },
             shell_runner: None,
             url_fetcher: None,
+            skill_registry: Some(&skills),
         })
         .map_err(internal_error)?;
         Ok(CommandsExpandResult {

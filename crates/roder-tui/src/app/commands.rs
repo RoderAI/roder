@@ -18,6 +18,7 @@ pub(super) fn built_in_command_catalog() -> Vec<CommandDescriptor> {
         ("agents", "List configured subagents."),
         ("tasks", "Open the background task monitor."),
         ("memory", "Inspect relevant project and user memory."),
+        ("commit", "Create a scoped git commit."),
         ("marketplace", "Manage plugin marketplaces."),
         (
             "plugin",
@@ -30,6 +31,7 @@ pub(super) fn built_in_command_catalog() -> Vec<CommandDescriptor> {
     .map(|(name, description)| {
         let argument_hint = match name {
             "goal" => Some("<objective>".to_string()),
+            "commit" => Some("[path-or-message]".to_string()),
             "marketplace" => {
                 Some("list|install-default|add|remove|refresh|search|show [args]".to_string())
             }
@@ -122,30 +124,6 @@ pub(super) fn selected_invocation(
     Some((command.name.clone(), String::new()))
 }
 
-pub(super) fn built_in_prompt(name: &str, args: &str) -> Option<String> {
-    let body = match name {
-        "init" => "Inspect the workspace and draft concise project instructions.",
-        "compact" => "Compact the current thread while preserving the working state.",
-        "memory" => "Surface relevant memory for the current workspace and task.",
-        "marketplace" => {
-            "Use the Roder marketplace app-server methods to list defaults, install one or all defaults, add local marketplaces, refresh catalogs, search de-duplicated plugins, or show one plugin variant."
-        }
-        "plugin" => {
-            "Use the Roder plugin marketplace app-server methods to preview installs, install selected plugin variants, install all de-duplicated variants, list installed variants, disable an installed variant, or uninstall by variant key."
-        }
-        "remote" => {
-            "Open the remote app-server pairing workflow and show connection URLs, token preview, auth header guidance, and LAN/Tailscale safety notes."
-        }
-        "roadmap" => "Open roadmapping mode, optionally with a specific roadmap plan.",
-        _ => return None,
-    };
-    if args.trim().is_empty() {
-        Some(body.to_string())
-    } else {
-        Some(format!("{body}\n\nUser arguments: {}", args.trim()))
-    }
-}
-
 pub(super) fn help_text(commands: &[CommandDescriptor]) -> String {
     let mut lines = vec![
         "Slash commands:".to_string(),
@@ -155,13 +133,22 @@ pub(super) fn help_text(commands: &[CommandDescriptor]) -> String {
         "/model - Show or change the active model.".to_string(),
         "/agents - List configured subagents.".to_string(),
         "/tasks - Open the background task monitor.".to_string(),
+        "/commit [path-or-message] - Create a scoped git commit.".to_string(),
         "/marketplace <command> - Manage plugin marketplaces.".to_string(),
         "/plugin <command> - Manage marketplace plugin installs.".to_string(),
     ];
     for command in commands {
         if matches!(
             command.name.as_str(),
-            "clear" | "goal" | "retry" | "model" | "agents" | "tasks" | "marketplace" | "plugin"
+            "clear"
+                | "goal"
+                | "retry"
+                | "model"
+                | "agents"
+                | "tasks"
+                | "marketplace"
+                | "plugin"
+                | "commit"
         ) {
             continue;
         }
@@ -224,23 +211,13 @@ mod tests {
     }
 
     #[test]
-    fn built_in_prompt_preserves_user_arguments() {
-        assert_eq!(
-            built_in_prompt("memory", "focus on ui").as_deref(),
-            Some(
-                "Surface relevant memory for the current workspace and task.\n\nUser arguments: focus on ui"
-            )
-        );
-        assert_eq!(built_in_prompt("help", ""), None);
-    }
-
-    #[test]
     fn help_text_lists_commands() {
         let help = help_text(&sample_commands());
 
         assert!(help.contains("Slash commands:"));
         assert!(help.contains("/goal <objective> - Create a new active goal."));
         assert!(help.contains("/retry - Resubmit the last user message."));
+        assert!(help.contains("/commit [path-or-message] - Create a scoped git commit."));
         assert!(help.contains("/marketplace <command> - Manage plugin marketplaces."));
         assert!(help.contains("/plugin <command> - Manage marketplace plugin installs."));
         assert!(help.contains("/help - Run command."));
@@ -267,6 +244,7 @@ mod tests {
                 "agents",
                 "tasks",
                 "memory",
+                "commit",
                 "marketplace",
                 "plugin",
                 "remote",
@@ -279,6 +257,13 @@ mod tests {
                 .find(|command| command.name == "goal")
                 .and_then(|command| command.argument_hint.as_deref()),
             Some("<objective>")
+        );
+        assert_eq!(
+            commands
+                .iter()
+                .find(|command| command.name == "commit")
+                .and_then(|command| command.argument_hint.as_deref()),
+            Some("[path-or-message]")
         );
         assert_eq!(
             commands

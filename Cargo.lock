@@ -2401,6 +2401,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "roder-api",
+ "roder-skills",
  "serde",
  "serde_json",
  "serde_yaml",
