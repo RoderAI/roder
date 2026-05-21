@@ -173,10 +173,35 @@ mod tests {
             .collect::<Vec<_>>();
         assert!(text.contains(&"mode:plan"));
         assert!(text.contains(&"model:gpt-test"));
+        assert!(text.contains(&"profile:gpt-test"));
         assert!(text.contains(&"session:12345678"));
         assert!(text.contains(&"branch:main"));
         assert!(text.contains(&"tok:42"));
         assert!(text.contains(&"mcp:1"));
+    }
+
+    #[test]
+    fn model_switch_status_marks_profile_segment_warning() {
+        let mut ctx = test_context();
+        ctx.model_profile = Some("claude-haiku-4-5-20251001");
+        ctx.model_switch_summary = Some("Model switch summary: previous profile mock/gpt-5.5.");
+
+        let cells = status_cells(
+            &built_in_status_segments(),
+            &ctx,
+            120,
+            &StatusLineConfig::default(),
+        );
+        let profile = cells
+            .iter()
+            .find(|cell| cell.text.starts_with("profile:"))
+            .unwrap();
+        assert_eq!(profile.text, "profile:claude-haiku-4-5-20251001");
+        assert_eq!(profile.style, StatusStyle::Warning);
+        assert_eq!(
+            profile.tooltip,
+            ctx.model_switch_summary.map(str::to_string)
+        );
     }
 
     fn segment(id: &str, priority: i32, text: &str) -> StatusSegment {
@@ -201,6 +226,8 @@ mod tests {
             }),
             policy_mode: PolicyMode::Plan,
             model: Some("gpt-test"),
+            model_profile: Some("gpt-test"),
+            model_switch_summary: None,
             usage: Some(USAGE.get_or_init(|| SessionUsage {
                 input_tokens: 40,
                 output_tokens: 2,

@@ -1520,10 +1520,15 @@ pub struct ProviderSelectParams {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct ProviderSelectResult {
     pub provider: String,
     pub model: String,
     pub reasoning: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model_profile: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model_switch_summary: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
