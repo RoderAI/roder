@@ -1,0 +1,103 @@
+{
+  "id": "instant-grep-synthetic-monorepo-root-cause",
+  "title": "Synthetic monorepo root-cause grep",
+  "prompt": "FAKE_GREP_INDEXED Investigate the synthetic monorepo incident and locate BUG_ROOT_CAUSE_TOKEN with indexed grep metadata.",
+  "tags": ["search", "instant-grep", "bug-investigation", "tool:grep", "fixture:synthetic-monorepo"],
+  "workspace": {
+    "files": [
+      {
+        "path": "crates/service-00/src/lib.rs",
+        "contents": "pub struct Service00;\npub fn config() -> &'static str { \"stable\" }\n"
+      },
+      {
+        "path": "crates/service-01/src/lib.rs",
+        "contents": "pub struct Service01;\npub fn config() -> &'static str { \"stable\" }\n"
+      },
+      {
+        "path": "crates/service-02/src/lib.rs",
+        "contents": "pub struct Service02;\npub fn config() -> &'static str { \"stable\" }\n"
+      },
+      {
+        "path": "crates/service-03/src/lib.rs",
+        "contents": "pub struct Service03;\npub fn config() -> &'static str { \"stable\" }\n"
+      },
+      {
+        "path": "crates/service-04/src/lib.rs",
+        "contents": "pub struct Service04;\npub fn config() -> &'static str { \"stable\" }\n"
+      },
+      {
+        "path": "crates/service-05/src/lib.rs",
+        "contents": "pub struct Service05;\npub fn config() -> &'static str { \"stable\" }\n"
+      },
+      {
+        "path": "crates/service-06/src/lib.rs",
+        "contents": "pub struct Service06;\npub fn config() -> &'static str { \"stable\" }\n"
+      },
+      {
+        "path": "crates/service-07/src/lib.rs",
+        "contents": "pub struct Service07;\npub fn config() -> &'static str { \"stable\" }\n"
+      },
+      {
+        "path": "crates/service-08/src/lib.rs",
+        "contents": "pub struct Service08;\npub fn config() -> &'static str { \"stable\" }\n"
+      },
+      {
+        "path": "crates/service-09/src/lib.rs",
+        "contents": "pub struct Service09;\npub fn config() -> &'static str { \"stable\" }\n"
+      },
+      {
+        "path": "crates/service-10/src/lib.rs",
+        "contents": "pub struct Service10;\npub fn config() -> &'static str { \"stable\" }\n"
+      },
+      {
+        "path": "crates/service-11/src/lib.rs",
+        "contents": "pub struct Service11;\npub fn config() -> &'static str { \"BUG_ROOT_CAUSE_TOKEN\" }\n"
+      },
+      {
+        "path": "crates/service-12/src/lib.rs",
+        "contents": "pub struct Service12;\npub fn config() -> &'static str { \"stable\" }\n"
+      },
+      {
+        "path": "crates/service-13/src/lib.rs",
+        "contents": "pub struct Service13;\npub fn config() -> &'static str { \"stable\" }\n"
+      },
+      {
+        "path": "crates/service-14/src/lib.rs",
+        "contents": "pub struct Service14;\npub fn config() -> &'static str { \"stable\" }\n"
+      },
+      {
+        "path": "crates/service-15/src/lib.rs",
+        "contents": "pub struct Service15;\npub fn config() -> &'static str { \"stable\" }\n"
+      },
+      {
+        "path": "docs/runbooks/search.md",
+        "contents": "Use indexed grep before broad reading during root-cause investigations.\n"
+      },
+      {
+        "path": "tests/synthetic_monorepo.rs",
+        "contents": "#[test]\nfn root_cause_fixture() { assert!(true); }\n"
+      }
+    ]
+  },
+  "timeoutMs": 10000,
+  "expected": {
+    "finalAnswerContains": ["hello from roder"],
+    "files": [
+      {
+        "path": "crates/service-11/src/lib.rs",
+        "exists": true,
+        "contains": ["BUG_ROOT_CAUSE_TOKEN"]
+      }
+    ],
+    "commandChecks": [
+      {
+        "command": "grep -R \"BUG_ROOT_CAUSE_TOKEN\" -n . | grep -q \"crates/service-11/src/lib.rs\"",
+        "expectedExitCode": 0
+      }
+    ]
+  },
+  "constraints": [
+    "offline fake provider fixture",
+    "search latency metrics should include indexed grep engine metadata"
+  ]
+}
