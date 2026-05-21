@@ -3113,4 +3113,38 @@ mod tests {
         assert_eq!(value["attachment"]["mimeType"], "image/png");
         assert_eq!(value["image"]["image_url"], "data:image/png;base64,YWJj");
     }
+
+    #[test]
+    fn transcript_json_rpc_boundary_values_round_trip() {
+        let request = JsonRpcRequest {
+            jsonrpc: "2.0".to_string(),
+            id: Some(serde_json::json!(7)),
+            method: "processes/list".to_string(),
+            params: Some(serde_json::json!({"includeCompleted": true})),
+        };
+        let response = JsonRpcResponse {
+            jsonrpc: "2.0".to_string(),
+            id: Some(serde_json::json!(7)),
+            result: Some(serde_json::json!({"processes": []})),
+            error: None,
+        };
+        let notification = JsonRpcNotification {
+            jsonrpc: "2.0".to_string(),
+            method: "processes/changed".to_string(),
+            params: serde_json::json!({"processId": "proc-a"}),
+        };
+
+        assert_eq!(
+            serde_json::to_value(&request).unwrap()["method"],
+            "processes/list"
+        );
+        assert_eq!(
+            serde_json::to_value(&response).unwrap()["result"]["processes"],
+            serde_json::json!([])
+        );
+        assert_eq!(
+            serde_json::to_value(&notification).unwrap()["method"],
+            "processes/changed"
+        );
+    }
 }

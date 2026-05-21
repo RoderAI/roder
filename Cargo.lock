@@ -2467,6 +2467,7 @@ dependencies = [
  "qrcode",
  "rand 0.10.1",
  "roder-api",
+ "roder-api-transcript",
  "roder-automations",
  "roder-code-index",
  "roder-codex-auth",
