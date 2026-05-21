@@ -12,3 +12,6 @@ serde_json.workspace = true
 time = { workspace = true, features = ["formatting", "parsing", "serde", "serde-well-known"] }
 tokio.workspace = true
 uuid = { workspace = true, features = ["v4"] }
+
+[dev-dependencies]
+roder-tools.workspace = true

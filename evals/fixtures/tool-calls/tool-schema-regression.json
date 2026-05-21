@@ -1,0 +1,12 @@
+{
+  "id": "tool-schema-regression",
+  "title": "Tool schema regression failure grouping",
+  "prompt": "Expose a tool-schema regression with the smallest relevant trace and failure class.",
+  "tags": ["micro", "tool-schema", "tool:read_file", "tool-misuse"],
+  "timeoutMs": 10000,
+  "expected": {
+    "finalAnswerContains": ["used valid tool arguments"],
+    "verificationRequired": false
+  },
+  "constraints": ["a missing required tool argument should fail only this micro-eval"]
+}

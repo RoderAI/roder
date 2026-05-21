@@ -2407,6 +2407,7 @@ dependencies = [
  "anyhow",
  "roder-api",
  "roder-core",
+ "roder-tools",
  "serde",
  "serde_json",
  "time",

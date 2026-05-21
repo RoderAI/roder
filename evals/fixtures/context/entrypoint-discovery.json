@@ -1,0 +1,27 @@
+{
+  "id": "entrypoint-discovery",
+  "title": "Entrypoint discovery reaches the relevant symbol quickly",
+  "prompt": "Find the entry point for the eval runner and summarize the relevant module without scanning unrelated code.",
+  "tags": ["micro", "entrypoint-discovery", "tool:grep"],
+  "workspace": {
+    "files": [
+      {
+        "path": "src/main.rs",
+        "contents": "fn main() { run_eval_runner(); }\nfn run_eval_runner() {}\n"
+      }
+    ]
+  },
+  "timeoutMs": 10000,
+  "expected": {
+    "finalAnswerContains": ["hello from roder"],
+    "files": [
+      {
+        "path": "src/main.rs",
+        "exists": true,
+        "contains": ["run_eval_runner"]
+      }
+    ],
+    "verificationRequired": true
+  },
+  "constraints": ["score by first relevant file or symbol reached"]
+}
