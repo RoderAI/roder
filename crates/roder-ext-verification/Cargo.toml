@@ -1,0 +1,28 @@
+[package]
+name = "roder-ext-verification"
+version.workspace = true
+edition.workspace = true
+
+[package.metadata.roder.distribution]
+id = "verification"
+category = "tool-provider"
+display_name = "Verification"
+description = "Verification gate review tool for eval and non-interactive coding turns."
+default_in_profiles = ["full", "research-headless"]
+required_env = []
+optional_env = []
+conflicts_with = []
+required_capabilities = []
+extension_path = "::VerificationExtension"
+docs_url = ""
+
+[dependencies]
+anyhow.workspace = true
+async-trait.workspace = true
+roder-api.workspace = true
+semver.workspace = true
+serde = { workspace = true, features = ["derive"] }
+serde_json.workspace = true
+
+[dev-dependencies]
+tokio.workspace = true

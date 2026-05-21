@@ -261,6 +261,41 @@ pub struct TaskLedgerUpdated {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct VerificationRequired {
+    pub thread_id: ThreadId,
+    pub turn_id: TurnId,
+    pub reason: String,
+    pub changed_files: Vec<String>,
+    pub tool_evidence: Vec<String>,
+    pub tests_run: Vec<String>,
+    pub open_gaps: Vec<String>,
+    #[serde(with = "time::serde::rfc3339")]
+    pub timestamp: OffsetDateTime,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct VerificationCompleted {
+    pub thread_id: ThreadId,
+    pub turn_id: TurnId,
+    pub passed: bool,
+    pub changed_files: Vec<String>,
+    pub tool_evidence: Vec<String>,
+    pub tests_run: Vec<String>,
+    pub open_gaps: Vec<String>,
+    #[serde(with = "time::serde::rfc3339")]
+    pub timestamp: OffsetDateTime,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct VerificationSkipped {
+    pub thread_id: ThreadId,
+    pub turn_id: TurnId,
+    pub reason: String,
+    #[serde(with = "time::serde::rfc3339")]
+    pub timestamp: OffsetDateTime,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ToolCallStarted {
     pub thread_id: ThreadId,
     pub turn_id: TurnId,
@@ -934,6 +969,9 @@ pub enum RoderEvent {
     UserInputRequested(UserInputRequested),
     UserInputResolved(UserInputResolved),
     TaskLedgerUpdated(TaskLedgerUpdated),
+    VerificationRequired(VerificationRequired),
+    VerificationCompleted(VerificationCompleted),
+    VerificationSkipped(VerificationSkipped),
     PolicyDecisionRecorded(PolicyDecisionRecorded),
     PolicyBypassActive(PolicyBypassActive),
     PolicyModeChanged(PolicyModeChanged),
@@ -1037,6 +1075,9 @@ impl RoderEvent {
             RoderEvent::UserInputRequested(_) => "user_input.requested",
             RoderEvent::UserInputResolved(_) => "user_input.resolved",
             RoderEvent::TaskLedgerUpdated(_) => "task_ledger.updated",
+            RoderEvent::VerificationRequired(_) => "verification.required",
+            RoderEvent::VerificationCompleted(_) => "verification.completed",
+            RoderEvent::VerificationSkipped(_) => "verification.skipped",
             RoderEvent::PolicyDecisionRecorded(_) => "policy.decision",
             RoderEvent::PolicyBypassActive(_) => "policy.bypass_active",
             RoderEvent::PolicyModeChanged(_) => "policy.mode_changed",
@@ -1182,7 +1223,10 @@ impl RoderEvent {
             RoderEvent::FileChangePreviewReady(_) => EventSource::Tool,
             RoderEvent::UserInputRequested(_)
             | RoderEvent::UserInputResolved(_)
-            | RoderEvent::TaskLedgerUpdated(_) => EventSource::Core,
+            | RoderEvent::TaskLedgerUpdated(_)
+            | RoderEvent::VerificationRequired(_)
+            | RoderEvent::VerificationCompleted(_)
+            | RoderEvent::VerificationSkipped(_) => EventSource::Core,
             RoderEvent::ExtensionRegistered(_) => EventSource::Extension,
             RoderEvent::RunnerLifecycle(_) => EventSource::Extension,
             RoderEvent::TeamStarted(_)
@@ -1216,6 +1260,9 @@ impl RoderEvent {
             RoderEvent::UserInputRequested(e) => Some(&e.thread_id),
             RoderEvent::UserInputResolved(e) => Some(&e.thread_id),
             RoderEvent::TaskLedgerUpdated(e) => Some(&e.thread_id),
+            RoderEvent::VerificationRequired(e) => Some(&e.thread_id),
+            RoderEvent::VerificationCompleted(e) => Some(&e.thread_id),
+            RoderEvent::VerificationSkipped(e) => Some(&e.thread_id),
             RoderEvent::PolicyDecisionRecorded(e) => Some(&e.thread_id),
             RoderEvent::PolicyBypassActive(e) => Some(&e.thread_id),
             RoderEvent::PolicyModeChanged(e) => Some(&e.thread_id),
@@ -1315,6 +1362,9 @@ impl RoderEvent {
             RoderEvent::UserInputRequested(e) => Some(&e.turn_id),
             RoderEvent::UserInputResolved(e) => Some(&e.turn_id),
             RoderEvent::TaskLedgerUpdated(e) => Some(&e.turn_id),
+            RoderEvent::VerificationRequired(e) => Some(&e.turn_id),
+            RoderEvent::VerificationCompleted(e) => Some(&e.turn_id),
+            RoderEvent::VerificationSkipped(e) => Some(&e.turn_id),
             RoderEvent::PolicyDecisionRecorded(e) => Some(&e.turn_id),
             RoderEvent::PolicyBypassActive(e) => Some(&e.turn_id),
             RoderEvent::PolicyModeChanged(e) => e.turn_id.as_ref(),

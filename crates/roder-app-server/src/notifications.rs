@@ -14,6 +14,8 @@ use roder_protocol::{
     TeamMemberStartedNotification, TeamMemberStatusChangedNotification, ThreadStartedNotification,
     ThreadStatusChangedNotification, TurnCompletedNotification, TurnStartedNotification,
     UserInputRequestedNotification, UserInputResolvedNotification,
+    VerificationCompletedNotification, VerificationRequiredNotification,
+    VerificationSkippedNotification,
 };
 use roder_tasks::BackgroundRunner;
 use time::OffsetDateTime;
@@ -307,6 +309,38 @@ pub(crate) fn desktop_notifications_for_event(event: &RoderEvent) -> Vec<JsonRpc
                 thread_status_notification(&event.thread_id, "idle"),
             ]
         }
+        RoderEvent::VerificationRequired(event) => vec![desktop_notification(
+            "verification/required",
+            VerificationRequiredNotification {
+                thread_id: event.thread_id.clone(),
+                turn_id: event.turn_id.clone(),
+                reason: event.reason.clone(),
+                changed_files: event.changed_files.clone(),
+                tool_evidence: event.tool_evidence.clone(),
+                tests_run: event.tests_run.clone(),
+                open_gaps: event.open_gaps.clone(),
+            },
+        )],
+        RoderEvent::VerificationCompleted(event) => vec![desktop_notification(
+            "verification/completed",
+            VerificationCompletedNotification {
+                thread_id: event.thread_id.clone(),
+                turn_id: event.turn_id.clone(),
+                passed: event.passed,
+                changed_files: event.changed_files.clone(),
+                tool_evidence: event.tool_evidence.clone(),
+                tests_run: event.tests_run.clone(),
+                open_gaps: event.open_gaps.clone(),
+            },
+        )],
+        RoderEvent::VerificationSkipped(event) => vec![desktop_notification(
+            "verification/skipped",
+            VerificationSkippedNotification {
+                thread_id: event.thread_id.clone(),
+                turn_id: event.turn_id.clone(),
+                reason: event.reason.clone(),
+            },
+        )],
         RoderEvent::TurnFailed(event) => {
             let turn = DesktopTurn {
                 id: event.turn_id.clone(),
@@ -707,7 +741,7 @@ fn notification_for_event(event: &RoderEvent) -> Option<Notification> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use roder_api::events::ToolCallCompleted;
+    use roder_api::events::{ToolCallCompleted, VerificationRequired};
     use serde_json::json;
 
     #[test]
@@ -732,5 +766,30 @@ mod tests {
         assert_eq!(item["payload"]["shown"], 3);
         assert!(item["payload"].get("input").is_none());
         assert!(item["payload"].get("arguments").is_none());
+    }
+
+    #[test]
+    fn verification_required_notification_is_forwarded_to_desktop_clients() {
+        let notifications = desktop_notifications_for_event(&RoderEvent::VerificationRequired(
+            VerificationRequired {
+                thread_id: "thread-1".to_string(),
+                turn_id: "turn-1".to_string(),
+                reason: "code_changes_without_verification".to_string(),
+                changed_files: vec!["src/lib.rs".to_string()],
+                tool_evidence: vec!["write_file: wrote src/lib.rs".to_string()],
+                tests_run: Vec::new(),
+                open_gaps: Vec::new(),
+                timestamp: OffsetDateTime::UNIX_EPOCH,
+            },
+        ));
+
+        assert_eq!(notifications.len(), 1);
+        assert_eq!(notifications[0].method, "verification/required");
+        assert_eq!(notifications[0].params["threadId"], "thread-1");
+        assert_eq!(notifications[0].params["changedFiles"][0], "src/lib.rs");
+        assert_eq!(
+            notifications[0].params["reason"],
+            "code_changes_without_verification"
+        );
     }
 }

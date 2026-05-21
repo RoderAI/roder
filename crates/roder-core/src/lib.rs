@@ -14,6 +14,7 @@ mod tool_execution;
 mod tool_output;
 mod tool_preview;
 mod tool_validation;
+mod verification_gate;
 
 pub use bus::*;
 pub use instructions::*;
