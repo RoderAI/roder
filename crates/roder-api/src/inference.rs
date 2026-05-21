@@ -5,6 +5,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::conversation::ConversationItem;
 use crate::extension::InferenceEngineId;
+use crate::reliability::ReliabilityRequestPolicy;
 use crate::tools::{ToolChoice, ToolSpec};
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -250,6 +251,8 @@ pub struct RuntimeHints {
     pub speed_policy: Option<SpeedPolicyDecision>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub deadline_remaining_seconds: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reliability: Option<ReliabilityRequestPolicy>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -460,6 +463,28 @@ mod tests {
                 .and_then(|value| value.get("appliedReasoning"))
                 .and_then(serde_json::Value::as_str),
             Some("high")
+        );
+    }
+
+    #[test]
+    fn inference_reliability_policy_serializes_runtime_metadata() {
+        let hints = RuntimeHints {
+            reliability: Some(ReliabilityRequestPolicy::default()),
+            ..RuntimeHints::default()
+        };
+
+        let json = serde_json::to_value(hints).unwrap();
+        assert_eq!(
+            json.get("reliability")
+                .and_then(|value| value.get("providerRetryMaxAttempts"))
+                .and_then(serde_json::Value::as_u64),
+            Some(3)
+        );
+        assert_eq!(
+            json.get("reliability")
+                .and_then(|value| value.get("retryEmptyProviderBody"))
+                .and_then(serde_json::Value::as_bool),
+            Some(true)
         );
     }
 }
