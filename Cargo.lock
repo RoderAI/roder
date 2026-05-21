@@ -2457,6 +2457,7 @@ dependencies = [
  "qrcode",
  "rand 0.10.1",
  "roder-api",
+ "roder-automations",
  "roder-code-index",
  "roder-codex-auth",
  "roder-commands",
@@ -2498,6 +2499,7 @@ dependencies = [
  "serde_json",
  "tempfile",
  "time",
+ "tokio",
 ]
 
 [[package]]
