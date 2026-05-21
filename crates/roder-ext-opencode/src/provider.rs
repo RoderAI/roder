@@ -15,6 +15,10 @@ use roder_api::inference::{
     InferenceTurnContext, MessageDelta, ModelDescriptor, ProviderAuthType, TokenUsage,
     ToolCallCompleted,
 };
+use roder_api::reliability::{
+    ReliabilityRequestPolicy, provider_retry_delay_ms, provider_retry_metadata,
+    provider_retry_status_cause,
+};
 use roder_api::tools::ToolChoice;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -341,17 +345,16 @@ async fn stream_chat_completions(
     for (key, value) in headers {
         http = http.header(key, value);
     }
-    let response = http.send().await?;
-    if !response.status().is_success() {
-        anyhow::bail!(
-            "{provider_name} Chat Completions error {}: {}",
-            response.status(),
-            response.text().await.unwrap_or_default()
-        );
-    }
+    let response =
+        send_chat_completion_request(provider_name, http, request.runtime.reliability.as_ref())
+            .await?;
 
-    let mut bytes = response.bytes_stream();
+    let retry_events = response.retry_events;
+    let mut bytes = response.response.bytes_stream();
     let stream = async_stream::try_stream! {
+        for retry_event in retry_events {
+            yield InferenceEvent::ProviderMetadata(retry_event);
+        }
         let mut state = ChatStreamState::new(tool_name_map);
         while let Some(chunk) = bytes.next().await {
             let chunk = chunk?;
@@ -365,6 +368,88 @@ async fn stream_chat_completions(
     };
 
     Ok(Box::pin(stream))
+}
+
+struct RetriedResponse {
+    response: reqwest::Response,
+    retry_events: Vec<Value>,
+}
+
+async fn send_chat_completion_request(
+    provider_name: &str,
+    request: reqwest::RequestBuilder,
+    policy: Option<&ReliabilityRequestPolicy>,
+) -> anyhow::Result<RetriedResponse> {
+    let policy = policy.cloned().unwrap_or_default();
+    let attempts = policy.provider_retry_max_attempts.max(1);
+    let mut last_error = None;
+    let mut retry_events = Vec::new();
+    for attempt in 1..=attempts {
+        let Some(request) = request.try_clone() else {
+            return request
+                .send()
+                .await
+                .map(|response| RetriedResponse {
+                    response,
+                    retry_events,
+                })
+                .map_err(Into::into);
+        };
+        match request.send().await {
+            Ok(response) if response.status().is_success() => {
+                return Ok(RetriedResponse {
+                    response,
+                    retry_events,
+                });
+            }
+            Ok(response) => {
+                let status = response.status();
+                let text = response.text().await.unwrap_or_default();
+                let retryable = policy
+                    .provider_retry_status_codes
+                    .contains(&status.as_u16());
+                last_error = Some(format!(
+                    "{provider_name} Chat Completions error {status}: {text}"
+                ));
+                if retryable && attempt < attempts {
+                    push_retry_event(
+                        &mut retry_events,
+                        attempt,
+                        &provider_retry_status_cause(status.as_u16()),
+                        &policy,
+                    );
+                    retry_sleep(&policy, attempt).await;
+                    continue;
+                }
+            }
+            Err(err) => {
+                last_error = Some(err.to_string());
+                if attempt < attempts {
+                    push_retry_event(&mut retry_events, attempt, "transport_error", &policy);
+                    retry_sleep(&policy, attempt).await;
+                    continue;
+                }
+            }
+        }
+        break;
+    }
+    anyhow::bail!(last_error.unwrap_or_else(|| format!("{provider_name} request failed")))
+}
+
+fn push_retry_event(
+    events: &mut Vec<Value>,
+    attempt: u32,
+    cause: &str,
+    policy: &ReliabilityRequestPolicy,
+) {
+    events.push(provider_retry_metadata(attempt, cause, policy));
+}
+
+async fn retry_sleep(policy: &ReliabilityRequestPolicy, attempt: u32) {
+    let delay = provider_retry_delay_ms(policy, attempt);
+    if delay > 0 {
+        tokio::time::sleep(Duration::from_millis(delay)).await;
+    }
 }
 
 #[derive(Debug, Default)]
@@ -779,6 +864,7 @@ mod tests {
     use roder_api::inference::{
         InstructionBundle, ModelSelection, OutputConfig, ReasoningConfig, RuntimeHints,
     };
+    use roder_api::reliability::ReliabilityRequestPolicy;
     use roder_api::tools::{ToolChoice, ToolSpec};
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     use tokio::net::TcpListener;
@@ -926,6 +1012,39 @@ mod tests {
             Some(InferenceEvent::ToolCallCompleted(call))
                 if call.name == "exec_command" && call.arguments == "{\"cmd\":\"date\"}"
         ));
+    }
+
+    #[tokio::test]
+    async fn retry_recovers_chat_completion_after_retryable_status() {
+        let base_url = spawn_retry_chat_server(vec![
+            (503, r#"{"error":"busy"}"#),
+            (
+                200,
+                "data: {\"choices\":[{\"delta\":{\"content\":\"ok\"}}]}\r\n\r\ndata: [DONE]\r\n\r\n",
+            ),
+        ])
+        .await;
+        let policy = ReliabilityRequestPolicy {
+            provider_retry_max_attempts: 2,
+            provider_retry_initial_backoff_ms: 0,
+            provider_retry_status_codes: vec![503],
+            ..ReliabilityRequestPolicy::default()
+        };
+        let client = reqwest::Client::new();
+        let request = client
+            .post(format!("{base_url}/chat/completions"))
+            .bearer_auth("secret")
+            .json(&json!({ "model": "opencode/gpt-5.5", "messages": [] }));
+
+        let response = send_chat_completion_request("OpenCode Zen", request, Some(&policy))
+            .await
+            .unwrap();
+
+        assert!(response.response.status().is_success());
+        assert_eq!(
+            response.retry_events[0]["kind"],
+            "reliability_retry_attempt"
+        );
     }
 
     #[tokio::test]
@@ -1082,5 +1201,24 @@ mod tests {
             base_url: format!("http://{addr}"),
             request_body: rx,
         }
+    }
+
+    async fn spawn_retry_chat_server(responses: Vec<(u16, &'static str)>) -> String {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            for (status, body) in responses {
+                let (mut stream, _) = listener.accept().await.unwrap();
+                let mut buf = vec![0_u8; 16 * 1024];
+                let _ = stream.read(&mut buf).await.unwrap();
+                let reason = if status == 200 { "OK" } else { "Retry" };
+                let response = format!(
+                    "HTTP/1.1 {status} {reason}\r\ncontent-type: text/event-stream\r\nconnection: close\r\ncontent-length: {}\r\n\r\n{body}",
+                    body.len()
+                );
+                stream.write_all(response.as_bytes()).await.unwrap();
+            }
+        });
+        format!("http://{addr}")
     }
 }

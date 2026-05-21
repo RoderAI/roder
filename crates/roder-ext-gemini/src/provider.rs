@@ -6,7 +6,12 @@ use roder_api::inference::{
     InferenceTurnContext, MessageDelta, ModelDescriptor, ProviderAuthType, TokenUsage,
     ToolCallCompleted,
 };
+use roder_api::reliability::{
+    ReliabilityRequestPolicy, provider_retry_delay_ms, provider_retry_metadata,
+    provider_retry_status_cause,
+};
 use serde_json::{Value, json};
+use std::time::Duration;
 
 pub struct GeminiEngine {
     api_key: String,
@@ -107,15 +112,8 @@ impl InferenceEngine for GeminiEngine {
             "https://generativelanguage.googleapis.com/v1beta/models/{}:generateContent?key={}",
             request.model.model, self.api_key
         );
-        let response = reqwest::Client::new().post(url).json(&body).send().await?;
-        if !response.status().is_success() {
-            anyhow::bail!(
-                "Gemini error {}: {}",
-                response.status(),
-                response.text().await.unwrap_or_default()
-            );
-        }
-        let value: Value = response.json().await?;
+        let (value, retry_events) =
+            send_gemini_request(&url, &body, request.runtime.reliability.as_ref()).await?;
         let text = extract_candidate_text(&value);
         let mut events = Vec::new();
         if !text.is_empty() {
@@ -130,6 +128,9 @@ impl InferenceEngine for GeminiEngine {
         if let Some(usage) = extract_usage(&value) {
             events.push(Ok(InferenceEvent::Usage(usage)));
         }
+        for retry_event in retry_events {
+            events.push(Ok(InferenceEvent::ProviderMetadata(retry_event)));
+        }
         events.push(Ok(InferenceEvent::ProviderMetadata(value.clone())));
         events.push(Ok(InferenceEvent::Completed(CompletionMetadata {
             stop_reason: value
@@ -142,6 +143,76 @@ impl InferenceEngine for GeminiEngine {
                 .map(str::to_string),
         })));
         Ok(Box::pin(futures::stream::iter(events)))
+    }
+}
+
+async fn send_gemini_request(
+    url: &str,
+    body: &Value,
+    policy: Option<&ReliabilityRequestPolicy>,
+) -> anyhow::Result<(Value, Vec<Value>)> {
+    let policy = policy.cloned().unwrap_or_default();
+    let attempts = policy.provider_retry_max_attempts.max(1);
+    let client = reqwest::Client::new();
+    let mut last_error = None;
+    let mut retry_events = Vec::new();
+    for attempt in 1..=attempts {
+        let response = client.post(url).json(body).send().await;
+        match response {
+            Ok(response) if response.status().is_success() => {
+                let bytes = response.bytes().await?;
+                if bytes.is_empty() && policy.retry_empty_provider_body && attempt < attempts {
+                    push_retry_event(&mut retry_events, attempt, "empty_provider_body", &policy);
+                    retry_sleep(&policy, attempt).await;
+                    continue;
+                }
+                return Ok((serde_json::from_slice(&bytes)?, retry_events));
+            }
+            Ok(response) => {
+                let status = response.status();
+                let text = response.text().await.unwrap_or_default();
+                let retryable = policy
+                    .provider_retry_status_codes
+                    .contains(&status.as_u16());
+                last_error = Some(format!("Gemini error {status}: {text}"));
+                if retryable && attempt < attempts {
+                    push_retry_event(
+                        &mut retry_events,
+                        attempt,
+                        &provider_retry_status_cause(status.as_u16()),
+                        &policy,
+                    );
+                    retry_sleep(&policy, attempt).await;
+                    continue;
+                }
+            }
+            Err(err) => {
+                last_error = Some(err.to_string());
+                if attempt < attempts {
+                    push_retry_event(&mut retry_events, attempt, "transport_error", &policy);
+                    retry_sleep(&policy, attempt).await;
+                    continue;
+                }
+            }
+        }
+        break;
+    }
+    anyhow::bail!(last_error.unwrap_or_else(|| "Gemini request failed".to_string()))
+}
+
+fn push_retry_event(
+    events: &mut Vec<Value>,
+    attempt: u32,
+    cause: &str,
+    policy: &ReliabilityRequestPolicy,
+) {
+    events.push(provider_retry_metadata(attempt, cause, policy));
+}
+
+async fn retry_sleep(policy: &ReliabilityRequestPolicy, attempt: u32) {
+    let delay = provider_retry_delay_ms(policy, attempt);
+    if delay > 0 {
+        tokio::time::sleep(Duration::from_millis(delay)).await;
     }
 }
 
@@ -314,7 +385,10 @@ mod tests {
     use roder_api::inference::{
         InstructionBundle, ModelSelection, OutputConfig, ReasoningConfig, RuntimeHints,
     };
+    use roder_api::reliability::ReliabilityRequestPolicy;
     use roder_api::tools::{ToolChoice, ToolSpec};
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    use tokio::net::TcpListener;
 
     fn request() -> AgentInferenceRequest {
         AgentInferenceRequest {
@@ -518,5 +592,49 @@ mod tests {
                 total_tokens: 5,
             })
         );
+    }
+
+    #[tokio::test]
+    async fn retry_recovers_after_empty_body() {
+        let url = spawn_retry_server(vec![
+            (200, ""),
+            (
+                200,
+                r#"{"responseId":"resp_1","candidates":[{"finishReason":"STOP","content":{"parts":[{"text":"ok"}]}}]}"#,
+            ),
+        ])
+        .await;
+        let policy = ReliabilityRequestPolicy {
+            provider_retry_max_attempts: 2,
+            provider_retry_initial_backoff_ms: 0,
+            retry_empty_provider_body: true,
+            ..ReliabilityRequestPolicy::default()
+        };
+
+        let (value, retry_events) = send_gemini_request(&url, &json!({}), Some(&policy))
+            .await
+            .unwrap();
+
+        assert_eq!(extract_candidate_text(&value), "ok");
+        assert_eq!(retry_events[0]["kind"], "reliability_retry_attempt");
+    }
+
+    async fn spawn_retry_server(responses: Vec<(u16, &'static str)>) -> String {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            for (status, body) in responses {
+                let (mut stream, _) = listener.accept().await.unwrap();
+                let mut buf = [0_u8; 4096];
+                let _ = stream.read(&mut buf).await.unwrap();
+                let reason = if status == 200 { "OK" } else { "Retry" };
+                let response = format!(
+                    "HTTP/1.1 {status} {reason}\r\ncontent-type: application/json\r\nconnection: close\r\ncontent-length: {}\r\n\r\n{body}",
+                    body.len()
+                );
+                stream.write_all(response.as_bytes()).await.unwrap();
+            }
+        });
+        format!("http://{addr}/v1beta/models/test:generateContent?key=secret")
     }
 }
