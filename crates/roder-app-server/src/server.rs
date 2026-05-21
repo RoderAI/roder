@@ -1,5 +1,6 @@
 use std::sync::Arc;
 
+use roder_api::catalog::built_in_model_profile;
 use roder_api::events::{EventEnvelope, RoderEvent};
 use roder_api::inference::{
     HostedWebSearchMode, InferenceProviderContext, InferenceProviderMetadata, ProviderAuthType,
@@ -949,11 +950,27 @@ impl AppServer {
         params: ProviderSelectParams,
     ) -> Result<serde_json::Value, JsonRpcError> {
         let thread_id = params.thread_id.clone();
+        let previous_model = if let Some(thread_id) = thread_id.as_deref() {
+            self.desktop_thread_model(thread_id).await
+        } else {
+            None
+        };
         let cfg = self
             .runtime
             .select_provider(params.provider, params.model, params.reasoning)
             .await
             .map_err(internal_error)?;
+        let model_profile = active_model_profile_label(&cfg);
+        let model_switch_summary = previous_model
+            .filter(|(provider, model)| {
+                provider != &cfg.default_provider || model != &cfg.default_model
+            })
+            .map(|(provider, model)| {
+                format!(
+                    "Model switch summary: previous profile {provider}/{model}. Current profile {}/{}.",
+                    cfg.default_provider, model_profile
+                )
+            });
         if let Some(thread_id) = thread_id {
             self.desktop_thread_models.write().await.insert(
                 thread_id.clone(),
@@ -976,6 +993,8 @@ impl AppServer {
             provider: cfg.default_provider,
             model: cfg.default_model,
             reasoning: self.runtime.effective_reasoning().await,
+            model_profile: Some(model_profile),
+            model_switch_summary,
         })
         .unwrap())
     }
@@ -3167,6 +3186,15 @@ fn internal_error(err: impl std::fmt::Display) -> JsonRpcError {
     }
 }
 
+fn active_model_profile_label(cfg: &roder_core::RuntimeConfig) -> String {
+    cfg.model_profiles
+        .get(&cfg.default_model)
+        .cloned()
+        .or_else(|| built_in_model_profile(&cfg.default_model))
+        .map(|profile| profile.model)
+        .unwrap_or_else(|| cfg.default_model.clone())
+}
+
 fn not_found(message: impl Into<String>) -> JsonRpcError {
     JsonRpcError {
         code: -32602,
@@ -3426,4 +3454,56 @@ async fn provider_auth_status(
 fn non_empty(value: String) -> Option<String> {
     let value = value.trim().to_string();
     (!value.is_empty()).then_some(value)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use roder_api::catalog::PROVIDER_MOCK;
+    use roder_api::inference::{
+        ModelHarnessProfile, ModelInstructionOverlay, ModelProfileReasoning, ModelSchemaPolicy,
+        ProviderFamily,
+    };
+
+    #[test]
+    fn model_switch_provider_status_fields_serialize_with_active_profile() {
+        let cfg = roder_core::RuntimeConfig {
+            default_provider: PROVIDER_MOCK.to_string(),
+            default_model: "gpt-5.5".to_string(),
+            model_profiles: std::collections::HashMap::from([(
+                "gpt-5.5".to_string(),
+                ModelHarnessProfile {
+                    model: "gpt-5.5".to_string(),
+                    provider: PROVIDER_MOCK.to_string(),
+                    provider_family: ProviderFamily::Mock,
+                    edit_tool: Some("patch".to_string()),
+                    schema_policy: ModelSchemaPolicy::RequiredFirstFlat,
+                    instruction_overlay: ModelInstructionOverlay::LiteralToolOutputs,
+                    reasoning: ModelProfileReasoning::default(),
+                    parallel_tool_calls: Some(true),
+                    auto_compact_token_limit: Some(180_000),
+                },
+            )]),
+            ..roder_core::RuntimeConfig::default()
+        };
+        let result = ProviderSelectResult {
+            provider: cfg.default_provider.clone(),
+            model: cfg.default_model.clone(),
+            reasoning: "medium".to_string(),
+            model_profile: Some(active_model_profile_label(&cfg)),
+            model_switch_summary: Some(
+                "Model switch summary: previous profile mock/mock. Current profile mock/gpt-5.5."
+                    .to_string(),
+            ),
+        };
+
+        let value = serde_json::to_value(result).unwrap();
+        assert_eq!(value["modelProfile"], "gpt-5.5");
+        assert!(
+            value["modelSwitchSummary"]
+                .as_str()
+                .unwrap()
+                .contains("previous profile mock/mock")
+        );
+    }
 }

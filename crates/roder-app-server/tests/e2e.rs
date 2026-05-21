@@ -708,7 +708,7 @@ async fn test_app_server_e2e() {
 }
 
 #[tokio::test]
-async fn providers_select_updates_desktop_thread_model_for_next_turn() {
+async fn model_switch_providers_select_updates_desktop_thread_model_for_next_turn() {
     let engine = Arc::new(TaskCallingEngine {
         hang_child: false,
         parent_calls: Mutex::new(0),
@@ -748,6 +748,19 @@ async fn providers_select_updates_desktop_thread_model_for_next_turn() {
     )
     .await;
     assert_eq!(selected.model, "alternate-mock-model");
+    assert_eq!(
+        selected.model_profile.as_deref(),
+        Some("alternate-mock-model")
+    );
+    assert!(
+        selected
+            .model_switch_summary
+            .as_deref()
+            .is_some_and(|summary| {
+                summary.contains("previous profile mock/mock")
+                    && summary.contains("Current profile mock/alternate-mock-model")
+            })
+    );
 
     let _: TurnStartResult = request(
         &client,
