@@ -12,6 +12,7 @@ mod plan_hunk_tests;
 mod plan_panel;
 mod plan_review;
 mod plugin_browser;
+mod processes;
 #[allow(dead_code)]
 mod remote;
 mod runner;
@@ -2238,6 +2239,9 @@ impl TuiApp {
             }
             "tasks" => {
                 self.run_tasks_slash_command().await;
+            }
+            "ps" => {
+                self.run_processes_slash_command(&args).await;
             }
             "remote" => {
                 self.run_remote_slash_command(&args).await;

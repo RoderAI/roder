@@ -17,6 +17,7 @@ pub(super) fn built_in_command_catalog() -> Vec<CommandDescriptor> {
         ("model", "Show or change the active model."),
         ("agents", "List configured subagents."),
         ("tasks", "Open the background task monitor."),
+        ("ps", "Open the Roder-owned process monitor."),
         ("memory", "Inspect relevant project and user memory."),
         ("commit", "Create a scoped git commit."),
         ("marketplace", "Manage plugin marketplaces."),
@@ -38,6 +39,7 @@ pub(super) fn built_in_command_catalog() -> Vec<CommandDescriptor> {
             "plugin" => {
                 Some("preview|install|install-all|list|disable|uninstall [args]".to_string())
             }
+            "ps" => Some("all|stop <id>|stop-all --confirm|<id>".to_string()),
             "roadmap" => Some("[plan]".to_string()),
             _ => None,
         };
@@ -133,6 +135,8 @@ pub(super) fn help_text(commands: &[CommandDescriptor]) -> String {
         "/model - Show or change the active model.".to_string(),
         "/agents - List configured subagents.".to_string(),
         "/tasks - Open the background task monitor.".to_string(),
+        "/ps [all|stop <id>|stop-all --confirm] - Inspect and stop Roder-owned processes."
+            .to_string(),
         "/commit [path-or-message] - Create a scoped git commit.".to_string(),
         "/marketplace <command> - Manage plugin marketplaces.".to_string(),
         "/plugin <command> - Manage marketplace plugin installs.".to_string(),
@@ -146,6 +150,7 @@ pub(super) fn help_text(commands: &[CommandDescriptor]) -> String {
                 | "model"
                 | "agents"
                 | "tasks"
+                | "ps"
                 | "marketplace"
                 | "plugin"
                 | "commit"
@@ -243,6 +248,7 @@ mod tests {
                 "model",
                 "agents",
                 "tasks",
+                "ps",
                 "memory",
                 "commit",
                 "marketplace",
@@ -278,6 +284,13 @@ mod tests {
                 .find(|command| command.name == "plugin")
                 .and_then(|command| command.argument_hint.as_deref()),
             Some("preview|install|install-all|list|disable|uninstall [args]")
+        );
+        assert_eq!(
+            commands
+                .iter()
+                .find(|command| command.name == "ps")
+                .and_then(|command| command.argument_hint.as_deref()),
+            Some("all|stop <id>|stop-all --confirm|<id>")
         );
         assert_eq!(
             commands

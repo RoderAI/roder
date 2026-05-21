@@ -3,6 +3,7 @@ use super::*;
 use crate::palette::{
     PaletteAction, collect_entries, cycle_source_filter,
     index::{PaletteMatch, search as search_palette},
+    processes::process_source,
     render::palette_list,
     skills::skill_source,
     sources::{
@@ -92,6 +93,13 @@ impl TuiApp {
                 None
             }
         };
+        let processes = match self.processes_list(true).await {
+            Ok(processes) => Some(processes),
+            Err(err) => {
+                self.push_event(format!("processes/list unavailable: {err}"));
+                None
+            }
+        };
 
         let mut sources = Vec::new();
         if self.palette_source_enabled("commands") {
@@ -143,6 +151,11 @@ impl TuiApp {
         }
         if self.palette_source_enabled("memories") {
             sources.push(memories_source());
+        }
+        if self.palette_source_enabled("processes")
+            && let Some(processes) = processes.as_ref()
+        {
+            sources.push(process_source(&processes.processes));
         }
         if self.palette_source_enabled("remote") {
             sources.push(remote_source());
@@ -320,6 +333,15 @@ impl TuiApp {
             PaletteAction::ShowAutomationsStatus => {
                 self.show_automations_status().await;
             }
+            PaletteAction::ShowProcesses => {
+                self.show_processes(false).await;
+            }
+            PaletteAction::ShowProcessDetail(process_id) => {
+                self.show_process_detail(&process_id).await;
+            }
+            PaletteAction::StopProcess(process_id) => {
+                self.stop_process(&process_id, Some("palette stop")).await;
+            }
         }
     }
 
@@ -361,6 +383,7 @@ impl TuiApp {
             .await;
         decode_response(res)
     }
+
 }
 
 #[cfg(test)]
