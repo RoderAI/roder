@@ -17,7 +17,7 @@ use roder_api::inference::{HostedWebSearchConfig, RuntimeProfile};
 use roder_api::notifications::NotificationKind;
 use roder_api::policy_mode::PolicyMode;
 use roder_api::remote_runner::{RunnerDestination, RunnerManifest};
-use roder_app_server::{AppServer, LocalAppClient};
+use roder_app_server::{AppServer, AppServerFeatureConfig, LocalAppClient};
 use roder_core::model_profiles::{
     ModelHarnessProfileOverride, ModelProfileOverrides, ModelProfileReasoningOverride,
     resolve_model_profiles,
@@ -719,6 +719,10 @@ struct AppServerOptions {
     remote_token_ttl: Option<time::Duration>,
     allowed_origins: Vec<String>,
     print_qr: bool,
+    enable_automations: Option<bool>,
+    automation_server_id: Option<String>,
+    automation_server_role: Option<String>,
+    automation_store: Option<PathBuf>,
     cli_options: CliOptions,
 }
 
@@ -1072,6 +1076,10 @@ fn parse_app_server_options(args: &[String]) -> anyhow::Result<AppServerOptions>
     let mut remote_token_ttl = None;
     let mut allowed_origins = Vec::new();
     let mut print_qr = true;
+    let mut enable_automations = None;
+    let mut automation_server_id = None;
+    let mut automation_server_role = None;
+    let mut automation_store = None;
     let mut passthrough = Vec::new();
     let mut i = 0;
     while i < args.len() {
@@ -1129,6 +1137,42 @@ fn parse_app_server_options(args: &[String]) -> anyhow::Result<AppServerOptions>
             "--print-qr=true" => {
                 print_qr = true;
             }
+            "--enable-automations" => {
+                enable_automations = Some(true);
+            }
+            "--disable-automations" => {
+                enable_automations = Some(false);
+            }
+            "--automation-server-id" => {
+                let Some(value) = args.get(i + 1) else {
+                    anyhow::bail!("--automation-server-id requires a value");
+                };
+                automation_server_id = Some(value.clone());
+                i += 1;
+            }
+            arg if arg.starts_with("--automation-server-id=") => {
+                automation_server_id = Some(arg["--automation-server-id=".len()..].to_string());
+            }
+            "--automation-server-role" => {
+                let Some(value) = args.get(i + 1) else {
+                    anyhow::bail!("--automation-server-role requires a value");
+                };
+                automation_server_role = Some(value.clone());
+                i += 1;
+            }
+            arg if arg.starts_with("--automation-server-role=") => {
+                automation_server_role = Some(arg["--automation-server-role=".len()..].to_string());
+            }
+            "--automation-store" => {
+                let Some(value) = args.get(i + 1) else {
+                    anyhow::bail!("--automation-store requires a value");
+                };
+                automation_store = Some(PathBuf::from(value));
+                i += 1;
+            }
+            arg if arg.starts_with("--automation-store=") => {
+                automation_store = Some(PathBuf::from(&arg["--automation-store=".len()..]));
+            }
             other => passthrough.push(other.to_string()),
         }
         i += 1;
@@ -1141,6 +1185,10 @@ fn parse_app_server_options(args: &[String]) -> anyhow::Result<AppServerOptions>
         remote_token_ttl,
         allowed_origins,
         print_qr,
+        enable_automations,
+        automation_server_id,
+        automation_server_role,
+        automation_store,
         cli_options: parse_cli_options(&passthrough)?,
     })
 }
@@ -1154,8 +1202,11 @@ async fn run_app_server(args: &[String]) -> anyhow::Result<()> {
         );
     }
 
-    let (runtime, _) = build_runtime_from_config(options.cli_options).await?;
-    let app_server = Arc::new(AppServer::new(runtime).with_user_config_persistence());
+    let (runtime, _) = build_runtime_from_config(options.cli_options.clone()).await?;
+    let feature_config = resolve_app_server_feature_config(&options)?;
+    let app_server = Arc::new(
+        AppServer::with_feature_config(runtime, feature_config).with_user_config_persistence(),
+    );
     if options.remote {
         let token = match options.auth_token {
             Some(token) => roder_app_server::remote::RemoteToken::new(token)?,
@@ -1185,6 +1236,40 @@ async fn run_app_server(args: &[String]) -> anyhow::Result<()> {
         return Ok(());
     }
     run_stdio_app_server(app_server).await
+}
+
+fn resolve_app_server_feature_config(
+    options: &AppServerOptions,
+) -> anyhow::Result<AppServerFeatureConfig> {
+    let cfg = roder_config::load_config()?;
+    let mut features = AppServerFeatureConfig::from_config(cfg.app_server.as_ref());
+    apply_app_server_automation_overrides(&mut features, options)?;
+    Ok(features)
+}
+
+fn apply_app_server_automation_overrides(
+    features: &mut AppServerFeatureConfig,
+    options: &AppServerOptions,
+) -> anyhow::Result<()> {
+    if let Some(enabled) = options.enable_automations {
+        features.automations.enabled = enabled;
+    }
+    if let Some(server_id) = options.automation_server_id.as_ref() {
+        if server_id.trim().is_empty() {
+            anyhow::bail!("--automation-server-id cannot be empty");
+        }
+        features.automations.server_id = server_id.clone();
+    }
+    if let Some(server_role) = options.automation_server_role.as_ref() {
+        if server_role.trim().is_empty() {
+            anyhow::bail!("--automation-server-role cannot be empty");
+        }
+        features.automations.server_role = server_role.clone();
+    }
+    if let Some(store) = options.automation_store.as_ref() {
+        features.automations.store_path = store.clone();
+    }
+    Ok(())
 }
 
 fn render_remote_app_server_start(
@@ -2440,6 +2525,49 @@ Report findings.
                 "https://second.example".to_string(),
             ]
         );
+    }
+
+    #[test]
+    fn app_server_automations_parse_scheduler_flags() {
+        let options = parse_app_server_options(&[
+            "--enable-automations".to_string(),
+            "--automation-server-id".to_string(),
+            "desktop-main".to_string(),
+            "--automation-server-role=desktop".to_string(),
+            "--automation-store".to_string(),
+            "/tmp/automations.sqlite3".to_string(),
+            "--mode".to_string(),
+            "plan".to_string(),
+        ])
+        .unwrap();
+
+        assert_eq!(options.enable_automations, Some(true));
+        assert_eq!(
+            options.automation_server_id.as_deref(),
+            Some("desktop-main")
+        );
+        assert_eq!(options.automation_server_role.as_deref(), Some("desktop"));
+        assert_eq!(
+            options.automation_store,
+            Some(PathBuf::from("/tmp/automations.sqlite3"))
+        );
+        assert_eq!(options.cli_options.policy_mode, Some(PolicyMode::Plan));
+    }
+
+    #[test]
+    fn app_server_automations_reject_empty_flag_values() {
+        let err = parse_app_server_options(&[
+            "--enable-automations".to_string(),
+            "--automation-server-id=".to_string(),
+        ])
+        .and_then(|options| {
+            let mut features = AppServerFeatureConfig::default();
+            apply_app_server_automation_overrides(&mut features, &options)
+        })
+        .unwrap_err()
+        .to_string();
+
+        assert!(err.contains("automation-server-id cannot be empty"));
     }
 
     #[test]
