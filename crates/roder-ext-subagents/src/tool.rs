@@ -126,7 +126,7 @@ impl ToolExecutor for TaskTool {
                     },
                     "inputs": {
                         "type": "object",
-                        "description": "Optional structured context for the child task."
+                        "description": "Optional freeform structured context for the child task."
                     },
                     "timeout_seconds": {
                         "type": "integer",
