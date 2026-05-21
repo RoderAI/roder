@@ -251,11 +251,19 @@ mod tests {
 
     #[test]
     fn checked_in_startup_fixture_loads() {
-        let path = Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../..")
-            .join("tests/fixtures/api-transcripts/startup.jsonl");
-        let records = read_transcript_records(&path).unwrap();
-
-        assert_eq!(records.len(), 2);
+        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+        for fixture in [
+            "startup.jsonl",
+            "slash-menu.jsonl",
+            "palette.jsonl",
+            "streaming-turn.jsonl",
+        ] {
+            let path = root.join("tests/fixtures/api-transcripts").join(fixture);
+            let records = read_transcript_records(&path).unwrap();
+            assert!(
+                records.len() >= 2,
+                "{fixture} should contain a header and body record"
+            );
+        }
     }
 }

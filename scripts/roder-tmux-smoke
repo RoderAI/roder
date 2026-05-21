@@ -1,0 +1,41 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+case "${1:-}" in
+  api-transcript-record-replay)
+    ;;
+  *)
+    echo "usage: $0 api-transcript-record-replay" >&2
+    exit 2
+    ;;
+esac
+
+if [[ "${RODER_TUI_RECORD_SMOKE:-}" != "1" ]]; then
+  echo "skipped: set RODER_TUI_RECORD_SMOKE=1 to run api transcript record/replay smoke"
+  exit 0
+fi
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+TMUX="$ROOT/.agents/skills/roder-tmux/scripts/roder_tmux.sh"
+SESSION="roder-api-transcript-smoke"
+OUT_DIR="$ROOT/.roder/tmux-captures"
+TRANSCRIPT="$ROOT/.roder/api-transcript-smoke.jsonl"
+
+mkdir -p "$OUT_DIR" "$(dirname "$TRANSCRIPT")"
+rm -f "$TRANSCRIPT"
+
+cleanup() {
+  "$TMUX" stop -s "$SESSION" >/dev/null 2>&1 || true
+}
+trap cleanup EXIT
+
+"$TMUX" start -s "$SESSION" -- cargo run -p roder-cli -- --record-api-transcript "$TRANSCRIPT" --record-ui-frames
+sleep 4
+"$TMUX" keys -s "$SESSION" C-c y Enter || true
+sleep 3
+"$TMUX" capture -s "$SESSION" -o "$OUT_DIR" >/dev/null || true
+cleanup
+
+test -s "$TRANSCRIPT"
+cargo run -p roder-cli -- replay "$TRANSCRIPT" --headless
+echo "api transcript record/replay smoke ok: $TRANSCRIPT"
