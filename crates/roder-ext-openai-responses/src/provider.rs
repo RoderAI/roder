@@ -1405,6 +1405,7 @@ mod tests {
                 auto_compact_token_limit: Some(200_000),
                 parallel_tool_calls: Some(true),
                 hosted_web_search: roder_api::inference::HostedWebSearchConfig::disabled(),
+                ..RuntimeHints::default()
             },
             metadata: json!({}),
         }
@@ -1556,6 +1557,42 @@ mod tests {
         let body = OpenAiResponsesEngine::map_request(&request);
 
         assert_eq!(body["parallel_tool_calls"], false);
+    }
+
+    #[test]
+    fn profile_request_snapshot_maps_openai_patch_reasoning_parallel_and_context() {
+        let mut request = request();
+        request.tools = vec![roder_api::tools::ToolSpec {
+            name: "apply_patch".to_string(),
+            description: "Apply a patch".to_string(),
+            parameters: json!({
+                "type": "object",
+                "required": ["patch"],
+                "properties": { "patch": { "type": "string" } },
+                "additionalProperties": false
+            }),
+        }];
+        request.reasoning.level = Some("high".to_string());
+        request.runtime.parallel_tool_calls = Some(false);
+        request.runtime.auto_compact_token_limit = Some(180_000);
+        request.metadata = json!({
+            "modelProfile": {
+                "editTool": "patch",
+                "schemaPolicy": "required_first_flat",
+                "parallelToolCalls": false
+            }
+        });
+
+        let body = OpenAiResponsesEngine::map_request(&request);
+
+        assert_eq!(body["tools"][0]["name"], "apply_patch");
+        assert_eq!(body["tools"][0]["parameters"]["required"][0], "patch");
+        assert_eq!(body["reasoning"]["effort"], "high");
+        assert_eq!(body["parallel_tool_calls"], false);
+        assert_eq!(
+            body["context_management"][0],
+            json!({ "type": "compaction", "compact_threshold": 180_000 })
+        );
     }
 
     #[test]
@@ -1713,7 +1750,7 @@ mod tests {
     }
 
     #[test]
-    fn xai_mapping_omits_reasoning_for_non_reasoning_grok_models() {
+    fn profile_xai_mapping_omits_reasoning_for_non_reasoning_grok_models() {
         let mut request = request();
         request.model.provider = PROVIDER_XAI.to_string();
         request.model.model = "grok-4.20-0309-non-reasoning".to_string();

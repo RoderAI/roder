@@ -361,6 +361,53 @@ mod tests {
     }
 
     #[test]
+    fn profile_request_snapshot_maps_anthropic_edit_overlay_and_reasoning() {
+        let mut request = request();
+        request.instructions.developer = Some(
+            "developer\n\n## Model Harness Profile\n\nUse the provided context as the current working set."
+                .to_string(),
+        );
+        request.tools = vec![ToolSpec {
+            name: "edit".to_string(),
+            description: "Edit a file".to_string(),
+            parameters: json!({
+                "type": "object",
+                "required": ["path", "old_string", "new_string"],
+                "properties": {
+                    "path": { "type": "string" },
+                    "old_string": { "type": "string" },
+                    "new_string": { "type": "string" }
+                },
+                "additionalProperties": false
+            }),
+        }];
+        request.reasoning.level = Some("low".to_string());
+        request.runtime.parallel_tool_calls = Some(false);
+        request.metadata = json!({
+            "modelProfile": {
+                "editTool": "edit",
+                "schemaPolicy": "standard_required_first",
+                "instructionOverlay": "intuitive_context",
+                "parallelToolCalls": false
+            }
+        });
+
+        let body = AnthropicEngine::map_request(&request);
+
+        assert_eq!(
+            body["system"][1]["text"],
+            request.instructions.developer.unwrap()
+        );
+        assert_eq!(body["tools"][0]["name"], "edit");
+        assert_eq!(
+            body["tools"][0]["input_schema"]["required"],
+            json!(["path", "old_string", "new_string"])
+        );
+        assert_eq!(body["output_config"]["effort"], "low");
+        assert!(body.get("parallel_tool_calls").is_none());
+    }
+
+    #[test]
     fn normalizes_tool_schema_order_for_anthropic_tools() {
         let mut request = request();
         request.tools = vec![ToolSpec {

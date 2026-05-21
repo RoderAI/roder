@@ -98,4 +98,15 @@ mod tests {
         assert!(engine.capabilities().tool_calls);
         assert!(engine.capabilities().parallel_tool_calls);
     }
+
+    #[test]
+    fn profile_supergrok_uses_openai_responses_profile_contract() {
+        let engine = SuperGrokEngine;
+        let capabilities = engine.capabilities();
+
+        assert!(capabilities.tool_calls);
+        assert!(capabilities.parallel_tool_calls);
+        assert!(capabilities.reasoning_summaries);
+        assert!(capabilities.prompt_cache);
+    }
 }
