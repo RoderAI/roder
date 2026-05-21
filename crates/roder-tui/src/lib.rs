@@ -5,6 +5,7 @@ pub mod frame_snapshot;
 pub mod keymap;
 pub mod mouse;
 pub mod palette;
+pub mod replay;
 pub mod roadmap;
 pub mod runtime_io;
 pub mod selection;
