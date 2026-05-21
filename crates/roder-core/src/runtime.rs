@@ -41,6 +41,7 @@ use crate::verification_gate::VerificationGateState;
 
 const MAX_TOOL_ROUNDS_PER_TURN: usize = 1024;
 const FINAL_ANSWER_PHASE: &str = "final_answer";
+pub(crate) const MIN_CHILD_DEADLINE_SECONDS: u64 = 2;
 
 #[derive(Debug, Clone)]
 pub struct RuntimeConfig {
@@ -55,6 +56,7 @@ pub struct RuntimeConfig {
     pub workspace: Option<String>,
     pub policy_mode: PolicyMode,
     pub runtime_profile: RuntimeProfile,
+    pub turn_deadline_seconds: Option<u64>,
     pub remote_runner_destination: Option<RunnerDestination>,
     pub team_data_dir: Option<PathBuf>,
     pub roadmap_data_dir: Option<PathBuf>,
@@ -74,6 +76,7 @@ impl Default for RuntimeConfig {
             workspace: None,
             policy_mode: PolicyMode::Default,
             runtime_profile: RuntimeProfile::Interactive,
+            turn_deadline_seconds: None,
             remote_runner_destination: None,
             team_data_dir: None,
             roadmap_data_dir: None,
@@ -1109,6 +1112,7 @@ impl Runtime {
                         thread_id: thread_id_for_task,
                         turn_id: turn_id_for_task.clone(),
                         error: err.to_string(),
+                        error_kind: None,
                         timestamp: OffsetDateTime::now_utc(),
                     }))
                     .await;
@@ -1194,6 +1198,7 @@ impl Runtime {
 
         let cfg = self.config.read().await.clone();
         let runtime_profile = cfg.runtime_profile;
+        let turn_deadline = turn_deadline_for_config(&cfg);
         let provider = req
             .provider_override
             .clone()
@@ -1233,6 +1238,13 @@ impl Runtime {
         let mut speed_policy = SpeedPolicyState::default();
 
         for _ in 0..MAX_TOOL_ROUNDS_PER_TURN {
+            if let Some(deadline) = turn_deadline
+                && deadline_expired(deadline)
+            {
+                self.fail_turn_due_to_deadline(&req.thread_id, &turn_id, deadline, &conversation)
+                    .await?;
+                return Ok(());
+            }
             let steers = self.drain_turn_steers(&turn_id).await;
             self.append_steers(&req, &turn_id, &mut conversation, steers)
                 .await?;
@@ -1263,10 +1275,13 @@ impl Runtime {
             {
                 instructions = apply_task_ledger_required(instructions);
             }
-            let request_metadata = speed_policy_decision
-                .as_ref()
-                .map(|decision| serde_json::json!({ "speedPolicy": decision }))
-                .unwrap_or_else(|| serde_json::json!({}));
+            let mut request_metadata = serde_json::json!({});
+            if let Some(decision) = &speed_policy_decision {
+                request_metadata["speedPolicy"] = serde_json::json!(decision);
+            }
+            if let Some(remaining) = deadline_remaining_seconds(turn_deadline) {
+                request_metadata["deadlineRemainingSeconds"] = serde_json::json!(remaining);
+            }
             let request = AgentInferenceRequest {
                 model: ModelSelection {
                     provider: provider.clone(),
@@ -1287,6 +1302,7 @@ impl Runtime {
                     parallel_tool_calls: Some(parallel_tool_calls),
                     hosted_web_search: cfg.hosted_web_search.clone(),
                     speed_policy: speed_policy_decision,
+                    deadline_remaining_seconds: deadline_remaining_seconds(turn_deadline),
                     ..RuntimeHints::default()
                 },
                 metadata: request_metadata,
@@ -1296,14 +1312,51 @@ impl Runtime {
                 thread_id: &req.thread_id,
                 turn_id: &turn_id,
             };
-            let mut stream = engine.stream_turn(ctx, request).await?;
+            let stream_future = engine.stream_turn(ctx, request);
+            let mut stream = if let Some(deadline) = turn_deadline {
+                match tokio::time::timeout_at(deadline_instant(deadline), stream_future).await {
+                    Ok(stream) => stream?,
+                    Err(_) => {
+                        self.fail_turn_due_to_deadline(
+                            &req.thread_id,
+                            &turn_id,
+                            deadline,
+                            &conversation,
+                        )
+                        .await?;
+                        return Ok(());
+                    }
+                }
+            } else {
+                stream_future.await?
+            };
             let mut assistant_text = String::new();
             let mut phase_messages = Vec::<AssistantMessage>::new();
             let mut reasoning_text = String::new();
             let mut tool_calls = Vec::new();
             let mut provider_metadata = None;
 
-            while let Some(res) = stream.next().await {
+            loop {
+                let next = if let Some(deadline) = turn_deadline {
+                    match tokio::time::timeout_at(deadline_instant(deadline), stream.next()).await {
+                        Ok(next) => next,
+                        Err(_) => {
+                            self.fail_turn_due_to_deadline(
+                                &req.thread_id,
+                                &turn_id,
+                                deadline,
+                                &conversation,
+                            )
+                            .await?;
+                            return Ok(());
+                        }
+                    }
+                } else {
+                    stream.next().await
+                };
+                let Some(res) = next else {
+                    break;
+                };
                 let event = match res {
                     Ok(event) => event,
                     Err(err) => {
@@ -1311,6 +1364,7 @@ impl Runtime {
                             thread_id: req.thread_id.clone(),
                             turn_id: turn_id.clone(),
                             error: err.to_string(),
+                            error_kind: None,
                             timestamp: OffsetDateTime::now_utc(),
                         }))
                         .await;
@@ -1376,6 +1430,7 @@ impl Runtime {
                             thread_id: req.thread_id.clone(),
                             turn_id: turn_id.clone(),
                             error: failure.message,
+                            error_kind: None,
                             timestamp: OffsetDateTime::now_utc(),
                         }))
                         .await;
@@ -1485,6 +1540,13 @@ impl Runtime {
                     .await?;
                 conversation.push(tool_item);
             }
+            if let Some(deadline) = turn_deadline
+                && deadline_expired(deadline)
+            {
+                self.fail_turn_due_to_deadline(&req.thread_id, &turn_id, deadline, &conversation)
+                    .await?;
+                return Ok(());
+            }
             let results = self
                 .route_tool_calls(
                     &req.thread_id,
@@ -1492,6 +1554,7 @@ impl Runtime {
                     tool_calls,
                     parallel_tool_calls,
                     workspace.as_deref(),
+                    turn_deadline,
                 )
                 .await?;
             for result in results {
@@ -1518,6 +1581,7 @@ impl Runtime {
                 thread_id: req.thread_id.clone(),
                 turn_id: turn_id.clone(),
                 error: message,
+                error_kind: None,
                 timestamp: OffsetDateTime::now_utc(),
             }))
             .await;
@@ -1592,19 +1656,20 @@ impl Runtime {
         calls: Vec<ToolCallCompleted>,
         parallel: bool,
         workspace: Option<&str>,
+        deadline: Option<OffsetDateTime>,
     ) -> anyhow::Result<Vec<ToolResultRecord>> {
         if parallel {
             try_join_all(
-                calls
-                    .into_iter()
-                    .map(|call| self.route_tool_call(thread_id, turn_id, call, workspace)),
+                calls.into_iter().map(|call| {
+                    self.route_tool_call(thread_id, turn_id, call, workspace, deadline)
+                }),
             )
             .await
         } else {
             let mut results = Vec::with_capacity(calls.len());
             for call in calls {
                 results.push(
-                    self.route_tool_call(thread_id, turn_id, call, workspace)
+                    self.route_tool_call(thread_id, turn_id, call, workspace, deadline)
                         .await?,
                 );
             }
@@ -1630,6 +1695,52 @@ impl Runtime {
             thread_id: thread_id.clone(),
             turn_id: turn_id.clone(),
             error: message,
+            error_kind: None,
+            timestamp: OffsetDateTime::now_utc(),
+        }))
+        .await;
+        self.complete_team_member_turn(thread_id, turn_id, TeamMemberStatus::Failed)
+            .await?;
+        Ok(())
+    }
+
+    async fn fail_turn_due_to_deadline(
+        &self,
+        thread_id: &ThreadId,
+        turn_id: &TurnId,
+        deadline: OffsetDateTime,
+        conversation: &[ConversationItem],
+    ) -> anyhow::Result<()> {
+        let partial_result = turn_partial_result(conversation);
+        self.emit(RoderEvent::TurnPartialResult(TurnPartialResult {
+            thread_id: thread_id.clone(),
+            turn_id: turn_id.clone(),
+            summary: partial_result.clone(),
+            timestamp: OffsetDateTime::now_utc(),
+        }))
+        .await;
+        self.emit(RoderEvent::TurnDeadlineExceeded(TurnDeadlineExceeded {
+            thread_id: thread_id.clone(),
+            turn_id: turn_id.clone(),
+            deadline,
+            partial_result: partial_result.clone(),
+            timestamp: OffsetDateTime::now_utc(),
+        }))
+        .await;
+        let message = "turn deadline expired".to_string();
+        self.persist_turn_item(
+            thread_id,
+            turn_id,
+            &ConversationItem::Error(ErrorRecord {
+                message: format!("{message}: {partial_result}"),
+            }),
+        )
+        .await?;
+        self.emit(RoderEvent::TurnFailed(TurnFailed {
+            thread_id: thread_id.clone(),
+            turn_id: turn_id.clone(),
+            error: message,
+            error_kind: Some("deadline_timeout".to_string()),
             timestamp: OffsetDateTime::now_utc(),
         }))
         .await;
@@ -1734,6 +1845,55 @@ fn conversation_has_task_ledger(conversation: &[ConversationItem]) -> bool {
                 if result.name.as_deref() == Some("task_ledger.update") && !result.is_error
         )
     })
+}
+
+fn turn_deadline_for_config(cfg: &RuntimeConfig) -> Option<OffsetDateTime> {
+    if !cfg.runtime_profile.is_non_interactive() {
+        return None;
+    }
+    cfg.turn_deadline_seconds
+        .filter(|seconds| *seconds > 0)
+        .map(|seconds| OffsetDateTime::now_utc() + Duration::seconds(seconds as i64))
+}
+
+fn deadline_expired(deadline: OffsetDateTime) -> bool {
+    OffsetDateTime::now_utc() >= deadline
+}
+
+pub(crate) fn deadline_remaining_seconds(deadline: Option<OffsetDateTime>) -> Option<u64> {
+    let deadline = deadline?;
+    if deadline <= OffsetDateTime::now_utc() {
+        return Some(0);
+    }
+    Some(
+        (deadline - OffsetDateTime::now_utc())
+            .unsigned_abs()
+            .as_secs()
+            .max(1),
+    )
+}
+
+fn deadline_instant(deadline: OffsetDateTime) -> tokio::time::Instant {
+    let now = OffsetDateTime::now_utc();
+    if deadline <= now {
+        return tokio::time::Instant::now();
+    }
+    tokio::time::Instant::now() + (deadline - now).unsigned_abs()
+}
+
+fn turn_partial_result(conversation: &[ConversationItem]) -> String {
+    let tool_results = conversation
+        .iter()
+        .filter(|item| matches!(item, ConversationItem::ToolResult(_)))
+        .count();
+    let assistant_messages = conversation
+        .iter()
+        .filter(|item| matches!(item, ConversationItem::AssistantMessage(_)))
+        .count();
+    format!(
+        "partial turn state: {} conversation items, {assistant_messages} assistant messages, {tool_results} tool results",
+        conversation.len()
+    )
 }
 
 fn reasoning_for_model(cfg: &RuntimeConfig, model: &str) -> ReasoningConfig {
@@ -2189,6 +2349,40 @@ mod tests {
         }
     }
 
+    struct DeadlineEngine;
+
+    #[async_trait::async_trait]
+    impl InferenceEngine for DeadlineEngine {
+        fn id(&self) -> String {
+            roder_api::catalog::PROVIDER_MOCK.to_string()
+        }
+
+        fn capabilities(&self) -> InferenceCapabilities {
+            InferenceCapabilities::coding_agent_default()
+        }
+
+        async fn list_models(
+            &self,
+            _ctx: InferenceProviderContext<'_>,
+        ) -> anyhow::Result<Vec<roder_api::inference::ModelDescriptor>> {
+            Ok(Vec::new())
+        }
+
+        async fn stream_turn(
+            &self,
+            _ctx: InferenceTurnContext<'_>,
+            _request: AgentInferenceRequest,
+        ) -> anyhow::Result<InferenceEventStream> {
+            Ok(Box::pin(stream::once(async {
+                tokio::time::sleep(std::time::Duration::from_secs(60)).await;
+                Ok(InferenceEvent::MessageDelta(MessageDelta {
+                    text: "too late".to_string(),
+                    phase: None,
+                }))
+            })))
+        }
+    }
+
     struct WriteFileContributor;
 
     impl ToolContributor for WriteFileContributor {
@@ -2236,6 +2430,45 @@ mod tests {
                 name: call.name,
                 text: format!("wrote {path}"),
                 data: serde_json::json!({ "path": path }),
+                is_error: false,
+            })
+        }
+    }
+
+    struct CountingTaskTool {
+        calls: Arc<StdMutex<u32>>,
+    }
+
+    #[async_trait::async_trait]
+    impl ToolExecutor for CountingTaskTool {
+        fn spec(&self) -> ToolSpec {
+            ToolSpec {
+                name: "task".to_string(),
+                description: "Dispatch a test subagent.".to_string(),
+                parameters: serde_json::json!({
+                    "type": "object",
+                    "properties": {
+                        "description": { "type": "string" },
+                        "prompt": { "type": "string" },
+                        "parent_deadline_seconds": { "type": "integer" }
+                    },
+                    "required": ["description", "prompt"],
+                    "additionalProperties": false
+                }),
+            }
+        }
+
+        async fn execute(
+            &self,
+            _ctx: ToolExecutionContext,
+            call: ToolCall,
+        ) -> anyhow::Result<ToolResult> {
+            *self.calls.lock().unwrap() += 1;
+            Ok(ToolResult {
+                id: call.id,
+                name: call.name,
+                text: "started child".to_string(),
+                data: serde_json::json!({}),
                 is_error: false,
             })
         }
@@ -2521,5 +2754,134 @@ mod tests {
                 .and_then(serde_json::Value::as_str),
             Some("verification")
         );
+    }
+
+    #[tokio::test]
+    async fn deadline_turn_timeout_emits_partial_result_and_clears_active_turn() {
+        let mut builder = ExtensionRegistryBuilder::new();
+        builder.inference_engine(Arc::new(DeadlineEngine));
+        let runtime = Arc::new(
+            Runtime::new(
+                builder.build().unwrap(),
+                RuntimeConfig {
+                    default_provider: roder_api::catalog::PROVIDER_MOCK.to_string(),
+                    default_model: "mock".to_string(),
+                    runtime_profile: RuntimeProfile::Eval,
+                    turn_deadline_seconds: Some(1),
+                    ..RuntimeConfig::default()
+                },
+            )
+            .unwrap(),
+        );
+        let mut rx = runtime.subscribe_events();
+        let turn_id = runtime
+            .start_turn(StartTurnRequest {
+                thread_id: "thread-deadline".to_string(),
+                message: "slow work".to_string(),
+                images: Vec::new(),
+                provider_override: None,
+                model_override: None,
+                workspace: None,
+                instructions: InstructionBundle::default(),
+                task_ledger_required: false,
+            })
+            .await
+            .unwrap();
+
+        let mut saw_partial = false;
+        let mut saw_deadline = false;
+        let mut failed_kind = None;
+        tokio::time::timeout(std::time::Duration::from_secs(5), async {
+            loop {
+                let envelope = rx.recv().await.unwrap();
+                if envelope.turn_id.as_deref() != Some(&turn_id) {
+                    continue;
+                }
+                match envelope.event {
+                    RoderEvent::TurnPartialResult(event) => {
+                        saw_partial = event.summary.contains("partial turn state");
+                    }
+                    RoderEvent::TurnDeadlineExceeded(event) => {
+                        saw_deadline = event.partial_result.contains("conversation items");
+                    }
+                    RoderEvent::TurnFailed(event) => {
+                        failed_kind = event.error_kind;
+                        break;
+                    }
+                    _ => {}
+                }
+            }
+        })
+        .await
+        .unwrap();
+
+        for _ in 0..20 {
+            if !runtime.active_turns.read().await.contains_key(&turn_id) {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+        assert!(saw_partial);
+        assert!(saw_deadline);
+        assert_eq!(failed_kind.as_deref(), Some("deadline_timeout"));
+        assert!(!runtime.active_turns.read().await.contains_key(&turn_id));
+    }
+
+    #[tokio::test]
+    async fn deadline_skips_subagent_task_when_remaining_budget_is_too_low() {
+        let calls = Arc::new(StdMutex::new(0));
+        let mut builder = ExtensionRegistryBuilder::new();
+        builder.inference_engine(Arc::new(CapturingEngine {
+            request: Arc::new(StdMutex::new(None)),
+        }));
+        let task_tool = Arc::new(CountingTaskTool {
+            calls: calls.clone(),
+        });
+        builder.tool_contributor(Arc::new(TestToolContributor { tool: task_tool }));
+        let runtime = Runtime::new(
+            builder.build().unwrap(),
+            RuntimeConfig {
+                policy_mode: PolicyMode::Bypass,
+                ..RuntimeConfig::default()
+            },
+        )
+        .unwrap();
+
+        let result = runtime
+            .route_tool_call(
+                &"thread-deadline-task".to_string(),
+                &"turn-deadline-task".to_string(),
+                ToolCallCompleted {
+                    id: "task-1".to_string(),
+                    name: "task".to_string(),
+                    arguments: serde_json::json!({
+                        "description": "inspect",
+                        "prompt": "read"
+                    })
+                    .to_string(),
+                },
+                None,
+                Some(OffsetDateTime::now_utc() + Duration::seconds(1)),
+            )
+            .await
+            .unwrap();
+
+        assert!(result.is_error);
+        assert!(result.result.contains("deadline policy skipped"));
+        assert_eq!(*calls.lock().unwrap(), 0);
+    }
+
+    struct TestToolContributor {
+        tool: Arc<dyn ToolExecutor>,
+    }
+
+    impl ToolContributor for TestToolContributor {
+        fn id(&self) -> String {
+            "test-tool".to_string()
+        }
+
+        fn contribute(&self, registry: &mut ToolRegistry) -> anyhow::Result<()> {
+            registry.register(self.tool.clone())
+        }
     }
 }

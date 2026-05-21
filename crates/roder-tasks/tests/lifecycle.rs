@@ -175,6 +175,7 @@ async fn cancel_is_prompt_and_idempotent() {
 #[tokio::test]
 async fn deadline_expiry_fails_task() {
     let (runner, _notify, _max_running) = runner(1, 1024);
+    let mut events = runner.subscribe();
     let handle = runner
         .submit(
             "test",
@@ -192,6 +193,28 @@ async fn deadline_expiry_fails_task() {
         runner.get(&handle.task_id).await.unwrap().state,
         TaskState::Failed
     );
+    let mut saw_partial = false;
+    let mut saw_classified_failure = false;
+    while !(saw_partial && saw_classified_failure) {
+        match tokio::time::timeout(Duration::from_secs(1), events.recv())
+            .await
+            .unwrap()
+            .unwrap()
+        {
+            RoderEvent::TaskOutput(output) if output.task_id == handle.task_id => {
+                saw_partial = output.chunk.contains("partial result")
+                    && output.chunk.contains("hello background task");
+            }
+            RoderEvent::TaskFailed(failed) if failed.task_id == handle.task_id => {
+                saw_classified_failure = failed.error_kind.as_deref() == Some("deadline_timeout")
+                    && failed
+                        .partial_result
+                        .as_deref()
+                        .is_some_and(|partial| partial.contains("hello background task"));
+            }
+            _ => {}
+        }
+    }
 }
 
 #[tokio::test]

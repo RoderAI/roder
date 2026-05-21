@@ -185,6 +185,8 @@ pub struct RuntimeHints {
     pub hosted_web_search: HostedWebSearchConfig,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub speed_policy: Option<SpeedPolicyDecision>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub deadline_remaining_seconds: Option<u64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]

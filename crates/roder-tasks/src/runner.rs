@@ -290,6 +290,7 @@ impl BackgroundRunner {
             })),
         };
 
+        let mut timeout_partial_result = None;
         let result = if let Some(deadline) = options.deadline {
             let now = OffsetDateTime::now_utc();
             let duration = (deadline - now).unsigned_abs();
@@ -300,7 +301,20 @@ impl BackgroundRunner {
             };
             match tokio::time::timeout_at(deadline_instant, executor.execute(ctx, input)).await {
                 Ok(result) => result,
-                Err(_) => Err(anyhow::anyhow!("task deadline expired")),
+                Err(_) => {
+                    let partial = self.partial_result(&task_id).await;
+                    timeout_partial_result = Some(partial.clone());
+                    self.emit(RoderEvent::TaskOutput(TaskOutput {
+                        task_id: task_id.clone(),
+                        stream: TaskOutputStream::Log,
+                        chunk: format!("task deadline expired; partial result: {partial}"),
+                        dropped_bytes: 0,
+                        thread_id: options.thread_id.clone(),
+                        turn_id: options.turn_id.clone(),
+                        timestamp: OffsetDateTime::now_utc(),
+                    }));
+                    Err(anyhow::anyhow!("task deadline expired"))
+                }
             }
         } else {
             executor.execute(ctx, input).await
@@ -323,6 +337,10 @@ impl BackgroundRunner {
                 self.emit(RoderEvent::TaskFailed(TaskFailed {
                     task_id,
                     error: error.to_string(),
+                    error_kind: timeout_partial_result
+                        .as_ref()
+                        .map(|_| "deadline_timeout".to_string()),
+                    partial_result: timeout_partial_result,
                     thread_id: options.thread_id,
                     turn_id: options.turn_id,
                     timestamp: OffsetDateTime::now_utc(),
@@ -368,6 +386,27 @@ impl BackgroundRunner {
             timestamp: OffsetDateTime::now_utc(),
         }));
         Ok(())
+    }
+
+    async fn partial_result(&self, task_id: &str) -> String {
+        let Some((logs, dropped)) = self.logs(task_id).await else {
+            return "no task output captured before timeout".to_string();
+        };
+        if logs.is_empty() {
+            return "no task output captured before timeout".to_string();
+        }
+        let mut text = logs
+            .iter()
+            .rev()
+            .take(3)
+            .map(|entry| entry.chunk.trim())
+            .collect::<Vec<_>>();
+        text.reverse();
+        let mut partial = text.join("\n");
+        if dropped > 0 {
+            partial.push_str(&format!("\n... {dropped} bytes dropped"));
+        }
+        partial
     }
 
     fn emit(&self, event: RoderEvent) {

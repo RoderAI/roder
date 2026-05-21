@@ -25,11 +25,57 @@ impl Runtime {
         &self,
         thread_id: &ThreadId,
         turn_id: &TurnId,
-        call: roder_api::inference::ToolCallCompleted,
+        mut call: roder_api::inference::ToolCallCompleted,
         workspace: Option<&str>,
+        deadline: Option<OffsetDateTime>,
     ) -> anyhow::Result<ToolResultRecord> {
-        let parsed_args = serde_json::from_str(&call.arguments)
+        let mut parsed_args: Value = serde_json::from_str(&call.arguments)
             .unwrap_or_else(|_| serde_json::json!({ "raw": call.arguments }));
+        if is_subagent_task_tool(&call.name) {
+            if let Some(deadline) = deadline {
+                let remaining =
+                    crate::runtime::deadline_remaining_seconds(Some(deadline)).unwrap_or_default();
+                if remaining <= crate::runtime::MIN_CHILD_DEADLINE_SECONDS {
+                    let item = ToolResultRecord {
+                        id: call.id.clone(),
+                        name: Some(call.name.clone()),
+                        result: format!(
+                            "deadline policy skipped subagent work: {remaining}s remaining"
+                        ),
+                        display_payload: tool_display_payload(
+                            Some(&call.name),
+                            Some(&parsed_args),
+                            None,
+                        ),
+                        is_error: true,
+                    };
+                    self.persist_turn_item(
+                        thread_id,
+                        turn_id,
+                        &roder_api::conversation::ConversationItem::ToolResult(item.clone()),
+                    )
+                    .await?;
+                    self.emit(RoderEvent::ToolCallCompleted(ToolCallCompleted {
+                        thread_id: thread_id.clone(),
+                        turn_id: turn_id.clone(),
+                        tool_id: call.id,
+                        tool_name: item.name.clone(),
+                        display_payload: item.display_payload.clone(),
+                        is_error: true,
+                        output: Some(item.result.clone()),
+                        timestamp: OffsetDateTime::now_utc(),
+                    }))
+                    .await;
+                    return Ok(item);
+                }
+                if let Some(object) = parsed_args.as_object_mut() {
+                    object
+                        .entry("parent_deadline_seconds".to_string())
+                        .or_insert_with(|| serde_json::json!(remaining));
+                    call.arguments = serde_json::to_string(&parsed_args)?;
+                }
+            }
+        }
         self.emit(RoderEvent::ToolCallRequested(ToolCallRequested {
             thread_id: thread_id.clone(),
             turn_id: turn_id.clone(),
@@ -711,6 +757,10 @@ impl Runtime {
             is_error: false,
         })
     }
+}
+
+fn is_subagent_task_tool(name: &str) -> bool {
+    name == "task" || name.starts_with("task_")
 }
 
 fn subagent_error_kind(data: &Value) -> String {
