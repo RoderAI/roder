@@ -9,6 +9,7 @@ mod fs;
 mod marketplaces;
 mod notifications;
 pub mod remote;
+mod retrieval;
 mod search_index;
 pub mod server;
 
