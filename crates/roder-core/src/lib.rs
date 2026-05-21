@@ -13,6 +13,7 @@ pub mod teams;
 mod tool_execution;
 mod tool_output;
 mod tool_preview;
+mod tool_validation;
 
 pub use bus::*;
 pub use instructions::*;
