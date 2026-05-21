@@ -18,15 +18,20 @@ use it to:
   settings.
 - create or resume sessions and desktop-shaped threads.
 - start, steer, interrupt, and observe turns.
-- list/select providers, models, runners, tools, agents, commands, memories,
-  media artifacts, workflow imports, plan reviews, hunks, automations, and
-  background tasks.
+- list/select providers, models, runners, tools, agents, commands, skills,
+  memories, media artifacts, workflow imports, plan reviews, hunks,
+  automations, eval reports, retrieval diagnostics, search indexes, code
+  indexes, and background tasks.
 - receive notifications for turn lifecycle, streamed assistant output, tool
-  lifecycle, teams, workflow imports, media, memory, plan review, hunk, and
-  automation events.
+  lifecycle, teams, workflow imports, media, memory, plan review, hunk,
+  discovery, retrieval, skill, search-index, code-index, and automation events.
 
 The source of truth for method registration is
 `AppServer::handle_request` in `crates/roder-app-server/src/server.rs`.
+The versioned public method manifest is checked in at
+`schemas/app-server/roder-app-server.v1.json`; the JSON Schema wrapper is
+`schemas/app-server/methods.schema.json`. SDK generators and integrators should
+prefer those files over scraping this prose.
 
 ## Transport
 
@@ -156,8 +161,9 @@ Core:
 | `providers/configure` | Persist an API key for an API-key provider. |
 | `providers/select` | Select active default provider/model/reasoning. |
 | `model/list` | List desktop model descriptors. |
-| `settings/get` | Read hosted web search mode, default policy mode, and file-backed context status. |
+| `settings/get` | Read hosted web search mode, search-index status, default policy mode, and file-backed context status. |
 | `settings/set_web_search` | Set hosted web search mode. |
+| `settings/set_search_index` | Enable or disable the persistent regex search index. |
 | `settings/set_default_mode` | Set default policy mode. |
 | `settings/set_file_backed_dynamic_context` | Enable or disable file-backed dynamic context. |
 | `auth/codex/login` | Start Codex OAuth login. |
@@ -174,6 +180,7 @@ Sessions, threads, and turns:
 | `thread/start` | Create a desktop thread/session. |
 | `thread/list` | List desktop threads. |
 | `thread/read` | Read a desktop thread with optional turns. |
+| `thread/archive` | Archive a desktop thread and remove it from active listings. |
 | `turn/start` | Start a desktop turn from rich text input. |
 | `turn/steer` | Add user input to an active desktop turn. |
 | `turn/interrupt` | Interrupt an active desktop turn. |
@@ -195,6 +202,10 @@ Tools, commands, files, agents, and tasks:
 | `discovery/promote` | Promote one discovery item for a session. |
 | `discovery/promoted/list` | List promoted discovery items. |
 | `discovery/promoted/clear` | Clear promoted discovery state. |
+| `skills/list` | List skill descriptors and diagnostics visible to the runtime. |
+| `skills/read` | Read one skill body by exact selector. |
+| `skills/setEnabled` | Persist a skill enable/disable rule. |
+| `skills/setExposure` | Persist a skill exposure rule. |
 | `tools/call` | Directly call allowed workflow tools. |
 | `commands/list` | List configured slash commands. |
 | `commands/expand` | Expand a command to a model prompt and context blocks. |
@@ -221,6 +232,8 @@ Tools, commands, files, agents, and tasks:
 | `automations/runNow` | Queue an immediate automation run. |
 | `automations/runs` | Read automation run history. |
 | `automations/cancelRun` | Cancel a queued or running automation run. |
+| `eval/reports/list` | List bounded eval report summaries from the workspace. |
+| `eval/report/read` | Read one bounded eval report markdown body. |
 
 Teams and panes:
 
@@ -296,6 +309,18 @@ Review, hunks, workflow imports, media, and memory:
 | `artifact/grep` | Search an artifact with a literal query. |
 | `artifact/tail` | Read the final lines of an artifact. |
 | `artifact/delete` | Delete a Roder-owned context artifact. |
+| `search_index/status` | Read persistent regex index state for a workspace. |
+| `search_index/warmup` | Build the regex index if it is missing. |
+| `search_index/rebuild` | Force rebuild the regex index. |
+| `search_index/clear` | Remove the regex index store. |
+| `index/status` | Read semantic code-index state and generation metadata. |
+| `index/rebuild` | Rebuild the semantic code index. |
+| `index/search` | Query proof-verified semantic code chunks. |
+| `index/readChunk` | Read source for a specific code-index chunk. |
+| `index/proofs/list` | List content proofs for indexed chunks. |
+| `retrieval/recommendations` | Read retrieval router recommendations for a turn. |
+| `retrieval/metrics` | Read retrieval outcome metrics for a turn. |
+| `retrieval/promoted` | Read discovery/promotion state for a turn. |
 | `memory/list` | List memory records. |
 | `memory/read` | Read one memory. |
 | `memory/save` | Save a memory. |
@@ -463,6 +488,7 @@ Response:
 ```json
 {
   "web_search": { "mode": "cached" },
+  "search_index": { "enabled": true },
   "default_mode": "default",
   "file_backed_dynamic_context": true
 }
@@ -471,6 +497,7 @@ Response:
 Notes:
 
 - `web_search.mode` is one of `disabled`, `cached`, or `live`.
+- `search_index.enabled` controls the persistent regex search-index methods.
 - `default_mode` is a `PolicyMode` value from `roder-api`.
 - `file_backed_dynamic_context` controls whether long tool output, command
   output, and compaction source material are written to context artifacts.
@@ -500,6 +527,35 @@ Behavior:
 - Updates runtime state immediately.
 - Persists `disabled`, `codex`, or `live` to config when persistence is
   enabled. `codex` is the persisted config value for cached hosted search.
+
+### `settings/set_search_index`
+
+Purpose: Enable or disable the persistent regex search index used by fast
+workspace grep-style lookups.
+
+Request:
+
+```json
+{
+  "enabled": false
+}
+```
+
+Response:
+
+```json
+{
+  "search_index": { "enabled": false }
+}
+```
+
+Behavior:
+
+- Updates the process-wide search-index setting immediately.
+- Persists the setting to user config when app-server config persistence is
+  enabled.
+- Publishes `search_index/statusChanged` after the setting changes so clients
+  can refresh index status displays.
 
 ### `settings/set_default_mode`
 
@@ -710,6 +766,40 @@ Behavior:
 - Reads a persisted session snapshot first.
 - Falls back to persisted session metadata and then in-memory desktop threads.
 - Returns `{"thread": null}` when the thread is unknown.
+
+### `thread/archive`
+
+Purpose: Archive a desktop thread and remove it from active app-server thread
+lists.
+
+Request:
+
+```json
+{
+  "threadId": "thread-123"
+}
+```
+
+Response:
+
+```json
+{
+  "threadId": "thread-123",
+  "archived": true
+}
+```
+
+Behavior:
+
+- Calls the runtime session archive path for the supplied `threadId`.
+- Removes in-memory desktop thread, selected model, and active-turn state for
+  the thread.
+- After archive, `thread/list` no longer returns the thread and `thread/read`
+  returns `{ "thread": null }`.
+
+Errors:
+
+- Session-store or archive failures return code `-32000` with `data.details`.
 
 ### `turn/start`
 
@@ -1120,6 +1210,149 @@ Behavior:
 
 - Only `get_goal` and `create_goal` can be called directly.
 - Other tool names return code `-32602`.
+
+### Discovery methods
+
+Purpose: Inspect and promote lazily discovered tools, skills, workflows,
+artifacts, and other capability descriptions without loading the full catalog
+into every model prompt.
+
+Examples:
+
+```json
+{
+  "method": "discovery/search",
+  "params": {
+    "query": "grep",
+    "groupId": "tools",
+    "limit": 10
+  }
+}
+```
+
+```json
+{
+  "method": "discovery/read",
+  "params": {
+    "itemId": "tool:builtin-coding-tools/grep",
+    "promote": true,
+    "threadId": "thread-123",
+    "turnId": "turn-123"
+  }
+}
+```
+
+Behavior:
+
+- `discovery/refresh` rebuilds the catalog from the runtime's registered
+  discovery providers.
+- `discovery/groups` returns catalog group metadata for client filters.
+- `discovery/search` returns bounded matching items and auth/redaction status
+  when the provider exposes it.
+- `discovery/read` returns the full item payload and can promote the item into
+  a thread/turn when `promote` is true.
+- `discovery/promote`, `discovery/promoted/list`, and
+  `discovery/promoted/clear` manage promoted capability state for model
+  context.
+
+Notifications:
+
+- Discovery runtime events are forwarded as `discovery/catalogBuilt`,
+  `discovery/itemUpdated`, `discovery/authRequired`, `discovery/itemRead`,
+  `discovery/itemPromoted`, `discovery/promotionReused`,
+  `discovery/warmCacheHit`, and `discovery/promotionExpired` when the
+  underlying runtime emits them.
+
+### Skills methods
+
+Purpose: List, read, and configure the skill catalog visible to the runtime.
+
+List:
+
+```json
+{
+  "method": "skills/list",
+  "params": {}
+}
+```
+
+```json
+{
+  "skills": [
+    {
+      "id": "builtin:commit",
+      "name": "commit",
+      "canonicalPath": "builtin://skills/commit/SKILL.md",
+      "source": "builtIn",
+      "exposure": "direct_only",
+      "activation": "enabled",
+      "description": "Create a scoped git commit.",
+      "experimental": false
+    }
+  ],
+  "diagnostics": []
+}
+```
+
+Read:
+
+```json
+{
+  "method": "skills/read",
+  "params": {
+    "selector": { "path": "builtin://skills/commit/SKILL.md" }
+  }
+}
+```
+
+Mutate:
+
+```json
+{
+  "method": "skills/setEnabled",
+  "params": {
+    "selector": { "name": "commit" },
+    "enabled": false
+  }
+}
+```
+
+```json
+{
+  "method": "skills/setExposure",
+  "params": {
+    "selector": { "path": "builtin://skills/commit/SKILL.md" },
+    "exposure": "global"
+  }
+}
+```
+
+Behavior:
+
+- `skills/list` returns `SkillDescriptor` values plus catalog diagnostics.
+  Descriptors include `canonicalPath`, `source`, `exposure`, `activation`,
+  `description`, optional `shortDescription`, `experimental`, diagnostics, and
+  optional `agentMetadata`.
+- `skills/read` returns `{ "skill": null }` when the selector does not match
+  exactly one skill.
+- `selector` is either `{ "name": "..." }` or `{ "path": "..." }`.
+- `skills/setEnabled` and `skills/setExposure` persist canonical skill config
+  rules when app-server config persistence is enabled and return the refreshed
+  `skills` plus `diagnostics`.
+
+Errors:
+
+- Mutating an unknown skill returns code `-32602` with message
+  `Invalid params: skill not found`.
+- Mutating by ambiguous name returns code `-32602` and a message that lists the
+  canonical paths to select by.
+
+Notifications:
+
+- Runtime skill events are forwarded as `skills/catalogLoaded`,
+  `skills/configApplied`, `skills/activationResolved`,
+  `skills/indexRendered`, `skills/invoked`, `skills/autoActivated`, and
+  `skills/skipped` when emitted.
 
 ### `commands/list`
 
@@ -2628,6 +2861,435 @@ Behavior:
   `<sessionDir>/<threadId>/artifacts/<turnId>/`, beside the session's
   `metadata.json`, `events.jsonl`, and `turn_items.jsonl`.
 
+### Search index methods
+
+Purpose: Manage the persistent regex search index used by fast exact-text
+workspace search.
+
+Status:
+
+```json
+{
+  "method": "search_index/status",
+  "params": {
+    "workspace": "/Users/pz/w/gode"
+  }
+}
+```
+
+```json
+{
+  "status": {
+    "state": "ready",
+    "enabled": true,
+    "workspace": "/Users/pz/w/gode",
+    "storeDir": "/Users/pz/.roder/indexes/workspace-id",
+    "indexVersion": "1",
+    "documentCount": 2048,
+    "indexBytes": 7340032,
+    "buildTimeMs": 215,
+    "stale": false
+  }
+}
+```
+
+Mutations:
+
+```json
+{
+  "method": "search_index/warmup",
+  "params": { "workspace": "/Users/pz/w/gode" }
+}
+```
+
+```json
+{
+  "method": "search_index/rebuild",
+  "params": { "workspace": "/Users/pz/w/gode" }
+}
+```
+
+```json
+{
+  "method": "search_index/clear",
+  "params": { "workspace": "/Users/pz/w/gode" }
+}
+```
+
+Behavior:
+
+- `workspace` is optional; when omitted the server's runtime workspace is used.
+- Status `state` is one of `disabled`, `missing`, `building`, `ready`,
+  `stale`, `failed`, or `cleared`.
+- `search_index/warmup` returns current status when an index already exists;
+  otherwise it builds the index.
+- `search_index/rebuild` always rebuilds the index for the workspace.
+- `search_index/clear` removes the persistent store and returns `cleared` even
+  if the store was already absent.
+- Search-index storage is rooted under the configured search-index home, or
+  the default `~/.roder/indexes` path used by `roder-search`.
+
+Notifications:
+
+- `search_index/statusChanged` is emitted for `building`, `ready`, `cleared`,
+  `disabled`, and failure transitions with payload
+  `{ "status": SearchIndexStatus }`.
+
+### Code index methods
+
+Purpose: Build and query the source-free semantic code index, then require an
+explicit policy-gated source read when a client wants chunk text.
+
+Status and rebuild:
+
+```json
+{
+  "method": "index/status",
+  "params": {
+    "workspace": "/Users/pz/w/gode"
+  }
+}
+```
+
+```json
+{
+  "method": "index/rebuild",
+  "params": {
+    "workspace": "/Users/pz/w/gode"
+  }
+}
+```
+
+```json
+{
+  "status": {
+    "status": "ready",
+    "workspace": "/Users/pz/w/gode",
+    "storePath": "/Users/pz/.roder/code-index/workspace-key/code-index.sqlite3",
+    "generationId": "generation-123",
+    "rootHash": "merkle-root",
+    "stale": false,
+    "stats": {
+      "fileCount": 128,
+      "chunkCount": 640,
+      "embeddedChunkCount": 640,
+      "cachedEmbeddingCount": 512,
+      "indexBytes": 10485760
+    }
+  }
+}
+```
+
+Search:
+
+```json
+{
+  "method": "index/search",
+  "params": {
+    "workspace": "/Users/pz/w/gode",
+    "query": "oauth refresh token",
+    "limit": 5
+  }
+}
+```
+
+```json
+{
+  "status": {
+    "status": "ready",
+    "workspace": "/Users/pz/w/gode",
+    "storePath": "/Users/pz/.roder/code-index/workspace-key/code-index.sqlite3",
+    "generationId": "generation-123",
+    "rootHash": "merkle-root",
+    "stale": false,
+    "stats": {
+      "fileCount": 128,
+      "chunkCount": 640,
+      "embeddedChunkCount": 640,
+      "cachedEmbeddingCount": 512,
+      "indexBytes": 10485760
+    }
+  },
+  "response": {
+    "generation": {
+      "id": "generation-123",
+      "status": "ready",
+      "workspaceRoot": "/Users/pz/w/gode",
+      "rootHash": "merkle-root",
+      "configHash": "config-hash",
+      "stats": {
+        "fileCount": 128,
+        "chunkCount": 640,
+        "embeddedChunkCount": 640,
+        "cachedEmbeddingCount": 512,
+        "indexBytes": 10485760
+      },
+      "createdAt": "2026-05-21T12:00:00Z",
+      "updatedAt": "2026-05-21T12:00:00Z",
+      "staleReason": null
+    },
+    "results": [
+      {
+        "queryId": "query-123",
+        "chunk": {
+          "chunkHash": "chunk-hash",
+          "path": "src/auth.rs",
+          "pathHash": "path-hash",
+          "byteRange": { "start": 0, "end": 128 },
+          "lineRange": { "start": 1, "end": 8 },
+          "contentHash": "content-hash",
+          "language": "rust",
+          "symbolHint": "oauth_refresh_token"
+        },
+        "score": 0.91,
+        "proof": {
+          "pathHash": "path-hash",
+          "contentHash": "content-hash",
+          "workspaceRootHash": "merkle-root",
+          "generationId": "generation-123"
+        },
+        "proofVerified": true,
+        "snippet": "pub fn oauth_refresh_token() { ... }"
+      }
+    ],
+    "droppedResults": []
+  }
+}
+```
+
+Read source:
+
+```json
+{
+  "method": "index/readChunk",
+  "params": {
+    "workspace": "/Users/pz/w/gode",
+    "chunkHash": "chunk-hash",
+    "offset": 0,
+    "limit": 1024,
+    "includeSource": true
+  }
+}
+```
+
+List proofs:
+
+```json
+{
+  "method": "index/proofs/list",
+  "params": {
+    "workspace": "/Users/pz/w/gode"
+  }
+}
+```
+
+Behavior:
+
+- `index/status` and all code-index methods default `workspace` to the server
+  runtime workspace.
+- `index/rebuild` rebuilds Merkle, chunk, embedding, and proof metadata in the
+  code-index SQLite store, then emits `index/statusChanged`.
+- `index/search` rejects blank queries with code `-32602`; `limit` defaults to
+  5 and is clamped to 1..50.
+- `index/search` returns proof-verified chunks and marks the search generation
+  `stale` when the status root hash no longer matches the workspace.
+- `index/readChunk` requires `includeSource: true`; without it the server
+  returns code `-32602` with message `index/readChunk requires
+  includeSource=true for policy-gated source reads`.
+- `index/readChunk.limit` defaults to 4096 bytes and is clamped to 1..4096.
+- `index/proofs/list` returns content proofs for all stored chunks in the
+  current generation.
+
+Notifications:
+
+- `index/statusChanged` is emitted with payload
+  `{ "status": CodeIndexStatusView }` after rebuilds.
+
+### Retrieval router methods
+
+Purpose: Let desktop and diagnostic clients inspect the retrieval route
+decisions, outcomes, and promoted capability state recorded for a turn.
+
+Request shape for all retrieval methods:
+
+```json
+{
+  "threadId": "thread-123",
+  "turnId": "turn-123",
+  "limit": 10
+}
+```
+
+Recommendations response:
+
+```json
+{
+  "threadId": "thread-123",
+  "turnId": "turn-123",
+  "plans": [
+    {
+      "routeId": "route-123",
+      "threadId": "thread-123",
+      "turnId": "turn-123",
+      "intent": "inspect_tool",
+      "recommended": [
+        {
+          "mode": "discovery",
+          "tool": "discovery.search",
+          "query": "grep",
+          "reason": "tool lookup should start from discovery",
+          "confidence": "high",
+          "itemId": "tool:builtin-coding-tools/grep"
+        }
+      ],
+      "avoid": [],
+      "timestamp": "2026-05-21T12:00:00Z"
+    }
+  ],
+  "summary": {
+    "text": "1 retrieval route planned.",
+    "notes": ["discovery.search recommended for grep"],
+    "truncated": false
+  }
+}
+```
+
+Metrics response:
+
+```json
+{
+  "threadId": "thread-123",
+  "turnId": "turn-123",
+  "outcomes": [
+    {
+      "routeId": "route-123",
+      "mode": "discovery",
+      "tool": "discovery.search",
+      "outcome": "useful",
+      "firstUsefulPath": "discovery",
+      "discoveryBeforeToolUse": true,
+      "promotionBeforeToolUse": false,
+      "wrongToolFamilyAttempts": 1,
+      "resultCount": 3,
+      "latencyMs": 7,
+      "bytesReturned": 512,
+      "estimatedTokensReturned": 128
+    }
+  ],
+  "acceptedCount": 1,
+  "ignoredCount": 1,
+  "failedCount": 0,
+  "outcomeCounts": { "useful": 1 },
+  "modeCounts": { "discovery": 1 },
+  "summary": {
+    "text": "1 useful retrieval outcome.",
+    "notes": [],
+    "truncated": false
+  }
+}
+```
+
+Behavior:
+
+- `retrieval/recommendations` returns `RetrievalRoutePlan` values emitted for
+  the requested thread/turn.
+- `retrieval/metrics` summarizes accepted, ignored, failed, and measured
+  retrieval outcomes.
+- `retrieval/promoted` returns promoted, reused, warm-cache, expired, and
+  skipped promotion states for the turn.
+- `limit` is optional and bounds returned event-derived rows.
+
+Notifications:
+
+- Retrieval runtime events are forwarded as `retrieval/routePlanned`,
+  `retrieval/routeAccepted`, `retrieval/routeIgnored`,
+  `retrieval/routeFailed`, `retrieval/resultUsed`,
+  `retrieval/discoveryItemPromoted`, and `retrieval/promotionSkipped`.
+
+### Eval report methods
+
+Purpose: List and read local eval reports generated under
+`<workspace>/evals/reports`.
+
+List:
+
+```json
+{
+  "method": "eval/reports/list",
+  "params": {
+    "limit": 10
+  }
+}
+```
+
+```json
+{
+  "reports": [
+    {
+      "id": "tool-calls-20260521-120000",
+      "suiteId": "tool-calls",
+      "fixtureCount": 12,
+      "passed": 10,
+      "failed": 2,
+      "reliability": {
+        "errorClassCounts": { "tool_schema": 1 },
+        "retryAttempts": 1,
+        "retryRecoveries": 1,
+        "failureLimitStops": 0,
+        "unknownErrors": 0
+      },
+      "generatedAt": "2026-05-21T12:00:00Z"
+    }
+  ]
+}
+```
+
+Read:
+
+```json
+{
+  "method": "eval/report/read",
+  "params": {
+    "reportId": "tool-calls-20260521-120000",
+    "maxBytes": 65536
+  }
+}
+```
+
+```json
+{
+  "summary": {
+    "id": "tool-calls-20260521-120000",
+    "suiteId": "tool-calls",
+    "fixtureCount": 12,
+    "passed": 10,
+    "failed": 2,
+    "reliability": {
+      "errorClassCounts": { "tool_schema": 1 },
+      "retryAttempts": 1,
+      "retryRecoveries": 1,
+      "failureLimitStops": 0,
+      "unknownErrors": 0
+    },
+    "generatedAt": "2026-05-21T12:00:00Z"
+  },
+  "markdown": "# Eval Report\n\n...",
+  "truncated": false
+}
+```
+
+Behavior:
+
+- `eval/reports/list.limit` truncates the sorted report list when supplied.
+- `eval/report/read.reportId` must be an id returned by
+  `eval/reports/list`; absolute paths and `..` are rejected.
+- `eval/report/read.maxBytes` defaults to 65536 and is capped at 262144.
+
+Errors:
+
+- Invalid report ids return code `-32602`.
+- Report directory/list failures return code `-32000` with `data.details`.
+
 ### Memory methods
 
 Purpose: Manage and search memories through the registered memory store.
@@ -2900,11 +3562,23 @@ notifications:
 - Workflow imports: `workflow/importsDetected`, `workflow/importPreviewed`,
   `workflow/importEnabled`, `workflow/importDisabled`,
   `workflow/importStale`, `workflow/importFailed`.
+- Discovery: `discovery/catalogBuilt`, `discovery/itemUpdated`,
+  `discovery/authRequired`, `discovery/itemRead`,
+  `discovery/itemPromoted`, `discovery/promotionReused`,
+  `discovery/warmCacheHit`, `discovery/promotionExpired`.
+- Retrieval: `retrieval/routePlanned`, `retrieval/routeAccepted`,
+  `retrieval/routeIgnored`, `retrieval/routeFailed`,
+  `retrieval/resultUsed`, `retrieval/discoveryItemPromoted`,
+  `retrieval/promotionSkipped`.
+- Skills: `skills/catalogLoaded`, `skills/configApplied`,
+  `skills/activationResolved`, `skills/indexRendered`, `skills/invoked`,
+  `skills/autoActivated`, `skills/skipped`.
 - Media: `media/artifactCreated`, `media/artifactUpdated`,
   `media/artifactDeleted`, `media/previewReady`.
 - Memory: `memory/saved`, `memory/updated`, `memory/deleted`,
   `memory/queried`, `memory/recallReady`, `memory/reembedQueued`,
   `memory/providerChanged`, `memory/observationRecorded`.
+- Indexes: `search_index/statusChanged` and `index/statusChanged`.
 
 Payloads for these notifications are the corresponding `roder-api` event
 structs serialized to JSON.
