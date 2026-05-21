@@ -1,0 +1,43 @@
+{
+  "id": "semantic-index-near-identical-workspaces",
+  "title": "Semantic index near-identical workspace cache fixture",
+  "prompt": "Use the semantic code index to identify the only changed handler in a near-identical service layout.",
+  "tags": ["search", "semantic-index", "code-index", "cache-reuse", "fixture:near-identical"],
+  "workspace": {
+    "files": [
+      {
+        "path": "services/a/src/handler.rs",
+        "contents": "pub fn shared_handler() -> &'static str { \"same\" }\n"
+      },
+      {
+        "path": "services/b/src/handler.rs",
+        "contents": "pub fn shared_handler_changed() -> &'static str { \"changed\" }\n"
+      },
+      {
+        "path": "services/c/src/handler.rs",
+        "contents": "pub fn shared_handler() -> &'static str { \"same\" }\n"
+      }
+    ]
+  },
+  "timeoutMs": 10000,
+  "expected": {
+    "finalAnswerContains": ["hello from roder"],
+    "files": [
+      {
+        "path": "services/b/src/handler.rs",
+        "exists": true,
+        "contains": ["shared_handler_changed"]
+      }
+    ],
+    "commandChecks": [
+      {
+        "command": "grep -R \"shared_handler_changed\" -n services | grep -q \"services/b/src/handler.rs\"",
+        "expectedExitCode": 0
+      }
+    ]
+  },
+  "constraints": [
+    "offline fake provider fixture",
+    "near-identical layout exercises chunk-content cache reuse expectations"
+  ]
+}
