@@ -1,8 +1,8 @@
 use std::path::Path;
 
 use roder_protocol::{
-    EvalReportReadParams, EvalReportReadResult, EvalReportSummary, EvalReportsListParams,
-    EvalReportsListResult, JsonRpcError,
+    EvalReliabilitySummary, EvalReportReadParams, EvalReportReadResult, EvalReportSummary,
+    EvalReportsListParams, EvalReportsListResult, JsonRpcError,
 };
 
 const DEFAULT_MAX_REPORT_BYTES: usize = 64 * 1024;
@@ -62,6 +62,13 @@ fn summary(report: roder_evals::EvalReportSummary) -> EvalReportSummary {
         fixture_count: report.fixture_count,
         passed: report.passed,
         failed: report.failed,
+        reliability: EvalReliabilitySummary {
+            error_class_counts: report.reliability.error_class_counts,
+            retry_attempts: report.reliability.retry_attempts,
+            retry_recoveries: report.reliability.retry_recoveries,
+            failure_limit_stops: report.reliability.failure_limit_stops,
+            unknown_errors: report.reliability.unknown_errors,
+        },
         generated_at: report.generated_at,
     }
 }
@@ -141,6 +148,80 @@ mod tests {
         let _ = std::fs::remove_dir_all(root);
     }
 
+    #[test]
+    fn eval_report_methods_include_reliability_counters() {
+        let root = std::env::temp_dir().join(format!(
+            "roder-app-evals-reliability-{}",
+            uuid::Uuid::new_v4()
+        ));
+        let report_dir = root.join("evals").join("reports");
+        let result = roder_evals::EvalFixtureResult {
+            fixture_id: "provider-429".to_string(),
+            title: "Provider 429".to_string(),
+            workspace: root.join("workspace"),
+            final_answer: "hello from roder".to_string(),
+            report: roder_evals::EvalReport {
+                run: roder_evals::EvalRun {
+                    suite_id: "reliability".to_string(),
+                    run_id: "run".to_string(),
+                    provider: "mock".to_string(),
+                    model: "mock".to_string(),
+                    started_at: time::OffsetDateTime::UNIX_EPOCH,
+                    tags: vec!["reliability".to_string()],
+                },
+                outcome: roder_evals::EvalOutcome::Pass,
+                failure_class: None,
+                trajectory: roder_evals::EvalTrajectory {
+                    thread_id: "thread".to_string(),
+                    turn_id: "turn".to_string(),
+                    events: Vec::new(),
+                },
+                metrics: vec![
+                    metric("reliability_retry_attempts", 2.0),
+                    metric("reliability_retry_recoveries", 1.0),
+                    metric("reliability_error_class_provider_error", 2.0),
+                ],
+            },
+            trace_excerpt: Vec::new(),
+            failure_message: None,
+        };
+        let report = roder_evals::EvalSuiteReport {
+            suite_id: "reliability".to_string(),
+            fixture_dir: root.join("evals").join("fixtures").join("reliability"),
+            output_dir: report_dir.clone(),
+            offline: true,
+            generated_at: time::OffsetDateTime::UNIX_EPOCH,
+            results: vec![result],
+        };
+        roder_evals::write_eval_report_files(&report, &report_dir).unwrap();
+
+        let listed: EvalReportsListResult = serde_json::from_value(
+            handle_eval_reports_list(&root, EvalReportsListParams { limit: Some(10) }).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(listed.reports[0].reliability.retry_attempts, 2);
+        assert_eq!(listed.reports[0].reliability.retry_recoveries, 1);
+        assert_eq!(
+            listed.reports[0].reliability.error_class_counts["provider_error"],
+            2
+        );
+
+        let read: roder_protocol::EvalReportReadResult = serde_json::from_value(
+            handle_eval_report_read(
+                &root,
+                EvalReportReadParams {
+                    report_id: "eval-run".to_string(),
+                    max_bytes: Some(64 * 1024),
+                },
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        assert!(read.markdown.contains("## Reliability Metrics"));
+        assert_eq!(read.summary.reliability.retry_attempts, 2);
+        let _ = std::fs::remove_dir_all(root);
+    }
+
     #[tokio::test]
     async fn eval_report_json_rpc_methods_list_and_read_bounded_reports() {
         let root =
@@ -202,5 +283,14 @@ mod tests {
         assert_eq!(read.summary.suite_id, "tool-calls");
         assert!(read.truncated);
         let _ = std::fs::remove_dir_all(root);
+    }
+
+    fn metric(name: &str, value: f64) -> roder_evals::EvalMetric {
+        roder_evals::EvalMetric {
+            name: name.to_string(),
+            kind: roder_evals::EvalMetricKind::Count,
+            value,
+            unit: None,
+        }
     }
 }

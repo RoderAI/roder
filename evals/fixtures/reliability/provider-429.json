@@ -1,0 +1,10 @@
+{
+  "id": "provider-429",
+  "title": "Reliability provider 429",
+  "prompt": "Run the reliability provider-429 fixture.",
+  "tags": ["reliability", "reliability:provider_429", "provider:429"],
+  "expected": {
+    "finalAnswerContains": ["hello from roder"]
+  },
+  "constraints": ["count retryable rate limit recovery without leaking provider details"]
+}

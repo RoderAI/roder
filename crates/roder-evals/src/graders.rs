@@ -109,6 +109,17 @@ pub fn micro_eval_behavior_tags() -> BTreeSet<&'static str> {
     ])
 }
 
+pub fn reliability_eval_behavior_tags() -> BTreeSet<&'static str> {
+    BTreeSet::from([
+        "reliability:invalid_arguments",
+        "reliability:missing_file",
+        "reliability:provider_empty_body",
+        "reliability:provider_429",
+        "reliability:repeated_timeout",
+        "reliability:unknown_panic",
+    ])
+}
+
 fn grade_tool_schema(
     spec: Option<&ToolSpec>,
     expectation: &ToolSchemaExpectation,
@@ -342,5 +353,17 @@ mod tests {
         assert!(tags.contains("truncation-follow-up"));
         assert!(tags.contains("repeated-failing-tool-calls"));
         assert!(tags.contains("entrypoint-discovery"));
+    }
+
+    #[test]
+    fn reliability_eval_tags_cover_required_failure_families() {
+        let tags = reliability_eval_behavior_tags();
+
+        assert!(tags.contains("reliability:invalid_arguments"));
+        assert!(tags.contains("reliability:missing_file"));
+        assert!(tags.contains("reliability:provider_empty_body"));
+        assert!(tags.contains("reliability:provider_429"));
+        assert!(tags.contains("reliability:repeated_timeout"));
+        assert!(tags.contains("reliability:unknown_panic"));
     }
 }

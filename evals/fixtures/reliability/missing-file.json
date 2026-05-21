@@ -1,0 +1,8 @@
+{
+  "id": "missing-file",
+  "title": "Reliability missing file",
+  "prompt": "Run the reliability missing-file fixture.",
+  "tags": ["reliability", "reliability:missing_file", "tool:read_file"],
+  "expected": {},
+  "constraints": ["classify missing local files as environment failures"]
+}

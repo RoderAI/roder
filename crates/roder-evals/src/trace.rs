@@ -243,6 +243,34 @@ impl EvalTrajectoryEvent {
                 &e.turn_id,
                 e.timestamp,
             )),
+            RoderEvent::ReliabilityFailureRecorded(e) => {
+                let mut event = Self::basic(
+                    "reliability_failure",
+                    &e.context.thread_id,
+                    &e.context.turn_id,
+                    e.timestamp,
+                );
+                event.tool_id = e.context.tool_id.clone();
+                event.tool_name = e.context.tool_name.clone();
+                event.is_error = true;
+                Some(event)
+            }
+            RoderEvent::ReliabilityRetryRecorded(e) => Some(Self::basic(
+                "reliability_retry",
+                &e.context.thread_id,
+                &e.context.turn_id,
+                e.timestamp,
+            )),
+            RoderEvent::ReliabilityLimitRecorded(e) => {
+                let mut event = Self::basic(
+                    "reliability_limit",
+                    &e.context.thread_id,
+                    &e.context.turn_id,
+                    e.timestamp,
+                );
+                event.is_error = true;
+                Some(event)
+            }
             RoderEvent::TurnCompleted(e) => Some(Self::basic(
                 "turn_completed",
                 &e.thread_id,

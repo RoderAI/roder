@@ -8,6 +8,10 @@ use time::OffsetDateTime;
 
 use crate::{EvalMetric, EvalMetricKind, EvalOutcome, EvalTrajectory, EvalTrajectoryEvent};
 
+use super::reliability::{
+    ReliabilityReportSummary, reliability_markdown, reliability_metrics, reliability_summary,
+};
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct EvalSuiteReport {
@@ -43,6 +47,8 @@ pub struct EvalReportSummary {
     pub fixture_count: usize,
     pub passed: usize,
     pub failed: usize,
+    #[serde(default)]
+    pub reliability: ReliabilityReportSummary,
     #[serde(with = "time::serde::rfc3339")]
     pub generated_at: OffsetDateTime,
 }
@@ -252,7 +258,7 @@ pub(super) fn eval_metrics(
         })
         .last()
         .unwrap_or(0);
-    vec![
+    let mut metrics = vec![
         EvalMetric {
             name: "outcome_pass".to_string(),
             kind: EvalMetricKind::Outcome,
@@ -401,7 +407,9 @@ pub(super) fn eval_metrics(
             value: verification_open_gaps as f64,
             unit: None,
         },
-    ]
+    ];
+    metrics.extend(reliability_metrics(events, outcome));
+    metrics
 }
 
 fn is_file_read(event: &RoderEvent) -> bool {
@@ -486,6 +494,7 @@ fn summary_from_report(id: String, path: PathBuf, report: &EvalSuiteReport) -> E
         fixture_count: report.results.len(),
         passed,
         failed: report.results.len().saturating_sub(passed),
+        reliability: reliability_summary(report),
         generated_at: report.generated_at,
     }
 }
@@ -652,6 +661,7 @@ fn eval_report_markdown(report: &EvalSuiteReport) -> String {
             )),
         ));
     }
+    text.push_str(&reliability_markdown(report));
     let groups = failure_groups(report);
     if !groups.is_empty() {
         text.push_str("\n## Failure Groups\n\n| Tool | Model | Failure class | Count |\n| --- | --- | --- | --- |\n");
