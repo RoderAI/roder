@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 
-use crate::runner::{OfflineEvalRunnerOptions, run_offline_eval_suite};
+use crate::runner::{EvalSpeedPolicyMode, OfflineEvalRunnerOptions, run_offline_eval_suite};
 use crate::{
     EvalExpectedCommand, EvalExpectedEvidence, EvalExpectedFile, EvalFailureClass, EvalFixture,
     EvalOutcome, EvalWorkspaceFile, EvalWorkspaceSetup,
@@ -257,5 +257,86 @@ async fn failed_fixture_reports_failure_class_and_trace_excerpt() {
     let markdown = std::fs::read_to_string(output_dir.join("eval-report.md")).unwrap();
     assert!(markdown.contains("ToolSchema"));
     assert!(markdown.contains("inference_event"));
+    let _ = std::fs::remove_dir_all(root);
+}
+
+#[tokio::test]
+async fn speed_policy_both_runs_baseline_and_speed_report_rows() {
+    let root = std::env::temp_dir().join(format!("roder-evals-test-{}", uuid::Uuid::new_v4()));
+    let fixture_dir = root.join("fixtures");
+    let output_dir = root.join("reports");
+    std::fs::create_dir_all(&fixture_dir).unwrap();
+    let fixture = EvalFixture {
+        id: "routine-speed".to_string(),
+        title: "Routine speed".to_string(),
+        prompt: "Say hello after inspecting the routine task.".to_string(),
+        tags: vec!["speed".to_string()],
+        workspace: EvalWorkspaceSetup::default(),
+        timeout_ms: Some(10_000),
+        expected: EvalExpectedEvidence {
+            final_answer_contains: vec!["hello from roder".to_string()],
+            files: Vec::new(),
+            command_checks: Vec::new(),
+            verification_required: false,
+            task_ledger_required: false,
+        },
+        constraints: Vec::new(),
+    };
+    std::fs::write(
+        fixture_dir.join("routine-speed.json"),
+        serde_json::to_string_pretty(&fixture).unwrap(),
+    )
+    .unwrap();
+
+    let report = run_offline_eval_suite(
+        &fixture_dir,
+        OfflineEvalRunnerOptions {
+            output_dir: output_dir.clone(),
+            speed_policy: EvalSpeedPolicyMode::Both,
+            ..OfflineEvalRunnerOptions::default()
+        },
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(report.results.len(), 2);
+    assert!(report.results.iter().any(|result| {
+        result
+            .report
+            .run
+            .tags
+            .iter()
+            .any(|tag| tag == "speed_policy:off")
+    }));
+    assert!(report.results.iter().any(|result| {
+        result
+            .report
+            .run
+            .tags
+            .iter()
+            .any(|tag| tag == "speed_policy:on")
+    }));
+    let speed = report
+        .results
+        .iter()
+        .find(|result| {
+            result
+                .report
+                .run
+                .tags
+                .iter()
+                .any(|tag| tag == "speed_policy:on")
+        })
+        .unwrap();
+    assert!(
+        speed
+            .report
+            .metrics
+            .iter()
+            .any(|metric| { metric.name == "deadline_remaining_seconds" && metric.value > 0.0 })
+    );
+    let markdown = std::fs::read_to_string(output_dir.join("eval-report.md")).unwrap();
+    assert!(markdown.contains("Speed Metrics"));
+    assert!(markdown.contains("Speed Policy Comparison"));
     let _ = std::fs::remove_dir_all(root);
 }

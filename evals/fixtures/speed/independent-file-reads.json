@@ -1,0 +1,44 @@
+{
+  "id": "speed-independent-file-reads",
+  "title": "Speed policy independent file reads",
+  "prompt": "Inspect independent files and report the shared readiness signal.",
+  "tags": ["speed", "independent-file-reads", "tool:read_file"],
+  "workspace": {
+    "files": [
+      {
+        "path": "services/api/status.txt",
+        "contents": "api=ready\n"
+      },
+      {
+        "path": "services/worker/status.txt",
+        "contents": "worker=ready\n"
+      },
+      {
+        "path": "services/tui/status.txt",
+        "contents": "tui=ready\n"
+      }
+    ]
+  },
+  "timeoutMs": 10000,
+  "expected": {
+    "finalAnswerContains": ["hello from roder"],
+    "files": [
+      {
+        "path": "services/api/status.txt",
+        "exists": true,
+        "contains": ["api=ready"]
+      },
+      {
+        "path": "services/worker/status.txt",
+        "exists": true,
+        "contains": ["worker=ready"]
+      },
+      {
+        "path": "services/tui/status.txt",
+        "exists": true,
+        "contains": ["tui=ready"]
+      }
+    ]
+  },
+  "constraints": ["offline fake provider fixture", "independent reads can be delegated or parallelized"]
+}

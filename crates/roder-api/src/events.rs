@@ -149,6 +149,8 @@ pub struct InferenceStarted {
     pub engine_id: InferenceEngineId,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub speed_policy: Option<SpeedPolicyDecision>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub deadline_remaining_seconds: Option<u64>,
     #[serde(with = "time::serde::rfc3339")]
     pub timestamp: OffsetDateTime,
 }
