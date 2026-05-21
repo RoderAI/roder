@@ -1,6 +1,6 @@
-use crate::{EvalFixture, ExpectedArtifactTool, FileBackedContextResult};
+use crate::{ExpectedArtifactTool, FileBackedContextFixture, FileBackedContextResult};
 
-pub fn grade_file_backed_fixture(fixture: &EvalFixture) -> FileBackedContextResult {
+pub fn grade_file_backed_fixture(fixture: &FileBackedContextFixture) -> FileBackedContextResult {
     let (artifact_read_count, artifact_grep_count, artifact_tail_count) =
         match fixture.expected_tool {
             ExpectedArtifactTool::Read => (1, 0, 0),
@@ -26,7 +26,7 @@ pub fn grade_file_backed_fixture(fixture: &EvalFixture) -> FileBackedContextResu
     }
 }
 
-fn estimated_tokens_saved(fixture: &EvalFixture) -> u64 {
+fn estimated_tokens_saved(fixture: &FileBackedContextFixture) -> u64 {
     let inline_chars = fixture.prompt.len() + fixture.expected_artifact_query.len();
     u64::try_from(inline_chars.div_ceil(4)).unwrap_or(u64::MAX)
 }
@@ -37,7 +37,7 @@ mod tests {
 
     #[test]
     fn file_backed_context_grader_tracks_artifact_grep() {
-        let fixture = EvalFixture {
+        let fixture = FileBackedContextFixture {
             id: "long-command-output".to_string(),
             title: "Long command output".to_string(),
             prompt: "Find RECOVERY_TOKEN".to_string(),
