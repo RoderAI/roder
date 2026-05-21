@@ -1,0 +1,31 @@
+{
+  "id": "huge-grep-result",
+  "title": "Huge grep result requires bounded context metrics",
+  "prompt": "Search for NEEDLE in the relevant report shard and follow pagination if the grep output is truncated.",
+  "tags": ["micro", "context-budget", "truncation-follow-up", "tool:grep"],
+  "workspace": {
+    "files": [
+      {
+        "path": "reports/relevant-shard.log",
+        "contents": "NEEDLE alpha\nNEEDLE beta\nRECOVERY_TOKEN=huge-grep-context\n"
+      },
+      {
+        "path": "reports/decoy-shard.log",
+        "contents": "NEEDLE decoy\n"
+      }
+    ]
+  },
+  "timeoutMs": 10000,
+  "expected": {
+    "finalAnswerContains": ["hello from roder"],
+    "files": [
+      {
+        "path": "reports/relevant-shard.log",
+        "exists": true,
+        "contains": ["RECOVERY_TOKEN=huge-grep-context"]
+      }
+    ],
+    "verificationRequired": true
+  },
+  "constraints": ["track grep truncation follow-up and irrelevant reads"]
+}

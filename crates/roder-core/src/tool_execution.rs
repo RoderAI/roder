@@ -265,38 +265,56 @@ impl Runtime {
         self.emit_hunk_records(&result).await;
         self.emit_media_artifacts(thread_id, turn_id, &result).await;
         let raw_text = result.text;
-        let item_result =
-            if runtime_config.file_backed_dynamic_context && should_spill_tool_output(&raw_text) {
-                let artifact = self.context_artifacts().create(CreateArtifactRequest {
-                    kind: ContextArtifactKind::ToolOutput,
-                    thread_id,
-                    turn_id,
-                    source_tool_id: Some(&result.id),
-                    label: Some(&result.name),
-                    bytes: raw_text.as_bytes(),
-                })?;
-                let reference = format_artifact_reference(&artifact, &result.name);
-                let inline = artifact_backed_tool_output(&raw_text, &reference, &result.name);
-                self.emit(RoderEvent::ContextArtifactCreated(ContextArtifactCreated {
-                    thread_id: thread_id.clone(),
-                    turn_id: turn_id.clone(),
-                    artifact: artifact.clone(),
-                    timestamp: OffsetDateTime::now_utc(),
-                }))
-                .await;
-                self.emit(RoderEvent::ContextArtifactCapped(ContextArtifactCapped {
-                    thread_id: thread_id.clone(),
-                    turn_id: turn_id.clone(),
-                    artifact_id: artifact.id,
-                    inline_byte_count: inline.len() as u64,
-                    original_byte_count: raw_text.len() as u64,
-                    timestamp: OffsetDateTime::now_utc(),
-                }))
-                .await;
-                inline
-            } else {
-                cap_tool_output_lines(raw_text)
-            };
+        let original_line_count = raw_text.lines().count() as u64;
+        let original_char_count = raw_text.chars().count() as u64;
+        let artifact_backed =
+            runtime_config.file_backed_dynamic_context && should_spill_tool_output(&raw_text);
+        let item_result = if artifact_backed {
+            let artifact = self.context_artifacts().create(CreateArtifactRequest {
+                kind: ContextArtifactKind::ToolOutput,
+                thread_id,
+                turn_id,
+                source_tool_id: Some(&result.id),
+                label: Some(&result.name),
+                bytes: raw_text.as_bytes(),
+            })?;
+            let reference = format_artifact_reference(&artifact, &result.name);
+            let inline = artifact_backed_tool_output(&raw_text, &reference, &result.name);
+            self.emit(RoderEvent::ContextArtifactCreated(ContextArtifactCreated {
+                thread_id: thread_id.clone(),
+                turn_id: turn_id.clone(),
+                artifact: artifact.clone(),
+                timestamp: OffsetDateTime::now_utc(),
+            }))
+            .await;
+            self.emit(RoderEvent::ContextArtifactCapped(ContextArtifactCapped {
+                thread_id: thread_id.clone(),
+                turn_id: turn_id.clone(),
+                artifact_id: artifact.id,
+                inline_byte_count: inline.len() as u64,
+                original_byte_count: raw_text.len() as u64,
+                timestamp: OffsetDateTime::now_utc(),
+            }))
+            .await;
+            inline
+        } else {
+            cap_tool_output_lines(raw_text)
+        };
+        let inline_char_count = item_result.chars().count() as u64;
+        if artifact_backed || inline_char_count < original_char_count {
+            self.emit(RoderEvent::ToolOutputTruncated(ToolOutputTruncated {
+                thread_id: thread_id.clone(),
+                turn_id: turn_id.clone(),
+                tool_id: result.id.clone(),
+                tool_name: Some(result.name.clone()),
+                original_line_count,
+                original_char_count,
+                inline_char_count,
+                artifact_backed,
+                timestamp: OffsetDateTime::now_utc(),
+            }))
+            .await;
+        }
         let item = ToolResultRecord {
             id: result.id.clone(),
             name: Some(result.name.clone()),
