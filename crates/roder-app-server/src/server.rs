@@ -162,6 +162,30 @@ impl AppServer {
                 })
                 .await
             }
+            "search_index/status" => {
+                self.decode_and(req.params, |p| async move {
+                    self.handle_search_index_status(p).await
+                })
+                .await
+            }
+            "search_index/warmup" => {
+                self.decode_and(req.params, |p| async move {
+                    self.handle_search_index_warmup(p).await
+                })
+                .await
+            }
+            "search_index/rebuild" => {
+                self.decode_and(req.params, |p| async move {
+                    self.handle_search_index_rebuild(p).await
+                })
+                .await
+            }
+            "search_index/clear" => {
+                self.decode_and(req.params, |p| async move {
+                    self.handle_search_index_clear(p).await
+                })
+                .await
+            }
             "settings/set_default_mode" => {
                 self.decode_and(req.params, |p| async move {
                     self.handle_settings_set_default_mode(p).await
@@ -1079,6 +1103,8 @@ impl AppServer {
         if self.persist_user_config {
             roder_config::save_search_index_enabled(params.enabled).map_err(internal_error)?;
         }
+        let status = self.search_index_status(None);
+        self.publish_search_index_status(status);
         Ok(serde_json::to_value(SettingsSetSearchIndexResult {
             search_index: SearchIndexSettings {
                 enabled: params.enabled,

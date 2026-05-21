@@ -891,6 +891,92 @@ pub struct SearchIndexSettings {
     pub enabled: bool,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub enum SearchIndexStatusState {
+    Disabled,
+    Missing,
+    Building,
+    Ready,
+    Stale,
+    Failed,
+    Cleared,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct SearchIndexStatus {
+    pub state: SearchIndexStatusState,
+    pub enabled: bool,
+    pub workspace: String,
+    pub store_dir: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub index_version: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub document_count: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub index_bytes: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub build_time_ms: Option<u64>,
+    pub stale: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub message: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct SearchIndexStatusParams {
+    pub workspace: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct SearchIndexWarmupParams {
+    pub workspace: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct SearchIndexRebuildParams {
+    pub workspace: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct SearchIndexClearParams {
+    pub workspace: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SearchIndexStatusResult {
+    pub status: SearchIndexStatus,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SearchIndexWarmupResult {
+    pub status: SearchIndexStatus,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SearchIndexRebuildResult {
+    pub status: SearchIndexStatus,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SearchIndexClearResult {
+    pub status: SearchIndexStatus,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SearchIndexStatusNotification {
+    pub status: SearchIndexStatus,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ExtensionsListResult {
     pub extensions: Vec<ExtensionManifest>,
@@ -1871,6 +1957,33 @@ mod tests {
         assert_eq!(value["toolEvidence"][0], "write_file: wrote src/lib.rs");
         assert_eq!(value["testsRun"][0], "cargo test");
         assert!(value.get("changed_files").is_none());
+    }
+
+    #[test]
+    fn search_index_status_protocol_uses_camel_case_fields() {
+        let value = serde_json::to_value(SearchIndexStatusNotification {
+            status: SearchIndexStatus {
+                state: SearchIndexStatusState::Ready,
+                enabled: true,
+                workspace: "/tmp/workspace".to_string(),
+                store_dir: "/tmp/home/.roder/indexes/abc".to_string(),
+                index_version: Some("fastregex-v1".to_string()),
+                document_count: Some(7),
+                index_bytes: Some(128),
+                build_time_ms: Some(4),
+                stale: false,
+                message: None,
+            },
+        })
+        .unwrap();
+
+        assert_eq!(value["status"]["state"], "ready");
+        assert_eq!(value["status"]["storeDir"], "/tmp/home/.roder/indexes/abc");
+        assert_eq!(value["status"]["indexVersion"], "fastregex-v1");
+        assert_eq!(value["status"]["documentCount"], 7);
+        assert_eq!(value["status"]["buildTimeMs"], 4);
+        assert!(value["status"].get("store_dir").is_none());
+        assert!(value["status"].get("document_count").is_none());
     }
 
     #[test]

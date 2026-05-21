@@ -42,7 +42,32 @@ Result text is still formatted as `relative/path:line:content`. `ToolResult.data
 
 The index records searchable text files under the workspace root, excluding `.git`, `target`, common binary files, and files above the configured size limit. It stores n-gram postings that can identify candidate files for many literal and regex queries. Candidate files are always re-read and verified before output, so broad query decomposition can only cost extra verification work; it cannot create false final matches.
 
-Remote runner workspaces initially use fallback scanning. Local index storage is rooted under `~/.roder/indexes/<workspace-id>/` as persistent storage is expanded.
+Remote runner workspaces initially use fallback scanning. Local index storage is rooted under `~/.roder/indexes/<workspace-id>/`; test and harness runs can override the home root with `RODER_SEARCH_INDEX_HOME`.
+
+## App-Server Inspection
+
+Desktop clients and palette surfaces can inspect and manage the persistent index through JSON-RPC:
+
+- `search_index/status` returns the current index state without reading private files.
+- `search_index/warmup` builds the index when it is missing, or reports the existing status when it is already present.
+- `search_index/rebuild` explicitly rebuilds the persistent index for the workspace.
+- `search_index/clear` removes the persistent index cache for the workspace.
+
+Each method accepts `{ "workspace": "/path/to/workspace" }`; omitting `workspace` uses the app-server runtime workspace. Responses include a `status` object with `state`, `enabled`, `workspace`, `storeDir`, optional `indexVersion`, optional document/byte/build metrics, a `stale` flag, and an optional message.
+
+Status states are:
+
+- `disabled`: indexed search is off through config or environment.
+- `missing`: no persistent index has been built for the workspace.
+- `building`: a warmup or rebuild is in progress.
+- `ready`: the index is present and matches current file metadata.
+- `stale`: the index exists but at least one indexed document changed, disappeared, or no longer matches the workspace/index version.
+- `failed`: status inspection, rebuild, or clear failed.
+- `cleared`: the index cache was removed.
+
+Warmup, rebuild, clear, and settings toggles publish `search_index/statusChanged` notifications so TUI and palette surfaces can show readable progress without polling. The notification payload is `{ "status": ... }` using the same shape as the method responses.
+
+The indexed path is always a performance optimization. If the status is `disabled`, `missing`, `stale`, or `failed`, `grep` remains correct by using fallback scanning or by verifying candidate files against current file contents before returning matches.
 
 ## Configuration
 
