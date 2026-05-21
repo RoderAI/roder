@@ -90,6 +90,7 @@ impl SubagentTraceSink for RuntimeSubagentTraceSink {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use roder_api::subagents::{SubagentExitReason, SubagentLane};
     use roder_api::trace::{SubagentDestination, SubagentDestinationKind};
 
     #[tokio::test]
@@ -109,6 +110,7 @@ mod tests {
             title: "Inspect".to_string(),
             role: "explore".to_string(),
             model: Some("mock".to_string()),
+            lane: Some(SubagentLane::Scout),
             status: SubagentTraceStatus::Queued,
             elapsed_ms: 0,
             usage: None,
@@ -121,6 +123,7 @@ mod tests {
             }),
             latest_activity: Some("queued".to_string()),
             error_summary: None,
+            exit_reason: Some(SubagentExitReason::Completed),
         })
         .await;
 
@@ -128,5 +131,15 @@ mod tests {
         assert_eq!(envelope.kind, "turn/subagentTraceCreated");
         assert_eq!(envelope.thread_id.as_deref(), Some("parent-thread"));
         assert_eq!(envelope.turn_id.as_deref(), Some("parent-turn"));
+        match envelope.event {
+            RoderEvent::SubagentTraceCreated(event) => {
+                assert_eq!(event.summary.lane, Some(SubagentLane::Scout));
+                assert_eq!(
+                    event.summary.exit_reason,
+                    Some(SubagentExitReason::Completed)
+                );
+            }
+            other => panic!("unexpected event: {other:?}"),
+        }
     }
 }

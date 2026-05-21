@@ -13,9 +13,119 @@ pub struct SubagentRequest {
     pub model: Option<String>,
     pub tools: Option<Vec<String>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub lane: Option<SubagentLane>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_concurrent: Option<usize>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub allowed_tools: Option<Vec<String>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub parent_deadline_seconds: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub inputs: Option<serde_json::Value>,
     pub timeout_seconds: Option<u64>,
 }
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[serde(rename_all = "snake_case")]
+pub enum SubagentLane {
+    Scout,
+    Editor,
+    Reviewer,
+    Runner,
+}
+
+impl SubagentLane {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Scout => "scout",
+            Self::Editor => "editor",
+            Self::Reviewer => "reviewer",
+            Self::Runner => "runner",
+        }
+    }
+
+    pub fn preset(self) -> SubagentLanePreset {
+        match self {
+            Self::Scout => SubagentLanePreset {
+                lane: self,
+                description: "Read and search without changing state.",
+                max_concurrent: 4,
+                timeout_seconds: 120,
+                allowed_tools: &[
+                    "Read",
+                    "Grep",
+                    "Glob",
+                    "read_file",
+                    "grep",
+                    "glob",
+                    "list_files",
+                ],
+            },
+            Self::Editor => SubagentLanePreset {
+                lane: self,
+                description: "Make a bounded file-change slice.",
+                max_concurrent: 2,
+                timeout_seconds: 180,
+                allowed_tools: &[
+                    "Read",
+                    "Grep",
+                    "Glob",
+                    "read_file",
+                    "grep",
+                    "glob",
+                    "list_files",
+                    "write_file",
+                    "edit",
+                    "multi_edit",
+                    "apply_patch",
+                ],
+            },
+            Self::Reviewer => SubagentLanePreset {
+                lane: self,
+                description: "Review and verify with evidence.",
+                max_concurrent: 2,
+                timeout_seconds: 120,
+                allowed_tools: &[
+                    "Read",
+                    "Grep",
+                    "Glob",
+                    "read_file",
+                    "grep",
+                    "glob",
+                    "list_files",
+                ],
+            },
+            Self::Runner => SubagentLanePreset {
+                lane: self,
+                description: "Run commands or tests when process policy allows it.",
+                max_concurrent: 1,
+                timeout_seconds: 120,
+                allowed_tools: &["Shell", "shell", "exec_command", "run_command"],
+            },
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct SubagentLanePreset {
+    pub lane: SubagentLane,
+    pub description: &'static str,
+    pub max_concurrent: usize,
+    pub timeout_seconds: u64,
+    pub allowed_tools: &'static [&'static str],
+}
+
+pub fn built_in_subagent_lane_presets() -> [SubagentLanePreset; 4] {
+    [
+        SubagentLane::Scout.preset(),
+        SubagentLane::Editor.preset(),
+        SubagentLane::Reviewer.preset(),
+        SubagentLane::Runner.preset(),
+    ]
+}
+
+pub const SUBAGENT_SUMMARY_CONTRACT: &str = "Child summary must include these labels: Conclusion, Evidence, Files inspected, Files changed, Remaining uncertainty.";
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct SubagentDefinition {
@@ -155,6 +265,10 @@ mod tests {
                     subagent_type: Some("explore".to_string()),
                     model: Some("test-model".to_string()),
                     tools: Some(vec!["Read".to_string()]),
+                    lane: None,
+                    max_concurrent: None,
+                    allowed_tools: None,
+                    parent_deadline_seconds: None,
                     inputs: None,
                     timeout_seconds: Some(10),
                 },
