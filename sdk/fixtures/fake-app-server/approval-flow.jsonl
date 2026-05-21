@@ -1,0 +1,10 @@
+{"kind":"header","schemaVersion":1,"createdAt":"1970-01-01T00:00:00Z","roderVersion":"dev","cwd":"<redacted>","terminal":{"cols":80,"rows":24},"features":["sdk","app-server"],"metadata":{"fixture":"approval-flow"}}
+{"kind":"api.request","seq":1,"atMs":0,"client":"sdk","request":{"jsonrpc":"2.0","id":1,"method":"thread/start","params":{"cwd":"/workspace","model":"mock","modelProvider":"mock"}}}
+{"kind":"api.response","seq":2,"atMs":1,"requestSeq":1,"response":{"jsonrpc":"2.0","id":1,"result":{"thread":{"id":"thread-approval"}}}}
+{"kind":"api.request","seq":3,"atMs":2,"client":"sdk","request":{"jsonrpc":"2.0","id":2,"method":"turn/start","params":{"threadId":"thread-approval","input":[{"type":"text","text":"read file"}]}}}
+{"kind":"api.response","seq":4,"atMs":3,"requestSeq":3,"response":{"jsonrpc":"2.0","id":2,"result":{"turn":{"id":"turn-approval"}}}}
+{"kind":"api.notification","seq":5,"atMs":4,"notification":{"jsonrpc":"2.0","method":"session/approvalRequested","params":{"threadId":"thread-approval","turnId":"turn-approval","approvalId":"approval-1","toolName":"fs/readFile"}}}
+{"kind":"api.request","seq":6,"atMs":5,"client":"sdk","request":{"jsonrpc":"2.0","id":3,"method":"session/resolve_approval","params":{"approvalId":"approval-1","approved":true,"message":"fixture approval"}}}
+{"kind":"api.response","seq":7,"atMs":6,"requestSeq":6,"response":{"jsonrpc":"2.0","id":3,"result":{"resolved":true}}}
+{"kind":"api.notification","seq":8,"atMs":7,"notification":{"jsonrpc":"2.0","method":"session/approvalResolved","params":{"threadId":"thread-approval","turnId":"turn-approval","approvalId":"approval-1","approved":true}}}
+{"kind":"api.notification","seq":9,"atMs":8,"notification":{"jsonrpc":"2.0","method":"turn/completed","params":{"threadId":"thread-approval","turnId":"turn-approval","status":"completed"}}}

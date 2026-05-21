@@ -1,0 +1,13 @@
+{"kind":"header","schemaVersion":1,"createdAt":"1970-01-01T00:00:00Z","roderVersion":"dev","cwd":"<redacted>","terminal":{"cols":80,"rows":24},"features":["sdk","app-server"],"metadata":{"fixture":"basic-thread"}}
+{"kind":"api.request","seq":1,"atMs":0,"client":"sdk","request":{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}}
+{"kind":"api.response","seq":2,"atMs":1,"requestSeq":1,"response":{"jsonrpc":"2.0","id":1,"result":{"provider":"mock","model":"mock","cwd":"/workspace"}}}
+{"kind":"api.request","seq":3,"atMs":2,"client":"sdk","request":{"jsonrpc":"2.0","id":2,"method":"providers/list"}}
+{"kind":"api.response","seq":4,"atMs":3,"requestSeq":3,"response":{"jsonrpc":"2.0","id":2,"result":{"providers":[{"id":"mock","name":"Mock","defaultModel":"mock"}]}}}
+{"kind":"api.request","seq":5,"atMs":4,"client":"sdk","request":{"jsonrpc":"2.0","id":3,"method":"model/list"}}
+{"kind":"api.response","seq":6,"atMs":5,"requestSeq":5,"response":{"jsonrpc":"2.0","id":3,"result":{"models":[{"id":"mock","provider":"mock","name":"Mock"}]}}}
+{"kind":"api.request","seq":7,"atMs":6,"client":"sdk","request":{"jsonrpc":"2.0","id":4,"method":"thread/start","params":{"cwd":"/workspace","model":"mock","modelProvider":"mock"}}}
+{"kind":"api.response","seq":8,"atMs":7,"requestSeq":7,"response":{"jsonrpc":"2.0","id":4,"result":{"thread":{"id":"thread-basic"}}}}
+{"kind":"api.request","seq":9,"atMs":8,"client":"sdk","request":{"jsonrpc":"2.0","id":5,"method":"turn/start","params":{"threadId":"thread-basic","input":[{"type":"text","text":"hello"}]}}}
+{"kind":"api.response","seq":10,"atMs":9,"requestSeq":9,"response":{"jsonrpc":"2.0","id":5,"result":{"turn":{"id":"turn-basic"}}}}
+{"kind":"api.notification","seq":11,"atMs":10,"notification":{"jsonrpc":"2.0","method":"turn/delta","params":{"threadId":"thread-basic","turnId":"turn-basic","delta":"hello"}}}
+{"kind":"api.notification","seq":12,"atMs":11,"notification":{"jsonrpc":"2.0","method":"turn/completed","params":{"threadId":"thread-basic","turnId":"turn-basic","status":"completed"}}}
