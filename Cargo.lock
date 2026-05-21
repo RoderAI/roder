@@ -2445,6 +2445,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "roder-api-transcript"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "serde",
+ "serde_json",
+ "time",
+]
+
+[[package]]
 name = "roder-app-server"
 version = "0.1.0"
 dependencies = [

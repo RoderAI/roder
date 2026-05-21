@@ -50,6 +50,7 @@ urlencoding = "2.1.3"
 uuid = "1.23.1"
 
 roder-api = { path = "crates/roder-api" }
+roder-api-transcript = { path = "crates/roder-api-transcript" }
 roder-automations = { path = "crates/roder-automations" }
 roder-app-server = { path = "crates/roder-app-server" }
 roder-codex-auth = { path = "crates/roder-codex-auth" }
