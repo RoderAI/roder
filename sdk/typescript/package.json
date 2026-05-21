@@ -2,14 +2,25 @@
   "name": "@roder/sdk",
   "version": "0.0.0",
   "private": true,
+  "description": "TypeScript SDK for the Roder app-server JSON-RPC API",
   "type": "module",
+  "packageManager": "pnpm@10.33.2",
+  "license": "UNLICENSED",
   "exports": {
     ".": "./dist/src/index.js"
   },
+  "files": [
+    "dist/src",
+    "README.md",
+    "CHANGELOG.md"
+  ],
   "scripts": {
     "build": "tsc -p tsconfig.json",
+    "codegen:check": "node ../codegen/generate-typescript.mjs --check",
+    "prepack": "pnpm run codegen:check && pnpm run verify:readme && pnpm run typecheck && pnpm test -- fixtures",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "test": "npm run build && node --test dist/test/*.test.js"
+    "test": "pnpm run build && node --test dist/test/*.test.js",
+    "verify:readme": "node -e \"const fs = require('node:fs'); const text = fs.readFileSync('README.md', 'utf8'); if (!text.includes('RoderAgent') || !text.includes('pnpm run typecheck')) process.exit(1);\""
   },
   "devDependencies": {
     "@types/node": "^25.9.1",
