@@ -1,0 +1,19 @@
+{
+  "id": "edit-tool-profile",
+  "title": "Model profile edit-tool comparison",
+  "prompt": "Say hello from the selected model profile and mention the profile comparison.",
+  "tags": ["model-profile", "edit-tool"],
+  "workspace": {
+    "files": [
+      {
+        "path": "README.md",
+        "contents": "profile fixture ready\n"
+      }
+    ]
+  },
+  "timeoutMs": 10000,
+  "expected": {
+    "finalAnswerContains": ["hello from roder"]
+  },
+  "constraints": ["offline fake provider fixture", "compare profile tags and failure classes"]
+}

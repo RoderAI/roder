@@ -1,0 +1,19 @@
+{
+  "id": "schema-profile",
+  "title": "Model profile schema reliability",
+  "prompt": "Report the schema reliability expectation for this profile eval.",
+  "tags": ["model-profile", "schema-error"],
+  "workspace": {
+    "files": [
+      {
+        "path": "schemas/tool.json",
+        "contents": "{\"required\":[\"path\"],\"properties\":{\"path\":{\"type\":\"string\"}}}\n"
+      }
+    ]
+  },
+  "timeoutMs": 10000,
+  "expected": {
+    "finalAnswerContains": ["hello from roder"]
+  },
+  "constraints": ["offline fake provider fixture", "track schema-error failure classes by profile"]
+}

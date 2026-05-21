@@ -49,6 +49,8 @@ pub struct OfflineEvalRunnerOptions {
     pub runtime_profile: RuntimeProfile,
     #[serde(default)]
     pub speed_policy: EvalSpeedPolicyMode,
+    #[serde(default)]
+    pub profiles: EvalProfileMode,
 }
 
 impl Default for OfflineEvalRunnerOptions {
@@ -60,6 +62,7 @@ impl Default for OfflineEvalRunnerOptions {
             model: default_model(),
             runtime_profile: RuntimeProfile::Interactive,
             speed_policy: EvalSpeedPolicyMode::Off,
+            profiles: EvalProfileMode::Off,
         }
     }
 }
@@ -122,6 +125,53 @@ struct EvalSpeedPolicyRun {
     enabled: bool,
 }
 
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum EvalProfileMode {
+    #[default]
+    Off,
+    All,
+}
+
+impl EvalProfileMode {
+    fn runs(self, default_model: &str) -> Vec<EvalProfileRun> {
+        match self {
+            Self::Off => vec![EvalProfileRun {
+                label: None,
+                model: default_model.to_string(),
+            }],
+            Self::All => vec![
+                EvalProfileRun {
+                    label: Some("profile:gpt-5.5"),
+                    model: "gpt-5.5".to_string(),
+                },
+                EvalProfileRun {
+                    label: Some("profile:claude-haiku-4-5-20251001"),
+                    model: "claude-haiku-4-5-20251001".to_string(),
+                },
+            ],
+        }
+    }
+}
+
+impl std::str::FromStr for EvalProfileMode {
+    type Err = anyhow::Error;
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        match value {
+            "off" => Ok(Self::Off),
+            "all" => Ok(Self::All),
+            other => anyhow::bail!("invalid --profiles {other:?}; expected off or all"),
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+struct EvalProfileRun {
+    label: Option<&'static str>,
+    model: String,
+}
+
 pub fn load_eval_fixtures(dir: &Path) -> anyhow::Result<Vec<EvalFixture>> {
     let mut fixtures = Vec::new();
     load_eval_fixtures_from_dir(dir, &mut fixtures)
@@ -153,20 +203,23 @@ pub async fn run_offline_eval_suite(
         .unwrap_or("fixtures")
         .to_string();
     let speed_runs = options.speed_policy.runs(options.runtime_profile);
-    let mut results = Vec::with_capacity(fixtures.len() * speed_runs.len());
+    let profile_runs = options.profiles.runs(&options.model);
+    let mut results = Vec::with_capacity(fixtures.len() * speed_runs.len() * profile_runs.len());
     for fixture in fixtures {
-        for speed_run in &speed_runs {
-            results.push(
-                run_offline_fixture(
-                    &suite_id,
-                    &run_id,
-                    &fixture,
-                    &options.provider,
-                    &options.model,
-                    *speed_run,
-                )
-                .await?,
-            );
+        for profile_run in &profile_runs {
+            for speed_run in &speed_runs {
+                results.push(
+                    run_offline_fixture(
+                        &suite_id,
+                        &run_id,
+                        &fixture,
+                        &options.provider,
+                        profile_run,
+                        *speed_run,
+                    )
+                    .await?,
+                );
+            }
         }
     }
     let report = EvalSuiteReport {
@@ -211,7 +264,7 @@ async fn run_offline_fixture(
     run_id: &str,
     fixture: &EvalFixture,
     provider: &str,
-    model: &str,
+    profile_run: &EvalProfileRun,
     speed_run: EvalSpeedPolicyRun,
 ) -> anyhow::Result<EvalFixtureResult> {
     let start = Instant::now();
@@ -232,7 +285,7 @@ async fn run_offline_fixture(
         let runtime = Arc::new(build_fake_runtime(
             &workspace.path,
             provider,
-            model,
+            &profile_run.model,
             speed_run.runtime_profile,
             speed_run.enabled,
             fixture.timeout_ms.map(deadline_seconds_from_timeout_ms),
@@ -244,7 +297,7 @@ async fn run_offline_fixture(
                 message: fixture.prompt.clone(),
                 images: Vec::new(),
                 provider_override: Some(provider.to_string()),
-                model_override: Some(model.to_string()),
+                model_override: Some(profile_run.model.clone()),
                 workspace: Some(workspace.path.display().to_string()),
                 instructions: InstructionBundle::default(),
                 task_ledger_required: fixture.expected.task_ledger_required,
@@ -300,11 +353,14 @@ async fn run_offline_fixture(
             suite_id: suite_id.to_string(),
             run_id: run_id.to_string(),
             provider: provider.to_string(),
-            model: model.to_string(),
+            model: profile_run.model.clone(),
             started_at: OffsetDateTime::now_utc(),
             tags: {
                 let mut tags = fixture.tags.clone();
                 tags.push(speed_run.label.to_string());
+                if let Some(label) = profile_run.label {
+                    tags.push(label.to_string());
+                }
                 tags
             },
         },

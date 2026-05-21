@@ -587,6 +587,25 @@ fn eval_report_markdown(report: &EvalSuiteReport) -> String {
             ));
         }
     }
+    let profile_comparisons = model_profile_comparisons(report);
+    if !profile_comparisons.is_empty() {
+        text.push_str(
+            "\n## Model Profile Deltas\n\n| Fixture | Profile | Outcome | Failure class | Wall ms | Model calls | Tool calls |\n| --- | --- | --- | --- | ---: | ---: | ---: |\n",
+        );
+        for comparison in profile_comparisons {
+            text.push_str(&format!(
+                "| `{}` | `{}` | `{:?}` | `{}` | {:.0} | {:.0} | {:.0} |\n",
+                comparison.fixture_id,
+                comparison.profile,
+                comparison.outcome,
+                comparison.failure_class,
+                comparison.wall_ms,
+                comparison.model_calls,
+                comparison.tool_calls,
+            ));
+        }
+        text.push_str("\nRecommended profile changes should be made only when this table shows an improved failure class or equivalent quality with lower wall/model/tool cost.\n");
+    }
     text.push_str(
         "\n## Context Metrics\n\n| Fixture | Context tokens | Context bytes | Entrypoint candidates | Entrypoint injection event | First relevant read event | Irrelevant reads | Truncation follow-ups | Tool output truncations |\n| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |\n",
     );
@@ -665,6 +684,55 @@ fn speed_policy_label(result: &EvalFixtureResult) -> &'static str {
     } else {
         "off"
     }
+}
+
+fn profile_label(result: &EvalFixtureResult) -> Option<String> {
+    result
+        .report
+        .run
+        .tags
+        .iter()
+        .find_map(|tag| tag.strip_prefix("profile:").map(str::to_string))
+}
+
+struct ModelProfileComparison {
+    fixture_id: String,
+    profile: String,
+    outcome: EvalOutcome,
+    failure_class: String,
+    wall_ms: f64,
+    model_calls: f64,
+    tool_calls: f64,
+}
+
+fn model_profile_comparisons(report: &EvalSuiteReport) -> Vec<ModelProfileComparison> {
+    let mut rows = report
+        .results
+        .iter()
+        .filter_map(|result| {
+            let profile = profile_label(result)?;
+            Some(ModelProfileComparison {
+                fixture_id: result.fixture_id.clone(),
+                profile,
+                outcome: result.report.outcome.clone(),
+                failure_class: result
+                    .report
+                    .failure_class
+                    .as_ref()
+                    .map(|class| format!("{class:?}"))
+                    .unwrap_or_else(|| "-".to_string()),
+                wall_ms: metric_value(result, "wall_time_ms"),
+                model_calls: metric_value(result, "model_calls"),
+                tool_calls: metric_value(result, "tool_calls"),
+            })
+        })
+        .collect::<Vec<_>>();
+    rows.sort_by(|left, right| {
+        left.fixture_id
+            .cmp(&right.fixture_id)
+            .then_with(|| left.profile.cmp(&right.profile))
+    });
+    rows
 }
 
 struct SpeedPolicyComparison {
