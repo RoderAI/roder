@@ -17,12 +17,17 @@ use time::OffsetDateTime;
 use tokio::sync::broadcast;
 use tokio::time::{Duration, timeout};
 
+mod baseline;
 mod reliability;
 mod report;
 #[cfg(test)]
 mod tests;
 mod workspace;
 
+pub use baseline::{
+    ReliabilityBaseline, ReliabilityBaselineComparison, ReliabilityBaselineExpectation,
+    ReliabilityBaselineStatus, compare_eval_report_to_baseline, compare_reliability_baseline,
+};
 pub use reliability::ReliabilityReportSummary;
 pub use report::{
     EvalFixtureResult, EvalReportDocument, EvalReportSummary, EvalSuiteReport, list_eval_reports,
