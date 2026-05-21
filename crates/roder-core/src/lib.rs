@@ -11,6 +11,7 @@ mod reliability;
 mod retrieval_metrics;
 mod roadmap;
 pub mod runtime;
+mod skills;
 mod speed_policy;
 mod subagent_traces;
 pub mod teams;
