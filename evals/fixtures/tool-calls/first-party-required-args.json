@@ -1,0 +1,37 @@
+{
+  "id": "first-party-required-args",
+  "title": "First-party coding tool required arguments",
+  "prompt": "Validate that first-party coding tool calls use the required arguments and no extra fields before finalizing.",
+  "tags": [
+    "micro",
+    "tool-schema",
+    "tool:read_file",
+    "tool:list_files",
+    "tool:grep",
+    "tool:glob",
+    "tool:shell",
+    "tool:exec_command",
+    "tool:write_stdin",
+    "tool:apply_patch",
+    "tool:write_file",
+    "tool:edit",
+    "tool:multi_edit"
+  ],
+  "timeoutMs": 10000,
+  "expected": {
+    "finalAnswerContains": ["hello from roder"],
+    "verificationRequired": true
+  },
+  "constraints": [
+    "read_file requires path",
+    "grep requires query",
+    "glob requires pattern",
+    "shell requires command",
+    "exec_command requires cmd",
+    "write_stdin requires session_id",
+    "apply_patch requires patch",
+    "write_file requires path and content",
+    "edit requires path old_string and new_string",
+    "multi_edit requires path and edits"
+  ]
+}

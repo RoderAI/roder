@@ -1,0 +1,12 @@
+{
+  "id": "repeated-failing-tool-calls",
+  "title": "Repeated failing tool call guardrail",
+  "prompt": "Stop repeating a failing tool call and change strategy after the first failure.",
+  "tags": ["micro", "repeated-failing-tool-calls", "tool:exec_command"],
+  "timeoutMs": 10000,
+  "expected": {
+    "finalAnswerContains": ["hello from roder"],
+    "verificationRequired": true
+  },
+  "constraints": ["do not repeat the same failing tool call"]
+}
