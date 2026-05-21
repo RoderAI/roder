@@ -51,6 +51,10 @@ async fn run_eval_run(args: &[String]) -> anyhow::Result<()> {
     let model = flag_value(args, "--model")
         .map(ToOwned::to_owned)
         .or_else(|| std::env::var("RODER_MODEL").ok());
+    let runtime_profile = flag_value(args, "--profile")
+        .map(str::parse)
+        .transpose()?
+        .unwrap_or_default();
     if !offline {
         if std::env::var("RODER_EVAL_LIVE_PROVIDER").ok().as_deref() != Some("1") {
             anyhow::bail!(
@@ -71,6 +75,7 @@ async fn run_eval_run(args: &[String]) -> anyhow::Result<()> {
             output_dir: output_dir.clone(),
             provider,
             model,
+            runtime_profile,
         },
     )
     .await

@@ -3,7 +3,7 @@ use time::OffsetDateTime;
 
 use crate::artifacts::{ContextArtifact, ContextArtifactId};
 use crate::extension::{ExtensionId, InferenceEngineId};
-use crate::inference::InferenceEvent;
+use crate::inference::{InferenceEvent, RuntimeProfile};
 use crate::media::{MediaArtifact, MediaArtifactId, MediaPreview};
 use crate::memory::{MemoryCitation, MemoryId, MemoryProviderSelection, MemoryRecord, MemoryScope};
 use crate::plan_review::{
@@ -72,6 +72,8 @@ pub struct SessionLoaded {
 pub struct TurnStarted {
     pub thread_id: ThreadId,
     pub turn_id: TurnId,
+    #[serde(default)]
+    pub runtime_profile: RuntimeProfile,
     #[serde(with = "time::serde::rfc3339")]
     pub timestamp: OffsetDateTime,
 }
@@ -1481,6 +1483,7 @@ mod tests {
             event: RoderEvent::TurnStarted(TurnStarted {
                 thread_id: thread_id.unwrap_or("thread-a").to_string(),
                 turn_id: turn_id.unwrap_or("turn-a").to_string(),
+                runtime_profile: RuntimeProfile::Interactive,
                 timestamp: OffsetDateTime::UNIX_EPOCH,
             }),
         }

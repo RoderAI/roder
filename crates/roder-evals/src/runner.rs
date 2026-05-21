@@ -6,7 +6,9 @@ use anyhow::Context;
 use roder_api::catalog::PROVIDER_MOCK;
 use roder_api::events::{RoderEvent, ThreadId, TurnId};
 use roder_api::extension::ExtensionRegistryBuilder;
-use roder_api::inference::{HostedWebSearchConfig, InferenceEvent, InstructionBundle};
+use roder_api::inference::{
+    HostedWebSearchConfig, InferenceEvent, InstructionBundle, RuntimeProfile,
+};
 use roder_api::policy_mode::PolicyMode;
 use roder_core::fake_provider::FakeInferenceEngine;
 use roder_core::{Runtime, RuntimeConfig, StartTurnRequest};
@@ -43,6 +45,8 @@ pub struct OfflineEvalRunnerOptions {
     pub provider: String,
     #[serde(default = "default_model")]
     pub model: String,
+    #[serde(default)]
+    pub runtime_profile: RuntimeProfile,
 }
 
 impl Default for OfflineEvalRunnerOptions {
@@ -52,6 +56,7 @@ impl Default for OfflineEvalRunnerOptions {
             output_dir: PathBuf::from("evals").join("reports"),
             provider: default_provider(),
             model: default_model(),
+            runtime_profile: RuntimeProfile::Interactive,
         }
     }
 }
@@ -95,6 +100,7 @@ pub async fn run_offline_eval_suite(
                 &fixture,
                 &options.provider,
                 &options.model,
+                options.runtime_profile,
             )
             .await?,
         );
@@ -142,6 +148,7 @@ async fn run_offline_fixture(
     fixture: &EvalFixture,
     provider: &str,
     model: &str,
+    runtime_profile: RuntimeProfile,
 ) -> anyhow::Result<EvalFixtureResult> {
     let start = Instant::now();
     let workspace = create_workspace(fixture)?;
@@ -158,7 +165,12 @@ async fn run_offline_fixture(
     }
     let mut turn_id = "setup-failed".to_string();
     if outcome == EvalOutcome::Pass {
-        let runtime = Arc::new(build_fake_runtime(&workspace.path, provider, model)?);
+        let runtime = Arc::new(build_fake_runtime(
+            &workspace.path,
+            provider,
+            model,
+            runtime_profile,
+        )?);
         let mut rx = runtime.subscribe_events();
         turn_id = runtime
             .start_turn(StartTurnRequest {
@@ -230,9 +242,17 @@ async fn run_offline_fixture(
     })
 }
 
-fn build_fake_runtime(workspace: &Path, provider: &str, model: &str) -> anyhow::Result<Runtime> {
+fn build_fake_runtime(
+    workspace: &Path,
+    provider: &str,
+    model: &str,
+    runtime_profile: RuntimeProfile,
+) -> anyhow::Result<Runtime> {
     let mut builder = ExtensionRegistryBuilder::new();
     builder.inference_engine(Arc::new(FakeInferenceEngine));
+    builder.tool_contributor(Arc::new(roder_tools::BuiltinCodingToolsContributor::new(
+        workspace.to_path_buf(),
+    )?));
     builder.context_planner(Arc::new(roder_context::EntrypointContextPlanner::new(
         workspace.to_path_buf(),
     )));
@@ -244,6 +264,7 @@ fn build_fake_runtime(workspace: &Path, provider: &str, model: &str) -> anyhow::
             hosted_web_search: HostedWebSearchConfig::disabled(),
             workspace: Some(workspace.display().to_string()),
             policy_mode: PolicyMode::Default,
+            runtime_profile,
             ..RuntimeConfig::default()
         },
     )
