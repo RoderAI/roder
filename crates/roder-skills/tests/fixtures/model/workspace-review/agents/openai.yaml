@@ -1,0 +1,5 @@
+interface: openai
+dependencies:
+  - git
+policies:
+  - findings-first

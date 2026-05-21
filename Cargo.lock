@@ -3093,6 +3093,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "roder-skills"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "roder-api",
+ "serde",
+ "serde_json",
+ "serde_yaml",
+ "toml",
+]
+
+[[package]]
 name = "roder-supergrok-auth"
 version = "0.1.0"
 dependencies = [

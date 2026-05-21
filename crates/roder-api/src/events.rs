@@ -26,6 +26,7 @@ use crate::retrieval::{
     RetrievalDiscoveryItemPromoted, RetrievalPromotionSkipped, RetrievalResultUsed,
     RetrievalRouteAccepted, RetrievalRouteFailed, RetrievalRouteIgnored, RetrievalRoutePlanned,
 };
+use crate::skills::{SkillActivationResolved, SkillConfigApplied, SkillsCatalogLoaded};
 use crate::subagents::SubagentExitReason;
 use crate::task_ledger::TaskLedgerItem;
 use crate::teams::{
@@ -1097,6 +1098,9 @@ pub enum RoderEvent {
     RemoteClientConnected(RemoteClientConnected),
     RemoteClientDisconnected(RemoteClientDisconnected),
     RoadmapChanged(RoadmapChanged),
+    SkillsCatalogLoaded(SkillsCatalogLoaded),
+    SkillConfigApplied(SkillConfigApplied),
+    SkillActivationResolved(SkillActivationResolved),
     TaskStarted(TaskStarted),
     TaskOutput(TaskOutput),
     TaskCompleted(TaskCompleted),
@@ -1233,6 +1237,9 @@ impl RoderEvent {
             RoderEvent::RemoteClientConnected(_) => "remote/clientConnected",
             RoderEvent::RemoteClientDisconnected(_) => "remote/clientDisconnected",
             RoderEvent::RoadmapChanged(_) => "roadmap.changed",
+            RoderEvent::SkillsCatalogLoaded(_) => "skills/catalogLoaded",
+            RoderEvent::SkillConfigApplied(_) => "skills/configApplied",
+            RoderEvent::SkillActivationResolved(_) => "skills/activationResolved",
             RoderEvent::TaskStarted(_) => "task.started",
             RoderEvent::TaskOutput(_) => "task.output",
             RoderEvent::TaskCompleted(_) => "task.completed",
@@ -1339,7 +1346,10 @@ impl RoderEvent {
             | RoderEvent::RemoteAuthFailed(_)
             | RoderEvent::RemoteClientConnected(_)
             | RoderEvent::RemoteClientDisconnected(_) => EventSource::AppServer,
-            RoderEvent::RoadmapChanged(_) => EventSource::Core,
+            RoderEvent::RoadmapChanged(_)
+            | RoderEvent::SkillsCatalogLoaded(_)
+            | RoderEvent::SkillConfigApplied(_)
+            | RoderEvent::SkillActivationResolved(_) => EventSource::Core,
             RoderEvent::FileChangePreviewReady(_) => EventSource::Tool,
             RoderEvent::UserInputRequested(_)
             | RoderEvent::UserInputResolved(_)
@@ -1464,6 +1474,7 @@ impl RoderEvent {
             RoderEvent::TeamMemberStatusChanged(e) => Some(&e.member_thread_id),
             RoderEvent::TeamMemberMessageDelta(e) => Some(&e.member_thread_id),
             RoderEvent::TeamMemberCompleted(e) => Some(&e.member_thread_id),
+            RoderEvent::SkillActivationResolved(e) => Some(&e.thread_id),
             RoderEvent::RuntimeStarted(_)
             | RoderEvent::ExtensionRegistered(_)
             | RoderEvent::WorkflowImportsDetected(_)
@@ -1488,6 +1499,8 @@ impl RoderEvent {
             | RoderEvent::RemoteClientConnected(_)
             | RoderEvent::RemoteClientDisconnected(_)
             | RoderEvent::RoadmapChanged(_)
+            | RoderEvent::SkillsCatalogLoaded(_)
+            | RoderEvent::SkillConfigApplied(_)
             | RoderEvent::RunnerLifecycle(_)
             | RoderEvent::TeamDisplayModeChanged(_)
             | RoderEvent::TeamTaskChanged(_)
@@ -1589,6 +1602,7 @@ impl RoderEvent {
             RoderEvent::TurnSteered(e) => Some(&e.turn_id),
             RoderEvent::TeamMemberMessageDelta(e) => Some(&e.turn_id),
             RoderEvent::TeamMemberCompleted(e) => e.turn_id.as_ref(),
+            RoderEvent::SkillActivationResolved(e) => Some(&e.turn_id),
             RoderEvent::RuntimeStarted(_)
             | RoderEvent::ExtensionRegistered(_)
             | RoderEvent::SessionCreated(_)
@@ -1617,6 +1631,8 @@ impl RoderEvent {
             | RoderEvent::RemoteClientConnected(_)
             | RoderEvent::RemoteClientDisconnected(_)
             | RoderEvent::RoadmapChanged(_)
+            | RoderEvent::SkillsCatalogLoaded(_)
+            | RoderEvent::SkillConfigApplied(_)
             | RoderEvent::RunnerLifecycle(_)
             | RoderEvent::TeamStarted(_)
             | RoderEvent::TeamMemberStarted(_)
@@ -1992,5 +2008,39 @@ mod tests {
             }
             other => panic!("unexpected event: {other:?}"),
         }
+    }
+
+    #[test]
+    fn skill_activation_event_exposes_kind_source_and_turn_scope() {
+        let descriptor = crate::skills::SkillDescriptor {
+            id: "builtin:commit".to_string(),
+            name: "commit".to_string(),
+            canonical_path: "roder-builtin://commit/SKILL.md".to_string(),
+            source: crate::skills::SkillSource::BuiltIn,
+            exposure: crate::skills::SkillExposure::DirectOnly,
+            activation: crate::skills::SkillActivationState::Enabled,
+            description: "Commit staged changes safely.".to_string(),
+            short_description: Some("Commit safely".to_string()),
+            experimental: false,
+            diagnostics: Vec::new(),
+            agent_metadata: None,
+        };
+        let event = RoderEvent::SkillActivationResolved(crate::skills::SkillActivationResolved {
+            thread_id: "thread-a".to_string(),
+            turn_id: "turn-a".to_string(),
+            selector: crate::skills::SkillSelector::Name {
+                name: "commit".to_string(),
+            },
+            activation_reason: crate::skills::SkillActivationReason::FeatureBinding,
+            activated: true,
+            descriptor: Some(descriptor),
+            diagnostic: None,
+            timestamp: OffsetDateTime::UNIX_EPOCH,
+        });
+
+        assert_eq!(event.kind(), "skills/activationResolved");
+        assert_eq!(event.source(), EventSource::Core);
+        assert_eq!(event.thread_id().map(String::as_str), Some("thread-a"));
+        assert_eq!(event.turn_id().map(String::as_str), Some("turn-a"));
     }
 }

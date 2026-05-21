@@ -93,6 +93,7 @@ roder-evals = { path = "crates/roder-evals" }
 roder-protocol = { path = "crates/roder-protocol" }
 roder-sandbox = { path = "crates/roder-sandbox" }
 roder-search = { path = "crates/roder-search" }
+roder-skills = { path = "crates/roder-skills" }
 roder-theme = { path = "crates/roder-theme" }
 roder-tasks = { path = "crates/roder-tasks" }
 roder-tools = { path = "crates/roder-tools" }
