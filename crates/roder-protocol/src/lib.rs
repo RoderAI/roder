@@ -419,6 +419,23 @@ pub struct TurnCompletedNotification {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct TurnDeadlineExceededNotification {
+    pub thread_id: ThreadId,
+    pub turn_id: TurnId,
+    pub deadline: time::OffsetDateTime,
+    pub partial_result: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TurnPartialResultNotification {
+    pub thread_id: ThreadId,
+    pub turn_id: TurnId,
+    pub summary: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct ItemStartedNotification {
     pub thread_id: ThreadId,
     pub turn_id: TurnId,
@@ -2071,6 +2088,28 @@ mod tests {
         assert_eq!(value["summary"]["suiteId"], "tool-calls");
         assert_eq!(value["summary"]["fixtureCount"], 2);
         assert_eq!(value["markdown"], "# Report");
+    }
+
+    #[test]
+    fn deadline_notifications_use_camel_case_fields() {
+        let value = serde_json::to_value(TurnDeadlineExceededNotification {
+            thread_id: "thread-a".to_string(),
+            turn_id: "turn-a".to_string(),
+            deadline: OffsetDateTime::UNIX_EPOCH,
+            partial_result: "partial evidence".to_string(),
+        })
+        .unwrap();
+        assert_eq!(value["threadId"], "thread-a");
+        assert_eq!(value["turnId"], "turn-a");
+        assert_eq!(value["partialResult"], "partial evidence");
+
+        let value = serde_json::to_value(TurnPartialResultNotification {
+            thread_id: "thread-a".to_string(),
+            turn_id: "turn-a".to_string(),
+            summary: "partial evidence".to_string(),
+        })
+        .unwrap();
+        assert_eq!(value["summary"], "partial evidence");
     }
 
     #[test]

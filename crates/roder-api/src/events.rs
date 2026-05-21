@@ -732,6 +732,28 @@ pub struct TurnFailed {
     pub thread_id: ThreadId,
     pub turn_id: TurnId,
     pub error: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error_kind: Option<String>,
+    #[serde(with = "time::serde::rfc3339")]
+    pub timestamp: OffsetDateTime,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TurnPartialResult {
+    pub thread_id: ThreadId,
+    pub turn_id: TurnId,
+    pub summary: String,
+    #[serde(with = "time::serde::rfc3339")]
+    pub timestamp: OffsetDateTime,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TurnDeadlineExceeded {
+    pub thread_id: ThreadId,
+    pub turn_id: TurnId,
+    #[serde(with = "time::serde::rfc3339")]
+    pub deadline: OffsetDateTime,
+    pub partial_result: String,
     #[serde(with = "time::serde::rfc3339")]
     pub timestamp: OffsetDateTime,
 }
@@ -1040,6 +1062,8 @@ pub enum RoderEvent {
     TurnItemAppended(TurnItemAppended),
     TurnCompleted(TurnCompleted),
     TurnFailed(TurnFailed),
+    TurnPartialResult(TurnPartialResult),
+    TurnDeadlineExceeded(TurnDeadlineExceeded),
     TurnInterrupted(TurnInterrupted),
     TurnSteered(TurnSteered),
     RunnerLifecycle(RunnerLifecycle),
@@ -1146,6 +1170,8 @@ impl RoderEvent {
             RoderEvent::TurnItemAppended(_) => "turn.item_appended",
             RoderEvent::TurnCompleted(_) => "turn.completed",
             RoderEvent::TurnFailed(_) => "turn.failed",
+            RoderEvent::TurnPartialResult(_) => "turn.partial_result",
+            RoderEvent::TurnDeadlineExceeded(_) => "turn.deadline_exceeded",
             RoderEvent::TurnInterrupted(_) => "turn.interrupted",
             RoderEvent::TurnSteered(_) => "turn.steered",
             RoderEvent::RunnerLifecycle(_) => "runner.lifecycle",
@@ -1226,6 +1252,8 @@ impl RoderEvent {
             RoderEvent::UserInputRequested(_)
             | RoderEvent::UserInputResolved(_)
             | RoderEvent::TaskLedgerUpdated(_)
+            | RoderEvent::TurnPartialResult(_)
+            | RoderEvent::TurnDeadlineExceeded(_)
             | RoderEvent::VerificationRequired(_)
             | RoderEvent::VerificationCompleted(_)
             | RoderEvent::VerificationSkipped(_) => EventSource::Core,
@@ -1312,6 +1340,8 @@ impl RoderEvent {
             RoderEvent::TurnItemAppended(e) => Some(&e.thread_id),
             RoderEvent::TurnCompleted(e) => Some(&e.thread_id),
             RoderEvent::TurnFailed(e) => Some(&e.thread_id),
+            RoderEvent::TurnPartialResult(e) => Some(&e.thread_id),
+            RoderEvent::TurnDeadlineExceeded(e) => Some(&e.thread_id),
             RoderEvent::TurnInterrupted(e) => Some(&e.thread_id),
             RoderEvent::TurnSteered(e) => Some(&e.thread_id),
             RoderEvent::TeamStarted(e) => Some(&e.lead_thread_id),
@@ -1412,6 +1442,8 @@ impl RoderEvent {
             RoderEvent::TurnItemAppended(e) => Some(&e.turn_id),
             RoderEvent::TurnCompleted(e) => Some(&e.turn_id),
             RoderEvent::TurnFailed(e) => Some(&e.turn_id),
+            RoderEvent::TurnPartialResult(e) => Some(&e.turn_id),
+            RoderEvent::TurnDeadlineExceeded(e) => Some(&e.turn_id),
             RoderEvent::TurnInterrupted(e) => Some(&e.turn_id),
             RoderEvent::TurnSteered(e) => Some(&e.turn_id),
             RoderEvent::TeamMemberMessageDelta(e) => Some(&e.turn_id),
