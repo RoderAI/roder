@@ -5,6 +5,7 @@ use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
 
+use crate::artifacts::ContextArtifactAccess;
 use crate::events::{ThreadId, TurnId};
 use crate::extension::ToolProviderId;
 use crate::media::{MediaGenerationRequest, MediaGenerationResponse};
@@ -50,6 +51,7 @@ pub struct ToolExecutionHandles {
     pub workspace: Option<Arc<dyn ScopedWorkspaceHandle>>,
     pub process_runner: Option<Arc<dyn ScopedProcessRunner>>,
     pub subagent_trace_sink: Option<Arc<dyn SubagentTraceSink>>,
+    pub context_artifacts: Option<Arc<dyn ContextArtifactAccess>>,
 }
 
 impl fmt::Debug for ToolExecutionHandles {
@@ -58,6 +60,7 @@ impl fmt::Debug for ToolExecutionHandles {
             .field("workspace", &self.workspace.is_some())
             .field("process_runner", &self.process_runner.is_some())
             .field("subagent_trace_sink", &self.subagent_trace_sink.is_some())
+            .field("context_artifacts", &self.context_artifacts.is_some())
             .finish()
     }
 }
@@ -133,6 +136,11 @@ impl ToolExecutionContext {
         self
     }
 
+    pub fn with_context_artifacts(mut self, store: Arc<dyn ContextArtifactAccess>) -> Self {
+        self.handles.context_artifacts = Some(store);
+        self
+    }
+
     pub fn require_workspace(&self) -> anyhow::Result<Arc<dyn ScopedWorkspaceHandle>> {
         self.handles
             .workspace
@@ -145,6 +153,13 @@ impl ToolExecutionContext {
             .process_runner
             .clone()
             .ok_or_else(|| anyhow::anyhow!("process runner is not available"))
+    }
+
+    pub fn require_context_artifacts(&self) -> anyhow::Result<Arc<dyn ContextArtifactAccess>> {
+        self.handles
+            .context_artifacts
+            .clone()
+            .ok_or_else(|| anyhow::anyhow!("context artifact store is not available"))
     }
 }
 

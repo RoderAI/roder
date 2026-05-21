@@ -16,6 +16,7 @@ pub struct Config {
     pub reasoning: Option<String>,
     pub auto_compact_token_limit: Option<u32>,
     pub web_search: Option<WebSearchConfig>,
+    pub context: Option<ContextConfig>,
     pub subagents: Option<SubagentsConfig>,
     pub policy_modes: Option<PolicyModesConfig>,
     pub commands: Option<CommandsConfig>,
@@ -33,6 +34,20 @@ pub struct Config {
     pub providers: HashMap<String, ProviderConfig>,
     #[serde(default)]
     pub models: HashMap<String, ModelConfig>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ContextConfig {
+    #[serde(default = "default_true")]
+    pub file_backed_dynamic_context: bool,
+}
+
+impl Default for ContextConfig {
+    fn default() -> Self {
+        Self {
+            file_backed_dynamic_context: true,
+        }
+    }
 }
 
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]
@@ -470,6 +485,10 @@ pub fn save_search_index_enabled(enabled: bool) -> anyhow::Result<()> {
     save_search_index_enabled_to_path(config_path(), enabled)
 }
 
+pub fn save_file_backed_dynamic_context(enabled: bool) -> anyhow::Result<()> {
+    save_file_backed_dynamic_context_to_path(config_path(), enabled)
+}
+
 pub fn save_default_policy_mode(mode: &str) -> anyhow::Result<()> {
     save_default_policy_mode_to_path(config_path(), mode)
 }
@@ -523,6 +542,19 @@ pub fn save_search_index_enabled_to_path(
         .search_index
         .get_or_insert_with(Default::default)
         .enabled = enabled;
+    save_config_file_to_path(path, &config)
+}
+
+pub fn save_file_backed_dynamic_context_to_path(
+    path: impl AsRef<Path>,
+    enabled: bool,
+) -> anyhow::Result<()> {
+    let path = path.as_ref();
+    let mut config = load_config_file_from_path(path)?;
+    config
+        .context
+        .get_or_insert_with(Default::default)
+        .file_backed_dynamic_context = enabled;
     save_config_file_to_path(path, &config)
 }
 
@@ -619,6 +651,22 @@ fn apply_env_overrides_with(config: &mut Config, mut env: impl FnMut(&str) -> Op
         && let Ok(limit) = limit.trim().parse::<u32>()
     {
         config.auto_compact_token_limit = Some(limit);
+    }
+    if let Some(disabled) = env("RODER_DISABLE_CONTEXT_ARTIFACTS")
+        && parse_bool(&disabled).unwrap_or(false)
+    {
+        config
+            .context
+            .get_or_insert_with(Default::default)
+            .file_backed_dynamic_context = false;
+    }
+    if let Some(enabled) = env("RODER_FILE_BACKED_DYNAMIC_CONTEXT")
+        && let Some(enabled) = parse_bool(&enabled)
+    {
+        config
+            .context
+            .get_or_insert_with(Default::default)
+            .file_backed_dynamic_context = enabled;
     }
     if let Some(default_agent) =
         env("RODER_SUBAGENTS_DEFAULT").or_else(|| env("RODER_SUBAGENTS_DEFAULT_AGENT"))
@@ -809,6 +857,7 @@ mod tests {
             reasoning: Some("medium".to_string()),
             auto_compact_token_limit: None,
             web_search: None,
+            context: None,
             subagents: None,
             policy_modes: None,
             commands: None,
@@ -871,6 +920,38 @@ mod tests {
                 .unwrap()[0],
             "embedder"
         );
+    }
+
+    #[test]
+    fn context_config_deserializes_saves_and_env_overrides_apply() {
+        let mut config: Config = toml::from_str(
+            r#"
+            [context]
+            file_backed_dynamic_context = false
+            "#,
+        )
+        .unwrap();
+        assert!(!config.context.as_ref().unwrap().file_backed_dynamic_context);
+
+        apply_env_overrides_with(&mut config, |key| match key {
+            "RODER_FILE_BACKED_DYNAMIC_CONTEXT" => Some("true".to_string()),
+            _ => None,
+        });
+        assert!(config.context.as_ref().unwrap().file_backed_dynamic_context);
+
+        apply_env_overrides_with(&mut config, |key| match key {
+            "RODER_DISABLE_CONTEXT_ARTIFACTS" => Some("1".to_string()),
+            _ => None,
+        });
+        assert!(!config.context.as_ref().unwrap().file_backed_dynamic_context);
+
+        let path =
+            std::env::temp_dir().join(format!("roder-config-context-{}.toml", std::process::id()));
+        let _ = fs::remove_file(&path);
+        save_file_backed_dynamic_context_to_path(&path, false).unwrap();
+        let saved = load_config_file_from_path(&path).unwrap();
+        assert!(!saved.context.unwrap().file_backed_dynamic_context);
+        let _ = fs::remove_file(path);
     }
 
     #[test]

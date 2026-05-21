@@ -151,11 +151,11 @@ async fn oversized_tool_result_is_capped_before_next_provider_request() {
 
     assert_eq!(tool_result.name.as_deref(), Some("huge_output"));
     assert!(tool_result.result.chars().count() <= 20_000);
-    assert!(
-        tool_result
-            .result
-            .starts_with("Total output lines: 1\n\nstart")
-    );
+    assert!(tool_result.result.starts_with(
+        "Tool output was stored in a local context artifact because it exceeded inline limits."
+    ));
+    assert!(tool_result.result.contains("[artifact: tool_output"));
+    assert!(tool_result.result.contains("read_artifact"));
     assert!(tool_result.result.ends_with("end"));
     assert!(tool_result.result.contains("chars omitted"));
     assert!(!tool_result.result.contains(&"x".repeat(50_000)));

@@ -1,3 +1,4 @@
+mod artifacts;
 mod backend;
 mod edit;
 mod exec;
@@ -128,7 +129,8 @@ impl ToolContributor for BuiltinCodingToolsContributor {
         }))?;
         edit::register(registry, self.workspace.clone(), self.backend.clone())?;
         workflow::register(registry)?;
-        media::register(registry)
+        media::register(registry)?;
+        artifacts::register(registry)
     }
 }
 
@@ -445,6 +447,57 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn artifacts_tools_read_grep_and_tail_current_thread_store() {
+        let mut registry = ToolRegistry::default();
+        artifacts::register(&mut registry).unwrap();
+        let store = Arc::new(FakeArtifactStore);
+        let ctx = context_without_handles().with_context_artifacts(store);
+
+        let read = registry
+            .get("read_artifact")
+            .unwrap()
+            .execute(
+                ctx.clone(),
+                call(
+                    "read_artifact",
+                    json!({ "artifact_id": "artifact-1", "start_line": 2, "limit": 1 }),
+                ),
+            )
+            .await
+            .unwrap();
+        assert_eq!(read.text, "    2: needle");
+        assert_eq!(read.data["nextStartLine"], 3);
+
+        let grep = registry
+            .get("grep_artifact")
+            .unwrap()
+            .execute(
+                ctx.clone(),
+                call(
+                    "grep_artifact",
+                    json!({ "artifact_id": "artifact-1", "query": "needle" }),
+                ),
+            )
+            .await
+            .unwrap();
+        assert_eq!(grep.text, "2: needle");
+
+        let tail = registry
+            .get("tail_artifact")
+            .unwrap()
+            .execute(
+                ctx,
+                call(
+                    "tail_artifact",
+                    json!({ "artifact_id": "artifact-1", "lines": 1 }),
+                ),
+            )
+            .await
+            .unwrap();
+        assert_eq!(tail.text, "    3: omega");
+    }
+
+    #[tokio::test]
     async fn builtin_coding_tools_allow_paths_outside_workspace_by_default() {
         let root = test_workspace("path-global-root");
         let outside = test_workspace("path-global-outside");
@@ -652,6 +705,100 @@ mod tests {
             } else {
                 std::env::remove_var("HOME");
             }
+        }
+    }
+
+    struct FakeArtifactStore;
+
+    impl roder_api::artifacts::ContextArtifactAccess for FakeArtifactStore {
+        fn list_artifacts(
+            &self,
+            thread_id: &roder_api::events::ThreadId,
+        ) -> anyhow::Result<Vec<roder_api::artifacts::ContextArtifact>> {
+            Ok(vec![artifact(thread_id)])
+        }
+
+        fn read_artifact(
+            &self,
+            thread_id: &roder_api::events::ThreadId,
+            _artifact_id: &roder_api::artifacts::ContextArtifactId,
+            start_line: usize,
+            _limit: usize,
+        ) -> anyhow::Result<roder_api::artifacts::ArtifactReadPage> {
+            let lines = ["    1: alpha", "    2: needle", "    3: omega"];
+            Ok(roder_api::artifacts::ArtifactReadPage {
+                artifact: artifact(thread_id).descriptor(),
+                text: lines[start_line - 1].to_string(),
+                start_line,
+                limit: 1,
+                shown: 1,
+                total_lines: 3,
+                next_start_line: Some(start_line + 1).filter(|line| *line <= 3),
+                truncated: start_line < 3,
+            })
+        }
+
+        fn grep_artifact(
+            &self,
+            thread_id: &roder_api::events::ThreadId,
+            _artifact_id: &roder_api::artifacts::ContextArtifactId,
+            query: &str,
+            _offset: usize,
+            _limit: usize,
+        ) -> anyhow::Result<roder_api::artifacts::ArtifactGrepPage> {
+            Ok(roder_api::artifacts::ArtifactGrepPage {
+                artifact: artifact(thread_id).descriptor(),
+                query: query.to_string(),
+                text: "2: needle".to_string(),
+                offset: 0,
+                limit: 200,
+                shown: 1,
+                total_matches: 1,
+                next_offset: None,
+                truncated: false,
+            })
+        }
+
+        fn tail_artifact(
+            &self,
+            thread_id: &roder_api::events::ThreadId,
+            _artifact_id: &roder_api::artifacts::ContextArtifactId,
+            lines: usize,
+        ) -> anyhow::Result<roder_api::artifacts::ArtifactTailPage> {
+            Ok(roder_api::artifacts::ArtifactTailPage {
+                artifact: artifact(thread_id).descriptor(),
+                text: "    3: omega".to_string(),
+                start_line: 3,
+                lines,
+                shown: 1,
+                total_lines: 3,
+                truncated: true,
+            })
+        }
+
+        fn delete_artifact(
+            &self,
+            _thread_id: &roder_api::events::ThreadId,
+            _artifact_id: &roder_api::artifacts::ContextArtifactId,
+        ) -> anyhow::Result<bool> {
+            Ok(true)
+        }
+    }
+
+    fn artifact(thread_id: &str) -> roder_api::artifacts::ContextArtifact {
+        roder_api::artifacts::ContextArtifact {
+            id: "artifact-1".to_string(),
+            kind: roder_api::artifacts::ContextArtifactKind::ToolOutput,
+            thread_id: thread_id.to_string(),
+            turn_id: "turn-a".to_string(),
+            byte_count: 18,
+            line_count: 3,
+            source_tool_id: Some("call-a".to_string()),
+            label: Some("stdout".to_string()),
+            store_path: "/private/artifact-1.txt".to_string(),
+            retention_expires_at: None,
+            created_at: time::OffsetDateTime::UNIX_EPOCH,
+            roder_owned: true,
         }
     }
 

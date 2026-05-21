@@ -1,3 +1,4 @@
+mod artifact;
 pub mod client;
 mod command;
 mod desktop_contract;

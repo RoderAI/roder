@@ -1,3 +1,4 @@
+use roder_api::artifacts::{ContextArtifactKind, format_artifact_reference};
 use roder_api::conversation::{ToolResultRecord, tool_display_payload};
 use roder_api::events::*;
 use roder_api::policy_mode::{PolicyDecision, PolicyMode};
@@ -7,9 +8,12 @@ use roder_api::tools::ToolResult;
 use serde_json::Value;
 use time::OffsetDateTime;
 
+use crate::artifacts::CreateArtifactRequest;
 use crate::policy_gate::DefaultPolicyGate;
 use crate::runtime::{PendingPlanExit, Runtime};
-use crate::tool_output::cap_tool_output_lines;
+use crate::tool_output::{
+    artifact_backed_tool_output, cap_tool_output_lines, should_spill_tool_output,
+};
 use crate::tool_preview::file_change_preview;
 
 impl Runtime {
@@ -209,10 +213,43 @@ impl Runtime {
             .await;
         self.emit_hunk_records(&result).await;
         self.emit_media_artifacts(thread_id, turn_id, &result).await;
+        let raw_text = result.text;
+        let item_result =
+            if runtime_config.file_backed_dynamic_context && should_spill_tool_output(&raw_text) {
+                let artifact = self.context_artifacts().create(CreateArtifactRequest {
+                    kind: ContextArtifactKind::ToolOutput,
+                    thread_id,
+                    turn_id,
+                    source_tool_id: Some(&result.id),
+                    label: Some(&result.name),
+                    bytes: raw_text.as_bytes(),
+                })?;
+                let reference = format_artifact_reference(&artifact, &result.name);
+                let inline = artifact_backed_tool_output(&raw_text, &reference, &result.name);
+                self.emit(RoderEvent::ContextArtifactCreated(ContextArtifactCreated {
+                    thread_id: thread_id.clone(),
+                    turn_id: turn_id.clone(),
+                    artifact: artifact.clone(),
+                    timestamp: OffsetDateTime::now_utc(),
+                }))
+                .await;
+                self.emit(RoderEvent::ContextArtifactCapped(ContextArtifactCapped {
+                    thread_id: thread_id.clone(),
+                    turn_id: turn_id.clone(),
+                    artifact_id: artifact.id,
+                    inline_byte_count: inline.len() as u64,
+                    original_byte_count: raw_text.len() as u64,
+                    timestamp: OffsetDateTime::now_utc(),
+                }))
+                .await;
+                inline
+            } else {
+                cap_tool_output_lines(raw_text)
+            };
         let item = ToolResultRecord {
             id: result.id.clone(),
             name: Some(result.name.clone()),
-            result: cap_tool_output_lines(result.text),
+            result: item_result,
             display_payload: tool_display_payload(
                 Some(&result.name),
                 Some(&parsed_args),

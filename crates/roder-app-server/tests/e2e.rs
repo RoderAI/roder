@@ -1,5 +1,6 @@
 use base64::Engine;
 use futures::{SinkExt, StreamExt, stream};
+use roder_api::artifacts::ContextArtifactKind;
 use roder_api::capabilities::CapabilityDecision;
 use roder_api::catalog::{
     PROVIDER_CODEX, PROVIDER_MOCK, PROVIDER_OPENCODE, PROVIDER_OPENCODE_GO, PROVIDER_POOLSIDE,
@@ -26,6 +27,7 @@ use roder_core::{
     PendingPlanExit, Runtime, RuntimeConfig, fake_provider::FakeInferenceEngine,
     media_artifacts::MediaArtifactStore,
 };
+use roder_ext_jsonl_session::store::JsonlSessionStoreFactory;
 use roder_ext_memory::MemoryExtension;
 use roder_ext_openai_embeddings::OpenAiEmbeddingsExtension;
 use roder_ext_subagents::{
@@ -36,36 +38,40 @@ use roder_extension_host::{
     build_default_registry,
 };
 use roder_protocol::{
-    AgentsListResult, CommandsExpandParams, CommandsExpandResult, CommandsListResult,
-    CommandsRunParams, CommandsRunResult, ExtensionsListResult, HunkListParams, HunkListResult,
-    HunkReadParams, HunkReadResult, HunkRollbackParams, HunkRollbackResult, InitializeResult,
-    JsonRpcError, JsonRpcRequest, MarketplacesAddParams, MarketplacesAddResult,
-    MarketplacesListResult, MarketplacesRefreshParams, MarketplacesRefreshResult,
-    MarketplacesRemoveParams, MarketplacesRemoveResult, MarketplacesSearchParams,
-    MarketplacesSearchResult, MediaAttachToTurnParams, MediaAttachToTurnResult, MediaDeleteParams,
-    MediaDeleteResult, MediaListParams, MediaListResult, MediaReadParams, MediaReadResult,
-    MediaThumbnailParams, MediaThumbnailResult, MemoryDeleteParams, MemoryDeleteResult,
-    MemoryListParams, MemoryListResult, MemoryProviderListResult, MemoryQueryParams,
-    MemoryQueryResult, MemoryReadParams, MemoryReadResult, MemoryRecallPreviewParams,
-    MemoryRecallPreviewResult, MemorySaveParams, MemorySaveResult, MemoryUpdateParams,
-    PlanReviewApproveParams, PlanReviewCommentParams, PlanReviewCommentResult,
-    PlanReviewReadParams, PlanReviewReadResult, PluginDisableParams, PluginDisableResult,
-    PluginInstallAllVariantsParams, PluginInstallAllVariantsResult, PluginInstallParams,
-    PluginInstallResult, PluginListInstalledResult, PluginPreviewInstallParams,
-    PluginPreviewInstallResult, PluginUninstallParams, PluginUninstallResult, ProviderAuthResult,
-    ProviderSelectParams, ProviderSelectResult, ProvidersListResult, RunnersDeleteResult,
-    RunnersListResult, RunnersSelectParams, RunnersSelectResult, RunnersSessionResult,
-    SessionExitPlanParams, SessionExitPlanResult, SessionGetResult, SessionResolveApprovalParams,
+    AgentsListResult, ArtifactDeleteParams, ArtifactDeleteResult, ArtifactGrepParams,
+    ArtifactGrepResult, ArtifactListParams, ArtifactListResult, ArtifactReadParams,
+    ArtifactReadResult, ArtifactTailParams, ArtifactTailResult, CommandsExpandParams,
+    CommandsExpandResult, CommandsListResult, CommandsRunParams, CommandsRunResult,
+    ExtensionsListResult, HunkListParams, HunkListResult, HunkReadParams, HunkReadResult,
+    HunkRollbackParams, HunkRollbackResult, InitializeResult, JsonRpcError, JsonRpcRequest,
+    MarketplacesAddParams, MarketplacesAddResult, MarketplacesListResult,
+    MarketplacesRefreshParams, MarketplacesRefreshResult, MarketplacesRemoveParams,
+    MarketplacesRemoveResult, MarketplacesSearchParams, MarketplacesSearchResult,
+    MediaAttachToTurnParams, MediaAttachToTurnResult, MediaDeleteParams, MediaDeleteResult,
+    MediaListParams, MediaListResult, MediaReadParams, MediaReadResult, MediaThumbnailParams,
+    MediaThumbnailResult, MemoryDeleteParams, MemoryDeleteResult, MemoryListParams,
+    MemoryListResult, MemoryProviderListResult, MemoryQueryParams, MemoryQueryResult,
+    MemoryReadParams, MemoryReadResult, MemoryRecallPreviewParams, MemoryRecallPreviewResult,
+    MemorySaveParams, MemorySaveResult, MemoryUpdateParams, PlanReviewApproveParams,
+    PlanReviewCommentParams, PlanReviewCommentResult, PlanReviewReadParams, PlanReviewReadResult,
+    PluginDisableParams, PluginDisableResult, PluginInstallAllVariantsParams,
+    PluginInstallAllVariantsResult, PluginInstallParams, PluginInstallResult,
+    PluginListInstalledResult, PluginPreviewInstallParams, PluginPreviewInstallResult,
+    PluginUninstallParams, PluginUninstallResult, ProviderAuthResult, ProviderSelectParams,
+    ProviderSelectResult, ProvidersListResult, RunnersDeleteResult, RunnersListResult,
+    RunnersSelectParams, RunnersSelectResult, RunnersSessionResult, SessionExitPlanParams,
+    SessionExitPlanResult, SessionGetResult, SessionResolveApprovalParams,
     SessionResolveApprovalResult, SessionResolveUserInputParams, SessionResolveUserInputResult,
     SessionSetModeParams, SessionSetModeResult, SettingsGetResult, SettingsSetDefaultModeParams,
-    SettingsSetDefaultModeResult, SettingsSetSearchIndexParams, SettingsSetSearchIndexResult,
-    SettingsSetWebSearchParams, SettingsSetWebSearchResult, SubagentTraceReadParams,
-    SubagentTraceReadResult, SubagentTracesListParams, SubagentTracesListResult, TasksGetParams,
-    TasksGetResult, TasksListResult, TasksSubmitParams, TasksSubmitResult, TeamCleanupParams,
-    TeamCleanupResult, TeamListParams, TeamListResult, TeamMemberInterruptParams,
-    TeamMemberInterruptResult, TeamMemberMessageParams, TeamMemberMessageResult,
-    TeamMemberStartParams, TeamMemberStartResult, TeamReadParams, TeamReadResult,
-    TeamStartMemberParams, TeamStartParams, TeamStartResult, ThreadArchiveParams,
+    SettingsSetDefaultModeResult, SettingsSetFileBackedDynamicContextParams,
+    SettingsSetFileBackedDynamicContextResult, SettingsSetSearchIndexParams,
+    SettingsSetSearchIndexResult, SettingsSetWebSearchParams, SettingsSetWebSearchResult,
+    SubagentTraceReadParams, SubagentTraceReadResult, SubagentTracesListParams,
+    SubagentTracesListResult, TasksGetParams, TasksGetResult, TasksListResult, TasksSubmitParams,
+    TasksSubmitResult, TeamCleanupParams, TeamCleanupResult, TeamListParams, TeamListResult,
+    TeamMemberInterruptParams, TeamMemberInterruptResult, TeamMemberMessageParams,
+    TeamMemberMessageResult, TeamMemberStartParams, TeamMemberStartResult, TeamReadParams,
+    TeamReadResult, TeamStartMemberParams, TeamStartParams, TeamStartResult, ThreadArchiveParams,
     ThreadArchiveResult, ThreadListParams, ThreadListResult, ThreadReadResult, ThreadStartParams,
     ThreadStartResult, ToolCallParams, ToolCallResult, ToolsListResult, TurnInputItem,
     TurnInterruptParams, TurnStartParams, TurnStartResult, TurnSteerParams, TurnSteerResult,
@@ -2811,6 +2817,209 @@ async fn desktop_contract_fs_and_command_methods_match_desktop_contract() {
 }
 
 #[tokio::test]
+async fn artifacts_methods_list_read_grep_tail_delete_and_command_spill() {
+    let data_dir =
+        std::env::temp_dir().join(format!("roder-artifact-e2e-{}", uuid::Uuid::new_v4()));
+    let session_root = data_dir.join("sessions");
+    let mut builder = ExtensionRegistryBuilder::new();
+    builder.inference_engine(Arc::new(FakeInferenceEngine));
+    builder.session_store_factory(Arc::new(JsonlSessionStoreFactory {
+        base_path: session_root.clone(),
+    }));
+    let runtime = Arc::new(
+        Runtime::new(
+            builder.build().unwrap(),
+            RuntimeConfig {
+                team_data_dir: Some(data_dir.join("teams")),
+                ..RuntimeConfig::default()
+            },
+        )
+        .unwrap(),
+    );
+    runtime
+        .set_policy_mode(PolicyMode::AcceptAll, Some("test artifacts".to_string()))
+        .await
+        .unwrap();
+    let server = Arc::new(AppServer::new(runtime.clone()));
+    let client = LocalAppClient::new(server);
+
+    let dir = std::env::temp_dir().join(format!("roder-command-artifact-{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let command: serde_json::Value = request(
+        &client,
+        "command/exec",
+        Some(serde_json::json!({
+            "command": ["sh", "-c", "printf 'alpha\nneedle\nomega\n'"],
+            "cwd": dir.display().to_string(),
+            "processId": "process-artifact-1",
+            "outputBytesCap": 8,
+            "timeoutMs": 5000
+        })),
+    )
+    .await;
+    assert_eq!(command["exitCode"], 0);
+    assert!(
+        command["stdout"]
+            .as_str()
+            .unwrap()
+            .contains("read_artifact")
+    );
+    let artifact_id = command["stdoutArtifact"]["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    assert_eq!(command["stdoutArtifact"]["kind"], "command_stdout");
+    let artifact_path = runtime
+        .context_artifacts()
+        .get(&artifact_id)
+        .unwrap()
+        .store_path;
+    assert!(
+        artifact_path.starts_with(
+            session_root
+                .join("app-server")
+                .join("artifacts")
+                .join("process-artifact-1")
+                .to_string_lossy()
+                .as_ref()
+        )
+    );
+
+    let listed: ArtifactListResult = request(
+        &client,
+        "artifact/list",
+        Some(
+            serde_json::to_value(ArtifactListParams {
+                thread_id: "app-server".to_string(),
+                kind: Some(ContextArtifactKind::CommandStdout),
+                limit: None,
+            })
+            .unwrap(),
+        ),
+    )
+    .await;
+    assert!(
+        listed
+            .artifacts
+            .iter()
+            .any(|artifact| artifact.id == artifact_id)
+    );
+
+    let read: ArtifactReadResult = request(
+        &client,
+        "artifact/read",
+        Some(
+            serde_json::to_value(ArtifactReadParams {
+                thread_id: "app-server".to_string(),
+                artifact_id: artifact_id.clone(),
+                start_line: Some(2),
+                limit: Some(1),
+            })
+            .unwrap(),
+        ),
+    )
+    .await;
+    assert!(read.page.text.contains("2: needle"));
+
+    let grep: ArtifactGrepResult = request(
+        &client,
+        "artifact/grep",
+        Some(
+            serde_json::to_value(ArtifactGrepParams {
+                thread_id: "app-server".to_string(),
+                artifact_id: artifact_id.clone(),
+                query: "needle".to_string(),
+                offset: None,
+                limit: None,
+            })
+            .unwrap(),
+        ),
+    )
+    .await;
+    assert_eq!(grep.page.total_matches, 1);
+
+    let tail: ArtifactTailResult = request(
+        &client,
+        "artifact/tail",
+        Some(
+            serde_json::to_value(ArtifactTailParams {
+                thread_id: "app-server".to_string(),
+                artifact_id: artifact_id.clone(),
+                lines: Some(1),
+            })
+            .unwrap(),
+        ),
+    )
+    .await;
+    assert!(tail.page.text.contains("3: omega"));
+
+    let denied = client
+        .send_request(JsonRpcRequest {
+            jsonrpc: "2.0".to_string(),
+            id: Some(serde_json::json!("artifact/read-denied")),
+            method: "artifact/read".to_string(),
+            params: Some(
+                serde_json::to_value(ArtifactReadParams {
+                    thread_id: "other-thread".to_string(),
+                    artifact_id: artifact_id.clone(),
+                    start_line: None,
+                    limit: None,
+                })
+                .unwrap(),
+            ),
+        })
+        .await;
+    assert!(
+        denied
+            .error
+            .unwrap()
+            .message
+            .contains("does not belong to thread")
+    );
+
+    let deleted: ArtifactDeleteResult = request(
+        &client,
+        "artifact/delete",
+        Some(
+            serde_json::to_value(ArtifactDeleteParams {
+                thread_id: "app-server".to_string(),
+                artifact_id,
+            })
+            .unwrap(),
+        ),
+    )
+    .await;
+    assert!(deleted.deleted);
+
+    request::<SettingsSetFileBackedDynamicContextResult>(
+        &client,
+        "settings/set_file_backed_dynamic_context",
+        Some(
+            serde_json::to_value(SettingsSetFileBackedDynamicContextParams { enabled: false })
+                .unwrap(),
+        ),
+    )
+    .await;
+    let disabled_command: serde_json::Value = request(
+        &client,
+        "command/exec",
+        Some(serde_json::json!({
+            "command": ["sh", "-c", "printf 'alpha\nneedle\nomega\n'"],
+            "cwd": dir.display().to_string(),
+            "processId": "process-artifact-disabled",
+            "outputBytesCap": 8,
+            "timeoutMs": 5000
+        })),
+    )
+    .await;
+    assert!(disabled_command.get("stdoutArtifact").is_none());
+    assert_eq!(disabled_command["stdout"], "alpha\nne");
+
+    let _ = std::fs::remove_dir_all(dir);
+    let _ = std::fs::remove_dir_all(data_dir);
+}
+
+#[tokio::test]
 async fn team_methods_start_list_read_message_and_cleanup() {
     let runtime = Arc::new(Runtime::fake().unwrap());
     let server = Arc::new(AppServer::new(runtime));
@@ -3495,6 +3704,7 @@ async fn web_search_setting_can_be_set_and_observed() {
     let settings: SettingsGetResult = request(&client, "settings/get", None).await;
     assert_eq!(settings.web_search.mode, HostedWebSearchMode::Cached);
     assert_eq!(settings.default_mode, PolicyMode::Default);
+    assert!(settings.file_backed_dynamic_context);
 
     let changed: SettingsSetWebSearchResult = request(
         &client,
@@ -3539,6 +3749,28 @@ async fn search_index_setting_can_be_set_and_observed() {
     let settings: SettingsGetResult = request(&client, "settings/get", None).await;
     assert!(!settings.search_index.enabled);
     roder_search::set_search_index_enabled(true);
+}
+
+#[tokio::test]
+async fn settings_file_backed_dynamic_context_can_be_set_and_observed() {
+    let runtime = Arc::new(Runtime::fake().unwrap());
+    let server = Arc::new(AppServer::new(runtime.clone()));
+    let client = LocalAppClient::new(server);
+
+    let changed: SettingsSetFileBackedDynamicContextResult = request(
+        &client,
+        "settings/set_file_backed_dynamic_context",
+        Some(
+            serde_json::to_value(SettingsSetFileBackedDynamicContextParams { enabled: false })
+                .unwrap(),
+        ),
+    )
+    .await;
+    assert!(!changed.enabled);
+
+    let settings: SettingsGetResult = request(&client, "settings/get", None).await;
+    assert!(!settings.file_backed_dynamic_context);
+    assert!(!runtime.status().await.file_backed_dynamic_context);
 }
 
 #[tokio::test]
