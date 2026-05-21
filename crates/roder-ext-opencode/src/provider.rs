@@ -399,6 +399,7 @@ fn chat_tools(request: &AgentInferenceRequest) -> (Vec<Value>, ChatToolNameMap) 
     let mut used_tool_names = HashSet::new();
     let mut tool_name_map = ChatToolNameMap::default();
     for tool in &request.tools {
+        let tool = tool.normalized_for_model(roder_api::ToolSchemaPolicy::warning());
         let api_name = chat_tool_name(&tool.name, &mut used_tool_names);
         tool_name_map.register(&tool.name, &api_name);
         tools.push(json!({
@@ -925,6 +926,48 @@ mod tests {
             Some(InferenceEvent::ToolCallCompleted(call))
                 if call.name == "exec_command" && call.arguments == "{\"cmd\":\"date\"}"
         ));
+    }
+
+    #[test]
+    fn normalizes_tool_schema_order_for_opencode_tools() {
+        let mut request = AgentInferenceRequest {
+            model: ModelSelection {
+                provider: PROVIDER_OPENCODE.to_string(),
+                model: "minimax-m2.5-free".to_string(),
+            },
+            instructions: InstructionBundle::default(),
+            conversation: vec![ConversationItem::UserMessage(UserMessage::text("hi"))],
+            tools: vec![ToolSpec {
+                name: "exec_command".to_string(),
+                description: "Run a command".to_string(),
+                parameters: json!({
+                    "type": "object",
+                    "properties": { "command": { "type": "string" } },
+                    "additionalProperties": false,
+                    "required": ["command"]
+                }),
+            }],
+            tool_choice: ToolChoice::Auto,
+            reasoning: ReasoningConfig::default(),
+            output: OutputConfig::default(),
+            runtime: RuntimeHints::default(),
+            metadata: json!({}),
+        };
+
+        let (tools, tool_name_map) = chat_tools(&request);
+        let schema = serde_json::to_string(&tools[0]["function"]["parameters"]).unwrap();
+
+        assert_eq!(tool_name_map.api_name("exec_command"), "exec_command");
+        assert!(
+            schema.starts_with(r#"{"type":"object","required":["command"],"properties":"#),
+            "{schema}"
+        );
+
+        request.tool_choice = ToolChoice::Specific("exec_command".to_string());
+        assert_eq!(
+            chat_tool_choice(&request.tool_choice, &tool_name_map)["function"]["name"],
+            "exec_command"
+        );
     }
 
     struct CapturedChatServer {

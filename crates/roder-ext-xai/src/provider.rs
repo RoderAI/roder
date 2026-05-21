@@ -90,4 +90,12 @@ mod tests {
                 .any(|model| model.id == "grok-4.20-0309-reasoning")
         );
     }
+
+    #[test]
+    fn supergrok_tools_use_openai_responses_provider_contract() {
+        let engine = SuperGrokEngine;
+
+        assert!(engine.capabilities().tool_calls);
+        assert!(engine.capabilities().parallel_tool_calls);
+    }
 }
