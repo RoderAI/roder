@@ -3,7 +3,10 @@ use crate::diff::DiffViewerState;
 use crate::diff::keys::{DiffKey, DiffKeyOutcome, apply_key};
 use crate::diff::render::diff_viewer_widget;
 
-impl TuiApp {
+impl<C> TuiApp<C>
+where
+    C: AppClient,
+{
     pub(super) fn open_diff_preview(&mut self, preview: roder_api::events::FileChangePreviewReady) {
         self.show_palette = false;
         self.show_provider_popup = false;

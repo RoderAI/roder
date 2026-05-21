@@ -183,6 +183,36 @@ where
             Err(err) => Err(err),
         }
     }
+
+    fn try_recv(&mut self) -> Result<EventEnvelope, broadcast::error::TryRecvError> {
+        match self.inner.try_recv() {
+            Ok(envelope) => {
+                let value = serde_json::to_value(&envelope).unwrap_or_else(|err| {
+                    serde_json::json!({
+                        "serializationError": err.to_string()
+                    })
+                });
+                let (seq, at_ms) = self.recorder.next_seq_at_ms();
+                let _ = self.recorder.push(ApiTranscriptRecord::RuntimeEvent {
+                    seq,
+                    at_ms,
+                    envelope: value,
+                });
+                Ok(envelope)
+            }
+            Err(broadcast::error::TryRecvError::Lagged(skipped)) => {
+                let (seq, at_ms) = self.recorder.next_seq_at_ms();
+                let _ = self.recorder.push(ApiTranscriptRecord::BroadcastLag {
+                    seq,
+                    at_ms,
+                    stream: self.stream.clone(),
+                    skipped,
+                });
+                Err(broadcast::error::TryRecvError::Lagged(skipped))
+            }
+            Err(err) => Err(err),
+        }
+    }
 }
 
 pub struct RecordingNotificationReceiver<R> {
@@ -221,6 +251,36 @@ where
                     skipped,
                 });
                 Err(broadcast::error::RecvError::Lagged(skipped))
+            }
+            Err(err) => Err(err),
+        }
+    }
+
+    fn try_recv(&mut self) -> Result<JsonRpcNotification, broadcast::error::TryRecvError> {
+        match self.inner.try_recv() {
+            Ok(notification) => {
+                let value = serde_json::to_value(&notification).unwrap_or_else(|err| {
+                    serde_json::json!({
+                        "serializationError": err.to_string()
+                    })
+                });
+                let (seq, at_ms) = self.recorder.next_seq_at_ms();
+                let _ = self.recorder.push(ApiTranscriptRecord::ApiNotification {
+                    seq,
+                    at_ms,
+                    notification: value,
+                });
+                Ok(notification)
+            }
+            Err(broadcast::error::TryRecvError::Lagged(skipped)) => {
+                let (seq, at_ms) = self.recorder.next_seq_at_ms();
+                let _ = self.recorder.push(ApiTranscriptRecord::BroadcastLag {
+                    seq,
+                    at_ms,
+                    stream: self.stream.clone(),
+                    skipped,
+                });
+                Err(broadcast::error::TryRecvError::Lagged(skipped))
             }
             Err(err) => Err(err),
         }
@@ -353,6 +413,10 @@ mod tests {
     impl AppEventReceiver for LaggedEventReceiver {
         async fn recv(&mut self) -> Result<EventEnvelope, broadcast::error::RecvError> {
             Err(broadcast::error::RecvError::Lagged(4))
+        }
+
+        fn try_recv(&mut self) -> Result<EventEnvelope, broadcast::error::TryRecvError> {
+            Err(broadcast::error::TryRecvError::Lagged(4))
         }
     }
 

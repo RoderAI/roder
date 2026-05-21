@@ -35,6 +35,7 @@ mod workflow_import;
 
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use base64::Engine;
@@ -60,7 +61,10 @@ use roder_api::inference::{
     HostedWebSearchMode, ProviderAuthType, ReasoningEffortDescriptor, TokenUsage,
 };
 use roder_api::policy_mode::{PolicyDecision, PolicyMode};
-use roder_app_server::LocalAppClient;
+use roder_api_transcript::ApiTranscriptRecord;
+use roder_app_server::{
+    AppClient, AppEventReceiver, AppServer, LocalAppClient, transcript::TranscriptRecorder,
+};
 use roder_protocol::{
     AgentsListResult, CommandDescriptor, CommandsExpandParams, CommandsExpandResult,
     CommandsListResult, DesktopThread, JsonRpcRequest, JsonRpcResponse, PendingPlanExitDescriptor,
@@ -81,11 +85,13 @@ use tokio::process::Command;
 use tui_textarea::TextArea;
 
 use self::commands::built_in_command_catalog;
+use crate::frame_snapshot;
 use crate::roadmap::RoadmapModeState;
 #[cfg(test)]
 use crate::runtime_io::keyboard_enhancement_flags;
 use crate::runtime_io::{
-    CrosstermInputSource, SystemClock, TerminalSession, TuiClock, TuiInputSource,
+    CrosstermInputSource, RecordingInputSource, SystemClock, TerminalSession, TuiClock,
+    TuiInputRecorder, TuiInputSource,
 };
 use composer::{
     ComposerKeyAction, composer_mode, composer_text, composer_textarea, handle_composer_key,
@@ -111,6 +117,31 @@ const TOP_STATUS_ANIMATION_FPS: u64 = 6;
 const MAX_VISIBLE_SLASH_COMMANDS: usize = 8;
 const COPIED_HELPER_LABEL: &str = "Copied to clipboard";
 const COPIED_HELPER_DURATION: Duration = Duration::from_secs(2);
+
+#[derive(Clone, Default)]
+pub struct TuiRunOptions {
+    pub transcript_recorder: Option<TranscriptRecorder>,
+    pub record_ui_frames: bool,
+}
+
+#[derive(Clone)]
+struct OptionalInputRecorder {
+    recorder: Option<TranscriptRecorder>,
+}
+
+impl TuiInputRecorder for OptionalInputRecorder {
+    fn record_input(&mut self, input: roder_api_transcript::RecordedUiInput) -> anyhow::Result<()> {
+        let Some(recorder) = &self.recorder else {
+            return Ok(());
+        };
+        let (seq, at_ms) = recorder.next_seq_at_ms();
+        recorder.push(ApiTranscriptRecord::UiInput {
+            seq,
+            at_ms,
+            event: input,
+        })
+    }
+}
 
 fn should_handle_key_event(key: KeyEvent) -> bool {
     matches!(key.kind, KeyEventKind::Press | KeyEventKind::Repeat)
@@ -906,8 +937,11 @@ impl ProviderChoice {
     }
 }
 
-pub struct TuiApp {
-    client: LocalAppClient,
+pub struct TuiApp<C = LocalAppClient>
+where
+    C: AppClient,
+{
+    client: C,
     thread_id: String,
     session_title: Option<String>,
     session_message_count: usize,
@@ -1020,7 +1054,7 @@ struct SessionParts {
     session_message_count: usize,
 }
 
-impl TuiApp {
+impl TuiApp<LocalAppClient> {
     pub async fn new(client: LocalAppClient, model: String) -> anyhow::Result<Self> {
         Self::new_with_startup(client, model, TuiStartup::NewSession).await
     }
@@ -1029,6 +1063,21 @@ impl TuiApp {
         client: LocalAppClient,
         model: String,
         startup: TuiStartup,
+    ) -> anyhow::Result<Self> {
+        let remote_panel_server = client.app_server();
+        TuiApp::new_with_startup_and_remote(client, model, startup, remote_panel_server).await
+    }
+}
+
+impl<C> TuiApp<C>
+where
+    C: AppClient,
+{
+    pub async fn new_with_startup_and_remote(
+        client: C,
+        model: String,
+        startup: TuiStartup,
+        remote_panel_server: Arc<AppServer>,
     ) -> anyhow::Result<Self> {
         if let TuiStartup::TeamAttach { team_id, member_id } = startup.clone() {
             let team = team_read(&client, &team_id)
@@ -1066,6 +1115,7 @@ impl TuiApp {
                 .unwrap_or_default();
             let mut app = Self::from_session_parts(
                 client,
+                remote_panel_server,
                 SessionParts {
                     thread_id: member.thread_id.clone(),
                     provider,
@@ -1110,6 +1160,7 @@ impl TuiApp {
                 .unwrap_or_default();
             let mut app = Self::from_session_parts(
                 client,
+                remote_panel_server,
                 SessionParts {
                     thread_id: thread_id.clone(),
                     provider,
@@ -1154,6 +1205,7 @@ impl TuiApp {
         };
         let mut app = Self::from_session_parts(
             client,
+            remote_panel_server,
             SessionParts {
                 thread_id: session.thread.id,
                 provider: session.model_provider,
@@ -1184,7 +1236,8 @@ impl TuiApp {
     }
 
     async fn from_session_parts(
-        client: LocalAppClient,
+        client: C,
+        remote_panel_server: Arc<AppServer>,
         parts: SessionParts,
     ) -> anyhow::Result<Self> {
         let SessionParts {
@@ -1200,7 +1253,7 @@ impl TuiApp {
         provider_state.select(Some(0));
         let theme = Theme::for_terminal_themed();
         let remote_panel = RemotePanelController::new(
-            client.app_server(),
+            remote_panel_server,
             std::env::current_dir()
                 .ok()
                 .map(|path| path.display().to_string()),
@@ -1328,8 +1381,17 @@ impl TuiApp {
     }
 
     pub async fn run(&mut self) -> anyhow::Result<()> {
+        self.run_with_options(TuiRunOptions::default()).await
+    }
+
+    pub async fn run_with_options(&mut self, options: TuiRunOptions) -> anyhow::Result<()> {
         let mut session = TerminalSession::enter()?;
-        let mut input = CrosstermInputSource;
+        let mut input = RecordingInputSource::new(
+            CrosstermInputSource,
+            OptionalInputRecorder {
+                recorder: options.transcript_recorder.clone(),
+            },
+        );
         let clock = SystemClock;
 
         let mut rx = self.client.subscribe_events();
@@ -1339,7 +1401,16 @@ impl TuiApp {
             let now = clock.now();
             advance_top_status_animation(&mut self.animation_frame, &mut next_animation_tick, now);
             self.tick_streaming_animations(now, session.terminal_mut().size()?.width);
-            session.terminal_mut().draw(|f| self.render(f))?;
+            session.terminal_mut().draw(|f| {
+                self.render(f);
+                if options.record_ui_frames
+                    && let Some(recorder) = &options.transcript_recorder
+                {
+                    let frame = frame_snapshot::recorded_frame(f.buffer_mut(), true);
+                    let (seq, at_ms) = recorder.next_seq_at_ms();
+                    let _ = recorder.push(ApiTranscriptRecord::UiFrame { seq, at_ms, frame });
+                }
+            })?;
 
             if input.poll(self.animation_poll_timeout(next_animation_tick, clock.now()))? {
                 match input.read()? {
@@ -5834,7 +5905,10 @@ fn decode_response<T: serde::de::DeserializeOwned>(res: JsonRpcResponse) -> anyh
     Ok(serde_json::from_value(result)?)
 }
 
-async fn session_get(client: &LocalAppClient) -> anyhow::Result<SessionGetResult> {
+async fn session_get<C>(client: &C) -> anyhow::Result<SessionGetResult>
+where
+    C: AppClient,
+{
     let res = client
         .send_request(JsonRpcRequest {
             jsonrpc: "2.0".to_string(),
@@ -5846,7 +5920,10 @@ async fn session_get(client: &LocalAppClient) -> anyhow::Result<SessionGetResult
     decode_response(res)
 }
 
-async fn team_read(client: &LocalAppClient, team_id: &str) -> anyhow::Result<TeamReadResult> {
+async fn team_read<C>(client: &C, team_id: &str) -> anyhow::Result<TeamReadResult>
+where
+    C: AppClient,
+{
     let res = client
         .send_request(JsonRpcRequest {
             jsonrpc: "2.0".to_string(),
@@ -5863,7 +5940,10 @@ async fn team_read(client: &LocalAppClient, team_id: &str) -> anyhow::Result<Tea
     decode_response(res)
 }
 
-async fn settings_get(client: &LocalAppClient) -> anyhow::Result<SettingsGetResult> {
+async fn settings_get<C>(client: &C) -> anyhow::Result<SettingsGetResult>
+where
+    C: AppClient,
+{
     let res = client
         .send_request(JsonRpcRequest {
             jsonrpc: "2.0".to_string(),

@@ -10,8 +10,10 @@ path = "src/main.rs"
 [dependencies]
 anyhow.workspace = true
 crossterm.workspace = true
+ratatui.workspace = true
 time.workspace = true
 roder-api.workspace = true
+roder-api-transcript.workspace = true
 roder-app-server.workspace = true
 roder-codex-auth.workspace = true
 roder-commands.workspace = true

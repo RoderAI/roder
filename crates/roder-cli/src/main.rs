@@ -5,6 +5,7 @@ mod automations;
 mod commands;
 mod evals;
 mod marketplace;
+mod replay;
 mod resume_picker;
 mod roadmap_cli;
 mod skills;
@@ -19,7 +20,13 @@ use roder_api::inference::{HostedWebSearchConfig, RuntimeProfile};
 use roder_api::notifications::NotificationKind;
 use roder_api::policy_mode::PolicyMode;
 use roder_api::remote_runner::{RunnerDestination, RunnerManifest};
-use roder_app_server::{AppServer, AppServerFeatureConfig, LocalAppClient};
+use roder_api_transcript::{
+    ApiTranscriptHeader, ApiTranscriptRecord, RecordedTerminalSize, SUPPORTED_SCHEMA_VERSION,
+};
+use roder_app_server::{
+    AppServer, AppServerFeatureConfig, LocalAppClient,
+    transcript::{RecordingAppClient, TranscriptRecorder},
+};
 use roder_core::model_profiles::{
     ModelHarnessProfileOverride, ModelProfileOverrides, ModelProfileReasoningOverride,
     resolve_model_profiles,
@@ -45,7 +52,7 @@ use roder_protocol::{
     WorkflowEnableParams, WorkflowEnableResult, WorkflowPreviewParams, WorkflowPreviewResult,
     WorkflowScanParams, WorkflowScanResult,
 };
-use roder_tui::{TuiApp, TuiStartup};
+use roder_tui::{TuiApp, TuiRunOptions, TuiStartup};
 use roder_web_search::WebSearchProviderKind;
 use skills::run_skills_cli;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
@@ -106,12 +113,17 @@ async fn main() -> anyhow::Result<()> {
     if matches!(args.first().map(String::as_str), Some("team")) {
         return run_team_cli(&args[1..]).await;
     }
+    if matches!(args.first().map(String::as_str), Some("replay")) {
+        return replay::run_replay_cli(&args[1..]).await;
+    }
 
     let cli_options = parse_cli_options(&args)?;
     let mut startup = cli_options.startup.clone();
+    let record_api_transcript = cli_options.record_api_transcript.clone();
+    let record_ui_frames = cli_options.record_ui_frames;
     let (runtime, default_model) = build_runtime_from_config(cli_options).await?;
     let app_server = Arc::new(AppServer::new(runtime).with_user_config_persistence());
-    let client = LocalAppClient::new(app_server);
+    let client = LocalAppClient::new(app_server.clone());
 
     if matches!(startup, TuiStartup::ResumeMenu) {
         let sessions = list_sessions(&client).await?;
@@ -121,9 +133,30 @@ async fn main() -> anyhow::Result<()> {
         startup = TuiStartup::ResumeSession(thread_id);
     }
 
-    let mut tui = TuiApp::new_with_startup(client, default_model, startup).await?;
-    tui.run().await?;
-    print_tui_exit_summary(&tui);
+    if let Some(path) = record_api_transcript {
+        let recorder = TranscriptRecorder::default();
+        push_transcript_header(&recorder)?;
+        let recording_client = RecordingAppClient::new(client, recorder.clone(), "tui");
+        let mut tui = TuiApp::new_with_startup_and_remote(
+            recording_client,
+            default_model,
+            startup,
+            app_server,
+        )
+        .await?;
+        tui.run_with_options(TuiRunOptions {
+            transcript_recorder: Some(recorder.clone()),
+            record_ui_frames,
+        })
+        .await?;
+        print_tui_exit_summary(&tui);
+        write_transcript(&path, &recorder)?;
+        println!("Transcript: {}", path.display());
+    } else {
+        let mut tui = TuiApp::new_with_startup(client, default_model, startup).await?;
+        tui.run().await?;
+        print_tui_exit_summary(&tui);
+    }
     Ok(())
 }
 
@@ -862,6 +895,8 @@ pub(crate) struct CliOptions {
     runtime_profile: Option<RuntimeProfile>,
     team_display: Option<roder_api::teams::AgentTeamDisplayMode>,
     startup: TuiStartup,
+    record_api_transcript: Option<PathBuf>,
+    record_ui_frames: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -1202,6 +1237,18 @@ fn parse_cli_options(args: &[String]) -> anyhow::Result<CliOptions> {
                 options.team_display =
                     Some(parse_team_display_mode(&arg["--team-display=".len()..])?);
             }
+            "--record-api-transcript" => {
+                let Some(path) = args.get(i + 1) else {
+                    anyhow::bail!("--record-api-transcript requires a path");
+                };
+                options.record_api_transcript = Some(PathBuf::from(path));
+                i += 1;
+            }
+            arg if arg.starts_with("--record-api-transcript=") => {
+                options.record_api_transcript =
+                    Some(PathBuf::from(&arg["--record-api-transcript=".len()..]));
+            }
+            "--record-ui-frames" => options.record_ui_frames = true,
             _ => {}
         }
         i += 1;
@@ -1209,7 +1256,35 @@ fn parse_cli_options(args: &[String]) -> anyhow::Result<CliOptions> {
     Ok(options)
 }
 
-fn print_tui_exit_summary(tui: &TuiApp) {
+fn push_transcript_header(recorder: &TranscriptRecorder) -> anyhow::Result<()> {
+    let (cols, rows) = crossterm::terminal::size().unwrap_or((80, 24));
+    recorder.push(ApiTranscriptRecord::Header(ApiTranscriptHeader {
+        schema_version: SUPPORTED_SCHEMA_VERSION,
+        created_at: time::OffsetDateTime::now_utc(),
+        roder_version: env!("CARGO_PKG_VERSION").to_string(),
+        cwd: std::env::current_dir()
+            .map(|path| path.display().to_string())
+            .unwrap_or_else(|_| "<unknown>".to_string()),
+        terminal: RecordedTerminalSize { cols, rows },
+        features: vec!["tui".to_string(), "app-server".to_string()],
+        metadata: serde_json::Value::Null,
+    }))
+}
+
+fn write_transcript(path: &Path, recorder: &TranscriptRecorder) -> anyhow::Result<()> {
+    if let Some(parent) = path.parent()
+        && !parent.as_os_str().is_empty()
+    {
+        std::fs::create_dir_all(parent)?;
+    }
+    std::fs::write(path, recorder.jsonl())?;
+    Ok(())
+}
+
+fn print_tui_exit_summary<C>(tui: &TuiApp<C>)
+where
+    C: roder_app_server::AppClient,
+{
     let summary = tui.exit_summary();
     println!("Session: {}", summary.title);
     println!(
