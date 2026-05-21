@@ -235,11 +235,27 @@ fn eval_report_markdown(report: &EvalSuiteReport) -> String {
         .filter(|result| result.report.outcome == EvalOutcome::Pass)
         .count();
     let mut text = format!(
-        "# Roder Eval Report\n\n- Suite: `{}`\n- Fixtures: {}\n- Passed: {}\n- Failed: {}\n\n| Fixture | Outcome | Failure class | Trace excerpt |\n| --- | --- | --- | --- |\n",
+        "# Roder Eval Report\n\n- Suite: `{}`\n- Fixtures: {}\n- Passed: {}\n- Failed: {}\n",
         report.suite_id,
         report.results.len(),
         passed,
         report.results.len().saturating_sub(passed)
+    );
+    text.push_str(
+        "\n## Pass Rates\n\n| Scope | Passed | Total | Pass rate |\n| --- | ---: | ---: | ---: |\n",
+    );
+    for (scope, passed, total) in pass_rate_rows(report) {
+        let rate = if total == 0 {
+            0.0
+        } else {
+            (passed as f64 / total as f64) * 100.0
+        };
+        text.push_str(&format!(
+            "| `{scope}` | {passed} | {total} | {rate:.1}% |\n"
+        ));
+    }
+    text.push_str(
+        "\n## Fixtures\n\n| Fixture | Outcome | Failure class | Trace excerpt |\n| --- | --- | --- | --- |\n",
     );
     for result in &report.results {
         let class = result
@@ -274,6 +290,31 @@ fn eval_report_markdown(report: &EvalSuiteReport) -> String {
         }
     }
     text
+}
+
+fn pass_rate_rows(report: &EvalSuiteReport) -> Vec<(String, usize, usize)> {
+    let mut rows = BTreeMap::<String, (usize, usize)>::new();
+    for result in &report.results {
+        let passed = usize::from(result.report.outcome == EvalOutcome::Pass);
+        let model_scope = format!("{}/{}", result.report.run.provider, result.report.run.model);
+        let entry = rows.entry(format!("model:{model_scope}")).or_insert((0, 0));
+        entry.0 += passed;
+        entry.1 += 1;
+        for tag in result
+            .report
+            .run
+            .tags
+            .iter()
+            .filter(|tag| tag.starts_with("tool:"))
+        {
+            let entry = rows.entry(tag.clone()).or_insert((0, 0));
+            entry.0 += passed;
+            entry.1 += 1;
+        }
+    }
+    rows.into_iter()
+        .map(|(scope, (passed, total))| (scope, passed, total))
+        .collect()
 }
 
 fn failure_groups(report: &EvalSuiteReport) -> BTreeMap<(String, String, String), usize> {

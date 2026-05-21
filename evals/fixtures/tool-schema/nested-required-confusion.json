@@ -1,0 +1,16 @@
+{
+  "id": "nested-required-confusion",
+  "title": "Tool schema nested required confusion",
+  "prompt": "Prefer the flattest valid tool schema and use multi_edit only with the minimal edits array shape.",
+  "tags": ["micro", "tool-schema", "tool:multi_edit", "failure:nested-required-confusion"],
+  "timeoutMs": 10000,
+  "expected": {
+    "finalAnswerContains": ["hello from roder"],
+    "verificationRequired": false
+  },
+  "constraints": [
+    "multi_edit requires path and edits",
+    "each multi_edit edit item requires old_string and new_string",
+    "avoid avoidable nested required objects"
+  ]
+}
