@@ -82,7 +82,11 @@ impl ToolExecutor for GrepTool {
                     "response_format": ResponseFormat::schema_property()
                 },
                 "required": ["query"],
-                "additionalProperties": false
+                "additionalProperties": false,
+                "x-roder": {
+                    "retrievalMode": "exact_text",
+                    "retrievalMetadata": true
+                }
             }),
         }
     }
@@ -176,7 +180,11 @@ impl ToolExecutor for GlobTool {
                     "response_format": ResponseFormat::schema_property()
                 },
                 "required": ["pattern"],
-                "additionalProperties": false
+                "additionalProperties": false,
+                "x-roder": {
+                    "retrievalMode": "file_name",
+                    "retrievalMetadata": true
+                }
             }),
         }
     }
@@ -217,6 +225,7 @@ impl ToolExecutor for GlobTool {
         );
         let mut data = data;
         data["response_format"] = json!(response_format.as_str());
+        data["retrieval_mode"] = json!("file_name");
         Ok(result(call, text, data, false))
     }
 }
@@ -291,6 +300,7 @@ fn merge_search_metadata(data: &mut Value, metadata: &roder_search::SearchMetada
         return;
     };
     object.insert("engine".to_string(), json!(metadata.engine.as_str()));
+    object.insert("retrieval_mode".to_string(), json!("exact_text"));
     object.insert("index_version".to_string(), json!(metadata.index_version));
     object.insert(
         "candidate_files".to_string(),

@@ -36,6 +36,10 @@ impl ToolExecutor for DiscoveryListTool {
                 "type": "object",
                 "properties": {
                     "limit": { "type": "integer", "minimum": 1, "maximum": 200 }
+                },
+                "x-roder": {
+                    "retrievalMode": "discovery",
+                    "retrievalMetadata": true
                 }
             }),
         }
@@ -63,6 +67,7 @@ impl ToolExecutor for DiscoveryListTool {
                 "catalogId": catalog.id,
                 "groupCount": catalog.groups.len(),
                 "hiddenItemCount": catalog.hidden_item_count,
+                "retrieval_mode": "discovery",
                 "items": summaries,
             }),
             is_error: false,
@@ -85,7 +90,11 @@ impl ToolExecutor for DiscoverySearchTool {
                     "query": { "type": "string" },
                     "limit": { "type": "integer", "minimum": 1, "maximum": 200 }
                 },
-                "required": ["query"]
+                "required": ["query"],
+                "x-roder": {
+                    "retrievalMode": "discovery",
+                    "retrievalMetadata": true
+                }
             }),
         }
     }
@@ -120,6 +129,7 @@ impl ToolExecutor for DiscoverySearchTool {
             },
             data: json!({
                 "query": query,
+                "retrieval_mode": "discovery",
                 "matches": matches,
             }),
             is_error: false,
@@ -144,7 +154,11 @@ impl ToolExecutor for DiscoveryReadTool {
                     "limit": { "type": "integer", "minimum": 1, "maximum": 200 },
                     "promote": { "type": "boolean" }
                 },
-                "required": ["item_id"]
+                "required": ["item_id"],
+                "x-roder": {
+                    "retrievalMode": "promotion",
+                    "retrievalMetadata": true
+                }
             }),
         }
     }
@@ -185,6 +199,7 @@ impl ToolExecutor for DiscoveryReadTool {
             data: json!({
                 "item": item,
                 "promoted": promoted,
+                "retrieval_mode": "promotion",
                 "page": content,
             }),
             is_error: false,
