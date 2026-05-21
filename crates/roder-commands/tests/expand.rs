@@ -6,11 +6,13 @@ use std::{
 };
 
 use anyhow::Result;
-use roder_api::{context::ContextBlockKind, policy_mode::PolicyMode};
+use roder_api::{context::ContextBlockKind, policy_mode::PolicyMode, skills::SkillExposure};
 use roder_commands::{
     CommandExpansionOptions, CommandExpansionRequest, CommandInclude, CommandSource, CommandSpec,
-    FileInclude, ShellInclude, ShellRunner, UrlFetcher, UrlInclude, expand_command,
+    FileInclude, ShellInclude, ShellRunner, UrlFetcher, UrlInclude, built_in_commands,
+    expand_command,
 };
+use roder_skills::{SkillConfigRule, SkillRegistry, SkillRegistryOptions};
 
 #[test]
 fn expand_substitutes_arguments_and_default_values() {
@@ -114,6 +116,7 @@ fn expand_blocks_shell_includes_by_default_and_in_plan_mode() {
         options,
         shell_runner: Some(&FakeShell),
         url_fetcher: None,
+        skill_registry: None,
     })
     .unwrap_err()
     .to_string();
@@ -141,6 +144,7 @@ fn expand_runs_shell_include_when_enabled() {
         options,
         shell_runner: Some(&FakeShell),
         url_fetcher: None,
+        skill_registry: None,
     })
     .unwrap();
     assert_eq!(result.message, "[context:command.review.shell.diff]");
@@ -175,6 +179,7 @@ fn expand_blocks_url_includes_by_default_and_by_host_allowlist() {
         options,
         shell_runner: None,
         url_fetcher: Some(&FakeUrl),
+        skill_registry: None,
     })
     .unwrap_err()
     .to_string();
@@ -203,6 +208,7 @@ fn expand_fetches_url_include_when_enabled() {
         options,
         shell_runner: None,
         url_fetcher: Some(&FakeUrl),
+        skill_registry: None,
     })
     .unwrap();
     assert_eq!(result.message, "[context:command.review.urls.docs]");
@@ -214,6 +220,69 @@ fn expand_fetches_url_include_when_enabled() {
         result.context_blocks[0].metadata["include_kind"].as_str(),
         Some("url")
     );
+}
+
+#[test]
+fn builtin_commit_expansion_includes_direct_only_commit_skill() {
+    let dir = tempdir("builtin_commit_expansion_includes_direct_only_commit_skill");
+    let spec = built_in_commands()
+        .into_iter()
+        .find(|spec| spec.name == "commit")
+        .expect("commit command");
+    let registry = SkillRegistry::load(SkillRegistryOptions::new(&dir));
+
+    let result = expand_command(CommandExpansionRequest {
+        spec: &spec,
+        arguments: "src/lib.rs",
+        workspace_root: &dir,
+        options: CommandExpansionOptions::default(),
+        shell_runner: None,
+        url_fetcher: None,
+        skill_registry: Some(&registry),
+    })
+    .unwrap();
+
+    assert_eq!(result.command_name, "commit");
+    assert!(result.message.contains("bound commit skill"));
+    assert!(result.context_blocks.iter().any(|block| {
+        block.text.starts_with("<skill name=\"commit\"") && block.text.contains("git status")
+    }));
+}
+
+#[test]
+fn required_builtin_commit_skill_refuses_when_disabled() {
+    let dir = tempdir("required_builtin_commit_skill_refuses_when_disabled");
+    let spec = built_in_commands()
+        .into_iter()
+        .find(|spec| spec.name == "commit")
+        .expect("commit command");
+    let registry = SkillRegistry::load(SkillRegistryOptions {
+        workspace: dir.clone(),
+        include_builtins: true,
+        roots: Vec::new(),
+        workflow_imports: Vec::new(),
+        config_rules: vec![SkillConfigRule {
+            name: Some("commit".to_string()),
+            path: None,
+            enabled: Some(false),
+            exposure: Some(SkillExposure::DirectOnly),
+        }],
+    });
+
+    let err = expand_command(CommandExpansionRequest {
+        spec: &spec,
+        arguments: "",
+        workspace_root: &dir,
+        options: CommandExpansionOptions::default(),
+        shell_runner: None,
+        url_fetcher: None,
+        skill_registry: Some(&registry),
+    })
+    .unwrap_err()
+    .to_string();
+
+    assert!(err.contains("required skill commit"), "{err}");
+    assert!(err.contains("disabled"), "{err}");
 }
 
 fn expand(
@@ -229,6 +298,7 @@ fn expand(
         options,
         shell_runner: None,
         url_fetcher: None,
+        skill_registry: None,
     })
 }
 
@@ -241,6 +311,7 @@ fn command(name: &str, body: &str) -> CommandSpec {
         model: None,
         agent: None,
         include: CommandInclude::default(),
+        feature_skill_bindings: Vec::new(),
         body: body.to_string(),
         source: CommandSource::Workspace,
         path: None,

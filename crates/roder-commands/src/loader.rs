@@ -47,6 +47,7 @@ pub fn parse_command_markdown(
         model: non_empty(parsed.model),
         agent: non_empty(parsed.agent),
         include: parsed.include,
+        feature_skill_bindings: Vec::new(),
         body: body.trim().to_string(),
         source,
         path: Some(path.to_path_buf()),

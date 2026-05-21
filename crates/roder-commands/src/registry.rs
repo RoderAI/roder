@@ -268,6 +268,7 @@ mod tests {
             "agents",
             "tasks",
             "memory",
+            "commit",
             "marketplace",
             "plugin",
         ] {

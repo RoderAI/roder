@@ -2242,19 +2242,7 @@ impl TuiApp {
                 self.run_roadmap_slash_command(&args);
             }
             _ => {
-                if let Some(prompt) = commands::built_in_prompt(&name, &args) {
-                    let suffix = slash_command_suffix(&args);
-                    let pending =
-                        PendingPrompt::with_images(format!("/{name}{suffix}"), prompt, Vec::new());
-                    if self.active_turn_id.is_some() {
-                        self.steer_prepared_prompt(pending).await;
-                    } else {
-                        self.start_prepared_prompt(pending).await;
-                    }
-                    self.push_event(format!("slash command: /{name}{suffix}"));
-                } else {
-                    self.run_custom_slash_command(name, args).await;
-                }
+                self.run_custom_slash_command(name, args).await;
             }
         }
     }

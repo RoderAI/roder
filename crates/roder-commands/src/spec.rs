@@ -1,5 +1,7 @@
 use std::path::PathBuf;
 
+use roder_api::skills::FeatureSkillBinding;
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CommandSpec {
     pub name: String,
@@ -9,6 +11,7 @@ pub struct CommandSpec {
     pub model: Option<String>,
     pub agent: Option<String>,
     pub include: CommandInclude,
+    pub feature_skill_bindings: Vec<FeatureSkillBinding>,
     pub body: String,
     pub source: CommandSource,
     pub path: Option<PathBuf>,
