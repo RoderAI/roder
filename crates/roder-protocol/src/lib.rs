@@ -30,6 +30,7 @@ use roder_api::plan_review::{
     PlanRewrite,
 };
 use roder_api::policy_mode::PolicyMode;
+use roder_api::retrieval::{RetrievalMeasuredOutcome, RetrievalMode, RetrievalRoutePlan};
 use roder_api::subagents::SubagentPermissionMode;
 use roder_api::tasks::{TaskHandle, TaskOutputStream};
 use roder_api::teams::{
@@ -1505,6 +1506,74 @@ pub struct DiscoveryPromotedClearResult {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct RetrievalTurnParams {
+    pub thread_id: ThreadId,
+    pub turn_id: TurnId,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub limit: Option<usize>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RetrievalDebugSummary {
+    pub text: String,
+    #[serde(default)]
+    pub notes: Vec<String>,
+    pub truncated: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RetrievalRecommendationsResult {
+    pub thread_id: ThreadId,
+    pub turn_id: TurnId,
+    pub plans: Vec<RetrievalRoutePlan>,
+    pub summary: RetrievalDebugSummary,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RetrievalMetricsResult {
+    pub thread_id: ThreadId,
+    pub turn_id: TurnId,
+    pub outcomes: Vec<RetrievalMeasuredOutcome>,
+    pub accepted_count: u64,
+    pub ignored_count: u64,
+    pub failed_count: u64,
+    pub outcome_counts: BTreeMap<String, u64>,
+    pub mode_counts: BTreeMap<RetrievalMode, u64>,
+    pub summary: RetrievalDebugSummary,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RetrievalPromotedCapabilityState {
+    pub item_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub route_id: Option<String>,
+    pub state: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cache_status: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
+    pub thread_id: ThreadId,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub turn_id: Option<TurnId>,
+    #[serde(with = "time::serde::rfc3339")]
+    pub timestamp: OffsetDateTime,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RetrievalPromotedResult {
+    pub thread_id: ThreadId,
+    pub turn_id: TurnId,
+    pub states: Vec<RetrievalPromotedCapabilityState>,
+    pub summary: RetrievalDebugSummary,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct MediaReadParams {
     pub artifact_id: MediaArtifactId,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -2356,6 +2425,49 @@ mod tests {
 
         let clear = serde_json::to_value(DiscoveryPromotedClearResult { cleared: 2 }).unwrap();
         assert_eq!(clear["cleared"], 2);
+    }
+
+    #[test]
+    fn retrieval_protocol_structs_use_camel_case_fields() {
+        let params: RetrievalTurnParams = serde_json::from_value(serde_json::json!({
+            "threadId": "thread-1",
+            "turnId": "turn-1",
+            "limit": 5
+        }))
+        .unwrap();
+        assert_eq!(params.thread_id, "thread-1");
+        assert_eq!(params.turn_id, "turn-1");
+        assert_eq!(params.limit, Some(5));
+
+        let result = RetrievalRecommendationsResult {
+            thread_id: "thread-1".to_string(),
+            turn_id: "turn-1".to_string(),
+            plans: Vec::new(),
+            summary: RetrievalDebugSummary {
+                text: "no route recommendations recorded".to_string(),
+                notes: vec!["router did not emit retrieval/routePlanned".to_string()],
+                truncated: false,
+            },
+        };
+        let value = serde_json::to_value(result).unwrap();
+        assert_eq!(value["threadId"], "thread-1");
+        assert_eq!(value["turnId"], "turn-1");
+        assert_eq!(value["summary"]["truncated"], false);
+
+        let state = RetrievalPromotedCapabilityState {
+            item_id: "tool:builtin/grep".to_string(),
+            route_id: Some("route-1".to_string()),
+            state: "skipped".to_string(),
+            cache_status: None,
+            reason: Some("already warm".to_string()),
+            thread_id: "thread-1".to_string(),
+            turn_id: Some("turn-1".to_string()),
+            timestamp: OffsetDateTime::UNIX_EPOCH,
+        };
+        let value = serde_json::to_value(state).unwrap();
+        assert_eq!(value["itemId"], "tool:builtin/grep");
+        assert_eq!(value["routeId"], "route-1");
+        assert!(value.get("cacheStatus").is_none());
     }
 
     #[test]

@@ -5,6 +5,7 @@ use roder_api::conversation::{
     ContextCompactionRecord, ConversationItem, ToolResultRecord, UserMessage,
 };
 use roder_api::events::*;
+use roder_api::retrieval::{RetrievalRoutePlan, RetrievalRoutePlanned};
 use time::OffsetDateTime;
 
 use crate::artifacts::CreateArtifactRequest;
@@ -114,6 +115,20 @@ impl Runtime {
                 },
             ))
             .await;
+        }
+        for block in plan
+            .blocks
+            .iter()
+            .filter(|block| matches!(block.kind, ContextBlockKind::RetrievalHint))
+        {
+            if let Some(value) = block.metadata.get("retrievalPlan")
+                && let Ok(plan) = serde_json::from_value::<RetrievalRoutePlan>(value.clone())
+            {
+                self.emit(RoderEvent::RetrievalRoutePlanned(RetrievalRoutePlanned {
+                    plan,
+                }))
+                .await;
+            }
         }
         self.emit(RoderEvent::ContextAssemblyCompleted(
             ContextAssemblyCompleted {

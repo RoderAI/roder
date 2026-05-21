@@ -17,6 +17,11 @@ use roder_api::plan_review::{
     PlanReviewStatus,
 };
 use roder_api::policy_mode::PolicyMode;
+use roder_api::retrieval::{
+    RetrievalConfidence, RetrievalIntent, RetrievalMeasuredOutcome, RetrievalMode,
+    RetrievalOutcomeKind, RetrievalPromotionSkipped, RetrievalRecommendation, RetrievalResultUsed,
+    RetrievalRouteAccepted, RetrievalRouteIgnored, RetrievalRoutePlan, RetrievalRoutePlanned,
+};
 use roder_api::session::{SessionMetadata, SessionStore, SessionStoreFactory, ThreadSnapshot};
 use roder_api::subagents::{SubagentDefinition, SubagentPermissionMode};
 use roder_api::tasks::TaskState;
@@ -66,7 +71,8 @@ use roder_protocol::{
     PluginInstallAllVariantsResult, PluginInstallParams, PluginInstallResult,
     PluginListInstalledResult, PluginPreviewInstallParams, PluginPreviewInstallResult,
     PluginUninstallParams, PluginUninstallResult, ProviderAuthResult, ProviderSelectParams,
-    ProviderSelectResult, ProvidersListResult, RunnersDeleteResult, RunnersListResult,
+    ProviderSelectResult, ProvidersListResult, RetrievalMetricsResult, RetrievalPromotedResult,
+    RetrievalRecommendationsResult, RetrievalTurnParams, RunnersDeleteResult, RunnersListResult,
     RunnersSelectParams, RunnersSelectResult, RunnersSessionResult, SearchIndexClearParams,
     SearchIndexClearResult, SearchIndexRebuildParams, SearchIndexRebuildResult,
     SearchIndexStatusParams, SearchIndexStatusResult, SearchIndexStatusState,
@@ -3514,6 +3520,136 @@ async fn discovery_methods_refresh_search_read_promote_list_and_clear() {
         std::env::remove_var("RODER_DISCOVERY_SESSION_DIR");
     }
     let _ = std::fs::remove_dir_all(root);
+}
+
+#[tokio::test]
+async fn retrieval_methods_read_recommendations_metrics_and_promotions() {
+    let store: Arc<dyn SessionStoreFactory> = Arc::new(RecordingSessionStoreFactory::default());
+    let mut builder = ExtensionRegistryBuilder::new();
+    builder.inference_engine(Arc::new(FakeInferenceEngine));
+    builder.session_store_factory(store);
+    let runtime = Arc::new(Runtime::new(builder.build().unwrap(), Default::default()).unwrap());
+    let client = LocalAppClient::new(Arc::new(AppServer::new(runtime.clone())));
+
+    let session = start_thread(&client).await;
+    let thread_id = session.thread.id.clone();
+    let turn_id = "turn-retrieval".to_string();
+    let route_id = "route-retrieval".to_string();
+    let timestamp = OffsetDateTime::UNIX_EPOCH;
+    let plan = RetrievalRoutePlan {
+        route_id: route_id.clone(),
+        thread_id: thread_id.clone(),
+        turn_id: turn_id.clone(),
+        intent: RetrievalIntent::InspectTool,
+        recommended: vec![RetrievalRecommendation {
+            mode: RetrievalMode::Discovery,
+            tool: "discovery.search".to_string(),
+            query: "grep".to_string(),
+            reason: "tool lookup should start from discovery".to_string(),
+            confidence: RetrievalConfidence::High,
+            item_id: Some("tool:builtin-coding-tools/grep".to_string()),
+        }],
+        avoid: Vec::new(),
+        timestamp,
+    };
+    runtime
+        .emit(roder_api::events::RoderEvent::RetrievalRoutePlanned(
+            RetrievalRoutePlanned { plan },
+        ))
+        .await;
+    runtime
+        .emit(roder_api::events::RoderEvent::RetrievalRouteAccepted(
+            RetrievalRouteAccepted {
+                route_id: route_id.clone(),
+                thread_id: thread_id.clone(),
+                turn_id: turn_id.clone(),
+                mode: RetrievalMode::Discovery,
+                tool: "discovery.search".to_string(),
+                query: "grep".to_string(),
+                timestamp,
+            },
+        ))
+        .await;
+    runtime
+        .emit(roder_api::events::RoderEvent::RetrievalRouteIgnored(
+            RetrievalRouteIgnored {
+                route_id: route_id.clone(),
+                thread_id: thread_id.clone(),
+                turn_id: turn_id.clone(),
+                chosen_tool: "web_search".to_string(),
+                recommended_modes: vec![RetrievalMode::Discovery],
+                reason: "model picked web for local tool lookup".to_string(),
+                timestamp,
+            },
+        ))
+        .await;
+    runtime
+        .emit(roder_api::events::RoderEvent::RetrievalResultUsed(
+            RetrievalResultUsed {
+                outcome: RetrievalMeasuredOutcome {
+                    route_id: route_id.clone(),
+                    mode: RetrievalMode::Discovery,
+                    tool: "discovery.search".to_string(),
+                    outcome: RetrievalOutcomeKind::Useful,
+                    first_useful_path: Some(RetrievalMode::Discovery),
+                    discovery_before_tool_use: true,
+                    promotion_before_tool_use: false,
+                    wrong_tool_family_attempts: 1,
+                    result_count: 3,
+                    latency_ms: 7,
+                    bytes_returned: 512,
+                    estimated_tokens_returned: 128,
+                },
+                thread_id: thread_id.clone(),
+                turn_id: turn_id.clone(),
+                timestamp,
+            },
+        ))
+        .await;
+    runtime
+        .emit(roder_api::events::RoderEvent::RetrievalPromotionSkipped(
+            RetrievalPromotionSkipped {
+                route_id,
+                thread_id: thread_id.clone(),
+                turn_id: turn_id.clone(),
+                item_id: "tool:builtin-coding-tools/grep".to_string(),
+                reason: "already warm-cached".to_string(),
+                timestamp,
+            },
+        ))
+        .await;
+
+    let params = Some(
+        serde_json::to_value(RetrievalTurnParams {
+            thread_id: thread_id.clone(),
+            turn_id: turn_id.clone(),
+            limit: Some(10),
+        })
+        .unwrap(),
+    );
+    let recommendations: RetrievalRecommendationsResult =
+        request(&client, "retrieval/recommendations", params.clone()).await;
+    assert_eq!(recommendations.plans.len(), 1);
+    assert!(
+        recommendations.summary.notes[0].contains("discovery.search"),
+        "{:?}",
+        recommendations.summary
+    );
+
+    let metrics: RetrievalMetricsResult =
+        request(&client, "retrieval/metrics", params.clone()).await;
+    assert_eq!(metrics.accepted_count, 1);
+    assert_eq!(metrics.ignored_count, 1);
+    assert_eq!(metrics.outcomes.len(), 1);
+    assert_eq!(metrics.outcomes[0].wrong_tool_family_attempts, 1);
+
+    let promoted: RetrievalPromotedResult = request(&client, "retrieval/promoted", params).await;
+    assert_eq!(promoted.states.len(), 1);
+    assert_eq!(promoted.states[0].state, "skipped");
+    assert_eq!(
+        promoted.states[0].reason.as_deref(),
+        Some("already warm-cached")
+    );
 }
 
 #[tokio::test]
