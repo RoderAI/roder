@@ -10,6 +10,8 @@ mod discovery;
 mod evals;
 mod fs;
 mod marketplaces;
+#[cfg(test)]
+mod method_manifest;
 mod notifications;
 mod processes;
 pub mod remote;

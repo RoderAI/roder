@@ -1,3 +1,6 @@
+pub mod methods;
+pub mod schema;
+
 use roder_api::artifacts::{
     ArtifactGrepPage, ArtifactReadPage, ArtifactTailPage, ContextArtifactDescriptor,
     ContextArtifactKind,
