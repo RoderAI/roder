@@ -46,6 +46,11 @@ impl PlanPanelState {
         self.visible = !self.items.is_empty();
     }
 
+    pub(super) fn replace_from_task_ledger_output(&mut self, output: &str) {
+        self.items = parse_plan_items(output);
+        self.visible = !self.items.is_empty();
+    }
+
     fn visible_items(&self) -> impl Iterator<Item = &PlanItem> {
         self.items.iter().take(MAX_VISIBLE_PLAN_ITEMS)
     }
@@ -66,6 +71,7 @@ enum PlanStatus {
     Pending,
     InProgress,
     Completed,
+    Blocked,
 }
 
 pub(super) fn plan_panel_height(plan: &PlanPanelState) -> u16 {
@@ -159,6 +165,7 @@ fn parse_status(status: &str) -> Option<PlanStatus> {
         "pending" => Some(PlanStatus::Pending),
         "in_progress" => Some(PlanStatus::InProgress),
         "completed" => Some(PlanStatus::Completed),
+        "blocked" => Some(PlanStatus::Blocked),
         _ => None,
     }
 }
@@ -171,6 +178,7 @@ fn status_marker(status: PlanStatus, theme: Theme) -> (&'static str, ratatui::st
             "✓ ",
             theme.policy_mode(roder_api::policy_mode::PolicyMode::AcceptAll),
         ),
+        PlanStatus::Blocked => ("× ", theme.error()),
     }
 }
 
@@ -182,6 +190,12 @@ fn plan_counter_width(plan: &PlanPanelState) -> u16 {
 fn plan_counter_symbol(plan: &PlanPanelState) -> &'static str {
     if !plan.is_empty() && plan.completed_count() == plan.len() {
         "✓"
+    } else if plan
+        .items
+        .iter()
+        .any(|item| item.status == PlanStatus::Blocked)
+    {
+        "×"
     } else if plan
         .items
         .iter()
@@ -205,6 +219,7 @@ fn plan_counter_symbol_style(plan: &PlanPanelState, theme: Theme) -> ratatui::st
     match plan_counter_symbol(plan) {
         "✓" => theme.policy_mode(roder_api::policy_mode::PolicyMode::AcceptAll),
         "◆" => theme.running(),
+        "×" => theme.error(),
         _ => theme.subtle(),
     }
 }
@@ -257,6 +272,20 @@ mod tests {
 
         state.toggle();
         assert!(!state.is_visible());
+    }
+
+    #[test]
+    fn task_ledger_output_reuses_plan_panel_and_blocked_status() {
+        let mut state = PlanPanelState::default();
+
+        state.replace_from_task_ledger_output(
+            "Task ledger: 1/3 completed\n- completed: Inspect [inspect]\n- in_progress: Build [build]\n- blocked: Verify [verify]",
+        );
+
+        assert!(state.is_visible());
+        assert_eq!(state.len(), 3);
+        assert_eq!(state.completed_count(), 1);
+        assert_eq!(state.items[2].status, PlanStatus::Blocked);
     }
 
     #[test]

@@ -2792,6 +2792,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "roder-ext-task-ledger"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "roder-api",
+ "semver",
+ "serde",
+ "serde_json",
+ "tokio",
+]
+
+[[package]]
 name = "roder-ext-task-process"
 version = "0.1.0"
 dependencies = [
@@ -2902,6 +2915,7 @@ dependencies = [
  "roder-ext-runner-unix-local",
  "roder-ext-runner-vercel",
  "roder-ext-subagents",
+ "roder-ext-task-ledger",
  "roder-ext-task-process",
  "roder-ext-tavily-search",
  "roder-ext-web-search",

@@ -49,6 +49,23 @@ impl InferenceEngine for FakeInferenceEngine {
             ))]);
             return Ok(Box::pin(stream));
         }
+        if should_update_task_ledger(&request) {
+            let stream = stream::iter(vec![Ok(InferenceEvent::ToolCallCompleted(
+                ToolCallCompleted {
+                    id: "fake-task-ledger".to_string(),
+                    name: "task_ledger.update".to_string(),
+                    arguments: serde_json::json!({
+                        "tasks": [
+                            { "id": "inspect", "content": "Inspect task", "status": "completed", "evidence": "fake-provider" },
+                            { "id": "verify", "content": "Verify task", "status": "in_progress" }
+                        ],
+                        "requireCompletionEvidence": true
+                    })
+                    .to_string(),
+                },
+            ))]);
+            return Ok(Box::pin(stream));
+        }
         if user_input_unavailable(&request) {
             let stream = stream::iter(vec![Ok(InferenceEvent::Failed(InferenceFailure {
                 message: "clarification unavailable in non-interactive runtime profile".to_string(),
@@ -102,6 +119,22 @@ fn user_input_unavailable(request: &AgentInferenceRequest) -> bool {
                 if result.name.as_deref() == Some("request_user_input")
                     && result.is_error
                     && result.result.contains("User input is unavailable")
+        )
+    })
+}
+
+fn should_update_task_ledger(request: &AgentInferenceRequest) -> bool {
+    request.conversation.iter().any(|item| {
+        matches!(
+            item,
+            ConversationItem::UserMessage(message)
+                if message.text.contains("FAKE_TASK_LEDGER_UPDATE")
+        )
+    }) && !request.conversation.iter().any(|item| {
+        matches!(
+            item,
+            ConversationItem::ToolResult(result)
+                if result.name.as_deref() == Some("task_ledger.update")
         )
     })
 }

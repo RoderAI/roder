@@ -205,6 +205,12 @@ impl EvalTrajectoryEvent {
                 event.tool_name = e.tool_name.clone();
                 Some(event)
             }
+            RoderEvent::TaskLedgerUpdated(e) => Some(Self::basic(
+                "task_ledger_updated",
+                &e.thread_id,
+                &e.turn_id,
+                e.timestamp,
+            )),
             RoderEvent::TurnCompleted(e) => Some(Self::basic(
                 "turn_completed",
                 &e.thread_id,

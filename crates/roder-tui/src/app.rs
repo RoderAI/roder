@@ -4001,12 +4001,11 @@ impl TuiApp {
     fn open_settings_submenu(&mut self) {
         self.provider_popup_screen = ProviderPopupScreen::Settings;
         self.provider_menu_filter.clear();
-        self.provider_menu_items =
-            settings_menu_items(
-                self.timeline_settings,
-                self.search_index_enabled,
-                self.file_backed_dynamic_context,
-            );
+        self.provider_menu_items = settings_menu_items(
+            self.timeline_settings,
+            self.search_index_enabled,
+            self.file_backed_dynamic_context,
+        );
         let selected = self
             .provider_menu_items
             .iter()
@@ -4267,12 +4266,11 @@ impl TuiApp {
         for timeline in self.team_timelines.values_mut() {
             timeline.set_settings(self.timeline_settings);
         }
-        self.provider_menu_items =
-            settings_menu_items(
-                self.timeline_settings,
-                self.search_index_enabled,
-                self.file_backed_dynamic_context,
-            );
+        self.provider_menu_items = settings_menu_items(
+            self.timeline_settings,
+            self.search_index_enabled,
+            self.file_backed_dynamic_context,
+        );
         if let Some(selected) = self.provider_state.selected() {
             self.provider_state.select(Some(
                 selected.min(self.provider_menu_items.len().saturating_sub(1)),
@@ -4594,6 +4592,12 @@ impl TuiApp {
             && let Some(text) = output.as_deref()
         {
             self.plan_panel.replace_from_update_plan_output(text);
+        }
+        if !failed
+            && tool_name.as_deref() == Some("task_ledger.update")
+            && let Some(text) = output.as_deref()
+        {
+            self.plan_panel.replace_from_task_ledger_output(text);
         }
         let timeline_output = if tool_name
             .as_deref()
@@ -6260,7 +6264,10 @@ mod tests {
     use roder_api::teams::{TeamMemberDescriptor, TeamMemberRole, TeamMemberStatus};
     use roder_app_server::AppServer;
     use roder_core::Runtime;
-    use roder_protocol::{ProviderDescriptor, ProvidersListResult};
+    use roder_protocol::{
+        DesktopItem, DesktopThread, DesktopThreadStatus, DesktopTurn, ProviderDescriptor,
+        ProvidersListResult,
+    };
 
     fn test_app() -> TuiApp {
         let theme = Theme::for_dark_background(true);
@@ -6365,6 +6372,53 @@ mod tests {
             .map(|row| row.text)
             .collect::<Vec<_>>()
             .join("\n")
+    }
+
+    #[test]
+    fn resumed_task_ledger_tool_result_restores_plan_panel() {
+        let mut app = test_app();
+        let thread = DesktopThread {
+            id: "thread-ledger".to_string(),
+            session_id: "thread-ledger".to_string(),
+            preview: String::new(),
+            model_provider: "mock".to_string(),
+            created_at: 0,
+            updated_at: 0,
+            status: DesktopThreadStatus {
+                kind: "idle".to_string(),
+                active_flags: Vec::new(),
+            },
+            cwd: "/tmp".to_string(),
+            name: None,
+            turns: Some(vec![DesktopTurn {
+                id: "turn-ledger".to_string(),
+                items: vec![DesktopItem {
+                    id: "tool-ledger".to_string(),
+                    kind: "toolMessage".to_string(),
+                    text: Some(
+                        "Task ledger: 1/2 completed\n- completed: Inspect [inspect]\n- in_progress: Verify [verify]"
+                            .to_string(),
+                    ),
+                    status: Some("completed".to_string()),
+                    phase: None,
+                    tool_name: Some("task_ledger.update".to_string()),
+                    tool_call_id: Some("tool-ledger".to_string()),
+                    payload: None,
+                }],
+                items_view: "all".to_string(),
+                status: "completed".to_string(),
+                error: None,
+                started_at: None,
+                completed_at: None,
+                duration_ms: None,
+            }]),
+        };
+
+        app.apply_thread(thread);
+
+        assert!(app.plan_panel.is_visible());
+        assert_eq!(app.plan_panel.len(), 2);
+        assert_eq!(app.plan_panel.completed_count(), 1);
     }
 
     #[test]
