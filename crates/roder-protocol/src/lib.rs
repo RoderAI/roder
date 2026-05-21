@@ -1268,6 +1268,45 @@ pub struct WorkflowRemoveResult {
     pub decision: WorkflowImportDecision,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct EvalReportsListParams {
+    pub limit: Option<usize>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct EvalReportSummary {
+    pub id: String,
+    pub suite_id: String,
+    pub fixture_count: usize,
+    pub passed: usize,
+    pub failed: usize,
+    #[serde(with = "time::serde::rfc3339")]
+    pub generated_at: time::OffsetDateTime,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct EvalReportsListResult {
+    pub reports: Vec<EvalReportSummary>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct EvalReportReadParams {
+    pub report_id: String,
+    pub max_bytes: Option<usize>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct EvalReportReadResult {
+    pub summary: EvalReportSummary,
+    pub markdown: String,
+    pub truncated: bool,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct MarketplacesListResult {
@@ -1945,6 +1984,40 @@ mod tests {
         };
         let value = serde_json::to_value(uninstall).unwrap();
         assert_eq!(value["variantKey"], "codex-plugins:superpowers");
+    }
+
+    #[test]
+    fn eval_report_protocol_structs_use_camel_case_fields() {
+        let list: EvalReportsListParams = serde_json::from_value(serde_json::json!({
+            "limit": 5
+        }))
+        .unwrap();
+        assert_eq!(list.limit, Some(5));
+
+        let read: EvalReportReadParams = serde_json::from_value(serde_json::json!({
+            "reportId": "eval-run",
+            "maxBytes": 1024
+        }))
+        .unwrap();
+        assert_eq!(read.report_id, "eval-run");
+        assert_eq!(read.max_bytes, Some(1024));
+
+        let result = EvalReportReadResult {
+            summary: EvalReportSummary {
+                id: "eval-run".to_string(),
+                suite_id: "tool-calls".to_string(),
+                fixture_count: 2,
+                passed: 1,
+                failed: 1,
+                generated_at: OffsetDateTime::UNIX_EPOCH,
+            },
+            markdown: "# Report".to_string(),
+            truncated: false,
+        };
+        let value = serde_json::to_value(result).unwrap();
+        assert_eq!(value["summary"]["suiteId"], "tool-calls");
+        assert_eq!(value["summary"]["fixtureCount"], 2);
+        assert_eq!(value["markdown"], "# Report");
     }
 
     #[test]

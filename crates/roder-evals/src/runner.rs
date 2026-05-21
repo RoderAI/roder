@@ -20,7 +20,10 @@ mod report;
 mod tests;
 mod workspace;
 
-pub use report::{EvalFixtureResult, EvalSuiteReport, write_eval_report_files};
+pub use report::{
+    EvalFixtureResult, EvalReportDocument, EvalReportSummary, EvalSuiteReport, list_eval_reports,
+    read_eval_report, write_eval_report_files,
+};
 
 use report::{eval_metrics, trajectory_excerpt};
 use workspace::{
