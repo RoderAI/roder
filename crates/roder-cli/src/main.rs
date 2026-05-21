@@ -6,6 +6,7 @@ mod evals;
 mod marketplace;
 mod resume_picker;
 mod roadmap_cli;
+mod skills;
 #[cfg(test)]
 mod tui_config;
 
@@ -42,6 +43,7 @@ use roder_protocol::{
 };
 use roder_tui::{TuiApp, TuiStartup};
 use roder_web_search::WebSearchProviderKind;
+use skills::run_skills_cli;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::sync::mpsc;
 
@@ -57,6 +59,9 @@ async fn main() -> anyhow::Result<()> {
     if matches!(args.first().map(String::as_str), Some("commands")) {
         let cfg = roder_config::load_config()?;
         return commands::run_commands_cli(&args[1..], &cfg);
+    }
+    if matches!(args.first().map(String::as_str), Some("skills" | "skill")) {
+        return run_skills_cli(&args[1..]).await;
     }
     if matches!(args.first().map(String::as_str), Some("tasks")) {
         return run_tasks_cli(&args[1..]).await;
@@ -728,6 +733,7 @@ pub(crate) async fn build_runtime_from_config(
     let speed_policy = resolve_speed_policy_config(cfg.speed_policy.as_ref());
     let reliability = resolve_reliability_config(cfg.reliability.as_ref());
     let custom_inference_provider_configs = custom_inference_providers(&cfg);
+    let skills_config = cfg.skills.clone();
     let (default_provider, configured_model) = resolve_provider_model(cfg.provider, cfg.model);
     let default_model = configured_model.clone().unwrap_or_else(|| {
         if default_provider == PROVIDER_MOCK {
@@ -821,6 +827,11 @@ pub(crate) async fn build_runtime_from_config(
             roadmap_data_dir: None,
         },
     )?);
+    let skills_registry = roder_config::build_skills_registry(
+        std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")),
+        skills_config.as_ref(),
+    );
+    runtime.set_skills(skills_registry).await;
 
     Ok((runtime, default_model))
 }

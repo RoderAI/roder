@@ -16,6 +16,8 @@ mod runner;
 mod scroll_accel;
 mod session_resume;
 mod shortcuts;
+#[allow(dead_code)]
+mod skills;
 mod stream_animation;
 mod subagent_trace;
 #[cfg(test)]

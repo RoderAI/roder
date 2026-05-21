@@ -12,6 +12,7 @@ pub mod remote;
 mod retrieval;
 mod search_index;
 pub mod server;
+mod skills;
 
 pub use client::*;
 pub use server::*;

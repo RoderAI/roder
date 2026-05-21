@@ -31,6 +31,7 @@ use roder_api::plan_review::{
 };
 use roder_api::policy_mode::PolicyMode;
 use roder_api::retrieval::{RetrievalMeasuredOutcome, RetrievalMode, RetrievalRoutePlan};
+use roder_api::skills::{Skill, SkillDescriptor, SkillExposure, SkillSelector};
 use roder_api::subagents::SubagentPermissionMode;
 use roder_api::tasks::{TaskHandle, TaskOutputStream};
 use roder_api::teams::{
@@ -2104,6 +2105,48 @@ pub struct CommandsRunResult {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SkillsListResult {
+    pub skills: Vec<SkillDescriptor>,
+    #[serde(default)]
+    pub diagnostics: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SkillsReadParams {
+    pub selector: SkillSelector,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SkillsReadResult {
+    pub skill: Option<Skill>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SkillsSetEnabledParams {
+    pub selector: SkillSelector,
+    pub enabled: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SkillsSetExposureParams {
+    pub selector: SkillSelector,
+    pub exposure: SkillExposure,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SkillsUpdateResult {
+    pub skills: Vec<SkillDescriptor>,
+    #[serde(default)]
+    pub diagnostics: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ToolsListResult {
     pub tools: Vec<ToolSpec>,
 }
@@ -2588,6 +2631,35 @@ mod tests {
         };
         let value = serde_json::to_value(uninstall).unwrap();
         assert_eq!(value["variantKey"], "codex-plugins:superpowers");
+    }
+
+    #[test]
+    fn skills_protocol_structs_use_camel_case_fields() {
+        let params: SkillsSetExposureParams = serde_json::from_value(serde_json::json!({
+            "selector": { "name": { "name": "commit" } },
+            "exposure": "direct_only"
+        }))
+        .unwrap();
+        assert_eq!(
+            params.selector,
+            SkillSelector::Name {
+                name: "commit".to_string()
+            }
+        );
+        assert_eq!(params.exposure, SkillExposure::DirectOnly);
+
+        let enabled = SkillsSetEnabledParams {
+            selector: SkillSelector::Path {
+                path: "roder-builtin://commit/SKILL.md".to_string(),
+            },
+            enabled: false,
+        };
+        let value = serde_json::to_value(enabled).unwrap();
+        assert_eq!(
+            value["selector"]["path"]["path"],
+            "roder-builtin://commit/SKILL.md"
+        );
+        assert_eq!(value["enabled"], false);
     }
 
     #[test]
