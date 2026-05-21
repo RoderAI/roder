@@ -78,10 +78,14 @@ impl Runtime {
                 blocks.push(block);
             }
         }
-        let plan = if let Some(planner) = self.registry.context_planners.first() {
-            planner.plan(&query, blocks).await?
-        } else {
+        let plan = if self.registry.context_planners.is_empty() {
             ContextPlan { blocks }
+        } else {
+            let mut plan = ContextPlan { blocks };
+            for planner in &self.registry.context_planners {
+                plan = planner.plan(&query, plan.blocks).await?;
+            }
+            plan
         };
         let block_count = plan.blocks.len() as u64;
         let total_byte_count = plan
