@@ -476,6 +476,24 @@ impl AppServer {
                 })
                 .await
             }
+            "retrieval/recommendations" => {
+                self.decode_and(req.params, |p| async move {
+                    self.handle_retrieval_recommendations(p).await
+                })
+                .await
+            }
+            "retrieval/metrics" => {
+                self.decode_and(req.params, |p| async move {
+                    self.handle_retrieval_metrics(p).await
+                })
+                .await
+            }
+            "retrieval/promoted" => {
+                self.decode_and(req.params, |p| async move {
+                    self.handle_retrieval_promoted(p).await
+                })
+                .await
+            }
             "tasks/submit" => {
                 self.decode_and(
                     req.params,

@@ -185,6 +185,7 @@ fn render_retrieval_block(plan: &RetrievalRoutePlan) -> ContextBlock {
             "planner": "retrieval-router",
             "route_id": plan.route_id,
             "intent": format!("{:?}", plan.intent),
+            "retrievalPlan": serializable(plan),
             "recommended": serializable(&plan.recommended),
             "avoid": serializable(&plan.avoid),
         }),
