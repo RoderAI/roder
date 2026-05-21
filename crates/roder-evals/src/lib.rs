@@ -8,6 +8,7 @@ use time::OffsetDateTime;
 
 pub mod fixture;
 pub mod graders;
+pub(crate) mod retrieval_router;
 pub mod runner;
 pub mod trace;
 
