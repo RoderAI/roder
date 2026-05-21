@@ -2,25 +2,41 @@
   "id": "enterprise-large-catalog-100-plus",
   "title": "Deferred discovery with 180 hidden enterprise capabilities",
   "tags": ["lazy-discovery", "enterprise", "mcp", "plugins", "bucket:100-plus"],
-  "hiddenDeferredCapabilities": 180,
-  "catalogShape": {
-    "internalTools": 20,
-    "mcpTools": 128,
-    "skills": 22,
-    "plugins": 10
-  },
   "prompt": "Investigate a production checkout failure using Stripe and Vercel capabilities. Promote only the required payment and deployment schemas before using tools.",
-  "compactIndexContains": ["stripe.payment_intents.search", "vercel.deployments.find", "sentry.issues.search"],
-  "expectedDiscoveryQuery": "checkout failure stripe vercel deployment",
-  "expectedPromotion": "stripe.payment_intents.search",
-  "secondaryExpectedPromotion": "vercel.deployments.find",
-  "expectedToolCall": "stripe.payment_intents.search",
-  "expectedAnswerContains": "checkout failure correlated with deployment",
-  "metrics": {
-    "baselineSchemaTokens": 47000,
-    "deferredPromptTokens": 3100,
-    "expectedPromotionCount": 2,
-    "expectedWarmCacheHits": 1,
-    "maxWrongToolCalls": 0
-  }
+  "timeoutMs": 10000,
+  "expected": {
+    "finalAnswerContains": ["hello from roder"],
+    "verificationRequired": false
+  },
+  "lazyDiscovery": {
+    "hiddenDeferredCapabilities": 180,
+    "catalogShape": {
+      "internalTools": 20,
+      "mcpTools": 128,
+      "skills": 22,
+      "plugins": 10
+    },
+    "compactIndexContains": [
+      "stripe.payment_intents.search",
+      "vercel.deployments.find",
+      "sentry.issues.search"
+    ],
+    "expectedDiscoveryQuery": "checkout failure stripe vercel deployment",
+    "expectedPromotion": "stripe.payment_intents.search",
+    "secondaryExpectedPromotion": "vercel.deployments.find",
+    "expectedToolCall": "stripe.payment_intents.search",
+    "metrics": {
+      "baselineSchemaTokens": 47000,
+      "deferredPromptTokens": 3100,
+      "expectedPromotionCount": 2,
+      "expectedWarmCacheHits": 1,
+      "maxWrongToolCalls": 0,
+      "maxUnknownToolCalls": 0,
+      "maxCallsBeforePromotion": 0
+    }
+  },
+  "constraints": [
+    "score token savings against a 100+ hidden-capability enterprise catalog",
+    "checkout failure correlated with deployment is the correctness target for live provider variants"
+  ]
 }

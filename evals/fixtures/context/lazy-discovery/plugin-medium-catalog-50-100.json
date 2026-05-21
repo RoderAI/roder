@@ -2,24 +2,36 @@
   "id": "plugin-medium-catalog-50-100",
   "title": "Deferred discovery with 76 hidden plugin and skill capabilities",
   "tags": ["lazy-discovery", "plugins", "skills", "bucket:50-100"],
-  "hiddenDeferredCapabilities": 76,
-  "catalogShape": {
-    "internalTools": 8,
-    "mcpTools": 30,
-    "skills": 18,
-    "plugins": 20
-  },
   "prompt": "Use the frontend design-system workflow to update a component plan, but do not load backend deployment, billing, or Sentry playbooks.",
-  "compactIndexContains": ["skill.design-system-frontend", "plugin.ui-workflows"],
-  "expectedDiscoveryQuery": "frontend design system workflow component plan",
-  "expectedPromotion": "skill.design-system-frontend",
-  "expectedToolCall": "discovery.promote",
-  "expectedAnswerContains": "design-system component plan",
-  "metrics": {
-    "baselineSchemaTokens": 17200,
-    "deferredPromptTokens": 1600,
-    "expectedPromotionCount": 1,
-    "expectedWarmCacheHits": 0,
-    "maxWrongToolCalls": 0
-  }
+  "timeoutMs": 10000,
+  "expected": {
+    "finalAnswerContains": ["hello from roder"],
+    "verificationRequired": false
+  },
+  "lazyDiscovery": {
+    "hiddenDeferredCapabilities": 76,
+    "catalogShape": {
+      "internalTools": 8,
+      "mcpTools": 30,
+      "skills": 18,
+      "plugins": 20
+    },
+    "compactIndexContains": ["skill.design-system-frontend", "plugin.ui-workflows"],
+    "expectedDiscoveryQuery": "frontend design system workflow component plan",
+    "expectedPromotion": "skill.design-system-frontend",
+    "expectedToolCall": "discovery.promote",
+    "metrics": {
+      "baselineSchemaTokens": 17200,
+      "deferredPromptTokens": 1600,
+      "expectedPromotionCount": 1,
+      "expectedWarmCacheHits": 0,
+      "maxWrongToolCalls": 0,
+      "maxUnknownToolCalls": 0,
+      "maxCallsBeforePromotion": 0
+    }
+  },
+  "constraints": [
+    "score token savings against a 50-100 hidden-capability plugin and skill catalog",
+    "design-system component plan is the correctness target for live provider variants"
+  ]
 }

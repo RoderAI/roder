@@ -18,6 +18,7 @@ use tokio::sync::broadcast;
 use tokio::time::{Duration, timeout};
 
 mod baseline;
+mod lazy_discovery;
 mod reliability;
 mod report;
 #[cfg(test)]
@@ -34,6 +35,7 @@ pub use report::{
     read_eval_report, write_eval_report_files,
 };
 
+use lazy_discovery::lazy_discovery_metrics;
 use reliability::fixture_reliability_injection;
 use report::{eval_metrics, trajectory_excerpt};
 use workspace::{
@@ -368,6 +370,8 @@ async fn run_offline_fixture(
     }
     let trajectory = EvalTrajectory::from_events(thread_id.clone(), turn_id.clone(), &events);
     let trace_excerpt = trajectory_excerpt(&trajectory);
+    let mut metrics = eval_metrics(&events, start.elapsed().as_millis(), &outcome);
+    metrics.extend(lazy_discovery_metrics(fixture, &events, &outcome));
     let report = EvalReport {
         run: EvalRun {
             suite_id: suite_id.to_string(),
@@ -387,7 +391,7 @@ async fn run_offline_fixture(
         outcome: outcome.clone(),
         failure_class: failure_class.clone(),
         trajectory,
-        metrics: eval_metrics(&events, start.elapsed().as_millis(), &outcome),
+        metrics,
     };
     Ok(EvalFixtureResult {
         fixture_id: fixture.id.clone(),
