@@ -264,6 +264,8 @@ impl Runtime {
             .await;
         self.emit_hunk_records(&result).await;
         self.emit_media_artifacts(thread_id, turn_id, &result).await;
+        self.emit_task_ledger_update(thread_id, turn_id, &result)
+            .await;
         let raw_text = result.text;
         let original_line_count = raw_text.lines().count() as u64;
         let original_char_count = raw_text.chars().count() as u64;
@@ -419,6 +421,30 @@ impl Runtime {
             ))
             .await;
         }
+    }
+
+    async fn emit_task_ledger_update(
+        &self,
+        thread_id: &ThreadId,
+        turn_id: &TurnId,
+        result: &ToolResult,
+    ) {
+        let Some(value) = result.data.get("taskLedger") else {
+            return;
+        };
+        let Ok(snapshot) =
+            serde_json::from_value::<roder_api::task_ledger::TaskLedgerSnapshot>(value.clone())
+        else {
+            return;
+        };
+        self.emit(RoderEvent::TaskLedgerUpdated(TaskLedgerUpdated {
+            thread_id: thread_id.clone(),
+            turn_id: turn_id.clone(),
+            completed_count: snapshot.completed_count() as u64,
+            tasks: snapshot.tasks,
+            timestamp: OffsetDateTime::now_utc(),
+        }))
+        .await;
     }
 
     async fn request_tool_approval(
