@@ -1,3 +1,4 @@
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use roder_api::events::RoderEvent;
@@ -165,5 +166,38 @@ fn eval_report_markdown(report: &EvalSuiteReport) -> String {
             ));
         }
     }
+    let groups = failure_groups(report);
+    if !groups.is_empty() {
+        text.push_str("\n## Failure Groups\n\n| Tool | Model | Failure class | Count |\n| --- | --- | --- | --- |\n");
+        for ((tool, model, class), count) in groups {
+            text.push_str(&format!("| `{tool}` | `{model}` | `{class}` | {count} |\n"));
+        }
+    }
     text
+}
+
+fn failure_groups(report: &EvalSuiteReport) -> BTreeMap<(String, String, String), usize> {
+    let mut groups = BTreeMap::new();
+    for result in &report.results {
+        if result.report.outcome == EvalOutcome::Pass {
+            continue;
+        }
+        let tool = result
+            .report
+            .run
+            .tags
+            .iter()
+            .find_map(|tag| tag.strip_prefix("tool:"))
+            .unwrap_or("unknown")
+            .to_string();
+        let model = format!("{}/{}", result.report.run.provider, result.report.run.model);
+        let class = result
+            .report
+            .failure_class
+            .as_ref()
+            .map(|class| format!("{class:?}"))
+            .unwrap_or_else(|| "Unknown".to_string());
+        *groups.entry((tool, model, class)).or_insert(0) += 1;
+    }
+    groups
 }

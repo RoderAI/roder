@@ -1,0 +1,12 @@
+{
+  "id": "task-ledger",
+  "title": "Task ledger compliance",
+  "prompt": "Track subtasks explicitly and finish only after the ledger is complete.",
+  "tags": ["micro", "task-ledger", "tool:update_plan"],
+  "timeoutMs": 10000,
+  "expected": {
+    "finalAnswerContains": ["hello from roder"],
+    "verificationRequired": true
+  },
+  "constraints": ["task ledger must not be skipped"]
+}
