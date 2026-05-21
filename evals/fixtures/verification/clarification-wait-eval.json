@@ -1,0 +1,15 @@
+{
+  "id": "clarification-wait-eval",
+  "title": "Eval profile rejects clarification waits",
+  "prompt": "FAKE_REQUEST_USER_INPUT: ask for clarification before making progress.",
+  "tags": ["verification", "runtime-profile", "failure:clarification-wait"],
+  "timeoutMs": 10000,
+  "expected": {
+    "finalAnswerContains": ["hello from roder"],
+    "verificationRequired": false
+  },
+  "constraints": [
+    "eval profile must not wait indefinitely for user input",
+    "request_user_input returns a model-visible unavailable result"
+  ]
+}

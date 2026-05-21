@@ -12,7 +12,7 @@ mod tui_config;
 use evals::run_eval_cli;
 use marketplace::{run_marketplace_cli, run_plugin_cli, run_setup_cli};
 use roder_api::catalog::{DEFAULT_MODEL_ID, PROVIDER_MOCK, normalize_provider_id};
-use roder_api::inference::HostedWebSearchConfig;
+use roder_api::inference::{HostedWebSearchConfig, RuntimeProfile};
 use roder_api::notifications::NotificationKind;
 use roder_api::policy_mode::PolicyMode;
 use roder_api::remote_runner::{RunnerDestination, RunnerManifest};
@@ -695,6 +695,7 @@ pub(crate) fn decode_response<T: serde::de::DeserializeOwned>(
 #[derive(Debug, Clone, Default)]
 pub(crate) struct CliOptions {
     policy_mode: Option<PolicyMode>,
+    runtime_profile: Option<RuntimeProfile>,
     team_display: Option<roder_api::teams::AgentTeamDisplayMode>,
     startup: TuiStartup,
 }
@@ -717,6 +718,7 @@ pub(crate) async fn build_runtime_from_config(
     let keys = provider_keys(&cfg);
     let web_search = resolve_web_search_config(cfg.web_search.as_ref())?;
     let policy_mode = resolve_policy_mode(&options, &cfg)?;
+    let runtime_profile = resolve_runtime_profile(&options, &cfg)?;
     let custom_inference_provider_configs = custom_inference_providers(&cfg);
     let (default_provider, configured_model) = resolve_provider_model(cfg.provider, cfg.model);
     let default_model = configured_model.clone().unwrap_or_else(|| {
@@ -796,6 +798,7 @@ pub(crate) async fn build_runtime_from_config(
             model_parallel_tool_calls,
             workspace: workspace.map(|p| p.display().to_string()),
             policy_mode,
+            runtime_profile,
             remote_runner_destination,
             team_data_dir: None,
             roadmap_data_dir: None,
@@ -992,6 +995,16 @@ fn parse_cli_options(args: &[String]) -> anyhow::Result<CliOptions> {
             }
             arg if arg.starts_with("--mode=") => {
                 options.policy_mode = Some(parse_policy_mode(&arg["--mode=".len()..])?);
+            }
+            "--profile" => {
+                let Some(profile) = args.get(i + 1) else {
+                    anyhow::bail!("--profile requires a value");
+                };
+                options.runtime_profile = Some(parse_runtime_profile(profile)?);
+                i += 1;
+            }
+            arg if arg.starts_with("--profile=") => {
+                options.runtime_profile = Some(parse_runtime_profile(&arg["--profile=".len()..])?);
             }
             "--team-display" => {
                 let Some(mode) = args.get(i + 1) else {
@@ -1256,6 +1269,10 @@ fn parse_policy_mode(mode: &str) -> anyhow::Result<PolicyMode> {
     }
 }
 
+fn parse_runtime_profile(profile: &str) -> anyhow::Result<RuntimeProfile> {
+    profile.parse()
+}
+
 fn parse_team_display_mode(mode: &str) -> anyhow::Result<roder_api::teams::AgentTeamDisplayMode> {
     match mode.trim().to_ascii_lowercase().as_str() {
         "auto" => Ok(roder_api::teams::AgentTeamDisplayMode::Auto),
@@ -1283,6 +1300,20 @@ fn resolve_policy_mode(
         .map(parse_policy_mode)
         .transpose()
         .map(|mode| mode.unwrap_or_default())
+}
+
+fn resolve_runtime_profile(
+    options: &CliOptions,
+    cfg: &roder_config::Config,
+) -> anyhow::Result<RuntimeProfile> {
+    if let Some(profile) = options.runtime_profile {
+        return Ok(profile);
+    }
+    cfg.runtime_profile
+        .as_deref()
+        .map(parse_runtime_profile)
+        .transpose()
+        .map(|profile| profile.unwrap_or_default())
 }
 
 async fn resolve_subagents_config(
@@ -1915,6 +1946,19 @@ mod tests {
     }
 
     #[test]
+    fn parses_runtime_profile_cli_flags() {
+        let options =
+            parse_cli_options(&["--profile".to_string(), "non-interactive".to_string()]).unwrap();
+        assert_eq!(
+            options.runtime_profile,
+            Some(RuntimeProfile::NonInteractive)
+        );
+
+        let options = parse_cli_options(&["--profile=eval".to_string()]).unwrap();
+        assert_eq!(options.runtime_profile, Some(RuntimeProfile::Eval));
+    }
+
+    #[test]
     fn parses_team_display_cli_flags() {
         let options =
             parse_cli_options(&["--team-display".to_string(), "in-process".to_string()]).unwrap();
@@ -2002,6 +2046,25 @@ mod tests {
 
         let err = resolve_policy_mode(&CliOptions::default(), &cfg).unwrap_err();
         assert!(err.to_string().contains("unsupported policy mode"));
+    }
+
+    #[test]
+    fn config_runtime_profile_is_validated() {
+        let cfg = roder_config::Config {
+            runtime_profile: Some("eval".to_string()),
+            ..roder_config::Config::default()
+        };
+        assert_eq!(
+            resolve_runtime_profile(&CliOptions::default(), &cfg).unwrap(),
+            RuntimeProfile::Eval
+        );
+
+        let cfg = roder_config::Config {
+            runtime_profile: Some("waiting-room".to_string()),
+            ..roder_config::Config::default()
+        };
+        let err = resolve_runtime_profile(&CliOptions::default(), &cfg).unwrap_err();
+        assert!(err.to_string().contains("unsupported runtime profile"));
     }
 
     #[test]

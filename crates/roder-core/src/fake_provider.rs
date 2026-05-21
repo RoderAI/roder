@@ -1,5 +1,6 @@
 use futures::stream;
 use roder_api::catalog::{PROVIDER_MOCK, models_for_provider};
+use roder_api::conversation::ConversationItem;
 use roder_api::extension::InferenceEngineId;
 use roder_api::inference::*;
 
@@ -25,8 +26,35 @@ impl InferenceEngine for FakeInferenceEngine {
     async fn stream_turn(
         &self,
         _ctx: InferenceTurnContext<'_>,
-        _request: AgentInferenceRequest,
+        request: AgentInferenceRequest,
     ) -> anyhow::Result<InferenceEventStream> {
+        if should_request_user_input(&request) {
+            let stream = stream::iter(vec![Ok(InferenceEvent::ToolCallCompleted(
+                ToolCallCompleted {
+                    id: "fake-user-input".to_string(),
+                    name: "request_user_input".to_string(),
+                    arguments: serde_json::json!({
+                        "questions": [{
+                            "header": "Choice",
+                            "id": "choice",
+                            "question": "Which option should be used?",
+                            "options": [
+                                { "label": "A", "description": "Use option A." },
+                                { "label": "B", "description": "Use option B." }
+                            ]
+                        }]
+                    })
+                    .to_string(),
+                },
+            ))]);
+            return Ok(Box::pin(stream));
+        }
+        if user_input_unavailable(&request) {
+            let stream = stream::iter(vec![Ok(InferenceEvent::Failed(InferenceFailure {
+                message: "clarification unavailable in non-interactive runtime profile".to_string(),
+            }))]);
+            return Ok(Box::pin(stream));
+        }
         let stream = stream::iter(vec![
             Ok(InferenceEvent::MessageDelta(MessageDelta {
                 text: "hello".to_string(),
@@ -48,4 +76,32 @@ impl InferenceEngine for FakeInferenceEngine {
 
         Ok(Box::pin(stream))
     }
+}
+
+fn should_request_user_input(request: &AgentInferenceRequest) -> bool {
+    request.conversation.iter().any(|item| {
+        matches!(
+            item,
+            ConversationItem::UserMessage(message)
+                if message.text.contains("FAKE_REQUEST_USER_INPUT")
+        )
+    }) && !request.conversation.iter().any(|item| {
+        matches!(
+            item,
+            ConversationItem::ToolResult(result)
+                if result.name.as_deref() == Some("request_user_input")
+        )
+    })
+}
+
+fn user_input_unavailable(request: &AgentInferenceRequest) -> bool {
+    request.conversation.iter().any(|item| {
+        matches!(
+            item,
+            ConversationItem::ToolResult(result)
+                if result.name.as_deref() == Some("request_user_input")
+                    && result.is_error
+                    && result.result.contains("User input is unavailable")
+        )
+    })
 }

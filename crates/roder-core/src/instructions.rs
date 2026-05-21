@@ -1,4 +1,4 @@
-use roder_api::inference::InstructionBundle;
+use roder_api::inference::{InstructionBundle, RuntimeProfile};
 
 pub const RODER_INSTRUCTIONS: &str = r#"You are Roder, a Rust-native coding agent running inside a terminal TUI on a user's computer.
 
@@ -46,4 +46,28 @@ pub fn default_instructions() -> InstructionBundle {
         system: Some(RODER_INSTRUCTIONS.to_string()),
         developer: None,
     }
+}
+
+const NON_INTERACTIVE_INSTRUCTIONS: &str = r#"## Runtime Profile
+
+This turn is running in a non-interactive profile. Do not wait for unavailable user clarification. Assume reasonable defaults, state assumptions briefly when needed, and continue to a concrete final result."#;
+
+const EVAL_INSTRUCTIONS: &str = r#"## Eval Runtime Profile
+
+This turn is running in eval mode. Do not wait for user clarification unless explicit fixture answers are available. Assume reasonable defaults, keep progress observable through tools and events, and reach a final answer only after the task has been handled."#;
+
+pub fn apply_runtime_profile(
+    mut instructions: InstructionBundle,
+    profile: RuntimeProfile,
+) -> InstructionBundle {
+    let addition = match profile {
+        RuntimeProfile::Interactive => return instructions,
+        RuntimeProfile::NonInteractive => NON_INTERACTIVE_INSTRUCTIONS,
+        RuntimeProfile::Eval => EVAL_INSTRUCTIONS,
+    };
+    instructions.developer = Some(match instructions.developer {
+        Some(existing) if !existing.trim().is_empty() => format!("{existing}\n\n{addition}"),
+        _ => addition.to_string(),
+    });
+    instructions
 }
