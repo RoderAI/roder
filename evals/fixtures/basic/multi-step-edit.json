@@ -1,0 +1,33 @@
+{
+  "id": "multi-step-edit",
+  "title": "Fake provider multi-step edit fixture",
+  "prompt": "Review the workspace, make the requested edit if needed, and report verification.",
+  "tags": ["fake-provider", "multi-step-edit"],
+  "workspace": {
+    "files": [
+      {
+        "path": "src/config.txt",
+        "contents": "status=ready\n"
+      }
+    ]
+  },
+  "timeoutMs": 10000,
+  "expected": {
+    "finalAnswerContains": ["hello from roder"],
+    "files": [
+      {
+        "path": "src/config.txt",
+        "exists": true,
+        "contains": ["status=ready"]
+      }
+    ],
+    "commandChecks": [
+      {
+        "command": "test -f src/config.txt && grep -q 'status=ready' src/config.txt",
+        "expectedExitCode": 0
+      }
+    ],
+    "verificationRequired": true
+  },
+  "constraints": ["offline fake provider fixture"]
+}

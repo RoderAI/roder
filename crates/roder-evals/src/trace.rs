@@ -174,6 +174,17 @@ impl EvalTrajectoryEvent {
                 event.is_error = e.is_error;
                 Some(event)
             }
+            RoderEvent::TurnCompleted(e) => Some(Self::basic(
+                "turn_completed",
+                &e.thread_id,
+                &e.turn_id,
+                e.timestamp,
+            )),
+            RoderEvent::TurnFailed(e) => {
+                let mut event = Self::basic("turn_failed", &e.thread_id, &e.turn_id, e.timestamp);
+                event.is_error = true;
+                Some(event)
+            }
             _ => None,
         }
     }
