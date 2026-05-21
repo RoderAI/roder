@@ -1,6 +1,7 @@
 pub mod artifacts;
 pub mod capabilities;
 pub mod catalog;
+pub mod code_index;
 pub mod context;
 pub mod conversation;
 pub mod distribution;
@@ -32,6 +33,7 @@ pub mod workflow;
 pub use artifacts::*;
 pub use capabilities::*;
 pub use catalog::*;
+pub use code_index::*;
 pub use context::*;
 pub use conversation::*;
 pub use distribution::*;

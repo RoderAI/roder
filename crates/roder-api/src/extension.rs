@@ -44,6 +44,7 @@ pub enum ProvidedService {
     RemoteRunnerProvider(crate::remote_runner::RemoteRunnerProviderId),
     StatusSegment(crate::tui_status::StatusSegmentId),
     PaletteSource(crate::tui_status::PaletteSourceId),
+    CodeIndexProvider(crate::code_index::CodeIndexProviderId),
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -84,6 +85,7 @@ pub struct ExtensionRegistry {
     pub remote_runner_providers: Vec<Arc<dyn crate::remote_runner::RemoteRunnerProvider>>,
     pub status_segments: Vec<crate::tui_status::StatusSegment>,
     pub palette_sources: Vec<crate::tui_status::PaletteSourceDescriptor>,
+    pub code_index_providers: Vec<Arc<dyn crate::code_index::CodeIndexProvider>>,
 }
 
 impl ExtensionRegistry {
@@ -144,6 +146,7 @@ pub struct ExtensionRegistryBuilder {
     pub remote_runner_providers: Vec<Arc<dyn crate::remote_runner::RemoteRunnerProvider>>,
     pub status_segments: Vec<crate::tui_status::StatusSegment>,
     pub palette_sources: Vec<crate::tui_status::PaletteSourceDescriptor>,
+    pub code_index_providers: Vec<Arc<dyn crate::code_index::CodeIndexProvider>>,
 }
 
 impl Default for ExtensionRegistryBuilder {
@@ -175,6 +178,7 @@ impl ExtensionRegistryBuilder {
             remote_runner_providers: Vec::new(),
             status_segments: Vec::new(),
             palette_sources: Vec::new(),
+            code_index_providers: Vec::new(),
         }
     }
 
@@ -214,6 +218,7 @@ impl ExtensionRegistryBuilder {
             remote_runner_providers: self.remote_runner_providers,
             status_segments: self.status_segments,
             palette_sources: self.palette_sources,
+            code_index_providers: self.code_index_providers,
         })
     }
 
@@ -313,6 +318,10 @@ impl ExtensionRegistryBuilder {
 
     pub fn palette_source(&mut self, source: crate::tui_status::PaletteSourceDescriptor) {
         self.palette_sources.push(source);
+    }
+
+    pub fn code_index_provider(&mut self, provider: Arc<dyn crate::code_index::CodeIndexProvider>) {
+        self.code_index_providers.push(provider);
     }
 
     fn validate(&self) -> anyhow::Result<RegistryValidation> {
@@ -523,6 +532,12 @@ fn actual_services(builder: &ExtensionRegistryBuilder) -> anyhow::Result<Vec<Pro
             .iter()
             .map(|service| ProvidedService::PaletteSource(service.id.clone())),
     );
+    services.extend(
+        builder
+            .code_index_providers
+            .iter()
+            .map(|service| ProvidedService::CodeIndexProvider(service.id())),
+    );
     Ok(services)
 }
 
@@ -604,6 +619,7 @@ fn service_label(service: &ProvidedService) -> String {
         ProvidedService::RemoteRunnerProvider(id) => format!("RemoteRunnerProvider({id})"),
         ProvidedService::StatusSegment(id) => format!("StatusSegment({id})"),
         ProvidedService::PaletteSource(id) => format!("PaletteSource({id})"),
+        ProvidedService::CodeIndexProvider(id) => format!("CodeIndexProvider({id})"),
     }
 }
 
@@ -643,6 +659,21 @@ mod tests {
 
         let decoded = serde_json::from_value::<ProvidedService>(encoded)
             .expect("deserialize task executor service");
+        assert_eq!(decoded, service);
+    }
+
+    #[test]
+    fn provided_service_code_index_provider_round_trips_json() {
+        let service = ProvidedService::CodeIndexProvider("local-code-index".to_string());
+        let encoded =
+            serde_json::to_value(&service).expect("serialize code index provider service");
+        assert_eq!(
+            encoded,
+            serde_json::json!({ "CodeIndexProvider": "local-code-index" })
+        );
+
+        let decoded = serde_json::from_value::<ProvidedService>(encoded)
+            .expect("deserialize code index provider service");
         assert_eq!(decoded, service);
     }
 
