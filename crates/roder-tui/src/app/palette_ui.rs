@@ -4,6 +4,7 @@ use crate::palette::{
     PaletteAction, collect_entries, cycle_source_filter,
     index::{PaletteMatch, search as search_palette},
     render::palette_list,
+    skills::skill_source,
     sources::{
         agent_source, command_source, marketplace_source, media_source, memories_source,
         mode_source, model_source, remote_source, runner_source, session_source, settings_source,
@@ -84,6 +85,13 @@ impl TuiApp {
                 None
             }
         };
+        let skills = match self.skills_list().await {
+            Ok(skills) => Some(skills),
+            Err(err) => {
+                self.push_event(format!("skills/list unavailable: {err}"));
+                None
+            }
+        };
 
         let mut sources = Vec::new();
         if self.palette_source_enabled("commands") {
@@ -124,6 +132,11 @@ impl TuiApp {
             && let Some(marketplaces) = marketplaces.as_ref()
         {
             sources.push(marketplace_source(&marketplaces.marketplaces));
+        }
+        if self.palette_source_enabled("skills")
+            && let Some(skills) = skills.as_ref()
+        {
+            sources.push(skill_source(&skills.skills));
         }
         if self.palette_source_enabled("media") {
             sources.push(media_source());
@@ -276,6 +289,12 @@ impl TuiApp {
             }
             PaletteAction::SetSearchIndexEnabled(enabled) => {
                 self.set_search_index_enabled(enabled).await;
+            }
+            PaletteAction::SetSkillEnabled { selector, enabled } => {
+                self.set_skill_enabled(selector, enabled).await;
+            }
+            PaletteAction::SetSkillExposure { selector, exposure } => {
+                self.set_skill_exposure(selector, exposure).await;
             }
             PaletteAction::SelectRunner {
                 destination_id,

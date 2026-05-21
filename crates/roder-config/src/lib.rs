@@ -33,6 +33,7 @@ pub struct Config {
     #[serde(default)]
     pub embedding_providers: HashMap<String, EmbeddingProviderConfig>,
     pub agent_teams: Option<AgentTeamsConfig>,
+    pub skills: Option<roder_skills::SkillsConfig>,
     #[serde(default)]
     pub providers: HashMap<String, ProviderConfig>,
     #[serde(default)]
@@ -562,6 +563,10 @@ pub fn save_provider_api_key(provider: &str, api_key: &str) -> anyhow::Result<()
     save_provider_api_key_to_path(config_path(), provider, api_key)
 }
 
+pub fn save_skills_config(skills: &roder_skills::SkillsConfig) -> anyhow::Result<()> {
+    save_skills_config_to_path(config_path(), skills)
+}
+
 pub fn save_default_provider_model_to_path(
     path: impl AsRef<Path>,
     provider: &str,
@@ -655,6 +660,49 @@ pub fn save_provider_api_key_to_path(
         .or_default()
         .api_key = Some(api_key.to_string());
     save_config_file_to_path(path, &config)
+}
+
+pub fn save_skills_config_to_path(
+    path: impl AsRef<Path>,
+    skills: &roder_skills::SkillsConfig,
+) -> anyhow::Result<()> {
+    let path = path.as_ref();
+    let mut config = load_config_file_from_path(path)?;
+    config.skills = Some(skills.clone());
+    save_config_file_to_path(path, &config)
+}
+
+pub fn build_skills_registry(
+    workspace: impl AsRef<Path>,
+    skills: Option<&roder_skills::SkillsConfig>,
+) -> roder_skills::SkillRegistry {
+    let workspace = workspace.as_ref();
+    let mut options = roder_skills::SkillRegistryOptions::new(workspace);
+    options.config_rules = skills
+        .map(|skills| skills.config.clone())
+        .unwrap_or_default();
+    options.roots.push(roder_skills::SkillRoot::workspace(
+        workspace.join(".agents/skills"),
+        "workspace://.agents/skills",
+    ));
+    if let Some(home) = dirs::home_dir() {
+        options.roots.push(roder_skills::SkillRoot::user(
+            home.join(".codex/skills"),
+            "user://.codex/skills",
+        ));
+    }
+    if let Ok(store) = marketplaces::load_marketplace_store() {
+        for plugin in store.installed_plugins.iter().filter(|plugin| {
+            plugin.state == roder_api::marketplace::MarketplaceInstallState::Installed
+        }) {
+            options.roots.push(roder_skills::SkillRoot::plugin(
+                plugin.variant_key.clone(),
+                PathBuf::from(&plugin.install_path).join("skills"),
+                format!("plugin://{}/skills", plugin.variant_key),
+            ));
+        }
+    }
+    roder_skills::SkillRegistry::load(options)
 }
 
 fn load_config_file() -> anyhow::Result<Config> {
@@ -939,6 +987,7 @@ mod tests {
             memories: None,
             embedding_providers: HashMap::new(),
             agent_teams: None,
+            skills: None,
             providers: HashMap::new(),
             models: HashMap::new(),
             model_profiles: HashMap::new(),
@@ -1672,6 +1721,32 @@ mod tests {
                 .and_then(|provider| provider.api_key.as_deref()),
             Some("sk-test")
         );
+        let _ = fs::remove_file(&path);
+    }
+
+    #[test]
+    fn save_skills_config_creates_canonical_skills_table() {
+        let path =
+            std::env::temp_dir().join(format!("roder-config-skills-{}.toml", std::process::id()));
+        let _ = fs::remove_file(&path);
+        let mut skills = roder_skills::SkillsConfig::default();
+        skills.upsert_rule(
+            roder_api::skills::SkillSelector::Name {
+                name: "commit".to_string(),
+            },
+            |rule| {
+                rule.set_enabled(false);
+                rule.set_exposure(roder_api::skills::SkillExposure::Global);
+            },
+        );
+
+        save_skills_config_to_path(&path, &skills).unwrap();
+
+        let saved_text = fs::read_to_string(&path).unwrap();
+        assert!(saved_text.contains("[[skills.config]]"));
+        assert!(saved_text.contains("name = \"commit\""));
+        let config = load_config_file_from_path(&path).unwrap();
+        assert_eq!(config.skills.unwrap(), skills);
         let _ = fs::remove_file(&path);
     }
 }

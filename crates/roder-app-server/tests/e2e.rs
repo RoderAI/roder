@@ -23,6 +23,7 @@ use roder_api::retrieval::{
     RetrievalRouteAccepted, RetrievalRouteIgnored, RetrievalRoutePlan, RetrievalRoutePlanned,
 };
 use roder_api::session::{SessionMetadata, SessionStore, SessionStoreFactory, ThreadSnapshot};
+use roder_api::skills::{SkillActivationState, SkillExposure, SkillSelector};
 use roder_api::subagents::{SubagentDefinition, SubagentPermissionMode};
 use roder_api::tasks::TaskState;
 use roder_app_server::remote::{
@@ -83,6 +84,7 @@ use roder_protocol::{
     SettingsSetDefaultModeResult, SettingsSetFileBackedDynamicContextParams,
     SettingsSetFileBackedDynamicContextResult, SettingsSetSearchIndexParams,
     SettingsSetSearchIndexResult, SettingsSetWebSearchParams, SettingsSetWebSearchResult,
+    SkillsListResult, SkillsSetEnabledParams, SkillsSetExposureParams, SkillsUpdateResult,
     SubagentTraceReadParams, SubagentTraceReadResult, SubagentTracesListParams,
     SubagentTracesListResult, TasksGetParams, TasksGetResult, TasksListResult, TasksSubmitParams,
     TasksSubmitResult, TeamCleanupParams, TeamCleanupResult, TeamListParams, TeamListResult,
@@ -114,6 +116,7 @@ struct TaskCallingEngine {
 
 static SEARCH_INDEX_TEST_LOCK: LazyLock<Mutex<()>> = LazyLock::new(|| Mutex::new(()));
 static DISCOVERY_TEST_LOCK: LazyLock<Mutex<()>> = LazyLock::new(|| Mutex::new(()));
+static SKILLS_TEST_LOCK: LazyLock<Mutex<()>> = LazyLock::new(|| Mutex::new(()));
 
 struct PendingEngine;
 
@@ -3813,6 +3816,114 @@ async fn commands_list_expand_and_skills_are_deterministic() {
     assert!(commit.context_blocks.iter().any(|block| {
         block.text.starts_with("<skill name=\"commit\"") && block.text.contains("git status")
     }));
+}
+
+#[tokio::test]
+async fn skills_manager_can_disable_commit_and_update_exposure() {
+    let _guard = SKILLS_TEST_LOCK.lock().await;
+    let root =
+        std::env::temp_dir().join(format!("roder-skills-manager-e2e-{}", uuid::Uuid::new_v4()));
+    let home = root.join("home");
+    let workspace = root.join("workspace");
+    std::fs::create_dir_all(&home).unwrap();
+    std::fs::create_dir_all(&workspace).unwrap();
+    let previous_home = std::env::var_os("HOME");
+    let previous_marketplaces_path = std::env::var_os("RODER_MARKETPLACES_PATH");
+    unsafe {
+        std::env::set_var("HOME", &home);
+        std::env::set_var("RODER_MARKETPLACES_PATH", root.join("marketplaces.json"));
+    }
+
+    let runtime = Arc::new(Runtime::fake().unwrap());
+    runtime
+        .set_skills(roder_config::build_skills_registry(&workspace, None))
+        .await;
+    let server = Arc::new(AppServer::new(runtime));
+    let client = LocalAppClient::new(server);
+
+    let listed: SkillsListResult = request(&client, "skills/list", None).await;
+    let commit = listed
+        .skills
+        .iter()
+        .find(|skill| skill.name == "commit")
+        .expect("missing built-in commit skill");
+    assert_eq!(commit.exposure, SkillExposure::DirectOnly);
+
+    let updated: SkillsUpdateResult = request(
+        &client,
+        "skills/setExposure",
+        Some(
+            serde_json::to_value(SkillsSetExposureParams {
+                selector: SkillSelector::Name {
+                    name: "commit".to_string(),
+                },
+                exposure: SkillExposure::Global,
+            })
+            .unwrap(),
+        ),
+    )
+    .await;
+    assert_eq!(
+        updated
+            .skills
+            .iter()
+            .find(|skill| skill.name == "commit")
+            .unwrap()
+            .exposure,
+        SkillExposure::Global
+    );
+
+    let updated: SkillsUpdateResult = request(
+        &client,
+        "skills/setEnabled",
+        Some(
+            serde_json::to_value(SkillsSetEnabledParams {
+                selector: SkillSelector::Name {
+                    name: "commit".to_string(),
+                },
+                enabled: false,
+            })
+            .unwrap(),
+        ),
+    )
+    .await;
+    assert_eq!(
+        updated
+            .skills
+            .iter()
+            .find(|skill| skill.name == "commit")
+            .unwrap()
+            .activation,
+        SkillActivationState::Disabled
+    );
+
+    let error = request_error(
+        &client,
+        "commands/expand",
+        Some(
+            serde_json::to_value(CommandsExpandParams {
+                name: "commit".to_string(),
+                arguments: String::new(),
+                workspace: Some(workspace.display().to_string()),
+            })
+            .unwrap(),
+        ),
+    )
+    .await;
+    assert!(error.message.contains("disabled"));
+    unsafe {
+        if let Some(value) = previous_home {
+            std::env::set_var("HOME", value);
+        } else {
+            std::env::remove_var("HOME");
+        }
+        if let Some(value) = previous_marketplaces_path {
+            std::env::set_var("RODER_MARKETPLACES_PATH", value);
+        } else {
+            std::env::remove_var("RODER_MARKETPLACES_PATH");
+        }
+    }
+    let _ = std::fs::remove_dir_all(root);
 }
 
 #[tokio::test]

@@ -32,6 +32,7 @@ roder-extension-host.workspace = true
 roder-protocol.workspace = true
 roder-roadmap.workspace = true
 roder-search.workspace = true
+roder-skills.workspace = true
 roder-supergrok-auth.workspace = true
 roder-tasks.workspace = true
 serde = { workspace = true, features = ["derive"] }

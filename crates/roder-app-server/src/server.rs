@@ -121,6 +121,10 @@ impl AppServer {
         self
     }
 
+    pub(crate) fn persist_user_config_enabled(&self) -> bool {
+        self.persist_user_config
+    }
+
     pub async fn handle_request(&self, req: JsonRpcRequest) -> JsonRpcResponse {
         let result = match req.method.as_str() {
             "initialize" => self.handle_initialize().await,
@@ -518,6 +522,26 @@ impl AppServer {
             }
             "tasks/subscribe" => self.handle_tasks_subscribe().await,
             "commands/list" => self.handle_commands_list().await,
+            "skills/list" => self.handle_skills_list().await,
+            "skills/read" => {
+                self.decode_and(
+                    req.params,
+                    |p| async move { self.handle_skills_read(p).await },
+                )
+                .await
+            }
+            "skills/setEnabled" => {
+                self.decode_and(req.params, |p| async move {
+                    self.handle_skills_set_enabled(p).await
+                })
+                .await
+            }
+            "skills/setExposure" => {
+                self.decode_and(req.params, |p| async move {
+                    self.handle_skills_set_exposure(p).await
+                })
+                .await
+            }
             "eval/reports/list" => {
                 self.decode_and(req.params, |p| async move {
                     crate::evals::handle_eval_reports_list(&self.runtime.workspace(), p)

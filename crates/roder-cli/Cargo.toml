@@ -30,6 +30,7 @@ roder-protocol.workspace = true
 roder-roadmap.workspace = true
 roder-supergrok-auth.workspace = true
 roder-search.workspace = true
+roder-skills.workspace = true
 roder-tui.workspace = true
 roder-tools.workspace = true
 roder-web-search.workspace = true
