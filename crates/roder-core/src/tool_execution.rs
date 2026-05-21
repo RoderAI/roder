@@ -1,3 +1,4 @@
+use roder_api::ToolSchemaPolicy;
 use roder_api::artifacts::{ContextArtifactKind, format_artifact_reference};
 use roder_api::conversation::{ToolResultRecord, tool_display_payload};
 use roder_api::events::*;
@@ -15,6 +16,9 @@ use crate::tool_output::{
     artifact_backed_tool_output, cap_tool_output_lines, should_spill_tool_output,
 };
 use crate::tool_preview::file_change_preview;
+use crate::tool_validation::{
+    emit_tool_validation_recorded, validate_tool_call_arguments, validation_error_tool_result,
+};
 
 impl Runtime {
     pub(crate) async fn route_tool_call(
@@ -36,6 +40,17 @@ impl Runtime {
         }))
         .await;
         let Some(executor) = self.tool_registry.get(&call.name) else {
+            emit_tool_validation_recorded(
+                self,
+                thread_id,
+                turn_id,
+                &call.id,
+                &call.name,
+                ToolCallValidationFailureClass::UnknownTool,
+                ToolCallValidationRepairStatus::NotNeeded,
+                "tool is not registered".to_string(),
+            )
+            .await;
             let item = ToolResultRecord {
                 id: call.id.clone(),
                 name: Some(call.name),
@@ -62,13 +77,49 @@ impl Runtime {
             .await;
             return Ok(item);
         };
+        let spec = executor
+            .spec()
+            .normalized_for_model(ToolSchemaPolicy::strict());
+        let arguments = match validate_tool_call_arguments(
+            &call.arguments,
+            &spec,
+            thread_id,
+            turn_id,
+            &call.id,
+            self,
+        )
+        .await
+        {
+            Ok(arguments) => arguments,
+            Err(error) => {
+                let item = validation_error_tool_result(&call.id, &call.name, &parsed_args, error);
+                self.persist_turn_item(
+                    thread_id,
+                    turn_id,
+                    &roder_api::conversation::ConversationItem::ToolResult(item.clone()),
+                )
+                .await?;
+                self.emit(RoderEvent::ToolCallCompleted(ToolCallCompleted {
+                    thread_id: thread_id.clone(),
+                    turn_id: turn_id.clone(),
+                    tool_id: call.id,
+                    tool_name: item.name.clone(),
+                    display_payload: item.display_payload.clone(),
+                    is_error: true,
+                    output: Some(item.result.clone()),
+                    timestamp: OffsetDateTime::now_utc(),
+                }))
+                .await;
+                return Ok(item);
+            }
+        };
         let mut runtime_config = self.status().await;
         let mode = self.effective_policy_mode_for_thread(thread_id).await;
         runtime_config.policy_mode = mode;
         let tool_call = ToolCall {
             id: call.id.clone(),
             name: call.name.clone(),
-            arguments: parsed_args.clone(),
+            arguments,
             raw_arguments: call.arguments,
             thread_id: thread_id.clone(),
             turn_id: turn_id.clone(),
