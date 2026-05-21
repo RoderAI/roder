@@ -26,7 +26,6 @@ async-trait.workspace = true
 notify-rust = { version = "4.11.7", optional = true }
 roder-api.workspace = true
 semver.workspace = true
-workspace-hack = { version = "0.1", path = "../../workspace-hack" }
 
 [dev-dependencies]
 serde_json.workspace = true

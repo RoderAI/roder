@@ -8,7 +8,6 @@ anyhow.workspace = true
 roder-api.workspace = true
 roder-ext-runner-hosted-common.workspace = true
 semver.workspace = true
-workspace-hack = { version = "0.1", path = "../../workspace-hack" }
 
 [dev-dependencies]
 tokio.workspace = true

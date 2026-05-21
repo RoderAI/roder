@@ -23,7 +23,6 @@ time.workspace = true
 tokio.workspace = true
 toml.workspace = true
 tui-textarea = { version = "0.11.0", package = "tui-textarea-2" }
-workspace-hack = { version = "0.1", path = "../../workspace-hack" }
 
 [dev-dependencies]
 roder-core.workspace = true

@@ -10,7 +10,7 @@ REASONING ?=
 LISTEN ?= stdio://
 VERSION ?=
 
-.PHONY: build install run app-server mock-run mock-app-server jaeger dev-deps test test-fast smoke release-brew clean hakari-update cargo-unlock
+.PHONY: build install run run-existing app-server mock-run mock-existing mock-app-server jaeger dev-deps test test-fast smoke release-brew clean cargo-unlock
 
 # Drop stale target locks when no cargo/rustc is using this repo (see `make cargo-unlock-help`).
 cargo-unlock:
@@ -51,10 +51,18 @@ install:
 run: build
 	cd "$(WORKSPACE)" && RODER_PROVIDER="$(PROVIDER)" RODER_MODEL="$(MODEL)" RODER_REASONING="$(REASONING)" "$(CURDIR)/$(BINARY)"
 
+run-existing:
+	@test -x "$(BINARY)" || { echo "$(BINARY) does not exist; run 'make build' once first" >&2; exit 1; }
+	cd "$(WORKSPACE)" && RODER_PROVIDER="$(PROVIDER)" RODER_MODEL="$(MODEL)" RODER_REASONING="$(REASONING)" "$(CURDIR)/$(BINARY)"
+
 app-server:
 	cd "$(WORKSPACE)" && RODER_PROVIDER="$(PROVIDER)" RODER_MODEL="$(MODEL)" RODER_REASONING="$(REASONING)" cargo run --manifest-path "$(CURDIR)/Cargo.toml" -p roder-cli --bin roder -- app-server --listen "$(LISTEN)"
 
 mock-run: build
+	cd "$(WORKSPACE)" && RODER_PROVIDER="mock" RODER_MODEL="$(MODEL)" RODER_REASONING="$(REASONING)" "$(CURDIR)/$(BINARY)"
+
+mock-existing:
+	@test -x "$(BINARY)" || { echo "$(BINARY) does not exist; run 'make build' once first" >&2; exit 1; }
 	cd "$(WORKSPACE)" && RODER_PROVIDER="mock" RODER_MODEL="$(MODEL)" RODER_REASONING="$(REASONING)" "$(CURDIR)/$(BINARY)"
 
 mock-app-server:
@@ -65,11 +73,6 @@ jaeger:
 
 dev-deps:
 	cargo install cargo-nextest --locked
-	cargo install cargo-hakari --locked
-
-hakari-update:
-	cargo hakari generate
-	cargo hakari manage-deps -y
 
 test-fast:
 	$(CARGO_TEST) $(TEST_FAST_ARGS)

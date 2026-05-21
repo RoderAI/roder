@@ -1,6 +1,5 @@
 [build]
 incremental = true
-rustc-wrapper = "sccache"
 
 [term]
 color = "auto"
