@@ -13,3 +13,12 @@ __pycache__/
 target/
 .target-roadmap-local/
 .claude/
+
+# SDK package artifacts
+sdk/typescript/dist/
+sdk/typescript/node_modules/
+sdk/typescript/*.tgz
+sdk/python/.venv/
+sdk/python/build/
+sdk/python/dist/
+sdk/python/src/*.egg-info/
