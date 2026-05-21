@@ -18,6 +18,7 @@ pub enum ContextBlockKind {
     TaskMetadata,
     PriorSummary,
     EntrypointHint,
+    RetrievalHint,
     Other(String),
 }
 

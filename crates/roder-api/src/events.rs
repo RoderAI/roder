@@ -22,6 +22,10 @@ use crate::reliability::{
     ReliabilityFailureRecorded, ReliabilityLimitRecorded, ReliabilityMetricRecorded,
     ReliabilityRetryRecorded,
 };
+use crate::retrieval::{
+    RetrievalDiscoveryItemPromoted, RetrievalPromotionSkipped, RetrievalResultUsed,
+    RetrievalRouteAccepted, RetrievalRouteFailed, RetrievalRouteIgnored, RetrievalRoutePlanned,
+};
 use crate::subagents::SubagentExitReason;
 use crate::task_ledger::TaskLedgerItem;
 use crate::teams::{
@@ -1072,6 +1076,13 @@ pub enum RoderEvent {
     DiscoveryPromotionReused(DiscoveryPromotionReused),
     DiscoveryWarmCacheHit(DiscoveryWarmCacheHit),
     DiscoveryPromotionExpired(DiscoveryPromotionExpired),
+    RetrievalRoutePlanned(RetrievalRoutePlanned),
+    RetrievalRouteAccepted(RetrievalRouteAccepted),
+    RetrievalRouteIgnored(RetrievalRouteIgnored),
+    RetrievalRouteFailed(RetrievalRouteFailed),
+    RetrievalResultUsed(RetrievalResultUsed),
+    RetrievalDiscoveryItemPromoted(RetrievalDiscoveryItemPromoted),
+    RetrievalPromotionSkipped(RetrievalPromotionSkipped),
     MemorySaved(MemorySaved),
     MemoryUpdated(MemoryUpdated),
     MemoryDeleted(MemoryDeleted),
@@ -1201,6 +1212,13 @@ impl RoderEvent {
             RoderEvent::DiscoveryPromotionReused(_) => "discovery/promotionReused",
             RoderEvent::DiscoveryWarmCacheHit(_) => "discovery/warmCacheHit",
             RoderEvent::DiscoveryPromotionExpired(_) => "discovery/promotionExpired",
+            RoderEvent::RetrievalRoutePlanned(_) => "retrieval/routePlanned",
+            RoderEvent::RetrievalRouteAccepted(_) => "retrieval/routeAccepted",
+            RoderEvent::RetrievalRouteIgnored(_) => "retrieval/routeIgnored",
+            RoderEvent::RetrievalRouteFailed(_) => "retrieval/routeFailed",
+            RoderEvent::RetrievalResultUsed(_) => "retrieval/resultUsed",
+            RoderEvent::RetrievalDiscoveryItemPromoted(_) => "retrieval/discoveryItemPromoted",
+            RoderEvent::RetrievalPromotionSkipped(_) => "retrieval/promotionSkipped",
             RoderEvent::MemorySaved(_) => "memory/saved",
             RoderEvent::MemoryUpdated(_) => "memory/updated",
             RoderEvent::MemoryDeleted(_) => "memory/deleted",
@@ -1296,6 +1314,13 @@ impl RoderEvent {
             | RoderEvent::DiscoveryPromotionReused(_)
             | RoderEvent::DiscoveryWarmCacheHit(_)
             | RoderEvent::DiscoveryPromotionExpired(_)
+            | RoderEvent::RetrievalRoutePlanned(_)
+            | RoderEvent::RetrievalRouteAccepted(_)
+            | RoderEvent::RetrievalRouteIgnored(_)
+            | RoderEvent::RetrievalRouteFailed(_)
+            | RoderEvent::RetrievalResultUsed(_)
+            | RoderEvent::RetrievalDiscoveryItemPromoted(_)
+            | RoderEvent::RetrievalPromotionSkipped(_)
             | RoderEvent::MemorySaved(_)
             | RoderEvent::MemoryUpdated(_)
             | RoderEvent::MemoryDeleted(_)
@@ -1411,6 +1436,13 @@ impl RoderEvent {
             RoderEvent::DiscoveryPromotionReused(e) => Some(&e.record.thread_id),
             RoderEvent::DiscoveryWarmCacheHit(e) => Some(&e.record.thread_id),
             RoderEvent::DiscoveryPromotionExpired(e) => Some(&e.record.thread_id),
+            RoderEvent::RetrievalRoutePlanned(e) => Some(&e.plan.thread_id),
+            RoderEvent::RetrievalRouteAccepted(e) => Some(&e.thread_id),
+            RoderEvent::RetrievalRouteIgnored(e) => Some(&e.thread_id),
+            RoderEvent::RetrievalRouteFailed(e) => Some(&e.thread_id),
+            RoderEvent::RetrievalResultUsed(e) => Some(&e.thread_id),
+            RoderEvent::RetrievalDiscoveryItemPromoted(e) => Some(&e.thread_id),
+            RoderEvent::RetrievalPromotionSkipped(e) => Some(&e.thread_id),
             RoderEvent::MemoryRecallReady(e) => Some(&e.thread_id),
             RoderEvent::MemoryObservationRecorded(e) => Some(&e.thread_id),
             RoderEvent::TaskStarted(e) => e.thread_id.as_ref(),
@@ -1532,6 +1564,13 @@ impl RoderEvent {
             RoderEvent::DiscoveryPromotionReused(e) => e.record.turn_id.as_ref(),
             RoderEvent::DiscoveryWarmCacheHit(e) => e.record.turn_id.as_ref(),
             RoderEvent::DiscoveryPromotionExpired(e) => e.record.turn_id.as_ref(),
+            RoderEvent::RetrievalRoutePlanned(e) => Some(&e.plan.turn_id),
+            RoderEvent::RetrievalRouteAccepted(e) => Some(&e.turn_id),
+            RoderEvent::RetrievalRouteIgnored(e) => Some(&e.turn_id),
+            RoderEvent::RetrievalRouteFailed(e) => Some(&e.turn_id),
+            RoderEvent::RetrievalResultUsed(e) => Some(&e.turn_id),
+            RoderEvent::RetrievalDiscoveryItemPromoted(e) => Some(&e.turn_id),
+            RoderEvent::RetrievalPromotionSkipped(e) => Some(&e.turn_id),
             RoderEvent::MemoryRecallReady(e) => Some(&e.turn_id),
             RoderEvent::MemoryObservationRecorded(e) => Some(&e.turn_id),
             RoderEvent::TaskStarted(e) => e.turn_id.as_ref(),
