@@ -6,6 +6,11 @@ use std::sync::Arc;
 use serde::{Deserialize, Serialize};
 
 use crate::artifacts::ContextArtifactAccess;
+use crate::discovery::{
+    DiscoveryAuthState, DiscoveryCacheStatus, DiscoveryCatalogItem, DiscoveryCatalogSource,
+    DiscoveryItemStatus, DiscoveryLifecycleState, DiscoveryPromotionState, DiscoveryRedaction,
+    DiscoverySchemaFormat, DiscoverySchemaReference, DiscoverySourceKind,
+};
 use crate::events::{ThreadId, TurnId};
 use crate::extension::ToolProviderId;
 use crate::inference::ModelSchemaPolicy;
@@ -36,6 +41,44 @@ impl ToolSpec {
             ModelSchemaPolicy::RequiredFirstFlat => {
                 self.normalized_for_model(ToolSchemaPolicy::strict())
             }
+        }
+    }
+
+    pub fn discovery_item(
+        &self,
+        provider_id: impl Into<String>,
+        schema_uri: impl Into<String>,
+    ) -> DiscoveryCatalogItem {
+        let provider_id = provider_id.into();
+        DiscoveryCatalogItem {
+            id: format!("tool:{provider_id}/{}", self.name),
+            group_id: format!("tools:{provider_id}"),
+            source: DiscoveryCatalogSource {
+                kind: DiscoverySourceKind::InternalTools,
+                id: provider_id.clone(),
+                display_name: provider_id,
+                origin: None,
+                auth_state: DiscoveryAuthState::NotRequired,
+                redaction: DiscoveryRedaction::none(),
+            },
+            name: self.name.clone(),
+            title: self.name.clone(),
+            description: Some(self.description.clone()),
+            status: DiscoveryItemStatus::Available,
+            lifecycle: DiscoveryLifecycleState::Discovered,
+            promotion: DiscoveryPromotionState::NotPromoted,
+            cache_status: DiscoveryCacheStatus::Cold,
+            schema: Some(DiscoverySchemaReference {
+                format: DiscoverySchemaFormat::JsonSchema,
+                uri: schema_uri.into(),
+                content_hash: None,
+                byte_count: None,
+                redaction: DiscoveryRedaction::none(),
+            }),
+            tags: vec!["tool".to_string()],
+            hints: Vec::new(),
+            redaction: DiscoveryRedaction::none(),
+            last_refreshed_at: None,
         }
     }
 }
@@ -277,5 +320,40 @@ pub trait MediaGeneratorProvider: Send + Sync + 'static {
         _request: MediaGenerationRequest,
     ) -> anyhow::Result<MediaGenerationResponse> {
         anyhow::bail!("video generation is not supported by this provider")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn tool_spec_can_be_represented_as_discovery_item() {
+        let spec = ToolSpec {
+            name: "grep".to_string(),
+            description: "Search files".to_string(),
+            parameters: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "query": { "type": "string" }
+                },
+                "required": ["query"]
+            }),
+        };
+
+        let item = spec.discovery_item(
+            "builtin-coding-tools",
+            "discovery/tools/builtin-coding-tools/grep.schema.json",
+        );
+        assert_eq!(item.id, "tool:builtin-coding-tools/grep");
+        assert_eq!(item.group_id, "tools:builtin-coding-tools");
+        assert_eq!(item.source.kind, DiscoverySourceKind::InternalTools);
+        assert_eq!(item.source.auth_state, DiscoveryAuthState::NotRequired);
+        assert_eq!(item.status, DiscoveryItemStatus::Available);
+        assert_eq!(item.lifecycle, DiscoveryLifecycleState::Discovered);
+        assert_eq!(
+            item.schema.as_ref().map(|schema| schema.format.clone()),
+            Some(DiscoverySchemaFormat::JsonSchema)
+        );
     }
 }
