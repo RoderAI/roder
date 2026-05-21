@@ -4,6 +4,7 @@ mod conversation;
 pub mod fake_provider;
 mod instructions;
 pub mod media_artifacts;
+pub mod model_profiles;
 mod plan_review;
 pub mod policy_gate;
 mod roadmap;
