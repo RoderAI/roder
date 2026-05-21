@@ -1,5 +1,4 @@
 use std::path::PathBuf;
-use std::time::Duration;
 
 use base64::Engine;
 use roder_api::artifacts::{ContextArtifact, ContextArtifactKind, format_artifact_reference};
@@ -26,6 +25,10 @@ impl AppServer {
     ) -> Result<serde_json::Value, JsonRpcError> {
         validate_command_exec_params(&params)?;
         self.enforce_command_exec_policy(&params).await?;
+        let process_id = params
+            .process_id
+            .clone()
+            .unwrap_or_else(|| format!("command-{}", uuid::Uuid::new_v4()));
         let mut command = Command::new(&params.command[0]);
         command.args(&params.command[1..]);
         if let Some(cwd) = params.cwd.as_deref() {
@@ -44,27 +47,12 @@ impl AppServer {
             }
         }
 
-        let output_future = command.output();
-        let output = if params.disable_timeout {
-            output_future.await.map_err(internal_error)?
-        } else {
-            let timeout_ms = params.timeout_ms.unwrap_or(30_000);
-            tokio::time::timeout(Duration::from_millis(timeout_ms), output_future)
-                .await
-                .map_err(|_| JsonRpcError {
-                    code: -32000,
-                    message: format!("command timed out after {timeout_ms}ms"),
-                    data: None,
-                })?
-                .map_err(internal_error)?
-        };
+        let output =
+            crate::command_process::run_registered_command(self, &process_id, command, &params)
+                .await?;
 
         let (stdout, stdout_truncated) = cap_output(&output.stdout, &params);
         let (stderr, stderr_truncated) = cap_output(&output.stderr, &params);
-        let process_id = params
-            .process_id
-            .clone()
-            .unwrap_or_else(|| format!("command-{}", uuid::Uuid::new_v4()));
         let stdout_artifact = self
             .write_command_artifact_if_capped(
                 &process_id,

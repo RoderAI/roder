@@ -7,6 +7,11 @@ use crate::tasks::{TaskId, TaskOutputStream};
 
 pub type ProcessId = String;
 
+#[async_trait::async_trait]
+pub trait ProcessStopper: Send + Sync + 'static {
+    async fn stop(&self, reason: Option<String>) -> anyhow::Result<()>;
+}
+
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum ProcessOrigin {
@@ -130,6 +135,31 @@ pub struct ProcessFailed {
     pub error: String,
     #[serde(with = "time::serde::rfc3339")]
     pub timestamp: OffsetDateTime,
+}
+
+#[async_trait::async_trait]
+pub trait ProcessRegistrySink: Send + Sync + 'static {
+    async fn register_process(
+        &self,
+        process: ProcessDescriptor,
+        stopper: Option<std::sync::Arc<dyn ProcessStopper>>,
+    ) -> anyhow::Result<ProcessDescriptor>;
+
+    async fn append_process_output(&self, output: ProcessOutput) -> anyhow::Result<()>;
+
+    async fn mark_process_exited(
+        &self,
+        process_id: &str,
+        exit_code: Option<i32>,
+    ) -> anyhow::Result<()>;
+
+    async fn mark_process_failed(&self, process_id: &str, error: String) -> anyhow::Result<()>;
+
+    async fn mark_process_stopped(
+        &self,
+        process_id: &str,
+        reason: Option<String>,
+    ) -> anyhow::Result<()>;
 }
 
 pub fn command_summary(command: &[String]) -> String {
