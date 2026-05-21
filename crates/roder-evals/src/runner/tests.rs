@@ -45,6 +45,7 @@ async fn runner_creates_report_files_from_fake_provider_fixture() {
             task_ledger_required: false,
         },
         constraints: Vec::new(),
+        lazy_discovery: None,
     };
     std::fs::write(
         fixture_dir.join("hello.json"),
@@ -90,6 +91,7 @@ async fn eval_runtime_profile_fails_clarification_waits_without_hanging() {
             task_ledger_required: false,
         },
         constraints: Vec::new(),
+        lazy_discovery: None,
     };
     std::fs::write(
         fixture_dir.join("clarification-wait.json"),
@@ -155,6 +157,7 @@ async fn task_ledger_required_fixtures_grade_missing_and_complete_state() {
                 task_ledger_required: true,
             },
             constraints: Vec::new(),
+            lazy_discovery: None,
         };
         std::fs::write(
             fixture_dir.join(format!("{id}.json")),
@@ -232,6 +235,7 @@ async fn failed_fixture_reports_failure_class_and_trace_excerpt() {
             task_ledger_required: false,
         },
         constraints: Vec::new(),
+        lazy_discovery: None,
     };
     std::fs::write(
         fixture_dir.join("tool-misuse-fail.json"),
@@ -283,6 +287,7 @@ async fn speed_policy_both_runs_baseline_and_speed_report_rows() {
             task_ledger_required: false,
         },
         constraints: Vec::new(),
+        lazy_discovery: None,
     };
     std::fs::write(
         fixture_dir.join("routine-speed.json"),
@@ -367,6 +372,7 @@ async fn model_profile_all_runs_profile_delta_report_rows() {
             task_ledger_required: false,
         },
         constraints: Vec::new(),
+        lazy_discovery: None,
     };
     std::fs::write(
         fixture_dir.join("profile-edit-tool.json"),

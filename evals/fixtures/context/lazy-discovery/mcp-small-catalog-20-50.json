@@ -2,24 +2,36 @@
   "id": "mcp-small-catalog-20-50",
   "title": "Deferred discovery with 32 hidden MCP tools",
   "tags": ["lazy-discovery", "mcp", "bucket:20-50"],
-  "hiddenDeferredCapabilities": 32,
-  "catalogShape": {
-    "internalTools": 6,
-    "mcpTools": 24,
-    "skills": 2,
-    "plugins": 0
-  },
   "prompt": "Find the GitHub issue labeled release-blocker and summarize the owner without loading unrelated Sentry, Figma, or Stripe schemas.",
-  "compactIndexContains": ["github.issue.search", "github.issue.read"],
-  "expectedDiscoveryQuery": "github issue release blocker",
-  "expectedPromotion": "github.issue.search",
-  "expectedToolCall": "github.issue.search",
-  "expectedAnswerContains": "release-blocker owner",
-  "metrics": {
-    "baselineSchemaTokens": 4600,
-    "deferredPromptTokens": 780,
-    "expectedPromotionCount": 1,
-    "expectedWarmCacheHits": 0,
-    "maxWrongToolCalls": 0
-  }
+  "timeoutMs": 10000,
+  "expected": {
+    "finalAnswerContains": ["hello from roder"],
+    "verificationRequired": false
+  },
+  "lazyDiscovery": {
+    "hiddenDeferredCapabilities": 32,
+    "catalogShape": {
+      "internalTools": 6,
+      "mcpTools": 24,
+      "skills": 2,
+      "plugins": 0
+    },
+    "compactIndexContains": ["github.issue.search", "github.issue.read"],
+    "expectedDiscoveryQuery": "github issue release blocker",
+    "expectedPromotion": "github.issue.search",
+    "expectedToolCall": "github.issue.search",
+    "metrics": {
+      "baselineSchemaTokens": 4600,
+      "deferredPromptTokens": 780,
+      "expectedPromotionCount": 1,
+      "expectedWarmCacheHits": 0,
+      "maxWrongToolCalls": 0,
+      "maxUnknownToolCalls": 0,
+      "maxCallsBeforePromotion": 0
+    }
+  },
+  "constraints": [
+    "score token savings against a 20-50 hidden-capability MCP catalog",
+    "release-blocker owner is the correctness target for live provider variants"
+  ]
 }

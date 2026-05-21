@@ -8,6 +8,7 @@ use time::OffsetDateTime;
 
 use crate::{EvalMetric, EvalMetricKind, EvalOutcome, EvalTrajectory, EvalTrajectoryEvent};
 
+use super::lazy_discovery::lazy_discovery_markdown;
 use super::reliability::{
     ReliabilityReportSummary, reliability_markdown, reliability_metrics, reliability_summary,
 };
@@ -784,6 +785,7 @@ fn eval_report_markdown(report: &EvalSuiteReport) -> String {
             )),
         ));
     }
+    text.push_str(&lazy_discovery_markdown(report));
     text.push_str(&reliability_markdown(report));
     let groups = failure_groups(report);
     if !groups.is_empty() {
