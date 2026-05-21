@@ -502,6 +502,57 @@ impl AppServer {
                 .await
             }
             "tasks/subscribe" => self.handle_tasks_subscribe().await,
+            "automations/list" => {
+                match req
+                    .params
+                    .map(serde_json::from_value::<AutomationsListParams>)
+                    .transpose()
+                    .map_err(invalid_params)
+                {
+                    Ok(params) => {
+                        self.handle_automations_list(params.unwrap_or_default())
+                            .await
+                    }
+                    Err(error) => Err(error),
+                }
+            }
+            "automations/create" => {
+                self.decode_and(req.params, |p| async move {
+                    self.handle_automations_create(p).await
+                })
+                .await
+            }
+            "automations/update" => {
+                self.decode_and(req.params, |p| async move {
+                    self.handle_automations_update(p).await
+                })
+                .await
+            }
+            "automations/delete" => {
+                self.decode_and(req.params, |p| async move {
+                    self.handle_automations_delete(p).await
+                })
+                .await
+            }
+            "automations/runNow" => {
+                self.decode_and(req.params, |p| async move {
+                    self.handle_automations_run_now(p).await
+                })
+                .await
+            }
+            "automations/runs" => {
+                self.decode_and(req.params, |p| async move {
+                    self.handle_automations_runs(p).await
+                })
+                .await
+            }
+            "automations/cancelRun" => {
+                self.decode_and(req.params, |p| async move {
+                    self.handle_automations_cancel_run(p).await
+                })
+                .await
+            }
+            "automations/status" => self.handle_automations_status().await,
             "commands/list" => self.handle_commands_list().await,
             "skills/list" => self.handle_skills_list().await,
             "skills/read" => {
@@ -3295,7 +3346,7 @@ fn invalid_params(err: impl std::fmt::Display) -> JsonRpcError {
     }
 }
 
-fn internal_error(err: impl std::fmt::Display) -> JsonRpcError {
+pub(crate) fn internal_error(err: impl std::fmt::Display) -> JsonRpcError {
     let details = format!("{err:#}");
     JsonRpcError {
         code: -32000,
