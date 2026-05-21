@@ -17,6 +17,25 @@ use super::*;
 
 static ENV_LOCK: Mutex<()> = Mutex::new(());
 
+#[test]
+fn discovery_tools_advertise_retrieval_metadata() {
+    let mut registry = ToolRegistry::default();
+    register(&mut registry).unwrap();
+
+    assert_eq!(
+        registry.get("discovery.list").unwrap().spec().parameters["x-roder"]["retrievalMode"],
+        "discovery"
+    );
+    assert_eq!(
+        registry.get("discovery.search").unwrap().spec().parameters["x-roder"]["retrievalMode"],
+        "discovery"
+    );
+    assert_eq!(
+        registry.get("discovery.read").unwrap().spec().parameters["x-roder"]["retrievalMode"],
+        "promotion"
+    );
+}
+
 #[tokio::test]
 async fn discovery_tools_list_search_read_and_record_promotion() {
     let _guard = ENV_LOCK.lock().unwrap();

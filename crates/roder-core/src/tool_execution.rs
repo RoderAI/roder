@@ -85,6 +85,13 @@ impl Runtime {
             timestamp: OffsetDateTime::now_utc(),
         }))
         .await;
+        self.emit(crate::retrieval_metrics::route_choice_event(
+            thread_id,
+            turn_id,
+            &call.name,
+            &parsed_args,
+        ))
+        .await;
         let Some(executor) = self.tool_registry.get(&call.name) else {
             emit_tool_validation_recorded(
                 self,
@@ -121,6 +128,19 @@ impl Runtime {
                 timestamp: OffsetDateTime::now_utc(),
             }))
             .await;
+            self.emit(crate::retrieval_metrics::route_failed_event(
+                thread_id,
+                turn_id,
+                item.name.as_deref().unwrap_or("unknown"),
+                "tool is not registered",
+            ))
+            .await;
+            self.emit(crate::retrieval_metrics::unknown_tool_result_event(
+                thread_id,
+                turn_id,
+                item.name.as_deref().unwrap_or("unknown"),
+            ))
+            .await;
             return Ok(item);
         };
         let spec = executor
@@ -155,6 +175,13 @@ impl Runtime {
                     output: Some(item.result.clone()),
                     timestamp: OffsetDateTime::now_utc(),
                 }))
+                .await;
+                self.emit(crate::retrieval_metrics::route_failed_event(
+                    thread_id,
+                    turn_id,
+                    &call.name,
+                    "tool argument validation failed",
+                ))
                 .await;
                 return Ok(item);
             }
@@ -225,6 +252,13 @@ impl Runtime {
                 timestamp: OffsetDateTime::now_utc(),
             }))
             .await;
+            self.emit(crate::retrieval_metrics::route_failed_event(
+                thread_id,
+                turn_id,
+                &tool_call.name,
+                "policy denied tool call",
+            ))
+            .await;
             return Ok(item);
         }
 
@@ -268,6 +302,13 @@ impl Runtime {
                 output: Some(item.result.clone()),
                 timestamp: OffsetDateTime::now_utc(),
             }))
+            .await;
+            self.emit(crate::retrieval_metrics::route_failed_event(
+                thread_id,
+                turn_id,
+                &tool_call.name,
+                "approval denied",
+            ))
             .await;
             return Ok(item);
         }
@@ -393,6 +434,18 @@ impl Runtime {
             timestamp: OffsetDateTime::now_utc(),
         }))
         .await;
+        if let Some(event) = crate::retrieval_metrics::result_used_event(
+            thread_id,
+            turn_id,
+            &result.name,
+            item.display_payload
+                .as_ref()
+                .unwrap_or(&serde_json::Value::Null),
+            &item.result,
+            item.is_error,
+        ) {
+            self.emit(event).await;
+        }
         Ok(item)
     }
 
