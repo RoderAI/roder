@@ -5,9 +5,12 @@ use roder_protocol::{
     ProcessesStopResult,
 };
 
-use super::{TuiApp, decode_response, short_id, truncate};
+use super::{AppClient, TuiApp, decode_response, short_id, truncate};
 
-impl TuiApp {
+impl<C> TuiApp<C>
+where
+    C: AppClient,
+{
     pub(super) async fn run_processes_slash_command(&mut self, args: &str) {
         let parts = args.split_whitespace().collect::<Vec<_>>();
         match parts.as_slice() {

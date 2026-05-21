@@ -208,6 +208,14 @@ impl AppEventReceiver for ReplayEventReceiver {
             .pop_front()
             .ok_or(broadcast::error::RecvError::Closed)
     }
+
+    fn try_recv(&mut self) -> Result<EventEnvelope, broadcast::error::TryRecvError> {
+        self.events
+            .lock()
+            .expect("replay event receiver mutex poisoned")
+            .pop_front()
+            .ok_or(broadcast::error::TryRecvError::Empty)
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -223,6 +231,14 @@ impl AppNotificationReceiver for ReplayNotificationReceiver {
             .expect("replay notification receiver mutex poisoned")
             .pop_front()
             .ok_or(broadcast::error::RecvError::Closed)
+    }
+
+    fn try_recv(&mut self) -> Result<JsonRpcNotification, broadcast::error::TryRecvError> {
+        self.notifications
+            .lock()
+            .expect("replay notification receiver mutex poisoned")
+            .pop_front()
+            .ok_or(broadcast::error::TryRecvError::Empty)
     }
 }
 

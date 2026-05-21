@@ -24,7 +24,10 @@ fn is_palette_close_key(key: crossterm::event::KeyEvent) -> bool {
     key.code == KeyCode::Esc
 }
 
-impl TuiApp {
+impl<C> TuiApp<C>
+where
+    C: AppClient,
+{
     pub(super) async fn open_palette(&mut self) {
         self.show_provider_popup = false;
         self.palette_query.clear();

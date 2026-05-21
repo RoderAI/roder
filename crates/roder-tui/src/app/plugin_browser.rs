@@ -14,7 +14,7 @@ use roder_protocol::{
     PluginInstallResult,
 };
 
-use super::{Theme, TuiApp, decode_response, truncate};
+use super::{AppClient, Theme, TuiApp, decode_response, truncate};
 
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub(super) enum PluginBrowserStatus {
@@ -179,7 +179,10 @@ impl PluginBrowserState {
     }
 }
 
-impl TuiApp {
+impl<C> TuiApp<C>
+where
+    C: AppClient,
+{
     pub(super) async fn open_plugin_browser(&mut self) {
         self.show_provider_popup = false;
         self.plugin_browser = Some(match self.marketplaces_search(None).await {

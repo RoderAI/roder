@@ -5,7 +5,10 @@ use roder_protocol::{
 
 use super::*;
 
-pub(super) async fn threads_list(client: &LocalAppClient) -> anyhow::Result<Vec<DesktopThread>> {
+pub(super) async fn threads_list<C>(client: &C) -> anyhow::Result<Vec<DesktopThread>>
+where
+    C: AppClient,
+{
     let res = client
         .send_request(JsonRpcRequest {
             jsonrpc: "2.0".to_string(),
@@ -26,9 +29,10 @@ pub(super) async fn threads_list(client: &LocalAppClient) -> anyhow::Result<Vec<
     Ok(threads)
 }
 
-pub(super) async fn commands_list(
-    client: &LocalAppClient,
-) -> anyhow::Result<Vec<CommandDescriptor>> {
+pub(super) async fn commands_list<C>(client: &C) -> anyhow::Result<Vec<CommandDescriptor>>
+where
+    C: AppClient,
+{
     let res = client
         .send_request(JsonRpcRequest {
             jsonrpc: "2.0".to_string(),
@@ -40,7 +44,10 @@ pub(super) async fn commands_list(
     Ok(decode_response::<CommandsListResult>(res)?.commands)
 }
 
-impl TuiApp {
+impl<C> TuiApp<C>
+where
+    C: AppClient,
+{
     pub(super) async fn load_session(&mut self, thread_id: String) {
         match load_thread(&self.client, &thread_id).await {
             Ok(Some(thread)) => self.apply_thread(thread),
@@ -185,10 +192,13 @@ impl TuiApp {
     }
 }
 
-pub(super) async fn load_thread(
-    client: &LocalAppClient,
+pub(super) async fn load_thread<C>(
+    client: &C,
     thread_id: &str,
-) -> anyhow::Result<Option<DesktopThread>> {
+) -> anyhow::Result<Option<DesktopThread>>
+where
+    C: AppClient,
+{
     let res = client
         .send_request(JsonRpcRequest {
             jsonrpc: "2.0".to_string(),

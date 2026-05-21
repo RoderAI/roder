@@ -20,11 +20,13 @@ pub trait AppClient: Clone + Send + Sync + 'static {
 #[async_trait]
 pub trait AppEventReceiver: Send {
     async fn recv(&mut self) -> Result<EventEnvelope, broadcast::error::RecvError>;
+    fn try_recv(&mut self) -> Result<EventEnvelope, broadcast::error::TryRecvError>;
 }
 
 #[async_trait]
 pub trait AppNotificationReceiver: Send {
     async fn recv(&mut self) -> Result<JsonRpcNotification, broadcast::error::RecvError>;
+    fn try_recv(&mut self) -> Result<JsonRpcNotification, broadcast::error::TryRecvError>;
 }
 
 #[async_trait]
@@ -32,12 +34,20 @@ impl AppEventReceiver for broadcast::Receiver<EventEnvelope> {
     async fn recv(&mut self) -> Result<EventEnvelope, broadcast::error::RecvError> {
         broadcast::Receiver::recv(self).await
     }
+
+    fn try_recv(&mut self) -> Result<EventEnvelope, broadcast::error::TryRecvError> {
+        broadcast::Receiver::try_recv(self)
+    }
 }
 
 #[async_trait]
 impl AppNotificationReceiver for broadcast::Receiver<JsonRpcNotification> {
     async fn recv(&mut self) -> Result<JsonRpcNotification, broadcast::error::RecvError> {
         broadcast::Receiver::recv(self).await
+    }
+
+    fn try_recv(&mut self) -> Result<JsonRpcNotification, broadcast::error::TryRecvError> {
+        broadcast::Receiver::try_recv(self)
     }
 }
 

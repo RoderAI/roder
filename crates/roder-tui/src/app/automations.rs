@@ -1,8 +1,11 @@
 use roder_protocol::{AutomationsListResult, AutomationsStatusResult, JsonRpcRequest};
 
-use super::{TuiApp, decode_response};
+use super::{AppClient, TuiApp, decode_response};
 
-impl TuiApp {
+impl<C> TuiApp<C>
+where
+    C: AppClient,
+{
     pub(super) async fn automations_status(&self) -> anyhow::Result<AutomationsStatusResult> {
         let res = self
             .client

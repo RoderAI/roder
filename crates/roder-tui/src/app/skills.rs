@@ -4,9 +4,12 @@ use roder_protocol::{
     SkillsUpdateResult,
 };
 
-use super::{TuiApp, decode_response};
+use super::{AppClient, TuiApp, decode_response};
 
-impl TuiApp {
+impl<C> TuiApp<C>
+where
+    C: AppClient,
+{
     pub(super) async fn skills_list(&self) -> anyhow::Result<SkillsListResult> {
         let res = self
             .client
