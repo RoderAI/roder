@@ -1,4 +1,5 @@
 pub mod index;
+pub mod processes;
 pub mod render;
 pub mod skills;
 pub mod sources;
@@ -44,6 +45,9 @@ pub enum PaletteAction {
     OpenPluginBrowser,
     OpenSkillsManager,
     ShowAutomationsStatus,
+    ShowProcesses,
+    ShowProcessDetail(String),
+    StopProcess(String),
     /// Switch the active theme by id (basename of the `.css` file, no
     /// extension). The dispatcher reloads the stylesheet, restyles the next
     /// frame, and persists the choice to `~/.roder/state.toml`.
