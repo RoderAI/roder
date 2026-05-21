@@ -186,6 +186,36 @@ impl AppServer {
                 })
                 .await
             }
+            "index/status" => {
+                self.decode_and(req.params, |p| async move {
+                    self.handle_code_index_status(p).await
+                })
+                .await
+            }
+            "index/rebuild" => {
+                self.decode_and(req.params, |p| async move {
+                    self.handle_code_index_rebuild(p).await
+                })
+                .await
+            }
+            "index/search" => {
+                self.decode_and(req.params, |p| async move {
+                    self.handle_code_index_search(p).await
+                })
+                .await
+            }
+            "index/readChunk" => {
+                self.decode_and(req.params, |p| async move {
+                    self.handle_code_index_read_chunk(p).await
+                })
+                .await
+            }
+            "index/proofs/list" => {
+                self.decode_and(req.params, |p| async move {
+                    self.handle_code_index_proofs_list(p).await
+                })
+                .await
+            }
             "settings/set_default_mode" => {
                 self.decode_and(req.params, |p| async move {
                     self.handle_settings_set_default_mode(p).await

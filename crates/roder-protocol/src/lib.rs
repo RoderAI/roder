@@ -3,6 +3,10 @@ use roder_api::artifacts::{
     ContextArtifactKind,
 };
 use roder_api::capabilities::CapabilityStatus;
+use roder_api::code_index::{
+    CodeChunk, CodeIndexGenerationId, CodeIndexSearchResponse, CodeIndexStats, CodeIndexStatus,
+    ContentProof,
+};
 use roder_api::context::ContextBlock;
 use roder_api::conversation::InputImage;
 use roder_api::events::{ThreadId, TurnId};
@@ -975,6 +979,113 @@ pub struct SearchIndexClearResult {
 #[serde(rename_all = "camelCase")]
 pub struct SearchIndexStatusNotification {
     pub status: SearchIndexStatus,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct CodeIndexStatusView {
+    pub status: CodeIndexStatus,
+    pub workspace: String,
+    pub store_path: String,
+    pub generation_id: Option<CodeIndexGenerationId>,
+    pub root_hash: Option<String>,
+    pub stale: bool,
+    pub stats: CodeIndexStats,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub message: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct CodeIndexStatusParams {
+    pub workspace: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct CodeIndexRebuildParams {
+    pub workspace: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CodeIndexSearchParams {
+    pub query: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub workspace: Option<String>,
+    #[serde(default)]
+    pub limit: Option<usize>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CodeIndexReadChunkParams {
+    pub chunk_hash: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub workspace: Option<String>,
+    #[serde(default)]
+    pub offset: Option<usize>,
+    #[serde(default)]
+    pub limit: Option<usize>,
+    #[serde(default)]
+    pub include_source: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct CodeIndexProofsListParams {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub workspace: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CodeIndexStatusResult {
+    pub status: CodeIndexStatusView,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CodeIndexRebuildResult {
+    pub status: CodeIndexStatusView,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CodeIndexSearchResultEnvelope {
+    pub status: CodeIndexStatusView,
+    pub response: CodeIndexSearchResponse,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CodeIndexChunkReadPage {
+    pub chunk: CodeChunk,
+    pub text: String,
+    pub offset: usize,
+    pub limit: usize,
+    pub total_bytes: usize,
+    pub has_more: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CodeIndexReadChunkResult {
+    pub status: CodeIndexStatusView,
+    pub page: CodeIndexChunkReadPage,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CodeIndexProofsListResult {
+    pub status: CodeIndexStatusView,
+    pub proofs: Vec<ContentProof>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CodeIndexStatusNotification {
+    pub status: CodeIndexStatusView,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1984,6 +2095,40 @@ mod tests {
         assert_eq!(value["status"]["buildTimeMs"], 4);
         assert!(value["status"].get("store_dir").is_none());
         assert!(value["status"].get("document_count").is_none());
+    }
+
+    #[test]
+    fn code_index_status_protocol_uses_camel_case_fields() {
+        let value = serde_json::to_value(CodeIndexStatusNotification {
+            status: CodeIndexStatusView {
+                status: CodeIndexStatus::Ready,
+                workspace: "/tmp/workspace".to_string(),
+                store_path: "/tmp/home/.roder/code-index/abc/code-index.sqlite3".to_string(),
+                generation_id: Some("gen-1".to_string()),
+                root_hash: Some("root-hash".to_string()),
+                stale: false,
+                stats: roder_api::code_index::CodeIndexStats {
+                    file_count: 2,
+                    chunk_count: 3,
+                    embedded_chunk_count: 3,
+                    cached_embedding_count: 1,
+                    index_bytes: 256,
+                },
+                message: None,
+            },
+        })
+        .unwrap();
+
+        assert_eq!(value["status"]["status"], "ready");
+        assert_eq!(
+            value["status"]["storePath"],
+            "/tmp/home/.roder/code-index/abc/code-index.sqlite3"
+        );
+        assert_eq!(value["status"]["generationId"], "gen-1");
+        assert_eq!(value["status"]["stats"]["chunkCount"], 3);
+        assert_eq!(value["status"]["stats"]["cachedEmbeddingCount"], 1);
+        assert!(value["status"].get("store_path").is_none());
+        assert!(value["status"]["stats"].get("chunk_count").is_none());
     }
 
     #[test]
