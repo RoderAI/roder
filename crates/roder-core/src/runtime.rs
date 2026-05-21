@@ -34,6 +34,7 @@ use crate::bus::EventBus;
 use crate::fake_provider::FakeInferenceEngine;
 use crate::instructions::{apply_runtime_profile, apply_task_ledger_required};
 use crate::policy_gate::DefaultPolicyGate;
+use crate::speed_policy::{SpeedPolicyState, reasoning_from_decision};
 use crate::subagent_traces::RuntimeSubagentTraceSink;
 use crate::teams::{TeamManager, TeamMemberStartRequest, TeamStartRequest, TeamState};
 use crate::verification_gate::VerificationGateState;
@@ -1229,6 +1230,7 @@ impl Runtime {
         let mut exhausted_tool_rounds = true;
         let mut verification_gate =
             VerificationGateState::new(req.message.clone(), runtime_profile);
+        let mut speed_policy = SpeedPolicyState::default();
 
         for _ in 0..MAX_TOOL_ROUNDS_PER_TURN {
             let steers = self.drain_turn_steers(&turn_id).await;
@@ -1244,10 +1246,12 @@ impl Runtime {
                 return Ok(());
             }
 
+            let speed_policy_decision = speed_policy.decision(runtime_profile, &model);
             self.emit(RoderEvent::InferenceStarted(InferenceStarted {
                 thread_id: req.thread_id.clone(),
                 turn_id: turn_id.clone(),
                 engine_id: engine.id(),
+                speed_policy: speed_policy_decision.clone(),
                 timestamp: OffsetDateTime::now_utc(),
             }))
             .await;
@@ -1259,6 +1263,10 @@ impl Runtime {
             {
                 instructions = apply_task_ledger_required(instructions);
             }
+            let request_metadata = speed_policy_decision
+                .as_ref()
+                .map(|decision| serde_json::json!({ "speedPolicy": decision }))
+                .unwrap_or_else(|| serde_json::json!({}));
             let request = AgentInferenceRequest {
                 model: ModelSelection {
                     provider: provider.clone(),
@@ -1268,16 +1276,20 @@ impl Runtime {
                 conversation: conversation.clone(),
                 tools: tools.clone(),
                 tool_choice: tool_choice.clone(),
-                reasoning: reasoning_for_model(&cfg, &model),
+                reasoning: reasoning_from_decision(
+                    speed_policy_decision.as_ref(),
+                    reasoning_for_model(&cfg, &model),
+                ),
                 output: OutputConfig::default(),
                 runtime: RuntimeHints {
                     auto_compact_token_limit: server_side_compaction_threshold(&cfg, &model),
                     profile: runtime_profile,
                     parallel_tool_calls: Some(parallel_tool_calls),
                     hosted_web_search: cfg.hosted_web_search.clone(),
+                    speed_policy: speed_policy_decision,
                     ..RuntimeHints::default()
                 },
-                metadata: serde_json::json!({}),
+                metadata: request_metadata,
             };
 
             let ctx = InferenceTurnContext {
@@ -1351,6 +1363,7 @@ impl Runtime {
                     InferenceEvent::ReasoningDelta(delta) => reasoning_text.push_str(&delta.text),
                     InferenceEvent::ToolCallCompleted(call) => tool_calls.push(call),
                     InferenceEvent::Failed(failure) => {
+                        speed_policy.record_failure();
                         self.persist_turn_item(
                             &req.thread_id,
                             &turn_id,
@@ -1385,6 +1398,10 @@ impl Runtime {
                 }
             }
 
+            speed_policy.record_model_output(
+                !assistant_text.is_empty() || !phase_messages.is_empty(),
+                tool_calls.len(),
+            );
             if tool_calls.is_empty() {
                 let steers = self.drain_turn_steers(&turn_id).await;
                 if !steers.is_empty() {
@@ -1414,6 +1431,7 @@ impl Runtime {
                     continue;
                 }
                 if let Some(prompt) = verification_gate.blocking_prompt() {
+                    speed_policy.record_verification_required();
                     self.emit(RoderEvent::VerificationRequired(VerificationRequired {
                         thread_id: req.thread_id.clone(),
                         turn_id: turn_id.clone(),
@@ -1822,7 +1840,9 @@ pub fn validate_edit_tool(value: &str) -> anyhow::Result<()> {
 mod tests {
     use super::*;
     use futures::stream;
-    use roder_api::catalog::{REASONING_HIGH, REASONING_MEDIUM, REASONING_MINIMAL, REASONING_NONE};
+    use roder_api::catalog::{
+        REASONING_HIGH, REASONING_LOW, REASONING_MEDIUM, REASONING_MINIMAL, REASONING_NONE,
+    };
     use roder_api::extension::ExtensionRegistryBuilder;
     use roder_api::inference::{
         CompletionMetadata, InferenceCapabilities, InferenceEngine, InferenceEventStream,
@@ -2090,6 +2110,85 @@ mod tests {
         }
     }
 
+    struct SpeedPolicyEngine {
+        calls: StdMutex<u32>,
+        requests: Arc<StdMutex<Vec<AgentInferenceRequest>>>,
+    }
+
+    #[async_trait::async_trait]
+    impl InferenceEngine for SpeedPolicyEngine {
+        fn id(&self) -> String {
+            roder_api::catalog::PROVIDER_MOCK.to_string()
+        }
+
+        fn capabilities(&self) -> InferenceCapabilities {
+            InferenceCapabilities::coding_agent_default()
+        }
+
+        async fn list_models(
+            &self,
+            _ctx: InferenceProviderContext<'_>,
+        ) -> anyhow::Result<Vec<roder_api::inference::ModelDescriptor>> {
+            Ok(roder_api::catalog::models_for_provider(
+                roder_api::catalog::PROVIDER_MOCK,
+                true,
+            ))
+        }
+
+        async fn stream_turn(
+            &self,
+            _ctx: InferenceTurnContext<'_>,
+            request: AgentInferenceRequest,
+        ) -> anyhow::Result<InferenceEventStream> {
+            self.requests.lock().unwrap().push(request.clone());
+            let mut calls = self.calls.lock().unwrap();
+            *calls += 1;
+            let events = match *calls {
+                1 => vec![Ok(InferenceEvent::ToolCallCompleted(ToolCallCompleted {
+                    id: "write-1".to_string(),
+                    name: "write_file".to_string(),
+                    arguments: serde_json::json!({
+                        "path": "src/lib.rs",
+                        "content": "pub fn answer() -> u8 { 42 }\n"
+                    })
+                    .to_string(),
+                }))],
+                3 if request.conversation.iter().any(|item| {
+                    matches!(
+                        item,
+                        ConversationItem::UserMessage(message)
+                            if message.text.contains("Verification gate blocked final completion")
+                    )
+                }) =>
+                {
+                    vec![Ok(InferenceEvent::ToolCallCompleted(ToolCallCompleted {
+                        id: "verify-1".to_string(),
+                        name: crate::verification_gate::VERIFICATION_TOOL_NAME.to_string(),
+                        arguments: serde_json::json!({
+                            "originalTask": "write code",
+                            "changedFiles": ["src/lib.rs"],
+                            "toolEvidence": ["write_file wrote src/lib.rs"],
+                            "testsRun": ["cargo test -p roder-core speed_policy"],
+                            "openGaps": [],
+                            "status": "completed"
+                        })
+                        .to_string(),
+                    }))]
+                }
+                _ => vec![Ok(InferenceEvent::MessageDelta(MessageDelta {
+                    text: "done".to_string(),
+                    phase: None,
+                }))],
+            };
+            Ok(Box::pin(stream::iter(events.into_iter().chain(
+                std::iter::once(Ok(InferenceEvent::Completed(CompletionMetadata {
+                    stop_reason: Some("stop".to_string()),
+                    provider_response_id: None,
+                }))),
+            ))))
+        }
+    }
+
     struct WriteFileContributor;
 
     impl ToolContributor for WriteFileContributor {
@@ -2329,5 +2428,98 @@ mod tests {
         assert!(saw_required);
         assert!(saw_completed);
         assert!(final_text.contains("verified final"));
+    }
+
+    #[tokio::test]
+    async fn speed_policy_changes_reasoning_across_eval_model_calls_without_model_switch() {
+        let requests = Arc::new(StdMutex::new(Vec::new()));
+        let mut builder = ExtensionRegistryBuilder::new();
+        builder.inference_engine(Arc::new(SpeedPolicyEngine {
+            calls: StdMutex::new(0),
+            requests: requests.clone(),
+        }));
+        builder.tool_contributor(Arc::new(WriteFileContributor));
+        builder.tool_contributor(Arc::new(
+            roder_ext_verification::VerificationToolContributor,
+        ));
+        let runtime = Arc::new(
+            Runtime::new(
+                builder.build().unwrap(),
+                RuntimeConfig {
+                    default_provider: roder_api::catalog::PROVIDER_MOCK.to_string(),
+                    default_model: "gpt-5.5".to_string(),
+                    runtime_profile: RuntimeProfile::Eval,
+                    policy_mode: PolicyMode::Bypass,
+                    ..RuntimeConfig::default()
+                },
+            )
+            .unwrap(),
+        );
+        let mut rx = runtime.subscribe_events();
+        let turn_id = runtime
+            .start_turn(StartTurnRequest {
+                thread_id: "thread-speed-policy".to_string(),
+                message: "write code".to_string(),
+                images: Vec::new(),
+                provider_override: None,
+                model_override: None,
+                workspace: None,
+                instructions: InstructionBundle::default(),
+                task_ledger_required: false,
+            })
+            .await
+            .unwrap();
+
+        let mut saw_speed_policy_event = false;
+        tokio::time::timeout(std::time::Duration::from_secs(5), async {
+            loop {
+                let envelope = rx.recv().await.unwrap();
+                if envelope.turn_id.as_deref() != Some(&turn_id) {
+                    continue;
+                }
+                match envelope.event {
+                    RoderEvent::InferenceStarted(event) => {
+                        if event.speed_policy.is_some() {
+                            saw_speed_policy_event = true;
+                        }
+                    }
+                    RoderEvent::TurnCompleted(_) => break,
+                    RoderEvent::TurnFailed(event) => panic!("turn failed: {}", event.error),
+                    _ => {}
+                }
+            }
+        })
+        .await
+        .unwrap();
+
+        let requests = requests.lock().unwrap().clone();
+        assert!(saw_speed_policy_event);
+        assert!(requests.len() >= 4);
+        assert!(requests.iter().all(|request| {
+            request.model.provider == roder_api::catalog::PROVIDER_MOCK
+                && request.model.model == "gpt-5.5"
+        }));
+        assert_eq!(
+            requests[0].runtime.speed_policy.as_ref().map(|d| d.phase),
+            Some(roder_api::inference::SpeedPolicyPhase::Orientation)
+        );
+        assert_eq!(requests[0].reasoning.level.as_deref(), Some(REASONING_HIGH));
+        assert_eq!(
+            requests[1].runtime.speed_policy.as_ref().map(|d| d.phase),
+            Some(roder_api::inference::SpeedPolicyPhase::Execution)
+        );
+        assert_eq!(requests[1].reasoning.level.as_deref(), Some(REASONING_LOW));
+        assert_eq!(
+            requests[2].runtime.speed_policy.as_ref().map(|d| d.phase),
+            Some(roder_api::inference::SpeedPolicyPhase::Verification)
+        );
+        assert_eq!(requests[2].reasoning.level.as_deref(), Some(REASONING_HIGH));
+        assert_eq!(
+            requests[2]
+                .metadata
+                .pointer("/speedPolicy/phase")
+                .and_then(serde_json::Value::as_str),
+            Some("verification")
+        );
     }
 }
