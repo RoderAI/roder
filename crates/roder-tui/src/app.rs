@@ -114,7 +114,7 @@ use tool_timeline::{
 use turn_timer::TurnTimer;
 
 const TOP_STATUS_ANIMATION_FPS: u64 = 6;
-const MAX_VISIBLE_SLASH_COMMANDS: usize = 8;
+const MAX_VISIBLE_SLASH_COMMANDS: usize = 12;
 const COPIED_HELPER_LABEL: &str = "Copied to clipboard";
 const COPIED_HELPER_DURATION: Duration = Duration::from_secs(2);
 
