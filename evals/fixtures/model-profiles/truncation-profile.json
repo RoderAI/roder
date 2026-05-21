@@ -1,0 +1,19 @@
+{
+  "id": "truncation-profile",
+  "title": "Model profile truncation follow-up",
+  "prompt": "Read the workspace note and report the truncation follow-up expectation.",
+  "tags": ["model-profile", "truncation-follow-up"],
+  "workspace": {
+    "files": [
+      {
+        "path": "notes/context.txt",
+        "contents": "The profile eval should preserve trace metrics for truncation follow-up behavior.\n"
+      }
+    ]
+  },
+  "timeoutMs": 10000,
+  "expected": {
+    "finalAnswerContains": ["hello from roder"]
+  },
+  "constraints": ["offline fake provider fixture", "trace metrics back profile recommendations"]
+}
