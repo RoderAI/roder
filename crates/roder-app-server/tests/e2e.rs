@@ -46,9 +46,13 @@ use roder_protocol::{
     CodeIndexRebuildParams, CodeIndexRebuildResult, CodeIndexSearchParams,
     CodeIndexSearchResultEnvelope, CodeIndexStatusParams, CodeIndexStatusResult,
     CommandsExpandParams, CommandsExpandResult, CommandsListResult, CommandsRunParams,
-    CommandsRunResult, ExtensionsListResult, HunkListParams, HunkListResult, HunkReadParams,
-    HunkReadResult, HunkRollbackParams, HunkRollbackResult, InitializeResult, JsonRpcError,
-    JsonRpcRequest, MarketplacesAddParams, MarketplacesAddResult, MarketplacesListResult,
+    CommandsRunResult, DiscoveryGroupsParams, DiscoveryGroupsResult, DiscoveryPromoteParams,
+    DiscoveryPromoteResult, DiscoveryPromotedClearParams, DiscoveryPromotedClearResult,
+    DiscoveryPromotedListParams, DiscoveryPromotedListResult, DiscoveryReadParams,
+    DiscoveryReadResult, DiscoveryRefreshResult, DiscoverySearchParams, DiscoverySearchResult,
+    ExtensionsListResult, HunkListParams, HunkListResult, HunkReadParams, HunkReadResult,
+    HunkRollbackParams, HunkRollbackResult, InitializeResult, JsonRpcError, JsonRpcRequest,
+    MarketplacesAddParams, MarketplacesAddResult, MarketplacesListResult,
     MarketplacesRefreshParams, MarketplacesRefreshResult, MarketplacesRemoveParams,
     MarketplacesRemoveResult, MarketplacesSearchParams, MarketplacesSearchResult,
     MediaAttachToTurnParams, MediaAttachToTurnResult, MediaDeleteParams, MediaDeleteResult,
@@ -103,6 +107,7 @@ struct TaskCallingEngine {
 }
 
 static SEARCH_INDEX_TEST_LOCK: LazyLock<Mutex<()>> = LazyLock::new(|| Mutex::new(()));
+static DISCOVERY_TEST_LOCK: LazyLock<Mutex<()>> = LazyLock::new(|| Mutex::new(()));
 
 struct PendingEngine;
 
@@ -3328,6 +3333,187 @@ async fn tools_list_discovers_configured_web_search_without_secret_material() {
     assert!(!protocol_text.contains("Authorization"));
     assert!(!protocol_text.contains("x-api-key"));
     assert!(!protocol_text.contains("api_key"));
+}
+
+#[tokio::test]
+async fn discovery_methods_refresh_search_read_promote_list_and_clear() {
+    let _guard = DISCOVERY_TEST_LOCK.lock().await;
+    let root = std::env::temp_dir().join(format!(
+        "roder-discovery-e2e-{}",
+        OffsetDateTime::now_utc().unix_timestamp_nanos()
+    ));
+    let workspace = root.join("workspace");
+    let catalog_dir = root.join("catalog");
+    let session_dir = root.join("session");
+    std::fs::create_dir_all(&workspace).unwrap();
+    std::fs::write(
+        workspace.join(".mcp.json"),
+        r#"{"mcpServers":{"mcp-local":{"command":"node","env":{"API_KEY":"secret"}}}}"#,
+    )
+    .unwrap();
+    unsafe {
+        std::env::set_var("RODER_DISCOVERY_CATALOG_DIR", &catalog_dir);
+        std::env::set_var("RODER_DISCOVERY_SESSION_DIR", &session_dir);
+    }
+
+    let registry = build_default_registry(DefaultRegistryConfig {
+        workspace: Some(workspace.clone()),
+        ..Default::default()
+    })
+    .unwrap();
+    let runtime = Arc::new(
+        Runtime::new(
+            registry,
+            RuntimeConfig {
+                workspace: Some(workspace.display().to_string()),
+                ..Default::default()
+            },
+        )
+        .unwrap(),
+    );
+    let client = LocalAppClient::new(Arc::new(AppServer::new(runtime)));
+
+    let refresh: DiscoveryRefreshResult = request(&client, "discovery/refresh", None).await;
+    assert!(refresh.catalog_root.ends_with("catalog"));
+    assert!(
+        refresh
+            .written_files
+            .iter()
+            .any(|path| path.ends_with("index.json"))
+    );
+    assert!(
+        refresh
+            .catalog
+            .groups
+            .iter()
+            .any(|group| group.id == "tools:builtin-coding-tools")
+    );
+
+    let groups: DiscoveryGroupsResult = request(
+        &client,
+        "discovery/groups",
+        Some(
+            serde_json::to_value(DiscoveryGroupsParams {
+                refresh: Some(false),
+                limit: Some(50),
+            })
+            .unwrap(),
+        ),
+    )
+    .await;
+    let mcp_item = groups
+        .groups
+        .iter()
+        .flat_map(|group| group.items.iter())
+        .find(|item| item.name == "mcp-local")
+        .expect("mcp discovery item");
+    assert_eq!(
+        mcp_item.source.auth_state,
+        roder_api::discovery::DiscoveryAuthState::Required
+    );
+    assert!(mcp_item.redaction.redacted);
+    assert!(
+        mcp_item
+            .redaction
+            .fields
+            .iter()
+            .any(|field| field == "$.env")
+    );
+
+    let search: DiscoverySearchResult = request(
+        &client,
+        "discovery/search",
+        Some(
+            serde_json::to_value(DiscoverySearchParams {
+                query: "grep".to_string(),
+                refresh: Some(false),
+                limit: Some(20),
+            })
+            .unwrap(),
+        ),
+    )
+    .await;
+    let grep_item = search
+        .items
+        .iter()
+        .find(|item| item.id == "tool:builtin-coding-tools/grep")
+        .expect("grep discovery item");
+
+    let read: DiscoveryReadResult = request(
+        &client,
+        "discovery/read",
+        Some(
+            serde_json::to_value(DiscoveryReadParams {
+                item_id: grep_item.id.clone(),
+                refresh: Some(false),
+                start_line: Some(1),
+                limit: Some(20),
+                promote: Some(true),
+                thread_id: Some("thread-discovery".to_string()),
+                turn_id: Some("turn-discovery".to_string()),
+            })
+            .unwrap(),
+        ),
+    )
+    .await;
+    assert!(read.promoted);
+    assert!(read.page.text.contains("\"query\""));
+    assert!(read.page.total_lines <= 20 || read.page.truncated);
+
+    let promote: DiscoveryPromoteResult = request(
+        &client,
+        "discovery/promote",
+        Some(
+            serde_json::to_value(DiscoveryPromoteParams {
+                item_id: grep_item.id.clone(),
+                thread_id: "thread-discovery".to_string(),
+                turn_id: Some("turn-discovery-2".to_string()),
+            })
+            .unwrap(),
+        ),
+    )
+    .await;
+    assert_eq!(
+        promote.record.promotion,
+        roder_api::discovery::DiscoveryPromotionState::Reused
+    );
+    assert_eq!(
+        promote.record.cache_status,
+        roder_api::discovery::DiscoveryCacheStatus::Hit
+    );
+
+    let promoted: DiscoveryPromotedListResult = request(
+        &client,
+        "discovery/promoted/list",
+        Some(
+            serde_json::to_value(DiscoveryPromotedListParams {
+                thread_id: Some("thread-discovery".to_string()),
+            })
+            .unwrap(),
+        ),
+    )
+    .await;
+    assert_eq!(promoted.records.len(), 1);
+
+    let cleared: DiscoveryPromotedClearResult = request(
+        &client,
+        "discovery/promoted/clear",
+        Some(
+            serde_json::to_value(DiscoveryPromotedClearParams {
+                thread_id: Some("thread-discovery".to_string()),
+                item_id: Some(grep_item.id.clone()),
+            })
+            .unwrap(),
+        ),
+    )
+    .await;
+    assert_eq!(cleared.cleared, 1);
+
+    unsafe {
+        std::env::remove_var("RODER_DISCOVERY_CATALOG_DIR");
+        std::env::remove_var("RODER_DISCOVERY_SESSION_DIR");
+    }
+    let _ = std::fs::remove_dir_all(root);
 }
 
 #[tokio::test]
