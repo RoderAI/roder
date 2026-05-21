@@ -1,4 +1,5 @@
 mod artifact;
+mod automations;
 pub mod client;
 mod code_index;
 mod command;
@@ -14,5 +15,6 @@ mod search_index;
 pub mod server;
 mod skills;
 
+pub use automations::AppServerFeatureConfig;
 pub use client::*;
 pub use server::*;

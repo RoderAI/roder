@@ -22,6 +22,7 @@ if-addrs.workspace = true
 rand.workspace = true
 qrcode.workspace = true
 roder-api.workspace = true
+roder-automations.workspace = true
 roder-codex-auth.workspace = true
 roder-code-index.workspace = true
 roder-commands.workspace = true

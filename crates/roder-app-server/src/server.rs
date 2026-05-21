@@ -23,10 +23,11 @@ use roder_core::{
 };
 use roder_protocol::*;
 use roder_roadmap::{ListOptions, list_documents, parse_document, validate_document};
-use roder_tasks::{BackgroundRunner, BackgroundRunnerConfig, TaskExecutorRegistry};
+use roder_tasks::BackgroundRunner;
 use time::OffsetDateTime;
 use tokio::sync::{RwLock, broadcast};
 
+use crate::automations::AppServerFeatureConfig;
 use crate::desktop_contract::{
     default_cwd_string, desktop_thread_from_metadata, desktop_turn_from_record,
     desktop_turn_images, desktop_turn_message,
@@ -81,39 +82,19 @@ struct RoadmapThreadParams {
 
 pub struct AppServer {
     pub runtime: Arc<Runtime>,
-    tasks: BackgroundRunner,
-    persist_user_config: bool,
-    desktop_threads: RwLock<std::collections::HashMap<String, DesktopThread>>,
-    desktop_thread_models: RwLock<std::collections::HashMap<String, (String, String)>>,
-    desktop_active_turns: RwLock<std::collections::HashMap<String, String>>,
-    desktop_notifications: broadcast::Sender<JsonRpcNotification>,
+    pub(crate) tasks: BackgroundRunner,
+    pub(crate) persist_user_config: bool,
+    pub(crate) features: AppServerFeatureConfig,
+    pub(crate) automation_supervisor: Option<roder_automations::AutomationSupervisorHandle>,
+    pub(crate) desktop_threads: RwLock<std::collections::HashMap<String, DesktopThread>>,
+    pub(crate) desktop_thread_models: RwLock<std::collections::HashMap<String, (String, String)>>,
+    pub(crate) desktop_active_turns: RwLock<std::collections::HashMap<String, String>>,
+    pub(crate) desktop_notifications: broadcast::Sender<JsonRpcNotification>,
 }
 
 impl AppServer {
     pub fn new(runtime: Arc<Runtime>) -> Self {
-        let mut task_registry = TaskExecutorRegistry::default();
-        for executor in &runtime.registry().task_executors {
-            let _ = task_registry.register(Arc::clone(executor));
-        }
-        let tasks = BackgroundRunner::new(task_registry, BackgroundRunnerConfig::default());
-        let (desktop_notifications, _) = broadcast::channel(1024);
-        if tokio::runtime::Handle::try_current().is_ok() {
-            notifications::spawn_task_event_bridge(Arc::clone(&runtime), tasks.clone());
-            notifications::spawn_runtime_event_handlers(Arc::clone(&runtime), tasks.clone());
-            notifications::spawn_desktop_notification_bridge(
-                Arc::clone(&runtime),
-                desktop_notifications.clone(),
-            );
-        }
-        Self {
-            runtime,
-            tasks,
-            persist_user_config: false,
-            desktop_threads: RwLock::new(std::collections::HashMap::new()),
-            desktop_thread_models: RwLock::new(std::collections::HashMap::new()),
-            desktop_active_turns: RwLock::new(std::collections::HashMap::new()),
-            desktop_notifications,
-        }
+        Self::with_feature_config(runtime, AppServerFeatureConfig::default())
     }
 
     pub fn with_user_config_persistence(mut self) -> Self {
