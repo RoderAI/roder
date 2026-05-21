@@ -3,7 +3,7 @@ use time::OffsetDateTime;
 
 use crate::artifacts::{ContextArtifact, ContextArtifactId};
 use crate::extension::{ExtensionId, InferenceEngineId};
-use crate::inference::{InferenceEvent, RuntimeProfile};
+use crate::inference::{InferenceEvent, RuntimeProfile, SpeedPolicyDecision};
 use crate::media::{MediaArtifact, MediaArtifactId, MediaPreview};
 use crate::memory::{MemoryCitation, MemoryId, MemoryProviderSelection, MemoryRecord, MemoryScope};
 use crate::plan_review::{
@@ -147,6 +147,8 @@ pub struct InferenceStarted {
     pub thread_id: ThreadId,
     pub turn_id: TurnId,
     pub engine_id: InferenceEngineId,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub speed_policy: Option<SpeedPolicyDecision>,
     #[serde(with = "time::serde::rfc3339")]
     pub timestamp: OffsetDateTime,
 }

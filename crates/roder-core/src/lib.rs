@@ -8,6 +8,7 @@ mod plan_review;
 pub mod policy_gate;
 mod roadmap;
 pub mod runtime;
+mod speed_policy;
 mod subagent_traces;
 pub mod teams;
 mod tool_execution;

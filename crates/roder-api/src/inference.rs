@@ -96,6 +96,36 @@ pub struct ReasoningConfig {
     pub level: Option<String>,
 }
 
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum SpeedPolicyPhase {
+    #[default]
+    Orientation,
+    Execution,
+    Verification,
+    Recovery,
+}
+
+impl SpeedPolicyPhase {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Orientation => "orientation",
+            Self::Execution => "execution",
+            Self::Verification => "verification",
+            Self::Recovery => "recovery",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct SpeedPolicyDecision {
+    pub phase: SpeedPolicyPhase,
+    pub desired_reasoning: String,
+    pub applied_reasoning: Option<String>,
+    pub supported: bool,
+}
+
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 pub struct OutputConfig {
     pub max_tokens: Option<u32>,
@@ -153,6 +183,8 @@ pub struct RuntimeHints {
     pub parallel_tool_calls: Option<bool>,
     #[serde(default)]
     pub hosted_web_search: HostedWebSearchConfig,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub speed_policy: Option<SpeedPolicyDecision>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -326,4 +358,43 @@ pub trait InferenceEngine: Send + Sync + 'static {
         ctx: InferenceTurnContext<'_>,
         request: AgentInferenceRequest,
     ) -> anyhow::Result<InferenceEventStream>;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn inference_speed_policy_decision_serializes_runtime_metadata() {
+        let decision = SpeedPolicyDecision {
+            phase: SpeedPolicyPhase::Verification,
+            desired_reasoning: "high".to_string(),
+            applied_reasoning: Some("high".to_string()),
+            supported: true,
+        };
+        let hints = RuntimeHints {
+            speed_policy: Some(decision),
+            ..RuntimeHints::default()
+        };
+
+        let json = serde_json::to_value(hints).unwrap();
+        assert_eq!(
+            json.get("speed_policy")
+                .and_then(|value| value.get("phase"))
+                .and_then(serde_json::Value::as_str),
+            Some("verification")
+        );
+        assert_eq!(
+            json.get("speed_policy")
+                .and_then(|value| value.get("desiredReasoning"))
+                .and_then(serde_json::Value::as_str),
+            Some("high")
+        );
+        assert_eq!(
+            json.get("speed_policy")
+                .and_then(|value| value.get("appliedReasoning"))
+                .and_then(serde_json::Value::as_str),
+            Some("high")
+        );
+    }
 }
