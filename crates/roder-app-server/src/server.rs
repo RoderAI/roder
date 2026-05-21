@@ -439,6 +439,43 @@ impl AppServer {
                 .await
             }
             "tools/list" => self.handle_tools_list().await,
+            "discovery/groups" => {
+                self.decode_and(req.params, |p| async move {
+                    self.handle_discovery_groups(p).await
+                })
+                .await
+            }
+            "discovery/search" => {
+                self.decode_and(req.params, |p| async move {
+                    self.handle_discovery_search(p).await
+                })
+                .await
+            }
+            "discovery/read" => {
+                self.decode_and(req.params, |p| async move {
+                    self.handle_discovery_read(p).await
+                })
+                .await
+            }
+            "discovery/refresh" => self.handle_discovery_refresh().await,
+            "discovery/promote" => {
+                self.decode_and(req.params, |p| async move {
+                    self.handle_discovery_promote(p).await
+                })
+                .await
+            }
+            "discovery/promoted/list" => {
+                self.decode_and(req.params, |p| async move {
+                    self.handle_discovery_promoted_list(p).await
+                })
+                .await
+            }
+            "discovery/promoted/clear" => {
+                self.decode_and(req.params, |p| async move {
+                    self.handle_discovery_promoted_clear(p).await
+                })
+                .await
+            }
             "tasks/submit" => {
                 self.decode_and(
                     req.params,

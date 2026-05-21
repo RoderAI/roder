@@ -9,6 +9,9 @@ use roder_api::code_index::{
 };
 use roder_api::context::ContextBlock;
 use roder_api::conversation::InputImage;
+use roder_api::discovery::{
+    DiscoveryCatalog, DiscoveryCatalogGroup, DiscoveryCatalogItem, DiscoveryPromotionRecord,
+};
 use roder_api::events::{ThreadId, TurnId};
 use roder_api::extension::{ExtensionId, ExtensionManifest};
 use roder_api::inference::{
@@ -1379,6 +1382,129 @@ pub struct ArtifactDeleteResult {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct DiscoveryGroupsParams {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub refresh: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub limit: Option<usize>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DiscoveryGroupsResult {
+    pub catalog_id: String,
+    pub title: String,
+    pub hidden_item_count: u64,
+    pub groups: Vec<DiscoveryCatalogGroup>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DiscoverySearchParams {
+    pub query: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub refresh: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub limit: Option<usize>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DiscoverySearchResult {
+    pub query: String,
+    pub items: Vec<DiscoveryCatalogItem>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DiscoveryReadParams {
+    pub item_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub refresh: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub start_line: Option<usize>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub limit: Option<usize>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub promote: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub thread_id: Option<ThreadId>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub turn_id: Option<TurnId>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DiscoveryReadPage {
+    pub text: String,
+    pub start_line: usize,
+    pub end_line: usize,
+    pub total_lines: usize,
+    pub truncated: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DiscoveryReadResult {
+    pub item: DiscoveryCatalogItem,
+    pub page: DiscoveryReadPage,
+    pub promoted: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DiscoveryRefreshResult {
+    pub catalog: DiscoveryCatalog,
+    pub catalog_root: String,
+    pub session_state_dir: String,
+    pub written_files: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DiscoveryPromoteParams {
+    pub item_id: String,
+    pub thread_id: ThreadId,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub turn_id: Option<TurnId>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DiscoveryPromoteResult {
+    pub record: DiscoveryPromotionRecord,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DiscoveryPromotedListParams {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub thread_id: Option<ThreadId>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DiscoveryPromotedListResult {
+    pub records: Vec<DiscoveryPromotionRecord>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DiscoveryPromotedClearParams {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub thread_id: Option<ThreadId>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub item_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DiscoveryPromotedClearResult {
+    pub cleared: usize,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct MediaReadParams {
     pub artifact_id: MediaArtifactId,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -2211,6 +2337,25 @@ mod tests {
 
         assert_eq!(command["exitCode"], 0);
         assert!(command.get("stdoutArtifact").is_none());
+    }
+
+    #[test]
+    fn discovery_protocol_structs_use_camel_case_fields() {
+        let params: DiscoveryReadParams = serde_json::from_value(serde_json::json!({
+            "itemId": "tool:builtin/grep",
+            "startLine": 2,
+            "limit": 10,
+            "threadId": "thread-1",
+            "turnId": "turn-1"
+        }))
+        .unwrap();
+
+        assert_eq!(params.item_id, "tool:builtin/grep");
+        assert_eq!(params.start_line, Some(2));
+        assert_eq!(params.thread_id.as_deref(), Some("thread-1"));
+
+        let clear = serde_json::to_value(DiscoveryPromotedClearResult { cleared: 2 }).unwrap();
+        assert_eq!(clear["cleared"], 2);
     }
 
     #[test]

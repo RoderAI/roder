@@ -187,6 +187,13 @@ Tools, commands, files, agents, and tasks:
 | Method | Purpose |
 | --- | --- |
 | `tools/list` | List runtime tool specs. |
+| `discovery/refresh` | Rebuild the lazy discovery catalog. |
+| `discovery/groups` | List lazy discovery catalog groups. |
+| `discovery/search` | Search lazy discovery items. |
+| `discovery/read` | Read and optionally promote one discovery item. |
+| `discovery/promote` | Promote one discovery item for a session. |
+| `discovery/promoted/list` | List promoted discovery items. |
+| `discovery/promoted/clear` | Clear promoted discovery state. |
 | `tools/call` | Directly call allowed workflow tools. |
 | `commands/list` | List configured slash commands. |
 | `commands/expand` | Expand a command to a model prompt and context blocks. |
