@@ -6,6 +6,7 @@ use roder_api::catalog::{
     PROVIDER_CODEX, PROVIDER_MOCK, PROVIDER_OPENCODE, PROVIDER_OPENCODE_GO, PROVIDER_POOLSIDE,
     PROVIDER_SUPERGROK, PROVIDER_XAI,
 };
+use roder_api::code_index::CodeIndexStatus;
 use roder_api::extension::{ExtensionRegistryBuilder, InferenceEngineId};
 use roder_api::inference::*;
 use roder_api::marketplace::MarketplaceInstallState;
@@ -40,11 +41,14 @@ use roder_extension_host::{
 use roder_protocol::{
     AgentsListResult, ArtifactDeleteParams, ArtifactDeleteResult, ArtifactGrepParams,
     ArtifactGrepResult, ArtifactListParams, ArtifactListResult, ArtifactReadParams,
-    ArtifactReadResult, ArtifactTailParams, ArtifactTailResult, CommandsExpandParams,
-    CommandsExpandResult, CommandsListResult, CommandsRunParams, CommandsRunResult,
-    ExtensionsListResult, HunkListParams, HunkListResult, HunkReadParams, HunkReadResult,
-    HunkRollbackParams, HunkRollbackResult, InitializeResult, JsonRpcError, JsonRpcRequest,
-    MarketplacesAddParams, MarketplacesAddResult, MarketplacesListResult,
+    ArtifactReadResult, ArtifactTailParams, ArtifactTailResult, CodeIndexProofsListParams,
+    CodeIndexProofsListResult, CodeIndexReadChunkParams, CodeIndexReadChunkResult,
+    CodeIndexRebuildParams, CodeIndexRebuildResult, CodeIndexSearchParams,
+    CodeIndexSearchResultEnvelope, CodeIndexStatusParams, CodeIndexStatusResult,
+    CommandsExpandParams, CommandsExpandResult, CommandsListResult, CommandsRunParams,
+    CommandsRunResult, ExtensionsListResult, HunkListParams, HunkListResult, HunkReadParams,
+    HunkReadResult, HunkRollbackParams, HunkRollbackResult, InitializeResult, JsonRpcError,
+    JsonRpcRequest, MarketplacesAddParams, MarketplacesAddResult, MarketplacesListResult,
     MarketplacesRefreshParams, MarketplacesRefreshResult, MarketplacesRemoveParams,
     MarketplacesRemoveResult, MarketplacesSearchParams, MarketplacesSearchResult,
     MediaAttachToTurnParams, MediaAttachToTurnResult, MediaDeleteParams, MediaDeleteResult,
@@ -3910,6 +3914,155 @@ async fn search_index_methods_manage_status_warmup_rebuild_and_clear() {
     roder_search::set_search_index_enabled(true);
     unsafe {
         std::env::remove_var("RODER_SEARCH_INDEX_HOME");
+    }
+    let _ = std::fs::remove_dir_all(root);
+}
+
+#[tokio::test]
+async fn code_index_methods_rebuild_search_read_chunks_and_list_proofs() {
+    let root = std::env::temp_dir().join(format!(
+        "roder-code-index-app-server-{}",
+        uuid::Uuid::new_v4()
+    ));
+    let workspace = root.join("workspace");
+    let home = root.join("home");
+    std::fs::create_dir_all(workspace.join("src")).unwrap();
+    std::fs::write(
+        workspace.join("src/auth.rs"),
+        "pub fn oauth_refresh_token() {\n    let token = \"refresh\";\n}\n",
+    )
+    .unwrap();
+    unsafe {
+        std::env::set_var("RODER_CODE_INDEX_HOME", &home);
+    }
+
+    let runtime = Arc::new(Runtime::fake().unwrap());
+    let server = Arc::new(AppServer::new(runtime));
+    let client = LocalAppClient::new(server);
+    let mut notifications = client.subscribe_notifications();
+    let workspace_param = workspace.display().to_string();
+
+    let status: CodeIndexStatusResult = request(
+        &client,
+        "index/status",
+        Some(
+            serde_json::to_value(CodeIndexStatusParams {
+                workspace: Some(workspace_param.clone()),
+            })
+            .unwrap(),
+        ),
+    )
+    .await;
+    assert_eq!(status.status.status, CodeIndexStatus::Missing);
+
+    let rebuild: CodeIndexRebuildResult = request(
+        &client,
+        "index/rebuild",
+        Some(
+            serde_json::to_value(CodeIndexRebuildParams {
+                workspace: Some(workspace_param.clone()),
+            })
+            .unwrap(),
+        ),
+    )
+    .await;
+    assert_eq!(rebuild.status.status, CodeIndexStatus::Ready);
+    assert_eq!(rebuild.status.stats.file_count, 1);
+    let ready = wait_for_notification(&mut notifications, "index/statusChanged", None).await;
+    assert_eq!(ready.params["status"]["status"], "ready");
+
+    let search: CodeIndexSearchResultEnvelope = request(
+        &client,
+        "index/search",
+        Some(
+            serde_json::to_value(CodeIndexSearchParams {
+                workspace: Some(workspace_param.clone()),
+                query: "oauth refresh token".to_string(),
+                limit: Some(5),
+            })
+            .unwrap(),
+        ),
+    )
+    .await;
+    assert_eq!(search.status.status, CodeIndexStatus::Ready);
+    assert_eq!(search.response.generation.status, CodeIndexStatus::Ready);
+    assert!(!search.response.results.is_empty());
+    assert!(search.response.results[0].proof_verified);
+    let chunk_hash = search.response.results[0].chunk.chunk_hash.clone();
+
+    let denied: JsonRpcError = request_error(
+        &client,
+        "index/readChunk",
+        Some(
+            serde_json::to_value(CodeIndexReadChunkParams {
+                workspace: Some(workspace_param.clone()),
+                chunk_hash: chunk_hash.clone(),
+                offset: None,
+                limit: None,
+                include_source: false,
+            })
+            .unwrap(),
+        ),
+    )
+    .await;
+    assert!(denied.message.contains("includeSource=true"));
+
+    let read: CodeIndexReadChunkResult = request(
+        &client,
+        "index/readChunk",
+        Some(
+            serde_json::to_value(CodeIndexReadChunkParams {
+                workspace: Some(workspace_param.clone()),
+                chunk_hash,
+                offset: Some(0),
+                limit: Some(32),
+                include_source: true,
+            })
+            .unwrap(),
+        ),
+    )
+    .await;
+    assert!(read.page.total_bytes >= read.page.text.len());
+    assert!(read.page.text.contains("oauth") || read.page.text.contains("token"));
+
+    let proofs: CodeIndexProofsListResult = request(
+        &client,
+        "index/proofs/list",
+        Some(
+            serde_json::to_value(CodeIndexProofsListParams {
+                workspace: Some(workspace_param.clone()),
+            })
+            .unwrap(),
+        ),
+    )
+    .await;
+    assert!(!proofs.proofs.is_empty());
+    assert_eq!(
+        proofs.proofs[0].generation_id,
+        rebuild.status.generation_id.unwrap()
+    );
+
+    std::fs::write(
+        workspace.join("src/auth.rs"),
+        "pub fn oauth_refresh_token_changed() {}\n",
+    )
+    .unwrap();
+    let stale: CodeIndexStatusResult = request(
+        &client,
+        "index/status",
+        Some(
+            serde_json::to_value(CodeIndexStatusParams {
+                workspace: Some(workspace_param),
+            })
+            .unwrap(),
+        ),
+    )
+    .await;
+    assert_eq!(stale.status.status, CodeIndexStatus::Stale);
+    assert!(stale.status.stale);
+
+    unsafe {
+        std::env::remove_var("RODER_CODE_INDEX_HOME");
     }
     let _ = std::fs::remove_dir_all(root);
 }
