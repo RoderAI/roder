@@ -1,0 +1,33 @@
+{
+  "id": "speed-routine-edit",
+  "title": "Speed policy routine edit",
+  "prompt": "FAKE_WRITE_FILE: make the routine library edit and finish with verification evidence.",
+  "tags": ["speed", "routine-edit", "tool:write_file"],
+  "workspace": {
+    "files": [
+      {
+        "path": "src/lib.rs",
+        "contents": "pub fn fake() -> &'static str { \"pending\" }\n"
+      }
+    ]
+  },
+  "timeoutMs": 10000,
+  "expected": {
+    "finalAnswerContains": ["hello from roder"],
+    "files": [
+      {
+        "path": "src/lib.rs",
+        "exists": true,
+        "contains": ["verified"]
+      }
+    ],
+    "commandChecks": [
+      {
+        "command": "grep -q 'verified' src/lib.rs",
+        "expectedExitCode": 0
+      }
+    ],
+    "verificationRequired": true
+  },
+  "constraints": ["offline fake provider fixture", "routine edits should use lower reasoning after orientation"]
+}

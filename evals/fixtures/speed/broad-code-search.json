@@ -1,0 +1,34 @@
+{
+  "id": "speed-broad-code-search",
+  "title": "Speed policy broad code search",
+  "prompt": "Find the relevant implementation entry point across a small workspace and summarize it. Use the fixture content only.",
+  "tags": ["speed", "broad-code-search", "tool:grep"],
+  "workspace": {
+    "files": [
+      {
+        "path": "src/router.rs",
+        "contents": "pub fn route() -> &'static str { \"router-ready\" }\n"
+      },
+      {
+        "path": "src/runtime.rs",
+        "contents": "pub fn speed_entrypoint() -> &'static str { \"speed-policy-entrypoint\" }\n"
+      },
+      {
+        "path": "docs/notes.md",
+        "contents": "The speed policy entry point lives in src/runtime.rs.\n"
+      }
+    ]
+  },
+  "timeoutMs": 10000,
+  "expected": {
+    "finalAnswerContains": ["hello from roder"],
+    "files": [
+      {
+        "path": "src/runtime.rs",
+        "exists": true,
+        "contains": ["speed-policy-entrypoint"]
+      }
+    ]
+  },
+  "constraints": ["offline fake provider fixture", "prefer search before broad reading"]
+}

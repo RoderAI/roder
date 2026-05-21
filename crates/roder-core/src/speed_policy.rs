@@ -5,6 +5,27 @@ use roder_api::inference::{
     ReasoningConfig, RuntimeProfile, SpeedPolicyDecision, SpeedPolicyPhase,
 };
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RuntimeSpeedPolicyConfig {
+    pub enabled: bool,
+    pub orientation_reasoning: String,
+    pub execution_reasoning: String,
+    pub verification_reasoning: String,
+    pub recovery_reasoning: String,
+}
+
+impl Default for RuntimeSpeedPolicyConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            orientation_reasoning: REASONING_HIGH.to_string(),
+            execution_reasoning: REASONING_LOW.to_string(),
+            verification_reasoning: REASONING_HIGH.to_string(),
+            recovery_reasoning: REASONING_MEDIUM.to_string(),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Default)]
 pub(crate) struct SpeedPolicyState {
     assistant_messages: u32,
@@ -35,13 +56,17 @@ impl SpeedPolicyState {
         &self,
         runtime_profile: RuntimeProfile,
         model: &str,
+        config: &RuntimeSpeedPolicyConfig,
     ) -> Option<SpeedPolicyDecision> {
+        if !config.enabled {
+            return None;
+        }
         if runtime_profile != RuntimeProfile::Eval {
             return None;
         }
 
         let phase = self.phase();
-        let desired_reasoning = desired_reasoning_for_phase(phase).to_string();
+        let desired_reasoning = config.reasoning_for_phase(phase).to_string();
         let supported = model_supports_reasoning_effort(model, &desired_reasoning);
         Some(SpeedPolicyDecision {
             phase,
@@ -64,6 +89,17 @@ impl SpeedPolicyState {
     }
 }
 
+impl RuntimeSpeedPolicyConfig {
+    fn reasoning_for_phase(&self, phase: SpeedPolicyPhase) -> &str {
+        match phase {
+            SpeedPolicyPhase::Orientation => &self.orientation_reasoning,
+            SpeedPolicyPhase::Execution => &self.execution_reasoning,
+            SpeedPolicyPhase::Verification => &self.verification_reasoning,
+            SpeedPolicyPhase::Recovery => &self.recovery_reasoning,
+        }
+    }
+}
+
 pub(crate) fn reasoning_from_decision(
     decision: Option<&SpeedPolicyDecision>,
     fallback: ReasoningConfig,
@@ -77,14 +113,6 @@ pub(crate) fn reasoning_from_decision(
     }
 }
 
-fn desired_reasoning_for_phase(phase: SpeedPolicyPhase) -> &'static str {
-    match phase {
-        SpeedPolicyPhase::Orientation | SpeedPolicyPhase::Verification => REASONING_HIGH,
-        SpeedPolicyPhase::Execution => REASONING_LOW,
-        SpeedPolicyPhase::Recovery => REASONING_MEDIUM,
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -93,8 +121,11 @@ mod tests {
     #[test]
     fn speed_policy_moves_high_to_low_to_high_and_recovery_medium() {
         let mut state = SpeedPolicyState::default();
+        let config = RuntimeSpeedPolicyConfig::default();
 
-        let orientation = state.decision(RuntimeProfile::Eval, "gpt-5.5").unwrap();
+        let orientation = state
+            .decision(RuntimeProfile::Eval, "gpt-5.5", &config)
+            .unwrap();
         assert_eq!(orientation.phase, SpeedPolicyPhase::Orientation);
         assert_eq!(
             orientation.applied_reasoning.as_deref(),
@@ -102,12 +133,16 @@ mod tests {
         );
 
         state.record_model_output(true, 1);
-        let execution = state.decision(RuntimeProfile::Eval, "gpt-5.5").unwrap();
+        let execution = state
+            .decision(RuntimeProfile::Eval, "gpt-5.5", &config)
+            .unwrap();
         assert_eq!(execution.phase, SpeedPolicyPhase::Execution);
         assert_eq!(execution.applied_reasoning.as_deref(), Some(REASONING_LOW));
 
         state.record_verification_required();
-        let verification = state.decision(RuntimeProfile::Eval, "gpt-5.5").unwrap();
+        let verification = state
+            .decision(RuntimeProfile::Eval, "gpt-5.5", &config)
+            .unwrap();
         assert_eq!(verification.phase, SpeedPolicyPhase::Verification);
         assert_eq!(
             verification.applied_reasoning.as_deref(),
@@ -115,7 +150,9 @@ mod tests {
         );
 
         state.record_failure();
-        let recovery = state.decision(RuntimeProfile::Eval, "gpt-5.5").unwrap();
+        let recovery = state
+            .decision(RuntimeProfile::Eval, "gpt-5.5", &config)
+            .unwrap();
         assert_eq!(recovery.phase, SpeedPolicyPhase::Recovery);
         assert_eq!(
             recovery.applied_reasoning.as_deref(),
@@ -126,7 +163,10 @@ mod tests {
     #[test]
     fn unsupported_model_degrades_to_fallback_reasoning() {
         let state = SpeedPolicyState::default();
-        let decision = state.decision(RuntimeProfile::Eval, "mock").unwrap();
+        let config = RuntimeSpeedPolicyConfig::default();
+        let decision = state
+            .decision(RuntimeProfile::Eval, "mock", &config)
+            .unwrap();
         let fallback = ReasoningConfig {
             enabled: true,
             level: Some(REASONING_XHIGH.to_string()),
@@ -145,7 +185,11 @@ mod tests {
     #[test]
     fn non_eval_profiles_do_not_apply_speed_policy() {
         let state = SpeedPolicyState::default();
-        assert_eq!(state.decision(RuntimeProfile::Interactive, "gpt-5.5"), None);
+        let config = RuntimeSpeedPolicyConfig::default();
+        assert_eq!(
+            state.decision(RuntimeProfile::Interactive, "gpt-5.5", &config),
+            None
+        );
         assert_eq!(
             reasoning_from_decision(
                 None,

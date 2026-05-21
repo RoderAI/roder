@@ -34,6 +34,7 @@ use crate::bus::EventBus;
 use crate::fake_provider::FakeInferenceEngine;
 use crate::instructions::{apply_runtime_profile, apply_task_ledger_required};
 use crate::policy_gate::DefaultPolicyGate;
+pub use crate::speed_policy::RuntimeSpeedPolicyConfig;
 use crate::speed_policy::{SpeedPolicyState, reasoning_from_decision};
 use crate::subagent_traces::RuntimeSubagentTraceSink;
 use crate::teams::{TeamManager, TeamMemberStartRequest, TeamStartRequest, TeamState};
@@ -56,6 +57,7 @@ pub struct RuntimeConfig {
     pub workspace: Option<String>,
     pub policy_mode: PolicyMode,
     pub runtime_profile: RuntimeProfile,
+    pub speed_policy: RuntimeSpeedPolicyConfig,
     pub turn_deadline_seconds: Option<u64>,
     pub remote_runner_destination: Option<RunnerDestination>,
     pub team_data_dir: Option<PathBuf>,
@@ -76,6 +78,7 @@ impl Default for RuntimeConfig {
             workspace: None,
             policy_mode: PolicyMode::Default,
             runtime_profile: RuntimeProfile::Interactive,
+            speed_policy: RuntimeSpeedPolicyConfig::default(),
             turn_deadline_seconds: None,
             remote_runner_destination: None,
             team_data_dir: None,
@@ -1258,12 +1261,14 @@ impl Runtime {
                 return Ok(());
             }
 
-            let speed_policy_decision = speed_policy.decision(runtime_profile, &model);
+            let speed_policy_decision =
+                speed_policy.decision(runtime_profile, &model, &cfg.speed_policy);
             self.emit(RoderEvent::InferenceStarted(InferenceStarted {
                 thread_id: req.thread_id.clone(),
                 turn_id: turn_id.clone(),
                 engine_id: engine.id(),
                 speed_policy: speed_policy_decision.clone(),
+                deadline_remaining_seconds: deadline_remaining_seconds(turn_deadline),
                 timestamp: OffsetDateTime::now_utc(),
             }))
             .await;
