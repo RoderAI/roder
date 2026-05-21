@@ -6,6 +6,7 @@ use time::OffsetDateTime;
 
 use crate::events::{ThreadId, TurnId};
 use crate::extension::TaskExecutorId;
+use crate::processes::ProcessRegistrySink;
 use crate::remote_runner::{RemoteRunnerSession, RunnerDestination};
 use crate::{ToolSchemaPolicy, normalize_tool_schema};
 
@@ -64,6 +65,7 @@ pub struct TaskExecutionContext {
     pub runner_session: Option<Arc<dyn RemoteRunnerSession>>,
     pub deadline: Option<OffsetDateTime>,
     pub metadata: serde_json::Value,
+    pub process_registry: Option<Arc<dyn ProcessRegistrySink>>,
     pub output: TaskOutputSink,
 }
 
@@ -98,6 +100,10 @@ impl fmt::Debug for TaskExecutionContext {
             )
             .field("deadline", &self.deadline)
             .field("metadata", &self.metadata)
+            .field(
+                "process_registry",
+                &self.process_registry.as_ref().map(|_| "<process-registry>"),
+            )
             .finish_non_exhaustive()
     }
 }
@@ -349,6 +355,7 @@ mod tests {
                     runner_session: None,
                     deadline: None,
                     metadata: serde_json::json!({}),
+                    process_registry: None,
                     output: TaskOutputSink::default(),
                 },
                 serde_json::json!({ "ok": true }),

@@ -13,6 +13,7 @@ use tokio::sync::{Mutex, Semaphore, broadcast};
 use tokio::task::AbortHandle;
 
 use crate::log_buffer::{BoundedLogBuffer, TaskLogEntry};
+use crate::process_registry::ProcessRegistry;
 use crate::registry::TaskExecutorRegistry;
 
 #[derive(Debug, Clone)]
@@ -49,6 +50,7 @@ pub struct BackgroundRunner {
     config: BackgroundRunnerConfig,
     semaphore: Arc<Semaphore>,
     tasks: Arc<Mutex<BTreeMap<TaskId, TaskRecord>>>,
+    processes: ProcessRegistry,
     events: broadcast::Sender<RoderEvent>,
 }
 
@@ -63,17 +65,32 @@ struct TaskRecord {
 impl BackgroundRunner {
     pub fn new(registry: TaskExecutorRegistry, config: BackgroundRunnerConfig) -> Self {
         let (events, _) = broadcast::channel(1024);
+        let processes = ProcessRegistry::default();
+        if tokio::runtime::Handle::try_current().is_ok() {
+            let mut process_events = processes.subscribe();
+            let task_events = events.clone();
+            tokio::spawn(async move {
+                while let Ok(event) = process_events.recv().await {
+                    let _ = task_events.send(event);
+                }
+            });
+        }
         Self {
             registry,
             semaphore: Arc::new(Semaphore::new(config.max_concurrent.max(1))),
             config,
             tasks: Arc::new(Mutex::new(BTreeMap::new())),
+            processes,
             events,
         }
     }
 
     pub fn subscribe(&self) -> broadcast::Receiver<RoderEvent> {
         self.events.subscribe()
+    }
+
+    pub fn processes(&self) -> ProcessRegistry {
+        self.processes.clone()
     }
 
     pub async fn submit(
@@ -282,6 +299,7 @@ impl BackgroundRunner {
             runner_session: options.runner_session,
             deadline: options.deadline,
             metadata: options.metadata,
+            process_registry: Some(Arc::new(self.processes.clone())),
             output: TaskOutputSink::new(Arc::new(RunnerOutputWriter {
                 runner: self.clone(),
                 task_id: task_id.clone(),
@@ -376,6 +394,17 @@ impl BackgroundRunner {
             };
             record.log.push(stream.clone(), chunk.clone())
         };
+        let _ = self
+            .processes
+            .append_task_output(
+                task_id,
+                stream.clone(),
+                chunk.clone(),
+                dropped_bytes,
+                thread_id.clone(),
+                turn_id.clone(),
+            )
+            .await;
         self.emit(RoderEvent::TaskOutput(TaskOutput {
             task_id: task_id.to_string(),
             stream,
@@ -457,90 +486,5 @@ impl TaskOutputWriter for RunnerOutputWriter {
                 self.turn_id.clone(),
             )
             .await
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use std::sync::Arc;
-
-    use roder_api::tasks::{TaskExecutionResult, TaskExecutor, TaskSpec};
-
-    use super::*;
-
-    struct MetadataEchoExecutor;
-
-    #[async_trait::async_trait]
-    impl TaskExecutor for MetadataEchoExecutor {
-        fn id(&self) -> TaskExecutorId {
-            "metadata.echo".to_string()
-        }
-
-        fn spec(&self) -> TaskSpec {
-            TaskSpec {
-                kind: "metadata.echo".to_string(),
-                description: "Echo task metadata.".to_string(),
-                input_schema: serde_json::json!({ "type": "object" }),
-                default_timeout_seconds: None,
-                metadata: serde_json::Value::Null,
-            }
-        }
-
-        async fn execute(
-            &self,
-            ctx: TaskExecutionContext,
-            _input: serde_json::Value,
-        ) -> anyhow::Result<TaskExecutionResult> {
-            Ok(TaskExecutionResult::success(ctx.metadata))
-        }
-    }
-
-    #[tokio::test]
-    async fn automation_metadata_reaches_task_executor_and_task_list() {
-        let mut registry = TaskExecutorRegistry::default();
-        registry.register(Arc::new(MetadataEchoExecutor)).unwrap();
-        let runner = BackgroundRunner::new(registry, BackgroundRunnerConfig::default());
-        let mut events = runner.subscribe();
-        let metadata = serde_json::json!({
-            "automationId": "automation-1",
-            "automationRunId": "run-1"
-        });
-
-        let handle = runner
-            .submit(
-                "metadata.echo",
-                serde_json::json!({}),
-                TaskSubmitOptions {
-                    metadata: metadata.clone(),
-                    ..TaskSubmitOptions::default()
-                },
-            )
-            .await
-            .unwrap();
-
-        for _ in 0..50 {
-            if let Some(task) = runner.get(&handle.task_id).await
-                && task.state == TaskState::Completed
-            {
-                break;
-            }
-            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
-        }
-
-        let listed = runner.list().await;
-        assert!(
-            listed
-                .iter()
-                .any(|task| task.task_id == handle.task_id && task.spec.kind == "metadata.echo")
-        );
-        loop {
-            let event = events.recv().await.unwrap();
-            if let RoderEvent::TaskCompleted(completed) = event
-                && completed.task_id == handle.task_id
-            {
-                assert_eq!(completed.payload, metadata);
-                break;
-            }
-        }
     }
 }

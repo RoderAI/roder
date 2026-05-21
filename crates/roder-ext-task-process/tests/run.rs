@@ -106,6 +106,68 @@ async fn process_task_honors_cwd_and_env_overrides() {
 }
 
 #[tokio::test]
+async fn process_task_registers_process_descriptor_and_stops_from_registry() {
+    let workspace = temp_workspace();
+    let runner = runner(1024);
+    let handle = runner
+        .submit(
+            "process",
+            serde_json::json!({
+                "command": "sh",
+                "args": ["-c", "sleep 5"],
+            }),
+            TaskSubmitOptions {
+                workspace_root: Some(workspace.display().to_string()),
+                thread_id: Some("thread-process".to_string()),
+                turn_id: Some("turn-process".to_string()),
+                ..TaskSubmitOptions::default()
+            },
+        )
+        .await
+        .unwrap();
+    let registry = runner.processes();
+
+    for _ in 0..50 {
+        if registry
+            .list(false)
+            .await
+            .iter()
+            .any(|process| process.task_id.as_deref() == Some(&handle.task_id))
+        {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    let process = registry
+        .list(false)
+        .await
+        .into_iter()
+        .find(|process| process.task_id.as_deref() == Some(&handle.task_id))
+        .expect("process descriptor");
+    assert_eq!(
+        process.origin,
+        roder_api::processes::ProcessOrigin::BackgroundTask
+    );
+    assert!(process.stoppable);
+    assert_eq!(process.thread_id.as_deref(), Some("thread-process"));
+
+    let stopped = registry
+        .stop(&process.process_id, Some("test stop".to_string()))
+        .await
+        .unwrap();
+    assert!(stopped.stopped);
+    for _ in 0..50 {
+        if let Some(process) = registry.get(&process.process_id).await
+            && matches!(process.state, roder_api::processes::ProcessState::Stopped)
+        {
+            return;
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    panic!("process did not stop");
+}
+
+#[tokio::test]
 async fn process_task_routes_through_remote_runner_session_when_configured() {
     let workspace = temp_workspace();
     let runner = runner(1024);

@@ -4,6 +4,7 @@ mod automations;
 pub mod client;
 mod code_index;
 mod command;
+mod command_process;
 mod desktop_contract;
 mod discovery;
 mod evals;

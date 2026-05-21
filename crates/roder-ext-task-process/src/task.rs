@@ -4,6 +4,9 @@ use std::process::Stdio;
 use std::sync::Arc;
 
 use anyhow::{Context, bail};
+use roder_api::processes::{
+    ProcessDescriptor, ProcessOrigin, ProcessState, ProcessStopper, command_summary,
+};
 use roder_api::remote_runner::RunnerCommandRequest;
 use roder_api::tasks::{
     TaskExecutionContext, TaskExecutionResult, TaskExecutor, TaskOutputStream, TaskSpec,
@@ -11,6 +14,7 @@ use roder_api::tasks::{
 use serde::Deserialize;
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::Command;
+use tokio::sync::{Mutex, oneshot};
 
 pub const PROCESS_TASK_EXECUTOR_ID: &str = "process";
 
@@ -73,6 +77,9 @@ impl TaskExecutor for ProcessTaskExecutor {
         }
 
         let cwd = resolve_cwd(ctx.workspace_root.as_deref(), input.cwd.as_deref())?;
+        let command_parts = std::iter::once(input.command.clone())
+            .chain(input.args.clone())
+            .collect::<Vec<_>>();
         let mut command = Command::new(&input.command);
         command
             .args(&input.args)
@@ -85,9 +92,38 @@ impl TaskExecutor for ProcessTaskExecutor {
         let mut child = command
             .spawn()
             .with_context(|| format!("spawn process task {:?}", input.command))?;
+        let pid = child.id();
         let stdout = child.stdout.take();
         let stderr = child.stderr.take();
         let output = Arc::new(ctx.output);
+        let process_id = format!("task-{}", ctx.task_id);
+        let (stop_tx, stop_rx) = oneshot::channel();
+        if let Some(registry) = ctx.process_registry.as_ref() {
+            registry
+                .register_process(
+                    ProcessDescriptor {
+                        process_id: process_id.clone(),
+                        origin: ProcessOrigin::BackgroundTask,
+                        state: ProcessState::Running,
+                        command: command_parts.clone(),
+                        command_summary: command_summary(&command_parts),
+                        cwd: Some(cwd.display().to_string()),
+                        pid,
+                        task_id: Some(ctx.task_id.clone()),
+                        thread_id: ctx.thread_id.clone(),
+                        turn_id: ctx.turn_id.clone(),
+                        runner_destination_id: None,
+                        runner_session_id: None,
+                        stoppable: true,
+                        started_at: time::OffsetDateTime::now_utc(),
+                        updated_at: time::OffsetDateTime::now_utc(),
+                        stdout_tail: None,
+                        stderr_tail: None,
+                    },
+                    Some(Arc::new(ChannelProcessStopper::new(stop_tx))),
+                )
+                .await?;
+        }
 
         let stdout_task = tokio::spawn(stream_pipe(
             stdout,
@@ -99,9 +135,27 @@ impl TaskExecutor for ProcessTaskExecutor {
             TaskOutputStream::Stderr,
             Arc::clone(&output),
         ));
-        let status = child.wait().await.context("wait for process task")?;
+        let (status, stopped_by_registry) = tokio::select! {
+            status = child.wait() => (status.context("wait for process task")?, false),
+            _ = stop_rx => {
+                child.kill().await.context("kill stopped process task")?;
+                if let Some(registry) = ctx.process_registry.as_ref() {
+                    registry
+                        .mark_process_stopped(&process_id, Some("stop requested".to_string()))
+                        .await?;
+                }
+                (child.wait().await.context("wait for stopped process task")?, true)
+            }
+        };
         stdout_task.await.context("join stdout reader")??;
         stderr_task.await.context("join stderr reader")??;
+        if let Some(registry) = ctx.process_registry.as_ref()
+            && !stopped_by_registry
+        {
+            let _ = registry
+                .mark_process_exited(&process_id, status.code())
+                .await;
+        }
 
         Ok(TaskExecutionResult {
             exit_code: status.code(),
@@ -112,6 +166,28 @@ impl TaskExecutor for ProcessTaskExecutor {
                 "success": status.success(),
             }),
         })
+    }
+}
+
+struct ChannelProcessStopper {
+    stop_tx: Mutex<Option<oneshot::Sender<Option<String>>>>,
+}
+
+impl ChannelProcessStopper {
+    fn new(stop_tx: oneshot::Sender<Option<String>>) -> Self {
+        Self {
+            stop_tx: Mutex::new(Some(stop_tx)),
+        }
+    }
+}
+
+#[async_trait::async_trait]
+impl ProcessStopper for ChannelProcessStopper {
+    async fn stop(&self, reason: Option<String>) -> anyhow::Result<()> {
+        if let Some(stop_tx) = self.stop_tx.lock().await.take() {
+            let _ = stop_tx.send(reason);
+        }
+        Ok(())
     }
 }
 
