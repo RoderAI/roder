@@ -1,6 +1,12 @@
 # Search Benchmark Harness
 
-Run the benchmark against an external repository fixture:
+Run the benchmark against the built-in synthetic monorepo fixture:
+
+```sh
+cargo bench -p roder-search --bench search
+```
+
+Or run it against an external repository fixture:
 
 ```sh
 RODER_SEARCH_BENCH_FIXTURE=/path/to/repo \
@@ -9,7 +15,7 @@ RODER_SEARCH_BENCH_QUERIES='fn ,struct ,Config' \
 cargo bench -p roder-search --bench search
 ```
 
-The harness prints scan and indexed p50/p90/p99 latency, match counts, candidate files, verified files, index bytes, and warmup build time. If `RODER_SEARCH_BENCH_FIXTURE` is unset, it skips cleanly.
+The harness prints scan and indexed p50/p90/p99 latency, match counts, candidate files, verified files, index bytes, and warmup build time. If `RODER_SEARCH_BENCH_FIXTURE` is unset, it creates a temporary synthetic monorepo fixture under the system temp directory.
 
 ## Evidence From Real Repositories
 

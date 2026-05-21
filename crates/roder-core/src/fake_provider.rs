@@ -74,6 +74,22 @@ impl InferenceEngine for FakeInferenceEngine {
             ))]);
             return Ok(Box::pin(stream));
         }
+        if should_grep(&request) {
+            let stream = stream::iter(vec![Ok(InferenceEvent::ToolCallCompleted(
+                ToolCallCompleted {
+                    id: "fake-grep".to_string(),
+                    name: "grep".to_string(),
+                    arguments: serde_json::json!({
+                        "query": "BUG_ROOT_CAUSE_TOKEN",
+                        "path": ".",
+                        "mode": "indexed",
+                        "limit": 20
+                    })
+                    .to_string(),
+                },
+            ))]);
+            return Ok(Box::pin(stream));
+        }
         if should_complete_verification(&request) {
             let failed = prompt_contains(&request, "FAKE_VERIFICATION_FAILED");
             let stream = stream::iter(vec![Ok(InferenceEvent::ToolCallCompleted(
@@ -162,6 +178,16 @@ fn should_write_file(request: &AgentInferenceRequest) -> bool {
                 item,
                 ConversationItem::ToolResult(result)
                     if result.name.as_deref() == Some("write_file")
+            )
+        })
+}
+
+fn should_grep(request: &AgentInferenceRequest) -> bool {
+    prompt_contains(request, "FAKE_GREP_INDEXED")
+        && !request.conversation.iter().any(|item| {
+            matches!(
+                item,
+                ConversationItem::ToolResult(result) if result.name.as_deref() == Some("grep")
             )
         })
 }

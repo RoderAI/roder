@@ -89,6 +89,12 @@ fn merge_display_fields(payload: &mut Map<String, Value>, source: Option<&Value>
         "total_lines",
         "next_offset",
         "truncated",
+        "engine",
+        "candidate_files",
+        "verified_files",
+        "elapsed_ms",
+        "index_bytes",
+        "index_build_time_ms",
     ] {
         let Some(value) = source.get(key).and_then(display_value) else {
             continue;
@@ -155,6 +161,9 @@ mod tests {
                 "path": "src/main.rs",
                 "shown": 4,
                 "truncated": false,
+                "engine": "indexed",
+                "candidate_files": 2,
+                "elapsed_ms": 5,
                 "hunks": [{ "path": "src/main.rs" }]
             })),
         )
@@ -164,6 +173,9 @@ mod tests {
         assert_eq!(payload["query"], "needle");
         assert_eq!(payload["shown"], 4);
         assert_eq!(payload["truncated"], false);
+        assert_eq!(payload["engine"], "indexed");
+        assert_eq!(payload["candidate_files"], 2);
+        assert_eq!(payload["elapsed_ms"], 5);
         assert!(payload.get("content").is_none());
         assert!(payload.get("api_key").is_none());
         assert!(payload.get("hunks").is_none());

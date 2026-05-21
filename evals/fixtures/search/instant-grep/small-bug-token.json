@@ -1,0 +1,47 @@
+{
+  "id": "instant-grep-small-bug-token",
+  "title": "Small workspace bug token search",
+  "prompt": "FAKE_GREP_INDEXED Investigate the failing login test and find BUG_ROOT_CAUSE_TOKEN without reading every file.",
+  "tags": ["search", "instant-grep", "bug-investigation", "tool:grep", "fixture:small"],
+  "workspace": {
+    "files": [
+      {
+        "path": "src/auth/login.rs",
+        "contents": "pub fn login_flow() -> &'static str { \"BUG_ROOT_CAUSE_TOKEN\" }\n"
+      },
+      {
+        "path": "src/auth/session.rs",
+        "contents": "pub fn session_state() -> &'static str { \"ready\" }\n"
+      },
+      {
+        "path": "src/payments/checkout.rs",
+        "contents": "pub fn checkout_state() -> &'static str { \"unrelated\" }\n"
+      },
+      {
+        "path": "tests/login_test.rs",
+        "contents": "#[test]\nfn login_regression() { assert!(true); }\n"
+      }
+    ]
+  },
+  "timeoutMs": 10000,
+  "expected": {
+    "finalAnswerContains": ["hello from roder"],
+    "files": [
+      {
+        "path": "src/auth/login.rs",
+        "exists": true,
+        "contains": ["BUG_ROOT_CAUSE_TOKEN"]
+      }
+    ],
+    "commandChecks": [
+      {
+        "command": "grep -R \"BUG_ROOT_CAUSE_TOKEN\" -n . | grep -q \"src/auth/login.rs\"",
+        "expectedExitCode": 0
+      }
+    ]
+  },
+  "constraints": [
+    "offline fake provider fixture",
+    "grep should report indexed search metadata in eval metrics"
+  ]
+}
