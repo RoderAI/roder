@@ -1,0 +1,19 @@
+{
+  "id": "verification-profile",
+  "title": "Model profile verification behavior",
+  "prompt": "Report the verification behavior expectation for this profile eval.",
+  "tags": ["model-profile", "verification-behavior"],
+  "workspace": {
+    "files": [
+      {
+        "path": "src/lib.rs",
+        "contents": "pub fn ready() -> bool { true }\n"
+      }
+    ]
+  },
+  "timeoutMs": 10000,
+  "expected": {
+    "finalAnswerContains": ["hello from roder"]
+  },
+  "constraints": ["offline fake provider fixture", "compare verification behavior across profiles"]
+}

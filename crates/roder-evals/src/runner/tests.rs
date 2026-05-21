@@ -1,6 +1,8 @@
 use std::path::PathBuf;
 
-use crate::runner::{EvalSpeedPolicyMode, OfflineEvalRunnerOptions, run_offline_eval_suite};
+use crate::runner::{
+    EvalProfileMode, EvalSpeedPolicyMode, OfflineEvalRunnerOptions, run_offline_eval_suite,
+};
 use crate::{
     EvalExpectedCommand, EvalExpectedEvidence, EvalExpectedFile, EvalFailureClass, EvalFixture,
     EvalOutcome, EvalWorkspaceFile, EvalWorkspaceSetup,
@@ -338,5 +340,70 @@ async fn speed_policy_both_runs_baseline_and_speed_report_rows() {
     let markdown = std::fs::read_to_string(output_dir.join("eval-report.md")).unwrap();
     assert!(markdown.contains("Speed Metrics"));
     assert!(markdown.contains("Speed Policy Comparison"));
+    let _ = std::fs::remove_dir_all(root);
+}
+
+#[tokio::test]
+async fn model_profile_all_runs_profile_delta_report_rows() {
+    let root = std::env::temp_dir().join(format!(
+        "roder-evals-model-profile-{}",
+        uuid::Uuid::new_v4()
+    ));
+    let fixture_dir = root.join("fixtures");
+    let output_dir = root.join("reports");
+    std::fs::create_dir_all(&fixture_dir).unwrap();
+    let fixture = EvalFixture {
+        id: "profile-edit-tool".to_string(),
+        title: "Profile edit tool".to_string(),
+        prompt: "Say hello from the selected profile.".to_string(),
+        tags: vec!["model-profile".to_string(), "edit-tool".to_string()],
+        workspace: EvalWorkspaceSetup::default(),
+        timeout_ms: Some(10_000),
+        expected: EvalExpectedEvidence {
+            final_answer_contains: vec!["hello from roder".to_string()],
+            files: Vec::new(),
+            command_checks: Vec::new(),
+            verification_required: false,
+            task_ledger_required: false,
+        },
+        constraints: Vec::new(),
+    };
+    std::fs::write(
+        fixture_dir.join("profile-edit-tool.json"),
+        serde_json::to_string_pretty(&fixture).unwrap(),
+    )
+    .unwrap();
+
+    let report = run_offline_eval_suite(
+        &fixture_dir,
+        OfflineEvalRunnerOptions {
+            output_dir: output_dir.clone(),
+            profiles: EvalProfileMode::All,
+            ..OfflineEvalRunnerOptions::default()
+        },
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(report.results.len(), 2);
+    assert!(report.results.iter().any(|result| {
+        result
+            .report
+            .run
+            .tags
+            .iter()
+            .any(|tag| tag == "profile:gpt-5.5")
+    }));
+    assert!(report.results.iter().any(|result| {
+        result
+            .report
+            .run
+            .tags
+            .iter()
+            .any(|tag| tag == "profile:claude-haiku-4-5-20251001")
+    }));
+    let markdown = std::fs::read_to_string(output_dir.join("eval-report.md")).unwrap();
+    assert!(markdown.contains("Model Profile Deltas"));
+    assert!(markdown.contains("profile:gpt-5.5") || markdown.contains("gpt-5.5"));
     let _ = std::fs::remove_dir_all(root);
 }
