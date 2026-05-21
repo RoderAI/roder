@@ -1,0 +1,9 @@
+{
+  "id": "repeated-timeout",
+  "title": "Reliability repeated timeout",
+  "prompt": "Run the reliability repeated-timeout fixture.",
+  "tags": ["reliability", "reliability:repeated_timeout"],
+  "timeoutMs": 1000,
+  "expected": {},
+  "constraints": ["count timeout limit stops separately from model mistakes"]
+}

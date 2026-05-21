@@ -35,6 +35,7 @@ use roder_api::workflow::{
     WorkflowImportDecision, WorkflowImportItem, WorkflowImportScan, WorkflowImportState,
 };
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 use std::collections::HashMap;
 use time::OffsetDateTime;
 
@@ -1323,6 +1324,17 @@ pub struct EvalReportsListParams {
     pub limit: Option<usize>,
 }
 
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct EvalReliabilitySummary {
+    #[serde(default)]
+    pub error_class_counts: BTreeMap<String, u64>,
+    pub retry_attempts: u64,
+    pub retry_recoveries: u64,
+    pub failure_limit_stops: u64,
+    pub unknown_errors: u64,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct EvalReportSummary {
@@ -1331,6 +1343,8 @@ pub struct EvalReportSummary {
     pub fixture_count: usize,
     pub passed: usize,
     pub failed: usize,
+    #[serde(default)]
+    pub reliability: EvalReliabilitySummary,
     #[serde(with = "time::serde::rfc3339")]
     pub generated_at: time::OffsetDateTime,
 }
@@ -2084,6 +2098,11 @@ mod tests {
                 fixture_count: 2,
                 passed: 1,
                 failed: 1,
+                reliability: EvalReliabilitySummary {
+                    retry_attempts: 2,
+                    retry_recoveries: 1,
+                    ..EvalReliabilitySummary::default()
+                },
                 generated_at: OffsetDateTime::UNIX_EPOCH,
             },
             markdown: "# Report".to_string(),
@@ -2092,6 +2111,8 @@ mod tests {
         let value = serde_json::to_value(result).unwrap();
         assert_eq!(value["summary"]["suiteId"], "tool-calls");
         assert_eq!(value["summary"]["fixtureCount"], 2);
+        assert_eq!(value["summary"]["reliability"]["retryAttempts"], 2);
+        assert_eq!(value["summary"]["reliability"]["retryRecoveries"], 1);
         assert_eq!(value["markdown"], "# Report");
     }
 

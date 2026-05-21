@@ -1,0 +1,10 @@
+{
+  "id": "provider-empty-body",
+  "title": "Reliability provider empty body",
+  "prompt": "Run the reliability provider-empty-body fixture.",
+  "tags": ["reliability", "reliability:provider_empty_body", "provider:empty_body"],
+  "expected": {
+    "finalAnswerContains": ["hello from roder"]
+  },
+  "constraints": ["count empty body retry recovery as provider reliability, not model failure"]
+}
