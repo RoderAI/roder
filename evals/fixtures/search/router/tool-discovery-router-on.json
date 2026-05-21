@@ -1,0 +1,26 @@
+{
+  "id": "router-tool-discovery-on",
+  "title": "Router on tool discovery",
+  "prompt": "FAKE_DISCOVERY_SEARCH Which built-in tool should search for BUG_ROOT_CAUSE_TOKEN without loading every schema?",
+  "tags": ["search", "retrieval-router", "router:on", "context:deferred", "bucket:20-50", "route:tool-discovery", "lazy-discovery"],
+  "timeoutMs": 10000,
+  "expected": {
+    "finalAnswerContains": ["hello from roder"],
+    "verificationRequired": false
+  },
+  "lazyDiscovery": {
+    "hiddenDeferredCapabilities": 40,
+    "catalogShape": { "internalTools": 8, "mcpTools": 24, "skills": 4, "plugins": 4 },
+    "expectedDiscoveryQuery": "grep",
+    "metrics": {
+      "baselineSchemaTokens": 5200,
+      "deferredPromptTokens": 980,
+      "expectedPromotionCount": 0,
+      "expectedWarmCacheHits": 0,
+      "maxWrongToolCalls": 0,
+      "maxUnknownToolCalls": 0,
+      "maxCallsBeforePromotion": 0
+    }
+  },
+  "constraints": ["grade discovery-before-tool-use", "measure lazy capability lookup without promotion"]
+}

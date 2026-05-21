@@ -1,0 +1,43 @@
+{
+  "id": "router-exact-symbol-on",
+  "title": "Router on exact symbol search",
+  "prompt": "FAKE_GREP_INDEXED Find BUG_ROOT_CAUSE_TOKEN in the login flow without reading every file.",
+  "tags": ["search", "retrieval-router", "router:on", "context:deferred", "bucket:20-50", "route:exact-symbol"],
+  "workspace": {
+    "files": [
+      {
+        "path": "src/auth/login.rs",
+        "contents": "pub fn login_flow() -> &'static str { \"BUG_ROOT_CAUSE_TOKEN\" }\n"
+      },
+      {
+        "path": "src/noise.rs",
+        "contents": "pub fn unrelated() -> &'static str { \"noise\" }\n"
+      }
+    ]
+  },
+  "timeoutMs": 10000,
+  "expected": {
+    "finalAnswerContains": ["hello from roder"],
+    "files": [
+      {
+        "path": "src/auth/login.rs",
+        "exists": true,
+        "contains": ["BUG_ROOT_CAUSE_TOKEN"]
+      }
+    ]
+  },
+  "lazyDiscovery": {
+    "hiddenDeferredCapabilities": 32,
+    "catalogShape": { "internalTools": 8, "mcpTools": 20, "skills": 4, "plugins": 0 },
+    "metrics": {
+      "baselineSchemaTokens": 4600,
+      "deferredPromptTokens": 900,
+      "expectedPromotionCount": 0,
+      "expectedWarmCacheHits": 0,
+      "maxWrongToolCalls": 0,
+      "maxUnknownToolCalls": 0,
+      "maxCallsBeforePromotion": 0
+    }
+  },
+  "constraints": ["grade first useful exact-text retrieval path", "compare router:on with deferred capability context"]
+}

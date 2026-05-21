@@ -1,0 +1,26 @@
+{
+  "id": "router-file-name-off",
+  "title": "Router off file-name search comparison",
+  "prompt": "Find the auth router file that contains BUG_ROOT_CAUSE_TOKEN.",
+  "tags": ["search", "retrieval-router", "router:off", "context:full-static", "route:file-name"],
+  "workspace": {
+    "files": [
+      {
+        "path": "src/routes/auth_router.rs",
+        "contents": "pub const ROUTER_TOKEN: &str = \"BUG_ROOT_CAUSE_TOKEN\";\n"
+      }
+    ]
+  },
+  "timeoutMs": 10000,
+  "expected": {
+    "finalAnswerContains": ["hello from roder"],
+    "files": [
+      {
+        "path": "src/routes/auth_router.rs",
+        "exists": true,
+        "contains": ["BUG_ROOT_CAUSE_TOKEN"]
+      }
+    ]
+  },
+  "constraints": ["compare router:off against router:on runs", "full static capability context comparison row"]
+}

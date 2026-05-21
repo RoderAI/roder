@@ -1,0 +1,39 @@
+{
+  "id": "router-regex-usage-on",
+  "title": "Router on regex usage search",
+  "prompt": "FAKE_GREP_INDEXED Trace usage of login_.* handlers and recover BUG_ROOT_CAUSE_TOKEN.",
+  "tags": ["search", "retrieval-router", "router:on", "context:deferred", "bucket:50-100", "route:regex-usage"],
+  "workspace": {
+    "files": [
+      {
+        "path": "src/auth/handlers.rs",
+        "contents": "pub fn login_start() {}\npub fn login_finish() -> &'static str { \"BUG_ROOT_CAUSE_TOKEN\" }\n"
+      }
+    ]
+  },
+  "timeoutMs": 10000,
+  "expected": {
+    "finalAnswerContains": ["hello from roder"],
+    "files": [
+      {
+        "path": "src/auth/handlers.rs",
+        "exists": true,
+        "contains": ["BUG_ROOT_CAUSE_TOKEN"]
+      }
+    ]
+  },
+  "lazyDiscovery": {
+    "hiddenDeferredCapabilities": 72,
+    "catalogShape": { "internalTools": 12, "mcpTools": 44, "skills": 10, "plugins": 6 },
+    "metrics": {
+      "baselineSchemaTokens": 8800,
+      "deferredPromptTokens": 1800,
+      "expectedPromotionCount": 0,
+      "expectedWarmCacheHits": 0,
+      "maxWrongToolCalls": 0,
+      "maxUnknownToolCalls": 0,
+      "maxCallsBeforePromotion": 0
+    }
+  },
+  "constraints": ["grade regex-style usage search", "report 50-100 hidden deferred capability bucket"]
+}

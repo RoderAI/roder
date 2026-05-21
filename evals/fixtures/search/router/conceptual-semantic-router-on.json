@@ -1,0 +1,39 @@
+{
+  "id": "router-conceptual-semantic-on",
+  "title": "Router on conceptual semantic search",
+  "prompt": "FAKE_GREP_INDEXED Explain where session renewal keeps auth state alive and find BUG_ROOT_CAUSE_TOKEN.",
+  "tags": ["search", "retrieval-router", "router:on", "context:deferred", "bucket:100-plus", "route:semantic-code"],
+  "workspace": {
+    "files": [
+      {
+        "path": "src/session/renewal.rs",
+        "contents": "pub fn renew_session() -> &'static str { \"BUG_ROOT_CAUSE_TOKEN\" }\n"
+      }
+    ]
+  },
+  "timeoutMs": 10000,
+  "expected": {
+    "finalAnswerContains": ["hello from roder"],
+    "files": [
+      {
+        "path": "src/session/renewal.rs",
+        "exists": true,
+        "contains": ["BUG_ROOT_CAUSE_TOKEN"]
+      }
+    ]
+  },
+  "lazyDiscovery": {
+    "hiddenDeferredCapabilities": 128,
+    "catalogShape": { "internalTools": 18, "mcpTools": 62, "skills": 26, "plugins": 22 },
+    "metrics": {
+      "baselineSchemaTokens": 14200,
+      "deferredPromptTokens": 3200,
+      "expectedPromotionCount": 0,
+      "expectedWarmCacheHits": 0,
+      "maxWrongToolCalls": 0,
+      "maxUnknownToolCalls": 0,
+      "maxCallsBeforePromotion": 0
+    }
+  },
+  "constraints": ["grade conceptual semantic-code route pressure", "report 100-plus hidden deferred capability bucket"]
+}

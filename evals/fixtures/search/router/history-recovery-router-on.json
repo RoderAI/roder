@@ -1,0 +1,26 @@
+{
+  "id": "router-history-recovery-on",
+  "title": "Router on history recovery",
+  "prompt": "Recover the previous turn detail named BUG_ROOT_CAUSE_TOKEN from history rather than searching unrelated code.",
+  "tags": ["search", "retrieval-router", "router:on", "context:deferred", "route:history"],
+  "workspace": {
+    "files": [
+      {
+        "path": "notes/history.txt",
+        "contents": "previous turn detail: BUG_ROOT_CAUSE_TOKEN=history\n"
+      }
+    ]
+  },
+  "timeoutMs": 10000,
+  "expected": {
+    "finalAnswerContains": ["hello from roder"],
+    "files": [
+      {
+        "path": "notes/history.txt",
+        "exists": true,
+        "contains": ["BUG_ROOT_CAUSE_TOKEN"]
+      }
+    ]
+  },
+  "constraints": ["grade history-recovery route pressure"]
+}

@@ -6,6 +6,7 @@ use roder_api::inference::InferenceEvent;
 use serde::{Deserialize, Serialize};
 use time::OffsetDateTime;
 
+use crate::retrieval_router::retrieval_router_markdown;
 use crate::{EvalMetric, EvalMetricKind, EvalOutcome, EvalTrajectory, EvalTrajectoryEvent};
 
 use super::lazy_discovery::lazy_discovery_markdown;
@@ -785,6 +786,7 @@ fn eval_report_markdown(report: &EvalSuiteReport) -> String {
             )),
         ));
     }
+    text.push_str(&retrieval_router_markdown(report));
     text.push_str(&lazy_discovery_markdown(report));
     text.push_str(&reliability_markdown(report));
     let groups = failure_groups(report);

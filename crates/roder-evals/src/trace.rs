@@ -170,6 +170,73 @@ impl EvalTrajectoryEvent {
                 &e.turn_id,
                 e.timestamp,
             )),
+            RoderEvent::RetrievalRoutePlanned(e) => Some(Self::basic(
+                "retrieval_route_planned",
+                &e.plan.thread_id,
+                &e.plan.turn_id,
+                e.plan.timestamp,
+            )),
+            RoderEvent::RetrievalRouteAccepted(e) => {
+                let mut event = Self::basic(
+                    "retrieval_route_accepted",
+                    &e.thread_id,
+                    &e.turn_id,
+                    e.timestamp,
+                );
+                event.tool_name = Some(e.tool.clone());
+                Some(event)
+            }
+            RoderEvent::RetrievalRouteIgnored(e) => {
+                let mut event = Self::basic(
+                    "retrieval_route_ignored",
+                    &e.thread_id,
+                    &e.turn_id,
+                    e.timestamp,
+                );
+                event.tool_name = Some(e.chosen_tool.clone());
+                Some(event)
+            }
+            RoderEvent::RetrievalRouteFailed(e) => {
+                let mut event = Self::basic(
+                    "retrieval_route_failed",
+                    &e.thread_id,
+                    &e.turn_id,
+                    e.timestamp,
+                );
+                event.tool_name = Some(e.tool.clone());
+                event.is_error = true;
+                Some(event)
+            }
+            RoderEvent::RetrievalResultUsed(e) => {
+                let mut event = Self::basic(
+                    "retrieval_result_used",
+                    &e.thread_id,
+                    &e.turn_id,
+                    e.timestamp,
+                );
+                event.tool_name = Some(e.outcome.tool.clone());
+                event.is_error = !matches!(
+                    e.outcome.outcome,
+                    roder_api::retrieval::RetrievalOutcomeKind::Useful
+                );
+                Some(event)
+            }
+            RoderEvent::RetrievalDiscoveryItemPromoted(e) => Some(Self::basic(
+                "retrieval_discovery_item_promoted",
+                &e.thread_id,
+                &e.turn_id,
+                e.timestamp,
+            )),
+            RoderEvent::RetrievalPromotionSkipped(e) => {
+                let mut event = Self::basic(
+                    "retrieval_promotion_skipped",
+                    &e.thread_id,
+                    &e.turn_id,
+                    e.timestamp,
+                );
+                event.is_error = true;
+                Some(event)
+            }
             RoderEvent::InferenceEventReceived(e) => {
                 let mut event =
                     Self::basic("inference_event", &e.thread_id, &e.turn_id, e.timestamp);
