@@ -84,6 +84,7 @@ use tokio::process::Command;
 use tui_textarea::TextArea;
 
 use self::commands::built_in_command_catalog;
+use crate::roadmap::RoadmapModeState;
 use composer::{
     ComposerKeyAction, composer_mode, composer_text, composer_textarea, handle_composer_key,
     shell_command_from_input, style_composer_for_current_mode,
@@ -93,6 +94,7 @@ use plan_panel::{
     PlanPanelState, plan_counter_area, plan_panel_height, render_plan_counter, render_plan_panel,
 };
 use plugin_browser::PluginBrowserState;
+use remote::{RemotePanelController, render_remote_panel_lines};
 use scroll_accel::ScrollSettings;
 use shortcuts::FooterShortcutContext;
 use team_ui::{TeamUiState, is_team_focus_next_key, is_team_focus_previous_key};
@@ -983,6 +985,8 @@ pub struct TuiApp {
     confirm_dialog: Option<ConfirmDialogState>,
     tool_detail_modal: Option<ToolDetailModal>,
     plugin_browser: Option<PluginBrowserState>,
+    remote_panel: RemotePanelController,
+    roadmap_mode: Option<RoadmapModeState>,
     image_attachments: Vec<ImageAttachment>,
     queued_prompts: PromptQueue,
     last_user_prompt: Option<PendingPrompt>,
@@ -1012,6 +1016,9 @@ pub enum TuiStartup {
     NewSession,
     ResumeMenu,
     ResumeSession(String),
+    RoadmapOpen {
+        path: Option<String>,
+    },
     TeamAttach {
         team_id: String,
         member_id: String,
@@ -1192,6 +1199,9 @@ impl TuiApp {
             TuiStartup::ResumeSession(thread_id) => {
                 app.load_session(thread_id).await;
             }
+            TuiStartup::RoadmapOpen { path } => {
+                app.enter_roadmap_mode(path);
+            }
             TuiStartup::TeamAttach { .. } => {}
         }
 
@@ -1214,6 +1224,12 @@ impl TuiApp {
         let mut provider_state = ListState::default();
         provider_state.select(Some(0));
         let theme = Theme::for_terminal_themed();
+        let remote_panel = RemotePanelController::new(
+            client.app_server(),
+            std::env::current_dir()
+                .ok()
+                .map(|path| path.display().to_string()),
+        );
         // Mirror the resolution that for_terminal_themed performed so the
         // palette's Themes source can flag the active row consistently. If
         // discovery yields nothing we leave this as `None` and the palette
@@ -1297,6 +1313,8 @@ impl TuiApp {
             confirm_dialog: None,
             tool_detail_modal: None,
             plugin_browser: None,
+            remote_panel,
+            roadmap_mode: None,
             image_attachments: Vec::new(),
             queued_prompts: PromptQueue::default(),
             last_user_prompt: None,
@@ -1312,6 +1330,18 @@ impl TuiApp {
             active_theme_id,
             theme_preview_baseline: None,
         })
+    }
+
+    pub fn enter_roadmap_mode(&mut self, path: Option<String>) {
+        let label = path.clone().unwrap_or_else(|| "roadmap".to_string());
+        let workspace = std::env::current_dir();
+        let state = workspace
+            .as_deref()
+            .ok()
+            .and_then(|workspace| RoadmapModeState::load(workspace, path.clone()).ok())
+            .unwrap_or_else(|| RoadmapModeState::new(path));
+        self.roadmap_mode = Some(state);
+        self.push_event(format!("Roadmapping mode: {label}"));
     }
 
     pub fn exit_summary(&self) -> TuiExitSummary {
@@ -1556,6 +1586,7 @@ impl TuiApp {
 
             while let Ok(envelope) = rx.try_recv() {
                 self.push_event(format!("{} #{}", envelope.kind, envelope.seq));
+                self.remote_panel.apply_event(&envelope);
 
                 match envelope.event {
                     RoderEvent::TurnStarted(ev) => {
@@ -1885,6 +1916,13 @@ impl TuiApp {
     }
 
     fn focused_thread_id(&self) -> &str {
+        if let Some(thread_id) = self
+            .roadmap_mode
+            .as_ref()
+            .and_then(|roadmap| roadmap.selected_thread_id.as_deref())
+        {
+            return thread_id;
+        }
         self.team_ui.focused_thread_id(&self.thread_id)
     }
 
@@ -2185,6 +2223,12 @@ impl TuiApp {
             "tasks" => {
                 self.run_tasks_slash_command().await;
             }
+            "remote" => {
+                self.run_remote_slash_command(&args).await;
+            }
+            "roadmap" => {
+                self.run_roadmap_slash_command(&args);
+            }
             _ => {
                 if let Some(prompt) = commands::built_in_prompt(&name, &args) {
                     let suffix = slash_command_suffix(&args);
@@ -2394,6 +2438,47 @@ impl TuiApp {
         }
     }
 
+    async fn run_remote_slash_command(&mut self, args: &str) {
+        let action = args.split_whitespace().next().unwrap_or("status");
+        let result = match action {
+            "start" => self.remote_panel.start().await,
+            "stop" => self.remote_panel.stop().await,
+            "restart" | "regenerate" => self.remote_panel.start().await,
+            "status" | "" => {
+                if self.remote_panel.is_running() {
+                    Ok(())
+                } else {
+                    self.remote_panel.start().await
+                }
+            }
+            other => {
+                self.timeline.push_error(format!(
+                    "unknown /remote action: {other}. Use start, stop, restart, or status."
+                ));
+                return;
+            }
+        };
+
+        match result {
+            Ok(()) => {
+                self.timeline.push_system(
+                    render_remote_panel_lines(&self.remote_panel.snapshot()).join("\n"),
+                );
+                self.push_event(format!("slash command: /remote {action}"));
+            }
+            Err(err) => self.record_error(format!("remote {action} failed: {err}")),
+        }
+    }
+
+    fn run_roadmap_slash_command(&mut self, args: &str) {
+        let path = args
+            .split_whitespace()
+            .next()
+            .filter(|value| !value.is_empty())
+            .map(roadmap_slash_path);
+        self.enter_roadmap_mode(path);
+    }
+
     async fn expand_slash_command(
         &self,
         name: &str,
@@ -2446,7 +2531,12 @@ impl TuiApp {
         self.composer = composer_textarea(self.theme);
         self.slash_command_selection = 0;
         let display = transcript_message_with_image_attachments(&text, &attachments);
-        Some(PendingPrompt::with_images(display, text, images))
+        let message = self
+            .roadmap_mode
+            .as_ref()
+            .map(|roadmap| roadmap.prompt_context(&text))
+            .unwrap_or(text);
+        Some(PendingPrompt::with_images(display, message, images))
     }
 
     fn has_prepared_prompt(&self) -> bool {
@@ -2734,6 +2824,10 @@ impl TuiApp {
             f.render_widget(Block::default().style(Style::default().bg(bg)), area);
         }
         style_composer_for_current_mode(&mut self.composer, self.theme, self.policy_mode);
+        if let Some(roadmap) = self.roadmap_mode.as_ref() {
+            self.composer
+                .set_placeholder_text(roadmap.composer_placeholder());
+        }
         let event_height = event_log_height(self.show_event_log, self.events.len());
         let attachment_height = image_attachment_height(self.image_attachments.len());
         let queue_height = queued_prompt_height(self.queued_prompts.len());
@@ -2776,10 +2870,17 @@ impl TuiApp {
 
         let transcript_index = 1;
         f.render_widget(self.header(area.width), chunks[0]);
-        f.render_widget(
-            self.transcript(chunks[transcript_index]),
-            chunks[transcript_index],
-        );
+        if self.roadmap_mode.is_some() {
+            f.render_widget(
+                self.roadmap_document(chunks[transcript_index]),
+                chunks[transcript_index],
+            );
+        } else {
+            f.render_widget(
+                self.transcript(chunks[transcript_index]),
+                chunks[transcript_index],
+            );
+        }
 
         let mut composer_index = if event_height > 0 {
             f.render_widget(self.event_log(), chunks[transcript_index + 1]);
@@ -2950,6 +3051,26 @@ impl TuiApp {
         Paragraph::new(text)
             .style(self.theme.text())
             .scroll((render.text_scroll, 0))
+            .wrap(Wrap { trim: false })
+    }
+
+    fn roadmap_document(&mut self, area: Rect) -> Paragraph<'static> {
+        self.selectable_lines = Vec::new();
+        let mut text = self
+            .roadmap_mode
+            .as_ref()
+            .map(RoadmapModeState::render_text)
+            .unwrap_or_else(|| Text::from("Roadmap mode"));
+        let activity = self
+            .timeline
+            .render_with_frame(self.theme, area, self.animation_frame);
+        if !activity.text.lines.is_empty() {
+            text.lines.push(Line::from(""));
+            text.lines.push(Line::from("Activity Evidence"));
+            text.lines.extend(activity.text.lines.into_iter().take(6));
+        }
+        Paragraph::new(text)
+            .style(self.theme.text())
             .wrap(Wrap { trim: false })
     }
 
@@ -3153,6 +3274,11 @@ impl TuiApp {
         } else {
             ""
         };
+        let roadmap_hint = self
+            .roadmap_mode
+            .as_ref()
+            .map(|state| format!("  roadmap:{}", state.label()))
+            .unwrap_or_default();
         let shortcut_context = match self.timeline.focus() {
             TimelineFocus::Timeline => FooterShortcutContext::Timeline,
             TimelineFocus::Composer if self.active_turn_id.is_some() => {
@@ -3165,13 +3291,13 @@ impl TuiApp {
         Paragraph::new(line_with_gap(
             vec![Span::styled(
                 format!(
-                    " {status}  mode:{}{queue_hint}{pending_hint}{shell_hint}  {interaction_hint}",
+                    " {status}  mode:{}{queue_hint}{pending_hint}{shell_hint}{roadmap_hint}  {interaction_hint}",
                     policy_mode_label(self.policy_mode),
                     queue_hint = if self.queued_prompts.is_empty() {
                         String::new()
                     } else {
                         format!("  {}", queue_status(self.queued_prompts.len()))
-                    }
+                    },
                 ),
                 self.theme.subtle(),
             )],
@@ -6051,6 +6177,16 @@ fn short_id(id: &str) -> &str {
     id.get(..8).unwrap_or(id)
 }
 
+fn roadmap_slash_path(plan: &str) -> String {
+    if plan.starts_with("roadmap/") {
+        plan.to_string()
+    } else if plan.ends_with(".md") {
+        format!("roadmap/{plan}")
+    } else {
+        format!("roadmap/{plan}.md")
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -6063,10 +6199,11 @@ mod tests {
 
     fn test_app() -> TuiApp {
         let theme = Theme::for_dark_background(true);
+        let server = Arc::new(AppServer::new(Arc::new(
+            Runtime::fake().expect("fake runtime"),
+        )));
         TuiApp {
-            client: LocalAppClient::new(Arc::new(AppServer::new(Arc::new(
-                Runtime::fake().expect("fake runtime"),
-            )))),
+            client: LocalAppClient::new(server.clone()),
             thread_id: "thread-test".to_string(),
             session_title: None,
             session_message_count: 0,
@@ -6118,6 +6255,12 @@ mod tests {
             confirm_dialog: None,
             tool_detail_modal: None,
             plugin_browser: None,
+            remote_panel: RemotePanelController::with_listen(
+                server,
+                "ws://127.0.0.1:0".to_string(),
+                Some("/tmp/gode".to_string()),
+            ),
+            roadmap_mode: None,
             image_attachments: Vec::new(),
             queued_prompts: PromptQueue::default(),
             last_user_prompt: None,
@@ -6130,6 +6273,32 @@ mod tests {
             active_theme_id: None,
             theme_preview_baseline: None,
         }
+    }
+
+    #[tokio::test]
+    async fn remote_slash_command_starts_stops_and_displays_qr() {
+        let mut app = test_app();
+
+        app.run_remote_slash_command("start").await;
+        assert!(app.remote_panel.is_running());
+        let rendered = rendered_timeline_text(&mut app);
+        assert!(rendered.contains("Remote app-server: running"));
+        assert!(rendered.contains("QR:"));
+        assert!(rendered.contains("roder://connect"));
+
+        app.run_remote_slash_command("stop").await;
+        assert!(!app.remote_panel.is_running());
+        let rendered = rendered_timeline_text(&mut app);
+        assert!(rendered.contains("Remote app-server: stopped"));
+    }
+
+    fn rendered_timeline_text(app: &mut TuiApp) -> String {
+        let render = app.timeline.render(app.theme, Rect::new(0, 0, 100, 200));
+        rendered_text_rows(&render.text, 100, 200, render.text_scroll)
+            .into_iter()
+            .map(|row| row.text)
+            .collect::<Vec<_>>()
+            .join("\n")
     }
 
     #[test]
@@ -6157,6 +6326,84 @@ mod tests {
         assert_eq!(app.focused_thread_id(), "thread-lead");
         app.cycle_team_focus(true);
         assert_eq!(app.focused_thread_id(), "thread-builder");
+    }
+
+    #[test]
+    fn roadmap_mode_is_visible_in_footer() {
+        let mut app = test_app();
+
+        app.enter_roadmap_mode(Some("roadmap/20-roadmapping-mode.md".to_string()));
+
+        let mut buffer = Buffer::empty(Rect::new(0, 0, 100, 1));
+        app.footer(100).render(buffer.area, &mut buffer);
+        let footer = buffer_row_cells(&buffer, 0)
+            .iter()
+            .map(|cell| cell.symbol.as_str())
+            .collect::<String>();
+        assert!(footer.contains("roadmap:20-roadmapping-mode.md"));
+    }
+
+    #[test]
+    fn roadmap_slash_command_enters_mode_with_plan() {
+        let mut app = test_app();
+
+        app.run_roadmap_slash_command("20-roadmapping-mode.md");
+
+        assert_eq!(
+            app.roadmap_mode
+                .as_ref()
+                .and_then(|state| state.selected_plan.as_deref()),
+            Some("roadmap/20-roadmapping-mode.md")
+        );
+    }
+
+    #[test]
+    fn roadmap_prompt_submission_adds_context() {
+        let mut app = test_app();
+        app.enter_roadmap_mode(Some("roadmap/20-roadmapping-mode.md".to_string()));
+        app.composer.insert_str("continue the selected task");
+
+        let pending = app.take_prepared_prompt().unwrap();
+
+        assert_eq!(pending.display, "continue the selected task");
+        assert!(pending.message.contains("Roadmapping mode is active"));
+        assert!(pending.message.contains("Selected roadmap:"));
+        assert!(pending.message.contains("continue the selected task"));
+    }
+
+    #[test]
+    fn roadmap_attached_thread_becomes_prompt_target() {
+        let mut app = test_app();
+        app.enter_roadmap_mode(Some("roadmap/20-roadmapping-mode.md".to_string()));
+        app.roadmap_mode
+            .as_mut()
+            .unwrap()
+            .attach_thread("thread-roadmap");
+
+        assert_eq!(app.focused_thread_id(), "thread-roadmap");
+    }
+
+    #[test]
+    fn roadmap_document_keeps_activity_as_secondary_evidence() {
+        let mut app = test_app();
+        app.enter_roadmap_mode(Some("roadmap/20-roadmapping-mode.md".to_string()));
+        app.timeline.push_system("worker evidence");
+
+        let mut buffer = Buffer::empty(Rect::new(0, 0, 100, 80));
+        app.roadmap_document(buffer.area)
+            .render(buffer.area, &mut buffer);
+        let rows = (0..buffer.area.height)
+            .map(|row| {
+                buffer_row_cells(&buffer, row)
+                    .iter()
+                    .map(|cell| cell.symbol.as_str())
+                    .collect::<String>()
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(rows.contains("Roadmap"));
+        assert!(rows.contains("Activity Evidence"));
+        assert!(rows.contains("worker evidence"));
     }
 
     #[test]

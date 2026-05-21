@@ -14,7 +14,7 @@ regex = "1"
 serde = { workspace = true, features = ["derive"] }
 serde_json.workspace = true
 time.workspace = true
-tokio = { workspace = true, features = ["full"] }
+tokio.workspace = true
 
 [dev-dependencies]
 roder-ext-runner-unix-local.workspace = true

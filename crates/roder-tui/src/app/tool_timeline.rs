@@ -43,17 +43,9 @@ const MIN_PAGE_SCROLL_ROWS: isize = 12;
 const TIMELINE_OVERSCAN_ROWS: usize = 4;
 const RUNNING_SHELL_TAIL_ROWS: usize = 12;
 
-#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+#[derive(Debug, Clone, Copy, Default, Eq, PartialEq)]
 pub(super) struct TimelineSettings {
     pub message_folding: bool,
-}
-
-impl Default for TimelineSettings {
-    fn default() -> Self {
-        Self {
-            message_folding: false,
-        }
-    }
 }
 
 #[derive(Debug, Clone, Eq, PartialEq)]

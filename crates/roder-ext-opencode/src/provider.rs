@@ -195,10 +195,10 @@ impl InferenceEngine for OpenCodeInferenceEngine {
             self.schedule_model_refresh(base_url, self.api_key());
         }
 
-        if let Some(entry) = cached {
-            if !entry.models.is_empty() {
-                return Ok(entry.models);
-            }
+        if let Some(entry) = cached
+            && !entry.models.is_empty()
+        {
+            return Ok(entry.models);
         }
 
         Ok(models_for_provider(self.spec.provider_id, false))

@@ -5,6 +5,7 @@ mod instructions;
 pub mod media_artifacts;
 mod plan_review;
 pub mod policy_gate;
+mod roadmap;
 pub mod runtime;
 mod subagent_traces;
 pub mod teams;

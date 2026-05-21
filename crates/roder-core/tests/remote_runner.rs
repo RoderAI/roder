@@ -509,6 +509,7 @@ async fn mock_runner_e2e_tools_command_port_snapshot_resume_and_continue() {
                     default_manifest: RunnerManifest::default(),
                 }),
                 team_data_dir: None,
+                roadmap_data_dir: None,
             },
         )
         .unwrap(),
@@ -604,6 +605,7 @@ async fn runtime(session_dir: PathBuf, workspace: PathBuf) -> Arc<Runtime> {
                     default_manifest: RunnerManifest::default(),
                 }),
                 team_data_dir: None,
+                roadmap_data_dir: None,
             },
         )
         .unwrap(),

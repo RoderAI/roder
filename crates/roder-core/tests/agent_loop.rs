@@ -539,6 +539,7 @@ async fn run_turn_continues_after_tool_result() {
                 policy_mode: roder_api::policy_mode::PolicyMode::Default,
                 remote_runner_destination: None,
                 team_data_dir: None,
+                roadmap_data_dir: None,
             },
         )
         .unwrap(),
@@ -616,6 +617,7 @@ async fn run_turn_executes_parallel_tool_call_batch_concurrently() {
                 policy_mode: roder_api::policy_mode::PolicyMode::Default,
                 remote_runner_destination: None,
                 team_data_dir: None,
+                roadmap_data_dir: None,
             },
         )
         .unwrap(),
@@ -734,6 +736,7 @@ async fn commentary_phase_messages_are_preserved_for_next_provider_request() {
                 policy_mode: roder_api::policy_mode::PolicyMode::Default,
                 remote_runner_destination: None,
                 team_data_dir: None,
+                roadmap_data_dir: None,
             },
         )
         .unwrap(),
@@ -849,6 +852,7 @@ async fn runtime_advertises_apply_patch_only_for_patch_models() {
                 policy_mode: roder_api::policy_mode::PolicyMode::Default,
                 remote_runner_destination: None,
                 team_data_dir: None,
+                roadmap_data_dir: None,
             },
         )
         .unwrap(),
@@ -907,6 +911,7 @@ async fn runtime_uses_custom_model_edit_tool_override() {
                 policy_mode: roder_api::policy_mode::PolicyMode::Default,
                 remote_runner_destination: None,
                 team_data_dir: None,
+                roadmap_data_dir: None,
             },
         )
         .unwrap(),
@@ -947,6 +952,7 @@ async fn tool_execution_errors_are_returned_to_model() {
                 policy_mode: roder_api::policy_mode::PolicyMode::Default,
                 remote_runner_destination: None,
                 team_data_dir: None,
+                roadmap_data_dir: None,
             },
         )
         .unwrap(),
@@ -1008,6 +1014,7 @@ async fn run_turn_allows_more_than_eight_tool_rounds() {
                 policy_mode: roder_api::policy_mode::PolicyMode::Default,
                 remote_runner_destination: None,
                 team_data_dir: None,
+                roadmap_data_dir: None,
             },
         )
         .unwrap(),
@@ -1066,6 +1073,7 @@ async fn unknown_tool_completion_is_marked_as_error() {
                 policy_mode: roder_api::policy_mode::PolicyMode::Default,
                 remote_runner_destination: None,
                 team_data_dir: None,
+                roadmap_data_dir: None,
             },
         )
         .unwrap(),

@@ -11,4 +11,5 @@ __pycache__/
 *.test
 *.pyc
 target/
+.target-roadmap-local/
 .claude/

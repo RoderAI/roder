@@ -722,6 +722,13 @@ pub struct RemoteServerStarted {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RemoteServerStopped {
+    pub listen_addr: String,
+    #[serde(with = "time::serde::rfc3339")]
+    pub timestamp: OffsetDateTime,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RemoteAuthFailed {
     pub remote_addr: Option<String>,
     #[serde(with = "time::serde::rfc3339")]
@@ -738,6 +745,16 @@ pub struct RemoteClientConnected {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RemoteClientDisconnected {
     pub remote_addr: Option<String>,
+    #[serde(with = "time::serde::rfc3339")]
+    pub timestamp: OffsetDateTime,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RoadmapChanged {
+    pub event_kind: String,
+    pub path: String,
+    pub task_id: Option<String>,
+    pub thread_id: Option<String>,
     #[serde(with = "time::serde::rfc3339")]
     pub timestamp: OffsetDateTime,
 }
@@ -804,9 +821,11 @@ pub enum RoderEvent {
     MemoryProviderChanged(MemoryProviderChanged),
     MemoryObservationRecorded(MemoryObservationRecorded),
     RemoteServerStarted(RemoteServerStarted),
+    RemoteServerStopped(RemoteServerStopped),
     RemoteAuthFailed(RemoteAuthFailed),
     RemoteClientConnected(RemoteClientConnected),
     RemoteClientDisconnected(RemoteClientDisconnected),
+    RoadmapChanged(RoadmapChanged),
     TaskStarted(TaskStarted),
     TaskOutput(TaskOutput),
     TaskCompleted(TaskCompleted),
@@ -893,9 +912,11 @@ impl RoderEvent {
             RoderEvent::MemoryProviderChanged(_) => "memory/providerChanged",
             RoderEvent::MemoryObservationRecorded(_) => "memory/observationRecorded",
             RoderEvent::RemoteServerStarted(_) => "remote/serverStarted",
+            RoderEvent::RemoteServerStopped(_) => "remote/serverStopped",
             RoderEvent::RemoteAuthFailed(_) => "remote/authFailed",
             RoderEvent::RemoteClientConnected(_) => "remote/clientConnected",
             RoderEvent::RemoteClientDisconnected(_) => "remote/clientDisconnected",
+            RoderEvent::RoadmapChanged(_) => "roadmap.changed",
             RoderEvent::TaskStarted(_) => "task.started",
             RoderEvent::TaskOutput(_) => "task.output",
             RoderEvent::TaskCompleted(_) => "task.completed",
@@ -971,9 +992,11 @@ impl RoderEvent {
             | RoderEvent::TaskFailed(_)
             | RoderEvent::TaskCancelled(_) => EventSource::Extension,
             RoderEvent::RemoteServerStarted(_)
+            | RoderEvent::RemoteServerStopped(_)
             | RoderEvent::RemoteAuthFailed(_)
             | RoderEvent::RemoteClientConnected(_)
             | RoderEvent::RemoteClientDisconnected(_) => EventSource::AppServer,
+            RoderEvent::RoadmapChanged(_) => EventSource::Core,
             RoderEvent::FileChangePreviewReady(_) => EventSource::Tool,
             RoderEvent::UserInputRequested(_) | RoderEvent::UserInputResolved(_) => {
                 EventSource::Core
@@ -1071,9 +1094,11 @@ impl RoderEvent {
             | RoderEvent::MemoryReembedQueued(_)
             | RoderEvent::MemoryProviderChanged(_)
             | RoderEvent::RemoteServerStarted(_)
+            | RoderEvent::RemoteServerStopped(_)
             | RoderEvent::RemoteAuthFailed(_)
             | RoderEvent::RemoteClientConnected(_)
             | RoderEvent::RemoteClientDisconnected(_)
+            | RoderEvent::RoadmapChanged(_)
             | RoderEvent::RunnerLifecycle(_)
             | RoderEvent::TeamDisplayModeChanged(_)
             | RoderEvent::TeamTaskChanged(_)
@@ -1157,9 +1182,11 @@ impl RoderEvent {
             | RoderEvent::MemoryReembedQueued(_)
             | RoderEvent::MemoryProviderChanged(_)
             | RoderEvent::RemoteServerStarted(_)
+            | RoderEvent::RemoteServerStopped(_)
             | RoderEvent::RemoteAuthFailed(_)
             | RoderEvent::RemoteClientConnected(_)
             | RoderEvent::RemoteClientDisconnected(_)
+            | RoderEvent::RoadmapChanged(_)
             | RoderEvent::RunnerLifecycle(_)
             | RoderEvent::TeamStarted(_)
             | RoderEvent::TeamMemberStarted(_)

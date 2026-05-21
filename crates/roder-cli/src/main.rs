@@ -4,6 +4,7 @@ use std::sync::Arc;
 mod commands;
 mod marketplace;
 mod resume_picker;
+mod roadmap_cli;
 #[cfg(test)]
 mod tui_config;
 
@@ -54,6 +55,9 @@ async fn main() -> anyhow::Result<()> {
     }
     if matches!(args.first().map(String::as_str), Some("workflow")) {
         return run_workflow_cli(&args[1..]).await;
+    }
+    if matches!(args.first().map(String::as_str), Some("roadmap")) {
+        return run_roadmap_entrypoint(&args[1..]).await;
     }
     if matches!(
         args.first().map(String::as_str),
@@ -284,6 +288,52 @@ async fn run_memory_cli(args: &[String]) -> anyhow::Result<()> {
         ),
     }
     Ok(())
+}
+
+async fn run_roadmap_entrypoint(args: &[String]) -> anyhow::Result<()> {
+    if args.is_empty() {
+        return run_roadmap_tui(None).await;
+    }
+    if matches!(args.first().map(String::as_str), Some("open")) {
+        let Some(plan) = args.get(1) else {
+            anyhow::bail!("usage: roder roadmap open <plan>");
+        };
+        return run_roadmap_tui(Some(roadmap_tui_plan_path(plan))).await;
+    }
+    roadmap_cli::run_roadmap_cli(args).await
+}
+
+async fn run_roadmap_tui(plan: Option<String>) -> anyhow::Result<()> {
+    let cli_options = CliOptions {
+        startup: TuiStartup::RoadmapOpen { path: plan.clone() },
+        ..CliOptions::default()
+    };
+    let (runtime, default_model) = build_runtime_from_config(cli_options).await?;
+    if let Some(path) = plan.as_deref() {
+        runtime.open_roadmap(path).await?;
+        runtime.enter_roadmap_mode(path).await?;
+    }
+    let app_server = Arc::new(AppServer::new(runtime).with_user_config_persistence());
+    let client = LocalAppClient::new(app_server);
+    let mut tui = TuiApp::new_with_startup(
+        client,
+        default_model,
+        TuiStartup::RoadmapOpen { path: plan },
+    )
+    .await?;
+    tui.run().await?;
+    print_tui_exit_summary(&tui);
+    Ok(())
+}
+
+fn roadmap_tui_plan_path(plan: &str) -> String {
+    if plan.starts_with("roadmap/") {
+        plan.to_string()
+    } else if plan.ends_with(".md") {
+        format!("roadmap/{plan}")
+    } else {
+        format!("roadmap/{plan}.md")
+    }
 }
 
 async fn list_sessions(client: &LocalAppClient) -> anyhow::Result<Vec<DesktopThread>> {
@@ -649,6 +699,8 @@ struct AppServerOptions {
     listen: String,
     remote: bool,
     auth_token: Option<String>,
+    remote_token_ttl: Option<time::Duration>,
+    allowed_origins: Vec<String>,
     print_qr: bool,
     cli_options: CliOptions,
 }
@@ -736,6 +788,7 @@ pub(crate) async fn build_runtime_from_config(
             policy_mode,
             remote_runner_destination,
             team_data_dir: None,
+            roadmap_data_dir: None,
         },
     )?);
 
@@ -965,6 +1018,8 @@ fn parse_app_server_options(args: &[String]) -> anyhow::Result<AppServerOptions>
     let mut listen = "stdio://".to_string();
     let mut remote = false;
     let mut auth_token = None;
+    let mut remote_token_ttl = None;
+    let mut allowed_origins = Vec::new();
     let mut print_qr = true;
     let mut passthrough = Vec::new();
     let mut i = 0;
@@ -996,6 +1051,27 @@ fn parse_app_server_options(args: &[String]) -> anyhow::Result<AppServerOptions>
             arg if arg.starts_with("--auth-token=") => {
                 auth_token = Some(resolve_auth_token_arg(&arg["--auth-token=".len()..])?);
             }
+            "--remote-token-ttl" => {
+                let Some(value) = args.get(i + 1) else {
+                    anyhow::bail!("--remote-token-ttl requires seconds");
+                };
+                remote_token_ttl = Some(parse_remote_token_ttl(value)?);
+                i += 1;
+            }
+            arg if arg.starts_with("--remote-token-ttl=") => {
+                remote_token_ttl =
+                    Some(parse_remote_token_ttl(&arg["--remote-token-ttl=".len()..])?);
+            }
+            "--allowed-origin" => {
+                let Some(value) = args.get(i + 1) else {
+                    anyhow::bail!("--allowed-origin requires a value");
+                };
+                allowed_origins.push(value.clone());
+                i += 1;
+            }
+            arg if arg.starts_with("--allowed-origin=") => {
+                allowed_origins.push(arg["--allowed-origin=".len()..].to_string());
+            }
             "--print-qr=false" => {
                 print_qr = false;
             }
@@ -1011,6 +1087,8 @@ fn parse_app_server_options(args: &[String]) -> anyhow::Result<AppServerOptions>
         listen,
         remote,
         auth_token,
+        remote_token_ttl,
+        allowed_origins,
         print_qr,
         cli_options: parse_cli_options(&passthrough)?,
     })
@@ -1037,6 +1115,8 @@ async fn run_app_server(args: &[String]) -> anyhow::Result<()> {
             roder_app_server::remote::RemoteServerOptions {
                 listen: options.listen,
                 token,
+                token_ttl: options.remote_token_ttl,
+                allowed_origins: options.allowed_origins,
                 print_qr: options.print_qr,
                 workspace: std::env::current_dir()
                     .ok()
@@ -1044,21 +1124,31 @@ async fn run_app_server(args: &[String]) -> anyhow::Result<()> {
             },
         )
         .await?;
-        if options.print_qr {
-            eprintln!(
-                "{}",
-                roder_app_server::remote::render_terminal_pairing(&handle)
-            );
-        } else {
-            eprintln!(
-                "Remote app-server listening at {}; token {}",
-                handle.listen_addr, handle.token_preview
-            );
-        }
+        eprintln!(
+            "{}",
+            render_remote_app_server_start(&handle, options.print_qr, |handle| {
+                roder_app_server::remote::render_terminal_pairing(handle)
+            })
+        );
         std::future::pending::<()>().await;
         return Ok(());
     }
     run_stdio_app_server(app_server).await
+}
+
+fn render_remote_app_server_start(
+    handle: &roder_app_server::remote::RemoteServerHandle,
+    print_qr: bool,
+    render_pairing: impl FnOnce(&roder_app_server::remote::RemoteServerHandle) -> String,
+) -> String {
+    if print_qr {
+        render_pairing(handle)
+    } else {
+        format!(
+            "Remote app-server listening at {}; token {}",
+            handle.listen_addr, handle.token_preview
+        )
+    }
 }
 
 fn resolve_auth_token_arg(value: &str) -> anyhow::Result<String> {
@@ -1075,6 +1165,16 @@ fn resolve_auth_token_arg(value: &str) -> anyhow::Result<String> {
         }
         Ok(value.to_string())
     }
+}
+
+fn parse_remote_token_ttl(value: &str) -> anyhow::Result<time::Duration> {
+    let seconds = value
+        .parse::<i64>()
+        .map_err(|_| anyhow::anyhow!("--remote-token-ttl requires a positive second count"))?;
+    if seconds <= 0 {
+        anyhow::bail!("--remote-token-ttl requires a positive second count");
+    }
+    Ok(time::Duration::seconds(seconds))
 }
 
 async fn run_stdio_app_server(app_server: Arc<AppServer>) -> anyhow::Result<()> {
@@ -1844,6 +1944,22 @@ mod tests {
     }
 
     #[test]
+    fn roadmap_tui_plan_paths_are_normalized() {
+        assert_eq!(
+            roadmap_tui_plan_path("20-roadmapping-mode.md"),
+            "roadmap/20-roadmapping-mode.md"
+        );
+        assert_eq!(
+            roadmap_tui_plan_path("roadmap/20-roadmapping-mode.md"),
+            "roadmap/20-roadmapping-mode.md"
+        );
+        assert_eq!(
+            roadmap_tui_plan_path("20-roadmapping-mode"),
+            "roadmap/20-roadmapping-mode.md"
+        );
+    }
+
+    #[test]
     fn decode_response_includes_error_data() {
         let err = decode_response::<serde_json::Value>(JsonRpcResponse {
             jsonrpc: "2.0".to_string(),
@@ -2046,6 +2162,29 @@ Report findings.
     }
 
     #[test]
+    fn app_server_remote_options_do_not_change_stdio_default() {
+        let options = parse_app_server_options(&[
+            "--auth-token".to_string(),
+            "remote-secret".to_string(),
+            "--remote-token-ttl".to_string(),
+            "60".to_string(),
+            "--allowed-origin=https://client.example".to_string(),
+            "--print-qr=false".to_string(),
+        ])
+        .unwrap();
+
+        assert!(!options.remote);
+        assert_eq!(options.listen, "stdio://");
+        assert_eq!(options.auth_token.as_deref(), Some("remote-secret"));
+        assert_eq!(options.remote_token_ttl, Some(time::Duration::seconds(60)));
+        assert_eq!(
+            options.allowed_origins,
+            vec!["https://client.example".to_string()]
+        );
+        assert!(!options.print_qr);
+    }
+
+    #[test]
     fn app_server_remote_accepts_auth_token_env() {
         unsafe {
             std::env::set_var("RODER_TEST_REMOTE_TOKEN", "remote-secret");
@@ -2059,6 +2198,64 @@ Report findings.
         .unwrap();
         assert_eq!(options.auth_token.as_deref(), Some("remote-secret"));
         assert!(!options.print_qr);
+    }
+
+    #[test]
+    fn app_server_remote_accepts_token_ttl_seconds() {
+        let options = parse_app_server_options(&[
+            "--remote".to_string(),
+            "--remote-token-ttl".to_string(),
+            "60".to_string(),
+        ])
+        .unwrap();
+        assert_eq!(options.remote_token_ttl, Some(time::Duration::seconds(60)));
+
+        let err =
+            parse_app_server_options(&["--remote".to_string(), "--remote-token-ttl=0".to_string()])
+                .unwrap_err()
+                .to_string();
+        assert!(err.contains("positive second count"));
+    }
+
+    #[test]
+    fn app_server_remote_accepts_allowed_origins() {
+        let options = parse_app_server_options(&[
+            "--remote".to_string(),
+            "--allowed-origin".to_string(),
+            "https://client.example".to_string(),
+            "--allowed-origin=https://second.example".to_string(),
+        ])
+        .unwrap();
+        assert_eq!(
+            options.allowed_origins,
+            vec![
+                "https://client.example".to_string(),
+                "https://second.example".to_string(),
+            ]
+        );
+    }
+
+    #[test]
+    fn app_server_remote_start_message_supports_fake_qr_renderer() {
+        let handle = roder_app_server::remote::RemoteServerHandle {
+            listen_addr: "127.0.0.1:49152".parse().unwrap(),
+            connect_urls: vec!["ws://127.0.0.1:49152".to_string()],
+            token_preview: "secr...oken".to_string(),
+            pairing_url: "roder://connect?payload=test".to_string(),
+        };
+
+        let rendered = render_remote_app_server_start(&handle, true, |handle| {
+            format!("fake qr for {}", handle.pairing_url)
+        });
+        assert_eq!(rendered, "fake qr for roder://connect?payload=test");
+
+        let rendered = render_remote_app_server_start(&handle, false, |_| {
+            panic!("text mode must not render QR")
+        });
+        assert_eq!(
+            rendered,
+            "Remote app-server listening at 127.0.0.1:49152; token secr...oken"
+        );
     }
 
     #[test]

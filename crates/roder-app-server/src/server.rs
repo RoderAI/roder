@@ -21,6 +21,7 @@ use roder_core::{
     media_artifacts::{MediaArtifactStore, default_media_artifact_dir},
 };
 use roder_protocol::*;
+use roder_roadmap::{ListOptions, list_documents, parse_document, validate_document};
 use roder_tasks::{BackgroundRunner, BackgroundRunnerConfig, TaskExecutorRegistry};
 use time::OffsetDateTime;
 use tokio::sync::{RwLock, broadcast};
@@ -30,6 +31,52 @@ use crate::desktop_contract::{
     desktop_turn_images, desktop_turn_message,
 };
 use crate::notifications;
+
+#[derive(Debug, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct RoadmapPathParams {
+    path: String,
+}
+
+#[derive(Debug, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct RoadmapCreateParams {
+    slug: String,
+    title: String,
+    goal: Option<String>,
+}
+
+#[derive(Debug, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct RoadmapPatchParams {
+    path: String,
+    old_text: String,
+    new_text: String,
+}
+
+#[derive(Debug, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct RoadmapTaskUpdateParams {
+    path: String,
+    task_id: String,
+    checked: bool,
+    evidence: Option<String>,
+}
+
+#[derive(Debug, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct RoadmapValidateParams {
+    path: Option<String>,
+}
+
+#[derive(Debug, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct RoadmapThreadParams {
+    path: String,
+    task_id: Option<String>,
+    thread_id: Option<String>,
+    title: Option<String>,
+}
 
 pub struct AppServer {
     pub runtime: Arc<Runtime>,
@@ -150,6 +197,63 @@ impl AppServer {
             "thread/archive" => {
                 self.decode_and(req.params, |p| async move {
                     self.handle_thread_archive(p).await
+                })
+                .await
+            }
+            "roadmap/list" => self.handle_roadmap_list().await,
+            "roadmap/read" => {
+                self.decode_and(
+                    req.params,
+                    |p| async move { self.handle_roadmap_read(p).await },
+                )
+                .await
+            }
+            "roadmap/create" => {
+                self.decode_and(req.params, |p| async move {
+                    self.handle_roadmap_create(p).await
+                })
+                .await
+            }
+            "roadmap/patch" => {
+                self.decode_and(
+                    req.params,
+                    |p| async move { self.handle_roadmap_patch(p).await },
+                )
+                .await
+            }
+            "roadmap/task/update" => {
+                self.decode_and(req.params, |p| async move {
+                    self.handle_roadmap_task_update(p).await
+                })
+                .await
+            }
+            "roadmap/validate" => {
+                self.decode_and(req.params, |p| async move {
+                    self.handle_roadmap_validate(p).await
+                })
+                .await
+            }
+            "roadmap/thread/list" => {
+                self.decode_and(req.params, |p| async move {
+                    self.handle_roadmap_thread_list(p).await
+                })
+                .await
+            }
+            "roadmap/thread/spawn" => {
+                self.decode_and(req.params, |p| async move {
+                    self.handle_roadmap_thread_spawn(p).await
+                })
+                .await
+            }
+            "roadmap/thread/attach" | "thread/attach" => {
+                self.decode_and(req.params, |p| async move {
+                    self.handle_roadmap_thread_attach(p).await
+                })
+                .await
+            }
+            "thread/roadmap/open" => {
+                self.decode_and(req.params, |p| async move {
+                    self.handle_thread_roadmap_open(p).await
                 })
                 .await
             }
@@ -1131,6 +1235,176 @@ impl AppServer {
             archived,
         })
         .unwrap())
+    }
+
+    async fn handle_roadmap_list(&self) -> Result<serde_json::Value, JsonRpcError> {
+        let documents = self.runtime.list_roadmaps().await.map_err(internal_error)?;
+        Ok(serde_json::json!({ "documents": documents }))
+    }
+
+    async fn handle_roadmap_read(
+        &self,
+        params: RoadmapPathParams,
+    ) -> Result<serde_json::Value, JsonRpcError> {
+        let path = self.roadmap_path(&params.path)?;
+        let content = std::fs::read_to_string(&path).map_err(internal_error)?;
+        let document = parse_document(&path, &content);
+        Ok(serde_json::json!({ "document": document }))
+    }
+
+    async fn handle_roadmap_create(
+        &self,
+        params: RoadmapCreateParams,
+    ) -> Result<serde_json::Value, JsonRpcError> {
+        let workspace = self.roadmap_workspace()?;
+        let roadmap_dir = workspace.join("roadmap");
+        std::fs::create_dir_all(&roadmap_dir).map_err(internal_error)?;
+        let slug = sanitize_roadmap_slug(&params.slug)?;
+        let phase = next_roadmap_phase(&roadmap_dir).map_err(internal_error)?;
+        let path = roadmap_dir.join(format!("{phase:02}-{slug}.md"));
+        if path.exists() {
+            return Err(invalid_params(format!(
+                "roadmap already exists: {}",
+                path.display()
+            )));
+        }
+        let goal = params
+            .goal
+            .as_deref()
+            .unwrap_or("Describe the intended outcome.");
+        std::fs::write(&path, roadmap_template(&params.title, goal, phase, &slug))
+            .map_err(internal_error)?;
+        let content = std::fs::read_to_string(&path).map_err(internal_error)?;
+        let document = parse_document(&path, &content);
+        Ok(serde_json::json!({ "document": document, "path": rel(&workspace, &path) }))
+    }
+
+    async fn handle_roadmap_patch(
+        &self,
+        params: RoadmapPatchParams,
+    ) -> Result<serde_json::Value, JsonRpcError> {
+        let path = self.roadmap_path(&params.path)?;
+        let content = std::fs::read_to_string(&path).map_err(internal_error)?;
+        if !content.contains(&params.old_text) {
+            return Err(not_found("roadmap patch oldText not found"));
+        }
+        let updated = content.replacen(&params.old_text, &params.new_text, 1);
+        std::fs::write(&path, updated).map_err(internal_error)?;
+        Ok(serde_json::json!({ "path": self.roadmap_rel(&path)?, "changed": true }))
+    }
+
+    async fn handle_roadmap_task_update(
+        &self,
+        params: RoadmapTaskUpdateParams,
+    ) -> Result<serde_json::Value, JsonRpcError> {
+        let evidence = params.evidence.unwrap_or_default();
+        self.runtime
+            .set_roadmap_task(&params.path, &params.task_id, params.checked, &evidence)
+            .await
+            .map_err(internal_error)?;
+        Ok(serde_json::json!({
+            "path": params.path,
+            "taskId": params.task_id,
+            "checked": params.checked
+        }))
+    }
+
+    async fn handle_roadmap_validate(
+        &self,
+        params: RoadmapValidateParams,
+    ) -> Result<serde_json::Value, JsonRpcError> {
+        if let Some(path) = params.path {
+            let validation = self
+                .runtime
+                .validate_roadmap(&path)
+                .await
+                .map_err(internal_error)?;
+            return Ok(serde_json::json!({ "results": [validation] }));
+        }
+        let workspace = self.roadmap_workspace()?;
+        let mut results = Vec::new();
+        for document in
+            list_documents(&workspace, ListOptions::default()).map_err(internal_error)?
+        {
+            let content = std::fs::read_to_string(&document.path).map_err(internal_error)?;
+            let document = parse_document(&document.path, &content);
+            results.push(validate_document(&document));
+        }
+        Ok(serde_json::json!({ "results": results }))
+    }
+
+    async fn handle_roadmap_thread_list(
+        &self,
+        params: RoadmapPathParams,
+    ) -> Result<serde_json::Value, JsonRpcError> {
+        let threads = self
+            .runtime
+            .list_roadmap_threads(&params.path)
+            .await
+            .map_err(internal_error)?;
+        Ok(serde_json::json!({ "threads": threads }))
+    }
+
+    async fn handle_roadmap_thread_spawn(
+        &self,
+        params: RoadmapThreadParams,
+    ) -> Result<serde_json::Value, JsonRpcError> {
+        let task_id = params
+            .task_id
+            .ok_or_else(|| invalid_params("roadmap/thread/spawn requires taskId"))?;
+        let thread = self
+            .runtime
+            .spawn_roadmap_thread(&params.path, &task_id)
+            .await
+            .map_err(internal_error)?;
+        Ok(serde_json::json!({ "thread": thread }))
+    }
+
+    async fn handle_roadmap_thread_attach(
+        &self,
+        params: RoadmapThreadParams,
+    ) -> Result<serde_json::Value, JsonRpcError> {
+        let task_id = params
+            .task_id
+            .ok_or_else(|| invalid_params("roadmap thread attach requires taskId"))?;
+        let thread_id = params
+            .thread_id
+            .ok_or_else(|| invalid_params("roadmap thread attach requires threadId"))?;
+        let thread = self
+            .runtime
+            .attach_roadmap_thread(&params.path, &task_id, &thread_id, params.title)
+            .await
+            .map_err(internal_error)?;
+        Ok(serde_json::json!({ "thread": thread }))
+    }
+
+    async fn handle_thread_roadmap_open(
+        &self,
+        params: RoadmapPathParams,
+    ) -> Result<serde_json::Value, JsonRpcError> {
+        let document = self
+            .runtime
+            .open_roadmap(&params.path)
+            .await
+            .map_err(internal_error)?;
+        self.runtime
+            .enter_roadmap_mode(&params.path)
+            .await
+            .map_err(internal_error)?;
+        Ok(serde_json::json!({ "document": document }))
+    }
+
+    fn roadmap_workspace(&self) -> Result<std::path::PathBuf, JsonRpcError> {
+        Ok(self.runtime.workspace())
+    }
+
+    fn roadmap_path(&self, path: &str) -> Result<std::path::PathBuf, JsonRpcError> {
+        let workspace = self.roadmap_workspace()?;
+        resolve_roadmap_path(&workspace, path).map_err(invalid_params)
+    }
+
+    fn roadmap_rel(&self, path: &std::path::Path) -> Result<String, JsonRpcError> {
+        Ok(rel(&self.roadmap_workspace()?, path))
     }
 
     async fn handle_session_get(&self) -> Result<serde_json::Value, JsonRpcError> {
@@ -2823,6 +3097,67 @@ fn not_found(message: impl Into<String>) -> JsonRpcError {
         message: message.into(),
         data: None,
     }
+}
+
+fn sanitize_roadmap_slug(slug: &str) -> Result<String, JsonRpcError> {
+    if slug
+        .chars()
+        .all(|ch| ch.is_ascii_lowercase() || ch.is_ascii_digit() || ch == '-')
+    {
+        Ok(slug.to_string())
+    } else {
+        Err(invalid_params(
+            "slug must contain only lowercase letters, digits, and hyphens",
+        ))
+    }
+}
+
+fn next_roadmap_phase(roadmap_dir: &std::path::Path) -> anyhow::Result<u32> {
+    let mut max_phase = 0;
+    for entry in std::fs::read_dir(roadmap_dir)? {
+        let entry = entry?;
+        let name = entry.file_name();
+        let name = name.to_string_lossy();
+        if let Some((prefix, _)) = name.split_once('-')
+            && let Ok(phase) = prefix.parse::<u32>()
+        {
+            max_phase = max_phase.max(phase);
+        }
+    }
+    Ok(max_phase + 1)
+}
+
+fn roadmap_template(title: &str, goal: &str, phase: u32, slug: &str) -> String {
+    format!(
+        "# {title} Implementation Plan\n\n**Goal:** {goal}\n**Architecture:** Document the architecture before implementation.\n**Tech Stack:** Rust.\n\n## Owned Paths\n\n- Create: `roadmap/{phase:02}-{slug}.md`\n\n## Tasks\n\n- [ ] Draft the implementation plan\n\nRun:\n\n```sh\ncargo test -p roder-roadmap\n```\n\nAcceptance:\n- The roadmap is actionable and validated.\n\n## Phase Acceptance\n\n- [ ] Plan is complete.\n"
+    )
+}
+
+fn resolve_roadmap_path(
+    workspace: &std::path::Path,
+    path: &str,
+) -> anyhow::Result<std::path::PathBuf> {
+    let path = if path.starts_with("roadmap/") {
+        workspace.join(path)
+    } else if path.ends_with(".md") {
+        workspace.join("roadmap").join(path)
+    } else {
+        workspace.join("roadmap").join(format!("{path}.md"))
+    };
+    if path.parent() == Some(&workspace.join("roadmap"))
+        && path.extension().and_then(|ext| ext.to_str()) == Some("md")
+    {
+        Ok(path)
+    } else {
+        anyhow::bail!("plan must resolve under roadmap/*.md")
+    }
+}
+
+fn rel(workspace: &std::path::Path, path: &std::path::Path) -> String {
+    path.strip_prefix(workspace)
+        .unwrap_or(path)
+        .display()
+        .to_string()
 }
 
 fn team_descriptor(team: TeamState) -> TeamDescriptor {
