@@ -64,6 +64,11 @@ pub fn built_in_commands() -> Vec<CommandSpec> {
             "Show background tasks and their recent output.",
         ),
         (
+            "ps",
+            "Open the Roder-owned process monitor.",
+            "Inspect and stop Roder-owned local and remote runner processes.",
+        ),
+        (
             "memory",
             "Inspect relevant project and user memory.",
             "Surface relevant memory for the current workspace and task.",
@@ -95,6 +100,7 @@ pub fn built_in_commands() -> Vec<CommandSpec> {
             "plugin" => {
                 Some("preview|install|install-all|list|disable|uninstall [args]".to_string())
             }
+            "ps" => Some("all|stop <id>|stop-all --confirm|<id>".to_string()),
             _ => None,
         },
         allowed_tools: Vec::new(),

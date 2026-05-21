@@ -267,6 +267,7 @@ mod tests {
             "model",
             "agents",
             "tasks",
+            "ps",
             "memory",
             "commit",
             "marketplace",
@@ -278,6 +279,12 @@ mod tests {
             assert_eq!(spec.source, CommandSource::BuiltIn);
             assert!(!spec.body.is_empty());
         }
+        assert_eq!(
+            registry
+                .get("ps")
+                .and_then(|spec| spec.argument_hint.as_deref()),
+            Some("all|stop <id>|stop-all --confirm|<id>")
+        );
         assert_eq!(
             registry
                 .get("marketplace")
