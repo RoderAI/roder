@@ -12,6 +12,7 @@ surface for desktop, TUI, CLI, and sibling clients.
 | `thread/start` | new chat | Create a Roder thread/session with `model`, optional `modelProvider`, `cwd`, and `ephemeral`. | Returns a desktop `Thread`. |
 | `thread/list` | sidebar bootstrap/refresh | List persisted Roder sessions as stable desktop `Thread` objects. | Pagination cursors are reserved. |
 | `thread/read` | thread switch | Read a persisted thread by `threadId`; include turns/items when `includeTurns` is true. | Returns `thread: null` when not found. |
+| `thread/archive` | archive/delete thread action | Archive a persisted session and remove desktop in-memory state for that thread. | `thread/list` no longer returns archived threads. |
 | `turn/start` | send prompt | Start a Roder turn on `threadId`, accepting desktop `input` text blocks and temporary `prompt` fallback. | Emits turn and item notifications. |
 | `turn/steer` | steer active turn | Send additional user input to the active turn, enforcing `expectedTurnId` when provided. | Requires an active turn. |
 | `turn/interrupt` | stop button | Interrupt the active turn for a thread; `turnId` is optional when there is a single active turn. | Uses the runtime interrupt path. |
@@ -19,6 +20,12 @@ surface for desktop, TUI, CLI, and sibling clients.
 | `fs/readFile` | file preview | Read an absolute host path and return base64 bytes as `dataBase64`. | Read-only filesystem method. |
 | `fs/readDirectory` | file browser | List direct children of an absolute host directory with `fileName`, `isDirectory`, and `isFile`. | Read-only filesystem method. |
 | `command/exec` | one-off command runner | Run an argv vector with optional absolute `cwd`, env overrides, timeout, output cap, and optional `command/exec/outputDelta` streaming. | PTY, streaming stdin, resize, write, and terminate are deferred. |
+| `processes/list`, `processes/get`, `processes/stop`, `processes/stopAll`, `processes/subscribe` | process monitor | Inspect and stop Roder-owned command, task, and remote-runner processes. | Does not enumerate arbitrary host OS processes. |
+| `skills/list`, `skills/read`, `skills/setEnabled`, `skills/setExposure` | skills manager | List/read skill descriptors and persist canonical enablement/exposure rules. | Mutating by ambiguous skill name returns an invalid-params error; select by canonical path. |
+| `search_index/status`, `search_index/warmup`, `search_index/rebuild`, `search_index/clear` | search-index dashboard | Manage the persistent regex index for a workspace. | Controlled by `settings/set_search_index`; emits `search_index/statusChanged`. |
+| `index/status`, `index/rebuild`, `index/search`, `index/readChunk`, `index/proofs/list` | semantic code-index inspector | Build/query proof-verified code chunks and read chunk source only with `includeSource: true`. | Emits `index/statusChanged` after rebuild. |
+| `retrieval/recommendations`, `retrieval/metrics`, `retrieval/promoted` | retrieval diagnostics | Inspect route recommendations, outcomes, and promoted capability state for a turn. | Diagnostic surface derived from runtime retrieval events. |
+| `eval/reports/list`, `eval/report/read` | eval report viewer | List and read bounded markdown reports from `<workspace>/evals/reports`. | Report ids must come from the list response. |
 | `team/start` | start an agent team | Create a lead thread plus long-lived teammate threads with `displayMode` `auto`, `in_process`, `tmux`, or `iterm2`. | Team control-plane methods use desktop singular method names. |
 | `team/list` | team sidebar/bootstrap | List active or persisted teams as `TeamDescriptor` objects. | Supports optional `limit`; pagination cursors are reserved. |
 | `team/read` | attach/split-pane bootstrap | Read a team plus persisted mailbox messages by `teamId`. | Used by `roder team attach --team ... --member ...`. |
@@ -51,6 +58,11 @@ surface for desktop, TUI, CLI, and sibling clients.
 | `session/planExitRequested` | `requestId`, `targetMode`, optional `planSummary`, `threadId`, and `turnId`; clients should prompt and answer with `session/exit_plan`. | Runtime plan-mode exit request. |
 | `session/planExitResolved` | `requestId`, `approved`, `targetMode`, `resolvedMode`, `threadId`, and `turnId`; clients clear the plan-exit prompt. | Runtime plan-mode exit resolution. |
 | `command/exec/outputDelta` | `processId`, `stream`, `deltaBase64`, and `capReached`; appends streamed command output. | `command/exec` with `streamStdoutStderr: true`. |
+| `process.started`, `process.output`, `process.exited`, `process.stopping`, `process.stopped`, `process.failed` | Process descriptor/output payloads; refresh process monitor rows and output tails. | Roder process registry. |
+| `skills/catalogLoaded`, `skills/configApplied`, `skills/activationResolved`, `skills/indexRendered`, `skills/invoked`, `skills/autoActivated`, `skills/skipped` | Update skills manager or diagnostics panels. | Runtime skills registry and injection paths. |
+| `search_index/statusChanged` | `{ status }`; refresh regex search-index state. | Search-index status, warmup, rebuild, clear, and setting changes. |
+| `index/statusChanged` | `{ status }`; refresh semantic code-index state. | Code-index rebuild. |
+| `retrieval/routePlanned`, `retrieval/routeAccepted`, `retrieval/routeIgnored`, `retrieval/routeFailed`, `retrieval/resultUsed`, `retrieval/discoveryItemPromoted`, `retrieval/promotionSkipped` | Update retrieval diagnostics for a turn. | Runtime retrieval router. |
 | `team/started` | `params.team` is a `TeamDescriptor`; clients can render the roster. | `team/start`. |
 | `team/member/started` | `teamId` plus a member descriptor; roster grows. | Runtime team member creation. |
 | `team/member/statusChanged` | `teamId`, `memberId`, `status`; roster status updates. | Runtime member turn routing. |
@@ -68,6 +80,14 @@ launch an app-server with scheduler enablement; a TUI-local app-server should
 only read and manage automations unless explicitly launched with scheduler
 flags. See `docs/app-server/automations.md` for method payloads, missed-run
 behavior, and lease recovery.
+
+## Schema Manifest
+
+The current method manifest is checked in at
+`schemas/app-server/roder-app-server.v1.json`, and
+`schemas/app-server/methods.schema.json` describes the manifest shape. Desktop
+and sibling clients that generate low-level method helpers should use those
+files rather than scraping `docs/app-server/api.md`.
 
 ## Team Display Modes
 
