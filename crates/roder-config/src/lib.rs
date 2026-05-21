@@ -16,6 +16,7 @@ pub struct Config {
     pub reasoning: Option<String>,
     pub runtime_profile: Option<String>,
     pub auto_compact_token_limit: Option<u32>,
+    pub reliability: Option<ReliabilityConfig>,
     pub speed_policy: Option<SpeedPolicyConfig>,
     pub web_search: Option<WebSearchConfig>,
     pub context: Option<ContextConfig>,
@@ -38,6 +39,19 @@ pub struct Config {
     pub models: HashMap<String, ModelConfig>,
     #[serde(default)]
     pub model_profiles: HashMap<String, ModelHarnessProfileConfig>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ReliabilityConfig {
+    pub max_consecutive_tool_failures: Option<u32>,
+    pub max_tool_failures_per_turn: Option<u32>,
+    pub max_model_calls_per_turn: Option<u32>,
+    pub provider_retry_max_attempts: Option<u32>,
+    pub provider_retry_initial_backoff_ms: Option<u64>,
+    pub provider_retry_backoff_factor: Option<u32>,
+    #[serde(default)]
+    pub provider_retry_status_codes: Vec<u16>,
+    pub retry_empty_provider_body: Option<bool>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -909,6 +923,7 @@ mod tests {
             reasoning: Some("medium".to_string()),
             runtime_profile: None,
             auto_compact_token_limit: None,
+            reliability: None,
             speed_policy: None,
             web_search: None,
             context: None,
@@ -1152,6 +1167,34 @@ mod tests {
         assert_eq!(speed.verification_reasoning.as_deref(), Some("high"));
         assert_eq!(speed.recovery_reasoning.as_deref(), Some("medium"));
         assert_eq!(speed.eval_deadline_seconds, Some(600));
+    }
+
+    #[test]
+    fn reliability_config_parses_failure_limits_and_retry_policy() {
+        let config: Config = toml::from_str(
+            r#"
+            [reliability]
+            max_consecutive_tool_failures = 4
+            max_tool_failures_per_turn = 8
+            max_model_calls_per_turn = 20
+            provider_retry_max_attempts = 5
+            provider_retry_initial_backoff_ms = 250
+            provider_retry_backoff_factor = 3
+            provider_retry_status_codes = [429, 503]
+            retry_empty_provider_body = false
+            "#,
+        )
+        .unwrap();
+
+        let reliability = config.reliability.unwrap();
+        assert_eq!(reliability.max_consecutive_tool_failures, Some(4));
+        assert_eq!(reliability.max_tool_failures_per_turn, Some(8));
+        assert_eq!(reliability.max_model_calls_per_turn, Some(20));
+        assert_eq!(reliability.provider_retry_max_attempts, Some(5));
+        assert_eq!(reliability.provider_retry_initial_backoff_ms, Some(250));
+        assert_eq!(reliability.provider_retry_backoff_factor, Some(3));
+        assert_eq!(reliability.provider_retry_status_codes, vec![429, 503]);
+        assert_eq!(reliability.retry_empty_provider_body, Some(false));
     }
 
     #[test]

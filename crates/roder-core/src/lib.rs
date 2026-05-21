@@ -7,6 +7,7 @@ pub mod media_artifacts;
 pub mod model_profiles;
 mod plan_review;
 pub mod policy_gate;
+mod reliability;
 mod roadmap;
 pub mod runtime;
 mod speed_policy;
@@ -20,5 +21,6 @@ mod verification_gate;
 
 pub use bus::*;
 pub use instructions::*;
+pub use reliability::RuntimeReliabilityConfig;
 pub use runtime::*;
 pub use teams::*;

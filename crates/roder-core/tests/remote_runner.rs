@@ -506,6 +506,7 @@ async fn mock_runner_e2e_tools_command_port_snapshot_resume_and_continue() {
                 policy_mode: roder_api::policy_mode::PolicyMode::AcceptAll,
                 runtime_profile: roder_api::inference::RuntimeProfile::Interactive,
                 speed_policy: Default::default(),
+                reliability: Default::default(),
                 turn_deadline_seconds: None,
                 remote_runner_destination: Some(RunnerDestination {
                     id: "mock-hosted".to_string(),
@@ -607,6 +608,7 @@ async fn runtime(session_dir: PathBuf, workspace: PathBuf) -> Arc<Runtime> {
                 policy_mode: roder_api::policy_mode::PolicyMode::Default,
                 runtime_profile: roder_api::inference::RuntimeProfile::Interactive,
                 speed_policy: Default::default(),
+                reliability: Default::default(),
                 turn_deadline_seconds: None,
                 remote_runner_destination: Some(RunnerDestination {
                     id: "unix-local".to_string(),

@@ -21,7 +21,9 @@ use roder_core::model_profiles::{
     ModelHarnessProfileOverride, ModelProfileOverrides, ModelProfileReasoningOverride,
     resolve_model_profiles,
 };
-use roder_core::{Runtime, RuntimeConfig, RuntimeSpeedPolicyConfig, validate_edit_tool};
+use roder_core::{
+    Runtime, RuntimeConfig, RuntimeReliabilityConfig, RuntimeSpeedPolicyConfig, validate_edit_tool,
+};
 use roder_ext_subagents::{AgentLoadConfig, load_agent_definitions};
 use roder_extension_host::{
     CustomInferenceProviderConfig, DefaultNotificationsConfig, DefaultRegistryConfig,
@@ -724,6 +726,7 @@ pub(crate) async fn build_runtime_from_config(
     let policy_mode = resolve_policy_mode(&options, &cfg)?;
     let runtime_profile = resolve_runtime_profile(&options, &cfg)?;
     let speed_policy = resolve_speed_policy_config(cfg.speed_policy.as_ref());
+    let reliability = resolve_reliability_config(cfg.reliability.as_ref());
     let custom_inference_provider_configs = custom_inference_providers(&cfg);
     let (default_provider, configured_model) = resolve_provider_model(cfg.provider, cfg.model);
     let default_model = configured_model.clone().unwrap_or_else(|| {
@@ -808,6 +811,7 @@ pub(crate) async fn build_runtime_from_config(
             policy_mode,
             runtime_profile,
             speed_policy,
+            reliability,
             turn_deadline_seconds: cfg
                 .speed_policy
                 .as_ref()
@@ -1349,6 +1353,39 @@ fn resolve_speed_policy_config(
         }
     }
     speed_policy
+}
+
+fn resolve_reliability_config(
+    cfg: Option<&roder_config::ReliabilityConfig>,
+) -> RuntimeReliabilityConfig {
+    let mut reliability = RuntimeReliabilityConfig::default();
+    if let Some(cfg) = cfg {
+        if let Some(value) = cfg.max_consecutive_tool_failures {
+            reliability.max_consecutive_tool_failures = value;
+        }
+        if let Some(value) = cfg.max_tool_failures_per_turn {
+            reliability.max_tool_failures_per_turn = value;
+        }
+        if let Some(value) = cfg.max_model_calls_per_turn {
+            reliability.max_model_calls_per_turn = value;
+        }
+        if let Some(value) = cfg.provider_retry_max_attempts {
+            reliability.provider_retry_max_attempts = value;
+        }
+        if let Some(value) = cfg.provider_retry_initial_backoff_ms {
+            reliability.provider_retry_initial_backoff_ms = value;
+        }
+        if let Some(value) = cfg.provider_retry_backoff_factor {
+            reliability.provider_retry_backoff_factor = value;
+        }
+        if !cfg.provider_retry_status_codes.is_empty() {
+            reliability.provider_retry_status_codes = cfg.provider_retry_status_codes.clone();
+        }
+        if let Some(value) = cfg.retry_empty_provider_body {
+            reliability.retry_empty_provider_body = value;
+        }
+    }
+    reliability
 }
 
 fn model_profile_overrides_from_config(
