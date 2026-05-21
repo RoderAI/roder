@@ -10,7 +10,19 @@ REASONING ?=
 LISTEN ?= stdio://
 VERSION ?=
 
-.PHONY: build install run run-existing app-server mock-run mock-existing mock-app-server jaeger dev-deps test test-fast smoke release-brew clean cargo-unlock
+.PHONY: build install run run-existing app-server mock-run mock-existing mock-app-server jaeger dev-deps test test-fast smoke release-brew clean clean-target cargo-unlock
+
+# Wipe the cargo target dir. Incremental builds accumulate session artifacts
+# unboundedly (cargo does not GC them on stable); once target/ grows to hundreds
+# of thousands of files the filesystem overhead dominates and builds crawl.
+# A clean cold rebuild is ~20s, so run this whenever target/ gets bloated.
+# Check size: du -sh target ; count files: find target -type f | wc -l
+clean-target:
+	@if pgrep -f "$(CURDIR)/target" >/dev/null 2>&1; then \
+		echo "Refusing: cargo/rustc still running for this repo. Check: pgrep -fl '$(CURDIR)/target'" >&2; \
+		exit 1; \
+	fi
+	cargo clean
 
 # Drop stale target locks when no cargo/rustc is using this repo (see `make cargo-unlock-help`).
 cargo-unlock:
