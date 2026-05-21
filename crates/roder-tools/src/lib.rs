@@ -1,5 +1,6 @@
 mod artifacts;
 mod backend;
+mod discovery;
 mod edit;
 mod exec;
 mod files;
@@ -131,7 +132,8 @@ impl ToolContributor for BuiltinCodingToolsContributor {
         edit::register(registry, self.workspace.clone(), self.backend.clone())?;
         workflow::register(registry)?;
         media::register(registry)?;
-        artifacts::register(registry)
+        artifacts::register(registry)?;
+        discovery::register(registry)
     }
 }
 
