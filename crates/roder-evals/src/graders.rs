@@ -54,6 +54,7 @@ pub struct ToolSchemaGrade {
     #[serde(default)]
     pub missing_required_fields: Vec<String>,
     pub additional_properties_false: bool,
+    pub required_before_properties: bool,
 }
 
 pub fn first_party_coding_tool_schema_expectations() -> Vec<ToolSchemaExpectation> {
@@ -118,6 +119,7 @@ fn grade_tool_schema(
             passed: false,
             missing_required_fields: expectation.required_fields.clone(),
             additional_properties_false: false,
+            required_before_properties: false,
         };
     };
     let required = spec
@@ -139,17 +141,35 @@ fn grade_tool_schema(
         .get("additionalProperties")
         .and_then(serde_json::Value::as_bool)
         == Some(false);
+    let schema_json = serde_json::to_string(&spec.parameters).unwrap_or_default();
+    let required_before_properties = match (
+        schema_json.find(r#""required""#),
+        schema_json.find(r#""properties""#),
+    ) {
+        (Some(required), Some(properties)) => required < properties,
+        (None, Some(_)) if expectation.required_fields.is_empty() => true,
+        _ => false,
+    };
     ToolSchemaGrade {
         tool_name: expectation.tool_name.clone(),
         passed: missing_required_fields.is_empty()
             && (!expectation.additional_properties_false || additional_properties_false),
+        required_before_properties,
         missing_required_fields,
         additional_properties_false,
     }
+    .with_order_requirement()
 }
 
 fn default_true() -> bool {
     true
+}
+
+impl ToolSchemaGrade {
+    fn with_order_requirement(mut self) -> Self {
+        self.passed = self.passed && self.required_before_properties;
+        self
+    }
 }
 
 #[cfg(test)]
@@ -199,7 +219,7 @@ mod tests {
     }
 
     #[test]
-    fn micro_eval_missing_required_argument_fails_one_tool_grade() {
+    fn micro_eval_tool_schema_missing_required_argument_fails_one_tool_grade() {
         let mut specs = vec![ToolSpec {
             name: "read_file".to_string(),
             description: "bad read_file".to_string(),
@@ -220,6 +240,7 @@ mod tests {
                     parameters: serde_json::json!({
                         "type": "object",
                         "required": expectation.required_fields,
+                        "properties": {},
                         "additionalProperties": false
                     }),
                 }),
@@ -234,6 +255,82 @@ mod tests {
         assert_eq!(failed.len(), 1);
         assert_eq!(failed[0].tool_name, "read_file");
         assert_eq!(failed[0].missing_required_fields, ["path"]);
+    }
+
+    #[test]
+    fn micro_eval_tool_schema_order_regression_fails_one_tool_grade() {
+        let mut specs = vec![ToolSpec {
+            name: "grep".to_string(),
+            description: "bad grep".to_string(),
+            parameters: serde_json::json!({
+                "type": "object",
+                "properties": { "query": { "type": "string" } },
+                "required": ["query"],
+                "additionalProperties": false
+            }),
+        }];
+        specs.extend(
+            first_party_coding_tool_schema_expectations()
+                .into_iter()
+                .filter(|expectation| expectation.tool_name != "grep")
+                .map(|expectation| ToolSpec {
+                    name: expectation.tool_name,
+                    description: "placeholder".to_string(),
+                    parameters: serde_json::json!({
+                        "type": "object",
+                        "required": expectation.required_fields,
+                        "properties": {},
+                        "additionalProperties": false
+                    }),
+                }),
+        );
+
+        let grades = grade_tool_schemas(&specs);
+        let grep = grades
+            .iter()
+            .find(|grade| grade.tool_name == "grep")
+            .unwrap();
+
+        assert!(!grep.passed);
+        assert!(!grep.required_before_properties);
+    }
+
+    #[test]
+    fn micro_eval_tool_schema_additional_properties_regression_fails_one_tool_grade() {
+        let mut specs = vec![ToolSpec {
+            name: "glob".to_string(),
+            description: "bad glob".to_string(),
+            parameters: serde_json::json!({
+                "type": "object",
+                "required": ["pattern"],
+                "properties": { "pattern": { "type": "string" } },
+                "additionalProperties": true
+            }),
+        }];
+        specs.extend(
+            first_party_coding_tool_schema_expectations()
+                .into_iter()
+                .filter(|expectation| expectation.tool_name != "glob")
+                .map(|expectation| ToolSpec {
+                    name: expectation.tool_name,
+                    description: "placeholder".to_string(),
+                    parameters: serde_json::json!({
+                        "type": "object",
+                        "required": expectation.required_fields,
+                        "properties": {},
+                        "additionalProperties": false
+                    }),
+                }),
+        );
+
+        let grades = grade_tool_schemas(&specs);
+        let glob = grades
+            .iter()
+            .find(|grade| grade.tool_name == "glob")
+            .unwrap();
+
+        assert!(!glob.passed);
+        assert!(!glob.additional_properties_false);
     }
 
     #[test]
