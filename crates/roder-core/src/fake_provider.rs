@@ -50,18 +50,12 @@ impl InferenceEngine for FakeInferenceEngine {
             return Ok(Box::pin(stream));
         }
         if should_update_task_ledger(&request) {
+            let complete = prompt_contains(&request, "FAKE_TASK_LEDGER_COMPLETE");
             let stream = stream::iter(vec![Ok(InferenceEvent::ToolCallCompleted(
                 ToolCallCompleted {
                     id: "fake-task-ledger".to_string(),
                     name: "task_ledger.update".to_string(),
-                    arguments: serde_json::json!({
-                        "tasks": [
-                            { "id": "inspect", "content": "Inspect task", "status": "completed", "evidence": "fake-provider" },
-                            { "id": "verify", "content": "Verify task", "status": "in_progress" }
-                        ],
-                        "requireCompletionEvidence": true
-                    })
-                    .to_string(),
+                    arguments: task_ledger_arguments(complete),
                 },
             ))]);
             return Ok(Box::pin(stream));
@@ -96,19 +90,14 @@ impl InferenceEngine for FakeInferenceEngine {
 }
 
 fn should_request_user_input(request: &AgentInferenceRequest) -> bool {
-    request.conversation.iter().any(|item| {
-        matches!(
-            item,
-            ConversationItem::UserMessage(message)
-                if message.text.contains("FAKE_REQUEST_USER_INPUT")
-        )
-    }) && !request.conversation.iter().any(|item| {
-        matches!(
-            item,
-            ConversationItem::ToolResult(result)
-                if result.name.as_deref() == Some("request_user_input")
-        )
-    })
+    prompt_contains(request, "FAKE_REQUEST_USER_INPUT")
+        && !request.conversation.iter().any(|item| {
+            matches!(
+                item,
+                ConversationItem::ToolResult(result)
+                    if result.name.as_deref() == Some("request_user_input")
+            )
+        })
 }
 
 fn user_input_unavailable(request: &AgentInferenceRequest) -> bool {
@@ -124,17 +113,42 @@ fn user_input_unavailable(request: &AgentInferenceRequest) -> bool {
 }
 
 fn should_update_task_ledger(request: &AgentInferenceRequest) -> bool {
+    (prompt_contains(request, "FAKE_TASK_LEDGER_UPDATE")
+        || prompt_contains(request, "FAKE_TASK_LEDGER_COMPLETE"))
+        && !request.conversation.iter().any(|item| {
+            matches!(
+                item,
+                ConversationItem::ToolResult(result)
+                    if result.name.as_deref() == Some("task_ledger.update")
+            )
+        })
+}
+
+fn prompt_contains(request: &AgentInferenceRequest, needle: &str) -> bool {
     request.conversation.iter().any(|item| {
         matches!(
             item,
-            ConversationItem::UserMessage(message)
-                if message.text.contains("FAKE_TASK_LEDGER_UPDATE")
-        )
-    }) && !request.conversation.iter().any(|item| {
-        matches!(
-            item,
-            ConversationItem::ToolResult(result)
-                if result.name.as_deref() == Some("task_ledger.update")
+            ConversationItem::UserMessage(message) if message.text.contains(needle)
         )
     })
+}
+
+fn task_ledger_arguments(complete: bool) -> String {
+    let second_status = if complete { "completed" } else { "in_progress" };
+    let mut second = serde_json::json!({
+        "id": "verify",
+        "content": "Verify task",
+        "status": second_status
+    });
+    if complete {
+        second["evidence"] = serde_json::json!("fake-provider");
+    }
+    serde_json::json!({
+        "tasks": [
+            { "id": "inspect", "content": "Inspect task", "status": "completed", "evidence": "fake-provider" },
+            second
+        ],
+        "requireCompletionEvidence": true
+    })
+    .to_string()
 }

@@ -162,6 +162,7 @@ fn turn(thread_id: &str) -> StartTurnRequest {
         model_override: None,
         workspace: None,
         instructions: default_instructions(),
+        task_ledger_required: false,
     }
 }
 

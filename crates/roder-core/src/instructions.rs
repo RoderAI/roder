@@ -56,6 +56,10 @@ const EVAL_INSTRUCTIONS: &str = r#"## Eval Runtime Profile
 
 This turn is running in eval mode. Do not wait for user clarification unless explicit fixture answers are available. Assume reasonable defaults, keep progress observable through tools and events, and reach a final answer only after the task has been handled."#;
 
+const TASK_LEDGER_REQUIRED_INSTRUCTIONS: &str = r#"## Task Ledger Required
+
+This eval task is decomposed work. Create and maintain a task ledger with `task_ledger.update` before risky work starts, keep exactly one item in progress, and include evidence when marking items completed."#;
+
 pub fn apply_runtime_profile(
     mut instructions: InstructionBundle,
     profile: RuntimeProfile,
@@ -68,6 +72,16 @@ pub fn apply_runtime_profile(
     instructions.developer = Some(match instructions.developer {
         Some(existing) if !existing.trim().is_empty() => format!("{existing}\n\n{addition}"),
         _ => addition.to_string(),
+    });
+    instructions
+}
+
+pub fn apply_task_ledger_required(mut instructions: InstructionBundle) -> InstructionBundle {
+    instructions.developer = Some(match instructions.developer {
+        Some(existing) if !existing.trim().is_empty() => {
+            format!("{existing}\n\n{TASK_LEDGER_REQUIRED_INSTRUCTIONS}")
+        }
+        _ => TASK_LEDGER_REQUIRED_INSTRUCTIONS.to_string(),
     });
     instructions
 }

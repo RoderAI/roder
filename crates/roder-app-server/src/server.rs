@@ -1593,6 +1593,7 @@ impl AppServer {
                 model_override,
                 workspace,
                 instructions: default_instructions(),
+                task_ledger_required: false,
             })
             .await
             .map_err(internal_error)?;
@@ -2007,6 +2008,7 @@ impl AppServer {
                 model_override: expanded.model.clone(),
                 workspace,
                 instructions: default_instructions(),
+                task_ledger_required: false,
             })
             .await
             .map_err(internal_error)?;

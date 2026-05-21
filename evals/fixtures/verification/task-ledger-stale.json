@@ -1,0 +1,14 @@
+{
+  "id": "task-ledger-stale",
+  "title": "Task ledger stale",
+  "prompt": "FAKE_TASK_LEDGER_UPDATE: start a decomposed eval task but leave the task ledger incomplete.",
+  "tags": ["verification", "task-ledger", "failure:stale-task-ledger"],
+  "timeoutMs": 10000,
+  "expected": {
+    "finalAnswerContains": ["hello from roder"],
+    "taskLedgerRequired": true
+  },
+  "constraints": [
+    "stale or incomplete task ledger state should be graded as an eval failure"
+  ]
+}

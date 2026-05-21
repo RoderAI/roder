@@ -32,7 +32,7 @@ use tokio::sync::{Mutex, RwLock, oneshot};
 use crate::artifacts::{ContextArtifactStore, default_context_artifact_dir};
 use crate::bus::EventBus;
 use crate::fake_provider::FakeInferenceEngine;
-use crate::instructions::apply_runtime_profile;
+use crate::instructions::{apply_runtime_profile, apply_task_ledger_required};
 use crate::policy_gate::DefaultPolicyGate;
 use crate::subagent_traces::RuntimeSubagentTraceSink;
 use crate::teams::{TeamManager, TeamMemberStartRequest, TeamStartRequest, TeamState};
@@ -88,6 +88,7 @@ pub struct StartTurnRequest {
     pub model_override: Option<String>,
     pub workspace: Option<String>,
     pub instructions: InstructionBundle,
+    pub task_ledger_required: bool,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -828,6 +829,7 @@ impl Runtime {
                     model_override: member.model.clone(),
                     workspace: None,
                     instructions: crate::default_instructions(),
+                    task_ledger_required: false,
                 })
                 .await?
             }
@@ -840,6 +842,7 @@ impl Runtime {
                 model_override: member.model.clone(),
                 workspace: None,
                 instructions: crate::default_instructions(),
+                task_ledger_required: false,
             })
             .await?
         };
@@ -1246,12 +1249,19 @@ impl Runtime {
             }))
             .await;
 
+            let mut instructions = apply_runtime_profile(req.instructions.clone(), runtime_profile);
+            if req.task_ledger_required
+                && runtime_profile == RuntimeProfile::Eval
+                && !conversation_has_task_ledger(&conversation)
+            {
+                instructions = apply_task_ledger_required(instructions);
+            }
             let request = AgentInferenceRequest {
                 model: ModelSelection {
                     provider: provider.clone(),
                     model: model.clone(),
                 },
-                instructions: apply_runtime_profile(req.instructions.clone(), runtime_profile),
+                instructions,
                 conversation: conversation.clone(),
                 tools: tools.clone(),
                 tool_choice: tool_choice.clone(),
@@ -1676,6 +1686,16 @@ fn conversation_has_images(conversation: &[ConversationItem]) -> bool {
     })
 }
 
+fn conversation_has_task_ledger(conversation: &[ConversationItem]) -> bool {
+    conversation.iter().any(|item| {
+        matches!(
+            item,
+            ConversationItem::ToolResult(result)
+                if result.name.as_deref() == Some("task_ledger.update") && !result.is_error
+        )
+    })
+}
+
 fn reasoning_for_model(cfg: &RuntimeConfig, model: &str) -> ReasoningConfig {
     let level = effective_reasoning_for_model(cfg, model);
     match level.as_str() {
@@ -1996,6 +2016,7 @@ mod tests {
                     system: None,
                     developer: Some("base developer".to_string()),
                 },
+                task_ledger_required: false,
             })
             .await
             .unwrap();
@@ -2026,5 +2047,56 @@ mod tests {
         let developer = request.instructions.developer.unwrap();
         assert!(developer.contains("base developer"));
         assert!(developer.contains("non-interactive profile"));
+    }
+
+    #[tokio::test]
+    async fn task_ledger_enforcement_injects_eval_reminder_before_work() {
+        let captured = Arc::new(StdMutex::new(None));
+        let mut builder = ExtensionRegistryBuilder::new();
+        builder.inference_engine(Arc::new(CapturingEngine {
+            request: captured.clone(),
+        }));
+        let runtime = Arc::new(
+            Runtime::new(
+                builder.build().unwrap(),
+                RuntimeConfig {
+                    runtime_profile: RuntimeProfile::Eval,
+                    ..RuntimeConfig::default()
+                },
+            )
+            .unwrap(),
+        );
+        let mut rx = runtime.subscribe_events();
+        let turn_id = runtime
+            .start_turn(StartTurnRequest {
+                thread_id: "thread-ledger".to_string(),
+                message: "decomposed work".to_string(),
+                images: Vec::new(),
+                provider_override: None,
+                model_override: None,
+                workspace: None,
+                instructions: InstructionBundle::default(),
+                task_ledger_required: true,
+            })
+            .await
+            .unwrap();
+
+        tokio::time::timeout(std::time::Duration::from_secs(5), async {
+            loop {
+                let envelope = rx.recv().await.unwrap();
+                if envelope.turn_id.as_deref() == Some(&turn_id)
+                    && matches!(envelope.event, RoderEvent::TurnCompleted(_))
+                {
+                    break;
+                }
+            }
+        })
+        .await
+        .unwrap();
+
+        let request = captured.lock().unwrap().clone().unwrap();
+        let developer = request.instructions.developer.unwrap();
+        assert!(developer.contains("Task Ledger Required"));
+        assert!(developer.contains("task_ledger.update"));
     }
 }

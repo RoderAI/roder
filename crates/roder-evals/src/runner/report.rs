@@ -178,6 +178,26 @@ pub(super) fn eval_metrics(
         .iter()
         .filter(|event| matches!(event, RoderEvent::ToolOutputTruncated(_)))
         .count() as u64;
+    let task_ledger_updates = events
+        .iter()
+        .filter(|event| matches!(event, RoderEvent::TaskLedgerUpdated(_)))
+        .count() as u64;
+    let task_ledger_tasks = events
+        .iter()
+        .filter_map(|event| match event {
+            RoderEvent::TaskLedgerUpdated(updated) => Some(updated.tasks.len() as u64),
+            _ => None,
+        })
+        .last()
+        .unwrap_or(0);
+    let task_ledger_completed = events
+        .iter()
+        .filter_map(|event| match event {
+            RoderEvent::TaskLedgerUpdated(updated) => Some(updated.completed_count),
+            _ => None,
+        })
+        .last()
+        .unwrap_or(0);
     vec![
         EvalMetric {
             name: "outcome_pass".to_string(),
@@ -265,6 +285,24 @@ pub(super) fn eval_metrics(
             name: "tool_output_truncations".to_string(),
             kind: EvalMetricKind::Count,
             value: tool_output_truncations as f64,
+            unit: None,
+        },
+        EvalMetric {
+            name: "task_ledger_updates".to_string(),
+            kind: EvalMetricKind::Count,
+            value: task_ledger_updates as f64,
+            unit: None,
+        },
+        EvalMetric {
+            name: "task_ledger_tasks".to_string(),
+            kind: EvalMetricKind::Count,
+            value: task_ledger_tasks as f64,
+            unit: None,
+        },
+        EvalMetric {
+            name: "task_ledger_completed".to_string(),
+            kind: EvalMetricKind::Count,
+            value: task_ledger_completed as f64,
             unit: None,
         },
     ]
@@ -430,6 +468,18 @@ fn eval_report_markdown(report: &EvalSuiteReport) -> String {
             metric_value(result, "irrelevant_file_reads"),
             metric_value(result, "truncation_follow_ups"),
             metric_value(result, "tool_output_truncations"),
+        ));
+    }
+    text.push_str(
+        "\n## Task Ledger Metrics\n\n| Fixture | Updates | Tasks | Completed |\n| --- | ---: | ---: | ---: |\n",
+    );
+    for result in &report.results {
+        text.push_str(&format!(
+            "| `{}` | {:.0} | {:.0} | {:.0} |\n",
+            result.fixture_id,
+            metric_value(result, "task_ledger_updates"),
+            metric_value(result, "task_ledger_tasks"),
+            metric_value(result, "task_ledger_completed"),
         ));
     }
     let groups = failure_groups(report);

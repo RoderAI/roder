@@ -8,6 +8,7 @@ anyhow.workspace = true
 roder-api.workspace = true
 roder-context.workspace = true
 roder-core.workspace = true
+roder-ext-task-ledger.workspace = true
 roder-tools.workspace = true
 serde = { workspace = true, features = ["derive"] }
 serde_json.workspace = true
