@@ -191,9 +191,7 @@ impl WorkspaceSearcher {
     }
 
     pub fn warm(&mut self, options: &SearchOptions) -> Result<&SearchIndex, SearchError> {
-        let mut workspace_options = options.clone();
-        workspace_options.path = PathBuf::from(".");
-        self.index = Some(SearchIndex::build(&self.root, &workspace_options)?);
+        self.index = Some(SearchIndex::build(&self.root, options)?);
         Ok(self.index.as_ref().expect("index was just built"))
     }
 
@@ -220,7 +218,12 @@ impl WorkspaceSearcher {
                 scan_search(&self.root, options, &query, start, SearchEngine::Scan, None)
             }
             SearchMode::Auto | SearchMode::Indexed => {
-                if self.index.is_none() {
+                let requested_scope = scoped_path(&self.root, &options.path)?;
+                let should_warm = match self.index.as_ref() {
+                    Some(index) => !requested_scope.starts_with(index.scope()),
+                    None => true,
+                };
+                if should_warm {
                     self.warm(options)?;
                 }
                 let index = self.index.as_ref().expect("index is initialized");
@@ -556,5 +559,28 @@ mod tests {
             all.lines,
             vec!["src/a.txt:1:needle", "tests/a.txt:1:needle"]
         );
+    }
+
+    #[test]
+    fn scoped_indexed_search_warms_only_requested_file() {
+        let workspace = TempWorkspace::new();
+        workspace.write("src/types/roder.ts", "export type toolSubject = string;\n");
+        workspace.write(
+            "node_modules/big-package/index.js",
+            "toolSubject in dependency\n",
+        );
+        let mut searcher = WorkspaceSearcher::new(&workspace.root);
+
+        let results = searcher
+            .search(&SearchOptions::new("toolSubject").with_path("src/types/roder.ts"))
+            .unwrap();
+
+        assert_eq!(
+            results.lines,
+            vec!["src/types/roder.ts:1:export type toolSubject = string;"]
+        );
+        let index = searcher.index().expect("search should warm an index");
+        assert_eq!(index.scope(), workspace.root.join("src/types/roder.ts"));
+        assert_eq!(index.stats().document_count, 1);
     }
 }
