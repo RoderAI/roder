@@ -1,3 +1,5 @@
+#[allow(dead_code)]
+mod automations;
 mod commands;
 mod composer;
 mod dialog;

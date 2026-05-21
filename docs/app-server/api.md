@@ -19,10 +19,11 @@ use it to:
 - create or resume sessions and desktop-shaped threads.
 - start, steer, interrupt, and observe turns.
 - list/select providers, models, runners, tools, agents, commands, memories,
-  media artifacts, workflow imports, plan reviews, hunks, and background tasks.
+  media artifacts, workflow imports, plan reviews, hunks, automations, and
+  background tasks.
 - receive notifications for turn lifecycle, streamed assistant output, tool
-  lifecycle, teams, workflow imports, media, memory, plan review, and hunk
-  events.
+  lifecycle, teams, workflow imports, media, memory, plan review, hunk, and
+  automation events.
 
 The source of truth for method registration is
 `AppServer::handle_request` in `crates/roder-app-server/src/server.rs`.
@@ -207,6 +208,14 @@ Tools, commands, files, agents, and tasks:
 | `tasks/get` | Read task handle plus logs. |
 | `tasks/cancel` | Cancel a task. |
 | `tasks/subscribe` | Return supported task event kinds. |
+| `automations/status` | Read scheduler ownership, store path, and run counters. |
+| `automations/list` | List automation definitions. |
+| `automations/create` | Register a scheduled Roder run. |
+| `automations/update` | Patch an automation definition. |
+| `automations/delete` | Disable an automation while preserving run history. |
+| `automations/runNow` | Queue an immediate automation run. |
+| `automations/runs` | Read automation run history. |
+| `automations/cancelRun` | Cancel a queued or running automation run. |
 
 Teams and panes:
 
@@ -1590,6 +1599,50 @@ Behavior:
 - Enabling an item that requires approval without `approveSideEffects` returns
   code `-32040` with `itemId`, `source`, and `risk` in `data`.
 
+### Automation methods
+
+Purpose: Manage app-server scheduled Roder runs, inspect scheduler ownership,
+and read run history. See `docs/app-server/automations.md` for the full
+method, config, scheduler, lease-recovery, and client-integration reference.
+
+Example status request:
+
+```json
+{
+  "method": "automations/status",
+  "params": {}
+}
+```
+
+Example status response:
+
+```json
+{
+  "schedulerEnabled": false,
+  "readApiEnabled": true,
+  "serverId": "desktop-main",
+  "serverRole": "desktop",
+  "storePath": "/Users/example/.roder/automations.sqlite3",
+  "activeRuns": 0,
+  "dueCount": 0,
+  "leasedCount": 0
+}
+```
+
+Behavior:
+
+- Scheduling is disabled by default. Desktop clients may enable scheduler
+  ownership for their app-server process; ordinary TUI-local app servers should
+  remain scheduler-disabled unless explicitly requested.
+- Disabled scheduler instances can still serve read/manage APIs when
+  `readApiEnabled` is true.
+- `automations/runNow` uses the same lease, task, thread, turn, event, and run
+  audit path as scheduled occurrences.
+- Missed runs are represented either as due runs according to catch-up policy or
+  as `skipped` run records with `skipReason`.
+- Failed runs record `error`; interactive approval or user-input waits also
+  emit `automations/needsInput`.
+
 ### Plugin marketplace methods
 
 Purpose: Manage Claude, Cursor, Codex, and local plugin marketplace metadata,
@@ -2726,6 +2779,37 @@ Example:
   "delta": "Reviewing"
 }
 ```
+
+### Automation notifications
+
+Automation notifications let desktop and sibling clients distinguish running,
+terminal, skipped, and blocked scheduled work:
+
+```json
+{
+  "run": {
+    "runId": "run-123",
+    "automationId": "automation-123",
+    "occurrenceKey": "automation-123:manual:2026-05-21T10:10:00Z",
+    "state": "running",
+    "scheduledFor": "2026-05-21T10:10:00Z",
+    "threadId": "thread-123",
+    "turnId": "turn-123",
+    "taskId": "task-123"
+  }
+}
+```
+
+Methods:
+
+- `automations/runStarted`
+- `automations/runCompleted`
+- `automations/runFailed`
+- `automations/runSkipped`
+- `automations/needsInput`
+
+`automations/needsInput` is emitted in addition to `automations/runFailed` when
+an automation turn is interrupted because it requested approval or user input.
 
 ### Advanced artifact notifications
 

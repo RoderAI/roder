@@ -27,6 +27,11 @@ surface for desktop, TUI, CLI, and sibling clients.
 | `team/member/interrupt` | stop focused teammate | Interrupt only the selected teammate's active turn. | `turnId` is accepted for client bookkeeping; the team member id is authoritative. |
 | `team/member/focus` | headless focus acknowledgement | Validate that a member exists and echo the focused member id. | Split-pane focus is TUI-local; headless pane methods return a precise unsupported error. |
 | `team/cleanup` | close team state | Remove persisted team state, refusing active members unless `force` is true. | Split-pane backends must close only panes they created. |
+| `automations/status` | automation dashboard | Report scheduler enablement, store path, and due/running/leased counters. | Scheduling is app-server-owned and disabled by default. |
+| `automations/list` | automation dashboard | List automation definitions for display and management. | Does not enable the scheduler. |
+| `automations/runNow` | manual automation run | Queue one immediate automation occurrence through the normal run path. | Uses the same task/thread/turn audit path as scheduled runs. |
+| `automations/runs` | automation history | Read run history, including failed and skipped missed runs. | Use `state` filtering for failed, running, or skipped views. |
+| `automations/cancelRun` | stop automation run | Cancel a queued or running automation run. | Cancellation is run-id scoped. |
 
 ## Required Desktop Notifications
 
@@ -52,6 +57,17 @@ surface for desktop, TUI, CLI, and sibling clients.
 | `team/member/messageDelta` | `teamId`, `memberId`, `turnId`, `delta`; append to that member's transcript. | Teammate inference deltas. |
 | `team/member/completed` | `teamId`, `memberId`, optional `turnId`, `status`; selected teammate becomes idle/completed/interrupted. | Runtime turn completion/interruption. |
 | `team/cleanupCompleted` | `teamId`, `forced`; remove local team state. | `team/cleanup`. |
+| `automations/runStarted` | `run` with `state: "running"`; show active scheduled work. | Automation worker start. |
+| `automations/runCompleted` | `run` with terminal success fields; mark the run complete. | Automation worker completion. |
+| `automations/runFailed` | `run` plus `error`; show failed scheduled work. | Automation worker failure. |
+| `automations/runSkipped` | `run` plus `reason`; show missed or suppressed work. | Scheduler missed-run/catch-up handling. |
+| `automations/needsInput` | `run` plus `error`; prompt that automation could not proceed unattended. | Automation worker approval or user-input wait. |
+
+Automation clients should treat scheduler state as process-local. Desktop may
+launch an app-server with scheduler enablement; a TUI-local app-server should
+only read and manage automations unless explicitly launched with scheduler
+flags. See `docs/app-server/automations.md` for method payloads, missed-run
+behavior, and lease recovery.
 
 ## Team Display Modes
 
