@@ -1,6 +1,9 @@
 use serde::Serialize;
 
-use crate::inference::{ModelDescriptor, ReasoningEffortDescriptor};
+use crate::inference::{
+    ModelDescriptor, ModelHarnessProfile, ModelInstructionOverlay, ModelProfileReasoning,
+    ModelSchemaPolicy, ProviderFamily, ReasoningEffortDescriptor,
+};
 
 pub const PROVIDER_MOCK: &str = "mock";
 pub const PROVIDER_OPENAI: &str = "openai";
@@ -631,7 +634,7 @@ pub const BUILT_IN_MODELS: &[ModelCatalogEntry] = &[
         auto_compact_token_limit: 115_200,
         supports_compaction: false,
         supports_images: false,
-        supports_tools: false,
+        supports_tools: true,
         supports_structured: false,
         edit_tool: None,
         hidden: true,
@@ -659,7 +662,7 @@ const fn openai_model(
         auto_compact_token_limit,
         supports_compaction,
         supports_images: false,
-        supports_tools: false,
+        supports_tools: true,
         supports_structured: false,
         edit_tool: Some("patch"),
         hidden: false,
@@ -831,6 +834,82 @@ pub fn lookup_model(id: &str) -> Option<&'static ModelCatalogEntry> {
     BUILT_IN_MODELS.iter().find(|model| model.id == id)
 }
 
+pub fn built_in_model_profile(id: &str) -> Option<ModelHarnessProfile> {
+    lookup_model(id).map(model_harness_profile_from_catalog)
+}
+
+pub fn built_in_model_profiles() -> Vec<ModelHarnessProfile> {
+    built_in_models(true)
+        .into_iter()
+        .map(model_harness_profile_from_catalog)
+        .collect()
+}
+
+fn model_harness_profile_from_catalog(model: &ModelCatalogEntry) -> ModelHarnessProfile {
+    let provider_family = provider_family_for_provider(model.provider);
+    ModelHarnessProfile {
+        model: model.id.to_string(),
+        provider: model.provider.to_string(),
+        provider_family,
+        edit_tool: model.edit_tool.map(str::to_string),
+        schema_policy: schema_policy_for_family(provider_family),
+        instruction_overlay: instruction_overlay_for_family(provider_family),
+        reasoning: ModelProfileReasoning {
+            orientation: Some(model.default_reasoning.to_string()),
+            execution: Some(default_execution_reasoning(model)),
+            verification: Some(model.default_reasoning.to_string()),
+            recovery: Some(model.default_reasoning.to_string()),
+        },
+        parallel_tool_calls: Some(matches!(
+            provider_family,
+            ProviderFamily::OpenAi | ProviderFamily::Xai | ProviderFamily::Opencode
+        )),
+        auto_compact_token_limit: (model.auto_compact_token_limit > 0)
+            .then_some(model.auto_compact_token_limit),
+    }
+}
+
+pub fn provider_family_for_provider(provider: &str) -> ProviderFamily {
+    match provider {
+        PROVIDER_OPENAI | PROVIDER_CODEX => ProviderFamily::OpenAi,
+        PROVIDER_ANTHROPIC => ProviderFamily::Anthropic,
+        PROVIDER_GEMINI => ProviderFamily::Gemini,
+        PROVIDER_XAI | PROVIDER_SUPERGROK => ProviderFamily::Xai,
+        PROVIDER_OPENCODE | PROVIDER_OPENCODE_GO => ProviderFamily::Opencode,
+        PROVIDER_POOLSIDE => ProviderFamily::Poolside,
+        _ => ProviderFamily::Mock,
+    }
+}
+
+fn schema_policy_for_family(family: ProviderFamily) -> ModelSchemaPolicy {
+    match family {
+        ProviderFamily::OpenAi => ModelSchemaPolicy::RequiredFirstFlat,
+        _ => ModelSchemaPolicy::StandardRequiredFirst,
+    }
+}
+
+fn instruction_overlay_for_family(family: ProviderFamily) -> ModelInstructionOverlay {
+    match family {
+        ProviderFamily::OpenAi => ModelInstructionOverlay::LiteralToolOutputs,
+        ProviderFamily::Anthropic | ProviderFamily::Gemini => {
+            ModelInstructionOverlay::IntuitiveContext
+        }
+        _ => ModelInstructionOverlay::Standard,
+    }
+}
+
+fn default_execution_reasoning(model: &ModelCatalogEntry) -> String {
+    if model
+        .supported_reasoning
+        .iter()
+        .any(|option| option.effort == REASONING_LOW)
+    {
+        REASONING_LOW.to_string()
+    } else {
+        model.default_reasoning.to_string()
+    }
+}
+
 pub fn model_supports_reasoning_effort(model: &str, effort: &str) -> bool {
     lookup_model(model)
         .map(|entry| {
@@ -958,6 +1037,21 @@ mod tests {
         assert_eq!(models_for_provider(PROVIDER_OPENCODE_GO, false).len(), 4);
         assert_eq!(models_for_provider(PROVIDER_POOLSIDE, false).len(), 2);
         assert_eq!(models_for_provider(PROVIDER_MOCK, true).len(), 1);
+    }
+
+    #[test]
+    fn catalog_model_profile_derives_openai_defaults() {
+        let profile = built_in_model_profile("gpt-5.5").unwrap();
+
+        assert_eq!(profile.provider_family, ProviderFamily::OpenAi);
+        assert_eq!(profile.edit_tool.as_deref(), Some(EDIT_TOOL_PATCH));
+        assert_eq!(profile.schema_policy, ModelSchemaPolicy::RequiredFirstFlat);
+        assert_eq!(
+            profile.instruction_overlay,
+            ModelInstructionOverlay::LiteralToolOutputs
+        );
+        assert_eq!(profile.reasoning.execution.as_deref(), Some(REASONING_LOW));
+        assert_eq!(profile.parallel_tool_calls, Some(true));
     }
 
     #[test]

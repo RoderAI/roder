@@ -36,6 +36,8 @@ pub struct Config {
     pub providers: HashMap<String, ProviderConfig>,
     #[serde(default)]
     pub models: HashMap<String, ModelConfig>,
+    #[serde(default)]
+    pub model_profiles: HashMap<String, ModelHarnessProfileConfig>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -89,6 +91,25 @@ pub struct ProviderConfig {
 pub struct ModelConfig {
     pub edit_tool: Option<String>,
     pub parallel_tool_calls: Option<bool>,
+}
+
+#[derive(Debug, Default, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ModelHarnessProfileConfig {
+    pub provider_family: Option<String>,
+    pub edit_tool: Option<String>,
+    pub schema_policy: Option<String>,
+    pub instruction_overlay: Option<String>,
+    pub parallel_tool_calls: Option<bool>,
+    pub auto_compact_token_limit: Option<u32>,
+    pub reasoning: Option<ModelProfileReasoningConfig>,
+}
+
+#[derive(Debug, Default, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ModelProfileReasoningConfig {
+    pub orientation: Option<String>,
+    pub execution: Option<String>,
+    pub verification: Option<String>,
+    pub recovery: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -905,6 +926,7 @@ mod tests {
             agent_teams: None,
             providers: HashMap::new(),
             models: HashMap::new(),
+            model_profiles: HashMap::new(),
         };
         config.providers.insert(
             "openai".to_string(),
@@ -1453,6 +1475,49 @@ mod tests {
                 .get("custom-claude")
                 .and_then(|model| model.parallel_tool_calls),
             Some(true)
+        );
+    }
+
+    #[test]
+    fn deserializes_model_profile_overrides() {
+        let config: Config = toml::from_str(
+            r#"
+            [model_profiles."gpt-5.5"]
+            provider_family = "openai"
+            edit_tool = "patch"
+            schema_policy = "required_first_flat"
+            instruction_overlay = "literal_tool_outputs"
+            parallel_tool_calls = true
+            auto_compact_token_limit = 180000
+
+            [model_profiles."gpt-5.5".reasoning]
+            orientation = "high"
+            execution = "low"
+            verification = "high"
+            recovery = "medium"
+            "#,
+        )
+        .unwrap();
+
+        let profile = config.model_profiles.get("gpt-5.5").unwrap();
+        assert_eq!(profile.provider_family.as_deref(), Some("openai"));
+        assert_eq!(profile.edit_tool.as_deref(), Some("patch"));
+        assert_eq!(
+            profile.schema_policy.as_deref(),
+            Some("required_first_flat")
+        );
+        assert_eq!(
+            profile.instruction_overlay.as_deref(),
+            Some("literal_tool_outputs")
+        );
+        assert_eq!(profile.parallel_tool_calls, Some(true));
+        assert_eq!(profile.auto_compact_token_limit, Some(180000));
+        assert_eq!(
+            profile
+                .reasoning
+                .as_ref()
+                .and_then(|reasoning| reasoning.execution.as_deref()),
+            Some("low")
         );
     }
 

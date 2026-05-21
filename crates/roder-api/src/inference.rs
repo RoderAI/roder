@@ -98,6 +98,69 @@ pub struct ReasoningConfig {
 
 #[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
+pub enum ProviderFamily {
+    #[default]
+    Mock,
+    OpenAi,
+    Anthropic,
+    Gemini,
+    Xai,
+    Opencode,
+    Poolside,
+}
+
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ModelSchemaPolicy {
+    #[default]
+    StandardRequiredFirst,
+    RequiredFirstFlat,
+}
+
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ModelInstructionOverlay {
+    #[default]
+    Standard,
+    LiteralToolOutputs,
+    IntuitiveContext,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ModelProfileReasoning {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub orientation: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub execution: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub verification: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub recovery: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ModelHarnessProfile {
+    pub model: String,
+    pub provider: String,
+    pub provider_family: ProviderFamily,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub edit_tool: Option<String>,
+    #[serde(default)]
+    pub schema_policy: ModelSchemaPolicy,
+    #[serde(default)]
+    pub instruction_overlay: ModelInstructionOverlay,
+    #[serde(default)]
+    pub reasoning: ModelProfileReasoning,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub parallel_tool_calls: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub auto_compact_token_limit: Option<u32>,
+}
+
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
 pub enum SpeedPolicyPhase {
     #[default]
     Orientation,
