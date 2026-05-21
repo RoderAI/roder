@@ -44,6 +44,7 @@ pub enum PaletteAction {
     InsertComposerText(String),
     OpenPluginBrowser,
     OpenSkillsManager,
+    OpenRoadmapMode,
     ShowAutomationsStatus,
     ShowProcesses,
     ShowProcessDetail(String),

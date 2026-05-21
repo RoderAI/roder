@@ -88,6 +88,16 @@ pub fn built_in_commands() -> Vec<CommandSpec> {
             "Preview, install, list, disable, or uninstall marketplace plugins.",
             "Use the Roder plugin marketplace app-server methods to preview installs, install selected plugin variants, install all de-duplicated variants, list installed variants, disable an installed variant, or uninstall by variant key. Interpret arguments as a plugin command, for example: preview <marketplace-id> <plugin-id>, install <marketplace-id> <plugin-id> [--all-variants], install-all <marketplace-id> <plugin-id>, list, disable <variant-key>, or uninstall <variant-key>.",
         ),
+        (
+            "remote",
+            "Open the remote app-server pairing panel.",
+            "Open or manage the remote app-server pairing panel.",
+        ),
+        (
+            "roadmap",
+            "Open document-first roadmapping mode.",
+            "Open document-first roadmapping mode for a selected roadmap plan.",
+        ),
     ]
     .into_iter()
     .map(|(name, description, body)| CommandSpec {
@@ -101,6 +111,7 @@ pub fn built_in_commands() -> Vec<CommandSpec> {
                 Some("preview|install|install-all|list|disable|uninstall [args]".to_string())
             }
             "ps" => Some("all|stop <id>|stop-all --confirm|<id>".to_string()),
+            "roadmap" => Some("[plan]".to_string()),
             _ => None,
         },
         allowed_tools: Vec::new(),

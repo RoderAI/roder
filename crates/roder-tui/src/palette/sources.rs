@@ -484,6 +484,43 @@ pub fn remote_source() -> StaticPaletteSource {
     )
 }
 
+pub fn roadmap_source() -> StaticPaletteSource {
+    StaticPaletteSource::new(
+        "roadmaps",
+        "Roadmaps",
+        vec![
+            (
+                PaletteItem {
+                    id: "roadmap-open".to_string(),
+                    title: "Roadmaps: open manager".to_string(),
+                    subtitle: Some("Open document-first roadmapping mode".to_string()),
+                    keywords: vec![
+                        "roadmap".to_string(),
+                        "plan".to_string(),
+                        "planning".to_string(),
+                    ],
+                    icon: Some('R'),
+                },
+                PaletteAction::OpenRoadmapMode,
+            ),
+            (
+                PaletteItem {
+                    id: "roadmap-command".to_string(),
+                    title: "Roadmaps: open specific plan".to_string(),
+                    subtitle: Some("Seed /roadmap so you can add a roadmap/*.md path".to_string()),
+                    keywords: vec![
+                        "roadmap".to_string(),
+                        "plan".to_string(),
+                        "file".to_string(),
+                    ],
+                    icon: Some('R'),
+                },
+                PaletteAction::InsertComposerText("/roadmap ".to_string()),
+            ),
+        ],
+    )
+}
+
 pub fn session_source(sessions: &[DesktopThread]) -> StaticPaletteSource {
     StaticPaletteSource::new(
         "sessions",
@@ -1047,6 +1084,17 @@ mod tests {
         assert_eq!(
             source.entries()[0].action,
             PaletteAction::InsertComposerText("/remote".to_string())
+        );
+    }
+
+    #[test]
+    fn roadmap_source_opens_mode_and_seeds_specific_plan_command() {
+        let source = roadmap_source();
+        assert_eq!(source.entries()[0].item.title, "Roadmaps: open manager");
+        assert_eq!(source.entries()[0].action, PaletteAction::OpenRoadmapMode);
+        assert_eq!(
+            source.entries()[1].action,
+            PaletteAction::InsertComposerText("/roadmap ".to_string())
         );
     }
 

@@ -114,7 +114,7 @@ use tool_timeline::{
 use turn_timer::TurnTimer;
 
 const TOP_STATUS_ANIMATION_FPS: u64 = 6;
-const MAX_VISIBLE_SLASH_COMMANDS: usize = 12;
+const MAX_VISIBLE_SLASH_COMMANDS: usize = 16;
 const COPIED_HELPER_LABEL: &str = "Copied to clipboard";
 const COPIED_HELPER_DURATION: Duration = Duration::from_secs(2);
 
@@ -784,6 +784,7 @@ enum ProviderMenuItem {
     Models,
     Providers,
     Settings,
+    RoadmapMode,
     RunnerSettings,
     SpinnerSettings,
     WebSearchSettings,
@@ -852,6 +853,7 @@ impl ProviderMenuItem {
             Self::Models => "Models".to_string(),
             Self::Providers => "Providers".to_string(),
             Self::Settings => "Settings".to_string(),
+            Self::RoadmapMode => "Roadmaps".to_string(),
             Self::RunnerSettings => "Runners".to_string(),
             Self::SpinnerSettings => "Working spinner".to_string(),
             Self::WebSearchSettings => "Web search provider".to_string(),
@@ -3885,6 +3887,10 @@ where
             ProviderMenuItem::Settings => {
                 self.open_settings_submenu();
             }
+            ProviderMenuItem::RoadmapMode => {
+                self.show_provider_popup = false;
+                self.enter_roadmap_mode(None);
+            }
             ProviderMenuItem::RunnerSettings => {
                 self.open_runners_submenu().await;
             }
@@ -5617,6 +5623,7 @@ fn main_provider_menu_items(providers: &[ProviderChoice]) -> Vec<ProviderMenuIte
         ProviderMenuItem::Models,
         ProviderMenuItem::Providers,
         ProviderMenuItem::Settings,
+        ProviderMenuItem::RoadmapMode,
         ProviderMenuItem::RunnerSettings,
         ProviderMenuItem::ResumeSessions,
         ProviderMenuItem::WebSearchSettings,
@@ -6493,6 +6500,19 @@ mod tests {
                 .and_then(|state| state.selected_plan.as_deref()),
             Some("roadmap/20-roadmapping-mode.md")
         );
+    }
+
+    #[tokio::test]
+    async fn provider_menu_roadmap_entry_enters_mode() {
+        let mut app = test_app();
+        app.show_provider_popup = true;
+        app.provider_menu_items = main_provider_menu_items(&[]);
+        app.provider_state.select(Some(3));
+
+        app.select_current_provider_menu_item().await;
+
+        assert!(!app.show_provider_popup);
+        assert!(app.roadmap_mode.is_some());
     }
 
     #[test]
@@ -7658,28 +7678,29 @@ mod tests {
         assert!(matches!(items.first(), Some(ProviderMenuItem::Models)));
         assert!(matches!(items.get(1), Some(ProviderMenuItem::Providers)));
         assert!(matches!(items.get(2), Some(ProviderMenuItem::Settings)));
+        assert!(matches!(items.get(3), Some(ProviderMenuItem::RoadmapMode)));
         assert!(matches!(
-            items.get(3),
+            items.get(4),
             Some(ProviderMenuItem::RunnerSettings)
         ));
         assert!(matches!(
-            items.get(4),
+            items.get(5),
             Some(ProviderMenuItem::ResumeSessions)
         ));
         assert!(matches!(
-            items.get(5),
+            items.get(6),
             Some(ProviderMenuItem::WebSearchSettings)
         ));
         assert!(matches!(
-            items.get(6),
+            items.get(7),
             Some(ProviderMenuItem::SpinnerSettings)
         ));
         assert!(matches!(
-            items.get(7),
+            items.get(8),
             Some(ProviderMenuItem::ThemesSettings)
         ));
         assert!(matches!(
-            items.get(8),
+            items.get(9),
             Some(ProviderMenuItem::MarketplacesSettings)
         ));
     }
