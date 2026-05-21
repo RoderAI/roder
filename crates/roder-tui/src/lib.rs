@@ -1,10 +1,12 @@
 pub mod app;
 pub mod config;
 pub mod diff;
+pub mod frame_snapshot;
 pub mod keymap;
 pub mod mouse;
 pub mod palette;
 pub mod roadmap;
+pub mod runtime_io;
 pub mod selection;
 pub mod status_line;
 pub mod theme;

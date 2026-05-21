@@ -376,7 +376,10 @@ mod tests {
             ApiTranscriptRecord::UiInput {
                 seq: 7,
                 at_ms: 60,
-                event: RecordedUiInput::Resize { cols: 120, rows: 36 },
+                event: RecordedUiInput::Resize {
+                    cols: 120,
+                    rows: 36,
+                },
             },
             ApiTranscriptRecord::UiFrame {
                 seq: 8,

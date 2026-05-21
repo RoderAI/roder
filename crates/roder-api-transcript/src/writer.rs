@@ -10,7 +10,9 @@ pub fn write_jsonl_record(
 ) -> anyhow::Result<()> {
     record.validate()?;
     serde_json::to_writer(&mut *writer, record).context("serialize api transcript record")?;
-    writer.write_all(b"\n").context("write api transcript newline")?;
+    writer
+        .write_all(b"\n")
+        .context("write api transcript newline")?;
     Ok(())
 }
 
@@ -64,4 +66,3 @@ mod tests {
         assert!(text.contains("\"kind\":\"header\""));
     }
 }
-
