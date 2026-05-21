@@ -173,6 +173,7 @@ pub fn build_default_registry(config: DefaultRegistryConfig) -> anyhow::Result<E
         config.policy_mode,
     ))?;
     builder.install(roder_ext_task_ledger::TaskLedgerExtension)?;
+    builder.install(roder_ext_verification::VerificationExtension)?;
     builder.install(UnixLocalRunnerExtension)?;
     builder.install(DockerRunnerExtension)?;
     builder.install(BlaxelRunnerExtension)?;
@@ -719,6 +720,7 @@ mod tests {
             "edit",
             "multi_edit",
             "task_ledger.update",
+            "verification.review",
         ] {
             assert!(
                 names.contains(&expected.to_string()),
