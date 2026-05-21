@@ -4,15 +4,11 @@ incremental = true
 [term]
 color = "auto"
 
-# Use Homebrew lld via clang (clang supplies macOS SDK search paths).
-[target.aarch64-apple-darwin]
-linker = "clang"
-rustflags = ["-C", "link-arg=-fuse-ld=lld"]
+# macOS: use the default system linker (ld-prime, the Xcode linker). Benchmarked
+# faster than lld for our incremental relink of the ~50MB dev binary, and it needs
+# no Homebrew dependency. rustc defaults to clang+ld-prime here, so no config needed.
 
-[target.x86_64-apple-darwin]
-linker = "clang"
-rustflags = ["-C", "link-arg=-fuse-ld=lld"]
-
+# Linux: the default GNU bfd linker is slow; use lld via clang.
 [target.x86_64-unknown-linux-gnu]
 linker = "clang"
 rustflags = ["-C", "link-arg=-fuse-ld=lld"]
