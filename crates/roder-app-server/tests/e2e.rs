@@ -1,6 +1,10 @@
 use base64::Engine;
 use futures::{SinkExt, StreamExt, stream};
 use roder_api::artifacts::ContextArtifactKind;
+use roder_api::automations::{
+    AutomationConcurrencyPolicy, AutomationProject, AutomationRunState, AutomationSchedule,
+    CatchUpPolicy,
+};
 use roder_api::capabilities::CapabilityDecision;
 use roder_api::catalog::{
     PROVIDER_CODEX, PROVIDER_MOCK, PROVIDER_OPENCODE, PROVIDER_OPENCODE_GO, PROVIDER_POOLSIDE,
@@ -30,7 +34,7 @@ use roder_api::tasks::TaskState;
 use roder_app_server::remote::{
     RemoteServerOptions, RemoteToken, listen_remote_websocket, listen_remote_websocket_controller,
 };
-use roder_app_server::{AppServer, LocalAppClient};
+use roder_app_server::{AppServer, AppServerFeatureConfig, LocalAppClient};
 use roder_core::{
     PendingPlanExit, Runtime, RuntimeConfig, fake_provider::FakeInferenceEngine,
     media_artifacts::MediaArtifactStore,
@@ -48,18 +52,20 @@ use roder_extension_host::{
 use roder_protocol::{
     AgentsListResult, ArtifactDeleteParams, ArtifactDeleteResult, ArtifactGrepParams,
     ArtifactGrepResult, ArtifactListParams, ArtifactListResult, ArtifactReadParams,
-    ArtifactReadResult, ArtifactTailParams, ArtifactTailResult, CodeIndexProofsListParams,
-    CodeIndexProofsListResult, CodeIndexReadChunkParams, CodeIndexReadChunkResult,
-    CodeIndexRebuildParams, CodeIndexRebuildResult, CodeIndexSearchParams,
-    CodeIndexSearchResultEnvelope, CodeIndexStatusParams, CodeIndexStatusResult,
-    CommandsExpandParams, CommandsExpandResult, CommandsListResult, CommandsRunParams,
-    CommandsRunResult, DiscoveryGroupsParams, DiscoveryGroupsResult, DiscoveryPromoteParams,
-    DiscoveryPromoteResult, DiscoveryPromotedClearParams, DiscoveryPromotedClearResult,
-    DiscoveryPromotedListParams, DiscoveryPromotedListResult, DiscoveryReadParams,
-    DiscoveryReadResult, DiscoveryRefreshResult, DiscoverySearchParams, DiscoverySearchResult,
-    ExtensionsListResult, HunkListParams, HunkListResult, HunkReadParams, HunkReadResult,
-    HunkRollbackParams, HunkRollbackResult, InitializeResult, JsonRpcError, JsonRpcRequest,
-    MarketplacesAddParams, MarketplacesAddResult, MarketplacesListResult,
+    ArtifactReadResult, ArtifactTailParams, ArtifactTailResult, AutomationsCreateParams,
+    AutomationsCreateResult, AutomationsListResult, AutomationsRunNowParams,
+    AutomationsRunNowResult, AutomationsRunsParams, AutomationsRunsResult, AutomationsStatusResult,
+    CodeIndexProofsListParams, CodeIndexProofsListResult, CodeIndexReadChunkParams,
+    CodeIndexReadChunkResult, CodeIndexRebuildParams, CodeIndexRebuildResult,
+    CodeIndexSearchParams, CodeIndexSearchResultEnvelope, CodeIndexStatusParams,
+    CodeIndexStatusResult, CommandsExpandParams, CommandsExpandResult, CommandsListResult,
+    CommandsRunParams, CommandsRunResult, DiscoveryGroupsParams, DiscoveryGroupsResult,
+    DiscoveryPromoteParams, DiscoveryPromoteResult, DiscoveryPromotedClearParams,
+    DiscoveryPromotedClearResult, DiscoveryPromotedListParams, DiscoveryPromotedListResult,
+    DiscoveryReadParams, DiscoveryReadResult, DiscoveryRefreshResult, DiscoverySearchParams,
+    DiscoverySearchResult, ExtensionsListResult, HunkListParams, HunkListResult, HunkReadParams,
+    HunkReadResult, HunkRollbackParams, HunkRollbackResult, InitializeResult, JsonRpcError,
+    JsonRpcRequest, MarketplacesAddParams, MarketplacesAddResult, MarketplacesListResult,
     MarketplacesRefreshParams, MarketplacesRefreshResult, MarketplacesRemoveParams,
     MarketplacesRemoveResult, MarketplacesSearchParams, MarketplacesSearchResult,
     MediaAttachToTurnParams, MediaAttachToTurnResult, MediaDeleteParams, MediaDeleteResult,
@@ -3928,6 +3934,85 @@ async fn skills_manager_can_disable_commit_and_update_exposure() {
 }
 
 #[tokio::test]
+async fn automations_create_run_now_status_and_runs() {
+    let root = std::env::temp_dir().join(format!("roder-automations-e2e-{}", uuid::Uuid::new_v4()));
+    let project = root.join("project");
+    let store_path = root.join("automations.sqlite3");
+    std::fs::create_dir_all(&project).unwrap();
+    let runtime = Arc::new(Runtime::fake().unwrap());
+    let server = Arc::new(AppServer::with_feature_config(
+        runtime,
+        AppServerFeatureConfig {
+            automations: roder_automations::AutomationSupervisorConfig {
+                enabled: false,
+                store_path: store_path.clone(),
+                ..roder_automations::AutomationSupervisorConfig::default()
+            },
+        },
+    ));
+    let client = LocalAppClient::new(server);
+
+    let status: AutomationsStatusResult = request(&client, "automations/status", None).await;
+    assert!(!status.scheduler_enabled);
+    assert!(status.read_api_enabled);
+
+    let created: AutomationsCreateResult = request(
+        &client,
+        "automations/create",
+        Some(
+            serde_json::to_value(AutomationsCreateParams {
+                name: "Hourly status".to_string(),
+                project: AutomationProject {
+                    cwd: project.display().to_string(),
+                    display_name: Some("project".to_string()),
+                },
+                schedule: AutomationSchedule::Interval { seconds: 60 },
+                prompt: "say hello".to_string(),
+                enabled: true,
+                model_provider: Some("mock".to_string()),
+                model: Some("mock".to_string()),
+                policy_mode: None,
+                catch_up: CatchUpPolicy::RunLatestOnly,
+                concurrency: AutomationConcurrencyPolicy::Forbid,
+            })
+            .unwrap(),
+        ),
+    )
+    .await;
+
+    let listed: AutomationsListResult = request(&client, "automations/list", None).await;
+    assert_eq!(listed.automations.len(), 1);
+    assert_eq!(listed.automations[0].id, created.automation.id);
+
+    let run_now: AutomationsRunNowResult = request(
+        &client,
+        "automations/runNow",
+        Some(
+            serde_json::to_value(AutomationsRunNowParams {
+                automation_id: created.automation.id.clone(),
+                prompt_override: None,
+            })
+            .unwrap(),
+        ),
+    )
+    .await;
+    assert_eq!(run_now.run.state, AutomationRunState::Queued);
+
+    let completed = wait_for_automation_run(
+        &client,
+        &created.automation.id,
+        &run_now.run.run_id,
+        AutomationRunState::Completed,
+    )
+    .await;
+    assert!(completed.thread_id.is_some());
+    assert!(completed.turn_id.is_some());
+    assert!(completed.task_id.is_some());
+
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[tokio::test]
 async fn discovery_catalog_includes_runtime_skills() {
     let _guard = SKILLS_TEST_LOCK.lock().await;
     let root = std::env::temp_dir().join(format!(
@@ -5270,6 +5355,38 @@ async fn request<T: serde::de::DeserializeOwned>(
         res.error
     );
     serde_json::from_value(res.result.unwrap()).unwrap()
+}
+
+async fn wait_for_automation_run(
+    client: &LocalAppClient,
+    automation_id: &str,
+    run_id: &str,
+    state: AutomationRunState,
+) -> roder_api::automations::AutomationRunSummary {
+    for _ in 0..100 {
+        let runs: AutomationsRunsResult = request(
+            client,
+            "automations/runs",
+            Some(
+                serde_json::to_value(AutomationsRunsParams {
+                    automation_id: automation_id.to_string(),
+                    state: None,
+                    limit: None,
+                })
+                .unwrap(),
+            ),
+        )
+        .await;
+        if let Some(run) = runs
+            .runs
+            .into_iter()
+            .find(|run| run.run_id == run_id && run.state == state)
+        {
+            return run;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+    }
+    panic!("automation run {run_id} did not reach {state:?}");
 }
 
 async fn remote_request<T: serde::de::DeserializeOwned>(

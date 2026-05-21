@@ -179,6 +179,25 @@ impl AutomationStore {
             .transpose()
     }
 
+    pub fn list_runs(
+        &self,
+        automation_id: &AutomationId,
+        limit: Option<usize>,
+    ) -> Result<Vec<AutomationRunSummary>> {
+        let mut statement = self.conn.prepare(
+            "SELECT summary_json FROM automation_runs WHERE automation_id = ?1 ORDER BY scheduled_for DESC, updated_at DESC",
+        )?;
+        let rows = statement.query_map(params![automation_id], |row| row.get::<_, String>(0))?;
+        let mut runs = Vec::new();
+        for row in rows {
+            runs.push(serde_json::from_str(&row?)?);
+            if limit.is_some_and(|limit| runs.len() >= limit) {
+                break;
+            }
+        }
+        Ok(runs)
+    }
+
     pub fn append_log(&self, entry: &RunLogEntry) -> Result<()> {
         self.conn.execute(
             r#"
