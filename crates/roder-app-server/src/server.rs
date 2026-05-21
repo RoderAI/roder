@@ -408,6 +408,18 @@ impl AppServer {
             }
             "tasks/subscribe" => self.handle_tasks_subscribe().await,
             "commands/list" => self.handle_commands_list().await,
+            "eval/reports/list" => {
+                self.decode_and(req.params, |p| async move {
+                    crate::evals::handle_eval_reports_list(&self.runtime.workspace(), p)
+                })
+                .await
+            }
+            "eval/report/read" => {
+                self.decode_and(req.params, |p| async move {
+                    crate::evals::handle_eval_report_read(&self.runtime.workspace(), p)
+                })
+                .await
+            }
             "commands/expand" => {
                 self.decode_and(req.params, |p| async move {
                     self.handle_commands_expand(p).await

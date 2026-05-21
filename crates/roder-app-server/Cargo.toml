@@ -25,6 +25,7 @@ roder-codex-auth.workspace = true
 roder-commands.workspace = true
 roder-config.workspace = true
 roder-core.workspace = true
+roder-evals.workspace = true
 roder-extension-host.workspace = true
 roder-protocol.workspace = true
 roder-roadmap.workspace = true

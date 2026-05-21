@@ -2261,6 +2261,7 @@ dependencies = [
  "roder-commands",
  "roder-config",
  "roder-core",
+ "roder-evals",
  "roder-ext-jsonl-session",
  "roder-ext-memory",
  "roder-ext-openai-embeddings",
