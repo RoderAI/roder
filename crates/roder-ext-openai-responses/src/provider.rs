@@ -424,6 +424,7 @@ fn responses_tools(request: &AgentInferenceRequest) -> (Vec<Value>, ResponsesToo
         })),
     }
     for tool in &request.tools {
+        let tool = tool.normalized_for_model(roder_api::ToolSchemaPolicy::warning());
         let api_name = responses_tool_name(&tool.name, &mut used_tool_names);
         tool_name_map.register(&tool.name, &api_name);
         tools.push(json!({
@@ -1612,6 +1613,29 @@ mod tests {
         assert_eq!(tools[0]["type"], "function");
         assert_eq!(tools[0]["name"], "apply_patch");
         assert_eq!(tools[0]["parameters"]["required"][0], "patch");
+    }
+
+    #[test]
+    fn normalizes_tool_schema_order_for_responses_tools() {
+        let mut request = request();
+        request.tools = vec![roder_api::tools::ToolSpec {
+            name: "shell".to_string(),
+            description: "Run shell command".to_string(),
+            parameters: json!({
+                "type": "object",
+                "properties": { "command": { "type": "string" } },
+                "additionalProperties": false,
+                "required": ["command"]
+            }),
+        }];
+
+        let body = OpenAiResponsesEngine::map_request(&request);
+        let schema = serde_json::to_string(&body["tools"][0]["parameters"]).unwrap();
+
+        assert!(
+            schema.starts_with(r#"{"type":"object","required":["command"],"properties":"#),
+            "{schema}"
+        );
     }
 
     #[test]

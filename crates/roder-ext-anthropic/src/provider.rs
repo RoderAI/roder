@@ -53,6 +53,8 @@ impl AnthropicEngine {
                     .tools
                     .iter()
                     .map(|tool| {
+                        let tool =
+                            tool.normalized_for_model(roder_api::ToolSchemaPolicy::warning());
                         json!({
                             "name": tool.name,
                             "description": tool.description,
@@ -356,6 +358,29 @@ mod tests {
         assert_eq!(body["tools"][0]["input_schema"]["type"], "object");
         assert_eq!(body["tool_choice"]["type"], "auto");
         assert_eq!(body["output_config"]["effort"], "medium");
+    }
+
+    #[test]
+    fn normalizes_tool_schema_order_for_anthropic_tools() {
+        let mut request = request();
+        request.tools = vec![ToolSpec {
+            name: "shell".to_string(),
+            description: "Run shell command".to_string(),
+            parameters: json!({
+                "type": "object",
+                "properties": { "command": { "type": "string" } },
+                "additionalProperties": false,
+                "required": ["command"]
+            }),
+        }];
+
+        let body = AnthropicEngine::map_request(&request);
+        let schema = serde_json::to_string(&body["tools"][0]["input_schema"]).unwrap();
+
+        assert!(
+            schema.starts_with(r#"{"type":"object","required":["command"],"properties":"#),
+            "{schema}"
+        );
     }
 
     #[test]

@@ -1,6 +1,6 @@
 #[tokio::test]
 #[ignore = "requires RODER_XAI_LIVE=1 and XAI_API_KEY or SuperGrok OAuth tokens"]
-async fn live_xai_smoke_is_explicitly_opt_in() {
+async fn live_xai_tools_smoke_is_explicitly_opt_in() {
     if std::env::var("RODER_XAI_LIVE").ok().as_deref() != Some("1") {
         eprintln!("set RODER_XAI_LIVE=1 to run live xAI smoke tests");
         return;

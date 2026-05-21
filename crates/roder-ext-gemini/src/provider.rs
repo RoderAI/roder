@@ -44,6 +44,7 @@ impl GeminiEngine {
                     .tools
                     .iter()
                     .map(|tool| {
+                        let tool = tool.normalized_for_model(roder_api::ToolSchemaPolicy::warning());
                         json!({
                             "name": tool.name,
                             "description": tool.description,
@@ -403,6 +404,31 @@ mod tests {
         assert_eq!(
             body["toolConfig"]["functionCallingConfig"]["allowedFunctionNames"][0],
             "shell"
+        );
+    }
+
+    #[test]
+    fn normalizes_tool_schema_order_for_gemini_tools() {
+        let mut request = request();
+        request.tools = vec![ToolSpec {
+            name: "shell".to_string(),
+            description: "Run shell command".to_string(),
+            parameters: json!({
+                "type": "object",
+                "properties": { "command": { "type": "string" } },
+                "additionalProperties": false,
+                "required": ["command"]
+            }),
+        }];
+
+        let body = GeminiEngine::map_request(&request);
+        let schema =
+            serde_json::to_string(&body["tools"][0]["functionDeclarations"][0]["parameters"])
+                .unwrap();
+
+        assert!(
+            schema.starts_with(r#"{"type":"object","required":["command"],"properties":"#),
+            "{schema}"
         );
     }
 
