@@ -29,12 +29,20 @@ pub async fn run_eval_cli(args: &[String]) -> anyhow::Result<()> {
                 .unwrap_or(64 * 1024);
             let report = roder_evals::read_eval_report(&output_dir, report_id, max_bytes)?;
             print!("{}", report.markdown);
+            if let Some(baseline) = flag_value(args, "--compare-baseline") {
+                let comparison = roder_evals::compare_eval_report_to_baseline(
+                    &output_dir,
+                    report_id,
+                    Path::new(baseline),
+                )?;
+                print!("{comparison}");
+            }
             if report.truncated {
                 println!("\n[truncated]");
             }
         }
         _ => anyhow::bail!(
-            "usage: roder eval run FIXTURE_DIR --offline [--speed-policy off|on|both] [--profiles off|all] | roder eval list | roder eval report [REPORT_ID]"
+            "usage: roder eval run FIXTURE_DIR --offline [--speed-policy off|on|both] [--profiles off|all] | roder eval list | roder eval report [REPORT_ID] [--compare-baseline PATH]"
         ),
     }
     Ok(())
