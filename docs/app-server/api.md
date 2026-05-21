@@ -214,6 +214,22 @@ Teams and panes:
 | `team/pane/focus` | Unsupported in headless app-server clients. |
 | `team/pane/cleanup` | Unsupported in headless app-server clients. |
 
+Roadmaps:
+
+| Method | Purpose |
+| --- | --- |
+| `roadmap/list` | List roadmap Markdown documents in the workspace. |
+| `roadmap/read` | Parse one roadmap document. |
+| `roadmap/create` | Create a numbered `roadmap/{NN}-{slug}.md` plan. |
+| `roadmap/patch` | Replace one exact text span in a roadmap document. |
+| `roadmap/task/update` | Update one task checkbox; marking done requires evidence. |
+| `roadmap/validate` | Validate one roadmap or all workspace roadmaps. |
+| `roadmap/thread/list` | List threads attached to the active roadmap state. |
+| `roadmap/thread/spawn` | Create and attach a generated roadmap thread id. |
+| `roadmap/thread/attach` | Attach an existing thread id to a roadmap task. |
+| `thread/roadmap/open` | Open a roadmap and enter roadmapping mode. |
+| `thread/attach` | Alias for attaching an existing thread id to a roadmap task. |
+
 Review, hunks, workflow imports, media, and memory:
 
 | Method | Purpose |
@@ -2645,6 +2661,15 @@ Cancellation and interruption:
    `authenticated: false`, call `auth/codex/login`.
 3. Call `providers/list` again or `auth/codex/status`.
 4. Call `providers/select` with provider, model, and optional reasoning.
+
+### Roadmaps
+
+1. Call `roadmap/list` to discover plans.
+2. Call `thread/roadmap/open` with `{ "path": "roadmap/20-roadmapping-mode.md" }`.
+3. Call `roadmap/read` or `roadmap/validate` to render document state.
+4. Use `roadmap/task/update` with an `evidence` string before setting `checked: true`.
+5. Use `roadmap/thread/attach` or `thread/attach` to connect existing threads.
+6. ACP roadmap methods are not advertised; unsupported ACP roadmap requests return JSON-RPC method-not-found.
 
 ### Memories
 

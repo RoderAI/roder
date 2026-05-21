@@ -414,7 +414,7 @@ mod tests {
             .collect::<Vec<_>>();
         assert!(!colors.contains(&theme.accent));
         assert!(!colors.contains(&theme.accent_soft));
-        assert!(colors.iter().any(|color| *color == theme.text));
-        assert!(colors.iter().any(|color| *color == theme.muted));
+        assert!(colors.contains(&theme.text));
+        assert!(colors.contains(&theme.muted));
     }
 }

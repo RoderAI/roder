@@ -1,0 +1,18 @@
+[build]
+incremental = true
+
+[term]
+color = "auto"
+
+# macOS: use the default system linker (ld-prime, the Xcode linker). Benchmarked
+# faster than lld for our incremental relink of the ~50MB dev binary, and it needs
+# no Homebrew dependency. rustc defaults to clang+ld-prime here, so no config needed.
+
+# Linux: the default GNU bfd linker is slow; use lld via clang.
+[target.x86_64-unknown-linux-gnu]
+linker = "clang"
+rustflags = ["-C", "link-arg=-fuse-ld=lld"]
+
+[target.aarch64-unknown-linux-gnu]
+linker = "clang"
+rustflags = ["-C", "link-arg=-fuse-ld=lld"]

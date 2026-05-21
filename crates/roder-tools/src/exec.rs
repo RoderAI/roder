@@ -11,7 +11,7 @@ use serde::Deserialize;
 use serde_json::json;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWriteExt};
 use tokio::process::{ChildStdin, Command};
-use tokio::sync::Mutex;
+use tokio::sync::{Mutex, Notify};
 
 use crate::files::{parse, require_nonempty, result};
 use crate::workspace::Workspace;
@@ -44,6 +44,7 @@ struct ExecSession {
     output: Mutex<String>,
     cursor: Mutex<usize>,
     exit: Mutex<Option<ExecExit>>,
+    exit_notify: Notify,
     tty: bool,
 }
 
@@ -156,6 +157,7 @@ impl ToolExecutor for ExecCommandTool {
             output: Mutex::new(String::new()),
             cursor: Mutex::new(0),
             exit: Mutex::new(None),
+            exit_notify: Notify::new(),
             tty,
         });
 
@@ -173,6 +175,7 @@ impl ToolExecutor for ExecCommandTool {
             .insert(session_id, session.clone());
 
         sleep_for(args.yield_time_ms).await;
+        settle_completed_exit(&session).await;
         let completed = session.exit.lock().await.is_some();
         let snapshot = session
             .snapshot(
@@ -266,6 +269,7 @@ impl ToolExecutor for WriteStdinTool {
         }
 
         sleep_for(args.yield_time_ms).await;
+        settle_completed_exit(&session).await;
         let completed = session.exit.lock().await.is_some();
         let snapshot = session
             .snapshot(
@@ -437,6 +441,7 @@ fn spawn_waiter(
             exit_from_status(child.wait().await, false)
         };
         *session.exit.lock().await = Some(exit);
+        session.exit_notify.notify_waiters();
     });
 }
 
@@ -468,6 +473,15 @@ async fn sleep_for(yield_time_ms: Option<u64>) {
     if millis > 0 {
         tokio::time::sleep(Duration::from_millis(millis)).await;
     }
+}
+
+async fn settle_completed_exit(session: &ExecSession) {
+    if session.exit.lock().await.is_some() {
+        tokio::task::yield_now().await;
+        return;
+    }
+    let _ = tokio::time::timeout(Duration::from_millis(250), session.exit_notify.notified()).await;
+    tokio::task::yield_now().await;
 }
 
 fn truncate_output(output: &str, max_output_tokens: Option<usize>) -> String {

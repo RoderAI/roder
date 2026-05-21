@@ -117,6 +117,12 @@ fn looks_like_side_effect(call: &ToolCall) -> bool {
 }
 
 fn looks_like_write(call: &ToolCall) -> bool {
+    if matches!(
+        call.name.as_str(),
+        "roadmap_create" | "roadmap_set_task_state" | "roadmap_thread_attach"
+    ) {
+        return true;
+    }
     tool_name_contains_any(
         call,
         &[
@@ -224,6 +230,36 @@ mod tests {
         );
 
         assert!(matches!(decision, PolicyDecision::RequiresApproval { .. }));
+    }
+
+    #[test]
+    fn roadmap_mutating_tools_follow_write_policy() {
+        for tool in [
+            "roadmap_create",
+            "roadmap_patch",
+            "roadmap_set_task_state",
+            "roadmap_thread_attach",
+        ] {
+            let default_decision = DefaultPolicyGate::new().decide(
+                &call(tool, json!({})),
+                PolicyMode::Default,
+                &context(),
+            );
+            assert!(
+                matches!(default_decision, PolicyDecision::RequiresApproval { .. }),
+                "{tool} should require approval in default mode"
+            );
+
+            let plan_decision = DefaultPolicyGate::new().decide(
+                &call(tool, json!({})),
+                PolicyMode::Plan,
+                &context(),
+            );
+            assert!(
+                matches!(plan_decision, PolicyDecision::Denied { .. }),
+                "{tool} should be denied in plan mode"
+            );
+        }
     }
 
     #[test]

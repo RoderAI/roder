@@ -21,7 +21,7 @@ anyhow.workspace = true
 async-trait.workspace = true
 roder-api.workspace = true
 semver.workspace = true
-tokio = { workspace = true, features = ["full"] }
+tokio.workspace = true
 
 [dev-dependencies]
 serde_json.workspace = true

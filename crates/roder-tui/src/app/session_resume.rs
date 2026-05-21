@@ -16,10 +16,10 @@ pub(super) async fn threads_list(client: &LocalAppClient) -> anyhow::Result<Vec<
         .await;
     let mut threads = Vec::new();
     for thread in decode_response::<ThreadListResult>(res)?.data {
-        if let Ok(Some(full_thread)) = load_thread(client, &thread.id).await {
-            if thread_has_user_message(&full_thread) {
-                threads.push(full_thread);
-            }
+        if let Ok(Some(full_thread)) = load_thread(client, &thread.id).await
+            && thread_has_user_message(&full_thread)
+        {
+            threads.push(full_thread);
         }
     }
     threads.sort_by_key(|thread| std::cmp::Reverse(thread.updated_at));
@@ -210,7 +210,7 @@ fn title_from_thread(thread: &DesktopThread) -> Option<String> {
     thread.turns.as_ref()?.iter().find_map(|turn| {
         turn.items.iter().find_map(|item| {
             (item.kind == "userMessage")
-                .then(|| item.text.as_deref())
+                .then_some(item.text.as_deref())
                 .flatten()
                 .filter(|text| !text.trim().is_empty())
                 .map(|text| truncate(text.trim(), 72))

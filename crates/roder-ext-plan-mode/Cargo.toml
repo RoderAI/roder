@@ -26,4 +26,4 @@ serde_json.workspace = true
 uuid = { workspace = true, features = ["v4"] }
 
 [dev-dependencies]
-tokio = { workspace = true, features = ["full"] }
+tokio.workspace = true

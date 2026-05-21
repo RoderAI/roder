@@ -1,23 +1,27 @@
 mod network;
 
+use std::collections::HashMap;
 use std::net::SocketAddr;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use futures::{SinkExt, StreamExt};
 use qrcode::QrCode;
 use qrcode::render::unicode;
 use roder_api::events::{
     RemoteAuthFailed, RemoteClientConnected, RemoteClientDisconnected, RemoteServerStarted,
-    RoderEvent,
+    RemoteServerStopped, RoderEvent,
 };
 use roder_protocol::JsonRpcRequest;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use time::OffsetDateTime;
-use tokio::net::TcpListener;
+use tokio::io::AsyncWriteExt;
+use tokio::net::{TcpListener, TcpStream};
+use tokio::sync::oneshot;
+use tokio::task::JoinHandle;
 use tokio_tungstenite::tungstenite::Message;
 use tokio_tungstenite::tungstenite::handshake::server::{ErrorResponse, Request, Response};
-use tokio_tungstenite::tungstenite::http::{HeaderValue, StatusCode};
+use tokio_tungstenite::tungstenite::http::{HeaderValue, StatusCode, header};
 
 use crate::AppServer;
 use network::connect_urls;
@@ -60,6 +64,7 @@ pub struct RemoteAuth {
     enabled: bool,
     token_hash: Vec<u8>,
     token_preview: String,
+    expires_at: Option<OffsetDateTime>,
 }
 
 impl RemoteAuth {
@@ -68,14 +73,20 @@ impl RemoteAuth {
             enabled: false,
             token_hash: Vec::new(),
             token_preview: String::new(),
+            expires_at: None,
         }
     }
 
     pub fn enabled(token: &RemoteToken) -> Self {
+        Self::enabled_until(token, None)
+    }
+
+    pub fn enabled_until(token: &RemoteToken, expires_at: Option<OffsetDateTime>) -> Self {
         Self {
             enabled: true,
             token_hash: token.hash.clone(),
             token_preview: token.preview.clone(),
+            expires_at,
         }
     }
 
@@ -84,8 +95,15 @@ impl RemoteAuth {
     }
 
     pub fn verify_request(&self, request: &Request) -> bool {
+        self.verify_request_at(request, OffsetDateTime::now_utc())
+    }
+
+    pub fn verify_request_at(&self, request: &Request, now: OffsetDateTime) -> bool {
         if !self.enabled {
             return true;
+        }
+        if self.expires_at.is_some_and(|expires_at| now >= expires_at) {
+            return false;
         }
         let Some(token) = bearer_from_headers(request) else {
             return false;
@@ -99,8 +117,33 @@ impl RemoteAuth {
 pub struct RemoteServerOptions {
     pub listen: String,
     pub token: RemoteToken,
+    pub token_ttl: Option<time::Duration>,
+    pub allowed_origins: Vec<String>,
     pub print_qr: bool,
     pub workspace: Option<String>,
+}
+
+#[derive(Debug, Default)]
+struct RemoteAuthBackoff {
+    failures: Mutex<HashMap<String, u32>>,
+}
+
+impl RemoteAuthBackoff {
+    fn record_failure(&self, key: &str) -> Option<u64> {
+        let mut failures = self.failures.lock().expect("remote auth backoff poisoned");
+        let count = failures
+            .entry(key.to_string())
+            .and_modify(|count| *count = count.saturating_add(1))
+            .or_insert(1);
+        retry_after_seconds(*count)
+    }
+
+    fn reset(&self, key: &str) {
+        self.failures
+            .lock()
+            .expect("remote auth backoff poisoned")
+            .remove(key);
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -123,6 +166,27 @@ pub struct RemoteServerHandle {
     pub pairing_url: String,
 }
 
+#[derive(Debug)]
+pub struct RemoteServerController {
+    handle: RemoteServerHandle,
+    shutdown: Option<oneshot::Sender<()>>,
+    task: JoinHandle<()>,
+}
+
+impl RemoteServerController {
+    pub fn handle(&self) -> &RemoteServerHandle {
+        &self.handle
+    }
+
+    pub async fn stop(mut self) -> anyhow::Result<()> {
+        if let Some(shutdown) = self.shutdown.take() {
+            let _ = shutdown.send(());
+        }
+        self.task.await?;
+        Ok(())
+    }
+}
+
 pub fn generate_remote_token(mut rng: impl std::io::Read) -> anyhow::Result<RemoteToken> {
     let mut bytes = [0_u8; TOKEN_BYTES];
     rng.read_exact(&mut bytes)?;
@@ -138,6 +202,29 @@ pub async fn listen_remote_websocket(
     app_server: Arc<AppServer>,
     options: RemoteServerOptions,
 ) -> anyhow::Result<RemoteServerHandle> {
+    let (handle, task) = spawn_remote_websocket(app_server, options, None).await?;
+    drop(task);
+    Ok(handle)
+}
+
+pub async fn listen_remote_websocket_controller(
+    app_server: Arc<AppServer>,
+    options: RemoteServerOptions,
+) -> anyhow::Result<RemoteServerController> {
+    let (shutdown, shutdown_rx) = oneshot::channel();
+    let (handle, task) = spawn_remote_websocket(app_server, options, Some(shutdown_rx)).await?;
+    Ok(RemoteServerController {
+        handle,
+        shutdown: Some(shutdown),
+        task,
+    })
+}
+
+async fn spawn_remote_websocket(
+    app_server: Arc<AppServer>,
+    options: RemoteServerOptions,
+    mut shutdown: Option<oneshot::Receiver<()>>,
+) -> anyhow::Result<(RemoteServerHandle, JoinHandle<()>)> {
     let bind_addr = parse_ws_listen(&options.listen)?;
     let listener = TcpListener::bind(bind_addr).await?;
     let listen_addr = listener.local_addr()?;
@@ -172,16 +259,36 @@ pub async fn listen_remote_websocket(
             token_preview: handle.token_preview.clone(),
             timestamp: OffsetDateTime::now_utc(),
         }));
-    let auth = Arc::new(RemoteAuth::enabled(&options.token));
-    tokio::spawn(async move {
+    let auth = Arc::new(RemoteAuth::enabled_until(
+        &options.token,
+        options.token_ttl.map(|ttl| OffsetDateTime::now_utc() + ttl),
+    ));
+    let auth_backoff = Arc::new(RemoteAuthBackoff::default());
+    let allowed_origins = Arc::new(options.allowed_origins);
+    let stop_events = app_server.clone();
+    let task = tokio::spawn(async move {
         loop {
-            let Ok((stream, peer_addr)) = listener.accept().await else {
+            let accepted = if let Some(shutdown) = shutdown.as_mut() {
+                tokio::select! {
+                    _ = shutdown => break,
+                    accepted = listener.accept() => accepted,
+                }
+            } else {
+                listener.accept().await
+            };
+            let Ok((stream, peer_addr)) = accepted else {
                 break;
             };
             let auth = auth.clone();
             let app_server = app_server.clone();
             let remote_initialize_metadata = remote_initialize_metadata.clone();
+            let auth_backoff = auth_backoff.clone();
+            let allowed_origins = allowed_origins.clone();
             tokio::spawn(async move {
+                let mut stream = stream;
+                if respond_to_health_probe(&mut stream).await {
+                    return;
+                }
                 let remote_addr = peer_addr.to_string();
                 let auth_events = app_server.clone();
                 let auth_remote_addr = remote_addr.clone();
@@ -189,7 +296,14 @@ pub async fn listen_remote_websocket(
                 let callback = move |request: &Request,
                                      mut response: Response|
                       -> Result<Response, ErrorResponse> {
+                    if !origin_allowed(request, &allowed_origins) {
+                        let mut response =
+                            ErrorResponse::new(Some("origin not allowed".to_string()));
+                        *response.status_mut() = StatusCode::FORBIDDEN;
+                        return Err(response);
+                    }
                     if auth.verify_request(request) {
+                        auth_backoff.reset(&auth_remote_addr);
                         if request_supports_remote_protocol(request) {
                             response.headers_mut().insert(
                                 "Sec-WebSocket-Protocol",
@@ -206,6 +320,11 @@ pub async fn listen_remote_websocket(
                         ));
                         let mut response = ErrorResponse::new(Some("unauthorized".to_string()));
                         *response.status_mut() = StatusCode::UNAUTHORIZED;
+                        if let Some(retry_after) = auth_backoff.record_failure(&auth_remote_addr)
+                            && let Ok(value) = HeaderValue::from_str(&retry_after.to_string())
+                        {
+                            response.headers_mut().insert(header::RETRY_AFTER, value);
+                        }
                         Err(response)
                     }
                 };
@@ -265,8 +384,35 @@ pub async fn listen_remote_websocket(
                     ));
             });
         }
+        stop_events
+            .runtime
+            .bus
+            .emit(RoderEvent::RemoteServerStopped(RemoteServerStopped {
+                listen_addr: listen_addr.to_string(),
+                timestamp: OffsetDateTime::now_utc(),
+            }));
     });
-    Ok(handle)
+    Ok((handle, task))
+}
+
+async fn respond_to_health_probe(stream: &mut TcpStream) -> bool {
+    let mut buffer = [0_u8; 512];
+    let Ok(bytes_read) = stream.peek(&mut buffer).await else {
+        return false;
+    };
+    if !is_health_probe(&buffer[..bytes_read]) {
+        return false;
+    }
+    let response = b"HTTP/1.1 200 OK\r\ncontent-type: text/plain\r\ncontent-length: 3\r\nconnection: close\r\n\r\nok\n";
+    let _ = stream.write_all(response).await;
+    true
+}
+
+fn is_health_probe(buffer: &[u8]) -> bool {
+    buffer.starts_with(b"GET /readyz HTTP/1.1\r\n")
+        || buffer.starts_with(b"GET /readyz HTTP/1.0\r\n")
+        || buffer.starts_with(b"GET /healthz HTTP/1.1\r\n")
+        || buffer.starts_with(b"GET /healthz HTTP/1.0\r\n")
 }
 
 pub fn pairing_payload(
@@ -364,6 +510,17 @@ fn request_supports_remote_protocol(request: &Request) -> bool {
         })
 }
 
+fn origin_allowed(request: &Request, allowed_origins: &[String]) -> bool {
+    let Some(origin) = request
+        .headers()
+        .get(header::ORIGIN)
+        .and_then(|value| value.to_str().ok())
+    else {
+        return true;
+    };
+    allowed_origins.iter().any(|allowed| allowed == origin)
+}
+
 fn token_preview(token: &str) -> String {
     let prefix = token.chars().take(4).collect::<String>();
     let suffix = token
@@ -393,6 +550,13 @@ fn base64_url_no_pad(bytes: &[u8]) -> String {
     base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(bytes)
 }
 
+fn retry_after_seconds(failure_count: u32) -> Option<u64> {
+    match failure_count {
+        0..=2 => None,
+        count => Some(1_u64 << (count - 3).min(5)),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -418,6 +582,21 @@ mod tests {
     }
 
     #[test]
+    fn local_websocket_auth_disabled_accepts_missing_and_wrong_token() {
+        let auth = RemoteAuth::disabled();
+        let missing = Request::builder().uri("ws://127.0.0.1").body(()).unwrap();
+        let wrong = Request::builder()
+            .uri("ws://127.0.0.1")
+            .header("Authorization", "Bearer wrong-token")
+            .body(())
+            .unwrap();
+
+        assert!(auth.verify_request(&missing));
+        assert!(auth.verify_request(&wrong));
+        assert_eq!(auth.token_preview(), "");
+    }
+
+    #[test]
     fn remote_auth_accepts_subprotocol_bearer() {
         let token = RemoteToken::new("secret-token".to_string()).unwrap();
         let auth = RemoteAuth::enabled(&token);
@@ -431,6 +610,55 @@ mod tests {
             .unwrap();
         assert!(auth.verify_request(&request));
         assert!(request_supports_remote_protocol(&request));
+    }
+
+    #[test]
+    fn remote_auth_rejects_expired_token_with_fake_clock() {
+        let token = RemoteToken::new("secret-token".to_string()).unwrap();
+        let expires_at = OffsetDateTime::UNIX_EPOCH + time::Duration::seconds(60);
+        let auth = RemoteAuth::enabled_until(&token, Some(expires_at));
+        let request = Request::builder()
+            .uri("ws://127.0.0.1")
+            .header("Authorization", "Bearer secret-token")
+            .body(())
+            .unwrap();
+
+        assert!(auth.verify_request_at(
+            &request,
+            OffsetDateTime::UNIX_EPOCH + time::Duration::seconds(59)
+        ));
+        assert!(!auth.verify_request_at(
+            &request,
+            OffsetDateTime::UNIX_EPOCH + time::Duration::seconds(60)
+        ));
+    }
+
+    #[test]
+    fn remote_auth_backoff_adds_retry_after_after_repeated_failures_and_resets() {
+        let backoff = RemoteAuthBackoff::default();
+
+        assert_eq!(backoff.record_failure("127.0.0.1:1234"), None);
+        assert_eq!(backoff.record_failure("127.0.0.1:1234"), None);
+        assert_eq!(backoff.record_failure("127.0.0.1:1234"), Some(1));
+        assert_eq!(backoff.record_failure("127.0.0.1:1234"), Some(2));
+        assert_eq!(backoff.record_failure("127.0.0.1:1234"), Some(4));
+
+        backoff.reset("127.0.0.1:1234");
+        assert_eq!(backoff.record_failure("127.0.0.1:1234"), None);
+    }
+
+    #[test]
+    fn remote_origin_rejection_is_default_with_explicit_allowlist() {
+        let request = Request::builder()
+            .uri("ws://127.0.0.1")
+            .header("Origin", "https://client.example")
+            .body(())
+            .unwrap();
+        assert!(!origin_allowed(&request, &[]));
+        assert!(origin_allowed(
+            &request,
+            &["https://client.example".to_string()]
+        ));
     }
 
     #[test]

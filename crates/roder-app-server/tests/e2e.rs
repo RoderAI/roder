@@ -18,7 +18,9 @@ use roder_api::policy_mode::PolicyMode;
 use roder_api::session::{SessionMetadata, SessionStore, SessionStoreFactory, ThreadSnapshot};
 use roder_api::subagents::{SubagentDefinition, SubagentPermissionMode};
 use roder_api::tasks::TaskState;
-use roder_app_server::remote::{RemoteServerOptions, RemoteToken, listen_remote_websocket};
+use roder_app_server::remote::{
+    RemoteServerOptions, RemoteToken, listen_remote_websocket, listen_remote_websocket_controller,
+};
 use roder_app_server::{AppServer, LocalAppClient};
 use roder_core::{
     PendingPlanExit, Runtime, RuntimeConfig, fake_provider::FakeInferenceEngine,
@@ -64,19 +66,22 @@ use roder_protocol::{
     TeamMemberInterruptResult, TeamMemberMessageParams, TeamMemberMessageResult,
     TeamMemberStartParams, TeamMemberStartResult, TeamReadParams, TeamReadResult,
     TeamStartMemberParams, TeamStartParams, TeamStartResult, ThreadArchiveParams,
-    ThreadArchiveResult, ThreadListParams, ThreadListResult, ThreadStartParams, ThreadStartResult,
-    ToolCallParams, ToolCallResult, ToolsListResult, TurnInputItem, TurnInterruptParams,
-    TurnStartParams, TurnStartResult, TurnSteerParams, TurnSteerResult, WorkflowEnableParams,
-    WorkflowEnableResult, WorkflowPreviewParams, WorkflowPreviewResult, WorkflowScanParams,
-    WorkflowScanResult,
+    ThreadArchiveResult, ThreadListParams, ThreadListResult, ThreadReadResult, ThreadStartParams,
+    ThreadStartResult, ToolCallParams, ToolCallResult, ToolsListResult, TurnInputItem,
+    TurnInterruptParams, TurnStartParams, TurnStartResult, TurnSteerParams, TurnSteerResult,
+    WorkflowEnableParams, WorkflowEnableResult, WorkflowPreviewParams, WorkflowPreviewResult,
+    WorkflowScanParams, WorkflowScanResult,
 };
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
 use time::OffsetDateTime;
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::net::TcpStream;
 use tokio::sync::Mutex;
 use tokio_tungstenite::tungstenite::Message;
 use tokio_tungstenite::tungstenite::client::IntoClientRequest;
+use tokio_tungstenite::{MaybeTlsStream, WebSocketStream};
 
 struct TaskCallingEngine {
     hang_child: bool,
@@ -751,6 +756,179 @@ async fn providers_select_updates_desktop_thread_model_for_next_turn() {
     let request = wait_for_recorded_request(&engine).await;
     assert_eq!(request.model.provider, PROVIDER_MOCK);
     assert_eq!(request.model.model, "alternate-mock-model");
+}
+
+#[tokio::test]
+async fn roadmap_methods_update_documents_threads_and_notifications() {
+    let root =
+        std::env::temp_dir().join(format!("roder-roadmap-app-server-{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir_all(root.join("roadmap")).unwrap();
+    std::fs::write(
+        root.join("roadmap/20-roadmapping-mode.md"),
+        roadmap_fixture(),
+    )
+    .unwrap();
+
+    let mut builder = ExtensionRegistryBuilder::new();
+    builder.inference_engine(Arc::new(FakeInferenceEngine));
+    let runtime = Arc::new(
+        Runtime::new(
+            builder.build().unwrap(),
+            RuntimeConfig {
+                workspace: Some(root.display().to_string()),
+                ..RuntimeConfig::default()
+            },
+        )
+        .unwrap(),
+    );
+    let server = Arc::new(AppServer::new(runtime));
+    let client = LocalAppClient::new(server.clone());
+    let mut notifications = client.subscribe_notifications();
+
+    let listed: serde_json::Value = request(&client, "roadmap/list", None).await;
+    assert_eq!(listed["documents"].as_array().unwrap().len(), 1);
+
+    let read: serde_json::Value = request(
+        &client,
+        "roadmap/read",
+        Some(serde_json::json!({ "path": "roadmap/20-roadmapping-mode.md" })),
+    )
+    .await;
+    assert_eq!(
+        read["document"]["title"],
+        "Roadmapping Mode Implementation Plan"
+    );
+    let task_id = read["document"]["tasks"][0]["id"].as_str().unwrap();
+
+    let created: serde_json::Value = request(
+        &client,
+        "roadmap/create",
+        Some(serde_json::json!({
+            "slug": "new-plan",
+            "title": "New Plan",
+            "goal": "Create a new plan."
+        })),
+    )
+    .await;
+    assert_eq!(created["path"], "roadmap/21-new-plan.md");
+
+    let patched: serde_json::Value = request(
+        &client,
+        "roadmap/patch",
+        Some(serde_json::json!({
+            "path": "roadmap/21-new-plan.md",
+            "oldText": "Create a new plan.",
+            "newText": "Create a patched plan."
+        })),
+    )
+    .await;
+    assert_eq!(patched["changed"], true);
+
+    let updated: serde_json::Value = request(
+        &client,
+        "roadmap/task/update",
+        Some(serde_json::json!({
+            "path": "roadmap/20-roadmapping-mode.md",
+            "taskId": task_id,
+            "checked": true,
+            "evidence": "app-server test evidence"
+        })),
+    )
+    .await;
+    assert_eq!(updated["checked"], true);
+
+    let opened: serde_json::Value = request(
+        &client,
+        "thread/roadmap/open",
+        Some(serde_json::json!({ "path": "roadmap/20-roadmapping-mode.md" })),
+    )
+    .await;
+    assert_eq!(
+        opened["document"]["path"],
+        root.join("roadmap/20-roadmapping-mode.md")
+            .display()
+            .to_string()
+    );
+
+    let spawned: serde_json::Value = request(
+        &client,
+        "roadmap/thread/spawn",
+        Some(serde_json::json!({
+            "path": "roadmap/20-roadmapping-mode.md",
+            "taskId": task_id
+        })),
+    )
+    .await;
+    assert!(
+        spawned["thread"]["thread_id"]
+            .as_str()
+            .unwrap()
+            .starts_with("thread-")
+    );
+
+    let attached: serde_json::Value = request(
+        &client,
+        "thread/attach",
+        Some(serde_json::json!({
+            "path": "roadmap/20-roadmapping-mode.md",
+            "taskId": task_id,
+            "threadId": "thread-existing",
+            "title": "Existing worker"
+        })),
+    )
+    .await;
+    assert_eq!(attached["thread"]["thread_id"], "thread-existing");
+
+    let threads: serde_json::Value = request(
+        &client,
+        "roadmap/thread/list",
+        Some(serde_json::json!({ "path": "roadmap/20-roadmapping-mode.md" })),
+    )
+    .await;
+    assert!(threads["threads"].as_array().unwrap().len() >= 2);
+
+    let validation: serde_json::Value = request(
+        &client,
+        "roadmap/validate",
+        Some(serde_json::json!({ "path": "roadmap/20-roadmapping-mode.md" })),
+    )
+    .await;
+    assert!(
+        validation["results"][0]["diagnostics"]
+            .as_array()
+            .unwrap()
+            .is_empty()
+    );
+
+    let mut methods = Vec::new();
+    for _ in 0..8 {
+        let notification = tokio::time::timeout(Duration::from_secs(2), notifications.recv())
+            .await
+            .unwrap()
+            .unwrap();
+        methods.push(notification.method);
+        if methods
+            .iter()
+            .any(|method| method == "roadmap/threadChanged")
+        {
+            break;
+        }
+    }
+    assert!(methods.iter().any(|method| method == "roadmap/changed"));
+    assert!(methods.iter().any(|method| method == "roadmap/taskChanged"));
+    assert!(
+        methods
+            .iter()
+            .any(|method| method == "roadmap/threadChanged")
+    );
+
+    let unsupported = request_error(
+        &client,
+        "acp/roadmap/open",
+        Some(serde_json::json!({ "path": "roadmap/20-roadmapping-mode.md" })),
+    )
+    .await;
+    assert_eq!(unsupported.code, -32601);
 }
 
 #[tokio::test]
@@ -1607,14 +1785,10 @@ async fn memory_methods_save_query_read_update_delete_and_preview() {
 }
 
 #[tokio::test]
-async fn remote_websocket_requires_auth_and_serves_initialize() {
-    let runtime = Arc::new(
-        Runtime::new(
-            build_default_registry(DefaultRegistryConfig::default()).unwrap(),
-            Default::default(),
-        )
-        .unwrap(),
-    );
+async fn remote_websocket_requires_auth_and_serves_thread_turn_flow() {
+    let mut builder = ExtensionRegistryBuilder::new();
+    builder.inference_engine(Arc::new(FakeInferenceEngine));
+    let runtime = Arc::new(Runtime::new(builder.build().unwrap(), Default::default()).unwrap());
     let mut events = runtime.subscribe_events();
     let app_server = Arc::new(AppServer::new(runtime));
     let token = RemoteToken::new("remote-secret-token".to_string()).unwrap();
@@ -1623,6 +1797,8 @@ async fn remote_websocket_requires_auth_and_serves_initialize() {
         RemoteServerOptions {
             listen: "ws://127.0.0.1:0".to_string(),
             token,
+            token_ttl: None,
+            allowed_origins: Vec::new(),
             print_qr: false,
             workspace: Some("/tmp/gode".to_string()),
         },
@@ -1644,6 +1820,20 @@ async fn remote_websocket_requires_auth_and_serves_initialize() {
         !serde_json::to_string(&auth_failed.event)
             .unwrap()
             .contains("remote-secret-token")
+    );
+
+    let mut origin_request = url.clone().into_client_request().unwrap();
+    origin_request.headers_mut().insert(
+        "Authorization",
+        "Bearer remote-secret-token".parse().unwrap(),
+    );
+    origin_request
+        .headers_mut()
+        .insert("Origin", "https://client.example".parse().unwrap());
+    assert!(
+        tokio_tungstenite::connect_async(origin_request)
+            .await
+            .is_err()
     );
 
     let mut request = url.clone().into_client_request().unwrap();
@@ -1681,8 +1871,145 @@ async fn remote_websocket_requires_auth_and_serves_initialize() {
             .and_then(serde_json::Value::as_bool),
         Some(true)
     );
+
+    let started: ThreadStartResult = remote_request(
+        &mut websocket,
+        "thread-start",
+        "thread/start",
+        Some(serde_json::json!({
+            "model": "mock",
+            "modelProvider": PROVIDER_MOCK,
+            "cwd": "/tmp",
+            "ephemeral": false
+        })),
+    )
+    .await;
+    let thread_id = started.thread.id.clone();
+
+    let turn: TurnStartResult = remote_request(
+        &mut websocket,
+        "turn-start",
+        "turn/start",
+        Some(serde_json::json!({
+            "threadId": thread_id,
+            "input": [{ "type": "text", "text": "hello remote" }]
+        })),
+    )
+    .await;
+    assert!(!turn.turn_id.is_empty());
+
+    let mut saw_completed = false;
+    for _ in 0..20 {
+        let envelope = tokio::time::timeout(Duration::from_secs(2), events.recv())
+            .await
+            .unwrap()
+            .unwrap();
+        if envelope.thread_id.as_deref() == Some(&started.thread.id)
+            && envelope.kind == "turn.completed"
+        {
+            saw_completed = true;
+            break;
+        }
+    }
+    assert!(saw_completed, "remote turn did not complete");
+
+    let read: ThreadReadResult = remote_request(
+        &mut websocket,
+        "thread-read",
+        "thread/read",
+        Some(serde_json::json!({
+            "threadId": started.thread.id,
+            "includeTurns": true
+        })),
+    )
+    .await;
+    let thread = read.thread.expect("remote thread/read returns thread");
+    assert_eq!(thread.id, started.thread.id);
+
     drop(websocket);
     let _ = wait_for_global_event(&mut events, "remote/clientDisconnected").await;
+}
+
+#[tokio::test]
+async fn remote_server_controller_stop_emits_stopped_event() {
+    let mut builder = ExtensionRegistryBuilder::new();
+    builder.inference_engine(Arc::new(FakeInferenceEngine));
+    let runtime = Arc::new(Runtime::new(builder.build().unwrap(), Default::default()).unwrap());
+    let mut events = runtime.subscribe_events();
+    let app_server = Arc::new(AppServer::new(runtime));
+    let token = RemoteToken::new("remote-secret-token".to_string()).unwrap();
+
+    let controller = listen_remote_websocket_controller(
+        app_server,
+        RemoteServerOptions {
+            listen: "ws://127.0.0.1:0".to_string(),
+            token,
+            token_ttl: None,
+            allowed_origins: Vec::new(),
+            print_qr: false,
+            workspace: Some("/tmp/gode".to_string()),
+        },
+    )
+    .await
+    .unwrap();
+    let listen_addr = controller.handle().listen_addr.to_string();
+
+    let started = wait_for_global_event(&mut events, "remote/serverStarted").await;
+    assert_eq!(started.source, roder_api::events::EventSource::AppServer);
+
+    controller.stop().await.unwrap();
+
+    let stopped = wait_for_global_event(&mut events, "remote/serverStopped").await;
+    assert_eq!(stopped.source, roder_api::events::EventSource::AppServer);
+    assert!(
+        serde_json::to_string(&stopped.event)
+            .unwrap()
+            .contains(&listen_addr)
+    );
+}
+
+#[tokio::test]
+async fn remote_health_endpoints_do_not_require_auth() {
+    let mut builder = ExtensionRegistryBuilder::new();
+    builder.inference_engine(Arc::new(FakeInferenceEngine));
+    let runtime = Arc::new(Runtime::new(builder.build().unwrap(), Default::default()).unwrap());
+    let app_server = Arc::new(AppServer::new(runtime));
+    let token = RemoteToken::new("remote-secret-token".to_string()).unwrap();
+
+    let controller = listen_remote_websocket_controller(
+        app_server,
+        RemoteServerOptions {
+            listen: "ws://127.0.0.1:0".to_string(),
+            token,
+            token_ttl: None,
+            allowed_origins: Vec::new(),
+            print_qr: false,
+            workspace: Some("/tmp/gode".to_string()),
+        },
+    )
+    .await
+    .unwrap();
+
+    for path in ["/readyz", "/healthz"] {
+        let mut stream = TcpStream::connect(controller.handle().listen_addr)
+            .await
+            .unwrap();
+        stream
+            .write_all(format!("GET {path} HTTP/1.1\r\nHost: roder\r\n\r\n").as_bytes())
+            .await
+            .unwrap();
+        let mut buffer = [0_u8; 512];
+        let bytes_read = stream.read(&mut buffer).await.unwrap();
+        let response = String::from_utf8_lossy(&buffer[..bytes_read]);
+
+        assert!(
+            response.starts_with("HTTP/1.1 200 OK"),
+            "unexpected {path} response: {response:?}"
+        );
+        assert!(response.ends_with("\r\n\r\nok\n"));
+    }
+
+    controller.stop().await.unwrap();
 }
 
 #[tokio::test]
@@ -3882,6 +4209,34 @@ async fn request<T: serde::de::DeserializeOwned>(
     serde_json::from_value(res.result.unwrap()).unwrap()
 }
 
+async fn remote_request<T: serde::de::DeserializeOwned>(
+    websocket: &mut WebSocketStream<MaybeTlsStream<TcpStream>>,
+    id: &str,
+    method: &str,
+    params: Option<serde_json::Value>,
+) -> T {
+    websocket
+        .send(Message::Text(
+            serde_json::to_string(&JsonRpcRequest {
+                jsonrpc: "2.0".to_string(),
+                id: Some(serde_json::json!(id)),
+                method: method.to_string(),
+                params,
+            })
+            .unwrap()
+            .into(),
+        ))
+        .await
+        .unwrap();
+    let message = websocket.next().await.unwrap().unwrap();
+    let Message::Text(text) = message else {
+        panic!("expected text response for {method}");
+    };
+    let response: roder_protocol::JsonRpcResponse = serde_json::from_str(&text).unwrap();
+    assert!(response.error.is_none(), "{:?}", response.error);
+    serde_json::from_value(response.result.unwrap()).unwrap()
+}
+
 async fn request_error(
     client: &LocalAppClient,
     method: &str,
@@ -3898,6 +4253,10 @@ async fn request_error(
         .await
         .error
         .unwrap_or_else(|| panic!("expected RPC error for {method}"))
+}
+
+fn roadmap_fixture() -> &'static str {
+    "# Roadmapping Mode Implementation Plan\n\n**Goal:** Add roadmapping mode.\n**Architecture:** Roadmap documents are first-class state.\n**Tech Stack:** Rust.\n\n## Owned Paths\n\n- Modify: `crates/roder-app-server/src/server.rs`\n\n## Tasks\n\n- [ ] Add app-server tests\n- [ ] Wire roadmap methods\n\nRun:\n\n```sh\ncargo test -p roder-app-server --test e2e roadmap_methods\n```\n\nAcceptance:\n- App-server roadmap behavior is covered.\n\n## Phase Acceptance\n\n- [ ] App-server works.\n"
 }
 
 fn text_input(text: &str) -> Vec<TurnInputItem> {
