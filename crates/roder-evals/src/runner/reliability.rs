@@ -341,6 +341,7 @@ mod tests {
             timeout_ms: None,
             expected: Default::default(),
             constraints: Vec::new(),
+            lazy_discovery: None,
         };
 
         let injection =
