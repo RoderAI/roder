@@ -147,6 +147,12 @@ impl SearchIndex {
 
         document.size != metadata.len() || document.modified_ms != modified_ms(&metadata)
     }
+
+    pub fn has_stale_documents(&self) -> bool {
+        self.documents
+            .iter()
+            .any(|document| self.document_is_stale(document.id))
+    }
 }
 
 pub(crate) struct TextFile {
