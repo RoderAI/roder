@@ -8,6 +8,7 @@ mod marketplace;
 mod replay;
 mod resume_picker;
 mod roadmap_cli;
+mod sdk_schema;
 mod skills;
 #[cfg(test)]
 mod tui_config;
@@ -1422,6 +1423,10 @@ fn parse_app_server_options(args: &[String]) -> anyhow::Result<AppServerOptions>
 }
 
 async fn run_app_server(args: &[String]) -> anyhow::Result<()> {
+    if matches!(args.first().map(String::as_str), Some("schema")) {
+        return sdk_schema::run_app_server_schema_cli(&args[1..]);
+    }
+
     let options = parse_app_server_options(args)?;
     if options.listen != "stdio://" && !options.remote {
         anyhow::bail!(
