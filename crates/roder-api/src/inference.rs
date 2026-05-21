@@ -52,6 +52,44 @@ pub struct InstructionBundle {
     pub developer: Option<String>,
 }
 
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum RuntimeProfile {
+    #[default]
+    Interactive,
+    NonInteractive,
+    Eval,
+}
+
+impl RuntimeProfile {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Interactive => "interactive",
+            Self::NonInteractive => "non_interactive",
+            Self::Eval => "eval",
+        }
+    }
+
+    pub fn is_non_interactive(self) -> bool {
+        matches!(self, Self::NonInteractive | Self::Eval)
+    }
+}
+
+impl std::str::FromStr for RuntimeProfile {
+    type Err = anyhow::Error;
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        match value.trim().to_ascii_lowercase().as_str() {
+            "interactive" => Ok(Self::Interactive),
+            "non_interactive" | "non-interactive" | "headless" => Ok(Self::NonInteractive),
+            "eval" => Ok(Self::Eval),
+            other => anyhow::bail!(
+                "unsupported runtime profile {other:?}; expected interactive, non_interactive, or eval"
+            ),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ReasoningConfig {
     pub enabled: bool,
@@ -109,6 +147,8 @@ pub struct RuntimeHints {
     pub trace_id: Option<String>,
     pub prompt_cache_key: Option<String>,
     pub auto_compact_token_limit: Option<u32>,
+    #[serde(default)]
+    pub profile: RuntimeProfile,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub parallel_tool_calls: Option<bool>,
     #[serde(default)]

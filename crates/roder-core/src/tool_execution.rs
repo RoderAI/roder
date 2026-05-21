@@ -591,6 +591,20 @@ impl Runtime {
             .get("questions")
             .cloned()
             .unwrap_or_else(|| serde_json::json!([]));
+        if self.status().await.runtime_profile.is_non_interactive() {
+            return Ok(ToolResult {
+                id: result.id,
+                name: result.name,
+                text: "User input is unavailable in the current non-interactive runtime profile. Continue with reasonable defaults or fail with a clear blocker.".to_string(),
+                data: serde_json::json!({
+                    "request_id": request_id,
+                    "questions": questions,
+                    "unavailable": true,
+                    "reason": "runtime_profile_non_interactive",
+                }),
+                is_error: true,
+            });
+        }
         let (tx, rx) = tokio::sync::oneshot::channel();
         self.pending_user_inputs.lock().await.insert(
             request_id.to_string(),

@@ -16,7 +16,7 @@ use roder_api::extension::ExtensionRegistry;
 use roder_api::inference::{
     AgentInferenceRequest, HostedWebSearchConfig, HostedWebSearchMode, InferenceEngine,
     InferenceEvent, InferenceTurnContext, InstructionBundle, ModelSelection, OutputConfig,
-    ReasoningConfig, RuntimeHints, ToolCallCompleted,
+    ReasoningConfig, RuntimeHints, RuntimeProfile, ToolCallCompleted,
 };
 use roder_api::policy_mode::{PolicyDecision, PolicyMode};
 use roder_api::remote_runner::{RemoteRunnerSession, RunnerDestination};
@@ -32,6 +32,7 @@ use tokio::sync::{Mutex, RwLock, oneshot};
 use crate::artifacts::{ContextArtifactStore, default_context_artifact_dir};
 use crate::bus::EventBus;
 use crate::fake_provider::FakeInferenceEngine;
+use crate::instructions::apply_runtime_profile;
 use crate::policy_gate::DefaultPolicyGate;
 use crate::subagent_traces::RuntimeSubagentTraceSink;
 use crate::teams::{TeamManager, TeamMemberStartRequest, TeamStartRequest, TeamState};
@@ -51,6 +52,7 @@ pub struct RuntimeConfig {
     pub model_parallel_tool_calls: HashMap<String, bool>,
     pub workspace: Option<String>,
     pub policy_mode: PolicyMode,
+    pub runtime_profile: RuntimeProfile,
     pub remote_runner_destination: Option<RunnerDestination>,
     pub team_data_dir: Option<PathBuf>,
     pub roadmap_data_dir: Option<PathBuf>,
@@ -69,6 +71,7 @@ impl Default for RuntimeConfig {
             model_parallel_tool_calls: HashMap::new(),
             workspace: None,
             policy_mode: PolicyMode::Default,
+            runtime_profile: RuntimeProfile::Interactive,
             remote_runner_destination: None,
             team_data_dir: None,
             roadmap_data_dir: None,
@@ -1170,6 +1173,7 @@ impl Runtime {
         self.emit(RoderEvent::TurnStarted(TurnStarted {
             thread_id: req.thread_id.clone(),
             turn_id: turn_id.clone(),
+            runtime_profile: self.config.read().await.runtime_profile,
             timestamp: OffsetDateTime::now_utc(),
         }))
         .await;
@@ -1184,6 +1188,7 @@ impl Runtime {
         .await?;
 
         let cfg = self.config.read().await.clone();
+        let runtime_profile = cfg.runtime_profile;
         let provider = req
             .provider_override
             .clone()
@@ -1246,7 +1251,7 @@ impl Runtime {
                     provider: provider.clone(),
                     model: model.clone(),
                 },
-                instructions: req.instructions.clone(),
+                instructions: apply_runtime_profile(req.instructions.clone(), runtime_profile),
                 conversation: conversation.clone(),
                 tools: tools.clone(),
                 tool_choice: tool_choice.clone(),
@@ -1254,6 +1259,7 @@ impl Runtime {
                 output: OutputConfig::default(),
                 runtime: RuntimeHints {
                     auto_compact_token_limit: server_side_compaction_threshold(&cfg, &model),
+                    profile: runtime_profile,
                     parallel_tool_calls: Some(parallel_tool_calls),
                     hosted_web_search: cfg.hosted_web_search.clone(),
                     ..RuntimeHints::default()
@@ -1773,7 +1779,14 @@ pub fn validate_edit_tool(value: &str) -> anyhow::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use futures::stream;
     use roder_api::catalog::{REASONING_HIGH, REASONING_MEDIUM, REASONING_MINIMAL, REASONING_NONE};
+    use roder_api::extension::ExtensionRegistryBuilder;
+    use roder_api::inference::{
+        CompletionMetadata, InferenceCapabilities, InferenceEngine, InferenceEventStream,
+        InferenceProviderContext, InferenceTurnContext, MessageDelta,
+    };
+    use std::sync::Mutex as StdMutex;
 
     #[test]
     fn server_side_compaction_uses_catalog_ninety_percent_default() {
@@ -1908,5 +1921,110 @@ mod tests {
 
         assert!(!parallel_tool_calls_for_model(&cfg, "custom-model"));
         assert!(parallel_tool_calls_for_model(&cfg, "other-model"));
+    }
+
+    struct CapturingEngine {
+        request: Arc<StdMutex<Option<AgentInferenceRequest>>>,
+    }
+
+    #[async_trait::async_trait]
+    impl InferenceEngine for CapturingEngine {
+        fn id(&self) -> String {
+            roder_api::catalog::PROVIDER_MOCK.to_string()
+        }
+
+        fn capabilities(&self) -> InferenceCapabilities {
+            InferenceCapabilities::coding_agent_default()
+        }
+
+        async fn list_models(
+            &self,
+            _ctx: InferenceProviderContext<'_>,
+        ) -> anyhow::Result<Vec<roder_api::inference::ModelDescriptor>> {
+            Ok(roder_api::catalog::models_for_provider(
+                roder_api::catalog::PROVIDER_MOCK,
+                true,
+            ))
+        }
+
+        async fn stream_turn(
+            &self,
+            _ctx: InferenceTurnContext<'_>,
+            request: AgentInferenceRequest,
+        ) -> anyhow::Result<InferenceEventStream> {
+            *self.request.lock().unwrap() = Some(request);
+            Ok(Box::pin(stream::iter(vec![
+                Ok(InferenceEvent::MessageDelta(MessageDelta {
+                    text: "done".to_string(),
+                    phase: None,
+                })),
+                Ok(InferenceEvent::Completed(CompletionMetadata {
+                    stop_reason: Some("stop".to_string()),
+                    provider_response_id: None,
+                })),
+            ])))
+        }
+    }
+
+    #[tokio::test]
+    async fn runtime_profile_reaches_inference_request_and_turn_metadata() {
+        let captured = Arc::new(StdMutex::new(None));
+        let mut builder = ExtensionRegistryBuilder::new();
+        builder.inference_engine(Arc::new(CapturingEngine {
+            request: captured.clone(),
+        }));
+        let runtime = Arc::new(
+            Runtime::new(
+                builder.build().unwrap(),
+                RuntimeConfig {
+                    runtime_profile: RuntimeProfile::NonInteractive,
+                    ..RuntimeConfig::default()
+                },
+            )
+            .unwrap(),
+        );
+        let mut rx = runtime.subscribe_events();
+        let turn_id = runtime
+            .start_turn(StartTurnRequest {
+                thread_id: "thread-profile".to_string(),
+                message: "work unattended".to_string(),
+                images: Vec::new(),
+                provider_override: None,
+                model_override: None,
+                workspace: None,
+                instructions: InstructionBundle {
+                    system: None,
+                    developer: Some("base developer".to_string()),
+                },
+            })
+            .await
+            .unwrap();
+
+        let mut observed_profile = None;
+        tokio::time::timeout(std::time::Duration::from_secs(5), async {
+            loop {
+                let envelope = rx.recv().await.unwrap();
+                if envelope.turn_id.as_deref() != Some(&turn_id) {
+                    continue;
+                }
+                match envelope.event {
+                    RoderEvent::TurnStarted(event) => {
+                        observed_profile = Some(event.runtime_profile);
+                    }
+                    RoderEvent::TurnCompleted(_) => break,
+                    RoderEvent::TurnFailed(event) => panic!("turn failed: {}", event.error),
+                    _ => {}
+                }
+            }
+        })
+        .await
+        .unwrap();
+
+        assert_eq!(observed_profile, Some(RuntimeProfile::NonInteractive));
+        let request = captured.lock().unwrap().clone().unwrap();
+        assert_eq!(request.runtime.profile, RuntimeProfile::NonInteractive);
+        let developer = request.instructions.developer.unwrap();
+        assert!(developer.contains("base developer"));
+        assert!(developer.contains("non-interactive profile"));
     }
 }

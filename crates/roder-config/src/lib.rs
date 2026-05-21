@@ -14,6 +14,7 @@ pub struct Config {
     pub provider: Option<String>,
     pub model: Option<String>,
     pub reasoning: Option<String>,
+    pub runtime_profile: Option<String>,
     pub auto_compact_token_limit: Option<u32>,
     pub web_search: Option<WebSearchConfig>,
     pub context: Option<ContextConfig>,
@@ -647,6 +648,11 @@ fn apply_env_overrides_with(config: &mut Config, mut env: impl FnMut(&str) -> Op
     {
         config.reasoning = Some(reasoning);
     }
+    if let Some(profile) = env("RODER_RUNTIME_PROFILE")
+        && !profile.trim().is_empty()
+    {
+        config.runtime_profile = Some(profile);
+    }
     if let Some(limit) = env("RODER_AUTO_COMPACT_TOKEN_LIMIT")
         && let Ok(limit) = limit.trim().parse::<u32>()
     {
@@ -855,6 +861,7 @@ mod tests {
             provider: Some("codex".to_string()),
             model: Some("gpt-5.5".to_string()),
             reasoning: Some("medium".to_string()),
+            runtime_profile: None,
             auto_compact_token_limit: None,
             web_search: None,
             context: None,
@@ -1061,6 +1068,18 @@ mod tests {
         let policy_modes = config.policy_modes.unwrap();
         assert_eq!(policy_modes.default.as_deref(), Some("bypass"));
         assert_eq!(policy_modes.warn_on_bypass, Some(false));
+    }
+
+    #[test]
+    fn runtime_profile_env_override_applies_without_mutating_process_env() {
+        let mut config = Config::default();
+
+        apply_env_overrides_with(&mut config, |key| match key {
+            "RODER_RUNTIME_PROFILE" => Some("eval".to_string()),
+            _ => None,
+        });
+
+        assert_eq!(config.runtime_profile.as_deref(), Some("eval"));
     }
 
     #[test]

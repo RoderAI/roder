@@ -8,11 +8,9 @@ anyhow.workspace = true
 roder-api.workspace = true
 roder-context.workspace = true
 roder-core.workspace = true
+roder-tools.workspace = true
 serde = { workspace = true, features = ["derive"] }
 serde_json.workspace = true
 time = { workspace = true, features = ["formatting", "parsing", "serde", "serde-well-known"] }
 tokio.workspace = true
 uuid = { workspace = true, features = ["v4"] }
-
-[dev-dependencies]
-roder-tools.workspace = true

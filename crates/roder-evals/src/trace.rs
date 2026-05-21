@@ -39,6 +39,8 @@ pub struct EvalTrajectoryEvent {
     pub tool_name: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub token_usage: Option<EvalTokenUsage>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub runtime_profile: Option<String>,
     #[serde(default)]
     pub is_error: bool,
 }
@@ -129,12 +131,11 @@ impl EvalTrajectory {
 impl EvalTrajectoryEvent {
     pub fn from_event(event: &RoderEvent) -> Option<Self> {
         match event {
-            RoderEvent::TurnStarted(e) => Some(Self::basic(
-                "turn_started",
-                &e.thread_id,
-                &e.turn_id,
-                e.timestamp,
-            )),
+            RoderEvent::TurnStarted(e) => {
+                let mut event = Self::basic("turn_started", &e.thread_id, &e.turn_id, e.timestamp);
+                event.runtime_profile = Some(e.runtime_profile.as_str().to_string());
+                Some(event)
+            }
             RoderEvent::InferenceStarted(e) => Some(Self::basic(
                 "inference_started",
                 &e.thread_id,
@@ -233,6 +234,7 @@ impl EvalTrajectoryEvent {
             tool_id: None,
             tool_name: None,
             token_usage: None,
+            runtime_profile: None,
             is_error: false,
         }
     }
@@ -243,7 +245,7 @@ mod tests {
     use roder_api::events::{
         InferenceEventReceived, RoderEvent, ToolCallCompleted, ToolCallRequested, TurnStarted,
     };
-    use roder_api::inference::{InferenceEvent, TokenUsage};
+    use roder_api::inference::{InferenceEvent, RuntimeProfile, TokenUsage};
 
     use super::*;
 
@@ -253,6 +255,7 @@ mod tests {
             RoderEvent::TurnStarted(TurnStarted {
                 thread_id: "thread-1".to_string(),
                 turn_id: "turn-1".to_string(),
+                runtime_profile: RuntimeProfile::Eval,
                 timestamp: OffsetDateTime::UNIX_EPOCH,
             }),
             RoderEvent::ToolCallRequested(ToolCallRequested {
@@ -288,6 +291,10 @@ mod tests {
         let trajectory = EvalTrajectory::from_events("thread-1", "turn-1", &events);
 
         assert_eq!(trajectory.events.len(), 4);
+        assert_eq!(
+            trajectory.events[0].runtime_profile.as_deref(),
+            Some("eval")
+        );
         assert_eq!(trajectory.events[1].tool_id.as_deref(), Some("tool-1"));
         assert!(trajectory.events[2].is_error);
         assert_eq!(
