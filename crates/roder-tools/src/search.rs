@@ -9,7 +9,10 @@ use serde_json::{Value, json};
 
 use crate::backend::{WorkspaceBackendHandle, backend_from_context_or_fallback};
 use crate::files::{parse, require_nonempty, result};
-use crate::paging::{DEFAULT_PAGE_LINES, MAX_PAGE_LINES, clamp_limit, page_lines, page_metadata};
+use crate::paging::{
+    DEFAULT_PAGE_LINES, MAX_PAGE_LINES, append_continuation_instruction, clamp_limit, page_lines,
+    page_metadata_with_continuation,
+};
 use crate::workspace::Workspace;
 
 pub(crate) fn register(
@@ -92,13 +95,42 @@ impl ToolExecutor for GrepTool {
         require_nonempty(&args.query, "query")?;
         let offset = args.offset.unwrap_or_default();
         let limit = clamp_limit(args.limit);
+        let query = args.query.clone();
+        let path = args.path.clone().unwrap_or_else(|| ".".to_string());
+        let regex = args.regex.unwrap_or(false);
+        let case_sensitive = args.case_sensitive.unwrap_or(true);
+        let word_boundary = args.word_boundary.unwrap_or(false);
+        let mode = args.mode.clone().unwrap_or_else(|| "auto".to_string());
         let backend = backend_from_context_or_fallback(&ctx, &self.workspace, &self.backend)?;
         let options = args.into_search_options()?;
         let (start, matches, metadata) = backend.grep_search(options).await?;
         let page = page_lines(&matches, offset, limit);
-        let mut data = page_metadata(start, offset, limit, &page);
+        let continuation_args = page.next_offset.map(|next| {
+            json!({
+                "query": query,
+                "path": path,
+                "regex": regex,
+                "case_sensitive": case_sensitive,
+                "word_boundary": word_boundary,
+                "mode": mode,
+                "offset": next,
+                "limit": limit,
+            })
+        });
+        let mut text = page.text.clone();
+        if let Some(args) = continuation_args.as_ref() {
+            append_continuation_instruction(&mut text, &page, "grep", args);
+        }
+        let mut data = page_metadata_with_continuation(
+            start,
+            offset,
+            limit,
+            &page,
+            "grep",
+            continuation_args.unwrap_or(Value::Null),
+        );
         merge_search_metadata(&mut data, &metadata);
-        Ok(result(call, page.text, data, false))
+        Ok(result(call, text, data, false))
     }
 }
 
@@ -152,8 +184,26 @@ impl ToolExecutor for GlobTool {
         let offset = args.offset.unwrap_or_default();
         let limit = clamp_limit(args.limit);
         let page = page_lines(&matches, offset, limit);
-        let data = page_metadata(".".to_string(), offset, limit, &page);
-        Ok(result(call, page.text, data, false))
+        let continuation_args = page.next_offset.map(|next| {
+            json!({
+                "pattern": args.pattern,
+                "offset": next,
+                "limit": limit,
+            })
+        });
+        let mut text = page.text.clone();
+        if let Some(args) = continuation_args.as_ref() {
+            append_continuation_instruction(&mut text, &page, "glob", args);
+        }
+        let data = page_metadata_with_continuation(
+            ".".to_string(),
+            offset,
+            limit,
+            &page,
+            "glob",
+            continuation_args.unwrap_or(Value::Null),
+        );
+        Ok(result(call, text, data, false))
     }
 }
 
@@ -271,11 +321,111 @@ pub(crate) fn wildcard_match(pattern: &str, text: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::backend::LocalWorkspaceBackend;
+    use roder_api::tools::{LocalWorkspaceHandle, ToolExecutionContext};
+    use std::path::{Path, PathBuf};
+    use std::sync::Arc;
 
     #[test]
     fn wildcard_match_supports_star_and_question_mark() {
         assert!(wildcard_match("src/*.rs", "src/main.rs"));
         assert!(wildcard_match("src/??.rs", "src/io.rs"));
         assert!(!wildcard_match("src/*.rs", "README.md"));
+    }
+
+    #[tokio::test]
+    async fn grep_paging_result_includes_continuation_text_and_data() {
+        let root = test_workspace("grep-paging");
+        let dir = root.join("src");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("a.rs"), "needle a\n").unwrap();
+        std::fs::write(dir.join("b.rs"), "needle b\n").unwrap();
+        let workspace = Workspace::new(root.clone()).unwrap();
+        let tool = GrepTool {
+            workspace: workspace.clone(),
+            backend: Arc::new(LocalWorkspaceBackend::new(workspace)),
+        };
+
+        let result = tool
+            .execute(
+                context(&root),
+                call(
+                    "grep",
+                    json!({"query": "needle", "path": "src", "limit": 1}),
+                ),
+            )
+            .await
+            .unwrap();
+
+        assert!(result.text.contains("call grep"));
+        assert!(result.text.contains("\"offset\":1"));
+        assert_eq!(result.data["omitted_lines"], 1);
+        assert_eq!(result.data["continuation_tool"], "grep");
+        assert_eq!(result.data["continuation_args"]["query"], "needle");
+        assert_eq!(result.data["continuation_args"]["offset"], 1);
+
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[tokio::test]
+    async fn glob_paging_result_includes_continuation_text_and_data() {
+        let root = test_workspace("glob-paging");
+        let dir = root.join("src");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("a.rs"), "").unwrap();
+        std::fs::write(dir.join("b.rs"), "").unwrap();
+        let workspace = Workspace::new(root.clone()).unwrap();
+        let tool = GlobTool {
+            workspace: workspace.clone(),
+            backend: Arc::new(LocalWorkspaceBackend::new(workspace)),
+        };
+
+        let result = tool
+            .execute(
+                context(&root),
+                call("glob", json!({"pattern": "src/*.rs", "limit": 1})),
+            )
+            .await
+            .unwrap();
+
+        assert!(result.text.contains("call glob"));
+        assert!(result.text.contains("\"offset\":1"));
+        assert_eq!(result.data["omitted_lines"], 1);
+        assert_eq!(result.data["continuation_tool"], "glob");
+        assert_eq!(result.data["continuation_args"]["pattern"], "src/*.rs");
+        assert_eq!(result.data["continuation_args"]["offset"], 1);
+
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    fn context(workspace: &Path) -> ToolExecutionContext {
+        ToolExecutionContext::new(
+            "thread-a",
+            "turn-a",
+            roder_api::policy_mode::PolicyMode::Default,
+        )
+        .with_workspace_handle(Arc::new(LocalWorkspaceHandle::new(workspace)))
+    }
+
+    fn call(name: &str, arguments: serde_json::Value) -> ToolCall {
+        ToolCall {
+            id: format!("call-{name}"),
+            name: name.to_string(),
+            raw_arguments: arguments.to_string(),
+            arguments,
+            thread_id: "thread-a".to_string(),
+            turn_id: "turn-a".to_string(),
+        }
+    }
+
+    fn test_workspace(name: &str) -> PathBuf {
+        let stamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let path = std::env::temp_dir().join(format!("roder-tools-{name}-{stamp}"));
+        let _ = std::fs::remove_dir_all(&path);
+        std::fs::create_dir_all(&path).unwrap();
+        path
     }
 }

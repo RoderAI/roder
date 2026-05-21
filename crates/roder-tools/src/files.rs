@@ -8,7 +8,10 @@ use serde::Deserialize;
 use serde_json::json;
 
 use crate::backend::{WorkspaceBackendHandle, backend_from_context_or_fallback};
-use crate::paging::{DEFAULT_PAGE_LINES, MAX_PAGE_LINES, clamp_limit, page_lines, page_metadata};
+use crate::paging::{
+    DEFAULT_PAGE_LINES, MAX_PAGE_LINES, append_continuation_instruction, clamp_limit,
+    omitted_lines, page_lines, page_metadata_with_continuation,
+};
 use crate::workspace::Workspace;
 
 pub(crate) fn register(
@@ -72,17 +75,31 @@ impl ToolExecutor for ReadFileTool {
             .collect::<Vec<_>>();
         let page = page_lines(&lines, start_line - 1, limit);
         let next_start_line = page.next_offset.map(|offset| offset + 1);
+        let continuation_args = next_start_line.map(|next| {
+            json!({
+                "path": path.clone(),
+                "start_line": next,
+                "limit": limit,
+            })
+        });
+        let mut text = page.text.clone();
+        if let Some(args) = continuation_args.as_ref() {
+            append_continuation_instruction(&mut text, &page, "read_file", args);
+        }
         Ok(result(
             call,
-            page.text,
+            text,
             json!({
                 "path": path,
                 "start_line": start_line,
                 "limit": limit,
                 "shown": page.shown,
                 "total_lines": page.total,
+                "omitted_lines": omitted_lines(&page),
                 "next_start_line": next_start_line,
                 "truncated": next_start_line.is_some(),
+                "continuation_tool": if next_start_line.is_some() { json!("read_file") } else { serde_json::Value::Null },
+                "continuation_args": continuation_args.unwrap_or(serde_json::Value::Null),
             }),
             false,
         ))
@@ -138,8 +155,26 @@ impl ToolExecutor for ListFilesTool {
         let offset = args.offset.unwrap_or_default();
         let limit = clamp_limit(args.limit);
         let page = page_lines(&names, offset, limit);
-        let data = page_metadata(path, offset, limit, &page);
-        Ok(result(call, page.text, data, false))
+        let continuation_args = page.next_offset.map(|next| {
+            json!({
+                "path": path.clone(),
+                "offset": next,
+                "limit": limit,
+            })
+        });
+        let mut text = page.text.clone();
+        if let Some(args) = continuation_args.as_ref() {
+            append_continuation_instruction(&mut text, &page, "list_files", args);
+        }
+        let data = page_metadata_with_continuation(
+            path,
+            offset,
+            limit,
+            &page,
+            "list_files",
+            continuation_args.unwrap_or(serde_json::Value::Null),
+        );
+        Ok(result(call, text, data, false))
     }
 }
 
@@ -181,4 +216,107 @@ pub(crate) fn require_nonempty(value: &str, name: &str) -> anyhow::Result<()> {
         bail!("{name} is required");
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::backend::LocalWorkspaceBackend;
+    use roder_api::tools::{LocalWorkspaceHandle, ToolExecutionContext};
+    use std::path::{Path, PathBuf};
+    use std::sync::Arc;
+
+    #[tokio::test]
+    async fn read_file_paging_result_includes_continuation_text_and_data() {
+        let root = test_workspace("read-file-paging");
+        let file = root.join("notes.txt");
+        std::fs::write(&file, "one\ntwo\nthree\n").unwrap();
+        let workspace = Workspace::new(root.clone()).unwrap();
+        let tool = ReadFileTool {
+            workspace: workspace.clone(),
+            backend: Arc::new(LocalWorkspaceBackend::new(workspace)),
+        };
+
+        let result = tool
+            .execute(
+                context(&root),
+                call(
+                    "read_file",
+                    json!({"path": "notes.txt", "start_line": 1, "limit": 2}),
+                ),
+            )
+            .await
+            .unwrap();
+
+        assert!(result.text.contains("next_offset=2"));
+        assert!(result.text.contains("call read_file"));
+        assert!(result.text.contains("\"start_line\":3"));
+        assert_eq!(result.data["omitted_lines"], 1);
+        assert_eq!(result.data["next_start_line"], 3);
+        assert_eq!(result.data["continuation_tool"], "read_file");
+        assert_eq!(result.data["continuation_args"]["start_line"], 3);
+
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[tokio::test]
+    async fn list_files_paging_result_includes_continuation_text_and_data() {
+        let root = test_workspace("list-files-paging");
+        let dir = root.join("src");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("a.rs"), "").unwrap();
+        std::fs::write(dir.join("b.rs"), "").unwrap();
+        let workspace = Workspace::new(root.clone()).unwrap();
+        let tool = ListFilesTool {
+            workspace: workspace.clone(),
+            backend: Arc::new(LocalWorkspaceBackend::new(workspace)),
+        };
+
+        let result = tool
+            .execute(
+                context(&root),
+                call("list_files", json!({"path": "src", "limit": 1})),
+            )
+            .await
+            .unwrap();
+
+        assert!(result.text.contains("call list_files"));
+        assert!(result.text.contains("\"offset\":1"));
+        assert_eq!(result.data["omitted_lines"], 1);
+        assert_eq!(result.data["continuation_tool"], "list_files");
+        assert_eq!(result.data["continuation_args"]["offset"], 1);
+
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    fn context(workspace: &Path) -> ToolExecutionContext {
+        ToolExecutionContext::new(
+            "thread-a",
+            "turn-a",
+            roder_api::policy_mode::PolicyMode::Default,
+        )
+        .with_workspace_handle(Arc::new(LocalWorkspaceHandle::new(workspace)))
+    }
+
+    fn call(name: &str, arguments: serde_json::Value) -> ToolCall {
+        ToolCall {
+            id: format!("call-{name}"),
+            name: name.to_string(),
+            raw_arguments: arguments.to_string(),
+            arguments,
+            thread_id: "thread-a".to_string(),
+            turn_id: "turn-a".to_string(),
+        }
+    }
+
+    fn test_workspace(name: &str) -> PathBuf {
+        let stamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let path = std::env::temp_dir().join(format!("roder-tools-{name}-{stamp}"));
+        let _ = std::fs::remove_dir_all(&path);
+        std::fs::create_dir_all(&path).unwrap();
+        path
+    }
 }
