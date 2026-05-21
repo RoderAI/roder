@@ -2,6 +2,11 @@ use serde::{Deserialize, Serialize};
 use time::OffsetDateTime;
 
 use crate::artifacts::{ContextArtifact, ContextArtifactId};
+use crate::automations::{
+    AutomationCompleted, AutomationCreated, AutomationDeleted, AutomationDue, AutomationFailed,
+    AutomationLeaseExpired, AutomationLeased, AutomationQueued, AutomationSkipped,
+    AutomationStarted, AutomationUpdated,
+};
 use crate::code_index::{
     CodeIndexChunked, CodeIndexEmbedded, CodeIndexFailed, CodeIndexProofFilteredResultDropped,
     CodeIndexReady, CodeIndexStale, CodeIndexingStarted,
@@ -1101,6 +1106,17 @@ pub enum RoderEvent {
     RemoteClientConnected(RemoteClientConnected),
     RemoteClientDisconnected(RemoteClientDisconnected),
     RoadmapChanged(RoadmapChanged),
+    AutomationCreated(AutomationCreated),
+    AutomationUpdated(AutomationUpdated),
+    AutomationDeleted(AutomationDeleted),
+    AutomationDue(AutomationDue),
+    AutomationLeased(AutomationLeased),
+    AutomationQueued(AutomationQueued),
+    AutomationStarted(AutomationStarted),
+    AutomationCompleted(AutomationCompleted),
+    AutomationFailed(AutomationFailed),
+    AutomationSkipped(AutomationSkipped),
+    AutomationLeaseExpired(AutomationLeaseExpired),
     SkillsCatalogLoaded(SkillsCatalogLoaded),
     SkillConfigApplied(SkillConfigApplied),
     SkillActivationResolved(SkillActivationResolved),
@@ -1244,6 +1260,17 @@ impl RoderEvent {
             RoderEvent::RemoteClientConnected(_) => "remote/clientConnected",
             RoderEvent::RemoteClientDisconnected(_) => "remote/clientDisconnected",
             RoderEvent::RoadmapChanged(_) => "roadmap.changed",
+            RoderEvent::AutomationCreated(_) => "automations/created",
+            RoderEvent::AutomationUpdated(_) => "automations/updated",
+            RoderEvent::AutomationDeleted(_) => "automations/deleted",
+            RoderEvent::AutomationDue(_) => "automations/due",
+            RoderEvent::AutomationLeased(_) => "automations/leased",
+            RoderEvent::AutomationQueued(_) => "automations/queued",
+            RoderEvent::AutomationStarted(_) => "automations/started",
+            RoderEvent::AutomationCompleted(_) => "automations/completed",
+            RoderEvent::AutomationFailed(_) => "automations/failed",
+            RoderEvent::AutomationSkipped(_) => "automations/skipped",
+            RoderEvent::AutomationLeaseExpired(_) => "automations/leaseExpired",
             RoderEvent::SkillsCatalogLoaded(_) => "skills/catalogLoaded",
             RoderEvent::SkillConfigApplied(_) => "skills/configApplied",
             RoderEvent::SkillActivationResolved(_) => "skills/activationResolved",
@@ -1358,6 +1385,17 @@ impl RoderEvent {
             | RoderEvent::RemoteClientConnected(_)
             | RoderEvent::RemoteClientDisconnected(_) => EventSource::AppServer,
             RoderEvent::RoadmapChanged(_)
+            | RoderEvent::AutomationCreated(_)
+            | RoderEvent::AutomationUpdated(_)
+            | RoderEvent::AutomationDeleted(_)
+            | RoderEvent::AutomationDue(_)
+            | RoderEvent::AutomationLeased(_)
+            | RoderEvent::AutomationQueued(_)
+            | RoderEvent::AutomationStarted(_)
+            | RoderEvent::AutomationCompleted(_)
+            | RoderEvent::AutomationFailed(_)
+            | RoderEvent::AutomationSkipped(_)
+            | RoderEvent::AutomationLeaseExpired(_)
             | RoderEvent::SkillsCatalogLoaded(_)
             | RoderEvent::SkillConfigApplied(_)
             | RoderEvent::SkillActivationResolved(_)
@@ -1518,12 +1556,23 @@ impl RoderEvent {
             | RoderEvent::RemoteClientConnected(_)
             | RoderEvent::RemoteClientDisconnected(_)
             | RoderEvent::RoadmapChanged(_)
+            | RoderEvent::AutomationCreated(_)
+            | RoderEvent::AutomationUpdated(_)
+            | RoderEvent::AutomationDeleted(_)
+            | RoderEvent::AutomationDue(_)
+            | RoderEvent::AutomationLeased(_)
+            | RoderEvent::AutomationQueued(_)
+            | RoderEvent::AutomationSkipped(_)
+            | RoderEvent::AutomationLeaseExpired(_)
             | RoderEvent::SkillsCatalogLoaded(_)
             | RoderEvent::SkillConfigApplied(_)
             | RoderEvent::RunnerLifecycle(_)
             | RoderEvent::TeamDisplayModeChanged(_)
             | RoderEvent::TeamTaskChanged(_)
             | RoderEvent::TeamCleanupCompleted(_) => None,
+            RoderEvent::AutomationStarted(e) => e.run.thread_id.as_ref(),
+            RoderEvent::AutomationCompleted(e) => e.run.thread_id.as_ref(),
+            RoderEvent::AutomationFailed(e) => e.run.thread_id.as_ref(),
         }
     }
 
@@ -1654,6 +1703,14 @@ impl RoderEvent {
             | RoderEvent::RemoteClientConnected(_)
             | RoderEvent::RemoteClientDisconnected(_)
             | RoderEvent::RoadmapChanged(_)
+            | RoderEvent::AutomationCreated(_)
+            | RoderEvent::AutomationUpdated(_)
+            | RoderEvent::AutomationDeleted(_)
+            | RoderEvent::AutomationDue(_)
+            | RoderEvent::AutomationLeased(_)
+            | RoderEvent::AutomationQueued(_)
+            | RoderEvent::AutomationSkipped(_)
+            | RoderEvent::AutomationLeaseExpired(_)
             | RoderEvent::SkillsCatalogLoaded(_)
             | RoderEvent::SkillConfigApplied(_)
             | RoderEvent::RunnerLifecycle(_)
@@ -1663,6 +1720,9 @@ impl RoderEvent {
             | RoderEvent::TeamDisplayModeChanged(_)
             | RoderEvent::TeamTaskChanged(_)
             | RoderEvent::TeamCleanupCompleted(_) => None,
+            RoderEvent::AutomationStarted(e) => e.run.turn_id.as_ref(),
+            RoderEvent::AutomationCompleted(e) => e.run.turn_id.as_ref(),
+            RoderEvent::AutomationFailed(e) => e.run.turn_id.as_ref(),
         }
     }
 }
@@ -1948,6 +2008,47 @@ mod tests {
             }
             other => panic!("unexpected event: {other:?}"),
         }
+    }
+
+    #[test]
+    fn automations_event_exposes_kind_source_and_replay_scope() {
+        let run = crate::automations::AutomationRunSummary {
+            run_id: "run-1".to_string(),
+            automation_id: "automation-1".to_string(),
+            occurrence_key: "automation-1:1970-01-01T00:00:00Z".to_string(),
+            state: crate::automations::AutomationRunState::Completed,
+            scheduled_for: OffsetDateTime::UNIX_EPOCH,
+            queued_at: Some(OffsetDateTime::UNIX_EPOCH),
+            started_at: Some(OffsetDateTime::UNIX_EPOCH),
+            finished_at: Some(OffsetDateTime::UNIX_EPOCH),
+            thread_id: Some("thread-a".to_string()),
+            turn_id: Some("turn-a".to_string()),
+            task_id: Some("task-1".to_string()),
+            server_id: Some("desktop-main".to_string()),
+            server_role: Some("desktop".to_string()),
+            exit_code: Some(0),
+            error: None,
+            skip_reason: None,
+        };
+        let event = RoderEvent::AutomationCompleted(crate::automations::AutomationCompleted {
+            run,
+            timestamp: OffsetDateTime::UNIX_EPOCH,
+        });
+
+        assert_eq!(event.kind(), "automations/completed");
+        assert_eq!(event.source(), EventSource::Core);
+        assert_eq!(event.thread_id().map(String::as_str), Some("thread-a"));
+        assert_eq!(event.turn_id().map(String::as_str), Some("turn-a"));
+
+        let value = serde_json::to_value(&event).unwrap();
+        assert_eq!(
+            value["AutomationCompleted"]["run"]["occurrenceKey"],
+            "automation-1:1970-01-01T00:00:00Z"
+        );
+        assert_eq!(
+            value["AutomationCompleted"]["run"]["serverId"],
+            "desktop-main"
+        );
     }
 
     #[test]
