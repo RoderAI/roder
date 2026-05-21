@@ -115,13 +115,50 @@ pub fn load_skill_from_paths(
     } else {
         None
     };
+    let id = format!("{}:{canonical_path}", source_id(&source));
+    Ok(skill_from_parsed(
+        parsed,
+        source,
+        canonical_path,
+        default_exposure,
+        agent_metadata,
+        id,
+    ))
+}
+
+pub fn skill_from_markdown(
+    text: &str,
+    source: SkillSource,
+    canonical_path: String,
+    default_exposure: SkillExposure,
+    agent_metadata: Option<SkillAgentMetadata>,
+) -> anyhow::Result<Skill> {
+    let parsed = parse_skill_markdown(text)?;
+    let id = format!("{}:{canonical_path}", source_id(&source));
+    Ok(skill_from_parsed(
+        parsed,
+        source,
+        canonical_path,
+        default_exposure,
+        agent_metadata,
+        id,
+    ))
+}
+
+fn skill_from_parsed(
+    parsed: ParsedSkillMarkdown,
+    source: SkillSource,
+    canonical_path: String,
+    default_exposure: SkillExposure,
+    agent_metadata: Option<SkillAgentMetadata>,
+    id: String,
+) -> Skill {
     let activation = if parsed.experimental {
         SkillActivationState::Experimental
     } else {
         SkillActivationState::Enabled
     };
-    let id = format!("{}:{canonical_path}", source_id(&source));
-    Ok(Skill {
+    Skill {
         descriptor: SkillDescriptor {
             id,
             name: parsed.name,
@@ -136,7 +173,7 @@ pub fn load_skill_from_paths(
             agent_metadata,
         },
         body: parsed.body,
-    })
+    }
 }
 
 fn source_id(source: &SkillSource) -> &'static str {

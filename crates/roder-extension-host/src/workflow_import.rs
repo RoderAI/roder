@@ -55,6 +55,13 @@ pub fn normalize_workflow_imports(items: &[WorkflowImportItem]) -> Vec<Normalize
         .collect()
 }
 
+pub fn normalized_skill_imports(items: &[WorkflowImportItem]) -> Vec<NormalizedWorkflowImport> {
+    normalize_workflow_imports(items)
+        .into_iter()
+        .filter(|import| matches!(import.target, WorkflowImportTarget::Skill { .. }))
+        .collect()
+}
+
 fn target_for(
     item: &WorkflowImportItem,
     name: String,
@@ -113,6 +120,22 @@ mod tests {
         let normalized = normalize_workflow_imports(&items);
 
         assert_eq!(normalized[1].conflicts.len(), 1);
+    }
+
+    #[test]
+    fn normalized_skill_imports_keep_only_skill_targets() {
+        let items = vec![
+            item("skill-a", WorkflowSourceType::Skill, false),
+            item("cmd-a", WorkflowSourceType::SlashCommand, false),
+        ];
+
+        let normalized = normalized_skill_imports(&items);
+
+        assert_eq!(normalized.len(), 1);
+        assert!(matches!(
+            normalized[0].target,
+            WorkflowImportTarget::Skill { .. }
+        ));
     }
 
     fn item(
