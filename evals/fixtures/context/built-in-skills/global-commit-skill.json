@@ -1,0 +1,37 @@
+{
+  "id": "built-in-commit-global-skill",
+  "title": "Built-in commit skill global exposure increases skill index context",
+  "tags": ["built-in-skills", "skills", "global", "lazy-discovery", "context-budget"],
+  "prompt": "Prepare a scoped commit plan. The commit skill is globally exposed, so use the visible guidance without direct invocation.",
+  "timeoutMs": 10000,
+  "expected": {
+    "finalAnswerContains": ["hello from roder"],
+    "verificationRequired": false
+  },
+  "lazyDiscovery": {
+    "hiddenDeferredCapabilities": 8,
+    "catalogShape": {
+      "internalTools": 6,
+      "mcpTools": 0,
+      "skills": 1,
+      "plugins": 0
+    },
+    "compactIndexContains": ["skill.commit", "roder-builtin://commit/SKILL.md"],
+    "expectedDiscoveryQuery": "commit skill global exposure",
+    "expectedPromotion": "skill.commit",
+    "expectedToolCall": "discovery.read",
+    "metrics": {
+      "baselineSchemaTokens": 1800,
+      "deferredPromptTokens": 900,
+      "expectedPromotionCount": 1,
+      "expectedWarmCacheHits": 0,
+      "maxWrongToolCalls": 0,
+      "maxUnknownToolCalls": 0,
+      "maxCallsBeforePromotion": 0
+    }
+  },
+  "constraints": [
+    "measure global skill index token impact",
+    "commit skill remains discoverable as roder-builtin source"
+  ]
+}

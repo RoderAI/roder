@@ -777,6 +777,21 @@ pub fn settings_source(
                     PaletteAction::SetWebSearchMode(mode),
                 )
             }))
+            .chain(std::iter::once((
+                PaletteItem {
+                    id: "settings:skills".to_string(),
+                    title: "Skills manager".to_string(),
+                    subtitle: Some("Manage skill enabled state and exposure".to_string()),
+                    keywords: vec![
+                        "skills".to_string(),
+                        "manager".to_string(),
+                        "built-in".to_string(),
+                        "exposure".to_string(),
+                    ],
+                    icon: Some('$'),
+                },
+                PaletteAction::OpenSkillsManager,
+            )))
             .collect(),
     )
 }
@@ -974,6 +989,10 @@ mod tests {
         assert_eq!(
             entries[3].action,
             PaletteAction::SetWebSearchMode(HostedWebSearchMode::Live)
+        );
+        assert_eq!(
+            entries.last().unwrap().action,
+            PaletteAction::OpenSkillsManager
         );
     }
 

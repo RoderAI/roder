@@ -9,6 +9,7 @@ use roder_api::discovery::{
     DiscoverySourceKind,
 };
 use roder_api::extension::ExtensionRegistry;
+use roder_api::skills::{SkillActivationState, SkillDescriptor, SkillExposure, SkillSource};
 use roder_api::subagents::SubagentDefinition;
 use roder_api::tools::ToolRegistry;
 use roder_api::workflow::{WorkflowImportItem, WorkflowSourceType};
@@ -122,6 +123,36 @@ pub(crate) fn subagent_groups(
     )])
 }
 
+pub(crate) fn skill_groups(
+    skills: &[SkillDescriptor],
+    root: &Path,
+    promoted: &[DiscoveryPromotionRecord],
+) -> anyhow::Result<Vec<roder_api::discovery::DiscoveryCatalogGroup>> {
+    if skills.is_empty() {
+        return Ok(Vec::new());
+    }
+    let mut items = Vec::new();
+    for skill in skills {
+        let schema_path = format!(
+            "skills/{}/{}.md",
+            safe_segment(&source_label(&skill.source)),
+            safe_segment(&skill.canonical_path)
+        );
+        write_skill_markdown(root.join(&schema_path), skill)?;
+        let mut item = skill_item(skill, schema_path);
+        apply_promoted_state(&mut item, promoted);
+        items.push(item);
+    }
+    items.sort_by(|left, right| left.id.cmp(&right.id));
+    Ok(vec![group(
+        "skills",
+        "registry",
+        DiscoverySourceKind::Skills,
+        "Skill registry",
+        items,
+    )])
+}
+
 fn workflow_item(
     item: &WorkflowImportItem,
     kind: DiscoverySourceKind,
@@ -209,6 +240,125 @@ fn subagent_item(
         hints: vec!["Promote before delegating specialized work.".to_string()],
         redaction: DiscoveryRedaction::none(),
         last_refreshed_at: None,
+    }
+}
+
+fn skill_item(skill: &SkillDescriptor, schema_path: String) -> DiscoveryCatalogItem {
+    DiscoveryCatalogItem {
+        id: format!("skill:{}", skill.canonical_path),
+        group_id: "skills:registry".to_string(),
+        source: DiscoveryCatalogSource {
+            kind: DiscoverySourceKind::Skills,
+            id: source_label(&skill.source),
+            display_name: source_title(&skill.source),
+            origin: Some(skill.canonical_path.clone()),
+            auth_state: DiscoveryAuthState::NotRequired,
+            redaction: DiscoveryRedaction::none(),
+        },
+        name: skill.name.clone(),
+        title: skill.name.clone(),
+        description: Some(skill.description.clone()),
+        status: if skill.activation == SkillActivationState::Disabled {
+            DiscoveryItemStatus::Disabled
+        } else {
+            DiscoveryItemStatus::Available
+        },
+        lifecycle: DiscoveryLifecycleState::Discovered,
+        promotion: DiscoveryPromotionState::NotPromoted,
+        cache_status: DiscoveryCacheStatus::Cold,
+        schema: Some(DiscoverySchemaReference {
+            format: DiscoverySchemaFormat::Markdown,
+            uri: schema_path,
+            content_hash: None,
+            byte_count: None,
+            redaction: DiscoveryRedaction::none(),
+        }),
+        tags: skill_tags(skill),
+        hints: skill_hints(skill),
+        redaction: DiscoveryRedaction::none(),
+        last_refreshed_at: None,
+    }
+}
+
+fn write_skill_markdown(path: impl AsRef<Path>, skill: &SkillDescriptor) -> anyhow::Result<()> {
+    let path = path.as_ref();
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    let diagnostics = if skill.diagnostics.is_empty() {
+        "none".to_string()
+    } else {
+        skill.diagnostics.join("\n- ")
+    };
+    fs::write(
+        path,
+        format!(
+            "# Skill: {}\n\nDescription: {}\n\nSource: {}\nCanonical path: {}\nActivation: {:?}\nExposure: {:?}\nDiagnostics: {}\n",
+            skill.name,
+            skill.description,
+            source_title(&skill.source),
+            skill.canonical_path,
+            skill.activation,
+            skill.exposure,
+            diagnostics
+        ),
+    )?;
+    Ok(())
+}
+
+fn skill_tags(skill: &SkillDescriptor) -> Vec<String> {
+    let mut tags = vec![
+        "skill".to_string(),
+        source_label(&skill.source),
+        match skill.activation {
+            SkillActivationState::Enabled => "enabled".to_string(),
+            SkillActivationState::Disabled => "disabled".to_string(),
+            SkillActivationState::Experimental => "experimental".to_string(),
+        },
+        match skill.exposure {
+            SkillExposure::Global => "global".to_string(),
+            SkillExposure::DirectOnly => "direct-only".to_string(),
+        },
+    ];
+    if skill.source == SkillSource::BuiltIn {
+        tags.push("built-in".to_string());
+    }
+    tags
+}
+
+fn skill_hints(skill: &SkillDescriptor) -> Vec<String> {
+    let mut hints = Vec::new();
+    match skill.exposure {
+        SkillExposure::Global => {
+            hints.push("Visible in the global skill index when enabled.".to_string());
+        }
+        SkillExposure::DirectOnly => {
+            hints.push("Promote or invoke directly with $skill-name before use.".to_string());
+        }
+    }
+    if skill.activation == SkillActivationState::Disabled {
+        hints.push("Disabled by skill configuration.".to_string());
+    }
+    hints
+}
+
+fn source_label(source: &SkillSource) -> String {
+    match source {
+        SkillSource::Workspace => "workspace".to_string(),
+        SkillSource::User => "user".to_string(),
+        SkillSource::Plugin { plugin_id } => format!("plugin-{plugin_id}"),
+        SkillSource::Imported { import_id } => format!("imported-{import_id}"),
+        SkillSource::BuiltIn => "built-in".to_string(),
+    }
+}
+
+fn source_title(source: &SkillSource) -> String {
+    match source {
+        SkillSource::Workspace => "Workspace skills".to_string(),
+        SkillSource::User => "User skills".to_string(),
+        SkillSource::Plugin { plugin_id } => format!("Plugin skills: {plugin_id}"),
+        SkillSource::Imported { import_id } => format!("Imported skill: {import_id}"),
+        SkillSource::BuiltIn => "Built-in skills".to_string(),
     }
 }
 
