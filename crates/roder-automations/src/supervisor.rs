@@ -55,6 +55,13 @@ pub struct AutomationSupervisorHandle {
 }
 
 impl AutomationSupervisorHandle {
+    pub fn new(shutdown: oneshot::Sender<()>, join: JoinHandle<()>) -> Self {
+        Self {
+            shutdown: Some(shutdown),
+            join: Some(join),
+        }
+    }
+
     pub async fn shutdown(mut self) {
         if let Some(shutdown) = self.shutdown.take() {
             let _ = shutdown.send(());
@@ -118,6 +125,7 @@ pub fn run_due_tick(
 ) -> Result<AutomationTickResult> {
     let now = clock.now();
     let mut result = AutomationTickResult::default();
+    let _ = store.recover_expired_leases(now)?;
     for stored in store.list_automations()? {
         result.automations_checked += 1;
         let last_checked_at = stored

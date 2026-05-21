@@ -6,7 +6,9 @@ use roder_api::automations::{
     AutomationRunSummary,
 };
 use roder_automations::{AutomationStore, ScheduledOccurrence};
-use roder_automations::{AutomationSupervisorConfig, start_supervisor};
+use roder_automations::{
+    AutomationSupervisorConfig, AutomationSupervisorHandle, SystemClock, run_due_tick,
+};
 use roder_core::Runtime;
 use roder_protocol::{
     AutomationsCancelRunParams, AutomationsCancelRunResult, AutomationsCreateParams,
@@ -16,7 +18,7 @@ use roder_protocol::{
     AutomationsUpdateResult, JsonRpcError,
 };
 use roder_tasks::{BackgroundRunner, BackgroundRunnerConfig, TaskExecutorRegistry};
-use tokio::sync::{RwLock, broadcast};
+use tokio::sync::{RwLock, broadcast, oneshot};
 
 use crate::automation_worker::{
     AUTOMATION_TASK_EXECUTOR_ID, AutomationTaskExecutor, AutomationTaskInput,
@@ -96,9 +98,12 @@ impl AppServer {
             );
         }
         let automation_supervisor = if tokio::runtime::Handle::try_current().is_ok() {
-            start_supervisor(feature_config.automations.clone())
-                .ok()
-                .flatten()
+            start_app_server_automation_supervisor(
+                tasks.clone(),
+                feature_config.automations.clone(),
+            )
+            .ok()
+            .flatten()
         } else {
             None
         };
@@ -124,6 +129,19 @@ impl AppServer {
 
     pub fn automation_status(&self) -> AutomationsStatusResult {
         let automations = &self.features.automations;
+        let (active_runs, due_count, leased_count) = self
+            .automation_store()
+            .and_then(|store| {
+                Ok((
+                    store.count_runs_by_states(&[
+                        AutomationRunState::Queued,
+                        AutomationRunState::Running,
+                    ])?,
+                    store.count_occurrences_by_state("scheduled")?,
+                    store.count_leases()?,
+                ))
+            })
+            .unwrap_or((0, 0, 0));
         AutomationsStatusResult {
             scheduler_enabled: automations.enabled && self.automation_supervisor.is_some(),
             read_api_enabled: automations.enabled || automations.read_api_when_disabled,
@@ -132,9 +150,9 @@ impl AppServer {
             store_path: automations.store_path.display().to_string(),
             last_tick_at: None,
             next_tick_at: None,
-            active_runs: 0,
-            due_count: 0,
-            leased_count: 0,
+            active_runs,
+            due_count,
+            leased_count,
         }
     }
 
@@ -143,69 +161,13 @@ impl AppServer {
         definition: AutomationDefinition,
         occurrence: ScheduledOccurrence,
     ) -> anyhow::Result<AutomationRunSummary> {
-        let store = AutomationStore::open(&self.features.automations.store_path)?;
-        store.upsert_automation(&definition, Some(occurrence.scheduled_for))?;
-        store.record_occurrence(&occurrence, time::OffsetDateTime::now_utc())?;
-        let run_id = uuid::Uuid::new_v4().to_string();
-        let lease = store
-            .acquire_lease(
-                run_id.clone(),
-                definition.id.clone(),
-                occurrence.occurrence_key.clone(),
-                self.features.automations.server_id.clone(),
-                self.features.automations.server_role.clone(),
-                time::OffsetDateTime::now_utc(),
-                self.features.automations.lease_seconds,
-            )?
-            .ok_or_else(|| {
-                anyhow::anyhow!(
-                    "automation occurrence {:?} is already leased",
-                    occurrence.occurrence_key
-                )
-            })?;
-        let queued = AutomationRunSummary {
-            run_id: run_id.clone(),
-            automation_id: definition.id.clone(),
-            occurrence_key: occurrence.occurrence_key.clone(),
-            state: AutomationRunState::Queued,
-            scheduled_for: occurrence.scheduled_for,
-            queued_at: Some(time::OffsetDateTime::now_utc()),
-            started_at: None,
-            finished_at: None,
-            thread_id: None,
-            turn_id: None,
-            task_id: None,
-            server_id: Some(lease.server_id),
-            server_role: Some(lease.server_role),
-            exit_code: None,
-            error: None,
-            skip_reason: None,
-        };
-        store.upsert_run(&queued, time::OffsetDateTime::now_utc())?;
-        let task = self
-            .tasks
-            .submit(
-                AUTOMATION_TASK_EXECUTOR_ID,
-                serde_json::to_value(AutomationTaskInput {
-                    definition,
-                    occurrence,
-                    run_id: run_id.clone(),
-                })?,
-                roder_tasks::TaskSubmitOptions {
-                    metadata: serde_json::json!({
-                        "automationId": queued.automation_id,
-                        "automationRunId": run_id,
-                    }),
-                    ..roder_tasks::TaskSubmitOptions::default()
-                },
-            )
-            .await?;
-        let queued = AutomationRunSummary {
-            task_id: Some(task.task_id),
-            ..queued
-        };
-        store.upsert_run(&queued, time::OffsetDateTime::now_utc())?;
-        Ok(queued)
+        submit_automation_run_with(
+            &self.tasks,
+            &self.features.automations,
+            definition,
+            occurrence,
+        )
+        .await
     }
 
     pub async fn cancel_automation_run(
@@ -444,6 +406,124 @@ impl AppServer {
     fn automation_store(&self) -> anyhow::Result<AutomationStore> {
         AutomationStore::open(&self.features.automations.store_path)
     }
+}
+
+fn start_app_server_automation_supervisor(
+    tasks: BackgroundRunner,
+    config: AutomationSupervisorConfig,
+) -> anyhow::Result<Option<AutomationSupervisorHandle>> {
+    if !config.enabled {
+        return Ok(None);
+    }
+
+    let (shutdown_tx, mut shutdown_rx) = oneshot::channel();
+    let join = tokio::spawn(async move {
+        let Ok(store) = AutomationStore::open(&config.store_path) else {
+            return;
+        };
+        let clock = SystemClock;
+        if config.run_missed_on_startup {
+            let _ = run_due_tick(&store, &config, &clock);
+            drain_due_automation_runs(&tasks, &config).await;
+        }
+        let mut interval =
+            tokio::time::interval(std::time::Duration::from_secs(config.tick_seconds.max(1)));
+        loop {
+            tokio::select! {
+                _ = interval.tick() => {
+                    let _ = run_due_tick(&store, &config, &clock);
+                    drain_due_automation_runs(&tasks, &config).await;
+                }
+                _ = &mut shutdown_rx => break,
+            }
+        }
+    });
+
+    Ok(Some(AutomationSupervisorHandle::new(shutdown_tx, join)))
+}
+
+async fn drain_due_automation_runs(tasks: &BackgroundRunner, config: &AutomationSupervisorConfig) {
+    let Ok(store) = AutomationStore::open(&config.store_path) else {
+        return;
+    };
+    let Ok(due) = store.list_scheduled_occurrences(Some(config.max_due_per_tick as usize)) else {
+        return;
+    };
+    for (definition, occurrence) in due {
+        let _ = submit_automation_run_with(tasks, config, definition, occurrence).await;
+    }
+}
+
+async fn submit_automation_run_with(
+    tasks: &BackgroundRunner,
+    config: &AutomationSupervisorConfig,
+    definition: AutomationDefinition,
+    occurrence: ScheduledOccurrence,
+) -> anyhow::Result<AutomationRunSummary> {
+    let store = AutomationStore::open(&config.store_path)?;
+    let run_id = uuid::Uuid::new_v4().to_string();
+    let lease = store
+        .acquire_lease(
+            run_id.clone(),
+            definition.id.clone(),
+            occurrence.occurrence_key.clone(),
+            config.server_id.clone(),
+            config.server_role.clone(),
+            time::OffsetDateTime::now_utc(),
+            config.lease_seconds,
+        )?
+        .ok_or_else(|| {
+            anyhow::anyhow!(
+                "automation occurrence {:?} is already leased",
+                occurrence.occurrence_key
+            )
+        })?;
+    if !store.set_occurrence_state(&occurrence.occurrence_key, "queued", None)? {
+        store.record_occurrence(&occurrence, time::OffsetDateTime::now_utc())?;
+        let _ = store.set_occurrence_state(&occurrence.occurrence_key, "queued", None)?;
+    }
+    let queued = AutomationRunSummary {
+        run_id: run_id.clone(),
+        automation_id: definition.id.clone(),
+        occurrence_key: occurrence.occurrence_key.clone(),
+        state: AutomationRunState::Queued,
+        scheduled_for: occurrence.scheduled_for,
+        queued_at: Some(time::OffsetDateTime::now_utc()),
+        started_at: None,
+        finished_at: None,
+        thread_id: None,
+        turn_id: None,
+        task_id: None,
+        server_id: Some(lease.server_id),
+        server_role: Some(lease.server_role),
+        exit_code: None,
+        error: None,
+        skip_reason: None,
+    };
+    store.upsert_run(&queued, time::OffsetDateTime::now_utc())?;
+    let task = tasks
+        .submit(
+            AUTOMATION_TASK_EXECUTOR_ID,
+            serde_json::to_value(AutomationTaskInput {
+                definition,
+                occurrence,
+                run_id: run_id.clone(),
+            })?,
+            roder_tasks::TaskSubmitOptions {
+                metadata: serde_json::json!({
+                    "automationId": queued.automation_id,
+                    "automationRunId": run_id,
+                }),
+                ..roder_tasks::TaskSubmitOptions::default()
+            },
+        )
+        .await?;
+    let queued = AutomationRunSummary {
+        task_id: Some(task.task_id),
+        ..queued
+    };
+    store.upsert_run(&queued, time::OffsetDateTime::now_utc())?;
+    Ok(queued)
 }
 
 fn validate_project(cwd: &str) -> anyhow::Result<()> {

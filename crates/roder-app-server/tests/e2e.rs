@@ -98,11 +98,11 @@ use roder_protocol::{
     TeamMemberInterruptParams, TeamMemberInterruptResult, TeamMemberMessageParams,
     TeamMemberMessageResult, TeamMemberStartParams, TeamMemberStartResult, TeamReadParams,
     TeamReadResult, TeamStartMemberParams, TeamStartParams, TeamStartResult, ThreadArchiveParams,
-    ThreadArchiveResult, ThreadListParams, ThreadListResult, ThreadReadResult, ThreadStartParams,
-    ThreadStartResult, ToolCallParams, ToolCallResult, ToolsListResult, TurnInputItem,
-    TurnInterruptParams, TurnStartParams, TurnStartResult, TurnSteerParams, TurnSteerResult,
-    WorkflowEnableParams, WorkflowEnableResult, WorkflowPreviewParams, WorkflowPreviewResult,
-    WorkflowScanParams, WorkflowScanResult,
+    ThreadArchiveResult, ThreadListParams, ThreadListResult, ThreadReadParams, ThreadReadResult,
+    ThreadStartParams, ThreadStartResult, ToolCallParams, ToolCallResult, ToolsListResult,
+    TurnInputItem, TurnInterruptParams, TurnStartParams, TurnStartResult, TurnSteerParams,
+    TurnSteerResult, WorkflowEnableParams, WorkflowEnableResult, WorkflowPreviewParams,
+    WorkflowPreviewResult, WorkflowScanParams, WorkflowScanResult,
 };
 use std::collections::HashMap;
 use std::sync::{Arc, LazyLock};
@@ -3937,9 +3937,24 @@ async fn skills_manager_can_disable_commit_and_update_exposure() {
 async fn automations_create_run_now_status_and_runs() {
     let root = std::env::temp_dir().join(format!("roder-automations-e2e-{}", uuid::Uuid::new_v4()));
     let project = root.join("project");
+    let session_root = root.join("sessions");
     let store_path = root.join("automations.sqlite3");
     std::fs::create_dir_all(&project).unwrap();
-    let runtime = Arc::new(Runtime::fake().unwrap());
+    let mut builder = ExtensionRegistryBuilder::new();
+    builder.inference_engine(Arc::new(FakeInferenceEngine));
+    builder.session_store_factory(Arc::new(JsonlSessionStoreFactory {
+        base_path: session_root,
+    }));
+    let runtime = Arc::new(
+        Runtime::new(
+            builder.build().unwrap(),
+            RuntimeConfig {
+                workspace: Some(project.display().to_string()),
+                ..RuntimeConfig::default()
+            },
+        )
+        .unwrap(),
+    );
     let server = Arc::new(AppServer::with_feature_config(
         runtime,
         AppServerFeatureConfig {
@@ -4008,6 +4023,178 @@ async fn automations_create_run_now_status_and_runs() {
     assert!(completed.thread_id.is_some());
     assert!(completed.turn_id.is_some());
     assert!(completed.task_id.is_some());
+
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[tokio::test]
+async fn automations_create_due_tick_run_and_persisted_thread_read() {
+    let root = std::env::temp_dir().join(format!(
+        "roder-automations-scheduled-e2e-{}",
+        uuid::Uuid::new_v4()
+    ));
+    let project = root.join("project");
+    let session_root = root.join("sessions");
+    let store_path = root.join("automations.sqlite3");
+    std::fs::create_dir_all(&project).unwrap();
+    let mut builder = ExtensionRegistryBuilder::new();
+    builder.inference_engine(Arc::new(FakeInferenceEngine));
+    builder.session_store_factory(Arc::new(JsonlSessionStoreFactory {
+        base_path: session_root,
+    }));
+    let runtime = Arc::new(
+        Runtime::new(
+            builder.build().unwrap(),
+            RuntimeConfig {
+                workspace: Some(project.display().to_string()),
+                ..RuntimeConfig::default()
+            },
+        )
+        .unwrap(),
+    );
+    let server = Arc::new(AppServer::with_feature_config(
+        runtime,
+        AppServerFeatureConfig {
+            automations: roder_automations::AutomationSupervisorConfig {
+                enabled: true,
+                store_path: store_path.clone(),
+                tick_seconds: 1,
+                lease_seconds: 30,
+                max_due_per_tick: 5,
+                run_missed_on_startup: false,
+                ..roder_automations::AutomationSupervisorConfig::default()
+            },
+        },
+    ));
+    let client = LocalAppClient::new(server);
+
+    let created: AutomationsCreateResult = request(
+        &client,
+        "automations/create",
+        Some(
+            serde_json::to_value(AutomationsCreateParams {
+                name: "Scheduled status".to_string(),
+                project: AutomationProject {
+                    cwd: project.display().to_string(),
+                    display_name: Some("project".to_string()),
+                },
+                schedule: AutomationSchedule::Interval { seconds: 1 },
+                prompt: "say hello from scheduled automation".to_string(),
+                enabled: true,
+                model_provider: Some("mock".to_string()),
+                model: Some("mock".to_string()),
+                policy_mode: None,
+                catch_up: CatchUpPolicy::RunLatestOnly,
+                concurrency: AutomationConcurrencyPolicy::Forbid,
+            })
+            .unwrap(),
+        ),
+    )
+    .await;
+
+    let completed = wait_for_automation_state(
+        &client,
+        &created.automation.id,
+        AutomationRunState::Completed,
+        180,
+    )
+    .await;
+    let thread_id = completed
+        .thread_id
+        .clone()
+        .expect("completed automation records a thread id");
+    assert!(completed.turn_id.is_some());
+    assert!(completed.task_id.is_some());
+
+    let read: ThreadReadResult = request(
+        &client,
+        "thread/read",
+        Some(
+            serde_json::to_value(ThreadReadParams {
+                thread_id: thread_id.clone(),
+                include_turns: true,
+            })
+            .unwrap(),
+        ),
+    )
+    .await;
+    let thread = read.thread.expect("automation thread is persisted");
+    assert_eq!(thread.id, thread_id);
+    assert!(thread.turns.unwrap_or_default().iter().any(|turn| {
+        turn.id
+            == completed
+                .turn_id
+                .clone()
+                .expect("completed automation records a turn id")
+    }));
+
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[tokio::test]
+#[ignore]
+async fn automations_live_wall_clock_tick_smoke() {
+    if std::env::var("RODER_LIVE_AUTOMATIONS").ok().as_deref() != Some("1") {
+        eprintln!("set RODER_LIVE_AUTOMATIONS=1 to run the live automation smoke");
+        return;
+    }
+
+    let root = std::env::temp_dir().join(format!(
+        "roder-automations-live-e2e-{}",
+        uuid::Uuid::new_v4()
+    ));
+    let project = root.join("project");
+    let store_path = root.join("automations.sqlite3");
+    std::fs::create_dir_all(&project).unwrap();
+    let runtime = Arc::new(Runtime::fake().unwrap());
+    let server = Arc::new(AppServer::with_feature_config(
+        runtime,
+        AppServerFeatureConfig {
+            automations: roder_automations::AutomationSupervisorConfig {
+                enabled: true,
+                store_path: store_path.clone(),
+                tick_seconds: 1,
+                lease_seconds: 30,
+                max_due_per_tick: 1,
+                run_missed_on_startup: false,
+                ..roder_automations::AutomationSupervisorConfig::default()
+            },
+        },
+    ));
+    let client = LocalAppClient::new(server);
+
+    let created: AutomationsCreateResult = request(
+        &client,
+        "automations/create",
+        Some(
+            serde_json::to_value(AutomationsCreateParams {
+                name: "Live scheduled status".to_string(),
+                project: AutomationProject {
+                    cwd: project.display().to_string(),
+                    display_name: Some("project".to_string()),
+                },
+                schedule: AutomationSchedule::Interval { seconds: 1 },
+                prompt: "say hello from live automation smoke".to_string(),
+                enabled: true,
+                model_provider: Some("mock".to_string()),
+                model: Some("mock".to_string()),
+                policy_mode: None,
+                catch_up: CatchUpPolicy::RunLatestOnly,
+                concurrency: AutomationConcurrencyPolicy::Forbid,
+            })
+            .unwrap(),
+        ),
+    )
+    .await;
+
+    let completed = wait_for_automation_state(
+        &client,
+        &created.automation.id,
+        AutomationRunState::Completed,
+        240,
+    )
+    .await;
+    assert!(completed.thread_id.is_some());
 
     let _ = std::fs::remove_dir_all(&root);
 }
@@ -5387,6 +5574,34 @@ async fn wait_for_automation_run(
         tokio::time::sleep(std::time::Duration::from_millis(20)).await;
     }
     panic!("automation run {run_id} did not reach {state:?}");
+}
+
+async fn wait_for_automation_state(
+    client: &LocalAppClient,
+    automation_id: &str,
+    state: AutomationRunState,
+    attempts: usize,
+) -> roder_api::automations::AutomationRunSummary {
+    for _ in 0..attempts {
+        let runs: AutomationsRunsResult = request(
+            client,
+            "automations/runs",
+            Some(
+                serde_json::to_value(AutomationsRunsParams {
+                    automation_id: automation_id.to_string(),
+                    state: Some(state),
+                    limit: None,
+                })
+                .unwrap(),
+            ),
+        )
+        .await;
+        if let Some(run) = runs.runs.into_iter().find(|run| run.state == state) {
+            return run;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+    }
+    panic!("automation {automation_id} did not reach {state:?}");
 }
 
 async fn remote_request<T: serde::de::DeserializeOwned>(
