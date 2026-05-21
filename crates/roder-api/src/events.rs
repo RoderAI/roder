@@ -9,6 +9,10 @@ use crate::memory::{MemoryCitation, MemoryId, MemoryProviderSelection, MemoryRec
 use crate::plan_review::{
     HunkId, HunkRecord, PlanComment, PlanReview, PlanReviewId, PlanReviewStatus, PlanRewrite,
 };
+use crate::reliability::{
+    ReliabilityFailureRecorded, ReliabilityLimitRecorded, ReliabilityMetricRecorded,
+    ReliabilityRetryRecorded,
+};
 use crate::subagents::SubagentExitReason;
 use crate::task_ledger::TaskLedgerItem;
 use crate::teams::{
@@ -990,6 +994,10 @@ pub enum RoderEvent {
     InferenceEventReceived(InferenceEventReceived),
     ToolCallRequested(ToolCallRequested),
     ToolCallValidationRecorded(ToolCallValidationRecorded),
+    ReliabilityFailureRecorded(ReliabilityFailureRecorded),
+    ReliabilityRetryRecorded(ReliabilityRetryRecorded),
+    ReliabilityLimitRecorded(ReliabilityLimitRecorded),
+    ReliabilityMetricRecorded(ReliabilityMetricRecorded),
     ApprovalRequested(ApprovalRequested),
     ApprovalResolved(ApprovalResolved),
     UserInputRequested(UserInputRequested),
@@ -1098,6 +1106,10 @@ impl RoderEvent {
             RoderEvent::InferenceEventReceived(_) => "inference.event_received",
             RoderEvent::ToolCallRequested(_) => "tool.call_requested",
             RoderEvent::ToolCallValidationRecorded(_) => "tool.call_validation",
+            RoderEvent::ReliabilityFailureRecorded(_) => "reliability.failure",
+            RoderEvent::ReliabilityRetryRecorded(_) => "reliability.retry",
+            RoderEvent::ReliabilityLimitRecorded(_) => "reliability.limit",
+            RoderEvent::ReliabilityMetricRecorded(_) => "reliability.metric",
             RoderEvent::ApprovalRequested(_) => "approval.requested",
             RoderEvent::ApprovalResolved(_) => "approval.resolved",
             RoderEvent::UserInputRequested(_) => "user_input.requested",
@@ -1193,6 +1205,10 @@ impl RoderEvent {
             RoderEvent::InferenceEventReceived(_) | RoderEvent::InferenceStarted(_) => {
                 EventSource::Provider
             }
+            RoderEvent::ReliabilityRetryRecorded(_) => EventSource::Provider,
+            RoderEvent::ReliabilityFailureRecorded(_)
+            | RoderEvent::ReliabilityLimitRecorded(_)
+            | RoderEvent::ReliabilityMetricRecorded(_) => EventSource::Core,
             RoderEvent::ToolCallRequested(_)
             | RoderEvent::ToolCallValidationRecorded(_)
             | RoderEvent::ToolCallStarted(_)
@@ -1287,6 +1303,10 @@ impl RoderEvent {
             RoderEvent::InferenceEventReceived(e) => Some(&e.thread_id),
             RoderEvent::ToolCallRequested(e) => Some(&e.thread_id),
             RoderEvent::ToolCallValidationRecorded(e) => Some(&e.thread_id),
+            RoderEvent::ReliabilityFailureRecorded(e) => Some(&e.context.thread_id),
+            RoderEvent::ReliabilityRetryRecorded(e) => Some(&e.context.thread_id),
+            RoderEvent::ReliabilityLimitRecorded(e) => Some(&e.context.thread_id),
+            RoderEvent::ReliabilityMetricRecorded(e) => Some(&e.context.thread_id),
             RoderEvent::ApprovalRequested(e) => Some(&e.thread_id),
             RoderEvent::ApprovalResolved(e) => Some(&e.thread_id),
             RoderEvent::UserInputRequested(e) => Some(&e.thread_id),
@@ -1391,6 +1411,10 @@ impl RoderEvent {
             RoderEvent::InferenceEventReceived(e) => Some(&e.turn_id),
             RoderEvent::ToolCallRequested(e) => Some(&e.turn_id),
             RoderEvent::ToolCallValidationRecorded(e) => Some(&e.turn_id),
+            RoderEvent::ReliabilityFailureRecorded(e) => Some(&e.context.turn_id),
+            RoderEvent::ReliabilityRetryRecorded(e) => Some(&e.context.turn_id),
+            RoderEvent::ReliabilityLimitRecorded(e) => Some(&e.context.turn_id),
+            RoderEvent::ReliabilityMetricRecorded(e) => Some(&e.context.turn_id),
             RoderEvent::ApprovalRequested(e) => Some(&e.turn_id),
             RoderEvent::ApprovalResolved(e) => Some(&e.turn_id),
             RoderEvent::UserInputRequested(e) => Some(&e.turn_id),
