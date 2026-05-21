@@ -63,7 +63,7 @@ impl Runtime {
             prompt: req.message.clone(),
             token_budget: None,
         };
-        let mut blocks = Vec::new();
+        let mut blocks = self.skill_context_blocks(req, turn_id).await;
         for provider in &self.registry.context_providers {
             for block in provider.blocks(&query).await? {
                 self.emit(RoderEvent::ContextBlockAdded(ContextBlockAdded {
@@ -305,18 +305,120 @@ fn truncate(text: &str) -> String {
 
 #[cfg(test)]
 mod tests {
+    use std::path::{Path, PathBuf};
     use std::sync::Arc;
 
     use roder_api::artifacts::ContextArtifactAccess;
     use roder_api::catalog::PROVIDER_MOCK;
     use roder_api::conversation::{AssistantMessage, UserMessage};
     use roder_api::extension::ExtensionRegistryBuilder;
+    use roder_api::skills::{SkillExposure, SkillSelector};
     use roder_ext_jsonl_session::store::JsonlSessionStoreFactory;
+    use roder_skills::{SkillConfigRule, SkillRegistry, SkillRegistryOptions, SkillRoot};
 
     use crate::fake_provider::FakeInferenceEngine;
-    use crate::runtime::{Runtime, RuntimeConfig};
+    use crate::runtime::{Runtime, RuntimeConfig, StartTurnRequest};
 
     use super::*;
+
+    #[tokio::test]
+    async fn skills_context_renders_global_index_and_direct_invocation() {
+        let workspace = fixture_dir("skills-context");
+        write_skill(
+            &workspace.join(".agents/skills/review"),
+            "review",
+            "Review code changes",
+            SkillExposure::Global,
+        );
+        let skills = SkillRegistry::load(SkillRegistryOptions {
+            workspace: workspace.clone(),
+            include_builtins: true,
+            roots: vec![SkillRoot::workspace(
+                workspace.join(".agents/skills"),
+                "workspace://.agents/skills",
+            )],
+            workflow_imports: Vec::new(),
+            config_rules: Vec::new(),
+        });
+        let runtime = runtime_with_skills(skills).await;
+        let mut events = runtime.subscribe_events();
+
+        let conversation = runtime
+            .conversation_for_turn(
+                &turn_request("thread-skills", "please use ${commit}"),
+                &"turn-skills".to_string(),
+                "mock",
+            )
+            .await
+            .unwrap();
+        let texts = conversation_texts(&conversation);
+        let index = texts
+            .iter()
+            .find(|text| text.starts_with("<skills>"))
+            .expect("global skill index");
+
+        assert!(index.contains("review"));
+        assert!(!index.contains("commit"));
+        assert!(texts.iter().any(|text| {
+            text.starts_with("<skill name=\"commit\"") && text.contains("Stage only files")
+        }));
+        let emitted = drain_events(&mut events);
+        assert!(emitted.iter().any(|event| {
+            matches!(
+                event,
+                RoderEvent::SkillIndexRendered(rendered)
+                    if rendered.rendered_count == 1 && rendered.hidden_count >= 1
+            )
+        }));
+        assert!(emitted.iter().any(|event| {
+            matches!(
+                event,
+                RoderEvent::SkillInvoked(invoked)
+                    if invoked.descriptor.name == "commit"
+            )
+        }));
+    }
+
+    #[tokio::test]
+    async fn skills_disabled_direct_skill_does_not_inject() {
+        let skills = SkillRegistry::load(SkillRegistryOptions {
+            workspace: PathBuf::new(),
+            include_builtins: true,
+            roots: Vec::new(),
+            workflow_imports: Vec::new(),
+            config_rules: vec![SkillConfigRule {
+                name: Some("commit".to_string()),
+                path: None,
+                enabled: Some(false),
+                exposure: None,
+            }],
+        });
+        let runtime = runtime_with_skills(skills).await;
+        let mut events = runtime.subscribe_events();
+
+        let conversation = runtime
+            .conversation_for_turn(
+                &turn_request("thread-disabled", "please use ${commit}"),
+                &"turn-disabled".to_string(),
+                "mock",
+            )
+            .await
+            .unwrap();
+        let texts = conversation_texts(&conversation);
+
+        assert!(!texts.iter().any(|text| {
+            text.starts_with("<skill name=\"commit\"") && text.contains("Stage only files")
+        }));
+        let emitted = drain_events(&mut events);
+        assert!(emitted.iter().any(|event| {
+            matches!(
+                event,
+                RoderEvent::SkillSkipped(skipped)
+                    if skipped.selector == (SkillSelector::Name { name: "commit".to_string() })
+                        && skipped.reason.contains("disabled")
+            )
+        }));
+    }
 
     #[tokio::test]
     async fn context_compaction_writes_history_artifact_and_emits_metrics() {
@@ -569,5 +671,57 @@ mod tests {
             }
         }
         events
+    }
+
+    async fn runtime_with_skills(skills: SkillRegistry) -> Runtime {
+        let mut builder = ExtensionRegistryBuilder::new();
+        builder.inference_engine(Arc::new(FakeInferenceEngine));
+        let runtime = Runtime::new(builder.build().unwrap(), RuntimeConfig::default()).unwrap();
+        runtime.set_skills(skills).await;
+        runtime
+    }
+
+    fn turn_request(thread_id: &str, message: &str) -> StartTurnRequest {
+        StartTurnRequest {
+            thread_id: thread_id.to_string(),
+            message: message.to_string(),
+            images: Vec::new(),
+            provider_override: None,
+            model_override: None,
+            workspace: None,
+            instructions: Default::default(),
+            task_ledger_required: false,
+        }
+    }
+
+    fn conversation_texts(conversation: &[ConversationItem]) -> Vec<&str> {
+        conversation
+            .iter()
+            .filter_map(|item| match item {
+                ConversationItem::UserMessage(message) => Some(message.text.as_str()),
+                _ => None,
+            })
+            .collect()
+    }
+
+    fn write_skill(dir: &Path, name: &str, description: &str, exposure: SkillExposure) {
+        std::fs::create_dir_all(dir).unwrap();
+        let exposure = match exposure {
+            SkillExposure::Global => "global",
+            SkillExposure::DirectOnly => "direct_only",
+        };
+        std::fs::write(
+            dir.join("SKILL.md"),
+            format!(
+                "---\nname: {name}\ndescription: {description}\nexposure: {exposure}\n---\nBody for {name}\n"
+            ),
+        )
+        .unwrap();
+    }
+
+    fn fixture_dir(name: &str) -> PathBuf {
+        let root = std::env::temp_dir().join(format!("roder-core-{name}-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&root).unwrap();
+        root
     }
 }

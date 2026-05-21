@@ -137,6 +137,51 @@ pub struct SkillActivationResolved {
     pub timestamp: OffsetDateTime,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct SkillIndexRendered {
+    pub thread_id: ThreadId,
+    pub turn_id: TurnId,
+    pub rendered_count: u64,
+    pub hidden_count: u64,
+    pub estimated_tokens: u32,
+    #[serde(with = "time::serde::rfc3339")]
+    pub timestamp: OffsetDateTime,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct SkillInvoked {
+    pub thread_id: ThreadId,
+    pub turn_id: TurnId,
+    pub selector: SkillSelector,
+    pub descriptor: SkillDescriptor,
+    #[serde(with = "time::serde::rfc3339")]
+    pub timestamp: OffsetDateTime,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct SkillAutoActivated {
+    pub thread_id: ThreadId,
+    pub turn_id: TurnId,
+    pub feature_id: String,
+    pub descriptor: SkillDescriptor,
+    #[serde(with = "time::serde::rfc3339")]
+    pub timestamp: OffsetDateTime,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct SkillSkipped {
+    pub thread_id: ThreadId,
+    pub turn_id: TurnId,
+    pub selector: SkillSelector,
+    pub reason: String,
+    #[serde(with = "time::serde::rfc3339")]
+    pub timestamp: OffsetDateTime,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

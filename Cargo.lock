@@ -2463,6 +2463,7 @@ dependencies = [
  "roder-ext-verification",
  "roder-roadmap",
  "roder-sandbox",
+ "roder-skills",
  "serde",
  "serde_json",
  "time",

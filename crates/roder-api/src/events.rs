@@ -26,7 +26,10 @@ use crate::retrieval::{
     RetrievalDiscoveryItemPromoted, RetrievalPromotionSkipped, RetrievalResultUsed,
     RetrievalRouteAccepted, RetrievalRouteFailed, RetrievalRouteIgnored, RetrievalRoutePlanned,
 };
-use crate::skills::{SkillActivationResolved, SkillConfigApplied, SkillsCatalogLoaded};
+use crate::skills::{
+    SkillActivationResolved, SkillAutoActivated, SkillConfigApplied, SkillIndexRendered,
+    SkillInvoked, SkillSkipped, SkillsCatalogLoaded,
+};
 use crate::subagents::SubagentExitReason;
 use crate::task_ledger::TaskLedgerItem;
 use crate::teams::{
@@ -1101,6 +1104,10 @@ pub enum RoderEvent {
     SkillsCatalogLoaded(SkillsCatalogLoaded),
     SkillConfigApplied(SkillConfigApplied),
     SkillActivationResolved(SkillActivationResolved),
+    SkillIndexRendered(SkillIndexRendered),
+    SkillInvoked(SkillInvoked),
+    SkillAutoActivated(SkillAutoActivated),
+    SkillSkipped(SkillSkipped),
     TaskStarted(TaskStarted),
     TaskOutput(TaskOutput),
     TaskCompleted(TaskCompleted),
@@ -1240,6 +1247,10 @@ impl RoderEvent {
             RoderEvent::SkillsCatalogLoaded(_) => "skills/catalogLoaded",
             RoderEvent::SkillConfigApplied(_) => "skills/configApplied",
             RoderEvent::SkillActivationResolved(_) => "skills/activationResolved",
+            RoderEvent::SkillIndexRendered(_) => "skills/indexRendered",
+            RoderEvent::SkillInvoked(_) => "skills/invoked",
+            RoderEvent::SkillAutoActivated(_) => "skills/autoActivated",
+            RoderEvent::SkillSkipped(_) => "skills/skipped",
             RoderEvent::TaskStarted(_) => "task.started",
             RoderEvent::TaskOutput(_) => "task.output",
             RoderEvent::TaskCompleted(_) => "task.completed",
@@ -1349,7 +1360,11 @@ impl RoderEvent {
             RoderEvent::RoadmapChanged(_)
             | RoderEvent::SkillsCatalogLoaded(_)
             | RoderEvent::SkillConfigApplied(_)
-            | RoderEvent::SkillActivationResolved(_) => EventSource::Core,
+            | RoderEvent::SkillActivationResolved(_)
+            | RoderEvent::SkillIndexRendered(_)
+            | RoderEvent::SkillInvoked(_)
+            | RoderEvent::SkillAutoActivated(_)
+            | RoderEvent::SkillSkipped(_) => EventSource::Core,
             RoderEvent::FileChangePreviewReady(_) => EventSource::Tool,
             RoderEvent::UserInputRequested(_)
             | RoderEvent::UserInputResolved(_)
@@ -1475,6 +1490,10 @@ impl RoderEvent {
             RoderEvent::TeamMemberMessageDelta(e) => Some(&e.member_thread_id),
             RoderEvent::TeamMemberCompleted(e) => Some(&e.member_thread_id),
             RoderEvent::SkillActivationResolved(e) => Some(&e.thread_id),
+            RoderEvent::SkillIndexRendered(e) => Some(&e.thread_id),
+            RoderEvent::SkillInvoked(e) => Some(&e.thread_id),
+            RoderEvent::SkillAutoActivated(e) => Some(&e.thread_id),
+            RoderEvent::SkillSkipped(e) => Some(&e.thread_id),
             RoderEvent::RuntimeStarted(_)
             | RoderEvent::ExtensionRegistered(_)
             | RoderEvent::WorkflowImportsDetected(_)
@@ -1603,6 +1622,10 @@ impl RoderEvent {
             RoderEvent::TeamMemberMessageDelta(e) => Some(&e.turn_id),
             RoderEvent::TeamMemberCompleted(e) => e.turn_id.as_ref(),
             RoderEvent::SkillActivationResolved(e) => Some(&e.turn_id),
+            RoderEvent::SkillIndexRendered(e) => Some(&e.turn_id),
+            RoderEvent::SkillInvoked(e) => Some(&e.turn_id),
+            RoderEvent::SkillAutoActivated(e) => Some(&e.turn_id),
+            RoderEvent::SkillSkipped(e) => Some(&e.turn_id),
             RoderEvent::RuntimeStarted(_)
             | RoderEvent::ExtensionRegistered(_)
             | RoderEvent::SessionCreated(_)

@@ -30,6 +30,7 @@ use roder_api::teams::TeamMemberStatus;
 use roder_api::tools::{ToolCall, ToolChoice, ToolExecutionContext, ToolRegistry, ToolResult};
 use roder_sandbox::ScopedFilesystem;
 use roder_sandbox::process::LocalProcessRunner;
+use roder_skills::{SkillRegistry, SkillRegistryOptions};
 use time::{Duration, OffsetDateTime};
 use tokio::sync::{Mutex, RwLock, oneshot};
 
@@ -195,6 +196,7 @@ pub struct Runtime {
     context_artifacts: Arc<ContextArtifactStore>,
     pub(crate) session_store: Option<Arc<dyn SessionStore>>,
     pub(crate) tool_registry: ToolRegistry,
+    pub(crate) skills: RwLock<SkillRegistry>,
 }
 
 impl Runtime {
@@ -251,6 +253,9 @@ impl Runtime {
             context_artifacts,
             session_store,
             tool_registry,
+            skills: RwLock::new(SkillRegistry::load(SkillRegistryOptions::new(
+                PathBuf::new(),
+            ))),
         };
         runtime.bus.emit(RoderEvent::RuntimeStarted(RuntimeStarted {
             timestamp: OffsetDateTime::now_utc(),
@@ -337,6 +342,10 @@ impl Runtime {
 
     pub async fn status(&self) -> RuntimeConfig {
         self.config.read().await.clone()
+    }
+
+    pub async fn set_skills(&self, skills: SkillRegistry) {
+        *self.skills.write().await = skills;
     }
 
     pub fn workspace(&self) -> PathBuf {
