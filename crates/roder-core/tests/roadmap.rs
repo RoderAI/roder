@@ -142,6 +142,7 @@ fn runtime_for(workspace: &std::path::Path) -> Runtime {
             default_model: "mock".to_string(),
             reasoning: None,
             auto_compact_token_limit: None,
+            file_backed_dynamic_context: false,
             hosted_web_search: HostedWebSearchConfig::disabled(),
             model_edit_tools: std::collections::HashMap::new(),
             model_parallel_tool_calls: std::collections::HashMap::new(),
