@@ -1,4 +1,5 @@
 pub mod artifacts;
+pub mod automations;
 pub mod capabilities;
 pub mod catalog;
 pub mod code_index;
@@ -34,6 +35,7 @@ pub mod tui_status;
 pub mod workflow;
 
 pub use artifacts::*;
+pub use automations::*;
 pub use capabilities::*;
 pub use catalog::*;
 pub use code_index::*;
