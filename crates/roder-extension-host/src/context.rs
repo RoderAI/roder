@@ -4,6 +4,7 @@ use std::sync::Arc;
 use roder_api::extension::ExtensionRegistryBuilder;
 
 pub(crate) fn install_context_planner(builder: &mut ExtensionRegistryBuilder, workspace: &Path) {
+    builder.context_planner(Arc::new(roder_context::RetrievalRouterPlanner));
     builder.context_planner(Arc::new(roder_context::EntrypointContextPlanner::new(
         workspace.to_path_buf(),
     )));
@@ -34,9 +35,10 @@ mod tests {
         install_context_planner(&mut builder, Path::new("."));
         let registry = builder.build().unwrap();
 
-        assert_eq!(registry.context_planners.len(), 1);
+        assert_eq!(registry.context_planners.len(), 2);
+        assert_eq!(registry.context_planners[0].id(), "retrieval-router");
         assert_eq!(
-            registry.context_planners[0].id(),
+            registry.context_planners[1].id(),
             "entrypoint-context-planner"
         );
     }
