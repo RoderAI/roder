@@ -89,6 +89,12 @@ pub struct ContextBlockAdded {
     pub thread_id: ThreadId,
     pub turn_id: TurnId,
     pub block_type: String,
+    #[serde(default)]
+    pub byte_count: u64,
+    #[serde(default)]
+    pub estimated_tokens: u32,
+    #[serde(default)]
+    pub priority: i32,
     #[serde(with = "time::serde::rfc3339")]
     pub timestamp: OffsetDateTime,
 }
@@ -97,6 +103,38 @@ pub struct ContextBlockAdded {
 pub struct ContextAssemblyCompleted {
     pub thread_id: ThreadId,
     pub turn_id: TurnId,
+    #[serde(default)]
+    pub block_count: u64,
+    #[serde(default)]
+    pub total_byte_count: u64,
+    #[serde(default)]
+    pub estimated_tokens: u32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub token_budget: Option<u32>,
+    #[serde(with = "time::serde::rfc3339")]
+    pub timestamp: OffsetDateTime,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ContextEntrypointCandidatesInjected {
+    pub thread_id: ThreadId,
+    pub turn_id: TurnId,
+    pub candidate_count: u64,
+    pub block_byte_count: u64,
+    pub estimated_tokens: u32,
+    #[serde(with = "time::serde::rfc3339")]
+    pub timestamp: OffsetDateTime,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ContextCompactionRecorded {
+    pub thread_id: ThreadId,
+    pub turn_id: TurnId,
+    pub original_item_count: u64,
+    pub original_estimated_tokens: u32,
+    pub compacted_item_count: u64,
+    pub compacted_estimated_tokens: u32,
+    pub file_backed: bool,
     #[serde(with = "time::serde::rfc3339")]
     pub timestamp: OffsetDateTime,
 }
@@ -235,6 +273,21 @@ pub struct ToolCallCompleted {
     pub is_error: bool,
     #[serde(default)]
     pub output: Option<String>,
+    #[serde(with = "time::serde::rfc3339")]
+    pub timestamp: OffsetDateTime,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ToolOutputTruncated {
+    pub thread_id: ThreadId,
+    pub turn_id: TurnId,
+    pub tool_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tool_name: Option<String>,
+    pub original_line_count: u64,
+    pub original_char_count: u64,
+    pub inline_char_count: u64,
+    pub artifact_backed: bool,
     #[serde(with = "time::serde::rfc3339")]
     pub timestamp: OffsetDateTime,
 }
@@ -857,6 +910,8 @@ pub enum RoderEvent {
     ContextAssemblyStarted(ContextAssemblyStarted),
     ContextBlockAdded(ContextBlockAdded),
     ContextAssemblyCompleted(ContextAssemblyCompleted),
+    ContextEntrypointCandidatesInjected(ContextEntrypointCandidatesInjected),
+    ContextCompactionRecorded(ContextCompactionRecorded),
     InferenceStarted(InferenceStarted),
     InferenceEventReceived(InferenceEventReceived),
     ToolCallRequested(ToolCallRequested),
@@ -872,6 +927,7 @@ pub enum RoderEvent {
     PolicyExitPlanResolved(PolicyExitPlanResolved),
     ToolCallStarted(ToolCallStarted),
     ToolCallCompleted(ToolCallCompleted),
+    ToolOutputTruncated(ToolOutputTruncated),
     SubagentStarted(SubagentStarted),
     SubagentMessage(SubagentMessage),
     SubagentToolCall(SubagentToolCall),
@@ -954,6 +1010,10 @@ impl RoderEvent {
             RoderEvent::ContextAssemblyStarted(_) => "context.assembly_started",
             RoderEvent::ContextBlockAdded(_) => "context.block_added",
             RoderEvent::ContextAssemblyCompleted(_) => "context.assembly_completed",
+            RoderEvent::ContextEntrypointCandidatesInjected(_) => {
+                "context.entrypoint_candidates_injected"
+            }
+            RoderEvent::ContextCompactionRecorded(_) => "context.compaction_recorded",
             RoderEvent::InferenceStarted(_) => "inference.started",
             RoderEvent::InferenceEventReceived(_) => "inference.event_received",
             RoderEvent::ToolCallRequested(_) => "tool.call_requested",
@@ -969,6 +1029,7 @@ impl RoderEvent {
             RoderEvent::PolicyExitPlanResolved(_) => "policy.exit_plan_resolved",
             RoderEvent::ToolCallStarted(_) => "tool.call_started",
             RoderEvent::ToolCallCompleted(_) => "tool.call_completed",
+            RoderEvent::ToolOutputTruncated(_) => "tool.output_truncated",
             RoderEvent::SubagentStarted(_) => "subagent.started",
             RoderEvent::SubagentMessage(_) => "subagent.message",
             RoderEvent::SubagentToolCall(_) => "subagent.tool_call",
@@ -1129,6 +1190,8 @@ impl RoderEvent {
             RoderEvent::ContextAssemblyStarted(e) => Some(&e.thread_id),
             RoderEvent::ContextBlockAdded(e) => Some(&e.thread_id),
             RoderEvent::ContextAssemblyCompleted(e) => Some(&e.thread_id),
+            RoderEvent::ContextEntrypointCandidatesInjected(e) => Some(&e.thread_id),
+            RoderEvent::ContextCompactionRecorded(e) => Some(&e.thread_id),
             RoderEvent::InferenceStarted(e) => Some(&e.thread_id),
             RoderEvent::InferenceEventReceived(e) => Some(&e.thread_id),
             RoderEvent::ToolCallRequested(e) => Some(&e.thread_id),
@@ -1144,6 +1207,7 @@ impl RoderEvent {
             RoderEvent::PolicyExitPlanResolved(e) => Some(&e.thread_id),
             RoderEvent::ToolCallStarted(e) => Some(&e.thread_id),
             RoderEvent::ToolCallCompleted(e) => Some(&e.thread_id),
+            RoderEvent::ToolOutputTruncated(e) => Some(&e.thread_id),
             RoderEvent::SubagentStarted(e) => Some(&e.thread_id),
             RoderEvent::SubagentMessage(e) => Some(&e.thread_id),
             RoderEvent::SubagentToolCall(e) => Some(&e.thread_id),
@@ -1224,6 +1288,8 @@ impl RoderEvent {
             RoderEvent::ContextAssemblyStarted(e) => Some(&e.turn_id),
             RoderEvent::ContextBlockAdded(e) => Some(&e.turn_id),
             RoderEvent::ContextAssemblyCompleted(e) => Some(&e.turn_id),
+            RoderEvent::ContextEntrypointCandidatesInjected(e) => Some(&e.turn_id),
+            RoderEvent::ContextCompactionRecorded(e) => Some(&e.turn_id),
             RoderEvent::InferenceStarted(e) => Some(&e.turn_id),
             RoderEvent::InferenceEventReceived(e) => Some(&e.turn_id),
             RoderEvent::ToolCallRequested(e) => Some(&e.turn_id),
@@ -1239,6 +1305,7 @@ impl RoderEvent {
             RoderEvent::PolicyExitPlanResolved(e) => Some(&e.turn_id),
             RoderEvent::ToolCallStarted(e) => Some(&e.turn_id),
             RoderEvent::ToolCallCompleted(e) => Some(&e.turn_id),
+            RoderEvent::ToolOutputTruncated(e) => Some(&e.turn_id),
             RoderEvent::SubagentStarted(e) => Some(&e.turn_id),
             RoderEvent::SubagentMessage(e) => Some(&e.turn_id),
             RoderEvent::SubagentToolCall(e) => Some(&e.turn_id),

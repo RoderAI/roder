@@ -1,0 +1,35 @@
+{
+  "id": "misleading-entrypoint-names",
+  "title": "Entrypoint discovery resists misleading names",
+  "prompt": "Find the billing reconciler entrypoint. There are misleading files with similar names; prefer fresh content evidence.",
+  "tags": ["micro", "entrypoint-discovery", "context-budget"],
+  "workspace": {
+    "files": [
+      {
+        "path": "src/billing/reconciler.rs",
+        "contents": "pub fn billing_reconciler_entrypoint() {}\n"
+      },
+      {
+        "path": "src/billing/reconciler_old.rs",
+        "contents": "pub fn unrelated_archive() {}\n"
+      },
+      {
+        "path": "src/reconcile_notes.md",
+        "contents": "Historical notes only.\n"
+      }
+    ]
+  },
+  "timeoutMs": 10000,
+  "expected": {
+    "finalAnswerContains": ["hello from roder"],
+    "files": [
+      {
+        "path": "src/billing/reconciler.rs",
+        "exists": true,
+        "contains": ["billing_reconciler_entrypoint"]
+      }
+    ],
+    "verificationRequired": true
+  },
+  "constraints": ["entrypoint candidates should include the relevant file in the top five"]
+}

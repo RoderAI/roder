@@ -68,6 +68,9 @@ impl Runtime {
                     thread_id: req.thread_id.clone(),
                     turn_id: turn_id.clone(),
                     block_type: format!("{:?}", block.kind),
+                    byte_count: block.text.len() as u64,
+                    estimated_tokens: estimate_text_tokens(&block.text),
+                    priority: block.priority,
                     timestamp: OffsetDateTime::now_utc(),
                 }))
                 .await;
@@ -79,10 +82,42 @@ impl Runtime {
         } else {
             ContextPlan { blocks }
         };
+        let block_count = plan.blocks.len() as u64;
+        let total_byte_count = plan
+            .blocks
+            .iter()
+            .map(|block| block.text.len() as u64)
+            .sum::<u64>();
+        let estimated_tokens = estimate_context_tokens(&plan);
+        for block in plan
+            .blocks
+            .iter()
+            .filter(|block| matches!(block.kind, ContextBlockKind::EntrypointHint))
+        {
+            self.emit(RoderEvent::ContextEntrypointCandidatesInjected(
+                ContextEntrypointCandidatesInjected {
+                    thread_id: req.thread_id.clone(),
+                    turn_id: turn_id.clone(),
+                    candidate_count: block
+                        .metadata
+                        .get("candidate_count")
+                        .and_then(serde_json::Value::as_u64)
+                        .unwrap_or(0),
+                    block_byte_count: block.text.len() as u64,
+                    estimated_tokens: estimate_text_tokens(&block.text),
+                    timestamp: OffsetDateTime::now_utc(),
+                },
+            ))
+            .await;
+        }
         self.emit(RoderEvent::ContextAssemblyCompleted(
             ContextAssemblyCompleted {
                 thread_id: req.thread_id.clone(),
                 turn_id: turn_id.clone(),
+                block_count,
+                total_byte_count,
+                estimated_tokens,
+                token_budget: query.token_budget,
                 timestamp: OffsetDateTime::now_utc(),
             },
         ))
@@ -129,6 +164,8 @@ impl Runtime {
         if threshold == 0 || estimate_tokens(&conversation) < threshold {
             return Ok(conversation);
         }
+        let original_item_count = conversation.len() as u64;
+        let original_estimated_tokens = estimate_tokens(&conversation);
         let suffix = conversation
             .last()
             .cloned()
@@ -161,12 +198,38 @@ impl Runtime {
             .await?;
         let mut compacted = vec![compaction];
         compacted.extend(suffix);
+        self.emit(RoderEvent::ContextCompactionRecorded(
+            ContextCompactionRecorded {
+                thread_id: thread_id.clone(),
+                turn_id: turn_id.clone(),
+                original_item_count,
+                original_estimated_tokens,
+                compacted_item_count: compacted.len() as u64,
+                compacted_estimated_tokens: estimate_tokens(&compacted),
+                file_backed: cfg.file_backed_dynamic_context,
+                timestamp: OffsetDateTime::now_utc(),
+            },
+        ))
+        .await;
         Ok(compacted)
     }
 }
 
+fn estimate_context_tokens(plan: &ContextPlan) -> u32 {
+    let chars: usize = plan.blocks.iter().map(|block| block.text.len()).sum();
+    chars_to_tokens(chars)
+}
+
 fn estimate_tokens(items: &[ConversationItem]) -> u32 {
     let chars: usize = items.iter().map(item_text_len).sum();
+    chars_to_tokens(chars)
+}
+
+fn estimate_text_tokens(text: &str) -> u32 {
+    chars_to_tokens(text.len())
+}
+
+fn chars_to_tokens(chars: usize) -> u32 {
     u32::try_from(chars.div_ceil(4)).unwrap_or(u32::MAX)
 }
 
@@ -236,7 +299,7 @@ mod tests {
     use super::*;
 
     #[tokio::test]
-    async fn compaction_writes_history_artifact_and_keeps_current_prompt() {
+    async fn context_compaction_writes_history_artifact_and_emits_metrics() {
         let mut builder = ExtensionRegistryBuilder::new();
         builder.inference_engine(Arc::new(FakeInferenceEngine));
         let session_root =
@@ -263,6 +326,7 @@ mod tests {
             },
         )
         .unwrap();
+        let mut events = runtime.subscribe_events();
         let compacted = runtime
             .compact_conversation_if_needed(
                 &"thread".to_string(),
@@ -321,6 +385,18 @@ mod tests {
                     .as_ref()
             )
         );
+        let emitted = drain_events(&mut events);
+        assert!(emitted.iter().any(|event| {
+            matches!(
+                event,
+                RoderEvent::ContextCompactionRecorded(recorded)
+                    if recorded.original_item_count == 3
+                        && recorded.compacted_item_count == 2
+                        && recorded.original_estimated_tokens > 0
+                        && recorded.compacted_estimated_tokens > 0
+                        && recorded.file_backed
+            )
+        }));
         let _ = std::fs::remove_dir_all(session_root);
     }
 
@@ -443,5 +519,20 @@ mod tests {
                 .is_empty()
         );
         let _ = std::fs::remove_dir_all(session_root);
+    }
+
+    fn drain_events(
+        rx: &mut tokio::sync::broadcast::Receiver<roder_api::events::EventEnvelope>,
+    ) -> Vec<RoderEvent> {
+        let mut events = Vec::new();
+        loop {
+            match rx.try_recv() {
+                Ok(envelope) => events.push(envelope.event),
+                Err(tokio::sync::broadcast::error::TryRecvError::Empty) => break,
+                Err(tokio::sync::broadcast::error::TryRecvError::Lagged(_)) => continue,
+                Err(tokio::sync::broadcast::error::TryRecvError::Closed) => break,
+            }
+        }
+        events
     }
 }

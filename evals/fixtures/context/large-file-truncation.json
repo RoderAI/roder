@@ -1,0 +1,31 @@
+{
+  "id": "large-file-truncation",
+  "title": "Large file context budget and truncation follow-up",
+  "prompt": "Find the RECOVERY_TOKEN in the large relevant log file. Use pagination after truncated output instead of guessing.",
+  "tags": ["micro", "context-budget", "truncation-follow-up", "tool:read_file"],
+  "workspace": {
+    "files": [
+      {
+        "path": "logs/relevant-large-output.txt",
+        "contents": "line 1\nline 2\nRECOVERY_TOKEN=large-file-context\n"
+      },
+      {
+        "path": "src/misleading.rs",
+        "contents": "fn unrelated() {}\n"
+      }
+    ]
+  },
+  "timeoutMs": 10000,
+  "expected": {
+    "finalAnswerContains": ["hello from roder"],
+    "files": [
+      {
+        "path": "logs/relevant-large-output.txt",
+        "exists": true,
+        "contains": ["RECOVERY_TOKEN=large-file-context"]
+      }
+    ],
+    "verificationRequired": true
+  },
+  "constraints": ["score truncation follow-up and context byte metrics"]
+}

@@ -68,6 +68,7 @@ pub enum EvalMetricKind {
     Count,
     Duration,
     Tokens,
+    Bytes,
     Flag,
 }
 
@@ -140,6 +141,24 @@ impl EvalTrajectoryEvent {
                 &e.turn_id,
                 e.timestamp,
             )),
+            RoderEvent::ContextAssemblyCompleted(e) => Some(Self::basic(
+                "context_assembly_completed",
+                &e.thread_id,
+                &e.turn_id,
+                e.timestamp,
+            )),
+            RoderEvent::ContextEntrypointCandidatesInjected(e) => Some(Self::basic(
+                "entrypoint_candidates_injected",
+                &e.thread_id,
+                &e.turn_id,
+                e.timestamp,
+            )),
+            RoderEvent::ContextCompactionRecorded(e) => Some(Self::basic(
+                "context_compaction_recorded",
+                &e.thread_id,
+                &e.turn_id,
+                e.timestamp,
+            )),
             RoderEvent::InferenceEventReceived(e) => {
                 let mut event =
                     Self::basic("inference_event", &e.thread_id, &e.turn_id, e.timestamp);
@@ -172,6 +191,17 @@ impl EvalTrajectoryEvent {
                 event.tool_id = Some(e.tool_id.clone());
                 event.tool_name = e.tool_name.clone();
                 event.is_error = e.is_error;
+                Some(event)
+            }
+            RoderEvent::ToolOutputTruncated(e) => {
+                let mut event = Self::basic(
+                    "tool_output_truncated",
+                    &e.thread_id,
+                    &e.turn_id,
+                    e.timestamp,
+                );
+                event.tool_id = Some(e.tool_id.clone());
+                event.tool_name = e.tool_name.clone();
                 Some(event)
             }
             RoderEvent::TurnCompleted(e) => Some(Self::basic(
