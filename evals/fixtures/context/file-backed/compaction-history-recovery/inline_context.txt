@@ -1,0 +1,10 @@
+Previous conversation was compacted. Key retained facts:
+- user: Please record the session UUID for turn 2 diagnostics.
+- assistant: I will store it in the next message.
+- user: The session UUID is required for the failover drill.
+- tool result: Updated session notes.
+
+[artifact: chat_history chat_history history_turn_3 lines=6 path=thread-eval/turn-3/history_turn_3_chat_history.txt]
+Use read_artifact or grep_artifact to inspect more.
+
+The lossy summary above does not include the full UUID. Search the chat history artifact for the exact value from turn 2.

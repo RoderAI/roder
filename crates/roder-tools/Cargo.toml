@@ -9,6 +9,7 @@ async-trait.workspace = true
 base64.workspace = true
 dirs.workspace = true
 roder-api.workspace = true
+roder-core.workspace = true
 serde = { workspace = true, features = ["derive"] }
 serde_json.workspace = true
 time.workspace = true
@@ -16,3 +17,4 @@ tokio = { workspace = true, features = ["full"] }
 
 [dev-dependencies]
 roder-ext-runner-unix-local.workspace = true
+uuid = { workspace = true, features = ["v4"] }

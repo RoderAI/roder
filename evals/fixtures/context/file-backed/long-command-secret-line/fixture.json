@@ -1,0 +1,32 @@
+{
+  "id": "long-command-secret-line",
+  "suite": "file-backed-context",
+  "tags": ["file-backed", "command_stdout", "grep_required"],
+  "prompt": "What is the deployment token emitted by the build? Reply with only the token value.",
+  "expected_answer": "deploy-token-7f3a2c91",
+  "timeout_secs": 120,
+  "grading": {
+    "require_artifact_follow_up": true,
+    "secret_line": 217,
+    "secret_pattern": "RODER_DEPLOY_TOKEN=",
+    "secret_must_not_appear_in_inline": true
+  },
+  "context": {
+    "inline_path": "inline_context.txt",
+    "full_output_path": "artifacts/cmd_build.stdout.txt",
+    "artifacts": [
+      {
+        "artifact_id": "cmd_build_001",
+        "kind": "command_stdout",
+        "label": "stdout",
+        "path": "artifacts/cmd_build.stdout.txt"
+      }
+    ]
+  },
+  "metrics": {
+    "track_inline_chars_saved": true,
+    "track_artifact_reads": true,
+    "track_artifact_grep_calls": true,
+    "track_answer_correctness": true
+  }
+}

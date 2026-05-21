@@ -1,6 +1,7 @@
 use serde::{Deserialize, Serialize};
 use time::OffsetDateTime;
 
+use crate::artifacts::ContextArtifact;
 use crate::extension::{ExtensionId, InferenceEngineId};
 use crate::inference::InferenceEvent;
 use crate::media::{MediaArtifact, MediaArtifactId, MediaPreview};
@@ -485,6 +486,56 @@ pub struct MediaPreviewReady {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ContextArtifactCreated {
+    pub thread_id: ThreadId,
+    pub turn_id: TurnId,
+    pub artifact: ContextArtifact,
+    #[serde(with = "time::serde::rfc3339")]
+    pub timestamp: OffsetDateTime,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ContextArtifactAppended {
+    pub thread_id: ThreadId,
+    pub turn_id: TurnId,
+    pub artifact: ContextArtifact,
+    pub appended_bytes: u64,
+    #[serde(with = "time::serde::rfc3339")]
+    pub timestamp: OffsetDateTime,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ContextArtifactCapped {
+    pub thread_id: ThreadId,
+    pub turn_id: TurnId,
+    pub artifact: ContextArtifact,
+    pub inline_bytes: u64,
+    #[serde(with = "time::serde::rfc3339")]
+    pub timestamp: OffsetDateTime,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ContextArtifactDeleted {
+    pub thread_id: ThreadId,
+    pub artifact_id: crate::artifacts::ContextArtifactId,
+    #[serde(with = "time::serde::rfc3339")]
+    pub timestamp: OffsetDateTime,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ContextArtifactRetentionExpired {
+    pub thread_id: ThreadId,
+    pub artifact_id: crate::artifacts::ContextArtifactId,
+    #[serde(with = "time::serde::rfc3339")]
+    pub timestamp: OffsetDateTime,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FileChanged {
     pub thread_id: ThreadId,
     pub turn_id: TurnId,
@@ -785,6 +836,11 @@ pub enum RoderEvent {
     MediaArtifactUpdated(MediaArtifactUpdated),
     MediaArtifactDeleted(MediaArtifactDeleted),
     MediaPreviewReady(MediaPreviewReady),
+    ContextArtifactCreated(ContextArtifactCreated),
+    ContextArtifactAppended(ContextArtifactAppended),
+    ContextArtifactCapped(ContextArtifactCapped),
+    ContextArtifactDeleted(ContextArtifactDeleted),
+    ContextArtifactRetentionExpired(ContextArtifactRetentionExpired),
     MemorySaved(MemorySaved),
     MemoryUpdated(MemoryUpdated),
     MemoryDeleted(MemoryDeleted),
@@ -874,6 +930,11 @@ impl RoderEvent {
             RoderEvent::MediaArtifactUpdated(_) => "media/artifactUpdated",
             RoderEvent::MediaArtifactDeleted(_) => "media/artifactDeleted",
             RoderEvent::MediaPreviewReady(_) => "media/previewReady",
+            RoderEvent::ContextArtifactCreated(_) => "context/artifactCreated",
+            RoderEvent::ContextArtifactAppended(_) => "context/artifactAppended",
+            RoderEvent::ContextArtifactCapped(_) => "context/artifactCapped",
+            RoderEvent::ContextArtifactDeleted(_) => "context/artifactDeleted",
+            RoderEvent::ContextArtifactRetentionExpired(_) => "context/artifactRetentionExpired",
             RoderEvent::MemorySaved(_) => "memory/saved",
             RoderEvent::MemoryUpdated(_) => "memory/updated",
             RoderEvent::MemoryDeleted(_) => "memory/deleted",
@@ -947,6 +1008,11 @@ impl RoderEvent {
             | RoderEvent::MediaArtifactUpdated(_)
             | RoderEvent::MediaArtifactDeleted(_)
             | RoderEvent::MediaPreviewReady(_)
+            | RoderEvent::ContextArtifactCreated(_)
+            | RoderEvent::ContextArtifactAppended(_)
+            | RoderEvent::ContextArtifactCapped(_)
+            | RoderEvent::ContextArtifactDeleted(_)
+            | RoderEvent::ContextArtifactRetentionExpired(_)
             | RoderEvent::MemorySaved(_)
             | RoderEvent::MemoryUpdated(_)
             | RoderEvent::MemoryDeleted(_)
@@ -1026,6 +1092,11 @@ impl RoderEvent {
             RoderEvent::MediaArtifactCreated(e) => Some(&e.thread_id),
             RoderEvent::MediaArtifactUpdated(e) => Some(&e.thread_id),
             RoderEvent::MediaPreviewReady(e) => Some(&e.thread_id),
+            RoderEvent::ContextArtifactCreated(e) => Some(&e.thread_id),
+            RoderEvent::ContextArtifactAppended(e) => Some(&e.thread_id),
+            RoderEvent::ContextArtifactCapped(e) => Some(&e.thread_id),
+            RoderEvent::ContextArtifactDeleted(e) => Some(&e.thread_id),
+            RoderEvent::ContextArtifactRetentionExpired(e) => Some(&e.thread_id),
             RoderEvent::MemoryRecallReady(e) => Some(&e.thread_id),
             RoderEvent::MemoryObservationRecorded(e) => Some(&e.thread_id),
             RoderEvent::TaskStarted(e) => e.thread_id.as_ref(),
@@ -1113,6 +1184,9 @@ impl RoderEvent {
             RoderEvent::MediaArtifactCreated(e) => Some(&e.turn_id),
             RoderEvent::MediaArtifactUpdated(e) => Some(&e.turn_id),
             RoderEvent::MediaPreviewReady(e) => Some(&e.turn_id),
+            RoderEvent::ContextArtifactCreated(e) => Some(&e.turn_id),
+            RoderEvent::ContextArtifactAppended(e) => Some(&e.turn_id),
+            RoderEvent::ContextArtifactCapped(e) => Some(&e.turn_id),
             RoderEvent::MemoryRecallReady(e) => Some(&e.turn_id),
             RoderEvent::MemoryObservationRecorded(e) => Some(&e.turn_id),
             RoderEvent::TaskStarted(e) => e.turn_id.as_ref(),
@@ -1140,6 +1214,8 @@ impl RoderEvent {
             | RoderEvent::WorkflowImportStale(_)
             | RoderEvent::WorkflowImportFailed(_)
             | RoderEvent::MediaArtifactDeleted(_)
+            | RoderEvent::ContextArtifactDeleted(_)
+            | RoderEvent::ContextArtifactRetentionExpired(_)
             | RoderEvent::MemorySaved(_)
             | RoderEvent::MemoryUpdated(_)
             | RoderEvent::MemoryDeleted(_)

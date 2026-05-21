@@ -513,6 +513,36 @@ impl AppServer {
                 })
                 .await
             }
+            "artifact/list" => {
+                self.decode_and(req.params, |p| async move {
+                    self.handle_artifact_list(p).await
+                })
+                .await
+            }
+            "artifact/read" => {
+                self.decode_and(req.params, |p| async move {
+                    self.handle_artifact_read(p).await
+                })
+                .await
+            }
+            "artifact/grep" => {
+                self.decode_and(req.params, |p| async move {
+                    self.handle_artifact_grep(p).await
+                })
+                .await
+            }
+            "artifact/tail" => {
+                self.decode_and(req.params, |p| async move {
+                    self.handle_artifact_tail(p).await
+                })
+                .await
+            }
+            "artifact/delete" => {
+                self.decode_and(req.params, |p| async move {
+                    self.handle_artifact_delete(p).await
+                })
+                .await
+            }
             "memory/list" => {
                 self.decode_and(
                     req.params,
@@ -2325,6 +2355,86 @@ impl AppServer {
         decisions.push(decision.clone());
         save_workflow_decisions(&decisions).map_err(internal_error)?;
         Ok(decision)
+    }
+
+    async fn handle_artifact_list(
+        &self,
+        params: ArtifactListParams,
+    ) -> Result<serde_json::Value, JsonRpcError> {
+        let artifacts = self
+            .runtime
+            .context_artifact_store_for_thread(&params.thread_id)
+            .list_for_thread(&params.thread_id)
+            .map_err(internal_error)?;
+        Ok(serde_json::to_value(ArtifactListResult { artifacts }).unwrap())
+    }
+
+    async fn handle_artifact_read(
+        &self,
+        params: ArtifactReadParams,
+    ) -> Result<serde_json::Value, JsonRpcError> {
+        let page = self
+            .runtime
+            .context_artifact_store_for_thread(&params.thread_id)
+            .read_page(
+                &params.thread_id,
+                &params.artifact_id,
+                params.start_line.unwrap_or(1),
+                params.limit.unwrap_or(200),
+            )
+            .map_err(internal_error)?;
+        Ok(serde_json::to_value(ArtifactReadResult { page }).unwrap())
+    }
+
+    async fn handle_artifact_grep(
+        &self,
+        params: ArtifactGrepParams,
+    ) -> Result<serde_json::Value, JsonRpcError> {
+        let result = self
+            .runtime
+            .context_artifact_store_for_thread(&params.thread_id)
+            .grep(&params.thread_id, &params.artifact_id, &params.pattern)
+            .map_err(internal_error)?;
+        Ok(serde_json::to_value(ArtifactGrepMethodResult { result }).unwrap())
+    }
+
+    async fn handle_artifact_tail(
+        &self,
+        params: ArtifactTailParams,
+    ) -> Result<serde_json::Value, JsonRpcError> {
+        let text = self
+            .runtime
+            .context_artifact_store_for_thread(&params.thread_id)
+            .tail(
+                &params.thread_id,
+                &params.artifact_id,
+                params.lines.unwrap_or(50),
+            )
+            .map_err(internal_error)?;
+        Ok(serde_json::to_value(ArtifactTailResult { text }).unwrap())
+    }
+
+    async fn handle_artifact_delete(
+        &self,
+        params: ArtifactDeleteParams,
+    ) -> Result<serde_json::Value, JsonRpcError> {
+        let deleted = self
+            .runtime
+            .context_artifact_store_for_thread(&params.thread_id)
+            .delete(&params.thread_id, &params.artifact_id)
+            .map_err(internal_error)?;
+        if deleted {
+            self.runtime
+                .emit(RoderEvent::ContextArtifactDeleted(
+                    roder_api::events::ContextArtifactDeleted {
+                        thread_id: params.thread_id,
+                        artifact_id: params.artifact_id,
+                        timestamp: time::OffsetDateTime::now_utc(),
+                    },
+                ))
+                .await;
+        }
+        Ok(serde_json::to_value(ArtifactDeleteResult { deleted }).unwrap())
     }
 
     async fn handle_media_list(

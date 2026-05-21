@@ -1,0 +1,30 @@
+{
+  "id": "compaction-history-recovery",
+  "suite": "file-backed-context",
+  "tags": ["file-backed", "chat_history", "compaction"],
+  "prompt": "What was the exact user-provided session UUID from turn 2? Reply with only the UUID.",
+  "expected_answer": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+  "timeout_secs": 120,
+  "grading": {
+    "require_artifact_follow_up": true,
+    "secret_pattern": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+    "secret_must_not_appear_in_inline": true
+  },
+  "context": {
+    "inline_path": "inline_context.txt",
+    "artifacts": [
+      {
+        "artifact_id": "history_turn_3",
+        "kind": "chat_history",
+        "label": "chat_history",
+        "path": "artifacts/history_turn_3.chat_history.txt"
+      }
+    ]
+  },
+  "metrics": {
+    "track_inline_chars_saved": true,
+    "track_artifact_reads": true,
+    "track_artifact_grep_calls": true,
+    "track_answer_correctness": true
+  }
+}

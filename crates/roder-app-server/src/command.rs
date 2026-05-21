@@ -2,9 +2,13 @@ use std::path::PathBuf;
 use std::time::Duration;
 
 use base64::Engine;
+use roder_api::artifacts::{
+    ContextArtifactKind, ContextArtifactReference, format_artifact_reference,
+};
 use roder_api::context::PolicyGate;
 use roder_api::policy_mode::PolicyDecision;
 use roder_api::tools::{ToolCall, ToolExecutionContext};
+use roder_core::artifacts::ContextArtifactStore;
 use roder_core::policy_gate::DefaultPolicyGate;
 use roder_protocol::{
     CommandExecOutputDeltaNotification, CommandExecParams, CommandExecResponse, JsonRpcError,
@@ -54,12 +58,18 @@ impl AppServer {
                 .map_err(internal_error)?
         };
 
-        let (stdout, stdout_truncated) = cap_output(&output.stdout, &params);
-        let (stderr, stderr_truncated) = cap_output(&output.stderr, &params);
+        let store = self.context_artifact_store_for_command();
+        let process_id = params
+            .process_id
+            .clone()
+            .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
+        let (stdout, stdout_truncated) =
+            cap_output_with_artifact(&store, &process_id, ContextArtifactKind::CommandStdout, "stdout", &output.stdout, &params);
+        let (stderr, stderr_truncated) =
+            cap_output_with_artifact(&store, &process_id, ContextArtifactKind::CommandStderr, "stderr", &output.stderr, &params);
         if params.stream_stdout_stderr {
-            let process_id = params.process_id.as_deref().unwrap();
-            self.emit_command_output_delta(process_id, "stdout", &stdout, stdout_truncated);
-            self.emit_command_output_delta(process_id, "stderr", &stderr, stderr_truncated);
+            self.emit_command_output_delta(&process_id, "stdout", &stdout, stdout_truncated);
+            self.emit_command_output_delta(&process_id, "stderr", &stderr, stderr_truncated);
             Ok(serde_json::to_value(CommandExecResponse {
                 exit_code: output.status.code().unwrap_or(-1),
                 stdout: String::new(),
@@ -113,6 +123,11 @@ impl AppServer {
                 data: Some(serde_json::json!({ "kind": "approval_required" })),
             }),
         }
+    }
+
+    fn context_artifact_store_for_command(&self) -> ContextArtifactStore {
+        const COMMAND_THREAD: &str = "app-server";
+        self.runtime.context_artifact_store_for_thread(COMMAND_THREAD)
     }
 
     fn emit_command_output_delta(
@@ -178,6 +193,79 @@ fn cap_output(output: &[u8], params: &CommandExecParams) -> (Vec<u8>, bool) {
         (output[..cap].to_vec(), true)
     } else {
         (output.to_vec(), false)
+    }
+}
+
+fn cap_output_with_artifact(
+    store: &ContextArtifactStore,
+    process_id: &str,
+    kind: ContextArtifactKind,
+    label: &str,
+    output: &[u8],
+    params: &CommandExecParams,
+) -> (Vec<u8>, bool) {
+    let (capped, truncated) = cap_output(output, params);
+    if !truncated {
+        return (capped, false);
+    }
+    let artifact = store
+        .write(
+            "app-server",
+            "command/exec",
+            kind,
+            &format!("{process_id}-{label}"),
+            Some(process_id),
+            label,
+            output,
+        )
+        .ok();
+    let mut inline = capped;
+    if let Some(artifact) = artifact {
+        let reference = ContextArtifactReference::from_artifact(&artifact, label);
+        let mut prefixed = format_artifact_reference(&reference);
+        prefixed.push_str("\n\n");
+        prefixed.push_str(&String::from_utf8_lossy(&inline));
+        inline = prefixed.into_bytes();
+    }
+    (inline, true)
+}
+
+#[cfg(test)]
+mod artifact_tests {
+    use super::*;
+
+    #[test]
+    fn cap_output_with_artifact_adds_reference_when_truncated() {
+        let store = ContextArtifactStore::new(
+            std::env::temp_dir().join(format!("roder-command-artifact-{}", uuid::Uuid::new_v4())),
+        );
+        let output = vec![b'x'; 2_000_000];
+        let params = CommandExecParams {
+            command: vec!["echo".to_string()],
+            cwd: None,
+            env: None,
+            timeout_ms: None,
+            disable_timeout: false,
+            tty: false,
+            stream_stdin: false,
+            stream_stdout_stderr: false,
+            process_id: Some("proc-1".to_string()),
+            size: None,
+            disable_output_cap: false,
+            output_bytes_cap: Some(1024),
+            sandbox_policy: None,
+        };
+        let (capped, truncated) = cap_output_with_artifact(
+            &store,
+            "proc-1",
+            ContextArtifactKind::CommandStdout,
+            "stdout",
+            &output,
+            &params,
+        );
+        assert!(truncated);
+        let text = String::from_utf8_lossy(&capped);
+        assert!(text.contains("[artifact: command_stdout"));
     }
 }
 

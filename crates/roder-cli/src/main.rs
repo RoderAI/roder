@@ -716,6 +716,10 @@ pub(crate) async fn build_runtime_from_config(
         remote_runner_destination: remote_runner_destination.clone(),
     })?;
 
+    let session_dir = std::env::var_os("HOME")
+        .map(std::path::PathBuf::from)
+        .map(|home| home.join(".roder").join("sessions"))
+        .ok_or_else(|| anyhow::anyhow!("could not resolve HOME for session storage"))?;
     let runtime = Arc::new(Runtime::new(
         registry,
         RuntimeConfig {
@@ -730,6 +734,8 @@ pub(crate) async fn build_runtime_from_config(
             policy_mode,
             remote_runner_destination,
             team_data_dir: None,
+            session_dir: Some(session_dir),
+            context_artifact_dir: None,
         },
     )?);
 

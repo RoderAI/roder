@@ -10,6 +10,10 @@ use roder_api::marketplace::{
     DedupedMarketplacePlugin, DefaultMarketplaceSelection, InstalledPluginRecord,
     MarketplaceDescriptor, MarketplaceKind, MarketplacePluginEntry, MarketplaceSource,
 };
+use roder_api::artifacts::{
+    ArtifactGrepResult as ContextArtifactGrepResult, ArtifactReadPage, ContextArtifact,
+    ContextArtifactId,
+};
 use roder_api::media::{MediaArtifact, MediaArtifactId, MediaAttachment, MediaPreview};
 use roder_api::memory::{
     MemoryId, MemoryProviderSelection, MemoryRecord, MemoryScope, MemorySearchResult,
@@ -1092,6 +1096,77 @@ pub struct MediaAttachToTurnResult {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct ArtifactListParams {
+    pub thread_id: ThreadId,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ArtifactListResult {
+    pub artifacts: Vec<ContextArtifact>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ArtifactReadParams {
+    pub thread_id: ThreadId,
+    pub artifact_id: ContextArtifactId,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub start_line: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub limit: Option<u64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ArtifactReadResult {
+    pub page: ArtifactReadPage,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ArtifactGrepParams {
+    pub thread_id: ThreadId,
+    pub artifact_id: ContextArtifactId,
+    pub pattern: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ArtifactGrepMethodResult {
+    pub result: ContextArtifactGrepResult,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ArtifactTailParams {
+    pub thread_id: ThreadId,
+    pub artifact_id: ContextArtifactId,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub lines: Option<u64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ArtifactTailResult {
+    pub text: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ArtifactDeleteParams {
+    pub thread_id: ThreadId,
+    pub artifact_id: ContextArtifactId,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ArtifactDeleteResult {
+    pub deleted: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct WorkflowScanParams {
     pub workspace: Option<String>,
     #[serde(default)]
@@ -1830,5 +1905,40 @@ mod tests {
         assert_eq!(value["attachment"]["artifactId"], "media-1");
         assert_eq!(value["attachment"]["mimeType"], "image/png");
         assert_eq!(value["image"]["image_url"], "data:image/png;base64,YWJj");
+    }
+
+    #[test]
+    fn artifact_protocol_structs_use_camel_case_fields() {
+        let read: ArtifactReadParams = serde_json::from_value(serde_json::json!({
+            "threadId": "thread-a",
+            "artifactId": "call_1",
+            "startLine": 2,
+            "limit": 10
+        }))
+        .unwrap();
+        assert_eq!(read.thread_id, "thread-a");
+        assert_eq!(read.artifact_id, "call_1");
+        assert_eq!(read.start_line, Some(2));
+        assert_eq!(read.limit, Some(10));
+
+        let tail: ArtifactTailParams = serde_json::from_value(serde_json::json!({
+            "threadId": "thread-a",
+            "artifactId": "call_1",
+            "lines": 5
+        }))
+        .unwrap();
+        assert_eq!(tail.lines, Some(5));
+
+        let page = ArtifactReadPage {
+            artifact_id: "call_1".to_string(),
+            start_line: 1,
+            line_count: 1,
+            total_lines: 10,
+            text: "hello".to_string(),
+            next_start_line: Some(2),
+        };
+        let value = serde_json::to_value(ArtifactReadResult { page }).unwrap();
+        assert_eq!(value["page"]["artifactId"], "call_1");
+        assert_eq!(value["page"]["nextStartLine"], 2);
     }
 }

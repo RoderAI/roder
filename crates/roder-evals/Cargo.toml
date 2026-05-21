@@ -1,0 +1,11 @@
+[package]
+name = "roder-evals"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+roder-api.workspace = true
+roder-core.workspace = true
+serde = { workspace = true, features = ["derive"] }
+serde_json.workspace = true

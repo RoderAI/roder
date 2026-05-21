@@ -9,7 +9,7 @@ use time::OffsetDateTime;
 
 use crate::policy_gate::DefaultPolicyGate;
 use crate::runtime::{PendingPlanExit, Runtime};
-use crate::tool_output::cap_tool_output_lines;
+use crate::tool_output::cap_tool_output_lines_with_store;
 use crate::tool_preview::file_change_preview;
 
 impl Runtime {
@@ -185,10 +185,35 @@ impl Runtime {
             .await;
         self.emit_hunk_records(&result).await;
         self.emit_media_artifacts(thread_id, turn_id, &result).await;
+        let store = self.context_artifact_store_for_thread(thread_id);
+        let capped = cap_tool_output_lines_with_store(
+            result.text.clone(),
+            Some(&store),
+            Some(thread_id),
+            Some(turn_id),
+            Some(&result.id),
+        );
+        if let Some(artifact) = capped.artifact.as_ref() {
+            self.emit(RoderEvent::ContextArtifactCapped(ContextArtifactCapped {
+                thread_id: thread_id.clone(),
+                turn_id: turn_id.clone(),
+                artifact: artifact.clone(),
+                inline_bytes: capped.text.len() as u64,
+                timestamp: OffsetDateTime::now_utc(),
+            }))
+            .await;
+            self.emit(RoderEvent::ContextArtifactCreated(ContextArtifactCreated {
+                thread_id: thread_id.clone(),
+                turn_id: turn_id.clone(),
+                artifact: artifact.clone(),
+                timestamp: OffsetDateTime::now_utc(),
+            }))
+            .await;
+        }
         let item = ToolResultRecord {
             id: result.id.clone(),
             name: Some(result.name.clone()),
-            result: cap_tool_output_lines(result.text),
+            result: capped.text,
             is_error: result.is_error,
         };
         self.persist_turn_item(

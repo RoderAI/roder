@@ -102,6 +102,8 @@ pub struct ToolExecutionContext {
     pub turn_id: TurnId,
     pub effective_mode: PolicyMode,
     pub handles: ToolExecutionHandles,
+    /// Root directory for file-backed context artifacts when executing artifact tools.
+    pub context_artifact_dir: Option<PathBuf>,
 }
 
 impl ToolExecutionContext {
@@ -115,7 +117,13 @@ impl ToolExecutionContext {
             turn_id: turn_id.into(),
             effective_mode,
             handles: ToolExecutionHandles::default(),
+            context_artifact_dir: None,
         }
+    }
+
+    pub fn with_context_artifact_dir(mut self, dir: impl Into<PathBuf>) -> Self {
+        self.context_artifact_dir = Some(dir.into());
+        self
     }
 
     pub fn with_workspace_handle(mut self, handle: Arc<dyn ScopedWorkspaceHandle>) -> Self {

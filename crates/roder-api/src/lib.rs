@@ -1,3 +1,4 @@
+pub mod artifacts;
 pub mod capabilities;
 pub mod catalog;
 pub mod context;
@@ -25,6 +26,7 @@ pub mod trace;
 pub mod tui_status;
 pub mod workflow;
 
+pub use artifacts::*;
 pub use capabilities::*;
 pub use catalog::*;
 pub use context::*;

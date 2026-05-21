@@ -1,3 +1,6 @@
+use roder_api::artifacts::{
+    ContextArtifact, ContextArtifactKind, ContextArtifactReference, format_artifact_reference,
+};
 use roder_api::catalog::lookup_model;
 use roder_api::context::{ContextBlockKind, ContextPlan, ContextQuery};
 use roder_api::conversation::{
@@ -131,8 +134,40 @@ impl Runtime {
             .cloned()
             .into_iter()
             .collect::<Vec<ConversationItem>>();
-        let summary = summarize_conversation(&conversation);
-        let compaction = ConversationItem::ContextCompaction(ContextCompactionRecord { summary });
+        let prior_window: Vec<ConversationItem> = conversation
+            .iter()
+            .take(conversation.len().saturating_sub(1))
+            .cloned()
+            .collect();
+        let history_artifact = if prior_window.is_empty() {
+            None
+        } else {
+            let artifact_id = format!("history_{turn_id}");
+            let store = self.context_artifact_store_for_thread(thread_id);
+            let body = format_conversation_window(&prior_window);
+            let artifact = store.write(
+                thread_id,
+                turn_id,
+                ContextArtifactKind::ChatHistory,
+                &artifact_id,
+                None,
+                "chat_history",
+                body.as_bytes(),
+            )?;
+            self.emit(RoderEvent::ContextArtifactCreated(ContextArtifactCreated {
+                thread_id: thread_id.clone(),
+                turn_id: turn_id.clone(),
+                artifact: artifact.clone(),
+                timestamp: OffsetDateTime::now_utc(),
+            }))
+            .await;
+            Some(artifact)
+        };
+        let summary = summarize_conversation(&conversation, history_artifact.as_ref());
+        let compaction = ConversationItem::ContextCompaction(ContextCompactionRecord {
+            summary,
+            artifact_id: history_artifact.as_ref().map(|artifact| artifact.id.clone()),
+        });
         self.persist_turn_item(thread_id, turn_id, &compaction)
             .await?;
         let mut compacted = vec![compaction];
@@ -160,7 +195,18 @@ fn item_text_len(item: &ConversationItem) -> usize {
     }
 }
 
-fn summarize_conversation(items: &[ConversationItem]) -> String {
+fn format_conversation_window(items: &[ConversationItem]) -> String {
+    items
+        .iter()
+        .filter_map(|item| serde_json::to_string(item).ok())
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+fn summarize_conversation(
+    items: &[ConversationItem],
+    history_artifact: Option<&ContextArtifact>,
+) -> String {
     let mut lines = vec!["Previous conversation was compacted. Key retained facts:".to_string()];
     for item in items.iter().take(items.len().saturating_sub(1)) {
         match item {
@@ -183,6 +229,13 @@ fn summarize_conversation(items: &[ConversationItem]) -> String {
             _ => {}
         }
     }
+    if let Some(artifact) = history_artifact {
+        lines.push(String::new());
+        lines.push(format_artifact_reference(&ContextArtifactReference::from_artifact(
+            artifact,
+            "chat_history",
+        )));
+    }
     lines.join("\n")
 }
 
@@ -200,6 +253,7 @@ fn truncate(text: &str) -> String {
 mod tests {
     use std::sync::Arc;
 
+    use roder_api::artifacts::ContextArtifactKind;
     use roder_api::catalog::PROVIDER_MOCK;
     use roder_api::conversation::{AssistantMessage, UserMessage};
     use roder_api::extension::ExtensionRegistryBuilder;
@@ -227,6 +281,8 @@ mod tests {
                 policy_mode: roder_api::policy_mode::PolicyMode::Default,
                 remote_runner_destination: None,
                 team_data_dir: None,
+                session_dir: None,
+                context_artifact_dir: None,
             },
         )
         .unwrap();
@@ -265,6 +321,86 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn compact_conversation_preserves_chat_history_artifact_reference() {
+        let sessions_base =
+            std::env::temp_dir().join(format!("roder-compaction-sessions-{}", uuid::Uuid::new_v4()));
+        let mut builder = ExtensionRegistryBuilder::new();
+        builder.inference_engine(Arc::new(FakeInferenceEngine));
+        let runtime = Runtime::new(
+            builder.build().unwrap(),
+            RuntimeConfig {
+                default_provider: PROVIDER_MOCK.to_string(),
+                default_model: "mock".to_string(),
+                reasoning: None,
+                auto_compact_token_limit: Some(1),
+                hosted_web_search: roder_api::inference::HostedWebSearchConfig::disabled(),
+                model_edit_tools: std::collections::HashMap::new(),
+                model_parallel_tool_calls: std::collections::HashMap::new(),
+                workspace: None,
+                policy_mode: roder_api::policy_mode::PolicyMode::Default,
+                remote_runner_destination: None,
+                team_data_dir: None,
+                session_dir: Some(sessions_base.clone()),
+                context_artifact_dir: None,
+            },
+        )
+        .unwrap();
+        let mut events = runtime.subscribe_events();
+        let compacted = runtime
+            .compact_conversation_if_needed(
+                &"thread".to_string(),
+                &"turn".to_string(),
+                "mock",
+                vec![
+                    ConversationItem::UserMessage(UserMessage {
+                        text: "needle detail only in full history".to_string(),
+                        images: Vec::new(),
+                    }),
+                    ConversationItem::AssistantMessage(AssistantMessage {
+                        text: "old answer".to_string(),
+                        phase: None,
+                    }),
+                    ConversationItem::UserMessage(UserMessage {
+                        text: "current prompt".to_string(),
+                        images: Vec::new(),
+                    }),
+                ],
+            )
+            .await
+            .unwrap();
+
+        let ConversationItem::ContextCompaction(record) = &compacted[0] else {
+            panic!("expected compaction item");
+        };
+        assert!(record.summary.contains("[artifact: chat_history"));
+        assert!(record.summary.contains("read_artifact"));
+        let artifact_id = record
+            .artifact_id
+            .as_deref()
+            .expect("compaction should record chat-history artifact id");
+        assert_eq!(artifact_id, "history_turn");
+
+        let store = runtime.context_artifact_store_for_thread("thread");
+        let grep = store
+            .grep("thread", artifact_id, "needle detail only in full history")
+            .unwrap();
+        assert_eq!(grep.matches.len(), 1);
+
+        let mut saw_created = false;
+        while let Ok(envelope) = events.try_recv() {
+            if matches!(
+                envelope.event,
+                RoderEvent::ContextArtifactCreated(ref created)
+                    if created.artifact.kind == ContextArtifactKind::ChatHistory
+                        && created.artifact.id == artifact_id
+            ) {
+                saw_created = true;
+            }
+        }
+        assert!(saw_created, "expected ContextArtifactCreated for chat history");
+    }
+
+    #[tokio::test]
     async fn openai_server_side_compaction_models_skip_local_summary_compaction() {
         let mut builder = ExtensionRegistryBuilder::new();
         builder.inference_engine(Arc::new(FakeInferenceEngine));
@@ -282,6 +418,8 @@ mod tests {
                 policy_mode: roder_api::policy_mode::PolicyMode::Default,
                 remote_runner_destination: None,
                 team_data_dir: None,
+                session_dir: None,
+                context_artifact_dir: None,
             },
         )
         .unwrap();

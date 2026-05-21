@@ -1,0 +1,6 @@
+{"type":"user","text":"Please record the session UUID for turn 2 diagnostics."}
+{"type":"assistant","text":"I will store it in the next message."}
+{"type":"user","text":"Session UUID for turn 2: a1b2c3d4-e5f6-7890-abcd-ef1234567890"}
+{"type":"assistant","text":"Recorded the UUID for failover drill follow-up."}
+{"type":"tool_result","name":"update_notes","result":"ok"}
+{"type":"user","text":"What was the exact session UUID from turn 2?"}

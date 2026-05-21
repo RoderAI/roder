@@ -1,3 +1,4 @@
+mod artifacts;
 mod backend;
 mod edit;
 mod exec;
@@ -140,6 +141,10 @@ pub fn builtin_coding_tools_contributor(
     workspace: impl Into<PathBuf>,
 ) -> anyhow::Result<Arc<dyn ToolContributor>> {
     Ok(Arc::new(BuiltinCodingToolsContributor::new(workspace)?))
+}
+
+pub fn artifact_tools_contributor() -> Arc<dyn ToolContributor> {
+    Arc::new(artifacts::ArtifactToolsContributor)
 }
 
 pub fn builtin_coding_tools_contributor_with_path_scope(

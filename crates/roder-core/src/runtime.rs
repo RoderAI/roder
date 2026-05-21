@@ -51,6 +51,10 @@ pub struct RuntimeConfig {
     pub policy_mode: PolicyMode,
     pub remote_runner_destination: Option<RunnerDestination>,
     pub team_data_dir: Option<PathBuf>,
+    /// Active sessions root (e.g. `~/.roder/sessions`). Artifacts live under `{session_dir}/{thread_id}/artifacts/`.
+    pub session_dir: Option<PathBuf>,
+    /// Overrides per-session artifact layout when set (tests only).
+    pub context_artifact_dir: Option<PathBuf>,
 }
 
 impl Default for RuntimeConfig {
@@ -67,6 +71,8 @@ impl Default for RuntimeConfig {
             policy_mode: PolicyMode::Default,
             remote_runner_destination: None,
             team_data_dir: None,
+            session_dir: None,
+            context_artifact_dir: None,
         }
     }
 }
@@ -162,6 +168,29 @@ pub struct Runtime {
     teams: TeamManager,
     pub(crate) session_store: Option<Arc<dyn SessionStore>>,
     pub(crate) tool_registry: ToolRegistry,
+}
+
+impl Runtime {
+    pub fn context_artifact_store_for_thread(
+        &self,
+        thread_id: &str,
+    ) -> crate::artifacts::ContextArtifactStore {
+        crate::artifacts::ContextArtifactStore::new(self.context_artifact_dir_for_thread(thread_id))
+    }
+
+    pub fn context_artifact_dir_for_thread(&self, thread_id: &str) -> PathBuf {
+        if let Ok(config) = self.config.try_read() {
+            if let Some(dir) = config.context_artifact_dir.clone() {
+                return dir;
+            }
+            if let Some(sessions) = config.session_dir.clone() {
+                return crate::artifacts::session_artifact_dir(sessions, thread_id);
+            }
+        }
+        let sessions = crate::artifacts::default_sessions_dir()
+            .unwrap_or_else(|_| std::env::temp_dir().join("roder-sessions"));
+        crate::artifacts::session_artifact_dir(sessions, thread_id)
+    }
 }
 
 impl Runtime {
@@ -263,6 +292,7 @@ impl Runtime {
         mode: PolicyMode,
         workspace: Option<&str>,
     ) -> ToolExecutionContext {
+        let artifact_dir = self.context_artifact_dir_for_thread(&thread_id);
         let mut ctx = ToolExecutionContext::new(thread_id, turn_id, mode)
             .with_process_runner(Arc::new(LocalProcessRunner))
             .with_subagent_trace_sink(Arc::new(RuntimeSubagentTraceSink::new(
@@ -272,7 +302,7 @@ impl Runtime {
         if let Some(workspace) = workspace {
             ctx = ctx.with_workspace_handle(Arc::new(ScopedFilesystem::new(workspace)));
         }
-        ctx
+        ctx.with_context_artifact_dir(artifact_dir)
     }
 
     pub async fn status(&self) -> RuntimeConfig {

@@ -64,6 +64,8 @@ pub struct FileChangeRecord {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct ContextCompactionRecord {
     pub summary: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub artifact_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]

@@ -307,6 +307,7 @@ impl RoderExtension for BuiltinCodingToolsExtension {
                 self.path_scope,
             )?,
         );
+        registry.tool_contributor(roder_tools::artifact_tools_contributor());
         Ok(())
     }
 }

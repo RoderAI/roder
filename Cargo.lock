@@ -2507,6 +2507,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "roder-evals"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "roder-api",
+ "roder-core",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "roder-ext-anthropic"
 version = "0.1.0"
 dependencies = [
@@ -3102,11 +3113,13 @@ dependencies = [
  "base64",
  "dirs",
  "roder-api",
+ "roder-core",
  "roder-ext-runner-unix-local",
  "serde",
  "serde_json",
  "time",
  "tokio",
+ "uuid",
 ]
 
 [[package]]

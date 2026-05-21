@@ -1,0 +1,27 @@
+Command `npm run build` finished (exit 0).
+
+[artifact: command_stdout stdout cmd_build_001 lines=402 path=thread-eval/turn-1/cmd_build_001_stdout.txt]
+Use read_artifact or grep_artifact to inspect more.
+
+Tail snippet:
+[build] step 383 ok cache=hit duration_ms=93
+[build] step 384 ok cache=hit duration_ms=94
+[build] step 385 ok cache=hit duration_ms=95
+[build] step 386 ok cache=hit duration_ms=96
+[build] step 387 ok cache=hit duration_ms=97
+[build] step 388 ok cache=hit duration_ms=88
+[build] step 389 ok cache=hit duration_ms=89
+[build] step 390 ok cache=hit duration_ms=90
+[build] step 391 ok cache=hit duration_ms=91
+[build] step 392 ok cache=hit duration_ms=92
+[build] step 393 ok cache=hit duration_ms=93
+[build] step 394 ok cache=hit duration_ms=94
+[build] step 395 ok cache=hit duration_ms=95
+[build] step 396 ok cache=hit duration_ms=96
+[build] step 397 ok cache=hit duration_ms=97
+[build] step 398 ok cache=hit duration_ms=88
+[build] step 399 ok cache=hit duration_ms=89
+[build] step 400 ok cache=hit duration_ms=90
+[build] finished status=success
+
+The deployment token is not repeated inline. Grep the artifact for `RODER_DEPLOY_TOKEN`.

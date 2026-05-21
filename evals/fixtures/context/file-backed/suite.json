@@ -1,0 +1,9 @@
+{
+  "name": "file-backed-context",
+  "version": 1,
+  "description": "Offline evals for file-backed dynamic context: long command output and compaction history recovery.",
+  "fixtures": [
+    "long-command-secret-line/fixture.json",
+    "compaction-history-recovery/fixture.json"
+  ]
+}

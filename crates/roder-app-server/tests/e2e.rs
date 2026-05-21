@@ -8,6 +8,7 @@ use roder_api::catalog::{
 use roder_api::extension::{ExtensionRegistryBuilder, InferenceEngineId};
 use roder_api::inference::*;
 use roder_api::marketplace::MarketplaceInstallState;
+use roder_api::artifacts::ContextArtifactKind;
 use roder_api::media::{MediaDimensions, MediaGenerationRequest, MediaKind};
 use roder_api::memory::MemoryScope;
 use roder_api::plan_review::{
@@ -21,8 +22,8 @@ use roder_api::tasks::TaskState;
 use roder_app_server::remote::{RemoteServerOptions, RemoteToken, listen_remote_websocket};
 use roder_app_server::{AppServer, LocalAppClient};
 use roder_core::{
-    PendingPlanExit, Runtime, RuntimeConfig, fake_provider::FakeInferenceEngine,
-    media_artifacts::MediaArtifactStore,
+    PendingPlanExit, Runtime, RuntimeConfig, artifacts::ContextArtifactStore,
+    fake_provider::FakeInferenceEngine, media_artifacts::MediaArtifactStore,
 };
 use roder_ext_memory::MemoryExtension;
 use roder_ext_openai_embeddings::OpenAiEmbeddingsExtension;
@@ -42,7 +43,10 @@ use roder_protocol::{
     MarketplacesRemoveParams, MarketplacesRemoveResult, MarketplacesSearchParams,
     MarketplacesSearchResult, MediaAttachToTurnParams, MediaAttachToTurnResult, MediaDeleteParams,
     MediaDeleteResult, MediaListParams, MediaListResult, MediaReadParams, MediaReadResult,
-    MediaThumbnailParams, MediaThumbnailResult, MemoryDeleteParams, MemoryDeleteResult,
+    MediaThumbnailParams, MediaThumbnailResult, ArtifactDeleteParams, ArtifactDeleteResult,
+    ArtifactGrepMethodResult, ArtifactGrepParams, ArtifactListParams, ArtifactListResult,
+    ArtifactReadParams, ArtifactReadResult, ArtifactTailParams, ArtifactTailResult,
+    MemoryDeleteParams, MemoryDeleteResult,
     MemoryListParams, MemoryListResult, MemoryProviderListResult, MemoryQueryParams,
     MemoryQueryResult, MemoryReadParams, MemoryReadResult, MemoryRecallPreviewParams,
     MemoryRecallPreviewResult, MemorySaveParams, MemorySaveResult, MemoryUpdateParams,
@@ -1480,6 +1484,134 @@ async fn media_methods_read_thumbnail_attach_and_delete_artifacts() {
     )
     .await;
     assert!(deleted.deleted);
+}
+
+#[tokio::test]
+async fn artifact_methods_list_read_grep_tail_and_delete() {
+    let sessions_base = std::env::temp_dir().join(format!("roder-artifact-e2e-{}", uuid::Uuid::new_v4()));
+    let artifact_root = roder_core::artifacts::session_artifact_dir(&sessions_base, "thread-a");
+    let store = ContextArtifactStore::new(&artifact_root);
+    let body = (1..=40)
+        .map(|line| format!("line {line}"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    store
+        .write(
+            "thread-a",
+            "turn-b",
+            ContextArtifactKind::ToolOutput,
+            "call_42",
+            Some("grep"),
+            "stdout",
+            body.as_bytes(),
+        )
+        .unwrap();
+
+    let runtime = Arc::new(
+        Runtime::new(
+            build_default_registry(DefaultRegistryConfig::default()).unwrap(),
+            RuntimeConfig {
+                session_dir: Some(sessions_base),
+                ..RuntimeConfig::default()
+            },
+        )
+        .unwrap(),
+    );
+    let client = LocalAppClient::new(Arc::new(AppServer::new(runtime)));
+
+    let listed: ArtifactListResult = request(
+        &client,
+        "artifact/list",
+        Some(
+            serde_json::to_value(ArtifactListParams {
+                thread_id: "thread-a".to_string(),
+            })
+            .unwrap(),
+        ),
+    )
+    .await;
+    assert_eq!(listed.artifacts.len(), 1);
+    assert_eq!(listed.artifacts[0].id, "call_42");
+
+    let read: ArtifactReadResult = request(
+        &client,
+        "artifact/read",
+        Some(
+            serde_json::to_value(ArtifactReadParams {
+                thread_id: "thread-a".to_string(),
+                artifact_id: "call_42".to_string(),
+                start_line: Some(1),
+                limit: Some(5),
+            })
+            .unwrap(),
+        ),
+    )
+    .await;
+    assert_eq!(read.page.line_count, 5);
+    assert_eq!(read.page.next_start_line, Some(6));
+
+    let grep: ArtifactGrepMethodResult = request(
+        &client,
+        "artifact/grep",
+        Some(
+            serde_json::to_value(ArtifactGrepParams {
+                thread_id: "thread-a".to_string(),
+                artifact_id: "call_42".to_string(),
+                pattern: "line 33".to_string(),
+            })
+            .unwrap(),
+        ),
+    )
+    .await;
+    assert_eq!(grep.result.matches.len(), 1);
+    assert_eq!(grep.result.matches[0].line_number, 33);
+
+    let tail: ArtifactTailResult = request(
+        &client,
+        "artifact/tail",
+        Some(
+            serde_json::to_value(ArtifactTailParams {
+                thread_id: "thread-a".to_string(),
+                artifact_id: "call_42".to_string(),
+                lines: Some(3),
+            })
+            .unwrap(),
+        ),
+    )
+    .await;
+    assert!(tail.text.contains("line 40"));
+
+    let cross_thread = request_error(
+        &client,
+        "artifact/read",
+        Some(
+            serde_json::to_value(ArtifactReadParams {
+                thread_id: "thread-b".to_string(),
+                artifact_id: "call_42".to_string(),
+                start_line: None,
+                limit: None,
+            })
+            .unwrap(),
+        ),
+    )
+    .await;
+    assert!(cross_thread.message.contains("thread-a"));
+
+    let deleted: ArtifactDeleteResult = request(
+        &client,
+        "artifact/delete",
+        Some(
+            serde_json::to_value(ArtifactDeleteParams {
+                thread_id: "thread-a".to_string(),
+                artifact_id: "call_42".to_string(),
+            })
+            .unwrap(),
+        ),
+    )
+    .await;
+    assert!(deleted.deleted);
+
+    let _ = std::fs::remove_dir_all(root);
 }
 
 #[tokio::test]
