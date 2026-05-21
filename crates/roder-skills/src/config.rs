@@ -31,6 +31,23 @@ pub struct AppliedSkillConfig {
 }
 
 impl SkillConfigRule {
+    pub fn from_selector(selector: SkillSelector) -> Self {
+        match selector {
+            SkillSelector::Name { name } => Self {
+                name: Some(name),
+                path: None,
+                enabled: None,
+                exposure: None,
+            },
+            SkillSelector::Path { path } => Self {
+                name: None,
+                path: Some(path),
+                enabled: None,
+                exposure: None,
+            },
+        }
+    }
+
     pub fn selector(&self) -> Option<SkillSelector> {
         if let Some(path) = &self.path {
             return Some(SkillSelector::Path { path: path.clone() });
@@ -38,6 +55,14 @@ impl SkillConfigRule {
         self.name
             .as_ref()
             .map(|name| SkillSelector::Name { name: name.clone() })
+    }
+
+    pub fn set_enabled(&mut self, enabled: bool) {
+        self.enabled = Some(enabled);
+    }
+
+    pub fn set_exposure(&mut self, exposure: SkillExposure) {
+        self.exposure = Some(exposure);
     }
 
     fn matches(&self, descriptor: &SkillDescriptor) -> bool {
@@ -48,6 +73,26 @@ impl SkillConfigRule {
                 .name
                 .as_ref()
                 .is_some_and(|name| name == &descriptor.name)
+    }
+}
+
+impl SkillsConfig {
+    pub fn upsert_rule(
+        &mut self,
+        selector: SkillSelector,
+        update: impl FnOnce(&mut SkillConfigRule),
+    ) {
+        if let Some(rule) = self
+            .config
+            .iter_mut()
+            .find(|rule| rule.selector() == Some(selector.clone()))
+        {
+            update(rule);
+            return;
+        }
+        let mut rule = SkillConfigRule::from_selector(selector);
+        update(&mut rule);
+        self.config.push(rule);
     }
 }
 
@@ -151,5 +196,26 @@ enabled = false
                 name: "commit".to_string()
             })
         );
+    }
+
+    #[test]
+    fn config_upserts_rules_by_selector() {
+        let mut config = SkillsConfig::default();
+        config.upsert_rule(
+            SkillSelector::Name {
+                name: "commit".to_string(),
+            },
+            |rule| rule.set_enabled(false),
+        );
+        config.upsert_rule(
+            SkillSelector::Name {
+                name: "commit".to_string(),
+            },
+            |rule| rule.set_exposure(SkillExposure::Global),
+        );
+
+        assert_eq!(config.config.len(), 1);
+        assert_eq!(config.config[0].enabled, Some(false));
+        assert_eq!(config.config[0].exposure, Some(SkillExposure::Global));
     }
 }

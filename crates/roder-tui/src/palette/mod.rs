@@ -1,10 +1,12 @@
 pub mod index;
 pub mod render;
+pub mod skills;
 pub mod sources;
 
 use roder_api::events::ThreadId;
 use roder_api::inference::HostedWebSearchMode;
 use roder_api::policy_mode::PolicyMode;
+use roder_api::skills::{SkillExposure, SkillSelector};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PaletteItem {
@@ -26,6 +28,14 @@ pub enum PaletteAction {
     SetPolicyMode(PolicyMode),
     SetWebSearchMode(HostedWebSearchMode),
     SetSearchIndexEnabled(bool),
+    SetSkillEnabled {
+        selector: SkillSelector,
+        enabled: bool,
+    },
+    SetSkillExposure {
+        selector: SkillSelector,
+        exposure: SkillExposure,
+    },
     SelectRunner {
         destination_id: String,
         provider_id: String,

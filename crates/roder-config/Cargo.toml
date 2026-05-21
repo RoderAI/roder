@@ -7,6 +7,7 @@ edition.workspace = true
 anyhow.workspace = true
 dirs.workspace = true
 roder-api.workspace = true
+roder-skills.workspace = true
 reqwest = { workspace = true, features = ["blocking", "json"] }
 serde = { workspace = true, features = ["derive"] }
 serde_json.workspace = true
