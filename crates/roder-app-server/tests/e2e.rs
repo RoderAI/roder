@@ -78,7 +78,9 @@ use roder_protocol::{
     PluginDisableParams, PluginDisableResult, PluginInstallAllVariantsParams,
     PluginInstallAllVariantsResult, PluginInstallParams, PluginInstallResult,
     PluginListInstalledResult, PluginPreviewInstallParams, PluginPreviewInstallResult,
-    PluginUninstallParams, PluginUninstallResult, ProviderAuthResult, ProviderSelectParams,
+    PluginUninstallParams, PluginUninstallResult, ProcessesGetParams, ProcessesGetResult,
+    ProcessesListParams, ProcessesListResult, ProcessesStopAllParams, ProcessesStopAllResult,
+    ProcessesStopParams, ProcessesStopResult, ProviderAuthResult, ProviderSelectParams,
     ProviderSelectResult, ProvidersListResult, RetrievalMetricsResult, RetrievalPromotedResult,
     RetrievalRecommendationsResult, RetrievalTurnParams, RunnersDeleteResult, RunnersListResult,
     RunnersSelectParams, RunnersSelectResult, RunnersSessionResult, SearchIndexClearParams,
@@ -4361,6 +4363,247 @@ async fn tasks_submit_list_get_and_events_observe_process_task() {
             .collect::<String>(),
         "task-ok"
     );
+}
+
+#[tokio::test]
+async fn processes_list_get_stop_and_subscribe_for_process_task() {
+    let workspace =
+        std::env::temp_dir().join(format!("roder-app-server-process-{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir_all(&workspace).unwrap();
+    let registry = build_default_registry(DefaultRegistryConfig {
+        workspace: Some(workspace.clone()),
+        ..DefaultRegistryConfig::default()
+    })
+    .unwrap();
+    let runtime = Arc::new(Runtime::new(registry, Default::default()).unwrap());
+    let server = Arc::new(AppServer::new(runtime));
+    let client = LocalAppClient::new(server);
+
+    let subscribed: roder_protocol::ProcessesSubscribeResult =
+        request(&client, "processes/subscribe", None).await;
+    assert!(subscribed.subscribed);
+    assert!(
+        subscribed
+            .event_kinds
+            .iter()
+            .any(|kind| kind == "process.started")
+    );
+
+    let submitted: TasksSubmitResult = request(
+        &client,
+        "tasks/submit",
+        Some(
+            serde_json::to_value(TasksSubmitParams {
+                executor_id: "process".to_string(),
+                input: serde_json::json!({
+                    "command": "sh",
+                    "args": ["-c", "printf 'process-ready\n'; sleep 5"],
+                    "cwd": ".",
+                }),
+                thread_id: Some("thread-process".to_string()),
+                turn_id: Some("turn-process".to_string()),
+                workspace: Some(workspace.display().to_string()),
+            })
+            .unwrap(),
+        ),
+    )
+    .await;
+
+    let process = wait_for_process_by_task(&client, &submitted.task.task_id).await;
+    assert_eq!(
+        process.task_id.as_deref(),
+        Some(submitted.task.task_id.as_str())
+    );
+    assert_eq!(process.thread_id.as_deref(), Some("thread-process"));
+    assert!(process.stoppable);
+
+    let detail: ProcessesGetResult = request(
+        &client,
+        "processes/get",
+        Some(
+            serde_json::to_value(ProcessesGetParams {
+                process_id: process.process_id.clone(),
+                output_bytes: Some(4096),
+            })
+            .unwrap(),
+        ),
+    )
+    .await;
+    assert_eq!(
+        detail.process.as_ref().unwrap().process_id,
+        process.process_id
+    );
+    let mut saw_output = false;
+    for _ in 0..50 {
+        let detail: ProcessesGetResult = request(
+            &client,
+            "processes/get",
+            Some(
+                serde_json::to_value(ProcessesGetParams {
+                    process_id: process.process_id.clone(),
+                    output_bytes: Some(4096),
+                })
+                .unwrap(),
+            ),
+        )
+        .await;
+        if detail
+            .output
+            .iter()
+            .any(|output| output.chunk.contains("process-ready"))
+        {
+            saw_output = true;
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    assert!(saw_output, "process output tail missing process-ready");
+
+    let stopped: ProcessesStopResult = request(
+        &client,
+        "processes/stop",
+        Some(
+            serde_json::to_value(ProcessesStopParams {
+                process_id: process.process_id.clone(),
+                reason: Some("test stop".to_string()),
+            })
+            .unwrap(),
+        ),
+    )
+    .await;
+    assert!(stopped.result.stopped);
+
+    for _ in 0..50 {
+        let detail: ProcessesGetResult = request(
+            &client,
+            "processes/get",
+            Some(
+                serde_json::to_value(ProcessesGetParams {
+                    process_id: process.process_id.clone(),
+                    output_bytes: Some(4096),
+                })
+                .unwrap(),
+            ),
+        )
+        .await;
+        if let Some(process) = detail.process.as_ref()
+            && matches!(process.state, roder_api::processes::ProcessState::Stopped)
+        {
+            return;
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    panic!("process did not stop");
+}
+
+#[tokio::test]
+async fn processes_stop_all_stops_multiple_running_processes() {
+    let workspace = std::env::temp_dir().join(format!(
+        "roder-app-server-stop-all-{}",
+        uuid::Uuid::new_v4()
+    ));
+    std::fs::create_dir_all(&workspace).unwrap();
+    let registry = build_default_registry(DefaultRegistryConfig {
+        workspace: Some(workspace.clone()),
+        ..DefaultRegistryConfig::default()
+    })
+    .unwrap();
+    let runtime = Arc::new(Runtime::new(registry, Default::default()).unwrap());
+    let server = Arc::new(AppServer::new(runtime));
+    let client = LocalAppClient::new(server);
+
+    let first: TasksSubmitResult = request(
+        &client,
+        "tasks/submit",
+        Some(
+            serde_json::to_value(TasksSubmitParams {
+                executor_id: "process".to_string(),
+                input: serde_json::json!({
+                    "command": "sh",
+                    "args": ["-c", "sleep 5"],
+                    "cwd": ".",
+                }),
+                thread_id: None,
+                turn_id: None,
+                workspace: Some(workspace.display().to_string()),
+            })
+            .unwrap(),
+        ),
+    )
+    .await;
+    let second: TasksSubmitResult = request(
+        &client,
+        "tasks/submit",
+        Some(
+            serde_json::to_value(TasksSubmitParams {
+                executor_id: "process".to_string(),
+                input: serde_json::json!({
+                    "command": "sh",
+                    "args": ["-c", "sleep 5"],
+                    "cwd": ".",
+                }),
+                thread_id: None,
+                turn_id: None,
+                workspace: Some(workspace.display().to_string()),
+            })
+            .unwrap(),
+        ),
+    )
+    .await;
+    let first_process = wait_for_process_by_task(&client, &first.task.task_id).await;
+    let second_process = wait_for_process_by_task(&client, &second.task.task_id).await;
+
+    let stopped: ProcessesStopAllResult = request(
+        &client,
+        "processes/stopAll",
+        Some(
+            serde_json::to_value(ProcessesStopAllParams {
+                reason: Some("test stop all".to_string()),
+            })
+            .unwrap(),
+        ),
+    )
+    .await;
+    assert!(
+        stopped
+            .results
+            .iter()
+            .any(|result| { result.process_id == first_process.process_id && result.stopped })
+    );
+    assert!(
+        stopped
+            .results
+            .iter()
+            .any(|result| { result.process_id == second_process.process_id && result.stopped })
+    );
+}
+
+async fn wait_for_process_by_task(
+    client: &LocalAppClient,
+    task_id: &str,
+) -> roder_api::processes::ProcessDescriptor {
+    for _ in 0..50 {
+        let listed: ProcessesListResult = request(
+            client,
+            "processes/list",
+            Some(
+                serde_json::to_value(ProcessesListParams {
+                    include_completed: true,
+                })
+                .unwrap(),
+            ),
+        )
+        .await;
+        if let Some(process) = listed
+            .processes
+            .into_iter()
+            .find(|process| process.task_id.as_deref() == Some(task_id))
+        {
+            return process;
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    panic!("process for task {task_id} not found");
 }
 
 #[tokio::test]

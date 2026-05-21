@@ -502,6 +502,45 @@ impl AppServer {
                 .await
             }
             "tasks/subscribe" => self.handle_tasks_subscribe().await,
+            "processes/list" => {
+                match req
+                    .params
+                    .map(serde_json::from_value::<ProcessesListParams>)
+                    .transpose()
+                    .map_err(invalid_params)
+                {
+                    Ok(params) => self.handle_processes_list(params.unwrap_or_default()).await,
+                    Err(err) => Err(err),
+                }
+            }
+            "processes/get" => {
+                self.decode_and(
+                    req.params,
+                    |p| async move { self.handle_processes_get(p).await },
+                )
+                .await
+            }
+            "processes/stop" => {
+                self.decode_and(req.params, |p| async move {
+                    self.handle_processes_stop(p).await
+                })
+                .await
+            }
+            "processes/stopAll" => {
+                match req
+                    .params
+                    .map(serde_json::from_value::<ProcessesStopAllParams>)
+                    .transpose()
+                    .map_err(invalid_params)
+                {
+                    Ok(params) => {
+                        self.handle_processes_stop_all(params.unwrap_or_default())
+                            .await
+                    }
+                    Err(err) => Err(err),
+                }
+            }
+            "processes/subscribe" => self.handle_processes_subscribe().await,
             "automations/list" => {
                 match req
                     .params

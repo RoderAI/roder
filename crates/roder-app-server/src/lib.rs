@@ -11,6 +11,7 @@ mod evals;
 mod fs;
 mod marketplaces;
 mod notifications;
+mod processes;
 pub mod remote;
 mod retrieval;
 mod search_index;

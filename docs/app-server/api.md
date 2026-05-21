@@ -208,6 +208,11 @@ Tools, commands, files, agents, and tasks:
 | `tasks/get` | Read task handle plus logs. |
 | `tasks/cancel` | Cancel a task. |
 | `tasks/subscribe` | Return supported task event kinds. |
+| `processes/list` | List Roder-owned local and remote processes. |
+| `processes/get` | Read one process descriptor plus output tail. |
+| `processes/stop` | Stop one Roder-owned process. |
+| `processes/stopAll` | Stop every stoppable Roder-owned process. |
+| `processes/subscribe` | Return supported process event kinds. |
 | `automations/status` | Read scheduler ownership, store path, and run counters. |
 | `automations/list` | List automation definitions. |
 | `automations/create` | Register a scheduled Roder run. |
@@ -1307,6 +1312,74 @@ Errors:
   ]
 }
 ```
+
+### `processes/list`, `processes/get`, `processes/stop`, `processes/stopAll`, `processes/subscribe`
+
+Purpose: inspect and control processes spawned by Roder. This surface only reports Roder-owned processes from `command/exec`, process-backed background tasks, and remote runner commands. It does not enumerate arbitrary host OS processes, and local OS PIDs are metadata only; clients must use `processId`.
+
+List active processes:
+
+```json
+{
+  "method": "processes/list",
+  "params": { "includeCompleted": false }
+}
+```
+
+Read one process and its retained output tail:
+
+```json
+{
+  "method": "processes/get",
+  "params": { "processId": "task-abc123", "outputBytes": 4096 }
+}
+```
+
+Stop one process:
+
+```json
+{
+  "method": "processes/stop",
+  "params": { "processId": "task-abc123", "reason": "user requested stop" }
+}
+```
+
+Stop all active stoppable processes:
+
+```json
+{
+  "method": "processes/stopAll",
+  "params": { "reason": "workspace cleanup" }
+}
+```
+
+`processes/subscribe` returns these event kinds:
+
+```json
+{
+  "subscribed": true,
+  "eventKinds": [
+    "process.started",
+    "process.output",
+    "process.exited",
+    "process.stopping",
+    "process.stopped",
+    "process.failed"
+  ]
+}
+```
+
+Retention:
+
+- `processes/list` returns active processes by default.
+- Pass `includeCompleted: true` to include retained terminal descriptors.
+- Completed descriptors and output tails are bounded by the process registry retention limits.
+
+Remote runner semantics:
+
+- Remote process descriptors include `runnerDestinationId` and `runnerSessionId`.
+- Remote stops call the runner provider cancellation API through `cancel_command`.
+- Remote stops never attempt to kill local host PIDs.
 
 ### `runners/list`
 
