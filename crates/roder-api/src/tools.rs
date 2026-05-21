@@ -11,12 +11,21 @@ use crate::extension::ToolProviderId;
 use crate::media::{MediaGenerationRequest, MediaGenerationResponse};
 use crate::policy_mode::PolicyMode;
 use crate::trace::SubagentTraceSink;
+use crate::{ToolSchemaPolicy, normalize_tool_schema};
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct ToolSpec {
     pub name: String,
     pub description: String,
     pub parameters: serde_json::Value,
+}
+
+impl ToolSpec {
+    pub fn normalized_for_model(&self, policy: ToolSchemaPolicy) -> Self {
+        let mut spec = self.clone();
+        spec.parameters = normalize_tool_schema(&spec.name, &spec.parameters, policy).schema;
+        spec
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -190,7 +199,13 @@ impl ToolRegistry {
     }
 
     pub fn specs(&self) -> Vec<ToolSpec> {
-        self.tools.values().map(|tool| tool.spec()).collect()
+        self.tools
+            .values()
+            .map(|tool| {
+                tool.spec()
+                    .normalized_for_model(ToolSchemaPolicy::warning())
+            })
+            .collect()
     }
 
     pub fn specs_for_edit_tool(&self, edit_tool: Option<&str>) -> Vec<ToolSpec> {
@@ -198,6 +213,7 @@ impl ToolRegistry {
             .values()
             .map(|tool| tool.spec())
             .filter(|spec| keep_tool_for_edit_tool(&spec.name, edit_tool))
+            .map(|spec| spec.normalized_for_model(ToolSchemaPolicy::strict()))
             .collect()
     }
 
