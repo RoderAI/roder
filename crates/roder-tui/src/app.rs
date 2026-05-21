@@ -34,27 +34,17 @@ mod turn_timer;
 mod workflow_import;
 
 use std::collections::{HashMap, HashSet};
-use std::io;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
 use base64::Engine;
-#[cfg(any(test, not(windows)))]
+#[cfg(test)]
 use crossterm::event::KeyboardEnhancementFlags;
-#[cfg(not(windows))]
-use crossterm::event::{PopKeyboardEnhancementFlags, PushKeyboardEnhancementFlags};
-use crossterm::{
-    event::{
-        self, DisableBracketedPaste, DisableMouseCapture, EnableBracketedPaste, EnableMouseCapture,
-        Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseButton, MouseEvent,
-        MouseEventKind,
-    },
-    execute,
-    terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
+use crossterm::event::{
+    Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
 };
 use ratatui::{
-    Frame, Terminal,
-    backend::CrosstermBackend,
+    Frame,
     buffer::Buffer,
     layout::{Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
@@ -92,6 +82,11 @@ use tui_textarea::TextArea;
 
 use self::commands::built_in_command_catalog;
 use crate::roadmap::RoadmapModeState;
+#[cfg(test)]
+use crate::runtime_io::keyboard_enhancement_flags;
+use crate::runtime_io::{
+    CrosstermInputSource, SystemClock, TerminalSession, TuiClock, TuiInputSource,
+};
 use composer::{
     ComposerKeyAction, composer_mode, composer_text, composer_textarea, handle_composer_key,
     shell_command_from_input, style_composer_for_current_mode,
@@ -117,41 +112,8 @@ const MAX_VISIBLE_SLASH_COMMANDS: usize = 8;
 const COPIED_HELPER_LABEL: &str = "Copied to clipboard";
 const COPIED_HELPER_DURATION: Duration = Duration::from_secs(2);
 
-#[cfg(any(test, not(windows)))]
-fn keyboard_enhancement_flags() -> KeyboardEnhancementFlags {
-    KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES
-        | KeyboardEnhancementFlags::REPORT_ALL_KEYS_AS_ESCAPE_CODES
-}
-
 fn should_handle_key_event(key: KeyEvent) -> bool {
     matches!(key.kind, KeyEventKind::Press | KeyEventKind::Repeat)
-}
-
-#[cfg(not(windows))]
-fn push_keyboard_enhancements<W: io::Write>(writer: &mut W) -> io::Result<bool> {
-    execute!(
-        writer,
-        PushKeyboardEnhancementFlags(keyboard_enhancement_flags())
-    )?;
-    Ok(true)
-}
-
-#[cfg(windows)]
-fn push_keyboard_enhancements<W: io::Write>(_writer: &mut W) -> io::Result<bool> {
-    Ok(false)
-}
-
-#[cfg(not(windows))]
-fn pop_keyboard_enhancements<W: io::Write>(writer: &mut W, active: bool) -> io::Result<()> {
-    if active {
-        execute!(writer, PopKeyboardEnhancementFlags)?;
-    }
-    Ok(())
-}
-
-#[cfg(windows)]
-fn pop_keyboard_enhancements<W: io::Write>(_writer: &mut W, _active: bool) -> io::Result<()> {
-    Ok(())
 }
 
 fn pending_turn_input(text: String, images: Vec<InputImage>) -> Vec<TurnInputItem> {
@@ -1366,29 +1328,21 @@ impl TuiApp {
     }
 
     pub async fn run(&mut self) -> anyhow::Result<()> {
-        enable_raw_mode()?;
-        let mut stdout = io::stdout();
-        execute!(
-            stdout,
-            EnterAlternateScreen,
-            EnableBracketedPaste,
-            EnableMouseCapture,
-        )?;
-        let keyboard_enhancements_active = push_keyboard_enhancements(&mut stdout)?;
-        let backend = CrosstermBackend::new(stdout);
-        let mut terminal = Terminal::new(backend)?;
+        let mut session = TerminalSession::enter()?;
+        let mut input = CrosstermInputSource;
+        let clock = SystemClock;
 
         let mut rx = self.client.subscribe_events();
-        let mut next_animation_tick = Instant::now() + top_status_animation_interval();
+        let mut next_animation_tick = clock.now() + top_status_animation_interval();
 
         loop {
-            let now = Instant::now();
+            let now = clock.now();
             advance_top_status_animation(&mut self.animation_frame, &mut next_animation_tick, now);
-            self.tick_streaming_animations(now, terminal.size()?.width);
-            terminal.draw(|f| self.render(f))?;
+            self.tick_streaming_animations(now, session.terminal_mut().size()?.width);
+            session.terminal_mut().draw(|f| self.render(f))?;
 
-            if event::poll(self.animation_poll_timeout(next_animation_tick, Instant::now()))? {
-                match event::read()? {
+            if input.poll(self.animation_poll_timeout(next_animation_tick, clock.now()))? {
+                match input.read()? {
                     Event::Key(key) => {
                         if !should_handle_key_event(key) {
                             continue;
@@ -1608,7 +1562,7 @@ impl TuiApp {
                 match envelope.event {
                     RoderEvent::TurnStarted(ev) => {
                         self.active_turn_id = Some(ev.turn_id);
-                        self.active_turn_timer.start(Instant::now());
+                        self.active_turn_timer.start(clock.now());
                         self.current_turn_input_tokens = 0;
                         self.current_turn_output_tokens = 0;
                         self.current_turn_reasoning_tokens = None;
@@ -1619,7 +1573,7 @@ impl TuiApp {
                         if self.active_turn_id.as_deref() == Some(&ev.turn_id) =>
                     {
                         self.flush_streaming_animation_for_thread(&ev.thread_id);
-                        let elapsed = self.active_turn_timer.finish(Instant::now());
+                        let elapsed = self.active_turn_timer.finish(clock.now());
                         self.active_turn_id = None;
                         self.timeline.push_turn_completed(TurnCompletedSummary {
                             elapsed,
@@ -1731,7 +1685,7 @@ impl TuiApp {
                     },
                     RoderEvent::ApprovalRequested(ev) => {
                         if self.active_turn_id.as_deref() == Some(&ev.turn_id) {
-                            self.active_turn_timer.pause(Instant::now());
+                            self.active_turn_timer.pause(clock.now());
                         }
                         self.record_tool_requested_with_id(
                             ev.tool_id,
@@ -1747,7 +1701,7 @@ impl TuiApp {
                     RoderEvent::ApprovalResolved(ev) => {
                         self.clear_tool_approval_dialog(&ev.approval_id);
                         if self.active_turn_id.as_deref() == Some(&ev.turn_id) {
-                            self.active_turn_timer.resume(Instant::now());
+                            self.active_turn_timer.resume(clock.now());
                         }
                         if !ev.approved {
                             self.record_tool_completed(&ev.tool_id, true, None);
@@ -1843,15 +1797,7 @@ impl TuiApp {
             }
         }
 
-        disable_raw_mode()?;
-        execute!(
-            terminal.backend_mut(),
-            DisableBracketedPaste,
-            DisableMouseCapture,
-        )?;
-        pop_keyboard_enhancements(terminal.backend_mut(), keyboard_enhancements_active)?;
-        execute!(terminal.backend_mut(), LeaveAlternateScreen)?;
-        terminal.show_cursor()?;
+        session.restore()?;
 
         Ok(())
     }
@@ -3225,8 +3171,7 @@ impl TuiApp {
         ]));
         lines.extend(visible);
 
-        Paragraph::new(Text::from(lines))
-            .style(self.theme.text())
+        Paragraph::new(Text::from(lines)).style(self.theme.text())
     }
 
     fn slash_command_preview(&self, matches: Option<&[CommandDescriptor]>) -> Paragraph<'static> {
@@ -3252,8 +3197,7 @@ impl TuiApp {
         if let Some(warning) = commands::command_warning(command) {
             spans.push(Span::styled(format!("  {warning}"), self.theme.shell()));
         }
-        Paragraph::new(Line::from(spans))
-            .style(self.theme.text())
+        Paragraph::new(Line::from(spans)).style(self.theme.text())
     }
 
     fn footer(&self, width: u16) -> Paragraph<'static> {

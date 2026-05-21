@@ -26,19 +26,27 @@ struct RecorderState {
 
 impl TranscriptRecorder {
     pub fn push(&self, record: ApiTranscriptRecord) -> anyhow::Result<()> {
-        let mut state = self.state.lock().expect("transcript recorder mutex poisoned");
+        let mut state = self
+            .state
+            .lock()
+            .expect("transcript recorder mutex poisoned");
         write_jsonl_record(&mut state.jsonl, &record)?;
         state.records.push(record);
         Ok(())
     }
 
     pub fn next_seq_at_ms(&self) -> (u64, u64) {
-        let mut state = self.state.lock().expect("transcript recorder mutex poisoned");
+        let mut state = self
+            .state
+            .lock()
+            .expect("transcript recorder mutex poisoned");
         let started_at = *state.started_at.get_or_insert_with(Instant::now);
         state.next_seq = state.next_seq.saturating_add(1);
         (
             state.next_seq,
-            Instant::now().saturating_duration_since(started_at).as_millis() as u64,
+            Instant::now()
+                .saturating_duration_since(started_at)
+                .as_millis() as u64,
         )
     }
 
@@ -309,7 +317,11 @@ mod tests {
                 roder_api_transcript::ApiTranscriptKind::ApiNotification,
             ]
         );
-        assert!(String::from_utf8(recorder.jsonl()).unwrap().contains("session/get"));
+        assert!(
+            String::from_utf8(recorder.jsonl())
+                .unwrap()
+                .contains("session/get")
+        );
     }
 
     #[tokio::test]
@@ -373,4 +385,3 @@ mod tests {
         }
     }
 }
-

@@ -12,4 +12,3 @@ pub use format::{
 pub use reader::{ApiTranscriptReader, read_jsonl_records};
 pub use redaction::{RedactionRule, RedactionSummary, TranscriptRedactor};
 pub use writer::{ApiTranscriptWriter, write_jsonl_record};
-

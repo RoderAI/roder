@@ -239,7 +239,10 @@ mod tests {
             summary.redacted_fields,
             vec!["$/request/params/command".to_string()]
         );
-        assert!(!serde_json::to_string(&value).unwrap().contains("raw-command-token"));
+        assert!(
+            !serde_json::to_string(&value)
+                .unwrap()
+                .contains("raw-command-token")
+        );
     }
 }
-
