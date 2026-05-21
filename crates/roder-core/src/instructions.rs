@@ -1,4 +1,6 @@
-use roder_api::inference::{InstructionBundle, RuntimeProfile};
+use roder_api::inference::{
+    InstructionBundle, ModelHarnessProfile, ModelInstructionOverlay, RuntimeProfile,
+};
 
 pub const RODER_INSTRUCTIONS: &str = r#"You are Roder, a Rust-native coding agent running inside a terminal TUI on a user's computer.
 
@@ -60,6 +62,14 @@ const TASK_LEDGER_REQUIRED_INSTRUCTIONS: &str = r#"## Task Ledger Required
 
 This eval task is decomposed work. Create and maintain a task ledger with `task_ledger.update` before risky work starts, keep exactly one item in progress, and include evidence when marking items completed."#;
 
+const LITERAL_TOOL_OUTPUTS_OVERLAY: &str = r#"## Model Harness Profile
+
+Tool outputs are literal evidence from the harness. Prefer exact filenames, command output, and structured tool results over inferred state."#;
+
+const INTUITIVE_CONTEXT_OVERLAY: &str = r#"## Model Harness Profile
+
+Use the provided context as the current working set. Ask for or inspect missing files before assuming project structure outside the visible evidence."#;
+
 pub fn apply_runtime_profile(
     mut instructions: InstructionBundle,
     profile: RuntimeProfile,
@@ -82,6 +92,22 @@ pub fn apply_task_ledger_required(mut instructions: InstructionBundle) -> Instru
             format!("{existing}\n\n{TASK_LEDGER_REQUIRED_INSTRUCTIONS}")
         }
         _ => TASK_LEDGER_REQUIRED_INSTRUCTIONS.to_string(),
+    });
+    instructions
+}
+
+pub fn apply_model_instruction_overlay(
+    mut instructions: InstructionBundle,
+    profile: &ModelHarnessProfile,
+) -> InstructionBundle {
+    let addition = match profile.instruction_overlay {
+        ModelInstructionOverlay::Standard => return instructions,
+        ModelInstructionOverlay::LiteralToolOutputs => LITERAL_TOOL_OUTPUTS_OVERLAY,
+        ModelInstructionOverlay::IntuitiveContext => INTUITIVE_CONTEXT_OVERLAY,
+    };
+    instructions.developer = Some(match instructions.developer {
+        Some(existing) if !existing.trim().is_empty() => format!("{existing}\n\n{addition}"),
+        _ => addition.to_string(),
     });
     instructions
 }
