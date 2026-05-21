@@ -82,6 +82,9 @@ fn merge_display_fields(payload: &mut Map<String, Value>, source: Option<&Value>
         "pattern",
         "regex",
         "glob",
+        "command",
+        "cmd",
+        "shell_command",
         "name",
         "displayName",
         "skill",
@@ -147,6 +150,7 @@ mod tests {
             Some("write_file"),
             Some(&json!({
                 "path": "src/lib.rs",
+                "command": "cargo test",
                 "content": "do not persist me",
                 "query": "needle",
                 "api_key": "secret"
@@ -161,6 +165,7 @@ mod tests {
         .expect("display payload");
 
         assert_eq!(payload["path"], "src/main.rs");
+        assert_eq!(payload["command"], "cargo test");
         assert_eq!(payload["query"], "needle");
         assert_eq!(payload["shown"], 4);
         assert_eq!(payload["truncated"], false);
