@@ -41,6 +41,10 @@ pub struct EvalTrajectoryEvent {
     pub token_usage: Option<EvalTokenUsage>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub runtime_profile: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub speed_policy_phase: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub speed_policy_reasoning: Option<String>,
     #[serde(default)]
     pub is_error: bool,
 }
@@ -136,12 +140,18 @@ impl EvalTrajectoryEvent {
                 event.runtime_profile = Some(e.runtime_profile.as_str().to_string());
                 Some(event)
             }
-            RoderEvent::InferenceStarted(e) => Some(Self::basic(
-                "inference_started",
-                &e.thread_id,
-                &e.turn_id,
-                e.timestamp,
-            )),
+            RoderEvent::InferenceStarted(e) => {
+                let mut event =
+                    Self::basic("inference_started", &e.thread_id, &e.turn_id, e.timestamp);
+                if let Some(decision) = &e.speed_policy {
+                    event.speed_policy_phase = Some(decision.phase.as_str().to_string());
+                    event.speed_policy_reasoning = decision
+                        .applied_reasoning
+                        .clone()
+                        .or_else(|| Some(decision.desired_reasoning.clone()));
+                }
+                Some(event)
+            }
             RoderEvent::ContextAssemblyCompleted(e) => Some(Self::basic(
                 "context_assembly_completed",
                 &e.thread_id,
@@ -263,6 +273,8 @@ impl EvalTrajectoryEvent {
             tool_name: None,
             token_usage: None,
             runtime_profile: None,
+            speed_policy_phase: None,
+            speed_policy_reasoning: None,
             is_error: false,
         }
     }

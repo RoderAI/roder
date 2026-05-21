@@ -831,6 +831,17 @@ pub fn lookup_model(id: &str) -> Option<&'static ModelCatalogEntry> {
     BUILT_IN_MODELS.iter().find(|model| model.id == id)
 }
 
+pub fn model_supports_reasoning_effort(model: &str, effort: &str) -> bool {
+    lookup_model(model)
+        .map(|entry| {
+            entry
+                .supported_reasoning
+                .iter()
+                .any(|option| option.effort == effort)
+        })
+        .unwrap_or(false)
+}
+
 pub fn normalize_provider_id(provider: &str) -> String {
     match provider.trim().to_ascii_lowercase().as_str() {
         "grok" | "x-ai" | "x.ai" => PROVIDER_XAI.to_string(),
