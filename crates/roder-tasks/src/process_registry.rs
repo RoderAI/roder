@@ -240,8 +240,17 @@ impl ProcessRegistry {
             reason: reason.clone(),
             timestamp: OffsetDateTime::now_utc(),
         }));
-        if let Some(stopper) = stopper {
-            stopper.stop(reason).await?;
+        if let Some(stopper) = stopper
+            && let Err(error) = stopper.stop(reason).await
+        {
+            let mut inner = self.inner.lock().await;
+            if let Some(record) = inner.processes.get_mut(process_id)
+                && matches!(record.descriptor.state, ProcessState::Stopping)
+            {
+                record.descriptor.state = ProcessState::Running;
+                record.descriptor.updated_at = OffsetDateTime::now_utc();
+            }
+            return Err(error);
         }
         Ok(ProcessStopResult {
             process_id: process_id.to_string(),
