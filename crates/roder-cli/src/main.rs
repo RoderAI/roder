@@ -37,7 +37,9 @@ use roder_protocol::{
     DesktopThread, JsonRpcError, JsonRpcRequest, JsonRpcResponse, MemoryDeleteParams,
     MemoryDeleteResult, MemoryListParams, MemoryListResult, MemoryProviderListResult,
     MemoryProviderSetParams, MemoryQueryParams, MemoryQueryResult, MemoryReadParams,
-    MemoryReadResult, MemorySaveParams, MemorySaveResult, MemoryUpdateParams, TasksCancelParams,
+    MemoryReadResult, MemorySaveParams, MemorySaveResult, MemoryUpdateParams, ProcessesGetParams,
+    ProcessesGetResult, ProcessesListParams, ProcessesListResult, ProcessesStopAllParams,
+    ProcessesStopAllResult, ProcessesStopParams, ProcessesStopResult, TasksCancelParams,
     TasksCancelResult, TasksGetParams, TasksGetResult, TasksListResult, TasksSubmitParams,
     TasksSubmitResult, ThreadListParams, ThreadListResult, ThreadReadParams, ThreadReadResult,
     WorkflowEnableParams, WorkflowEnableResult, WorkflowPreviewParams, WorkflowPreviewResult,
@@ -67,6 +69,9 @@ async fn main() -> anyhow::Result<()> {
     }
     if matches!(args.first().map(String::as_str), Some("tasks")) {
         return run_tasks_cli(&args[1..]).await;
+    }
+    if matches!(args.first().map(String::as_str), Some("ps")) {
+        return run_ps_cli(&args[1..]).await;
     }
     if matches!(
         args.first().map(String::as_str),
@@ -530,6 +535,146 @@ async fn task_get(client: &LocalAppClient, task_id: &str) -> anyhow::Result<Task
         })
         .await;
     decode_response::<TasksGetResult>(res)
+}
+
+async fn run_ps_cli(args: &[String]) -> anyhow::Result<()> {
+    let (runtime, _) = build_runtime_from_config(CliOptions::default()).await?;
+    let client = LocalAppClient::new(Arc::new(AppServer::new(runtime)));
+    match args.first().map(String::as_str) {
+        None => {
+            let result = processes_list(&client, false).await?;
+            for process in result.processes {
+                println!("{}", process_cli_row(&process));
+            }
+        }
+        Some("--all" | "all") => {
+            let result = processes_list(&client, true).await?;
+            for process in result.processes {
+                println!("{}", process_cli_row(&process));
+            }
+        }
+        Some("show") => {
+            let Some(process_id) = args.get(1) else {
+                anyhow::bail!("usage: roder ps show PROCESS_ID");
+            };
+            let result = process_get(&client, process_id, Some(4096)).await?;
+            if let Some(process) = result.process {
+                println!("{}", process_cli_row(&process));
+                for output in result.output {
+                    print!("{}", output.chunk);
+                }
+            }
+        }
+        Some("stop") => {
+            let Some(process_id) = args.get(1) else {
+                anyhow::bail!("usage: roder ps stop PROCESS_ID");
+            };
+            let res = client
+                .send_request(JsonRpcRequest {
+                    jsonrpc: "2.0".to_string(),
+                    id: Some(serde_json::json!("processes/stop")),
+                    method: "processes/stop".to_string(),
+                    params: Some(serde_json::to_value(ProcessesStopParams {
+                        process_id: process_id.clone(),
+                        reason: Some("cli ps stop".to_string()),
+                    })?),
+                })
+                .await;
+            let result = decode_response::<ProcessesStopResult>(res)?.result;
+            println!("{}\tstopped: {}", result.process_id, result.stopped);
+        }
+        Some("stop-all") => {
+            let confirm = args.iter().any(|arg| arg == "--confirm");
+            if !confirm {
+                anyhow::bail!("usage: roder ps stop-all --confirm");
+            }
+            let res = client
+                .send_request(JsonRpcRequest {
+                    jsonrpc: "2.0".to_string(),
+                    id: Some(serde_json::json!("processes/stopAll")),
+                    method: "processes/stopAll".to_string(),
+                    params: Some(serde_json::to_value(ProcessesStopAllParams {
+                        reason: Some("cli ps stop-all".to_string()),
+                    })?),
+                })
+                .await;
+            let result = decode_response::<ProcessesStopAllResult>(res)?;
+            let stopped = result
+                .results
+                .iter()
+                .filter(|result| result.stopped)
+                .count();
+            println!("stopped: {stopped}");
+        }
+        Some(process_id) => {
+            let result = process_get(&client, process_id, Some(4096)).await?;
+            if let Some(process) = result.process {
+                println!("{}", process_cli_row(&process));
+                for output in result.output {
+                    print!("{}", output.chunk);
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+async fn processes_list(
+    client: &LocalAppClient,
+    include_completed: bool,
+) -> anyhow::Result<ProcessesListResult> {
+    let res = client
+        .send_request(JsonRpcRequest {
+            jsonrpc: "2.0".to_string(),
+            id: Some(serde_json::json!("processes/list")),
+            method: "processes/list".to_string(),
+            params: Some(serde_json::to_value(ProcessesListParams {
+                include_completed,
+            })?),
+        })
+        .await;
+    decode_response::<ProcessesListResult>(res)
+}
+
+async fn process_get(
+    client: &LocalAppClient,
+    process_id: &str,
+    output_bytes: Option<usize>,
+) -> anyhow::Result<ProcessesGetResult> {
+    let res = client
+        .send_request(JsonRpcRequest {
+            jsonrpc: "2.0".to_string(),
+            id: Some(serde_json::json!("processes/get")),
+            method: "processes/get".to_string(),
+            params: Some(serde_json::to_value(ProcessesGetParams {
+                process_id: process_id.to_string(),
+                output_bytes,
+            })?),
+        })
+        .await;
+    decode_response::<ProcessesGetResult>(res)
+}
+
+fn process_cli_row(process: &roder_api::processes::ProcessDescriptor) -> String {
+    format!(
+        "{}\t{}\t{:?}\t{}\t{}",
+        process.process_id,
+        process_state_label(&process.state),
+        process.origin,
+        process.task_id.as_deref().unwrap_or("-"),
+        one_line(&process.command_summary)
+    )
+}
+
+fn process_state_label(state: &roder_api::processes::ProcessState) -> &'static str {
+    match state {
+        roder_api::processes::ProcessState::Starting => "starting",
+        roder_api::processes::ProcessState::Running => "running",
+        roder_api::processes::ProcessState::Stopping => "stopping",
+        roder_api::processes::ProcessState::Exited { .. } => "exited",
+        roder_api::processes::ProcessState::Failed { .. } => "failed",
+        roder_api::processes::ProcessState::Stopped => "stopped",
+    }
 }
 
 async fn run_workflow_cli(args: &[String]) -> anyhow::Result<()> {
@@ -2675,5 +2820,35 @@ Report findings.
         };
         let err = resolve_remote_runner_destination(Some(&cfg)).unwrap_err();
         assert!(err.to_string().contains("secret_env"));
+    }
+
+    #[test]
+    fn ps_cli_row_contains_process_state_origin_and_command() {
+        let process = roder_api::processes::ProcessDescriptor {
+            process_id: "process-1".to_string(),
+            origin: roder_api::processes::ProcessOrigin::CommandExec,
+            state: roder_api::processes::ProcessState::Running,
+            command: vec!["sleep".to_string(), "10".to_string()],
+            command_summary: "sleep 10".to_string(),
+            cwd: None,
+            pid: None,
+            task_id: Some("task-1".to_string()),
+            thread_id: None,
+            turn_id: None,
+            runner_destination_id: None,
+            runner_session_id: None,
+            stoppable: true,
+            started_at: time::OffsetDateTime::UNIX_EPOCH,
+            updated_at: time::OffsetDateTime::UNIX_EPOCH,
+            stdout_tail: None,
+            stderr_tail: None,
+        };
+
+        let row = process_cli_row(&process);
+
+        assert!(row.contains("process-1"));
+        assert!(row.contains("running"));
+        assert!(row.contains("CommandExec"));
+        assert!(row.contains("sleep 10"));
     }
 }
