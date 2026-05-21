@@ -779,6 +779,24 @@ pub fn settings_source(
             }))
             .chain(std::iter::once((
                 PaletteItem {
+                    id: "settings:automations".to_string(),
+                    title: "Automations status".to_string(),
+                    subtitle: Some(
+                        "Read app-server scheduler and run counts without enabling scheduling"
+                            .to_string(),
+                    ),
+                    keywords: vec![
+                        "automations".to_string(),
+                        "scheduler".to_string(),
+                        "runs".to_string(),
+                        "status".to_string(),
+                    ],
+                    icon: Some('A'),
+                },
+                PaletteAction::ShowAutomationsStatus,
+            )))
+            .chain(std::iter::once((
+                PaletteItem {
                     id: "settings:skills".to_string(),
                     title: "Skills manager".to_string(),
                     subtitle: Some("Manage skill enabled state and exposure".to_string()),
@@ -993,6 +1011,32 @@ mod tests {
         assert_eq!(
             entries.last().unwrap().action,
             PaletteAction::OpenSkillsManager
+        );
+    }
+
+    #[test]
+    fn settings_source_exposes_read_only_automations_status_action() {
+        let source = settings_source(
+            &WebSearchSettings {
+                mode: HostedWebSearchMode::Cached,
+            },
+            &SearchIndexSettings { enabled: true },
+        );
+        let entries = source.entries();
+        let automations = entries
+            .iter()
+            .find(|entry| entry.item.id == "settings:automations")
+            .expect("automations status palette row");
+
+        assert_eq!(automations.item.title, "Automations status");
+        assert_eq!(automations.action, PaletteAction::ShowAutomationsStatus);
+        assert!(
+            automations
+                .item
+                .subtitle
+                .as_ref()
+                .unwrap()
+                .contains("without enabling")
         );
     }
 

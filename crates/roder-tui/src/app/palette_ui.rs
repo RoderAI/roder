@@ -317,6 +317,9 @@ impl TuiApp {
                 self.palette_source_filter = Some("skills".to_string());
                 self.populate_palette().await;
             }
+            PaletteAction::ShowAutomationsStatus => {
+                self.show_automations_status().await;
+            }
         }
     }
 

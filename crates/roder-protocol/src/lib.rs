@@ -550,6 +550,26 @@ pub struct VerificationSkippedNotification {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct AutomationRunNotification {
+    pub run: AutomationRunSummary,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AutomationRunFailedNotification {
+    pub run: AutomationRunSummary,
+    pub error: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AutomationRunSkippedNotification {
+    pub run: AutomationRunSummary,
+    pub reason: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct PlanExitRequestedNotification {
     pub thread_id: ThreadId,
     pub turn_id: TurnId,
