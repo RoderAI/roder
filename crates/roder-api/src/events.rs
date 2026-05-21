@@ -1650,12 +1650,14 @@ mod tests {
             title: "Inspect repository".to_string(),
             role: "explorer".to_string(),
             model: Some("test-model".to_string()),
+            lane: None,
             status: SubagentTraceStatus::Running,
             elapsed_ms: 10,
             usage: None,
             destination: None,
             latest_activity: None,
             error_summary: None,
+            exit_reason: None,
         };
         let event = RoderEvent::SubagentTraceCreated(SubagentTraceCreated {
             summary,

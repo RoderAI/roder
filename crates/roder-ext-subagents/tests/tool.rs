@@ -6,8 +6,8 @@ use roder_api::events::{ThreadId, TurnId};
 use roder_api::inference::TokenUsage;
 use roder_api::policy_mode::PolicyMode;
 use roder_api::subagents::{
-    SubagentDefinition, SubagentDispatcher, SubagentExitReason, SubagentPermissionMode,
-    SubagentRequest, SubagentResult,
+    SubagentDefinition, SubagentDispatcher, SubagentExitReason, SubagentLane,
+    SubagentPermissionMode, SubagentRequest, SubagentResult,
 };
 use roder_api::tools::{
     ToolCall, ToolContributor, ToolExecutionContext, ToolExecutor, ToolRegistry,
@@ -46,6 +46,10 @@ async fn task_tool_leaves_missing_subagent_type_for_dispatcher_fallback() {
                 "prompt": "Find the entry point",
                 "model": "override-model",
                 "tools": ["Read"],
+                "lane": "scout",
+                "max_concurrent": 2,
+                "allowed_tools": ["Read"],
+                "parent_deadline_seconds": 30,
                 "inputs": { "path": "crates" },
                 "timeout_seconds": 3
             })),
@@ -67,6 +71,10 @@ async fn task_tool_leaves_missing_subagent_type_for_dispatcher_fallback() {
     assert_eq!(requests[0].subagent_type, None);
     assert_eq!(requests[0].model.as_deref(), Some("override-model"));
     assert_eq!(requests[0].tools.as_ref().unwrap(), &["Read"]);
+    assert_eq!(requests[0].lane, Some(SubagentLane::Scout));
+    assert_eq!(requests[0].max_concurrent, Some(2));
+    assert_eq!(requests[0].allowed_tools.as_ref().unwrap(), &["Read"]);
+    assert_eq!(requests[0].parent_deadline_seconds, Some(30));
     assert_eq!(requests[0].inputs.as_ref().unwrap()["path"], "crates");
 }
 
@@ -128,6 +136,26 @@ async fn task_tool_reports_timeout_results_as_stable_tool_errors() {
     assert!(result.is_error);
     assert_eq!(result.data["error"]["kind"], "timeout");
     assert_eq!(result.data["exit_reason"], "timeout");
+}
+
+#[tokio::test]
+async fn speed_policy_blocks_editor_lane_in_plan_mode() {
+    let tool = TaskTool::canonical(Arc::new(FakeDispatcher::default()));
+
+    let result = tool
+        .execute(
+            ToolExecutionContext::new("parent-thread", "parent-turn", PolicyMode::Plan),
+            call(json!({
+                "description": "Edit files",
+                "prompt": "Patch the code",
+                "lane": "editor"
+            })),
+        )
+        .await
+        .unwrap();
+
+    assert!(result.is_error);
+    assert_eq!(result.data["error"]["kind"], "policy_mode");
 }
 
 #[tokio::test]
@@ -202,6 +230,10 @@ fn schema_snapshot_covers_model_facing_task_tool() {
     assert!(schema.contains(
         r#""inputs":{"type":"object","description":"Optional freeform structured context for the child task."}"#
     ));
+    assert!(schema.contains(r#""lane":{"type":"string""#));
+    assert!(schema.contains(r#""enum":["scout","editor","reviewer","runner"]"#));
+    assert!(schema.contains(r#""max_concurrent":{"type":"integer""#));
+    assert!(schema.contains(r#""minimum":1"#));
     assert!(schema.contains(r#""additionalProperties":false"#));
 }
 
@@ -299,7 +331,7 @@ impl SubagentDispatcher for FakeDispatcher {
             metadata: if self.timeout {
                 json!({ "error": { "kind": "timeout" } })
             } else {
-                json!({})
+                json!({ "lane": request.lane.map(|lane| lane.as_str()) })
             },
         })
     }

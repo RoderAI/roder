@@ -27,6 +27,7 @@ pub(crate) struct TraceSummaryArgs<'a> {
     pub(crate) usage: Option<roder_api::inference::TokenUsage>,
     pub(crate) latest_activity: Option<String>,
     pub(crate) error_summary: Option<String>,
+    pub(crate) exit_reason: Option<roder_api::subagents::SubagentExitReason>,
 }
 
 pub(crate) fn trace_summary(args: TraceSummaryArgs<'_>) -> SubagentTraceSummary {
@@ -42,6 +43,7 @@ pub(crate) fn trace_summary(args: TraceSummaryArgs<'_>) -> SubagentTraceSummary 
             .clone()
             .unwrap_or_else(|| args.default_role.to_string()),
         model: args.model,
+        lane: args.request.lane,
         status: args.status,
         elapsed_ms: args
             .started_at
@@ -59,6 +61,7 @@ pub(crate) fn trace_summary(args: TraceSummaryArgs<'_>) -> SubagentTraceSummary 
         }),
         latest_activity: args.latest_activity,
         error_summary: args.error_summary,
+        exit_reason: args.exit_reason,
     }
 }
 

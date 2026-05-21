@@ -2,6 +2,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::events::{ThreadId, TurnId};
 use crate::inference::TokenUsage;
+use crate::subagents::{SubagentExitReason, SubagentLane};
 
 pub type SubagentTraceId = String;
 
@@ -55,6 +56,8 @@ pub struct SubagentTraceSummary {
     pub role: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub model: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub lane: Option<SubagentLane>,
     pub status: SubagentTraceStatus,
     pub elapsed_ms: u64,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -65,6 +68,8 @@ pub struct SubagentTraceSummary {
     pub latest_activity: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub error_summary: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub exit_reason: Option<SubagentExitReason>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -168,6 +173,7 @@ mod tests {
             title: "Inspect files".to_string(),
             role: "explorer".to_string(),
             model: Some("gpt-test".to_string()),
+            lane: Some(SubagentLane::Scout),
             status: SubagentTraceStatus::Running,
             elapsed_ms: 1200,
             usage: None,
@@ -180,11 +186,13 @@ mod tests {
             }),
             latest_activity: Some("reading README".to_string()),
             error_summary: None,
+            exit_reason: None,
         };
 
         let value = serde_json::to_value(&summary).unwrap();
         assert_eq!(value["traceId"], "trace-1");
         assert_eq!(value["childThreadId"], "child-thread");
+        assert_eq!(value["lane"], "scout");
         assert_eq!(value["status"], "running");
         assert_eq!(value["destination"]["kind"], "in_process");
 

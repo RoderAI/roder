@@ -1,5 +1,6 @@
 use std::collections::BTreeMap;
 use std::sync::Arc;
+use std::sync::Mutex as StdMutex;
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, bail};
@@ -17,7 +18,8 @@ use roder_api::inference::{
 };
 use roder_api::policy_mode::PolicyMode;
 use roder_api::subagents::{
-    SubagentDefinition, SubagentDispatcher, SubagentExitReason, SubagentRequest, SubagentResult,
+    SUBAGENT_SUMMARY_CONTRACT, SubagentDefinition, SubagentDispatcher, SubagentExitReason,
+    SubagentLane, SubagentPermissionMode, SubagentRequest, SubagentResult,
 };
 use roder_api::tools::{ToolCall, ToolChoice, ToolExecutionContext, ToolRegistry};
 use roder_api::trace::{
@@ -104,6 +106,7 @@ pub struct InProcessDispatcher {
     engines: InferenceEngineRegistry,
     parent_tools: ToolRegistry,
     semaphore: Arc<Semaphore>,
+    active_lanes: Arc<StdMutex<BTreeMap<String, usize>>>,
 }
 
 impl InProcessDispatcher {
@@ -131,6 +134,7 @@ impl InProcessDispatcher {
             definitions: mapped,
             engines,
             parent_tools,
+            active_lanes: Arc::new(StdMutex::new(BTreeMap::new())),
         })
     }
 
@@ -152,6 +156,29 @@ impl InProcessDispatcher {
         } else {
             definition.tools.clone()
         };
+
+        let mut child = ToolRegistry::default();
+        for name in allow {
+            let tool = self
+                .parent_tools
+                .get(&name)
+                .with_context(|| format!("subagent tool {name:?} is not registered"))?;
+            child.register(tool)?;
+        }
+        Ok(child)
+    }
+
+    fn filtered_tool_registry_for_request(
+        &self,
+        definition: &SubagentDefinition,
+        request: &SubagentRequest,
+    ) -> anyhow::Result<ToolRegistry> {
+        let mut allow = definition.tools.clone();
+        apply_explicit_tool_restriction(definition, &mut allow, request.tools.as_deref())?;
+        apply_explicit_tool_restriction(definition, &mut allow, request.allowed_tools.as_deref())?;
+        if let Some(lane) = request.lane {
+            apply_lane_tool_restriction(&mut allow, lane);
+        }
 
         let mut child = ToolRegistry::default();
         for name in allow {
@@ -200,6 +227,7 @@ impl InProcessDispatcher {
             thread_id: parent_thread_id.clone(),
             turn_id: parent_turn_id.clone(),
         };
+        let lane = effective_lane(&request);
         let started_at = Instant::now();
         emit_trace_created(
             trace_sink.as_deref(),
@@ -214,6 +242,7 @@ impl InProcessDispatcher {
                 usage: None,
                 latest_activity: Some("queued".to_string()),
                 error_summary: None,
+                exit_reason: None,
             }),
         )
         .await;
@@ -237,6 +266,34 @@ impl InProcessDispatcher {
                     usage: None,
                     latest_activity: Some("concurrency limit reached".to_string()),
                     error_summary: Some(err.to_string()),
+                    exit_reason: Some(SubagentExitReason::Failed),
+                });
+                emit_trace_failed(trace_sink.as_deref(), summary, err.to_string()).await;
+                return Err(err);
+            }
+        };
+        let lane_guard = match ActiveLaneGuard::try_acquire(
+            self.active_lanes.clone(),
+            lane,
+            effective_max_concurrent(&request, lane),
+        ) {
+            Ok(guard) => guard,
+            Err(err) => {
+                let summary = trace_summary(TraceSummaryArgs {
+                    trace_ids: &trace_ids,
+                    parent: &parent,
+                    request: &request,
+                    default_role: self.config.default_agent.as_str(),
+                    model: request.model.clone(),
+                    status: SubagentTraceStatus::Failed,
+                    started_at,
+                    usage: None,
+                    latest_activity: Some(format!(
+                        "{} lane concurrency limit reached",
+                        lane.as_str()
+                    )),
+                    error_summary: Some(err.to_string()),
+                    exit_reason: Some(SubagentExitReason::Failed),
                 });
                 emit_trace_failed(trace_sink.as_deref(), summary, err.to_string()).await;
                 return Err(err);
@@ -244,6 +301,7 @@ impl InProcessDispatcher {
         };
         let timeout = request
             .timeout_seconds
+            .or_else(|| request.lane.map(|lane| lane.preset().timeout_seconds))
             .unwrap_or(self.config.default_timeout_seconds);
         let timeout_summary_request = request.clone();
         let timeout_trace_ids = trace_ids.clone();
@@ -261,6 +319,7 @@ impl InProcessDispatcher {
             .await
         });
         let result = tokio::time::timeout(Duration::from_secs(timeout), run).await;
+        drop(lane_guard);
         drop(permit);
         match result {
             Ok(result) => result,
@@ -276,6 +335,7 @@ impl InProcessDispatcher {
                     usage: None,
                     latest_activity: Some("timed out".to_string()),
                     error_summary: Some("subagent timed out".to_string()),
+                    exit_reason: Some(SubagentExitReason::Timeout),
                 });
                 emit_trace_failed(
                     trace_sink.as_deref(),
@@ -292,7 +352,11 @@ impl InProcessDispatcher {
                     usage: None,
                     exit_reason: SubagentExitReason::Timeout,
                     transcript: None,
-                    metadata: serde_json::json!({ "error": { "kind": "timeout" } }),
+                    metadata: serde_json::json!({
+                        "lane": timeout_summary_request.lane.unwrap_or(SubagentLane::Scout).as_str(),
+                        "exit_reason": "timeout",
+                        "error": { "kind": "timeout" }
+                    }),
                 })
             }
         }
@@ -315,7 +379,8 @@ impl InProcessDispatcher {
             .definitions
             .get(&agent_type)
             .with_context(|| format!("unknown subagent type {agent_type:?}"))?;
-        let tools = self.filtered_tool_registry(definition, request.tools.as_deref())?;
+        let tools = self.filtered_tool_registry_for_request(definition, &request)?;
+        let lane = effective_lane_for_definition(&request, definition);
         let model = request
             .model
             .clone()
@@ -370,7 +435,7 @@ impl InProcessDispatcher {
                 },
                 instructions: InstructionBundle {
                     system: definition.system_prompt.clone(),
-                    developer: None,
+                    developer: Some(subagent_developer_instructions(lane, &request)),
                 },
                 conversation: conversation.clone(),
                 tools: tools.specs(),
@@ -390,6 +455,9 @@ impl InProcessDispatcher {
                 metadata: serde_json::json!({
                     "subagent": {
                         "agent_type": agent_type,
+                        "lane": lane.as_str(),
+                        "summary_contract": SUBAGENT_SUMMARY_CONTRACT,
+                        "parent_deadline_seconds": request.parent_deadline_seconds,
                         "parent_thread_id": parent_thread_id,
                         "parent_turn_id": parent_turn_id,
                     }
@@ -461,6 +529,7 @@ impl InProcessDispatcher {
                             usage: usage.clone(),
                             latest_activity: Some("inference failed".to_string()),
                             error_summary: Some(failure.message.clone()),
+                            exit_reason: Some(SubagentExitReason::Failed),
                         });
                         emit_trace_failed(trace_sink.as_deref(), summary, failure.message.clone())
                             .await;
@@ -577,6 +646,7 @@ impl InProcessDispatcher {
             }),
             error_summary: (final_status == SubagentTraceStatus::Failed)
                 .then(|| final_message.clone()),
+            exit_reason: Some(exit_reason.clone()),
         });
         if final_status == SubagentTraceStatus::Completed {
             emit_trace_completed(trace_sink.as_deref(), final_summary).await;
@@ -591,14 +661,125 @@ impl InProcessDispatcher {
             model: Some(model),
             final_message,
             usage,
-            exit_reason,
+            exit_reason: exit_reason.clone(),
             transcript: self
                 .config
                 .include_child_transcript
                 .then(|| transcript.to_json()),
-            metadata: serde_json::json!({}),
+            metadata: serde_json::json!({
+                "lane": lane.as_str(),
+                "exit_reason": exit_reason,
+                "summary_contract": SUBAGENT_SUMMARY_CONTRACT,
+            }),
         })
     }
+}
+
+struct ActiveLaneGuard {
+    active_lanes: Arc<StdMutex<BTreeMap<String, usize>>>,
+    key: String,
+}
+
+impl ActiveLaneGuard {
+    fn try_acquire(
+        active_lanes: Arc<StdMutex<BTreeMap<String, usize>>>,
+        lane: SubagentLane,
+        max_concurrent: usize,
+    ) -> anyhow::Result<Self> {
+        if max_concurrent == 0 {
+            bail!(
+                "subagent {} lane max_concurrent must be at least 1",
+                lane.as_str()
+            );
+        }
+        let key = lane.as_str().to_string();
+        {
+            let mut active = active_lanes.lock().unwrap();
+            let count = active.entry(key.clone()).or_insert(0);
+            if *count >= max_concurrent {
+                bail!(
+                    "subagent {} lane max_concurrent limit {max_concurrent} reached",
+                    lane.as_str()
+                );
+            }
+            *count += 1;
+        }
+        Ok(Self { active_lanes, key })
+    }
+}
+
+impl Drop for ActiveLaneGuard {
+    fn drop(&mut self) {
+        let mut active = self.active_lanes.lock().unwrap();
+        if let Some(count) = active.get_mut(&self.key) {
+            *count = count.saturating_sub(1);
+            if *count == 0 {
+                active.remove(&self.key);
+            }
+        }
+    }
+}
+
+fn effective_lane(request: &SubagentRequest) -> SubagentLane {
+    request.lane.unwrap_or(SubagentLane::Scout)
+}
+
+fn effective_lane_for_definition(
+    request: &SubagentRequest,
+    definition: &SubagentDefinition,
+) -> SubagentLane {
+    request.lane.unwrap_or(match definition.permission_mode {
+        SubagentPermissionMode::ReadOnly => SubagentLane::Scout,
+        SubagentPermissionMode::AutoEdit => SubagentLane::Editor,
+        SubagentPermissionMode::Default => SubagentLane::Reviewer,
+    })
+}
+
+fn effective_max_concurrent(request: &SubagentRequest, lane: SubagentLane) -> usize {
+    request
+        .max_concurrent
+        .unwrap_or_else(|| lane.preset().max_concurrent)
+}
+
+fn apply_explicit_tool_restriction(
+    definition: &SubagentDefinition,
+    allow: &mut Vec<String>,
+    restriction: Option<&[String]>,
+) -> anyhow::Result<()> {
+    let Some(restriction) = restriction else {
+        return Ok(());
+    };
+    for tool in restriction {
+        if !definition.tools.iter().any(|allowed| allowed == tool) {
+            bail!(
+                "requested tool {tool:?} is not allowed by subagent {:?}",
+                definition.agent_type
+            );
+        }
+    }
+    allow.retain(|tool| restriction.iter().any(|requested| requested == tool));
+    Ok(())
+}
+
+fn apply_lane_tool_restriction(allow: &mut Vec<String>, lane: SubagentLane) {
+    let preset = lane.preset();
+    allow.retain(|tool| preset.allowed_tools.iter().any(|allowed| allowed == tool));
+}
+
+fn subagent_developer_instructions(lane: SubagentLane, request: &SubagentRequest) -> String {
+    let preset = lane.preset();
+    let mut instructions = format!(
+        "Subagent lane: {}. Lane purpose: {} {}",
+        lane.as_str(),
+        preset.description,
+        SUBAGENT_SUMMARY_CONTRACT
+    );
+    if let Some(parent_deadline_seconds) = request.parent_deadline_seconds {
+        instructions.push_str(&format!(
+            " Parent deadline budget: {parent_deadline_seconds} seconds."
+        ));
+    }
+    instructions
 }
 
 #[async_trait::async_trait]
