@@ -8,9 +8,11 @@ use time::OffsetDateTime;
 
 pub mod fixture;
 pub mod graders;
+pub mod runner;
 pub mod trace;
 
 pub use fixture::*;
+pub use runner::*;
 pub use trace::*;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

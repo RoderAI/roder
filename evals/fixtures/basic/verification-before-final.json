@@ -1,0 +1,33 @@
+{
+  "id": "verification-before-final",
+  "title": "Fake provider verification-before-final fixture",
+  "prompt": "Verify the workspace state before giving the final answer.",
+  "tags": ["fake-provider", "verification-before-final"],
+  "workspace": {
+    "files": [
+      {
+        "path": "checks/status.txt",
+        "contents": "verified=yes\n"
+      }
+    ]
+  },
+  "timeoutMs": 10000,
+  "expected": {
+    "finalAnswerContains": ["hello from roder"],
+    "files": [
+      {
+        "path": "checks/status.txt",
+        "exists": true,
+        "contains": ["verified=yes"]
+      }
+    ],
+    "commandChecks": [
+      {
+        "command": "grep -q 'verified=yes' checks/status.txt",
+        "expectedExitCode": 0
+      }
+    ],
+    "verificationRequired": true
+  },
+  "constraints": ["verify before final"]
+}

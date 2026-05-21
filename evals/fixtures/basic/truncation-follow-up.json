@@ -1,0 +1,27 @@
+{
+  "id": "truncation-follow-up",
+  "title": "Fake provider truncation follow-up fixture",
+  "prompt": "Continue after truncated output and provide the final recovered detail.",
+  "tags": ["fake-provider", "truncation-follow-up"],
+  "workspace": {
+    "files": [
+      {
+        "path": "logs/output.txt",
+        "contents": "line 1\nline 2\nRECOVERED_DETAIL\n"
+      }
+    ]
+  },
+  "timeoutMs": 10000,
+  "expected": {
+    "finalAnswerContains": ["hello from roder"],
+    "files": [
+      {
+        "path": "logs/output.txt",
+        "exists": true,
+        "contains": ["RECOVERED_DETAIL"]
+      }
+    ],
+    "verificationRequired": true
+  },
+  "constraints": ["follow up after truncation instead of guessing"]
+}

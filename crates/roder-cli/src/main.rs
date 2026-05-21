@@ -2,12 +2,14 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 mod commands;
+mod evals;
 mod marketplace;
 mod resume_picker;
 mod roadmap_cli;
 #[cfg(test)]
 mod tui_config;
 
+use evals::run_eval_cli;
 use marketplace::{run_marketplace_cli, run_plugin_cli, run_setup_cli};
 use roder_api::catalog::{DEFAULT_MODEL_ID, PROVIDER_MOCK, normalize_provider_id};
 use roder_api::inference::HostedWebSearchConfig;
@@ -98,42 +100,6 @@ async fn main() -> anyhow::Result<()> {
     let mut tui = TuiApp::new_with_startup(client, default_model, startup).await?;
     tui.run().await?;
     print_tui_exit_summary(&tui);
-    Ok(())
-}
-
-async fn run_eval_cli(args: &[String]) -> anyhow::Result<()> {
-    match args.first().map(String::as_str) {
-        Some("run") => {
-            let Some(path) = args.get(1) else {
-                anyhow::bail!("usage: roder eval run FIXTURE_DIR --offline");
-            };
-            let offline = args.iter().any(|arg| arg == "--offline");
-            if !offline {
-                anyhow::bail!("roder eval run currently requires --offline");
-            }
-            let output_dir = std::env::var_os("RODER_EVAL_OUTPUT_DIR")
-                .map(PathBuf::from)
-                .unwrap_or_else(|| std::env::temp_dir().join("roder-evals"));
-            let report = roder_evals::run_file_backed_context_eval(
-                Path::new(path),
-                roder_evals::EvalRunOptions {
-                    offline,
-                    output_dir: output_dir.clone(),
-                },
-            )?;
-            let benchmark_dir = std::env::var_os("RODER_BENCHMARK_OUTPUT_DIR")
-                .map(PathBuf::from)
-                .unwrap_or_else(|| PathBuf::from("benchmark").join("file-backed-dynamic-context"));
-            roder_evals::write_file_backed_context_benchmark_markdown(&report, &benchmark_dir)?;
-            println!(
-                "evaluated {} fixtures; report={}; benchmark={}",
-                report.results.len(),
-                output_dir.join("file-backed-context-report.json").display(),
-                benchmark_dir.display()
-            );
-        }
-        _ => anyhow::bail!("usage: roder eval run FIXTURE_DIR --offline"),
-    }
     Ok(())
 }
 
