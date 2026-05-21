@@ -266,6 +266,8 @@ impl Runtime {
         self.emit_media_artifacts(thread_id, turn_id, &result).await;
         self.emit_task_ledger_update(thread_id, turn_id, &result)
             .await;
+        self.emit_verification_result(thread_id, turn_id, &result)
+            .await;
         let raw_text = result.text;
         let original_line_count = raw_text.lines().count() as u64;
         let original_char_count = raw_text.chars().count() as u64;
@@ -445,6 +447,55 @@ impl Runtime {
             timestamp: OffsetDateTime::now_utc(),
         }))
         .await;
+    }
+
+    async fn emit_verification_result(
+        &self,
+        thread_id: &ThreadId,
+        turn_id: &TurnId,
+        result: &ToolResult,
+    ) {
+        let Some(value) = result.data.get("verification") else {
+            return;
+        };
+        let status = value
+            .get("status")
+            .and_then(Value::as_str)
+            .unwrap_or_default();
+        let changed_files = json_string_array(value.get("changedFiles"));
+        let tool_evidence = json_string_array(value.get("toolEvidence"));
+        let tests_run = json_string_array(value.get("testsRun"));
+        let open_gaps = json_string_array(value.get("openGaps"));
+        match status {
+            "completed" | "failed" => {
+                self.emit(RoderEvent::VerificationCompleted(VerificationCompleted {
+                    thread_id: thread_id.clone(),
+                    turn_id: turn_id.clone(),
+                    passed: status == "completed",
+                    changed_files,
+                    tool_evidence,
+                    tests_run,
+                    open_gaps,
+                    timestamp: OffsetDateTime::now_utc(),
+                }))
+                .await;
+            }
+            "skipped" => {
+                let reason = value
+                    .get("skipReason")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default()
+                    .to_string();
+                self.emit(RoderEvent::VerificationSkipped(VerificationSkipped {
+                    thread_id: thread_id.clone(),
+                    turn_id: turn_id.clone(),
+                    reason,
+                    timestamp: OffsetDateTime::now_utc(),
+                }))
+                .await;
+            }
+            _ => {}
+        }
     }
 
     async fn request_tool_approval(
@@ -668,4 +719,17 @@ fn subagent_error_kind(data: &Value) -> String {
         .and_then(Value::as_str)
         .unwrap_or("subagent_failed")
         .to_string()
+}
+
+fn json_string_array(value: Option<&Value>) -> Vec<String> {
+    value
+        .and_then(Value::as_array)
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(Value::as_str)
+                .map(str::to_string)
+                .collect()
+        })
+        .unwrap_or_default()
 }

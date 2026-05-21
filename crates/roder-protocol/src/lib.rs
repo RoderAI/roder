@@ -487,6 +487,38 @@ pub struct UserInputResolvedNotification {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct VerificationRequiredNotification {
+    pub thread_id: ThreadId,
+    pub turn_id: TurnId,
+    pub reason: String,
+    pub changed_files: Vec<String>,
+    pub tool_evidence: Vec<String>,
+    pub tests_run: Vec<String>,
+    pub open_gaps: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct VerificationCompletedNotification {
+    pub thread_id: ThreadId,
+    pub turn_id: TurnId,
+    pub passed: bool,
+    pub changed_files: Vec<String>,
+    pub tool_evidence: Vec<String>,
+    pub tests_run: Vec<String>,
+    pub open_gaps: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct VerificationSkippedNotification {
+    pub thread_id: ThreadId,
+    pub turn_id: TurnId,
+    pub reason: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct PlanExitRequestedNotification {
     pub thread_id: ThreadId,
     pub turn_id: TurnId,
@@ -1782,6 +1814,27 @@ mod tests {
         assert_eq!(value["params"]["itemId"], "turn-1-assistant");
         assert_eq!(value["params"]["delta"], "hello");
         assert_eq!(value["params"]["phase"], "final_answer");
+    }
+
+    #[test]
+    fn verification_notifications_use_camel_case_fields() {
+        let value = serde_json::to_value(VerificationRequiredNotification {
+            thread_id: "thread-1".to_string(),
+            turn_id: "turn-1".to_string(),
+            reason: "code_changes_without_verification".to_string(),
+            changed_files: vec!["src/lib.rs".to_string()],
+            tool_evidence: vec!["write_file: wrote src/lib.rs".to_string()],
+            tests_run: vec!["cargo test".to_string()],
+            open_gaps: Vec::new(),
+        })
+        .unwrap();
+
+        assert_eq!(value["threadId"], "thread-1");
+        assert_eq!(value["turnId"], "turn-1");
+        assert_eq!(value["changedFiles"][0], "src/lib.rs");
+        assert_eq!(value["toolEvidence"][0], "write_file: wrote src/lib.rs");
+        assert_eq!(value["testsRun"][0], "cargo test");
+        assert!(value.get("changed_files").is_none());
     }
 
     #[test]

@@ -36,6 +36,7 @@ use crate::instructions::{apply_runtime_profile, apply_task_ledger_required};
 use crate::policy_gate::DefaultPolicyGate;
 use crate::subagent_traces::RuntimeSubagentTraceSink;
 use crate::teams::{TeamManager, TeamMemberStartRequest, TeamStartRequest, TeamState};
+use crate::verification_gate::VerificationGateState;
 
 const MAX_TOOL_ROUNDS_PER_TURN: usize = 1024;
 const FINAL_ANSWER_PHASE: &str = "final_answer";
@@ -1226,6 +1227,8 @@ impl Runtime {
         let mut final_reasoning_text = String::new();
         let mut final_provider_metadata = None;
         let mut exhausted_tool_rounds = true;
+        let mut verification_gate =
+            VerificationGateState::new(req.message.clone(), runtime_profile);
 
         for _ in 0..MAX_TOOL_ROUNDS_PER_TURN {
             let steers = self.drain_turn_steers(&turn_id).await;
@@ -1410,6 +1413,24 @@ impl Runtime {
                         .await?;
                     continue;
                 }
+                if let Some(prompt) = verification_gate.blocking_prompt() {
+                    self.emit(RoderEvent::VerificationRequired(VerificationRequired {
+                        thread_id: req.thread_id.clone(),
+                        turn_id: turn_id.clone(),
+                        reason: verification_gate.reason(),
+                        changed_files: verification_gate.changed_files(),
+                        tool_evidence: verification_gate.tool_evidence.clone(),
+                        tests_run: verification_gate.tests_run.clone(),
+                        open_gaps: verification_gate.open_gaps.clone(),
+                        timestamp: OffsetDateTime::now_utc(),
+                    }))
+                    .await;
+                    let item = ConversationItem::UserMessage(UserMessage::text(prompt));
+                    self.persist_turn_item(&req.thread_id, &turn_id, &item)
+                        .await?;
+                    conversation.push(item);
+                    continue;
+                }
                 final_phase_messages = phase_messages;
                 final_assistant_text = assistant_text;
                 final_reasoning_text = reasoning_text;
@@ -1456,6 +1477,7 @@ impl Runtime {
                 )
                 .await?;
             for result in results {
+                verification_gate.record_tool_result(&result);
                 conversation.push(ConversationItem::ToolResult(result));
             }
             conversation = self
@@ -1806,6 +1828,7 @@ mod tests {
         CompletionMetadata, InferenceCapabilities, InferenceEngine, InferenceEventStream,
         InferenceProviderContext, InferenceTurnContext, MessageDelta,
     };
+    use roder_api::tools::{ToolContributor, ToolExecutor, ToolSpec};
     use std::sync::Mutex as StdMutex;
 
     #[test]
@@ -1986,6 +2009,139 @@ mod tests {
         }
     }
 
+    struct VerificationGateEngine {
+        calls: StdMutex<u32>,
+    }
+
+    #[async_trait::async_trait]
+    impl InferenceEngine for VerificationGateEngine {
+        fn id(&self) -> String {
+            roder_api::catalog::PROVIDER_MOCK.to_string()
+        }
+
+        fn capabilities(&self) -> InferenceCapabilities {
+            InferenceCapabilities::coding_agent_default()
+        }
+
+        async fn list_models(
+            &self,
+            _ctx: InferenceProviderContext<'_>,
+        ) -> anyhow::Result<Vec<roder_api::inference::ModelDescriptor>> {
+            Ok(roder_api::catalog::models_for_provider(
+                roder_api::catalog::PROVIDER_MOCK,
+                true,
+            ))
+        }
+
+        async fn stream_turn(
+            &self,
+            _ctx: InferenceTurnContext<'_>,
+            request: AgentInferenceRequest,
+        ) -> anyhow::Result<InferenceEventStream> {
+            let mut calls = self.calls.lock().unwrap();
+            *calls += 1;
+            let events = match *calls {
+                1 => vec![Ok(InferenceEvent::ToolCallCompleted(ToolCallCompleted {
+                    id: "write-1".to_string(),
+                    name: "write_file".to_string(),
+                    arguments: serde_json::json!({
+                        "path": "src/lib.rs",
+                        "content": "pub fn answer() -> u8 { 42 }\n"
+                    })
+                    .to_string(),
+                }))],
+                2 => vec![Ok(InferenceEvent::MessageDelta(MessageDelta {
+                    text: "done too early".to_string(),
+                    phase: None,
+                }))],
+                3 if request.conversation.iter().any(|item| {
+                    matches!(
+                        item,
+                        ConversationItem::UserMessage(message)
+                            if message.text.contains("Verification gate blocked final completion")
+                    )
+                }) =>
+                {
+                    vec![Ok(InferenceEvent::ToolCallCompleted(ToolCallCompleted {
+                        id: "verify-1".to_string(),
+                        name: crate::verification_gate::VERIFICATION_TOOL_NAME.to_string(),
+                        arguments: serde_json::json!({
+                            "originalTask": "write code",
+                            "changedFiles": ["src/lib.rs"],
+                            "toolEvidence": ["write_file wrote src/lib.rs"],
+                            "testsRun": ["cargo test -p roder-core verification_gate"],
+                            "openGaps": [],
+                            "status": "completed"
+                        })
+                        .to_string(),
+                    }))]
+                }
+                _ => vec![Ok(InferenceEvent::MessageDelta(MessageDelta {
+                    text: "verified final".to_string(),
+                    phase: None,
+                }))],
+            };
+            Ok(Box::pin(stream::iter(events.into_iter().chain(
+                std::iter::once(Ok(InferenceEvent::Completed(CompletionMetadata {
+                    stop_reason: Some("stop".to_string()),
+                    provider_response_id: None,
+                }))),
+            ))))
+        }
+    }
+
+    struct WriteFileContributor;
+
+    impl ToolContributor for WriteFileContributor {
+        fn id(&self) -> String {
+            "test-write".to_string()
+        }
+
+        fn contribute(&self, registry: &mut ToolRegistry) -> anyhow::Result<()> {
+            registry.register(Arc::new(WriteFileTool))
+        }
+    }
+
+    struct WriteFileTool;
+
+    #[async_trait::async_trait]
+    impl ToolExecutor for WriteFileTool {
+        fn spec(&self) -> ToolSpec {
+            ToolSpec {
+                name: "write_file".to_string(),
+                description: "Write a test file.".to_string(),
+                parameters: serde_json::json!({
+                    "type": "object",
+                    "properties": {
+                        "path": { "type": "string" },
+                        "content": { "type": "string" }
+                    },
+                    "required": ["path", "content"],
+                    "additionalProperties": false
+                }),
+            }
+        }
+
+        async fn execute(
+            &self,
+            _ctx: ToolExecutionContext,
+            call: ToolCall,
+        ) -> anyhow::Result<ToolResult> {
+            let path = call
+                .arguments
+                .get("path")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or("src/lib.rs");
+            Ok(ToolResult {
+                id: call.id,
+                name: call.name,
+                text: format!("wrote {path}"),
+                data: serde_json::json!({ "path": path }),
+                is_error: false,
+            })
+        }
+    }
+
     #[tokio::test]
     async fn runtime_profile_reaches_inference_request_and_turn_metadata() {
         let captured = Arc::new(StdMutex::new(None));
@@ -2061,6 +2217,7 @@ mod tests {
                 builder.build().unwrap(),
                 RuntimeConfig {
                     runtime_profile: RuntimeProfile::Eval,
+                    policy_mode: PolicyMode::Bypass,
                     ..RuntimeConfig::default()
                 },
             )
@@ -2098,5 +2255,79 @@ mod tests {
         let developer = request.instructions.developer.unwrap();
         assert!(developer.contains("Task Ledger Required"));
         assert!(developer.contains("task_ledger.update"));
+    }
+
+    #[tokio::test]
+    async fn verification_gate_forces_eval_code_changes_through_review() {
+        let mut builder = ExtensionRegistryBuilder::new();
+        builder.inference_engine(Arc::new(VerificationGateEngine {
+            calls: StdMutex::new(0),
+        }));
+        builder.tool_contributor(Arc::new(WriteFileContributor));
+        builder.tool_contributor(Arc::new(
+            roder_ext_verification::VerificationToolContributor,
+        ));
+        let runtime = Arc::new(
+            Runtime::new(
+                builder.build().unwrap(),
+                RuntimeConfig {
+                    default_provider: roder_api::catalog::PROVIDER_MOCK.to_string(),
+                    default_model: "mock".to_string(),
+                    runtime_profile: RuntimeProfile::Eval,
+                    policy_mode: PolicyMode::Bypass,
+                    ..RuntimeConfig::default()
+                },
+            )
+            .unwrap(),
+        );
+        let mut rx = runtime.subscribe_events();
+        let turn_id = runtime
+            .start_turn(StartTurnRequest {
+                thread_id: "thread-verification".to_string(),
+                message: "write code".to_string(),
+                images: Vec::new(),
+                provider_override: None,
+                model_override: None,
+                workspace: None,
+                instructions: InstructionBundle::default(),
+                task_ledger_required: false,
+            })
+            .await
+            .unwrap();
+
+        let mut saw_required = false;
+        let mut saw_completed = false;
+        let mut final_text = String::new();
+        tokio::time::timeout(std::time::Duration::from_secs(5), async {
+            loop {
+                let envelope = rx.recv().await.unwrap();
+                if envelope.turn_id.as_deref() != Some(&turn_id) {
+                    continue;
+                }
+                match envelope.event {
+                    RoderEvent::VerificationRequired(event) => {
+                        saw_required = true;
+                        assert_eq!(event.changed_files, vec!["src/lib.rs"]);
+                    }
+                    RoderEvent::VerificationCompleted(event) => {
+                        saw_completed = true;
+                        assert!(event.passed);
+                    }
+                    RoderEvent::InferenceEventReceived(event) => {
+                        if let InferenceEvent::MessageDelta(delta) = event.event {
+                            final_text.push_str(&delta.text);
+                        }
+                    }
+                    RoderEvent::TurnCompleted(_) => break,
+                    _ => {}
+                }
+            }
+        })
+        .await
+        .unwrap();
+
+        assert!(saw_required);
+        assert!(saw_completed);
+        assert!(final_text.contains("verified final"));
     }
 }
