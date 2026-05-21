@@ -6,7 +6,7 @@ use futures::stream;
 use roder_api::extension::InferenceEngineId;
 use roder_api::inference::*;
 use roder_api::subagents::{
-    SubagentDefinition, SubagentDispatcher, SubagentPermissionMode, SubagentRequest,
+    SubagentDefinition, SubagentDispatcher, SubagentLane, SubagentPermissionMode, SubagentRequest,
 };
 use roder_api::tools::{
     ToolCall, ToolExecutionContext, ToolExecutor, ToolRegistry, ToolResult, ToolSpec,
@@ -199,6 +199,53 @@ async fn max_concurrent_dispatches_reject_extra_work_before_engine_invocation() 
 }
 
 #[tokio::test]
+async fn speed_lane_concurrency_caps_reject_extra_runner_work() {
+    let engine = Arc::new(BlockingEngine::default());
+    let dispatcher = Arc::new(dispatcher_with_config_and_engine(
+        InProcessDispatcherConfig {
+            max_concurrent: 4,
+            default_timeout_seconds: 10,
+            ..InProcessDispatcherConfig::default()
+        },
+        engine.clone(),
+    ));
+
+    let first = {
+        let dispatcher = dispatcher.clone();
+        tokio::spawn(async move {
+            dispatcher
+                .dispatch(
+                    "parent".to_string(),
+                    "turn-1".to_string(),
+                    SubagentRequest {
+                        lane: Some(SubagentLane::Runner),
+                        ..request()
+                    },
+                )
+                .await
+        })
+    };
+    while engine.calls.load(Ordering::SeqCst) == 0 {
+        tokio::time::sleep(Duration::from_millis(5)).await;
+    }
+
+    let err = dispatcher
+        .dispatch(
+            "parent".to_string(),
+            "turn-2".to_string(),
+            SubagentRequest {
+                lane: Some(SubagentLane::Runner),
+                ..request()
+            },
+        )
+        .await
+        .unwrap_err();
+    assert!(err.to_string().contains("runner lane max_concurrent"));
+    engine.release.store(true, Ordering::SeqCst);
+    first.await.unwrap().unwrap();
+}
+
+#[tokio::test]
 async fn timeout_cancels_child_engine_future() {
     let engine = Arc::new(CancellableEngine::default());
     let dispatcher = dispatcher_with_config_and_engine(
@@ -227,6 +274,38 @@ async fn timeout_cancels_child_engine_future() {
     );
     assert_eq!(engine.calls.load(Ordering::SeqCst), 1);
     assert!(engine.dropped.load(Ordering::SeqCst));
+}
+
+#[tokio::test]
+async fn speed_timeout_status_preserves_lane_exit_reason() {
+    let engine = Arc::new(CancellableEngine::default());
+    let dispatcher = dispatcher_with_config_and_engine(
+        InProcessDispatcherConfig {
+            default_timeout_seconds: 1,
+            ..InProcessDispatcherConfig::default()
+        },
+        engine.clone(),
+    );
+
+    let result = dispatcher
+        .dispatch(
+            "parent".to_string(),
+            "turn".to_string(),
+            SubagentRequest {
+                lane: Some(SubagentLane::Reviewer),
+                timeout_seconds: Some(1),
+                ..request()
+            },
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(
+        result.exit_reason,
+        roder_api::subagents::SubagentExitReason::Timeout
+    );
+    assert_eq!(result.metadata["lane"], "reviewer");
+    assert_eq!(result.metadata["exit_reason"], "timeout");
 }
 
 #[tokio::test]
@@ -307,14 +386,18 @@ async fn trace_sink_receives_child_status_and_tool_deltas() {
             })),
         ],
     ]));
-    let dispatcher = dispatcher_with_engine(engine);
+    let dispatcher = dispatcher_with_engine(engine.clone());
     let sink = Arc::new(CapturingTraceSink::default());
 
     let result = dispatcher
         .dispatch_traced(
             "parent-thread".to_string(),
             "parent-turn".to_string(),
-            request(),
+            SubagentRequest {
+                lane: Some(SubagentLane::Reviewer),
+                parent_deadline_seconds: Some(30),
+                ..request()
+            },
             Some(sink.clone()),
         )
         .await
@@ -338,6 +421,33 @@ async fn trace_sink_receives_child_status_and_tool_deltas() {
         events.last().map(String::as_str),
         Some("completed")
     ));
+    let summaries = sink.summaries.lock().unwrap().clone();
+    assert!(
+        summaries
+            .iter()
+            .any(|summary| summary.contains("lane:reviewer"))
+    );
+    assert!(
+        summaries
+            .iter()
+            .any(|summary| summary.contains("exit:completed"))
+    );
+    let requests = engine.requests.lock().unwrap();
+    assert!(
+        requests[0]
+            .instructions
+            .developer
+            .as_deref()
+            .unwrap()
+            .contains("Conclusion, Evidence, Files inspected")
+    );
+    assert_eq!(
+        requests[0]
+            .metadata
+            .pointer("/subagent/lane")
+            .and_then(serde_json::Value::as_str),
+        Some("reviewer")
+    );
 }
 
 fn dispatcher_with_engine(engine: Arc<dyn InferenceEngine>) -> InProcessDispatcher {
@@ -373,6 +483,10 @@ fn request() -> SubagentRequest {
         subagent_type: Some("explore".to_string()),
         model: None,
         tools: None,
+        lane: None,
+        max_concurrent: None,
+        allowed_tools: None,
+        parent_deadline_seconds: None,
         inputs: None,
         timeout_seconds: None,
     }
@@ -529,6 +643,7 @@ struct ScriptedEngine {
 #[derive(Default)]
 struct CapturingTraceSink {
     events: Mutex<Vec<String>>,
+    summaries: Mutex<Vec<String>>,
 }
 
 #[async_trait::async_trait]
@@ -538,6 +653,14 @@ impl SubagentTraceSink for CapturingTraceSink {
             .lock()
             .unwrap()
             .push(format!("created:{:?}", summary.status).to_lowercase());
+        self.summaries.lock().unwrap().push(format!(
+            "lane:{} exit:{}",
+            summary.lane.map(|lane| lane.as_str()).unwrap_or("none"),
+            summary
+                .exit_reason
+                .map(exit_reason_label)
+                .unwrap_or_else(|| "none".to_string())
+        ));
     }
 
     async fn trace_delta(&self, delta: SubagentTraceDelta) {
@@ -565,12 +688,36 @@ impl SubagentTraceSink for CapturingTraceSink {
     }
 
     async fn trace_completed(&self, _summary: SubagentTraceSummary) {
+        self.summaries.lock().unwrap().push(format!(
+            "lane:{} exit:{}",
+            _summary.lane.map(|lane| lane.as_str()).unwrap_or("none"),
+            _summary
+                .exit_reason
+                .map(exit_reason_label)
+                .unwrap_or_else(|| "none".to_string())
+        ));
         self.events.lock().unwrap().push("completed".to_string());
     }
 
-    async fn trace_failed(&self, _summary: SubagentTraceSummary, error: String) {
+    async fn trace_failed(&self, summary: SubagentTraceSummary, error: String) {
+        self.summaries.lock().unwrap().push(format!(
+            "lane:{} exit:{}",
+            summary.lane.map(|lane| lane.as_str()).unwrap_or("none"),
+            summary
+                .exit_reason
+                .map(exit_reason_label)
+                .unwrap_or_else(|| "none".to_string())
+        ));
         self.events.lock().unwrap().push(format!("failed:{error}"));
     }
+}
+
+fn exit_reason_label(reason: roder_api::subagents::SubagentExitReason) -> String {
+    serde_json::to_value(reason)
+        .unwrap()
+        .as_str()
+        .unwrap()
+        .to_string()
 }
 
 impl ScriptedEngine {

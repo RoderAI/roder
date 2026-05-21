@@ -2,8 +2,9 @@ use std::sync::Arc;
 
 use anyhow::bail;
 use roder_api::extension::ToolProviderId;
+use roder_api::policy_mode::PolicyMode;
 use roder_api::subagents::{
-    SubagentDispatcher, SubagentExitReason, SubagentRequest, SubagentResult,
+    SubagentDispatcher, SubagentExitReason, SubagentLane, SubagentRequest, SubagentResult,
 };
 use roder_api::tools::{
     ToolCall, ToolContributor, ToolExecutionContext, ToolExecutor, ToolRegistry, ToolResult,
@@ -124,6 +125,26 @@ impl ToolExecutor for TaskTool {
                         "items": { "type": "string" },
                         "description": "Optional additional restriction over the subagent tool whitelist."
                     },
+                    "lane": {
+                        "type": "string",
+                        "enum": ["scout", "editor", "reviewer", "runner"],
+                        "description": "Optional execution lane preset for policy, concurrency, and summary expectations."
+                    },
+                    "max_concurrent": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "description": "Optional lane-local concurrency cap for this request."
+                    },
+                    "allowed_tools": {
+                        "type": "array",
+                        "items": { "type": "string" },
+                        "description": "Optional explicit allowed-tool cap in addition to the subagent definition."
+                    },
+                    "parent_deadline_seconds": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "description": "Optional remaining parent deadline budget in seconds."
+                    },
                     "inputs": {
                         "type": "object",
                         "description": "Optional freeform structured context for the child task."
@@ -157,6 +178,14 @@ impl ToolExecutor for TaskTool {
                 ));
             }
         };
+        if let Err(err) = validate_policy_mode(ctx.effective_mode, &request) {
+            return Ok(error_result(
+                call.id,
+                call.name,
+                "policy_mode",
+                err.to_string(),
+            ));
+        }
 
         match self
             .dispatcher
@@ -196,6 +225,9 @@ fn parse_task_request(
     if matches!(args.timeout_seconds, Some(0)) {
         bail!("timeout_seconds must be at least 1");
     }
+    if matches!(args.max_concurrent, Some(0)) {
+        bail!("max_concurrent must be at least 1");
+    }
 
     Ok(SubagentRequest {
         description: args.description,
@@ -205,9 +237,48 @@ fn parse_task_request(
             .or(args.subagent_type),
         model: args.model,
         tools: args.tools,
+        lane: args.lane,
+        max_concurrent: args.max_concurrent,
+        allowed_tools: args.allowed_tools,
+        parent_deadline_seconds: args.parent_deadline_seconds,
         inputs: args.inputs,
         timeout_seconds: args.timeout_seconds,
     })
+}
+
+fn validate_policy_mode(mode: PolicyMode, request: &SubagentRequest) -> anyhow::Result<()> {
+    if mode != PolicyMode::Plan {
+        return Ok(());
+    }
+    if matches!(
+        request.lane,
+        Some(SubagentLane::Editor | SubagentLane::Runner)
+    ) {
+        bail!("plan mode only allows scout or reviewer subagent lanes");
+    }
+    let tool_names = request
+        .tools
+        .iter()
+        .flatten()
+        .chain(request.allowed_tools.iter().flatten());
+    if tool_names.into_iter().any(is_state_changing_tool) {
+        bail!("plan mode blocks editor, runner, write, and process subagent tools");
+    }
+    Ok(())
+}
+
+fn is_state_changing_tool(tool: &String) -> bool {
+    matches!(
+        tool.as_str(),
+        "Shell"
+            | "shell"
+            | "exec_command"
+            | "run_command"
+            | "write_file"
+            | "edit"
+            | "multi_edit"
+            | "apply_patch"
+    )
 }
 
 fn result_to_tool_result(
@@ -238,6 +309,12 @@ fn result_to_tool_result(
     });
     if let Some(transcript) = transcript {
         data["transcript"] = transcript;
+    }
+    if let Some(lane) = metadata.get("lane") {
+        data["lane"] = lane.clone();
+    }
+    if let Some(summary_contract) = metadata.get("summary_contract") {
+        data["summary_contract"] = summary_contract.clone();
     }
     if is_error {
         data["error"] = metadata
@@ -309,6 +386,14 @@ struct TaskToolArguments {
     model: Option<String>,
     #[serde(default)]
     tools: Option<Vec<String>>,
+    #[serde(default)]
+    lane: Option<SubagentLane>,
+    #[serde(default)]
+    max_concurrent: Option<usize>,
+    #[serde(default)]
+    allowed_tools: Option<Vec<String>>,
+    #[serde(default)]
+    parent_deadline_seconds: Option<u64>,
     #[serde(default)]
     inputs: Option<Value>,
     #[serde(default)]

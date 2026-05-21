@@ -20,6 +20,7 @@ fn summary(status: SubagentTraceStatus) -> SubagentTraceSummary {
         title: "Inspect repository".to_string(),
         role: "explore".to_string(),
         model: Some("mock".to_string()),
+        lane: None,
         status,
         elapsed_ms: 1200,
         usage: None,
@@ -32,6 +33,7 @@ fn summary(status: SubagentTraceStatus) -> SubagentTraceSummary {
         }),
         latest_activity: None,
         error_summary: None,
+        exit_reason: None,
     }
 }
 
