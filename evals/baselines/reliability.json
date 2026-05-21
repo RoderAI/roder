@@ -1,0 +1,30 @@
+{
+  "version": 1,
+  "unknownErrorBlockerThreshold": 0,
+  "expectations": [
+    {
+      "scope": "suite",
+      "metric": "reliability_unknown_errors",
+      "maxCount": 0,
+      "maxIncrease": 0
+    },
+    {
+      "scope": "model:mock/mock",
+      "metric": "reliability_error_class_provider_error",
+      "maxCount": 2,
+      "maxIncrease": 1
+    },
+    {
+      "scope": "tool:read_file",
+      "metric": "reliability_error_class_invalid_arguments",
+      "maxCount": 1,
+      "maxIncrease": 0
+    },
+    {
+      "scope": "tool:read_file",
+      "metric": "reliability_error_class_unexpected_environment",
+      "maxCount": 1,
+      "maxIncrease": 0
+    }
+  ]
+}
