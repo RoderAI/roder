@@ -1,0 +1,8 @@
+{
+  "id": "invalid-arguments",
+  "title": "Reliability invalid arguments",
+  "prompt": "Run the reliability invalid-arguments fixture.",
+  "tags": ["reliability", "reliability:invalid_arguments", "tool:read_file"],
+  "expected": {},
+  "constraints": ["classify invalid tool arguments without treating them as provider failures"]
+}

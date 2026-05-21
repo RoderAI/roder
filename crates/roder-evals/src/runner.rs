@@ -17,16 +17,19 @@ use time::OffsetDateTime;
 use tokio::sync::broadcast;
 use tokio::time::{Duration, timeout};
 
+mod reliability;
 mod report;
 #[cfg(test)]
 mod tests;
 mod workspace;
 
+pub use reliability::ReliabilityReportSummary;
 pub use report::{
     EvalFixtureResult, EvalReportDocument, EvalReportSummary, EvalSuiteReport, list_eval_reports,
     read_eval_report, write_eval_report_files,
 };
 
+use reliability::fixture_reliability_injection;
 use report::{eval_metrics, trajectory_excerpt};
 use workspace::{
     create_workspace, failure_class_for_fixture, grade_expected_evidence, run_workspace_setup,
@@ -330,6 +333,18 @@ async fn run_offline_fixture(
                 });
                 failure_message = Some(error);
             }
+        }
+    }
+    if let Some(injection) = fixture_reliability_injection(fixture, &thread_id, &turn_id) {
+        events.extend(injection.events);
+        if let Some(next) = injection.outcome {
+            outcome = next;
+        }
+        if let Some(next) = injection.failure_class {
+            failure_class = Some(next);
+        }
+        if let Some(next) = injection.failure_message {
+            failure_message = Some(next);
         }
     }
     if outcome == EvalOutcome::Pass

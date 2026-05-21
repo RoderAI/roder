@@ -1,0 +1,8 @@
+{
+  "id": "unknown-panic",
+  "title": "Reliability unknown panic conversion",
+  "prompt": "Run the reliability unknown-panic fixture.",
+  "tags": ["reliability", "reliability:unknown_panic"],
+  "expected": {},
+  "constraints": ["treat unknown harness errors as release-blocking reliability failures"]
+}
