@@ -211,6 +211,28 @@ impl EvalTrajectoryEvent {
                 &e.turn_id,
                 e.timestamp,
             )),
+            RoderEvent::VerificationRequired(e) => Some(Self::basic(
+                "verification_required",
+                &e.thread_id,
+                &e.turn_id,
+                e.timestamp,
+            )),
+            RoderEvent::VerificationCompleted(e) => {
+                let mut event = Self::basic(
+                    "verification_completed",
+                    &e.thread_id,
+                    &e.turn_id,
+                    e.timestamp,
+                );
+                event.is_error = !e.passed;
+                Some(event)
+            }
+            RoderEvent::VerificationSkipped(e) => Some(Self::basic(
+                "verification_skipped",
+                &e.thread_id,
+                &e.turn_id,
+                e.timestamp,
+            )),
             RoderEvent::TurnCompleted(e) => Some(Self::basic(
                 "turn_completed",
                 &e.thread_id,

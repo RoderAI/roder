@@ -1,0 +1,14 @@
+{
+  "id": "skipped-tests-verification",
+  "title": "Skipped tests leave verification gaps",
+  "prompt": "FAKE_WRITE_FILE FAKE_VERIFICATION_FAILED: edit code, skip tests, and surface verification gaps.",
+  "tags": ["verification", "verification-before-final", "failure:skipped-tests"],
+  "timeoutMs": 10000,
+  "expected": {
+    "finalAnswerContains": ["hello from roder"],
+    "verificationRequired": true
+  },
+  "constraints": [
+    "verification with skipped tests must leave an open gap instead of allowing final completion"
+  ]
+}

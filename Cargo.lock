@@ -2413,6 +2413,7 @@ dependencies = [
  "roder-context",
  "roder-core",
  "roder-ext-task-ledger",
+ "roder-ext-verification",
  "roder-tools",
  "serde",
  "serde_json",

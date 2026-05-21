@@ -204,7 +204,11 @@ async fn run_offline_fixture(
             Err(TurnCollectionError::Failed { error, collected }) => {
                 events = collected;
                 outcome = EvalOutcome::Fail;
-                failure_class = Some(EvalFailureClass::Runtime);
+                failure_class = Some(if error.contains("verification gaps remain") {
+                    EvalFailureClass::Verifier
+                } else {
+                    EvalFailureClass::Runtime
+                });
                 failure_message = Some(error);
             }
         }
@@ -297,6 +301,9 @@ fn build_fake_runtime(
     builder.tool_contributor(Arc::new(
         roder_ext_task_ledger::TaskLedgerToolContributor::default(),
     ));
+    builder.tool_contributor(Arc::new(
+        roder_ext_verification::VerificationToolContributor,
+    ));
     builder.context_planner(Arc::new(roder_context::EntrypointContextPlanner::new(
         workspace.to_path_buf(),
     )));
@@ -307,7 +314,7 @@ fn build_fake_runtime(
             default_model: model.to_string(),
             hosted_web_search: HostedWebSearchConfig::disabled(),
             workspace: Some(workspace.display().to_string()),
-            policy_mode: PolicyMode::Default,
+            policy_mode: PolicyMode::Bypass,
             runtime_profile,
             ..RuntimeConfig::default()
         },

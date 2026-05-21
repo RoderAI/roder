@@ -60,6 +60,37 @@ impl InferenceEngine for FakeInferenceEngine {
             ))]);
             return Ok(Box::pin(stream));
         }
+        if should_write_file(&request) {
+            let stream = stream::iter(vec![Ok(InferenceEvent::ToolCallCompleted(
+                ToolCallCompleted {
+                    id: "fake-write-file".to_string(),
+                    name: "write_file".to_string(),
+                    arguments: serde_json::json!({
+                        "path": "src/lib.rs",
+                        "content": "pub fn fake() -> &'static str { \"verified\" }\n"
+                    })
+                    .to_string(),
+                },
+            ))]);
+            return Ok(Box::pin(stream));
+        }
+        if should_complete_verification(&request) {
+            let failed = prompt_contains(&request, "FAKE_VERIFICATION_FAILED");
+            let stream = stream::iter(vec![Ok(InferenceEvent::ToolCallCompleted(
+                ToolCallCompleted {
+                    id: "fake-verification".to_string(),
+                    name: "verification.review".to_string(),
+                    arguments: verification_arguments(failed),
+                },
+            ))]);
+            return Ok(Box::pin(stream));
+        }
+        if verification_failed(&request) {
+            let stream = stream::iter(vec![Ok(InferenceEvent::Failed(InferenceFailure {
+                message: "verification gaps remain: tests not run".to_string(),
+            }))]);
+            return Ok(Box::pin(stream));
+        }
         if user_input_unavailable(&request) {
             let stream = stream::iter(vec![Ok(InferenceEvent::Failed(InferenceFailure {
                 message: "clarification unavailable in non-interactive runtime profile".to_string(),
@@ -124,6 +155,44 @@ fn should_update_task_ledger(request: &AgentInferenceRequest) -> bool {
         })
 }
 
+fn should_write_file(request: &AgentInferenceRequest) -> bool {
+    prompt_contains(request, "FAKE_WRITE_FILE")
+        && !request.conversation.iter().any(|item| {
+            matches!(
+                item,
+                ConversationItem::ToolResult(result)
+                    if result.name.as_deref() == Some("write_file")
+            )
+        })
+}
+
+fn should_complete_verification(request: &AgentInferenceRequest) -> bool {
+    request.conversation.iter().any(|item| {
+        matches!(
+            item,
+            ConversationItem::UserMessage(message)
+                if message.text.contains("Verification gate blocked final completion")
+        )
+    }) && !request.conversation.iter().any(|item| {
+        matches!(
+            item,
+            ConversationItem::ToolResult(result)
+                if result.name.as_deref() == Some("verification.review")
+        )
+    })
+}
+
+fn verification_failed(request: &AgentInferenceRequest) -> bool {
+    request.conversation.iter().any(|item| {
+        matches!(
+            item,
+            ConversationItem::ToolResult(result)
+                if result.name.as_deref() == Some("verification.review")
+                    && result.result.contains("Verification failed")
+        )
+    })
+}
+
 fn prompt_contains(request: &AgentInferenceRequest, needle: &str) -> bool {
     request.conversation.iter().any(|item| {
         matches!(
@@ -149,6 +218,23 @@ fn task_ledger_arguments(complete: bool) -> String {
             second
         ],
         "requireCompletionEvidence": true
+    })
+    .to_string()
+}
+
+fn verification_arguments(failed: bool) -> String {
+    let (status, open_gaps) = if failed {
+        ("failed", serde_json::json!(["tests not run"]))
+    } else {
+        ("completed", serde_json::json!([]))
+    };
+    serde_json::json!({
+        "originalTask": "fake verification eval",
+        "changedFiles": ["src/lib.rs"],
+        "toolEvidence": ["write_file wrote src/lib.rs"],
+        "testsRun": if failed { serde_json::json!([]) } else { serde_json::json!(["cargo test -p roder-evals verification"]) },
+        "openGaps": open_gaps,
+        "status": status
     })
     .to_string()
 }
