@@ -122,6 +122,25 @@ pub(super) fn eval_metrics(
             )
         })
         .count();
+    let child_tasks = events
+        .iter()
+        .filter(|event| {
+            matches!(
+                event,
+                RoderEvent::TaskStarted(_)
+                    | RoderEvent::SubagentStarted(_)
+                    | RoderEvent::TeamMemberStarted(_)
+            )
+        })
+        .count();
+    let deadline_remaining_seconds = events
+        .iter()
+        .filter_map(|event| match event {
+            RoderEvent::InferenceStarted(started) => started.deadline_remaining_seconds,
+            _ => None,
+        })
+        .last()
+        .unwrap_or(0);
     let total_tokens = events
         .iter()
         .filter_map(|event| match event {
@@ -261,6 +280,18 @@ pub(super) fn eval_metrics(
             kind: EvalMetricKind::Count,
             value: tool_calls as f64,
             unit: None,
+        },
+        EvalMetric {
+            name: "child_task_count".to_string(),
+            kind: EvalMetricKind::Count,
+            value: child_tasks as f64,
+            unit: None,
+        },
+        EvalMetric {
+            name: "deadline_remaining_seconds".to_string(),
+            kind: EvalMetricKind::Duration,
+            value: deadline_remaining_seconds as f64,
+            unit: Some("s".to_string()),
         },
         EvalMetric {
             name: "tool_errors".to_string(),
@@ -519,6 +550,44 @@ fn eval_report_markdown(report: &EvalSuiteReport) -> String {
         }
     }
     text.push_str(
+        "\n## Speed Metrics\n\n| Fixture | Policy | Wall ms | Model calls | Tool calls | Child tasks | Deadline remaining s | Outcome |\n| --- | --- | ---: | ---: | ---: | ---: | ---: | --- |\n",
+    );
+    for result in &report.results {
+        text.push_str(&format!(
+            "| `{}` | `{}` | {:.0} | {:.0} | {:.0} | {:.0} | {:.0} | `{:?}` |\n",
+            result.fixture_id,
+            speed_policy_label(result),
+            metric_value(result, "wall_time_ms"),
+            metric_value(result, "model_calls"),
+            metric_value(result, "tool_calls"),
+            metric_value(result, "child_task_count"),
+            metric_value(result, "deadline_remaining_seconds"),
+            result.report.outcome,
+        ));
+    }
+    let comparisons = speed_policy_comparisons(report);
+    if !comparisons.is_empty() {
+        text.push_str(
+            "\n## Speed Policy Comparison\n\n| Fixture | Baseline wall ms | Speed wall ms | Delta ms | Baseline model calls | Speed model calls | Baseline tool calls | Speed tool calls | Baseline child tasks | Speed child tasks | Quality |\n| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |\n",
+        );
+        for comparison in comparisons {
+            text.push_str(&format!(
+                "| `{}` | {:.0} | {:.0} | {:.0} | {:.0} | {:.0} | {:.0} | {:.0} | {:.0} | {:.0} | {} |\n",
+                comparison.fixture_id,
+                comparison.baseline_wall_ms,
+                comparison.speed_wall_ms,
+                comparison.speed_wall_ms - comparison.baseline_wall_ms,
+                comparison.baseline_model_calls,
+                comparison.speed_model_calls,
+                comparison.baseline_tool_calls,
+                comparison.speed_tool_calls,
+                comparison.baseline_child_tasks,
+                comparison.speed_child_tasks,
+                comparison.quality,
+            ));
+        }
+    }
+    text.push_str(
         "\n## Context Metrics\n\n| Fixture | Context tokens | Context bytes | Entrypoint candidates | Entrypoint injection event | First relevant read event | Irrelevant reads | Truncation follow-ups | Tool output truncations |\n| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |\n",
     );
     for result in &report.results {
@@ -582,6 +651,73 @@ fn metric_value(result: &EvalFixtureResult, name: &str) -> f64 {
         .find(|metric| metric.name == name)
         .map(|metric| metric.value)
         .unwrap_or(0.0)
+}
+
+fn speed_policy_label(result: &EvalFixtureResult) -> &'static str {
+    if result
+        .report
+        .run
+        .tags
+        .iter()
+        .any(|tag| tag == "speed_policy:on")
+    {
+        "on"
+    } else {
+        "off"
+    }
+}
+
+struct SpeedPolicyComparison {
+    fixture_id: String,
+    baseline_wall_ms: f64,
+    speed_wall_ms: f64,
+    baseline_model_calls: f64,
+    speed_model_calls: f64,
+    baseline_tool_calls: f64,
+    speed_tool_calls: f64,
+    baseline_child_tasks: f64,
+    speed_child_tasks: f64,
+    quality: String,
+}
+
+fn speed_policy_comparisons(report: &EvalSuiteReport) -> Vec<SpeedPolicyComparison> {
+    let mut by_fixture =
+        BTreeMap::<String, (Option<&EvalFixtureResult>, Option<&EvalFixtureResult>)>::new();
+    for result in &report.results {
+        let entry = by_fixture
+            .entry(result.fixture_id.clone())
+            .or_insert((None, None));
+        match speed_policy_label(result) {
+            "on" => entry.1 = Some(result),
+            _ => entry.0 = Some(result),
+        }
+    }
+    by_fixture
+        .into_iter()
+        .filter_map(|(fixture_id, (baseline, speed))| {
+            let baseline = baseline?;
+            let speed = speed?;
+            Some(SpeedPolicyComparison {
+                fixture_id,
+                baseline_wall_ms: metric_value(baseline, "wall_time_ms"),
+                speed_wall_ms: metric_value(speed, "wall_time_ms"),
+                baseline_model_calls: metric_value(baseline, "model_calls"),
+                speed_model_calls: metric_value(speed, "model_calls"),
+                baseline_tool_calls: metric_value(baseline, "tool_calls"),
+                speed_tool_calls: metric_value(speed, "tool_calls"),
+                baseline_child_tasks: metric_value(baseline, "child_task_count"),
+                speed_child_tasks: metric_value(speed, "child_task_count"),
+                quality: if baseline.report.outcome == speed.report.outcome {
+                    format!("matched `{:?}`", speed.report.outcome)
+                } else {
+                    format!(
+                        "changed `{:?}` -> `{:?}`",
+                        baseline.report.outcome, speed.report.outcome
+                    )
+                },
+            })
+        })
+        .collect()
 }
 
 fn verification_remaining_gaps(events: &[crate::EvalTrajectoryEvent]) -> String {
@@ -652,9 +788,11 @@ fn failure_groups(report: &EvalSuiteReport) -> BTreeMap<(String, String, String)
 mod tests {
     use super::*;
     use roder_api::events::{
-        ContextAssemblyCompleted, ContextEntrypointCandidatesInjected, RoderEvent,
-        ToolCallRequested, ToolOutputTruncated, VerificationCompleted, VerificationRequired,
+        ContextAssemblyCompleted, ContextEntrypointCandidatesInjected, InferenceStarted,
+        RoderEvent, ToolCallRequested, ToolOutputTruncated, VerificationCompleted,
+        VerificationRequired,
     };
+    use roder_api::tasks::TaskStarted;
 
     #[test]
     fn context_eval_metrics_track_budget_entrypoints_and_truncation_follow_up() {
@@ -752,5 +890,41 @@ mod tests {
         assert_eq!(value("verification_completed"), 0.0);
         assert_eq!(value("verification_failed"), 1.0);
         assert_eq!(value("verification_open_gaps"), 1.0);
+    }
+
+    #[test]
+    fn speed_eval_metrics_track_child_tasks_and_deadline_remaining() {
+        let events = vec![
+            RoderEvent::InferenceStarted(InferenceStarted {
+                thread_id: "thread-a".to_string(),
+                turn_id: "turn-a".to_string(),
+                engine_id: "mock".to_string(),
+                speed_policy: None,
+                deadline_remaining_seconds: Some(27),
+                timestamp: OffsetDateTime::UNIX_EPOCH,
+            }),
+            RoderEvent::TaskStarted(TaskStarted {
+                task_id: "task-a".to_string(),
+                executor_id: "subagent".to_string(),
+                task_kind: "subagent".to_string(),
+                queue_depth: 0,
+                thread_id: Some("thread-a".to_string()),
+                turn_id: Some("turn-a".to_string()),
+                timestamp: OffsetDateTime::UNIX_EPOCH,
+            }),
+        ];
+
+        let metrics = eval_metrics(&events, 42, &EvalOutcome::Pass);
+        let value = |name: &str| {
+            metrics
+                .iter()
+                .find(|metric| metric.name == name)
+                .map(|metric| metric.value)
+                .unwrap()
+        };
+
+        assert_eq!(value("model_calls"), 1.0);
+        assert_eq!(value("child_task_count"), 1.0);
+        assert_eq!(value("deadline_remaining_seconds"), 27.0);
     }
 }

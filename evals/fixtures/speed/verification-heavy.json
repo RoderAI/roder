@@ -1,0 +1,27 @@
+{
+  "id": "speed-verification-heavy",
+  "title": "Speed policy verification-heavy task",
+  "prompt": "FAKE_WRITE_FILE: change the library and satisfy the verification gate before finalizing.",
+  "tags": ["speed", "verification-heavy", "tool:write_file", "verification"],
+  "workspace": {
+    "files": [
+      {
+        "path": "src/lib.rs",
+        "contents": "pub fn fake() -> &'static str { \"needs-verification\" }\n"
+      }
+    ]
+  },
+  "timeoutMs": 10000,
+  "expected": {
+    "finalAnswerContains": ["hello from roder"],
+    "files": [
+      {
+        "path": "src/lib.rs",
+        "exists": true,
+        "contains": ["verified"]
+      }
+    ],
+    "verificationRequired": true
+  },
+  "constraints": ["offline fake provider fixture", "verification should restore high reasoning"]
+}

@@ -34,7 +34,7 @@ pub async fn run_eval_cli(args: &[String]) -> anyhow::Result<()> {
             }
         }
         _ => anyhow::bail!(
-            "usage: roder eval run FIXTURE_DIR --offline | roder eval list | roder eval report [REPORT_ID]"
+            "usage: roder eval run FIXTURE_DIR --offline [--speed-policy off|on|both] | roder eval list | roder eval report [REPORT_ID]"
         ),
     }
     Ok(())
@@ -42,7 +42,7 @@ pub async fn run_eval_cli(args: &[String]) -> anyhow::Result<()> {
 
 async fn run_eval_run(args: &[String]) -> anyhow::Result<()> {
     let Some(path) = args.first() else {
-        anyhow::bail!("usage: roder eval run FIXTURE_DIR --offline");
+        anyhow::bail!("usage: roder eval run FIXTURE_DIR --offline [--speed-policy off|on|both]");
     };
     let offline = args.iter().any(|arg| arg == "--offline");
     let provider = flag_value(args, "--provider")
@@ -52,6 +52,10 @@ async fn run_eval_run(args: &[String]) -> anyhow::Result<()> {
         .map(ToOwned::to_owned)
         .or_else(|| std::env::var("RODER_MODEL").ok());
     let runtime_profile = flag_value(args, "--profile")
+        .map(str::parse)
+        .transpose()?
+        .unwrap_or_default();
+    let speed_policy = flag_value(args, "--speed-policy")
         .map(str::parse)
         .transpose()?
         .unwrap_or_default();
@@ -76,6 +80,7 @@ async fn run_eval_run(args: &[String]) -> anyhow::Result<()> {
             provider,
             model,
             runtime_profile,
+            speed_policy,
         },
     )
     .await

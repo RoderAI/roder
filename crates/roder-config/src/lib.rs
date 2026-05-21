@@ -16,6 +16,7 @@ pub struct Config {
     pub reasoning: Option<String>,
     pub runtime_profile: Option<String>,
     pub auto_compact_token_limit: Option<u32>,
+    pub speed_policy: Option<SpeedPolicyConfig>,
     pub web_search: Option<WebSearchConfig>,
     pub context: Option<ContextConfig>,
     pub subagents: Option<SubagentsConfig>,
@@ -35,6 +36,30 @@ pub struct Config {
     pub providers: HashMap<String, ProviderConfig>,
     #[serde(default)]
     pub models: HashMap<String, ModelConfig>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct SpeedPolicyConfig {
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+    pub orientation_reasoning: Option<String>,
+    pub execution_reasoning: Option<String>,
+    pub verification_reasoning: Option<String>,
+    pub recovery_reasoning: Option<String>,
+    pub eval_deadline_seconds: Option<u64>,
+}
+
+impl Default for SpeedPolicyConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            orientation_reasoning: None,
+            execution_reasoning: None,
+            verification_reasoning: None,
+            recovery_reasoning: None,
+            eval_deadline_seconds: None,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -863,6 +888,7 @@ mod tests {
             reasoning: Some("medium".to_string()),
             runtime_profile: None,
             auto_compact_token_limit: None,
+            speed_policy: None,
             web_search: None,
             context: None,
             subagents: None,
@@ -1080,6 +1106,30 @@ mod tests {
         });
 
         assert_eq!(config.runtime_profile.as_deref(), Some("eval"));
+    }
+
+    #[test]
+    fn speed_policy_config_parses_tunable_thresholds() {
+        let config: Config = toml::from_str(
+            r#"
+            [speed_policy]
+            enabled = true
+            orientation_reasoning = "high"
+            execution_reasoning = "low"
+            verification_reasoning = "high"
+            recovery_reasoning = "medium"
+            eval_deadline_seconds = 600
+            "#,
+        )
+        .unwrap();
+
+        let speed = config.speed_policy.unwrap();
+        assert!(speed.enabled);
+        assert_eq!(speed.orientation_reasoning.as_deref(), Some("high"));
+        assert_eq!(speed.execution_reasoning.as_deref(), Some("low"));
+        assert_eq!(speed.verification_reasoning.as_deref(), Some("high"));
+        assert_eq!(speed.recovery_reasoning.as_deref(), Some("medium"));
+        assert_eq!(speed.eval_deadline_seconds, Some(600));
     }
 
     #[test]

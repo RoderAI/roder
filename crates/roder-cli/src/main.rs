@@ -17,7 +17,7 @@ use roder_api::notifications::NotificationKind;
 use roder_api::policy_mode::PolicyMode;
 use roder_api::remote_runner::{RunnerDestination, RunnerManifest};
 use roder_app_server::{AppServer, LocalAppClient};
-use roder_core::{Runtime, RuntimeConfig, validate_edit_tool};
+use roder_core::{Runtime, RuntimeConfig, RuntimeSpeedPolicyConfig, validate_edit_tool};
 use roder_ext_subagents::{AgentLoadConfig, load_agent_definitions};
 use roder_extension_host::{
     CustomInferenceProviderConfig, DefaultNotificationsConfig, DefaultRegistryConfig,
@@ -719,6 +719,7 @@ pub(crate) async fn build_runtime_from_config(
     let web_search = resolve_web_search_config(cfg.web_search.as_ref())?;
     let policy_mode = resolve_policy_mode(&options, &cfg)?;
     let runtime_profile = resolve_runtime_profile(&options, &cfg)?;
+    let speed_policy = resolve_speed_policy_config(cfg.speed_policy.as_ref());
     let custom_inference_provider_configs = custom_inference_providers(&cfg);
     let (default_provider, configured_model) = resolve_provider_model(cfg.provider, cfg.model);
     let default_model = configured_model.clone().unwrap_or_else(|| {
@@ -799,6 +800,11 @@ pub(crate) async fn build_runtime_from_config(
             workspace: workspace.map(|p| p.display().to_string()),
             policy_mode,
             runtime_profile,
+            speed_policy,
+            turn_deadline_seconds: cfg
+                .speed_policy
+                .as_ref()
+                .and_then(|speed| speed.eval_deadline_seconds),
             remote_runner_destination,
             team_data_dir: None,
             roadmap_data_dir: None,
@@ -1314,6 +1320,28 @@ fn resolve_runtime_profile(
         .map(parse_runtime_profile)
         .transpose()
         .map(|profile| profile.unwrap_or_default())
+}
+
+fn resolve_speed_policy_config(
+    cfg: Option<&roder_config::SpeedPolicyConfig>,
+) -> RuntimeSpeedPolicyConfig {
+    let mut speed_policy = RuntimeSpeedPolicyConfig::default();
+    if let Some(cfg) = cfg {
+        speed_policy.enabled = cfg.enabled;
+        if let Some(reasoning) = &cfg.orientation_reasoning {
+            speed_policy.orientation_reasoning = reasoning.clone();
+        }
+        if let Some(reasoning) = &cfg.execution_reasoning {
+            speed_policy.execution_reasoning = reasoning.clone();
+        }
+        if let Some(reasoning) = &cfg.verification_reasoning {
+            speed_policy.verification_reasoning = reasoning.clone();
+        }
+        if let Some(reasoning) = &cfg.recovery_reasoning {
+            speed_policy.recovery_reasoning = reasoning.clone();
+        }
+    }
+    speed_policy
 }
 
 async fn resolve_subagents_config(
@@ -2065,6 +2093,25 @@ mod tests {
         };
         let err = resolve_runtime_profile(&CliOptions::default(), &cfg).unwrap_err();
         assert!(err.to_string().contains("unsupported runtime profile"));
+    }
+
+    #[test]
+    fn speed_policy_config_maps_to_runtime_thresholds() {
+        let cfg = roder_config::SpeedPolicyConfig {
+            enabled: false,
+            orientation_reasoning: Some("high".to_string()),
+            execution_reasoning: Some("minimal".to_string()),
+            verification_reasoning: Some("xhigh".to_string()),
+            recovery_reasoning: Some("medium".to_string()),
+            eval_deadline_seconds: Some(600),
+        };
+
+        let resolved = resolve_speed_policy_config(Some(&cfg));
+        assert!(!resolved.enabled);
+        assert_eq!(resolved.orientation_reasoning, "high");
+        assert_eq!(resolved.execution_reasoning, "minimal");
+        assert_eq!(resolved.verification_reasoning, "xhigh");
+        assert_eq!(resolved.recovery_reasoning, "medium");
     }
 
     #[test]

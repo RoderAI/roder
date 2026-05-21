@@ -11,7 +11,7 @@ use roder_api::inference::{
 };
 use roder_api::policy_mode::PolicyMode;
 use roder_core::fake_provider::FakeInferenceEngine;
-use roder_core::{Runtime, RuntimeConfig, StartTurnRequest};
+use roder_core::{Runtime, RuntimeConfig, RuntimeSpeedPolicyConfig, StartTurnRequest};
 use serde::{Deserialize, Serialize};
 use time::OffsetDateTime;
 use tokio::sync::broadcast;
@@ -47,6 +47,8 @@ pub struct OfflineEvalRunnerOptions {
     pub model: String,
     #[serde(default)]
     pub runtime_profile: RuntimeProfile,
+    #[serde(default)]
+    pub speed_policy: EvalSpeedPolicyMode,
 }
 
 impl Default for OfflineEvalRunnerOptions {
@@ -57,8 +59,67 @@ impl Default for OfflineEvalRunnerOptions {
             provider: default_provider(),
             model: default_model(),
             runtime_profile: RuntimeProfile::Interactive,
+            speed_policy: EvalSpeedPolicyMode::Off,
         }
     }
+}
+
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum EvalSpeedPolicyMode {
+    #[default]
+    Off,
+    On,
+    Both,
+}
+
+impl EvalSpeedPolicyMode {
+    fn runs(self, runtime_profile: RuntimeProfile) -> Vec<EvalSpeedPolicyRun> {
+        match self {
+            Self::Off => vec![EvalSpeedPolicyRun {
+                label: "speed_policy:off",
+                runtime_profile,
+                enabled: false,
+            }],
+            Self::On => vec![EvalSpeedPolicyRun {
+                label: "speed_policy:on",
+                runtime_profile: RuntimeProfile::Eval,
+                enabled: true,
+            }],
+            Self::Both => vec![
+                EvalSpeedPolicyRun {
+                    label: "speed_policy:off",
+                    runtime_profile: RuntimeProfile::Eval,
+                    enabled: false,
+                },
+                EvalSpeedPolicyRun {
+                    label: "speed_policy:on",
+                    runtime_profile: RuntimeProfile::Eval,
+                    enabled: true,
+                },
+            ],
+        }
+    }
+}
+
+impl std::str::FromStr for EvalSpeedPolicyMode {
+    type Err = anyhow::Error;
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        match value {
+            "off" => Ok(Self::Off),
+            "on" => Ok(Self::On),
+            "both" => Ok(Self::Both),
+            other => anyhow::bail!("invalid --speed-policy {other:?}; expected off, on, or both"),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+struct EvalSpeedPolicyRun {
+    label: &'static str,
+    runtime_profile: RuntimeProfile,
+    enabled: bool,
 }
 
 pub fn load_eval_fixtures(dir: &Path) -> anyhow::Result<Vec<EvalFixture>> {
@@ -91,19 +152,22 @@ pub async fn run_offline_eval_suite(
         .filter(|name| !name.is_empty())
         .unwrap_or("fixtures")
         .to_string();
-    let mut results = Vec::with_capacity(fixtures.len());
+    let speed_runs = options.speed_policy.runs(options.runtime_profile);
+    let mut results = Vec::with_capacity(fixtures.len() * speed_runs.len());
     for fixture in fixtures {
-        results.push(
-            run_offline_fixture(
-                &suite_id,
-                &run_id,
-                &fixture,
-                &options.provider,
-                &options.model,
-                options.runtime_profile,
-            )
-            .await?,
-        );
+        for speed_run in &speed_runs {
+            results.push(
+                run_offline_fixture(
+                    &suite_id,
+                    &run_id,
+                    &fixture,
+                    &options.provider,
+                    &options.model,
+                    *speed_run,
+                )
+                .await?,
+            );
+        }
     }
     let report = EvalSuiteReport {
         suite_id,
@@ -148,7 +212,7 @@ async fn run_offline_fixture(
     fixture: &EvalFixture,
     provider: &str,
     model: &str,
-    runtime_profile: RuntimeProfile,
+    speed_run: EvalSpeedPolicyRun,
 ) -> anyhow::Result<EvalFixtureResult> {
     let start = Instant::now();
     let workspace = create_workspace(fixture)?;
@@ -169,7 +233,9 @@ async fn run_offline_fixture(
             &workspace.path,
             provider,
             model,
-            runtime_profile,
+            speed_run.runtime_profile,
+            speed_run.enabled,
+            fixture.timeout_ms.map(deadline_seconds_from_timeout_ms),
         )?);
         let mut rx = runtime.subscribe_events();
         turn_id = runtime
@@ -236,7 +302,11 @@ async fn run_offline_fixture(
             provider: provider.to_string(),
             model: model.to_string(),
             started_at: OffsetDateTime::now_utc(),
-            tags: fixture.tags.clone(),
+            tags: {
+                let mut tags = fixture.tags.clone();
+                tags.push(speed_run.label.to_string());
+                tags
+            },
         },
         outcome: outcome.clone(),
         failure_class: failure_class.clone(),
@@ -292,6 +362,8 @@ fn build_fake_runtime(
     provider: &str,
     model: &str,
     runtime_profile: RuntimeProfile,
+    speed_policy_enabled: bool,
+    turn_deadline_seconds: Option<u64>,
 ) -> anyhow::Result<Runtime> {
     let mut builder = ExtensionRegistryBuilder::new();
     builder.inference_engine(Arc::new(FakeInferenceEngine));
@@ -316,9 +388,18 @@ fn build_fake_runtime(
             workspace: Some(workspace.display().to_string()),
             policy_mode: PolicyMode::Bypass,
             runtime_profile,
+            speed_policy: RuntimeSpeedPolicyConfig {
+                enabled: speed_policy_enabled,
+                ..RuntimeSpeedPolicyConfig::default()
+            },
+            turn_deadline_seconds,
             ..RuntimeConfig::default()
         },
     )
+}
+
+fn deadline_seconds_from_timeout_ms(timeout_ms: u64) -> u64 {
+    timeout_ms.div_ceil(1000).max(1)
 }
 
 async fn collect_turn_events(
