@@ -1,5 +1,8 @@
+export { RoderAgent, type ApprovalDecision, type PlanExitDecision, type RoderAgentOptions, type RoderApprovals, type UserInputDecision } from "./agent.js";
 export { RoderRpcClient, type MethodHelpers } from "./client.js";
+export { normalizeNotification, type EventMode, type RoderSdkEvent } from "./events.js";
 export { RoderRpcError, RoderTransportError } from "./errors.js";
+export { RoderRun, type RoderRunOptions } from "./run.js";
 export {
   InMemoryTransport,
   LocalProcessTransport,
