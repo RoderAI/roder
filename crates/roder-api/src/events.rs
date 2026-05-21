@@ -23,6 +23,9 @@ use crate::memory::{MemoryCitation, MemoryId, MemoryProviderSelection, MemoryRec
 use crate::plan_review::{
     HunkId, HunkRecord, PlanComment, PlanReview, PlanReviewId, PlanReviewStatus, PlanRewrite,
 };
+use crate::processes::{
+    ProcessExited, ProcessFailed, ProcessOutput, ProcessStarted, ProcessStopped, ProcessStopping,
+};
 use crate::reliability::{
     ReliabilityFailureRecorded, ReliabilityLimitRecorded, ReliabilityMetricRecorded,
     ReliabilityRetryRecorded,
@@ -1129,6 +1132,12 @@ pub enum RoderEvent {
     TaskCompleted(TaskCompleted),
     TaskFailed(TaskFailed),
     TaskCancelled(TaskCancelled),
+    ProcessStarted(ProcessStarted),
+    ProcessOutput(ProcessOutput),
+    ProcessExited(ProcessExited),
+    ProcessStopping(ProcessStopping),
+    ProcessStopped(ProcessStopped),
+    ProcessFailed(ProcessFailed),
     FileChangePreviewReady(FileChangePreviewReady),
     FileChanged(FileChanged),
     TurnItemAppended(TurnItemAppended),
@@ -1283,6 +1292,12 @@ impl RoderEvent {
             RoderEvent::TaskCompleted(_) => "task.completed",
             RoderEvent::TaskFailed(_) => "task.failed",
             RoderEvent::TaskCancelled(_) => "task.cancelled",
+            RoderEvent::ProcessStarted(_) => "process.started",
+            RoderEvent::ProcessOutput(_) => "process.output",
+            RoderEvent::ProcessExited(_) => "process.exited",
+            RoderEvent::ProcessStopping(_) => "process.stopping",
+            RoderEvent::ProcessStopped(_) => "process.stopped",
+            RoderEvent::ProcessFailed(_) => "process.failed",
             RoderEvent::FileChangePreviewReady(_) => "file.change_preview_ready",
             RoderEvent::FileChanged(_) => "file.changed",
             RoderEvent::TurnItemAppended(_) => "turn.item_appended",
@@ -1378,7 +1393,13 @@ impl RoderEvent {
             | RoderEvent::TaskOutput(_)
             | RoderEvent::TaskCompleted(_)
             | RoderEvent::TaskFailed(_)
-            | RoderEvent::TaskCancelled(_) => EventSource::Extension,
+            | RoderEvent::TaskCancelled(_)
+            | RoderEvent::ProcessStarted(_)
+            | RoderEvent::ProcessOutput(_)
+            | RoderEvent::ProcessExited(_)
+            | RoderEvent::ProcessStopping(_)
+            | RoderEvent::ProcessStopped(_)
+            | RoderEvent::ProcessFailed(_) => EventSource::Extension,
             RoderEvent::RemoteServerStarted(_)
             | RoderEvent::RemoteServerStopped(_)
             | RoderEvent::RemoteAuthFailed(_)
@@ -1570,6 +1591,12 @@ impl RoderEvent {
             | RoderEvent::TeamDisplayModeChanged(_)
             | RoderEvent::TeamTaskChanged(_)
             | RoderEvent::TeamCleanupCompleted(_) => None,
+            RoderEvent::ProcessStarted(e) => e.process.thread_id.as_ref(),
+            RoderEvent::ProcessOutput(e) => e.thread_id.as_ref(),
+            RoderEvent::ProcessExited(e) => e.process.thread_id.as_ref(),
+            RoderEvent::ProcessStopping(_) => None,
+            RoderEvent::ProcessStopped(e) => e.process.thread_id.as_ref(),
+            RoderEvent::ProcessFailed(e) => e.process.thread_id.as_ref(),
             RoderEvent::AutomationStarted(e) => e.run.thread_id.as_ref(),
             RoderEvent::AutomationCompleted(e) => e.run.thread_id.as_ref(),
             RoderEvent::AutomationFailed(e) => e.run.thread_id.as_ref(),
@@ -1720,6 +1747,12 @@ impl RoderEvent {
             | RoderEvent::TeamDisplayModeChanged(_)
             | RoderEvent::TeamTaskChanged(_)
             | RoderEvent::TeamCleanupCompleted(_) => None,
+            RoderEvent::ProcessStarted(e) => e.process.turn_id.as_ref(),
+            RoderEvent::ProcessOutput(e) => e.turn_id.as_ref(),
+            RoderEvent::ProcessExited(e) => e.process.turn_id.as_ref(),
+            RoderEvent::ProcessStopping(_) => None,
+            RoderEvent::ProcessStopped(e) => e.process.turn_id.as_ref(),
+            RoderEvent::ProcessFailed(e) => e.process.turn_id.as_ref(),
             RoderEvent::AutomationStarted(e) => e.run.turn_id.as_ref(),
             RoderEvent::AutomationCompleted(e) => e.run.turn_id.as_ref(),
             RoderEvent::AutomationFailed(e) => e.run.turn_id.as_ref(),
@@ -2132,6 +2165,71 @@ mod tests {
             }
             other => panic!("unexpected event: {other:?}"),
         }
+    }
+
+    #[test]
+    fn processes_events_expose_kind_source_scope_and_round_trip() {
+        let descriptor = crate::processes::ProcessDescriptor {
+            process_id: "process-1".to_string(),
+            origin: crate::processes::ProcessOrigin::CommandExec,
+            state: crate::processes::ProcessState::Running,
+            command: vec!["sleep".to_string(), "10".to_string()],
+            command_summary: "sleep 10".to_string(),
+            cwd: Some("/repo".to_string()),
+            pid: Some(1234),
+            task_id: Some("task-1".to_string()),
+            thread_id: Some("thread-a".to_string()),
+            turn_id: Some("turn-a".to_string()),
+            runner_destination_id: None,
+            runner_session_id: None,
+            stoppable: true,
+            started_at: OffsetDateTime::UNIX_EPOCH,
+            updated_at: OffsetDateTime::UNIX_EPOCH,
+            stdout_tail: None,
+            stderr_tail: None,
+        };
+        let event = RoderEvent::ProcessStarted(crate::processes::ProcessStarted {
+            process: descriptor,
+            timestamp: OffsetDateTime::UNIX_EPOCH,
+        });
+        let envelope = EventEnvelope {
+            event_id: "event-process-started".to_string(),
+            seq: 11,
+            timestamp: OffsetDateTime::UNIX_EPOCH,
+            source: event.source(),
+            kind: event.kind().to_string(),
+            thread_id: event.thread_id().cloned(),
+            turn_id: event.turn_id().cloned(),
+            event,
+        };
+
+        let serialized = serde_json::to_string(&envelope).unwrap();
+        let round_trip: EventEnvelope = serde_json::from_str(&serialized).unwrap();
+
+        assert_eq!(round_trip.kind, "process.started");
+        assert_eq!(round_trip.source, EventSource::Extension);
+        assert_eq!(round_trip.thread_id.as_deref(), Some("thread-a"));
+        assert_eq!(round_trip.turn_id.as_deref(), Some("turn-a"));
+        match round_trip.event {
+            RoderEvent::ProcessStarted(started) => {
+                assert_eq!(started.process.process_id, "process-1");
+                assert_eq!(started.process.pid, Some(1234));
+            }
+            other => panic!("unexpected event: {other:?}"),
+        }
+
+        let output = RoderEvent::ProcessOutput(crate::processes::ProcessOutput {
+            process_id: "process-1".to_string(),
+            stream: crate::tasks::TaskOutputStream::Stdout,
+            chunk: "ready\n".to_string(),
+            dropped_bytes: 0,
+            thread_id: Some("thread-a".to_string()),
+            turn_id: Some("turn-a".to_string()),
+            timestamp: OffsetDateTime::UNIX_EPOCH,
+        });
+        assert_eq!(output.kind(), "process.output");
+        assert_eq!(output.thread_id().map(String::as_str), Some("thread-a"));
+        assert_eq!(output.turn_id().map(String::as_str), Some("turn-a"));
     }
 
     #[test]

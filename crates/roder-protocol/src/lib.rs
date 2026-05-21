@@ -34,6 +34,7 @@ use roder_api::plan_review::{
     PlanRewrite,
 };
 use roder_api::policy_mode::PolicyMode;
+use roder_api::processes::{ProcessDescriptor, ProcessId, ProcessOutput, ProcessStopResult};
 use roder_api::retrieval::{RetrievalMeasuredOutcome, RetrievalMode, RetrievalRoutePlan};
 use roder_api::skills::{Skill, SkillDescriptor, SkillExposure, SkillSelector};
 use roder_api::subagents::SubagentPermissionMode;
@@ -2412,6 +2413,70 @@ pub struct TasksSubscribeResult {
     pub event_kinds: Vec<String>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct ProcessesListParams {
+    #[serde(default)]
+    pub include_completed: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProcessesListResult {
+    pub processes: Vec<ProcessDescriptor>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProcessesGetParams {
+    pub process_id: ProcessId,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub output_bytes: Option<usize>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProcessesGetResult {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub process: Option<ProcessDescriptor>,
+    #[serde(default)]
+    pub output: Vec<ProcessOutput>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProcessesStopParams {
+    pub process_id: ProcessId,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProcessesStopResult {
+    pub result: ProcessStopResult,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct ProcessesStopAllParams {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProcessesStopAllResult {
+    pub results: Vec<ProcessStopResult>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProcessesSubscribeResult {
+    pub subscribed: bool,
+    pub event_kinds: Vec<String>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AgentDescriptor {
     pub agent_type: String,
@@ -2885,6 +2950,79 @@ mod tests {
         assert_eq!(value["patch"]["modelProvider"], "codex");
         assert_eq!(value["patch"]["catchUp"]["skipExpired"]["graceSeconds"], 60);
         assert!(value.get("automation_id").is_none());
+    }
+
+    #[test]
+    fn processes_protocol_structs_cover_list_detail_stop_and_subscribe() {
+        let descriptor = ProcessDescriptor {
+            process_id: "process-1".to_string(),
+            origin: roder_api::processes::ProcessOrigin::CommandExec,
+            state: roder_api::processes::ProcessState::Running,
+            command: vec!["sleep".to_string(), "10".to_string()],
+            command_summary: "sleep 10".to_string(),
+            cwd: Some("/repo".to_string()),
+            pid: Some(1234),
+            task_id: Some("task-1".to_string()),
+            thread_id: Some("thread-1".to_string()),
+            turn_id: Some("turn-1".to_string()),
+            runner_destination_id: None,
+            runner_session_id: None,
+            stoppable: true,
+            started_at: OffsetDateTime::UNIX_EPOCH,
+            updated_at: OffsetDateTime::UNIX_EPOCH,
+            stdout_tail: Some("ready\n".to_string()),
+            stderr_tail: None,
+        };
+
+        let list_params: ProcessesListParams = serde_json::from_value(serde_json::json!({
+            "includeCompleted": true
+        }))
+        .unwrap();
+        assert!(list_params.include_completed);
+
+        let list = serde_json::to_value(ProcessesListResult {
+            processes: vec![descriptor.clone()],
+        })
+        .unwrap();
+        assert_eq!(list["processes"][0]["processId"], "process-1");
+        assert_eq!(list["processes"][0]["pid"], 1234);
+        assert!(list["processes"][0].get("process_id").is_none());
+
+        let get: ProcessesGetParams = serde_json::from_value(serde_json::json!({
+            "processId": "process-1",
+            "outputBytes": 1024
+        }))
+        .unwrap();
+        assert_eq!(get.process_id, "process-1");
+        assert_eq!(get.output_bytes, Some(1024));
+
+        let stop: ProcessesStopParams = serde_json::from_value(serde_json::json!({
+            "processId": "process-1",
+            "reason": "user requested stop"
+        }))
+        .unwrap();
+        assert_eq!(stop.process_id, "process-1");
+        assert_eq!(stop.reason.as_deref(), Some("user requested stop"));
+
+        let stop_all: ProcessesStopAllResult = serde_json::from_value(serde_json::json!({
+            "results": [{
+                "processId": "process-1",
+                "stopped": true,
+                "process": list["processes"][0].clone()
+            }]
+        }))
+        .unwrap();
+        assert_eq!(stop_all.results[0].process_id, "process-1");
+        assert!(stop_all.results[0].stopped);
+
+        let subscribe = ProcessesSubscribeResult {
+            subscribed: true,
+            event_kinds: vec!["process.started".to_string(), "process.output".to_string()],
+        };
+        let value = serde_json::to_value(subscribe).unwrap();
+        assert_eq!(value["subscribed"], true);
+        assert_eq!(value["eventKinds"][0], "process.started");
+        assert!(value.get("event_kinds").is_none());
     }
 
     #[test]
