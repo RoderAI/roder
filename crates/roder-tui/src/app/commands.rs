@@ -302,6 +302,22 @@ mod tests {
     }
 
     #[test]
+    fn ps_is_visible_in_server_sorted_root_slash_menu() {
+        let mut commands = built_in_command_catalog();
+        commands.sort_by(|a, b| a.name.cmp(&b.name));
+        let visible = matching_commands(&commands, "/")
+            .into_iter()
+            .take(super::super::MAX_VISIBLE_SLASH_COMMANDS)
+            .map(|command| command.name.as_str())
+            .collect::<Vec<_>>();
+
+        assert!(
+            visible.contains(&"ps"),
+            "/ps should be visible when commands/list returns commands sorted by name; got {visible:?}"
+        );
+    }
+
+    #[test]
     fn menu_only_shows_while_typing_command_name() {
         assert!(should_show_menu("/"));
         assert!(should_show_menu("/he"));
