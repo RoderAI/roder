@@ -2394,6 +2394,28 @@ mod tests {
         );
     }
 
+    #[tokio::test]
+    async fn automations_can_create_project_thread_with_model_overrides() {
+        let runtime = Runtime::fake().unwrap();
+        let metadata = runtime
+            .create_session_with(CreateSessionRequest {
+                title: Some("Automation: nightly status".to_string()),
+                workspace: Some("/tmp/project".to_string()),
+                provider: Some("mock".to_string()),
+                model: Some("mock".to_string()),
+            })
+            .await
+            .unwrap();
+
+        assert_eq!(
+            metadata.title.as_deref(),
+            Some("Automation: nightly status")
+        );
+        assert_eq!(metadata.workspace.as_deref(), Some("/tmp/project"));
+        assert_eq!(metadata.provider.as_deref(), Some("mock"));
+        assert_eq!(metadata.model.as_deref(), Some("mock"));
+    }
+
     #[test]
     fn server_side_compaction_is_only_enabled_for_supported_models() {
         let cfg = RuntimeConfig {

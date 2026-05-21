@@ -15,6 +15,7 @@ required-features = ["e2e-tests"]
 
 [dependencies]
 anyhow.workspace = true
+async-trait.workspace = true
 base64.workspace = true
 dirs.workspace = true
 futures.workspace = true

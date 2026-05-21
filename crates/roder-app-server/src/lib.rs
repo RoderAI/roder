@@ -1,4 +1,5 @@
 mod artifact;
+mod automation_worker;
 mod automations;
 pub mod client;
 mod code_index;
