@@ -26,6 +26,7 @@ impl Runtime {
                     | ContextBlockKind::Memory
                     | ContextBlockKind::RepositoryFact
                     | ContextBlockKind::PriorSummary
+                    | ContextBlockKind::EntrypointHint
             ) {
                 conversation.push(ConversationItem::UserMessage(UserMessage {
                     text: block.text,

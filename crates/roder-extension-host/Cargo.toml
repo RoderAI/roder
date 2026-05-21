@@ -11,6 +11,7 @@ futures.workspace = true
 roder-api.workspace = true
 roder-codex-auth.workspace = true
 roder-config.workspace = true
+roder-context.workspace = true
 roder-ext-anthropic.workspace = true
 roder-ext-firecrawl-search.workspace = true
 roder-ext-gemini.workspace = true
