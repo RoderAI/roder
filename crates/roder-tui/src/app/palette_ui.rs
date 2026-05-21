@@ -312,6 +312,11 @@ impl TuiApp {
             PaletteAction::OpenPluginBrowser => {
                 self.open_plugin_browser().await;
             }
+            PaletteAction::OpenSkillsManager => {
+                self.palette_query.clear();
+                self.palette_source_filter = Some("skills".to_string());
+                self.populate_palette().await;
+            }
         }
     }
 

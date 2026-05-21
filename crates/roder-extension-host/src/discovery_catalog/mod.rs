@@ -3,6 +3,7 @@ use std::path::{Path, PathBuf};
 
 use roder_api::discovery::{DiscoveryCatalog, DiscoveryCatalogGroup, DiscoveryPromotionRecord};
 use roder_api::extension::ExtensionRegistry;
+use roder_api::skills::SkillDescriptor;
 use roder_api::workflow::WorkflowImportItem;
 use serde::{Deserialize, Serialize};
 use time::OffsetDateTime;
@@ -44,6 +45,15 @@ pub fn build_file_backed_catalog(
     workflow_items: &[WorkflowImportItem],
     options: &DiscoveryCatalogBuildOptions,
 ) -> anyhow::Result<DiscoveryCatalogBuildResult> {
+    build_file_backed_catalog_with_skills(registry, workflow_items, &[], options)
+}
+
+pub fn build_file_backed_catalog_with_skills(
+    registry: &ExtensionRegistry,
+    workflow_items: &[WorkflowImportItem],
+    skills: &[SkillDescriptor],
+    options: &DiscoveryCatalogBuildOptions,
+) -> anyhow::Result<DiscoveryCatalogBuildResult> {
     fs::create_dir_all(&options.catalog_root)?;
     fs::create_dir_all(&options.session_state_dir)?;
 
@@ -57,6 +67,11 @@ pub fn build_file_backed_catalog(
     )?);
     groups.extend(build::workflow_groups(
         workflow_items,
+        &options.catalog_root,
+        &promoted,
+    )?);
+    groups.extend(build::skill_groups(
+        skills,
         &options.catalog_root,
         &promoted,
     )?);

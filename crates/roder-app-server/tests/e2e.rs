@@ -7,6 +7,7 @@ use roder_api::catalog::{
     PROVIDER_SUPERGROK, PROVIDER_XAI,
 };
 use roder_api::code_index::CodeIndexStatus;
+use roder_api::discovery::DiscoverySourceKind;
 use roder_api::extension::{ExtensionRegistryBuilder, InferenceEngineId};
 use roder_api::inference::*;
 use roder_api::marketplace::MarketplaceInstallState;
@@ -3921,6 +3922,62 @@ async fn skills_manager_can_disable_commit_and_update_exposure() {
             std::env::set_var("RODER_MARKETPLACES_PATH", value);
         } else {
             std::env::remove_var("RODER_MARKETPLACES_PATH");
+        }
+    }
+    let _ = std::fs::remove_dir_all(root);
+}
+
+#[tokio::test]
+async fn discovery_catalog_includes_runtime_skills() {
+    let _guard = SKILLS_TEST_LOCK.lock().await;
+    let root = std::env::temp_dir().join(format!(
+        "roder-skills-discovery-e2e-{}",
+        uuid::Uuid::new_v4()
+    ));
+    let workspace = root.join("workspace");
+    std::fs::create_dir_all(&workspace).unwrap();
+    let previous_catalog = std::env::var_os("RODER_DISCOVERY_CATALOG_DIR");
+    let previous_session = std::env::var_os("RODER_DISCOVERY_SESSION_DIR");
+    unsafe {
+        std::env::set_var("RODER_DISCOVERY_CATALOG_DIR", root.join("catalog"));
+        std::env::set_var("RODER_DISCOVERY_SESSION_DIR", root.join("session"));
+    }
+
+    let runtime = Arc::new(Runtime::fake().unwrap());
+    runtime
+        .set_skills(roder_config::build_skills_registry(&workspace, None))
+        .await;
+    let client = LocalAppClient::new(Arc::new(AppServer::new(runtime)));
+    let groups: DiscoveryGroupsResult = request(
+        &client,
+        "discovery/groups",
+        Some(serde_json::json!({ "refresh": true })),
+    )
+    .await;
+    let skills_group = groups
+        .groups
+        .iter()
+        .find(|group| group.id == "skills:registry")
+        .expect("skills discovery group");
+    let commit = skills_group
+        .items
+        .iter()
+        .find(|item| item.name == "commit")
+        .expect("commit discovery item");
+    assert_eq!(commit.source.kind, DiscoverySourceKind::Skills);
+    assert!(commit.tags.contains(&"built-in".to_string()));
+    assert!(commit.tags.contains(&"direct-only".to_string()));
+
+    unsafe {
+        if let Some(value) = previous_catalog {
+            std::env::set_var("RODER_DISCOVERY_CATALOG_DIR", value);
+        } else {
+            std::env::remove_var("RODER_DISCOVERY_CATALOG_DIR");
+        }
+        if let Some(value) = previous_session {
+            std::env::set_var("RODER_DISCOVERY_SESSION_DIR", value);
+        } else {
+            std::env::remove_var("RODER_DISCOVERY_SESSION_DIR");
         }
     }
     let _ = std::fs::remove_dir_all(root);

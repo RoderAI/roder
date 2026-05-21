@@ -8,7 +8,7 @@ use roder_api::discovery::{
 };
 use roder_api::events::RoderEvent;
 use roder_extension_host::discovery_catalog::{
-    DiscoveryCatalogBuildOptions, PromotionStore, build_file_backed_catalog,
+    DiscoveryCatalogBuildOptions, PromotionStore, build_file_backed_catalog_with_skills,
 };
 use roder_protocol::{
     DiscoveryGroupsParams, DiscoveryGroupsResult, DiscoveryPromoteParams, DiscoveryPromoteResult,
@@ -28,7 +28,9 @@ impl AppServer {
         &self,
         params: DiscoveryGroupsParams,
     ) -> Result<serde_json::Value, JsonRpcError> {
-        let catalog = self.discovery_catalog(params.refresh.unwrap_or(false))?;
+        let catalog = self
+            .discovery_catalog(params.refresh.unwrap_or(false))
+            .await?;
         let mut groups = catalog.groups.clone();
         groups.truncate(clamp_limit(params.limit));
         Ok(serde_json::to_value(DiscoveryGroupsResult {
@@ -48,7 +50,9 @@ impl AppServer {
             return Err(invalid_params("discovery/search requires query"));
         }
         let query = params.query.trim().to_ascii_lowercase();
-        let catalog = self.discovery_catalog(params.refresh.unwrap_or(false))?;
+        let catalog = self
+            .discovery_catalog(params.refresh.unwrap_or(false))
+            .await?;
         let limit = clamp_limit(params.limit);
         let items = catalog
             .groups
@@ -69,7 +73,9 @@ impl AppServer {
         &self,
         params: DiscoveryReadParams,
     ) -> Result<serde_json::Value, JsonRpcError> {
-        let catalog = self.discovery_catalog(params.refresh.unwrap_or(false))?;
+        let catalog = self
+            .discovery_catalog(params.refresh.unwrap_or(false))
+            .await?;
         let item = find_item(&catalog, &params.item_id)?;
         let page = read_item_page(
             &self.discovery_catalog_root(),
@@ -106,7 +112,7 @@ impl AppServer {
     }
 
     pub(crate) async fn handle_discovery_refresh(&self) -> Result<serde_json::Value, JsonRpcError> {
-        let result = self.rebuild_discovery_catalog()?;
+        let result = self.rebuild_discovery_catalog().await?;
         Ok(serde_json::to_value(DiscoveryRefreshResult {
             catalog: result.catalog,
             catalog_root: result.catalog_root.display().to_string(),
@@ -124,7 +130,7 @@ impl AppServer {
         &self,
         params: DiscoveryPromoteParams,
     ) -> Result<serde_json::Value, JsonRpcError> {
-        let catalog = self.discovery_catalog(false)?;
+        let catalog = self.discovery_catalog(false).await?;
         let item = find_item(&catalog, &params.item_id)?;
         let record = self.promote_discovery_item(&item, params.thread_id, params.turn_id)?;
         self.emit_promotion_event(record.clone()).await;
@@ -165,25 +171,34 @@ impl AppServer {
         Ok(serde_json::to_value(DiscoveryPromotedClearResult { cleared }).unwrap())
     }
 
-    fn discovery_catalog(&self, refresh: bool) -> Result<DiscoveryCatalog, JsonRpcError> {
+    async fn discovery_catalog(&self, refresh: bool) -> Result<DiscoveryCatalog, JsonRpcError> {
         if refresh || !self.discovery_catalog_root().join("index.json").exists() {
-            return Ok(self.rebuild_discovery_catalog()?.catalog);
+            return Ok(self.rebuild_discovery_catalog().await?.catalog);
         }
         let text = fs::read_to_string(self.discovery_catalog_root().join("index.json"))
             .map_err(internal_error)?;
         serde_json::from_str(&text).map_err(internal_error)
     }
 
-    fn rebuild_discovery_catalog(
+    async fn rebuild_discovery_catalog(
         &self,
     ) -> Result<roder_extension_host::discovery_catalog::DiscoveryCatalogBuildResult, JsonRpcError>
     {
         let workspace = self.runtime.workspace();
         let workflow =
             roder_config::scan_workflow_imports(roder_config::WorkflowScanOptions::new(&workspace));
-        build_file_backed_catalog(
+        let skills = self
+            .runtime
+            .skills_snapshot()
+            .await
+            .skills()
+            .iter()
+            .map(|skill| skill.descriptor.clone())
+            .collect::<Vec<_>>();
+        build_file_backed_catalog_with_skills(
             self.runtime.registry(),
             &workflow.items,
+            &skills,
             &DiscoveryCatalogBuildOptions::new(
                 self.discovery_catalog_root(),
                 self.discovery_session_state_dir(),

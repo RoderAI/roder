@@ -388,6 +388,32 @@ mod tests {
         );
     }
 
+    #[test]
+    fn discovery_descriptors_preserve_builtin_enabled_and_exposure_state() {
+        let workspace = fixture_dir("discovery");
+        let registry = SkillRegistry::load(SkillRegistryOptions {
+            workspace,
+            include_builtins: true,
+            roots: Vec::new(),
+            workflow_imports: Vec::new(),
+            config_rules: vec![SkillConfigRule {
+                name: Some("commit".to_string()),
+                path: None,
+                enabled: Some(true),
+                exposure: Some(SkillExposure::Global),
+            }],
+        });
+
+        let commit = registry
+            .skills()
+            .iter()
+            .find(|skill| skill.descriptor.name == "commit")
+            .expect("commit skill");
+        assert_eq!(commit.descriptor.source, SkillSource::BuiltIn);
+        assert_eq!(commit.descriptor.exposure, SkillExposure::Global);
+        assert_eq!(commit.descriptor.activation, SkillActivationState::Enabled);
+    }
+
     fn write_skill(dir: &Path, name: &str, description: &str) {
         std::fs::create_dir_all(dir).unwrap();
         std::fs::write(
