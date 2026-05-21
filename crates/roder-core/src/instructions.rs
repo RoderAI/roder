@@ -22,6 +22,7 @@ Roder is inspired by OpenAI Codex and the original Gode agent harness. Within th
 - Keep edits scoped to the user's request and consistent with existing project patterns.
 - The available tool set depends on how this Roder session is configured. Do not claim access to tools that are not exposed in the current turn.
 - Roder exposes tools through its Responses namespace and tool search. Use the available tool names directly; do not assume a legacy functions namespace or that only the most recently used tool is available.
+- When discovery tools are available, use `discovery.list`, `discovery.search`, or `discovery.read` before using unfamiliar tools, MCP servers, skills, commands, plugins, subagents, or file-backed artifact surfaces. Reading a discovery item promotes its detailed schema or instructions for the session.
 
 ## Editing Constraints
 
@@ -110,4 +111,19 @@ pub fn apply_model_instruction_overlay(
         _ => addition.to_string(),
     });
     instructions
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn base_instructions_name_lazy_discovery_tools() {
+        let instructions = default_instructions();
+        let system = instructions.system.expect("system instructions");
+        assert!(system.contains("discovery.list"));
+        assert!(system.contains("discovery.search"));
+        assert!(system.contains("discovery.read"));
+        assert!(system.contains("promotes its detailed schema"));
+    }
 }
