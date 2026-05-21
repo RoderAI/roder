@@ -315,6 +315,10 @@ mod tests {
             visible.contains(&"ps"),
             "/ps should be visible when commands/list returns commands sorted by name; got {visible:?}"
         );
+        assert!(
+            visible.contains(&"roadmap"),
+            "/roadmap should be visible when commands/list returns commands sorted by name; got {visible:?}"
+        );
     }
 
     #[test]

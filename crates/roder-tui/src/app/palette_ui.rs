@@ -8,8 +8,8 @@ use crate::palette::{
     skills::skill_source,
     sources::{
         agent_source, command_source, marketplace_source, media_source, memories_source,
-        mode_source, model_source, remote_source, runner_source, session_source, settings_source,
-        theme_source,
+        mode_source, model_source, remote_source, roadmap_source, runner_source, session_source,
+        settings_source, theme_source,
         workflow_import_source,
     },
 };
@@ -162,6 +162,9 @@ where
         }
         if self.palette_source_enabled("remote") {
             sources.push(remote_source());
+        }
+        if self.palette_source_enabled("roadmaps") {
+            sources.push(roadmap_source());
         }
         self.palette_entries = collect_entries(&sources);
         self.palette_state
@@ -332,6 +335,9 @@ where
                 self.palette_query.clear();
                 self.palette_source_filter = Some("skills".to_string());
                 self.populate_palette().await;
+            }
+            PaletteAction::OpenRoadmapMode => {
+                self.enter_roadmap_mode(None);
             }
             PaletteAction::ShowAutomationsStatus => {
                 self.show_automations_status().await;

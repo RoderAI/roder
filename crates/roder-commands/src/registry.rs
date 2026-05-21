@@ -272,6 +272,8 @@ mod tests {
             "commit",
             "marketplace",
             "plugin",
+            "remote",
+            "roadmap",
         ] {
             let spec = registry
                 .get(name)
@@ -296,6 +298,12 @@ mod tests {
                 .get("plugin")
                 .and_then(|spec| spec.argument_hint.as_deref()),
             Some("preview|install|install-all|list|disable|uninstall [args]")
+        );
+        assert_eq!(
+            registry
+                .get("roadmap")
+                .and_then(|spec| spec.argument_hint.as_deref()),
+            Some("[plan]")
         );
     }
 

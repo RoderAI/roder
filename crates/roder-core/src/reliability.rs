@@ -20,7 +20,7 @@ impl Default for RuntimeReliabilityConfig {
         Self {
             max_consecutive_tool_failures: 5,
             max_tool_failures_per_turn: 10,
-            max_model_calls_per_turn: 50,
+            max_model_calls_per_turn: 512,
             provider_retry_max_attempts: 3,
             provider_retry_initial_backoff_ms: 1_000,
             provider_retry_backoff_factor: 2,
@@ -185,5 +185,13 @@ mod tests {
             ReliabilityLimitKind::ConsecutiveToolFailures
         );
         assert_eq!(limit.current, 2);
+    }
+
+    #[test]
+    fn default_model_call_limit_allows_long_agentic_turns() {
+        assert_eq!(
+            RuntimeReliabilityConfig::default().max_model_calls_per_turn,
+            512
+        );
     }
 }
