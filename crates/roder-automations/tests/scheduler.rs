@@ -2,9 +2,10 @@ use roder_api::automations::{
     AutomationClient, AutomationClientKind, AutomationConcurrencyPolicy, AutomationDefinition,
     AutomationProject, AutomationRunState, AutomationRunSummary, AutomationSchedule, CatchUpPolicy,
 };
+use roder_automations::AutomationSupervisorConfig;
 use roder_automations::{
     AutomationStore, Clock, FakeClock, OccurrenceAction, RunLogEntry, expand_missed_occurrences,
-    next_after, occurrence_key,
+    next_after, occurrence_key, run_due_tick,
 };
 use time::OffsetDateTime;
 
@@ -293,4 +294,166 @@ fn lease_renew_and_release_require_owner() {
     assert!(store.renew_lease(&run_id, &server_id, ts(70), 30).unwrap());
     assert!(store.release_lease(&run_id).unwrap());
     assert!(!store.release_lease(&run_id).unwrap());
+}
+
+#[test]
+fn scheduler_recovers_missed_cron_occurrences_after_process_restart() {
+    let temp = tempfile::tempdir().unwrap();
+    let store_path = temp.path().join("automations.sqlite3");
+    let definition = definition(
+        AutomationSchedule::Cron {
+            expression: "* * * * *".to_string(),
+            timezone: "UTC".to_string(),
+        },
+        CatchUpPolicy::RunAllMissed { max_per_tick: 10 },
+    );
+    let config = AutomationSupervisorConfig {
+        enabled: true,
+        max_due_per_tick: 10,
+        ..AutomationSupervisorConfig::default()
+    };
+
+    {
+        let store = AutomationStore::open(&store_path).unwrap();
+        store.upsert_automation(&definition, Some(ts(0))).unwrap();
+    }
+
+    let restarted = AutomationStore::open(&store_path).unwrap();
+    let clock = FakeClock::new(ts(300));
+    let result = run_due_tick(&restarted, &config, &clock).unwrap();
+
+    assert_eq!(result.occurrences_recorded, 5);
+    assert_eq!(result.runs_due, 5);
+    assert_eq!(
+        restarted.count_occurrences_by_state("scheduled").unwrap(),
+        5
+    );
+    let due = restarted.list_scheduled_occurrences(None).unwrap();
+    assert_eq!(due.len(), 5);
+    assert_eq!(due[0].1.scheduled_for, ts(60));
+    assert_eq!(due[4].1.scheduled_for, ts(300));
+}
+
+#[test]
+fn scheduler_racing_instances_do_not_lease_same_due_occurrence_twice() {
+    let temp = tempfile::tempdir().unwrap();
+    let store_path = temp.path().join("automations.sqlite3");
+    let definition = definition(
+        AutomationSchedule::Interval { seconds: 60 },
+        CatchUpPolicy::RunAllMissed { max_per_tick: 10 },
+    );
+    let config = AutomationSupervisorConfig {
+        enabled: true,
+        max_due_per_tick: 1,
+        ..AutomationSupervisorConfig::default()
+    };
+    let store_a = AutomationStore::open(&store_path).unwrap();
+    store_a.upsert_automation(&definition, Some(ts(0))).unwrap();
+    run_due_tick(&store_a, &config, &FakeClock::new(ts(60))).unwrap();
+
+    let store_b = AutomationStore::open(&store_path).unwrap();
+    let due_a = store_a.list_scheduled_occurrences(Some(1)).unwrap();
+    let due_b = store_b.list_scheduled_occurrences(Some(1)).unwrap();
+    assert_eq!(due_a[0].1.occurrence_key, due_b[0].1.occurrence_key);
+
+    let first = store_a
+        .acquire_lease(
+            "run-a".to_string(),
+            definition.id.clone(),
+            due_a[0].1.occurrence_key.clone(),
+            "server-a".to_string(),
+            "desktop".to_string(),
+            ts(60),
+            30,
+        )
+        .unwrap();
+    assert!(first.is_some());
+    store_a
+        .set_occurrence_state(&due_a[0].1.occurrence_key, "queued", None)
+        .unwrap();
+
+    let duplicate = store_b
+        .acquire_lease(
+            "run-b".to_string(),
+            definition.id.clone(),
+            due_b[0].1.occurrence_key.clone(),
+            "server-b".to_string(),
+            "desktop".to_string(),
+            ts(61),
+            30,
+        )
+        .unwrap();
+    assert!(duplicate.is_none());
+    assert_eq!(store_b.count_occurrences_by_state("queued").unwrap(), 1);
+}
+
+#[test]
+fn scheduler_recovers_stale_leased_occurrences_after_lease_seconds() {
+    let store = AutomationStore::open_memory().unwrap();
+    let definition = definition(
+        AutomationSchedule::Interval { seconds: 60 },
+        CatchUpPolicy::RunAllMissed { max_per_tick: 10 },
+    );
+    let config = AutomationSupervisorConfig {
+        enabled: true,
+        lease_seconds: 30,
+        ..AutomationSupervisorConfig::default()
+    };
+    store.upsert_automation(&definition, Some(ts(0))).unwrap();
+    run_due_tick(&store, &config, &FakeClock::new(ts(60))).unwrap();
+    let due = store.list_scheduled_occurrences(Some(1)).unwrap();
+    let occurrence = &due[0].1;
+    store
+        .acquire_lease(
+            "run-a".to_string(),
+            definition.id.clone(),
+            occurrence.occurrence_key.clone(),
+            "server-a".to_string(),
+            "desktop".to_string(),
+            ts(60),
+            30,
+        )
+        .unwrap();
+    store
+        .set_occurrence_state(&occurrence.occurrence_key, "queued", None)
+        .unwrap();
+
+    run_due_tick(&store, &config, &FakeClock::new(ts(91))).unwrap();
+
+    assert_eq!(store.count_leases().unwrap(), 0);
+    assert_eq!(store.count_occurrences_by_state("scheduled").unwrap(), 1);
+    assert_eq!(
+        store.list_scheduled_occurrences(Some(1)).unwrap()[0]
+            .1
+            .occurrence_key,
+        occurrence.occurrence_key
+    );
+}
+
+#[test]
+fn scheduler_caps_due_per_tick_and_persists_skipped_occurrences() {
+    let store = AutomationStore::open_memory().unwrap();
+    let run_all = definition(
+        AutomationSchedule::Interval { seconds: 60 },
+        CatchUpPolicy::RunAllMissed { max_per_tick: 10 },
+    );
+    store.upsert_automation(&run_all, Some(ts(0))).unwrap();
+    let capped = AutomationSupervisorConfig {
+        enabled: true,
+        max_due_per_tick: 2,
+        ..AutomationSupervisorConfig::default()
+    };
+    let result = run_due_tick(&store, &capped, &FakeClock::new(ts(300))).unwrap();
+    assert_eq!(result.occurrences_recorded, 2);
+    assert_eq!(store.count_occurrences_by_state("scheduled").unwrap(), 2);
+
+    let mut skipped = definition(
+        AutomationSchedule::Interval { seconds: 60 },
+        CatchUpPolicy::RunLatestOnly,
+    );
+    skipped.id = "automation-skip".to_string();
+    store.upsert_automation(&skipped, Some(ts(0))).unwrap();
+    let result = run_due_tick(&store, &capped, &FakeClock::new(ts(180))).unwrap();
+    assert_eq!(result.skipped, 2);
+    assert_eq!(store.count_occurrences_by_state("skipped").unwrap(), 2);
 }

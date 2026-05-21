@@ -198,6 +198,107 @@ impl AutomationStore {
         Ok(runs)
     }
 
+    pub fn list_scheduled_occurrences(
+        &self,
+        limit: Option<usize>,
+    ) -> Result<Vec<(AutomationDefinition, ScheduledOccurrence)>> {
+        let mut statement = self.conn.prepare(
+            r#"
+            SELECT a.definition_json, o.occurrence_key, o.automation_id, o.scheduled_for
+            FROM automation_occurrences o
+            JOIN automations a ON a.id = o.automation_id
+            WHERE o.state = 'scheduled'
+            ORDER BY o.scheduled_for ASC, o.occurrence_key ASC
+            "#,
+        )?;
+        let rows = statement.query_map([], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, String>(2)?,
+                row.get::<_, i64>(3)?,
+            ))
+        })?;
+        let mut occurrences = Vec::new();
+        for row in rows {
+            let (definition_json, occurrence_key, automation_id, scheduled_for) = row?;
+            occurrences.push((
+                serde_json::from_str(&definition_json)?,
+                ScheduledOccurrence {
+                    automation_id,
+                    occurrence_key,
+                    scheduled_for: offset_from_unix(scheduled_for)?,
+                    action: OccurrenceAction::Run,
+                },
+            ));
+            if limit.is_some_and(|limit| occurrences.len() >= limit) {
+                break;
+            }
+        }
+        Ok(occurrences)
+    }
+
+    pub fn set_occurrence_state(
+        &self,
+        occurrence_key: &str,
+        state: &str,
+        skip_reason: Option<&str>,
+    ) -> Result<bool> {
+        Ok(self.conn.execute(
+            "UPDATE automation_occurrences SET state = ?2, skip_reason = ?3 WHERE occurrence_key = ?1",
+            params![occurrence_key, state, skip_reason],
+        )? > 0)
+    }
+
+    pub fn recover_expired_leases(&self, now: OffsetDateTime) -> Result<usize> {
+        let recovered = self.conn.execute(
+            r#"
+            UPDATE automation_occurrences
+            SET state = 'scheduled'
+            WHERE occurrence_key IN (
+                SELECT occurrence_key FROM automation_leases WHERE expires_at <= ?1
+            )
+            "#,
+            params![now.unix_timestamp()],
+        )?;
+        self.conn.execute(
+            "DELETE FROM automation_leases WHERE expires_at <= ?1",
+            params![now.unix_timestamp()],
+        )?;
+        Ok(recovered)
+    }
+
+    pub fn count_runs_by_states(&self, states: &[AutomationRunState]) -> Result<usize> {
+        let mut total = 0;
+        for state in states {
+            let count = self.conn.query_row(
+                "SELECT COUNT(*) FROM automation_runs WHERE state = ?1",
+                params![run_state(*state)],
+                |row| row.get::<_, i64>(0),
+            )?;
+            total += count as usize;
+        }
+        Ok(total)
+    }
+
+    pub fn count_occurrences_by_state(&self, state: &str) -> Result<usize> {
+        let count = self.conn.query_row(
+            "SELECT COUNT(*) FROM automation_occurrences WHERE state = ?1",
+            params![state],
+            |row| row.get::<_, i64>(0),
+        )?;
+        Ok(count as usize)
+    }
+
+    pub fn count_leases(&self) -> Result<usize> {
+        let count = self
+            .conn
+            .query_row("SELECT COUNT(*) FROM automation_leases", [], |row| {
+                row.get::<_, i64>(0)
+            })?;
+        Ok(count as usize)
+    }
+
     pub fn append_log(&self, entry: &RunLogEntry) -> Result<()> {
         self.conn.execute(
             r#"
