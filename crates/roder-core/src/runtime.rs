@@ -5,7 +5,9 @@ use std::sync::Arc;
 use anyhow::Context;
 use futures::StreamExt;
 use futures::future::{AbortHandle, Abortable, try_join_all};
-use roder_api::catalog::{EDIT_TOOL_EDIT, EDIT_TOOL_PATCH, REASONING_NONE, lookup_model};
+use roder_api::catalog::{
+    EDIT_TOOL_EDIT, EDIT_TOOL_PATCH, REASONING_NONE, built_in_model_profile, lookup_model,
+};
 use roder_api::context::PolicyGate;
 use roder_api::conversation::{
     AssistantMessage, ConversationItem, ErrorRecord, InputImage, ReasoningSummary, ToolCallRecord,
@@ -15,8 +17,9 @@ use roder_api::events::*;
 use roder_api::extension::ExtensionRegistry;
 use roder_api::inference::{
     AgentInferenceRequest, HostedWebSearchConfig, HostedWebSearchMode, InferenceEngine,
-    InferenceEvent, InferenceTurnContext, InstructionBundle, ModelSelection, OutputConfig,
-    ReasoningConfig, RuntimeHints, RuntimeProfile, ToolCallCompleted,
+    InferenceEvent, InferenceTurnContext, InstructionBundle, ModelHarnessProfile,
+    ModelSchemaPolicy, ModelSelection, OutputConfig, ReasoningConfig, RuntimeHints, RuntimeProfile,
+    ToolCallCompleted,
 };
 use roder_api::policy_mode::{PolicyDecision, PolicyMode};
 use roder_api::remote_runner::{RemoteRunnerSession, RunnerDestination};
@@ -32,7 +35,9 @@ use tokio::sync::{Mutex, RwLock, oneshot};
 use crate::artifacts::{ContextArtifactStore, default_context_artifact_dir};
 use crate::bus::EventBus;
 use crate::fake_provider::FakeInferenceEngine;
-use crate::instructions::{apply_runtime_profile, apply_task_ledger_required};
+use crate::instructions::{
+    apply_model_instruction_overlay, apply_runtime_profile, apply_task_ledger_required,
+};
 use crate::policy_gate::DefaultPolicyGate;
 pub use crate::speed_policy::RuntimeSpeedPolicyConfig;
 use crate::speed_policy::{SpeedPolicyState, reasoning_from_decision};
@@ -54,6 +59,7 @@ pub struct RuntimeConfig {
     pub hosted_web_search: HostedWebSearchConfig,
     pub model_edit_tools: HashMap<String, String>,
     pub model_parallel_tool_calls: HashMap<String, bool>,
+    pub model_profiles: HashMap<String, ModelHarnessProfile>,
     pub workspace: Option<String>,
     pub policy_mode: PolicyMode,
     pub runtime_profile: RuntimeProfile,
@@ -75,6 +81,7 @@ impl Default for RuntimeConfig {
             hosted_web_search: HostedWebSearchConfig::cached(),
             model_edit_tools: HashMap::new(),
             model_parallel_tool_calls: HashMap::new(),
+            model_profiles: HashMap::new(),
             workspace: None,
             policy_mode: PolicyMode::Default,
             runtime_profile: RuntimeProfile::Interactive,
@@ -1170,7 +1177,8 @@ impl Runtime {
 
     pub async fn tool_specs(&self) -> Vec<roder_api::tools::ToolSpec> {
         let cfg = self.config.read().await;
-        self.filtered_tool_specs(&cfg, &cfg.default_model)
+        let model_profile = model_profile_for_model(&cfg, &cfg.default_model);
+        self.filtered_tool_specs(&cfg, &cfg.default_model, model_profile.as_ref())
     }
 
     pub fn subagent_definitions(&self) -> Vec<SubagentDefinition> {
@@ -1212,7 +1220,8 @@ impl Runtime {
             .unwrap_or(cfg.default_model.clone());
         let engine = self.engine_for(&provider)?;
         let capabilities = engine.capabilities();
-        let tools = self.filtered_tool_specs(&cfg, &model);
+        let model_profile = model_profile_for_model(&cfg, &model);
+        let tools = self.filtered_tool_specs(&cfg, &model, model_profile.as_ref());
         let workspace = req.workspace.clone().or_else(|| cfg.workspace.clone());
         let parallel_tool_calls = parallel_tool_calls_for_model(&cfg, &model);
         let tool_choice = if tools.is_empty() {
@@ -1274,6 +1283,9 @@ impl Runtime {
             .await;
 
             let mut instructions = apply_runtime_profile(req.instructions.clone(), runtime_profile);
+            if let Some(profile) = &model_profile {
+                instructions = apply_model_instruction_overlay(instructions, profile);
+            }
             if req.task_ledger_required
                 && runtime_profile == RuntimeProfile::Eval
                 && !conversation_has_task_ledger(&conversation)
@@ -1286,6 +1298,17 @@ impl Runtime {
             }
             if let Some(remaining) = deadline_remaining_seconds(turn_deadline) {
                 request_metadata["deadlineRemainingSeconds"] = serde_json::json!(remaining);
+            }
+            if let Some(profile) = &model_profile {
+                request_metadata["modelProfile"] = serde_json::json!({
+                    "model": profile.model,
+                    "providerFamily": profile.provider_family,
+                    "editTool": profile.edit_tool,
+                    "schemaPolicy": profile.schema_policy,
+                    "instructionOverlay": profile.instruction_overlay,
+                    "parallelToolCalls": profile.parallel_tool_calls,
+                    "autoCompactTokenLimit": profile.auto_compact_token_limit,
+                });
             }
             let request = AgentInferenceRequest {
                 model: ModelSelection {
@@ -1778,9 +1801,12 @@ impl Runtime {
         &self,
         cfg: &RuntimeConfig,
         model: &str,
+        profile: Option<&ModelHarnessProfile>,
     ) -> Vec<roder_api::tools::ToolSpec> {
-        self.tool_registry
-            .specs_for_edit_tool(edit_tool_for_model(cfg, model))
+        self.tool_registry.specs_for_edit_tool_with_schema_policy(
+            edit_tool_for_model(cfg, model),
+            schema_policy_for_model(profile),
+        )
     }
 
     fn engine_for(&self, provider: &str) -> anyhow::Result<Arc<dyn InferenceEngine>> {
@@ -1918,6 +1944,9 @@ fn server_side_compaction_threshold(cfg: &RuntimeConfig, model: &str) -> Option<
         return None;
     }
     cfg.auto_compact_token_limit
+        .or_else(|| {
+            model_profile_for_model(cfg, model).and_then(|profile| profile.auto_compact_token_limit)
+        })
         .or(Some(entry.auto_compact_token_limit))
         .filter(|threshold| *threshold > 0)
 }
@@ -1926,6 +1955,9 @@ fn parallel_tool_calls_for_model(cfg: &RuntimeConfig, model: &str) -> bool {
     cfg.model_parallel_tool_calls
         .get(model)
         .copied()
+        .or_else(|| {
+            model_profile_for_model(cfg, model).and_then(|profile| profile.parallel_tool_calls)
+        })
         .unwrap_or(true)
 }
 
@@ -1947,8 +1979,18 @@ fn effective_reasoning_for_model(cfg: &RuntimeConfig, model: &str) -> String {
                 .iter()
                 .any(|option| option.effort == *reasoning)
         })
-        .unwrap_or(entry.default_reasoning)
-        .to_string()
+        .map(str::to_string)
+        .or_else(|| {
+            model_profile_for_model(cfg, model)
+                .and_then(|profile| profile.reasoning.orientation)
+                .filter(|reasoning| {
+                    entry
+                        .supported_reasoning
+                        .iter()
+                        .any(|option| option.effort == reasoning)
+                })
+        })
+        .unwrap_or_else(|| entry.default_reasoning.to_string())
 }
 
 fn validate_reasoning_effort(model: &str, effort: &str) -> anyhow::Result<()> {
@@ -1988,8 +2030,26 @@ fn edit_tool_for_model<'a>(cfg: &'a RuntimeConfig, model: &'a str) -> Option<&'a
     cfg.model_edit_tools
         .get(model)
         .map(String::as_str)
+        .or_else(|| {
+            cfg.model_profiles
+                .get(model)
+                .and_then(|profile| profile.edit_tool.as_deref())
+        })
         .or_else(|| lookup_model(model).and_then(|entry| entry.edit_tool))
         .or(Some(EDIT_TOOL_EDIT))
+}
+
+fn model_profile_for_model(cfg: &RuntimeConfig, model: &str) -> Option<ModelHarnessProfile> {
+    cfg.model_profiles
+        .get(model)
+        .cloned()
+        .or_else(|| built_in_model_profile(model))
+}
+
+fn schema_policy_for_model(profile: Option<&ModelHarnessProfile>) -> ModelSchemaPolicy {
+    profile
+        .map(|profile| profile.schema_policy)
+        .unwrap_or_default()
 }
 
 pub fn validate_edit_tool(value: &str) -> anyhow::Result<()> {
@@ -2011,7 +2071,8 @@ mod tests {
     use roder_api::extension::ExtensionRegistryBuilder;
     use roder_api::inference::{
         CompletionMetadata, InferenceCapabilities, InferenceEngine, InferenceEventStream,
-        InferenceProviderContext, InferenceTurnContext, MessageDelta,
+        InferenceProviderContext, InferenceTurnContext, MessageDelta, ModelInstructionOverlay,
+        ModelProfileReasoning, ModelSchemaPolicy, ProviderFamily,
     };
     use roder_api::tools::{ToolContributor, ToolExecutor, ToolSpec};
     use std::sync::Mutex as StdMutex;
@@ -2149,6 +2210,29 @@ mod tests {
 
         assert!(!parallel_tool_calls_for_model(&cfg, "custom-model"));
         assert!(parallel_tool_calls_for_model(&cfg, "other-model"));
+    }
+
+    #[test]
+    fn profile_parallel_tool_calls_applies_between_config_and_default() {
+        let cfg = RuntimeConfig {
+            model_profiles: std::collections::HashMap::from([(
+                "gpt-5.5".to_string(),
+                test_model_profile("gpt-5.5"),
+            )]),
+            ..RuntimeConfig::default()
+        };
+
+        assert!(!parallel_tool_calls_for_model(&cfg, "gpt-5.5"));
+
+        let cfg = RuntimeConfig {
+            model_parallel_tool_calls: std::collections::HashMap::from([(
+                "gpt-5.5".to_string(),
+                true,
+            )]),
+            ..cfg
+        };
+
+        assert!(parallel_tool_calls_for_model(&cfg, "gpt-5.5"));
     }
 
     struct CapturingEngine {
@@ -2438,6 +2522,201 @@ mod tests {
                 is_error: false,
             })
         }
+    }
+
+    struct ProfileToolContributor;
+
+    impl ToolContributor for ProfileToolContributor {
+        fn id(&self) -> String {
+            "profile-tools".to_string()
+        }
+
+        fn contribute(&self, registry: &mut ToolRegistry) -> anyhow::Result<()> {
+            for name in ["apply_patch", "edit", "multi_edit", "write_file"] {
+                registry.register(Arc::new(ProfileTool {
+                    name: name.to_string(),
+                }))?;
+            }
+            Ok(())
+        }
+    }
+
+    struct ProfileTool {
+        name: String,
+    }
+
+    #[async_trait::async_trait]
+    impl ToolExecutor for ProfileTool {
+        fn spec(&self) -> ToolSpec {
+            ToolSpec {
+                name: self.name.clone(),
+                description: format!("{} test tool", self.name),
+                parameters: serde_json::json!({
+                    "type": "object",
+                    "properties": {
+                        "path": { "type": "string" },
+                        "content": { "type": "string" }
+                    },
+                    "required": ["path", "content"],
+                    "additionalProperties": false
+                }),
+            }
+        }
+
+        async fn execute(
+            &self,
+            _ctx: ToolExecutionContext,
+            call: ToolCall,
+        ) -> anyhow::Result<ToolResult> {
+            Ok(ToolResult {
+                id: call.id,
+                name: call.name,
+                text: "ok".to_string(),
+                data: serde_json::json!({}),
+                is_error: false,
+            })
+        }
+    }
+
+    fn test_model_profile(model: &str) -> ModelHarnessProfile {
+        ModelHarnessProfile {
+            model: model.to_string(),
+            provider: roder_api::catalog::PROVIDER_OPENAI.to_string(),
+            provider_family: ProviderFamily::OpenAi,
+            edit_tool: Some(EDIT_TOOL_EDIT.to_string()),
+            schema_policy: ModelSchemaPolicy::StandardRequiredFirst,
+            instruction_overlay: ModelInstructionOverlay::IntuitiveContext,
+            reasoning: ModelProfileReasoning {
+                orientation: Some(REASONING_LOW.to_string()),
+                execution: Some(REASONING_LOW.to_string()),
+                verification: Some(REASONING_LOW.to_string()),
+                recovery: Some(REASONING_LOW.to_string()),
+            },
+            parallel_tool_calls: Some(false),
+            auto_compact_token_limit: Some(123_000),
+        }
+    }
+
+    async fn captured_profile_request(cfg: RuntimeConfig) -> AgentInferenceRequest {
+        let captured = Arc::new(StdMutex::new(None));
+        let mut builder = ExtensionRegistryBuilder::new();
+        builder.inference_engine(Arc::new(CapturingEngine {
+            request: captured.clone(),
+        }));
+        builder.tool_contributor(Arc::new(ProfileToolContributor));
+        let runtime = Arc::new(Runtime::new(builder.build().unwrap(), cfg).unwrap());
+        let mut rx = runtime.subscribe_events();
+        let turn_id = runtime
+            .start_turn(StartTurnRequest {
+                thread_id: "thread-model-profile".to_string(),
+                message: "use profile knobs".to_string(),
+                images: Vec::new(),
+                provider_override: None,
+                model_override: None,
+                workspace: None,
+                instructions: InstructionBundle {
+                    system: None,
+                    developer: Some("base developer".to_string()),
+                },
+                task_ledger_required: false,
+            })
+            .await
+            .unwrap();
+
+        tokio::time::timeout(std::time::Duration::from_secs(5), async {
+            loop {
+                let envelope = rx.recv().await.unwrap();
+                if envelope.turn_id.as_deref() != Some(&turn_id) {
+                    continue;
+                }
+                match envelope.event {
+                    RoderEvent::TurnCompleted(_) => break,
+                    RoderEvent::TurnFailed(event) => panic!("turn failed: {}", event.error),
+                    _ => {}
+                }
+            }
+        })
+        .await
+        .unwrap();
+
+        captured.lock().unwrap().clone().unwrap()
+    }
+
+    #[tokio::test]
+    async fn model_profile_routes_request_knobs_to_next_inference() {
+        let request = captured_profile_request(RuntimeConfig {
+            default_provider: roder_api::catalog::PROVIDER_MOCK.to_string(),
+            default_model: "gpt-5.5".to_string(),
+            model_profiles: std::collections::HashMap::from([(
+                "gpt-5.5".to_string(),
+                test_model_profile("gpt-5.5"),
+            )]),
+            ..RuntimeConfig::default()
+        })
+        .await;
+
+        let tool_names = request
+            .tools
+            .iter()
+            .map(|tool| tool.name.as_str())
+            .collect::<Vec<_>>();
+        assert!(!tool_names.contains(&"apply_patch"));
+        assert!(tool_names.contains(&"edit"));
+        assert!(tool_names.contains(&"multi_edit"));
+        assert!(tool_names.contains(&"write_file"));
+        assert_eq!(request.reasoning.level.as_deref(), Some(REASONING_LOW));
+        assert_eq!(request.runtime.parallel_tool_calls, Some(false));
+        assert_eq!(request.runtime.auto_compact_token_limit, Some(123_000));
+        assert!(
+            request
+                .instructions
+                .developer
+                .as_deref()
+                .unwrap_or_default()
+                .contains("Use the provided context as the current working set")
+        );
+        assert_eq!(
+            request
+                .metadata
+                .pointer("/modelProfile/schemaPolicy")
+                .and_then(serde_json::Value::as_str),
+            Some("standard_required_first")
+        );
+    }
+
+    #[tokio::test]
+    async fn model_profile_user_model_knobs_override_profile_defaults() {
+        let request = captured_profile_request(RuntimeConfig {
+            default_provider: roder_api::catalog::PROVIDER_MOCK.to_string(),
+            default_model: "gpt-5.5".to_string(),
+            reasoning: Some(REASONING_HIGH.to_string()),
+            auto_compact_token_limit: Some(999),
+            model_edit_tools: std::collections::HashMap::from([(
+                "gpt-5.5".to_string(),
+                EDIT_TOOL_PATCH.to_string(),
+            )]),
+            model_parallel_tool_calls: std::collections::HashMap::from([(
+                "gpt-5.5".to_string(),
+                true,
+            )]),
+            model_profiles: std::collections::HashMap::from([(
+                "gpt-5.5".to_string(),
+                test_model_profile("gpt-5.5"),
+            )]),
+            ..RuntimeConfig::default()
+        })
+        .await;
+
+        let tool_names = request
+            .tools
+            .iter()
+            .map(|tool| tool.name.as_str())
+            .collect::<Vec<_>>();
+        assert!(tool_names.contains(&"apply_patch"));
+        assert!(!tool_names.contains(&"edit"));
+        assert_eq!(request.reasoning.level.as_deref(), Some(REASONING_HIGH));
+        assert_eq!(request.runtime.parallel_tool_calls, Some(true));
+        assert_eq!(request.runtime.auto_compact_token_limit, Some(999));
     }
 
     struct CountingTaskTool {

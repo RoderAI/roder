@@ -17,6 +17,10 @@ use roder_api::notifications::NotificationKind;
 use roder_api::policy_mode::PolicyMode;
 use roder_api::remote_runner::{RunnerDestination, RunnerManifest};
 use roder_app_server::{AppServer, LocalAppClient};
+use roder_core::model_profiles::{
+    ModelHarnessProfileOverride, ModelProfileOverrides, ModelProfileReasoningOverride,
+    resolve_model_profiles,
+};
 use roder_core::{Runtime, RuntimeConfig, RuntimeSpeedPolicyConfig, validate_edit_tool};
 use roder_ext_subagents::{AgentLoadConfig, load_agent_definitions};
 use roder_extension_host::{
@@ -737,6 +741,8 @@ pub(crate) async fn build_runtime_from_config(
     .await?;
     let model_edit_tools = resolve_model_edit_tools(&cfg.models)?;
     let model_parallel_tool_calls = resolve_model_parallel_tool_calls(&cfg.models);
+    let model_profiles =
+        resolve_model_profiles(&model_profile_overrides_from_config(&cfg.model_profiles))?;
     let notifications = resolve_notifications_config(cfg.notifications.as_ref())?;
     let remote_runner_destination = resolve_remote_runner_destination(cfg.remote_runners.as_ref())?;
     let tool_path_scope = resolve_tool_path_scope(cfg.tools.as_ref())?;
@@ -797,6 +803,7 @@ pub(crate) async fn build_runtime_from_config(
             hosted_web_search: web_search.hosted,
             model_edit_tools,
             model_parallel_tool_calls,
+            model_profiles,
             workspace: workspace.map(|p| p.display().to_string()),
             policy_mode,
             runtime_profile,
@@ -1342,6 +1349,38 @@ fn resolve_speed_policy_config(
         }
     }
     speed_policy
+}
+
+fn model_profile_overrides_from_config(
+    profiles: &std::collections::HashMap<String, roder_config::ModelHarnessProfileConfig>,
+) -> ModelProfileOverrides {
+    let profiles = profiles
+        .iter()
+        .map(|(model, profile)| {
+            (
+                model.clone(),
+                ModelHarnessProfileOverride {
+                    provider_family: profile.provider_family.clone(),
+                    edit_tool: profile.edit_tool.clone(),
+                    schema_policy: profile.schema_policy.clone(),
+                    instruction_overlay: profile.instruction_overlay.clone(),
+                    reasoning: profile
+                        .reasoning
+                        .as_ref()
+                        .map(|reasoning| ModelProfileReasoningOverride {
+                            orientation: reasoning.orientation.clone(),
+                            execution: reasoning.execution.clone(),
+                            verification: reasoning.verification.clone(),
+                            recovery: reasoning.recovery.clone(),
+                        })
+                        .unwrap_or_default(),
+                    parallel_tool_calls: profile.parallel_tool_calls,
+                    auto_compact_token_limit: profile.auto_compact_token_limit,
+                },
+            )
+        })
+        .collect();
+    ModelProfileOverrides { profiles }
 }
 
 async fn resolve_subagents_config(

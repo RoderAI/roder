@@ -146,6 +146,7 @@ fn runtime_for(workspace: &std::path::Path) -> Runtime {
             hosted_web_search: HostedWebSearchConfig::disabled(),
             model_edit_tools: std::collections::HashMap::new(),
             model_parallel_tool_calls: std::collections::HashMap::new(),
+            model_profiles: std::collections::HashMap::new(),
             workspace: Some(workspace.display().to_string()),
             policy_mode: PolicyMode::Default,
             runtime_profile: roder_api::inference::RuntimeProfile::Interactive,
