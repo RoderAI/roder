@@ -131,6 +131,40 @@ pub struct ToolCallRequested {
     pub timestamp: OffsetDateTime,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ToolCallValidationFailureClass {
+    InvalidJson,
+    UnknownTool,
+    MissingRequired,
+    UnexpectedProperty,
+    WrongType,
+    EmptyRequiredString,
+    SchemaRepairApplied,
+    SchemaRepairRejected,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ToolCallValidationRepairStatus {
+    NotNeeded,
+    Applied,
+    Rejected,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ToolCallValidationRecorded {
+    pub thread_id: ThreadId,
+    pub turn_id: TurnId,
+    pub tool_id: String,
+    pub tool_name: String,
+    pub failure_class: ToolCallValidationFailureClass,
+    pub repair_status: ToolCallValidationRepairStatus,
+    pub message: String,
+    #[serde(with = "time::serde::rfc3339")]
+    pub timestamp: OffsetDateTime,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ApprovalRequested {
     pub thread_id: ThreadId,
@@ -826,6 +860,7 @@ pub enum RoderEvent {
     InferenceStarted(InferenceStarted),
     InferenceEventReceived(InferenceEventReceived),
     ToolCallRequested(ToolCallRequested),
+    ToolCallValidationRecorded(ToolCallValidationRecorded),
     ApprovalRequested(ApprovalRequested),
     ApprovalResolved(ApprovalResolved),
     UserInputRequested(UserInputRequested),
@@ -922,6 +957,7 @@ impl RoderEvent {
             RoderEvent::InferenceStarted(_) => "inference.started",
             RoderEvent::InferenceEventReceived(_) => "inference.event_received",
             RoderEvent::ToolCallRequested(_) => "tool.call_requested",
+            RoderEvent::ToolCallValidationRecorded(_) => "tool.call_validation",
             RoderEvent::ApprovalRequested(_) => "approval.requested",
             RoderEvent::ApprovalResolved(_) => "approval.resolved",
             RoderEvent::UserInputRequested(_) => "user_input.requested",
@@ -1011,6 +1047,7 @@ impl RoderEvent {
                 EventSource::Provider
             }
             RoderEvent::ToolCallRequested(_)
+            | RoderEvent::ToolCallValidationRecorded(_)
             | RoderEvent::ToolCallStarted(_)
             | RoderEvent::ToolCallCompleted(_) => EventSource::Tool,
             RoderEvent::SubagentStarted(_)
@@ -1095,6 +1132,7 @@ impl RoderEvent {
             RoderEvent::InferenceStarted(e) => Some(&e.thread_id),
             RoderEvent::InferenceEventReceived(e) => Some(&e.thread_id),
             RoderEvent::ToolCallRequested(e) => Some(&e.thread_id),
+            RoderEvent::ToolCallValidationRecorded(e) => Some(&e.thread_id),
             RoderEvent::ApprovalRequested(e) => Some(&e.thread_id),
             RoderEvent::ApprovalResolved(e) => Some(&e.thread_id),
             RoderEvent::UserInputRequested(e) => Some(&e.thread_id),
@@ -1189,6 +1227,7 @@ impl RoderEvent {
             RoderEvent::InferenceStarted(e) => Some(&e.turn_id),
             RoderEvent::InferenceEventReceived(e) => Some(&e.turn_id),
             RoderEvent::ToolCallRequested(e) => Some(&e.turn_id),
+            RoderEvent::ToolCallValidationRecorded(e) => Some(&e.turn_id),
             RoderEvent::ApprovalRequested(e) => Some(&e.turn_id),
             RoderEvent::ApprovalResolved(e) => Some(&e.turn_id),
             RoderEvent::UserInputRequested(e) => Some(&e.turn_id),
