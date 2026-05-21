@@ -6,6 +6,11 @@ use crate::code_index::{
     CodeIndexChunked, CodeIndexEmbedded, CodeIndexFailed, CodeIndexProofFilteredResultDropped,
     CodeIndexReady, CodeIndexStale, CodeIndexingStarted,
 };
+use crate::discovery::{
+    DiscoveryAuthRequired, DiscoveryCatalogBuilt, DiscoveryItemPromoted, DiscoveryItemRead,
+    DiscoveryItemUpdated, DiscoveryPromotionExpired, DiscoveryPromotionReused,
+    DiscoveryWarmCacheHit,
+};
 use crate::extension::{ExtensionId, InferenceEngineId};
 use crate::inference::{InferenceEvent, RuntimeProfile, SpeedPolicyDecision};
 use crate::media::{MediaArtifact, MediaArtifactId, MediaPreview};
@@ -1059,6 +1064,14 @@ pub enum RoderEvent {
     ContextArtifactCapped(ContextArtifactCapped),
     ContextArtifactDeleted(ContextArtifactDeleted),
     ContextArtifactRetentionExpired(ContextArtifactRetentionExpired),
+    DiscoveryCatalogBuilt(DiscoveryCatalogBuilt),
+    DiscoveryItemUpdated(DiscoveryItemUpdated),
+    DiscoveryAuthRequired(DiscoveryAuthRequired),
+    DiscoveryItemRead(DiscoveryItemRead),
+    DiscoveryItemPromoted(DiscoveryItemPromoted),
+    DiscoveryPromotionReused(DiscoveryPromotionReused),
+    DiscoveryWarmCacheHit(DiscoveryWarmCacheHit),
+    DiscoveryPromotionExpired(DiscoveryPromotionExpired),
     MemorySaved(MemorySaved),
     MemoryUpdated(MemoryUpdated),
     MemoryDeleted(MemoryDeleted),
@@ -1180,6 +1193,14 @@ impl RoderEvent {
             RoderEvent::ContextArtifactCapped(_) => "artifact/capped",
             RoderEvent::ContextArtifactDeleted(_) => "artifact/deleted",
             RoderEvent::ContextArtifactRetentionExpired(_) => "artifact/retentionExpired",
+            RoderEvent::DiscoveryCatalogBuilt(_) => "discovery/catalogBuilt",
+            RoderEvent::DiscoveryItemUpdated(_) => "discovery/itemUpdated",
+            RoderEvent::DiscoveryAuthRequired(_) => "discovery/authRequired",
+            RoderEvent::DiscoveryItemRead(_) => "discovery/itemRead",
+            RoderEvent::DiscoveryItemPromoted(_) => "discovery/itemPromoted",
+            RoderEvent::DiscoveryPromotionReused(_) => "discovery/promotionReused",
+            RoderEvent::DiscoveryWarmCacheHit(_) => "discovery/warmCacheHit",
+            RoderEvent::DiscoveryPromotionExpired(_) => "discovery/promotionExpired",
             RoderEvent::MemorySaved(_) => "memory/saved",
             RoderEvent::MemoryUpdated(_) => "memory/updated",
             RoderEvent::MemoryDeleted(_) => "memory/deleted",
@@ -1267,6 +1288,14 @@ impl RoderEvent {
             | RoderEvent::ContextArtifactCapped(_)
             | RoderEvent::ContextArtifactDeleted(_)
             | RoderEvent::ContextArtifactRetentionExpired(_)
+            | RoderEvent::DiscoveryCatalogBuilt(_)
+            | RoderEvent::DiscoveryItemUpdated(_)
+            | RoderEvent::DiscoveryAuthRequired(_)
+            | RoderEvent::DiscoveryItemRead(_)
+            | RoderEvent::DiscoveryItemPromoted(_)
+            | RoderEvent::DiscoveryPromotionReused(_)
+            | RoderEvent::DiscoveryWarmCacheHit(_)
+            | RoderEvent::DiscoveryPromotionExpired(_)
             | RoderEvent::MemorySaved(_)
             | RoderEvent::MemoryUpdated(_)
             | RoderEvent::MemoryDeleted(_)
@@ -1377,6 +1406,11 @@ impl RoderEvent {
             RoderEvent::ContextArtifactCapped(e) => Some(&e.thread_id),
             RoderEvent::ContextArtifactDeleted(e) => Some(&e.thread_id),
             RoderEvent::ContextArtifactRetentionExpired(e) => Some(&e.thread_id),
+            RoderEvent::DiscoveryItemRead(e) => Some(&e.thread_id),
+            RoderEvent::DiscoveryItemPromoted(e) => Some(&e.record.thread_id),
+            RoderEvent::DiscoveryPromotionReused(e) => Some(&e.record.thread_id),
+            RoderEvent::DiscoveryWarmCacheHit(e) => Some(&e.record.thread_id),
+            RoderEvent::DiscoveryPromotionExpired(e) => Some(&e.record.thread_id),
             RoderEvent::MemoryRecallReady(e) => Some(&e.thread_id),
             RoderEvent::MemoryObservationRecorded(e) => Some(&e.thread_id),
             RoderEvent::TaskStarted(e) => e.thread_id.as_ref(),
@@ -1407,6 +1441,9 @@ impl RoderEvent {
             | RoderEvent::WorkflowImportStale(_)
             | RoderEvent::WorkflowImportFailed(_)
             | RoderEvent::MediaArtifactDeleted(_)
+            | RoderEvent::DiscoveryCatalogBuilt(_)
+            | RoderEvent::DiscoveryItemUpdated(_)
+            | RoderEvent::DiscoveryAuthRequired(_)
             | RoderEvent::MemorySaved(_)
             | RoderEvent::MemoryUpdated(_)
             | RoderEvent::MemoryDeleted(_)
@@ -1490,6 +1527,11 @@ impl RoderEvent {
             RoderEvent::ContextArtifactCreated(e) => Some(&e.turn_id),
             RoderEvent::ContextArtifactAppended(e) => Some(&e.turn_id),
             RoderEvent::ContextArtifactCapped(e) => Some(&e.turn_id),
+            RoderEvent::DiscoveryItemRead(e) => Some(&e.turn_id),
+            RoderEvent::DiscoveryItemPromoted(e) => e.record.turn_id.as_ref(),
+            RoderEvent::DiscoveryPromotionReused(e) => e.record.turn_id.as_ref(),
+            RoderEvent::DiscoveryWarmCacheHit(e) => e.record.turn_id.as_ref(),
+            RoderEvent::DiscoveryPromotionExpired(e) => e.record.turn_id.as_ref(),
             RoderEvent::MemoryRecallReady(e) => Some(&e.turn_id),
             RoderEvent::MemoryObservationRecorded(e) => Some(&e.turn_id),
             RoderEvent::TaskStarted(e) => e.turn_id.as_ref(),
@@ -1521,6 +1563,9 @@ impl RoderEvent {
             | RoderEvent::MediaArtifactDeleted(_)
             | RoderEvent::ContextArtifactDeleted(_)
             | RoderEvent::ContextArtifactRetentionExpired(_)
+            | RoderEvent::DiscoveryCatalogBuilt(_)
+            | RoderEvent::DiscoveryItemUpdated(_)
+            | RoderEvent::DiscoveryAuthRequired(_)
             | RoderEvent::MemorySaved(_)
             | RoderEvent::MemoryUpdated(_)
             | RoderEvent::MemoryDeleted(_)
