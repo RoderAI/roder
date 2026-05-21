@@ -456,6 +456,7 @@ mod tests {
         assert_eq!(grep.data["verified_files"], 1);
         assert_eq!(grep.data["stale"], false);
         assert_eq!(grep.data["index_version"], "roder-search-v1");
+        assert_eq!(grep.data["retrieval_mode"], "exact_text");
 
         let scan = run_tool(
             &registry,
@@ -466,6 +467,23 @@ mod tests {
         .await;
         assert!(scan.text.contains("src/b.rs:1:nothing"));
         assert_eq!(scan.data["engine"], "scan");
+
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[tokio::test]
+    async fn search_tools_advertise_retrieval_metadata() {
+        let root = test_workspace("retrieval-metadata");
+        let mut registry = ToolRegistry::default();
+        BuiltinCodingToolsContributor::new(root.clone())
+            .unwrap()
+            .contribute(&mut registry)
+            .unwrap();
+
+        let grep = registry.get("grep").unwrap().spec();
+        assert_eq!(grep.parameters["x-roder"]["retrievalMode"], "exact_text");
+        let glob = registry.get("glob").unwrap().spec();
+        assert_eq!(glob.parameters["x-roder"]["retrievalMode"], "file_name");
 
         let _ = std::fs::remove_dir_all(root);
     }

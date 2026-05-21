@@ -53,7 +53,7 @@ pub fn route_retrieval(
     if looks_like_command_failure(&prompt) {
         recommended.push(recommend(
             RetrievalMode::Artifact,
-            "artifact.grep",
+            "grep_artifact",
             extract_query(&query.prompt),
             "command or terminal output failure should start with saved artifact search",
             RetrievalConfidence::High,
@@ -455,7 +455,7 @@ mod tests {
         let block = plan.blocks.first().unwrap();
 
         assert!(block.text.contains("Artifact"));
-        assert!(block.text.contains("artifact.grep"));
+        assert!(block.text.contains("grep_artifact"));
     }
 
     fn query(prompt: &str) -> ContextQuery {

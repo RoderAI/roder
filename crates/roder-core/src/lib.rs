@@ -8,6 +8,7 @@ pub mod model_profiles;
 mod plan_review;
 pub mod policy_gate;
 mod reliability;
+mod retrieval_metrics;
 mod roadmap;
 pub mod runtime;
 mod speed_policy;
