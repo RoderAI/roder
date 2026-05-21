@@ -17,6 +17,7 @@ crossterm = "0.29.0"
 dirs = "6.0.0"
 futures = "0.3.32"
 if-addrs = "0.15.0"
+ignore = "0.4.25"
 rand = "0.10.1"
 qrcode = { version = "0.14.1", default-features = false }
 ratatui = { version = "0.30.0", features = ["crossterm_0_29"] }
@@ -52,6 +53,7 @@ roder-commands = { path = "crates/roder-commands" }
 roder-config = { path = "crates/roder-config" }
 roder-context = { path = "crates/roder-context" }
 roder-core = { path = "crates/roder-core" }
+roder-code-index = { path = "crates/roder-code-index" }
 roder-roadmap = { path = "crates/roder-roadmap" }
 roder-supergrok-auth = { path = "crates/roder-supergrok-auth" }
 roder-ext-anthropic = { path = "crates/roder-ext-anthropic" }

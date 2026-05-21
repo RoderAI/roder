@@ -1,0 +1,14 @@
+[package]
+name = "roder-code-index"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+ignore.workspace = true
+roder-api.workspace = true
+rusqlite.workspace = true
+serde = { workspace = true, features = ["derive"] }
+serde_json.workspace = true
+sha2.workspace = true
+time.workspace = true
