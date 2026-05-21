@@ -22,6 +22,7 @@ use roder_api::inference::{
     ToolCallCompleted,
 };
 use roder_api::policy_mode::{PolicyDecision, PolicyMode};
+use roder_api::reliability::{ReliabilityContext, ReliabilityDetails, ReliabilityLimitRecorded};
 use roder_api::remote_runner::{RemoteRunnerSession, RunnerDestination};
 use roder_api::session::{SessionMetadata, SessionStore, ThreadSnapshot};
 use roder_api::subagents::SubagentDefinition;
@@ -39,6 +40,7 @@ use crate::instructions::{
     apply_model_instruction_overlay, apply_runtime_profile, apply_task_ledger_required,
 };
 use crate::policy_gate::DefaultPolicyGate;
+use crate::reliability::{ReliabilityLimitHit, RuntimeReliabilityConfig, TurnReliabilityState};
 pub use crate::speed_policy::RuntimeSpeedPolicyConfig;
 use crate::speed_policy::{SpeedPolicyState, reasoning_from_decision};
 use crate::subagent_traces::RuntimeSubagentTraceSink;
@@ -66,6 +68,7 @@ pub struct RuntimeConfig {
     pub policy_mode: PolicyMode,
     pub runtime_profile: RuntimeProfile,
     pub speed_policy: RuntimeSpeedPolicyConfig,
+    pub reliability: RuntimeReliabilityConfig,
     pub turn_deadline_seconds: Option<u64>,
     pub remote_runner_destination: Option<RunnerDestination>,
     pub team_data_dir: Option<PathBuf>,
@@ -88,6 +91,7 @@ impl Default for RuntimeConfig {
             policy_mode: PolicyMode::Default,
             runtime_profile: RuntimeProfile::Interactive,
             speed_policy: RuntimeSpeedPolicyConfig::default(),
+            reliability: RuntimeReliabilityConfig::default(),
             turn_deadline_seconds: None,
             remote_runner_destination: None,
             team_data_dir: None,
@@ -1262,6 +1266,7 @@ impl Runtime {
         let mut verification_gate =
             VerificationGateState::new(req.message.clone(), runtime_profile);
         let mut speed_policy = SpeedPolicyState::default();
+        let mut reliability = TurnReliabilityState::default();
 
         for _ in 0..MAX_TOOL_ROUNDS_PER_TURN {
             if let Some(deadline) = turn_deadline
@@ -1286,6 +1291,21 @@ impl Runtime {
 
             let speed_policy_decision =
                 speed_policy.decision(runtime_profile, &model, &cfg.speed_policy);
+            if let Some(limit) = reliability.record_model_call(
+                &cfg.reliability,
+                runtime_profile == RuntimeProfile::Interactive,
+            ) {
+                self.fail_turn_due_to_reliability_limit(
+                    &req.thread_id,
+                    &turn_id,
+                    &provider,
+                    &model,
+                    limit,
+                    &conversation,
+                )
+                .await?;
+                return Ok(());
+            }
             self.emit(RoderEvent::InferenceStarted(InferenceStarted {
                 thread_id: req.thread_id.clone(),
                 turn_id: turn_id.clone(),
@@ -1344,6 +1364,7 @@ impl Runtime {
                     parallel_tool_calls: Some(parallel_tool_calls),
                     hosted_web_search: cfg.hosted_web_search.clone(),
                     speed_policy: speed_policy_decision,
+                    reliability: Some(cfg.reliability.clone().into()),
                     deadline_remaining_seconds: deadline_remaining_seconds(turn_deadline),
                     ..RuntimeHints::default()
                 },
@@ -1644,6 +1665,22 @@ impl Runtime {
                     turn_deadline,
                 )
                 .await?;
+            if let Some(limit) = reliability.record_tool_results(
+                &cfg.reliability,
+                &results,
+                runtime_profile == RuntimeProfile::Interactive,
+            ) {
+                self.fail_turn_due_to_reliability_limit(
+                    &req.thread_id,
+                    &turn_id,
+                    &provider,
+                    &model,
+                    limit,
+                    &conversation,
+                )
+                .await?;
+                return Ok(());
+            }
             for result in results {
                 verification_gate.record_tool_result(&result);
                 conversation.push(ConversationItem::ToolResult(result));
@@ -1855,6 +1892,65 @@ impl Runtime {
             turn_id: turn_id.clone(),
             error: message,
             error_kind: Some("deadline_timeout".to_string()),
+            timestamp: OffsetDateTime::now_utc(),
+        }))
+        .await;
+        self.complete_team_member_turn(thread_id, turn_id, TeamMemberStatus::Failed)
+            .await?;
+        Ok(())
+    }
+
+    async fn fail_turn_due_to_reliability_limit(
+        &self,
+        thread_id: &ThreadId,
+        turn_id: &TurnId,
+        provider: &str,
+        model: &str,
+        limit: ReliabilityLimitHit,
+        conversation: &[ConversationItem],
+    ) -> anyhow::Result<()> {
+        self.emit(RoderEvent::ReliabilityLimitRecorded(
+            ReliabilityLimitRecorded {
+                context: ReliabilityContext {
+                    thread_id: thread_id.clone(),
+                    turn_id: turn_id.clone(),
+                    tool_id: None,
+                    tool_name: None,
+                    provider: Some(provider.to_string()),
+                    model: Some(model.to_string()),
+                },
+                error_class: limit.error_class,
+                limit_kind: limit.limit_kind,
+                decision: limit.decision,
+                current: limit.current,
+                limit: limit.limit,
+                details: ReliabilityDetails::redacted(&limit.message),
+                timestamp: OffsetDateTime::now_utc(),
+            },
+        ))
+        .await;
+        let partial_result = turn_partial_result(conversation);
+        self.emit(RoderEvent::TurnPartialResult(TurnPartialResult {
+            thread_id: thread_id.clone(),
+            turn_id: turn_id.clone(),
+            summary: partial_result.clone(),
+            timestamp: OffsetDateTime::now_utc(),
+        }))
+        .await;
+        let message = format!("reliability limit reached: {}", limit.message);
+        self.persist_turn_item(
+            thread_id,
+            turn_id,
+            &ConversationItem::Error(ErrorRecord {
+                message: format!("{message}: {partial_result}"),
+            }),
+        )
+        .await?;
+        self.emit(RoderEvent::TurnFailed(TurnFailed {
+            thread_id: thread_id.clone(),
+            turn_id: turn_id.clone(),
+            error: message,
+            error_kind: Some("reliability_limit".to_string()),
             timestamp: OffsetDateTime::now_utc(),
         }))
         .await;

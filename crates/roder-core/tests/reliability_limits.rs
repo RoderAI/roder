@@ -1,0 +1,276 @@
+use std::sync::{Arc, Mutex};
+
+use futures::stream;
+use roder_api::catalog::PROVIDER_MOCK;
+use roder_api::events::RoderEvent;
+use roder_api::extension::{ExtensionRegistryBuilder, InferenceEngineId, ToolProviderId};
+use roder_api::inference::{
+    AgentInferenceRequest, CompletionMetadata, HostedWebSearchConfig, InferenceCapabilities,
+    InferenceEngine, InferenceEvent, InferenceEventStream, InferenceProviderContext,
+    InferenceTurnContext, MessageDelta, ModelDescriptor, RuntimeProfile, ToolCallCompleted,
+};
+use roder_api::reliability::{ReliabilityLimitDecision, ReliabilityLimitKind};
+use roder_api::tools::{
+    ToolCall, ToolContributor, ToolExecutionContext, ToolExecutor, ToolResult, ToolSpec,
+};
+use roder_core::{
+    Runtime, RuntimeConfig, RuntimeReliabilityConfig, StartTurnRequest, default_instructions,
+};
+use serde_json::json;
+
+#[tokio::test]
+async fn reliability_limits_stop_eval_turn_after_consecutive_tool_failures() {
+    let runtime = runtime_with_failing_tool(RuntimeReliabilityConfig {
+        max_consecutive_tool_failures: 2,
+        ..RuntimeReliabilityConfig::default()
+    });
+    let mut events = runtime.subscribe_events();
+
+    runtime
+        .start_turn(turn("thread-reliability-failures"))
+        .await
+        .unwrap();
+
+    let mut saw_limit = false;
+    loop {
+        let envelope = tokio::time::timeout(std::time::Duration::from_secs(2), events.recv())
+            .await
+            .unwrap()
+            .unwrap();
+        if let RoderEvent::ReliabilityLimitRecorded(event) = &envelope.event {
+            saw_limit = true;
+            assert_eq!(
+                event.limit_kind,
+                ReliabilityLimitKind::ConsecutiveToolFailures
+            );
+            assert_eq!(event.decision, ReliabilityLimitDecision::StopTurn);
+            assert_eq!(event.current, 2);
+            assert_eq!(event.limit, 2);
+            assert_eq!(event.context.thread_id, "thread-reliability-failures");
+            assert_eq!(event.context.provider.as_deref(), Some(PROVIDER_MOCK));
+        }
+        if let RoderEvent::TurnFailed(failed) = &envelope.event {
+            assert_eq!(failed.error_kind.as_deref(), Some("reliability_limit"));
+            break;
+        }
+    }
+
+    assert!(saw_limit);
+}
+
+#[tokio::test]
+async fn reliability_limits_model_call_emits_interactive_continuation_decision() {
+    let runtime = runtime_with_final_engine(RuntimeReliabilityConfig {
+        max_model_calls_per_turn: 0,
+        ..RuntimeReliabilityConfig::default()
+    });
+    let mut events = runtime.subscribe_events();
+
+    runtime
+        .start_turn(StartTurnRequest {
+            thread_id: "thread-reliability-model-calls".to_string(),
+            message: "answer".to_string(),
+            images: Vec::new(),
+            provider_override: None,
+            model_override: None,
+            workspace: None,
+            instructions: default_instructions(),
+            task_ledger_required: false,
+        })
+        .await
+        .unwrap();
+
+    let mut saw_partial = false;
+    loop {
+        let envelope = tokio::time::timeout(std::time::Duration::from_secs(2), events.recv())
+            .await
+            .unwrap()
+            .unwrap();
+        match &envelope.event {
+            RoderEvent::ReliabilityLimitRecorded(event) => {
+                assert_eq!(event.limit_kind, ReliabilityLimitKind::ModelCallsPerTurn);
+                assert_eq!(
+                    event.decision,
+                    ReliabilityLimitDecision::RequestContinuation
+                );
+            }
+            RoderEvent::TurnPartialResult(_) => saw_partial = true,
+            RoderEvent::TurnFailed(failed) => {
+                assert_eq!(failed.error_kind.as_deref(), Some("reliability_limit"));
+                break;
+            }
+            _ => {}
+        }
+    }
+    assert!(saw_partial);
+}
+
+fn runtime_with_failing_tool(reliability: RuntimeReliabilityConfig) -> Arc<Runtime> {
+    let mut builder = ExtensionRegistryBuilder::new();
+    builder.inference_engine(Arc::new(RepeatingToolEngine {
+        requests: Mutex::new(0),
+    }));
+    builder.tool_contributor(Arc::new(FailingToolContributor));
+    runtime(builder, reliability, RuntimeProfile::Eval)
+}
+
+fn runtime_with_final_engine(reliability: RuntimeReliabilityConfig) -> Arc<Runtime> {
+    let mut builder = ExtensionRegistryBuilder::new();
+    builder.inference_engine(Arc::new(FinalEngine));
+    runtime(builder, reliability, RuntimeProfile::Interactive)
+}
+
+fn runtime(
+    builder: ExtensionRegistryBuilder,
+    reliability: RuntimeReliabilityConfig,
+    runtime_profile: RuntimeProfile,
+) -> Arc<Runtime> {
+    Arc::new(
+        Runtime::new(
+            builder.build().unwrap(),
+            RuntimeConfig {
+                hosted_web_search: HostedWebSearchConfig::disabled(),
+                runtime_profile,
+                reliability,
+                ..RuntimeConfig::default()
+            },
+        )
+        .unwrap(),
+    )
+}
+
+fn turn(thread_id: &str) -> StartTurnRequest {
+    StartTurnRequest {
+        thread_id: thread_id.to_string(),
+        message: "use unstable".to_string(),
+        images: Vec::new(),
+        provider_override: None,
+        model_override: None,
+        workspace: None,
+        instructions: default_instructions(),
+        task_ledger_required: false,
+    }
+}
+
+struct RepeatingToolEngine {
+    requests: Mutex<usize>,
+}
+
+#[async_trait::async_trait]
+impl InferenceEngine for RepeatingToolEngine {
+    fn id(&self) -> InferenceEngineId {
+        PROVIDER_MOCK.to_string()
+    }
+
+    fn capabilities(&self) -> InferenceCapabilities {
+        InferenceCapabilities::coding_agent_default()
+    }
+
+    async fn list_models(
+        &self,
+        _ctx: InferenceProviderContext<'_>,
+    ) -> anyhow::Result<Vec<ModelDescriptor>> {
+        Ok(Vec::new())
+    }
+
+    async fn stream_turn(
+        &self,
+        _ctx: InferenceTurnContext<'_>,
+        _request: AgentInferenceRequest,
+    ) -> anyhow::Result<InferenceEventStream> {
+        let mut requests = self.requests.lock().unwrap();
+        *requests += 1;
+        let call_id = format!("call-{}", *requests);
+        Ok(Box::pin(stream::iter(vec![
+            Ok(InferenceEvent::ToolCallCompleted(ToolCallCompleted {
+                id: call_id,
+                name: "unstable".to_string(),
+                arguments: "{}".to_string(),
+            })),
+            Ok(InferenceEvent::Completed(CompletionMetadata {
+                stop_reason: Some("tool_calls".to_string()),
+                provider_response_id: None,
+            })),
+        ])))
+    }
+}
+
+struct FinalEngine;
+
+#[async_trait::async_trait]
+impl InferenceEngine for FinalEngine {
+    fn id(&self) -> InferenceEngineId {
+        PROVIDER_MOCK.to_string()
+    }
+
+    fn capabilities(&self) -> InferenceCapabilities {
+        InferenceCapabilities::coding_agent_default()
+    }
+
+    async fn list_models(
+        &self,
+        _ctx: InferenceProviderContext<'_>,
+    ) -> anyhow::Result<Vec<ModelDescriptor>> {
+        Ok(Vec::new())
+    }
+
+    async fn stream_turn(
+        &self,
+        _ctx: InferenceTurnContext<'_>,
+        _request: AgentInferenceRequest,
+    ) -> anyhow::Result<InferenceEventStream> {
+        Ok(Box::pin(stream::iter(vec![
+            Ok(InferenceEvent::MessageDelta(MessageDelta {
+                text: "done".to_string(),
+                phase: None,
+            })),
+            Ok(InferenceEvent::Completed(CompletionMetadata {
+                stop_reason: Some("stop".to_string()),
+                provider_response_id: None,
+            })),
+        ])))
+    }
+}
+
+struct FailingToolContributor;
+
+impl ToolContributor for FailingToolContributor {
+    fn id(&self) -> ToolProviderId {
+        "test-failing-tool".to_string()
+    }
+
+    fn contribute(&self, registry: &mut roder_api::tools::ToolRegistry) -> anyhow::Result<()> {
+        registry.register(Arc::new(FailingTool))
+    }
+}
+
+struct FailingTool;
+
+#[async_trait::async_trait]
+impl ToolExecutor for FailingTool {
+    fn spec(&self) -> ToolSpec {
+        ToolSpec {
+            name: "unstable".to_string(),
+            description: "Always fails".to_string(),
+            parameters: json!({
+                "type": "object",
+                "properties": {},
+                "additionalProperties": false
+            }),
+        }
+    }
+
+    async fn execute(
+        &self,
+        _ctx: ToolExecutionContext,
+        call: ToolCall,
+    ) -> anyhow::Result<ToolResult> {
+        Ok(ToolResult {
+            id: call.id,
+            name: call.name,
+            text: "simulated failure".to_string(),
+            data: json!({ "error": { "kind": "simulated" } }),
+            is_error: true,
+        })
+    }
+}
