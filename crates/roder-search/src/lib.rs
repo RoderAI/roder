@@ -14,7 +14,9 @@ use index::{collect_text_files, scoped_path};
 use postings::FileId;
 use query::CompiledQuery;
 pub use store::{
-    IndexStoreMetadata, STORE_MANIFEST_FILE, default_store_dir, manifest_path, workspace_key,
+    IncrementalStoreStats, IndexStoreMetadata, LoadedSearchIndex, STORE_LOOKUP_FILE,
+    STORE_MANIFEST_FILE, STORE_POSTINGS_DIR, default_store_dir, load_persistent_index, lookup_path,
+    manifest_path, postings_dir, rebuild_persistent_index, save_incremental_index, workspace_key,
 };
 
 pub const INDEX_VERSION: &str = "roder-search-v1";
@@ -141,6 +143,7 @@ pub enum SearchError {
     Io(std::io::Error),
     InvalidPath(String),
     InvalidQuery(String),
+    Store(String),
 }
 
 impl fmt::Display for SearchError {
@@ -150,6 +153,7 @@ impl fmt::Display for SearchError {
             Self::InvalidPath(message) | Self::InvalidQuery(message) => {
                 formatter.write_str(message)
             }
+            Self::Store(message) => formatter.write_str(message),
         }
     }
 }
@@ -158,7 +162,7 @@ impl std::error::Error for SearchError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
             Self::Io(err) => Some(err),
-            Self::InvalidPath(_) | Self::InvalidQuery(_) => None,
+            Self::InvalidPath(_) | Self::InvalidQuery(_) | Self::Store(_) => None,
         }
     }
 }
@@ -187,6 +191,13 @@ impl WorkspaceSearcher {
         Self {
             root: root.as_ref().to_path_buf(),
             index: None,
+        }
+    }
+
+    pub fn with_index(root: impl AsRef<Path>, index: SearchIndex) -> Self {
+        Self {
+            root: root.as_ref().to_path_buf(),
+            index: Some(index),
         }
     }
 
