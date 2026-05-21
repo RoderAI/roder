@@ -10,6 +10,7 @@ use crate::plan_review::{
     HunkId, HunkRecord, PlanComment, PlanReview, PlanReviewId, PlanReviewStatus, PlanRewrite,
 };
 use crate::subagents::SubagentExitReason;
+use crate::task_ledger::TaskLedgerItem;
 use crate::teams::{
     AgentTeamDisplayMode, TeamId, TeamMemberId, TeamMemberRole, TeamMemberStatus,
     TeamTaskDescriptor,
@@ -245,6 +246,16 @@ pub struct UserInputResolved {
     pub turn_id: TurnId,
     pub request_id: String,
     pub answers: serde_json::Value,
+    #[serde(with = "time::serde::rfc3339")]
+    pub timestamp: OffsetDateTime,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TaskLedgerUpdated {
+    pub thread_id: ThreadId,
+    pub turn_id: TurnId,
+    pub tasks: Vec<TaskLedgerItem>,
+    pub completed_count: u64,
     #[serde(with = "time::serde::rfc3339")]
     pub timestamp: OffsetDateTime,
 }
@@ -922,6 +933,7 @@ pub enum RoderEvent {
     ApprovalResolved(ApprovalResolved),
     UserInputRequested(UserInputRequested),
     UserInputResolved(UserInputResolved),
+    TaskLedgerUpdated(TaskLedgerUpdated),
     PolicyDecisionRecorded(PolicyDecisionRecorded),
     PolicyBypassActive(PolicyBypassActive),
     PolicyModeChanged(PolicyModeChanged),
@@ -1024,6 +1036,7 @@ impl RoderEvent {
             RoderEvent::ApprovalResolved(_) => "approval.resolved",
             RoderEvent::UserInputRequested(_) => "user_input.requested",
             RoderEvent::UserInputResolved(_) => "user_input.resolved",
+            RoderEvent::TaskLedgerUpdated(_) => "task_ledger.updated",
             RoderEvent::PolicyDecisionRecorded(_) => "policy.decision",
             RoderEvent::PolicyBypassActive(_) => "policy.bypass_active",
             RoderEvent::PolicyModeChanged(_) => "policy.mode_changed",
@@ -1167,9 +1180,9 @@ impl RoderEvent {
             | RoderEvent::RemoteClientDisconnected(_) => EventSource::AppServer,
             RoderEvent::RoadmapChanged(_) => EventSource::Core,
             RoderEvent::FileChangePreviewReady(_) => EventSource::Tool,
-            RoderEvent::UserInputRequested(_) | RoderEvent::UserInputResolved(_) => {
-                EventSource::Core
-            }
+            RoderEvent::UserInputRequested(_)
+            | RoderEvent::UserInputResolved(_)
+            | RoderEvent::TaskLedgerUpdated(_) => EventSource::Core,
             RoderEvent::ExtensionRegistered(_) => EventSource::Extension,
             RoderEvent::RunnerLifecycle(_) => EventSource::Extension,
             RoderEvent::TeamStarted(_)
@@ -1202,6 +1215,7 @@ impl RoderEvent {
             RoderEvent::ApprovalResolved(e) => Some(&e.thread_id),
             RoderEvent::UserInputRequested(e) => Some(&e.thread_id),
             RoderEvent::UserInputResolved(e) => Some(&e.thread_id),
+            RoderEvent::TaskLedgerUpdated(e) => Some(&e.thread_id),
             RoderEvent::PolicyDecisionRecorded(e) => Some(&e.thread_id),
             RoderEvent::PolicyBypassActive(e) => Some(&e.thread_id),
             RoderEvent::PolicyModeChanged(e) => Some(&e.thread_id),
@@ -1300,6 +1314,7 @@ impl RoderEvent {
             RoderEvent::ApprovalResolved(e) => Some(&e.turn_id),
             RoderEvent::UserInputRequested(e) => Some(&e.turn_id),
             RoderEvent::UserInputResolved(e) => Some(&e.turn_id),
+            RoderEvent::TaskLedgerUpdated(e) => Some(&e.turn_id),
             RoderEvent::PolicyDecisionRecorded(e) => Some(&e.turn_id),
             RoderEvent::PolicyBypassActive(e) => Some(&e.turn_id),
             RoderEvent::PolicyModeChanged(e) => e.turn_id.as_ref(),
