@@ -1,5 +1,6 @@
 mod artifact;
 pub mod client;
+mod code_index;
 mod command;
 mod desktop_contract;
 mod evals;
