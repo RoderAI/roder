@@ -25,6 +25,7 @@ impl Runtime {
                 ContextBlockKind::Instruction
                     | ContextBlockKind::Memory
                     | ContextBlockKind::RepositoryFact
+                    | ContextBlockKind::RetrievedDocument
                     | ContextBlockKind::PriorSummary
                     | ContextBlockKind::EntrypointHint
             ) {
