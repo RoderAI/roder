@@ -13,6 +13,14 @@ impl Trigram {
             None
         }
     }
+
+    pub(crate) fn key(self) -> String {
+        String::from_utf8_lossy(&self.0).into_owned()
+    }
+
+    pub(crate) fn from_key(key: &str) -> Option<Self> {
+        Self::from_window(key.as_bytes())
+    }
 }
 
 pub(crate) fn trigrams(text: &str, case_sensitive: bool) -> BTreeSet<Trigram> {
