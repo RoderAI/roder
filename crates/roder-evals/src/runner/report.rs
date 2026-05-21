@@ -111,6 +111,7 @@ pub(super) fn eval_metrics(
     wall_time_ms: u128,
     outcome: &EvalOutcome,
 ) -> Vec<EvalMetric> {
+    let search = search_metrics(events);
     let model_calls = events
         .iter()
         .filter(|event| matches!(event, RoderEvent::InferenceStarted(_)))
@@ -360,6 +361,60 @@ pub(super) fn eval_metrics(
             unit: None,
         },
         EvalMetric {
+            name: "grep_calls".to_string(),
+            kind: EvalMetricKind::Count,
+            value: search.calls as f64,
+            unit: None,
+        },
+        EvalMetric {
+            name: "grep_indexed_calls".to_string(),
+            kind: EvalMetricKind::Count,
+            value: search.indexed_calls as f64,
+            unit: None,
+        },
+        EvalMetric {
+            name: "grep_scan_calls".to_string(),
+            kind: EvalMetricKind::Count,
+            value: search.scan_calls as f64,
+            unit: None,
+        },
+        EvalMetric {
+            name: "grep_fallback_calls".to_string(),
+            kind: EvalMetricKind::Count,
+            value: search.fallback_calls as f64,
+            unit: None,
+        },
+        EvalMetric {
+            name: "grep_candidate_files".to_string(),
+            kind: EvalMetricKind::Count,
+            value: search.candidate_files as f64,
+            unit: None,
+        },
+        EvalMetric {
+            name: "grep_verified_files".to_string(),
+            kind: EvalMetricKind::Count,
+            value: search.verified_files as f64,
+            unit: None,
+        },
+        EvalMetric {
+            name: "grep_elapsed_ms".to_string(),
+            kind: EvalMetricKind::Duration,
+            value: search.elapsed_ms as f64,
+            unit: Some("ms".to_string()),
+        },
+        EvalMetric {
+            name: "grep_index_bytes".to_string(),
+            kind: EvalMetricKind::Bytes,
+            value: search.index_bytes as f64,
+            unit: Some("bytes".to_string()),
+        },
+        EvalMetric {
+            name: "grep_index_build_time_ms".to_string(),
+            kind: EvalMetricKind::Duration,
+            value: search.index_build_time_ms as f64,
+            unit: Some("ms".to_string()),
+        },
+        EvalMetric {
             name: "task_ledger_updates".to_string(),
             kind: EvalMetricKind::Count,
             value: task_ledger_updates as f64,
@@ -410,6 +465,56 @@ pub(super) fn eval_metrics(
     ];
     metrics.extend(reliability_metrics(events, outcome));
     metrics
+}
+
+#[derive(Default)]
+struct SearchEvalMetrics {
+    calls: u64,
+    indexed_calls: u64,
+    scan_calls: u64,
+    fallback_calls: u64,
+    candidate_files: u64,
+    verified_files: u64,
+    elapsed_ms: u64,
+    index_bytes: u64,
+    index_build_time_ms: u64,
+}
+
+fn search_metrics(events: &[RoderEvent]) -> SearchEvalMetrics {
+    let mut metrics = SearchEvalMetrics::default();
+    for event in events {
+        let RoderEvent::ToolCallCompleted(completed) = event else {
+            continue;
+        };
+        if completed.tool_name.as_deref() != Some("grep") {
+            continue;
+        }
+        metrics.calls += 1;
+        let Some(payload) = completed.display_payload.as_ref() else {
+            continue;
+        };
+        match payload.get("engine").and_then(serde_json::Value::as_str) {
+            Some("indexed") => metrics.indexed_calls += 1,
+            Some("scan") => metrics.scan_calls += 1,
+            Some("fallback") => metrics.fallback_calls += 1,
+            _ => {}
+        }
+        metrics.candidate_files += u64_payload(payload, "candidate_files");
+        metrics.verified_files += u64_payload(payload, "verified_files");
+        metrics.elapsed_ms += u64_payload(payload, "elapsed_ms");
+        metrics.index_bytes = metrics.index_bytes.max(u64_payload(payload, "index_bytes"));
+        metrics.index_build_time_ms = metrics
+            .index_build_time_ms
+            .max(u64_payload(payload, "index_build_time_ms"));
+    }
+    metrics
+}
+
+fn u64_payload(payload: &serde_json::Value, key: &str) -> u64 {
+    payload
+        .get(key)
+        .and_then(serde_json::Value::as_u64)
+        .unwrap_or_default()
 }
 
 fn is_file_read(event: &RoderEvent) -> bool {
@@ -595,6 +700,24 @@ fn eval_report_markdown(report: &EvalSuiteReport) -> String {
                 comparison.quality,
             ));
         }
+    }
+    text.push_str(
+        "\n## Search Metrics\n\n| Fixture | Grep calls | Indexed | Scan | Fallback | Candidate files | Verified files | Grep elapsed ms | Index bytes | Index build ms |\n| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |\n",
+    );
+    for result in &report.results {
+        text.push_str(&format!(
+            "| `{}` | {:.0} | {:.0} | {:.0} | {:.0} | {:.0} | {:.0} | {:.0} | {:.0} | {:.0} |\n",
+            result.fixture_id,
+            metric_value(result, "grep_calls"),
+            metric_value(result, "grep_indexed_calls"),
+            metric_value(result, "grep_scan_calls"),
+            metric_value(result, "grep_fallback_calls"),
+            metric_value(result, "grep_candidate_files"),
+            metric_value(result, "grep_verified_files"),
+            metric_value(result, "grep_elapsed_ms"),
+            metric_value(result, "grep_index_bytes"),
+            metric_value(result, "grep_index_build_time_ms"),
+        ));
     }
     let profile_comparisons = model_profile_comparisons(report);
     if !profile_comparisons.is_empty() {
@@ -867,8 +990,8 @@ mod tests {
     use super::*;
     use roder_api::events::{
         ContextAssemblyCompleted, ContextEntrypointCandidatesInjected, InferenceStarted,
-        RoderEvent, ToolCallRequested, ToolOutputTruncated, VerificationCompleted,
-        VerificationRequired,
+        RoderEvent, ToolCallCompleted, ToolCallRequested, ToolOutputTruncated,
+        VerificationCompleted, VerificationRequired,
     };
     use roder_api::tasks::TaskStarted;
 
@@ -968,6 +1091,45 @@ mod tests {
         assert_eq!(value("verification_completed"), 0.0);
         assert_eq!(value("verification_failed"), 1.0);
         assert_eq!(value("verification_open_gaps"), 1.0);
+    }
+
+    #[test]
+    fn search_eval_metrics_track_grep_engine_and_latency_metadata() {
+        let events = vec![RoderEvent::ToolCallCompleted(ToolCallCompleted {
+            thread_id: "thread-a".to_string(),
+            turn_id: "turn-a".to_string(),
+            tool_id: "grep-a".to_string(),
+            tool_name: Some("grep".to_string()),
+            display_payload: Some(serde_json::json!({
+                "query": "BUG_ROOT_CAUSE_TOKEN",
+                "engine": "indexed",
+                "candidate_files": 4,
+                "verified_files": 2,
+                "elapsed_ms": 7,
+                "index_bytes": 4096,
+                "index_build_time_ms": 3
+            })),
+            is_error: false,
+            output: None,
+            timestamp: OffsetDateTime::UNIX_EPOCH,
+        })];
+
+        let metrics = eval_metrics(&events, 42, &EvalOutcome::Pass);
+        let value = |name: &str| {
+            metrics
+                .iter()
+                .find(|metric| metric.name == name)
+                .map(|metric| metric.value)
+                .unwrap()
+        };
+
+        assert_eq!(value("grep_calls"), 1.0);
+        assert_eq!(value("grep_indexed_calls"), 1.0);
+        assert_eq!(value("grep_candidate_files"), 4.0);
+        assert_eq!(value("grep_verified_files"), 2.0);
+        assert_eq!(value("grep_elapsed_ms"), 7.0);
+        assert_eq!(value("grep_index_bytes"), 4096.0);
+        assert_eq!(value("grep_index_build_time_ms"), 3.0);
     }
 
     #[test]

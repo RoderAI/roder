@@ -1,15 +1,14 @@
 use std::env;
 use std::hint::black_box;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
 use roder_search::{DEFAULT_MAX_FILE_SIZE, SearchMode, SearchOptions, WorkspaceSearcher};
 
 fn main() {
-    let Some(fixture) = env::var_os("RODER_SEARCH_BENCH_FIXTURE").map(PathBuf::from) else {
-        println!("skipping search benchmark: set RODER_SEARCH_BENCH_FIXTURE=/path/to/repo");
-        return;
-    };
+    let fixture = env::var_os("RODER_SEARCH_BENCH_FIXTURE")
+        .map(PathBuf::from)
+        .unwrap_or_else(generate_synthetic_fixture);
     if !fixture.exists() {
         println!(
             "skipping search benchmark: fixture does not exist: {}",
@@ -24,7 +23,7 @@ fn main() {
         .unwrap_or(25)
         .max(3);
     let queries = env::var("RODER_SEARCH_BENCH_QUERIES")
-        .unwrap_or_else(|_| "fn ,struct ,TODO".to_string())
+        .unwrap_or_else(|_| "BUG_ROOT_CAUSE_TOKEN,struct ,TODO".to_string())
         .split(',')
         .map(str::trim)
         .filter(|query| !query.is_empty())
@@ -144,4 +143,58 @@ fn print_report(query: &str, engine: &str, report: &Report) {
 
 fn millis(duration: Duration) -> f64 {
     duration.as_secs_f64() * 1000.0
+}
+
+fn generate_synthetic_fixture() -> PathBuf {
+    let root = env::temp_dir().join(format!(
+        "roder-search-synthetic-bench-{}",
+        std::process::id()
+    ));
+    if root.exists() {
+        std::fs::remove_dir_all(&root).expect("remove stale synthetic search benchmark fixture");
+    }
+    std::fs::create_dir_all(&root).expect("create synthetic search benchmark fixture");
+    write_synthetic_monorepo(&root, 16, 24);
+    root
+}
+
+fn write_synthetic_monorepo(root: &Path, crates: usize, files_per_crate: usize) {
+    for crate_index in 0..crates {
+        let src = root
+            .join("crates")
+            .join(format!("service-{crate_index:02}"))
+            .join("src");
+        std::fs::create_dir_all(&src).expect("create synthetic crate");
+        for file_index in 0..files_per_crate {
+            let symbol = format!("SearchHotPath{crate_index:02}_{file_index:02}");
+            let token = if crate_index == 11 && file_index == 17 {
+                "BUG_ROOT_CAUSE_TOKEN"
+            } else {
+                "ordinary_token"
+            };
+            let body = format!(
+                "pub struct {symbol};\n\
+                 impl {symbol} {{\n\
+                     pub fn route_config_{file_index:02}() -> &'static str {{ \"{token}\" }}\n\
+                     pub fn fallback_scan_noise() -> usize {{ {crate_index} + {file_index} }}\n\
+                 }}\n\
+                 // TODO synthetic benchmark filler for grep latency comparisons.\n"
+            );
+            std::fs::write(src.join(format!("module_{file_index:02}.rs")), body)
+                .expect("write synthetic source file");
+        }
+    }
+    let docs = root.join("docs");
+    std::fs::create_dir_all(&docs).expect("create synthetic docs");
+    for index in 0..64 {
+        std::fs::write(
+            docs.join(format!("investigation-{index:02}.md")),
+            format!(
+                "# Investigation {index}\n\n\
+                 Repeated grep over this synthetic monorepo should find \
+                 the root-cause marker only in the relevant Rust module.\n"
+            ),
+        )
+        .expect("write synthetic docs");
+    }
 }

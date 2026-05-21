@@ -1,0 +1,71 @@
+{
+  "id": "instant-grep-medium-repeated-grep",
+  "title": "Medium service bug investigation search",
+  "prompt": "FAKE_GREP_INDEXED Find BUG_ROOT_CAUSE_TOKEN in a medium service layout where repeated full scans are the bottleneck.",
+  "tags": ["search", "instant-grep", "bug-investigation", "tool:grep", "fixture:medium"],
+  "workspace": {
+    "files": [
+      {
+        "path": "services/api/src/router.rs",
+        "contents": "pub fn route() -> &'static str { \"api\" }\n"
+      },
+      {
+        "path": "services/api/src/auth.rs",
+        "contents": "pub fn auth_guard() -> &'static str { \"guard\" }\n"
+      },
+      {
+        "path": "services/api/src/retries.rs",
+        "contents": "pub fn retry_budget() -> usize { 3 }\n"
+      },
+      {
+        "path": "services/worker/src/jobs.rs",
+        "contents": "pub fn job_runner() -> &'static str { \"worker\" }\n"
+      },
+      {
+        "path": "services/worker/src/retry.rs",
+        "contents": "pub fn failed_job_marker() -> &'static str { \"BUG_ROOT_CAUSE_TOKEN\" }\n"
+      },
+      {
+        "path": "services/worker/src/backoff.rs",
+        "contents": "pub fn backoff_ms() -> u64 { 250 }\n"
+      },
+      {
+        "path": "services/tui/src/app.rs",
+        "contents": "pub fn draw() -> &'static str { \"tui\" }\n"
+      },
+      {
+        "path": "services/tui/src/search.rs",
+        "contents": "pub fn search_hint() -> &'static str { \"index\" }\n"
+      },
+      {
+        "path": "docs/incidents/2026-05-21.md",
+        "contents": "The worker retry path should be checked before changing API routing.\n"
+      },
+      {
+        "path": "tests/worker_retry.rs",
+        "contents": "#[test]\nfn retry_regression() { assert!(true); }\n"
+      }
+    ]
+  },
+  "timeoutMs": 10000,
+  "expected": {
+    "finalAnswerContains": ["hello from roder"],
+    "files": [
+      {
+        "path": "services/worker/src/retry.rs",
+        "exists": true,
+        "contains": ["BUG_ROOT_CAUSE_TOKEN"]
+      }
+    ],
+    "commandChecks": [
+      {
+        "command": "grep -R \"BUG_ROOT_CAUSE_TOKEN\" -n . | grep -q \"services/worker/src/retry.rs\"",
+        "expectedExitCode": 0
+      }
+    ]
+  },
+  "constraints": [
+    "offline fake provider fixture",
+    "the report should expose grep candidate and verified file counts"
+  ]
+}
