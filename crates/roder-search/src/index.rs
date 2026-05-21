@@ -116,6 +116,26 @@ impl SearchIndex {
             .map(|document| self.root.join(&document.path))
     }
 
+    pub(crate) fn from_persisted(
+        root: PathBuf,
+        scope: PathBuf,
+        documents: Vec<Document>,
+        postings: BTreeMap<Trigram, BTreeSet<FileId>>,
+        stats: IndexStats,
+    ) -> Self {
+        Self {
+            root,
+            scope,
+            documents,
+            postings,
+            stats,
+        }
+    }
+
+    pub(crate) fn postings(&self) -> &BTreeMap<Trigram, BTreeSet<FileId>> {
+        &self.postings
+    }
+
     pub(crate) fn document_is_stale(&self, id: FileId) -> bool {
         let Some(document) = self.documents.get(id) else {
             return true;
@@ -247,7 +267,7 @@ fn read_text_file(
 fn ignored_dir(path: &Path) -> bool {
     path.file_name()
         .and_then(|name| name.to_str())
-        .is_some_and(|name| matches!(name, ".git" | "target"))
+        .is_some_and(|name| matches!(name, ".git" | ".roder" | "target"))
 }
 
 fn obvious_binary(path: &Path) -> bool {
