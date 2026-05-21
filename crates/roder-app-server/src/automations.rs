@@ -1,11 +1,20 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use roder_api::automations::{AutomationDefinition, AutomationRunState, AutomationRunSummary};
+use roder_api::automations::{
+    AutomationClient, AutomationClientKind, AutomationDefinition, AutomationRunState,
+    AutomationRunSummary,
+};
 use roder_automations::{AutomationStore, ScheduledOccurrence};
 use roder_automations::{AutomationSupervisorConfig, start_supervisor};
 use roder_core::Runtime;
-use roder_protocol::AutomationsStatusResult;
+use roder_protocol::{
+    AutomationsCancelRunParams, AutomationsCancelRunResult, AutomationsCreateParams,
+    AutomationsCreateResult, AutomationsDeleteParams, AutomationsDeleteResult,
+    AutomationsListParams, AutomationsListResult, AutomationsRunNowParams, AutomationsRunNowResult,
+    AutomationsRunsParams, AutomationsRunsResult, AutomationsStatusResult, AutomationsUpdateParams,
+    AutomationsUpdateResult, JsonRpcError,
+};
 use roder_tasks::{BackgroundRunner, BackgroundRunnerConfig, TaskExecutorRegistry};
 use tokio::sync::{RwLock, broadcast};
 
@@ -14,6 +23,7 @@ use crate::automation_worker::{
 };
 use crate::notifications;
 use crate::server::AppServer;
+use crate::server::internal_error;
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct AppServerFeatureConfig {
@@ -123,6 +133,8 @@ impl AppServer {
             last_tick_at: None,
             next_tick_at: None,
             active_runs: 0,
+            due_count: 0,
+            leased_count: 0,
         }
     }
 
@@ -222,6 +234,235 @@ impl AppServer {
         store.upsert_run(&cancelled, time::OffsetDateTime::now_utc())?;
         let _ = store.release_lease(&cancelled.run_id);
         Ok(task_cancelled || cancelled.task_id.is_none())
+    }
+
+    pub(crate) async fn handle_automations_list(
+        &self,
+        params: AutomationsListParams,
+    ) -> Result<serde_json::Value, JsonRpcError> {
+        let automations = self
+            .automation_store()
+            .map_err(internal_error)?
+            .list_automations()
+            .map_err(internal_error)?
+            .into_iter()
+            .map(|stored| stored.definition)
+            .filter(|definition| params.include_disabled.unwrap_or(true) || definition.enabled)
+            .filter(|definition| {
+                params
+                    .project_cwd
+                    .as_ref()
+                    .is_none_or(|cwd| &definition.project.cwd == cwd)
+            })
+            .collect::<Vec<_>>();
+        Ok(serde_json::to_value(AutomationsListResult { automations }).unwrap())
+    }
+
+    pub(crate) async fn handle_automations_create(
+        &self,
+        params: AutomationsCreateParams,
+    ) -> Result<serde_json::Value, JsonRpcError> {
+        validate_project(&params.project.cwd).map_err(internal_error)?;
+        validate_schedule(&params.schedule).map_err(internal_error)?;
+        let now = time::OffsetDateTime::now_utc();
+        let definition = AutomationDefinition {
+            id: uuid::Uuid::new_v4().to_string(),
+            name: params.name,
+            project: params.project,
+            schedule: params.schedule,
+            prompt: params.prompt,
+            enabled: params.enabled,
+            model_provider: params.model_provider,
+            model: params.model,
+            policy_mode: params.policy_mode,
+            catch_up: params.catch_up,
+            concurrency: params.concurrency,
+            created_by: AutomationClient {
+                id: self.features.automations.server_id.clone(),
+                kind: AutomationClientKind::AppServer,
+            },
+            created_at: now,
+            updated_at: now,
+        };
+        self.automation_store()
+            .map_err(internal_error)?
+            .upsert_automation(&definition, Some(now))
+            .map_err(internal_error)?;
+        Ok(serde_json::to_value(AutomationsCreateResult {
+            automation: definition,
+        })
+        .unwrap())
+    }
+
+    pub(crate) async fn handle_automations_update(
+        &self,
+        params: AutomationsUpdateParams,
+    ) -> Result<serde_json::Value, JsonRpcError> {
+        let store = self.automation_store().map_err(internal_error)?;
+        let mut definition = store
+            .get_automation(&params.automation_id)
+            .map_err(internal_error)?
+            .ok_or_else(|| unknown_automation(&params.automation_id))?
+            .definition;
+        if let Some(name) = params.patch.name {
+            definition.name = name;
+        }
+        if let Some(project) = params.patch.project {
+            validate_project(&project.cwd).map_err(internal_error)?;
+            definition.project = project;
+        }
+        if let Some(schedule) = params.patch.schedule {
+            validate_schedule(&schedule).map_err(internal_error)?;
+            definition.schedule = schedule;
+        }
+        if let Some(prompt) = params.patch.prompt {
+            definition.prompt = prompt;
+        }
+        if let Some(enabled) = params.patch.enabled {
+            definition.enabled = enabled;
+        }
+        if let Some(model_provider) = params.patch.model_provider {
+            definition.model_provider = Some(model_provider);
+        }
+        if let Some(model) = params.patch.model {
+            definition.model = Some(model);
+        }
+        if let Some(policy_mode) = params.patch.policy_mode {
+            definition.policy_mode = Some(policy_mode);
+        }
+        if let Some(catch_up) = params.patch.catch_up {
+            definition.catch_up = catch_up;
+        }
+        if let Some(concurrency) = params.patch.concurrency {
+            definition.concurrency = concurrency;
+        }
+        definition.updated_at = time::OffsetDateTime::now_utc();
+        store
+            .upsert_automation(&definition, Some(definition.updated_at))
+            .map_err(internal_error)?;
+        Ok(serde_json::to_value(AutomationsUpdateResult {
+            automation: definition,
+        })
+        .unwrap())
+    }
+
+    pub(crate) async fn handle_automations_delete(
+        &self,
+        params: AutomationsDeleteParams,
+    ) -> Result<serde_json::Value, JsonRpcError> {
+        let store = self.automation_store().map_err(internal_error)?;
+        let Some(mut stored) = store
+            .get_automation(&params.automation_id)
+            .map_err(internal_error)?
+        else {
+            return Ok(serde_json::to_value(AutomationsDeleteResult {
+                automation_id: params.automation_id,
+                deleted: false,
+            })
+            .unwrap());
+        };
+        stored.definition.enabled = false;
+        stored.definition.updated_at = time::OffsetDateTime::now_utc();
+        store
+            .upsert_automation(&stored.definition, stored.last_checked_at)
+            .map_err(internal_error)?;
+        Ok(serde_json::to_value(AutomationsDeleteResult {
+            automation_id: params.automation_id,
+            deleted: true,
+        })
+        .unwrap())
+    }
+
+    pub(crate) async fn handle_automations_run_now(
+        &self,
+        params: AutomationsRunNowParams,
+    ) -> Result<serde_json::Value, JsonRpcError> {
+        let mut definition = self
+            .automation_store()
+            .map_err(internal_error)?
+            .get_automation(&params.automation_id)
+            .map_err(internal_error)?
+            .ok_or_else(|| unknown_automation(&params.automation_id))?
+            .definition;
+        if let Some(prompt) = params.prompt_override {
+            definition.prompt = prompt;
+        }
+        let scheduled_for = time::OffsetDateTime::now_utc();
+        let occurrence = ScheduledOccurrence {
+            automation_id: definition.id.clone(),
+            occurrence_key: roder_automations::occurrence_key(&definition.id, scheduled_for),
+            scheduled_for,
+            action: roder_automations::OccurrenceAction::Run,
+        };
+        let run = self
+            .submit_automation_run(definition, occurrence)
+            .await
+            .map_err(internal_error)?;
+        Ok(serde_json::to_value(AutomationsRunNowResult { run }).unwrap())
+    }
+
+    pub(crate) async fn handle_automations_runs(
+        &self,
+        params: AutomationsRunsParams,
+    ) -> Result<serde_json::Value, JsonRpcError> {
+        let mut runs = self
+            .automation_store()
+            .map_err(internal_error)?
+            .list_runs(&params.automation_id, params.limit)
+            .map_err(internal_error)?;
+        if let Some(state) = params.state {
+            runs.retain(|run| run.state == state);
+        }
+        Ok(serde_json::to_value(AutomationsRunsResult {
+            runs,
+            next_cursor: None,
+        })
+        .unwrap())
+    }
+
+    pub(crate) async fn handle_automations_cancel_run(
+        &self,
+        params: AutomationsCancelRunParams,
+    ) -> Result<serde_json::Value, JsonRpcError> {
+        let cancelled = self
+            .cancel_automation_run(&params.run_id, params.reason)
+            .await
+            .map_err(internal_error)?;
+        Ok(serde_json::to_value(AutomationsCancelRunResult {
+            run_id: params.run_id,
+            cancelled,
+        })
+        .unwrap())
+    }
+
+    pub(crate) async fn handle_automations_status(
+        &self,
+    ) -> Result<serde_json::Value, JsonRpcError> {
+        Ok(serde_json::to_value(self.automation_status()).unwrap())
+    }
+
+    fn automation_store(&self) -> anyhow::Result<AutomationStore> {
+        AutomationStore::open(&self.features.automations.store_path)
+    }
+}
+
+fn validate_project(cwd: &str) -> anyhow::Result<()> {
+    if !std::path::Path::new(cwd).is_dir() {
+        anyhow::bail!("automation project path does not exist: {cwd}");
+    }
+    Ok(())
+}
+
+fn validate_schedule(schedule: &roder_api::automations::AutomationSchedule) -> anyhow::Result<()> {
+    roder_automations::next_after(schedule, time::OffsetDateTime::now_utc(), true)?;
+    Ok(())
+}
+
+fn unknown_automation(id: &str) -> JsonRpcError {
+    JsonRpcError {
+        code: -32602,
+        message: format!("unknown automation {id:?}"),
+        data: None,
     }
 }
 

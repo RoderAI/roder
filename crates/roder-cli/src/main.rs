@@ -1,6 +1,7 @@
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
+mod automations;
 mod commands;
 mod evals;
 mod marketplace;
@@ -10,6 +11,7 @@ mod skills;
 #[cfg(test)]
 mod tui_config;
 
+use automations::run_automations_cli;
 use evals::run_eval_cli;
 use marketplace::{run_marketplace_cli, run_plugin_cli, run_setup_cli};
 use roder_api::catalog::{DEFAULT_MODEL_ID, PROVIDER_MOCK, normalize_provider_id};
@@ -65,6 +67,12 @@ async fn main() -> anyhow::Result<()> {
     }
     if matches!(args.first().map(String::as_str), Some("tasks")) {
         return run_tasks_cli(&args[1..]).await;
+    }
+    if matches!(
+        args.first().map(String::as_str),
+        Some("automation" | "automations")
+    ) {
+        return run_automations_cli(&args[1..]).await;
     }
     if matches!(args.first().map(String::as_str), Some("eval")) {
         return run_eval_cli(&args[1..]).await;

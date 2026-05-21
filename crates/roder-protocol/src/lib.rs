@@ -2150,7 +2150,7 @@ pub struct SkillsUpdateResult {
     pub diagnostics: Vec<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AutomationsListParams {
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -2306,6 +2306,10 @@ pub struct AutomationsStatusResult {
     pub next_tick_at: Option<OffsetDateTime>,
     #[serde(default)]
     pub active_runs: usize,
+    #[serde(default)]
+    pub due_count: usize,
+    #[serde(default)]
+    pub leased_count: usize,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
