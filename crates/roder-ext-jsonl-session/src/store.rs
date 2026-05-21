@@ -81,6 +81,10 @@ impl SessionStore for JsonlSessionStore {
         "jsonl".to_string()
     }
 
+    fn local_session_root(&self) -> Option<PathBuf> {
+        Some(self.base_path.clone())
+    }
+
     async fn create_session(&self, metadata: SessionMetadata) -> anyhow::Result<SessionMetadata> {
         let dir = self.session_dir(&metadata.thread_id);
         fs::create_dir_all(&dir)

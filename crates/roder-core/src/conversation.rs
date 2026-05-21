@@ -1,3 +1,4 @@
+use roder_api::artifacts::{ContextArtifactKind, format_artifact_reference};
 use roder_api::catalog::lookup_model;
 use roder_api::context::{ContextBlockKind, ContextPlan, ContextQuery};
 use roder_api::conversation::{
@@ -6,6 +7,7 @@ use roder_api::conversation::{
 use roder_api::events::*;
 use time::OffsetDateTime;
 
+use crate::artifacts::CreateArtifactRequest;
 use crate::runtime::{Runtime, StartTurnRequest};
 
 impl Runtime {
@@ -131,7 +133,28 @@ impl Runtime {
             .cloned()
             .into_iter()
             .collect::<Vec<ConversationItem>>();
-        let summary = summarize_conversation(&conversation);
+        let summary = if cfg.file_backed_dynamic_context {
+            let history_json = serde_json::to_vec_pretty(&conversation)?;
+            let artifact = self.context_artifacts().create(CreateArtifactRequest {
+                kind: ContextArtifactKind::ChatHistory,
+                thread_id,
+                turn_id,
+                source_tool_id: None,
+                label: Some("pre-compaction conversation"),
+                bytes: &history_json,
+            })?;
+            self.emit(RoderEvent::ContextArtifactCreated(ContextArtifactCreated {
+                thread_id: thread_id.clone(),
+                turn_id: turn_id.clone(),
+                artifact: artifact.clone(),
+                timestamp: OffsetDateTime::now_utc(),
+            }))
+            .await;
+            let reference = format_artifact_reference(&artifact, "pre-compaction conversation");
+            format!("{}\n\n{}", summarize_conversation(&conversation), reference)
+        } else {
+            summarize_conversation(&conversation)
+        };
         let compaction = ConversationItem::ContextCompaction(ContextCompactionRecord { summary });
         self.persist_turn_item(thread_id, turn_id, &compaction)
             .await?;
@@ -200,9 +223,11 @@ fn truncate(text: &str) -> String {
 mod tests {
     use std::sync::Arc;
 
+    use roder_api::artifacts::ContextArtifactAccess;
     use roder_api::catalog::PROVIDER_MOCK;
     use roder_api::conversation::{AssistantMessage, UserMessage};
     use roder_api::extension::ExtensionRegistryBuilder;
+    use roder_ext_jsonl_session::store::JsonlSessionStoreFactory;
 
     use crate::fake_provider::FakeInferenceEngine;
     use crate::runtime::{Runtime, RuntimeConfig};
@@ -210,9 +235,14 @@ mod tests {
     use super::*;
 
     #[tokio::test]
-    async fn compact_conversation_keeps_summary_and_current_prompt() {
+    async fn compaction_writes_history_artifact_and_keeps_current_prompt() {
         let mut builder = ExtensionRegistryBuilder::new();
         builder.inference_engine(Arc::new(FakeInferenceEngine));
+        let session_root =
+            std::env::temp_dir().join(format!("roder-session-artifacts-{}", uuid::Uuid::new_v4()));
+        builder.session_store_factory(Arc::new(JsonlSessionStoreFactory {
+            base_path: session_root.clone(),
+        }));
         let runtime = Runtime::new(
             builder.build().unwrap(),
             RuntimeConfig {
@@ -220,6 +250,7 @@ mod tests {
                 default_model: "mock".to_string(),
                 reasoning: None,
                 auto_compact_token_limit: Some(1),
+                file_backed_dynamic_context: true,
                 hosted_web_search: roder_api::inference::HostedWebSearchConfig::disabled(),
                 model_edit_tools: std::collections::HashMap::new(),
                 model_parallel_tool_calls: std::collections::HashMap::new(),
@@ -258,11 +289,38 @@ mod tests {
             &compacted[0],
             ConversationItem::ContextCompaction(summary)
                 if summary.summary.contains("Previous conversation was compacted")
+                    && summary.summary.contains("read_artifact")
         ));
         assert!(matches!(
             &compacted[1],
             ConversationItem::UserMessage(message) if message.text == "current prompt"
         ));
+        let artifacts = runtime
+            .context_artifacts()
+            .list_artifacts(&"thread".to_string())
+            .unwrap();
+        let history = artifacts
+            .iter()
+            .find(|artifact| {
+                artifact.kind == roder_api::artifacts::ContextArtifactKind::ChatHistory
+            })
+            .unwrap();
+        let grep = runtime
+            .context_artifacts()
+            .grep_artifact(&"thread".to_string(), &history.id, "old answer", 0, 10)
+            .unwrap();
+        assert_eq!(grep.total_matches, 1);
+        assert!(
+            history.store_path.starts_with(
+                session_root
+                    .join("thread")
+                    .join("artifacts")
+                    .join("turn")
+                    .to_string_lossy()
+                    .as_ref()
+            )
+        );
+        let _ = std::fs::remove_dir_all(session_root);
     }
 
     #[tokio::test]
@@ -276,6 +334,7 @@ mod tests {
                 default_model: "mock".to_string(),
                 reasoning: None,
                 auto_compact_token_limit: Some(1),
+                file_backed_dynamic_context: true,
                 hosted_web_search: roder_api::inference::HostedWebSearchConfig::disabled(),
                 model_edit_tools: std::collections::HashMap::new(),
                 model_parallel_tool_calls: std::collections::HashMap::new(),
@@ -313,5 +372,75 @@ mod tests {
             .unwrap();
 
         assert_eq!(compacted, conversation);
+    }
+
+    #[tokio::test]
+    async fn compaction_without_file_backed_context_keeps_legacy_summary_only() {
+        let mut builder = ExtensionRegistryBuilder::new();
+        builder.inference_engine(Arc::new(FakeInferenceEngine));
+        let session_root = std::env::temp_dir().join(format!(
+            "roder-session-artifacts-disabled-{}",
+            uuid::Uuid::new_v4()
+        ));
+        builder.session_store_factory(Arc::new(JsonlSessionStoreFactory {
+            base_path: session_root.clone(),
+        }));
+        let runtime = Runtime::new(
+            builder.build().unwrap(),
+            RuntimeConfig {
+                default_provider: PROVIDER_MOCK.to_string(),
+                default_model: "mock".to_string(),
+                reasoning: None,
+                auto_compact_token_limit: Some(1),
+                file_backed_dynamic_context: false,
+                hosted_web_search: roder_api::inference::HostedWebSearchConfig::disabled(),
+                model_edit_tools: std::collections::HashMap::new(),
+                model_parallel_tool_calls: std::collections::HashMap::new(),
+                workspace: None,
+                roadmap_data_dir: None,
+                policy_mode: roder_api::policy_mode::PolicyMode::Default,
+                remote_runner_destination: None,
+                team_data_dir: None,
+            },
+        )
+        .unwrap();
+
+        let compacted = runtime
+            .compact_conversation_if_needed(
+                &"thread".to_string(),
+                &"turn".to_string(),
+                "mock",
+                vec![
+                    ConversationItem::UserMessage(UserMessage {
+                        text: "very large old context".repeat(20),
+                        images: Vec::new(),
+                    }),
+                    ConversationItem::AssistantMessage(AssistantMessage {
+                        text: "old answer".to_string(),
+                        phase: None,
+                    }),
+                    ConversationItem::UserMessage(UserMessage {
+                        text: "current prompt".to_string(),
+                        images: Vec::new(),
+                    }),
+                ],
+            )
+            .await
+            .unwrap();
+
+        assert!(matches!(
+            &compacted[0],
+            ConversationItem::ContextCompaction(summary)
+                if summary.summary.contains("Previous conversation was compacted")
+                    && !summary.summary.contains("read_artifact")
+        ));
+        assert!(
+            runtime
+                .context_artifacts()
+                .list_artifacts(&"thread".to_string())
+                .unwrap()
+                .is_empty()
+        );
+        let _ = std::fs::remove_dir_all(session_root);
     }
 }

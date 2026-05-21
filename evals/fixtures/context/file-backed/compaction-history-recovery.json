@@ -1,0 +1,9 @@
+{
+  "id": "compaction-history-recovery",
+  "title": "Recover detail from pre-compaction chat history",
+  "prompt": "A prior conversation was compacted and the summary omitted the exact project codename. Use the chat_history artifact reference to recover it.",
+  "tags": ["file-backed-context", "compaction"],
+  "expectedAnswerContains": "project codename: night-jar",
+  "expectedArtifactQuery": "night-jar",
+  "expectedTool": "grep"
+}

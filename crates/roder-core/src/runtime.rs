@@ -29,6 +29,7 @@ use roder_sandbox::process::LocalProcessRunner;
 use time::{Duration, OffsetDateTime};
 use tokio::sync::{Mutex, RwLock, oneshot};
 
+use crate::artifacts::{ContextArtifactStore, default_context_artifact_dir};
 use crate::bus::EventBus;
 use crate::fake_provider::FakeInferenceEngine;
 use crate::policy_gate::DefaultPolicyGate;
@@ -44,6 +45,7 @@ pub struct RuntimeConfig {
     pub default_model: String,
     pub reasoning: Option<String>,
     pub auto_compact_token_limit: Option<u32>,
+    pub file_backed_dynamic_context: bool,
     pub hosted_web_search: HostedWebSearchConfig,
     pub model_edit_tools: HashMap<String, String>,
     pub model_parallel_tool_calls: HashMap<String, bool>,
@@ -61,6 +63,7 @@ impl Default for RuntimeConfig {
             default_model: "mock".to_string(),
             reasoning: None,
             auto_compact_token_limit: None,
+            file_backed_dynamic_context: true,
             hosted_web_search: HostedWebSearchConfig::cached(),
             model_edit_tools: HashMap::new(),
             model_parallel_tool_calls: HashMap::new(),
@@ -164,6 +167,7 @@ pub struct Runtime {
     workspace: PathBuf,
     teams: TeamManager,
     pub(crate) roadmaps: Mutex<roder_roadmap::RoadmapRuntime>,
+    context_artifacts: Arc<ContextArtifactStore>,
     pub(crate) session_store: Option<Arc<dyn SessionStore>>,
     pub(crate) tool_registry: ToolRegistry,
 }
@@ -196,6 +200,13 @@ impl Runtime {
             .roadmap_data_dir
             .clone()
             .unwrap_or_else(|| workspace.join(".roder"));
+        let context_artifacts = Arc::new(
+            session_store
+                .as_ref()
+                .and_then(|store| store.local_session_root())
+                .map(ContextArtifactStore::new_session_scoped)
+                .unwrap_or_else(|| ContextArtifactStore::new(default_context_artifact_dir())),
+        );
         let runtime = Self {
             bus,
             registry,
@@ -212,6 +223,7 @@ impl Runtime {
                 workspace,
                 roadmap_data_dir,
             )),
+            context_artifacts,
             session_store,
             tool_registry,
         };
@@ -245,6 +257,10 @@ impl Runtime {
 
     pub fn registry(&self) -> &ExtensionRegistry {
         &self.registry
+    }
+
+    pub fn context_artifacts(&self) -> Arc<ContextArtifactStore> {
+        Arc::clone(&self.context_artifacts)
     }
 
     pub async fn execute_workflow_tool(
@@ -283,6 +299,7 @@ impl Runtime {
     ) -> ToolExecutionContext {
         let mut ctx = ToolExecutionContext::new(thread_id, turn_id, mode)
             .with_process_runner(Arc::new(LocalProcessRunner))
+            .with_context_artifacts(self.context_artifacts.clone())
             .with_subagent_trace_sink(Arc::new(RuntimeSubagentTraceSink::new(
                 self.bus.clone(),
                 self.session_store.clone(),
@@ -322,6 +339,12 @@ impl Runtime {
             }))
             .await;
         }
+    }
+
+    pub async fn set_file_backed_dynamic_context(&self, enabled: bool) -> RuntimeConfig {
+        let mut cfg = self.config.write().await;
+        cfg.file_backed_dynamic_context = enabled;
+        cfg.clone()
     }
 
     pub async fn pending_plan_exit(&self) -> Option<PendingPlanExit> {

@@ -74,10 +74,12 @@ use roder_protocol::{
     RunnersSelectParams, RunnersSelectResult, SessionExitPlanParams, SessionExitPlanResult,
     SessionGetResult, SessionResolveApprovalParams, SessionResolveApprovalResult,
     SessionSetModeParams, SessionSetModeResult, SettingsGetResult, SettingsSetDefaultModeParams,
-    SettingsSetDefaultModeResult, SettingsSetSearchIndexParams, SettingsSetSearchIndexResult,
-    SettingsSetWebSearchParams, SettingsSetWebSearchResult, TasksGetParams, TasksGetResult,
-    TasksListResult, TeamReadParams, TeamReadResult, ThreadStartParams, ThreadStartResult,
-    TurnInputItem, TurnInterruptParams, TurnStartParams, TurnSteerParams,
+    SettingsSetDefaultModeResult, SettingsSetFileBackedDynamicContextParams,
+    SettingsSetFileBackedDynamicContextResult, SettingsSetSearchIndexParams,
+    SettingsSetSearchIndexResult, SettingsSetWebSearchParams, SettingsSetWebSearchResult,
+    TasksGetParams, TasksGetResult, TasksListResult, TeamReadParams, TeamReadResult,
+    ThreadStartParams, ThreadStartResult, TurnInputItem, TurnInterruptParams, TurnStartParams,
+    TurnSteerParams,
 };
 use tokio::io::AsyncWriteExt;
 use tokio::process::Command;
@@ -788,6 +790,7 @@ enum ProviderMenuItem {
     SpinnerSettings,
     WebSearchSettings,
     SearchIndexToggle(bool),
+    FileBackedDynamicContextToggle(bool),
     MessageFoldingToggle(bool),
     ThemesSettings,
     MarketplacesSettings,
@@ -856,6 +859,10 @@ impl ProviderMenuItem {
             Self::WebSearchSettings => "Web search provider".to_string(),
             Self::SearchIndexToggle(enabled) => format!(
                 "Instant regex search: {}",
+                if *enabled { "on" } else { "off" }
+            ),
+            Self::FileBackedDynamicContextToggle(enabled) => format!(
+                "File-backed dynamic context: {}",
                 if *enabled { "on" } else { "off" }
             ),
             Self::MessageFoldingToggle(enabled) => format!(
@@ -982,6 +989,7 @@ pub struct TuiApp {
     timeline_settings: TimelineSettings,
     web_search_mode: HostedWebSearchMode,
     search_index_enabled: bool,
+    file_backed_dynamic_context: bool,
     confirm_dialog: Option<ConfirmDialogState>,
     tool_detail_modal: Option<ToolDetailModal>,
     plugin_browser: Option<PluginBrowserState>,
@@ -1308,7 +1316,11 @@ impl TuiApp {
                 .map(|settings| settings.web_search.mode)
                 .unwrap_or(HostedWebSearchMode::Cached),
             search_index_enabled: settings_state
+                .as_ref()
                 .map(|settings| settings.search_index.enabled)
+                .unwrap_or(true),
+            file_backed_dynamic_context: settings_state
+                .map(|settings| settings.file_backed_dynamic_context)
                 .unwrap_or(true),
             confirm_dialog: None,
             tool_detail_modal: None,
@@ -3338,6 +3350,7 @@ impl TuiApp {
                         ProviderMenuItem::WebSearchMode(mode) if *mode == self.web_search_mode => {
                             "✓ "
                         }
+                        ProviderMenuItem::FileBackedDynamicContextToggle(true) => "✓ ",
                         ProviderMenuItem::MessageFoldingToggle(true) => "✓ ",
                         ProviderMenuItem::Session(session) if session.id == self.thread_id => "✓ ",
                         ProviderMenuItem::Theme(id)
@@ -3636,8 +3649,11 @@ impl TuiApp {
         match decode_response::<SettingsSetSearchIndexResult>(res) {
             Ok(result) => {
                 self.search_index_enabled = result.search_index.enabled;
-                self.provider_menu_items =
-                    settings_menu_items(self.timeline_settings, self.search_index_enabled);
+                self.provider_menu_items = settings_menu_items(
+                    self.timeline_settings,
+                    self.search_index_enabled,
+                    self.file_backed_dynamic_context,
+                );
                 self.timeline.push_system(format!(
                     "instant regex search {}.",
                     if self.search_index_enabled {
@@ -3687,6 +3703,42 @@ impl TuiApp {
             }
             Err(err) => {
                 self.record_error(format!("failed to set default mode: {err}"));
+                self.show_provider_popup = false;
+            }
+        }
+    }
+
+    async fn set_file_backed_dynamic_context(&mut self, enabled: bool) {
+        let res = self
+            .client
+            .send_request(JsonRpcRequest {
+                jsonrpc: "2.0".to_string(),
+                id: Some(serde_json::json!(
+                    "settings/set_file_backed_dynamic_context"
+                )),
+                method: "settings/set_file_backed_dynamic_context".to_string(),
+                params: Some(
+                    serde_json::to_value(SettingsSetFileBackedDynamicContextParams { enabled })
+                        .unwrap(),
+                ),
+            })
+            .await;
+
+        match decode_response::<SettingsSetFileBackedDynamicContextResult>(res) {
+            Ok(result) => {
+                self.file_backed_dynamic_context = result.enabled;
+                let state = if result.enabled {
+                    "enabled"
+                } else {
+                    "disabled"
+                };
+                self.timeline
+                    .push_system(format!("file-backed dynamic context {state}."));
+                self.push_event(format!("file-backed dynamic context {state}"));
+                self.show_provider_popup = false;
+            }
+            Err(err) => {
+                self.record_error(format!("failed to set file-backed dynamic context: {err}"));
                 self.show_provider_popup = false;
             }
         }
@@ -3872,6 +3924,9 @@ impl TuiApp {
             ProviderMenuItem::MessageFoldingToggle(enabled) => {
                 self.set_timeline_message_folding(!enabled);
             }
+            ProviderMenuItem::FileBackedDynamicContextToggle(enabled) => {
+                self.set_file_backed_dynamic_context(!enabled).await;
+            }
             ProviderMenuItem::DefaultMode(mode) => {
                 self.set_default_mode(mode).await;
             }
@@ -3947,7 +4002,11 @@ impl TuiApp {
         self.provider_popup_screen = ProviderPopupScreen::Settings;
         self.provider_menu_filter.clear();
         self.provider_menu_items =
-            settings_menu_items(self.timeline_settings, self.search_index_enabled);
+            settings_menu_items(
+                self.timeline_settings,
+                self.search_index_enabled,
+                self.file_backed_dynamic_context,
+            );
         let selected = self
             .provider_menu_items
             .iter()
@@ -4209,7 +4268,11 @@ impl TuiApp {
             timeline.set_settings(self.timeline_settings);
         }
         self.provider_menu_items =
-            settings_menu_items(self.timeline_settings, self.search_index_enabled);
+            settings_menu_items(
+                self.timeline_settings,
+                self.search_index_enabled,
+                self.file_backed_dynamic_context,
+            );
         if let Some(selected) = self.provider_state.selected() {
             self.provider_state.select(Some(
                 selected.min(self.provider_menu_items.len().saturating_sub(1)),
@@ -5624,6 +5687,7 @@ fn providers_menu_items(providers: &[ProviderChoice]) -> Vec<ProviderMenuItem> {
 fn settings_menu_items(
     timeline_settings: TimelineSettings,
     search_index_enabled: bool,
+    file_backed_dynamic_context: bool,
 ) -> Vec<ProviderMenuItem> {
     [
         PolicyMode::Default,
@@ -5635,6 +5699,7 @@ fn settings_menu_items(
     .map(ProviderMenuItem::DefaultMode)
     .chain([
         ProviderMenuItem::SearchIndexToggle(search_index_enabled),
+        ProviderMenuItem::FileBackedDynamicContextToggle(file_backed_dynamic_context),
         ProviderMenuItem::MessageFoldingToggle(timeline_settings.message_folding),
         ProviderMenuItem::Back,
     ])
@@ -6252,6 +6317,7 @@ mod tests {
             timeline_settings: TimelineSettings::default(),
             web_search_mode: HostedWebSearchMode::Cached,
             search_index_enabled: true,
+            file_backed_dynamic_context: true,
             confirm_dialog: None,
             tool_detail_modal: None,
             plugin_browser: None,
@@ -7600,12 +7666,16 @@ mod tests {
             ProviderMenuItem::SearchIndexToggle(true).label(),
             "Instant regex search: on"
         );
+        assert_eq!(
+            ProviderMenuItem::FileBackedDynamicContextToggle(true).label(),
+            "File-backed dynamic context: on"
+        );
         assert_eq!(settings_policy_mode_label(PolicyMode::Default), "Default");
     }
 
     #[test]
-    fn settings_menu_includes_search_index_and_message_folding_toggles_before_back() {
-        let items = settings_menu_items(TimelineSettings::default(), true);
+    fn settings_menu_includes_toggles_before_back() {
+        let items = settings_menu_items(TimelineSettings::default(), true, true);
 
         assert!(matches!(
             items.get(4),
@@ -7613,9 +7683,13 @@ mod tests {
         ));
         assert!(matches!(
             items.get(5),
+            Some(ProviderMenuItem::FileBackedDynamicContextToggle(true))
+        ));
+        assert!(matches!(
+            items.get(6),
             Some(ProviderMenuItem::MessageFoldingToggle(false))
         ));
-        assert!(matches!(items.get(6), Some(ProviderMenuItem::Back)));
+        assert!(matches!(items.get(7), Some(ProviderMenuItem::Back)));
     }
 
     #[test]
