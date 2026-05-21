@@ -1,0 +1,27 @@
+{
+  "id": "tool-misuse",
+  "title": "Fake provider tool misuse fixture",
+  "prompt": "Use only valid tool arguments and finish with a concise summary.",
+  "tags": ["fake-provider", "tool-misuse"],
+  "workspace": {
+    "files": [
+      {
+        "path": "README.md",
+        "contents": "tool fixture ready\n"
+      }
+    ]
+  },
+  "timeoutMs": 10000,
+  "expected": {
+    "finalAnswerContains": ["used valid tool arguments"],
+    "files": [
+      {
+        "path": "README.md",
+        "exists": true,
+        "contains": ["tool fixture ready"]
+      }
+    ],
+    "verificationRequired": false
+  },
+  "constraints": ["do not call unknown tools"]
+}
