@@ -59,10 +59,13 @@ use roder_protocol::{
     PluginListInstalledResult, PluginPreviewInstallParams, PluginPreviewInstallResult,
     PluginUninstallParams, PluginUninstallResult, ProviderAuthResult, ProviderSelectParams,
     ProviderSelectResult, ProvidersListResult, RunnersDeleteResult, RunnersListResult,
-    RunnersSelectParams, RunnersSelectResult, RunnersSessionResult, SessionExitPlanParams,
-    SessionExitPlanResult, SessionGetResult, SessionResolveApprovalParams,
-    SessionResolveApprovalResult, SessionResolveUserInputParams, SessionResolveUserInputResult,
-    SessionSetModeParams, SessionSetModeResult, SettingsGetResult, SettingsSetDefaultModeParams,
+    RunnersSelectParams, RunnersSelectResult, RunnersSessionResult, SearchIndexClearParams,
+    SearchIndexClearResult, SearchIndexRebuildParams, SearchIndexRebuildResult,
+    SearchIndexStatusParams, SearchIndexStatusResult, SearchIndexStatusState,
+    SearchIndexWarmupParams, SearchIndexWarmupResult, SessionExitPlanParams, SessionExitPlanResult,
+    SessionGetResult, SessionResolveApprovalParams, SessionResolveApprovalResult,
+    SessionResolveUserInputParams, SessionResolveUserInputResult, SessionSetModeParams,
+    SessionSetModeResult, SettingsGetResult, SettingsSetDefaultModeParams,
     SettingsSetDefaultModeResult, SettingsSetFileBackedDynamicContextParams,
     SettingsSetFileBackedDynamicContextResult, SettingsSetSearchIndexParams,
     SettingsSetSearchIndexResult, SettingsSetWebSearchParams, SettingsSetWebSearchResult,
@@ -79,7 +82,7 @@ use roder_protocol::{
     WorkflowScanParams, WorkflowScanResult,
 };
 use std::collections::HashMap;
-use std::sync::Arc;
+use std::sync::{Arc, LazyLock};
 use std::time::Duration;
 use time::OffsetDateTime;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -94,6 +97,8 @@ struct TaskCallingEngine {
     parent_calls: Mutex<usize>,
     requests: Mutex<Vec<AgentInferenceRequest>>,
 }
+
+static SEARCH_INDEX_TEST_LOCK: LazyLock<Mutex<()>> = LazyLock::new(|| Mutex::new(()));
 
 struct PendingEngine;
 
@@ -3742,6 +3747,7 @@ async fn web_search_setting_can_be_set_and_observed() {
 
 #[tokio::test]
 async fn search_index_setting_can_be_set_and_observed() {
+    let _guard = SEARCH_INDEX_TEST_LOCK.lock().await;
     roder_search::set_search_index_enabled(true);
     let runtime = Arc::new(Runtime::fake().unwrap());
     let server = Arc::new(AppServer::new(runtime));
@@ -3762,6 +3768,150 @@ async fn search_index_setting_can_be_set_and_observed() {
     let settings: SettingsGetResult = request(&client, "settings/get", None).await;
     assert!(!settings.search_index.enabled);
     roder_search::set_search_index_enabled(true);
+}
+
+#[tokio::test]
+async fn search_index_methods_manage_status_warmup_rebuild_and_clear() {
+    let _guard = SEARCH_INDEX_TEST_LOCK.lock().await;
+    roder_search::set_search_index_enabled(true);
+
+    let root = std::env::temp_dir().join(format!(
+        "roder-search-index-app-server-{}",
+        uuid::Uuid::new_v4()
+    ));
+    let workspace = root.join("workspace");
+    let home = root.join("home");
+    std::fs::create_dir_all(&workspace).unwrap();
+    std::fs::write(
+        workspace.join("main.rs"),
+        "fn main() { println!(\"needle\"); }\n",
+    )
+    .unwrap();
+    unsafe {
+        std::env::set_var("RODER_SEARCH_INDEX_HOME", &home);
+    }
+
+    let runtime = Arc::new(Runtime::fake().unwrap());
+    let server = Arc::new(AppServer::new(runtime));
+    let client = LocalAppClient::new(server);
+    let mut notifications = client.subscribe_notifications();
+    let workspace_param = workspace.display().to_string();
+
+    let status: SearchIndexStatusResult = request(
+        &client,
+        "search_index/status",
+        Some(
+            serde_json::to_value(SearchIndexStatusParams {
+                workspace: Some(workspace_param.clone()),
+            })
+            .unwrap(),
+        ),
+    )
+    .await;
+    assert_eq!(status.status.state, SearchIndexStatusState::Missing);
+    assert!(status.status.enabled);
+
+    let warmup: SearchIndexWarmupResult = request(
+        &client,
+        "search_index/warmup",
+        Some(
+            serde_json::to_value(SearchIndexWarmupParams {
+                workspace: Some(workspace_param.clone()),
+            })
+            .unwrap(),
+        ),
+    )
+    .await;
+    assert_eq!(warmup.status.state, SearchIndexStatusState::Ready);
+    assert_eq!(warmup.status.document_count, Some(1));
+
+    let building =
+        wait_for_notification(&mut notifications, "search_index/statusChanged", None).await;
+    assert_eq!(building.params["status"]["state"], "building");
+    let ready = wait_for_notification(&mut notifications, "search_index/statusChanged", None).await;
+    assert_eq!(ready.params["status"]["state"], "ready");
+    assert_eq!(ready.params["status"]["documentCount"], 1);
+
+    std::fs::write(
+        workspace.join("main.rs"),
+        "fn main() { println!(\"changed\"); }\n",
+    )
+    .unwrap();
+    let stale: SearchIndexStatusResult = request(
+        &client,
+        "search_index/status",
+        Some(
+            serde_json::to_value(SearchIndexStatusParams {
+                workspace: Some(workspace_param.clone()),
+            })
+            .unwrap(),
+        ),
+    )
+    .await;
+    assert_eq!(stale.status.state, SearchIndexStatusState::Stale);
+    assert!(stale.status.stale);
+
+    let rebuild: SearchIndexRebuildResult = request(
+        &client,
+        "search_index/rebuild",
+        Some(
+            serde_json::to_value(SearchIndexRebuildParams {
+                workspace: Some(workspace_param.clone()),
+            })
+            .unwrap(),
+        ),
+    )
+    .await;
+    assert_eq!(rebuild.status.state, SearchIndexStatusState::Ready);
+
+    let clear: SearchIndexClearResult = request(
+        &client,
+        "search_index/clear",
+        Some(
+            serde_json::to_value(SearchIndexClearParams {
+                workspace: Some(workspace_param.clone()),
+            })
+            .unwrap(),
+        ),
+    )
+    .await;
+    assert_eq!(clear.status.state, SearchIndexStatusState::Cleared);
+    let cleared =
+        wait_for_notification(&mut notifications, "search_index/statusChanged", None).await;
+    assert_eq!(cleared.params["status"]["state"], "building");
+    let cleared =
+        wait_for_notification(&mut notifications, "search_index/statusChanged", None).await;
+    assert_eq!(cleared.params["status"]["state"], "ready");
+    let cleared =
+        wait_for_notification(&mut notifications, "search_index/statusChanged", None).await;
+    assert_eq!(cleared.params["status"]["state"], "cleared");
+
+    let missing: SearchIndexStatusResult = request(
+        &client,
+        "search_index/status",
+        Some(
+            serde_json::to_value(SearchIndexStatusParams {
+                workspace: Some(workspace_param),
+            })
+            .unwrap(),
+        ),
+    )
+    .await;
+    assert_eq!(missing.status.state, SearchIndexStatusState::Missing);
+
+    roder_search::set_search_index_enabled(false);
+    let disabled: SearchIndexStatusResult = request(
+        &client,
+        "search_index/status",
+        Some(serde_json::to_value(SearchIndexStatusParams { workspace: None }).unwrap()),
+    )
+    .await;
+    assert_eq!(disabled.status.state, SearchIndexStatusState::Disabled);
+    roder_search::set_search_index_enabled(true);
+    unsafe {
+        std::env::remove_var("RODER_SEARCH_INDEX_HOME");
+    }
+    let _ = std::fs::remove_dir_all(root);
 }
 
 #[tokio::test]
