@@ -103,7 +103,45 @@ pub(crate) fn desktop_notifications_for_event(event: &RoderEvent) -> Vec<JsonRpc
                     item: tool_call_item(&call.id, Some(&call.name), None, "inProgress", None),
                 },
             )],
+            InferenceEvent::HostedToolCallStarted(call) => vec![desktop_notification(
+                "item/started",
+                ItemStartedNotification {
+                    thread_id: event.thread_id.clone(),
+                    turn_id: event.turn_id.clone(),
+                    item: tool_call_item(&call.id, Some(&call.name), None, "inProgress", None),
+                },
+            )],
             InferenceEvent::ToolCallCompleted(call) => vec![
+                desktop_notification(
+                    "item/started",
+                    ItemStartedNotification {
+                        thread_id: event.thread_id.clone(),
+                        turn_id: event.turn_id.clone(),
+                        item: tool_call_item(
+                            &call.id,
+                            Some(&call.name),
+                            parsed_tool_display_payload(&call.name, &call.arguments),
+                            "inProgress",
+                            None,
+                        ),
+                    },
+                ),
+                desktop_notification(
+                    "item/completed",
+                    ItemCompletedNotification {
+                        thread_id: event.thread_id.clone(),
+                        turn_id: event.turn_id.clone(),
+                        item: tool_call_item(
+                            &call.id,
+                            Some(&call.name),
+                            parsed_tool_display_payload(&call.name, &call.arguments),
+                            "completed",
+                            None,
+                        ),
+                    },
+                ),
+            ],
+            InferenceEvent::HostedToolCallCompleted(call) => vec![
                 desktop_notification(
                     "item/started",
                     ItemStartedNotification {
@@ -866,7 +904,8 @@ mod tests {
         AutomationCompleted, AutomationFailed, AutomationRunState, AutomationRunSummary,
         AutomationSkipped, AutomationStarted,
     };
-    use roder_api::events::{ToolCallCompleted, VerificationRequired};
+    use roder_api::events::{InferenceEventReceived, ToolCallCompleted, VerificationRequired};
+    use roder_api::inference::{HostedToolCallCompleted, InferenceEvent};
     use roder_api::notifications::NotificationKind;
     use serde_json::json;
 
@@ -913,6 +952,31 @@ mod tests {
         assert_eq!(item["payload"]["shown"], 3);
         assert!(item["payload"].get("input").is_none());
         assert!(item["payload"].get("arguments").is_none());
+    }
+
+    #[test]
+    fn hosted_tool_call_notification_completes_tool_item() {
+        let notifications = desktop_notifications_for_event(&RoderEvent::InferenceEventReceived(
+            InferenceEventReceived {
+                thread_id: "thread-1".to_string(),
+                turn_id: "turn-1".to_string(),
+                event: InferenceEvent::HostedToolCallCompleted(HostedToolCallCompleted {
+                    id: "ws-1".to_string(),
+                    name: "web_search".to_string(),
+                    arguments: r#"{"action":"search","query":"pandelis zembashis"}"#.to_string(),
+                }),
+                timestamp: OffsetDateTime::UNIX_EPOCH,
+            },
+        ));
+
+        assert_eq!(notifications.len(), 2);
+        assert_eq!(notifications[0].method, "item/started");
+        assert_eq!(notifications[1].method, "item/completed");
+        let item = &notifications[1].params["item"];
+        assert_eq!(item["type"], "tool.web_search");
+        assert_eq!(item["status"], "completed");
+        assert_eq!(item["toolName"], "web_search");
+        assert_eq!(item["payload"]["query"], "pandelis zembashis");
     }
 
     #[test]

@@ -570,6 +570,8 @@ impl InProcessDispatcher {
                         .await;
                     }
                     InferenceEvent::ToolCallDelta(_)
+                    | InferenceEvent::HostedToolCallStarted(_)
+                    | InferenceEvent::HostedToolCallCompleted(_)
                     | InferenceEvent::Compaction(_)
                     | InferenceEvent::ProviderMetadata(_) => {}
                 }

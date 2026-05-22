@@ -2,11 +2,11 @@ use roder_api::catalog::{PROVIDER_OPENAI, PROVIDER_SUPERGROK, PROVIDER_XAI, mode
 use roder_api::extension::InferenceEngineId;
 use roder_api::inference::CompactionProgress;
 use roder_api::inference::{
-    AgentInferenceRequest, CompletionMetadata, HostedWebSearchMode, InferenceCapabilities,
-    InferenceEngine, InferenceEvent, InferenceEventStream, InferenceFailure,
-    InferenceProviderContext, InferenceProviderMetadata, InferenceTurnContext, MessageDelta,
-    ModelDescriptor, ProviderAuthType, ReasoningDelta, TokenUsage, ToolCallCompleted,
-    ToolCallDelta, ToolCallStarted,
+    AgentInferenceRequest, CompletionMetadata, HostedToolCallCompleted, HostedToolCallStarted,
+    HostedWebSearchMode, InferenceCapabilities, InferenceEngine, InferenceEvent,
+    InferenceEventStream, InferenceFailure, InferenceProviderContext, InferenceProviderMetadata,
+    InferenceTurnContext, MessageDelta, ModelDescriptor, ProviderAuthType, ReasoningDelta,
+    TokenUsage, ToolCallCompleted, ToolCallDelta, ToolCallStarted,
 };
 use roder_api::reliability::{
     ReliabilityRequestPolicy, provider_retry_delay_ms, provider_retry_metadata,
@@ -752,6 +752,8 @@ struct ResponsesStreamState {
     tool_call_ids: HashMap<String, String>,
     tool_name_map: HashMap<String, String>,
     emitted_tool_call_ids: HashSet<String>,
+    emitted_hosted_tool_start_ids: HashSet<String>,
+    emitted_hosted_tool_complete_ids: HashSet<String>,
     reasoning_delta_keys: HashSet<String>,
 }
 
@@ -881,12 +883,28 @@ fn events_from_sse_event(
                 if is_compaction_item(item) {
                     return vec![compaction_event(item, "started")];
                 }
+                if let Some(call) = hosted_tool_call_started_from_item(item) {
+                    return emit_hosted_tool_start_once(call, state)
+                        .into_iter()
+                        .collect();
+                }
                 if let Some(call) = started_function_call(item, state) {
                     return vec![InferenceEvent::ToolCallStarted(call)];
                 }
             }
             Vec::new()
         }
+        "response.web_search_call.searching" => event
+            .data
+            .get("item_id")
+            .and_then(Value::as_str)
+            .map(|id| HostedToolCallStarted {
+                id: id.to_string(),
+                name: "web_search".to_string(),
+            })
+            .and_then(|call| emit_hosted_tool_start_once(call, state))
+            .into_iter()
+            .collect(),
         "response.function_call_arguments.delta" => {
             if let Some(item_id) = event.data.get("item_id").and_then(Value::as_str)
                 && let Some(delta) = event.data.get("delta").and_then(Value::as_str)
@@ -922,6 +940,9 @@ fn events_from_sse_event(
                 if let Some(message) = message_delta_from_done_item(item, state) {
                     events.push(message);
                 }
+                if let Some(call) = hosted_tool_call_completed_from_item(item) {
+                    events.extend(emit_hosted_tool_completed_events(call, state));
+                }
                 events.extend(
                     extract_tool_calls_from_item(item, &state.tool_name_map)
                         .into_iter()
@@ -935,6 +956,9 @@ fn events_from_sse_event(
             let response = event.data.get("response").unwrap_or(&event.data);
             let mut events = Vec::new();
             events.extend(message_deltas_from_response(response, state));
+            for call in extract_hosted_tool_calls(response) {
+                events.extend(emit_hosted_tool_completed_events(call, state));
+            }
             for call in extract_tool_calls(response, &state.tool_name_map) {
                 if let Some(call) = emit_tool_call_once(call, state) {
                     events.push(call);
@@ -989,6 +1013,90 @@ fn output_text_phase(data: &Value, state: &ResponsesStreamState) -> String {
 
 fn is_final_answer_phase(phase: &str) -> bool {
     phase.is_empty() || phase == FINAL_ANSWER_PHASE
+}
+
+fn hosted_tool_call_started_from_item(item: &Value) -> Option<HostedToolCallStarted> {
+    let name = hosted_tool_name(item)?;
+    let id = item.get("id").and_then(Value::as_str)?;
+    Some(HostedToolCallStarted {
+        id: id.to_string(),
+        name: name.to_string(),
+    })
+}
+
+fn hosted_tool_call_completed_from_item(item: &Value) -> Option<HostedToolCallCompleted> {
+    let name = hosted_tool_name(item)?;
+    let id = item.get("id").and_then(Value::as_str)?;
+    Some(HostedToolCallCompleted {
+        id: id.to_string(),
+        name: name.to_string(),
+        arguments: hosted_tool_arguments(item),
+    })
+}
+
+fn hosted_tool_name(item: &Value) -> Option<&'static str> {
+    match item.get("type").and_then(Value::as_str) {
+        Some("web_search_call") => Some("web_search"),
+        _ => None,
+    }
+}
+
+fn hosted_tool_arguments(item: &Value) -> String {
+    let Some(action) = item.get("action").and_then(Value::as_object) else {
+        return "{}".to_string();
+    };
+    let mut arguments = serde_json::Map::new();
+    if let Some(action_type) = action.get("type").and_then(Value::as_str) {
+        arguments.insert("action".to_string(), Value::String(action_type.to_string()));
+    }
+    if let Some(query) = action
+        .get("query")
+        .or_else(|| action.get("pattern"))
+        .and_then(Value::as_str)
+    {
+        arguments.insert("query".to_string(), Value::String(query.to_string()));
+    } else if let Some(queries) = action.get("queries").and_then(Value::as_array)
+        && let Some(query) = queries.first().and_then(Value::as_str)
+    {
+        arguments.insert("query".to_string(), Value::String(query.to_string()));
+    }
+    if let Some(url) = action.get("url").and_then(Value::as_str) {
+        arguments.insert("url".to_string(), Value::String(url.to_string()));
+    }
+    Value::Object(arguments).to_string()
+}
+
+fn emit_hosted_tool_start_once(
+    call: HostedToolCallStarted,
+    state: &mut ResponsesStreamState,
+) -> Option<InferenceEvent> {
+    state
+        .emitted_hosted_tool_start_ids
+        .insert(call.id.clone())
+        .then_some(InferenceEvent::HostedToolCallStarted(call))
+}
+
+fn emit_hosted_tool_completed_events(
+    call: HostedToolCallCompleted,
+    state: &mut ResponsesStreamState,
+) -> Vec<InferenceEvent> {
+    let mut events = Vec::new();
+    if let Some(started) = emit_hosted_tool_start_once(
+        HostedToolCallStarted {
+            id: call.id.clone(),
+            name: call.name.clone(),
+        },
+        state,
+    ) {
+        events.push(started);
+    }
+    if state
+        .emitted_hosted_tool_complete_ids
+        .insert(call.id.clone())
+    {
+        events.push(InferenceEvent::HostedToolCallCompleted(call));
+    }
+    events
 }
 
 fn record_output_item(item: &Value, state: &mut ResponsesStreamState) {
@@ -1383,6 +1491,16 @@ fn extract_tool_calls(
         .collect()
 }
 
+fn extract_hosted_tool_calls(value: &Value) -> Vec<HostedToolCallCompleted> {
+    let Some(output) = value.get("output").and_then(|v| v.as_array()) else {
+        return Vec::new();
+    };
+    output
+        .iter()
+        .filter_map(hosted_tool_call_completed_from_item)
+        .collect()
+}
+
 #[cfg(test)]
 fn extract_output_text(value: &Value) -> Option<String> {
     let output = value.get("output")?.as_array()?;
@@ -1634,8 +1752,7 @@ mod tests {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
         tokio::spawn(async move {
-            let mut routes = routes.into_iter();
-            while let Some((expected_path, status, body)) = routes.next() {
+            for (expected_path, status, body) in routes {
                 let Ok((mut stream, _)) = listener.accept().await else {
                     return;
                 };
@@ -2501,6 +2618,106 @@ mod tests {
                 arguments: "{\"text\":\"hello\"}".to_string(),
             })]
         );
+    }
+
+    #[test]
+    fn emits_hosted_web_search_tool_events() {
+        let mut state = ResponsesStreamState::default();
+        let added = SseEvent {
+            event: Some("response.output_item.added".to_string()),
+            data: json!({
+                "type": "response.output_item.added",
+                "item": {
+                    "id": "ws_1",
+                    "type": "web_search_call",
+                    "status": "in_progress"
+                }
+            }),
+        };
+        assert_eq!(
+            events_from_sse_event(&added, &mut state),
+            vec![InferenceEvent::HostedToolCallStarted(
+                HostedToolCallStarted {
+                    id: "ws_1".to_string(),
+                    name: "web_search".to_string(),
+                }
+            )]
+        );
+
+        let done = SseEvent {
+            event: Some("response.output_item.done".to_string()),
+            data: json!({
+                "type": "response.output_item.done",
+                "item": {
+                    "id": "ws_1",
+                    "type": "web_search_call",
+                    "status": "completed",
+                    "action": {
+                        "type": "search",
+                        "query": "pandelis zembashis"
+                    }
+                }
+            }),
+        };
+        assert_eq!(
+            events_from_sse_event(&done, &mut state),
+            vec![InferenceEvent::HostedToolCallCompleted(
+                HostedToolCallCompleted {
+                    id: "ws_1".to_string(),
+                    name: "web_search".to_string(),
+                    arguments: r#"{"action":"search","query":"pandelis zembashis"}"#.to_string(),
+                }
+            )]
+        );
+    }
+
+    #[test]
+    fn emits_unstreamed_hosted_web_search_from_completed_response() {
+        let mut state = ResponsesStreamState::default();
+        let completed = SseEvent {
+            event: Some("response.completed".to_string()),
+            data: json!({
+                "type": "response.completed",
+                "response": {
+                    "id": "resp_1",
+                    "status": "completed",
+                    "output": [
+                        {
+                            "id": "ws_1",
+                            "type": "web_search_call",
+                            "status": "completed",
+                            "action": {
+                                "type": "search",
+                                "queries": ["pandelis zembashis"]
+                            }
+                        }
+                    ],
+                    "usage": {
+                        "input_tokens": 1,
+                        "output_tokens": 2,
+                        "total_tokens": 3
+                    }
+                }
+            }),
+        };
+
+        let events = events_from_sse_event(&completed, &mut state);
+
+        assert!(events.iter().any(|event| matches!(
+            event,
+            InferenceEvent::HostedToolCallStarted(HostedToolCallStarted { id, name })
+                if id == "ws_1" && name == "web_search"
+        )));
+        assert!(events.iter().any(|event| matches!(
+            event,
+            InferenceEvent::HostedToolCallCompleted(HostedToolCallCompleted {
+                id,
+                name,
+                arguments
+            }) if id == "ws_1"
+                && name == "web_search"
+                && arguments == r#"{"action":"search","query":"pandelis zembashis"}"#
+        )));
     }
 
     #[test]

@@ -299,6 +299,19 @@ pub struct ToolCallCompleted {
     pub arguments: String,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct HostedToolCallStarted {
+    pub id: String,
+    pub name: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct HostedToolCallCompleted {
+    pub id: String,
+    pub name: String,
+    pub arguments: String,
+}
+
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
 pub struct TokenUsage {
     pub prompt_tokens: u32,
@@ -331,6 +344,8 @@ pub enum InferenceEvent {
     ToolCallStarted(ToolCallStarted),
     ToolCallDelta(ToolCallDelta),
     ToolCallCompleted(ToolCallCompleted),
+    HostedToolCallStarted(HostedToolCallStarted),
+    HostedToolCallCompleted(HostedToolCallCompleted),
     Compaction(CompactionProgress),
     Usage(TokenUsage),
     Completed(CompletionMetadata),
