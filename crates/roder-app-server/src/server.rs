@@ -87,9 +87,17 @@ pub struct AppServer {
     pub(crate) features: AppServerFeatureConfig,
     pub(crate) automation_supervisor: Option<roder_automations::AutomationSupervisorHandle>,
     pub(crate) desktop_threads: RwLock<std::collections::HashMap<String, DesktopThread>>,
-    pub(crate) desktop_thread_models: RwLock<std::collections::HashMap<String, (String, String)>>,
+    pub(crate) desktop_thread_models:
+        RwLock<std::collections::HashMap<String, DesktopThreadModelSelection>>,
     pub(crate) desktop_active_turns: RwLock<std::collections::HashMap<String, String>>,
     pub(crate) desktop_notifications: broadcast::Sender<JsonRpcNotification>,
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct DesktopThreadModelSelection {
+    pub provider: String,
+    pub model: String,
+    pub reasoning: Option<String>,
 }
 
 impl AppServer {
@@ -1159,33 +1167,45 @@ impl AppServer {
         } else {
             None
         };
-        let cfg = self
-            .runtime
-            .select_provider(params.provider, params.model, params.reasoning)
-            .await
-            .map_err(internal_error)?;
+        let cfg = if thread_id.is_some() {
+            self.runtime
+                .preview_provider_selection(params.provider, params.model, params.reasoning)
+                .await
+                .map_err(internal_error)?
+        } else {
+            self.runtime
+                .select_provider(params.provider, params.model, params.reasoning)
+                .await
+                .map_err(internal_error)?
+        };
         let model_profile = active_model_profile_label(&cfg);
         let model_switch_summary = previous_model
-            .filter(|(provider, model)| {
-                provider != &cfg.default_provider || model != &cfg.default_model
+            .filter(|selection| {
+                selection.provider != cfg.default_provider || selection.model != cfg.default_model
             })
-            .map(|(provider, model)| {
+            .map(|selection| {
                 format!(
-                    "Model switch summary: previous profile {provider}/{model}. Current profile {}/{}.",
-                    cfg.default_provider, model_profile
+                    "Model switch summary: previous profile {}/{}. Current profile {}/{}.",
+                    selection.provider, selection.model, cfg.default_provider, model_profile
                 )
             });
-        if let Some(thread_id) = thread_id {
+        let reasoning = Runtime::effective_reasoning_for_config(&cfg);
+        if let Some(thread_id) = thread_id.as_ref() {
             self.desktop_thread_models.write().await.insert(
                 thread_id.clone(),
-                (cfg.default_provider.clone(), cfg.default_model.clone()),
+                DesktopThreadModelSelection {
+                    provider: cfg.default_provider.clone(),
+                    model: cfg.default_model.clone(),
+                    reasoning: Some(reasoning.clone()),
+                },
             );
-            if let Some(thread) = self.desktop_threads.write().await.get_mut(&thread_id) {
+            if let Some(thread) = self.desktop_threads.write().await.get_mut(thread_id) {
                 thread.model_provider = cfg.default_provider.clone();
+                thread.model = cfg.default_model.clone();
                 thread.updated_at = OffsetDateTime::now_utc().unix_timestamp();
             }
         }
-        if self.persist_user_config {
+        if thread_id.is_none() && self.persist_user_config {
             roder_config::save_default_provider_model_reasoning(
                 &cfg.default_provider,
                 &cfg.default_model,
@@ -1196,7 +1216,7 @@ impl AppServer {
         Ok(serde_json::to_value(ProviderSelectResult {
             provider: cfg.default_provider,
             model: cfg.default_model,
-            reasoning: self.runtime.effective_reasoning().await,
+            reasoning,
             model_profile: Some(model_profile),
             model_switch_summary,
         })
@@ -1432,8 +1452,14 @@ impl AppServer {
             .await
             .map_err(internal_error)?;
         let cfg = self.runtime.status().await;
-        let model = params.model.unwrap_or(cfg.default_model);
-        let model_provider = params.model_provider.unwrap_or(cfg.default_provider);
+        let reasoning = params
+            .reasoning
+            .clone()
+            .unwrap_or_else(|| Runtime::effective_reasoning_for_config(&cfg));
+        let model = params.model.unwrap_or_else(|| cfg.default_model.clone());
+        let model_provider = params
+            .model_provider
+            .unwrap_or_else(|| cfg.default_provider.clone());
         let cwd = params
             .cwd
             .or_else(|| metadata.workspace.clone())
@@ -1443,10 +1469,14 @@ impl AppServer {
             .write()
             .await
             .insert(thread.id.clone(), thread.clone());
-        self.desktop_thread_models
-            .write()
-            .await
-            .insert(thread.id.clone(), (model_provider.clone(), model.clone()));
+        self.desktop_thread_models.write().await.insert(
+            thread.id.clone(),
+            DesktopThreadModelSelection {
+                provider: model_provider.clone(),
+                model: model.clone(),
+                reasoning: Some(reasoning.clone()),
+            },
+        );
         let _ = self
             .desktop_notifications
             .send(notifications::thread_started_notification(thread.clone()));
@@ -1454,6 +1484,7 @@ impl AppServer {
             thread,
             model,
             model_provider,
+            reasoning,
             cwd,
         })
         .unwrap())
@@ -1789,11 +1820,17 @@ impl AppServer {
         &self,
         params: TurnStartParams,
     ) -> Result<serde_json::Value, JsonRpcError> {
-        let (provider_override, model_override) = self
+        let (provider_override, model_override, reasoning_override) = self
             .desktop_thread_model(&params.thread_id)
             .await
-            .map(|(provider, model)| (Some(provider), Some(model)))
-            .unwrap_or((None, None));
+            .map(|selection| {
+                (
+                    Some(selection.provider),
+                    Some(selection.model),
+                    selection.reasoning,
+                )
+            })
+            .unwrap_or((None, None, None));
         let mut workspace = self
             .runtime
             .load_session(&params.thread_id)
@@ -1816,6 +1853,7 @@ impl AppServer {
                 images: desktop_turn_images(&params.input),
                 provider_override,
                 model_override,
+                reasoning_override,
                 workspace,
                 instructions: default_instructions(),
                 task_ledger_required: false,
@@ -2040,7 +2078,7 @@ impl AppServer {
         Ok(serde_json::to_value(TeamCleanupResult { cleaned }).unwrap())
     }
 
-    async fn desktop_thread_model(&self, thread_id: &str) -> Option<(String, String)> {
+    async fn desktop_thread_model(&self, thread_id: &str) -> Option<DesktopThreadModelSelection> {
         if let Some(model) = self
             .desktop_thread_models
             .read()
@@ -2057,7 +2095,11 @@ impl AppServer {
             .into_iter()
             .find(|metadata| metadata.thread_id == thread_id)
             .and_then(|metadata| match (metadata.provider, metadata.model) {
-                (Some(provider), Some(model)) => Some((provider, model)),
+                (Some(provider), Some(model)) => Some(DesktopThreadModelSelection {
+                    provider,
+                    model,
+                    reasoning: None,
+                }),
                 _ => None,
             })
     }
@@ -2231,6 +2273,7 @@ impl AppServer {
                 images: Vec::new(),
                 provider_override: None,
                 model_override: expanded.model.clone(),
+                reasoning_override: None,
                 workspace,
                 instructions: default_instructions(),
                 task_ledger_required: false,

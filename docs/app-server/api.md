@@ -650,6 +650,7 @@ Request:
 {
   "model": "gpt-5.5",
   "modelProvider": "openai",
+  "reasoning": "high",
   "cwd": "/Users/pz/w/gode",
   "ephemeral": false
 }
@@ -664,6 +665,7 @@ Response:
     "sessionId": "thread-123",
     "preview": "Untitled thread",
     "modelProvider": "openai",
+    "model": "gpt-5.5",
     "createdAt": 1770000000,
     "updatedAt": 1770000000,
     "status": { "type": "idle" },
@@ -671,6 +673,7 @@ Response:
   },
   "model": "gpt-5.5",
   "modelProvider": "openai",
+  "reasoning": "high",
   "cwd": "/Users/pz/w/gode"
 }
 ```
@@ -678,7 +681,8 @@ Response:
 Behavior:
 
 - Creates a persisted runtime session with optional provider/model/workspace.
-- Stores the selected provider/model for later `turn/start` overrides.
+- Stores the selected provider/model/reasoning for later `turn/start` overrides.
+- If `reasoning` is omitted, returns and stores the effective reasoning effort for the selected model.
 - Emits `thread/started`.
 - `ephemeral` is accepted by the DTO but is not currently used by the handler.
 
@@ -3368,6 +3372,7 @@ or the remote WebSocket notification stream for remote clients.
     "sessionId": "thread-123",
     "preview": "Untitled thread",
     "modelProvider": "openai",
+    "model": "gpt-5.5",
     "createdAt": 1770000000,
     "updatedAt": 1770000000,
     "status": { "type": "idle" },

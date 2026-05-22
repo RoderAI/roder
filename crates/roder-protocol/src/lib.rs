@@ -119,6 +119,7 @@ pub struct DesktopThread {
     pub session_id: ThreadId,
     pub preview: String,
     pub model_provider: String,
+    pub model: String,
     pub created_at: i64,
     pub updated_at: i64,
     pub status: DesktopThreadStatus,
@@ -171,6 +172,7 @@ pub struct DesktopItem {
 pub struct ThreadStartParams {
     pub model: Option<String>,
     pub model_provider: Option<String>,
+    pub reasoning: Option<String>,
     pub cwd: Option<String>,
     #[serde(default)]
     pub ephemeral: bool,
@@ -182,6 +184,7 @@ pub struct ThreadStartResult {
     pub thread: DesktopThread,
     pub model: String,
     pub model_provider: String,
+    pub reasoning: String,
     pub cwd: String,
 }
 

@@ -637,6 +637,7 @@ async fn start_and_wait(
             images: Vec::new(),
             provider_override: None,
             model_override: None,
+            reasoning_override: None,
             workspace: None,
 
             instructions: default_instructions(),

@@ -688,6 +688,7 @@ mod tests {
             images: Vec::new(),
             provider_override: None,
             model_override: None,
+            reasoning_override: None,
             workspace: None,
             instructions: Default::default(),
             task_ledger_required: false,

@@ -19,6 +19,7 @@ pub(crate) fn desktop_thread_from_metadata(
         session_id: metadata.thread_id,
         preview,
         model_provider: metadata.provider.unwrap_or_else(|| "mock".to_string()),
+        model: metadata.model.unwrap_or_else(|| "mock".to_string()),
         created_at: metadata.created_at.unix_timestamp(),
         updated_at: metadata.updated_at.unix_timestamp(),
         status: DesktopThreadStatus {
