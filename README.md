@@ -164,11 +164,13 @@ Built-in profiles:
 - `openai-only`
 - `anthropic-only`
 - `research-headless`
+- `tavily`
 - `full`
 
 ```sh
 cargo run -p roder-configure -- profile list
 cargo run -p roder-configure -- profile show openai-only
+cargo run -p roder-configure -- profile show tavily > tavily-profile.toml
 cargo run -p roder-configure -- validate ./profile.toml
 cargo run -p roder-configure -- generate --profile ./profile.toml --out ./dist/lab-roder
 ```
@@ -179,7 +181,7 @@ Structured CI output is available with `--format json`:
 cargo run -p roder-configure -- --format json validate ./profile.toml
 ```
 
-See [`docs/distributions.md`](./docs/distributions.md) for built-in profiles, custom profile format, capability declarations, and worked examples for OpenAI-only, research-headless, and customer-facing no-TUI distributions.
+See [`docs/distributions.md`](./docs/distributions.md) for built-in profiles, custom profile format, capability declarations, and worked examples for OpenAI-only, Tavily-enabled, research-headless, and customer-facing no-TUI distributions.
 
 The configurator must not write API keys into generated files. Put secrets in environment variables such as `OPENAI_API_KEY`; generated docs and configs list the required env-var names instead of secret values.
 

@@ -1,0 +1,34 @@
+id = "tavily"
+description = "OpenAI Roder distribution with external Tavily web search enabled."
+
+[distribution]
+name = "tavily-roder"
+version = "0.1.0"
+include_tui = true
+include_app_server = true
+include_cli = true
+extensions = [
+  "openai-responses",
+  "jsonl-session",
+  "plan-mode",
+  "notify-terminal",
+  "web-search",
+  "tavily-search",
+]
+default_provider = "openai-responses"
+default_session_store = "jsonl-session"
+
+[distribution.config_overrides.web_search]
+enabled = true
+mode = "external"
+provider = "tavily"
+canonical_tool = true
+namespaced_tools = true
+max_results = 5
+timeout_seconds = 20
+
+[distribution.config_overrides.web_search.tavily]
+enabled = true
+api_key_env = "TAVILY_API_KEY"
+project_env = "TAVILY_PROJECT"
+base_url = "https://api.tavily.com"
