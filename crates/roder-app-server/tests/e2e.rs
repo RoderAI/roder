@@ -100,11 +100,13 @@ use roder_protocol::{
     TeamMemberInterruptParams, TeamMemberInterruptResult, TeamMemberMessageParams,
     TeamMemberMessageResult, TeamMemberStartParams, TeamMemberStartResult, TeamReadParams,
     TeamReadResult, TeamStartMemberParams, TeamStartParams, TeamStartResult, ThreadArchiveParams,
-    ThreadArchiveResult, ThreadListParams, ThreadListResult, ThreadReadParams, ThreadReadResult,
-    ThreadStartParams, ThreadStartResult, ToolCallParams, ToolCallResult, ToolsListResult,
-    TurnInputItem, TurnInterruptParams, TurnStartParams, TurnStartResult, TurnSteerParams,
-    TurnSteerResult, WorkflowEnableParams, WorkflowEnableResult, WorkflowPreviewParams,
-    WorkflowPreviewResult, WorkflowScanParams, WorkflowScanResult,
+    ThreadArchiveResult, ThreadGoalClearParams, ThreadGoalClearResult, ThreadGoalGetParams,
+    ThreadGoalGetResult, ThreadGoalSetParams, ThreadGoalSetResult, ThreadGoalStatus,
+    ThreadListParams, ThreadListResult, ThreadReadParams, ThreadReadResult, ThreadStartParams,
+    ThreadStartResult, ToolCallParams, ToolCallResult, ToolsListResult, TurnInputItem,
+    TurnInterruptParams, TurnStartParams, TurnStartResult, TurnSteerParams, TurnSteerResult,
+    WorkflowEnableParams, WorkflowEnableResult, WorkflowPreviewParams, WorkflowPreviewResult,
+    WorkflowScanParams, WorkflowScanResult,
 };
 use std::collections::HashMap;
 use std::sync::{Arc, LazyLock};
@@ -737,6 +739,137 @@ async fn test_app_server_e2e() {
         kinds.iter().any(|kind| kind == "turn.completed"),
         "missing turn.completed: {kinds:?}"
     );
+}
+
+#[tokio::test]
+async fn thread_goal_methods_share_state_with_goal_tools() {
+    let workspace =
+        std::env::temp_dir().join(format!("roder-goal-app-server-{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir_all(&workspace).unwrap();
+
+    let mut builder = ExtensionRegistryBuilder::new();
+    builder.inference_engine(Arc::new(FakeInferenceEngine));
+    builder.tool_contributor(roder_tools::builtin_coding_tools_contributor(workspace).unwrap());
+    let runtime = Arc::new(Runtime::new(builder.build().unwrap(), Default::default()).unwrap());
+    let server = Arc::new(AppServer::new(runtime));
+    let client = LocalAppClient::new(server);
+    let mut notifications = client.subscribe_notifications();
+    let thread = start_thread(&client).await.thread;
+
+    let set: ThreadGoalSetResult = request(
+        &client,
+        "thread/goal/set",
+        Some(
+            serde_json::to_value(ThreadGoalSetParams {
+                thread_id: thread.id.clone(),
+                objective: Some("Ship shared goal state".to_string()),
+                status: Some(ThreadGoalStatus::Active),
+                token_budget: Some(Some(25)),
+            })
+            .unwrap(),
+        ),
+    )
+    .await;
+    let goal = set.goal.expect("created goal");
+    assert_eq!(goal.objective, "Ship shared goal state");
+    assert_eq!(goal.status, ThreadGoalStatus::Active);
+    assert_eq!(goal.token_budget, Some(25));
+    let updated =
+        wait_for_notification(&mut notifications, "thread/goal/updated", Some(&thread.id)).await;
+    assert_eq!(
+        updated.params["goal"]["objective"],
+        "Ship shared goal state"
+    );
+
+    let tool_get: ToolCallResult = request(
+        &client,
+        "tools/call",
+        Some(
+            serde_json::to_value(ToolCallParams {
+                thread_id: thread.id.clone(),
+                tool_name: "get_goal".to_string(),
+                arguments: serde_json::json!({}),
+            })
+            .unwrap(),
+        ),
+    )
+    .await;
+    assert!(!tool_get.is_error);
+    assert!(tool_get.text.contains("Ship shared goal state"));
+
+    let tool_update: ToolCallResult = request(
+        &client,
+        "tools/call",
+        Some(
+            serde_json::to_value(ToolCallParams {
+                thread_id: thread.id.clone(),
+                tool_name: "update_goal".to_string(),
+                arguments: serde_json::json!({ "status": "blocked" }),
+            })
+            .unwrap(),
+        ),
+    )
+    .await;
+    assert!(!tool_update.is_error);
+
+    let get: ThreadGoalGetResult = request(
+        &client,
+        "thread/goal/get",
+        Some(
+            serde_json::to_value(ThreadGoalGetParams {
+                thread_id: thread.id.clone(),
+            })
+            .unwrap(),
+        ),
+    )
+    .await;
+    assert_eq!(
+        get.goal.expect("goal after tool update").status,
+        ThreadGoalStatus::Blocked
+    );
+
+    let invalid = request_error(
+        &client,
+        "thread/goal/set",
+        Some(
+            serde_json::to_value(ThreadGoalSetParams {
+                thread_id: thread.id.clone(),
+                objective: Some(" ".to_string()),
+                status: None,
+                token_budget: None,
+            })
+            .unwrap(),
+        ),
+    )
+    .await;
+    assert!(invalid.message.contains("goal objective cannot be empty"));
+
+    let clear: ThreadGoalClearResult = request(
+        &client,
+        "thread/goal/clear",
+        Some(
+            serde_json::to_value(ThreadGoalClearParams {
+                thread_id: thread.id.clone(),
+            })
+            .unwrap(),
+        ),
+    )
+    .await;
+    assert!(clear.cleared);
+    wait_for_notification(&mut notifications, "thread/goal/cleared", Some(&thread.id)).await;
+
+    let get: ThreadGoalGetResult = request(
+        &client,
+        "thread/goal/get",
+        Some(
+            serde_json::to_value(ThreadGoalGetParams {
+                thread_id: thread.id,
+            })
+            .unwrap(),
+        ),
+    )
+    .await;
+    assert!(get.goal.is_none());
 }
 
 #[tokio::test]

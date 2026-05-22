@@ -241,6 +241,24 @@ impl AppServer {
                 )
                 .await
             }
+            "thread/goal/get" => {
+                self.decode_and(req.params, |p| async move {
+                    self.handle_thread_goal_get(p).await
+                })
+                .await
+            }
+            "thread/goal/set" => {
+                self.decode_and(req.params, |p| async move {
+                    self.handle_thread_goal_set(p).await
+                })
+                .await
+            }
+            "thread/goal/clear" => {
+                self.decode_and(req.params, |p| async move {
+                    self.handle_thread_goal_clear(p).await
+                })
+                .await
+            }
             "thread/archive" => {
                 self.decode_and(req.params, |p| async move {
                     self.handle_thread_archive(p).await
@@ -2334,7 +2352,10 @@ impl AppServer {
         &self,
         params: ToolCallParams,
     ) -> Result<serde_json::Value, JsonRpcError> {
-        if !matches!(params.tool_name.as_str(), "get_goal" | "create_goal") {
+        if !matches!(
+            params.tool_name.as_str(),
+            "get_goal" | "create_goal" | "update_goal"
+        ) {
             return Err(JsonRpcError {
                 code: -32602,
                 message: format!("tool cannot be called directly: {}", params.tool_name),

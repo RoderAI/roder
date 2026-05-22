@@ -425,6 +425,21 @@ const METHOD_SPECS: &[AppServerMethodSpecSeed] = &[
     method_spec!("team/start", "teams", LocalState, NonIdempotent),
     method_spec!("thread/archive", "threads", LocalState, NonIdempotent),
     method_spec!("thread/attach", "threads", LocalState, NonIdempotent),
+    method_spec!(
+        "thread/goal/clear",
+        "threads",
+        LocalState,
+        NonIdempotent,
+        ["thread/goal/cleared"]
+    ),
+    method_spec!("thread/goal/get", "threads", ReadOnly, Idempotent),
+    method_spec!(
+        "thread/goal/set",
+        "threads",
+        LocalState,
+        NonIdempotent,
+        ["thread/goal/updated"]
+    ),
     method_spec!("thread/list", "threads", ReadOnly, Idempotent),
     method_spec!("thread/read", "threads", ReadOnly, Idempotent),
     method_spec!("thread/roadmap/open", "threads", LocalState, NonIdempotent),

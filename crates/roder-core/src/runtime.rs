@@ -37,6 +37,7 @@ use tokio::sync::{Mutex, RwLock, oneshot};
 use crate::artifacts::{ContextArtifactStore, default_context_artifact_dir};
 use crate::bus::EventBus;
 use crate::fake_provider::FakeInferenceEngine;
+use crate::goals::RuntimeGoalController;
 use crate::instructions::{
     apply_model_instruction_overlay, apply_runtime_profile, apply_task_ledger_required,
 };
@@ -149,8 +150,15 @@ pub(crate) struct PendingUserInput {
 
 #[derive(Clone)]
 struct ActiveTurnHandle {
+    thread_id: ThreadId,
     abort: AbortHandle,
     steers: Arc<Mutex<Vec<UserMessage>>>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum TurnRunOutcome {
+    Completed,
+    Stopped,
 }
 
 impl PendingPlanExit {
@@ -193,6 +201,7 @@ pub struct Runtime {
     workspace: PathBuf,
     teams: TeamManager,
     pub(crate) roadmaps: Mutex<roder_roadmap::RoadmapRuntime>,
+    pub(crate) goals: Arc<RuntimeGoalController>,
     context_artifacts: Arc<ContextArtifactStore>,
     pub(crate) session_store: Option<Arc<dyn SessionStore>>,
     pub(crate) tool_registry: ToolRegistry,
@@ -235,6 +244,10 @@ impl Runtime {
                 .map(ContextArtifactStore::new_session_scoped)
                 .unwrap_or_else(|| ContextArtifactStore::new(default_context_artifact_dir())),
         );
+        let goals = Arc::new(RuntimeGoalController::new(
+            bus.clone(),
+            session_store.clone(),
+        ));
         let runtime = Self {
             bus,
             registry,
@@ -251,6 +264,7 @@ impl Runtime {
                 workspace,
                 roadmap_data_dir,
             )),
+            goals,
             context_artifacts,
             session_store,
             tool_registry,
@@ -331,6 +345,7 @@ impl Runtime {
         let mut ctx = ToolExecutionContext::new(thread_id, turn_id, mode)
             .with_process_runner(Arc::new(LocalProcessRunner))
             .with_context_artifacts(self.context_artifacts.clone())
+            .with_goal_controller(self.goals.clone())
             .with_subagent_trace_sink(Arc::new(RuntimeSubagentTraceSink::new(
                 self.bus.clone(),
                 self.session_store.clone(),
@@ -1176,6 +1191,7 @@ impl Runtime {
             let turn_id = uuid::Uuid::new_v4().to_string();
             let (abort_handle, abort_registration) = AbortHandle::new_pair();
             let active = ActiveTurnHandle {
+                thread_id: req.thread_id.clone(),
                 abort: abort_handle,
                 steers: Arc::new(Mutex::new(Vec::new())),
             };
@@ -1193,11 +1209,12 @@ impl Runtime {
                     abort_registration,
                 )
                 .await;
-                if let Ok(Err(err)) = result {
+                let completed = matches!(&result, Ok(Ok(TurnRunOutcome::Completed)));
+                if let Ok(Err(err)) = &result {
                     // run_turn emits failures after the stream starts; this covers setup/startup errors.
                     runtime
                         .emit(RoderEvent::TurnFailed(TurnFailed {
-                            thread_id: thread_id_for_task,
+                            thread_id: thread_id_for_task.clone(),
                             turn_id: turn_id_for_task.clone(),
                             error: err.to_string(),
                             error_kind: None,
@@ -1206,9 +1223,22 @@ impl Runtime {
                         .await;
                 }
                 runtime.active_turns.write().await.remove(&turn_id_for_task);
+                if completed {
+                    let _ = runtime
+                        .continue_active_goal_after_turn(thread_id_for_task)
+                        .await;
+                }
             });
             Ok(turn_id)
         })
+    }
+
+    pub(crate) async fn has_active_turn_for_thread(&self, thread_id: &ThreadId) -> bool {
+        self.active_turns
+            .read()
+            .await
+            .values()
+            .any(|handle| &handle.thread_id == thread_id)
     }
 
     pub async fn interrupt_turn(&self, thread_id: ThreadId, turn_id: TurnId) -> anyhow::Result<()> {
@@ -1272,12 +1302,13 @@ impl Runtime {
         self: &Arc<Self>,
         req: StartTurnRequest,
         turn_id: TurnId,
-    ) -> anyhow::Result<()> {
+    ) -> anyhow::Result<TurnRunOutcome> {
+        let turn_started_at = OffsetDateTime::now_utc();
         self.emit(RoderEvent::TurnStarted(TurnStarted {
             thread_id: req.thread_id.clone(),
             turn_id: turn_id.clone(),
             runtime_profile: self.config.read().await.runtime_profile,
-            timestamp: OffsetDateTime::now_utc(),
+            timestamp: turn_started_at,
         }))
         .await;
         self.persist_turn_item(
@@ -1333,7 +1364,7 @@ impl Runtime {
                 format!("provider {provider} does not support image input"),
             )
             .await?;
-            return Ok(());
+            return Ok(TurnRunOutcome::Stopped);
         }
         let mut final_assistant_text = String::new();
         let mut final_phase_messages = Vec::<AssistantMessage>::new();
@@ -1344,6 +1375,7 @@ impl Runtime {
             VerificationGateState::new(req.message.clone(), runtime_profile);
         let mut speed_policy = SpeedPolicyState::default();
         let mut reliability = TurnReliabilityState::default();
+        let mut turn_usage_tokens = 0_i64;
 
         for _ in 0..MAX_TOOL_ROUNDS_PER_TURN {
             if let Some(deadline) = turn_deadline
@@ -1351,7 +1383,7 @@ impl Runtime {
             {
                 self.fail_turn_due_to_deadline(&req.thread_id, &turn_id, deadline, &conversation)
                     .await?;
-                return Ok(());
+                return Ok(TurnRunOutcome::Stopped);
             }
             let steers = self.drain_turn_steers(&turn_id).await;
             self.append_steers(&req, &turn_id, &mut conversation, steers)
@@ -1363,7 +1395,7 @@ impl Runtime {
                     format!("provider {provider} does not support image input"),
                 )
                 .await?;
-                return Ok(());
+                return Ok(TurnRunOutcome::Stopped);
             }
 
             let speed_policy_decision =
@@ -1381,7 +1413,7 @@ impl Runtime {
                     &conversation,
                 )
                 .await?;
-                return Ok(());
+                return Ok(TurnRunOutcome::Stopped);
             }
             self.emit(RoderEvent::InferenceStarted(InferenceStarted {
                 thread_id: req.thread_id.clone(),
@@ -1403,6 +1435,10 @@ impl Runtime {
             {
                 instructions = apply_task_ledger_required(instructions);
             }
+            instructions = self
+                .goals
+                .apply_goal_instructions(&req.thread_id, instructions)
+                .await?;
             let mut request_metadata = serde_json::json!({});
             if let Some(decision) = &speed_policy_decision {
                 request_metadata["speedPolicy"] = serde_json::json!(decision);
@@ -1464,7 +1500,7 @@ impl Runtime {
                             &conversation,
                         )
                         .await?;
-                        return Ok(());
+                        return Ok(TurnRunOutcome::Stopped);
                     }
                 }
             } else {
@@ -1488,7 +1524,7 @@ impl Runtime {
                                 &conversation,
                             )
                             .await?;
-                            return Ok(());
+                            return Ok(TurnRunOutcome::Stopped);
                         }
                     }
                 } else {
@@ -1580,10 +1616,13 @@ impl Runtime {
                             TeamMemberStatus::Failed,
                         )
                         .await?;
-                        return Ok(());
+                        return Ok(TurnRunOutcome::Stopped);
+                    }
+                    InferenceEvent::Usage(usage) => {
+                        turn_usage_tokens =
+                            turn_usage_tokens.saturating_add(usage.total_tokens as i64);
                     }
                     InferenceEvent::Completed(_)
-                    | InferenceEvent::Usage(_)
                     | InferenceEvent::Compaction(_)
                     | InferenceEvent::ToolCallStarted(_)
                     | InferenceEvent::ToolCallDelta(_) => {}
@@ -1730,7 +1769,7 @@ impl Runtime {
             {
                 self.fail_turn_due_to_deadline(&req.thread_id, &turn_id, deadline, &conversation)
                     .await?;
-                return Ok(());
+                return Ok(TurnRunOutcome::Stopped);
             }
             let results = self
                 .route_tool_calls(
@@ -1756,7 +1795,7 @@ impl Runtime {
                     &conversation,
                 )
                 .await?;
-                return Ok(());
+                return Ok(TurnRunOutcome::Stopped);
             }
             for result in results {
                 verification_gate.record_tool_result(&result);
@@ -1797,7 +1836,7 @@ impl Runtime {
             .await;
             self.complete_team_member_turn(&req.thread_id, &turn_id, TeamMemberStatus::Failed)
                 .await?;
-            return Ok(());
+            return Ok(TurnRunOutcome::Stopped);
         }
 
         if !final_reasoning_text.is_empty() {
@@ -1856,6 +1895,13 @@ impl Runtime {
             .await?;
         }
 
+        self.goals
+            .account_turn_usage(
+                &req.thread_id,
+                turn_usage_tokens,
+                OffsetDateTime::now_utc() - turn_started_at,
+            )
+            .await?;
         self.emit(RoderEvent::TurnCompleted(TurnCompleted {
             thread_id: req.thread_id.clone(),
             turn_id: turn_id.clone(),
@@ -1866,7 +1912,7 @@ impl Runtime {
             .await?;
         self.persist_runner_state(&req.thread_id, runner_session.as_ref())
             .await?;
-        Ok(())
+        Ok(TurnRunOutcome::Completed)
     }
 
     async fn drain_turn_steers(&self, turn_id: &TurnId) -> Vec<UserMessage> {

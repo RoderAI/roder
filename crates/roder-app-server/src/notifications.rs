@@ -12,7 +12,8 @@ use roder_protocol::{
     ItemStartedNotification, JsonRpcNotification, PlanExitRequestedNotification,
     PlanExitResolvedNotification, TeamCleanupCompletedNotification,
     TeamMemberCompletedNotification, TeamMemberMessageDeltaNotification,
-    TeamMemberStartedNotification, TeamMemberStatusChangedNotification, ThreadStartedNotification,
+    TeamMemberStartedNotification, TeamMemberStatusChangedNotification,
+    ThreadGoalClearedNotification, ThreadGoalUpdatedNotification, ThreadStartedNotification,
     ThreadStatusChangedNotification, TurnCompletedNotification, TurnStartedNotification,
     UserInputRequestedNotification, UserInputResolvedNotification,
     VerificationCompletedNotification, VerificationRequiredNotification,
@@ -178,6 +179,19 @@ pub(crate) fn desktop_notifications_for_event(event: &RoderEvent) -> Vec<JsonRpc
                         "completed"
                     },
                 ),
+            },
+        )],
+        RoderEvent::ThreadGoalUpdated(event) => vec![desktop_notification(
+            "thread/goal/updated",
+            ThreadGoalUpdatedNotification {
+                thread_id: event.thread_id.clone(),
+                goal: event.goal.clone(),
+            },
+        )],
+        RoderEvent::ThreadGoalCleared(event) => vec![desktop_notification(
+            "thread/goal/cleared",
+            ThreadGoalClearedNotification {
+                thread_id: event.thread_id.clone(),
             },
         )],
         RoderEvent::ApprovalRequested(event) => vec![

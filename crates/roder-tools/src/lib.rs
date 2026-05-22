@@ -4,6 +4,7 @@ mod discovery;
 mod edit;
 mod exec;
 mod files;
+mod goals;
 mod hunk_output;
 mod media;
 mod paging;
