@@ -272,7 +272,14 @@ Parallel tool calls are enabled by default. For OpenAI Responses-compatible prov
 
 The app-server run-control methods are `turn/start`, `turn/steer`, and `turn/interrupt`. `turn/start` and `turn/steer` accept `input` blocks such as `{ "type": "text", "text": "..." }`. Steering accepts `{ "threadId": "...", "expectedTurnId": "...", "input": [...] }`, emits `turn.steered`, and appends the steering message to the active turn before the next provider request.
 
-`settings/get` returns runtime settings including hosted web search and file-backed dynamic context. `settings/set_web_search` accepts `{ "mode": "cached" }`, `{ "mode": "live" }`, or `{ "mode": "disabled" }`; `settings/set_file_backed_dynamic_context` accepts `{ "enabled": true }` or `{ "enabled": false }`. The TUI exposes these under the Ctrl+P settings menu and the Ctrl+K palette Settings source, and persists choices to `~/.roder/config.toml` when user config persistence is enabled.
+`settings/get` returns runtime settings including hosted web search, shell command shell, and file-backed dynamic context. `settings/set_web_search` accepts `{ "mode": "cached" }`, `{ "mode": "live" }`, or `{ "mode": "disabled" }`; `settings/set_shell` accepts `{ "shell": "zsh" }` or another shell binary/path; `settings/set_file_backed_dynamic_context` accepts `{ "enabled": true }` or `{ "enabled": false }`. The TUI exposes these under the Ctrl+P settings menu and the Ctrl+K palette Settings source, and persists choices to `~/.roder/config.toml` when user config persistence is enabled.
+
+The command execution shell defaults to zsh on macOS and bash elsewhere, unless the user's login shell is zsh. To override it in config:
+
+```toml
+[tools]
+shell = "zsh" # or "bash", "/bin/bash", etc.
+```
 
 File-backed dynamic context is enabled by default. To disable it in config:
 

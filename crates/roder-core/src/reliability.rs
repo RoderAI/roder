@@ -19,7 +19,7 @@ impl Default for RuntimeReliabilityConfig {
     fn default() -> Self {
         Self {
             max_consecutive_tool_failures: 5,
-            max_tool_failures_per_turn: 10,
+            max_tool_failures_per_turn: 128,
             max_model_calls_per_turn: 512,
             provider_retry_max_attempts: 3,
             provider_retry_initial_backoff_ms: 1_000,
@@ -157,7 +157,7 @@ mod tests {
     fn reliability_limits_reset_consecutive_failures_after_success() {
         let cfg = RuntimeReliabilityConfig {
             max_consecutive_tool_failures: 2,
-            max_tool_failures_per_turn: 10,
+            max_tool_failures_per_turn: 128,
             ..RuntimeReliabilityConfig::default()
         };
         let mut state = TurnReliabilityState::default();

@@ -99,8 +99,9 @@ Provider auth is provider-specific:
   surface.
 
 Config persistence is opt-in on the `AppServer` instance. When enabled,
-`providers/select`, `settings/set_web_search`, `settings/set_default_mode`, and
-`settings/set_file_backed_dynamic_context` write the selected defaults to
+`providers/select`, `settings/set_web_search`, `settings/set_shell`,
+`settings/set_default_mode`, and `settings/set_file_backed_dynamic_context`
+write the selected defaults to
 `~/.roder/config.toml`.
 
 ## Core Concepts
@@ -161,9 +162,10 @@ Core:
 | `providers/configure` | Persist an API key for an API-key provider. |
 | `providers/select` | Select active default provider/model/reasoning. |
 | `model/list` | List desktop model descriptors. |
-| `settings/get` | Read hosted web search mode, search-index status, default policy mode, and file-backed context status. |
+| `settings/get` | Read hosted web search mode, search-index status, shell command shell, default policy mode, and file-backed context status. |
 | `settings/set_web_search` | Set hosted web search mode. |
 | `settings/set_search_index` | Enable or disable the persistent regex search index. |
+| `settings/set_shell` | Set the shell used by the `shell` tool and default `exec_command` calls. |
 | `settings/set_default_mode` | Set default policy mode. |
 | `settings/set_file_backed_dynamic_context` | Enable or disable file-backed dynamic context. |
 | `auth/codex/login` | Start Codex OAuth login. |
@@ -492,6 +494,7 @@ Response:
 {
   "web_search": { "mode": "cached" },
   "search_index": { "enabled": true },
+  "shell": { "shell": "bash", "options": ["zsh", "bash"] },
   "default_mode": "default",
   "file_backed_dynamic_context": true
 }
@@ -501,6 +504,9 @@ Notes:
 
 - `web_search.mode` is one of `disabled`, `cached`, or `live`.
 - `search_index.enabled` controls the persistent regex search-index methods.
+- `shell.shell` is the active shell used by the `shell` tool and by
+  `exec_command` calls that do not pass a `shell` override. `shell.options`
+  lists selectable shells for UI clients.
 - `default_mode` is a `PolicyMode` value from `roder-api`.
 - `file_backed_dynamic_context` controls whether long tool output, command
   output, and compaction source material are written to context artifacts.
@@ -559,6 +565,37 @@ Behavior:
   enabled.
 - Publishes `search_index/statusChanged` after the setting changes so clients
   can refresh index status displays.
+
+### `settings/set_shell`
+
+Purpose: Change the shell used by command execution tools.
+
+Request:
+
+```json
+{
+  "shell": "zsh"
+}
+```
+
+Response:
+
+```json
+{
+  "shell": { "shell": "zsh", "options": ["zsh", "bash"] }
+}
+```
+
+Behavior:
+
+- Updates runtime state immediately for future `shell` tool calls and
+  `exec_command` calls without an explicit `shell` parameter.
+- `exec_command.shell` remains a per-call override.
+- Persists `[tools].shell` when app-server config persistence is enabled.
+
+Errors:
+
+- Empty `shell` returns JSON-RPC code `-32602`.
 
 ### `settings/set_default_mode`
 
@@ -932,9 +969,10 @@ Behavior:
 
 - Concatenates text input blocks with newlines.
 - Uses `prompt` as a transition fallback only when text input is empty.
-- Uses the thread's selected provider/model when known.
-- Starts a runtime turn and records the active turn id for optional
-  `turn/interrupt`.
+- If the thread already has an active runtime turn, queues the input as
+  same-turn steering and returns that active `turnId`.
+- Otherwise uses the thread's selected provider/model when known, starts a
+  runtime turn, and records the active turn id for optional `turn/interrupt`.
 
 Notifications:
 
@@ -3760,9 +3798,9 @@ Cancellation and interruption:
 
 - `thread/list` and `thread/read` use persisted sessions first and in-memory
   desktop threads as a fallback.
-- `providers/select`, `settings/set_web_search`, `settings/set_default_mode`,
-  and `settings/set_file_backed_dynamic_context` persist only when the
-  app-server instance enables user-config persistence.
+- `providers/select`, `settings/set_web_search`, `settings/set_shell`,
+  `settings/set_default_mode`, and `settings/set_file_backed_dynamic_context`
+  persist only when the app-server instance enables user-config persistence.
 - Workflow import decisions are persisted under `~/.roder/workflow-imports.json`
   unless `RODER_WORKFLOW_IMPORTS_PATH` is set.
 - Media artifact storage is configured by `media.artifacts_dir`,

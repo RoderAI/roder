@@ -29,6 +29,7 @@ pub enum PaletteAction {
     SetPolicyMode(PolicyMode),
     SetWebSearchMode(HostedWebSearchMode),
     SetSearchIndexEnabled(bool),
+    SetShell(String),
     SetSkillEnabled {
         selector: SkillSelector,
         enabled: bool,

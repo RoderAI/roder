@@ -171,6 +171,7 @@ pub struct ToolExecutionContext {
     pub thread_id: ThreadId,
     pub turn_id: TurnId,
     pub effective_mode: PolicyMode,
+    pub command_shell: Option<String>,
     pub handles: ToolExecutionHandles,
 }
 
@@ -184,8 +185,17 @@ impl ToolExecutionContext {
             thread_id: thread_id.into(),
             turn_id: turn_id.into(),
             effective_mode,
+            command_shell: None,
             handles: ToolExecutionHandles::default(),
         }
+    }
+
+    pub fn with_command_shell(mut self, shell: impl Into<String>) -> Self {
+        let shell = shell.into();
+        if !shell.trim().is_empty() {
+            self.command_shell = Some(shell);
+        }
+        self
     }
 
     pub fn with_workspace_handle(mut self, handle: Arc<dyn ScopedWorkspaceHandle>) -> Self {

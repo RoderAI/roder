@@ -1,8 +1,8 @@
 """Top + bottom status-bar content assertions.
 
 The top status row shows the app name, current model, reasoning level,
-and a session id. The bottom row carries the keybinding hints and the
-current mode. Both are stable surfaces that should not silently shift.
+and a session id. The bottom row carries keybinding hints; policy mode
+lives in the composer border so the footer does not duplicate it.
 """
 
 from __future__ import annotations
@@ -60,11 +60,11 @@ class TestBottomStatus:
         await _ready(tui, gode_bin, gode_env)
         assert "ready" in tui.screen.row(tui.screen.rows - 1)
 
-    async def test_shows_mode_default(
+    async def test_omits_mode_default(
         self, tui: TuiSession, gode_bin: str, gode_env: dict[str, str]
     ) -> None:
         await _ready(tui, gode_bin, gode_env)
-        assert "mode:default" in tui.screen.row(tui.screen.rows - 1)
+        assert "mode:" not in tui.screen.row(tui.screen.rows - 1)
 
     async def test_advertises_core_keybindings(
         self, tui: TuiSession, gode_bin: str, gode_env: dict[str, str]
@@ -72,7 +72,7 @@ class TestBottomStatus:
         """The footer is the discoverability surface — these hints must be present."""
         await _ready(tui, gode_bin, gode_env)
         footer = tui.screen.row(tui.screen.rows - 1)
-        for hint in ("enter send", "shift+enter newline", "tab timeline", "ctrl+p"):
+        for hint in ("enter send", "shift+enter newline", "tab timeline", "? shortcuts"):
             assert hint in footer, f"missing hint {hint!r} in footer: {footer!r}"
 
 

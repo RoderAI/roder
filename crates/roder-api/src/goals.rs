@@ -98,6 +98,7 @@ pub fn validate_thread_goal_budget(token_budget: Option<i64>) -> anyhow::Result<
 pub trait ThreadGoalController: Send + Sync + 'static {
     async fn get_thread_goal(&self, thread_id: &ThreadId) -> anyhow::Result<Option<ThreadGoal>>;
 
+    /// Create a new active thread goal, replacing any existing goal for the thread.
     async fn create_thread_goal(
         &self,
         thread_id: &ThreadId,

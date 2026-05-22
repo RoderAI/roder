@@ -1,5 +1,6 @@
 mod artifacts;
 mod backend;
+mod command_shell;
 mod discovery;
 mod edit;
 mod exec;
@@ -88,6 +89,7 @@ impl ToolExecutor for EchoTool {
 pub struct BuiltinCodingToolsContributor {
     workspace: Workspace,
     backend: WorkspaceBackendHandle,
+    command_shell: String,
 }
 
 impl BuiltinCodingToolsContributor {
@@ -99,9 +101,25 @@ impl BuiltinCodingToolsContributor {
         workspace: impl Into<PathBuf>,
         path_scope: ToolPathScope,
     ) -> anyhow::Result<Self> {
+        Self::new_with_path_scope_and_shell(
+            workspace,
+            path_scope,
+            roder_api::command_shell::default_command_shell(),
+        )
+    }
+
+    pub fn new_with_path_scope_and_shell(
+        workspace: impl Into<PathBuf>,
+        path_scope: ToolPathScope,
+        command_shell: impl Into<String>,
+    ) -> anyhow::Result<Self> {
         let workspace = Workspace::new_with_scope(workspace.into(), path_scope)?;
         let backend = Arc::new(LocalWorkspaceBackend::new(workspace.clone()));
-        Ok(Self { workspace, backend })
+        Ok(Self {
+            workspace,
+            backend,
+            command_shell: command_shell.into(),
+        })
     }
 
     #[cfg(test)]
@@ -112,6 +130,7 @@ impl BuiltinCodingToolsContributor {
         Ok(Self {
             workspace: Workspace::new(workspace.into())?,
             backend,
+            command_shell: roder_api::command_shell::default_command_shell(),
         })
     }
 }
@@ -124,8 +143,8 @@ impl ToolContributor for BuiltinCodingToolsContributor {
     fn contribute(&self, registry: &mut ToolRegistry) -> anyhow::Result<()> {
         files::register(registry, self.workspace.clone(), self.backend.clone())?;
         search::register(registry, self.workspace.clone(), self.backend.clone())?;
-        shell::register(registry, self.workspace.clone())?;
-        exec::register(registry, self.workspace.clone())?;
+        shell::register(registry, self.workspace.clone(), self.command_shell.clone())?;
+        exec::register(registry, self.workspace.clone(), self.command_shell.clone())?;
         registry.register(Arc::new(patch::ApplyPatchTool {
             workspace: self.workspace.clone(),
             backend: self.backend.clone(),
@@ -154,6 +173,20 @@ pub fn builtin_coding_tools_contributor_with_path_scope(
 ) -> anyhow::Result<Arc<dyn ToolContributor>> {
     Ok(Arc::new(
         BuiltinCodingToolsContributor::new_with_path_scope(workspace, path_scope)?,
+    ))
+}
+
+pub fn builtin_coding_tools_contributor_with_path_scope_and_shell(
+    workspace: impl Into<PathBuf>,
+    path_scope: ToolPathScope,
+    command_shell: impl Into<String>,
+) -> anyhow::Result<Arc<dyn ToolContributor>> {
+    Ok(Arc::new(
+        BuiltinCodingToolsContributor::new_with_path_scope_and_shell(
+            workspace,
+            path_scope,
+            command_shell,
+        )?,
     ))
 }
 

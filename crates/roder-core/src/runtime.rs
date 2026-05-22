@@ -66,6 +66,7 @@ pub struct RuntimeConfig {
     pub model_edit_tools: HashMap<String, String>,
     pub model_parallel_tool_calls: HashMap<String, bool>,
     pub model_profiles: HashMap<String, ModelHarnessProfile>,
+    pub command_shell: String,
     pub workspace: Option<String>,
     pub policy_mode: PolicyMode,
     pub runtime_profile: RuntimeProfile,
@@ -89,6 +90,7 @@ impl Default for RuntimeConfig {
             model_edit_tools: HashMap::new(),
             model_parallel_tool_calls: HashMap::new(),
             model_profiles: HashMap::new(),
+            command_shell: roder_api::command_shell::default_command_shell(),
             workspace: None,
             policy_mode: PolicyMode::Default,
             runtime_profile: RuntimeProfile::Interactive,
@@ -331,6 +333,7 @@ impl Runtime {
             "slash-command".to_string(),
             runtime_config.policy_mode,
             runtime_config.workspace.as_deref(),
+            Some(&runtime_config.command_shell),
         );
         executor.execute(ctx, tool_call).await
     }
@@ -341,8 +344,10 @@ impl Runtime {
         turn_id: TurnId,
         mode: PolicyMode,
         workspace: Option<&str>,
+        command_shell: Option<&str>,
     ) -> ToolExecutionContext {
         let mut ctx = ToolExecutionContext::new(thread_id, turn_id, mode)
+            .with_command_shell(command_shell.unwrap_or_default())
             .with_process_runner(Arc::new(LocalProcessRunner))
             .with_context_artifacts(self.context_artifacts.clone())
             .with_goal_controller(self.goals.clone())
@@ -398,6 +403,12 @@ impl Runtime {
     pub async fn set_file_backed_dynamic_context(&self, enabled: bool) -> RuntimeConfig {
         let mut cfg = self.config.write().await;
         cfg.file_backed_dynamic_context = enabled;
+        cfg.clone()
+    }
+
+    pub async fn set_command_shell(&self, shell: String) -> RuntimeConfig {
+        let mut cfg = self.config.write().await;
+        cfg.command_shell = shell;
         cfg.clone()
     }
 
@@ -1239,6 +1250,14 @@ impl Runtime {
             .await
             .values()
             .any(|handle| &handle.thread_id == thread_id)
+    }
+
+    pub async fn active_turn_for_thread(&self, thread_id: &ThreadId) -> Option<TurnId> {
+        self.active_turns
+            .read()
+            .await
+            .iter()
+            .find_map(|(turn_id, handle)| (&handle.thread_id == thread_id).then(|| turn_id.clone()))
     }
 
     pub async fn interrupt_turn(&self, thread_id: ThreadId, turn_id: TurnId) -> anyhow::Result<()> {

@@ -13,7 +13,7 @@ surface for desktop, TUI, CLI, and sibling clients.
 | `thread/list` | sidebar bootstrap/refresh | List persisted Roder sessions as stable desktop `Thread` objects. | Pagination cursors are reserved. |
 | `thread/read` | thread switch | Read a persisted thread by `threadId`; include turns/items when `includeTurns` is true. | Returns `thread: null` when not found. |
 | `thread/archive` | archive/delete thread action | Archive a persisted session and remove desktop in-memory state for that thread. | `thread/list` no longer returns archived threads. |
-| `turn/start` | send prompt | Start a Roder turn on `threadId`, accepting desktop `input` text blocks and temporary `prompt` fallback. | Emits turn and item notifications. |
+| `turn/start` | send prompt | Start a Roder turn on `threadId`, or queue same-turn steering when a turn is already active. Accepts desktop `input` text blocks and temporary `prompt` fallback. | Emits turn and item notifications for new turns; active-turn steering continues the existing turn. |
 | `turn/steer` | steer active turn | Send additional user input to the active turn, enforcing `expectedTurnId` when provided. | Requires an active turn. |
 | `turn/interrupt` | stop button | Interrupt the active turn for a thread; `turnId` is optional when there is a single active turn. | Uses the runtime interrupt path. |
 | `model/list` | model picker | Return visible model descriptors with `id`, `name`, `modelProvider`, reasoning efforts, and default flags. | Desktop model-picker data. |

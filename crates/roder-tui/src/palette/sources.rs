@@ -3,7 +3,7 @@ use roder_api::marketplace::MarketplaceDescriptor;
 use roder_api::policy_mode::PolicyMode;
 use roder_protocol::{
     AgentDescriptor, CommandDescriptor, DesktopThread, ProvidersListResult, RunnersListResult,
-    SearchIndexSettings, WebSearchSettings,
+    SearchIndexSettings, ShellSettings, WebSearchSettings,
 };
 
 use super::{PaletteAction, PaletteItem, StaticPaletteSource};
@@ -731,6 +731,7 @@ fn swatch_hint(color: ratatui::style::Color) -> String {
 pub fn settings_source(
     web_search: &WebSearchSettings,
     search_index: &SearchIndexSettings,
+    shell: &ShellSettings,
 ) -> StaticPaletteSource {
     let search_index_items = [
         (
@@ -812,6 +813,33 @@ pub fn settings_source(
                         icon: Some('~'),
                     },
                     PaletteAction::SetWebSearchMode(mode),
+                )
+            }))
+            .chain(shell.options.iter().cloned().map(|choice| {
+                let active_suffix = if choice == shell.shell {
+                    " (active)"
+                } else {
+                    ""
+                };
+                (
+                    PaletteItem {
+                        id: format!("shell:{choice}"),
+                        title: format!("Shell command shell: {choice}{active_suffix}"),
+                        subtitle: Some(
+                            "Choose the shell used by shell and default exec_command calls"
+                                .to_string(),
+                        ),
+                        keywords: vec![
+                            "shell".to_string(),
+                            "command".to_string(),
+                            "exec".to_string(),
+                            "bash".to_string(),
+                            "zsh".to_string(),
+                            "fish".to_string(),
+                        ],
+                        icon: Some('$'),
+                    },
+                    PaletteAction::SetShell(choice),
                 )
             }))
             .chain(std::iter::once((
@@ -1032,6 +1060,10 @@ mod tests {
                 mode: HostedWebSearchMode::Cached,
             },
             &SearchIndexSettings { enabled: true },
+            &ShellSettings {
+                shell: "bash".to_string(),
+                options: vec!["zsh".to_string(), "bash".to_string()],
+            },
         );
         let entries = source.entries();
 
@@ -1046,6 +1078,11 @@ mod tests {
             PaletteAction::SetWebSearchMode(HostedWebSearchMode::Live)
         );
         assert_eq!(
+            entries[6].action,
+            PaletteAction::SetShell("bash".to_string())
+        );
+        assert!(entries[6].item.title.contains("(active)"));
+        assert_eq!(
             entries.last().unwrap().action,
             PaletteAction::OpenSkillsManager
         );
@@ -1058,6 +1095,10 @@ mod tests {
                 mode: HostedWebSearchMode::Cached,
             },
             &SearchIndexSettings { enabled: true },
+            &ShellSettings {
+                shell: "bash".to_string(),
+                options: vec!["zsh".to_string(), "bash".to_string()],
+            },
         );
         let entries = source.entries();
         let automations = entries

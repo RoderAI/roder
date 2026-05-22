@@ -8,6 +8,7 @@
      * (or `border-style: rounded`) flips back to the default. */
     border-radius: 0;
     --text: reset;
+    --commentary: ansi(15);
     --muted: ansi(240);
     --subtle: ansi(238);
     --accent: ansi(244);

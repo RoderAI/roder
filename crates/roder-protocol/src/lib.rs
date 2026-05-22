@@ -1005,6 +1005,12 @@ pub struct SearchIndexSettings {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ShellSettings {
+    pub shell: String,
+    pub options: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub enum SearchIndexStatusState {
     Disabled,
@@ -2046,6 +2052,7 @@ pub struct ProviderSelectResult {
 pub struct SettingsGetResult {
     pub web_search: WebSearchSettings,
     pub search_index: SearchIndexSettings,
+    pub shell: ShellSettings,
     pub default_mode: PolicyMode,
     pub file_backed_dynamic_context: bool,
 }
@@ -2068,6 +2075,16 @@ pub struct SettingsSetSearchIndexParams {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SettingsSetSearchIndexResult {
     pub search_index: SearchIndexSettings,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SettingsSetShellParams {
+    pub shell: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SettingsSetShellResult {
+    pub shell: ShellSettings,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

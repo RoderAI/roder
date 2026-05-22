@@ -13,6 +13,7 @@ use tokio::io::{AsyncRead, AsyncReadExt, AsyncWriteExt};
 use tokio::process::{ChildStdin, Command};
 use tokio::sync::{Mutex, Notify};
 
+use crate::command_shell::shell_for_context;
 use crate::files::{parse, require_nonempty, result};
 use crate::workspace::Workspace;
 
@@ -20,11 +21,16 @@ const DEFAULT_YIELD_MS: u64 = 1000;
 const DEFAULT_MAX_OUTPUT_TOKENS: usize = 6000;
 const MAX_BUFFER_BYTES: usize = 1024 * 1024;
 
-pub(crate) fn register(registry: &mut ToolRegistry, workspace: Workspace) -> anyhow::Result<()> {
+pub(crate) fn register(
+    registry: &mut ToolRegistry,
+    workspace: Workspace,
+    command_shell: String,
+) -> anyhow::Result<()> {
     let manager = Arc::new(ExecSessionManager::default());
     registry.register(Arc::new(ExecCommandTool {
         workspace,
         manager: manager.clone(),
+        command_shell,
     }))?;
     registry.register(Arc::new(WriteStdinTool { manager }))
 }
@@ -39,6 +45,7 @@ struct ExecSessionManager {
 struct ExecSession {
     command: String,
     cwd: String,
+    shell: String,
     started: Instant,
     stdin: Mutex<Option<ChildStdin>>,
     output: Mutex<String>,
@@ -58,6 +65,7 @@ struct ExecExit {
 struct ExecCommandTool {
     workspace: Workspace,
     manager: Arc<ExecSessionManager>,
+    command_shell: String,
 }
 
 #[derive(Debug)]
@@ -84,7 +92,7 @@ impl ToolExecutor for ExecCommandTool {
                     },
                     "shell": {
                         "type": "string",
-                        "description": "Shell binary to launch. Defaults to the user's default shell."
+                        "description": "Shell binary to launch. Defaults to the configured command shell."
                     },
                     "tty": {
                         "type": "boolean",
@@ -136,7 +144,7 @@ impl ToolExecutor for ExecCommandTool {
         let shell = args
             .shell
             .filter(|value| !value.trim().is_empty())
-            .unwrap_or_else(default_shell);
+            .unwrap_or_else(|| shell_for_context(&ctx, &self.command_shell));
         let login = args.login.unwrap_or(true);
         let tty = args.tty.unwrap_or(false);
         let mut child = build_command(&shell, &command, login, tty)
@@ -152,6 +160,7 @@ impl ToolExecutor for ExecCommandTool {
         let session = Arc::new(ExecSession {
             command,
             cwd,
+            shell: shell.clone(),
             started: Instant::now(),
             stdin: Mutex::new(stdin),
             output: Mutex::new(String::new()),
@@ -361,6 +370,7 @@ impl ExecSession {
             data: json!({
                 "command": self.command,
                 "cwd": self.cwd,
+                "shell": self.shell,
                 "session_id": session_id,
                 "aggregated_output": output,
                 "exit_code": exit_code,
@@ -392,10 +402,6 @@ fn build_command(shell: &str, command: &str, login: bool, tty: bool) -> Command 
 
 fn shell_arg(login: bool) -> &'static str {
     if login { "-lc" } else { "-c" }
-}
-
-fn default_shell() -> String {
-    std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".to_string())
 }
 
 fn spawn_output_reader<R>(mut reader: R, session: Arc<ExecSession>)
@@ -538,6 +544,7 @@ mod tests {
         let tool = ExecCommandTool {
             workspace: Workspace::new(root.clone()).unwrap(),
             manager,
+            command_shell: roder_api::command_shell::default_command_shell(),
         };
 
         let result = tool
@@ -566,6 +573,7 @@ mod tests {
         let exec = ExecCommandTool {
             workspace: Workspace::new(root.clone()).unwrap(),
             manager: manager.clone(),
+            command_shell: roder_api::command_shell::default_command_shell(),
         };
         let stdin = WriteStdinTool { manager };
 
@@ -603,6 +611,52 @@ mod tests {
         assert!(!polled.is_error);
         assert_eq!(polled.data["status"], "completed");
         assert_eq!(polled.data["aggregated_output"], "got:hello");
+
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn exec_command_uses_context_command_shell_by_default() {
+        let root = temp_workspace("roder-exec-context-shell");
+        std::fs::create_dir_all(&root).unwrap();
+        let shell = root.join("record-shell.sh");
+        std::fs::write(
+            &shell,
+            "#!/bin/sh\nprintf '%s\\n' \"$0\" > used-shell.txt\nexec /bin/sh \"$@\"\n",
+        )
+        .unwrap();
+        use std::os::unix::fs::PermissionsExt;
+        let mut permissions = std::fs::metadata(&shell).unwrap().permissions();
+        permissions.set_mode(0o755);
+        std::fs::set_permissions(&shell, permissions).unwrap();
+        let manager = Arc::new(ExecSessionManager::default());
+        let tool = ExecCommandTool {
+            workspace: Workspace::new(root.clone()).unwrap(),
+            manager,
+            command_shell: "bash".to_string(),
+        };
+
+        let result = tool
+            .execute(
+                context(&root).with_command_shell(shell.display().to_string()),
+                call(
+                    "exec_command",
+                    json!({ "cmd": "printf hi", "yield_time_ms": 500 }),
+                ),
+            )
+            .await
+            .unwrap();
+
+        assert!(!result.is_error);
+        assert_eq!(result.data["status"], "completed");
+        assert_eq!(result.data["shell"], shell.display().to_string());
+        assert_eq!(
+            std::fs::read_to_string(root.join("used-shell.txt"))
+                .unwrap()
+                .trim(),
+            shell.display().to_string()
+        );
 
         let _ = std::fs::remove_dir_all(root);
     }

@@ -1,5 +1,8 @@
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
-use ratatui::layout::Rect;
+use ratatui::{
+    layout::Rect,
+    style::{Color, Modifier},
+};
 use roder_api::extension_state::ExtensionStoreScope;
 use roder_api::interactive::RegionKind;
 use std::time::{Duration, Instant};
@@ -541,6 +544,34 @@ fn commentary_phase_deltas_render_as_plain_assistant_text() {
 }
 
 #[test]
+fn commentary_phase_deltas_render_with_white_text_on_dark_backgrounds() {
+    let mut timeline = TimelineState::default();
+    timeline.push_assistant_delta("I will inspect first.", Some("commentary".to_string()));
+    timeline.push_assistant_delta("Done.", Some("final_answer".to_string()));
+
+    let theme = Theme::for_dark_background(true);
+    let render = timeline.render(theme, Rect::new(0, 0, 100, 20));
+    let commentary_span = render
+        .text
+        .lines
+        .iter()
+        .flat_map(|line| line.spans.iter())
+        .find(|span| span.content.as_ref() == "I will inspect first.")
+        .expect("commentary span should render");
+    let final_span = render
+        .text
+        .lines
+        .iter()
+        .flat_map(|line| line.spans.iter())
+        .find(|span| span.content.as_ref() == "Done.")
+        .expect("final answer span should render");
+
+    assert_eq!(theme.commentary, Color::Indexed(15));
+    assert_eq!(commentary_span.style.fg, Some(theme.commentary));
+    assert_eq!(final_span.style.fg, Some(theme.text));
+}
+
+#[test]
 fn tools_render_after_commentary_phase_messages() {
     let mut timeline = TimelineState::default();
     timeline.push_assistant_delta("I will inspect first.", Some("commentary".to_string()));
@@ -645,6 +676,32 @@ fn streaming_assistant_delta_buffers_then_reveals_with_gradient() {
             .flat_map(|line| line.spans.iter())
             .any(|span| span.style.fg == Some(Theme::for_dark_background(true).accent))
     );
+}
+
+#[test]
+fn streaming_commentary_delta_uses_commentary_text_without_accent_fade() {
+    let mut timeline = TimelineState::default();
+    let start = Instant::now();
+    timeline.push_assistant_delta_streaming_at(
+        "I will inspect first.",
+        Some("commentary".to_string()),
+        start,
+    );
+
+    assert!(timeline.tick_streaming_animation(start + Duration::from_millis(700), 80));
+    let theme = Theme::for_dark_background(true);
+    let rendered = timeline.render(theme, Rect::new(0, 0, 80, 8));
+    let colors = rendered
+        .text
+        .lines
+        .iter()
+        .flat_map(|line| line.spans.iter())
+        .filter_map(|span| span.style.fg)
+        .collect::<Vec<_>>();
+
+    assert!(colors.contains(&theme.commentary));
+    assert!(!colors.contains(&theme.accent));
+    assert!(!colors.contains(&theme.accent_soft));
 }
 
 #[test]
@@ -772,13 +829,35 @@ fn reasoning_deltas_render_live_as_thinking() {
     timeline.push_reasoning_delta("visible thinking tokens.");
     timeline.push_assistant_delta("Done.", Some("final_answer".to_string()));
 
-    let lines = rendered_lines(&mut timeline);
+    let theme = Theme::for_dark_background(true);
+    let render = timeline.render(theme, Rect::new(0, 0, 100, 20));
+    let lines = render
+        .text
+        .lines
+        .iter()
+        .map(|line| {
+            line.spans
+                .iter()
+                .map(|span| span.content.as_ref())
+                .collect::<String>()
+        })
+        .collect::<Vec<_>>();
     assert!(
         lines
             .iter()
             .any(|line| line == "The user is asking for visible thinking tokens.")
     );
     assert!(lines.iter().any(|line| line == "Done."));
+
+    let reasoning_span = render
+        .text
+        .lines
+        .iter()
+        .flat_map(|line| line.spans.iter())
+        .find(|span| span.content.as_ref() == "The user is asking for visible thinking tokens.")
+        .expect("reasoning span should render");
+    assert_eq!(reasoning_span.style.fg, Some(theme.muted));
+    assert!(reasoning_span.style.add_modifier.contains(Modifier::ITALIC));
 }
 
 #[test]
