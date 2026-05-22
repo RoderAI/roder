@@ -71,6 +71,20 @@ fn profiles_builtin_profiles_validate_against_workspace_catalog() {
                 &vec!["OPENAI_API_KEY".to_string()]
             );
         }
+        if profile.id == "tavily" {
+            assert_eq!(
+                report.required_env.get("tavily-search").unwrap(),
+                &vec!["TAVILY_API_KEY".to_string()]
+            );
+            assert_eq!(
+                profile
+                    .manifest
+                    .config_overrides
+                    .pointer("/web_search/provider")
+                    .and_then(|value| value.as_str()),
+                Some("tavily")
+            );
+        }
     }
 }
 

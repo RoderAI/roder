@@ -129,6 +129,10 @@ pub const BUILT_IN_PROFILES: &[BuiltInProfile] = &[
         source: include_str!("../profiles/research-headless.toml"),
     },
     BuiltInProfile {
+        id: "tavily",
+        source: include_str!("../profiles/tavily.toml"),
+    },
+    BuiltInProfile {
         id: "full",
         source: include_str!("../profiles/full.toml"),
     },

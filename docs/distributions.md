@@ -10,6 +10,7 @@ The configurator binary is `roder-configure`.
 - `openai-only`: OpenAI Responses, JSONL sessions, plan mode, terminal notifications, CLI, TUI, and app server.
 - `anthropic-only`: Anthropic Messages, JSONL sessions, plan mode, terminal notifications, CLI, TUI, and app server.
 - `research-headless`: no TUI; app server, OpenAI Responses, disk context, memory, subagents, process tasks, plan mode, and terminal notifications.
+- `tavily`: OpenAI Responses plus the web-search router and Tavily-backed search enabled through `TAVILY_API_KEY`.
 - `full`: all first-party extension metadata currently declared in the workspace.
 
 List profiles:
@@ -121,6 +122,18 @@ cargo run -p roder-configure -- generate --profile profile.toml --out dist/resea
 ```
 
 The profile includes JSONL replay-oriented sessions, disk context, memory, subagents, and process tasks.
+
+### Tavily-Enabled Web Search Build
+
+Use `tavily` when you want a normal CLI/TUI/app-server build with external Tavily web search configured. The generated profile enables the web-search router, selects `provider = "tavily"`, and keeps secrets in environment variables.
+
+```sh
+cargo run -p roder-configure -- profile show tavily > tavily-profile.toml
+cargo run -p roder-configure -- validate tavily-profile.toml
+cargo run -p roder-configure -- generate --profile tavily-profile.toml --out dist/tavily-roder --build
+```
+
+Set `OPENAI_API_KEY` and `TAVILY_API_KEY` at runtime. `TAVILY_PROJECT` is optional and is read only when set.
 
 ### Customer-Facing No-TUI Build
 

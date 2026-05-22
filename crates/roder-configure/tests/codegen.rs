@@ -14,6 +14,7 @@ fn codegen_renders_openai_only_distribution_deterministically() {
 
     assert_eq!(first, second);
     let cargo_toml = file(&first, "Cargo.toml");
+    assert!(cargo_toml.contains("[workspace]"));
     assert!(cargo_toml.contains("roder-ext-openai-responses"));
     assert!(cargo_toml.contains("roder-cli"));
     let readme = file(&first, "README.md");
@@ -31,6 +32,25 @@ fn codegen_respects_headless_profile_dependencies() {
 
     assert!(cargo_toml.contains("roder-app-server"));
     assert!(!cargo_toml.contains("roder-tui"));
+}
+
+#[test]
+fn codegen_renders_tavily_enabled_distribution() {
+    let catalog = Catalog::from_workspace(env!("CARGO_MANIFEST_DIR")).unwrap();
+    let profile = built_in_profile("tavily").unwrap().unwrap();
+
+    let files = render(&profile.manifest, &catalog).unwrap();
+    let cargo_toml = file(&files, "Cargo.toml");
+    assert!(cargo_toml.contains("roder-ext-tavily-search"));
+    assert!(cargo_toml.contains("roder-ext-web-search"));
+
+    let config = file(&files, "config.toml");
+    assert!(config.contains(r#""provider": "tavily""#));
+    assert!(config.contains(r#""api_key_env": "TAVILY_API_KEY""#));
+
+    let readme = file(&files, "README.md");
+    assert!(readme.contains("tavily-search"));
+    assert!(readme.contains("TAVILY_API_KEY"));
 }
 
 #[test]
