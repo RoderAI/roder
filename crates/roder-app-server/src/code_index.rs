@@ -169,13 +169,7 @@ impl AppServer {
     fn code_index_store_path(&self, workspace: &Path) -> PathBuf {
         let base = std::env::var_os("RODER_CODE_INDEX_HOME")
             .map(PathBuf::from)
-            .unwrap_or_else(|| {
-                std::env::var_os("HOME")
-                    .map(PathBuf::from)
-                    .unwrap_or_else(std::env::temp_dir)
-                    .join(".roder")
-                    .join("code-index")
-            });
+            .unwrap_or_else(|| roder_config::config_dir().join("code-index"));
         default_store_path(base, workspace)
     }
 

@@ -347,9 +347,7 @@ fn clamp_limit(limit: Option<usize>) -> usize {
 }
 
 fn default_roder_dir() -> PathBuf {
-    dirs::home_dir()
-        .unwrap_or_else(|| PathBuf::from("."))
-        .join(".roder")
+    roder_config::config_dir()
 }
 
 fn invalid_params(message: impl Into<String>) -> JsonRpcError {

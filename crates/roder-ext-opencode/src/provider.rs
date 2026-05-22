@@ -827,10 +827,18 @@ fn cache_path() -> PathBuf {
     if let Some(path) = env_nonempty("RODER_MODELS_CACHE_PATH") {
         return PathBuf::from(path);
     }
-    dirs::home_dir()
-        .unwrap_or_else(|| PathBuf::from("."))
-        .join(".roder")
-        .join("models-cache.json")
+    roder_data_dir().join("models-cache.json")
+}
+
+fn roder_data_dir() -> PathBuf {
+    std::env::var_os("RODER_DATA_DIR")
+        .or_else(|| std::env::var_os("RODER_CONFIG_DIR"))
+        .map(PathBuf::from)
+        .unwrap_or_else(|| {
+            dirs::home_dir()
+                .unwrap_or_else(|| PathBuf::from("."))
+                .join(".roder")
+        })
 }
 
 fn cache_ttl() -> Duration {

@@ -128,7 +128,7 @@ impl ToolExecutor for ExecCommandTool {
         let command = args.cmd.trim().to_string();
         require_nonempty(&command, "cmd")?;
         let cwd_path = match args.workdir.as_deref() {
-            Some(workdir) if !workdir.trim().is_empty() => workspace.resolve_existing(workdir)?,
+            Some(workdir) => workspace.resolve_existing_workdir(workdir)?,
             _ => workspace.root().to_path_buf(),
         };
         let cwd = workspace.display(&cwd_path);

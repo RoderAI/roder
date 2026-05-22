@@ -128,10 +128,7 @@ fn marketplace_source_cache_dir() -> anyhow::Result<PathBuf> {
     if let Some(path) = std::env::var_os("RODER_MARKETPLACE_SOURCE_CACHE_DIR") {
         return Ok(PathBuf::from(path));
     }
-    let home = std::env::var_os("HOME")
-        .map(PathBuf::from)
-        .ok_or_else(|| anyhow::anyhow!("could not resolve HOME for marketplace source cache"))?;
-    Ok(home.join(".roder").join("marketplaces").join("cache"))
+    Ok(crate::config_dir().join("marketplaces").join("cache"))
 }
 
 fn resolve_github_source(

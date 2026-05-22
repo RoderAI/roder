@@ -145,10 +145,14 @@ impl MediaArtifactStore {
 }
 
 pub fn default_media_artifact_dir() -> anyhow::Result<PathBuf> {
-    let home = std::env::var_os("HOME")
+    let data_dir = std::env::var_os("RODER_DATA_DIR")
+        .or_else(|| std::env::var_os("RODER_CONFIG_DIR"))
         .map(PathBuf::from)
-        .ok_or_else(|| anyhow::anyhow!("could not resolve HOME for media artifacts"))?;
-    Ok(home.join(".roder").join("artifacts"))
+        .or_else(|| std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".roder")))
+        .ok_or_else(|| {
+            anyhow::anyhow!("could not resolve Roder data directory for media artifacts")
+        })?;
+    Ok(data_dir.join("artifacts"))
 }
 
 fn preview_for(artifact: &MediaArtifact) -> MediaPreview {

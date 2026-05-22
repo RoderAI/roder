@@ -425,9 +425,14 @@ fn browser_command(url: &str) -> std::process::Command {
 }
 
 fn roder_data_dir() -> PathBuf {
-    dirs::home_dir()
-        .unwrap_or_else(|| PathBuf::from("."))
-        .join(".roder")
+    std::env::var_os("RODER_DATA_DIR")
+        .or_else(|| std::env::var_os("RODER_CONFIG_DIR"))
+        .map(PathBuf::from)
+        .unwrap_or_else(|| {
+            dirs::home_dir()
+                .unwrap_or_else(|| PathBuf::from("."))
+                .join(".roder")
+        })
 }
 
 fn normalize(tokens: &mut Tokens) {

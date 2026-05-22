@@ -111,7 +111,7 @@ fn resolve_workspace_command_dir(
 }
 
 fn default_user_command_dir() -> Option<PathBuf> {
-    home_dir().map(|home| home.join(".roder").join("commands"))
+    Some(roder_config::config_dir().join("commands"))
 }
 
 fn expand_tilde(path: &Path) -> PathBuf {

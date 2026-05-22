@@ -57,10 +57,7 @@ pub fn marketplace_store_path() -> anyhow::Result<PathBuf> {
     if let Some(path) = std::env::var_os("RODER_MARKETPLACES_PATH") {
         return Ok(PathBuf::from(path));
     }
-    let home = std::env::var_os("HOME")
-        .map(PathBuf::from)
-        .ok_or_else(|| anyhow::anyhow!("could not resolve HOME for marketplace state"))?;
-    Ok(home.join(".roder").join("marketplaces.json"))
+    Ok(crate::config_dir().join("marketplaces.json"))
 }
 
 pub fn load_marketplace_store() -> anyhow::Result<MarketplaceStore> {

@@ -9,6 +9,9 @@ pub mod workflow_import;
 pub use marketplaces::*;
 pub use workflow_import::{WorkflowScanOptions, scan_workflow_imports};
 
+pub const RODER_CONFIG_DIR_ENV: &str = "RODER_CONFIG_DIR";
+pub const RODER_DATA_DIR_ENV: &str = "RODER_DATA_DIR";
+
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]
 pub struct Config {
     pub provider: Option<String>,
@@ -599,6 +602,17 @@ pub fn load_config() -> anyhow::Result<Config> {
     Ok(config)
 }
 
+pub fn config_dir() -> PathBuf {
+    std::env::var_os(RODER_CONFIG_DIR_ENV)
+        .or_else(|| std::env::var_os(RODER_DATA_DIR_ENV))
+        .map(PathBuf::from)
+        .unwrap_or_else(default_config_dir)
+}
+
+pub fn config_file_path() -> PathBuf {
+    config_path()
+}
+
 pub fn save_default_provider_model(provider: &str, model: &str) -> anyhow::Result<()> {
     save_default_provider_model_to_path(config_path(), provider, model)
 }
@@ -802,10 +816,13 @@ fn save_config_file_to_path(path: impl AsRef<Path>, config: &Config) -> anyhow::
 }
 
 fn config_path() -> PathBuf {
-    let mut config_path = dirs::home_dir().unwrap_or_else(|| PathBuf::from("."));
-    config_path.push(".roder");
-    config_path.push("config.toml");
-    config_path
+    config_dir().join("config.toml")
+}
+
+fn default_config_dir() -> PathBuf {
+    dirs::home_dir()
+        .unwrap_or_else(|| PathBuf::from("."))
+        .join(".roder")
 }
 
 fn apply_env_overrides(config: &mut Config) {

@@ -4875,10 +4875,12 @@ fn insert_nested_toml_value(
 }
 
 fn tui_config_path() -> PathBuf {
-    let mut path = dirs::home_dir().unwrap_or_else(|| PathBuf::from("."));
-    path.push(".roder");
-    path.push("config.toml");
-    path
+    std::env::var_os("RODER_CONFIG_DIR")
+        .or_else(|| std::env::var_os("RODER_DATA_DIR"))
+        .map(PathBuf::from)
+        .or_else(|| dirs::home_dir().map(|home| home.join(".roder")))
+        .unwrap_or_else(|| PathBuf::from(".roder"))
+        .join("config.toml")
 }
 
 fn format_working_elapsed(duration: Duration) -> String {

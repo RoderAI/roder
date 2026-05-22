@@ -27,6 +27,79 @@ impl ToolPathScope {
     }
 }
 
+fn strip_matching_quotes(input: &str) -> &str {
+    let mut chars = input.chars();
+    let Some(first) = chars.next() else {
+        return input;
+    };
+    let Some(last) = input.chars().last() else {
+        return input;
+    };
+    if input.len() >= 2 && matches!(first, '\'' | '"' | '`') && first == last {
+        &input[first.len_utf8()..input.len() - last.len_utf8()]
+    } else {
+        input
+    }
+}
+
+fn is_workspace_root_alias(input: &str) -> bool {
+    let compact = input
+        .chars()
+        .filter(|ch| !ch.is_ascii_whitespace())
+        .map(|ch| if ch == '\\' { '/' } else { ch })
+        .collect::<String>();
+    compact.starts_with('.') && compact[1..].chars().all(|ch| ch == '/')
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn workdir_resolution_accepts_common_workspace_root_spellings() {
+        let root = temp_workspace("roder-workdir-root");
+        std::fs::create_dir_all(&root).unwrap();
+        let workspace = Workspace::new(root.clone()).unwrap();
+        let canonical = root.canonicalize().unwrap();
+
+        for value in [
+            "", " ", ".", "./", " . ", " . /", "'.'", "\"./\"", "` . / `",
+        ] {
+            assert_eq!(
+                workspace.resolve_existing_workdir(value).unwrap(),
+                canonical
+            );
+        }
+
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn workdir_resolution_still_accepts_normal_relative_directories() {
+        let root = temp_workspace("roder-workdir-subdir");
+        let subdir = root.join("crates").join("roder-tools");
+        std::fs::create_dir_all(&subdir).unwrap();
+        let workspace = Workspace::new(root.clone()).unwrap();
+
+        assert_eq!(
+            workspace
+                .resolve_existing_workdir("'crates/roder-tools'")
+                .unwrap(),
+            subdir.canonicalize().unwrap()
+        );
+
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    fn temp_workspace(prefix: &str) -> PathBuf {
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        std::env::temp_dir().join(format!("{prefix}-{nanos}"))
+    }
+}
+
 fn expand_home(input: &str) -> anyhow::Result<PathBuf> {
     if input == "~" {
         return home_dir();
@@ -96,6 +169,14 @@ impl Workspace {
             .with_context(|| format!("path does not exist: {input}"))?;
         self.ensure_allowed(&canonical)?;
         Ok(canonical)
+    }
+
+    pub(crate) fn resolve_existing_workdir(&self, input: &str) -> anyhow::Result<PathBuf> {
+        let trimmed = strip_matching_quotes(input.trim()).trim();
+        if trimmed.is_empty() || is_workspace_root_alias(trimmed) {
+            return Ok(self.root.clone());
+        }
+        self.resolve_existing(trimmed)
     }
 
     pub(crate) fn resolve_for_write(&self, input: &str) -> anyhow::Result<PathBuf> {
