@@ -147,6 +147,12 @@ impl AppServer {
                 })
                 .await
             }
+            "settings/set_shell" => {
+                self.decode_and(req.params, |p| async move {
+                    self.handle_settings_set_shell(p).await
+                })
+                .await
+            }
             "search_index/status" => {
                 self.decode_and(req.params, |p| async move {
                     self.handle_search_index_status(p).await
@@ -1264,6 +1270,7 @@ impl AppServer {
             search_index: SearchIndexSettings {
                 enabled: roder_search::search_index_enabled(),
             },
+            shell: shell_settings(&cfg.command_shell),
             default_mode: cfg.policy_mode,
             file_backed_dynamic_context: cfg.file_backed_dynamic_context,
         })
@@ -1307,6 +1314,22 @@ impl AppServer {
             search_index: SearchIndexSettings {
                 enabled: params.enabled,
             },
+        })
+        .unwrap())
+    }
+
+    async fn handle_settings_set_shell(
+        &self,
+        params: SettingsSetShellParams,
+    ) -> Result<serde_json::Value, JsonRpcError> {
+        let shell = roder_api::command_shell::normalize_command_shell(&params.shell)
+            .ok_or_else(|| invalid_params("shell is required"))?;
+        let cfg = self.runtime.set_command_shell(shell).await;
+        if self.persist_user_config {
+            roder_config::save_tools_shell(&cfg.command_shell).map_err(internal_error)?;
+        }
+        Ok(serde_json::to_value(SettingsSetShellResult {
+            shell: shell_settings(&cfg.command_shell),
         })
         .unwrap())
     }
@@ -1807,6 +1830,20 @@ impl AppServer {
         &self,
         params: TurnStartParams,
     ) -> Result<serde_json::Value, JsonRpcError> {
+        let message = desktop_turn_message(&params.input, params.prompt);
+        let images = desktop_turn_images(&params.input);
+        if let Some(turn_id) = self.runtime.active_turn_for_thread(&params.thread_id).await {
+            self.runtime
+                .steer_turn(params.thread_id.clone(), turn_id.clone(), message, images)
+                .await
+                .map_err(internal_error)?;
+            self.desktop_active_turns
+                .write()
+                .await
+                .insert(params.thread_id, turn_id.clone());
+            return Ok(serde_json::to_value(TurnStartResult { turn_id }).unwrap());
+        }
+
         let (provider_override, model_override) = self
             .desktop_thread_model(&params.thread_id)
             .await
@@ -1830,8 +1867,8 @@ impl AppServer {
             .runtime
             .start_turn(StartTurnRequest {
                 thread_id: params.thread_id.clone(),
-                message: desktop_turn_message(&params.input, params.prompt),
-                images: desktop_turn_images(&params.input),
+                message,
+                images,
                 provider_override,
                 model_override,
                 workspace,
@@ -3405,6 +3442,13 @@ fn invalid_params(err: impl std::fmt::Display) -> JsonRpcError {
         code: -32602,
         message: format!("Invalid params: {err}"),
         data: None,
+    }
+}
+
+fn shell_settings(shell: &str) -> ShellSettings {
+    ShellSettings {
+        shell: shell.to_string(),
+        options: roder_api::command_shell::command_shell_options(shell),
     }
 }
 

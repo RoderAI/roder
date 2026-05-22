@@ -8,6 +8,7 @@
  */
 :root {
     --text:               reset;
+    --commentary:         ansi(15);
     --muted:              ansi(244);
     --subtle:             ansi(240);
     --accent:             #00b894;

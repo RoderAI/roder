@@ -57,13 +57,13 @@ impl ToolExecutor for CreateGoalTool {
     fn spec(&self) -> ToolSpec {
         ToolSpec {
             name: "create_goal".to_string(),
-            description: "Create a new active goal when no goal is currently defined.".to_string(),
+            description: "Create or replace the current active goal for this thread.".to_string(),
             parameters: json!({
                 "type": "object",
                 "properties": {
                     "objective": {
                         "type": "string",
-                        "description": "The concrete objective to start pursuing."
+                        "description": "The concrete objective to start pursuing. Replaces any existing goal."
                     },
                     "token_budget": {
                         "type": "integer",
@@ -263,9 +263,6 @@ mod tests {
             objective: String,
             token_budget: Option<i64>,
         ) -> anyhow::Result<ThreadGoal> {
-            if self.goal.lock().await.is_some() {
-                anyhow::bail!("an active goal already exists");
-            }
             let now = OffsetDateTime::now_utc();
             let goal = ThreadGoal {
                 thread_id: thread_id.clone(),
@@ -340,6 +337,43 @@ mod tests {
         assert!(!completed.is_error);
         assert_eq!(completed.data["hasActiveGoal"], false);
         assert_eq!(completed.data["goal"]["status"], "complete");
+    }
+
+    #[tokio::test]
+    async fn create_goal_replaces_existing_goal() {
+        let controller = Arc::new(FakeGoalController::default());
+        let create = CreateGoalTool;
+
+        let original = create
+            .execute(
+                context(controller.clone()),
+                call(
+                    "create_goal",
+                    json!({ "objective": "Original goal", "token_budget": 100 }),
+                ),
+            )
+            .await
+            .unwrap();
+        assert!(!original.is_error);
+
+        let replacement = create
+            .execute(
+                context(controller),
+                call(
+                    "create_goal",
+                    json!({ "objective": "Replacement goal", "token_budget": 200 }),
+                ),
+            )
+            .await
+            .unwrap();
+
+        assert!(!replacement.is_error, "{replacement:?}");
+        assert_eq!(replacement.data["hasActiveGoal"], true);
+        assert_eq!(replacement.data["goal"]["objective"], "Replacement goal");
+        assert_eq!(replacement.data["goal"]["status"], "active");
+        assert_eq!(replacement.data["goal"]["tokenBudget"], 200);
+        assert_eq!(replacement.data["goal"]["tokensUsed"], 0);
+        assert_eq!(replacement.data["goal"]["timeUsedSeconds"], 0);
     }
 
     fn call(name: &str, arguments: Value) -> ToolCall {

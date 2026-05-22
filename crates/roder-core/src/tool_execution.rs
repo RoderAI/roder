@@ -204,6 +204,7 @@ impl Runtime {
             turn_id.clone(),
             mode,
             workspace.or(runtime_config.workspace.as_deref()),
+            Some(&runtime_config.command_shell),
         );
         let decision = DefaultPolicyGate::new()
             .decide_with_contributors(&tool_call, mode, &ctx, &self.registry.policy_contributors)

@@ -17,6 +17,7 @@ use automations::run_automations_cli;
 use evals::run_eval_cli;
 use marketplace::{run_marketplace_cli, run_plugin_cli, run_setup_cli};
 use roder_api::catalog::{DEFAULT_MODEL_ID, PROVIDER_MOCK, normalize_provider_id};
+use roder_api::command_shell::{default_command_shell, normalize_command_shell};
 use roder_api::inference::{HostedWebSearchConfig, RuntimeProfile};
 use roder_api::notifications::NotificationKind;
 use roder_api::policy_mode::PolicyMode;
@@ -1013,6 +1014,7 @@ pub(crate) async fn build_runtime_from_config(
     let notifications = resolve_notifications_config(cfg.notifications.as_ref())?;
     let remote_runner_destination = resolve_remote_runner_destination(cfg.remote_runners.as_ref())?;
     let tool_path_scope = resolve_tool_path_scope(cfg.tools.as_ref())?;
+    let command_shell = resolve_command_shell(cfg.tools.as_ref());
     let search_index_enabled = cfg
         .search_index
         .as_ref()
@@ -1048,6 +1050,7 @@ pub(crate) async fn build_runtime_from_config(
         session_dir: None,
         workspace: workspace.clone(),
         tool_path_scope,
+        command_shell: command_shell.clone(),
         web_search: web_search.external,
         subagents,
         policy_mode,
@@ -1071,6 +1074,7 @@ pub(crate) async fn build_runtime_from_config(
             model_edit_tools,
             model_parallel_tool_calls,
             model_profiles,
+            command_shell,
             workspace: workspace.map(|p| p.display().to_string()),
             policy_mode,
             runtime_profile,
@@ -1106,6 +1110,13 @@ fn resolve_tool_path_scope(
             config.path_scope
         )
     })
+}
+
+fn resolve_command_shell(config: Option<&roder_config::ToolsConfig>) -> String {
+    config
+        .and_then(|tools| tools.shell.as_deref())
+        .and_then(normalize_command_shell)
+        .unwrap_or_else(default_command_shell)
 }
 
 fn resolve_notifications_config(

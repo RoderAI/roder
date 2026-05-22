@@ -36,7 +36,7 @@ async def test_status_line_shows_ready(
     await _wait_ready(tui)
     status = tui.screen.row(tui.screen.rows - 1)
     assert "ready" in status, f"expected 'ready' in status line, got: {status!r}"
-    assert "mode:" in status, "status line should show the current mode"
+    assert "mode:" not in status, "status line should not duplicate the composer mode"
 
 
 async def test_top_status_shows_app_name(

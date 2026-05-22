@@ -76,10 +76,10 @@ use roder_protocol::{
     SessionSetModeParams, SessionSetModeResult, SettingsGetResult, SettingsSetDefaultModeParams,
     SettingsSetDefaultModeResult, SettingsSetFileBackedDynamicContextParams,
     SettingsSetFileBackedDynamicContextResult, SettingsSetSearchIndexParams,
-    SettingsSetSearchIndexResult, SettingsSetWebSearchParams, SettingsSetWebSearchResult,
-    TasksGetParams, TasksGetResult, TasksListResult, TeamReadParams, TeamReadResult, ThreadGoal,
-    ThreadStartParams, ThreadStartResult, TurnInputItem, TurnInterruptParams, TurnStartParams,
-    TurnSteerParams,
+    SettingsSetSearchIndexResult, SettingsSetShellParams, SettingsSetShellResult,
+    SettingsSetWebSearchParams, SettingsSetWebSearchResult, ShellSettings, TasksGetParams,
+    TasksGetResult, TasksListResult, TeamReadParams, TeamReadResult, ThreadGoal, ThreadStartParams,
+    ThreadStartResult, TurnInputItem, TurnInterruptParams, TurnStartParams, TurnSteerParams,
 };
 use tokio::io::AsyncWriteExt;
 use tokio::process::Command;
@@ -171,6 +171,7 @@ fn pending_turn_input(text: String, images: Vec<InputImage>) -> Vec<TurnInputIte
 struct Theme {
     text: Color,
     text_strong: Color,
+    commentary: Color,
     muted: Color,
     subtle: Color,
     accent: Color,
@@ -225,6 +226,7 @@ impl Theme {
             return Self {
                 text: Color::Reset,
                 text_strong: Color::Reset,
+                commentary: Color::Indexed(15),
                 muted: Color::Indexed(244),
                 subtle: Color::Indexed(245),
                 accent: Color::Indexed(212),
@@ -259,6 +261,7 @@ impl Theme {
         Self {
             text: Color::Reset,
             text_strong: Color::Reset,
+            commentary: Color::Indexed(16),
             muted: Color::Indexed(240),
             subtle: Color::Indexed(240),
             accent: Color::Indexed(198),
@@ -304,6 +307,7 @@ impl Theme {
         }
         set!(text, "text");
         set!(text_strong, "text");
+        set!(commentary, "commentary");
         set!(muted, "muted");
         set!(subtle, "subtle");
         set!(accent, "accent");
@@ -402,6 +406,10 @@ impl Theme {
         Style::default()
             .fg(self.text_strong)
             .add_modifier(Modifier::BOLD)
+    }
+
+    fn commentary(self) -> Style {
+        Style::default().fg(self.commentary)
     }
 
     fn muted(self) -> Style {
@@ -625,6 +633,7 @@ enum ProviderPopupScreen {
     Runners,
     Spinner,
     WebSearch,
+    Shell,
     Resume,
     Themes,
     Marketplaces,
@@ -783,6 +792,7 @@ enum ProviderMenuItem {
     RunnerSettings,
     SpinnerSettings,
     WebSearchSettings,
+    ShellSettings(String),
     SearchIndexToggle(bool),
     FileBackedDynamicContextToggle(bool),
     MessageFoldingToggle(bool),
@@ -793,6 +803,7 @@ enum ProviderMenuItem {
     DefaultMode(PolicyMode),
     Spinner(WorkingSpinner),
     WebSearchMode(HostedWebSearchMode),
+    ShellChoice(String),
     Provider(ProviderChoice),
     Model(ProviderOption),
     Reasoning(ReasoningOptionChoice),
@@ -852,6 +863,7 @@ impl ProviderMenuItem {
             Self::RunnerSettings => "Runners".to_string(),
             Self::SpinnerSettings => "Working spinner".to_string(),
             Self::WebSearchSettings => "Web search provider".to_string(),
+            Self::ShellSettings(shell) => format!("Shell command shell: {shell}"),
             Self::SearchIndexToggle(enabled) => format!(
                 "Instant regex search: {}",
                 if *enabled { "on" } else { "off" }
@@ -873,6 +885,7 @@ impl ProviderMenuItem {
             }
             Self::Spinner(spinner) => spinner.label().to_string(),
             Self::WebSearchMode(mode) => web_search_mode_label(*mode).to_string(),
+            Self::ShellChoice(shell) => shell.clone(),
             Self::Provider(provider) => provider.label(),
             Self::Model(option) => option.label.clone(),
             Self::Reasoning(option) => format!("{} - {}", option.effort, option.description),
@@ -987,6 +1000,8 @@ where
     timeline_settings: TimelineSettings,
     web_search_mode: HostedWebSearchMode,
     search_index_enabled: bool,
+    command_shell: String,
+    command_shell_options: Vec<String>,
     file_backed_dynamic_context: bool,
     confirm_dialog: Option<ConfirmDialogState>,
     tool_detail_modal: Option<ToolDetailModal>,
@@ -1267,6 +1282,10 @@ where
         };
         let policy_state = session_get(&client).await.ok();
         let settings_state = settings_get(&client).await.ok();
+        let shell_settings = settings_state
+            .as_ref()
+            .map(|settings| settings.shell.clone())
+            .unwrap_or_else(default_shell_settings);
         let tui_config = load_tui_config().unwrap_or_default();
         let selected_model = if requested_model.is_empty() {
             session_model
@@ -1341,6 +1360,8 @@ where
                 .as_ref()
                 .map(|settings| settings.search_index.enabled)
                 .unwrap_or(true),
+            command_shell: shell_settings.shell,
+            command_shell_options: shell_settings.options,
             file_backed_dynamic_context: settings_state
                 .map(|settings| settings.file_backed_dynamic_context)
                 .unwrap_or(true),
@@ -1800,16 +1821,13 @@ where
                     RoderEvent::ToolCallCompleted(ev) => {
                         self.record_tool_completed(&ev.tool_id, ev.is_error, ev.output);
                     }
-                    RoderEvent::ThreadGoalUpdated(ev) => {
-                        if ev.thread_id == self.thread_id {
-                            self.current_goal = Some(ev.goal);
-                        }
+                    RoderEvent::ThreadGoalUpdated(ev) if ev.thread_id == self.thread_id => {
+                        self.current_goal = Some(ev.goal);
                     }
-                    RoderEvent::ThreadGoalCleared(ev) => {
-                        if ev.thread_id == self.thread_id {
-                            self.current_goal = None;
-                        }
+                    RoderEvent::ThreadGoalCleared(ev) if ev.thread_id == self.thread_id => {
+                        self.current_goal = None;
                     }
+                    RoderEvent::ThreadGoalUpdated(_) | RoderEvent::ThreadGoalCleared(_) => {}
                     RoderEvent::SubagentTraceCreated(ev) => {
                         self.timeline.record_subagent_trace_created(ev.summary);
                     }
@@ -3309,8 +3327,7 @@ where
         Paragraph::new(line_with_gap(
             vec![Span::styled(
                 format!(
-                    " {status}  mode:{}{queue_hint}{pending_hint}{shell_hint}{roadmap_hint}{goal_hint}  {interaction_hint}",
-                    policy_mode_label(self.policy_mode),
+                    " {status}{queue_hint}{pending_hint}{shell_hint}{roadmap_hint}{goal_hint}  {interaction_hint}",
                     queue_hint = if self.queued_prompts.is_empty() {
                         String::new()
                     } else {
@@ -3356,6 +3373,9 @@ where
                         ProviderMenuItem::WebSearchMode(mode) if *mode == self.web_search_mode => {
                             "✓ "
                         }
+                        ProviderMenuItem::ShellChoice(shell) if shell == &self.command_shell => {
+                            "✓ "
+                        }
                         ProviderMenuItem::FileBackedDynamicContextToggle(true) => "✓ ",
                         ProviderMenuItem::MessageFoldingToggle(true) => "✓ ",
                         ProviderMenuItem::Session(session) if session.id == self.thread_id => "✓ ",
@@ -3370,6 +3390,7 @@ where
                         | ProviderMenuItem::RunnerSettings
                         | ProviderMenuItem::SpinnerSettings
                         | ProviderMenuItem::WebSearchSettings
+                        | ProviderMenuItem::ShellSettings(_)
                         | ProviderMenuItem::ThemesSettings
                         | ProviderMenuItem::MarketplacesSettings
                         | ProviderMenuItem::PluginBrowser
@@ -3400,6 +3421,7 @@ where
             ProviderPopupScreen::Runners => " Runners (Enter select, Esc back) ",
             ProviderPopupScreen::Spinner => " Working spinner (Enter select, Esc back) ",
             ProviderPopupScreen::WebSearch => " Web search provider (Enter select, Esc back) ",
+            ProviderPopupScreen::Shell => " Shell command shell (Enter select, Esc back) ",
             ProviderPopupScreen::Resume => " Resume session (Enter select, Esc back) ",
             ProviderPopupScreen::Themes => " Themes (Enter select, Esc back) ",
             ProviderPopupScreen::Marketplaces => " Plugin marketplaces (Enter select, Esc back) ",
@@ -3617,6 +3639,7 @@ where
                 self.provider_menu_items = settings_menu_items(
                     self.timeline_settings,
                     self.search_index_enabled,
+                    &self.command_shell,
                     self.file_backed_dynamic_context,
                 );
                 self.timeline.push_system(format!(
@@ -3638,6 +3661,38 @@ where
             }
             Err(err) => {
                 self.record_error(format!("failed to set instant regex search: {err}"));
+            }
+        }
+    }
+
+    async fn set_command_shell(&mut self, shell: String) {
+        let res = self
+            .client
+            .send_request(JsonRpcRequest {
+                jsonrpc: "2.0".to_string(),
+                id: Some(serde_json::json!("settings/set_shell")),
+                method: "settings/set_shell".to_string(),
+                params: Some(serde_json::to_value(SettingsSetShellParams { shell }).unwrap()),
+            })
+            .await;
+
+        match decode_response::<SettingsSetShellResult>(res) {
+            Ok(result) => {
+                self.command_shell = result.shell.shell;
+                self.command_shell_options = result.shell.options;
+                self.timeline.push_system(format!(
+                    "shell command shell set to {}.",
+                    self.command_shell
+                ));
+                self.push_event(format!(
+                    "shell command shell selected: {}",
+                    self.command_shell
+                ));
+                self.show_provider_popup = false;
+            }
+            Err(err) => {
+                self.record_error(format!("failed to set shell command shell: {err}"));
+                self.show_provider_popup = false;
             }
         }
     }
@@ -3749,6 +3804,10 @@ where
             self.provider_state.select(Some(0));
             return;
         }
+        if self.provider_popup_screen == ProviderPopupScreen::Shell {
+            self.open_settings_submenu();
+            return;
+        }
         if self.provider_popup_screen == ProviderPopupScreen::Resume {
             self.provider_popup_screen = ProviderPopupScreen::Main;
             self.provider_menu_items = main_provider_menu_items(&self.provider_choices);
@@ -3854,6 +3913,9 @@ where
             ProviderMenuItem::WebSearchSettings => {
                 self.open_web_search_submenu();
             }
+            ProviderMenuItem::ShellSettings(_) => {
+                self.open_shell_submenu();
+            }
             ProviderMenuItem::ThemesSettings => {
                 self.open_themes_submenu();
             }
@@ -3886,6 +3948,9 @@ where
             }
             ProviderMenuItem::WebSearchMode(mode) => {
                 self.set_web_search_mode(mode).await;
+            }
+            ProviderMenuItem::ShellChoice(shell) => {
+                self.set_command_shell(shell).await;
             }
             ProviderMenuItem::SearchIndexToggle(enabled) => {
                 self.set_search_index_enabled(!enabled).await;
@@ -3973,6 +4038,7 @@ where
         self.provider_menu_items = settings_menu_items(
             self.timeline_settings,
             self.search_index_enabled,
+            &self.command_shell,
             self.file_backed_dynamic_context,
         );
         let selected = self
@@ -4032,6 +4098,24 @@ where
             .provider_menu_items
             .iter()
             .position(|item| matches!(item, ProviderMenuItem::WebSearchMode(mode) if *mode == self.web_search_mode))
+            .unwrap_or(0);
+        self.provider_state.select(Some(selected));
+    }
+
+    fn open_shell_submenu(&mut self) {
+        self.provider_popup_screen = ProviderPopupScreen::Shell;
+        self.provider_menu_filter.clear();
+        self.provider_menu_items = self
+            .command_shell_options
+            .iter()
+            .cloned()
+            .map(ProviderMenuItem::ShellChoice)
+            .chain(std::iter::once(ProviderMenuItem::Back))
+            .collect();
+        let selected = self
+            .provider_menu_items
+            .iter()
+            .position(|item| matches!(item, ProviderMenuItem::ShellChoice(shell) if shell == &self.command_shell))
             .unwrap_or(0);
         self.provider_state.select(Some(selected));
     }
@@ -4238,6 +4322,7 @@ where
         self.provider_menu_items = settings_menu_items(
             self.timeline_settings,
             self.search_index_enabled,
+            &self.command_shell,
             self.file_backed_dynamic_context,
         );
         if let Some(selected) = self.provider_state.selected() {
@@ -5663,6 +5748,7 @@ fn providers_menu_items(providers: &[ProviderChoice]) -> Vec<ProviderMenuItem> {
 fn settings_menu_items(
     timeline_settings: TimelineSettings,
     search_index_enabled: bool,
+    command_shell: &str,
     file_backed_dynamic_context: bool,
 ) -> Vec<ProviderMenuItem> {
     [
@@ -5675,6 +5761,7 @@ fn settings_menu_items(
     .map(ProviderMenuItem::DefaultMode)
     .chain([
         ProviderMenuItem::SearchIndexToggle(search_index_enabled),
+        ProviderMenuItem::ShellSettings(command_shell.to_string()),
         ProviderMenuItem::FileBackedDynamicContextToggle(file_backed_dynamic_context),
         ProviderMenuItem::MessageFoldingToggle(timeline_settings.message_folding),
         ProviderMenuItem::Back,
@@ -5916,6 +6003,14 @@ where
         })
         .await;
     decode_response(res)
+}
+
+fn default_shell_settings() -> ShellSettings {
+    let shell = roder_api::command_shell::default_command_shell();
+    ShellSettings {
+        options: roder_api::command_shell::command_shell_options(&shell),
+        shell,
+    }
 }
 
 fn next_policy_mode(mode: PolicyMode) -> PolicyMode {
@@ -6305,6 +6400,8 @@ mod tests {
             timeline_settings: TimelineSettings::default(),
             web_search_mode: HostedWebSearchMode::Cached,
             search_index_enabled: true,
+            command_shell: "bash".to_string(),
+            command_shell_options: vec!["zsh".to_string(), "bash".to_string()],
             file_backed_dynamic_context: true,
             confirm_dialog: None,
             tool_detail_modal: None,
@@ -6446,6 +6543,22 @@ mod tests {
     }
 
     #[test]
+    fn footer_omits_policy_mode_label() {
+        let mut app = test_app();
+        app.policy_mode = PolicyMode::Bypass;
+
+        let mut buffer = Buffer::empty(Rect::new(0, 0, 100, 1));
+        app.footer(100).render(buffer.area, &mut buffer);
+        let footer = buffer_row_cells(&buffer, 0)
+            .iter()
+            .map(|cell| cell.symbol.as_str())
+            .collect::<String>();
+
+        assert!(footer.contains("ready"));
+        assert!(!footer.contains("mode:"));
+    }
+
+    #[test]
     fn roadmap_slash_command_enters_mode_with_plan() {
         let mut app = test_app();
 
@@ -6542,6 +6655,18 @@ mod tests {
         }
     }
 
+    #[test]
+    fn commentary_theme_role_uses_white_on_dark_backgrounds() {
+        assert_eq!(
+            Theme::for_dark_background(true).commentary,
+            Color::Indexed(15)
+        );
+        assert_eq!(
+            Theme::for_dark_background(false).commentary,
+            Color::Indexed(16)
+        );
+    }
+
     fn test_members() -> Vec<TeamMemberDescriptor> {
         vec![
             test_member("lead", TeamMemberRole::Lead, "Lead", "thread-lead"),
@@ -6581,6 +6706,7 @@ mod tests {
             let colors = [
                 theme.text,
                 theme.text_strong,
+                theme.commentary,
                 theme.muted,
                 theme.subtle,
                 theme.accent,
@@ -7717,6 +7843,10 @@ mod tests {
             "Instant regex search: on"
         );
         assert_eq!(
+            ProviderMenuItem::ShellSettings("bash".to_string()).label(),
+            "Shell command shell: bash"
+        );
+        assert_eq!(
             ProviderMenuItem::FileBackedDynamicContextToggle(true).label(),
             "File-backed dynamic context: on"
         );
@@ -7725,7 +7855,7 @@ mod tests {
 
     #[test]
     fn settings_menu_includes_toggles_before_back() {
-        let items = settings_menu_items(TimelineSettings::default(), true, true);
+        let items = settings_menu_items(TimelineSettings::default(), true, "bash", true);
 
         assert!(matches!(
             items.get(4),
@@ -7733,13 +7863,17 @@ mod tests {
         ));
         assert!(matches!(
             items.get(5),
-            Some(ProviderMenuItem::FileBackedDynamicContextToggle(true))
+            Some(ProviderMenuItem::ShellSettings(shell)) if shell == "bash"
         ));
         assert!(matches!(
             items.get(6),
+            Some(ProviderMenuItem::FileBackedDynamicContextToggle(true))
+        ));
+        assert!(matches!(
+            items.get(7),
             Some(ProviderMenuItem::MessageFoldingToggle(false))
         ));
-        assert!(matches!(items.get(7), Some(ProviderMenuItem::Back)));
+        assert!(matches!(items.get(8), Some(ProviderMenuItem::Back)));
     }
 
     #[test]

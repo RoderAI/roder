@@ -41,6 +41,8 @@ impl TimelineItem {
                 } else {
                     &message.text
                 };
+                let body_style = assistant_body_style(message.phase.as_deref(), theme);
+                let fade_palette = assistant_fade_palette(message.phase.as_deref());
                 let folded = fold_message_body(body, expanded || !message_folding);
                 if rendered.is_animating() {
                     let animated = message.animator.rendered_text();
@@ -54,9 +56,9 @@ impl TimelineItem {
                         "",
                         animated_markdown_lines(
                             &animated,
-                            item_style(theme.text(), selected, theme),
+                            item_style(body_style, selected, theme),
                             theme,
-                            StreamFadePalette::Accent,
+                            fade_palette,
                             markdown_lines,
                         ),
                         theme.subtle(),
@@ -67,7 +69,7 @@ impl TimelineItem {
                         "",
                         &folded.body,
                         theme.subtle(),
-                        item_style(theme.text(), selected, theme),
+                        item_style(body_style, selected, theme),
                         theme,
                     );
                 }
@@ -353,6 +355,26 @@ fn running_tool_marker_style(animation_frame: u64) -> Style {
     Style::default()
         .fg(ratatui::style::Color::Indexed(color))
         .add_modifier(Modifier::BOLD)
+}
+
+fn assistant_body_style(phase: Option<&str>, theme: Theme) -> Style {
+    if is_commentary_phase(phase) {
+        theme.commentary()
+    } else {
+        theme.text()
+    }
+}
+
+fn assistant_fade_palette(phase: Option<&str>) -> StreamFadePalette {
+    if is_commentary_phase(phase) {
+        StreamFadePalette::Commentary
+    } else {
+        StreamFadePalette::Accent
+    }
+}
+
+fn is_commentary_phase(phase: Option<&str>) -> bool {
+    matches!(phase, Some("commentary"))
 }
 
 fn push_user_block_lines(

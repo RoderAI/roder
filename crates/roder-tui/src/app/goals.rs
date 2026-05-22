@@ -91,7 +91,7 @@ where
                     if let Some(goal) = &self.current_goal {
                         self.composer = composer_textarea(self.theme);
                         self.composer
-                            .insert_str(&format!("/goal edit {}", goal.objective));
+                            .insert_str(format!("/goal edit {}", goal.objective));
                         self.timeline.push_system("Editing goal objective.");
                     } else {
                         self.timeline.push_system("No goal to edit.");

@@ -13,6 +13,11 @@ name = "e2e"
 path = "tests/e2e.rs"
 required-features = ["e2e-tests"]
 
+[[test]]
+name = "turn_start_steering"
+path = "tests/turn_start_steering.rs"
+required-features = ["e2e-tests"]
+
 [dependencies]
 anyhow.workspace = true
 async-trait.workspace = true

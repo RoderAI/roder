@@ -8,18 +8,27 @@ use serde::Deserialize;
 use serde_json::json;
 use tokio::process::Command;
 
+use crate::command_shell::shell_for_context;
 use crate::files::{parse, require_nonempty, result};
 use crate::workspace::Workspace;
 
 const DEFAULT_TIMEOUT_SECONDS: u64 = 120;
 
-pub(crate) fn register(registry: &mut ToolRegistry, workspace: Workspace) -> anyhow::Result<()> {
-    registry.register(Arc::new(ShellTool { workspace }))
+pub(crate) fn register(
+    registry: &mut ToolRegistry,
+    workspace: Workspace,
+    command_shell: String,
+) -> anyhow::Result<()> {
+    registry.register(Arc::new(ShellTool {
+        workspace,
+        command_shell,
+    }))
 }
 
 #[derive(Debug)]
 struct ShellTool {
     workspace: Workspace,
+    command_shell: String,
 }
 
 #[async_trait::async_trait]
@@ -72,11 +81,11 @@ impl ToolExecutor for ShellTool {
             .timeout_seconds
             .unwrap_or(DEFAULT_TIMEOUT_SECONDS)
             .clamp(1, 600);
-        let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".to_string());
+        let shell = shell_for_context(&ctx, &self.command_shell);
         let started = Instant::now();
         let output = tokio::time::timeout(
             std::time::Duration::from_secs(timeout),
-            Command::new(shell)
+            Command::new(&shell)
                 .arg("-lc")
                 .arg(&command)
                 .current_dir(&cwd)
@@ -114,6 +123,7 @@ impl ToolExecutor for ShellTool {
             json!({
                 "command": command,
                 "cwd": self.workspace.display(&cwd),
+                "shell": shell,
                 "aggregated_output": aggregated_output,
                 "exit_code": exit_code,
                 "duration_ms": duration_ms,
@@ -176,6 +186,7 @@ mod tests {
         std::fs::create_dir_all(&root).unwrap();
         let tool = ShellTool {
             workspace: Workspace::new(root.clone()).unwrap(),
+            command_shell: roder_api::command_shell::default_command_shell(),
         };
 
         let result = tool
@@ -199,6 +210,7 @@ mod tests {
         std::fs::create_dir_all(&root).unwrap();
         let tool = ShellTool {
             workspace: Workspace::new(root.clone()).unwrap(),
+            command_shell: roder_api::command_shell::default_command_shell(),
         };
 
         let result = tool
@@ -224,6 +236,7 @@ mod tests {
         std::fs::create_dir_all(&root).unwrap();
         let tool = ShellTool {
             workspace: Workspace::new(root.clone()).unwrap(),
+            command_shell: roder_api::command_shell::default_command_shell(),
         };
 
         for workdir in [".", "./", " . /", "'.'", "` . / `"] {
@@ -237,6 +250,46 @@ mod tests {
             assert!(!result.is_error, "workdir {workdir:?}: {}", result.text);
             assert_eq!(result.data["status"], "completed");
         }
+
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn shell_tool_uses_context_command_shell() {
+        let root = temp_workspace("roder-shell-context-shell");
+        std::fs::create_dir_all(&root).unwrap();
+        let shell = root.join("record-shell.sh");
+        std::fs::write(
+            &shell,
+            "#!/bin/sh\nprintf '%s\\n' \"$0\" > used-shell.txt\nexec /bin/sh \"$@\"\n",
+        )
+        .unwrap();
+        use std::os::unix::fs::PermissionsExt;
+        let mut permissions = std::fs::metadata(&shell).unwrap().permissions();
+        permissions.set_mode(0o755);
+        std::fs::set_permissions(&shell, permissions).unwrap();
+        let tool = ShellTool {
+            workspace: Workspace::new(root.clone()).unwrap(),
+            command_shell: "bash".to_string(),
+        };
+
+        let result = tool
+            .execute(
+                context(&root).with_command_shell(shell.display().to_string()),
+                call(json!({ "command": "printf ok" })),
+            )
+            .await
+            .unwrap();
+
+        assert!(!result.is_error);
+        assert_eq!(result.data["shell"], shell.display().to_string());
+        assert_eq!(
+            std::fs::read_to_string(root.join("used-shell.txt"))
+                .unwrap()
+                .trim(),
+            shell.display().to_string()
+        );
 
         let _ = std::fs::remove_dir_all(root);
     }

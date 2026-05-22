@@ -34,5 +34,8 @@ Models can inspect and update the same thread goal state through:
 - `create_goal`
 - `update_goal`
 
+`create_goal` creates or replaces the current thread goal and starts the new
+goal as active.
+
 `update_goal` accepts only `complete` or `blocked`. User-controlled operations
 such as pause, resume, budget changes, and clear stay on the app-server/TUI path.

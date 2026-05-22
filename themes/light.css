@@ -28,6 +28,7 @@
     --del-bg:       #ffd7d7;
 
     --text:               var(--ink);
+    --commentary:         var(--ink);
     --muted:              var(--soft-ink);
     --subtle:             #6b6b6b;
     --accent:             var(--indigo);

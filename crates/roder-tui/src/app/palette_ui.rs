@@ -120,7 +120,11 @@ where
         if self.palette_source_enabled("settings")
             && let Some(settings) = settings.as_ref()
         {
-            sources.push(settings_source(&settings.web_search, &settings.search_index));
+            sources.push(settings_source(
+                &settings.web_search,
+                &settings.search_index,
+                &settings.shell,
+            ));
         }
         if self.palette_source_enabled("runners")
             && let Some(runners) = runners.as_ref()
@@ -308,6 +312,9 @@ where
             }
             PaletteAction::SetSearchIndexEnabled(enabled) => {
                 self.set_search_index_enabled(enabled).await;
+            }
+            PaletteAction::SetShell(shell) => {
+                self.set_command_shell(shell).await;
             }
             PaletteAction::SetSkillEnabled { selector, enabled } => {
                 self.set_skill_enabled(selector, enabled).await;

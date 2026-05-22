@@ -30,3 +30,11 @@ Key bindings can be overridden in the user config under `[tui.keymap]`.
 ```
 
 Action ids are defined by `roder_tui::keymap::Action`.
+
+Command execution shell can be configured under `[tools]`; it is also exposed
+from the Ctrl+P settings menu.
+
+```toml
+[tools]
+shell = "zsh"
+```

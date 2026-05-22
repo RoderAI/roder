@@ -65,6 +65,7 @@ pub struct DefaultRegistryConfig {
     pub session_dir: Option<PathBuf>,
     pub workspace: Option<PathBuf>,
     pub tool_path_scope: roder_tools::ToolPathScope,
+    pub command_shell: String,
     pub web_search: Option<DefaultWebSearchConfig>,
     pub subagents: Option<DefaultSubagentsConfig>,
     pub policy_mode: PolicyMode,
@@ -92,6 +93,7 @@ impl Default for DefaultRegistryConfig {
             session_dir: None,
             workspace: None,
             tool_path_scope: roder_tools::ToolPathScope::default(),
+            command_shell: roder_api::command_shell::default_command_shell(),
             web_search: None,
             subagents: None,
             policy_mode: PolicyMode::Default,
@@ -207,6 +209,7 @@ pub fn build_default_registry(config: DefaultRegistryConfig) -> anyhow::Result<E
     builder.install(BuiltinCodingToolsExtension {
         workspace: workspace.clone(),
         path_scope: config.tool_path_scope,
+        command_shell: config.command_shell,
     })?;
     context::install_context_planner(&mut builder, &workspace);
 
@@ -265,6 +268,7 @@ struct EchoToolsExtension;
 struct BuiltinCodingToolsExtension {
     workspace: PathBuf,
     path_scope: roder_tools::ToolPathScope,
+    command_shell: String,
 }
 
 struct DefaultTuiExtension;
@@ -309,9 +313,10 @@ impl RoderExtension for BuiltinCodingToolsExtension {
 
     fn install(&self, registry: &mut ExtensionRegistryBuilder) -> anyhow::Result<()> {
         registry.tool_contributor(
-            roder_tools::builtin_coding_tools_contributor_with_path_scope(
+            roder_tools::builtin_coding_tools_contributor_with_path_scope_and_shell(
                 self.workspace.clone(),
                 self.path_scope,
+                self.command_shell.clone(),
             )?,
         );
         Ok(())
@@ -645,6 +650,7 @@ mod tests {
             session_dir: None,
             workspace: None,
             tool_path_scope: roder_tools::ToolPathScope::default(),
+            command_shell: "bash".to_string(),
             web_search: None,
             subagents: None,
             policy_mode: PolicyMode::Default,

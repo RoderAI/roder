@@ -200,9 +200,6 @@ impl ThreadGoalController for RuntimeGoalController {
         let objective = objective.trim().to_string();
         validate_thread_goal_objective(&objective)?;
         validate_thread_goal_budget(token_budget)?;
-        if self.get_thread_goal(thread_id).await?.is_some() {
-            anyhow::bail!("an active goal already exists");
-        }
         let now = OffsetDateTime::now_utc();
         let goal = ThreadGoal {
             thread_id: thread_id.clone(),
@@ -397,6 +394,42 @@ mod tests {
                 .unwrap()
                 .is_none()
         );
+    }
+
+    #[tokio::test]
+    async fn goal_controller_create_replaces_existing_thread_goal() {
+        let runtime = runtime();
+        let thread_id = "thread-goal-replace".to_string();
+        runtime
+            .goals
+            .create_thread_goal(&thread_id, "Original goal".to_string(), Some(100))
+            .await
+            .unwrap();
+        runtime
+            .goals
+            .account_turn_usage(&thread_id, 42, Duration::seconds(7))
+            .await
+            .unwrap();
+
+        let replacement = runtime
+            .goals
+            .create_thread_goal(&thread_id, "Replacement goal".to_string(), Some(200))
+            .await
+            .unwrap();
+
+        assert_eq!(replacement.objective, "Replacement goal");
+        assert_eq!(replacement.status, ThreadGoalStatus::Active);
+        assert_eq!(replacement.token_budget, Some(200));
+        assert_eq!(replacement.tokens_used, 0);
+        assert_eq!(replacement.time_used_seconds, 0);
+
+        let stored = runtime
+            .goals
+            .get_thread_goal(&thread_id)
+            .await
+            .unwrap()
+            .expect("replacement goal should be stored");
+        assert_eq!(stored, replacement);
     }
 
     #[tokio::test]

@@ -285,12 +285,14 @@ impl Default for CommandsConfig {
 pub struct ToolsConfig {
     #[serde(default = "default_tool_path_scope")]
     pub path_scope: String,
+    pub shell: Option<String>,
 }
 
 impl Default for ToolsConfig {
     fn default() -> Self {
         Self {
             path_scope: default_tool_path_scope(),
+            shell: None,
         }
     }
 }
@@ -634,6 +636,10 @@ pub fn save_search_index_enabled(enabled: bool) -> anyhow::Result<()> {
     save_search_index_enabled_to_path(config_path(), enabled)
 }
 
+pub fn save_tools_shell(shell: &str) -> anyhow::Result<()> {
+    save_tools_shell_to_path(config_path(), shell)
+}
+
 pub fn save_file_backed_dynamic_context(enabled: bool) -> anyhow::Result<()> {
     save_file_backed_dynamic_context_to_path(config_path(), enabled)
 }
@@ -695,6 +701,17 @@ pub fn save_search_index_enabled_to_path(
         .search_index
         .get_or_insert_with(Default::default)
         .enabled = enabled;
+    save_config_file_to_path(path, &config)
+}
+
+pub fn save_tools_shell_to_path(path: impl AsRef<Path>, shell: &str) -> anyhow::Result<()> {
+    let shell = shell.trim();
+    if shell.is_empty() {
+        anyhow::bail!("tools.shell cannot be empty");
+    }
+    let path = path.as_ref();
+    let mut config = load_config_file_from_path(path)?;
+    config.tools.get_or_insert_with(Default::default).shell = Some(shell.to_string());
     save_config_file_to_path(path, &config)
 }
 
@@ -1044,6 +1061,11 @@ fn apply_env_overrides_with(config: &mut Config, mut env: impl FnMut(&str) -> Op
         && !scope.trim().is_empty()
     {
         config.tools.get_or_insert_with(Default::default).path_scope = scope;
+    }
+    if let Some(shell) = env("RODER_TOOLS_SHELL")
+        && !shell.trim().is_empty()
+    {
+        config.tools.get_or_insert_with(Default::default).shell = Some(shell);
     }
     if let Some(disabled) = env("RODER_SEARCH_INDEX_DISABLED")
         && parse_bool(&disabled).unwrap_or(false)
@@ -1571,6 +1593,41 @@ mod tests {
     }
 
     #[test]
+    fn deserializes_tools_shell_and_env_override() {
+        let config: Config = toml::from_str(
+            r#"
+            [tools]
+            path_scope = "workspace"
+            shell = "zsh"
+            "#,
+        )
+        .unwrap();
+
+        let tools = config.tools.unwrap();
+        assert_eq!(tools.path_scope, "workspace");
+        assert_eq!(tools.shell.as_deref(), Some("zsh"));
+
+        let mut config = Config::default();
+        apply_env_overrides_with(&mut config, |key| match key {
+            "RODER_TOOLS_SHELL" => Some("/bin/bash".to_string()),
+            _ => None,
+        });
+
+        assert_eq!(config.tools.unwrap().shell.as_deref(), Some("/bin/bash"));
+    }
+
+    #[test]
+    fn save_tools_shell_persists_tools_section() {
+        let path = temp_config_path("tools-shell");
+        save_tools_shell_to_path(&path, "bash").unwrap();
+
+        let saved = load_config_file_from_path(&path).unwrap();
+        assert_eq!(saved.tools.unwrap().shell.as_deref(), Some("bash"));
+
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
     fn deserializes_search_index_config_and_env_overrides() {
         let config: Config = toml::from_str(
             r#"
@@ -2092,5 +2149,13 @@ mod tests {
         let root = std::env::temp_dir().join(format!("roder-config-{name}-{suffix}"));
         std::fs::create_dir_all(&root).unwrap();
         root
+    }
+
+    fn temp_config_path(name: &str) -> PathBuf {
+        let suffix = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        std::env::temp_dir().join(format!("roder-config-{name}-{suffix}.toml"))
     }
 }

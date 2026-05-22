@@ -92,14 +92,15 @@ use roder_protocol::{
     SessionSetModeResult, SettingsGetResult, SettingsSetDefaultModeParams,
     SettingsSetDefaultModeResult, SettingsSetFileBackedDynamicContextParams,
     SettingsSetFileBackedDynamicContextResult, SettingsSetSearchIndexParams,
-    SettingsSetSearchIndexResult, SettingsSetWebSearchParams, SettingsSetWebSearchResult,
-    SkillsListResult, SkillsSetEnabledParams, SkillsSetExposureParams, SkillsUpdateResult,
-    SubagentTraceReadParams, SubagentTraceReadResult, SubagentTracesListParams,
-    SubagentTracesListResult, TasksGetParams, TasksGetResult, TasksListResult, TasksSubmitParams,
-    TasksSubmitResult, TeamCleanupParams, TeamCleanupResult, TeamListParams, TeamListResult,
-    TeamMemberInterruptParams, TeamMemberInterruptResult, TeamMemberMessageParams,
-    TeamMemberMessageResult, TeamMemberStartParams, TeamMemberStartResult, TeamReadParams,
-    TeamReadResult, TeamStartMemberParams, TeamStartParams, TeamStartResult, ThreadArchiveParams,
+    SettingsSetSearchIndexResult, SettingsSetShellParams, SettingsSetShellResult,
+    SettingsSetWebSearchParams, SettingsSetWebSearchResult, SkillsListResult,
+    SkillsSetEnabledParams, SkillsSetExposureParams, SkillsUpdateResult, SubagentTraceReadParams,
+    SubagentTraceReadResult, SubagentTracesListParams, SubagentTracesListResult, TasksGetParams,
+    TasksGetResult, TasksListResult, TasksSubmitParams, TasksSubmitResult, TeamCleanupParams,
+    TeamCleanupResult, TeamListParams, TeamListResult, TeamMemberInterruptParams,
+    TeamMemberInterruptResult, TeamMemberMessageParams, TeamMemberMessageResult,
+    TeamMemberStartParams, TeamMemberStartResult, TeamReadParams, TeamReadResult,
+    TeamStartMemberParams, TeamStartParams, TeamStartResult, ThreadArchiveParams,
     ThreadArchiveResult, ThreadGoalClearParams, ThreadGoalClearResult, ThreadGoalGetParams,
     ThreadGoalGetResult, ThreadGoalSetParams, ThreadGoalSetResult, ThreadGoalStatus,
     ThreadListParams, ThreadListResult, ThreadReadParams, ThreadReadResult, ThreadStartParams,
@@ -4762,7 +4763,6 @@ async fn tools_call_can_create_and_get_goal() {
                 tool_name: "create_goal".to_string(),
                 arguments: serde_json::json!({
                     "objective": "Ship slash goal",
-                    "replace": true,
                 }),
             })
             .unwrap(),
@@ -4771,7 +4771,36 @@ async fn tools_call_can_create_and_get_goal() {
     .await;
 
     assert!(!created.is_error, "create_goal failed: {created:?}");
-    assert_eq!(created.text, "Goal active: Ship slash goal");
+    assert!(created.text.contains("Ship slash goal"));
+
+    let replaced: ToolCallResult = request(
+        &client,
+        "tools/call",
+        Some(
+            serde_json::to_value(ToolCallParams {
+                thread_id: session.thread.id.clone(),
+                tool_name: "create_goal".to_string(),
+                arguments: serde_json::json!({
+                    "objective": "Ship replacement goal",
+                    "token_budget": 200,
+                }),
+            })
+            .unwrap(),
+        ),
+    )
+    .await;
+
+    assert!(
+        !replaced.is_error,
+        "create_goal replacement failed: {replaced:?}"
+    );
+    assert!(replaced.text.contains("Ship replacement goal"));
+    assert_eq!(replaced.data["hasActiveGoal"], true);
+    assert_eq!(replaced.data["goal"]["objective"], "Ship replacement goal");
+    assert_eq!(replaced.data["goal"]["status"], "active");
+    assert_eq!(replaced.data["goal"]["tokenBudget"], 200);
+    assert_eq!(replaced.data["goal"]["tokensUsed"], 0);
+    assert_eq!(replaced.data["goal"]["timeUsedSeconds"], 0);
 
     let current: ToolCallResult = request(
         &client,
@@ -4788,7 +4817,7 @@ async fn tools_call_can_create_and_get_goal() {
     .await;
 
     assert!(!current.is_error, "get_goal failed: {current:?}");
-    assert_eq!(current.text, "Goal active: Ship slash goal");
+    assert!(current.text.contains("Ship replacement goal"));
 }
 
 #[tokio::test]
@@ -4941,6 +4970,35 @@ async fn search_index_setting_can_be_set_and_observed() {
     let settings: SettingsGetResult = request(&client, "settings/get", None).await;
     assert!(!settings.search_index.enabled);
     roder_search::set_search_index_enabled(true);
+}
+
+#[tokio::test]
+async fn shell_setting_can_be_set_and_observed() {
+    let runtime = Arc::new(Runtime::fake().unwrap());
+    let server = Arc::new(AppServer::new(runtime.clone()));
+    let client = LocalAppClient::new(server);
+
+    let settings: SettingsGetResult = request(&client, "settings/get", None).await;
+    assert!(!settings.shell.shell.trim().is_empty());
+    assert!(settings.shell.options.contains(&"zsh".to_string()));
+    assert!(settings.shell.options.contains(&"bash".to_string()));
+
+    let changed: SettingsSetShellResult = request(
+        &client,
+        "settings/set_shell",
+        Some(
+            serde_json::to_value(SettingsSetShellParams {
+                shell: "bash".to_string(),
+            })
+            .unwrap(),
+        ),
+    )
+    .await;
+    assert_eq!(changed.shell.shell, "bash");
+
+    let settings: SettingsGetResult = request(&client, "settings/get", None).await;
+    assert_eq!(settings.shell.shell, "bash");
+    assert_eq!(runtime.status().await.command_shell, "bash");
 }
 
 #[tokio::test]
