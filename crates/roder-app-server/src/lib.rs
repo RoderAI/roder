@@ -9,6 +9,7 @@ mod desktop_contract;
 mod discovery;
 mod evals;
 mod fs;
+mod goals;
 mod marketplaces;
 #[cfg(test)]
 mod method_manifest;

@@ -21,6 +21,7 @@ use roder_api::discovery::{
 };
 use roder_api::events::{ThreadId, TurnId};
 use roder_api::extension::{ExtensionId, ExtensionManifest};
+pub use roder_api::goals::{ThreadGoal, ThreadGoalStatus};
 use roder_api::inference::{
     HostedWebSearchMode, InferenceCapabilities, ModelDescriptor, ProviderAuthType,
 };
@@ -228,6 +229,68 @@ pub struct ThreadArchiveResult {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct ThreadGoalGetParams {
+    pub thread_id: ThreadId,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ThreadGoalGetResult {
+    pub goal: Option<ThreadGoal>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ThreadGoalSetParams {
+    pub thread_id: ThreadId,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub objective: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub status: Option<ThreadGoalStatus>,
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "deserialize_goal_token_budget_patch"
+    )]
+    pub token_budget: Option<Option<i64>>,
+}
+
+fn deserialize_goal_token_budget_patch<'de, D>(
+    deserializer: D,
+) -> Result<Option<Option<i64>>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let value = serde_json::Value::deserialize(deserializer)?;
+    match value {
+        serde_json::Value::Null => Ok(Some(None)),
+        value => i64::deserialize(value)
+            .map(Some)
+            .map(Some)
+            .map_err(serde::de::Error::custom),
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ThreadGoalSetResult {
+    pub goal: Option<ThreadGoal>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ThreadGoalClearParams {
+    pub thread_id: ThreadId,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ThreadGoalClearResult {
+    pub cleared: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct TurnInputItem {
     #[serde(rename = "type")]
     pub kind: String,
@@ -419,6 +482,19 @@ pub struct ThreadStartedNotification {
 pub struct ThreadStatusChangedNotification {
     pub thread_id: ThreadId,
     pub status: DesktopThreadStatus,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ThreadGoalUpdatedNotification {
+    pub thread_id: ThreadId,
+    pub goal: ThreadGoal,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ThreadGoalClearedNotification {
+    pub thread_id: ThreadId,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -3089,6 +3165,23 @@ mod tests {
         })
         .unwrap();
         assert_eq!(value["summary"], "partial evidence");
+    }
+
+    #[test]
+    fn thread_goal_set_params_preserve_null_budget_clear() {
+        let params: ThreadGoalSetParams = serde_json::from_value(serde_json::json!({
+            "threadId": "thread-a",
+            "tokenBudget": null
+        }))
+        .unwrap();
+        assert_eq!(params.thread_id, "thread-a");
+        assert_eq!(params.token_budget, Some(None));
+
+        let params: ThreadGoalSetParams = serde_json::from_value(serde_json::json!({
+            "threadId": "thread-a"
+        }))
+        .unwrap();
+        assert_eq!(params.token_budget, None);
     }
 
     #[test]

@@ -3,6 +3,7 @@ mod automations;
 mod commands;
 mod composer;
 mod dialog;
+mod goals;
 mod input_queue;
 mod media;
 #[allow(dead_code)]
@@ -76,7 +77,7 @@ use roder_protocol::{
     SettingsSetDefaultModeResult, SettingsSetFileBackedDynamicContextParams,
     SettingsSetFileBackedDynamicContextResult, SettingsSetSearchIndexParams,
     SettingsSetSearchIndexResult, SettingsSetWebSearchParams, SettingsSetWebSearchResult,
-    TasksGetParams, TasksGetResult, TasksListResult, TeamReadParams, TeamReadResult,
+    TasksGetParams, TasksGetResult, TasksListResult, TeamReadParams, TeamReadResult, ThreadGoal,
     ThreadStartParams, ThreadStartResult, TurnInputItem, TurnInterruptParams, TurnStartParams,
     TurnSteerParams,
 };
@@ -564,12 +565,6 @@ impl ProviderAuthFlow {
     }
 }
 
-#[derive(Debug, Clone, serde::Deserialize)]
-struct WorkflowToolCallResult {
-    text: String,
-    is_error: bool,
-}
-
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct ImageAttachment {
     path: PathBuf,
@@ -1005,6 +1000,7 @@ where
     slash_command_selection: usize,
     policy_mode: PolicyMode,
     pending_plan_exit: Option<PendingPlanExitDescriptor>,
+    current_goal: Option<ThreadGoal>,
     compaction_active: bool,
     theme: Theme,
     /// Id of the currently-applied theme (basename of the `.css` file). `None`
@@ -1282,6 +1278,10 @@ where
         let command_catalog = session_resume::commands_list(&client)
             .await
             .unwrap_or_else(|_| built_in_command_catalog());
+        let current_goal = goals::thread_goal_get(&client, &thread_id)
+            .await
+            .ok()
+            .and_then(|result| result.goal);
         let scroll_settings = tui_config.scroll_settings();
         let timeline_settings = tui_config.timeline_settings();
 
@@ -1359,6 +1359,7 @@ where
                 .map(|state| state.mode)
                 .unwrap_or_default(),
             pending_plan_exit: policy_state.and_then(|state| state.pending_plan_exit),
+            current_goal,
             compaction_active: false,
             theme,
             active_theme_id,
@@ -1798,6 +1799,16 @@ where
                     }
                     RoderEvent::ToolCallCompleted(ev) => {
                         self.record_tool_completed(&ev.tool_id, ev.is_error, ev.output);
+                    }
+                    RoderEvent::ThreadGoalUpdated(ev) => {
+                        if ev.thread_id == self.thread_id {
+                            self.current_goal = Some(ev.goal);
+                        }
+                    }
+                    RoderEvent::ThreadGoalCleared(ev) => {
+                        if ev.thread_id == self.thread_id {
+                            self.current_goal = None;
+                        }
                     }
                     RoderEvent::SubagentTraceCreated(ev) => {
                         self.timeline.record_subagent_trace_created(ev.summary);
@@ -2298,27 +2309,6 @@ where
         if let Ok(commands) = session_resume::commands_list(&self.client).await {
             self.command_catalog = commands;
         }
-    }
-
-    async fn run_goal_slash_command(&mut self, args: &str) {
-        let objective = args.trim();
-        if objective.is_empty() {
-            match self.goal_get().await {
-                Ok(text) => self.timeline.push_system(text),
-                Err(err) => self.record_error(format!("get_goal failed: {err}")),
-            }
-            self.push_event("slash command: /goal".to_string());
-            return;
-        }
-
-        match self.goal_create(objective).await {
-            Ok(text) => self.timeline.push_system(text),
-            Err(err) => self.record_error(format!("create_goal failed: {err}")),
-        }
-        self.push_event(format!(
-            "slash command: /goal{}",
-            slash_command_suffix(args)
-        ));
     }
 
     async fn run_retry_slash_command(&mut self) {
@@ -3302,6 +3292,11 @@ where
             .as_ref()
             .map(|state| format!("  roadmap:{}", state.label()))
             .unwrap_or_default();
+        let goal_hint = self
+            .current_goal
+            .as_ref()
+            .map(|goal| format!("  goal:{}", goals::goal_footer_label(goal)))
+            .unwrap_or_default();
         let shortcut_context = match self.timeline.focus() {
             TimelineFocus::Timeline => FooterShortcutContext::Timeline,
             TimelineFocus::Composer if self.active_turn_id.is_some() => {
@@ -3314,7 +3309,7 @@ where
         Paragraph::new(line_with_gap(
             vec![Span::styled(
                 format!(
-                    " {status}  mode:{}{queue_hint}{pending_hint}{shell_hint}{roadmap_hint}  {interaction_hint}",
+                    " {status}  mode:{}{queue_hint}{pending_hint}{shell_hint}{roadmap_hint}{goal_hint}  {interaction_hint}",
                     policy_mode_label(self.policy_mode),
                     queue_hint = if self.queued_prompts.is_empty() {
                         String::new()
@@ -3574,47 +3569,6 @@ where
             })
             .await;
         decode_response(res)
-    }
-
-    async fn goal_get(&self) -> anyhow::Result<String> {
-        self.workflow_tool_text("get_goal", serde_json::json!({}))
-            .await
-    }
-
-    async fn goal_create(&self, objective: &str) -> anyhow::Result<String> {
-        self.workflow_tool_text(
-            "create_goal",
-            serde_json::json!({
-                "objective": objective,
-                "replace": true,
-            }),
-        )
-        .await
-    }
-
-    async fn workflow_tool_text(
-        &self,
-        tool_name: &str,
-        arguments: serde_json::Value,
-    ) -> anyhow::Result<String> {
-        let res = self
-            .client
-            .send_request(JsonRpcRequest {
-                jsonrpc: "2.0".to_string(),
-                id: Some(serde_json::json!(format!("workflow/{tool_name}"))),
-                method: "tools/call".to_string(),
-                params: Some(serde_json::json!({
-                    "thread_id": self.thread_id,
-                    "tool_name": tool_name,
-                    "arguments": arguments,
-                })),
-            })
-            .await;
-        let result = decode_response::<self::WorkflowToolCallResult>(res)?;
-        if result.is_error {
-            anyhow::bail!(result.text);
-        }
-        Ok(result.text)
     }
 
     async fn set_web_search_mode(&mut self, mode: HostedWebSearchMode) {
@@ -6368,6 +6322,7 @@ mod tests {
             slash_command_selection: 0,
             policy_mode: PolicyMode::Default,
             pending_plan_exit: None,
+            current_goal: None,
             compaction_active: false,
             theme,
             active_theme_id: None,

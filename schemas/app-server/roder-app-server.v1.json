@@ -1264,6 +1264,39 @@
       "sideEffect": "localState"
     },
     {
+      "method": "thread/goal/clear",
+      "paramsType": "ThreadGoalClearParams",
+      "resultType": "ThreadGoalClearResult",
+      "stability": "stable",
+      "featureGroup": "threads",
+      "idempotency": "nonIdempotent",
+      "sideEffect": "localState",
+      "notifications": [
+        "thread/goal/cleared"
+      ]
+    },
+    {
+      "method": "thread/goal/get",
+      "paramsType": "ThreadGoalGetParams",
+      "resultType": "ThreadGoalGetResult",
+      "stability": "stable",
+      "featureGroup": "threads",
+      "idempotency": "idempotent",
+      "sideEffect": "readOnly"
+    },
+    {
+      "method": "thread/goal/set",
+      "paramsType": "ThreadGoalSetParams",
+      "resultType": "ThreadGoalSetResult",
+      "stability": "stable",
+      "featureGroup": "threads",
+      "idempotency": "nonIdempotent",
+      "sideEffect": "localState",
+      "notifications": [
+        "thread/goal/updated"
+      ]
+    },
+    {
       "method": "thread/list",
       "paramsType": "ThreadListParams",
       "resultType": "ThreadListResult",

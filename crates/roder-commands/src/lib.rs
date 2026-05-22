@@ -40,8 +40,8 @@ pub fn built_in_commands() -> Vec<CommandSpec> {
         ),
         (
             "goal",
-            "Create a new active goal from an objective.",
-            "Create or inspect the current active goal.",
+            "Inspect, set, pause, resume, edit, or clear the thread goal.",
+            "Manage the current thread goal.",
         ),
         (
             "retry",

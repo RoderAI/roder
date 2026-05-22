@@ -13,6 +13,7 @@ use crate::discovery::{
 };
 use crate::events::{ThreadId, TurnId};
 use crate::extension::ToolProviderId;
+use crate::goals::ThreadGoalController;
 use crate::inference::ModelSchemaPolicy;
 use crate::media::{MediaGenerationRequest, MediaGenerationResponse};
 use crate::policy_mode::PolicyMode;
@@ -116,6 +117,7 @@ pub struct ToolExecutionHandles {
     pub process_runner: Option<Arc<dyn ScopedProcessRunner>>,
     pub subagent_trace_sink: Option<Arc<dyn SubagentTraceSink>>,
     pub context_artifacts: Option<Arc<dyn ContextArtifactAccess>>,
+    pub goal_controller: Option<Arc<dyn ThreadGoalController>>,
 }
 
 impl fmt::Debug for ToolExecutionHandles {
@@ -125,6 +127,7 @@ impl fmt::Debug for ToolExecutionHandles {
             .field("process_runner", &self.process_runner.is_some())
             .field("subagent_trace_sink", &self.subagent_trace_sink.is_some())
             .field("context_artifacts", &self.context_artifacts.is_some())
+            .field("goal_controller", &self.goal_controller.is_some())
             .finish()
     }
 }
@@ -205,6 +208,11 @@ impl ToolExecutionContext {
         self
     }
 
+    pub fn with_goal_controller(mut self, controller: Arc<dyn ThreadGoalController>) -> Self {
+        self.handles.goal_controller = Some(controller);
+        self
+    }
+
     pub fn require_workspace(&self) -> anyhow::Result<Arc<dyn ScopedWorkspaceHandle>> {
         self.handles
             .workspace
@@ -224,6 +232,13 @@ impl ToolExecutionContext {
             .context_artifacts
             .clone()
             .ok_or_else(|| anyhow::anyhow!("context artifact store is not available"))
+    }
+
+    pub fn require_goal_controller(&self) -> anyhow::Result<Arc<dyn ThreadGoalController>> {
+        self.handles
+            .goal_controller
+            .clone()
+            .ok_or_else(|| anyhow::anyhow!("goal controller is not available"))
     }
 }
 

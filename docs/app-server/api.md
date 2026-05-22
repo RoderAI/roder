@@ -181,6 +181,9 @@ Sessions, threads, and turns:
 | `thread/list` | List desktop threads. |
 | `thread/read` | Read a desktop thread with optional turns. |
 | `thread/archive` | Archive a desktop thread and remove it from active listings. |
+| `thread/goal/get` | Read the thread goal state. |
+| `thread/goal/set` | Create or update the thread goal state. |
+| `thread/goal/clear` | Clear the thread goal state. |
 | `turn/start` | Start a desktop turn from rich text input. |
 | `turn/steer` | Add user input to an active desktop turn. |
 | `turn/interrupt` | Interrupt an active desktop turn. |
@@ -801,6 +804,107 @@ Errors:
 
 - Session-store or archive failures return code `-32000` with `data.details`.
 
+### `thread/goal/get`
+
+Purpose: Read the durable goal state for a thread.
+
+Request:
+
+```json
+{
+  "threadId": "thread-123"
+}
+```
+
+Response:
+
+```json
+{
+  "goal": {
+    "threadId": "thread-123",
+    "objective": "Ship the goal parity slice",
+    "status": "active",
+    "tokenBudget": 20000,
+    "tokensUsed": 1200,
+    "timeUsedSeconds": 180,
+    "createdAt": "2026-05-22T09:00:00Z",
+    "updatedAt": "2026-05-22T09:03:00Z"
+  }
+}
+```
+
+Behavior:
+
+- Returns `{ "goal": null }` when no goal is set.
+- Goal status is one of `active`, `paused`, `blocked`, `usageLimited`,
+  `budgetLimited`, or `complete`.
+
+### `thread/goal/set`
+
+Purpose: Create or update the durable goal state for a thread.
+
+Request:
+
+```json
+{
+  "threadId": "thread-123",
+  "objective": "Ship the goal parity slice",
+  "status": "active",
+  "tokenBudget": 20000
+}
+```
+
+Response:
+
+```json
+{
+  "goal": {
+    "threadId": "thread-123",
+    "objective": "Ship the goal parity slice",
+    "status": "active",
+    "tokenBudget": 20000,
+    "tokensUsed": 0,
+    "timeUsedSeconds": 0,
+    "createdAt": "2026-05-22T09:00:00Z",
+    "updatedAt": "2026-05-22T09:00:00Z"
+  }
+}
+```
+
+Behavior:
+
+- Creates a goal when `objective` is supplied and no goal exists.
+- Updates only supplied fields when a goal already exists.
+- `objective` must be non-empty and at most 4000 characters.
+- `tokenBudget`, when supplied, must be positive. Send `null` to clear the
+  budget.
+- Emits `thread/goal/updated` after a goal is created or updated.
+
+### `thread/goal/clear`
+
+Purpose: Clear the durable goal state for a thread.
+
+Request:
+
+```json
+{
+  "threadId": "thread-123"
+}
+```
+
+Response:
+
+```json
+{
+  "cleared": true
+}
+```
+
+Behavior:
+
+- Returns `false` when no goal existed.
+- Emits `thread/goal/cleared` when a goal was removed.
+
 ### `turn/start`
 
 Purpose: Start a desktop turn on a thread.
@@ -1208,7 +1312,7 @@ Response:
 
 Behavior:
 
-- Only `get_goal` and `create_goal` can be called directly.
+- Only `get_goal`, `create_goal`, and `update_goal` can be called directly.
 - Other tool names return code `-32602`.
 
 ### Discovery methods
@@ -3415,6 +3519,31 @@ or the remote WebSocket notification stream for remote clients.
 {
   "threadId": "thread-123",
   "status": { "type": "running", "activeFlags": ["approvalRequired"] }
+}
+```
+
+`thread/goal/updated`:
+
+```json
+{
+  "threadId": "thread-123",
+  "goal": {
+    "threadId": "thread-123",
+    "objective": "Ship the goal parity slice",
+    "status": "active",
+    "tokensUsed": 1200,
+    "timeUsedSeconds": 180,
+    "createdAt": "2026-05-22T09:00:00Z",
+    "updatedAt": "2026-05-22T09:03:00Z"
+  }
+}
+```
+
+`thread/goal/cleared`:
+
+```json
+{
+  "threadId": "thread-123"
 }
 ```
 

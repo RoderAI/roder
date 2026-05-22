@@ -17,6 +17,7 @@ use crate::discovery::{
     DiscoveryWarmCacheHit,
 };
 use crate::extension::{ExtensionId, InferenceEngineId};
+use crate::goals::{ThreadGoalCleared, ThreadGoalUpdated};
 use crate::inference::{InferenceEvent, RuntimeProfile, SpeedPolicyDecision};
 use crate::media::{MediaArtifact, MediaArtifactId, MediaPreview};
 use crate::memory::{MemoryCitation, MemoryId, MemoryProviderSelection, MemoryRecord, MemoryScope};
@@ -1108,6 +1109,8 @@ pub enum RoderEvent {
     RemoteAuthFailed(RemoteAuthFailed),
     RemoteClientConnected(RemoteClientConnected),
     RemoteClientDisconnected(RemoteClientDisconnected),
+    ThreadGoalUpdated(ThreadGoalUpdated),
+    ThreadGoalCleared(ThreadGoalCleared),
     RoadmapChanged(RoadmapChanged),
     AutomationCreated(AutomationCreated),
     AutomationUpdated(AutomationUpdated),
@@ -1268,6 +1271,8 @@ impl RoderEvent {
             RoderEvent::RemoteAuthFailed(_) => "remote/authFailed",
             RoderEvent::RemoteClientConnected(_) => "remote/clientConnected",
             RoderEvent::RemoteClientDisconnected(_) => "remote/clientDisconnected",
+            RoderEvent::ThreadGoalUpdated(_) => "thread/goal/updated",
+            RoderEvent::ThreadGoalCleared(_) => "thread/goal/cleared",
             RoderEvent::RoadmapChanged(_) => "roadmap.changed",
             RoderEvent::AutomationCreated(_) => "automations/created",
             RoderEvent::AutomationUpdated(_) => "automations/updated",
@@ -1406,6 +1411,8 @@ impl RoderEvent {
             | RoderEvent::RemoteClientConnected(_)
             | RoderEvent::RemoteClientDisconnected(_) => EventSource::AppServer,
             RoderEvent::RoadmapChanged(_)
+            | RoderEvent::ThreadGoalUpdated(_)
+            | RoderEvent::ThreadGoalCleared(_)
             | RoderEvent::AutomationCreated(_)
             | RoderEvent::AutomationUpdated(_)
             | RoderEvent::AutomationDeleted(_)
@@ -1543,6 +1550,8 @@ impl RoderEvent {
             RoderEvent::TurnDeadlineExceeded(e) => Some(&e.thread_id),
             RoderEvent::TurnInterrupted(e) => Some(&e.thread_id),
             RoderEvent::TurnSteered(e) => Some(&e.thread_id),
+            RoderEvent::ThreadGoalUpdated(e) => Some(&e.thread_id),
+            RoderEvent::ThreadGoalCleared(e) => Some(&e.thread_id),
             RoderEvent::TeamStarted(e) => Some(&e.lead_thread_id),
             RoderEvent::TeamMemberStarted(e) => Some(&e.member_thread_id),
             RoderEvent::TeamMemberStatusChanged(e) => Some(&e.member_thread_id),
@@ -1729,6 +1738,8 @@ impl RoderEvent {
             | RoderEvent::RemoteAuthFailed(_)
             | RoderEvent::RemoteClientConnected(_)
             | RoderEvent::RemoteClientDisconnected(_)
+            | RoderEvent::ThreadGoalUpdated(_)
+            | RoderEvent::ThreadGoalCleared(_)
             | RoderEvent::RoadmapChanged(_)
             | RoderEvent::AutomationCreated(_)
             | RoderEvent::AutomationUpdated(_)
