@@ -267,6 +267,7 @@ mod tests {
             session_id: "thread-a".to_string(),
             preview: String::new(),
             model_provider: "mock".to_string(),
+            model: "mock".to_string(),
             created_at: 0,
             updated_at: 0,
             status: DesktopThreadStatus {

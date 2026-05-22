@@ -108,6 +108,7 @@ pub struct StartTurnRequest {
     pub images: Vec<InputImage>,
     pub provider_override: Option<String>,
     pub model_override: Option<String>,
+    pub reasoning_override: Option<String>,
     pub workspace: Option<String>,
     pub instructions: InstructionBundle,
     pub task_ledger_required: bool,
@@ -623,8 +624,22 @@ impl Runtime {
         model: Option<String>,
         reasoning: Option<String>,
     ) -> anyhow::Result<RuntimeConfig> {
-        self.engine_for(&provider)?;
+        let next = self
+            .preview_provider_selection(provider, model, reasoning)
+            .await?;
         let mut cfg = self.config.write().await;
+        *cfg = next;
+        Ok(cfg.clone())
+    }
+
+    pub async fn preview_provider_selection(
+        &self,
+        provider: String,
+        model: Option<String>,
+        reasoning: Option<String>,
+    ) -> anyhow::Result<RuntimeConfig> {
+        self.engine_for(&provider)?;
+        let mut cfg = self.config.read().await.clone();
         cfg.default_provider = provider;
         if let Some(model) = model {
             cfg.default_model = model;
@@ -638,12 +653,16 @@ impl Runtime {
             validate_reasoning_effort(&cfg.default_model, &reasoning)?;
             cfg.reasoning = Some(reasoning);
         }
-        Ok(cfg.clone())
+        Ok(cfg)
     }
 
     pub async fn effective_reasoning(&self) -> String {
         let cfg = self.config.read().await;
         effective_reasoning_for_model(&cfg, &cfg.default_model)
+    }
+
+    pub fn effective_reasoning_for_config(cfg: &RuntimeConfig) -> String {
+        effective_reasoning_for_model(cfg, &cfg.default_model)
     }
 
     pub async fn create_session(&self, title: Option<String>) -> anyhow::Result<SessionMetadata> {
@@ -865,6 +884,7 @@ impl Runtime {
                     images: Vec::new(),
                     provider_override: member.model_provider.clone(),
                     model_override: member.model.clone(),
+                    reasoning_override: None,
                     workspace: None,
                     instructions: crate::default_instructions(),
                     task_ledger_required: false,
@@ -878,6 +898,7 @@ impl Runtime {
                 images: Vec::new(),
                 provider_override: member.model_provider.clone(),
                 model_override: member.model.clone(),
+                reasoning_override: None,
                 workspace: None,
                 instructions: crate::default_instructions(),
                 task_ledger_required: false,
@@ -1290,7 +1311,16 @@ impl Runtime {
         )
         .await?;
 
-        let cfg = self.config.read().await.clone();
+        let mut cfg = self.config.read().await.clone();
+        if let Some(reasoning) = &req.reasoning_override {
+            validate_reasoning_effort(
+                req.model_override
+                    .as_deref()
+                    .unwrap_or(cfg.default_model.as_str()),
+                reasoning,
+            )?;
+            cfg.reasoning = Some(reasoning.clone());
+        }
         let runtime_profile = cfg.runtime_profile;
         let turn_deadline = turn_deadline_for_config(&cfg);
         let provider = req
@@ -3037,6 +3067,7 @@ mod tests {
                 images: Vec::new(),
                 provider_override: None,
                 model_override: None,
+                reasoning_override: None,
                 workspace: None,
                 instructions: InstructionBundle {
                     system: None,
@@ -3188,6 +3219,7 @@ mod tests {
                     images: Vec::new(),
                     provider_override: None,
                     model_override,
+                    reasoning_override: None,
                     workspace: None,
                     instructions: InstructionBundle::default(),
                     task_ledger_required: false,
@@ -3315,6 +3347,7 @@ mod tests {
                 images: Vec::new(),
                 provider_override: None,
                 model_override: None,
+                reasoning_override: None,
                 workspace: None,
                 instructions: InstructionBundle {
                     system: None,
@@ -3379,6 +3412,7 @@ mod tests {
                 images: Vec::new(),
                 provider_override: None,
                 model_override: None,
+                reasoning_override: None,
                 workspace: None,
                 instructions: InstructionBundle::default(),
                 task_ledger_required: true,
@@ -3436,6 +3470,7 @@ mod tests {
                 images: Vec::new(),
                 provider_override: None,
                 model_override: None,
+                reasoning_override: None,
                 workspace: None,
                 instructions: InstructionBundle::default(),
                 task_ledger_required: false,
@@ -3512,6 +3547,7 @@ mod tests {
                 images: Vec::new(),
                 provider_override: None,
                 model_override: None,
+                reasoning_override: None,
                 workspace: None,
                 instructions: InstructionBundle::default(),
                 task_ledger_required: false,
@@ -3597,6 +3633,7 @@ mod tests {
                 images: Vec::new(),
                 provider_override: None,
                 model_override: None,
+                reasoning_override: None,
                 workspace: None,
                 instructions: InstructionBundle::default(),
                 task_ledger_required: false,

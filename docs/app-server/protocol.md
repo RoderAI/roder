@@ -9,7 +9,7 @@ surface for desktop, TUI, CLI, and sibling clients.
 | Method | Desktop caller | Roder backing behavior | Notes |
 | --- | --- | --- | --- |
 | `initialize` | startup handshake | Return app-server status, capabilities, cwd, active model, and provider metadata. | Startup entrypoint. |
-| `thread/start` | new chat | Create a Roder thread/session with `model`, optional `modelProvider`, `cwd`, and `ephemeral`. | Returns a desktop `Thread`. |
+| `thread/start` | new chat | Create a Roder thread/session with `model`, optional `modelProvider`, `reasoning`, `cwd`, and `ephemeral`. | Returns a desktop `Thread`. |
 | `thread/list` | sidebar bootstrap/refresh | List persisted Roder sessions as stable desktop `Thread` objects. | Pagination cursors are reserved. |
 | `thread/read` | thread switch | Read a persisted thread by `threadId`; include turns/items when `includeTurns` is true. | Returns `thread: null` when not found. |
 | `thread/archive` | archive/delete thread action | Archive a persisted session and remove desktop in-memory state for that thread. | `thread/list` no longer returns archived threads. |

@@ -698,6 +698,7 @@ mod tests {
             session_id: id.to_string(),
             preview: title.unwrap_or("Untitled thread").to_string(),
             model_provider: "mock".to_string(),
+            model: "mock".to_string(),
             created_at: OffsetDateTime::UNIX_EPOCH.unix_timestamp(),
             updated_at: updated_at.unix_timestamp(),
             status: DesktopThreadStatus {

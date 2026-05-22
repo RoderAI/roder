@@ -1186,6 +1186,7 @@ where
                 serde_json::to_value(ThreadStartParams {
                     model: (!model.trim().is_empty()).then(|| model.clone()),
                     model_provider: None,
+                    reasoning: None,
                     cwd: None,
                     ephemeral: false,
                 })
@@ -6409,6 +6410,7 @@ mod tests {
             session_id: "thread-ledger".to_string(),
             preview: String::new(),
             model_provider: "mock".to_string(),
+            model: "mock".to_string(),
             created_at: 0,
             updated_at: 0,
             status: DesktopThreadStatus {
