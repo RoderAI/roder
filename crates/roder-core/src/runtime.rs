@@ -1643,6 +1643,8 @@ impl Runtime {
                     }
                     InferenceEvent::Completed(_)
                     | InferenceEvent::Compaction(_)
+                    | InferenceEvent::HostedToolCallStarted(_)
+                    | InferenceEvent::HostedToolCallCompleted(_)
                     | InferenceEvent::ToolCallStarted(_)
                     | InferenceEvent::ToolCallDelta(_) => {}
                     InferenceEvent::ProviderMetadata(metadata) => {

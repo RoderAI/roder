@@ -64,6 +64,19 @@ fn tool_entry_formats_title_and_arguments() {
 }
 
 #[test]
+fn hosted_web_search_tool_entry_shows_query() {
+    let entry = ToolTimelineEntry::new(
+        "web_search",
+        r#"{"action":"search","query":"pandelis zembashis"}"#,
+    );
+
+    assert_eq!(
+        entry.label(),
+        "Web Search: query: \"pandelis zembashis\" action: search"
+    );
+}
+
+#[test]
 fn timeline_updates_tool_rows_in_place() {
     let mut timeline = TimelineState::default();
     timeline.record_tool_requested(

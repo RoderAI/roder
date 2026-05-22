@@ -1737,6 +1737,20 @@ where
                                     ToolTimelineEntry::new(call.name, call.arguments),
                                 );
                             }
+                            roder_api::inference::InferenceEvent::HostedToolCallStarted(call) => {
+                                self.record_tool_requested_with_id(
+                                    call.id,
+                                    fallback_entry(call.name),
+                                );
+                            }
+                            roder_api::inference::InferenceEvent::HostedToolCallCompleted(call) => {
+                                let tool_id = call.id.clone();
+                                self.record_tool_requested_with_id(
+                                    tool_id.clone(),
+                                    ToolTimelineEntry::new(call.name, call.arguments),
+                                );
+                                self.record_tool_completed(&tool_id, false, None);
+                            }
                             roder_api::inference::InferenceEvent::Compaction(compaction) => {
                                 self.record_compaction_progress(&compaction.status);
                             }
