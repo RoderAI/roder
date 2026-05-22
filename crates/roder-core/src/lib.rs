@@ -1,3 +1,4 @@
+mod agent_control_tools;
 pub mod artifacts;
 pub mod bus;
 mod conversation;

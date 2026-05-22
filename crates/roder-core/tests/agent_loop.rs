@@ -22,6 +22,11 @@ struct ParallelToolLoopEngine {
     requests: Mutex<Vec<AgentInferenceRequest>>,
 }
 
+struct AgentControlEngine {
+    thread_ids: Mutex<Vec<String>>,
+    tool_names_by_thread: Mutex<Vec<(String, Vec<String>)>>,
+}
+
 struct EchoContributor;
 
 impl ToolContributor for EchoContributor {
@@ -351,6 +356,133 @@ impl InferenceEngine for ParallelToolLoopEngine {
                 Ok(InferenceEvent::Completed(CompletionMetadata {
                     stop_reason: Some("stop".to_string()),
                     provider_response_id: Some("resp_done".to_string()),
+                })),
+            ]
+        };
+        Ok(Box::pin(stream::iter(events)))
+    }
+}
+
+#[async_trait::async_trait]
+impl InferenceEngine for AgentControlEngine {
+    fn id(&self) -> InferenceEngineId {
+        PROVIDER_MOCK.to_string()
+    }
+
+    fn capabilities(&self) -> InferenceCapabilities {
+        InferenceCapabilities::coding_agent_default()
+    }
+
+    async fn list_models(
+        &self,
+        _ctx: InferenceProviderContext<'_>,
+    ) -> anyhow::Result<Vec<ModelDescriptor>> {
+        Ok(Vec::new())
+    }
+
+    async fn stream_turn(
+        &self,
+        ctx: InferenceTurnContext<'_>,
+        request: AgentInferenceRequest,
+    ) -> anyhow::Result<InferenceEventStream> {
+        let is_parent = ctx.thread_id == "thread-agent-control";
+        let has_result = |name: &str| {
+            request.conversation.iter().any(|item| {
+                matches!(
+                    item,
+                    ConversationItem::ToolResult(result)
+                        if result.name.as_deref() == Some(name)
+                )
+            })
+        };
+        let mut thread_ids = self.thread_ids.lock().unwrap();
+        thread_ids.push(ctx.thread_id.to_string());
+        drop(thread_ids);
+        self.tool_names_by_thread.lock().unwrap().push((
+            ctx.thread_id.to_string(),
+            request.tools.into_iter().map(|tool| tool.name).collect(),
+        ));
+        let events = if is_parent && !has_result("spawn_agent") {
+            vec![
+                Ok(InferenceEvent::ToolCallCompleted(ToolCallCompleted {
+                    id: "call_spawn".to_string(),
+                    name: "spawn_agent".to_string(),
+                    arguments: json!({
+                        "task_name": "reviewer",
+                        "message": "review the code"
+                    })
+                    .to_string(),
+                })),
+                Ok(InferenceEvent::Completed(CompletionMetadata {
+                    stop_reason: Some("tool_calls".to_string()),
+                    provider_response_id: Some("resp_spawn".to_string()),
+                })),
+            ]
+        } else if is_parent && !has_result("list_agents") {
+            vec![
+                Ok(InferenceEvent::ToolCallCompleted(ToolCallCompleted {
+                    id: "call_list".to_string(),
+                    name: "list_agents".to_string(),
+                    arguments: "{}".to_string(),
+                })),
+                Ok(InferenceEvent::Completed(CompletionMetadata {
+                    stop_reason: Some("tool_calls".to_string()),
+                    provider_response_id: Some("resp_list".to_string()),
+                })),
+            ]
+        } else if is_parent && !has_result("send_message") {
+            vec![
+                Ok(InferenceEvent::ToolCallCompleted(ToolCallCompleted {
+                    id: "call_send".to_string(),
+                    name: "send_message".to_string(),
+                    arguments: json!({
+                        "target": "reviewer",
+                        "message": "add one more detail"
+                    })
+                    .to_string(),
+                })),
+                Ok(InferenceEvent::ToolCallCompleted(ToolCallCompleted {
+                    id: "call_wait".to_string(),
+                    name: "wait_agent".to_string(),
+                    arguments: json!({
+                        "target": "reviewer",
+                        "timeout_ms": 100
+                    })
+                    .to_string(),
+                })),
+                Ok(InferenceEvent::ToolCallCompleted(ToolCallCompleted {
+                    id: "call_close".to_string(),
+                    name: "close_agent".to_string(),
+                    arguments: json!({
+                        "target": "reviewer"
+                    })
+                    .to_string(),
+                })),
+                Ok(InferenceEvent::Completed(CompletionMetadata {
+                    stop_reason: Some("tool_calls".to_string()),
+                    provider_response_id: Some("resp_followup_batch".to_string()),
+                })),
+            ]
+        } else if is_parent {
+            vec![
+                Ok(InferenceEvent::MessageDelta(MessageDelta {
+                    text: "parent done".to_string(),
+                    phase: None,
+                })),
+                Ok(InferenceEvent::Completed(CompletionMetadata {
+                    stop_reason: Some("stop".to_string()),
+                    provider_response_id: Some("resp_parent".to_string()),
+                })),
+            ]
+        } else {
+            vec![
+                Ok(InferenceEvent::MessageDelta(MessageDelta {
+                    text: "child done".to_string(),
+                    phase: None,
+                })),
+                Ok(InferenceEvent::Completed(CompletionMetadata {
+                    stop_reason: Some("stop".to_string()),
+                    provider_response_id: Some("resp_child".to_string()),
                 })),
             ]
         };
@@ -963,6 +1095,81 @@ async fn runtime_uses_custom_model_edit_tool_override() {
     assert!(!names.contains(&"edit".to_string()), "{names:?}");
     assert!(!names.contains(&"multi_edit".to_string()), "{names:?}");
     assert!(!names.contains(&"write_file".to_string()), "{names:?}");
+}
+
+#[tokio::test]
+async fn model_can_spawn_long_lived_subagent_with_agent_control_tool() {
+    let engine = Arc::new(AgentControlEngine {
+        thread_ids: Mutex::new(Vec::new()),
+        tool_names_by_thread: Mutex::new(Vec::new()),
+    });
+    let mut builder = ExtensionRegistryBuilder::new();
+    builder.inference_engine(engine.clone());
+    let runtime = Arc::new(
+        Runtime::new(
+            builder.build().unwrap(),
+            RuntimeConfig {
+                policy_mode: roder_api::policy_mode::PolicyMode::Bypass,
+                team_data_dir: Some(std::env::temp_dir().join(format!(
+                    "roder-agent-control-tools-{}",
+                    uuid::Uuid::new_v4()
+                ))),
+                ..RuntimeConfig::default()
+            },
+        )
+        .unwrap(),
+    );
+    let mut rx = runtime.subscribe_events();
+    let _turn_id = runtime
+        .start_turn(StartTurnRequest {
+            thread_id: "thread-agent-control".to_string(),
+            message: "delegate this".to_string(),
+            images: Vec::new(),
+            provider_override: None,
+            model_override: None,
+            workspace: None,
+            instructions: default_instructions(),
+            task_ledger_required: false,
+        })
+        .await
+        .unwrap();
+
+    wait_for_completed(&mut rx, "thread-agent-control").await;
+
+    let teams = runtime.list_teams().await;
+    assert_eq!(teams.len(), 1);
+    assert_eq!(teams[0].lead_thread_id, "thread-agent-control");
+    assert_eq!(teams[0].members.len(), 2);
+    assert_eq!(teams[0].members[1].name, "reviewer");
+    assert_eq!(
+        teams[0].members[1].status,
+        roder_api::teams::TeamMemberStatus::Closed
+    );
+    assert_ne!(teams[0].members[1].thread_id, teams[0].lead_thread_id);
+    let thread_ids = engine.thread_ids.lock().unwrap().clone();
+    assert!(thread_ids.contains(&"thread-agent-control".to_string()));
+    assert!(thread_ids.iter().any(|id| id != "thread-agent-control"));
+    let tool_names_by_thread = engine.tool_names_by_thread.lock().unwrap().clone();
+    let parent_tools = tool_names_by_thread
+        .iter()
+        .find(|(thread_id, _)| thread_id == "thread-agent-control")
+        .map(|(_, tools)| tools)
+        .unwrap();
+    assert!(parent_tools.contains(&"spawn_agent".to_string()));
+    assert!(parent_tools.contains(&"send_message".to_string()));
+    assert!(parent_tools.contains(&"list_agents".to_string()));
+    assert!(parent_tools.contains(&"wait_agent".to_string()));
+    assert!(parent_tools.contains(&"close_agent".to_string()));
+    let child_tools = tool_names_by_thread
+        .iter()
+        .find(|(thread_id, _)| thread_id != "thread-agent-control")
+        .map(|(_, tools)| tools)
+        .unwrap();
+    assert!(child_tools.contains(&"spawn_agent".to_string()));
+    assert!(child_tools.contains(&"send_message".to_string()));
+    assert!(child_tools.contains(&"list_agents".to_string()));
+    assert!(child_tools.contains(&"wait_agent".to_string()));
+    assert!(child_tools.contains(&"close_agent".to_string()));
 }
 
 #[tokio::test]

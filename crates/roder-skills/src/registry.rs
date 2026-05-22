@@ -1,12 +1,45 @@
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
+fn is_cursor_rules_root(root: &SkillRoot) -> bool {
+    root.canonical_prefix.ends_with(".cursor/rules") || root.root.ends_with(".cursor/rules")
+}
+
+fn is_markdown_rule_file(path: &Path) -> bool {
+    matches!(
+        path.extension().and_then(|extension| extension.to_str()),
+        Some("md") | Some("mdc")
+    )
+}
+
+fn normalize_skill_name(raw: &str) -> String {
+    let mut normalized = String::new();
+    let mut previous_dash = false;
+    for ch in raw.chars().flat_map(char::to_lowercase) {
+        if ch.is_ascii_alphanumeric() {
+            normalized.push(ch);
+            previous_dash = false;
+        } else if !previous_dash && !normalized.is_empty() {
+            normalized.push('-');
+            previous_dash = true;
+        }
+    }
+    while normalized.ends_with('-') {
+        normalized.pop();
+    }
+    if normalized.is_empty() {
+        "cursor-rule".to_string()
+    } else {
+        normalized
+    }
+}
+
 use roder_api::skills::{Skill, SkillActivationState, SkillExposure, SkillSelector, SkillSource};
 use roder_api::workflow::{WorkflowImportItem, WorkflowImportState, WorkflowSourceType};
 
 use crate::builtin::builtin_skills;
 use crate::config::{SkillConfigRule, apply_skill_config};
-use crate::metadata::load_skill_from_paths;
+use crate::metadata::{load_compatible_skill_from_path, load_skill_from_paths};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SkillRoot {
@@ -124,24 +157,60 @@ impl SkillRegistry {
             return;
         };
         for entry in entries.flatten() {
-            let skill_path = entry.path().join("SKILL.md");
-            if !skill_path.exists() {
+            let path = entry.path();
+            if path.is_dir() {
+                let skill_path = path.join("SKILL.md");
+                if !skill_path.exists() {
+                    continue;
+                }
+                let name = entry.file_name().to_string_lossy().to_string();
+                let canonical_path = format!("{}/{name}/SKILL.md", root.canonical_prefix);
+                match load_skill_from_paths(
+                    &skill_path,
+                    root.source.clone(),
+                    canonical_path,
+                    SkillExposure::Global,
+                ) {
+                    Ok(skill) => self.push_skill(skill),
+                    Err(err) => self
+                        .diagnostics
+                        .push(format!("{}: {err}", skill_path.display())),
+                }
                 continue;
             }
-            let name = entry.file_name().to_string_lossy().to_string();
-            let canonical_path = format!("{}/{name}/SKILL.md", root.canonical_prefix);
-            match load_skill_from_paths(
-                &skill_path,
+
+            if !is_cursor_rules_root(root) || !is_markdown_rule_file(&path) {
+                continue;
+            }
+            let file_name = entry.file_name().to_string_lossy().to_string();
+            let Some(stem) = path.file_stem().map(|stem| stem.to_string_lossy()) else {
+                continue;
+            };
+            let fallback_name = normalize_skill_name(&stem);
+            let canonical_path = format!("{}/{file_name}", root.canonical_prefix);
+            match load_compatible_skill_from_path(
+                &path,
                 root.source.clone(),
                 canonical_path,
-                SkillExposure::Global,
+                SkillExposure::DirectOnly,
+                &fallback_name,
+                true,
             ) {
-                Ok(skill) => self.skills.push(skill),
-                Err(err) => self
-                    .diagnostics
-                    .push(format!("{}: {err}", skill_path.display())),
+                Ok(skill) => self.push_skill(skill),
+                Err(err) => self.diagnostics.push(format!("{}: {err}", path.display())),
             }
         }
+    }
+
+    fn push_skill(&mut self, skill: Skill) {
+        if self
+            .skills
+            .iter()
+            .any(|existing| existing.descriptor.canonical_path == skill.descriptor.canonical_path)
+        {
+            return;
+        }
+        self.skills.push(skill);
     }
 
     fn load_workflow_imports(&mut self, workspace: &Path, items: &[WorkflowImportItem]) {
@@ -412,6 +481,53 @@ mod tests {
         assert_eq!(commit.descriptor.source, SkillSource::BuiltIn);
         assert_eq!(commit.descriptor.exposure, SkillExposure::Global);
         assert_eq!(commit.descriptor.activation, SkillActivationState::Enabled);
+    }
+
+    #[test]
+    fn registry_loads_cursor_rules_as_compatible_direct_or_global_skills() {
+        let workspace = fixture_dir("cursor-rules");
+        let rules = workspace.join(".cursor/rules");
+        std::fs::create_dir_all(&rules).unwrap();
+        std::fs::write(
+            rules.join("Review Rule.mdc"),
+            "---\ndescription: Review cursor rule\nalwaysApply: false\n---\nReview carefully.\n",
+        )
+        .unwrap();
+        std::fs::write(
+            rules.join("Always.md"),
+            "---\ndescription: Always-on rule\nalwaysApply: true\n---\nAlways apply.\n",
+        )
+        .unwrap();
+
+        let registry = SkillRegistry::load(SkillRegistryOptions {
+            workspace: workspace.clone(),
+            include_builtins: false,
+            roots: vec![SkillRoot::workspace(
+                workspace.join(".cursor/rules"),
+                "workspace://.cursor/rules",
+            )],
+            workflow_imports: Vec::new(),
+            config_rules: Vec::new(),
+        });
+
+        let review = registry
+            .skills()
+            .iter()
+            .find(|skill| skill.descriptor.name == "review-rule")
+            .expect("review rule");
+        assert_eq!(review.descriptor.description, "Review cursor rule");
+        assert_eq!(review.descriptor.exposure, SkillExposure::DirectOnly);
+        assert_eq!(
+            review.descriptor.canonical_path,
+            "workspace://.cursor/rules/Review Rule.mdc"
+        );
+
+        let always = registry
+            .skills()
+            .iter()
+            .find(|skill| skill.descriptor.name == "always")
+            .expect("always rule");
+        assert_eq!(always.descriptor.exposure, SkillExposure::Global);
     }
 
     fn write_skill(dir: &Path, name: &str, description: &str) {

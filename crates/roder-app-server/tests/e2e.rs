@@ -3708,6 +3708,12 @@ async fn tools_list_exposes_default_coding_tools() {
         "write_file",
         "edit",
         "multi_edit",
+        "spawn_agent",
+        "send_message",
+        "followup_task",
+        "wait_agent",
+        "list_agents",
+        "close_agent",
     ] {
         assert!(
             names.contains(&expected.to_string()),

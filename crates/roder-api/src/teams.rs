@@ -79,6 +79,7 @@ pub enum TeamMemberStatus {
     Completed,
     Failed,
     Interrupted,
+    Closed,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

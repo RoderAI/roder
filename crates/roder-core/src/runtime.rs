@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use anyhow::Context;
 use futures::StreamExt;
-use futures::future::{AbortHandle, Abortable, try_join_all};
+use futures::future::{AbortHandle, Abortable, BoxFuture, try_join_all};
 use roder_api::catalog::{
     EDIT_TOOL_EDIT, EDIT_TOOL_PATCH, REASONING_NONE, built_in_model_profile, lookup_model,
 };
@@ -216,6 +216,7 @@ impl Runtime {
                 .contribute(&mut tool_registry)
                 .with_context(|| format!("tool contributor {} failed", contributor.id()))?;
         }
+        crate::agent_control_tools::contribute_agent_control_tools(&mut tool_registry)?;
 
         let team_data_dir = config.team_data_dir.clone();
         let workspace = config
@@ -831,9 +832,6 @@ impl Runtime {
         member_id: &str,
         message: String,
     ) -> anyhow::Result<TurnId> {
-        self.teams
-            .append_mailbox_message(team_id, None, member_id.to_string(), message.clone())
-            .await?;
         let team = self
             .read_team(team_id)
             .await
@@ -844,6 +842,12 @@ impl Runtime {
             .find(|member| member.id == member_id)
             .ok_or_else(|| anyhow::anyhow!("unknown team member {member_id:?}"))?
             .clone();
+        if member.status == TeamMemberStatus::Closed {
+            anyhow::bail!("subagent {} is closed", member.name);
+        }
+        self.teams
+            .append_mailbox_message(team_id, None, member_id.to_string(), message.clone())
+            .await?;
         let turn_id = if member.status == TeamMemberStatus::Running {
             if let Some(turn_id) = member.current_turn_id.clone() {
                 self.steer_turn(
@@ -964,6 +968,57 @@ impl Runtime {
         }))
         .await;
         Ok(Some(turn_id))
+    }
+
+    pub async fn close_team_member(
+        &self,
+        team_id: &str,
+        member_id: &str,
+    ) -> anyhow::Result<roder_api::teams::TeamMemberDescriptor> {
+        let team = self
+            .read_team(team_id)
+            .await
+            .ok_or_else(|| anyhow::anyhow!("unknown team {team_id:?}"))?;
+        let member = team
+            .members
+            .iter()
+            .find(|member| member.id == member_id)
+            .ok_or_else(|| anyhow::anyhow!("unknown team member {member_id:?}"))?
+            .clone();
+        if member.role == roder_api::teams::TeamMemberRole::Lead {
+            anyhow::bail!("team lead cannot be closed as a subagent");
+        }
+        let interrupted_turn_id = if member.status == TeamMemberStatus::Running {
+            if let Some(turn_id) = member.current_turn_id.clone() {
+                self.interrupt_turn(member.thread_id.clone(), turn_id.clone())
+                    .await?;
+                Some(turn_id)
+            } else {
+                None
+            }
+        } else {
+            member.current_turn_id.clone()
+        };
+        let updated = self
+            .teams
+            .update_member(team_id, member_id, |member| {
+                member.status = TeamMemberStatus::Closed;
+                member.current_turn_id = None;
+            })
+            .await?;
+        let closed = updated
+            .members
+            .iter()
+            .find(|member| member.id == member_id)
+            .cloned()
+            .ok_or_else(|| anyhow::anyhow!("closed team member disappeared"))?;
+        self.emit(crate::agent_control_tools::closed_member_event(
+            team_id.to_string(),
+            &closed,
+            interrupted_turn_id,
+        ))
+        .await;
+        Ok(closed)
     }
 
     pub async fn cleanup_team(&self, team_id: &str, force: bool) -> anyhow::Result<bool> {
@@ -1107,48 +1162,53 @@ impl Runtime {
         Ok(())
     }
 
-    pub async fn start_turn(self: &Arc<Self>, req: StartTurnRequest) -> anyhow::Result<TurnId> {
-        let cfg = self.config.read().await.clone();
-        let provider = req
-            .provider_override
-            .clone()
-            .unwrap_or_else(|| cfg.default_provider.clone());
-        self.engine_for(&provider)?;
-        let turn_id = uuid::Uuid::new_v4().to_string();
-        let (abort_handle, abort_registration) = AbortHandle::new_pair();
-        let active = ActiveTurnHandle {
-            abort: abort_handle,
-            steers: Arc::new(Mutex::new(Vec::new())),
-        };
-        self.active_turns
-            .write()
-            .await
-            .insert(turn_id.clone(), active);
-        let runtime = Arc::clone(self);
-        let turn_req = req;
-        let thread_id_for_task = turn_req.thread_id.clone();
-        let turn_id_for_task = turn_id.clone();
-        tokio::spawn(async move {
-            let result = Abortable::new(
-                runtime.run_turn(turn_req, turn_id_for_task.clone()),
-                abort_registration,
-            )
-            .await;
-            if let Ok(Err(err)) = result {
-                // run_turn emits failures after the stream starts; this covers setup/startup errors.
-                runtime
-                    .emit(RoderEvent::TurnFailed(TurnFailed {
-                        thread_id: thread_id_for_task,
-                        turn_id: turn_id_for_task.clone(),
-                        error: err.to_string(),
-                        error_kind: None,
-                        timestamp: OffsetDateTime::now_utc(),
-                    }))
-                    .await;
-            }
-            runtime.active_turns.write().await.remove(&turn_id_for_task);
-        });
-        Ok(turn_id)
+    pub fn start_turn(
+        self: &Arc<Self>,
+        req: StartTurnRequest,
+    ) -> BoxFuture<'_, anyhow::Result<TurnId>> {
+        Box::pin(async move {
+            let cfg = self.config.read().await.clone();
+            let provider = req
+                .provider_override
+                .clone()
+                .unwrap_or_else(|| cfg.default_provider.clone());
+            self.engine_for(&provider)?;
+            let turn_id = uuid::Uuid::new_v4().to_string();
+            let (abort_handle, abort_registration) = AbortHandle::new_pair();
+            let active = ActiveTurnHandle {
+                abort: abort_handle,
+                steers: Arc::new(Mutex::new(Vec::new())),
+            };
+            self.active_turns
+                .write()
+                .await
+                .insert(turn_id.clone(), active);
+            let runtime = Arc::clone(self);
+            let turn_req = req;
+            let thread_id_for_task = turn_req.thread_id.clone();
+            let turn_id_for_task = turn_id.clone();
+            tokio::spawn(async move {
+                let result = Abortable::new(
+                    runtime.run_turn(turn_req, turn_id_for_task.clone()),
+                    abort_registration,
+                )
+                .await;
+                if let Ok(Err(err)) = result {
+                    // run_turn emits failures after the stream starts; this covers setup/startup errors.
+                    runtime
+                        .emit(RoderEvent::TurnFailed(TurnFailed {
+                            thread_id: thread_id_for_task,
+                            turn_id: turn_id_for_task.clone(),
+                            error: err.to_string(),
+                            error_kind: None,
+                            timestamp: OffsetDateTime::now_utc(),
+                        }))
+                        .await;
+                }
+                runtime.active_turns.write().await.remove(&turn_id_for_task);
+            });
+            Ok(turn_id)
+        })
     }
 
     pub async fn interrupt_turn(&self, thread_id: ThreadId, turn_id: TurnId) -> anyhow::Result<()> {
@@ -1208,7 +1268,11 @@ impl Runtime {
             .collect()
     }
 
-    async fn run_turn(&self, req: StartTurnRequest, turn_id: TurnId) -> anyhow::Result<()> {
+    async fn run_turn(
+        self: &Arc<Self>,
+        req: StartTurnRequest,
+        turn_id: TurnId,
+    ) -> anyhow::Result<()> {
         self.emit(RoderEvent::TurnStarted(TurnStarted {
             thread_id: req.thread_id.clone(),
             turn_id: turn_id.clone(),
@@ -1814,7 +1878,7 @@ impl Runtime {
     }
 
     async fn route_tool_calls(
-        &self,
+        self: &Arc<Self>,
         thread_id: &ThreadId,
         turn_id: &TurnId,
         calls: Vec<ToolCallCompleted>,
@@ -1822,7 +1886,10 @@ impl Runtime {
         workspace: Option<&str>,
         deadline: Option<OffsetDateTime>,
     ) -> anyhow::Result<Vec<ToolResultRecord>> {
-        if parallel {
+        let force_sequential = calls
+            .iter()
+            .any(|call| crate::agent_control_tools::is_agent_control_tool(&call.name));
+        if parallel && !force_sequential {
             try_join_all(
                 calls.into_iter().map(|call| {
                     self.route_tool_call(thread_id, turn_id, call, workspace, deadline)
@@ -3587,14 +3654,16 @@ mod tests {
             calls: calls.clone(),
         });
         builder.tool_contributor(Arc::new(TestToolContributor { tool: task_tool }));
-        let runtime = Runtime::new(
-            builder.build().unwrap(),
-            RuntimeConfig {
-                policy_mode: PolicyMode::Bypass,
-                ..RuntimeConfig::default()
-            },
-        )
-        .unwrap();
+        let runtime = Arc::new(
+            Runtime::new(
+                builder.build().unwrap(),
+                RuntimeConfig {
+                    policy_mode: PolicyMode::Bypass,
+                    ..RuntimeConfig::default()
+                },
+            )
+            .unwrap(),
+        );
 
         let result = runtime
             .route_tool_call(
