@@ -1,5 +1,6 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::collections::HashSet;
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -767,10 +768,11 @@ pub fn build_skills_registry(
     options.config_rules = skills
         .map(|skills| skills.config.clone())
         .unwrap_or_default();
-    options.roots.push(roder_skills::SkillRoot::workspace(
-        workspace.join(".agents/skills"),
-        "workspace://.agents/skills",
-    ));
+    for (root, canonical_prefix) in local_skill_roots(workspace) {
+        options
+            .roots
+            .push(roder_skills::SkillRoot::workspace(root, canonical_prefix));
+    }
     if let Some(home) = dirs::home_dir() {
         options.roots.push(roder_skills::SkillRoot::user(
             home.join(".codex/skills"),
@@ -789,6 +791,106 @@ pub fn build_skills_registry(
         }
     }
     roder_skills::SkillRegistry::load(options)
+}
+
+fn local_skill_roots(workspace: &Path) -> Vec<(PathBuf, String)> {
+    let workspace = absolute_path(workspace);
+    let project_root = project_root_for_skill_scan(&workspace);
+    let mut bases = Vec::new();
+    let mut current = workspace.as_path();
+    loop {
+        bases.push(current.to_path_buf());
+        if current == project_root {
+            break;
+        }
+        let Some(parent) = current.parent() else {
+            break;
+        };
+        current = parent;
+    }
+    bases.reverse();
+
+    let mut roots = Vec::new();
+    let mut seen = HashSet::new();
+    for base in bases {
+        for relative in [
+            ".agents/skills",
+            ".claude/skills",
+            ".cursor/skills",
+            ".cursor/rules",
+        ] {
+            let root = base.join(relative);
+            if !root.exists() && base != workspace {
+                continue;
+            }
+            let key = root.clone();
+            if !seen.insert(key) {
+                continue;
+            }
+            let canonical_prefix =
+                format!("workspace://{}", relative_path_string(&project_root, &root));
+            roots.push((root, canonical_prefix));
+        }
+    }
+    roots
+}
+
+fn project_root_for_skill_scan(workspace: &Path) -> PathBuf {
+    let mut cargo_root = None;
+    for ancestor in workspace.ancestors() {
+        if ancestor.join(".git").exists() {
+            return ancestor.to_path_buf();
+        }
+        if ancestor.join("Cargo.toml").exists() {
+            cargo_root = Some(ancestor.to_path_buf());
+        }
+    }
+    cargo_root.unwrap_or_else(|| workspace.to_path_buf())
+}
+
+fn absolute_path(path: &Path) -> PathBuf {
+    if path.is_absolute() {
+        path.to_path_buf()
+    } else {
+        std::env::current_dir()
+            .unwrap_or_else(|_| PathBuf::from("."))
+            .join(path)
+    }
+}
+
+fn relative_path_string(from: &Path, to: &Path) -> String {
+    if let Ok(relative) = to.strip_prefix(from) {
+        return path_to_slash_string(relative);
+    }
+
+    let from_components: Vec<_> = from.components().collect();
+    let to_components: Vec<_> = to.components().collect();
+    let common = from_components
+        .iter()
+        .zip(to_components.iter())
+        .take_while(|(left, right)| left == right)
+        .count();
+    if common == 0 {
+        return path_to_slash_string(to);
+    }
+
+    let mut relative = PathBuf::new();
+    for _ in common..from_components.len() {
+        relative.push("..");
+    }
+    for component in &to_components[common..] {
+        relative.push(component.as_os_str());
+    }
+    path_to_slash_string(&relative)
+}
+
+fn path_to_slash_string(path: &Path) -> String {
+    let text = path.to_string_lossy().replace('\\', "/");
+    if text.is_empty() {
+        ".".to_string()
+    } else {
+        text
+    }
 }
 
 fn load_config_file() -> anyhow::Result<Config> {
@@ -1087,6 +1189,7 @@ fn parse_bool(value: &str) -> Option<bool> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use roder_api::skills::SkillExposure;
 
     #[test]
     fn serializes_provider_and_model_without_dropping_provider_blocks() {
@@ -1131,6 +1234,61 @@ mod tests {
         assert!(encoded.contains("model = \"gpt-5.5\""));
         assert!(encoded.contains("[providers.openai]"));
         assert!(encoded.contains("api_key = \"key\""));
+    }
+
+    #[test]
+    fn skills_registry_loads_local_agent_claude_and_cursor_roots_from_project_root() {
+        let project = temp_config_dir("local-skills-roots");
+        std::fs::create_dir_all(project.join(".git")).unwrap();
+        let workspace = project.join("nested/workspace");
+        std::fs::create_dir_all(&workspace).unwrap();
+
+        write_skill(
+            &project.join(".agents/skills/agent-local"),
+            "agent-local",
+            "Agent local skill",
+        );
+        write_skill(
+            &project.join(".claude/skills/claude-local"),
+            "claude-local",
+            "Claude local skill",
+        );
+        write_skill(
+            &project.join(".cursor/skills/cursor-local"),
+            "cursor-local",
+            "Cursor local skill",
+        );
+        std::fs::create_dir_all(project.join(".cursor/rules")).unwrap();
+        std::fs::write(
+            project.join(".cursor/rules/Review Rule.mdc"),
+            "---\ndescription: Cursor rule skill\nalwaysApply: true\n---\n# Review rule\nApply this rule.\n",
+        )
+        .unwrap();
+
+        let registry = build_skills_registry(&workspace, None);
+        let skill_names = registry
+            .skills()
+            .iter()
+            .map(|skill| skill.descriptor.name.as_str())
+            .collect::<Vec<_>>();
+
+        assert!(skill_names.contains(&"agent-local"));
+        assert!(skill_names.contains(&"claude-local"));
+        assert!(skill_names.contains(&"cursor-local"));
+        assert!(skill_names.contains(&"review-rule"));
+
+        let cursor_rule = registry
+            .skills()
+            .iter()
+            .find(|skill| skill.descriptor.name == "review-rule")
+            .expect("cursor rule skill");
+        assert_eq!(cursor_rule.descriptor.exposure, SkillExposure::Global);
+        assert!(
+            cursor_rule
+                .descriptor
+                .canonical_path
+                .ends_with(".cursor/rules/Review Rule.mdc")
+        );
     }
 
     #[test]
@@ -1915,5 +2073,24 @@ mod tests {
         let config = load_config_file_from_path(&path).unwrap();
         assert_eq!(config.skills.unwrap(), skills);
         let _ = fs::remove_file(&path);
+    }
+
+    fn write_skill(dir: &Path, name: &str, description: &str) {
+        std::fs::create_dir_all(dir).unwrap();
+        std::fs::write(
+            dir.join("SKILL.md"),
+            format!("---\nname: {name}\ndescription: {description}\n---\nBody for {name}\n"),
+        )
+        .unwrap();
+    }
+
+    fn temp_config_dir(name: &str) -> PathBuf {
+        let suffix = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!("roder-config-{name}-{suffix}"));
+        std::fs::create_dir_all(&root).unwrap();
+        root
     }
 }

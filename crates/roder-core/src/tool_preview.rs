@@ -187,15 +187,17 @@ mod runtime_tests {
         let mut builder = ExtensionRegistryBuilder::new();
         builder.inference_engine(Arc::new(FakeInferenceEngine));
         builder.tool_contributor(Arc::new(TestToolContributor));
-        let runtime = Runtime::new(
-            builder.build().unwrap(),
-            RuntimeConfig {
-                workspace: Some(root.to_string_lossy().into_owned()),
-                policy_mode: PolicyMode::AcceptAll,
-                ..RuntimeConfig::default()
-            },
-        )
-        .unwrap();
+        let runtime = Arc::new(
+            Runtime::new(
+                builder.build().unwrap(),
+                RuntimeConfig {
+                    workspace: Some(root.to_string_lossy().into_owned()),
+                    policy_mode: PolicyMode::AcceptAll,
+                    ..RuntimeConfig::default()
+                },
+            )
+            .unwrap(),
+        );
         let mut rx = runtime.subscribe_events();
 
         runtime

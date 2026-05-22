@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use roder_api::ToolSchemaPolicy;
 use roder_api::artifacts::{ContextArtifactKind, format_artifact_reference};
 use roder_api::conversation::{ToolResultRecord, tool_display_payload};
@@ -22,7 +24,7 @@ use crate::tool_validation::{
 
 impl Runtime {
     pub(crate) async fn route_tool_call(
-        &self,
+        self: &Arc<Self>,
         thread_id: &ThreadId,
         turn_id: &TurnId,
         mut call: roder_api::inference::ToolCallCompleted,
@@ -193,7 +195,7 @@ impl Runtime {
             id: call.id.clone(),
             name: call.name.clone(),
             arguments,
-            raw_arguments: call.arguments,
+            raw_arguments: call.arguments.clone(),
             thread_id: thread_id.clone(),
             turn_id: turn_id.clone(),
         };
@@ -327,20 +329,25 @@ impl Runtime {
             timestamp: OffsetDateTime::now_utc(),
         }))
         .await;
-        let result = match executor.execute(ctx, tool_call.clone()).await {
-            Ok(result) => result,
-            Err(err) => ToolResult {
-                id: tool_call.id.clone(),
-                name: tool_call.name.clone(),
-                text: err.to_string(),
-                data: serde_json::json!({
-                    "error": {
-                        "kind": "tool_execution_failed",
-                        "message": err.to_string(),
-                    }
-                }),
-                is_error: true,
-            },
+        let result = if crate::agent_control_tools::is_agent_control_tool(&tool_call.name) {
+            self.execute_agent_control_tool(thread_id, turn_id, &call, tool_call.arguments.clone())
+                .await
+        } else {
+            match executor.execute(ctx, tool_call.clone()).await {
+                Ok(result) => result,
+                Err(err) => ToolResult {
+                    id: tool_call.id.clone(),
+                    name: tool_call.name.clone(),
+                    text: err.to_string(),
+                    data: serde_json::json!({
+                        "error": {
+                            "kind": "tool_execution_failed",
+                            "message": err.to_string(),
+                        }
+                    }),
+                    is_error: true,
+                },
+            }
         };
         let result = self
             .resolve_user_input_request(thread_id, turn_id, result)

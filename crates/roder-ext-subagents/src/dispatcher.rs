@@ -12,9 +12,9 @@ use roder_api::conversation::{
 use roder_api::events::{ThreadId, TurnId};
 use roder_api::extension::{InferenceEngineId, SubagentDispatcherId};
 use roder_api::inference::{
-    AgentInferenceRequest, CompletionMetadata, InferenceEngine, InferenceEvent,
-    InferenceTurnContext, InstructionBundle, ModelSelection, OutputConfig, ReasoningConfig,
-    RuntimeHints,
+    AgentInferenceRequest, CompletionMetadata, HostedWebSearchConfig, InferenceEngine,
+    InferenceEvent, InferenceTurnContext, InstructionBundle, ModelSelection, OutputConfig,
+    ReasoningConfig, RuntimeHints,
 };
 use roder_api::policy_mode::PolicyMode;
 use roder_api::subagents::{
@@ -450,6 +450,9 @@ impl InProcessDispatcher {
                     trace_id: Some(format!("{parent_thread_id}:{parent_turn_id}")),
                     prompt_cache_key: None,
                     auto_compact_token_limit: None,
+                    // Give subagents live (codex-native) web browsing so the swarm
+                    // can actually research in parallel, not just reason.
+                    hosted_web_search: HostedWebSearchConfig::live(),
                     ..RuntimeHints::default()
                 },
                 metadata: serde_json::json!({

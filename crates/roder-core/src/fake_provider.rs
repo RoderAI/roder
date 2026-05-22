@@ -119,6 +119,71 @@ impl InferenceEngine for FakeInferenceEngine {
             ))]);
             return Ok(Box::pin(stream));
         }
+        if should_spawn_fake_agent(&request) {
+            let stream = stream::iter(vec![Ok(InferenceEvent::ToolCallCompleted(
+                ToolCallCompleted {
+                    id: "fake-spawn-agent".to_string(),
+                    name: "spawn_agent".to_string(),
+                    arguments: serde_json::json!({
+                        "task_name": "reviewer",
+                        "message": "review the fake agent control smoke"
+                    })
+                    .to_string(),
+                },
+            ))]);
+            return Ok(Box::pin(stream));
+        }
+        if should_list_fake_agents(&request) {
+            let stream = stream::iter(vec![Ok(InferenceEvent::ToolCallCompleted(
+                ToolCallCompleted {
+                    id: "fake-list-agents".to_string(),
+                    name: "list_agents".to_string(),
+                    arguments: "{}".to_string(),
+                },
+            ))]);
+            return Ok(Box::pin(stream));
+        }
+        if should_message_fake_agent(&request) {
+            let stream = stream::iter(vec![Ok(InferenceEvent::ToolCallCompleted(
+                ToolCallCompleted {
+                    id: "fake-send-message".to_string(),
+                    name: "send_message".to_string(),
+                    arguments: serde_json::json!({
+                        "target": "reviewer",
+                        "message": "add one more fake smoke detail"
+                    })
+                    .to_string(),
+                },
+            ))]);
+            return Ok(Box::pin(stream));
+        }
+        if should_wait_fake_agent(&request) {
+            let stream = stream::iter(vec![Ok(InferenceEvent::ToolCallCompleted(
+                ToolCallCompleted {
+                    id: "fake-wait-agent".to_string(),
+                    name: "wait_agent".to_string(),
+                    arguments: serde_json::json!({
+                        "target": "reviewer",
+                        "timeout_ms": 1000
+                    })
+                    .to_string(),
+                },
+            ))]);
+            return Ok(Box::pin(stream));
+        }
+        if should_close_fake_agent(&request) {
+            let stream = stream::iter(vec![Ok(InferenceEvent::ToolCallCompleted(
+                ToolCallCompleted {
+                    id: "fake-close-agent".to_string(),
+                    name: "close_agent".to_string(),
+                    arguments: serde_json::json!({
+                        "target": "reviewer"
+                    })
+                    .to_string(),
+                },
+            ))]);
+            return Ok(Box::pin(stream));
+        }
         if should_complete_verification(&request) {
             let failed = prompt_contains(&request, "FAKE_VERIFICATION_FAILED");
             let stream = stream::iter(vec![Ok(InferenceEvent::ToolCallCompleted(
@@ -250,6 +315,34 @@ fn should_discovery_read(request: &AgentInferenceRequest) -> bool {
         })
 }
 
+fn should_spawn_fake_agent(request: &AgentInferenceRequest) -> bool {
+    prompt_contains(request, "FAKE_AGENT_CONTROL_SMOKE") && !has_tool_result(request, "spawn_agent")
+}
+
+fn should_list_fake_agents(request: &AgentInferenceRequest) -> bool {
+    prompt_contains(request, "FAKE_AGENT_CONTROL_SMOKE")
+        && has_tool_result(request, "spawn_agent")
+        && !has_tool_result(request, "list_agents")
+}
+
+fn should_message_fake_agent(request: &AgentInferenceRequest) -> bool {
+    prompt_contains(request, "FAKE_AGENT_CONTROL_SMOKE")
+        && has_tool_result(request, "list_agents")
+        && !has_tool_result(request, "send_message")
+}
+
+fn should_wait_fake_agent(request: &AgentInferenceRequest) -> bool {
+    prompt_contains(request, "FAKE_AGENT_CONTROL_SMOKE")
+        && has_tool_result(request, "send_message")
+        && !has_tool_result(request, "wait_agent")
+}
+
+fn should_close_fake_agent(request: &AgentInferenceRequest) -> bool {
+    prompt_contains(request, "FAKE_AGENT_CONTROL_SMOKE")
+        && has_tool_result(request, "wait_agent")
+        && !has_tool_result(request, "close_agent")
+}
+
 fn should_complete_verification(request: &AgentInferenceRequest) -> bool {
     request.conversation.iter().any(|item| {
         matches!(
@@ -273,6 +366,15 @@ fn verification_failed(request: &AgentInferenceRequest) -> bool {
             ConversationItem::ToolResult(result)
                 if result.name.as_deref() == Some("verification.review")
                     && result.result.contains("Verification failed")
+        )
+    })
+}
+
+fn has_tool_result(request: &AgentInferenceRequest, name: &str) -> bool {
+    request.conversation.iter().any(|item| {
+        matches!(
+            item,
+            ConversationItem::ToolResult(result) if result.name.as_deref() == Some(name)
         )
     })
 }
