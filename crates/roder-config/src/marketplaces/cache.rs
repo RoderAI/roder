@@ -8,10 +8,7 @@ pub fn marketplace_cache_dir() -> anyhow::Result<PathBuf> {
     if let Some(path) = std::env::var_os("RODER_MARKETPLACE_CACHE_DIR") {
         return Ok(PathBuf::from(path));
     }
-    let home = std::env::var_os("HOME")
-        .map(PathBuf::from)
-        .ok_or_else(|| anyhow::anyhow!("could not resolve HOME for marketplace cache"))?;
-    Ok(home.join(".roder").join("plugins").join("cache"))
+    Ok(crate::config_dir().join("plugins").join("cache"))
 }
 
 pub fn install_path_for(entry: &MarketplacePluginEntry) -> anyhow::Result<PathBuf> {

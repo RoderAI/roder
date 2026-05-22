@@ -145,6 +145,15 @@ make install
 
 By default this writes `roder` to `~/.local/bin`. Override the install target with `BINDIR=/path/to/bin make install`.
 
+Roder reads configuration and user state from `~/.roder` by default. Use the
+global `--config-dir <path>` flag before or after the subcommand to run against
+an alternate directory:
+
+```sh
+roder --config-dir /tmp/lab-roder auth status
+roder app-server --config-dir /tmp/lab-roder --listen stdio://
+```
+
 ## Roder distribution configurator
 
 `roder-configure` generates a small downstream distribution crate, an initial `config.toml`, and optionally builds the resulting binary. It is the no-fork path for labs and products that want a tailored Roder build.

@@ -76,7 +76,9 @@ pub fn extension(dispatcher: Arc<InProcessDispatcher>) -> SubagentsExtension {
 }
 
 pub fn default_user_agent_dir() -> Option<PathBuf> {
-    std::env::var_os("HOME")
+    std::env::var_os("RODER_DATA_DIR")
+        .or_else(|| std::env::var_os("RODER_CONFIG_DIR"))
         .map(PathBuf::from)
-        .map(|home| home.join(".roder").join("agents"))
+        .or_else(|| std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".roder")))
+        .map(|home| home.join("agents"))
 }

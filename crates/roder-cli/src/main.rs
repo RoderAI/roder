@@ -61,7 +61,11 @@ use tokio::sync::mpsc;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    let args = std::env::args().skip(1).collect::<Vec<_>>();
+    let raw_args = std::env::args().skip(1).collect::<Vec<_>>();
+    let (args, config_dir) = extract_global_config_dir(&raw_args)?;
+    if let Some(config_dir) = config_dir.as_deref() {
+        apply_config_dir_override(config_dir)?;
+    }
     if matches!(args.first().map(String::as_str), Some("auth")) {
         return run_auth(&args[1..]).await;
     }
@@ -900,6 +904,66 @@ pub(crate) struct CliOptions {
     record_ui_frames: bool,
 }
 
+fn extract_global_config_dir(args: &[String]) -> anyhow::Result<(Vec<String>, Option<PathBuf>)> {
+    let mut stripped = Vec::with_capacity(args.len());
+    let mut config_dir = None;
+    let mut i = 0;
+    while i < args.len() {
+        match args[i].as_str() {
+            "--config-dir" => {
+                let Some(path) = args.get(i + 1) else {
+                    anyhow::bail!("--config-dir requires a path");
+                };
+                config_dir = Some(PathBuf::from(path));
+                i += 1;
+            }
+            arg if arg.starts_with("--config-dir=") => {
+                config_dir = Some(PathBuf::from(&arg["--config-dir=".len()..]));
+            }
+            _ => stripped.push(args[i].clone()),
+        }
+        i += 1;
+    }
+    Ok((stripped, config_dir))
+}
+
+fn apply_config_dir_override(path: &Path) -> anyhow::Result<PathBuf> {
+    let path = expand_config_dir_path(path)?;
+    if path.as_os_str().is_empty() {
+        anyhow::bail!("--config-dir cannot be empty");
+    }
+    // SAFETY: the CLI applies this process-wide override at startup, before
+    // Roder creates async worker threads or reads configuration-dependent
+    // state. The paired variables keep older data-dir-aware crates aligned.
+    unsafe {
+        std::env::set_var(roder_config::RODER_CONFIG_DIR_ENV, &path);
+        std::env::set_var(roder_config::RODER_DATA_DIR_ENV, &path);
+    }
+    Ok(path)
+}
+
+fn expand_config_dir_path(path: &Path) -> anyhow::Result<PathBuf> {
+    let text = path.to_string_lossy();
+    let expanded = if text == "~" {
+        cli_home_dir().ok_or_else(|| anyhow::anyhow!("could not resolve home directory"))?
+    } else if let Some(rest) = text.strip_prefix("~/") {
+        cli_home_dir()
+            .ok_or_else(|| anyhow::anyhow!("could not resolve home directory"))?
+            .join(rest)
+    } else {
+        path.to_path_buf()
+    };
+    if expanded.is_absolute() {
+        Ok(expanded)
+    } else {
+        Ok(std::env::current_dir()?.join(expanded))
+    }
+}
+
+fn cli_home_dir() -> Option<PathBuf> {
+    std::env::var_os("HOME").map(PathBuf::from)
+}
+
 #[derive(Debug, Clone)]
 struct AppServerOptions {
     listen: String,
@@ -919,6 +983,7 @@ pub(crate) async fn build_runtime_from_config(
     options: CliOptions,
 ) -> anyhow::Result<(Arc<Runtime>, String)> {
     let cfg = roder_config::load_config()?;
+    let config_dir = roder_config::config_dir();
     let keys = provider_keys(&cfg);
     let web_search = resolve_web_search_config(cfg.web_search.as_ref())?;
     let policy_mode = resolve_policy_mode(&options, &cfg)?;
@@ -1016,8 +1081,8 @@ pub(crate) async fn build_runtime_from_config(
                 .as_ref()
                 .and_then(|speed| speed.eval_deadline_seconds),
             remote_runner_destination,
-            team_data_dir: None,
-            roadmap_data_dir: None,
+            team_data_dir: Some(config_dir.join("teams")),
+            roadmap_data_dir: Some(config_dir.clone()),
         },
     )?);
     let skills_registry = roder_config::build_skills_registry(
@@ -2376,6 +2441,38 @@ mod tests {
 
         let options = parse_cli_options(&["--yolo".to_string()]).unwrap();
         assert_eq!(options.policy_mode, Some(PolicyMode::Bypass));
+    }
+
+    #[test]
+    fn extracts_global_config_dir_before_subcommand_routing() {
+        let (args, config_dir) = extract_global_config_dir(&[
+            "--config-dir".to_string(),
+            "/tmp/roder-alt".to_string(),
+            "auth".to_string(),
+            "status".to_string(),
+        ])
+        .unwrap();
+
+        assert_eq!(args, ["auth".to_string(), "status".to_string()]);
+        assert_eq!(config_dir.as_deref(), Some(Path::new("/tmp/roder-alt")));
+
+        let (args, config_dir) = extract_global_config_dir(&[
+            "app-server".to_string(),
+            "--config-dir=/tmp/roder-app".to_string(),
+            "--listen".to_string(),
+            "stdio://".to_string(),
+        ])
+        .unwrap();
+
+        assert_eq!(
+            args,
+            [
+                "app-server".to_string(),
+                "--listen".to_string(),
+                "stdio://".to_string()
+            ]
+        );
+        assert_eq!(config_dir.as_deref(), Some(Path::new("/tmp/roder-app")));
     }
 
     #[test]

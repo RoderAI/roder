@@ -2314,11 +2314,11 @@ impl AppServer {
                 path.clone()
             }
         });
-        let user_dir = cfg.user_dir.as_deref().map(expand_tilde).or_else(|| {
-            std::env::var_os("HOME")
-                .map(std::path::PathBuf::from)
-                .map(|home| home.join(".roder").join("commands"))
-        });
+        let user_dir = cfg
+            .user_dir
+            .as_deref()
+            .map(expand_tilde)
+            .or_else(|| Some(roder_config::config_dir().join("commands")));
         CommandsRegistry::load_with_options(
             user_dir.as_ref(),
             workspace_dir.as_ref(),
@@ -2889,9 +2889,11 @@ impl AppServer {
         };
         let mut options = roder_config::WorkflowScanOptions::new(workspace);
         options.include_user = include_user;
-        if include_user && let Some(home) = std::env::var_os("HOME").map(std::path::PathBuf::from) {
-            options.user_roots.push(home.join(".roder"));
-            options.user_roots.push(home.join(".agents"));
+        if include_user {
+            options.user_roots.push(roder_config::config_dir());
+            if let Some(home) = std::env::var_os("HOME").map(std::path::PathBuf::from) {
+                options.user_roots.push(home.join(".agents"));
+            }
         }
         Ok(roder_config::scan_workflow_imports(options))
     }
@@ -3584,10 +3586,7 @@ fn workflow_decisions_path() -> anyhow::Result<std::path::PathBuf> {
     if let Some(path) = std::env::var_os("RODER_WORKFLOW_IMPORTS_PATH") {
         return Ok(std::path::PathBuf::from(path));
     }
-    let home = std::env::var_os("HOME")
-        .map(std::path::PathBuf::from)
-        .ok_or_else(|| anyhow::anyhow!("could not resolve HOME for workflow import state"))?;
-    Ok(home.join(".roder").join("workflow-imports.json"))
+    Ok(roder_config::config_dir().join("workflow-imports.json"))
 }
 
 fn load_workflow_decisions() -> anyhow::Result<Vec<WorkflowImportDecision>> {

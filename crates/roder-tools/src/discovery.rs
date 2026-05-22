@@ -249,6 +249,9 @@ fn catalog_root() -> anyhow::Result<PathBuf> {
     if let Ok(path) = std::env::var("RODER_DISCOVERY_CATALOG_DIR") {
         return Ok(PathBuf::from(path));
     }
+    if let Some(path) = roder_data_dir() {
+        return Ok(path.join("discovery"));
+    }
     Ok(dirs::home_dir()
         .ok_or_else(|| anyhow::anyhow!("could not resolve home directory"))?
         .join(".roder")
@@ -259,11 +262,20 @@ fn session_state_dir() -> anyhow::Result<PathBuf> {
     if let Ok(path) = std::env::var("RODER_DISCOVERY_SESSION_DIR") {
         return Ok(PathBuf::from(path));
     }
+    if let Some(path) = roder_data_dir() {
+        return Ok(path.join("sessions").join("discovery-state"));
+    }
     Ok(dirs::home_dir()
         .ok_or_else(|| anyhow::anyhow!("could not resolve home directory"))?
         .join(".roder")
         .join("sessions")
         .join("discovery-state"))
+}
+
+fn roder_data_dir() -> Option<PathBuf> {
+    std::env::var_os("RODER_DATA_DIR")
+        .or_else(|| std::env::var_os("RODER_CONFIG_DIR"))
+        .map(PathBuf::from)
 }
 
 fn compact_items(catalog: &DiscoveryCatalog, limit: usize) -> Vec<String> {

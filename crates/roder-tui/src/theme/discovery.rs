@@ -8,6 +8,13 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
+fn roder_data_dir() -> Option<PathBuf> {
+    std::env::var_os("RODER_DATA_DIR")
+        .or_else(|| std::env::var_os("RODER_CONFIG_DIR"))
+        .map(PathBuf::from)
+        .or_else(|| dirs::home_dir().map(|home| home.join(".roder")))
+}
+
 use super::overrides::ThemeOverrides;
 
 #[derive(Debug, Clone)]
@@ -20,8 +27,8 @@ pub struct ThemeEntry {
 /// Default directory list, expanded with `~`.
 pub fn default_directories() -> Vec<PathBuf> {
     let mut out = Vec::new();
-    if let Some(home) = dirs::home_dir() {
-        out.push(home.join(".roder").join("themes"));
+    if let Some(dir) = roder_data_dir() {
+        out.push(dir.join("themes"));
     }
     out.push(PathBuf::from(".roder/themes"));
     // The repo's checked-in themes/ directory — useful for development and as

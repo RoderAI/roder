@@ -65,7 +65,7 @@ impl ToolExecutor for ShellTool {
         require_nonempty(&command, "command")?;
 
         let cwd = match args.workdir.as_deref() {
-            Some(workdir) if !workdir.trim().is_empty() => workspace.resolve_existing(workdir)?,
+            Some(workdir) => workspace.resolve_existing_workdir(workdir)?,
             _ => workspace.root().to_path_buf(),
         };
         let timeout = args
@@ -214,6 +214,29 @@ mod tests {
         assert!(result.text.contains("nope"));
         assert_eq!(result.data["exit_code"], 7);
         assert_eq!(result.data["status"], "failed");
+
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[tokio::test]
+    async fn shell_tool_accepts_workspace_root_workdir_variants() {
+        let root = temp_workspace("roder-shell-workdir");
+        std::fs::create_dir_all(&root).unwrap();
+        let tool = ShellTool {
+            workspace: Workspace::new(root.clone()).unwrap(),
+        };
+
+        for workdir in [".", "./", " . /", "'.'", "` . / `"] {
+            let result = tool
+                .execute(
+                    context(&root),
+                    call(json!({ "command": "printf ok", "workdir": workdir })),
+                )
+                .await
+                .unwrap();
+            assert!(!result.is_error, "workdir {workdir:?}: {}", result.text);
+            assert_eq!(result.data["status"], "completed");
+        }
 
         let _ = std::fs::remove_dir_all(root);
     }

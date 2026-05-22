@@ -1,7 +1,6 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use anyhow::Context;
 use futures::stream;
 use roder_api::capabilities::CapabilityRequest;
 use roder_api::catalog::{
@@ -252,9 +251,11 @@ fn known_provider_id(id: &str) -> bool {
 }
 
 fn roder_home_dir() -> anyhow::Result<PathBuf> {
-    dirs::home_dir()
-        .map(|home| home.join(".roder"))
-        .context("could not resolve home directory for ~/.roder")
+    let path = roder_config::config_dir();
+    if path.as_os_str().is_empty() {
+        anyhow::bail!("configured Roder directory cannot be empty");
+    }
+    Ok(path)
 }
 
 struct FakeProviderExtension;

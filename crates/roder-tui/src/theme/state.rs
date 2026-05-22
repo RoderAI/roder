@@ -23,7 +23,14 @@ use std::path::PathBuf;
 /// Path to the state file: `~/.roder/state.toml`. Returns `None` if the home
 /// directory can't be determined (tests / locked-down environments).
 pub fn state_file_path() -> Option<PathBuf> {
-    dirs::home_dir().map(|home| home.join(".roder").join("state.toml"))
+    roder_data_dir().map(|dir| dir.join("state.toml"))
+}
+
+fn roder_data_dir() -> Option<PathBuf> {
+    std::env::var_os("RODER_DATA_DIR")
+        .or_else(|| std::env::var_os("RODER_CONFIG_DIR"))
+        .map(PathBuf::from)
+        .or_else(|| dirs::home_dir().map(|home| home.join(".roder")))
 }
 
 /// Read `[tui].active_theme` from the state file. Any error returns `None`.
