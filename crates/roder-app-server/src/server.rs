@@ -17,7 +17,8 @@ use roder_commands::{
     CommandsRegistryOptions, ExtensionCommandDirectory, expand_command,
 };
 use roder_core::{
-    Runtime, StartTurnRequest, TeamMemberStartRequest as RuntimeTeamMemberStartRequest,
+    CreateSessionRequest, Runtime, StartTurnRequest,
+    TeamMemberStartRequest as RuntimeTeamMemberStartRequest,
     TeamStartRequest as RuntimeTeamStartRequest, TeamState, default_instructions,
     media_artifacts::{MediaArtifactStore, default_media_artifact_dir},
 };
@@ -1692,9 +1693,41 @@ impl AppServer {
         let task_id = params
             .task_id
             .ok_or_else(|| invalid_params("roadmap/thread/spawn requires taskId"))?;
+        let cfg = self.runtime.status().await;
+        let metadata = self
+            .runtime
+            .create_session_with(CreateSessionRequest {
+                title: Some(format!("Roadmap worker: {task_id}")),
+                workspace: Some(self.roadmap_workspace()?.display().to_string()),
+                provider: Some(cfg.default_provider.clone()),
+                model: Some(cfg.default_model.clone()),
+            })
+            .await
+            .map_err(internal_error)?;
+        let desktop_thread = desktop_thread_from_metadata(metadata, None);
+        self.desktop_threads
+            .write()
+            .await
+            .insert(desktop_thread.id.clone(), desktop_thread.clone());
+        self.desktop_thread_models.write().await.insert(
+            desktop_thread.id.clone(),
+            (cfg.default_provider, cfg.default_model),
+        );
+        let _ = self
+            .desktop_notifications
+            .send(notifications::thread_started_notification(
+                desktop_thread.clone(),
+            ));
         let thread = self
             .runtime
-            .spawn_roadmap_thread(&params.path, &task_id)
+            .attach_roadmap_thread(
+                &params.path,
+                &task_id,
+                &desktop_thread.id,
+                params
+                    .title
+                    .or_else(|| Some(format!("Roadmap worker: {task_id}"))),
+            )
             .await
             .map_err(internal_error)?;
         Ok(serde_json::json!({ "thread": thread }))

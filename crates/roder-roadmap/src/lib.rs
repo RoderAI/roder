@@ -1,3 +1,4 @@
+mod control;
 mod document;
 mod parser;
 mod prompts;
@@ -6,6 +7,10 @@ mod store;
 mod tools;
 mod validator;
 
+pub use control::{
+    RoadmapControlSnapshot, RoadmapDocumentControl, RoadmapTaskControl, RoadmapTaskStatus,
+    build_control_snapshot, dispatch_prompt,
+};
 pub use document::{
     ChecklistItem, Diagnostic, DiagnosticSeverity, Document, DocumentSummary, LineRange,
     RoadmapState, Task, ThreadAttachment, ValidationResult,

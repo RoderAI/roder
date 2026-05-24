@@ -83,6 +83,8 @@ Extensions never depend on `roder-core`; the core never depends on any extension
 
 The roadmap lives in `roadmap/`. It is organized as phased implementation plans, each scoped tight enough to be assigned to a single agent. The index in [`roadmap/00-feature-inventory-and-sequencing.md`](./roadmap/00-feature-inventory-and-sequencing.md) lists every plan and its dependency gates.
 
+`roder roadmap` is the local control surface for that work. Use `roder roadmap board [plan]` to see plan progress, task readiness, validation state, and attached worker lanes; `roder roadmap dispatch <plan> [task-id]` to print the focused worker brief; and `roder roadmap spawn <plan> [task-id]` to allocate a tracked worker attachment before steering or attaching a live thread. Opening `roder roadmap` or `/roadmap` in the TUI shows the same plan-first operator surface.
+
 Foundational and architectural plans:
 
 - [`roder_rust_rewrite_plan.md`](./roadmap/roder_rust_rewrite_plan.md) — the overall Rust rewrite plan.
