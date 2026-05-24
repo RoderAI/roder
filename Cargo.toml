@@ -24,7 +24,7 @@ ignore = "0.4.25"
 rand = "0.10.1"
 qrcode = { version = "0.14.1", default-features = false }
 ratatui = { version = "0.30.0", features = ["crossterm_0_29"] }
-reqwest = { version = "0.13.3", default-features = false, features = ["form", "http2", "json", "native-tls", "system-proxy"] }
+reqwest = { version = "0.13.3", default-features = false, features = ["form", "http2", "json", "rustls", "system-proxy"] }
 rusqlite = { version = "0.38.0", features = ["bundled"] }
 semver = "1.0.28"
 serde = "1.0.228"
@@ -41,6 +41,7 @@ tokio = { version = "1.52.3", default-features = false, features = [
     "net",
     "process",
     "rt-multi-thread",
+    "signal",
     "sync",
     "time",
 ] }

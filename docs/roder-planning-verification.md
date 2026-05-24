@@ -4,7 +4,7 @@ Roder's eval runtime profile is for unattended runs. It keeps chat-friendly beha
 
 - `request_user_input` returns a model-visible unavailable result instead of waiting for a user.
 - Decomposed eval fixtures can set `expected.taskLedgerRequired = true`; missing, stale, or incomplete task ledgers fail the eval.
-- Code-changing eval turns must call `verification.review` before final completion.
+- Code-changing eval turns must call `verification_review` before final completion.
 
 Run the local verification suite with:
 

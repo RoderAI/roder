@@ -189,7 +189,7 @@ impl InferenceEngine for FakeInferenceEngine {
             let stream = stream::iter(vec![Ok(InferenceEvent::ToolCallCompleted(
                 ToolCallCompleted {
                     id: "fake-verification".to_string(),
-                    name: "verification.review".to_string(),
+                    name: "verification_review".to_string(),
                     arguments: verification_arguments(failed),
                 },
             ))]);
@@ -354,7 +354,7 @@ fn should_complete_verification(request: &AgentInferenceRequest) -> bool {
         matches!(
             item,
             ConversationItem::ToolResult(result)
-                if result.name.as_deref() == Some("verification.review")
+                if result.name.as_deref() == Some("verification_review")
         )
     })
 }
@@ -364,7 +364,7 @@ fn verification_failed(request: &AgentInferenceRequest) -> bool {
         matches!(
             item,
             ConversationItem::ToolResult(result)
-                if result.name.as_deref() == Some("verification.review")
+                if result.name.as_deref() == Some("verification_review")
                     && result.result.contains("Verification failed")
         )
     })
