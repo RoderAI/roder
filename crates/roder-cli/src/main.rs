@@ -99,6 +99,9 @@ async fn main() -> anyhow::Result<()> {
         return run_workflow_cli(&args[1..]).await;
     }
     if matches!(args.first().map(String::as_str), Some("roadmap")) {
+        if roadmap_entrypoint_opens_tui(&args[1..]) {
+            return run_roadmap_tui_on_large_stack(args[1..].to_vec());
+        }
         return run_roadmap_entrypoint(&args[1..]).await;
     }
     if matches!(
@@ -371,6 +374,25 @@ async fn run_roadmap_entrypoint(args: &[String]) -> anyhow::Result<()> {
     roadmap_cli::run_roadmap_cli(args).await
 }
 
+fn roadmap_entrypoint_opens_tui(args: &[String]) -> bool {
+    args.is_empty() || matches!(args.first().map(String::as_str), Some("open"))
+}
+
+fn run_roadmap_tui_on_large_stack(args: Vec<String>) -> anyhow::Result<()> {
+    std::thread::Builder::new()
+        .name("roder-roadmap-tui".to_string())
+        .stack_size(32 * 1024 * 1024)
+        .spawn(move || {
+            tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .expect("roadmap TUI tokio runtime")
+                .block_on(run_roadmap_entrypoint(&args))
+        })?
+        .join()
+        .map_err(|panic| anyhow::anyhow!("roadmap TUI thread panicked: {panic:?}"))?
+}
+
 async fn run_roadmap_tui(plan: Option<String>) -> anyhow::Result<()> {
     let cli_options = CliOptions {
         startup: TuiStartup::RoadmapOpen { path: plan.clone() },
@@ -383,12 +405,14 @@ async fn run_roadmap_tui(plan: Option<String>) -> anyhow::Result<()> {
     }
     let app_server = Arc::new(AppServer::new(runtime).with_user_config_persistence());
     let client = LocalAppClient::new(app_server);
-    let mut tui = TuiApp::new_with_startup(
-        client,
-        default_model,
-        TuiStartup::RoadmapOpen { path: plan },
-    )
-    .await?;
+    let mut tui = Box::new(
+        TuiApp::new_with_startup(
+            client,
+            default_model,
+            TuiStartup::RoadmapOpen { path: plan },
+        )
+        .await?,
+    );
     tui.run().await?;
     print_tui_exit_summary(&tui);
     Ok(())

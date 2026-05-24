@@ -16,6 +16,7 @@ mod plugin_browser;
 mod processes;
 #[allow(dead_code)]
 mod remote;
+mod roadmap_workspace;
 mod runner;
 mod scroll_accel;
 mod session_resume;
@@ -104,6 +105,8 @@ use plan_panel::{
 };
 use plugin_browser::PluginBrowserState;
 use remote::{RemotePanelController, render_remote_panel_lines};
+use roadmap_workspace::{RoadmapWorkspaceMeta, render_roadmap_workspace};
+use roder_roadmap::ThreadAttachment;
 use scroll_accel::ScrollSettings;
 use shortcuts::FooterShortcutContext;
 use team_ui::{TeamUiState, is_team_focus_next_key, is_team_focus_previous_key};
@@ -1067,6 +1070,11 @@ struct SessionParts {
     session_message_count: usize,
 }
 
+#[derive(Debug, serde::Deserialize)]
+struct RoadmapThreadResponse {
+    thread: ThreadAttachment,
+}
+
 impl TuiApp<LocalAppClient> {
     pub async fn new(client: LocalAppClient, model: String) -> anyhow::Result<Self> {
         Self::new_with_startup(client, model, TuiStartup::NewSession).await
@@ -1563,6 +1571,9 @@ where
                                 }
                                 _ => {}
                             }
+                        } else if self.roadmap_mode.is_some() && self.handle_roadmap_key(key).await
+                        {
+                            continue;
                         } else {
                             if is_team_focus_next_key(key) {
                                 self.cycle_team_focus(true);
@@ -2528,6 +2539,258 @@ where
         self.enter_roadmap_mode(path);
     }
 
+    async fn handle_roadmap_key(&mut self, key: KeyEvent) -> bool {
+        if key.modifiers.contains(KeyModifiers::CONTROL) {
+            return false;
+        }
+        match key.code {
+            KeyCode::Esc | KeyCode::Char('q') => {
+                self.roadmap_mode = None;
+                self.push_event("left roadmapping mode".to_string());
+                true
+            }
+            KeyCode::Down | KeyCode::Char('j') => {
+                self.move_roadmap_focus(true);
+                true
+            }
+            KeyCode::Up | KeyCode::Char('k') => {
+                self.move_roadmap_focus(false);
+                true
+            }
+            KeyCode::Tab => {
+                if let Some(roadmap) = self.roadmap_mode.as_mut() {
+                    let pane = roadmap.focus_next_pane();
+                    self.push_event(format!("roadmap pane {}", pane.label()));
+                }
+                true
+            }
+            KeyCode::BackTab => {
+                if let Some(roadmap) = self.roadmap_mode.as_mut() {
+                    let pane = roadmap.focus_previous_pane();
+                    self.push_event(format!("roadmap pane {}", pane.label()));
+                }
+                true
+            }
+            KeyCode::Char('t') => {
+                if let Some(roadmap) = self.roadmap_mode.as_mut()
+                    && let Some(thread_id) = roadmap.select_next_thread().map(str::to_string)
+                {
+                    self.push_event(format!("roadmap worker {thread_id}"));
+                }
+                true
+            }
+            KeyCode::Char('v') => {
+                if let Some(roadmap) = self.roadmap_mode.as_mut() {
+                    roadmap.validate_selected_document();
+                    self.push_event("roadmap validated".to_string());
+                }
+                true
+            }
+            KeyCode::Char('s') => {
+                let _ = self.spawn_roadmap_worker().await;
+                true
+            }
+            KeyCode::Enter | KeyCode::Char('e') => {
+                if self.roadmap_mode.as_ref().is_some_and(|roadmap| {
+                    roadmap.focused_pane == crate::roadmap::RoadmapPaneFocus::Agents
+                }) {
+                    self.monitor_selected_roadmap_worker().await;
+                } else {
+                    self.execute_focused_roadmap_task().await;
+                }
+                true
+            }
+            _ => false,
+        }
+    }
+
+    fn move_roadmap_focus(&mut self, forward: bool) {
+        let Some(roadmap) = self.roadmap_mode.as_mut() else {
+            return;
+        };
+        match roadmap.focused_pane {
+            crate::roadmap::RoadmapPaneFocus::Plans => {
+                let result = if forward {
+                    roadmap.focus_next_plan()
+                } else {
+                    roadmap.focus_previous_plan()
+                }
+                .map(|plan| plan.map(str::to_string));
+                match result {
+                    Ok(Some(plan)) => self.push_event(format!("roadmap plan {plan}")),
+                    Ok(None) => {}
+                    Err(err) => self.record_error(format!("roadmap plan navigation failed: {err}")),
+                }
+            }
+            crate::roadmap::RoadmapPaneFocus::Tasks => {
+                let task_id = if forward {
+                    roadmap.focus_next_task()
+                } else {
+                    roadmap.focus_previous_task()
+                }
+                .map(str::to_string);
+                if let Some(task_id) = task_id {
+                    self.push_event(format!("roadmap focus {task_id}"));
+                }
+            }
+            crate::roadmap::RoadmapPaneFocus::Agents => {
+                let thread_id = if forward {
+                    roadmap.select_next_thread()
+                } else {
+                    roadmap.select_previous_thread()
+                }
+                .map(str::to_string);
+                if let Some(thread_id) = thread_id {
+                    self.push_event(format!("roadmap worker {thread_id}"));
+                }
+            }
+            crate::roadmap::RoadmapPaneFocus::TaskDetail
+            | crate::roadmap::RoadmapPaneFocus::Validation
+            | crate::roadmap::RoadmapPaneFocus::Activity => {
+                let label = roadmap.focused_pane.label();
+                if forward {
+                    roadmap.scroll_focused_pane_down();
+                } else {
+                    roadmap.scroll_focused_pane_up();
+                }
+                self.push_event(format!("roadmap {label} scroll"));
+            }
+        }
+    }
+
+    async fn spawn_roadmap_worker(&mut self) -> Option<ThreadAttachment> {
+        let Some((path, task_id)) = self.selected_roadmap_task_ref() else {
+            self.record_error("roadmap worker spawn needs a selected task".to_string());
+            return None;
+        };
+        let res = self
+            .client
+            .send_request(JsonRpcRequest {
+                jsonrpc: "2.0".to_string(),
+                id: Some(serde_json::json!("roadmap/thread/spawn")),
+                method: "roadmap/thread/spawn".to_string(),
+                params: Some(serde_json::json!({
+                    "path": path,
+                    "taskId": task_id,
+                })),
+            })
+            .await;
+        match decode_response::<RoadmapThreadResponse>(res) {
+            Ok(response) => {
+                if let Some(roadmap) = self.roadmap_mode.as_mut() {
+                    roadmap.selected_thread_id = Some(response.thread.thread_id.clone());
+                    roadmap.attached_threads.push(response.thread.clone());
+                }
+                self.push_event(format!(
+                    "spawned roadmap worker {}",
+                    response.thread.thread_id
+                ));
+                Some(response.thread)
+            }
+            Err(err) => {
+                self.record_error(format!("roadmap worker spawn failed: {err}"));
+                None
+            }
+        }
+    }
+
+    async fn execute_focused_roadmap_task(&mut self) {
+        let Some(roadmap) = self.roadmap_mode.as_ref() else {
+            return;
+        };
+        let task = roadmap
+            .focused_task_heading()
+            .unwrap_or("focused roadmap task");
+        let display = format!("Execute roadmap task: {task}");
+        let message = roadmap.prompt_context(
+            "Execute or continue the focused roadmap task. Use the roadmap document as source of truth, steer attached workers if present, and update task state only with evidence.",
+        );
+        let pending = PendingPrompt::with_images(display, message, Vec::new());
+        if self.active_turn_id.is_some() {
+            self.steer_prepared_prompt(pending).await;
+        } else {
+            self.start_prepared_prompt(pending).await;
+        }
+    }
+
+    async fn monitor_selected_roadmap_worker(&mut self) {
+        let Some((thread_id, task_id)) = self.roadmap_mode.as_ref().and_then(|roadmap| {
+            let thread_id = roadmap.selected_thread_id.clone()?;
+            let task_id = roadmap
+                .attached_threads
+                .iter()
+                .find(|thread| thread.thread_id == thread_id)
+                .and_then(|thread| thread.task_id.clone())
+                .or_else(|| roadmap.focused_task_id.clone());
+            Some((thread_id, task_id))
+        }) else {
+            self.record_error("roadmap worker monitor needs a selected worker".to_string());
+            return;
+        };
+        match session_resume::load_thread(&self.client, &thread_id).await {
+            Ok(Some(thread)) => {
+                self.roadmap_mode = None;
+                self.apply_thread(thread);
+                self.timeline.push_system(format!(
+                    "monitoring roadmap worker {}.",
+                    short_id(&thread_id)
+                ));
+                self.push_event(format!(
+                    "monitoring roadmap worker {}",
+                    short_id(&thread_id)
+                ));
+            }
+            Ok(None) => {
+                self.push_event(format!(
+                    "roadmap worker {} had no session; spawning replacement",
+                    short_id(&thread_id)
+                ));
+                if let Some(task_id) = task_id
+                    && let Some(roadmap) = self.roadmap_mode.as_mut()
+                {
+                    roadmap.focused_task_id = Some(task_id);
+                }
+                let Some(thread) = self.spawn_roadmap_worker().await else {
+                    self.record_error(format!(
+                        "roadmap worker session not found: {}",
+                        short_id(&thread_id)
+                    ));
+                    return;
+                };
+                match session_resume::load_thread(&self.client, &thread.thread_id).await {
+                    Ok(Some(desktop_thread)) => {
+                        let replacement_id = thread.thread_id.clone();
+                        self.roadmap_mode = None;
+                        self.apply_thread(desktop_thread);
+                        self.timeline.push_system(format!(
+                            "monitoring replacement roadmap worker {}.",
+                            short_id(&replacement_id)
+                        ));
+                        self.push_event(format!(
+                            "monitoring replacement roadmap worker {}",
+                            short_id(&replacement_id)
+                        ));
+                    }
+                    Ok(None) => self.record_error(format!(
+                        "replacement roadmap worker session not found: {}",
+                        short_id(&thread.thread_id)
+                    )),
+                    Err(err) => self
+                        .record_error(format!("replacement roadmap worker monitor failed: {err}")),
+                }
+            }
+            Err(err) => self.record_error(format!("roadmap worker monitor failed: {err}")),
+        }
+    }
+
+    fn selected_roadmap_task_ref(&self) -> Option<(String, String)> {
+        let roadmap = self.roadmap_mode.as_ref()?;
+        Some((
+            roadmap.selected_plan.clone()?,
+            roadmap.focused_task_id.clone()?,
+        ))
+    }
+
     async fn expand_slash_command(
         &self,
         name: &str,
@@ -2872,11 +3135,31 @@ where
             // the themed surface instead of the terminal's native background.
             f.render_widget(Block::default().style(Style::default().bg(bg)), area);
         }
-        style_composer_for_current_mode(&mut self.composer, self.theme, self.policy_mode);
         if let Some(roadmap) = self.roadmap_mode.as_ref() {
-            self.composer
-                .set_placeholder_text(roadmap.composer_placeholder());
+            let activity = self
+                .timeline
+                .render_with_frame(self.theme, area, self.animation_frame)
+                .text;
+            render_roadmap_workspace(
+                f,
+                area,
+                roadmap,
+                self.theme,
+                RoadmapWorkspaceMeta {
+                    model: self.model.clone(),
+                    status: if self.active_turn_id.is_some() {
+                        working_status_label(self.compaction_active).to_string()
+                    } else {
+                        "roadmap ready".to_string()
+                    },
+                    active_turn: self.active_turn_id.is_some(),
+                },
+                activity,
+            );
+            self.render_overlays(f, area);
+            return;
         }
+        style_composer_for_current_mode(&mut self.composer, self.theme, self.policy_mode);
         let event_height = event_log_height(self.show_event_log, self.events.len());
         let attachment_height = image_attachment_height(self.image_attachments.len());
         let queue_height = queued_prompt_height(self.queued_prompts.len());
@@ -2976,6 +3259,10 @@ where
         }
         f.render_widget(self.footer(area.width), chunks[composer_index]);
 
+        self.render_overlays(f, area);
+    }
+
+    fn render_overlays(&mut self, f: &mut Frame<'_>, area: Rect) {
         if self.show_provider_popup {
             self.render_provider_popup(f, area);
         }
@@ -6351,6 +6638,7 @@ mod tests {
     use super::*;
     use std::sync::Arc;
 
+    use ratatui::{Terminal, backend::TestBackend};
     use roder_api::teams::{TeamMemberDescriptor, TeamMemberRole, TeamMemberStatus};
     use roder_app_server::AppServer;
     use roder_core::Runtime;
@@ -6646,6 +6934,230 @@ mod tests {
         assert!(rows.contains("Roadmap"));
         assert!(rows.contains("Activity Evidence"));
         assert!(rows.contains("worker evidence"));
+    }
+
+    #[test]
+    fn roadmap_mode_uses_custom_workspace_instead_of_chat_frame() {
+        let mut app = test_app();
+        app.enter_roadmap_mode(Some("roadmap/20-roadmapping-mode.md".to_string()));
+
+        let backend = TestBackend::new(120, 36);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal.draw(|f| app.render(f)).unwrap();
+        let buffer = terminal.backend().buffer();
+        let rows = (0..buffer.area.height)
+            .map(|row| {
+                buffer_row_cells(buffer, row)
+                    .iter()
+                    .map(|cell| cell.symbol.as_str())
+                    .collect::<String>()
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        assert!(rows.contains("Roadmap Manager"));
+        assert!(rows.contains("Task Queue"));
+        assert!(rows.contains("Agent Lanes"));
+        assert!(rows.contains("Validation"));
+        assert!(!rows.contains("Send"));
+    }
+
+    #[tokio::test]
+    async fn roadmap_workspace_keys_manage_tasks_and_leave_mode() {
+        let mut app = test_app();
+        let workspace = temp_roadmap_workspace();
+        std::fs::write(
+            workspace.join("roadmap/20-roadmapping-mode.md"),
+            "# Roadmapping Mode Implementation Plan\n\n**Goal:** Add roadmapping mode.\n**Architecture:** Roadmap documents are first-class state.\n**Tech Stack:** Rust.\n\n## Owned Paths\n\n- Modify: `crates/roder-tui/src/roadmap.rs`\n\n## Tasks\n\n- [ ] Add roadmap tests\n- [ ] Wire roadmap keys\n\nRun:\n\n```sh\ncargo test -p roder-tui roadmap\n```\n\nAcceptance:\n- Roadmap mode renders.\n\n## Phase Acceptance\n\n- [ ] TUI works.\n",
+        )
+        .unwrap();
+        std::fs::write(
+            workspace.join("roadmap/21-second-plan.md"),
+            "# Second Plan\n\n**Goal:** Exercise plan focus.\n**Architecture:** Roadmap documents are first-class state.\n**Tech Stack:** Rust.\n\n## Owned Paths\n\n- Modify: `crates/roder-tui/src/app.rs`\n\n## Tasks\n\n- [ ] Second plan task\n\nRun:\n\n```sh\ncargo test -p roder-tui roadmap\n```\n\nAcceptance:\n- Plan navigation works.\n\n## Phase Acceptance\n\n- [ ] TUI works.\n",
+        )
+        .unwrap();
+        app.roadmap_mode = Some(
+            RoadmapModeState::load(&workspace, Some("20-roadmapping-mode.md".to_string())).unwrap(),
+        );
+
+        assert_eq!(
+            app.roadmap_mode
+                .as_ref()
+                .and_then(|state| state.focused_task_id.as_deref()),
+            Some("task-add-roadmap-tests")
+        );
+        assert_eq!(
+            app.roadmap_mode.as_ref().map(|state| state.focused_pane),
+            Some(crate::roadmap::RoadmapPaneFocus::Tasks)
+        );
+
+        assert!(
+            app.handle_roadmap_key(KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE))
+                .await
+        );
+        assert_eq!(
+            app.roadmap_mode.as_ref().map(|state| state.focused_pane),
+            Some(crate::roadmap::RoadmapPaneFocus::TaskDetail)
+        );
+
+        assert!(
+            app.handle_roadmap_key(KeyEvent::new(KeyCode::BackTab, KeyModifiers::SHIFT))
+                .await
+        );
+        assert_eq!(
+            app.roadmap_mode.as_ref().map(|state| state.focused_pane),
+            Some(crate::roadmap::RoadmapPaneFocus::Tasks)
+        );
+
+        app.roadmap_mode.as_mut().unwrap().focused_pane = crate::roadmap::RoadmapPaneFocus::Plans;
+        assert!(
+            app.handle_roadmap_key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE))
+                .await
+        );
+        assert_eq!(
+            app.roadmap_mode
+                .as_ref()
+                .and_then(|state| state.selected_plan.as_deref()),
+            Some("roadmap/21-second-plan.md")
+        );
+        assert!(
+            app.handle_roadmap_key(KeyEvent::new(KeyCode::Up, KeyModifiers::NONE))
+                .await
+        );
+        assert_eq!(
+            app.roadmap_mode
+                .as_ref()
+                .and_then(|state| state.selected_plan.as_deref()),
+            Some("roadmap/20-roadmapping-mode.md")
+        );
+
+        app.roadmap_mode.as_mut().unwrap().focused_pane = crate::roadmap::RoadmapPaneFocus::Tasks;
+        assert!(
+            app.handle_roadmap_key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE))
+                .await
+        );
+        assert_eq!(
+            app.roadmap_mode
+                .as_ref()
+                .and_then(|state| state.focused_task_id.as_deref()),
+            Some("task-wire-roadmap-keys")
+        );
+
+        app.roadmap_mode.as_mut().unwrap().attach_thread("thread-a");
+        app.roadmap_mode.as_mut().unwrap().attach_thread("thread-b");
+        app.roadmap_mode.as_mut().unwrap().focused_pane = crate::roadmap::RoadmapPaneFocus::Agents;
+        assert!(
+            app.handle_roadmap_key(KeyEvent::new(KeyCode::Up, KeyModifiers::NONE))
+                .await
+        );
+        assert_eq!(
+            app.roadmap_mode
+                .as_ref()
+                .and_then(|state| state.selected_thread_id.as_deref()),
+            Some("thread-a")
+        );
+        assert!(
+            app.handle_roadmap_key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE))
+                .await
+        );
+        assert_eq!(
+            app.roadmap_mode
+                .as_ref()
+                .and_then(|state| state.selected_thread_id.as_deref()),
+            Some("thread-b")
+        );
+
+        app.roadmap_mode.as_mut().unwrap().focused_pane =
+            crate::roadmap::RoadmapPaneFocus::Activity;
+        assert!(
+            app.handle_roadmap_key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE))
+                .await
+        );
+        assert_eq!(
+            app.roadmap_mode.as_ref().map(|state| state.activity_scroll),
+            Some(1)
+        );
+        assert!(
+            app.handle_roadmap_key(KeyEvent::new(KeyCode::Up, KeyModifiers::NONE))
+                .await
+        );
+        assert_eq!(
+            app.roadmap_mode.as_ref().map(|state| state.activity_scroll),
+            Some(0)
+        );
+
+        assert!(
+            app.handle_roadmap_key(KeyEvent::new(KeyCode::Char('v'), KeyModifiers::NONE))
+                .await
+        );
+        assert!(
+            app.roadmap_mode
+                .as_ref()
+                .is_some_and(|state| state.validation_diagnostics.is_empty())
+        );
+
+        assert!(
+            app.handle_roadmap_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE))
+                .await
+        );
+        assert!(app.roadmap_mode.is_none(), "events: {:?}", app.events);
+    }
+
+    #[tokio::test]
+    async fn roadmap_worker_enter_loads_worker_chat_view() {
+        let mut app = test_app();
+        let worker = start_test_thread(&app).await;
+        app.roadmap_mode = Some(RoadmapModeState::new(Some(
+            "roadmap/20-roadmapping-mode.md".to_string(),
+        )));
+        let roadmap = app.roadmap_mode.as_mut().unwrap();
+        roadmap.focused_pane = crate::roadmap::RoadmapPaneFocus::Agents;
+        roadmap.attach_thread(worker.thread.id.clone());
+
+        assert!(
+            app.handle_roadmap_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE))
+                .await
+        );
+
+        assert!(app.roadmap_mode.is_none());
+        assert_eq!(app.thread_id, worker.thread.id);
+        let render = app.timeline.render(app.theme, Rect::new(0, 0, 100, 8));
+        let rows = rendered_text_rows(&render.text, 100, 8, render.text_scroll);
+        assert!(
+            rows.iter()
+                .any(|row| row.text.contains("monitoring roadmap worker"))
+        );
+    }
+
+    fn temp_roadmap_workspace() -> PathBuf {
+        let unique = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let path = std::env::temp_dir().join(format!("roder-tui-roadmap-{unique}"));
+        std::fs::create_dir_all(path.join("roadmap")).unwrap();
+        path
+    }
+
+    async fn start_test_thread(app: &TuiApp) -> ThreadStartResult {
+        let res = app
+            .client
+            .send_request(JsonRpcRequest {
+                jsonrpc: "2.0".to_string(),
+                id: Some(serde_json::json!("thread/start")),
+                method: "thread/start".to_string(),
+                params: Some(
+                    serde_json::to_value(ThreadStartParams {
+                        model: Some("mock".to_string()),
+                        model_provider: Some("mock".to_string()),
+                        cwd: None,
+                        ephemeral: false,
+                    })
+                    .unwrap(),
+                ),
+            })
+            .await;
+        decode_response::<ThreadStartResult>(res).unwrap()
     }
 
     #[test]

@@ -995,7 +995,10 @@ async fn roadmap_methods_update_documents_threads_and_notifications() {
         })),
     )
     .await;
-    assert_eq!(created["path"], "roadmap/21-new-plan.md");
+    assert_eq!(
+        created["path"].as_str().unwrap().replace('\\', "/"),
+        "roadmap/21-new-plan.md"
+    );
 
     let patched: serde_json::Value = request(
         &client,
@@ -1048,8 +1051,21 @@ async fn roadmap_methods_update_documents_threads_and_notifications() {
         spawned["thread"]["thread_id"]
             .as_str()
             .unwrap()
-            .starts_with("thread-")
+            .trim()
+            .len()
+            > 0
     );
+    let spawned_thread_id = spawned["thread"]["thread_id"].as_str().unwrap();
+    let spawned_thread: serde_json::Value = request(
+        &client,
+        "thread/read",
+        Some(serde_json::json!({
+            "threadId": spawned_thread_id,
+            "includeTurns": true
+        })),
+    )
+    .await;
+    assert_eq!(spawned_thread["thread"]["id"], spawned_thread_id);
 
     let attached: serde_json::Value = request(
         &client,
