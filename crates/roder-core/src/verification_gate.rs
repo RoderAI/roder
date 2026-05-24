@@ -3,7 +3,7 @@ use std::collections::BTreeSet;
 use roder_api::conversation::ToolResultRecord;
 use roder_api::inference::RuntimeProfile;
 
-pub(crate) const VERIFICATION_TOOL_NAME: &str = "verification.review";
+pub(crate) const VERIFICATION_TOOL_NAME: &str = "verification_review";
 
 #[derive(Debug, Clone)]
 pub(crate) struct VerificationGateState {

@@ -10,7 +10,7 @@ use roder_api::tools::{
 use serde::Deserialize;
 use serde_json::json;
 
-pub const VERIFICATION_TOOL_NAME: &str = "verification.review";
+pub const VERIFICATION_TOOL_NAME: &str = "verification_review";
 
 pub struct VerificationExtension;
 

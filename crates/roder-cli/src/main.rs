@@ -4,6 +4,9 @@ use std::sync::Arc;
 mod automations;
 mod commands;
 mod evals;
+mod exec;
+mod exec_events;
+mod exec_output;
 mod marketplace;
 mod replay;
 mod resume_picker;
@@ -72,6 +75,9 @@ async fn main() -> anyhow::Result<()> {
     }
     if matches!(args.first().map(String::as_str), Some("app-server")) {
         return run_app_server(&args[1..]).await;
+    }
+    if matches!(args.first().map(String::as_str), Some("exec")) {
+        return exec::run_exec_cli(&args[1..]).await;
     }
     if matches!(args.first().map(String::as_str), Some("commands")) {
         let cfg = roder_config::load_config()?;

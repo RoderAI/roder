@@ -729,7 +729,7 @@ mod tests {
             "edit",
             "multi_edit",
             "task_ledger.update",
-            "verification.review",
+            "verification_review",
         ] {
             assert!(
                 names.contains(&expected.to_string()),
