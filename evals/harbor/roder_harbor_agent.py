@@ -10,28 +10,15 @@ from harbor.environments.base import BaseEnvironment
 from harbor.models.agent.context import AgentContext
 from harbor.models.trial.paths import EnvironmentPaths
 
+from roder_benchmark_guidance import TERMINAL_BENCH_GUIDANCE
+from roder_config_shell import rewrite_reasoning_shell_fragment
+from roder_exec_shell import roder_exec_shell_fragment
+from roder_plan_first import (
+    implementation_prompt_for_instruction,
+    plan_first_shell_fragment,
+    plan_prompt_for_instruction,
+)
 from roder_run_summary_fragment import run_summary_shell_fragment
-
-
-TERMINAL_BENCH_GUIDANCE = """Terminal-Bench harness guidance:
-- The verifier scores filesystem and process state, not the final chat message.
-- If the task asks for a file or exact answer, write the best current answer to the requested path as soon as you have it; revise it later if needed.
-- If you find any plausible exact-answer candidate, create or update the required output file before doing additional research, ranking, browsing, or long-running validation.
-- Before web/search or long research, inspect local task assets first: list the current directory, /app, and /tests when they exist, then grep visible tests and task files for expected paths, constants, answer formats, and fixture data.
-- For exact-answer tasks, the final chat answer alone does not score. Create or update the required output file before finalizing, even if the answer is provisional.
-- Required output files must contain complete machine-parseable content, not summaries. Never write ellipses, placeholders, Markdown fences, prose introductions, or truncated excerpts into files that the task will parse as sequences, JSON, CSV, SQL, code, model configs, or exact answers.
-- After writing a required output file, validate the actual file on disk with the same parser or regex shape the task implies. Do not rely only on checks over an intermediate variable. For DNA or gBlock files, the final file should normally match `^[ACGTacgt]+$` exactly, with no ambiguous bases such as `N`, amino-acid letters, whitespace beyond the allowed newline, ellipses, or comments.
-- For dated or "as of" leaderboard/data tasks, live web pages can be wrong and current live leaderboards are usually not the answer. Prefer local fixtures, package data, git history, release snapshots, or commits at or before the requested date, and record the dated answer in the required file before doing slower live-data checks.
-- If current/live data conflicts with a dated or historical candidate, keep the dated or historical candidate in the required output file unless direct dated computation proves it wrong.
-- For benchmark leaderboards, respect the requested benchmark/filter and score column exactly. Prefer complete or eligible benchmark rows over partial high-scoring rows when computing a Mean (Task) leaderboard unless the task explicitly says partial coverage counts.
-- For MTEB embedding or retrieval tasks, prefer the installed `mteb` package APIs over raw `sentence_transformers` calls when the task mentions `mteb`: use `mteb.get_model`, the model's `encode`/`similarity` helpers, and `mteb.encoder_interface.PromptType.query` / `PromptType.passage` for retrieval-style cosine similarity instead of assuming one generic embedding path. Do not finalize an MTEB retrieval task until a local script has run the requested model/revision and written the computed rank to the required file.
-- For document sorting/extraction tasks, process every input file before moving or deleting it. Keep a manifest of filenames, classify each file once, and verify the required summary has one row per required document plus any requested total row before finalizing.
-- For database recovery, WAL, journal, or event-log tasks, replay the local log as ordered state changes. Apply inserts, updates, deletes, and replacements to the same in-memory records before writing the final export; validate changes to existing ids as well as new rows. For encrypted or corrupted binary logs, derive likely transforms from known file magic/header bytes, then query the repaired local database instead of fabricating monotonic placeholder values.
-- For G-code, image, OCR, CAD, plot, or rendered-artifact tasks that ask for text or an exact string, inspect the source geometry and at least one rendered or transformed view. For 3D print paths, isolate extrusion moves above the base object, then try rotations, transposes, and mirrors before deciding; do not stop at the first readable generic word if a more exact or flag-like string may be visible from another projection.
-- For sanitizer/filter tasks, preserve benign inputs according to the task's visible contract and local checks before finalizing. Build adversarial local checks for obfuscated dangerous forms, null bytes, malformed tags, unquoted attributes, JavaScript URLs, event handlers, CSS script patterns, and safe clean files. If using a parser or serializer such as BeautifulSoup, also compare clean examples against that parser's normalized output so attribute order, entity handling, void tags, and whitespace do not create false clean-file changes.
-- Run quick local checks before long commands, and keep required output files scoreable before waiting on slow work.
-- Preserve exact stdout, stderr, file names, file contents, dimensions, schemas, and exit behavior that the task describes or tests imply.
-- Do not finish or mark the goal complete while a known local check is failing."""
 
 
 class RoderCli(BaseInstalledAgent):
@@ -81,6 +68,28 @@ class RoderCli(BaseInstalledAgent):
             else os.environ.get("RODER_HARBOR_TASK_LEDGER_REQUIRED")
         )
         self._task_ledger_required = False if task_ledger is None else task_ledger
+        plan_first = self._optional_bool(
+            kwargs.get("plan_first_enabled")
+            if "plan_first_enabled" in kwargs
+            else os.environ.get("RODER_HARBOR_PLAN_FIRST_ENABLED")
+        )
+        self._plan_first_enabled = False if plan_first is None else plan_first
+        self._plan_first_policy_mode = str(
+            kwargs.get("plan_first_policy_mode")
+            or os.environ.get("RODER_HARBOR_PLAN_FIRST_POLICY_MODE")
+            or self._policy_mode
+        )
+        self._plan_first_reasoning = str(
+            kwargs.get("plan_first_reasoning")
+            or os.environ.get("RODER_HARBOR_PLAN_FIRST_REASONING")
+            or self._reasoning
+        )
+        plan_first_soft_timeout = kwargs.get("plan_first_soft_timeout_sec") or os.environ.get(
+            "RODER_HARBOR_PLAN_FIRST_SOFT_TIMEOUT_SEC"
+        )
+        self._plan_first_soft_timeout_sec = self._optional_int(plan_first_soft_timeout)
+        if self._plan_first_enabled and self._plan_first_soft_timeout_sec is None:
+            self._plan_first_soft_timeout_sec = 360
         self._source_roots = tuple(
             kwargs.get("source_roots", ("Cargo.toml", "Cargo.lock", ".cargo", "crates"))
         )
@@ -234,6 +243,20 @@ class RoderCli(BaseInstalledAgent):
             return instruction
         return f"{TERMINAL_BENCH_GUIDANCE}\n\n{instruction}"
 
+    def _plan_first_env(self, instruction: str) -> dict[str, str]:
+        if not self._plan_first_enabled:
+            return {"RODER_HARBOR_PROMPT": self._prompt_for_instruction(instruction)}
+        terminal_guidance = (
+            TERMINAL_BENCH_GUIDANCE if self._benchmark_guidance_enabled else ""
+        )
+        return {
+            "RODER_HARBOR_PLAN_PROMPT": plan_prompt_for_instruction(instruction),
+            "RODER_HARBOR_PROMPT": implementation_prompt_for_instruction(
+                terminal_bench_guidance=terminal_guidance,
+                instruction=instruction,
+            ),
+        }
+
     def _create_source_archive(self) -> Path:
         if not self._source_dir.exists():
             raise FileNotFoundError(f"Roder source dir not found: {self._source_dir}")
@@ -310,11 +333,19 @@ class RoderCli(BaseInstalledAgent):
         last_message_path = (EnvironmentPaths.agent_dir / "roder-last-message.txt").as_posix()
         setup_summary_path = (EnvironmentPaths.agent_dir / "setup-summary.txt").as_posix()
         run_summary_path = (EnvironmentPaths.agent_dir / "roder-run-summary.json").as_posix()
+        plan_events_path = (EnvironmentPaths.agent_dir / "roder-plan-events.jsonl").as_posix()
+        plan_stderr_path = (EnvironmentPaths.agent_dir / "roder-plan-stderr.txt").as_posix()
+        plan_last_message_path = (
+            EnvironmentPaths.agent_dir / "roder-plan-last-message.txt"
+        ).as_posix()
+        plan_path = (EnvironmentPaths.agent_dir / "roder-plan.md").as_posix()
         setup = (
             f"mkdir -p {config_dir}/auth /logs/agent && "
             f"touch {shlex.quote(events_path)} {shlex.quote(stderr_path)} "
             f"{shlex.quote(output_path)} {shlex.quote(last_message_path)} "
-            f"{shlex.quote(setup_summary_path)} {shlex.quote(run_summary_path)} && "
+            f"{shlex.quote(setup_summary_path)} {shlex.quote(run_summary_path)} "
+            f"{shlex.quote(plan_events_path)} {shlex.quote(plan_stderr_path)} "
+            f"{shlex.quote(plan_last_message_path)} {shlex.quote(plan_path)} && "
             f"printf 'Roder run command setup started\\n' >> {shlex.quote(setup_summary_path)} && "
             "if [ -f /installed-agent/roder-auth.json ]; then "
             f"cp /installed-agent/roder-auth.json {config_dir}/auth/codex.json; "
@@ -343,11 +374,44 @@ class RoderCli(BaseInstalledAgent):
             "started_at=$(date -u '+%Y-%m-%dT%H:%M:%SZ')\n"
             "soft_timed_out=0\n"
             "deadline_timed_out=0\n"
+            "RODER_HARBOR_PLAN_THREAD_ID=\n"
             f"printf 'roder exec starting\\n' >> {shlex.quote(setup_summary_path)}\n"
-            + self._roder_exec_shell_fragment(
+            + self._reasoning_shell_fragment(
+                config_dir=config_dir,
+                setup_summary_path=setup_summary_path,
+                reasoning=self._plan_first_reasoning,
+                label="plan-first planning",
+            )
+            + plan_first_shell_fragment(
+                enabled=self._plan_first_enabled,
+                events_path=plan_events_path,
+                stderr_path=plan_stderr_path,
+                last_message_path=plan_last_message_path,
+                plan_path=plan_path,
+                setup_summary_path=setup_summary_path,
+                policy_mode=self._plan_first_policy_mode,
+                soft_timeout_sec=self._plan_first_soft_timeout_sec,
+                task_ledger_required=self._task_ledger_required,
+            )
+            + self._reasoning_shell_fragment(
+                config_dir=config_dir,
+                setup_summary_path=setup_summary_path,
+                reasoning=str(self._reasoning),
+                label="implementation",
+            )
+            + roder_exec_shell_fragment(
                 events_path=events_path,
                 stderr_path=stderr_path,
                 last_message_path=last_message_path,
+                prompt_env_var="RODER_HARBOR_PROMPT",
+                policy_mode=str(self._policy_mode),
+                soft_timeout_sec=self._soft_timeout_sec,
+                task_ledger_required=self._task_ledger_required,
+                resume_thread_env_var=(
+                    "RODER_HARBOR_PLAN_THREAD_ID"
+                    if self._plan_first_enabled
+                    else None
+                ),
             )
             + "status=$?\n"
             "case \"$status\" in 124|130|137|143) soft_timed_out=1 ;; esac\n"
@@ -392,34 +456,28 @@ class RoderCli(BaseInstalledAgent):
         env = {
             "RODER_CONFIG_DIR": config_dir,
             "RODER_DATA_DIR": config_dir,
-            "RODER_HARBOR_PROMPT": self._prompt_for_instruction(instruction),
         }
+        env.update(self._plan_first_env(instruction))
         return [
             ExecInput(command=setup, env=env),
             ExecInput(command=run, env=env),
         ]
 
-    def _roder_exec_shell_fragment(
-        self, events_path: str, stderr_path: str, last_message_path: str
+    def _reasoning_shell_fragment(
+        self,
+        *,
+        config_dir: str,
+        setup_summary_path: str,
+        reasoning: str,
+        label: str,
     ) -> str:
-        ledger_flag = " --task-ledger-required" if self._task_ledger_required else ""
-        command = (
-            f"roder exec --json --profile eval --mode {shlex.quote(str(self._policy_mode))} "
-            f"--skip-git-repo-check{ledger_flag} "
-            f"--output-last-message {shlex.quote(last_message_path)} - "
-            f">{shlex.quote(events_path)} 2>{shlex.quote(stderr_path)}"
-        )
-        if not self._soft_timeout_sec:
-            return f"printf '%s' \"$RODER_HARBOR_PROMPT\" | {command}\n"
-        timeout = shlex.quote(f"{self._soft_timeout_sec}s")
-        return (
-            "if command -v timeout >/dev/null 2>&1; then\n"
-            f"  printf '%s' \"$RODER_HARBOR_PROMPT\" | timeout -k 5s -s INT {timeout} {command}\n"
-            "else\n"
-            "  printf 'warning: timeout command unavailable; running without soft timeout\\n' "
-            f">> {shlex.quote(stderr_path)}\n"
-            f"  printf '%s' \"$RODER_HARBOR_PROMPT\" | {command}\n"
-            "fi\n"
+        if not self._plan_first_enabled:
+            return ""
+        return rewrite_reasoning_shell_fragment(
+            config_dir=config_dir,
+            reasoning=reasoning,
+            setup_summary_path=setup_summary_path,
+            label=label,
         )
 
     def populate_context_post_run(self, context: AgentContext) -> None:

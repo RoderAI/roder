@@ -33,18 +33,18 @@
     {
       "import_path": "roder_harbor_agent:RoderCli",
       "model_name": "codex/gpt-5.5",
-      "override_timeout_sec": 900,
+      "override_timeout_sec": 1800,
       "override_setup_timeout_sec": 2400,
       "kwargs": {
         "reasoning": "medium",
         "speed_policy_enabled": false,
-        "speed_policy_eval_deadline_seconds": 870,
+        "speed_policy_eval_deadline_seconds": 1740,
         "reliability_max_consecutive_tool_failures": 16,
         "benchmark_guidance_enabled": true,
         "task_ledger_required": true,
         "policy_mode": "bypass",
         "include_local_source": "true",
-        "soft_timeout_sec": 890
+        "soft_timeout_sec": 1780
       },
       "env": {}
     }

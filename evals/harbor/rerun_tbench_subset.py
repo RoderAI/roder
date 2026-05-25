@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Any
 
 from analyze_tbench_run import analyze_job
+from roder_plan_first import PLAN_FIRST_ARTIFACTS
 
 
 CLASS_ALIASES = {
@@ -45,7 +46,7 @@ DETERMINISTIC_ARTIFACTS = [
     "/logs/agent/roder-last-message.txt",
     "/logs/agent/setup-summary.txt",
     "/logs/agent/roder-run-summary.json",
-]
+] + PLAN_FIRST_ARTIFACTS
 
 
 def load_json(path: Path) -> dict[str, Any]:
@@ -91,6 +92,10 @@ def build_subset_config(
     timeout_sec: float | None,
     soft_timeout_sec: float | None,
     eval_deadline_sec: float | None,
+    plan_first: bool,
+    plan_first_soft_timeout_sec: float | None,
+    plan_first_policy_mode: str | None,
+    plan_first_reasoning: str | None,
 ) -> dict[str, Any]:
     config = copy.deepcopy(base_config)
     agent = (config.get("agents") or [{}])[0]
@@ -118,6 +123,16 @@ def build_subset_config(
         for agent_config in config.get("agents", []):
             kwargs = agent_config.setdefault("kwargs", {})
             kwargs["speed_policy_eval_deadline_seconds"] = eval_deadline_sec
+    if plan_first:
+        for agent_config in config.get("agents", []):
+            kwargs = agent_config.setdefault("kwargs", {})
+            kwargs["plan_first_enabled"] = True
+            if plan_first_soft_timeout_sec is not None:
+                kwargs["plan_first_soft_timeout_sec"] = plan_first_soft_timeout_sec
+            if plan_first_policy_mode is not None:
+                kwargs["plan_first_policy_mode"] = plan_first_policy_mode
+            if plan_first_reasoning is not None:
+                kwargs["plan_first_reasoning"] = plan_first_reasoning
     for dataset in config.get("datasets", []):
         if isinstance(dataset, dict):
             dataset["task_names"] = task_names
@@ -139,6 +154,10 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--timeout-sec", type=float)
     parser.add_argument("--soft-timeout-sec", type=float)
     parser.add_argument("--eval-deadline-sec", type=float)
+    parser.add_argument("--plan-first", action="store_true")
+    parser.add_argument("--plan-first-soft-timeout-sec", type=float)
+    parser.add_argument("--plan-first-policy-mode")
+    parser.add_argument("--plan-first-reasoning")
     parser.add_argument("--task-name", action="append", default=[])
     parser.add_argument("--exclude-task-name", action="append", default=[])
     parser.add_argument("--limit", type=int)
@@ -177,6 +196,10 @@ def main() -> int:
             timeout_sec=args.timeout_sec,
             soft_timeout_sec=args.soft_timeout_sec,
             eval_deadline_sec=args.eval_deadline_sec,
+            plan_first=args.plan_first,
+            plan_first_soft_timeout_sec=args.plan_first_soft_timeout_sec,
+            plan_first_policy_mode=args.plan_first_policy_mode,
+            plan_first_reasoning=args.plan_first_reasoning,
         )
     except Exception as exc:
         print(f"rerun_tbench_subset: {exc}", file=sys.stderr)
