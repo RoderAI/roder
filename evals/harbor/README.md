@@ -43,6 +43,8 @@ Per-run Roder artifacts are copied by Harbor under the agent logs directory:
 - `setup-summary.txt`: installer and run-command setup diagnostics
 - `roder-run-summary.json`: structured provider, timeout, exit-status, elapsed
   time, artifact-size, and last-event metadata
+- `roder-plan.md`, `roder-plan-events.jsonl`, `roder-plan-stderr.txt`, and
+  `roder-plan-last-message.txt`: populated when plan-first mode is enabled
 
 ## Full Run Hygiene
 
@@ -119,7 +121,10 @@ analysis for traceability.
 The full GPT-5.5 config also sets `speed_policy_enabled: false` in the agent
 kwargs. Roder's eval runtime can otherwise change reasoning effort by phase, so
 this explicit setting keeps the benchmark at the requested `medium` reasoning
-level for every model call.
+level for every model call. The checked-in task window is currently doubled to a
+1800-second Harbor hard timeout, 1780-second adapter soft timeout, and
+1740-second internal eval deadline; inference-speed work should be measured as a
+separate experiment.
 
 The configs pass `task_ledger_required: true` to `roder exec`. In eval profile
 this requires the model to maintain the built-in `task_ledger.update` ledger
@@ -170,6 +175,31 @@ python3 evals/harbor/rerun_tbench_subset.py \
   --eval-deadline-sec 20 \
   --output-config evals/reports/harbor/roder-tbench-soft-timeout-debug.json
 ```
+
+For plan-first reruns, ask the adapter to run a planning turn first, then
+resume the same Roder thread for implementation:
+
+```sh
+python3 evals/harbor/rerun_tbench_subset.py \
+  --source-job evals/harbor/jobs/roder-tbench-remaining-failures-gpt55-xhigh \
+  --base-config evals/harbor/tbench-full-gpt55-medium.json \
+  --class scored_fail \
+  --reasoning xhigh \
+  --plan-first \
+  --plan-first-reasoning medium \
+  --plan-first-soft-timeout-sec 360 \
+  --timeout-sec 2400 \
+  --soft-timeout-sec 2000 \
+  --eval-deadline-sec 1960 \
+  --job-name roder-tbench-remaining-failures-gpt55-xhigh-plan-first \
+  --output-config evals/reports/harbor/roder-tbench-remaining-failures-gpt55-xhigh-plan-first.json
+```
+
+Plan-first mode is a Harbor adapter mode, not Roder's read-only `plan` policy
+mode. The planning turn defaults to the same policy mode as the implementation
+turn so it can inspect local task files; it is constrained by prompt and a short
+planning soft timeout. Use `--plan-first-reasoning` to keep the planning turn
+cheaper while leaving the implementation turn at the requested reasoning level.
 
 Generated jobs, reports, manifests, and binaries are ignored by git under
 `evals/harbor/jobs/`, `evals/harbor/artifacts/`, and `evals/reports/`.
