@@ -23,6 +23,7 @@ pub(crate) struct ExecCli {
     pub output_last_message: Option<PathBuf>,
     pub skip_git_repo_check: bool,
     pub ephemeral: bool,
+    pub task_ledger_required: bool,
     pub images: Vec<PathBuf>,
     pub cli_options: CliOptions,
 }
@@ -89,6 +90,7 @@ pub(crate) async fn run_exec_cli(args: &[String]) -> anyhow::Result<()> {
                 thread_id: thread_id.clone(),
                 input: turn_input_items(&options.images),
                 prompt,
+                task_ledger_required: options.task_ledger_required,
             })?),
         })
         .await;
@@ -116,7 +118,7 @@ pub(crate) async fn run_exec_cli(args: &[String]) -> anyhow::Result<()> {
 
 fn print_exec_help() {
     println!(
-        "Usage: roder exec [OPTIONS] [PROMPT]\n       roder exec resume [THREAD_ID|--last] [PROMPT]\n\nOptions:\n  --json                         emit JSONL events to stdout\n  --output-last-message <FILE>   write final assistant text to FILE\n  --skip-git-repo-check          allow benchmark sandboxes without git metadata\n  --ephemeral                    request an ephemeral thread where supported\n  --profile <PROFILE>            select runtime profile, for example eval\n  --mode <MODE>                  select policy mode, for example bypass\n  --image <FILE>                 attach local image input\n  -                              read prompt from stdin\n  -h, --help                     show this help\n\nDefault stdout is the final assistant message only; diagnostics are written to stderr."
+        "Usage: roder exec [OPTIONS] [PROMPT]\n       roder exec resume [THREAD_ID|--last] [PROMPT]\n\nOptions:\n  --json                         emit JSONL events to stdout\n  --output-last-message <FILE>   write final assistant text to FILE\n  --skip-git-repo-check          allow benchmark sandboxes without git metadata\n  --ephemeral                    request an ephemeral thread where supported\n  --task-ledger-required         require eval task ledger updates before work\n  --profile <PROFILE>            select runtime profile, for example eval\n  --mode <MODE>                  select policy mode, for example bypass\n  --image <FILE>                 attach local image input\n  -                              read prompt from stdin\n  -h, --help                     show this help\n\nDefault stdout is the final assistant message only; diagnostics are written to stderr."
     );
 }
 
@@ -128,6 +130,7 @@ pub(crate) fn parse_exec_cli(args: &[String]) -> anyhow::Result<ExecCli> {
     let mut output_last_message = None;
     let mut skip_git_repo_check = false;
     let mut ephemeral = false;
+    let mut task_ledger_required = false;
     let mut images = Vec::new();
     let mut i = 0;
 
@@ -157,6 +160,7 @@ pub(crate) fn parse_exec_cli(args: &[String]) -> anyhow::Result<ExecCli> {
             }
             "--skip-git-repo-check" => skip_git_repo_check = true,
             "--ephemeral" => ephemeral = true,
+            "--task-ledger-required" => task_ledger_required = true,
             "--image" => {
                 let Some(path) = args.get(i + 1) else {
                     anyhow::bail!("--image requires a file");
@@ -219,6 +223,7 @@ pub(crate) fn parse_exec_cli(args: &[String]) -> anyhow::Result<ExecCli> {
         output_last_message,
         skip_git_repo_check,
         ephemeral,
+        task_ledger_required,
         images,
         cli_options,
     })
@@ -371,6 +376,7 @@ mod tests {
             "eval".to_string(),
             "--mode=bypass".to_string(),
             "--skip-git-repo-check".to_string(),
+            "--task-ledger-required".to_string(),
             "--output-last-message".to_string(),
             "/tmp/last.txt".to_string(),
             "reply".to_string(),
@@ -381,6 +387,7 @@ mod tests {
         assert_eq!(parsed.prompt.as_deref(), Some("reply ok"));
         assert!(parsed.json);
         assert!(parsed.skip_git_repo_check);
+        assert!(parsed.task_ledger_required);
         assert_eq!(parsed.cli_options.policy_mode, Some(PolicyMode::Bypass));
         assert_eq!(
             parsed.cli_options.runtime_profile,

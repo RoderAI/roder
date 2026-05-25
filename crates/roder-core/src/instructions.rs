@@ -61,7 +61,7 @@ This turn is running in eval mode. Do not wait for user clarification unless exp
 
 const TASK_LEDGER_REQUIRED_INSTRUCTIONS: &str = r#"## Task Ledger Required
 
-This eval task is decomposed work. Create and maintain a task ledger with `task_ledger.update` before risky work starts, keep exactly one item in progress, and include evidence when marking items completed."#;
+This eval task is decomposed work. The first tool call must be `task_ledger.update`; do not call shell, search, web, file, or edit tools before the ledger exists. Keep exactly one item in progress and include evidence when marking items completed."#;
 
 const LITERAL_TOOL_OUTPUTS_OVERLAY: &str = r#"## Model Harness Profile
 

@@ -1906,7 +1906,7 @@ impl AppServer {
                 model_override,
                 workspace,
                 instructions: default_instructions(),
-                task_ledger_required: false,
+                task_ledger_required: params.task_ledger_required,
             })
             .await
             .map_err(internal_error)?;

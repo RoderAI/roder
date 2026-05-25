@@ -2,6 +2,7 @@ mod agent_control_tools;
 pub mod artifacts;
 pub mod bus;
 mod conversation;
+mod deadline_policy;
 pub mod fake_provider;
 mod goals;
 mod instructions;

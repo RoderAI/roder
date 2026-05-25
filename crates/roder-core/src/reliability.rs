@@ -59,6 +59,17 @@ pub(crate) struct ReliabilityLimitHit {
     pub message: String,
 }
 
+pub(crate) fn provider_stream_retry_cause(message: &str) -> Option<&'static str> {
+    let lower = message.to_ascii_lowercase();
+    if lower.contains("error decoding response body") {
+        return Some("stream_decode_error");
+    }
+    if lower.contains("stream closed before response.completed") {
+        return Some("stream_closed_before_completed");
+    }
+    None
+}
+
 impl TurnReliabilityState {
     pub(crate) fn record_model_call(
         &mut self,
@@ -193,5 +204,18 @@ mod tests {
             RuntimeReliabilityConfig::default().max_model_calls_per_turn,
             512
         );
+    }
+
+    #[test]
+    fn provider_stream_retry_cause_classifies_transient_stream_failures() {
+        assert_eq!(
+            provider_stream_retry_cause("error decoding response body"),
+            Some("stream_decode_error")
+        );
+        assert_eq!(
+            provider_stream_retry_cause("stream closed before response.completed"),
+            Some("stream_closed_before_completed")
+        );
+        assert_eq!(provider_stream_retry_cause("invalid request body"), None);
     }
 }

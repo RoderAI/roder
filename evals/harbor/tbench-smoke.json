@@ -24,9 +24,6 @@
     "type": "docker",
     "force_build": false,
     "delete": false,
-    "override_cpus": 4,
-    "override_memory_mb": 8192,
-    "override_storage_mb": 20480,
     "kwargs": {}
   },
   "verifier": {
@@ -40,9 +37,14 @@
       "override_setup_timeout_sec": 2400,
       "kwargs": {
         "reasoning": "medium",
+        "speed_policy_enabled": false,
+        "speed_policy_eval_deadline_seconds": 870,
+        "reliability_max_consecutive_tool_failures": 16,
+        "benchmark_guidance_enabled": true,
+        "task_ledger_required": true,
         "policy_mode": "bypass",
         "include_local_source": "true",
-        "soft_timeout_sec": 840
+        "soft_timeout_sec": 890
       },
       "env": {}
     }
@@ -66,6 +68,7 @@
     "/logs/agent/roder-events.jsonl",
     "/logs/agent/roder-stderr.txt",
     "/logs/agent/roder-last-message.txt",
-    "/logs/agent/setup-summary.txt"
+    "/logs/agent/setup-summary.txt",
+    "/logs/agent/roder-run-summary.json"
   ]
 }

@@ -22,7 +22,11 @@ use roder_api::inference::{
     ToolCallCompleted,
 };
 use roder_api::policy_mode::{PolicyDecision, PolicyMode};
-use roder_api::reliability::{ReliabilityContext, ReliabilityDetails, ReliabilityLimitRecorded};
+use roder_api::reliability::{
+    ReliabilityContext, ReliabilityDetails, ReliabilityErrorClass, ReliabilityLimitRecorded,
+    ReliabilityRequestPolicy, ReliabilityRetryDecision, ReliabilityRetryRecorded,
+    provider_retry_delay_ms,
+};
 use roder_api::remote_runner::{RemoteRunnerSession, RunnerDestination};
 use roder_api::session::{SessionMetadata, SessionStore, ThreadSnapshot};
 use roder_api::subagents::SubagentDefinition;
@@ -42,7 +46,10 @@ use crate::instructions::{
     apply_model_instruction_overlay, apply_runtime_profile, apply_task_ledger_required,
 };
 use crate::policy_gate::DefaultPolicyGate;
-use crate::reliability::{ReliabilityLimitHit, RuntimeReliabilityConfig, TurnReliabilityState};
+use crate::reliability::{
+    ReliabilityLimitHit, RuntimeReliabilityConfig, TurnReliabilityState,
+    provider_stream_retry_cause,
+};
 pub use crate::speed_policy::RuntimeSpeedPolicyConfig;
 use crate::speed_policy::{SpeedPolicyState, reasoning_from_decision};
 use crate::subagent_traces::RuntimeSubagentTraceSink;
@@ -51,9 +58,19 @@ use crate::verification_gate::VerificationGateState;
 
 const MAX_TOOL_ROUNDS_PER_TURN: usize = 1024;
 const FINAL_ANSWER_PHASE: &str = "final_answer";
+const TASK_LEDGER_TOOL_NAME: &str = "task_ledger.update";
+const TASK_LEDGER_COMPLETION_REMINDER_LIMIT: u8 = 2;
+const TASK_LEDGER_SCOREABLE_CHECKPOINT_SECONDS: u64 = 180;
+const TASK_LEDGER_SCOREABLE_CHECKPOINT_LIMIT: u8 = 1;
 pub(crate) const MIN_CHILD_DEADLINE_SECONDS: u64 = 2;
 const MODEL_PROFILE_TRACE_KIND: &str = "model_profile_segment";
 const MODEL_SWITCH_SUMMARY_PREFIX: &str = "Model switch summary:";
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum InferenceTimeoutAction {
+    ScoreableCheckpoint,
+    Finalization,
+}
 
 #[derive(Debug, Clone)]
 pub struct RuntimeConfig {
@@ -1343,6 +1360,8 @@ impl Runtime {
         let cfg = self.config.read().await.clone();
         let runtime_profile = cfg.runtime_profile;
         let turn_deadline = turn_deadline_for_config(&cfg);
+        let deadline_finalization_reserve =
+            crate::deadline_policy::finalization_reserve_seconds(cfg.turn_deadline_seconds);
         let provider = req
             .provider_override
             .clone()
@@ -1395,8 +1414,13 @@ impl Runtime {
         let mut speed_policy = SpeedPolicyState::default();
         let mut reliability = TurnReliabilityState::default();
         let mut turn_usage_tokens = 0_i64;
+        let mut deadline_finalization_requested = false;
+        let mut deadline_scoreable_completion_requested = false;
+        let mut task_ledger_completion_reminders = 0_u8;
+        let mut task_ledger_scoreable_checkpoints = 0_u8;
+        let mut provider_stream_retry_attempts = 0_u32;
 
-        for _ in 0..MAX_TOOL_ROUNDS_PER_TURN {
+        'tool_rounds: for _ in 0..MAX_TOOL_ROUNDS_PER_TURN {
             if let Some(deadline) = turn_deadline
                 && deadline_expired(deadline)
             {
@@ -1407,6 +1431,59 @@ impl Runtime {
             let steers = self.drain_turn_steers(&turn_id).await;
             self.append_steers(&req, &turn_id, &mut conversation, steers)
                 .await?;
+            if runtime_profile == RuntimeProfile::Eval
+                && let Some(remaining) = crate::deadline_policy::should_start_finalization(
+                    turn_deadline,
+                    deadline_finalization_reserve,
+                    deadline_finalization_requested || deadline_scoreable_completion_requested,
+                )
+            {
+                if req.task_ledger_required
+                    && task_ledger_completion_reminders < TASK_LEDGER_COMPLETION_REMINDER_LIMIT
+                    && let Some(prompt) = task_ledger_completion_prompt(&conversation)
+                {
+                    task_ledger_completion_reminders += 1;
+                    deadline_scoreable_completion_requested = true;
+                    let item = ConversationItem::UserMessage(UserMessage::text(
+                        task_ledger_deadline_completion_prompt(
+                            remaining,
+                            deadline_finalization_reserve,
+                            &prompt,
+                        ),
+                    ));
+                    self.persist_turn_item(&req.thread_id, &turn_id, &item)
+                        .await?;
+                    conversation.push(item);
+                    continue 'tool_rounds;
+                } else {
+                    self.start_deadline_finalization(
+                        &req.thread_id,
+                        &turn_id,
+                        &mut conversation,
+                        remaining,
+                    )
+                    .await?;
+                    deadline_finalization_requested = true;
+                }
+            }
+            if runtime_profile == RuntimeProfile::Eval
+                && req.task_ledger_required
+                && !deadline_finalization_requested
+                && task_ledger_scoreable_checkpoints < TASK_LEDGER_SCOREABLE_CHECKPOINT_LIMIT
+                && let Some(remaining) = deadline_remaining_seconds(turn_deadline)
+                && remaining <= TASK_LEDGER_SCOREABLE_CHECKPOINT_SECONDS
+                && remaining > deadline_finalization_reserve
+                && let Some(prompt) = task_ledger_completion_prompt(&conversation)
+            {
+                task_ledger_scoreable_checkpoints += 1;
+                let item = ConversationItem::UserMessage(UserMessage::text(
+                    task_ledger_scoreable_checkpoint_prompt(remaining, &prompt),
+                ));
+                self.persist_turn_item(&req.thread_id, &turn_id, &item)
+                    .await?;
+                conversation.push(item);
+                continue 'tool_rounds;
+            }
             if !capabilities.image_input && conversation_has_images(&conversation) {
                 self.fail_turn_with_error(
                     &req.thread_id,
@@ -1476,6 +1553,38 @@ impl Runtime {
                     "autoCompactTokenLimit": profile.auto_compact_token_limit,
                 });
             }
+            let task_ledger_required_this_round = req.task_ledger_required
+                && runtime_profile == RuntimeProfile::Eval
+                && !deadline_finalization_requested
+                && !conversation_has_task_ledger(&conversation);
+            let task_ledger_tools = task_ledger_required_this_round
+                .then(|| self.task_ledger_tool_specs(model_profile.as_ref()))
+                .filter(|tools| !tools.is_empty());
+            let request_tools = if deadline_finalization_requested {
+                Vec::new()
+            } else if let Some(ledger_tools) = &task_ledger_tools {
+                ledger_tools.clone()
+            } else {
+                tools.clone()
+            };
+            let request_tool_choice = if deadline_finalization_requested {
+                ToolChoice::None
+            } else if task_ledger_tools.is_some() {
+                ToolChoice::Specific(TASK_LEDGER_TOOL_NAME.to_string())
+            } else {
+                tool_choice.clone()
+            };
+            if deadline_finalization_requested {
+                request_metadata["deadlineFinalization"] = serde_json::json!({
+                    "reserveSeconds": deadline_finalization_reserve,
+                    "remainingSeconds": deadline_remaining_seconds(turn_deadline),
+                });
+            } else if deadline_scoreable_completion_requested {
+                request_metadata["deadlineScoreableCompletion"] = serde_json::json!({
+                    "reserveSeconds": deadline_finalization_reserve,
+                    "remainingSeconds": deadline_remaining_seconds(turn_deadline),
+                });
+            }
             let request = AgentInferenceRequest {
                 model: ModelSelection {
                     provider: provider.clone(),
@@ -1483,8 +1592,8 @@ impl Runtime {
                 },
                 instructions,
                 conversation: conversation.clone(),
-                tools: tools.clone(),
-                tool_choice: tool_choice.clone(),
+                tools: request_tools,
+                tool_choice: request_tool_choice,
                 reasoning: reasoning_from_decision(
                     speed_policy_decision.as_ref(),
                     reasoning_for_model(&cfg, &model),
@@ -1508,10 +1617,46 @@ impl Runtime {
                 turn_id: &turn_id,
             };
             let stream_future = engine.stream_turn(ctx, request);
-            let mut stream = if let Some(deadline) = turn_deadline {
+            let mut stream = if let Some((deadline, timeout_action)) = inference_timeout_deadline(
+                turn_deadline,
+                runtime_profile,
+                req.task_ledger_required,
+                deadline_finalization_reserve,
+                deadline_finalization_requested || deadline_scoreable_completion_requested,
+                task_ledger_scoreable_checkpoints,
+                &conversation,
+            ) {
                 match tokio::time::timeout_at(deadline_instant(deadline), stream_future).await {
                     Ok(stream) => stream?,
                     Err(_) => {
+                        if runtime_profile == RuntimeProfile::Eval
+                            && !deadline_finalization_requested
+                        {
+                            let remaining = deadline_remaining_seconds(turn_deadline).unwrap_or(0);
+                            if timeout_action == InferenceTimeoutAction::ScoreableCheckpoint
+                                && task_ledger_scoreable_checkpoints
+                                    < TASK_LEDGER_SCOREABLE_CHECKPOINT_LIMIT
+                                && let Some(prompt) = task_ledger_completion_prompt(&conversation)
+                            {
+                                task_ledger_scoreable_checkpoints += 1;
+                                let item = ConversationItem::UserMessage(UserMessage::text(
+                                    task_ledger_scoreable_checkpoint_prompt(remaining, &prompt),
+                                ));
+                                self.persist_turn_item(&req.thread_id, &turn_id, &item)
+                                    .await?;
+                                conversation.push(item);
+                                continue 'tool_rounds;
+                            }
+                            self.start_deadline_finalization(
+                                &req.thread_id,
+                                &turn_id,
+                                &mut conversation,
+                                remaining,
+                            )
+                            .await?;
+                            deadline_finalization_requested = true;
+                            continue 'tool_rounds;
+                        }
                         self.fail_turn_due_to_deadline(
                             &req.thread_id,
                             &turn_id,
@@ -1532,10 +1677,48 @@ impl Runtime {
             let mut provider_metadata = None;
 
             loop {
-                let next = if let Some(deadline) = turn_deadline {
+                let next = if let Some((deadline, timeout_action)) = inference_timeout_deadline(
+                    turn_deadline,
+                    runtime_profile,
+                    req.task_ledger_required,
+                    deadline_finalization_reserve,
+                    deadline_finalization_requested || deadline_scoreable_completion_requested,
+                    task_ledger_scoreable_checkpoints,
+                    &conversation,
+                ) {
                     match tokio::time::timeout_at(deadline_instant(deadline), stream.next()).await {
                         Ok(next) => next,
                         Err(_) => {
+                            if runtime_profile == RuntimeProfile::Eval
+                                && !deadline_finalization_requested
+                            {
+                                let remaining =
+                                    deadline_remaining_seconds(turn_deadline).unwrap_or(0);
+                                if timeout_action == InferenceTimeoutAction::ScoreableCheckpoint
+                                    && task_ledger_scoreable_checkpoints
+                                        < TASK_LEDGER_SCOREABLE_CHECKPOINT_LIMIT
+                                    && let Some(prompt) =
+                                        task_ledger_completion_prompt(&conversation)
+                                {
+                                    task_ledger_scoreable_checkpoints += 1;
+                                    let item = ConversationItem::UserMessage(UserMessage::text(
+                                        task_ledger_scoreable_checkpoint_prompt(remaining, &prompt),
+                                    ));
+                                    self.persist_turn_item(&req.thread_id, &turn_id, &item)
+                                        .await?;
+                                    conversation.push(item);
+                                    continue 'tool_rounds;
+                                }
+                                self.start_deadline_finalization(
+                                    &req.thread_id,
+                                    &turn_id,
+                                    &mut conversation,
+                                    remaining,
+                                )
+                                .await?;
+                                deadline_finalization_requested = true;
+                                continue 'tool_rounds;
+                            }
                             self.fail_turn_due_to_deadline(
                                 &req.thread_id,
                                 &turn_id,
@@ -1555,10 +1738,48 @@ impl Runtime {
                 let event = match res {
                     Ok(event) => event,
                     Err(err) => {
+                        let error = err.to_string();
+                        if runtime_profile == RuntimeProfile::Eval
+                            && !deadline_finalization_requested
+                            && let Some(cause) = provider_stream_retry_cause(&error)
+                        {
+                            let retry_attempt = provider_stream_retry_attempts.saturating_add(1);
+                            let policy: ReliabilityRequestPolicy = cfg.reliability.clone().into();
+                            if retry_attempt < policy.provider_retry_max_attempts {
+                                provider_stream_retry_attempts = retry_attempt;
+                                let delay_ms = provider_retry_delay_ms(&policy, retry_attempt);
+                                self.emit(RoderEvent::ReliabilityRetryRecorded(
+                                    ReliabilityRetryRecorded {
+                                        context: ReliabilityContext {
+                                            thread_id: req.thread_id.clone(),
+                                            turn_id: turn_id.clone(),
+                                            provider: Some(provider.clone()),
+                                            model: Some(model.clone()),
+                                            ..ReliabilityContext::default()
+                                        },
+                                        error_class: ReliabilityErrorClass::ProviderError,
+                                        decision: ReliabilityRetryDecision::Retry,
+                                        attempt: retry_attempt,
+                                        max_attempts: policy.provider_retry_max_attempts,
+                                        delay_ms: Some(delay_ms),
+                                        details: ReliabilityDetails::redacted(format!(
+                                            "{cause}: {error}"
+                                        )),
+                                        timestamp: OffsetDateTime::now_utc(),
+                                    },
+                                ))
+                                .await;
+                                if delay_ms > 0 {
+                                    tokio::time::sleep(std::time::Duration::from_millis(delay_ms))
+                                        .await;
+                                }
+                                continue 'tool_rounds;
+                            }
+                        }
                         self.emit(RoderEvent::TurnFailed(TurnFailed {
                             thread_id: req.thread_id.clone(),
                             turn_id: turn_id.clone(),
-                            error: err.to_string(),
+                            error,
                             error_kind: None,
                             timestamp: OffsetDateTime::now_utc(),
                         }))
@@ -1703,7 +1924,23 @@ impl Runtime {
                         .await?;
                     continue;
                 }
-                if let Some(prompt) = verification_gate.blocking_prompt() {
+                if !deadline_finalization_requested
+                    && req.task_ledger_required
+                    && runtime_profile == RuntimeProfile::Eval
+                    && task_ledger_completion_reminders < TASK_LEDGER_COMPLETION_REMINDER_LIMIT
+                    && (!assistant_text.trim().is_empty() || !phase_messages.is_empty())
+                    && let Some(prompt) = task_ledger_completion_prompt(&conversation)
+                {
+                    task_ledger_completion_reminders += 1;
+                    let item = ConversationItem::UserMessage(UserMessage::text(prompt));
+                    self.persist_turn_item(&req.thread_id, &turn_id, &item)
+                        .await?;
+                    conversation.push(item);
+                    continue;
+                }
+                if !deadline_finalization_requested
+                    && let Some(prompt) = verification_gate.blocking_prompt()
+                {
                     speed_policy.record_verification_required();
                     self.emit(RoderEvent::VerificationRequired(VerificationRequired {
                         thread_id: req.thread_id.clone(),
@@ -1721,6 +1958,15 @@ impl Runtime {
                         .await?;
                     conversation.push(item);
                     continue;
+                }
+                if deadline_finalization_requested
+                    && assistant_text.trim().is_empty()
+                    && phase_messages.is_empty()
+                {
+                    assistant_text = format!(
+                        "Deadline finalization completed without model text. {}",
+                        turn_partial_result(&conversation)
+                    );
                 }
                 final_phase_messages = phase_messages;
                 final_assistant_text = assistant_text;
@@ -2047,6 +2293,28 @@ impl Runtime {
         Ok(())
     }
 
+    async fn start_deadline_finalization(
+        &self,
+        thread_id: &ThreadId,
+        turn_id: &TurnId,
+        conversation: &mut Vec<ConversationItem>,
+        remaining_seconds: u64,
+    ) -> anyhow::Result<()> {
+        let item = ConversationItem::UserMessage(crate::deadline_policy::finalization_message(
+            remaining_seconds,
+        ));
+        self.persist_turn_item(thread_id, turn_id, &item).await?;
+        conversation.push(item);
+        self.emit(RoderEvent::TurnPartialResult(TurnPartialResult {
+            thread_id: thread_id.clone(),
+            turn_id: turn_id.clone(),
+            summary: turn_partial_result(conversation),
+            timestamp: OffsetDateTime::now_utc(),
+        }))
+        .await;
+        Ok(())
+    }
+
     async fn fail_turn_due_to_reliability_limit(
         &self,
         thread_id: &ThreadId,
@@ -2153,6 +2421,20 @@ impl Runtime {
         )
     }
 
+    fn task_ledger_tool_specs(
+        &self,
+        profile: Option<&ModelHarnessProfile>,
+    ) -> Vec<roder_api::tools::ToolSpec> {
+        self.tool_registry
+            .get(TASK_LEDGER_TOOL_NAME)
+            .map(|tool| {
+                tool.spec()
+                    .normalized_for_model_profile(schema_policy_for_model(profile))
+            })
+            .into_iter()
+            .collect()
+    }
+
     fn engine_for(&self, provider: &str) -> anyhow::Result<Arc<dyn InferenceEngine>> {
         self.registry
             .inference_engine(provider)
@@ -2217,8 +2499,56 @@ fn conversation_has_task_ledger(conversation: &[ConversationItem]) -> bool {
         matches!(
             item,
             ConversationItem::ToolResult(result)
-                if result.name.as_deref() == Some("task_ledger.update") && !result.is_error
+                if result.name.as_deref() == Some(TASK_LEDGER_TOOL_NAME) && !result.is_error
         )
+    })
+}
+
+fn task_ledger_completion_prompt(conversation: &[ConversationItem]) -> Option<String> {
+    let latest = conversation.iter().rev().find_map(|item| match item {
+        ConversationItem::ToolResult(result)
+            if result.name.as_deref() == Some(TASK_LEDGER_TOOL_NAME) && !result.is_error =>
+        {
+            Some(result.result.as_str())
+        }
+        _ => None,
+    })?;
+    if !task_ledger_has_open_items(latest) {
+        return None;
+    }
+
+    let mut ledger = latest.chars().take(1500).collect::<String>();
+    if latest.chars().nth(1500).is_some() {
+        ledger.push_str("...");
+    }
+    Some(format!(
+        "Task Ledger Completion Required: the latest task ledger still has pending or in-progress items. Do not provide a final answer yet. Use tools to complete the remaining scoreable work, create or update any required output files, then call `{TASK_LEDGER_TOOL_NAME}` with every task completed and evidence before finalizing.\n\nLatest ledger:\n{ledger}"
+    ))
+}
+
+fn task_ledger_deadline_completion_prompt(
+    remaining_seconds: u64,
+    reserve_seconds: u64,
+    completion_prompt: &str,
+) -> String {
+    format!(
+        "Eval deadline scoreable completion: {remaining_seconds} seconds remain in the {reserve_seconds}-second finalization reserve. Do not browse, search, or start slow work. Use the available tools now to create or update the required scoreable output files, run only a quick local check if needed, then update the task ledger to completed before finalizing.\n\n{completion_prompt}"
+    )
+}
+
+fn task_ledger_scoreable_checkpoint_prompt(
+    remaining_seconds: u64,
+    completion_prompt: &str,
+) -> String {
+    format!(
+        "Scoreable Output Checkpoint: {remaining_seconds} seconds remain before the eval deadline. Before any further research, browsing, or long commands, use tools now to ensure the required output file(s) exist with the best evidence-backed answer, even if provisional. If a scoreable file already exists, read it and preserve that candidate unless you have stronger task-specific evidence for a replacement. Do not overwrite a plausible dated, historical, or local-evidence candidate with a current live-page, partial-coverage, or weaker guess merely to refresh the checkpoint. You may continue refining afterward, but do not apologize or finalize until the scoreable file exists and the task ledger is updated.\n\n{completion_prompt}"
+    )
+}
+
+fn task_ledger_has_open_items(ledger: &str) -> bool {
+    ledger.lines().any(|line| {
+        let line = line.trim_start();
+        line.starts_with("- pending:") || line.starts_with("- in_progress:")
     })
 }
 
@@ -2254,6 +2584,41 @@ fn deadline_instant(deadline: OffsetDateTime) -> tokio::time::Instant {
         return tokio::time::Instant::now();
     }
     tokio::time::Instant::now() + (deadline - now).unsigned_abs()
+}
+
+fn inference_timeout_deadline(
+    deadline: Option<OffsetDateTime>,
+    runtime_profile: RuntimeProfile,
+    task_ledger_required: bool,
+    reserve_seconds: u64,
+    finalization_requested: bool,
+    task_ledger_scoreable_checkpoints: u8,
+    conversation: &[ConversationItem],
+) -> Option<(OffsetDateTime, InferenceTimeoutAction)> {
+    let deadline = deadline?;
+    if runtime_profile == RuntimeProfile::Eval
+        && task_ledger_required
+        && !finalization_requested
+        && task_ledger_scoreable_checkpoints < TASK_LEDGER_SCOREABLE_CHECKPOINT_LIMIT
+        && TASK_LEDGER_SCOREABLE_CHECKPOINT_SECONDS > reserve_seconds
+        && task_ledger_completion_prompt(conversation).is_some()
+    {
+        let checkpoint_deadline =
+            deadline - Duration::seconds(TASK_LEDGER_SCOREABLE_CHECKPOINT_SECONDS as i64);
+        if checkpoint_deadline > OffsetDateTime::now_utc() {
+            return Some((
+                checkpoint_deadline,
+                InferenceTimeoutAction::ScoreableCheckpoint,
+            ));
+        }
+    }
+    if runtime_profile == RuntimeProfile::Eval && !finalization_requested {
+        return Some((
+            deadline - Duration::seconds(reserve_seconds as i64),
+            InferenceTimeoutAction::Finalization,
+        ));
+    }
+    Some((deadline, InferenceTimeoutAction::Finalization))
 }
 
 fn turn_partial_result(conversation: &[ConversationItem]) -> String {
@@ -2723,6 +3088,97 @@ mod tests {
                     provider_response_id: None,
                 })),
             ])))
+        }
+    }
+
+    struct TaskLedgerCompletionGateEngine {
+        calls: StdMutex<u32>,
+        requests: Arc<StdMutex<Vec<AgentInferenceRequest>>>,
+    }
+
+    #[async_trait::async_trait]
+    impl InferenceEngine for TaskLedgerCompletionGateEngine {
+        fn id(&self) -> String {
+            roder_api::catalog::PROVIDER_MOCK.to_string()
+        }
+
+        fn capabilities(&self) -> InferenceCapabilities {
+            InferenceCapabilities::coding_agent_default()
+        }
+
+        async fn list_models(
+            &self,
+            _ctx: InferenceProviderContext<'_>,
+        ) -> anyhow::Result<Vec<roder_api::inference::ModelDescriptor>> {
+            Ok(roder_api::catalog::models_for_provider(
+                roder_api::catalog::PROVIDER_MOCK,
+                true,
+            ))
+        }
+
+        async fn stream_turn(
+            &self,
+            _ctx: InferenceTurnContext<'_>,
+            request: AgentInferenceRequest,
+        ) -> anyhow::Result<InferenceEventStream> {
+            self.requests.lock().unwrap().push(request);
+            let mut calls = self.calls.lock().unwrap();
+            *calls += 1;
+            let events = match *calls {
+                1 => vec![Ok(InferenceEvent::ToolCallCompleted(ToolCallCompleted {
+                    id: "ledger-open".to_string(),
+                    name: TASK_LEDGER_TOOL_NAME.to_string(),
+                    arguments: serde_json::json!({
+                        "tasks": [
+                            {
+                                "id": "inspect",
+                                "content": "Inspect local assets",
+                                "status": "completed",
+                                "evidence": "listed workspace"
+                            },
+                            {
+                                "id": "write",
+                                "content": "Write /app/result.txt",
+                                "status": "pending"
+                            }
+                        ],
+                        "requireCompletionEvidence": true
+                    })
+                    .to_string(),
+                }))],
+                3 => vec![Ok(InferenceEvent::ToolCallCompleted(ToolCallCompleted {
+                    id: "ledger-complete".to_string(),
+                    name: TASK_LEDGER_TOOL_NAME.to_string(),
+                    arguments: serde_json::json!({
+                        "tasks": [
+                            {
+                                "id": "inspect",
+                                "content": "Inspect local assets",
+                                "status": "completed",
+                                "evidence": "listed workspace"
+                            },
+                            {
+                                "id": "write",
+                                "content": "Write /app/result.txt",
+                                "status": "completed",
+                                "evidence": "wrote answer"
+                            }
+                        ],
+                        "requireCompletionEvidence": true
+                    })
+                    .to_string(),
+                }))],
+                _ => vec![Ok(InferenceEvent::MessageDelta(MessageDelta {
+                    text: "final".to_string(),
+                    phase: None,
+                }))],
+            };
+            Ok(Box::pin(stream::iter(events.into_iter().chain(
+                std::iter::once(Ok(InferenceEvent::Completed(CompletionMetadata {
+                    stop_reason: Some("stop".to_string()),
+                    provider_response_id: None,
+                }))),
+            ))))
         }
     }
 
@@ -3427,6 +3883,9 @@ mod tests {
         builder.inference_engine(Arc::new(CapturingEngine {
             request: captured.clone(),
         }));
+        builder.tool_contributor(Arc::new(
+            roder_ext_task_ledger::TaskLedgerToolContributor::default(),
+        ));
         let runtime = Arc::new(
             Runtime::new(
                 builder.build().unwrap(),
@@ -3470,6 +3929,217 @@ mod tests {
         let developer = request.instructions.developer.unwrap();
         assert!(developer.contains("Task Ledger Required"));
         assert!(developer.contains("task_ledger.update"));
+        let tool_names: Vec<_> = request
+            .tools
+            .iter()
+            .map(|tool| tool.name.as_str())
+            .collect();
+        assert!(
+            tool_names.contains(&TASK_LEDGER_TOOL_NAME),
+            "tool names: {tool_names:?}"
+        );
+        assert_eq!(
+            request.tool_choice,
+            ToolChoice::Specific(TASK_LEDGER_TOOL_NAME.to_string())
+        );
+        assert_eq!(request.tools.len(), 1);
+        assert_eq!(request.tools[0].name, TASK_LEDGER_TOOL_NAME);
+    }
+
+    #[tokio::test]
+    async fn eval_task_ledger_blocks_final_answer_until_open_items_are_completed() {
+        let requests = Arc::new(StdMutex::new(Vec::new()));
+        let mut builder = ExtensionRegistryBuilder::new();
+        builder.inference_engine(Arc::new(TaskLedgerCompletionGateEngine {
+            calls: StdMutex::new(0),
+            requests: requests.clone(),
+        }));
+        builder.tool_contributor(Arc::new(
+            roder_ext_task_ledger::TaskLedgerToolContributor::default(),
+        ));
+        let runtime = Arc::new(
+            Runtime::new(
+                builder.build().unwrap(),
+                RuntimeConfig {
+                    runtime_profile: RuntimeProfile::Eval,
+                    policy_mode: PolicyMode::Bypass,
+                    ..RuntimeConfig::default()
+                },
+            )
+            .unwrap(),
+        );
+        let mut rx = runtime.subscribe_events();
+        let turn_id = runtime
+            .start_turn(StartTurnRequest {
+                thread_id: "thread-ledger-completion".to_string(),
+                message: "write the answer file".to_string(),
+                images: Vec::new(),
+                provider_override: None,
+                model_override: None,
+                workspace: None,
+                instructions: InstructionBundle::default(),
+                task_ledger_required: true,
+            })
+            .await
+            .unwrap();
+
+        tokio::time::timeout(std::time::Duration::from_secs(5), async {
+            loop {
+                let envelope = rx.recv().await.unwrap();
+                if envelope.turn_id.as_deref() != Some(&turn_id) {
+                    continue;
+                }
+                match envelope.event {
+                    RoderEvent::TurnCompleted(_) => break,
+                    RoderEvent::TurnFailed(event) => panic!("turn failed: {}", event.error),
+                    _ => {}
+                }
+            }
+        })
+        .await
+        .unwrap();
+
+        let requests = requests.lock().unwrap().clone();
+        assert_eq!(requests.len(), 4);
+        assert!(requests[2].conversation.iter().any(|item| {
+            matches!(
+                item,
+                ConversationItem::UserMessage(message)
+                    if message.text.contains("Task Ledger Completion Required")
+                        && message.text.contains("Write /app/result.txt")
+            )
+        }));
+        assert!(requests[3].conversation.iter().any(|item| {
+            matches!(
+                item,
+                ConversationItem::ToolResult(result)
+                    if result.name.as_deref() == Some(TASK_LEDGER_TOOL_NAME)
+                        && result.result.contains("Task ledger: 2/2 completed")
+            )
+        }));
+    }
+
+    #[tokio::test]
+    async fn eval_task_ledger_checkpoint_requests_scoreable_file_before_final_reserve() {
+        let requests = Arc::new(StdMutex::new(Vec::new()));
+        let mut builder = ExtensionRegistryBuilder::new();
+        builder.inference_engine(Arc::new(TaskLedgerCompletionGateEngine {
+            calls: StdMutex::new(0),
+            requests: requests.clone(),
+        }));
+        builder.tool_contributor(Arc::new(
+            roder_ext_task_ledger::TaskLedgerToolContributor::default(),
+        ));
+        let runtime = Arc::new(
+            Runtime::new(
+                builder.build().unwrap(),
+                RuntimeConfig {
+                    runtime_profile: RuntimeProfile::Eval,
+                    policy_mode: PolicyMode::Bypass,
+                    turn_deadline_seconds: Some(120),
+                    ..RuntimeConfig::default()
+                },
+            )
+            .unwrap(),
+        );
+        let mut rx = runtime.subscribe_events();
+        let turn_id = runtime
+            .start_turn(StartTurnRequest {
+                thread_id: "thread-ledger-checkpoint".to_string(),
+                message: "write the answer file".to_string(),
+                images: Vec::new(),
+                provider_override: None,
+                model_override: None,
+                workspace: None,
+                instructions: InstructionBundle::default(),
+                task_ledger_required: true,
+            })
+            .await
+            .unwrap();
+
+        tokio::time::timeout(std::time::Duration::from_secs(5), async {
+            loop {
+                let envelope = rx.recv().await.unwrap();
+                if envelope.turn_id.as_deref() != Some(&turn_id) {
+                    continue;
+                }
+                match envelope.event {
+                    RoderEvent::TurnCompleted(_) => break,
+                    RoderEvent::TurnFailed(event) => panic!("turn failed: {}", event.error),
+                    _ => {}
+                }
+            }
+        })
+        .await
+        .unwrap();
+
+        let requests = requests.lock().unwrap().clone();
+        assert!(requests.len() >= 2);
+        assert!(requests[1].conversation.iter().any(|item| {
+            matches!(
+                item,
+                ConversationItem::UserMessage(message)
+                    if message.text.contains("Scoreable Output Checkpoint")
+                        && message.text.contains("create or update the required output file")
+                        && message.text.contains("Write /app/result.txt")
+            )
+        }));
+    }
+
+    #[test]
+    fn deadline_task_ledger_prompt_preserves_scoreable_work_instruction() {
+        let prompt = task_ledger_deadline_completion_prompt(
+            12,
+            30,
+            "Task Ledger Completion Required: write /app/result.txt, then call task_ledger.update",
+        );
+
+        assert!(prompt.contains("12 seconds remain"));
+        assert!(prompt.contains("create or update the required scoreable output files"));
+        assert!(prompt.contains("write /app/result.txt"));
+        assert!(prompt.contains(TASK_LEDGER_TOOL_NAME));
+    }
+
+    #[test]
+    fn scoreable_checkpoint_prompt_preserves_provisional_file_instruction() {
+        let prompt = task_ledger_scoreable_checkpoint_prompt(
+            120,
+            "Task Ledger Completion Required: write /app/result.txt, then call task_ledger.update",
+        );
+
+        assert!(prompt.contains("120 seconds remain"));
+        assert!(prompt.contains("best evidence-backed answer"));
+        assert!(prompt.contains("even if provisional"));
+        assert!(prompt.contains("preserve that candidate"));
+        assert!(prompt.contains("partial-coverage"));
+        assert!(prompt.contains("write /app/result.txt"));
+        assert!(prompt.contains(TASK_LEDGER_TOOL_NAME));
+    }
+
+    #[test]
+    fn open_task_ledger_moves_inference_timeout_to_scoreable_checkpoint() {
+        let deadline = Some(OffsetDateTime::now_utc() + Duration::seconds(870));
+        let conversation = vec![ConversationItem::ToolResult(ToolResultRecord {
+            id: "ledger-open".to_string(),
+            name: Some(TASK_LEDGER_TOOL_NAME.to_string()),
+            result: "Task ledger: 0/1 completed\n- pending: Write /app/result.txt [write]"
+                .to_string(),
+            display_payload: None,
+            is_error: false,
+        })];
+
+        let (_, action) = inference_timeout_deadline(
+            deadline,
+            RuntimeProfile::Eval,
+            true,
+            30,
+            false,
+            0,
+            &conversation,
+        )
+        .unwrap();
+
+        assert_eq!(action, InferenceTimeoutAction::ScoreableCheckpoint);
     }
 
     #[tokio::test]

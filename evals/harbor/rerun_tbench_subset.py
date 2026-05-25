@@ -27,7 +27,15 @@ CLASS_ALIASES = {
     "timeout": "agent_timeout",
     "agent_timeout": "agent_timeout",
     "soft_timeout": "soft_timeout",
+    "soft_timeout_pass": "soft_timeout_pass",
+    "soft_timeout_fail": "soft_timeout_fail",
     "missing_artifacts": "missing_artifacts",
+    "provider_api_invalid_tool_name": "provider_api_invalid_tool_name",
+    "provider_policy_block": "provider_policy_block",
+    "provider_stream_decode_error": "provider_stream_decode_error",
+    "provider_stream_incomplete": "provider_stream_incomplete",
+    "roder_exec_error_status": "roder_exec_error_status",
+    "internal_deadline_timeout": "internal_deadline_timeout",
 }
 
 DETERMINISTIC_ARTIFACTS = [
@@ -36,6 +44,7 @@ DETERMINISTIC_ARTIFACTS = [
     "/logs/agent/roder-stderr.txt",
     "/logs/agent/roder-last-message.txt",
     "/logs/agent/setup-summary.txt",
+    "/logs/agent/roder-run-summary.json",
 ]
 
 
@@ -78,18 +87,26 @@ def build_subset_config(
     class_name: str,
     job_name: str | None,
     jobs_dir: str | None,
+    reasoning: str | None,
     timeout_sec: float | None,
     soft_timeout_sec: float | None,
+    eval_deadline_sec: float | None,
 ) -> dict[str, Any]:
     config = copy.deepcopy(base_config)
     agent = (config.get("agents") or [{}])[0]
     model = str(agent.get("model_name") or "model")
-    reasoning = str((agent.get("kwargs") or {}).get("reasoning") or "default")
+    effective_reasoning = reasoning or str(
+        (agent.get("kwargs") or {}).get("reasoning") or "default"
+    )
     config["job_name"] = job_name or (
-        f"{source_job.name}-{slug(class_name)}-{slug(model)}-{slug(reasoning)}"
+        f"{source_job.name}-{slug(class_name)}-{slug(model)}-{slug(effective_reasoning)}"
     )
     if jobs_dir:
         config["jobs_dir"] = jobs_dir
+    if reasoning is not None:
+        for agent_config in config.get("agents", []):
+            kwargs = agent_config.setdefault("kwargs", {})
+            kwargs["reasoning"] = reasoning
     if timeout_sec is not None:
         for agent_config in config.get("agents", []):
             agent_config["override_timeout_sec"] = timeout_sec
@@ -97,6 +114,10 @@ def build_subset_config(
         for agent_config in config.get("agents", []):
             kwargs = agent_config.setdefault("kwargs", {})
             kwargs["soft_timeout_sec"] = soft_timeout_sec
+    if eval_deadline_sec is not None:
+        for agent_config in config.get("agents", []):
+            kwargs = agent_config.setdefault("kwargs", {})
+            kwargs["speed_policy_eval_deadline_seconds"] = eval_deadline_sec
     for dataset in config.get("datasets", []):
         if isinstance(dataset, dict):
             dataset["task_names"] = task_names
@@ -114,9 +135,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--base-config", type=Path)
     parser.add_argument("--job-name")
     parser.add_argument("--jobs-dir")
+    parser.add_argument("--reasoning")
     parser.add_argument("--timeout-sec", type=float)
     parser.add_argument("--soft-timeout-sec", type=float)
+    parser.add_argument("--eval-deadline-sec", type=float)
     parser.add_argument("--task-name", action="append", default=[])
+    parser.add_argument("--exclude-task-name", action="append", default=[])
     parser.add_argument("--limit", type=int)
     return parser.parse_args()
 
@@ -133,6 +157,9 @@ def main() -> int:
             missing = sorted(requested.difference(task_names))
             if missing:
                 raise ValueError(f"Requested task names not in class: {', '.join(missing)}")
+        if args.exclude_task_name:
+            excluded = set(args.exclude_task_name)
+            task_names = [name for name in task_names if name not in excluded]
         if args.limit is not None:
             task_names = task_names[: args.limit]
         if not task_names:
@@ -146,8 +173,10 @@ def main() -> int:
             class_name=args.class_name,
             job_name=args.job_name,
             jobs_dir=args.jobs_dir,
+            reasoning=args.reasoning,
             timeout_sec=args.timeout_sec,
             soft_timeout_sec=args.soft_timeout_sec,
+            eval_deadline_sec=args.eval_deadline_sec,
         )
     except Exception as exc:
         print(f"rerun_tbench_subset: {exc}", file=sys.stderr)

@@ -121,9 +121,10 @@ impl OpenAiResponsesEngine {
         request: &AgentInferenceRequest,
         options: RequestMappingOptions<'_>,
     ) -> (Value, ResponsesToolNameMap) {
+        let (tools, tool_name_map) = responses_tools(request);
         let mut body = json!({
             "model": request.model.model,
-            "input": response_input_items(request),
+            "input": response_input_items(request, &tool_name_map),
             "store": false,
             "stream": true,
         });
@@ -167,7 +168,6 @@ impl OpenAiResponsesEngine {
                 body["include"] = json!(["reasoning.encrypted_content"]);
             }
         }
-        let (tools, tool_name_map) = responses_tools(request);
         if !tools.is_empty() {
             body["tools"] = json!(tools);
             body["tool_choice"] = match &request.tool_choice {
@@ -235,6 +235,13 @@ impl ResponsesToolNameMap {
         self.tool_name_to_api_name
             .get(tool_name)
             .map_or(tool_name, String::as_str)
+    }
+
+    fn replay_api_name(&self, tool_name: &str) -> String {
+        self.tool_name_to_api_name
+            .get(tool_name)
+            .cloned()
+            .unwrap_or_else(|| responses_api_tool_name(tool_name))
     }
 }
 
@@ -450,16 +457,7 @@ fn responses_tools(request: &AgentInferenceRequest) -> (Vec<Value>, ResponsesToo
 }
 
 fn responses_tool_name(tool_name: &str, used_tool_names: &mut HashSet<String>) -> String {
-    let base_name = tool_name
-        .chars()
-        .map(|c| {
-            if c.is_ascii_alphanumeric() || c == '_' || c == '-' {
-                c
-            } else {
-                '_'
-            }
-        })
-        .collect::<String>();
+    let base_name = responses_api_tool_name(tool_name);
     if used_tool_names.insert(base_name.clone()) {
         return base_name;
     }
@@ -471,6 +469,24 @@ fn responses_tool_name(tool_name: &str, used_tool_names: &mut HashSet<String>) -
         }
     }
     unreachable!()
+}
+
+fn responses_api_tool_name(tool_name: &str) -> String {
+    let name = tool_name
+        .chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || c == '_' || c == '-' {
+                c
+            } else {
+                '_'
+            }
+        })
+        .collect::<String>();
+    if name.is_empty() {
+        "tool".to_string()
+    } else {
+        name
+    }
 }
 
 fn map_tool_name<'a>(tool_name: &'a str, tool_name_map: &'a HashMap<String, String>) -> &'a str {
@@ -1295,7 +1311,10 @@ fn error_body_excerpt(body: &str) -> String {
     excerpt
 }
 
-fn response_input_items(request: &AgentInferenceRequest) -> Vec<Value> {
+fn response_input_items(
+    request: &AgentInferenceRequest,
+    tool_name_map: &ResponsesToolNameMap,
+) -> Vec<Value> {
     let mut items = Vec::new();
     let mut provider_output_call_ids = HashSet::new();
 
@@ -1321,11 +1340,12 @@ fn response_input_items(request: &AgentInferenceRequest) -> Vec<Value> {
                     None
                 } else {
                     let item_id = fallback_function_call_item_id(&call.id);
+                    let name = tool_name_map.replay_api_name(&call.name);
                     Some(json!({
                         "type": "function_call",
                         "id": item_id,
                         "call_id": call.id,
-                        "name": call.name,
+                        "name": name,
                         "arguments": call.arguments,
                         "status": "completed"
                     }))
@@ -1344,7 +1364,12 @@ fn response_input_items(request: &AgentInferenceRequest) -> Vec<Value> {
                 }))
             }
             roder_api::conversation::ConversationItem::ProviderMetadata(metadata) => {
-                append_provider_output_items(metadata, &mut items, &mut provider_output_call_ids);
+                append_provider_output_items(
+                    metadata,
+                    &mut items,
+                    &mut provider_output_call_ids,
+                    tool_name_map,
+                );
                 None
             }
             _ => None,
@@ -1388,6 +1413,7 @@ fn append_provider_output_items(
     metadata: &Value,
     items: &mut Vec<Value>,
     provider_output_call_ids: &mut HashSet<String>,
+    tool_name_map: &ResponsesToolNameMap,
 ) {
     let Some(output) = metadata.get("output").and_then(Value::as_array) else {
         return;
@@ -1398,7 +1424,11 @@ fn append_provider_output_items(
                 if let Some(call_id) = item.get("call_id").and_then(Value::as_str) {
                     provider_output_call_ids.insert(call_id.to_string());
                 }
-                items.push(item.clone());
+                let mut item = item.clone();
+                if let Some(name) = item.get("name").and_then(Value::as_str) {
+                    item["name"] = json!(tool_name_map.replay_api_name(name));
+                }
+                items.push(item);
             }
             Some("reasoning") => items.push(item.clone()),
             Some(kind) if is_compaction_type(kind) => items.push(item.clone()),
@@ -1629,6 +1659,11 @@ mod tests {
         }
     }
 
+    fn input_items(request: &AgentInferenceRequest) -> Vec<Value> {
+        let (_, tool_name_map) = responses_tools(request);
+        response_input_items(request, &tool_name_map)
+    }
+
     #[tokio::test]
     async fn model_discovery_reads_models_endpoint() {
         let base_url = spawn_models_server(vec![(
@@ -1856,7 +1891,7 @@ mod tests {
             phase: Some("commentary".to_string()),
         })];
 
-        let input = response_input_items(&request);
+        let input = input_items(&request);
         assert_eq!(input[0]["role"], "assistant");
         assert_eq!(input[0]["phase"], "commentary");
         assert_eq!(input[0]["content"][0]["text"], "I will inspect first.");
@@ -1872,7 +1907,7 @@ mod tests {
             }],
         ))];
 
-        let input = response_input_items(&request);
+        let input = input_items(&request);
         assert_eq!(input[0]["role"], "user");
         assert_eq!(input[0]["content"][0]["type"], "input_text");
         assert_eq!(input[0]["content"][0]["text"], "what is shown?");
@@ -1965,6 +2000,90 @@ mod tests {
         assert_eq!(tools[1]["type"], "function");
         assert_eq!(tools[1]["name"], "memory_query");
         assert_eq!(body["tool_choice"]["name"], "memory_save");
+    }
+
+    #[test]
+    fn replays_unsafe_tool_call_names_as_openai_safe_names() {
+        let mut request = request();
+        request.tools = vec![roder_api::tools::ToolSpec {
+            name: "tool.discovery.list".to_string(),
+            description: "list discovery tools".to_string(),
+            parameters: json!({ "type": "object" }),
+        }];
+        request.conversation = vec![
+            ConversationItem::UserMessage(UserMessage::text("List discovery tools")),
+            ConversationItem::ToolCall(ToolCallRecord {
+                id: "call_1".to_string(),
+                name: "tool.discovery.list".to_string(),
+                arguments: "{}".to_string(),
+            }),
+            ConversationItem::ToolResult(ToolResultRecord {
+                id: "call_1".to_string(),
+                name: Some("tool.discovery.list".to_string()),
+                result: "[]".to_string(),
+                display_payload: None,
+                is_error: false,
+            }),
+        ];
+
+        let body = OpenAiResponsesEngine::map_request(&request);
+
+        assert_eq!(body["tools"][0]["name"], "tool_discovery_list");
+        assert_eq!(body["input"][1]["type"], "function_call");
+        assert_eq!(body["input"][1]["name"], "tool_discovery_list");
+        assert_eq!(body["input"][2]["type"], "function_call_output");
+    }
+
+    #[test]
+    fn replays_provider_function_call_names_as_openai_safe_names() {
+        let mut request = request();
+        request.tools = vec![roder_api::tools::ToolSpec {
+            name: "tool.discovery.list".to_string(),
+            description: "list discovery tools".to_string(),
+            parameters: json!({ "type": "object" }),
+        }];
+        request.conversation = vec![
+            ConversationItem::UserMessage(UserMessage::text("List discovery tools")),
+            ConversationItem::ProviderMetadata(json!({
+                "output": [
+                    {
+                        "id": "fc_1",
+                        "type": "function_call",
+                        "status": "completed",
+                        "call_id": "call_1",
+                        "name": "tool.discovery.list",
+                        "arguments": "{}"
+                    }
+                ]
+            })),
+            ConversationItem::ToolCall(ToolCallRecord {
+                id: "call_1".to_string(),
+                name: "tool.discovery.list".to_string(),
+                arguments: "{}".to_string(),
+            }),
+            ConversationItem::ToolResult(ToolResultRecord {
+                id: "call_1".to_string(),
+                name: Some("tool.discovery.list".to_string()),
+                result: "[]".to_string(),
+                display_payload: None,
+                is_error: false,
+            }),
+        ];
+
+        let body = OpenAiResponsesEngine::map_request(&request);
+
+        assert_eq!(body["input"][1]["type"], "function_call");
+        assert_eq!(body["input"][1]["name"], "tool_discovery_list");
+        assert_eq!(
+            body["input"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .filter(|item| item["type"] == "function_call")
+                .count(),
+            1
+        );
+        assert_eq!(body["input"][2]["type"], "function_call_output");
     }
 
     #[test]
@@ -2069,7 +2188,7 @@ mod tests {
             }),
         ];
 
-        let input = response_input_items(&request);
+        let input = input_items(&request);
         assert_eq!(input[1]["type"], "reasoning");
         assert_eq!(input[1]["encrypted_content"], "encrypted-thinking");
         assert_eq!(input[2]["id"], "fc_1");
@@ -2102,7 +2221,7 @@ mod tests {
             ConversationItem::UserMessage(UserMessage::text("Continue")),
         ];
 
-        let input = response_input_items(&request);
+        let input = input_items(&request);
         assert_eq!(input[0]["type"], "compaction");
         assert_eq!(input[0]["encrypted_content"], "opaque");
         assert_eq!(input[1]["role"], "user");
@@ -2127,7 +2246,7 @@ mod tests {
             }),
         ];
 
-        let input = response_input_items(&request);
+        let input = input_items(&request);
         assert_eq!(input[1]["type"], "function_call");
         assert_eq!(input[1]["id"], "fc_1");
         assert_eq!(input[1]["call_id"], "call_1");

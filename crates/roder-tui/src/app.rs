@@ -2867,6 +2867,7 @@ where
             thread_id,
             input: pending_turn_input(pending.message, pending.images),
             prompt: None,
+            task_ledger_required: false,
         };
         let client = self.client.clone();
         tokio::spawn(async move {
