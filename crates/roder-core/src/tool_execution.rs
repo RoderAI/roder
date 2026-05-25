@@ -206,6 +206,9 @@ impl Runtime {
             workspace.or(runtime_config.workspace.as_deref()),
             Some(&runtime_config.command_shell),
         );
+        if let Some(remaining) = crate::runtime::deadline_remaining_seconds(deadline) {
+            ctx = ctx.with_deadline_remaining_seconds(remaining);
+        }
         let decision = DefaultPolicyGate::new()
             .decide_with_contributors(&tool_call, mode, &ctx, &self.registry.policy_contributors)
             .await?;
@@ -821,7 +824,7 @@ impl Runtime {
 }
 
 fn is_subagent_task_tool(name: &str) -> bool {
-    name == "task" || name.starts_with("task_")
+    name == "task" || (name.starts_with("task_") && !name.contains('.'))
 }
 
 fn subagent_error_kind(data: &Value) -> String {
@@ -843,4 +846,16 @@ fn json_string_array(value: Option<&Value>) -> Vec<String> {
                 .collect()
         })
         .unwrap_or_default()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::is_subagent_task_tool;
+
+    #[test]
+    fn subagent_task_tool_detection_excludes_task_ledger_namespace() {
+        assert!(is_subagent_task_tool("task"));
+        assert!(is_subagent_task_tool("task_explore"));
+        assert!(!is_subagent_task_tool("task_ledger.update"));
+    }
 }

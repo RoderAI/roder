@@ -13,66 +13,13 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-
-HARNESS_ERROR_CLASSES = {
-    "docker_registry_bad_gateway",
-    "agent_setup_failed",
-    "agent_timeout",
-    "missing_artifacts",
-    "verifier_error",
-    "unknown_error",
-}
-
-CORE_ARTIFACTS = (
-    "roder-cli.txt",
-    "roder-events.jsonl",
-    "roder-stderr.txt",
-    "roder-last-message.txt",
+from tbench_analysis_constants import (
+    CORE_ARTIFACTS,
+    HARNESS_ERROR_CLASSES,
+    RUN_SUMMARY_TASK_FIELDS,
+    SCORED_GROUP_PATTERNS,
+    SCORED_GROUP_SUBSYSTEMS,
 )
-
-SCORED_GROUP_PATTERNS = {
-    "ML/scientific": (
-        "torch",
-        "train-fasttext",
-        "mteb",
-        "raman",
-        "mcmc",
-        "protein",
-        "financial-document",
-        "tune-mjcf",
-        "count-dataset",
-        "query-optimize",
-    ),
-    "systems/emulation/services": (
-        "kv-store",
-        "mailman",
-        "install-windows",
-        "mips",
-        "make-doom",
-        "polyglot-rust-c",
-    ),
-    "media/geometry": (
-        "path-tracing",
-        "video-processing",
-        "gcode",
-    ),
-    "synthesis/security/math": (
-        "gpt2-codegolf",
-        "regex",
-        "overfull-hbox",
-        "fix-code-vulnerability",
-        "chess",
-        "winning-avg-corewars",
-    ),
-}
-
-SCORED_GROUP_SUBSYSTEMS = {
-    "ML/scientific": "runtime context, package-install planning, long-running command monitoring, and verification discipline",
-    "systems/emulation/services": "shell/process tooling, service startup validation, and timeout/deadline handling",
-    "media/geometry": "artifact inspection, binary/media tooling, and iterative verifier feedback",
-    "synthesis/security/math": "search/context retrieval, exact-output discipline, and test-driven repair loops",
-    "other": "task-specific analysis after clean harness artifacts are available",
-}
 
 
 @dataclass
@@ -85,10 +32,12 @@ class Trial:
     trial_log: str
     exception_text: str
     setup_text: str
+    agent_text: str
+    run_summary: dict[str, Any]
 
     @property
     def combined_text(self) -> str:
-        chunks = [self.trial_log, self.exception_text, self.setup_text]
+        chunks = [self.trial_log, self.exception_text, self.setup_text, self.agent_text]
         return "\n".join(chunk for chunk in chunks if chunk)
 
     @property
@@ -145,9 +94,34 @@ class Trial:
             )
         return sorted(set(missing))
 
+    def roder_exit_status(self) -> int | None:
+        summary_status = self.run_summary.get("exit_status")
+        if summary_status is not None:
+            try:
+                return int(summary_status)
+            except (TypeError, ValueError):
+                pass
+        match = re.search(r"roder exec finished with status (\d+)", self.setup_text)
+        if not match:
+            return None
+        try:
+            return int(match.group(1))
+        except ValueError:
+            return None
+
 
 def load_json(path: Path) -> dict[str, Any]:
     return json.loads(path.read_text())
+
+
+def load_json_if_present(path: Path) -> dict[str, Any]:
+    if not path.exists():
+        return {}
+    try:
+        value = json.loads(path.read_text())
+    except (OSError, json.JSONDecodeError):
+        return {}
+    return value if isinstance(value, dict) else {}
 
 
 def read_text(path: Path) -> str:
@@ -169,6 +143,16 @@ def setup_text(trial_dir: Path) -> str:
     summary = read_text(trial_dir / "agent" / "setup-summary.txt")
     if summary:
         chunks.append(f"--- setup-summary.txt ---\n{summary}")
+    return "\n".join(chunks)
+
+
+def agent_text(trial_dir: Path) -> str:
+    chunks = []
+    for base in (trial_dir / "agent", trial_dir / "artifacts"):
+        for name in ("roder-stderr.txt", "roder-cli.txt"):
+            text = read_text(base / name)
+            if text:
+                chunks.append(f"--- {base.name}/{name} ---\n{text}")
     return "\n".join(chunks)
 
 
@@ -196,6 +180,10 @@ def load_trials(job_dir: Path) -> list[Trial]:
                 trial_log=read_text(trial_dir / "trial.log"),
                 exception_text=exception,
                 setup_text=setup_text(trial_dir),
+                agent_text=agent_text(trial_dir),
+                run_summary=load_json_if_present(
+                    trial_dir / "agent" / "roder-run-summary.json"
+                ),
             )
         )
     return trials
@@ -217,8 +205,43 @@ def classify_trial(trial: Trial) -> set[str]:
 
     if trial.exception_type == "AgentTimeoutError" or "Agent execution timed out" in text:
         classes.add("agent_timeout")
-    if "roder exec soft-timed-out" in text:
+    if trial.run_summary.get("soft_timed_out") is True or "roder exec soft-timed-out" in text:
         classes.add("soft_timeout")
+        if trial.reward == 1.0:
+            classes.add("soft_timeout_pass")
+        elif trial.reward == 0.0:
+            classes.add("soft_timeout_fail")
+    if (
+        trial.run_summary.get("deadline_timed_out") is True
+        or trial.run_summary.get("provider_error_kind") == "turn_deadline_expired"
+        or "roder exec hit internal eval deadline before Harbor hard timeout" in text
+        or "turn deadline expired" in text
+    ):
+        classes.add("internal_deadline_timeout")
+    if (
+        trial.run_summary.get("deadline_finalized") is True
+        or "deadline finalization" in text.lower()
+        or "before the deadline" in text.lower()
+    ) and "turn deadline expired" not in text:
+        classes.add("deadline_finalized")
+
+    roder_status = trial.roder_exit_status()
+    if roder_status not in (None, 0, 124, 130, 137, 143):
+        classes.add("roder_exec_error_status")
+    provider_error_kind = trial.run_summary.get("provider_error_kind")
+    if provider_error_kind == "invalid_tool_name" or (
+        "Invalid 'input[" in text and "string does not match pattern" in text
+    ):
+        classes.add("provider_api_invalid_tool_name")
+    if provider_error_kind == "stream_decode_error" or "error decoding response body" in text:
+        classes.add("provider_stream_decode_error")
+    if (
+        provider_error_kind == "stream_incomplete"
+        or "stream closed before response.completed" in text
+    ):
+        classes.add("provider_stream_incomplete")
+    if provider_error_kind == "policy_block" or "flagged for possible cybersecurity risk" in text:
+        classes.add("provider_policy_block")
 
     setup_return = read_text(trial.path / "agent" / "setup" / "return-code.txt").strip()
     if (
@@ -255,6 +278,14 @@ def task_entry(trial: Trial) -> dict[str, Any]:
         entry["reward"] = trial.reward
     if trial.exception_type:
         entry["exception_type"] = trial.exception_type
+    exit_status = trial.roder_exit_status()
+    if exit_status is not None:
+        entry["roder_exit_status"] = exit_status
+    if trial.run_summary:
+        entry["run_summary_path"] = str(trial.path / "agent" / "roder-run-summary.json")
+        for key in RUN_SUMMARY_TASK_FIELDS:
+            if key in trial.run_summary:
+                entry[key] = trial.run_summary[key]
     missing = trial.missing_expected_artifacts()
     if missing:
         entry["missing_artifacts"] = missing
@@ -342,6 +373,7 @@ def analyze_job(job_dir: Path, group_scored_failures: bool = False) -> dict[str,
             explain_scored_trial_difference(stats, classes),
             "Clean-run errors exclude reward-0 scored failures and include setup, environment, timeout, verifier, unknown, and artifact failures.",
             "Soft timeouts are adapter-controlled early exits before Harbor's hard timeout; they are scored normally and are not clean-run errors.",
+            "Soft-timeout pass/fail subsets identify timeout-ladder rerun candidates without changing clean-run status.",
         ],
         "classes": {name: entries for name, entries in sorted(classes.items())},
         "trial_classes": trial_classes,

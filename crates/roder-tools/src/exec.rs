@@ -14,12 +14,15 @@ use tokio::process::{ChildStdin, Command};
 use tokio::sync::{Mutex, Notify};
 
 use crate::command_shell::shell_for_context;
+use crate::exec_output::{format_exec_output, trim_output_buffer_to_max_bytes, truncate_output};
 use crate::files::{parse, require_nonempty, result};
 use crate::workspace::Workspace;
 
 const DEFAULT_YIELD_MS: u64 = 1000;
 const DEFAULT_MAX_OUTPUT_TOKENS: usize = 6000;
 const MAX_BUFFER_BYTES: usize = 1024 * 1024;
+const DEADLINE_TIMEOUT_RESERVE_MS: u64 = 30_000;
+const MIN_DEADLINE_TIMEOUT_MS: u64 = 1_000;
 
 pub(crate) fn register(
     registry: &mut ToolRegistry,
@@ -47,6 +50,7 @@ struct ExecSession {
     cwd: String,
     shell: String,
     started: Instant,
+    effective_timeout_ms: Option<u64>,
     stdin: Mutex<Option<ChildStdin>>,
     output: Mutex<String>,
     cursor: Mutex<usize>,
@@ -147,6 +151,7 @@ impl ToolExecutor for ExecCommandTool {
             .unwrap_or_else(|| shell_for_context(&ctx, &self.command_shell));
         let login = args.login.unwrap_or(true);
         let tty = args.tty.unwrap_or(false);
+        let timeout_ms = effective_timeout_ms(args.timeout_ms, ctx.deadline_remaining_seconds);
         let mut child = build_command(&shell, &command, login, tty)
             .current_dir(&cwd_path)
             .stdin(Stdio::piped())
@@ -162,6 +167,7 @@ impl ToolExecutor for ExecCommandTool {
             cwd,
             shell: shell.clone(),
             started: Instant::now(),
+            effective_timeout_ms: timeout_ms,
             stdin: Mutex::new(stdin),
             output: Mutex::new(String::new()),
             cursor: Mutex::new(0),
@@ -176,7 +182,7 @@ impl ToolExecutor for ExecCommandTool {
         if let Some(stderr) = stderr {
             spawn_output_reader(stderr, session.clone());
         }
-        spawn_waiter(child, session.clone(), args.timeout_ms);
+        spawn_waiter(child, session.clone(), timeout_ms);
         self.manager
             .sessions
             .lock()
@@ -359,7 +365,7 @@ impl ExecSession {
         let output = if output.is_empty() && exit.is_some() {
             "(no output)".to_string()
         } else {
-            truncate_output(&output, max_output_tokens)
+            truncate_output(&output, max_output_tokens, DEFAULT_MAX_OUTPUT_TOKENS)
         };
         let elapsed_ms = self.started.elapsed().as_millis() as u64;
         let exit_code = exit.map(|exit| exit.exit_code);
@@ -375,6 +381,7 @@ impl ExecSession {
                 "aggregated_output": output,
                 "exit_code": exit_code,
                 "duration_ms": elapsed_ms,
+                "effective_timeout_ms": self.effective_timeout_ms,
                 "status": status,
                 "timed_out": timed_out,
                 "tty": self.tty,
@@ -416,12 +423,8 @@ where
                 Ok(n) => {
                     let mut output = session.output.lock().await;
                     output.push_str(&String::from_utf8_lossy(&buf[..n]));
-                    if output.len() > MAX_BUFFER_BYTES {
-                        let keep_from = output.len() - MAX_BUFFER_BYTES;
-                        output.replace_range(..keep_from, "");
-                        let mut cursor = session.cursor.lock().await;
-                        *cursor = cursor.saturating_sub(keep_from);
-                    }
+                    let mut cursor = session.cursor.lock().await;
+                    trim_output_buffer_to_max_bytes(&mut output, &mut cursor, MAX_BUFFER_BYTES);
                 }
             }
         }
@@ -449,6 +452,24 @@ fn spawn_waiter(
         *session.exit.lock().await = Some(exit);
         session.exit_notify.notify_waiters();
     });
+}
+
+fn effective_timeout_ms(
+    requested_timeout_ms: Option<u64>,
+    deadline_remaining_seconds: Option<u64>,
+) -> Option<u64> {
+    let deadline_timeout = deadline_remaining_seconds.map(|seconds| {
+        seconds
+            .saturating_mul(1000)
+            .saturating_sub(DEADLINE_TIMEOUT_RESERVE_MS)
+            .max(MIN_DEADLINE_TIMEOUT_MS)
+    });
+    match (requested_timeout_ms, deadline_timeout) {
+        (Some(requested), Some(deadline)) => Some(requested.min(deadline)),
+        (Some(requested), None) => Some(requested),
+        (None, Some(deadline)) => Some(deadline),
+        (None, None) => None,
+    }
 }
 
 fn exit_from_status(
@@ -488,44 +509,6 @@ async fn settle_completed_exit(session: &ExecSession) {
     }
     let _ = tokio::time::timeout(Duration::from_millis(250), session.exit_notify.notified()).await;
     tokio::task::yield_now().await;
-}
-
-fn truncate_output(output: &str, max_output_tokens: Option<usize>) -> String {
-    let max_chars = max_output_tokens
-        .unwrap_or(DEFAULT_MAX_OUTPUT_TOKENS)
-        .saturating_mul(4);
-    if output.len() <= max_chars {
-        return output.trim_end().to_string();
-    }
-    let omitted = output.len() - max_chars;
-    format!(
-        "[{} bytes omitted]\n{}",
-        omitted,
-        output[output.len() - max_chars..].trim_end()
-    )
-}
-
-fn format_exec_output(
-    exit_code: Option<i32>,
-    status: &str,
-    duration_ms: u64,
-    session_id: Option<u64>,
-    output: &str,
-) -> String {
-    let exit = exit_code
-        .map(|code| code.to_string())
-        .unwrap_or_else(|| "still running".to_string());
-    let mut text = format!(
-        "Exit code: {exit}\nStatus: {status}\nWall time: {:.3} seconds",
-        duration_ms as f64 / 1000.0
-    );
-    if status == "running"
-        && let Some(session_id) = session_id
-    {
-        text.push_str(&format!("\nSession id: {session_id}"));
-    }
-    text.push_str(&format!("\nOutput:\n{output}"));
-    text
 }
 
 #[cfg(test)]
@@ -657,6 +640,46 @@ mod tests {
                 .trim(),
             shell.display().to_string()
         );
+
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn effective_timeout_reserves_deadline_finalization_window() {
+        assert_eq!(effective_timeout_ms(None, None), None);
+        assert_eq!(effective_timeout_ms(Some(5_000), None), Some(5_000));
+        assert_eq!(effective_timeout_ms(None, Some(90)), Some(60_000));
+        assert_eq!(effective_timeout_ms(Some(120_000), Some(90)), Some(60_000));
+        assert_eq!(effective_timeout_ms(Some(5_000), Some(90)), Some(5_000));
+        assert_eq!(effective_timeout_ms(None, Some(5)), Some(1_000));
+    }
+
+    #[tokio::test]
+    async fn exec_command_clamps_missing_timeout_to_deadline_remaining() {
+        let root = temp_workspace("roder-exec-deadline");
+        std::fs::create_dir_all(&root).unwrap();
+        let manager = Arc::new(ExecSessionManager::default());
+        let tool = ExecCommandTool {
+            workspace: Workspace::new(root.clone()).unwrap(),
+            manager,
+            command_shell: roder_api::command_shell::default_command_shell(),
+        };
+
+        let result = tool
+            .execute(
+                context(&root).with_deadline_remaining_seconds(1),
+                call(
+                    "exec_command",
+                    json!({ "cmd": "sleep 2", "yield_time_ms": 1200, "login": false }),
+                ),
+            )
+            .await
+            .unwrap();
+
+        assert!(result.is_error);
+        assert_eq!(result.data["status"], "timed_out");
+        assert_eq!(result.data["timed_out"], true);
+        assert_eq!(result.data["effective_timeout_ms"], 1000);
 
         let _ = std::fs::remove_dir_all(root);
     }

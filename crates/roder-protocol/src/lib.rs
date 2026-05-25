@@ -307,6 +307,8 @@ pub struct TurnStartParams {
     #[serde(default)]
     pub input: Vec<TurnInputItem>,
     pub prompt: Option<String>,
+    #[serde(default)]
+    pub task_ledger_required: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -2607,6 +2609,18 @@ mod tests {
             params.input[1].image_url.as_deref(),
             Some("data:image/png;base64,YWJj")
         );
+        assert!(!params.task_ledger_required);
+    }
+
+    #[test]
+    fn desktop_turn_start_params_accept_task_ledger_required() {
+        let params: TurnStartParams = serde_json::from_value(serde_json::json!({
+            "threadId": "thread-1",
+            "taskLedgerRequired": true
+        }))
+        .unwrap();
+
+        assert!(params.task_ledger_required);
     }
 
     #[test]

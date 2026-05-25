@@ -6145,6 +6145,7 @@ async fn start_turn(client: &LocalAppClient, thread_id: &str, text: &str) -> Tur
                 thread_id: thread_id.to_string(),
                 input: text_input(text),
                 prompt: None,
+                task_ledger_required: false,
             })
             .unwrap(),
         ),

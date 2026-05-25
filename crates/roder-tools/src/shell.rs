@@ -13,6 +13,9 @@ use crate::files::{parse, require_nonempty, result};
 use crate::workspace::Workspace;
 
 const DEFAULT_TIMEOUT_SECONDS: u64 = 120;
+const MAX_TIMEOUT_SECONDS: u64 = 600;
+const DEADLINE_TIMEOUT_RESERVE_SECONDS: u64 = 30;
+const MIN_DEADLINE_TIMEOUT_SECONDS: u64 = 1;
 
 pub(crate) fn register(
     registry: &mut ToolRegistry,
@@ -77,21 +80,21 @@ impl ToolExecutor for ShellTool {
             Some(workdir) => workspace.resolve_existing_workdir(workdir)?,
             _ => workspace.root().to_path_buf(),
         };
-        let timeout = args
+        let requested_timeout = args
             .timeout_seconds
             .unwrap_or(DEFAULT_TIMEOUT_SECONDS)
-            .clamp(1, 600);
+            .clamp(1, MAX_TIMEOUT_SECONDS);
+        let timeout = effective_timeout_seconds(requested_timeout, ctx.deadline_remaining_seconds);
         let shell = shell_for_context(&ctx, &self.command_shell);
         let started = Instant::now();
-        let output = tokio::time::timeout(
-            std::time::Duration::from_secs(timeout),
-            Command::new(&shell)
-                .arg("-lc")
-                .arg(&command)
-                .current_dir(&cwd)
-                .output(),
-        )
-        .await;
+        let mut process = Command::new(&shell);
+        process
+            .arg("-lc")
+            .arg(&command)
+            .current_dir(&cwd)
+            .kill_on_drop(true);
+        let output =
+            tokio::time::timeout(std::time::Duration::from_secs(timeout), process.output()).await;
 
         let (exit_code, aggregated_output, timed_out) = match output {
             Ok(Ok(output)) => (
@@ -110,7 +113,9 @@ impl ToolExecutor for ShellTool {
             ),
         };
         let duration_ms = started.elapsed().as_millis() as u64;
-        let status = if exit_code == 0 && !timed_out {
+        let status = if timed_out {
+            "timed_out"
+        } else if exit_code == 0 {
             "completed"
         } else {
             "failed"
@@ -127,10 +132,12 @@ impl ToolExecutor for ShellTool {
                 "aggregated_output": aggregated_output,
                 "exit_code": exit_code,
                 "duration_ms": duration_ms,
+                "requested_timeout_seconds": requested_timeout,
+                "effective_timeout_seconds": timeout,
                 "status": status,
                 "timed_out": timed_out,
             }),
-            status == "failed",
+            status != "completed",
         ))
     }
 }
@@ -166,6 +173,21 @@ fn format_shell_output(exit_code: i32, duration_ms: u64, output: &str) -> String
         "Exit code: {exit_code}\nWall time: {:.3} seconds\nOutput:\n{output}",
         duration_ms as f64 / 1000.0
     )
+}
+
+fn effective_timeout_seconds(
+    requested_timeout_seconds: u64,
+    deadline_remaining_seconds: Option<u64>,
+) -> u64 {
+    let deadline_timeout = deadline_remaining_seconds.map(|seconds| {
+        seconds
+            .saturating_sub(DEADLINE_TIMEOUT_RESERVE_SECONDS)
+            .max(MIN_DEADLINE_TIMEOUT_SECONDS)
+    });
+    match deadline_timeout {
+        Some(deadline) => requested_timeout_seconds.min(deadline),
+        None => requested_timeout_seconds,
+    }
 }
 
 #[cfg(test)]
@@ -290,6 +312,39 @@ mod tests {
                 .trim(),
             shell.display().to_string()
         );
+
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn effective_timeout_reserves_deadline_finalization_window() {
+        assert_eq!(effective_timeout_seconds(120, None), 120);
+        assert_eq!(effective_timeout_seconds(120, Some(90)), 60);
+        assert_eq!(effective_timeout_seconds(5, Some(90)), 5);
+        assert_eq!(effective_timeout_seconds(120, Some(5)), 1);
+    }
+
+    #[tokio::test]
+    async fn shell_tool_clamps_timeout_to_deadline_remaining() {
+        let root = temp_workspace("roder-shell-deadline");
+        std::fs::create_dir_all(&root).unwrap();
+        let tool = ShellTool {
+            workspace: Workspace::new(root.clone()).unwrap(),
+            command_shell: roder_api::command_shell::default_command_shell(),
+        };
+
+        let result = tool
+            .execute(
+                context(&root).with_deadline_remaining_seconds(1),
+                call(json!({ "command": "sleep 2" })),
+            )
+            .await
+            .unwrap();
+
+        assert!(result.is_error);
+        assert_eq!(result.data["status"], "timed_out");
+        assert_eq!(result.data["timed_out"], true);
+        assert_eq!(result.data["effective_timeout_seconds"], 1);
 
         let _ = std::fs::remove_dir_all(root);
     }

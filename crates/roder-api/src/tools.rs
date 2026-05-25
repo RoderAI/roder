@@ -172,6 +172,7 @@ pub struct ToolExecutionContext {
     pub turn_id: TurnId,
     pub effective_mode: PolicyMode,
     pub command_shell: Option<String>,
+    pub deadline_remaining_seconds: Option<u64>,
     pub handles: ToolExecutionHandles,
 }
 
@@ -186,6 +187,7 @@ impl ToolExecutionContext {
             turn_id: turn_id.into(),
             effective_mode,
             command_shell: None,
+            deadline_remaining_seconds: None,
             handles: ToolExecutionHandles::default(),
         }
     }
@@ -195,6 +197,11 @@ impl ToolExecutionContext {
         if !shell.trim().is_empty() {
             self.command_shell = Some(shell);
         }
+        self
+    }
+
+    pub fn with_deadline_remaining_seconds(mut self, seconds: u64) -> Self {
+        self.deadline_remaining_seconds = Some(seconds);
         self
     }
 

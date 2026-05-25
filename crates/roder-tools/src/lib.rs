@@ -4,6 +4,7 @@ mod command_shell;
 mod discovery;
 mod edit;
 mod exec;
+mod exec_output;
 mod files;
 mod goals;
 mod hunk_output;
