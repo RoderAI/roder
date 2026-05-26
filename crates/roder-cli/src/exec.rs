@@ -49,6 +49,7 @@ pub(crate) async fn run_exec_cli(args: &[String]) -> anyhow::Result<()> {
     let client = LocalAppClient::new(app_server.clone());
     let mut notifications = client.subscribe_notifications();
     let mut output = ExecOutput::new(options.json, options.output_last_message.clone());
+    let cwd = std::env::current_dir()?.display().to_string();
 
     let thread_id = match &options.resume {
         ExecResume::New => {
@@ -60,9 +61,7 @@ pub(crate) async fn run_exec_cli(args: &[String]) -> anyhow::Result<()> {
                     params: Some(serde_json::to_value(ThreadStartParams {
                         model: Some(default_model),
                         model_provider: None,
-                        cwd: std::env::current_dir()
-                            .ok()
-                            .map(|path| path.display().to_string()),
+                        cwd,
                         ephemeral: options.ephemeral,
                     })?),
                 })

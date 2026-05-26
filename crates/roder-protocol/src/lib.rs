@@ -171,7 +171,7 @@ pub struct Item {
 pub struct ThreadStartParams {
     pub model: Option<String>,
     pub model_provider: Option<String>,
-    pub cwd: Option<String>,
+    pub cwd: String,
     #[serde(default)]
     pub ephemeral: bool,
 }

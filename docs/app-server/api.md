@@ -701,7 +701,11 @@ Response:
     "modelProvider": "openai",
     "createdAt": 1770000000,
     "updatedAt": 1770000000,
-    "status": { "type": "idle" },
+    "status": {
+      "type": "idle",
+      "activeTurnId": null,
+      "activeFlags": []
+    },
     "cwd": "/Users/pz/w/gode"
   },
   "model": "gpt-5.5",
@@ -712,7 +716,8 @@ Response:
 
 Behavior:
 
-- Creates a persisted runtime thread with optional provider/model/workspace.
+- Creates a persisted runtime thread with optional provider/model and required absolute workspace `cwd`.
+- Rejects missing, empty, or relative `cwd`; thread snapshots do not fall back to the app-server process cwd.
 - Stores the selected provider/model for later `turn/start` overrides.
 - Emits `thread/started`.
 - `ephemeral` is accepted by the DTO but is not currently used by the handler.

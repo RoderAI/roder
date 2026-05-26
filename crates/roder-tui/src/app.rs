@@ -1205,7 +1205,7 @@ where
                 serde_json::to_value(ThreadStartParams {
                     model: (!model.trim().is_empty()).then(|| model.clone()),
                     model_provider: None,
-                    cwd: None,
+                    cwd: std::env::current_dir()?.display().to_string(),
                     ephemeral: false,
                 })
                 .unwrap(),
@@ -7194,7 +7194,7 @@ mod tests {
                     serde_json::to_value(ThreadStartParams {
                         model: Some("mock".to_string()),
                         model_provider: Some("mock".to_string()),
-                        cwd: None,
+                        cwd: std::env::current_dir().unwrap().display().to_string(),
                         ephemeral: false,
                     })
                     .unwrap(),
