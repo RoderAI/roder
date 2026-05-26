@@ -62,7 +62,7 @@ pub(crate) trait WorkspaceBackend: Send + Sync + 'static {
 #[derive(Debug)]
 pub(crate) struct LocalWorkspaceBackend {
     workspace: Workspace,
-    searcher: Mutex<roder_search::WorkspaceSearcher>,
+    searcher: Arc<Mutex<roder_search::WorkspaceSearcher>>,
 }
 
 #[cfg(test)]
@@ -80,7 +80,9 @@ impl RunnerWorkspaceBackend {
 
 impl LocalWorkspaceBackend {
     pub(crate) fn new(workspace: Workspace) -> Self {
-        let searcher = Mutex::new(roder_search::WorkspaceSearcher::new(workspace.root()));
+        let searcher = Arc::new(Mutex::new(roder_search::WorkspaceSearcher::new(
+            workspace.root(),
+        )));
         Self {
             workspace,
             searcher,
@@ -193,31 +195,38 @@ impl WorkspaceBackend for LocalWorkspaceBackend {
         &self,
         options: SearchOptions,
     ) -> anyhow::Result<(String, Vec<String>, SearchMetadata)> {
-        let input_path = options.path.to_string_lossy().to_string();
-        let start = self.workspace.resolve_existing(&input_path)?;
-        let mut searcher = self
-            .searcher
-            .lock()
-            .map_err(|_| anyhow::anyhow!("search index lock is poisoned"))?;
-        let output = searcher.search(&options)?;
-        Ok((
-            self.workspace.display(&start),
-            output.lines,
-            output.metadata,
-        ))
+        let workspace = self.workspace.clone();
+        let searcher = self.searcher.clone();
+        tokio::task::spawn_blocking(move || {
+            let input_path = options.path.to_string_lossy().to_string();
+            let start = workspace.resolve_existing(&input_path)?;
+            let mut searcher = searcher
+                .lock()
+                .map_err(|_| anyhow::anyhow!("search index lock is poisoned"))?;
+            let output = searcher.search(&options)?;
+            Ok((workspace.display(&start), output.lines, output.metadata))
+        })
+        .await
+        .map_err(|err| anyhow::anyhow!("grep search task failed: {err}"))?
     }
 
     async fn glob(&self, pattern: &str) -> anyhow::Result<Vec<String>> {
-        let mut matches = Vec::new();
-        crate::search::visit_files(self.workspace.root(), &mut |path| {
-            let rel = self.workspace.display(path);
-            if crate::search::wildcard_match(pattern, &rel) {
-                matches.push(rel);
-            }
-            Ok(())
-        })?;
-        matches.sort();
-        Ok(matches)
+        let workspace = self.workspace.clone();
+        let pattern = pattern.to_string();
+        tokio::task::spawn_blocking(move || {
+            let mut matches = Vec::new();
+            crate::search::visit_files(workspace.root(), &mut |path| {
+                let rel = workspace.display(path);
+                if crate::search::wildcard_match(&pattern, &rel) {
+                    matches.push(rel);
+                }
+                Ok(())
+            })?;
+            matches.sort();
+            Ok(matches)
+        })
+        .await
+        .map_err(|err| anyhow::anyhow!("glob task failed: {err}"))?
     }
 
     async fn apply_patch(&self, patch: &str) -> anyhow::Result<String> {
