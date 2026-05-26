@@ -9062,6 +9062,41 @@ mod tests {
     }
 
     #[test]
+    fn provider_menu_includes_cursor_composer_model() {
+        let providers = vec![ProviderChoice {
+            provider_id: "cursor".to_string(),
+            name: "Cursor".to_string(),
+            description: Some("Cursor Composer via direct AgentService API".to_string()),
+            auth_type: ProviderAuthType::ApiKey,
+            authenticated: true,
+            auth_detail: None,
+            default_model: Some("composer-2.5".to_string()),
+            recommended: true,
+        }];
+        let models = vec![ProviderOption {
+            provider_id: "cursor".to_string(),
+            model_id: "composer-2.5".to_string(),
+            label: "cursor/composer-2.5 (Composer 2.5)".to_string(),
+            context_window: Some(200_000),
+            default_reasoning: None,
+            reasoning_options: Vec::new(),
+        }];
+
+        let items = models_menu_items(&models, &providers);
+
+        assert!(matches!(
+            &items[0],
+            ProviderMenuItem::Section(label) if label == "Cursor"
+        ));
+        assert!(matches!(
+            &items[1],
+            ProviderMenuItem::Model(option)
+                if option.provider_id == "cursor"
+                    && option.model_id == "composer-2.5"
+        ));
+    }
+
+    #[test]
     fn provider_menu_filter_does_not_return_section_headers() {
         let items = vec![
             ProviderMenuItem::Section("OpenCode".to_string()),
