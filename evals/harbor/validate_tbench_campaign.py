@@ -13,6 +13,8 @@ from typing import Any
 from tbench_campaign_handoff import validate_pre_eval_handoff
 from tbench_campaign_run_script import validate_run_script
 from tbench_campaign_image_preflight import validate_route_image_preflight
+from tbench_campaign_launch_plans import LaunchPlanSet, validate_route_launch_plan
+from tbench_campaign_route_readiness import validate_route_config_agent_readiness
 from tbench_campaign_score_projection import score_projection_for_tasks
 from validate_tbench_analysis import (
     DEFAULT_BASELINE,
@@ -45,6 +47,8 @@ def validate_campaign_manifest(
     manifest_path: Path,
     require_image_preflight: bool = False,
     require_analysis: bool = False,
+    require_launch_plans: bool = False,
+    allow_dry_run_launch_plans: bool = False,
     preflight_dir: Path | None = None,
     analysis_baseline: Path = DEFAULT_BASELINE,
 ) -> ValidationResult:
@@ -66,6 +70,7 @@ def validate_campaign_manifest(
     validate_manifest_summary(result, routes, summary)
     validate_score_projection(result, routes, manifest.get("scoreProjection"))
     seen_tasks: dict[str, str] = {}
+    launch_plan_set = LaunchPlanSet() if require_launch_plans else None
     for route in routes:
         if not isinstance(route, dict):
             result.add("route entry must be an object")
@@ -76,6 +81,9 @@ def validate_campaign_manifest(
             seen_tasks=seen_tasks,
             require_image_preflight=require_image_preflight,
             require_analysis=require_analysis,
+            require_launch_plans=require_launch_plans,
+            allow_dry_run_launch_plans=allow_dry_run_launch_plans,
+            launch_plan_set=launch_plan_set,
             preflight_dir=preflight_dir or manifest_path.parent,
             analysis_baseline=analysis_baseline,
         )
@@ -134,6 +142,9 @@ def validate_route(
     seen_tasks: dict[str, str],
     require_image_preflight: bool,
     require_analysis: bool,
+    require_launch_plans: bool,
+    allow_dry_run_launch_plans: bool,
+    launch_plan_set: LaunchPlanSet | None,
     preflight_dir: Path,
     analysis_baseline: Path,
 ) -> None:
@@ -177,6 +188,14 @@ def validate_route(
         )
     if require_analysis:
         validate_route_analysis_outputs(result, name, route, analysis_baseline)
+    if require_launch_plans:
+        validate_route_launch_plan(
+            result,
+            name,
+            route=route,
+            allow_dry_run=allow_dry_run_launch_plans,
+            plan_set=launch_plan_set,
+        )
 
 
 def validate_route_analysis_paths(
@@ -194,11 +213,13 @@ def validate_route_analysis_paths(
     expected_analysis_json = str(output_dir / f"{name}-analysis.json")
     expected_analysis_markdown = str(output_dir / f"{name}.md")
     expected_manifest_dir = str(output_dir / "manifests" / name)
+    expected_launch_plan = str(output_dir / f"{name}-launch-plan.json")
     for field, expected in (
         ("jobDir", expected_job_dir),
         ("analysisJson", expected_analysis_json),
         ("analysisMarkdown", expected_analysis_markdown),
         ("analysisManifestDir", expected_manifest_dir),
+        ("launchPlan", expected_launch_plan),
     ):
         if route.get(field) != expected:
             result.add(f"route {name} {field} mismatch")
@@ -259,46 +280,6 @@ def validate_route_config_agent(
         artifacts = {str(item) for item in list_value(config.get("artifacts"))}
         if "/logs/agent/roder-plan.md" not in artifacts:
             result.add(f"route {name} missing plan-first artifacts")
-
-
-def validate_route_config_agent_readiness(
-    result: ValidationResult,
-    name: str,
-    agent: dict[str, Any],
-    kwargs: dict[str, Any],
-) -> None:
-    expected = (
-        ("agents[0].override_timeout_sec", agent.get("override_timeout_sec"), 1800),
-        ("agents[0].kwargs.soft_timeout_sec", kwargs.get("soft_timeout_sec"), 1780),
-        (
-            "agents[0].kwargs.speed_policy_eval_deadline_seconds",
-            kwargs.get("speed_policy_eval_deadline_seconds"),
-            1740,
-        ),
-        ("agents[0].kwargs.speed_policy_enabled", kwargs.get("speed_policy_enabled"), False),
-        ("agents[0].kwargs.task_ledger_required", kwargs.get("task_ledger_required"), True),
-        (
-            "agents[0].kwargs.benchmark_guidance_enabled",
-            kwargs.get("benchmark_guidance_enabled"),
-            True,
-        ),
-        ("agents[0].kwargs.policy_mode", kwargs.get("policy_mode"), "bypass"),
-        (
-            "agents[0].kwargs.include_prebuilt_binary",
-            kwargs.get("include_prebuilt_binary"),
-            "true",
-        ),
-        (
-            "agents[0].kwargs.include_local_source",
-            kwargs.get("include_local_source"),
-            "false",
-        ),
-    )
-    for field, actual, expected_value in expected:
-        if actual != expected_value:
-            result.add(
-                f"route {name} {field} expected {expected_value!r}, got {actual!r}"
-            )
 
 
 def validate_route_config_runtime(
@@ -466,6 +447,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("manifest", type=Path)
     parser.add_argument("--require-image-preflight", action="store_true")
     parser.add_argument("--require-analysis", action="store_true")
+    parser.add_argument("--require-launch-plans", action="store_true")
+    parser.add_argument("--allow-dry-run-launch-plans", action="store_true")
     parser.add_argument("--preflight-dir", type=Path)
     parser.add_argument("--analysis-baseline", type=Path, default=DEFAULT_BASELINE)
     return parser.parse_args()
@@ -480,6 +463,8 @@ def main() -> int:
             manifest_path=args.manifest,
             require_image_preflight=args.require_image_preflight,
             require_analysis=args.require_analysis,
+            require_launch_plans=args.require_launch_plans,
+            allow_dry_run_launch_plans=args.allow_dry_run_launch_plans,
             preflight_dir=args.preflight_dir,
             analysis_baseline=args.analysis_baseline,
         )

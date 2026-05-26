@@ -6,7 +6,7 @@ import json
 from hashlib import sha256
 from pathlib import Path
 
-from pre_eval_config_summary import DEFAULT_CONFIGS
+from pre_eval_config_summary import DEFAULT_CONFIGS, deadline_policy_summary
 from pre_eval_harness_summary import DEFAULT_HARNESS_FILES
 from tbench_diagnostic_test_data import passing_tbench_diagnostics_summary
 
@@ -39,6 +39,7 @@ def ready_plan() -> dict:
         "harborConfigSha256": "a" * 64,
         "preEvalHarborConfigSha256": "a" * 64,
         "preEvalSummarySha256": "b" * 64,
+        "deadlinePolicy": deadline_policy_summary(),
         "prebuiltBinary": {
             "path": "/tmp/roder-linux-amd64",
             "sha256": "c" * 64,
@@ -59,6 +60,8 @@ def ready_plan() -> dict:
         },
         "harborHarnessTests": {"status": "passed"},
         "preEvalSummaryStatus": {"status": "ok", "blockedChecks": []},
+        "pullPreflight": False,
+        "offlinePreflight": False,
     }
 
 
@@ -112,6 +115,8 @@ def clean_summary(
             "requirePrebuilt": True,
             "requireAuth": True,
             "preflightImages": image_preflight,
+            "offlineImages": False,
+            "pullImages": False,
             "imageConfig": str(config) if image_preflight else None,
         },
         "prebuiltBinary": {
@@ -129,10 +134,12 @@ def clean_summary(
             "path": str(auth),
         },
         "checks": {
+            "preEvalOptions": {"status": "passed", "issues": []},
             "harborReadiness": {"status": "passed"},
             "harborConfigs": {
                 "status": "passed",
                 "issues": [],
+                "deadlinePolicy": deadline_policy_summary(),
                 "entries": config_entries(config),
             },
             "harborHarness": {
@@ -150,6 +157,7 @@ def clean_summary(
     if image_preflight:
         summary["checks"]["imagePreflight"] = {
             "status": "passed",
+            "offline": False,
             "config": str(config),
             "manifest": str(root_image_manifest(config)),
             "tasks": 89,
@@ -197,6 +205,7 @@ def write_clean_summary_fixture(
     root: Path,
     *,
     generated_at: str | None = None,
+    image_preflight: bool = True,
 ) -> Path:
     prebuilt = executable_file(root / "roder-linux-amd64", linux_x86_64_elf_bytes())
     auth = root / "codex.json"
@@ -207,6 +216,7 @@ def write_clean_summary_fixture(
         prebuilt=prebuilt,
         auth=auth,
         config=config,
+        image_preflight=image_preflight,
     )
     if generated_at is not None:
         summary_data["generatedAt"] = generated_at

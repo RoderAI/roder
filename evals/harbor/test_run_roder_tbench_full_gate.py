@@ -18,6 +18,7 @@ HARBOR_DIR = ROOT / "evals/harbor"
 if str(HARBOR_DIR) not in sys.path:
     sys.path.insert(0, str(HARBOR_DIR))
 
+from pre_eval_config_summary import deadline_policy_summary  # noqa: E402
 from run_roder_tbench_full_test_helpers import clean_summary  # noqa: E402
 
 SCRIPT = ROOT / "evals/harbor/run-roder-tbench-full.sh"
@@ -162,6 +163,7 @@ class RunRoderTbenchFullGateTests(unittest.TestCase):
             plan["harborConfigSha256"],
         )
         self.assertEqual(expected_config_sha, plan["preEvalHarborConfigSha256"])
+        self.assertEqual(deadline_policy_summary(), plan["deadlinePolicy"])
         self.assertEqual(str(prebuilt), plan["prebuiltBinary"]["path"])
         self.assertEqual(expected_prebuilt_sha, plan["prebuiltBinary"]["sha256"])
         self.assertEqual(str(expected_auth), plan["authFile"]["path"])
@@ -170,6 +172,45 @@ class RunRoderTbenchFullGateTests(unittest.TestCase):
         self.assertGreater(plan["harborHarness"]["files"], 0)
         self.assertIn("combinedSha256", plan["harborHarness"])
         self.assertEqual("passed", plan["harborHarnessTests"]["status"])
+
+    def test_dry_run_launch_plan_preserves_explicit_analysis_requirement(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            temp_path = Path(temp)
+            summary = temp_path / "pre-eval-summary.json"
+            prebuilt = temp_path / "roder-linux-amd64"
+            data = clean_summary(prebuilt_binary=prebuilt)
+            data["options"]["analysisTarget"] = "evals/reports/harbor/full-analysis.json"
+            data["checks"]["harborAnalysisBaseline"] = {"status": "ok"}
+            summary.write_text(json.dumps(data, indent=2) + "\n")
+            launch_plan = temp_path / "launch-plan.json"
+
+            env = os.environ.copy()
+            env.pop("RODER_HARBOR_LIVE_TBENCH", None)
+            env.pop("RODER_HARBOR_PRE_EVAL_ANALYSIS", None)
+            env.update(
+                {
+                    "RODER_HARBOR_DRY_RUN": "1",
+                    "RODER_HARBOR_PRE_EVAL_REQUIRE_ANALYSIS": "1",
+                    "RODER_HARBOR_PRE_EVAL_SUMMARY": str(summary),
+                    "RODER_HARBOR_LAUNCH_PLAN": str(launch_plan),
+                    "RODER_HARBOR_SKIP_PREFLIGHT": "1",
+                }
+            )
+
+            result = subprocess.run(
+                [str(SCRIPT)],
+                cwd=ROOT,
+                env=env,
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                check=False,
+            )
+
+            plan = json.loads(launch_plan.read_text())
+
+        self.assertEqual(0, result.returncode, result.stderr)
+        self.assertTrue(plan["requireAnalysis"])
 
     def test_dry_run_writes_default_launch_plan(self) -> None:
         with tempfile.TemporaryDirectory() as temp:

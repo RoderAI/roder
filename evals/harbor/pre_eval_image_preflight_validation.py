@@ -34,6 +34,8 @@ def validate_image_preflight(
         issues.append("image preflight config does not match requested config")
     if required_config and preflight_config != required_config:
         issues.append("image preflight config does not match required config")
+    if options.get("offlineImages") is True and image_preflight.get("offline") is not True:
+        issues.append("image preflight did not run in offline mode")
     validate_image_preflight_evidence(issues, image_preflight)
     validate_image_preflight_clean_details(issues, image_preflight)
     if verify_manifest:
@@ -64,6 +66,8 @@ def validate_image_manifest_file(
     config = manifest.get("config")
     if config != image_preflight.get("config"):
         issues.append("imagePreflight manifest config mismatch")
+    if manifest.get("offline") is not image_preflight.get("offline"):
+        issues.append("imagePreflight manifest offline mismatch")
     summary = manifest.get("summary")
     if not isinstance(summary, dict):
         issues.append("imagePreflight manifest summary is missing")

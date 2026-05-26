@@ -9,6 +9,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from hashlib import sha256
 from pathlib import Path
 
 
@@ -18,6 +19,7 @@ if str(HARBOR_DIR) not in sys.path:
     sys.path.insert(0, str(HARBOR_DIR))
 
 from run_roder_tbench_full_test_helpers import clean_summary  # noqa: E402
+from pre_eval_config_summary import deadline_policy_summary  # noqa: E402
 
 SCRIPT = ROOT / "evals/harbor/run-roder-tbench-smoke.sh"
 
@@ -61,6 +63,82 @@ class RunRoderTbenchSmokeGateTests(unittest.TestCase):
         self.assertEqual(0, result.returncode, result.stderr)
         self.assertIn("Smoke dry-run passed", result.stdout)
         self.assertNotIn("harbor should not run", result.stderr)
+
+    def test_dry_run_writes_smoke_launch_plan(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            temp_path = Path(temp)
+            summary = temp_path / "pre-eval-summary.json"
+            prebuilt = temp_path / "roder-linux-amd64"
+            data = clean_summary(preflight_images=True, prebuilt_binary=prebuilt)
+            rewrite_image_preflight_for_smoke(data, temp_path / "smoke-images.json")
+            summary.write_text(json.dumps(data, indent=2) + "\n")
+            launch_plan = temp_path / "smoke-launch-plan.json"
+
+            env = os.environ.copy()
+            env.pop("RODER_HARBOR_LIVE_TBENCH", None)
+            env.update(
+                {
+                    "RODER_HARBOR_DRY_RUN": "1",
+                    "RODER_HARBOR_PRE_EVAL_SUMMARY": str(summary),
+                    "RODER_HARBOR_LAUNCH_PLAN": str(launch_plan),
+                    "RODER_HARBOR_PRE_EVAL_MAX_AGE_SECONDS": "3600",
+                }
+            )
+
+            result = subprocess.run(
+                [str(SCRIPT)],
+                cwd=ROOT,
+                env=env,
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                check=False,
+            )
+
+            plan = json.loads(launch_plan.read_text())
+            expected_summary_sha = sha256(summary.read_bytes()).hexdigest()
+            config_path = ROOT / "evals/harbor/tbench-smoke.json"
+            expected_config_sha = sha256(config_path.read_bytes()).hexdigest()
+            expected_prebuilt_sha = sha256(prebuilt.read_bytes()).hexdigest()
+            expected_auth = prebuilt.parent / "codex.json"
+
+        self.assertEqual(0, result.returncode, result.stderr)
+        self.assertIn("Smoke launch plan written", result.stdout)
+        self.assertIn("TBench launch plan validation passed", result.stdout)
+        self.assertEqual("dry_run", plan["launchStatus"])
+        self.assertTrue(plan["dryRun"])
+        self.assertFalse(plan["wouldRunHarbor"])
+        self.assertEqual([], plan["blockedReasons"])
+        self.assertEqual(str(summary), plan["preEvalSummary"])
+        self.assertEqual(expected_summary_sha, plan["preEvalSummarySha256"])
+        self.assertEqual("evals/harbor/tbench-smoke.json", plan["harborConfig"])
+        self.assertEqual(expected_config_sha, plan["harborConfigSha256"])
+        self.assertEqual(expected_config_sha, plan["preEvalHarborConfigSha256"])
+        self.assertEqual("evals/harbor/jobs/roder-tbench-smoke", plan["jobDir"])
+        self.assertEqual(
+            "evals/reports/harbor/roder-tbench-smoke-analysis.json",
+            plan["analysisJson"],
+        )
+        self.assertEqual(
+            "evals/reports/harbor/roder-tbench-smoke.md",
+            plan["analysisMarkdown"],
+        )
+        self.assertEqual(3600, plan["maxPreEvalAgeSeconds"])
+        self.assertTrue(plan["requireImagePreflight"])
+        self.assertEqual(deadline_policy_summary(), plan["deadlinePolicy"])
+        self.assertEqual("ok", plan["preEvalSummaryStatus"]["status"])
+        self.assertEqual([], plan["preEvalSummaryStatus"]["blockedChecks"])
+        self.assertEqual(str(prebuilt), plan["prebuiltBinary"]["path"])
+        self.assertEqual(expected_prebuilt_sha, plan["prebuiltBinary"]["sha256"])
+        self.assertEqual(str(expected_auth), plan["authFile"]["path"])
+        self.assertTrue(plan["authFile"]["validJson"])
+        self.assertEqual("passed", plan["harborHarness"]["status"])
+        self.assertEqual("passed", plan["harborHarnessTests"]["status"])
+        self.assertEqual("passed", plan["imagePreflight"]["status"])
+        self.assertEqual(
+            "evals/harbor/tbench-smoke.json",
+            plan["imagePreflight"]["config"],
+        )
 
     def test_dry_run_rejects_reused_full_image_preflight_summary(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
@@ -154,6 +232,8 @@ def rewrite_image_preflight_for_smoke(summary: dict, manifest: Path) -> None:
             {
                 "clean": True,
                 "config": "evals/harbor/tbench-smoke.json",
+                "offline": False,
+                "pull": False,
                 "summary": {
                     "tasks": 1,
                     "unique_images": 1,
@@ -185,6 +265,7 @@ def rewrite_image_preflight_for_smoke(summary: dict, manifest: Path) -> None:
         {
             "config": "evals/harbor/tbench-smoke.json",
             "manifest": str(manifest),
+            "offline": False,
             "tasks": 1,
             "uniqueImages": 1,
             "present": 1,

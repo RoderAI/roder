@@ -14,6 +14,7 @@ def clean_summary() -> dict:
             "requirePrebuilt": True,
             "requireAuth": True,
             "preflightImages": True,
+            "offlineImages": False,
             "imageConfig": "evals/harbor/tbench-full-gpt55-medium.json",
             "analysisTarget": "evals/reports/harbor/full-analysis.json",
         },
@@ -29,8 +30,17 @@ def clean_summary() -> dict:
             "validJson": True,
         },
         "checks": {
+            "preEvalOptions": {"status": "passed", "issues": []},
             "harborReadiness": {"status": "passed"},
-            "harborConfigs": {"status": "passed", "issues": []},
+            "harborConfigs": {
+                "status": "passed",
+                "issues": [],
+                "deadlinePolicy": {
+                    "overrideTimeoutSec": 1800,
+                    "softTimeoutSec": 1780,
+                    "evalDeadlineSeconds": 1740,
+                },
+            },
             "harborHarness": {
                 "status": "passed",
                 "files": 1,
@@ -49,6 +59,7 @@ def clean_summary() -> dict:
             "tbenchDiagnostics": passing_tbench_diagnostics_summary(),
             "imagePreflight": {
                 "status": "passed",
+                "offline": False,
                 "config": "evals/harbor/tbench-full-gpt55-medium.json",
                 "manifest": "/tmp/image-preflight-manifest.json",
                 "tasks": 4,

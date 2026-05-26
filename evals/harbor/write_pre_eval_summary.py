@@ -20,6 +20,7 @@ from pre_eval_file_summary import (
     prebuilt_is_blocked,
     prebuilt_summary,
 )
+from pre_eval_campaign_summary import campaign_summary_check
 from pre_eval_harness_summary import harness_summary
 from pre_eval_config_summary import DEFAULT_CONFIGS, harbor_config_summary
 from pre_eval_run_summary import eval_run_summary, tbench_eval_run_summary
@@ -40,6 +41,7 @@ def build_summary(
     include_speed: bool,
     require_prebuilt: bool,
     preflight_images: bool,
+    offline_images: bool,
     pull_images: bool,
     image_config: str,
     analysis_target: str,
@@ -49,6 +51,7 @@ def build_summary(
     require_auth: bool,
     image_manifest: Path | None,
     config_paths: tuple[Path, ...] | list[Path] | None = None,
+    campaign_summary: Path | None = None,
     harbor_readiness_status: str = "passed",
     harbor_harness_tests_status: str | None = None,
     roder_evals_status: str | None = None,
@@ -69,14 +72,21 @@ def build_summary(
             "requirePrebuilt": require_prebuilt,
             "requireAuth": require_auth,
             "preflightImages": preflight_images,
+            "offlineImages": offline_images,
             "pullImages": pull_images,
             "imageConfig": image_config if preflight_images else None,
             "analysisTarget": analysis_target or None,
             "analysisBaseline": analysis_baseline if analysis_target else None,
+            "campaignSummary": str(campaign_summary) if campaign_summary else None,
         },
         "prebuiltBinary": prebuilt_summary(prebuilt_binary, require_prebuilt),
         "authFile": auth_summary(auth_file, require_auth),
         "checks": {
+            "preEvalOptions": pre_eval_options_summary(
+                preflight_images=preflight_images,
+                offline_images=offline_images,
+                pull_images=pull_images,
+            ),
             "harborReadiness": {"status": harbor_readiness_status},
             "harborConfigs": harbor_config_summary(config_paths),
             "harborHarness": harness_summary(),
@@ -111,12 +121,55 @@ def build_summary(
         )
 
     if image_manifest is not None:
-        summary["checks"]["imagePreflight"] = image_preflight_summary(image_manifest)
+        image_preflight = image_preflight_summary(image_manifest)
+        apply_image_preflight_option_requirements(
+            image_preflight,
+            offline_images=offline_images,
+        )
+        summary["checks"]["imagePreflight"] = image_preflight
+
+    if campaign_summary is not None:
+        summary["checks"]["campaignSummary"] = campaign_summary_check(campaign_summary)
 
     status, blocked_checks = overall_status(summary)
     summary["status"] = status
     summary["blockedChecks"] = blocked_checks
     return summary
+
+
+def pre_eval_options_summary(
+    *,
+    preflight_images: bool,
+    offline_images: bool,
+    pull_images: bool,
+) -> dict[str, Any]:
+    issues: list[str] = []
+    if offline_images and not preflight_images:
+        issues.append("offlineImages requires preflightImages")
+    if pull_images and not preflight_images:
+        issues.append("pullImages requires preflightImages")
+    if offline_images and pull_images:
+        issues.append("offlineImages cannot be combined with pullImages")
+    return {
+        "status": "failed" if issues else "passed",
+        "issues": issues,
+    }
+
+
+def apply_image_preflight_option_requirements(
+    image_preflight: dict[str, Any],
+    *,
+    offline_images: bool,
+) -> None:
+    issues: list[str] = []
+    existing_issues = image_preflight.get("issues")
+    if isinstance(existing_issues, list):
+        issues.extend(str(issue) for issue in existing_issues)
+    if offline_images and image_preflight.get("offline") is not True:
+        issues.append("image preflight did not run in offline mode")
+    if issues:
+        image_preflight["status"] = "failed"
+        image_preflight["issues"] = issues
 
 
 def overall_status(summary: dict[str, Any]) -> tuple[str, list[str]]:
@@ -206,6 +259,7 @@ def image_preflight_summary(path: Path) -> dict[str, Any]:
         "missing": 0,
         "unresolved": 0,
         "pullFailed": 0,
+        "offline": False,
         "selectionErrors": [],
         "blockedTasks": [],
     }
@@ -221,6 +275,7 @@ def image_preflight_summary(path: Path) -> dict[str, Any]:
     return {
         **base,
         "status": "passed" if manifest.get("clean") is True else "failed",
+        "offline": manifest.get("offline") is True,
         "config": manifest.get("config") if isinstance(manifest.get("config"), str) else None,
         "tasks": int(summary.get("tasks") or 0),
         "uniqueImages": int(summary.get("unique_images") or 0),
@@ -278,6 +333,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--include-speed", action="store_true")
     parser.add_argument("--require-prebuilt", action="store_true")
     parser.add_argument("--preflight-images", action="store_true")
+    parser.add_argument("--offline-images", action="store_true")
     parser.add_argument("--pull-images", action="store_true")
     parser.add_argument("--image-config", default="")
     parser.add_argument("--analysis-target", default="")
@@ -286,6 +342,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--auth-file", type=Path, default=DEFAULT_AUTH)
     parser.add_argument("--require-auth", action="store_true")
     parser.add_argument("--image-manifest", type=Path)
+    parser.add_argument("--campaign-summary", type=Path)
     parser.add_argument("--harbor-readiness-status", default="passed")
     parser.add_argument("--harbor-harness-tests-status")
     parser.add_argument("--roder-evals-status")
@@ -310,6 +367,7 @@ def main() -> int:
         include_speed=args.include_speed,
         require_prebuilt=args.require_prebuilt,
         preflight_images=args.preflight_images,
+        offline_images=args.offline_images,
         pull_images=args.pull_images,
         image_config=args.image_config,
         analysis_target=args.analysis_target,
@@ -319,6 +377,7 @@ def main() -> int:
         require_auth=args.require_auth,
         image_manifest=args.image_manifest,
         config_paths=tuple(args.config) or DEFAULT_CONFIGS,
+        campaign_summary=args.campaign_summary,
         harbor_readiness_status=args.harbor_readiness_status,
         harbor_harness_tests_status=args.harbor_harness_tests_status,
         roder_evals_status=args.roder_evals_status,

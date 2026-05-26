@@ -42,6 +42,12 @@ RODER_HARBOR_DRY_RUN=1 ./evals/harbor/run-roder-tbench-smoke.sh
 Dry-run mode runs or validates the pre-eval summary for `tbench-smoke.json`,
 including prebuilt binary, auth, unit-test, TBench diagnostics, and smoke image
 preflight evidence. It exits before job replacement or `harbor run`.
+It also writes and validates a smoke launch plan at
+`evals/reports/harbor/roder-tbench-smoke-launch-plan.json` by default. Set
+`RODER_HARBOR_LAUNCH_PLAN` to override that path. The plan binds the smoke
+config hash, pre-eval summary hash, injected prebuilt binary, auth JSON shape,
+deadline policy, image preflight evidence, harness file digests, and job-dir
+blocking state before Harbor can start.
 Live smoke runs preserve an existing `evals/harbor/jobs/roder-tbench-smoke`
 directory unless `RODER_HARBOR_REPLACE_JOB=1` is set.
 
@@ -140,13 +146,16 @@ overlap and inspect the combined projection:
 python3 evals/harbor/summarize_tbench_campaigns.py \
   evals/reports/harbor/campaigns/validated-conversions/validated-conversions-manifest.json \
   evals/reports/harbor/campaigns/historical-wins/historical-wins-manifest.json \
-  --preset validated-plus-historical
+  --preset validated-plus-historical \
+  --json evals/reports/harbor/campaigns/validated-plus-historical-summary.json
 ```
 
 That combination should report 18 unique tasks and a projected 68/89 if every
-route reproduces. The preset enables the overlap, count, projection,
-historical-win task, and route-owner checks so stale campaign math or missing
-historical-win routes block the handoff.
+route reproduces. The preset enables the overlap, campaign/route skeleton,
+count, projection, historical-win task, and route-owner checks so stale campaign
+math or missing historical-win routes block the handoff. The saved JSON includes
+a `validation` block with the preset name, status, expectation fields, and any
+blocking issues, plus a SHA-256 binding for each input campaign manifest.
 
 For a targeted subset or campaign route, add `--expected-trials` with the route
 task count. That keeps the same harness/provider/runtime blockers while
@@ -166,6 +175,7 @@ the other local diagnostics:
 
 ```sh
 evals/harbor/run-roder-pre-eval-diagnostics.sh \
+  --campaign-summary evals/reports/harbor/campaigns/validated-plus-historical-summary.json \
   --analysis evals/reports/harbor/roder-tbench-full-gpt55-medium-analysis.json
 ```
 
@@ -193,7 +203,12 @@ Each successful wrapper run writes `pre-eval-summary.json` in its output
 directory. Treat that file as the handoff artifact before a live run: it records
 the git head, dirty-path count, bounded dirty-path list, enabled options,
 image-preflight intent, check statuses, Harbor config invariants, and report
-paths. The `harborConfigs` check
+paths. When `--campaign-summary` is supplied, the `campaignSummary` check records
+the combined campaign preset, validation status, expected campaign/route/task
+set, duplicate-task evidence, projected pass count, unique task count, blocking issues, and input
+manifest SHA-256 bindings. For the `validated-plus-historical` handoff, the
+writer and downstream validators enforce the expected route skeleton, 18 unique
+tasks, zero duplicate tasks, and 68 projected passes. The `harborConfigs` check
 records concurrency, deadlines, speed-policy state, task-ledger state,
 environment cleanup, and prebuilt/source-upload settings for each checked-in
 config, plus the exact per-config readiness issues from
@@ -251,7 +266,9 @@ python3 evals/harbor/validate_pre_eval_summary.py \
   --require-prebuilt --require-auth --require-tests \
   --require-image-preflight --verify-harbor-configs \
   --verify-harness-files --verify-prebuilt-binary \
-  --verify-auth-file --max-age-seconds 7200
+  --verify-auth-file --require-campaign-summary \
+  --campaign-summary /path/to/validated-plus-historical-summary.json \
+  --max-age-seconds 7200
 ```
 
 The guarded full-run wrapper enforces this gate before it starts Harbor. If
@@ -268,6 +285,8 @@ without recording a secret hash.
 `RODER_HARBOR_PREFLIGHT_PULL=1` is passed through to the
 diagnostic image preflight. Set `RODER_HARBOR_PRE_EVAL_ANALYSIS` to include a
 previous analyzer JSON or job directory in the gate, and set
+`RODER_HARBOR_PRE_EVAL_CAMPAIGN_SUMMARY` to require the combined campaign
+handoff summary in both pre-eval and launch-plan validation. Set
 `RODER_HARBOR_PRE_EVAL_MAX_AGE_SECONDS` to tighten or relax the default
 two-hour freshness window.
 
@@ -368,21 +387,27 @@ python3 evals/harbor/generate_tbench_campaign.py \
   --output-dir evals/reports/harbor/campaigns/validated-conversions
 ```
 
-This writes a manifest with per-route image-preflight paths plus one config per
-route. It intentionally avoids a mixed-mode Harbor config because Harbor applies
-one agent profile to a run. It also writes an executable guarded run script,
+This writes a manifest with per-route image-preflight and launch-plan paths plus
+one config per route. It intentionally avoids a mixed-mode Harbor config because
+Harbor applies one agent profile to a run. It also writes an executable guarded run script,
 `run-validated-conversions.sh`, beside the manifest. The script validates the
 campaign, runs per-route image preflight, revalidates the image manifests, and
 then exits unless `RODER_HARBOR_LIVE_TBENCH=1` is set. When live execution is
-enabled, it runs or validates the pre-eval summary gate before `harbor run`, then
-analyzes each route with `analyze_tbench_run.py --require-clean`, writing route
-JSON, Markdown, and rerun manifests. It also validates each route analysis
+enabled, it runs or validates the pre-eval summary gate, writes and validates a
+ready launch plan for each route after the job-directory guard, then runs
+`harbor run`. Dry-run mode writes and validates dry-run route launch plans before
+exiting. After each route run, the script analyzes the result with
+`analyze_tbench_run.py --require-clean`, writing route JSON, Markdown, and rerun
+manifests. It also validates each route analysis
 against the clean-run baseline with `--expected-trials` set to that route's task
 count, so subset campaigns are blocked by harness regressions but not by the
 full-run 89-task minimum. Generated scripts pass each route config through the
 pre-eval `--config` option and validate reused summaries with `--require-config`,
 so a summary for only the default full and smoke configs cannot launch route
-campaigns. Live generated scripts also refuse to replace existing route job
+campaigns. When `RODER_HARBOR_PRE_EVAL_CAMPAIGN_SUMMARY` is set, generated
+scripts also require that campaign summary in pre-eval generation, summary
+validation, launch-plan writing, and launch-plan validation. Live generated scripts
+also refuse to replace existing route job
 directories unless `RODER_HARBOR_REPLACE_JOB=1` is set, preserving prior route
 evidence by default. The generated `route_job_dirs` preservation array must
 exactly match the manifest route job directories. The default campaign currently
@@ -418,7 +443,7 @@ requested, has a clean image-preflight manifest for the same route config. It
 also rejects stale or hand-edited run scripts that drop the live-run guard,
 route image preflight, pre-eval summary validation, job-directory preservation,
 or post-run analysis gates. The script must also contain the exact route config,
-job, image-preflight, and analysis paths recorded in the manifest, and its
+job, image-preflight, launch-plan, and analysis paths recorded in the manifest, and its
 `harbor run --config`, image-preflight `--config`, pre-eval `--config`, and
 summary `--require-config` arguments must match the manifest route set exactly.
 Each image-preflight command must bind the route config to that route's exact
@@ -428,12 +453,36 @@ The generated script must invoke the pre-eval diagnostics with its constructed
 `pre_eval_args` array and invoke summary validation with its constructed
 `summary_validation_args` array, so route-specific handoff gates cannot be built
 and then bypassed.
+Each route launch plan must bind the route config, job directory, analysis
+outputs, and pre-eval summary into `write_tbench_launch_plan.py`, then validate
+that plan with `validate_tbench_launch_plan.py --allow-dry-run` in dry-run mode
+or `--require-ready` in live mode. After dry-run launch plans exist, standalone
+campaign validation can require them too:
+
+```sh
+python3 evals/harbor/validate_tbench_campaign.py \
+  evals/reports/harbor/campaigns/validated-conversions/validated-conversions-manifest.json \
+  --require-image-preflight --require-launch-plans \
+  --allow-dry-run-launch-plans \
+  --preflight-dir evals/reports/harbor/campaigns/validated-conversions
+```
+
+That gate reads each route's `launchPlan`, checks the plan's route config, job
+directory, analysis paths, and image manifest against the campaign manifest, then
+reuses `validate_tbench_launch_plan.py` to verify the config hash and image
+manifest binding. It also requires all route launch plans in the same campaign
+handoff to use the same pre-eval summary path, summary SHA-256, and freshness
+window, pre-eval output directory, launch-option requirements, and embedded
+campaign-summary binding. Live route scripts run the same campaign-level launch-plan
+check without `--allow-dry-run-launch-plans`, so only ready plans pass before the
+final campaign handoff.
 Each `analyze_tbench_run.py` command must also use the route's exact job
 directory, `--require-clean`, JSON output, Markdown output, and rerun-manifest
 directory, and each `validate_tbench_analysis.py` command must use the route's
 exact analysis JSON and task count with the checked-in
-`evals/harbor/tbench-clean-baseline.json` baseline. For each route, the commands
-must execute in order: `harbor run`, analyzer, then baseline validation. The
+`evals/harbor/tbench-clean-baseline.json` baseline. For each live route, the
+commands must execute in order: ready launch-plan write, ready launch-plan
+validation, `harbor run`, analyzer, then baseline validation. The
 final generated command must revalidate the campaign with both
 `--require-image-preflight` and `--require-analysis`, and it must run after every
 route baseline validation. With
@@ -515,13 +564,18 @@ By default the wrapper runs the local pre-eval diagnostic loop first and refuses
 to start Harbor unless the resulting `pre-eval-summary.json` is fresh, unblocked,
 and proves prebuilt binary, auth, unit-test, TBench diagnostic, and image
 preflight readiness. To reuse an already generated summary, set
-`RODER_HARBOR_PRE_EVAL_SUMMARY=/path/to/pre-eval-summary.json`.
+`RODER_HARBOR_PRE_EVAL_SUMMARY=/path/to/pre-eval-summary.json`. To require the
+validated campaign handoff for a routed score run, also set
+`RODER_HARBOR_PRE_EVAL_CAMPAIGN_SUMMARY=/path/to/validated-plus-historical-summary.json`;
+when the wrapper runs the diagnostic loop itself, it passes that path through as
+`--campaign-summary`.
 
 To validate the launch gate without starting Harbor, run:
 
 ```sh
 RODER_HARBOR_DRY_RUN=1 \
   RODER_HARBOR_PRE_EVAL_SUMMARY=/path/to/pre-eval-summary.json \
+  RODER_HARBOR_PRE_EVAL_CAMPAIGN_SUMMARY=/path/to/validated-plus-historical-summary.json \
   RODER_HARBOR_LAUNCH_PLAN=/tmp/roder-tbench-launch-plan.json \
   ./evals/harbor/run-roder-tbench-full.sh
 ```
@@ -544,6 +598,12 @@ summary status, blocked checks, generation time, and git head when available.
 Launch-plan validation requires this embedded summary status to be `ok` with no
 blocked checks. `preEvalSummarySha256` binds the plan to the exact summary file;
 pass `--verify-pre-eval-summary` to verify the referenced file still matches.
+When a campaign summary is required, the plan records `requireCampaignSummary`
+and repeats the `campaignSummary` check from the pre-eval summary; launch-plan
+validation rejects missing, mismatched, stale, or wrong-count campaign-summary
+copies. The wrapper also passes `RODER_HARBOR_PRE_EVAL_CAMPAIGN_SUMMARY` into
+`validate_pre_eval_summary.py --campaign-summary`, so a reused summary generated
+from a different campaign handoff is rejected before the launch plan is written.
 `harborConfigSha256` binds the plan to the exact Harbor config, and
 `preEvalHarborConfigSha256` repeats the hash recorded by the pre-eval readiness
 summary for that same config path. Pass `--verify-harbor-config` to verify that
@@ -574,7 +634,7 @@ python3 evals/harbor/validate_tbench_launch_plan.py \
   evals/reports/harbor/roder-tbench-full-gpt55-medium-launch-plan.json \
   --allow-dry-run --verify-pre-eval-summary --verify-harbor-config \
   --verify-prebuilt-binary --verify-auth-file --verify-harness-files \
-  --max-pre-eval-age-seconds 7200
+  --require-campaign-summary --max-pre-eval-age-seconds 7200
 ```
 
 Use `--require-ready` for a live launch plan that must be clear to reach

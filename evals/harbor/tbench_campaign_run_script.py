@@ -18,11 +18,15 @@ from tbench_campaign_script_commands import (
     expected_baseline_validation_tuples,
     expected_campaign_validation_tuples,
     expected_image_preflight_tuples,
+    expected_launch_plan_tuples,
+    expected_launch_plan_validation_tuples,
     expected_route_job_dirs,
     format_tuple,
     has_flag_value,
     image_preflight_command_tuples,
     int_value,
+    launch_plan_command_tuples,
+    launch_plan_validation_command_tuples,
     route_job_dir_values,
     script_flag_values,
     validate_final_campaign_validation_order,
@@ -36,7 +40,10 @@ REQUIRED_RUN_SCRIPT_GUARDS = (
     "preflight_tbench_images.py",
     "run-roder-pre-eval-diagnostics.sh",
     "validate_pre_eval_summary.py",
+    "write_tbench_launch_plan.py",
+    "validate_tbench_launch_plan.py",
     "RODER_HARBOR_PRE_EVAL_SUMMARY",
+    "RODER_HARBOR_PRE_EVAL_CAMPAIGN_SUMMARY",
     "RODER_HARBOR_REPLACE_JOB",
     "route_job_dirs=(",
     "harbor run --config",
@@ -51,6 +58,7 @@ REQUIRED_RUN_SCRIPT_ROUTE_FIELDS = (
     ("analysisMarkdown", "analysis Markdown path"),
     ("analysisManifestDir", "analysis manifest directory"),
     ("imageManifest", "image manifest path"),
+    ("launchPlan", "launch plan path"),
 )
 REQUIRED_SUMMARY_VALIDATION_FLAGS = (
     "--require-prebuilt",
@@ -68,6 +76,24 @@ REQUIRED_RUN_SCRIPT_LINES = (
     (
         'pre_eval_summary="${RODER_HARBOR_PRE_EVAL_SUMMARY:-}"',
         "runScript pre-eval summary guard mismatch",
+    ),
+    (
+        'pre_eval_campaign_summary="${RODER_HARBOR_PRE_EVAL_CAMPAIGN_SUMMARY:-}"',
+        "runScript pre-eval campaign summary guard mismatch",
+    ),
+    ("pre_eval_ran_here=0", "runScript pre-eval run-context init mismatch"),
+    ("pre_eval_ran_here=1", "runScript pre-eval run-context update mismatch"),
+    (
+        "launch_plan_run_context_args=()",
+        "runScript launch-plan run-context init mismatch",
+    ),
+    (
+        'if [[ "$pre_eval_ran_here" == "1" ]]; then',
+        "runScript launch-plan run-context guard mismatch",
+    ),
+    (
+        "launch_plan_run_context_args=(--pre-eval-ran-here)",
+        "runScript launch-plan run-context arg mismatch",
     ),
     (
         'if [[ "$dry_run" != "1" && "${RODER_HARBOR_LIVE_TBENCH:-}" != "1" ]]; then',
@@ -141,6 +167,28 @@ def validate_run_script_routes(
             + "; ".join(format_tuple(item) for item in expected_preflight)
             + "; got "
             + "; ".join(format_tuple(item) for item in actual_preflight)
+        )
+    expected_launch_plans = sorted(expected_launch_plan_tuples(routes))
+    actual_launch_plans = sorted(launch_plan_command_tuples(tokens))
+    if actual_launch_plans != expected_launch_plans:
+        result.add(
+            "runScript launch plan commands mismatch: expected "
+            + "; ".join(format_tuple(item) for item in expected_launch_plans)
+            + "; got "
+            + "; ".join(format_tuple(item) for item in actual_launch_plans)
+        )
+    expected_launch_plan_validations = sorted(
+        expected_launch_plan_validation_tuples(routes)
+    )
+    actual_launch_plan_validations = sorted(
+        launch_plan_validation_command_tuples(tokens)
+    )
+    if actual_launch_plan_validations != expected_launch_plan_validations:
+        result.add(
+            "runScript launch plan validation commands mismatch: expected "
+            + "; ".join(format_tuple(item) for item in expected_launch_plan_validations)
+            + "; got "
+            + "; ".join(format_tuple(item) for item in actual_launch_plan_validations)
         )
     expected_job_dirs = sorted(expected_route_job_dirs(routes))
     actual_job_dirs = sorted(route_job_dir_values(text))
@@ -228,6 +276,16 @@ def validate_required_invocations(result: Any, text: str) -> None:
         not in lines
     ):
         result.add("runScript summary validation invocation mismatch")
+    required_campaign_summary_lines = (
+        'pre_eval_args+=(--campaign-summary "$pre_eval_campaign_summary")',
+        "summary_validation_args+=(--require-campaign-summary)",
+        'summary_validation_args+=(--campaign-summary "$pre_eval_campaign_summary")',
+        'launch_plan_campaign_args=(--campaign-summary "$pre_eval_campaign_summary")',
+        "launch_plan_validation_campaign_args=(--require-campaign-summary)",
+    )
+    for line in required_campaign_summary_lines:
+        if line not in lines:
+            result.add("runScript campaign summary handoff mismatch")
     summary_args = set(array_literal_values(text, "summary_validation_args"))
     for flag in REQUIRED_SUMMARY_VALIDATION_FLAGS:
         if flag not in summary_args:

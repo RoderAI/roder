@@ -28,6 +28,7 @@ launch_plan="${RODER_HARBOR_LAUNCH_PLAN:-evals/reports/harbor/roder-tbench-full-
 pre_eval_max_age_seconds="${RODER_HARBOR_PRE_EVAL_MAX_AGE_SECONDS:-7200}"
 
 pre_eval_summary="${RODER_HARBOR_PRE_EVAL_SUMMARY:-}"
+pre_eval_campaign_summary="${RODER_HARBOR_PRE_EVAL_CAMPAIGN_SUMMARY:-}"
 pre_eval_output_dir="${RODER_HARBOR_PRE_EVAL_OUTPUT_DIR:-evals/reports/pre-eval-diagnostics/full-run-latest}"
 pre_eval_ran_here=0
 require_pre_eval_image=1
@@ -54,6 +55,9 @@ if [[ -z "$pre_eval_summary" ]]; then
       pre_eval_args+=(--analysis-baseline "$RODER_HARBOR_PRE_EVAL_ANALYSIS_BASELINE")
     fi
   fi
+  if [[ -n "$pre_eval_campaign_summary" ]]; then
+    pre_eval_args+=(--campaign-summary "$pre_eval_campaign_summary")
+  fi
   ./evals/harbor/run-roder-pre-eval-diagnostics.sh "${pre_eval_args[@]}"
   pre_eval_summary="$pre_eval_output_dir/pre-eval-summary.json"
   pre_eval_ran_here=1
@@ -79,188 +83,50 @@ fi
 if [[ -n "${RODER_HARBOR_PRE_EVAL_ANALYSIS:-}" || "${RODER_HARBOR_PRE_EVAL_REQUIRE_ANALYSIS:-}" == "1" ]]; then
   summary_validation_args+=(--require-analysis)
 fi
+if [[ -n "$pre_eval_campaign_summary" ]]; then
+  summary_validation_args+=(--require-campaign-summary)
+  summary_validation_args+=(--campaign-summary "$pre_eval_campaign_summary")
+fi
 python3 evals/harbor/validate_pre_eval_summary.py "${summary_validation_args[@]}"
 
-write_launch_plan() {
-  local output_path="$1"
-  python3 - "$output_path" \
-    "$pre_eval_summary" \
-    "$pre_eval_output_dir" \
-    "$pre_eval_ran_here" \
-    "$require_pre_eval_image" \
-    "${RODER_HARBOR_PRE_EVAL_ANALYSIS:-}" \
-    "${RODER_HARBOR_SKIP_PREFLIGHT:-0}" \
-    "${RODER_HARBOR_PREFLIGHT_PULL:-0}" \
-    "${RODER_HARBOR_REPLACE_JOB:-0}" \
-    "$dry_run" \
-    "$job_dir" \
-    "$harbor_config" \
-    "$pre_eval_max_age_seconds" <<'PY'
-import json
-import hashlib
-import sys
-from datetime import datetime, timezone
-from pathlib import Path
-
-(
-    output_path,
-    pre_eval_summary,
-    pre_eval_output_dir,
-    pre_eval_ran_here,
-    require_pre_eval_image,
-    analysis_target,
-    skip_preflight,
-    pull_preflight,
-    replace_job,
-    dry_run,
-    job_dir,
-    harbor_config,
-    max_pre_eval_age_seconds,
-) = sys.argv[1:]
-
-is_dry_run = dry_run == "1"
-job_path = Path(job_dir)
-job_dir_exists = job_path.exists()
-job_dir_blocks_launch = (not is_dry_run) and job_dir_exists and replace_job != "1"
-blocked_reasons = ["existing_job_dir"] if job_dir_blocks_launch else []
-blocked_before_harbor = blocked_reasons[0] if blocked_reasons else None
-launch_status = (
-    "dry_run"
-    if is_dry_run
-    else "blocked"
-    if blocked_reasons
-    else "ready"
+launch_plan_args=(
+  --output "$launch_plan"
+  --pre-eval-summary "$pre_eval_summary"
+  --pre-eval-output-dir "$pre_eval_output_dir"
+  --job-dir "$job_dir"
+  --harbor-config "$harbor_config"
+  --analysis-json evals/reports/harbor/roder-tbench-full-gpt55-medium-analysis.json
+  --analysis-markdown evals/reports/harbor/roder-tbench-full-gpt55-medium.md
+  --max-pre-eval-age-seconds "$pre_eval_max_age_seconds"
 )
-try:
-    summary_bytes = Path(pre_eval_summary).read_bytes()
-    summary = json.loads(summary_bytes)
-    summary_sha256 = hashlib.sha256(summary_bytes).hexdigest()
-    if not isinstance(summary, dict):
-        summary = {}
-except Exception:
-    summary = {}
-    summary_sha256 = None
-effective_pre_eval_output_dir = pre_eval_output_dir
-if isinstance(summary.get("outputDir"), str) and summary.get("outputDir"):
-    effective_pre_eval_output_dir = summary["outputDir"]
-summary_options = summary.get("options") if isinstance(summary.get("options"), dict) else {}
-effective_require_pre_eval_image = require_pre_eval_image == "1"
-if isinstance(summary_options.get("preflightImages"), bool):
-    effective_require_pre_eval_image = summary_options["preflightImages"]
-effective_pull_preflight = pull_preflight == "1"
-if isinstance(summary_options.get("pullImages"), bool):
-    effective_pull_preflight = summary_options["pullImages"]
-try:
-    harbor_config_sha256 = hashlib.sha256(Path(harbor_config).read_bytes()).hexdigest()
-except OSError:
-    harbor_config_sha256 = None
-git = summary.get("git") if isinstance(summary.get("git"), dict) else {}
-harbor_configs = (
-    summary.get("checks", {}).get("harborConfigs", {})
-    if isinstance(summary.get("checks"), dict)
-    else {}
-)
-pre_eval_harbor_config_sha256 = None
-if isinstance(harbor_configs, dict) and isinstance(harbor_configs.get("entries"), list):
-    for entry in harbor_configs["entries"]:
-        if not isinstance(entry, dict):
-            continue
-        if entry.get("path") == harbor_config and isinstance(entry.get("sha256"), str):
-            pre_eval_harbor_config_sha256 = entry.get("sha256")
-            break
-prebuilt = summary.get("prebuiltBinary") if isinstance(summary.get("prebuiltBinary"), dict) else {}
-prebuilt_binary = {
-    key: prebuilt[key]
-    for key in (
-        "path",
-        "sha256",
-        "sizeBytes",
-        "modifiedAt",
-        "fileType",
-        "linuxX8664Elf",
-        "executable",
-    )
-    if key in prebuilt
-}
-auth = summary.get("authFile") if isinstance(summary.get("authFile"), dict) else {}
-auth_file = {
-    key: auth[key]
-    for key in (
-        "path",
-        "sizeBytes",
-        "modifiedAt",
-        "validJson",
-        "jsonFields",
-    )
-    if key in auth
-}
-image_preflight = (
-    summary.get("checks", {}).get("imagePreflight")
-    if isinstance(summary.get("checks"), dict)
-    and isinstance(summary.get("checks", {}).get("imagePreflight"), dict)
-    else {}
-)
-harbor_harness = (
-    summary.get("checks", {}).get("harborHarness")
-    if isinstance(summary.get("checks"), dict)
-    and isinstance(summary.get("checks", {}).get("harborHarness"), dict)
-    else {}
-)
-harbor_harness_tests = (
-    summary.get("checks", {}).get("harborHarnessTests")
-    if isinstance(summary.get("checks"), dict)
-    and isinstance(summary.get("checks", {}).get("harborHarnessTests"), dict)
-    else {}
-)
-summary_status = {
-    "status": summary.get("status"),
-    "blockedChecks": summary.get("blockedChecks")
-    if isinstance(summary.get("blockedChecks"), list)
-    else [],
-}
-if summary.get("generatedAt"):
-    summary_status["generatedAt"] = summary.get("generatedAt")
-if git.get("head"):
-    summary_status["gitHead"] = git.get("head")
-plan = {
-    "generatedAt": datetime.now(timezone.utc).isoformat(),
-    "launchStatus": launch_status,
-    "blockedReasons": blocked_reasons,
-    "dryRun": is_dry_run,
-    "wouldRunHarbor": (not is_dry_run) and not job_dir_blocks_launch,
-    "harborConfig": harbor_config,
-    "harborConfigSha256": harbor_config_sha256,
-    "preEvalHarborConfigSha256": pre_eval_harbor_config_sha256,
-    "jobDir": job_dir,
-    "jobDirExists": job_dir_exists,
-    "jobDirBlocksLaunch": job_dir_blocks_launch,
-    "blockedBeforeHarbor": blocked_before_harbor,
-    "analysisJson": "evals/reports/harbor/roder-tbench-full-gpt55-medium-analysis.json",
-    "analysisMarkdown": "evals/reports/harbor/roder-tbench-full-gpt55-medium.md",
-    "preEvalSummary": pre_eval_summary,
-    "preEvalSummarySha256": summary_sha256,
-    "preEvalSummaryStatus": summary_status,
-    "prebuiltBinary": prebuilt_binary,
-    "authFile": auth_file,
-    "imagePreflight": image_preflight,
-    "harborHarness": harbor_harness,
-    "harborHarnessTests": harbor_harness_tests,
-    "preEvalOutputDir": effective_pre_eval_output_dir,
-    "preEvalRanHere": pre_eval_ran_here == "1",
-    "requireImagePreflight": effective_require_pre_eval_image,
-    "requireAnalysis": bool(analysis_target),
-    "maxPreEvalAgeSeconds": int(max_pre_eval_age_seconds),
-    "skipPreflight": skip_preflight == "1",
-    "pullPreflight": effective_pull_preflight,
-    "replaceJob": replace_job == "1",
-}
-path = Path(output_path)
-path.parent.mkdir(parents=True, exist_ok=True)
-path.write_text(json.dumps(plan, indent=2) + "\n")
-PY
-}
-
-write_launch_plan "$launch_plan"
+if [[ "$pre_eval_ran_here" == "1" ]]; then
+  launch_plan_args+=(--pre-eval-ran-here)
+fi
+if [[ "$require_pre_eval_image" == "1" ]]; then
+  launch_plan_args+=(--require-image-preflight)
+fi
+if [[ -n "${RODER_HARBOR_PRE_EVAL_ANALYSIS:-}" ]]; then
+  launch_plan_args+=(--analysis-target "$RODER_HARBOR_PRE_EVAL_ANALYSIS")
+fi
+if [[ -n "${RODER_HARBOR_PRE_EVAL_ANALYSIS:-}" || "${RODER_HARBOR_PRE_EVAL_REQUIRE_ANALYSIS:-}" == "1" ]]; then
+  launch_plan_args+=(--require-analysis)
+fi
+if [[ "${RODER_HARBOR_SKIP_PREFLIGHT:-}" == "1" ]]; then
+  launch_plan_args+=(--skip-preflight)
+fi
+if [[ "${RODER_HARBOR_PREFLIGHT_PULL:-}" == "1" ]]; then
+  launch_plan_args+=(--pull-preflight)
+fi
+if [[ "${RODER_HARBOR_REPLACE_JOB:-}" == "1" ]]; then
+  launch_plan_args+=(--replace-job)
+fi
+if [[ "$dry_run" == "1" ]]; then
+  launch_plan_args+=(--dry-run)
+fi
+if [[ -n "$pre_eval_campaign_summary" ]]; then
+  launch_plan_args+=(--campaign-summary "$pre_eval_campaign_summary")
+fi
+python3 evals/harbor/write_tbench_launch_plan.py "${launch_plan_args[@]}"
 printf 'Full run launch plan written: %s\n' "$launch_plan"
 
 if [[ "$dry_run" == "1" ]]; then
@@ -277,6 +143,9 @@ if [[ "$dry_run" == "1" ]]; then
   )
   if [[ "$require_pre_eval_image" == "1" ]]; then
     dry_run_validator_args+=(--require-image-preflight)
+  fi
+  if [[ -n "$pre_eval_campaign_summary" ]]; then
+    dry_run_validator_args+=(--require-campaign-summary)
   fi
   python3 evals/harbor/validate_tbench_launch_plan.py "${dry_run_validator_args[@]}"
   printf 'Full run dry-run passed: pre-eval summary=%s\n' "$pre_eval_summary"
@@ -296,6 +165,9 @@ launch_validator_args=(
 )
 if [[ "$require_pre_eval_image" == "1" ]]; then
   launch_validator_args+=(--require-image-preflight)
+fi
+if [[ -n "$pre_eval_campaign_summary" ]]; then
+  launch_validator_args+=(--require-campaign-summary)
 fi
 if ! python3 evals/harbor/validate_tbench_launch_plan.py "${launch_validator_args[@]}"; then
   exit 2

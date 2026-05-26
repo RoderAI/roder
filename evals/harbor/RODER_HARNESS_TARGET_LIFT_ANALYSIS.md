@@ -276,12 +276,20 @@ Run three small targeted batches before another full run:
    python3 evals/harbor/summarize_tbench_campaigns.py \
      evals/reports/harbor/campaigns/validated-conversions/validated-conversions-manifest.json \
      evals/reports/harbor/campaigns/historical-wins/historical-wins-manifest.json \
-     --preset validated-plus-historical
+     --preset validated-plus-historical \
+     --json evals/reports/harbor/campaigns/validated-plus-historical-summary.json
    ```
 
-   This is the machine-checkable gate for the intended 18 non-overlapping
-   candidates, projected at 68/89 if every route reproduces, with the three
-   historical wins on their intended reviewed routes.
+   This is the machine-checkable gate for the intended validated and historical
+   campaign/route skeleton, 18 non-overlapping candidates, 68/89 projection, and
+   three historical wins on their intended reviewed routes. The JSON handoff
+   records the preset, validation status, expectations, input manifest SHA-256
+   bindings, and blocking issues.
+   Pass that file to `run-roder-pre-eval-diagnostics.sh --campaign-summary`
+   before launch so stale or blocked campaign handoffs stop in the local loop.
+   For the guarded full-run wrapper, set
+   `RODER_HARBOR_PRE_EVAL_CAMPAIGN_SUMMARY` to the same file so launch-plan
+   validation also rejects missing or mismatched campaign handoffs.
 
    The manifest separates medium, xhigh, and plan-first xhigh routes so each
    slice can be preflighted and analyzed independently before a broader run. It

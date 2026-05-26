@@ -95,6 +95,7 @@ class PreEvalConfigSummaryTests(unittest.TestCase):
             include_speed=False,
             require_prebuilt=False,
             preflight_images=False,
+            offline_images=False,
             pull_images=False,
             image_config="",
             analysis_target="",
@@ -119,6 +120,14 @@ class PreEvalConfigSummaryTests(unittest.TestCase):
             self.assertEqual("passed", config_check["status"])
             self.assertEqual([], config_check["issues"])
             self.assertEqual(1, config_check["configs"])
+            self.assertEqual(
+                {
+                    "overrideTimeoutSec": 1800,
+                    "softTimeoutSec": 1780,
+                    "evalDeadlineSeconds": 1740,
+                },
+                config_check["deadlinePolicy"],
+            )
             self.assertEqual(
                 {
                     "path": str(config_path),
