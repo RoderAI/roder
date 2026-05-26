@@ -1,0 +1,29 @@
+{
+  "id": "tbench-numeric-tolerance-output",
+  "title": "TBench numeric tolerance output",
+  "prompt": "FAKE_TBENCH_VIDEO_FRAME: write a takeoff-frame estimate inside the verifier tolerance.",
+  "tags": ["tbench-diagnostic", "numeric-tolerance-output", "tool:write_file"],
+  "timeoutMs": 10000,
+  "expected": {
+    "finalAnswerContains": ["hello from roder"],
+    "files": [
+      {
+        "path": "takeoff-frame.txt",
+        "exists": true,
+        "maxBytes": 16,
+        "allowedChars": "0123456789\n"
+      }
+    ],
+    "commandChecks": [
+      {
+        "command": "python3 - <<'PY'\nframe = int(open('takeoff-frame.txt').read())\nassert 219 <= frame <= 223, frame\nPY",
+        "expectedExitCode": 0
+      }
+    ],
+    "verificationRequired": true
+  },
+  "constraints": [
+    "near-miss numeric tasks need verifier-style tolerance checks",
+    "the final artifact must be checked, not only an intermediate calculation"
+  ]
+}

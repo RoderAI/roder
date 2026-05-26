@@ -52,30 +52,6 @@ def read_toml(path: Path) -> dict[str, Any]:
     return tomllib.loads(path.read_text())
 
 
-def task_name_from_trial_dir(name: str) -> str:
-    return name.split("__", 1)[0]
-
-
-def existing_job_task_names(config: dict[str, Any]) -> list[str]:
-    jobs_dir = Path(config.get("jobs_dir", "evals/harbor/jobs"))
-    job_name = config.get("job_name")
-    if not isinstance(job_name, str):
-        return []
-    job_dir = jobs_dir / job_name
-    names: set[str] = set()
-    for result_path in job_dir.glob("*/result.json"):
-        try:
-            result = load_json(result_path)
-        except Exception:
-            continue
-        task_name = result.get("task_name")
-        if isinstance(task_name, str):
-            names.add(task_name)
-        else:
-            names.add(task_name_from_trial_dir(result_path.parent.name))
-    return sorted(names)
-
-
 def registry_url_for_dataset(dataset_config: dict[str, Any]) -> str:
     registry = dataset_config.get("registry")
     if isinstance(registry, dict):
@@ -119,13 +95,11 @@ def selected_tasks(
         elif allow_network:
             wanted = []
         else:
-            wanted = existing_job_task_names(config)
-            if not wanted:
-                unresolved.append(
-                    f"{dataset_config.get('name')}@{dataset_config.get('version')}: "
-                    "offline mode needs task_names or an existing job directory"
-                )
-                continue
+            unresolved.append(
+                f"{dataset_config.get('name')}@{dataset_config.get('version')}: "
+                "offline mode needs explicit task_names for image preflight"
+            )
+            continue
 
         registry_tasks: list[TaskSpec] = []
         if allow_network:

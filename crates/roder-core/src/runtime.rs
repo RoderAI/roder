@@ -4080,7 +4080,7 @@ mod tests {
                 item,
                 ConversationItem::UserMessage(message)
                     if message.text.contains("Scoreable Output Checkpoint")
-                        && message.text.contains("create or update the required output file")
+                        && message.text.contains("ensure the required output file(s) exist")
                         && message.text.contains("Write /app/result.txt")
             )
         }));

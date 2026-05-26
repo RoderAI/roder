@@ -5,6 +5,10 @@ HARNESS_ERROR_CLASSES = {
     "agent_setup_failed",
     "agent_timeout",
     "missing_artifacts",
+    "provider_api_invalid_tool_name",
+    "provider_stream_decode_error",
+    "provider_stream_incomplete",
+    "roder_exec_error_status",
     "verifier_error",
     "unknown_error",
 }

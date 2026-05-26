@@ -1,0 +1,41 @@
+{
+  "id": "tbench-service-target-sanity",
+  "title": "TBench service target sanity",
+  "prompt": "FAKE_TBENCH_SERVICE_TARGET_SANITY: write evidence that validation targeted the guest service endpoint, not the host.",
+  "tags": ["tbench-diagnostic", "service-target", "environment-target", "tool:write_file"],
+  "workspace": {
+    "files": [
+      {
+        "path": "host-uname.txt",
+        "contents": "Darwin host-kernel\n"
+      },
+      {
+        "path": "guest-uname.txt",
+        "contents": "Linux alpine-vm 6.6.0\n"
+      }
+    ]
+  },
+  "timeoutMs": 10000,
+  "expected": {
+    "finalAnswerContains": ["hello from roder"],
+    "files": [
+      {
+        "path": "target-check.json",
+        "exists": true,
+        "contains": ["\"target\":\"guest\"", "\"guestMarker\":\"alpine-vm\""],
+        "maxBytes": 256
+      }
+    ],
+    "commandChecks": [
+      {
+        "command": "python3 - <<'PY'\nimport json\nfrom pathlib import Path\npayload = json.loads(Path('target-check.json').read_text())\nassert payload['target'] == 'guest', payload\nassert payload['guestMarker'] == 'alpine-vm', payload\nassert payload['sshPort'] == 2222, payload\nassert 'Darwin' not in json.dumps(payload), payload\nPY",
+        "expectedExitCode": 0
+      }
+    ],
+    "verificationRequired": true
+  },
+  "constraints": [
+    "environment-target tasks must validate the intended guest or service endpoint",
+    "host-level output must not stand in for the Terminal-Bench target service"
+  ]
+}

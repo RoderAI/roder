@@ -10,6 +10,8 @@ use crate::{
 };
 use roder_api::inference::RuntimeProfile;
 
+mod tbench_diagnostics;
+
 #[test]
 fn built_in_skills_fixtures_load_and_measure_context_modes() {
     let fixture_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -59,6 +61,10 @@ async fn runner_creates_report_files_from_fake_provider_fixture() {
                 path: PathBuf::from("README.md"),
                 exists: true,
                 contains: vec!["ready".to_string()],
+                exact_contents: None,
+                max_bytes: None,
+                allowed_chars: None,
+                json_array_fields: Vec::new(),
             }],
             command_checks: vec![EvalExpectedCommand {
                 command: "test -f README.md && printf checked".to_string(),
