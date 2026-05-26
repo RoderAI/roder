@@ -70,7 +70,11 @@ pub(crate) fn protocol_notifications_for_event(event: &RoderEvent) -> Vec<JsonRp
                         turn,
                     },
                 ),
-                thread_status_notification(&event.thread_id, "running"),
+                thread_status_notification(
+                    &event.thread_id,
+                    "running",
+                    Some(event.turn_id.clone()),
+                ),
             ]
         }
         RoderEvent::InferenceEventReceived(event) => match &event.event {
@@ -246,6 +250,7 @@ pub(crate) fn protocol_notifications_for_event(event: &RoderEvent) -> Vec<JsonRp
             thread_status_notification_with_flags(
                 &event.thread_id,
                 "running",
+                Some(event.turn_id.clone()),
                 vec!["approvalRequired".to_string()],
             ),
         ],
@@ -261,7 +266,7 @@ pub(crate) fn protocol_notifications_for_event(event: &RoderEvent) -> Vec<JsonRp
                     approved: event.approved,
                 },
             ),
-            thread_status_notification(&event.thread_id, "running"),
+            thread_status_notification(&event.thread_id, "running", Some(event.turn_id.clone())),
         ],
         RoderEvent::UserInputRequested(event) => vec![
             protocol_notification(
@@ -276,6 +281,7 @@ pub(crate) fn protocol_notifications_for_event(event: &RoderEvent) -> Vec<JsonRp
             thread_status_notification_with_flags(
                 &event.thread_id,
                 "running",
+                Some(event.turn_id.clone()),
                 vec!["userInputRequired".to_string()],
             ),
         ],
@@ -289,7 +295,7 @@ pub(crate) fn protocol_notifications_for_event(event: &RoderEvent) -> Vec<JsonRp
                     answers: event.answers.clone(),
                 },
             ),
-            thread_status_notification(&event.thread_id, "running"),
+            thread_status_notification(&event.thread_id, "running", Some(event.turn_id.clone())),
         ],
         RoderEvent::PolicyExitPlanRequested(event) => vec![
             protocol_notification(
@@ -305,6 +311,7 @@ pub(crate) fn protocol_notifications_for_event(event: &RoderEvent) -> Vec<JsonRp
             thread_status_notification_with_flags(
                 &event.thread_id,
                 "running",
+                Some(event.turn_id.clone()),
                 vec!["planExitRequired".to_string()],
             ),
         ],
@@ -320,7 +327,7 @@ pub(crate) fn protocol_notifications_for_event(event: &RoderEvent) -> Vec<JsonRp
                     resolved_mode: event.resolved_mode,
                 },
             ),
-            thread_status_notification(&event.thread_id, "running"),
+            thread_status_notification(&event.thread_id, "running", Some(event.turn_id.clone())),
         ],
         RoderEvent::TurnCompleted(event) => {
             let turn = Turn {
@@ -358,7 +365,7 @@ pub(crate) fn protocol_notifications_for_event(event: &RoderEvent) -> Vec<JsonRp
                         turn,
                     },
                 ),
-                thread_status_notification(&event.thread_id, "idle"),
+                thread_status_notification(&event.thread_id, "idle", None),
             ]
         }
         RoderEvent::VerificationRequired(event) => vec![protocol_notification(
@@ -454,7 +461,7 @@ pub(crate) fn protocol_notifications_for_event(event: &RoderEvent) -> Vec<JsonRp
                         turn,
                     },
                 ),
-                thread_status_notification(&event.thread_id, "idle"),
+                thread_status_notification(&event.thread_id, "idle", None),
             ]
         }
         RoderEvent::TurnInterrupted(event) => {
@@ -476,7 +483,7 @@ pub(crate) fn protocol_notifications_for_event(event: &RoderEvent) -> Vec<JsonRp
                         turn,
                     },
                 ),
-                thread_status_notification(&event.thread_id, "idle"),
+                thread_status_notification(&event.thread_id, "idle", None),
             ]
         }
         RoderEvent::TeamMemberStarted(event) => vec![protocol_notification(
@@ -707,13 +714,18 @@ fn automation_needs_input(error: &str) -> bool {
         || error.contains("approval")
 }
 
-fn thread_status_notification(thread_id: &str, status: &str) -> JsonRpcNotification {
-    thread_status_notification_with_flags(thread_id, status, Vec::new())
+fn thread_status_notification(
+    thread_id: &str,
+    status: &str,
+    active_turn_id: Option<String>,
+) -> JsonRpcNotification {
+    thread_status_notification_with_flags(thread_id, status, active_turn_id, Vec::new())
 }
 
 fn thread_status_notification_with_flags(
     thread_id: &str,
     status: &str,
+    active_turn_id: Option<String>,
     active_flags: Vec<String>,
 ) -> JsonRpcNotification {
     protocol_notification(
@@ -722,6 +734,7 @@ fn thread_status_notification_with_flags(
             thread_id: thread_id.to_string(),
             status: ThreadStatus {
                 kind: status.to_string(),
+                active_turn_id,
                 active_flags,
             },
         },

@@ -6766,6 +6766,7 @@ mod tests {
             updated_at: 0,
             status: ThreadStatus {
                 kind: "idle".to_string(),
+                active_turn_id: None,
                 active_flags: Vec::new(),
             },
             cwd: "/tmp".to_string(),
@@ -6799,6 +6800,50 @@ mod tests {
         assert!(app.plan_panel.is_visible());
         assert_eq!(app.plan_panel.len(), 2);
         assert_eq!(app.plan_panel.completed_count(), 1);
+    }
+
+    #[test]
+    fn apply_thread_uses_protocol_active_turn_status() {
+        let mut app = test_app();
+        let running = Thread {
+            id: "thread-running".to_string(),
+            preview: String::new(),
+            model_provider: "mock".to_string(),
+            created_at: 0,
+            updated_at: 0,
+            status: ThreadStatus {
+                kind: "running".to_string(),
+                active_turn_id: Some("turn-live".to_string()),
+                active_flags: Vec::new(),
+            },
+            cwd: "/tmp".to_string(),
+            name: None,
+            turns: None,
+        };
+
+        app.apply_thread(running);
+
+        assert_eq!(app.active_turn_id.as_deref(), Some("turn-live"));
+
+        let idle = Thread {
+            id: "thread-idle".to_string(),
+            preview: String::new(),
+            model_provider: "mock".to_string(),
+            created_at: 0,
+            updated_at: 0,
+            status: ThreadStatus {
+                kind: "idle".to_string(),
+                active_turn_id: None,
+                active_flags: Vec::new(),
+            },
+            cwd: "/tmp".to_string(),
+            name: None,
+            turns: None,
+        };
+
+        app.apply_thread(idle);
+
+        assert_eq!(app.active_turn_id, None);
     }
 
     #[test]

@@ -4,6 +4,7 @@ use roder_protocol::{Item, Thread, ThreadStatus, Turn, TurnInputItem};
 pub(crate) fn protocol_thread_from_metadata(
     metadata: roder_api::thread::ThreadMetadata,
     turns: Option<Vec<Turn>>,
+    status: ThreadStatus,
 ) -> Thread {
     let preview = metadata
         .title
@@ -20,13 +21,36 @@ pub(crate) fn protocol_thread_from_metadata(
         model_provider: metadata.provider.unwrap_or_else(|| "mock".to_string()),
         created_at: metadata.created_at.unix_timestamp(),
         updated_at: metadata.updated_at.unix_timestamp(),
-        status: ThreadStatus {
-            kind: "idle".to_string(),
-            active_flags: Vec::new(),
-        },
+        status,
         cwd,
         name: metadata.title,
         turns,
+    }
+}
+
+pub(crate) fn idle_thread_status() -> ThreadStatus {
+    ThreadStatus {
+        kind: "idle".to_string(),
+        active_turn_id: None,
+        active_flags: Vec::new(),
+    }
+}
+
+pub(crate) fn running_thread_status(turn_id: String, active_flags: Vec<String>) -> ThreadStatus {
+    ThreadStatus {
+        kind: "running".to_string(),
+        active_turn_id: Some(turn_id),
+        active_flags,
+    }
+}
+
+pub(crate) fn thread_status_for_activity(
+    active_turn_id: Option<String>,
+    active_flags: Vec<String>,
+) -> ThreadStatus {
+    match active_turn_id {
+        Some(turn_id) => running_thread_status(turn_id, active_flags),
+        None => idle_thread_status(),
     }
 }
 
