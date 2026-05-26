@@ -26,7 +26,7 @@ JSON mode emits one event per stdout line:
 {"type":"turn.started","turn_id":"..."}
 {"type":"item.updated","item":{"id":"...","type":"agentMessage","text":"...","status":"inProgress"}}
 {"type":"item.completed","item":{"id":"...","type":"agentMessage","status":"completed"}}
-{"type":"turn.completed","usage":{"input_tokens":0,"cached_input_tokens":0,"output_tokens":0,"reasoning_output_tokens":0}}
+{"type":"turn.completed","usage":{"input_tokens":100,"cached_input_tokens":92,"output_tokens":10,"reasoning_output_tokens":0,"cache_hit_rate":0.92}}
 ```
 
 Supported options:

@@ -131,6 +131,8 @@ static SKILLS_TEST_LOCK: LazyLock<Mutex<()>> = LazyLock::new(|| Mutex::new(()));
 
 struct PendingEngine;
 
+struct UsageReportingEngine;
+
 struct ImageRecordingEngine {
     requests: Mutex<Vec<AgentInferenceRequest>>,
 }
@@ -230,6 +232,16 @@ impl ThreadStore for RecordingThreadStore {
         Ok(metadata)
     }
 
+    async fn update_thread_metadata(
+        &self,
+        metadata: ThreadMetadata,
+    ) -> anyhow::Result<ThreadMetadata> {
+        if let Some(snapshot) = self.snapshots.lock().await.get_mut(&metadata.thread_id) {
+            snapshot.metadata = Some(metadata.clone());
+        }
+        Ok(metadata)
+    }
+
     async fn list_threads(&self) -> anyhow::Result<Vec<ThreadMetadata>> {
         Ok(self
             .snapshots
@@ -260,6 +272,15 @@ impl ThreadStore for RecordingThreadStore {
         envelope: &roder_api::events::EventEnvelope,
     ) -> anyhow::Result<()> {
         if let Some(snapshot) = self.snapshots.lock().await.get_mut(thread_id) {
+            if let roder_api::events::RoderEvent::TurnCompleted(event) = &envelope.event
+                && let Some(turn) = snapshot
+                    .turns
+                    .iter_mut()
+                    .find(|turn| turn.turn_id == event.turn_id)
+            {
+                turn.completed_at = Some(event.timestamp);
+                turn.usage = event.usage.clone();
+            }
             snapshot.events.push(envelope.clone());
         }
         Ok(())
@@ -286,6 +307,7 @@ impl ThreadStore for RecordingThreadStore {
                     items: vec![item.clone()],
                     created_at: OffsetDateTime::now_utc(),
                     completed_at: None,
+                    usage: None,
                 });
             }
         }
@@ -328,6 +350,44 @@ impl InferenceEngine for PendingEngine {
         _request: AgentInferenceRequest,
     ) -> anyhow::Result<InferenceEventStream> {
         Ok(Box::pin(stream::pending()))
+    }
+}
+
+#[async_trait::async_trait]
+impl InferenceEngine for UsageReportingEngine {
+    fn id(&self) -> InferenceEngineId {
+        PROVIDER_MOCK.to_string()
+    }
+
+    fn capabilities(&self) -> InferenceCapabilities {
+        InferenceCapabilities::text_only()
+    }
+
+    async fn list_models(
+        &self,
+        _ctx: InferenceProviderContext<'_>,
+    ) -> anyhow::Result<Vec<ModelDescriptor>> {
+        Ok(Vec::new())
+    }
+
+    async fn stream_turn(
+        &self,
+        _ctx: InferenceTurnContext<'_>,
+        _request: AgentInferenceRequest,
+    ) -> anyhow::Result<InferenceEventStream> {
+        Ok(Box::pin(futures::stream::iter(vec![
+            Ok(InferenceEvent::MessageDelta(MessageDelta {
+                text: "usage recorded".to_string(),
+                phase: None,
+            })),
+            Ok(InferenceEvent::Usage(
+                TokenUsage::new(100, 10, 110).with_cached_prompt_tokens(92),
+            )),
+            Ok(InferenceEvent::Completed(CompletionMetadata {
+                stop_reason: Some("stop".to_string()),
+                provider_response_id: None,
+            })),
+        ])))
     }
 }
 
@@ -2774,6 +2834,64 @@ async fn protocol_contract_turn_methods_and_notifications_match_protocol_contrac
         "missing active status notification: {methods:?}"
     );
     assert!(methods.iter().any(|method| method == "turn/completed"));
+}
+
+#[tokio::test]
+async fn turn_usage_cache_metrics_are_exposed_on_notifications_and_thread_metadata() {
+    let mut builder = ExtensionRegistryBuilder::new();
+    builder.inference_engine(Arc::new(UsageReportingEngine));
+    builder.thread_store_factory(Arc::new(RecordingThreadStoreFactory::default()));
+    let runtime = Arc::new(Runtime::new(builder.build().unwrap(), Default::default()).unwrap());
+    let server = Arc::new(AppServer::new(runtime));
+    let client = LocalAppClient::new(server);
+    let mut notifications = client.subscribe_notifications();
+    let thread = start_thread(&client).await;
+    let thread_id = thread.thread.id.clone();
+    let turn = start_turn(&client, &thread_id, "record usage").await;
+
+    let completed =
+        wait_for_notification(&mut notifications, "turn/completed", Some(&thread_id)).await;
+
+    assert_eq!(completed.params["turn"]["id"], turn.turn_id);
+    assert_eq!(completed.params["turn"]["usage"]["prompt_tokens"], 100);
+    assert_eq!(
+        completed.params["turn"]["usage"]["cached_prompt_tokens"],
+        92
+    );
+    assert!(
+        (completed.params["turn"]["usage"]["cache_hit_rate"]
+            .as_f64()
+            .unwrap()
+            - 0.92)
+            .abs()
+            < f64::EPSILON
+    );
+
+    let read: ThreadReadResult = request(
+        &client,
+        "thread/read",
+        Some(
+            serde_json::to_value(ThreadReadParams {
+                thread_id,
+                include_turns: true,
+            })
+            .unwrap(),
+        ),
+    )
+    .await;
+    let thread = read.thread.expect("thread/read returns persisted thread");
+    let usage = thread.usage.expect("thread metadata includes usage");
+    assert_eq!(usage.prompt_tokens, 100);
+    assert_eq!(usage.cached_prompt_tokens, 92);
+    assert!((usage.cache_hit_rate.unwrap() - 0.92).abs() < f64::EPSILON);
+    assert_eq!(
+        thread.turns.unwrap()[0]
+            .usage
+            .as_ref()
+            .unwrap()
+            .cached_prompt_tokens,
+        92
+    );
 }
 
 #[tokio::test]

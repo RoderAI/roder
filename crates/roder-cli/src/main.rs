@@ -20,7 +20,11 @@ mod tui_config;
 use automations::run_automations_cli;
 use evals::run_eval_cli;
 use marketplace::{run_marketplace_cli, run_plugin_cli, run_setup_cli};
-use roder_api::catalog::{DEFAULT_MODEL_ID, PROVIDER_MOCK, normalize_provider_id};
+use roder_api::catalog::{
+    DEFAULT_MODEL_ID, PROVIDER_ANTHROPIC, PROVIDER_CODEX, PROVIDER_GEMINI, PROVIDER_MOCK,
+    PROVIDER_OPENAI, PROVIDER_OPENCODE, PROVIDER_OPENCODE_GO, PROVIDER_POOLSIDE,
+    PROVIDER_SUPERGROK, PROVIDER_XAI, normalize_provider_id,
+};
 use roder_api::command_shell::{default_command_shell, normalize_command_shell};
 use roder_api::inference::{HostedWebSearchConfig, RuntimeProfile};
 use roder_api::notifications::NotificationKind;
@@ -1025,7 +1029,28 @@ pub(crate) async fn build_runtime_from_config(
     let reliability = resolve_reliability_config(cfg.reliability.as_ref());
     let custom_inference_provider_configs = custom_inference_providers(&cfg);
     let skills_config = cfg.skills.clone();
-    let (default_provider, configured_model) = resolve_provider_model(cfg.provider, cfg.model);
+    let (mut default_provider, mut configured_model) =
+        resolve_provider_model(cfg.provider, cfg.model);
+    if let Some(repair) = repair_unregistered_default_provider(
+        &default_provider,
+        &keys,
+        &custom_inference_provider_configs,
+    ) {
+        let original_provider = std::mem::replace(&mut default_provider, repair.provider);
+        configured_model = Some(repair.model);
+        eprintln!(
+            "warning: default provider {original_provider:?} is not registered; using {:?}",
+            default_provider
+        );
+        if repair.persist
+            && let Err(err) = roder_config::save_default_provider_model(
+                &default_provider,
+                configured_model.as_deref().unwrap_or(DEFAULT_MODEL_ID),
+            )
+        {
+            eprintln!("warning: failed to repair default provider in config.toml: {err}");
+        }
+    }
     let default_model = configured_model.clone().unwrap_or_else(|| {
         if default_provider == PROVIDER_MOCK {
             "mock".to_string()
@@ -2420,9 +2445,80 @@ fn resolve_provider_model(
     (normalize_provider_id(&provider), model)
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ProviderRepair {
+    provider: String,
+    model: String,
+    persist: bool,
+}
+
+fn repair_unregistered_default_provider(
+    provider: &str,
+    keys: &ProviderKeys,
+    custom_providers: &[CustomInferenceProviderConfig],
+) -> Option<ProviderRepair> {
+    if provider_can_be_registered(provider, keys, custom_providers) {
+        return None;
+    }
+    Some(ProviderRepair {
+        provider: PROVIDER_CODEX.to_string(),
+        model: DEFAULT_MODEL_ID.to_string(),
+        persist: should_persist_provider_repair(provider, custom_providers),
+    })
+}
+
+fn should_persist_provider_repair(
+    provider: &str,
+    custom_providers: &[CustomInferenceProviderConfig],
+) -> bool {
+    if env_nonempty("RODER_PROVIDER").is_some() {
+        return false;
+    }
+    !is_builtin_provider_id(provider)
+        && !custom_providers.iter().any(|custom| custom.id == provider)
+}
+
+fn provider_can_be_registered(
+    provider: &str,
+    keys: &ProviderKeys,
+    custom_providers: &[CustomInferenceProviderConfig],
+) -> bool {
+    match provider {
+        PROVIDER_MOCK | PROVIDER_CODEX | PROVIDER_SUPERGROK | PROVIDER_OPENCODE
+        | PROVIDER_OPENCODE_GO | PROVIDER_POOLSIDE => true,
+        PROVIDER_OPENAI => keys.openai.is_some(),
+        PROVIDER_ANTHROPIC => keys.anthropic.is_some(),
+        PROVIDER_GEMINI => keys.gemini.is_some(),
+        PROVIDER_XAI => keys.xai.is_some(),
+        provider => custom_providers.iter().any(|custom| custom.id == provider),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn provider_keys_for_test() -> ProviderKeys {
+        ProviderKeys {
+            openai: None,
+            openai_speech: None,
+            google_speech_access_token: None,
+            google_speech_project_id: None,
+            google_speech_location: None,
+            anthropic: None,
+            gemini: None,
+            xai: None,
+            xai_base_url: None,
+            opencode: None,
+            opencode_base_url: None,
+            opencode_project_id: None,
+            opencode_go: None,
+            opencode_go_base_url: None,
+            opencode_go_project_id: None,
+            poolside: None,
+            poolside_base_url: None,
+        }
+    }
 
     #[test]
     fn provider_slash_model_sets_default_model() {
@@ -2468,6 +2564,41 @@ mod tests {
         );
         assert_eq!(provider, "codex");
         assert_eq!(model.as_deref(), Some("gpt-5.5"));
+    }
+
+    #[test]
+    fn startup_repairs_unknown_default_provider_to_codex() {
+        let repair = repair_unregistered_default_provider("cursor", &provider_keys_for_test(), &[])
+            .expect("unknown provider should be repaired");
+
+        assert_eq!(repair.provider, PROVIDER_CODEX);
+        assert_eq!(repair.model, DEFAULT_MODEL_ID);
+    }
+
+    #[test]
+    fn startup_does_not_persist_builtin_provider_repair_for_missing_key() {
+        let repair =
+            repair_unregistered_default_provider(PROVIDER_OPENAI, &provider_keys_for_test(), &[])
+                .expect("missing API key should fall back for this run");
+
+        assert_eq!(repair.provider, PROVIDER_CODEX);
+        assert!(!repair.persist);
+    }
+
+    #[test]
+    fn startup_accepts_custom_default_provider() {
+        let repair = repair_unregistered_default_provider(
+            "local-openai",
+            &provider_keys_for_test(),
+            &[CustomInferenceProviderConfig {
+                id: "local-openai".to_string(),
+                name: None,
+                api_key: None,
+                base_url: "http://localhost:11434/v1".to_string(),
+            }],
+        );
+
+        assert_eq!(repair, None);
     }
 
     #[test]

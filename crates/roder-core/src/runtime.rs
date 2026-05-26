@@ -16,7 +16,7 @@ use roder_api::inference::{
     AgentInferenceRequest, HostedWebSearchConfig, HostedWebSearchMode, InferenceEngine,
     InferenceEvent, InferenceTurnContext, InstructionBundle, ModelHarnessProfile,
     ModelSchemaPolicy, ModelSelection, OutputConfig, ReasoningConfig, RuntimeHints, RuntimeProfile,
-    ToolCallCompleted,
+    TokenUsage, ToolCallCompleted,
 };
 use roder_api::policy_mode::{PolicyDecision, PolicyMode};
 use roder_api::reliability::{
@@ -27,7 +27,7 @@ use roder_api::reliability::{
 use roder_api::remote_runner::{RemoteRunnerSession, RunnerDestination};
 use roder_api::subagents::SubagentDefinition;
 use roder_api::teams::TeamMemberStatus;
-use roder_api::thread::{ThreadMetadata, ThreadSnapshot, ThreadStore};
+use roder_api::thread::{ThreadMetadata, ThreadSnapshot, ThreadStore, ThreadUsageMetadata};
 use roder_api::tools::{ToolCall, ToolChoice, ToolExecutionContext, ToolRegistry, ToolResult};
 use roder_api::transcript::{
     AssistantMessage, ErrorRecord, InputImage, ReasoningSummary, ToolCallRecord, ToolResultRecord,
@@ -716,6 +716,7 @@ impl Runtime {
             created_at: now,
             updated_at: now,
             message_count: 0,
+            usage: None,
         };
 
         let metadata = if let Some(store) = &self.thread_store {
@@ -1207,6 +1208,32 @@ impl Runtime {
         Ok(())
     }
 
+    async fn record_thread_usage_metadata(
+        &self,
+        thread_id: &ThreadId,
+        usage: &TokenUsage,
+    ) -> anyhow::Result<()> {
+        if usage.is_empty() {
+            return Ok(());
+        }
+        let Some(store) = &self.thread_store else {
+            return Ok(());
+        };
+        let Some(snapshot) = store.load_thread(thread_id).await? else {
+            return Ok(());
+        };
+        let Some(mut metadata) = snapshot.metadata else {
+            return Ok(());
+        };
+        metadata
+            .usage
+            .get_or_insert_with(ThreadUsageMetadata::default)
+            .add_token_usage(usage);
+        metadata.updated_at = OffsetDateTime::now_utc();
+        store.update_thread_metadata(metadata).await?;
+        Ok(())
+    }
+
     pub fn start_turn(
         self: &Arc<Self>,
         req: StartTurnRequest,
@@ -1248,6 +1275,7 @@ impl Runtime {
                             turn_id: turn_id_for_task.clone(),
                             error: err.to_string(),
                             error_kind: None,
+                            usage: None,
                             timestamp: OffsetDateTime::now_utc(),
                         }))
                         .await;
@@ -1415,7 +1443,7 @@ impl Runtime {
             VerificationGateState::new(req.message.clone(), runtime_profile);
         let mut speed_policy = SpeedPolicyState::default();
         let mut reliability = TurnReliabilityState::default();
-        let mut turn_usage_tokens = 0_i64;
+        let mut turn_usage = TokenUsage::default();
         let mut deadline_finalization_requested = false;
         let mut deadline_scoreable_completion_requested = false;
         let mut task_ledger_completion_reminders = 0_u8;
@@ -1782,6 +1810,7 @@ impl Runtime {
                             turn_id: turn_id.clone(),
                             error,
                             error_kind: None,
+                            usage: None,
                             timestamp: OffsetDateTime::now_utc(),
                         }))
                         .await;
@@ -1848,6 +1877,7 @@ impl Runtime {
                             turn_id: turn_id.clone(),
                             error: failure.message,
                             error_kind: None,
+                            usage: None,
                             timestamp: OffsetDateTime::now_utc(),
                         }))
                         .await;
@@ -1860,8 +1890,7 @@ impl Runtime {
                         return Ok(TurnRunOutcome::Stopped);
                     }
                     InferenceEvent::Usage(usage) => {
-                        turn_usage_tokens =
-                            turn_usage_tokens.saturating_add(usage.total_tokens as i64);
+                        turn_usage.add_assign(&usage);
                     }
                     InferenceEvent::Completed(_)
                     | InferenceEvent::Compaction(_)
@@ -2099,6 +2128,7 @@ impl Runtime {
                 turn_id: turn_id.clone(),
                 error: message,
                 error_kind: None,
+                usage: None,
                 timestamp: OffsetDateTime::now_utc(),
             }))
             .await;
@@ -2163,6 +2193,10 @@ impl Runtime {
             .await?;
         }
 
+        let turn_usage_tokens = turn_usage.total_tokens as i64;
+        let completed_usage = (!turn_usage.is_empty()).then_some(turn_usage.clone());
+        self.record_thread_usage_metadata(&req.thread_id, &turn_usage)
+            .await?;
         self.goals
             .account_turn_usage(
                 &req.thread_id,
@@ -2173,6 +2207,7 @@ impl Runtime {
         self.emit(RoderEvent::TurnCompleted(TurnCompleted {
             thread_id: req.thread_id.clone(),
             turn_id: turn_id.clone(),
+            usage: completed_usage,
             timestamp: OffsetDateTime::now_utc(),
         }))
         .await;
@@ -2241,6 +2276,7 @@ impl Runtime {
             turn_id: turn_id.clone(),
             error: message,
             error_kind: None,
+            usage: None,
             timestamp: OffsetDateTime::now_utc(),
         }))
         .await;
@@ -2286,6 +2322,7 @@ impl Runtime {
             turn_id: turn_id.clone(),
             error: message,
             error_kind: Some("deadline_timeout".to_string()),
+            usage: None,
             timestamp: OffsetDateTime::now_utc(),
         }))
         .await;
@@ -2367,6 +2404,7 @@ impl Runtime {
             turn_id: turn_id.clone(),
             error: message,
             error_kind: Some("reliability_limit".to_string()),
+            usage: None,
             timestamp: OffsetDateTime::now_utc(),
         }))
         .await;

@@ -122,14 +122,14 @@ impl ExecOutput {
                     let status = params.turn.status;
                     if status == "completed" && error.is_none() {
                         self.emit_event(ExecEvent::TurnCompleted {
-                            usage: ExecUsage::default(),
+                            usage: params.turn.usage.into(),
                         })?;
                         return Ok(Some(TurnTerminalState::Completed));
                     }
                     let error = error.unwrap_or(status);
                     self.emit_event(ExecEvent::TurnFailed {
                         error: error.clone(),
-                        usage: ExecUsage::default(),
+                        usage: params.turn.usage.into(),
                     })?;
                     return Ok(Some(TurnTerminalState::Failed(error)));
                 }

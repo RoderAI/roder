@@ -106,6 +106,7 @@ pub(super) fn fixture_reliability_injection(
                     turn_id: turn_id.clone(),
                     error: "repeated timeout limit reached".to_string(),
                     error_kind: Some("reliability_limit".to_string()),
+                    usage: None,
                     timestamp,
                 }),
             ],

@@ -327,11 +327,7 @@ async fn fake_provider_child_run_returns_deterministic_result_and_truncates_tran
                 text: "final child answer that is intentionally long".to_string(),
                 phase: None,
             })),
-            Ok(InferenceEvent::Usage(TokenUsage {
-                prompt_tokens: 1,
-                completion_tokens: 2,
-                total_tokens: 3,
-            })),
+            Ok(InferenceEvent::Usage(TokenUsage::new(1, 2, 3))),
             Ok(InferenceEvent::Completed(CompletionMetadata {
                 stop_reason: Some("stop".to_string()),
                 provider_response_id: None,

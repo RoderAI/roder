@@ -29,6 +29,7 @@ pub(super) fn built_in_command_catalog() -> Vec<CommandDescriptor> {
             "Preview, install, list, disable, or uninstall marketplace plugins.",
         ),
         ("remote", "Open the remote app-server pairing panel."),
+        ("voice", "Toggle voice dictation into the composer."),
         ("roadmap", "Open document-first roadmapping mode."),
     ]
     .into_iter()
@@ -43,6 +44,7 @@ pub(super) fn built_in_command_catalog() -> Vec<CommandDescriptor> {
                 Some("preview|install|install-all|list|disable|uninstall [args]".to_string())
             }
             "ps" => Some("all|stop <id>|stop-all --confirm|<id>".to_string()),
+            "voice" => Some("[hold|tap|off|status]".to_string()),
             "roadmap" => Some("[plan]".to_string()),
             _ => None,
         };
@@ -143,6 +145,7 @@ pub(super) fn help_text(commands: &[CommandDescriptor]) -> String {
         "/commit [path-or-message] - Create a scoped git commit.".to_string(),
         "/marketplace <command> - Manage plugin marketplaces.".to_string(),
         "/plugin <command> - Manage marketplace plugin installs.".to_string(),
+        "/voice [hold|tap|off|status] - Toggle voice dictation into the composer.".to_string(),
     ];
     for command in commands {
         if matches!(
@@ -157,6 +160,7 @@ pub(super) fn help_text(commands: &[CommandDescriptor]) -> String {
                 | "marketplace"
                 | "plugin"
                 | "commit"
+                | "voice"
         ) {
             continue;
         }
@@ -230,6 +234,11 @@ mod tests {
         assert!(help.contains("/commit [path-or-message] - Create a scoped git commit."));
         assert!(help.contains("/marketplace <command> - Manage plugin marketplaces."));
         assert!(help.contains("/plugin <command> - Manage marketplace plugin installs."));
+        assert!(
+            help.contains(
+                "/voice [hold|tap|off|status] - Toggle voice dictation into the composer."
+            )
+        );
         assert!(help.contains("/help - Run command."));
     }
 
@@ -259,6 +268,7 @@ mod tests {
                 "marketplace",
                 "plugin",
                 "remote",
+                "voice",
                 "roadmap"
             ]
         );
@@ -296,6 +306,13 @@ mod tests {
                 .find(|command| command.name == "ps")
                 .and_then(|command| command.argument_hint.as_deref()),
             Some("all|stop <id>|stop-all --confirm|<id>")
+        );
+        assert_eq!(
+            commands
+                .iter()
+                .find(|command| command.name == "voice")
+                .and_then(|command| command.argument_hint.as_deref()),
+            Some("[hold|tap|off|status]")
         );
         assert_eq!(
             commands

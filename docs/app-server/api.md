@@ -782,12 +782,26 @@ Response:
     "updatedAt": 1770000100,
     "status": { "type": "idle" },
     "cwd": "/Users/pz/w/gode",
+    "usage": {
+      "prompt_tokens": 100,
+      "completion_tokens": 10,
+      "total_tokens": 110,
+      "cached_prompt_tokens": 92,
+      "cache_hit_rate": 0.92
+    },
     "turns": [
       {
         "id": "turn-123",
         "items": [],
         "itemsView": "default",
-        "status": "completed"
+        "status": "completed",
+        "usage": {
+          "prompt_tokens": 100,
+          "completion_tokens": 10,
+          "total_tokens": 110,
+          "cached_prompt_tokens": 92,
+          "cache_hit_rate": 0.92
+        }
       }
     ]
   }
@@ -798,6 +812,8 @@ Behavior:
 
 - Reads a persisted thread snapshot first.
 - Falls back to persisted thread metadata and then in-memory protocol threads.
+- Includes aggregate thread `usage` and per-turn `usage` when provider usage
+  was reported; `cache_hit_rate` is `cached_prompt_tokens / prompt_tokens`.
 - Returns `{"thread": null}` when the thread is unknown.
 
 ### `thread/archive`
@@ -3541,7 +3557,9 @@ or the remote WebSocket notification stream for remote clients.
 `item` object. Tool items use `type: "tool.<name>"` when the tool name is known.
 
 `turn/completed` carries `threadId` and a terminal `turn` whose `status` is
-`completed`, `failed`, or `interrupted`.
+`completed`, `failed`, or `interrupted`. Completed and failed turns include
+`turn.usage` when provider usage was reported, including `cached_prompt_tokens`
+and `cache_hit_rate`.
 
 `thread/status/changed`:
 

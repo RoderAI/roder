@@ -5,7 +5,8 @@ use anyhow::Context;
 use roder_api::events::{EventEnvelope, RoderEvent, ThreadId, TurnId};
 use roder_api::extension_state::ExtensionStateRecord;
 use roder_api::thread::{
-    ThreadMetadata, ThreadSnapshot, ThreadStore, ThreadStoreFactory, TurnRecord,
+    ThreadMetadata, ThreadSnapshot, ThreadStore, ThreadStoreFactory, ThreadUsageMetadata,
+    TurnRecord,
 };
 use roder_api::transcript::TranscriptItem;
 use time::OffsetDateTime;
@@ -68,6 +69,7 @@ impl JsonlThreadStore {
                         items: vec![persisted.item],
                         created_at: persisted.timestamp,
                         completed_at: None,
+                        usage: None,
                     });
                 }
             }
@@ -443,6 +445,7 @@ impl JsonlThreadStore {
         let mut created_at = None;
         let mut updated_at = None;
         let mut message_count = 0u32;
+        let mut usage = ThreadUsageMetadata::default();
 
         if let Ok(turns) = self.read_turns(thread_id).await {
             for turn in turns {
@@ -479,6 +482,19 @@ impl JsonlThreadStore {
         if let Ok(events) = self.load_events(thread_id).await {
             for envelope in events {
                 track_timestamp(&mut created_at, &mut updated_at, envelope.timestamp);
+                match envelope.event {
+                    RoderEvent::TurnCompleted(event) => {
+                        if let Some(turn_usage) = event.usage.as_ref() {
+                            usage.add_token_usage(turn_usage);
+                        }
+                    }
+                    RoderEvent::TurnFailed(event) => {
+                        if let Some(turn_usage) = event.usage.as_ref() {
+                            usage.add_token_usage(turn_usage);
+                        }
+                    }
+                    _ => {}
+                }
             }
         }
 
@@ -500,6 +516,7 @@ impl JsonlThreadStore {
             created_at: created_at.unwrap_or(fallback_time),
             updated_at: updated_at.unwrap_or(fallback_time),
             message_count,
+            usage: (!usage.is_empty()).then_some(usage),
         }
     }
 
@@ -611,14 +628,17 @@ struct PersistedTranscriptItem {
 
 fn project_turn_completion(turns: &mut [TurnRecord], events: &[EventEnvelope]) {
     for envelope in events {
-        let (turn_id, timestamp) = match &envelope.event {
-            RoderEvent::TurnCompleted(event) => (&event.turn_id, event.timestamp),
-            RoderEvent::TurnFailed(event) => (&event.turn_id, event.timestamp),
-            RoderEvent::TurnInterrupted(event) => (&event.turn_id, event.timestamp),
+        let (turn_id, timestamp, usage) = match &envelope.event {
+            RoderEvent::TurnCompleted(event) => {
+                (&event.turn_id, event.timestamp, event.usage.clone())
+            }
+            RoderEvent::TurnFailed(event) => (&event.turn_id, event.timestamp, event.usage.clone()),
+            RoderEvent::TurnInterrupted(event) => (&event.turn_id, event.timestamp, None),
             _ => continue,
         };
         if let Some(turn) = turns.iter_mut().find(|turn| &turn.turn_id == turn_id) {
             turn.completed_at = Some(timestamp);
+            turn.usage = usage;
         }
     }
 }
@@ -674,6 +694,7 @@ mod tests {
                 created_at: now,
                 updated_at: now,
                 message_count: 0,
+                usage: None,
             })
             .await
             .unwrap();
@@ -710,6 +731,7 @@ mod tests {
                     event: RoderEvent::TurnCompleted(TurnCompleted {
                         thread_id: thread_id.clone(),
                         turn_id: turn_id.clone(),
+                        usage: None,
                         timestamp: now,
                     }),
                 },
@@ -754,6 +776,7 @@ mod tests {
                 created_at: now,
                 updated_at: now,
                 message_count: 0,
+                usage: None,
             })
             .await
             .unwrap();
@@ -799,6 +822,7 @@ mod tests {
                 created_at: now,
                 updated_at: now,
                 message_count: 0,
+                usage: None,
             })
             .await
             .unwrap();
@@ -852,6 +876,7 @@ mod tests {
                 created_at: now,
                 updated_at: now,
                 message_count: 0,
+                usage: None,
             })
             .await
             .unwrap();
@@ -957,6 +982,7 @@ mod tests {
                 created_at: now,
                 updated_at: now,
                 message_count: 0,
+                usage: None,
             })
             .await
             .unwrap();
@@ -1004,6 +1030,7 @@ mod tests {
                 created_at: now,
                 updated_at: now,
                 message_count: 0,
+                usage: None,
             })
             .await
             .unwrap();
@@ -1066,6 +1093,7 @@ mod tests {
                 created_at: now,
                 updated_at: now,
                 message_count: 0,
+                usage: None,
             })
             .await
             .unwrap();
@@ -1120,6 +1148,7 @@ mod tests {
                 created_at: now,
                 updated_at: now,
                 message_count: 0,
+                usage: None,
             })
             .await
             .unwrap();
@@ -1190,6 +1219,7 @@ mod tests {
                 created_at: now,
                 updated_at: now,
                 message_count: 0,
+                usage: None,
             })
             .await
             .unwrap();
@@ -1241,6 +1271,7 @@ mod tests {
             created_at: now,
             updated_at: now,
             message_count: 1,
+            usage: None,
         };
         let dir = store.thread_dir(&thread_id);
         fs::create_dir_all(&dir).await.unwrap();
@@ -1290,6 +1321,7 @@ mod tests {
                 created_at: now,
                 updated_at: now,
                 message_count: 0,
+                usage: None,
             })
             .await
             .unwrap();
@@ -1341,6 +1373,7 @@ mod tests {
                 created_at: now,
                 updated_at: now,
                 message_count: 0,
+                usage: None,
             })
             .await
             .unwrap();
@@ -1400,6 +1433,7 @@ mod tests {
                 created_at: now,
                 updated_at: now,
                 message_count: 0,
+                usage: None,
             })
             .await
             .unwrap();
