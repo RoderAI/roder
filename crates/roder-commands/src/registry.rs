@@ -273,6 +273,7 @@ mod tests {
             "marketplace",
             "plugin",
             "remote",
+            "voice",
             "roadmap",
         ] {
             let spec = registry
@@ -298,6 +299,12 @@ mod tests {
                 .get("plugin")
                 .and_then(|spec| spec.argument_hint.as_deref()),
             Some("preview|install|install-all|list|disable|uninstall [args]")
+        );
+        assert_eq!(
+            registry
+                .get("voice")
+                .and_then(|spec| spec.argument_hint.as_deref()),
+            Some("[hold|tap|off|status]")
         );
         assert_eq!(
             registry

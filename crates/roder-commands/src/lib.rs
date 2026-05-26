@@ -94,6 +94,11 @@ pub fn built_in_commands() -> Vec<CommandSpec> {
             "Open or manage the remote app-server pairing panel.",
         ),
         (
+            "voice",
+            "Toggle voice dictation into the composer.",
+            "Toggle voice dictation for clients that support speech-to-text composer input.",
+        ),
+        (
             "roadmap",
             "Open document-first roadmapping mode.",
             "Open document-first roadmapping mode for a selected roadmap plan.",
@@ -111,6 +116,7 @@ pub fn built_in_commands() -> Vec<CommandSpec> {
                 Some("preview|install|install-all|list|disable|uninstall [args]".to_string())
             }
             "ps" => Some("all|stop <id>|stop-all --confirm|<id>".to_string()),
+            "voice" => Some("[hold|tap|off|status]".to_string()),
             "roadmap" => Some("[plan]".to_string()),
             _ => None,
         },

@@ -318,11 +318,7 @@ impl SubagentDispatcher for FakeDispatcher {
             } else {
                 "child final".to_string()
             },
-            usage: Some(TokenUsage {
-                prompt_tokens: 1,
-                completion_tokens: 2,
-                total_tokens: 3,
-            }),
+            usage: Some(TokenUsage::new(1, 2, 3)),
             exit_reason,
             transcript: Some(json!({
                 "items": [{ "role": "assistant", "text": "child final" }],

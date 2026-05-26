@@ -357,13 +357,12 @@ impl ChatStreamState {
         }
         events.push(InferenceEvent::Usage(self.usage.unwrap_or_else(|| {
             let completion_tokens = self.estimated_completion_tokens.max(1);
-            TokenUsage {
-                prompt_tokens: self.estimated_prompt_tokens,
+            TokenUsage::new(
+                self.estimated_prompt_tokens,
                 completion_tokens,
-                total_tokens: self
-                    .estimated_prompt_tokens
+                self.estimated_prompt_tokens
                     .saturating_add(completion_tokens),
-            }
+            )
         })));
         events.push(InferenceEvent::ProviderMetadata(json!({
             "chunks": self.metadata_chunks,
@@ -402,12 +401,17 @@ fn extract_chat_usage(value: &Value) -> Option<TokenUsage> {
     }
     let prompt_tokens = prompt_tokens.unwrap_or_default();
     let completion_tokens = completion_tokens.unwrap_or_default();
-    Some(TokenUsage {
-        prompt_tokens,
-        completion_tokens,
-        total_tokens: total_tokens
-            .unwrap_or_else(|| prompt_tokens.saturating_add(completion_tokens)),
-    })
+    let cached_prompt_tokens = pointer_u32(usage, "/prompt_tokens_details/cached_tokens")
+        .or_else(|| pointer_u32(usage, "/input_tokens_details/cached_tokens"))
+        .unwrap_or_default();
+    Some(
+        TokenUsage::new(
+            prompt_tokens,
+            completion_tokens,
+            total_tokens.unwrap_or_else(|| prompt_tokens.saturating_add(completion_tokens)),
+        )
+        .with_cached_prompt_tokens(cached_prompt_tokens),
+    )
 }
 
 fn first_u32(value: &Value, keys: &[&str]) -> Option<u32> {
@@ -420,6 +424,13 @@ fn first_string<'a>(value: &'a Value, keys: &[&str]) -> Option<&'a str> {
 
 fn number_to_u32(value: Option<&Value>) -> Option<u32> {
     value?.as_u64().and_then(|n| u32::try_from(n).ok())
+}
+
+fn pointer_u32(value: &Value, pointer: &str) -> Option<u32> {
+    value
+        .pointer(pointer)
+        .and_then(Value::as_u64)
+        .and_then(|n| u32::try_from(n).ok())
 }
 
 fn poolside_thinking_enabled(request: &AgentInferenceRequest) -> bool {

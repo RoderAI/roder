@@ -33,6 +33,7 @@ mod thread_resume;
 mod tool_detail;
 mod tool_timeline;
 mod turn_timer;
+mod voice;
 mod workflow_import;
 
 use std::collections::{HashMap, HashSet};
@@ -76,11 +77,12 @@ use roder_protocol::{
     SettingsSetDefaultModeResult, SettingsSetFileBackedDynamicContextParams,
     SettingsSetFileBackedDynamicContextResult, SettingsSetSearchIndexParams,
     SettingsSetSearchIndexResult, SettingsSetShellParams, SettingsSetShellResult,
-    SettingsSetWebSearchParams, SettingsSetWebSearchResult, ShellSettings, TasksGetParams,
-    TasksGetResult, TasksListResult, TeamReadParams, TeamReadResult, Thread, ThreadExitPlanParams,
-    ThreadExitPlanResult, ThreadGoal, ThreadResolveApprovalParams, ThreadResolveApprovalResult,
-    ThreadSetModeParams, ThreadSetModeResult, ThreadStartParams, ThreadStartResult,
-    ThreadStateResult, TurnInputItem, TurnInterruptParams, TurnStartParams, TurnSteerParams,
+    SettingsSetWebSearchParams, SettingsSetWebSearchResult, ShellSettings,
+    SpeechProvidersListResult, TasksGetParams, TasksGetResult, TasksListResult, TeamReadParams,
+    TeamReadResult, Thread, ThreadExitPlanParams, ThreadExitPlanResult, ThreadGoal,
+    ThreadResolveApprovalParams, ThreadResolveApprovalResult, ThreadSetModeParams,
+    ThreadSetModeResult, ThreadStartParams, ThreadStartResult, ThreadStateResult, TurnInputItem,
+    TurnInterruptParams, TurnStartParams, TurnSteerParams,
 };
 use tokio::io::AsyncWriteExt;
 use tokio::process::Command;
@@ -116,6 +118,7 @@ use tool_timeline::{
     fallback_entry,
 };
 use turn_timer::TurnTimer;
+use voice::{VoiceConfig, VoiceMode, VoiceState};
 
 const TOP_STATUS_ANIMATION_FPS: u64 = 6;
 const MAX_VISIBLE_SLASH_COMMANDS: usize = 16;
@@ -537,6 +540,13 @@ struct ReasoningOptionChoice {
 }
 
 #[derive(Debug, Clone)]
+struct VoiceModelChoice {
+    provider_id: String,
+    model_id: String,
+    label: String,
+}
+
+#[derive(Debug, Clone)]
 struct ProviderChoice {
     provider_id: String,
     name: String,
@@ -636,6 +646,7 @@ enum ProviderPopupScreen {
     Runners,
     Spinner,
     WebSearch,
+    VoiceModels,
     Shell,
     Resume,
     Themes,
@@ -795,6 +806,7 @@ enum ProviderMenuItem {
     RunnerSettings,
     SpinnerSettings,
     WebSearchSettings,
+    VoiceModelSettings,
     ShellSettings(String),
     SearchIndexToggle(bool),
     FileBackedDynamicContextToggle(bool),
@@ -806,6 +818,7 @@ enum ProviderMenuItem {
     DefaultMode(PolicyMode),
     Spinner(WorkingSpinner),
     WebSearchMode(HostedWebSearchMode),
+    VoiceModel(VoiceModelChoice),
     ShellChoice(String),
     Provider(ProviderChoice),
     Model(ProviderOption),
@@ -866,6 +879,7 @@ impl ProviderMenuItem {
             Self::RunnerSettings => "Runners".to_string(),
             Self::SpinnerSettings => "Working spinner".to_string(),
             Self::WebSearchSettings => "Web search provider".to_string(),
+            Self::VoiceModelSettings => "Voice model".to_string(),
             Self::ShellSettings(shell) => format!("Shell command shell: {shell}"),
             Self::SearchIndexToggle(enabled) => format!(
                 "Instant regex search: {}",
@@ -888,6 +902,7 @@ impl ProviderMenuItem {
             }
             Self::Spinner(spinner) => spinner.label().to_string(),
             Self::WebSearchMode(mode) => web_search_mode_label(*mode).to_string(),
+            Self::VoiceModel(choice) => choice.label.clone(),
             Self::ShellChoice(shell) => shell.clone(),
             Self::Provider(provider) => provider.label(),
             Self::Model(option) => option.label.clone(),
@@ -1016,6 +1031,7 @@ where
     last_user_prompt: Option<PendingPrompt>,
     command_catalog: Vec<CommandDescriptor>,
     slash_command_selection: usize,
+    voice: VoiceState,
     policy_mode: PolicyMode,
     pending_plan_exit: Option<PendingPlanExitDescriptor>,
     current_goal: Option<ThreadGoal>,
@@ -1383,6 +1399,7 @@ where
             last_user_prompt: None,
             command_catalog,
             slash_command_selection: 0,
+            voice: VoiceState::from_config(tui_config.voice.clone().unwrap_or_default()),
             policy_mode: policy_state
                 .as_ref()
                 .map(|state| state.mode)
@@ -1433,6 +1450,7 @@ where
             let now = clock.now();
             advance_top_status_animation(&mut self.animation_frame, &mut next_animation_tick, now);
             self.tick_streaming_animations(now, session.terminal_mut().size()?.width);
+            self.stop_idle_voice_recording(now).await;
             session.terminal_mut().draw(|f| {
                 self.render(f);
                 if options.record_ui_frames
@@ -1447,6 +1465,9 @@ where
             if input.poll(self.animation_poll_timeout(next_animation_tick, clock.now()))? {
                 match input.read()? {
                     Event::Key(key) => {
+                        if self.handle_voice_key(key).await {
+                            continue;
+                        }
                         if !should_handle_key_event(key) {
                             continue;
                         }
@@ -2321,6 +2342,9 @@ where
             }
             "roadmap" => {
                 self.run_roadmap_slash_command(&args);
+            }
+            "voice" => {
+                self.run_voice_slash_command(&args).await;
             }
             _ => {
                 self.run_custom_slash_command(name, args).await;
@@ -3249,6 +3273,7 @@ where
         }
         self.render_copied_helper(f, chunks[composer_index], Instant::now());
         f.render_widget(&self.composer, chunks[composer_index]);
+        self.render_voice_transcribing_helper(f, chunks[composer_index]);
         self.render_plan_counter(f, chunks[composer_index]);
         composer_index += 1;
         if slash_height > 0 {
@@ -3291,6 +3316,19 @@ where
             return;
         };
         f.render_widget(copied_helper_widget(self.theme), area);
+    }
+
+    fn render_voice_transcribing_helper(&self, f: &mut Frame<'_>, composer_area: Rect) {
+        if !self.voice.is_transcribing() {
+            return;
+        }
+        let Some(area) = voice_helper_area(composer_area) else {
+            return;
+        };
+        f.render_widget(
+            voice_transcribing_widget(self.theme, self.working_spinner, self.animation_frame),
+            area,
+        );
     }
 
     fn render_plan_counter(&mut self, f: &mut Frame<'_>, composer_area: Rect) {
@@ -3607,6 +3645,10 @@ where
         } else {
             ""
         };
+        let voice_hint = self
+            .voice
+            .footer_hint(composer_text(&self.composer).trim().is_empty())
+            .unwrap_or_default();
         let roadmap_hint = self
             .roadmap_mode
             .as_ref()
@@ -3629,7 +3671,7 @@ where
         Paragraph::new(line_with_gap(
             vec![Span::styled(
                 format!(
-                    " {status}{queue_hint}{pending_hint}{shell_hint}{roadmap_hint}{goal_hint}  {interaction_hint}",
+                    " {status}{queue_hint}{pending_hint}{shell_hint}{voice_hint}{roadmap_hint}{goal_hint}  {interaction_hint}",
                     queue_hint = if self.queued_prompts.is_empty() {
                         String::new()
                     } else {
@@ -3675,6 +3717,12 @@ where
                         ProviderMenuItem::WebSearchMode(mode) if *mode == self.web_search_mode => {
                             "✓ "
                         }
+                        ProviderMenuItem::VoiceModel(choice)
+                            if self.voice.provider() == Some(choice.provider_id.as_str())
+                                && self.voice.model() == Some(choice.model_id.as_str()) =>
+                        {
+                            "✓ "
+                        }
                         ProviderMenuItem::ShellChoice(shell) if shell == &self.command_shell => {
                             "✓ "
                         }
@@ -3692,6 +3740,7 @@ where
                         | ProviderMenuItem::RunnerSettings
                         | ProviderMenuItem::SpinnerSettings
                         | ProviderMenuItem::WebSearchSettings
+                        | ProviderMenuItem::VoiceModelSettings
                         | ProviderMenuItem::ShellSettings(_)
                         | ProviderMenuItem::ThemesSettings
                         | ProviderMenuItem::MarketplacesSettings
@@ -3723,6 +3772,7 @@ where
             ProviderPopupScreen::Runners => " Runners (Enter select, Esc back) ",
             ProviderPopupScreen::Spinner => " Working spinner (Enter select, Esc back) ",
             ProviderPopupScreen::WebSearch => " Web search provider (Enter select, Esc back) ",
+            ProviderPopupScreen::VoiceModels => " Voice model (Enter select, Esc back) ",
             ProviderPopupScreen::Shell => " Shell command shell (Enter select, Esc back) ",
             ProviderPopupScreen::Resume => " Resume thread (Enter select, Esc back) ",
             ProviderPopupScreen::Themes => " Themes (Enter select, Esc back) ",
@@ -3805,6 +3855,19 @@ where
                 jsonrpc: "2.0".to_string(),
                 id: Some(serde_json::json!("providers/list")),
                 method: "providers/list".to_string(),
+                params: None,
+            })
+            .await;
+        decode_response(res)
+    }
+
+    async fn speech_providers_list(&self) -> anyhow::Result<SpeechProvidersListResult> {
+        let res = self
+            .client
+            .send_request(JsonRpcRequest {
+                jsonrpc: "2.0".to_string(),
+                id: Some(serde_json::json!("speech/providers/list")),
+                method: "speech/providers/list".to_string(),
                 params: None,
             })
             .await;
@@ -4106,6 +4169,16 @@ where
             self.provider_state.select(Some(0));
             return;
         }
+        if self.provider_popup_screen == ProviderPopupScreen::VoiceModels {
+            self.open_settings_submenu();
+            self.provider_state.select(
+                self.provider_menu_items
+                    .iter()
+                    .position(|item| matches!(item, ProviderMenuItem::VoiceModelSettings))
+                    .or(Some(0)),
+            );
+            return;
+        }
         if self.provider_popup_screen == ProviderPopupScreen::Shell {
             self.open_settings_submenu();
             return;
@@ -4215,6 +4288,9 @@ where
             ProviderMenuItem::WebSearchSettings => {
                 self.open_web_search_submenu();
             }
+            ProviderMenuItem::VoiceModelSettings => {
+                self.open_voice_models_submenu().await;
+            }
             ProviderMenuItem::ShellSettings(_) => {
                 self.open_shell_submenu();
             }
@@ -4250,6 +4326,10 @@ where
             }
             ProviderMenuItem::WebSearchMode(mode) => {
                 self.set_web_search_mode(mode).await;
+            }
+            ProviderMenuItem::VoiceModel(choice) => {
+                self.show_provider_popup = false;
+                self.set_voice_model(choice.provider_id, choice.model_id);
             }
             ProviderMenuItem::ShellChoice(shell) => {
                 self.set_command_shell(shell).await;
@@ -4402,6 +4482,35 @@ where
             .position(|item| matches!(item, ProviderMenuItem::WebSearchMode(mode) if *mode == self.web_search_mode))
             .unwrap_or(0);
         self.provider_state.select(Some(selected));
+    }
+
+    async fn open_voice_models_submenu(&mut self) {
+        self.provider_popup_screen = ProviderPopupScreen::VoiceModels;
+        self.provider_menu_filter.clear();
+        match self.speech_providers_list().await {
+            Ok(providers) => {
+                self.provider_menu_items = voice_model_menu_items(&providers);
+                let selected = self
+                    .provider_menu_items
+                    .iter()
+                    .position(|item| {
+                        matches!(
+                            item,
+                            ProviderMenuItem::VoiceModel(choice)
+                                if self.voice.provider() == Some(choice.provider_id.as_str())
+                                    && self.voice.model() == Some(choice.model_id.as_str())
+                        )
+                    })
+                    .or_else(|| first_selectable_provider_menu_index(&self.provider_menu_items));
+                self.provider_state.select(selected);
+            }
+            Err(err) => {
+                self.provider_menu_items = vec![ProviderMenuItem::Back];
+                self.provider_state.select(Some(0));
+                self.record_error(format!("speech/providers/list failed: {err}"));
+            }
+        }
+        self.show_provider_popup = true;
     }
 
     fn open_shell_submenu(&mut self) {
@@ -5081,6 +5190,7 @@ struct TuiUserConfig {
     scroll_acceleration: Option<TuiScrollAccelerationConfig>,
     scroll_speed: Option<f32>,
     timeline: Option<TuiTimelineConfig>,
+    voice: Option<VoiceConfig>,
 }
 
 #[derive(Debug, Clone, Copy, Default)]
@@ -5123,7 +5233,15 @@ fn load_tui_config() -> anyhow::Result<TuiUserConfig> {
         return Ok(TuiUserConfig::default());
     }
     let contents = std::fs::read_to_string(path)?;
-    let value = contents.parse::<toml::Value>()?;
+    let value = match toml::from_str::<toml::Value>(&contents) {
+        Ok(value) => value,
+        Err(_) => {
+            return Ok(TuiUserConfig {
+                voice: fallback_voice_config_from_text(&contents),
+                ..TuiUserConfig::default()
+            });
+        }
+    };
     Ok(TuiUserConfig {
         spinner: value
             .get("tui")
@@ -5154,7 +5272,117 @@ fn load_tui_config() -> anyhow::Result<TuiUserConfig> {
                     .get("message_folding")
                     .and_then(|enabled| enabled.as_bool()),
             }),
+        voice: value
+            .get("tui")
+            .and_then(|tui| tui.get("voice"))
+            .and_then(|config| config.as_table())
+            .map(|config| VoiceConfig {
+                enabled: config.get("enabled").and_then(|enabled| enabled.as_bool()),
+                mode: config
+                    .get("mode")
+                    .and_then(|mode| mode.as_str())
+                    .and_then(VoiceMode::from_config_value),
+                record_command: config
+                    .get("record_command")
+                    .and_then(|command| command.as_str())
+                    .map(str::to_string),
+                provider: config
+                    .get("provider")
+                    .and_then(|provider| provider.as_str())
+                    .map(str::to_string),
+                model: config
+                    .get("model")
+                    .and_then(|model| model.as_str())
+                    .map(str::to_string),
+                language: config
+                    .get("language")
+                    .and_then(|language| language.as_str())
+                    .map(str::to_string),
+                mime_type: config
+                    .get("mime_type")
+                    .and_then(|mime_type| mime_type.as_str())
+                    .map(str::to_string),
+                hold_idle_stop_millis: config
+                    .get("hold_idle_stop_millis")
+                    .and_then(toml::Value::as_integer)
+                    .and_then(|value| u64::try_from(value).ok()),
+            }),
     })
+}
+
+fn fallback_voice_config_from_text(contents: &str) -> Option<VoiceConfig> {
+    let values = fallback_toml_table_assignments(contents, "tui.voice");
+    if values.is_empty() {
+        return None;
+    }
+    Some(VoiceConfig {
+        enabled: values.get("enabled").and_then(|value| match value.trim() {
+            "true" => Some(true),
+            "false" => Some(false),
+            _ => None,
+        }),
+        mode: values
+            .get("mode")
+            .and_then(|value| fallback_toml_string(value))
+            .and_then(VoiceMode::from_config_value),
+        record_command: values
+            .get("record_command")
+            .and_then(|value| fallback_toml_string(value).map(str::to_string)),
+        provider: values
+            .get("provider")
+            .and_then(|value| fallback_toml_string(value).map(str::to_string)),
+        model: values
+            .get("model")
+            .and_then(|value| fallback_toml_string(value).map(str::to_string)),
+        language: values
+            .get("language")
+            .and_then(|value| fallback_toml_string(value).map(str::to_string)),
+        mime_type: values
+            .get("mime_type")
+            .and_then(|value| fallback_toml_string(value).map(str::to_string)),
+        hold_idle_stop_millis: values
+            .get("hold_idle_stop_millis")
+            .and_then(|value| value.trim().parse::<u64>().ok()),
+    })
+}
+
+fn fallback_toml_table_assignments<'a>(
+    contents: &'a str,
+    table_name: &str,
+) -> HashMap<&'a str, &'a str> {
+    let header = format!("[{table_name}]");
+    let mut in_table = false;
+    let mut values = HashMap::new();
+    for line in contents.lines() {
+        let trimmed = line.trim();
+        if trimmed.starts_with('[') && trimmed.ends_with(']') {
+            in_table = trimmed == header;
+            continue;
+        }
+        if !in_table {
+            continue;
+        }
+        let Some((key, value)) = trimmed.split_once('=') else {
+            continue;
+        };
+        let key = key.trim();
+        if !key.is_empty() && !key.starts_with('#') {
+            values.insert(key, value.trim());
+        }
+    }
+    values
+}
+
+fn fallback_toml_string(value: &str) -> Option<&str> {
+    let value = value.trim();
+    value
+        .strip_prefix('"')
+        .and_then(|value| value.strip_suffix('"'))
+        .or_else(|| {
+            value
+                .strip_prefix('\'')
+                .and_then(|value| value.strip_suffix('\''))
+        })
 }
 
 fn save_tui_spinner(spinner: &str) -> anyhow::Result<()> {
@@ -5170,8 +5398,22 @@ fn save_tui_message_folding(enabled: bool) -> anyhow::Result<()> {
 
 fn save_tui_value(path_segments: &[&str], saved_value: toml::Value) -> anyhow::Result<()> {
     let path = tui_config_path();
-    let mut value = if path.exists() {
-        std::fs::read_to_string(&path)?.parse::<toml::Value>()?
+    let contents = if path.exists() {
+        Some(std::fs::read_to_string(&path)?)
+    } else {
+        None
+    };
+    let mut value = if let Some(contents) = contents.as_deref() {
+        match toml::from_str::<toml::Value>(contents)
+            .and_then(|value| ensure_tui_config_table_shape(value, path_segments))
+        {
+            Ok(value) => value,
+            Err(_err) => {
+                let updated = patch_tui_config_text(contents, path_segments, saved_value)?;
+                write_tui_config_file(&path, updated)?;
+                return Ok(());
+            }
+        }
     } else {
         toml::Value::Table(toml::map::Map::new())
     };
@@ -5187,10 +5429,55 @@ fn save_tui_value(path_segments: &[&str], saved_value: toml::Value) -> anyhow::R
         .ok_or_else(|| anyhow::anyhow!("[tui] config must be a TOML table"))?;
     insert_nested_toml_value(tui, path_segments, saved_value)?;
 
+    write_tui_config_file(&path, toml::to_string_pretty(&value)?)?;
+    Ok(())
+}
+
+fn ensure_tui_config_table_shape(
+    mut value: toml::Value,
+    path_segments: &[&str],
+) -> Result<toml::Value, toml::de::Error> {
+    let Some(root) = value.as_table_mut() else {
+        return toml::from_str("=");
+    };
+    if let Some(tui) = root.get_mut("tui")
+        && !tui.is_table()
+    {
+        return toml::from_str("=");
+    }
+    let Some(tui) = root.get_mut("tui").and_then(toml::Value::as_table_mut) else {
+        return Ok(value);
+    };
+    if nested_tui_path_conflicts(tui, path_segments) {
+        return toml::from_str("=");
+    }
+    Ok(value)
+}
+
+fn nested_tui_path_conflicts(
+    table: &toml::map::Map<String, toml::Value>,
+    path_segments: &[&str],
+) -> bool {
+    let Some((first, rest)) = path_segments.split_first() else {
+        return true;
+    };
+    if rest.is_empty() {
+        return false;
+    }
+    match table.get(*first) {
+        Some(toml::Value::Table(child)) => nested_tui_path_conflicts(child, rest),
+        Some(_) => true,
+        None => false,
+    }
+}
+
+fn write_tui_config_file(path: &Path, contents: String) -> anyhow::Result<()> {
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)?;
     }
-    std::fs::write(path, toml::to_string_pretty(&value)?)?;
+    let tmp = path.with_extension("toml.tmp");
+    std::fs::write(&tmp, contents)?;
+    std::fs::rename(tmp, path)?;
     Ok(())
 }
 
@@ -5213,6 +5500,80 @@ fn insert_nested_toml_value(
         .as_table_mut()
         .ok_or_else(|| anyhow::anyhow!("[tui.{first}] config must be a TOML table"))?;
     insert_nested_toml_value(child, rest, value)
+}
+
+fn patch_tui_config_text(
+    contents: &str,
+    path_segments: &[&str],
+    value: toml::Value,
+) -> anyhow::Result<String> {
+    let Some((key, table_segments)) = path_segments.split_last() else {
+        anyhow::bail!("config key path must not be empty");
+    };
+    let table_name = std::iter::once("tui")
+        .chain(table_segments.iter().copied())
+        .collect::<Vec<_>>()
+        .join(".");
+    let literal = toml_value_literal(value)?;
+    let assignment = format!("{key} = {literal}");
+
+    let mut lines = contents.lines().map(str::to_string).collect::<Vec<_>>();
+    let header = format!("[{table_name}]");
+    let section_start = lines
+        .iter()
+        .position(|line| line.trim() == header)
+        .map(|index| index + 1);
+
+    if let Some(start) = section_start {
+        let end = lines[start..]
+            .iter()
+            .position(|line| {
+                let trimmed = line.trim();
+                trimmed.starts_with('[') && trimmed.ends_with(']')
+            })
+            .map(|offset| start + offset)
+            .unwrap_or(lines.len());
+        if let Some(existing) = lines[start..end]
+            .iter()
+            .position(|line| toml_assignment_key(line).is_some_and(|existing| existing == *key))
+            .map(|offset| start + offset)
+        {
+            lines[existing] = assignment;
+        } else {
+            lines.insert(end, assignment);
+        }
+    } else {
+        if !lines.last().is_none_or(|line| line.trim().is_empty()) {
+            lines.push(String::new());
+        }
+        lines.push(header);
+        lines.push(assignment);
+    }
+
+    let mut updated = lines.join("\n");
+    updated.push('\n');
+    Ok(updated)
+}
+
+fn toml_assignment_key(line: &str) -> Option<&str> {
+    let trimmed = line.trim_start();
+    if trimmed.starts_with('#') || trimmed.starts_with('[') {
+        return None;
+    }
+    trimmed
+        .split_once('=')
+        .map(|(key, _)| key.trim())
+        .filter(|key| !key.is_empty())
+}
+
+fn toml_value_literal(value: toml::Value) -> anyhow::Result<String> {
+    match value {
+        toml::Value::Boolean(value) => Ok(value.to_string()),
+        toml::Value::String(value) => Ok(format!("{value:?}")),
+        toml::Value::Integer(value) => Ok(value.to_string()),
+        toml::Value::Float(value) if value.is_finite() => Ok(value.to_string()),
+        other => anyhow::bail!("unsupported fallback TOML value: {other:?}"),
+    }
 }
 
 fn tui_config_path() -> PathBuf {
@@ -5324,6 +5685,37 @@ fn copied_helper_area(composer_area: Rect) -> Option<Rect> {
 
 fn copied_helper_width() -> u16 {
     (2 + COPIED_HELPER_LABEL.chars().count()) as u16
+}
+
+fn voice_transcribing_widget(
+    theme: Theme,
+    spinner: WorkingSpinner,
+    frame: u64,
+) -> Paragraph<'static> {
+    Paragraph::new(Line::from(vec![
+        Span::styled(
+            format!(" {} ", padded_spinner_frame(spinner, frame)),
+            theme.running(),
+        ),
+        Span::styled("transcribing voice...", theme.muted()),
+    ]))
+}
+
+fn voice_helper_area(composer_area: Rect) -> Option<Rect> {
+    if composer_area.width == 0 {
+        return None;
+    }
+    let width = voice_helper_width().min(composer_area.width);
+    Some(Rect::new(
+        composer_area.x + composer_area.width.saturating_sub(width + 2),
+        composer_area.y,
+        width,
+        1,
+    ))
+}
+
+fn voice_helper_width() -> u16 {
+    26
 }
 
 fn rect_contains(area: Rect, column: u16, row: u16) -> bool {
@@ -6064,6 +6456,7 @@ fn settings_menu_items(
     .chain([
         ProviderMenuItem::SearchIndexToggle(search_index_enabled),
         ProviderMenuItem::ShellSettings(command_shell.to_string()),
+        ProviderMenuItem::VoiceModelSettings,
         ProviderMenuItem::FileBackedDynamicContextToggle(file_backed_dynamic_context),
         ProviderMenuItem::MessageFoldingToggle(timeline_settings.message_folding),
         ProviderMenuItem::Back,
@@ -6109,6 +6502,25 @@ fn models_menu_items(
         items.extend(provider_models.into_iter().map(ProviderMenuItem::Model));
     }
 
+    items.push(ProviderMenuItem::Back);
+    items
+}
+
+fn voice_model_menu_items(providers: &SpeechProvidersListResult) -> Vec<ProviderMenuItem> {
+    let mut items = Vec::new();
+    for provider in &providers.providers {
+        if provider.models.is_empty() {
+            continue;
+        }
+        items.push(ProviderMenuItem::Section(provider.name.clone()));
+        items.extend(provider.models.iter().map(|model| {
+            ProviderMenuItem::VoiceModel(VoiceModelChoice {
+                provider_id: provider.id.clone(),
+                model_id: model.id.clone(),
+                label: format!("{} / {}", provider.name, model.name),
+            })
+        }));
+    }
     items.push(ProviderMenuItem::Back);
     items
 }
@@ -6644,7 +7056,8 @@ mod tests {
     use roder_app_server::AppServer;
     use roder_core::Runtime;
     use roder_protocol::{
-        Item, ProviderDescriptor, ProvidersListResult, Thread, ThreadStatus, Turn,
+        Item, ProviderDescriptor, ProvidersListResult, SpeechProvidersListResult, Thread,
+        ThreadStatus, Turn,
     };
 
     fn test_app() -> TuiApp {
@@ -6719,6 +7132,7 @@ mod tests {
             last_user_prompt: None,
             command_catalog: built_in_command_catalog(),
             slash_command_selection: 0,
+            voice: VoiceState::default(),
             policy_mode: PolicyMode::Default,
             pending_plan_exit: None,
             current_goal: None,
@@ -6841,6 +7255,21 @@ mod tests {
             .map(|cell| cell.symbol.as_str())
             .collect::<String>();
         assert!(footer.contains("roadmap:20-roadmapping-mode.md"));
+    }
+
+    #[test]
+    fn voice_mode_is_visible_in_empty_composer_footer() {
+        let mut app = test_app();
+        app.voice.enable_for_test();
+
+        let mut buffer = Buffer::empty(Rect::new(0, 0, 100, 1));
+        app.footer(100).render(buffer.area, &mut buffer);
+        let footer = buffer_row_cells(&buffer, 0)
+            .iter()
+            .map(|cell| cell.symbol.as_str())
+            .collect::<String>();
+
+        assert!(footer.contains("hold Space to speak"));
     }
 
     #[test]
@@ -7613,11 +8042,7 @@ mod tests {
             &mut turn_total,
             &mut thread_total,
             &mut context_total,
-            TokenUsage {
-                prompt_tokens: 10_000,
-                completion_tokens: 1_000,
-                total_tokens: 11_000,
-            },
+            TokenUsage::new(10_000, 1_000, 11_000),
         );
         record_usage_counters(
             &mut input,
@@ -7625,11 +8050,7 @@ mod tests {
             &mut turn_total,
             &mut thread_total,
             &mut context_total,
-            TokenUsage {
-                prompt_tokens: 10_500,
-                completion_tokens: 1_500,
-                total_tokens: 12_000,
-            },
+            TokenUsage::new(10_500, 1_500, 12_000),
         );
 
         assert_eq!(input, 10_500);
@@ -7647,11 +8068,7 @@ mod tests {
             &mut turn_total,
             &mut thread_total,
             &mut context_total,
-            TokenUsage {
-                prompt_tokens: 20_000,
-                completion_tokens: 2_000,
-                total_tokens: 22_000,
-            },
+            TokenUsage::new(20_000, 2_000, 22_000),
         );
 
         assert_eq!(thread_total, 34_000);
@@ -7926,6 +8343,18 @@ mod tests {
     #[test]
     fn copied_helper_area_is_absent_on_top_row() {
         assert_eq!(copied_helper_area(Rect::new(0, 0, 100, 3)), None);
+    }
+
+    #[test]
+    fn voice_helper_sits_inside_composer_top_right() {
+        let composer = Rect::new(4, 5, 80, 3);
+        let area = voice_helper_area(composer).expect("voice helper should fit");
+
+        assert_eq!(area.y, composer.y);
+        assert_eq!(area.height, 1);
+        assert_eq!(area.width, voice_helper_width());
+        assert!(area.x >= composer.x);
+        assert!(area.x + area.width <= composer.x + composer.width);
     }
 
     #[test]
@@ -8371,6 +8800,7 @@ mod tests {
             ProviderMenuItem::ShellSettings("bash".to_string()).label(),
             "Shell command shell: bash"
         );
+        assert_eq!(ProviderMenuItem::VoiceModelSettings.label(), "Voice model");
         assert_eq!(
             ProviderMenuItem::FileBackedDynamicContextToggle(true).label(),
             "File-backed dynamic context: on"
@@ -8392,13 +8822,54 @@ mod tests {
         ));
         assert!(matches!(
             items.get(6),
-            Some(ProviderMenuItem::FileBackedDynamicContextToggle(true))
+            Some(ProviderMenuItem::VoiceModelSettings)
         ));
         assert!(matches!(
             items.get(7),
+            Some(ProviderMenuItem::FileBackedDynamicContextToggle(true))
+        ));
+        assert!(matches!(
+            items.get(8),
             Some(ProviderMenuItem::MessageFoldingToggle(false))
         ));
-        assert!(matches!(items.get(8), Some(ProviderMenuItem::Back)));
+        assert!(matches!(items.get(9), Some(ProviderMenuItem::Back)));
+    }
+
+    #[test]
+    fn voice_model_menu_groups_speech_models_by_provider() {
+        let items = voice_model_menu_items(&SpeechProvidersListResult {
+            providers: vec![roder_protocol::SpeechProviderDescriptor {
+                id: "openai-speech".to_string(),
+                name: "OpenAI".to_string(),
+                description: None,
+                auth_type: ProviderAuthType::ApiKey,
+                auth_label: Some("OPENAI_API_KEY".to_string()),
+                authenticated: true,
+                auth_detail: None,
+                recommended: true,
+                sort_order: 0,
+                capabilities: roder_api::speech::SpeechCapabilities::default(),
+                models: vec![roder_api::speech::SpeechModelDescriptor {
+                    id: "gpt-4o-mini-transcribe".to_string(),
+                    name: "GPT-4o Mini Transcribe".to_string(),
+                    description: None,
+                    capabilities: roder_api::speech::SpeechCapabilities::default(),
+                }],
+            }],
+        });
+
+        assert!(matches!(
+            items.first(),
+            Some(ProviderMenuItem::Section(label)) if label == "OpenAI"
+        ));
+        assert!(matches!(
+            &items[1],
+            ProviderMenuItem::VoiceModel(choice)
+                if choice.provider_id == "openai-speech"
+                    && choice.model_id == "gpt-4o-mini-transcribe"
+                    && choice.label.contains("GPT-4o Mini Transcribe")
+        ));
+        assert!(matches!(items.last(), Some(ProviderMenuItem::Back)));
     }
 
     #[test]

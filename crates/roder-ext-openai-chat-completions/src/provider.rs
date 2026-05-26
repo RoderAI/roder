@@ -163,11 +163,17 @@ fn extract_message_text(value: &Value) -> String {
 
 fn extract_usage(value: &Value) -> Option<TokenUsage> {
     let usage = value.get("usage")?;
-    Some(TokenUsage {
-        prompt_tokens: number_to_u32(usage.get("prompt_tokens")).unwrap_or_default(),
-        completion_tokens: number_to_u32(usage.get("completion_tokens")).unwrap_or_default(),
-        total_tokens: number_to_u32(usage.get("total_tokens")).unwrap_or_default(),
-    })
+    let cached_prompt_tokens = number_to_u32(usage.pointer("/prompt_tokens_details/cached_tokens"))
+        .or_else(|| number_to_u32(usage.pointer("/input_tokens_details/cached_tokens")))
+        .unwrap_or_default();
+    Some(
+        TokenUsage::new(
+            number_to_u32(usage.get("prompt_tokens")).unwrap_or_default(),
+            number_to_u32(usage.get("completion_tokens")).unwrap_or_default(),
+            number_to_u32(usage.get("total_tokens")).unwrap_or_default(),
+        )
+        .with_cached_prompt_tokens(cached_prompt_tokens),
+    )
 }
 
 fn number_to_u32(value: Option<&Value>) -> Option<u32> {
@@ -238,16 +244,17 @@ mod tests {
                 "finish_reason": "stop",
                 "message": { "role": "assistant", "content": "hello" }
             }],
-            "usage": { "prompt_tokens": 2, "completion_tokens": 3, "total_tokens": 5 }
+            "usage": {
+                "prompt_tokens": 10,
+                "completion_tokens": 3,
+                "total_tokens": 13,
+                "prompt_tokens_details": { "cached_tokens": 9 }
+            }
         });
         assert_eq!(extract_message_text(&value), "hello");
         assert_eq!(
             extract_usage(&value),
-            Some(TokenUsage {
-                prompt_tokens: 2,
-                completion_tokens: 3,
-                total_tokens: 5,
-            })
+            Some(TokenUsage::new(10, 3, 13).with_cached_prompt_tokens(9))
         );
     }
 }

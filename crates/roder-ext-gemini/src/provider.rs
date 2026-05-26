@@ -459,11 +459,16 @@ fn extract_tool_calls(value: &Value) -> Vec<ToolCallCompleted> {
 
 fn extract_usage(value: &Value) -> Option<TokenUsage> {
     let usage = value.get("usageMetadata")?;
-    Some(TokenUsage {
-        prompt_tokens: number_to_u32(usage.get("promptTokenCount")).unwrap_or_default(),
-        completion_tokens: number_to_u32(usage.get("candidatesTokenCount")).unwrap_or_default(),
-        total_tokens: number_to_u32(usage.get("totalTokenCount")).unwrap_or_default(),
-    })
+    Some(
+        TokenUsage::new(
+            number_to_u32(usage.get("promptTokenCount")).unwrap_or_default(),
+            number_to_u32(usage.get("candidatesTokenCount")).unwrap_or_default(),
+            number_to_u32(usage.get("totalTokenCount")).unwrap_or_default(),
+        )
+        .with_cached_prompt_tokens(
+            number_to_u32(usage.get("cachedContentTokenCount")).unwrap_or_default(),
+        ),
+    )
 }
 
 fn number_to_u32(value: Option<&Value>) -> Option<u32> {
@@ -724,9 +729,10 @@ mod tests {
                 ] }
             }],
             "usageMetadata": {
-                "promptTokenCount": 2,
+                "promptTokenCount": 10,
                 "candidatesTokenCount": 3,
-                "totalTokenCount": 5
+                "totalTokenCount": 13,
+                "cachedContentTokenCount": 9
             }
         });
         assert_eq!(extract_candidate_text(&value), "hello world");
@@ -740,11 +746,7 @@ mod tests {
         );
         assert_eq!(
             extract_usage(&value),
-            Some(TokenUsage {
-                prompt_tokens: 2,
-                completion_tokens: 3,
-                total_tokens: 5,
-            })
+            Some(TokenUsage::new(10, 3, 13).with_cached_prompt_tokens(9))
         );
     }
 

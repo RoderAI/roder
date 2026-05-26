@@ -56,11 +56,7 @@ mod tests {
                 .pointer("/properties/items/items/additionalProperties")
                 .is_none()
         );
-        assert!(
-            schema
-                .pointer("/properties/items/items/x-roder")
-                .is_none()
-        );
+        assert!(schema.pointer("/properties/items/items/x-roder").is_none());
         assert_eq!(
             schema.pointer("/properties/items/items/properties/name/type"),
             Some(&json!("string"))

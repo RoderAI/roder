@@ -30,6 +30,10 @@ pub enum PaletteAction {
     SetWebSearchMode(HostedWebSearchMode),
     SetSearchIndexEnabled(bool),
     SetShell(String),
+    SetVoiceModel {
+        provider: String,
+        model: String,
+    },
     SetSkillEnabled {
         selector: SkillSelector,
         enabled: bool,

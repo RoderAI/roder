@@ -8,9 +8,8 @@ use crate::palette::{
     skills::skill_source,
     sources::{
         agent_source, command_source, marketplace_source, media_source, memories_source,
-        mode_source, model_source, remote_source, roadmap_source, runner_source, thread_source,
-        settings_source, theme_source,
-        workflow_import_source,
+        mode_source, model_source, remote_source, roadmap_source, runner_source, settings_source,
+        theme_source, thread_source, workflow_import_source,
     },
 };
 use crate::theme::{discover_themes, discovery::default_directories};
@@ -68,6 +67,17 @@ where
                 None
             }
         };
+        let speech_providers = if self.palette_source_enabled("settings") {
+            match self.speech_providers_list().await {
+                Ok(providers) => Some(providers),
+                Err(err) => {
+                    self.push_event(format!("speech/providers/list unavailable: {err}"));
+                    None
+                }
+            }
+        } else {
+            None
+        };
         let settings = match self.settings_get().await {
             Ok(settings) => Some(settings),
             Err(err) => {
@@ -124,6 +134,9 @@ where
                 &settings.web_search,
                 &settings.search_index,
                 &settings.shell,
+                speech_providers.as_ref(),
+                self.voice.provider(),
+                self.voice.model(),
             ));
         }
         if self.palette_source_enabled("runners")
@@ -316,6 +329,9 @@ where
             PaletteAction::SetShell(shell) => {
                 self.set_command_shell(shell).await;
             }
+            PaletteAction::SetVoiceModel { provider, model } => {
+                self.set_voice_model(provider, model);
+            }
             PaletteAction::SetSkillEnabled { selector, enabled } => {
                 self.set_skill_enabled(selector, enabled).await;
             }
@@ -399,7 +415,6 @@ where
             .await;
         decode_response(res)
     }
-
 }
 
 #[cfg(test)]
