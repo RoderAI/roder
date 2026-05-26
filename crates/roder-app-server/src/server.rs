@@ -31,8 +31,8 @@ use tokio::sync::{RwLock, broadcast};
 use crate::automations::AppServerFeatureConfig;
 use crate::notifications;
 use crate::protocol_contract::{
-    default_cwd_string, idle_thread_status, protocol_thread_from_metadata,
-    protocol_turn_from_record, protocol_turn_images, protocol_turn_message,
+    idle_thread_status, protocol_thread_from_metadata, protocol_turn_from_record,
+    protocol_turn_images, protocol_turn_message, required_thread_workspace,
     thread_status_for_activity,
 };
 
@@ -1442,9 +1442,9 @@ impl AppServer {
         &self,
         metadata: roder_api::thread::ThreadMetadata,
         turns: Option<Vec<Turn>>,
-    ) -> Thread {
+    ) -> Result<Thread, JsonRpcError> {
         let status = self.live_thread_status(&metadata.thread_id).await;
-        protocol_thread_from_metadata(metadata, turns, status)
+        protocol_thread_from_metadata(metadata, turns, status).map_err(internal_error)
     }
 
     async fn thread_with_live_status(&self, mut thread: Thread) -> Thread {
@@ -1465,7 +1465,7 @@ impl AppServer {
         for metadata in thread_metadata {
             threads.push(
                 self.protocol_thread_from_metadata_with_live_status(metadata, None)
-                    .await,
+                    .await?,
             );
         }
         let protocol_threads = self
@@ -1498,11 +1498,7 @@ impl AppServer {
             .model_provider
             .clone()
             .unwrap_or(cfg.default_provider);
-        let cwd = params
-            .cwd
-            .clone()
-            .or_else(|| cfg.workspace.clone())
-            .unwrap_or_else(default_cwd_string);
+        let cwd = required_thread_start_cwd(&params.cwd)?;
         let metadata = self
             .runtime
             .create_thread_with(roder_core::CreateThreadRequest {
@@ -1513,7 +1509,8 @@ impl AppServer {
             })
             .await
             .map_err(internal_error)?;
-        let thread = protocol_thread_from_metadata(metadata, None, idle_thread_status());
+        let thread = protocol_thread_from_metadata(metadata, None, idle_thread_status())
+            .map_err(internal_error)?;
         self.protocol_threads
             .write()
             .await
@@ -1556,7 +1553,7 @@ impl AppServer {
         let thread = match thread {
             Some((metadata, turns)) => Some(
                 self.protocol_thread_from_metadata_with_live_status(metadata, turns)
-                    .await,
+                    .await?,
             ),
             None => None,
         };
@@ -1576,7 +1573,7 @@ impl AppServer {
                         metadata,
                         params.include_turns.then(Vec::new),
                     )
-                    .await,
+                    .await?,
                 ),
                 None => None,
             }
@@ -1753,7 +1750,8 @@ impl AppServer {
             })
             .await
             .map_err(internal_error)?;
-        let protocol_thread = protocol_thread_from_metadata(metadata, None, idle_thread_status());
+        let protocol_thread = protocol_thread_from_metadata(metadata, None, idle_thread_status())
+            .map_err(internal_error)?;
         self.protocol_threads
             .write()
             .await
@@ -1927,20 +1925,24 @@ impl AppServer {
             .await
             .map(|(provider, model)| (Some(provider), Some(model)))
             .unwrap_or((None, None));
-        let mut workspace = self
+        let snapshot = self
             .runtime
             .load_thread(&params.thread_id)
             .await
-            .map_err(internal_error)?
-            .and_then(|snapshot| snapshot.metadata.and_then(|metadata| metadata.workspace));
-        if workspace.is_none() {
-            workspace = self
-                .protocol_threads
+            .map_err(internal_error)?;
+        let workspace = if let Some(snapshot) = snapshot {
+            let metadata = snapshot.metadata.ok_or_else(|| {
+                internal_error(format!("thread metadata missing for {}", params.thread_id))
+            })?;
+            required_thread_workspace(&metadata).map_err(internal_error)?
+        } else {
+            self.protocol_threads
                 .read()
                 .await
                 .get(&params.thread_id)
-                .map(|thread| thread.cwd.clone());
-        }
+                .map(|thread| thread.cwd.clone())
+                .ok_or_else(|| not_found(format!("thread not found: {}", params.thread_id)))?
+        };
         let turn_id = self
             .runtime
             .start_turn(StartTurnRequest {
@@ -1949,7 +1951,7 @@ impl AppServer {
                 images,
                 provider_override,
                 model_override,
-                workspace,
+                workspace: Some(workspace),
                 instructions: default_instructions(),
                 task_ledger_required: params.task_ledger_required,
             })
@@ -3511,6 +3513,17 @@ fn invalid_params(err: impl std::fmt::Display) -> JsonRpcError {
         message: format!("Invalid params: {err}"),
         data: None,
     }
+}
+
+fn required_thread_start_cwd(cwd: &str) -> Result<String, JsonRpcError> {
+    let cwd = cwd.trim();
+    if cwd.is_empty() {
+        return Err(invalid_params("thread/start requires cwd"));
+    }
+    if !std::path::Path::new(cwd).is_absolute() {
+        return Err(invalid_params("thread/start cwd must be an absolute path"));
+    }
+    Ok(cwd.to_string())
 }
 
 fn shell_settings(shell: &str) -> ShellSettings {

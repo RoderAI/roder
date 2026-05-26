@@ -9,7 +9,7 @@ for app, TUI, CLI, SDK, and sibling clients.
 | Method | Client caller | Roder backing behavior | Notes |
 | --- | --- | --- | --- |
 | `initialize` | startup handshake | Return app-server status, capabilities, cwd, active model, and provider metadata. | Startup entrypoint. |
-| `thread/start` | new chat | Create a Roder thread with `model`, optional `modelProvider`, `cwd`, and `ephemeral`. | Returns a protocol `Thread`. |
+| `thread/start` | new chat | Create a Roder thread with `model`, optional `modelProvider`, required absolute `cwd`, and `ephemeral`. | Returns a protocol `Thread`; missing, empty, or relative cwd is rejected. |
 | `thread/list` | sidebar bootstrap/refresh | List persisted Roder threads as stable protocol `Thread` objects. | Pagination cursors are reserved. |
 | `thread/read` | thread switch | Read a persisted thread by `threadId`; include turns/items when `includeTurns` is true. | Returns `thread: null` when not found. |
 | `thread/archive` | archive/delete thread action | Archive a persisted thread and remove in-memory protocol state for that thread. | `thread/list` no longer returns archived threads. |

@@ -2643,12 +2643,54 @@ async fn protocol_contract_methods_support_protocol_startup_contract() {
 }
 
 #[tokio::test]
-async fn thread_start_persists_resolved_cwd_when_client_omits_cwd() {
+async fn thread_start_rejects_missing_or_blank_cwd() {
+    let runtime = Arc::new(Runtime::fake().unwrap());
+    let server = Arc::new(AppServer::new(runtime));
+    let client = LocalAppClient::new(server);
+
+    for params in [
+        serde_json::json!({
+            "model": "mock",
+            "modelProvider": PROVIDER_MOCK,
+            "ephemeral": false,
+        }),
+        serde_json::json!({
+            "model": "mock",
+            "modelProvider": PROVIDER_MOCK,
+            "cwd": "",
+            "ephemeral": false,
+        }),
+        serde_json::json!({
+            "model": "mock",
+            "modelProvider": PROVIDER_MOCK,
+            "cwd": ".",
+            "ephemeral": false,
+        }),
+    ] {
+        let response = client
+            .send_request(JsonRpcRequest {
+                jsonrpc: "2.0".to_string(),
+                id: Some(serde_json::json!("thread/start")),
+                method: "thread/start".to_string(),
+                params: Some(params),
+            })
+            .await;
+
+        let error = response.error.expect("thread/start should reject cwd");
+        assert_eq!(error.code, -32602);
+        assert!(
+            error.message.contains("cwd"),
+            "unexpected error message: {}",
+            error.message
+        );
+    }
+}
+
+#[tokio::test]
+async fn thread_snapshots_reject_metadata_without_workspace() {
     let mut builder = ExtensionRegistryBuilder::new();
     builder.inference_engine(Arc::new(FakeInferenceEngine));
-    let store = RecordingThreadStoreFactory::default();
-    let snapshots = Arc::clone(&store.snapshots);
-    builder.thread_store_factory(Arc::new(store));
+    builder.thread_store_factory(Arc::new(RecordingThreadStoreFactory::default()));
     let runtime = Arc::new(
         Runtime::new(
             builder.build().unwrap(),
@@ -2659,63 +2701,53 @@ async fn thread_start_persists_resolved_cwd_when_client_omits_cwd() {
         )
         .unwrap(),
     );
+    let metadata = runtime
+        .create_thread_with(CreateThreadRequest {
+            title: Some("legacy missing workspace".to_string()),
+            workspace: None,
+            provider: Some(PROVIDER_MOCK.to_string()),
+            model: Some("mock".to_string()),
+        })
+        .await
+        .unwrap();
     let server = Arc::new(AppServer::new(runtime));
     let client = LocalAppClient::new(server);
 
-    let started: ThreadStartResult = request(
-        &client,
-        "thread/start",
-        Some(
-            serde_json::to_value(ThreadStartParams {
-                model: None,
-                model_provider: None,
-                cwd: None,
-                ephemeral: false,
-            })
-            .unwrap(),
-        ),
-    )
-    .await;
+    let response = client
+        .send_request(JsonRpcRequest {
+            jsonrpc: "2.0".to_string(),
+            id: Some(serde_json::json!("thread/read")),
+            method: "thread/read".to_string(),
+            params: Some(
+                serde_json::to_value(ThreadReadParams {
+                    thread_id: metadata.thread_id,
+                    include_turns: false,
+                })
+                .unwrap(),
+            ),
+        })
+        .await;
 
-    assert!(!started.cwd.trim().is_empty());
-    assert_eq!(started.thread.cwd, started.cwd);
-    let persisted_workspace = snapshots
-        .lock()
-        .await
-        .get(&started.thread.id)
-        .and_then(|snapshot| snapshot.metadata.as_ref())
-        .and_then(|metadata| metadata.workspace.as_deref().map(str::to_string));
-    assert_eq!(persisted_workspace.as_deref(), Some(started.cwd.as_str()));
+    let error = response
+        .error
+        .expect("thread/read should reject missing workspace metadata");
+    assert_eq!(error.code, -32000);
+    assert!(error.message.contains("missing workspace"));
 
-    let read: ThreadReadResult = request(
-        &client,
-        "thread/read",
-        Some(
-            serde_json::to_value(ThreadReadParams {
-                thread_id: started.thread.id.clone(),
-                include_turns: false,
-            })
-            .unwrap(),
-        ),
-    )
-    .await;
-    assert_eq!(
-        read.thread.expect("thread/read returns thread").cwd,
-        started.cwd
-    );
+    let response = client
+        .send_request(JsonRpcRequest {
+            jsonrpc: "2.0".to_string(),
+            id: Some(serde_json::json!("thread/list")),
+            method: "thread/list".to_string(),
+            params: Some(serde_json::to_value(ThreadListParams { limit: None }).unwrap()),
+        })
+        .await;
 
-    let listed: ThreadListResult = request(
-        &client,
-        "thread/list",
-        Some(serde_json::to_value(ThreadListParams { limit: None }).unwrap()),
-    )
-    .await;
-    let listed_thread = listed
-        .data
-        .iter()
-        .find(|thread| thread.id == started.thread.id)
-        .expect("thread/list includes started thread");
-    assert_eq!(listed_thread.cwd, started.cwd);
+    let error = response
+        .error
+        .expect("thread/list should reject missing workspace metadata");
+    assert_eq!(error.code, -32000);
+    assert!(error.message.contains("missing workspace"));
 }
 
 #[tokio::test]
@@ -6376,13 +6408,17 @@ async fn start_thread(client: &LocalAppClient) -> ThreadStartResult {
             serde_json::to_value(ThreadStartParams {
                 model: None,
                 model_provider: None,
-                cwd: None,
+                cwd: test_cwd(),
                 ephemeral: false,
             })
             .unwrap(),
         ),
     )
     .await
+}
+
+fn test_cwd() -> String {
+    std::env::current_dir().unwrap().display().to_string()
 }
 
 async fn start_turn(client: &LocalAppClient, thread_id: &str, text: &str) -> TurnStartResult {
