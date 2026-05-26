@@ -1,25 +1,25 @@
 use roder_api::artifacts::{ContextArtifactKind, format_artifact_reference};
 use roder_api::catalog::lookup_model;
 use roder_api::context::{ContextBlockKind, ContextPlan, ContextQuery};
-use roder_api::conversation::{
-    ContextCompactionRecord, ConversationItem, ToolResultRecord, UserMessage,
-};
 use roder_api::events::*;
 use roder_api::retrieval::{RetrievalRoutePlan, RetrievalRoutePlanned};
+use roder_api::transcript::{
+    ContextCompactionRecord, ToolResultRecord, TranscriptItem, UserMessage,
+};
 use time::OffsetDateTime;
 
 use crate::artifacts::CreateArtifactRequest;
 use crate::runtime::{Runtime, StartTurnRequest};
 
 impl Runtime {
-    pub(crate) async fn conversation_for_turn(
+    pub(crate) async fn transcript_for_turn(
         &self,
         req: &StartTurnRequest,
         turn_id: &TurnId,
         model: &str,
-    ) -> anyhow::Result<Vec<ConversationItem>> {
+    ) -> anyhow::Result<Vec<TranscriptItem>> {
         let context_plan = self.assemble_context(req, turn_id).await?;
-        let mut conversation = Vec::new();
+        let mut transcript = Vec::new();
         for block in context_plan.blocks {
             if matches!(
                 block.kind,
@@ -30,18 +30,18 @@ impl Runtime {
                     | ContextBlockKind::PriorSummary
                     | ContextBlockKind::EntrypointHint
             ) {
-                conversation.push(ConversationItem::UserMessage(UserMessage {
+                transcript.push(TranscriptItem::UserMessage(UserMessage {
                     text: block.text,
                     images: Vec::new(),
                 }));
             }
         }
-        conversation.extend(self.prior_conversation(&req.thread_id, turn_id).await?);
-        conversation.push(ConversationItem::UserMessage(UserMessage {
+        transcript.extend(self.prior_transcript(&req.thread_id, turn_id).await?);
+        transcript.push(TranscriptItem::UserMessage(UserMessage {
             text: req.message.clone(),
             images: req.images.clone(),
         }));
-        self.compact_conversation_if_needed(&req.thread_id, turn_id, model, conversation)
+        self.compact_transcript_if_needed(&req.thread_id, turn_id, model, transcript)
             .await
     }
 
@@ -145,15 +145,15 @@ impl Runtime {
         Ok(plan)
     }
 
-    async fn prior_conversation(
+    async fn prior_transcript(
         &self,
         thread_id: &ThreadId,
         current_turn_id: &TurnId,
-    ) -> anyhow::Result<Vec<ConversationItem>> {
-        let Some(store) = &self.session_store else {
+    ) -> anyhow::Result<Vec<TranscriptItem>> {
+        let Some(store) = &self.thread_store else {
             return Ok(Vec::new());
         };
-        let Some(snapshot) = store.load_session(thread_id).await? else {
+        let Some(snapshot) = store.load_thread(thread_id).await? else {
             return Ok(Vec::new());
         };
         let mut out = Vec::new();
@@ -166,39 +166,39 @@ impl Runtime {
         Ok(out)
     }
 
-    pub(crate) async fn compact_conversation_if_needed(
+    pub(crate) async fn compact_transcript_if_needed(
         &self,
         thread_id: &ThreadId,
         turn_id: &TurnId,
         model: &str,
-        conversation: Vec<ConversationItem>,
-    ) -> anyhow::Result<Vec<ConversationItem>> {
+        transcript: Vec<TranscriptItem>,
+    ) -> anyhow::Result<Vec<TranscriptItem>> {
         let cfg = self.status().await;
         if lookup_model(model).is_some_and(|entry| entry.supports_compaction) {
-            return Ok(conversation);
+            return Ok(transcript);
         }
         let threshold = cfg
             .auto_compact_token_limit
             .or_else(|| lookup_model(model).map(|entry| entry.auto_compact_token_limit))
             .unwrap_or(0);
-        if threshold == 0 || estimate_tokens(&conversation) < threshold {
-            return Ok(conversation);
+        if threshold == 0 || estimate_tokens(&transcript) < threshold {
+            return Ok(transcript);
         }
-        let original_item_count = conversation.len() as u64;
-        let original_estimated_tokens = estimate_tokens(&conversation);
-        let suffix = conversation
+        let original_item_count = transcript.len() as u64;
+        let original_estimated_tokens = estimate_tokens(&transcript);
+        let suffix = transcript
             .last()
             .cloned()
             .into_iter()
-            .collect::<Vec<ConversationItem>>();
+            .collect::<Vec<TranscriptItem>>();
         let summary = if cfg.file_backed_dynamic_context {
-            let history_json = serde_json::to_vec_pretty(&conversation)?;
+            let history_json = serde_json::to_vec_pretty(&transcript)?;
             let artifact = self.context_artifacts().create(CreateArtifactRequest {
                 kind: ContextArtifactKind::ChatHistory,
                 thread_id,
                 turn_id,
                 source_tool_id: None,
-                label: Some("pre-compaction conversation"),
+                label: Some("pre-compaction transcript"),
                 bytes: &history_json,
             })?;
             self.emit(RoderEvent::ContextArtifactCreated(ContextArtifactCreated {
@@ -208,12 +208,12 @@ impl Runtime {
                 timestamp: OffsetDateTime::now_utc(),
             }))
             .await;
-            let reference = format_artifact_reference(&artifact, "pre-compaction conversation");
-            format!("{}\n\n{}", summarize_conversation(&conversation), reference)
+            let reference = format_artifact_reference(&artifact, "pre-compaction transcript");
+            format!("{}\n\n{}", summarize_transcript(&transcript), reference)
         } else {
-            summarize_conversation(&conversation)
+            summarize_transcript(&transcript)
         };
-        let compaction = ConversationItem::ContextCompaction(ContextCompactionRecord { summary });
+        let compaction = TranscriptItem::ContextCompaction(ContextCompactionRecord { summary });
         self.persist_turn_item(thread_id, turn_id, &compaction)
             .await?;
         let mut compacted = vec![compaction];
@@ -240,7 +240,7 @@ fn estimate_context_tokens(plan: &ContextPlan) -> u32 {
     chars_to_tokens(chars)
 }
 
-fn estimate_tokens(items: &[ConversationItem]) -> u32 {
+fn estimate_tokens(items: &[TranscriptItem]) -> u32 {
     let chars: usize = items.iter().map(item_text_len).sum();
     chars_to_tokens(chars)
 }
@@ -253,35 +253,35 @@ fn chars_to_tokens(chars: usize) -> u32 {
     u32::try_from(chars.div_ceil(4)).unwrap_or(u32::MAX)
 }
 
-fn item_text_len(item: &ConversationItem) -> usize {
+fn item_text_len(item: &TranscriptItem) -> usize {
     match item {
-        ConversationItem::UserMessage(message) => message.text.len(),
-        ConversationItem::AssistantMessage(message) => message.text.len(),
-        ConversationItem::ReasoningSummary(summary) => summary.text.len(),
-        ConversationItem::ToolCall(call) => call.arguments.len() + call.name.len(),
-        ConversationItem::ToolResult(result) => result.result.len(),
-        ConversationItem::FileChange(change) => change.path.len() + change.change_type.len(),
-        ConversationItem::ContextCompaction(compaction) => compaction.summary.len(),
-        ConversationItem::Error(error) => error.message.len(),
-        ConversationItem::ProviderMetadata(value) => value.to_string().len(),
+        TranscriptItem::UserMessage(message) => message.text.len(),
+        TranscriptItem::AssistantMessage(message) => message.text.len(),
+        TranscriptItem::ReasoningSummary(summary) => summary.text.len(),
+        TranscriptItem::ToolCall(call) => call.arguments.len() + call.name.len(),
+        TranscriptItem::ToolResult(result) => result.result.len(),
+        TranscriptItem::FileChange(change) => change.path.len() + change.change_type.len(),
+        TranscriptItem::ContextCompaction(compaction) => compaction.summary.len(),
+        TranscriptItem::Error(error) => error.message.len(),
+        TranscriptItem::ProviderMetadata(value) => value.to_string().len(),
     }
 }
 
-fn summarize_conversation(items: &[ConversationItem]) -> String {
-    let mut lines = vec!["Previous conversation was compacted. Key retained facts:".to_string()];
+fn summarize_transcript(items: &[TranscriptItem]) -> String {
+    let mut lines = vec!["Previous transcript was compacted. Key retained facts:".to_string()];
     for item in items.iter().take(items.len().saturating_sub(1)) {
         match item {
-            ConversationItem::UserMessage(message) => {
+            TranscriptItem::UserMessage(message) => {
                 lines.push(format!("- user: {}", truncate(&message.text)));
             }
-            ConversationItem::AssistantMessage(message) => {
+            TranscriptItem::AssistantMessage(message) => {
                 lines.push(format!("- assistant: {}", truncate(&message.text)));
             }
-            ConversationItem::ToolResult(ToolResultRecord { name, result, .. }) => {
+            TranscriptItem::ToolResult(ToolResultRecord { name, result, .. }) => {
                 let name = name.as_deref().unwrap_or("tool");
                 lines.push(format!("- {name} result: {}", truncate(result)));
             }
-            ConversationItem::ContextCompaction(compaction) => {
+            TranscriptItem::ContextCompaction(compaction) => {
                 lines.push(format!(
                     "- prior summary: {}",
                     truncate(&compaction.summary)
@@ -310,10 +310,10 @@ mod tests {
 
     use roder_api::artifacts::ContextArtifactAccess;
     use roder_api::catalog::PROVIDER_MOCK;
-    use roder_api::conversation::{AssistantMessage, UserMessage};
     use roder_api::extension::ExtensionRegistryBuilder;
     use roder_api::skills::{SkillExposure, SkillSelector};
-    use roder_ext_jsonl_session::store::JsonlSessionStoreFactory;
+    use roder_api::transcript::{AssistantMessage, UserMessage};
+    use roder_ext_jsonl_thread_store::store::JsonlThreadStoreFactory;
     use roder_skills::{SkillConfigRule, SkillRegistry, SkillRegistryOptions, SkillRoot};
 
     use crate::fake_provider::FakeInferenceEngine;
@@ -343,15 +343,15 @@ mod tests {
         let runtime = runtime_with_skills(skills).await;
         let mut events = runtime.subscribe_events();
 
-        let conversation = runtime
-            .conversation_for_turn(
+        let transcript = runtime
+            .transcript_for_turn(
                 &turn_request("thread-skills", "please use ${commit}"),
                 &"turn-skills".to_string(),
                 "mock",
             )
             .await
             .unwrap();
-        let texts = conversation_texts(&conversation);
+        let texts = transcript_texts(&transcript);
         let index = texts
             .iter()
             .find(|text| text.starts_with("<skills>"))
@@ -396,15 +396,15 @@ mod tests {
         let runtime = runtime_with_skills(skills).await;
         let mut events = runtime.subscribe_events();
 
-        let conversation = runtime
-            .conversation_for_turn(
+        let transcript = runtime
+            .transcript_for_turn(
                 &turn_request("thread-disabled", "please use ${commit}"),
                 &"turn-disabled".to_string(),
                 "mock",
             )
             .await
             .unwrap();
-        let texts = conversation_texts(&conversation);
+        let texts = transcript_texts(&transcript);
 
         assert!(!texts.iter().any(|text| {
             text.starts_with("<skill name=\"commit\"") && text.contains("Stage only files")
@@ -424,10 +424,10 @@ mod tests {
     async fn context_compaction_writes_history_artifact_and_emits_metrics() {
         let mut builder = ExtensionRegistryBuilder::new();
         builder.inference_engine(Arc::new(FakeInferenceEngine));
-        let session_root =
-            std::env::temp_dir().join(format!("roder-session-artifacts-{}", uuid::Uuid::new_v4()));
-        builder.session_store_factory(Arc::new(JsonlSessionStoreFactory {
-            base_path: session_root.clone(),
+        let thread_root =
+            std::env::temp_dir().join(format!("roder-thread-artifacts-{}", uuid::Uuid::new_v4()));
+        builder.thread_store_factory(Arc::new(JsonlThreadStoreFactory {
+            base_path: thread_root.clone(),
         }));
         let runtime = Runtime::new(
             builder.build().unwrap(),
@@ -456,20 +456,20 @@ mod tests {
         .unwrap();
         let mut events = runtime.subscribe_events();
         let compacted = runtime
-            .compact_conversation_if_needed(
+            .compact_transcript_if_needed(
                 &"thread".to_string(),
                 &"turn".to_string(),
                 "mock",
                 vec![
-                    ConversationItem::UserMessage(UserMessage {
+                    TranscriptItem::UserMessage(UserMessage {
                         text: "very large old context".repeat(20),
                         images: Vec::new(),
                     }),
-                    ConversationItem::AssistantMessage(AssistantMessage {
+                    TranscriptItem::AssistantMessage(AssistantMessage {
                         text: "old answer".to_string(),
                         phase: None,
                     }),
-                    ConversationItem::UserMessage(UserMessage {
+                    TranscriptItem::UserMessage(UserMessage {
                         text: "current prompt".to_string(),
                         images: Vec::new(),
                     }),
@@ -480,13 +480,13 @@ mod tests {
 
         assert!(matches!(
             &compacted[0],
-            ConversationItem::ContextCompaction(summary)
-                if summary.summary.contains("Previous conversation was compacted")
+            TranscriptItem::ContextCompaction(summary)
+                if summary.summary.contains("Previous transcript was compacted")
                     && summary.summary.contains("read_artifact")
         ));
         assert!(matches!(
             &compacted[1],
-            ConversationItem::UserMessage(message) if message.text == "current prompt"
+            TranscriptItem::UserMessage(message) if message.text == "current prompt"
         ));
         let artifacts = runtime
             .context_artifacts()
@@ -505,7 +505,7 @@ mod tests {
         assert_eq!(grep.total_matches, 1);
         assert!(
             history.store_path.starts_with(
-                session_root
+                thread_root
                     .join("thread")
                     .join("artifacts")
                     .join("turn")
@@ -525,7 +525,7 @@ mod tests {
                         && recorded.file_backed
             )
         }));
-        let _ = std::fs::remove_dir_all(session_root);
+        let _ = std::fs::remove_dir_all(thread_root);
     }
 
     #[tokio::test]
@@ -557,44 +557,44 @@ mod tests {
             },
         )
         .unwrap();
-        let conversation = vec![
-            ConversationItem::UserMessage(UserMessage {
+        let transcript = vec![
+            TranscriptItem::UserMessage(UserMessage {
                 text: "very large old context".repeat(20),
                 images: Vec::new(),
             }),
-            ConversationItem::AssistantMessage(AssistantMessage {
+            TranscriptItem::AssistantMessage(AssistantMessage {
                 text: "old answer".to_string(),
                 phase: None,
             }),
-            ConversationItem::UserMessage(UserMessage {
+            TranscriptItem::UserMessage(UserMessage {
                 text: "current prompt".to_string(),
                 images: Vec::new(),
             }),
         ];
 
         let compacted = runtime
-            .compact_conversation_if_needed(
+            .compact_transcript_if_needed(
                 &"thread".to_string(),
                 &"turn".to_string(),
                 "gpt-5.5",
-                conversation.clone(),
+                transcript.clone(),
             )
             .await
             .unwrap();
 
-        assert_eq!(compacted, conversation);
+        assert_eq!(compacted, transcript);
     }
 
     #[tokio::test]
     async fn compaction_without_file_backed_context_keeps_legacy_summary_only() {
         let mut builder = ExtensionRegistryBuilder::new();
         builder.inference_engine(Arc::new(FakeInferenceEngine));
-        let session_root = std::env::temp_dir().join(format!(
-            "roder-session-artifacts-disabled-{}",
+        let thread_root = std::env::temp_dir().join(format!(
+            "roder-thread-artifacts-disabled-{}",
             uuid::Uuid::new_v4()
         ));
-        builder.session_store_factory(Arc::new(JsonlSessionStoreFactory {
-            base_path: session_root.clone(),
+        builder.thread_store_factory(Arc::new(JsonlThreadStoreFactory {
+            base_path: thread_root.clone(),
         }));
         let runtime = Runtime::new(
             builder.build().unwrap(),
@@ -623,20 +623,20 @@ mod tests {
         .unwrap();
 
         let compacted = runtime
-            .compact_conversation_if_needed(
+            .compact_transcript_if_needed(
                 &"thread".to_string(),
                 &"turn".to_string(),
                 "mock",
                 vec![
-                    ConversationItem::UserMessage(UserMessage {
+                    TranscriptItem::UserMessage(UserMessage {
                         text: "very large old context".repeat(20),
                         images: Vec::new(),
                     }),
-                    ConversationItem::AssistantMessage(AssistantMessage {
+                    TranscriptItem::AssistantMessage(AssistantMessage {
                         text: "old answer".to_string(),
                         phase: None,
                     }),
-                    ConversationItem::UserMessage(UserMessage {
+                    TranscriptItem::UserMessage(UserMessage {
                         text: "current prompt".to_string(),
                         images: Vec::new(),
                     }),
@@ -647,8 +647,8 @@ mod tests {
 
         assert!(matches!(
             &compacted[0],
-            ConversationItem::ContextCompaction(summary)
-                if summary.summary.contains("Previous conversation was compacted")
+            TranscriptItem::ContextCompaction(summary)
+                if summary.summary.contains("Previous transcript was compacted")
                     && !summary.summary.contains("read_artifact")
         ));
         assert!(
@@ -658,7 +658,7 @@ mod tests {
                 .unwrap()
                 .is_empty()
         );
-        let _ = std::fs::remove_dir_all(session_root);
+        let _ = std::fs::remove_dir_all(thread_root);
     }
 
     fn drain_events(
@@ -697,11 +697,11 @@ mod tests {
         }
     }
 
-    fn conversation_texts(conversation: &[ConversationItem]) -> Vec<&str> {
-        conversation
+    fn transcript_texts(transcript: &[TranscriptItem]) -> Vec<&str> {
+        transcript
             .iter()
             .filter_map(|item| match item {
-                ConversationItem::UserMessage(message) => Some(message.text.as_str()),
+                TranscriptItem::UserMessage(message) => Some(message.text.as_str()),
                 _ => None,
             })
             .collect()

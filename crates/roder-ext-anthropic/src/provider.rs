@@ -233,18 +233,18 @@ async fn retry_sleep(policy: &ReliabilityRequestPolicy, attempt: u32) {
 
 fn anthropic_messages(request: &AgentInferenceRequest) -> Vec<Value> {
     request
-        .conversation
+        .transcript
         .iter()
         .filter_map(|item| match item {
-            roder_api::conversation::ConversationItem::UserMessage(message) => Some(json!({
+            roder_api::transcript::TranscriptItem::UserMessage(message) => Some(json!({
                 "role": "user",
                 "content": [{ "type": "text", "text": message.text }]
             })),
-            roder_api::conversation::ConversationItem::AssistantMessage(message) => Some(json!({
+            roder_api::transcript::TranscriptItem::AssistantMessage(message) => Some(json!({
                 "role": "assistant",
                 "content": [{ "type": "text", "text": message.text }]
             })),
-            roder_api::conversation::ConversationItem::ToolCall(call) => Some(json!({
+            roder_api::transcript::TranscriptItem::ToolCall(call) => Some(json!({
                 "role": "assistant",
                 "content": [{
                     "type": "tool_use",
@@ -253,7 +253,7 @@ fn anthropic_messages(request: &AgentInferenceRequest) -> Vec<Value> {
                     "input": parse_json_object(&call.arguments)
                 }]
             })),
-            roder_api::conversation::ConversationItem::ToolResult(result) => Some(json!({
+            roder_api::transcript::TranscriptItem::ToolResult(result) => Some(json!({
                 "role": "user",
                 "content": [{
                     "type": "tool_result",
@@ -354,14 +354,14 @@ fn number_to_u32(value: Option<&Value>) -> Option<u32> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use roder_api::conversation::{
-        AssistantMessage, ConversationItem, ToolCallRecord, ToolResultRecord, UserMessage,
-    };
     use roder_api::inference::{
         InstructionBundle, ModelSelection, OutputConfig, ReasoningConfig, RuntimeHints,
     };
     use roder_api::reliability::ReliabilityRequestPolicy;
     use roder_api::tools::{ToolChoice, ToolSpec};
+    use roder_api::transcript::{
+        AssistantMessage, ToolCallRecord, ToolResultRecord, TranscriptItem, UserMessage,
+    };
     use std::sync::Arc;
     use std::sync::atomic::{AtomicUsize, Ordering};
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -377,18 +377,18 @@ mod tests {
                 system: Some("system".to_string()),
                 developer: Some("developer".to_string()),
             },
-            conversation: vec![
-                ConversationItem::UserMessage(UserMessage::text("Hello")),
-                ConversationItem::AssistantMessage(AssistantMessage {
+            transcript: vec![
+                TranscriptItem::UserMessage(UserMessage::text("Hello")),
+                TranscriptItem::AssistantMessage(AssistantMessage {
                     text: "Hi".to_string(),
                     phase: None,
                 }),
-                ConversationItem::ToolCall(ToolCallRecord {
+                TranscriptItem::ToolCall(ToolCallRecord {
                     id: "toolu_1".to_string(),
                     name: "shell".to_string(),
                     arguments: r#"{"cmd":"pwd"}"#.to_string(),
                 }),
-                ConversationItem::ToolResult(ToolResultRecord {
+                TranscriptItem::ToolResult(ToolResultRecord {
                     id: "toolu_1".to_string(),
                     name: Some("shell".to_string()),
                     result: "ok".to_string(),

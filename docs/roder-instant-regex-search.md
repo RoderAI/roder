@@ -46,7 +46,7 @@ Remote runner workspaces initially use fallback scanning. Local index storage is
 
 ## App-Server Inspection
 
-Desktop clients and palette surfaces can inspect and manage the persistent index through JSON-RPC:
+App clients and palette surfaces can inspect and manage the persistent index through JSON-RPC:
 
 - `search_index/status` returns the current index state without reading private files.
 - `search_index/warmup` builds the index when it is missing, or reports the existing status when it is already present.

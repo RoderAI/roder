@@ -403,7 +403,7 @@
       "paramsType": "InitializeParams",
       "resultType": "InitializeResult",
       "stability": "stable",
-      "featureGroup": "session",
+      "featureGroup": "app",
       "idempotency": "idempotent",
       "sideEffect": "readOnly"
     },
@@ -978,51 +978,6 @@
       "sideEffect": "localState"
     },
     {
-      "method": "session/exit_plan",
-      "paramsType": "SessionExitPlanParams",
-      "resultType": "SessionExitPlanResult",
-      "stability": "stable",
-      "featureGroup": "session",
-      "idempotency": "nonIdempotent",
-      "sideEffect": "localState"
-    },
-    {
-      "method": "session/get",
-      "paramsType": "SessionGetParams",
-      "resultType": "SessionGetResult",
-      "stability": "stable",
-      "featureGroup": "session",
-      "idempotency": "idempotent",
-      "sideEffect": "readOnly"
-    },
-    {
-      "method": "session/resolve_approval",
-      "paramsType": "SessionResolveApprovalParams",
-      "resultType": "SessionResolveApprovalResult",
-      "stability": "stable",
-      "featureGroup": "session",
-      "idempotency": "nonIdempotent",
-      "sideEffect": "localState"
-    },
-    {
-      "method": "session/resolve_user_input",
-      "paramsType": "SessionResolveUserInputParams",
-      "resultType": "SessionResolveUserInputResult",
-      "stability": "stable",
-      "featureGroup": "session",
-      "idempotency": "nonIdempotent",
-      "sideEffect": "localState"
-    },
-    {
-      "method": "session/set_mode",
-      "paramsType": "SessionSetModeParams",
-      "resultType": "SessionSetModeResult",
-      "stability": "stable",
-      "featureGroup": "session",
-      "idempotency": "nonIdempotent",
-      "sideEffect": "localState"
-    },
-    {
       "method": "settings/get",
       "paramsType": "SettingsGetParams",
       "resultType": "SettingsGetResult",
@@ -1053,6 +1008,15 @@
       "method": "settings/set_search_index",
       "paramsType": "SettingsSetSearchIndexParams",
       "resultType": "SettingsSetSearchIndexResult",
+      "stability": "stable",
+      "featureGroup": "settings",
+      "idempotency": "nonIdempotent",
+      "sideEffect": "localState"
+    },
+    {
+      "method": "settings/set_shell",
+      "paramsType": "SettingsSetShellParams",
+      "resultType": "SettingsSetShellResult",
       "stability": "stable",
       "featureGroup": "settings",
       "idempotency": "nonIdempotent",
@@ -1250,7 +1214,7 @@
       "paramsType": "ThreadArchiveParams",
       "resultType": "ThreadArchiveResult",
       "stability": "stable",
-      "featureGroup": "threads",
+      "featureGroup": "thread",
       "idempotency": "nonIdempotent",
       "sideEffect": "localState"
     },
@@ -1259,7 +1223,16 @@
       "paramsType": "ThreadAttachParams",
       "resultType": "ThreadAttachResult",
       "stability": "stable",
-      "featureGroup": "threads",
+      "featureGroup": "thread",
+      "idempotency": "nonIdempotent",
+      "sideEffect": "localState"
+    },
+    {
+      "method": "thread/exit_plan",
+      "paramsType": "ThreadExitPlanParams",
+      "resultType": "ThreadExitPlanResult",
+      "stability": "stable",
+      "featureGroup": "thread",
       "idempotency": "nonIdempotent",
       "sideEffect": "localState"
     },
@@ -1268,7 +1241,7 @@
       "paramsType": "ThreadGoalClearParams",
       "resultType": "ThreadGoalClearResult",
       "stability": "stable",
-      "featureGroup": "threads",
+      "featureGroup": "thread",
       "idempotency": "nonIdempotent",
       "sideEffect": "localState",
       "notifications": [
@@ -1280,7 +1253,7 @@
       "paramsType": "ThreadGoalGetParams",
       "resultType": "ThreadGoalGetResult",
       "stability": "stable",
-      "featureGroup": "threads",
+      "featureGroup": "thread",
       "idempotency": "idempotent",
       "sideEffect": "readOnly"
     },
@@ -1289,7 +1262,7 @@
       "paramsType": "ThreadGoalSetParams",
       "resultType": "ThreadGoalSetResult",
       "stability": "stable",
-      "featureGroup": "threads",
+      "featureGroup": "thread",
       "idempotency": "nonIdempotent",
       "sideEffect": "localState",
       "notifications": [
@@ -1301,7 +1274,7 @@
       "paramsType": "ThreadListParams",
       "resultType": "ThreadListResult",
       "stability": "stable",
-      "featureGroup": "threads",
+      "featureGroup": "thread",
       "idempotency": "idempotent",
       "sideEffect": "readOnly"
     },
@@ -1310,16 +1283,43 @@
       "paramsType": "ThreadReadParams",
       "resultType": "ThreadReadResult",
       "stability": "stable",
-      "featureGroup": "threads",
+      "featureGroup": "thread",
       "idempotency": "idempotent",
       "sideEffect": "readOnly"
+    },
+    {
+      "method": "thread/resolve_approval",
+      "paramsType": "ThreadResolveApprovalParams",
+      "resultType": "ThreadResolveApprovalResult",
+      "stability": "stable",
+      "featureGroup": "thread",
+      "idempotency": "nonIdempotent",
+      "sideEffect": "localState"
+    },
+    {
+      "method": "thread/resolve_user_input",
+      "paramsType": "ThreadResolveUserInputParams",
+      "resultType": "ThreadResolveUserInputResult",
+      "stability": "stable",
+      "featureGroup": "thread",
+      "idempotency": "nonIdempotent",
+      "sideEffect": "localState"
     },
     {
       "method": "thread/roadmap/open",
       "paramsType": "ThreadRoadmapOpenParams",
       "resultType": "ThreadRoadmapOpenResult",
       "stability": "stable",
-      "featureGroup": "threads",
+      "featureGroup": "thread",
+      "idempotency": "nonIdempotent",
+      "sideEffect": "localState"
+    },
+    {
+      "method": "thread/set_mode",
+      "paramsType": "ThreadSetModeParams",
+      "resultType": "ThreadSetModeResult",
+      "stability": "stable",
+      "featureGroup": "thread",
       "idempotency": "nonIdempotent",
       "sideEffect": "localState"
     },
@@ -1328,9 +1328,18 @@
       "paramsType": "ThreadStartParams",
       "resultType": "ThreadStartResult",
       "stability": "stable",
-      "featureGroup": "threads",
+      "featureGroup": "thread",
       "idempotency": "nonIdempotent",
       "sideEffect": "localState"
+    },
+    {
+      "method": "thread/state",
+      "paramsType": "ThreadStateParams",
+      "resultType": "ThreadStateResult",
+      "stability": "stable",
+      "featureGroup": "thread",
+      "idempotency": "idempotent",
+      "sideEffect": "readOnly"
     },
     {
       "method": "tools/call",

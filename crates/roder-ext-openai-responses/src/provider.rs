@@ -1318,24 +1318,24 @@ fn response_input_items(
     let mut items = Vec::new();
     let mut provider_output_call_ids = HashSet::new();
 
-    for conversation_item in &request.conversation {
+    for conversation_item in &request.transcript {
         let mapped = match conversation_item {
-            roder_api::conversation::ConversationItem::UserMessage(message) => Some(json!({
+            roder_api::transcript::TranscriptItem::UserMessage(message) => Some(json!({
                 "type": "message",
                 "role": "user",
                 "content": user_message_content(message)
             })),
-            roder_api::conversation::ConversationItem::AssistantMessage(message) => Some(json!({
+            roder_api::transcript::TranscriptItem::AssistantMessage(message) => Some(json!({
                 "type": "message",
                 "role": "assistant",
                 "phase": message.phase.as_deref().unwrap_or(FINAL_ANSWER_PHASE),
                 "content": [{ "type": "output_text", "text": message.text }]
             })),
-            roder_api::conversation::ConversationItem::ReasoningSummary(summary) => Some(json!({
+            roder_api::transcript::TranscriptItem::ReasoningSummary(summary) => Some(json!({
                 "type": "reasoning",
                 "summary": [{ "type": "summary_text", "text": summary.text }]
             })),
-            roder_api::conversation::ConversationItem::ToolCall(call) => {
+            roder_api::transcript::TranscriptItem::ToolCall(call) => {
                 if provider_output_call_ids.contains(&call.id) {
                     None
                 } else {
@@ -1351,19 +1351,17 @@ fn response_input_items(
                     }))
                 }
             }
-            roder_api::conversation::ConversationItem::ToolResult(result) => Some(json!({
+            roder_api::transcript::TranscriptItem::ToolResult(result) => Some(json!({
                 "type": "function_call_output",
                 "call_id": result.id,
                 "output": result.result
             })),
-            roder_api::conversation::ConversationItem::ContextCompaction(compaction) => {
-                Some(json!({
-                    "type": "message",
-                    "role": "user",
-                    "content": [{ "type": "input_text", "text": format!("Context summary:\n{}", compaction.summary) }]
-                }))
-            }
-            roder_api::conversation::ConversationItem::ProviderMetadata(metadata) => {
+            roder_api::transcript::TranscriptItem::ContextCompaction(compaction) => Some(json!({
+                "type": "message",
+                "role": "user",
+                "content": [{ "type": "input_text", "text": format!("Context summary:\n{}", compaction.summary) }]
+            })),
+            roder_api::transcript::TranscriptItem::ProviderMetadata(metadata) => {
                 append_provider_output_items(
                     metadata,
                     &mut items,
@@ -1382,7 +1380,7 @@ fn response_input_items(
     items
 }
 
-fn user_message_content(message: &roder_api::conversation::UserMessage) -> Vec<Value> {
+fn user_message_content(message: &roder_api::transcript::UserMessage) -> Vec<Value> {
     let mut content = Vec::new();
     if !message.text.is_empty() {
         content.push(json!({ "type": "input_text", "text": message.text }));
@@ -1603,14 +1601,13 @@ fn number_to_u32(value: Option<&Value>) -> Option<u32> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use roder_api::conversation::{
-        AssistantMessage, ConversationItem, InputImage, ToolCallRecord, ToolResultRecord,
-        UserMessage,
-    };
     use roder_api::inference::{
         InstructionBundle, ModelSelection, OutputConfig, ReasoningConfig, RuntimeHints,
     };
     use roder_api::reliability::ReliabilityRequestPolicy;
+    use roder_api::transcript::{
+        AssistantMessage, InputImage, ToolCallRecord, ToolResultRecord, TranscriptItem, UserMessage,
+    };
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     use tokio::net::TcpListener;
 
@@ -1624,9 +1621,9 @@ mod tests {
                 system: Some("be helpful".to_string()),
                 developer: None,
             },
-            conversation: vec![
-                ConversationItem::UserMessage(UserMessage::text("Hello")),
-                ConversationItem::AssistantMessage(AssistantMessage {
+            transcript: vec![
+                TranscriptItem::UserMessage(UserMessage::text("Hello")),
+                TranscriptItem::AssistantMessage(AssistantMessage {
                     text: "Hi".to_string(),
                     phase: None,
                 }),
@@ -1886,7 +1883,7 @@ mod tests {
     #[test]
     fn preserves_assistant_message_phase_for_responses_replay() {
         let mut request = request();
-        request.conversation = vec![ConversationItem::AssistantMessage(AssistantMessage {
+        request.transcript = vec![TranscriptItem::AssistantMessage(AssistantMessage {
             text: "I will inspect first.".to_string(),
             phase: Some("commentary".to_string()),
         })];
@@ -1900,7 +1897,7 @@ mod tests {
     #[test]
     fn maps_user_images_to_responses_input_image_content() {
         let mut request = request();
-        request.conversation = vec![ConversationItem::UserMessage(UserMessage::with_images(
+        request.transcript = vec![TranscriptItem::UserMessage(UserMessage::with_images(
             "what is shown?",
             vec![InputImage {
                 image_url: "data:image/png;base64,YWJj".to_string(),
@@ -2010,14 +2007,14 @@ mod tests {
             description: "list discovery tools".to_string(),
             parameters: json!({ "type": "object" }),
         }];
-        request.conversation = vec![
-            ConversationItem::UserMessage(UserMessage::text("List discovery tools")),
-            ConversationItem::ToolCall(ToolCallRecord {
+        request.transcript = vec![
+            TranscriptItem::UserMessage(UserMessage::text("List discovery tools")),
+            TranscriptItem::ToolCall(ToolCallRecord {
                 id: "call_1".to_string(),
                 name: "tool.discovery.list".to_string(),
                 arguments: "{}".to_string(),
             }),
-            ConversationItem::ToolResult(ToolResultRecord {
+            TranscriptItem::ToolResult(ToolResultRecord {
                 id: "call_1".to_string(),
                 name: Some("tool.discovery.list".to_string()),
                 result: "[]".to_string(),
@@ -2042,9 +2039,9 @@ mod tests {
             description: "list discovery tools".to_string(),
             parameters: json!({ "type": "object" }),
         }];
-        request.conversation = vec![
-            ConversationItem::UserMessage(UserMessage::text("List discovery tools")),
-            ConversationItem::ProviderMetadata(json!({
+        request.transcript = vec![
+            TranscriptItem::UserMessage(UserMessage::text("List discovery tools")),
+            TranscriptItem::ProviderMetadata(json!({
                 "output": [
                     {
                         "id": "fc_1",
@@ -2056,12 +2053,12 @@ mod tests {
                     }
                 ]
             })),
-            ConversationItem::ToolCall(ToolCallRecord {
+            TranscriptItem::ToolCall(ToolCallRecord {
                 id: "call_1".to_string(),
                 name: "tool.discovery.list".to_string(),
                 arguments: "{}".to_string(),
             }),
-            ConversationItem::ToolResult(ToolResultRecord {
+            TranscriptItem::ToolResult(ToolResultRecord {
                 id: "call_1".to_string(),
                 name: Some("tool.discovery.list".to_string()),
                 result: "[]".to_string(),
@@ -2154,9 +2151,9 @@ mod tests {
     #[test]
     fn replays_provider_function_call_items_before_tool_outputs() {
         let mut request = request();
-        request.conversation = vec![
-            ConversationItem::UserMessage(UserMessage::text("List files")),
-            ConversationItem::ProviderMetadata(json!({
+        request.transcript = vec![
+            TranscriptItem::UserMessage(UserMessage::text("List files")),
+            TranscriptItem::ProviderMetadata(json!({
                 "output": [
                     {
                         "id": "rs_1",
@@ -2174,12 +2171,12 @@ mod tests {
                     }
                 ]
             })),
-            ConversationItem::ToolCall(ToolCallRecord {
+            TranscriptItem::ToolCall(ToolCallRecord {
                 id: "call_1".to_string(),
                 name: "list_files".to_string(),
                 arguments: "{\"path\":\".\"}".to_string(),
             }),
-            ConversationItem::ToolResult(ToolResultRecord {
+            TranscriptItem::ToolResult(ToolResultRecord {
                 id: "call_1".to_string(),
                 name: Some("list_files".to_string()),
                 result: "Cargo.toml".to_string(),
@@ -2208,8 +2205,8 @@ mod tests {
     #[test]
     fn replays_provider_compaction_items() {
         let mut request = request();
-        request.conversation = vec![
-            ConversationItem::ProviderMetadata(json!({
+        request.transcript = vec![
+            TranscriptItem::ProviderMetadata(json!({
                 "output": [
                     {
                         "id": "cmp_1",
@@ -2218,7 +2215,7 @@ mod tests {
                     }
                 ]
             })),
-            ConversationItem::UserMessage(UserMessage::text("Continue")),
+            TranscriptItem::UserMessage(UserMessage::text("Continue")),
         ];
 
         let input = input_items(&request);
@@ -2230,14 +2227,14 @@ mod tests {
     #[test]
     fn fallback_function_call_items_use_responses_item_id_prefix() {
         let mut request = request();
-        request.conversation = vec![
-            ConversationItem::UserMessage(UserMessage::text("List files")),
-            ConversationItem::ToolCall(ToolCallRecord {
+        request.transcript = vec![
+            TranscriptItem::UserMessage(UserMessage::text("List files")),
+            TranscriptItem::ToolCall(ToolCallRecord {
                 id: "call_1".to_string(),
                 name: "list_files".to_string(),
                 arguments: "{\"path\":\".\"}".to_string(),
             }),
-            ConversationItem::ToolResult(ToolResultRecord {
+            TranscriptItem::ToolResult(ToolResultRecord {
                 id: "call_1".to_string(),
                 name: Some("list_files".to_string()),
                 result: "Cargo.toml".to_string(),

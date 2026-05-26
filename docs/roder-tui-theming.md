@@ -217,7 +217,7 @@ The set of recognized tokens is closed. Selectors that target unknown ids/classe
 | Timeline    | `.timeline-item`, `.timeline-user`, `.timeline-assistant`, `.timeline-thinking`, `.timeline-tool`, `.timeline-system`, `.timeline-error` |
 | Tool        | `.tool-header`, `.tool-args`, `.tool-output`, `.tool-diff`, `.tool-status-pending`, `.tool-status-ok`, `.tool-status-error` |
 | Palette     | `.palette-source`, `.palette-item`, `.palette-item-selected`, `.palette-title`, `.palette-subtitle`, `.palette-keyword` |
-| Status line | `.segment`, `.segment-mode`, `.segment-model`, `.segment-session`, `.segment-branch`, `.segment-usage`, `.segment-mcp` |
+| Status line | `.segment`, `.segment-mode`, `.segment-model`, `.segment-thread`, `.segment-branch`, `.segment-usage`, `.segment-mcp` |
 | Diff        | `.diff-file`, `.diff-hunk`, `.diff-line-add`, `.diff-line-del`, `.diff-line-ctx`, `.hunk-pending`, `.hunk-accepted`, `.hunk-rejected` |
 | Cross-cut   | `.error`, `.warning`, `.muted`, `.accent`, `.code`, `.kbd`, `.link`                                |
 

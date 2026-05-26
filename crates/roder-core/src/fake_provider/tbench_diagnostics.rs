@@ -1,5 +1,5 @@
-use roder_api::conversation::ConversationItem;
 use roder_api::inference::{AgentInferenceRequest, ToolCallCompleted};
+use roder_api::transcript::TranscriptItem;
 
 const TASK_LEDGER_TOOL_NAME: &str = "task_ledger.update";
 
@@ -125,22 +125,22 @@ fn task_ledger_call(id: &str, complete: bool) -> ToolCallCompleted {
 }
 
 fn has_tool_result(request: &AgentInferenceRequest, name: &str) -> bool {
-    request.conversation.iter().any(|item| {
+    request.transcript.iter().any(|item| {
         matches!(
             item,
-            ConversationItem::ToolResult(result) if result.name.as_deref() == Some(name)
+            TranscriptItem::ToolResult(result) if result.name.as_deref() == Some(name)
         )
     })
 }
 
 fn task_ledger_update_count(request: &AgentInferenceRequest) -> usize {
     request
-        .conversation
+        .transcript
         .iter()
         .filter(|item| {
             matches!(
                 item,
-                ConversationItem::ToolResult(result)
+                TranscriptItem::ToolResult(result)
                     if result.name.as_deref() == Some(TASK_LEDGER_TOOL_NAME)
             )
         })
@@ -148,10 +148,10 @@ fn task_ledger_update_count(request: &AgentInferenceRequest) -> usize {
 }
 
 fn prompt_contains(request: &AgentInferenceRequest, needle: &str) -> bool {
-    request.conversation.iter().any(|item| {
+    request.transcript.iter().any(|item| {
         matches!(
             item,
-            ConversationItem::UserMessage(message) if message.text.contains(needle)
+            TranscriptItem::UserMessage(message) if message.text.contains(needle)
         )
     })
 }

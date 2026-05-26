@@ -25,7 +25,7 @@ Diff bodies are pageable through `PagedHunkDiff`; hunk records retain capped inl
 - `hunk/read`
 - `hunk/rollback`
 
-The app-server reconstructs review and hunk state from persisted session events. Comments and rewrites are appended as events so resumed clients see the same review history.
+The app-server reconstructs review and hunk state from persisted thread events. Comments and rewrites are appended as events so resumed clients see the same review history.
 
 ## Tool Reporting
 

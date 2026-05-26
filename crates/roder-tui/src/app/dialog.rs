@@ -137,7 +137,7 @@ fn dialog_copy(dialog: &ConfirmDialog) -> DialogCopy {
             title: "Interrupt turn".to_string(),
             context: "running model".to_string(),
             heading: "Stop the current response?".to_string(),
-            detail: "Roder will ask the provider to stop this turn. The session stays open and any partial output remains visible.".to_string(),
+            detail: "Roder will ask the provider to stop this turn. The thread stays open and any partial output remains visible.".to_string(),
             confirm_label: "Interrupt".to_string(),
         },
         ConfirmDialog::Exit => DialogCopy {
@@ -195,7 +195,7 @@ mod tests {
         assert_eq!(copy.title, "Interrupt turn");
         assert_eq!(copy.confirm_label, "Interrupt");
         assert!(copy.heading.contains("Stop"));
-        assert!(copy.detail.contains("session stays open"));
+        assert!(copy.detail.contains("thread stays open"));
     }
 
     #[test]

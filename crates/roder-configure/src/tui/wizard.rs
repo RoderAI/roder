@@ -163,7 +163,7 @@ fn default_manifest() -> DistributionManifest {
         include_cli: true,
         extensions: Vec::new(),
         default_provider: None,
-        default_session_store: None,
+        default_thread_store: None,
         config_overrides: serde_json::Value::Null,
     }
 }

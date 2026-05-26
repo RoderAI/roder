@@ -202,7 +202,7 @@ const METHOD_SPECS: &[AppServerMethodSpecSeed] = &[
     method_spec!("index/rebuild", "code-index", LocalState, NonIdempotent),
     method_spec!("index/search", "code-index", ReadOnly, Idempotent),
     method_spec!("index/status", "code-index", ReadOnly, Idempotent),
-    method_spec!("initialize", "session", ReadOnly, Idempotent),
+    method_spec!("initialize", "app", ReadOnly, Idempotent),
     method_spec!(
         "marketplaces/add",
         "marketplaces",
@@ -352,21 +352,6 @@ const METHOD_SPECS: &[AppServerMethodSpecSeed] = &[
         LocalState,
         NonIdempotent
     ),
-    method_spec!("session/exit_plan", "session", LocalState, NonIdempotent),
-    method_spec!("session/get", "session", ReadOnly, Idempotent),
-    method_spec!(
-        "session/resolve_approval",
-        "session",
-        LocalState,
-        NonIdempotent
-    ),
-    method_spec!(
-        "session/resolve_user_input",
-        "session",
-        LocalState,
-        NonIdempotent
-    ),
-    method_spec!("session/set_mode", "session", LocalState, NonIdempotent),
     method_spec!("settings/get", "settings", ReadOnly, Idempotent),
     method_spec!(
         "settings/set_default_mode",
@@ -386,6 +371,7 @@ const METHOD_SPECS: &[AppServerMethodSpecSeed] = &[
         LocalState,
         NonIdempotent
     ),
+    method_spec!("settings/set_shell", "settings", LocalState, NonIdempotent),
     method_spec!(
         "settings/set_web_search",
         "settings",
@@ -423,27 +409,42 @@ const METHOD_SPECS: &[AppServerMethodSpecSeed] = &[
     method_spec!("team/pane/focus", "teams", LocalState, NonIdempotent),
     method_spec!("team/read", "teams", ReadOnly, Idempotent),
     method_spec!("team/start", "teams", LocalState, NonIdempotent),
-    method_spec!("thread/archive", "threads", LocalState, NonIdempotent),
-    method_spec!("thread/attach", "threads", LocalState, NonIdempotent),
+    method_spec!("thread/archive", "thread", LocalState, NonIdempotent),
+    method_spec!("thread/attach", "thread", LocalState, NonIdempotent),
+    method_spec!("thread/exit_plan", "thread", LocalState, NonIdempotent),
     method_spec!(
         "thread/goal/clear",
-        "threads",
+        "thread",
         LocalState,
         NonIdempotent,
         ["thread/goal/cleared"]
     ),
-    method_spec!("thread/goal/get", "threads", ReadOnly, Idempotent),
+    method_spec!("thread/goal/get", "thread", ReadOnly, Idempotent),
     method_spec!(
         "thread/goal/set",
-        "threads",
+        "thread",
         LocalState,
         NonIdempotent,
         ["thread/goal/updated"]
     ),
-    method_spec!("thread/list", "threads", ReadOnly, Idempotent),
-    method_spec!("thread/read", "threads", ReadOnly, Idempotent),
-    method_spec!("thread/roadmap/open", "threads", LocalState, NonIdempotent),
-    method_spec!("thread/start", "threads", LocalState, NonIdempotent),
+    method_spec!("thread/list", "thread", ReadOnly, Idempotent),
+    method_spec!("thread/read", "thread", ReadOnly, Idempotent),
+    method_spec!(
+        "thread/resolve_approval",
+        "thread",
+        LocalState,
+        NonIdempotent
+    ),
+    method_spec!(
+        "thread/resolve_user_input",
+        "thread",
+        LocalState,
+        NonIdempotent
+    ),
+    method_spec!("thread/roadmap/open", "thread", LocalState, NonIdempotent),
+    method_spec!("thread/set_mode", "thread", LocalState, NonIdempotent),
+    method_spec!("thread/start", "thread", LocalState, NonIdempotent),
+    method_spec!("thread/state", "thread", ReadOnly, Idempotent),
     method_spec!("tools/call", "tools", LocalState, NonIdempotent),
     method_spec!("tools/list", "tools", ReadOnly, Idempotent),
     method_spec!("turn/interrupt", "turns", LocalState, NonIdempotent),
@@ -488,7 +489,7 @@ mod tests {
             "settings/get",
             "thread/start",
             "turn/start",
-            "session/resolve_approval",
+            "thread/resolve_approval",
             "tools/call",
             "commands/list",
             "tasks/submit",

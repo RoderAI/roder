@@ -109,7 +109,7 @@ mod tests {
 
     use roder_api::policy_mode::PolicyMode;
     use roder_api::tui_status::{
-        GitSnapshot, McpServerStatus, SessionSummary, SessionUsage, StatusCell,
+        GitSnapshot, McpServerStatus, StatusCell, ThreadSummary, ThreadUsage,
     };
 
     use super::*;
@@ -174,7 +174,7 @@ mod tests {
         assert!(text.contains(&"mode:plan"));
         assert!(text.contains(&"model:gpt-test"));
         assert!(text.contains(&"profile:gpt-test"));
-        assert!(text.contains(&"session:12345678"));
+        assert!(text.contains(&"thread:12345678"));
         assert!(text.contains(&"branch:main"));
         assert!(text.contains(&"tok:42"));
         assert!(text.contains(&"mcp:1"));
@@ -214,13 +214,13 @@ mod tests {
     }
 
     fn test_context() -> StatusContext<'static> {
-        static SESSION: std::sync::OnceLock<SessionSummary> = std::sync::OnceLock::new();
-        static USAGE: std::sync::OnceLock<SessionUsage> = std::sync::OnceLock::new();
+        static THREAD: std::sync::OnceLock<ThreadSummary> = std::sync::OnceLock::new();
+        static USAGE: std::sync::OnceLock<ThreadUsage> = std::sync::OnceLock::new();
         static GIT: std::sync::OnceLock<GitSnapshot> = std::sync::OnceLock::new();
         static MCP: std::sync::OnceLock<Vec<McpServerStatus>> = std::sync::OnceLock::new();
 
         StatusContext {
-            session: SESSION.get_or_init(|| SessionSummary {
+            thread: THREAD.get_or_init(|| ThreadSummary {
                 thread_id: "1234567890abcdef".to_string(),
                 title: Some("Test".to_string()),
             }),
@@ -228,7 +228,7 @@ mod tests {
             model: Some("gpt-test"),
             model_profile: Some("gpt-test"),
             model_switch_summary: None,
-            usage: Some(USAGE.get_or_init(|| SessionUsage {
+            usage: Some(USAGE.get_or_init(|| ThreadUsage {
                 input_tokens: 40,
                 output_tokens: 2,
                 total_cost_usd: None,

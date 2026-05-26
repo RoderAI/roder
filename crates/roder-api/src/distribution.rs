@@ -32,7 +32,7 @@ pub struct DistributionEntry {
 pub enum ExtensionCategory {
     InferenceEngine,
     WireDialect,
-    SessionStore,
+    ThreadStore,
     CheckpointStore,
     MemoryStore,
     EmbeddingProvider,
@@ -60,7 +60,7 @@ pub struct DistributionManifest {
     #[serde(default)]
     pub default_provider: Option<String>,
     #[serde(default)]
-    pub default_session_store: Option<String>,
+    pub default_thread_store: Option<String>,
     #[serde(default)]
     pub config_overrides: serde_json::Value,
 }
@@ -204,9 +204,9 @@ mod tests {
                 include_tui: false,
                 include_app_server: true,
                 include_cli: true,
-                extensions: vec!["jsonl-session".to_string(), "memory".to_string()],
+                extensions: vec!["jsonl-thread-store".to_string(), "memory".to_string()],
                 default_provider: Some("openai-responses".to_string()),
-                default_session_store: Some("jsonl-session".to_string()),
+                default_thread_store: Some("jsonl-thread-store".to_string()),
                 config_overrides: serde_json::json!({
                     "subagents": { "max_depth": 1 }
                 }),

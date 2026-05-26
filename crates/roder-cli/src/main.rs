@@ -46,16 +46,16 @@ use roder_extension_host::{
     build_default_registry,
 };
 use roder_protocol::{
-    DesktopThread, JsonRpcError, JsonRpcRequest, JsonRpcResponse, MemoryDeleteParams,
-    MemoryDeleteResult, MemoryListParams, MemoryListResult, MemoryProviderListResult,
-    MemoryProviderSetParams, MemoryQueryParams, MemoryQueryResult, MemoryReadParams,
-    MemoryReadResult, MemorySaveParams, MemorySaveResult, MemoryUpdateParams, ProcessesGetParams,
-    ProcessesGetResult, ProcessesListParams, ProcessesListResult, ProcessesStopAllParams,
-    ProcessesStopAllResult, ProcessesStopParams, ProcessesStopResult, TasksCancelParams,
-    TasksCancelResult, TasksGetParams, TasksGetResult, TasksListResult, TasksSubmitParams,
-    TasksSubmitResult, ThreadListParams, ThreadListResult, ThreadReadParams, ThreadReadResult,
-    WorkflowEnableParams, WorkflowEnableResult, WorkflowPreviewParams, WorkflowPreviewResult,
-    WorkflowScanParams, WorkflowScanResult,
+    JsonRpcError, JsonRpcRequest, JsonRpcResponse, MemoryDeleteParams, MemoryDeleteResult,
+    MemoryListParams, MemoryListResult, MemoryProviderListResult, MemoryProviderSetParams,
+    MemoryQueryParams, MemoryQueryResult, MemoryReadParams, MemoryReadResult, MemorySaveParams,
+    MemorySaveResult, MemoryUpdateParams, ProcessesGetParams, ProcessesGetResult,
+    ProcessesListParams, ProcessesListResult, ProcessesStopAllParams, ProcessesStopAllResult,
+    ProcessesStopParams, ProcessesStopResult, TasksCancelParams, TasksCancelResult, TasksGetParams,
+    TasksGetResult, TasksListResult, TasksSubmitParams, TasksSubmitResult, Thread,
+    ThreadListParams, ThreadListResult, ThreadReadParams, ThreadReadResult, WorkflowEnableParams,
+    WorkflowEnableResult, WorkflowPreviewParams, WorkflowPreviewResult, WorkflowScanParams,
+    WorkflowScanResult,
 };
 use roder_tui::{TuiApp, TuiRunOptions, TuiStartup};
 use roder_web_search::WebSearchProviderKind;
@@ -141,11 +141,11 @@ async fn main() -> anyhow::Result<()> {
     let client = LocalAppClient::new(app_server.clone());
 
     if matches!(startup, TuiStartup::ResumeMenu) {
-        let sessions = list_sessions(&client).await?;
-        let Some(thread_id) = resume_picker::pick_session(&sessions)? else {
+        let threads = list_threads(&client).await?;
+        let Some(thread_id) = resume_picker::pick_thread(&threads)? else {
             return Ok(());
         };
-        startup = TuiStartup::ResumeSession(thread_id);
+        startup = TuiStartup::ResumeThread(thread_id);
     }
 
     if let Some(path) = record_api_transcript {
@@ -434,7 +434,7 @@ fn roadmap_tui_plan_path(plan: &str) -> String {
     }
 }
 
-async fn list_sessions(client: &LocalAppClient) -> anyhow::Result<Vec<DesktopThread>> {
+async fn list_threads(client: &LocalAppClient) -> anyhow::Result<Vec<Thread>> {
     let res = client
         .send_request(JsonRpcRequest {
             jsonrpc: "2.0".to_string(),
@@ -455,10 +455,7 @@ async fn list_sessions(client: &LocalAppClient) -> anyhow::Result<Vec<DesktopThr
     Ok(threads)
 }
 
-async fn read_thread(
-    client: &LocalAppClient,
-    thread_id: &str,
-) -> anyhow::Result<Option<DesktopThread>> {
+async fn read_thread(client: &LocalAppClient, thread_id: &str) -> anyhow::Result<Option<Thread>> {
     let res = client
         .send_request(JsonRpcRequest {
             jsonrpc: "2.0".to_string(),
@@ -473,7 +470,7 @@ async fn read_thread(
     Ok(decode_response::<ThreadReadResult>(res)?.thread)
 }
 
-fn thread_has_user_message(thread: &DesktopThread) -> bool {
+fn thread_has_user_message(thread: &Thread) -> bool {
     thread
         .turns
         .as_deref()
@@ -1077,7 +1074,7 @@ pub(crate) async fn build_runtime_from_config(
         poolside_api_key: keys.poolside,
         poolside_base_url: keys.poolside_base_url,
         custom_inference_providers: custom_inference_provider_configs,
-        session_dir: None,
+        thread_dir: None,
         workspace: workspace.clone(),
         tool_path_scope,
         command_shell: command_shell.clone(),
@@ -1307,7 +1304,7 @@ fn parse_cli_options(args: &[String]) -> anyhow::Result<CliOptions> {
                 options.startup = match thread_id {
                     Some(thread_id) => {
                         i += 1;
-                        TuiStartup::ResumeSession(thread_id.clone())
+                        TuiStartup::ResumeThread(thread_id.clone())
                     }
                     None => TuiStartup::ResumeMenu,
                 };
@@ -1393,7 +1390,7 @@ where
     C: roder_app_server::AppClient,
 {
     let summary = tui.exit_summary();
-    println!("Session: {}", summary.title);
+    println!("Thread: {}", summary.title);
     println!(
         "Saved as {} ({}, {} message{})",
         summary.thread_id,
@@ -2553,7 +2550,7 @@ mod tests {
     }
 
     #[test]
-    fn parses_resume_session_cli_command() {
+    fn parses_resume_thread_cli_command() {
         let options = parse_cli_options(&[
             "--mode=plan".to_string(),
             "resume".to_string(),
@@ -2562,10 +2559,7 @@ mod tests {
         .unwrap();
 
         assert_eq!(options.policy_mode, Some(PolicyMode::Plan));
-        assert_eq!(
-            options.startup,
-            TuiStartup::ResumeSession("abc".to_string())
-        );
+        assert_eq!(options.startup, TuiStartup::ResumeThread("abc".to_string()));
     }
 
     #[test]
@@ -2594,7 +2588,7 @@ mod tests {
                 code: -32000,
                 message: "parse failed".to_string(),
                 data: Some(serde_json::json!({
-                    "details": "parse session metadata /tmp/metadata.json"
+                    "details": "parse thread metadata /tmp/metadata.json"
                 })),
             }),
         })
@@ -2602,7 +2596,7 @@ mod tests {
 
         let rendered = err.to_string();
         assert!(rendered.contains("parse failed (-32000)"));
-        assert!(rendered.contains("parse session metadata /tmp/metadata.json"));
+        assert!(rendered.contains("parse thread metadata /tmp/metadata.json"));
     }
 
     #[test]

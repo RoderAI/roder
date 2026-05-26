@@ -109,7 +109,7 @@ fn catalog_builder_writes_grouped_tool_schema_and_artifact_tools() {
     let result = build_file_backed_catalog(
         &registry,
         &[],
-        &DiscoveryCatalogBuildOptions::new(root.join("catalog"), root.join("session")),
+        &DiscoveryCatalogBuildOptions::new(root.join("catalog"), root.join("state")),
     )
     .expect("build catalog");
 
@@ -148,7 +148,7 @@ fn workflow_imports_are_grouped_redacted_and_statused() {
     let result = build_file_backed_catalog(
         &registry,
         &items,
-        &DiscoveryCatalogBuildOptions::new(root.join("catalog"), root.join("session")),
+        &DiscoveryCatalogBuildOptions::new(root.join("catalog"), root.join("state")),
     )
     .expect("build catalog");
 
@@ -179,7 +179,7 @@ fn subagent_definitions_and_promotions_are_persisted() {
     let mut builder = ExtensionRegistryBuilder::new();
     builder.subagent_dispatcher(Arc::new(TestDispatcher));
     let registry = builder.build().expect("build registry");
-    let store = PromotionStore::new(root.join("session"));
+    let store = PromotionStore::new(root.join("state"));
     store
         .save(&[DiscoveryPromotionRecord {
             item_id: "subagent:fixture-dispatcher/reviewer".to_string(),
@@ -196,7 +196,7 @@ fn subagent_definitions_and_promotions_are_persisted() {
     let result = build_file_backed_catalog(
         &registry,
         &[],
-        &DiscoveryCatalogBuildOptions::new(root.join("catalog"), root.join("session")),
+        &DiscoveryCatalogBuildOptions::new(root.join("catalog"), root.join("state")),
     )
     .expect("build catalog");
 
@@ -209,7 +209,7 @@ fn subagent_definitions_and_promotions_are_persisted() {
         .expect("subagent item");
     assert_eq!(subagent.lifecycle, DiscoveryLifecycleState::WarmCached);
     assert_eq!(subagent.cache_status, DiscoveryCacheStatus::Hit);
-    assert!(root.join("session/discovery/promotions.json").exists());
+    assert!(root.join("state/discovery/promotions.json").exists());
 }
 
 #[test]
@@ -237,7 +237,7 @@ fn skills_are_grouped_with_enabled_and_exposure_state() {
         &registry,
         &[],
         &skills,
-        &DiscoveryCatalogBuildOptions::new(root.join("catalog"), root.join("session")),
+        &DiscoveryCatalogBuildOptions::new(root.join("catalog"), root.join("state")),
     )
     .expect("build catalog");
 

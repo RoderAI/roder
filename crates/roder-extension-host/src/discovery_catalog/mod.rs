@@ -19,14 +19,14 @@ pub use state::PromotionStore;
 #[derive(Debug, Clone)]
 pub struct DiscoveryCatalogBuildOptions {
     pub catalog_root: PathBuf,
-    pub session_state_dir: PathBuf,
+    pub promotion_state_dir: PathBuf,
 }
 
 impl DiscoveryCatalogBuildOptions {
-    pub fn new(catalog_root: impl Into<PathBuf>, session_state_dir: impl Into<PathBuf>) -> Self {
+    pub fn new(catalog_root: impl Into<PathBuf>, promotion_state_dir: impl Into<PathBuf>) -> Self {
         Self {
             catalog_root: catalog_root.into(),
-            session_state_dir: session_state_dir.into(),
+            promotion_state_dir: promotion_state_dir.into(),
         }
     }
 }
@@ -36,7 +36,7 @@ impl DiscoveryCatalogBuildOptions {
 pub struct DiscoveryCatalogBuildResult {
     pub catalog: DiscoveryCatalog,
     pub catalog_root: PathBuf,
-    pub session_state_dir: PathBuf,
+    pub promotion_state_dir: PathBuf,
     pub written_files: Vec<PathBuf>,
 }
 
@@ -55,9 +55,9 @@ pub fn build_file_backed_catalog_with_skills(
     options: &DiscoveryCatalogBuildOptions,
 ) -> anyhow::Result<DiscoveryCatalogBuildResult> {
     fs::create_dir_all(&options.catalog_root)?;
-    fs::create_dir_all(&options.session_state_dir)?;
+    fs::create_dir_all(&options.promotion_state_dir)?;
 
-    let promoted = PromotionStore::new(&options.session_state_dir).load()?;
+    let promoted = PromotionStore::new(&options.promotion_state_dir).load()?;
     let built_at = OffsetDateTime::now_utc();
     let mut groups = Vec::new();
     groups.extend(build::tool_groups(
@@ -96,11 +96,11 @@ pub fn build_file_backed_catalog_with_skills(
     };
 
     let mut written_files = write_catalog(&catalog, &options.catalog_root)?;
-    written_files.push(PromotionStore::new(&options.session_state_dir).ensure()?);
+    written_files.push(PromotionStore::new(&options.promotion_state_dir).ensure()?);
     Ok(DiscoveryCatalogBuildResult {
         catalog,
         catalog_root: options.catalog_root.clone(),
-        session_state_dir: options.session_state_dir.clone(),
+        promotion_state_dir: options.promotion_state_dir.clone(),
         written_files,
     })
 }

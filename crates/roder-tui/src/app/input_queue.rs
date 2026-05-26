@@ -1,4 +1,4 @@
-use roder_api::conversation::InputImage;
+use roder_api::transcript::InputImage;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(super) struct PendingPrompt {

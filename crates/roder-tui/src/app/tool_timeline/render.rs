@@ -138,12 +138,12 @@ impl TimelineItem {
                     .map(|tokens| format!("  thinking {}", format_compact_count(u64::from(tokens))))
                     .unwrap_or_default();
                 let text = format!(
-                    "  Turn completed in {}.  ↑ {}  ↓ {}{}  session {} tokens",
+                    "  Turn completed in {}.  ↑ {}  ↓ {}{}  thread {} tokens",
                     format_duration(summary.elapsed),
                     format_compact_count(u64::from(summary.input_tokens)),
                     format_compact_count(u64::from(summary.output_tokens)),
                     reasoning,
-                    format_compact_count(summary.session_tokens),
+                    format_compact_count(summary.thread_tokens),
                 );
                 lines.push(Line::from(Span::styled(
                     pad_to_width(&text, width),
