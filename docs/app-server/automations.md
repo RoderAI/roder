@@ -15,7 +15,7 @@ should own scheduled execution:
 roder app-server --enable-automations --automation-server-id desktop-main --automation-server-role desktop
 ```
 
-Desktop clients may opt into scheduler ownership. Ordinary TUI-local
+App clients may opt into scheduler ownership. Ordinary TUI-local
 app-server instances should remain scheduler-disabled unless the user explicitly
 requests local scheduled execution. A disabled scheduler can still answer
 `automations/status`, `automations/list`, and `automations/runs` when
@@ -347,7 +347,7 @@ Expired leases can be recovered by a later scheduler tick, so a client should
 use run state and lease counters rather than assuming a process crash loses
 scheduled work.
 
-Automation workers create normal Roder sessions and turns. If a run asks for
+Automation workers create normal Roder threads and turns. If a run asks for
 approval or user input, the worker interrupts the turn and records a failed run
 with `error: "automation run blocked waiting for interactive input"`.
 

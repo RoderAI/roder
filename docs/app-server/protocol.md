@@ -1,22 +1,22 @@
 # Roder App-Server Protocol
 
-Roder's desktop-facing app-server contract uses desktop thread, turn, item,
-model, filesystem, and command method names. This is the canonical app-server
-surface for desktop, TUI, CLI, and sibling clients.
+Roder's app-server contract uses protocol thread, turn, item, model,
+filesystem, and command method names. This is the canonical app-server surface
+for app, TUI, CLI, SDK, and sibling clients.
 
-## Required Desktop Methods
+## Required Client Methods
 
-| Method | Desktop caller | Roder backing behavior | Notes |
+| Method | Client caller | Roder backing behavior | Notes |
 | --- | --- | --- | --- |
 | `initialize` | startup handshake | Return app-server status, capabilities, cwd, active model, and provider metadata. | Startup entrypoint. |
-| `thread/start` | new chat | Create a Roder thread/session with `model`, optional `modelProvider`, `cwd`, and `ephemeral`. | Returns a desktop `Thread`. |
-| `thread/list` | sidebar bootstrap/refresh | List persisted Roder sessions as stable desktop `Thread` objects. | Pagination cursors are reserved. |
+| `thread/start` | new chat | Create a Roder thread with `model`, optional `modelProvider`, `cwd`, and `ephemeral`. | Returns a protocol `Thread`. |
+| `thread/list` | sidebar bootstrap/refresh | List persisted Roder threads as stable protocol `Thread` objects. | Pagination cursors are reserved. |
 | `thread/read` | thread switch | Read a persisted thread by `threadId`; include turns/items when `includeTurns` is true. | Returns `thread: null` when not found. |
-| `thread/archive` | archive/delete thread action | Archive a persisted session and remove desktop in-memory state for that thread. | `thread/list` no longer returns archived threads. |
-| `turn/start` | send prompt | Start a Roder turn on `threadId`, or queue same-turn steering when a turn is already active. Accepts desktop `input` text blocks and temporary `prompt` fallback. | Emits turn and item notifications for new turns; active-turn steering continues the existing turn. |
+| `thread/archive` | archive/delete thread action | Archive a persisted thread and remove in-memory protocol state for that thread. | `thread/list` no longer returns archived threads. |
+| `turn/start` | send prompt | Start a Roder turn on `threadId`, or queue same-turn steering when a turn is already active. Accepts protocol `input` text blocks and temporary `prompt` fallback. | Emits turn and item notifications for new turns; active-turn steering continues the existing turn. |
 | `turn/steer` | steer active turn | Send additional user input to the active turn, enforcing `expectedTurnId` when provided. | Requires an active turn. |
 | `turn/interrupt` | stop button | Interrupt the active turn for a thread; `turnId` is optional when there is a single active turn. | Uses the runtime interrupt path. |
-| `model/list` | model picker | Return visible model descriptors with `id`, `name`, `modelProvider`, reasoning efforts, and default flags. | Desktop model-picker data. |
+| `model/list` | model picker | Return visible model descriptors with `id`, `name`, `modelProvider`, reasoning efforts, and default flags. | Protocol model-picker data. |
 | `fs/readFile` | file preview | Read an absolute host path and return base64 bytes as `dataBase64`. | Read-only filesystem method. |
 | `fs/readDirectory` | file browser | List direct children of an absolute host directory with `fileName`, `isDirectory`, and `isFile`. | Read-only filesystem method. |
 | `command/exec` | one-off command runner | Run an argv vector with optional absolute `cwd`, env overrides, timeout, output cap, and optional `command/exec/outputDelta` streaming. | PTY, streaming stdin, resize, write, and terminate are deferred. |
@@ -26,10 +26,10 @@ surface for desktop, TUI, CLI, and sibling clients.
 | `index/status`, `index/rebuild`, `index/search`, `index/readChunk`, `index/proofs/list` | semantic code-index inspector | Build/query proof-verified code chunks and read chunk source only with `includeSource: true`. | Emits `index/statusChanged` after rebuild. |
 | `retrieval/recommendations`, `retrieval/metrics`, `retrieval/promoted` | retrieval diagnostics | Inspect route recommendations, outcomes, and promoted capability state for a turn. | Diagnostic surface derived from runtime retrieval events. |
 | `eval/reports/list`, `eval/report/read` | eval report viewer | List and read bounded markdown reports from `<workspace>/evals/reports`. | Report ids must come from the list response. |
-| `team/start` | start an agent team | Create a lead thread plus long-lived teammate threads with `displayMode` `auto`, `in_process`, `tmux`, or `iterm2`. | Team control-plane methods use desktop singular method names. |
+| `team/start` | start an agent team | Create a lead thread plus long-lived teammate threads with `displayMode` `auto`, `in_process`, `tmux`, or `iterm2`. | Team control-plane methods use singular protocol method names. |
 | `team/list` | team sidebar/bootstrap | List active or persisted teams as `TeamDescriptor` objects. | Supports optional `limit`; pagination cursors are reserved. |
 | `team/read` | attach/split-pane bootstrap | Read a team plus persisted mailbox messages by `teamId`. | Used by `roder team attach --team ... --member ...`. |
-| `team/member/start` | add teammate | Add a new long-lived teammate session to an existing team. | Returns the new `member` descriptor. |
+| `team/member/start` | add teammate | Add a new long-lived teammate thread to an existing team. | Returns the new `member` descriptor. |
 | `team/member/message` | direct message | Start or steer the selected teammate's active turn and persist the mailbox message. | Does not inject hidden text into the lead transcript. |
 | `team/member/interrupt` | stop focused teammate | Interrupt only the selected teammate's active turn. | `turnId` is accepted for client bookkeeping; the team member id is authoritative. |
 | `team/member/focus` | headless focus acknowledgement | Validate that a member exists and echo the focused member id. | Split-pane focus is TUI-local; headless pane methods return a precise unsupported error. |
@@ -40,23 +40,23 @@ surface for desktop, TUI, CLI, and sibling clients.
 | `automations/runs` | automation history | Read run history, including failed and skipped missed runs. | Use `state` filtering for failed, running, or skipped views. |
 | `automations/cancelRun` | stop automation run | Cancel a queued or running automation run. | Cancellation is run-id scoped. |
 
-## Required Desktop Notifications
+## Required Client Notifications
 
-| Notification | Desktop reducer expectation | Roder source |
+| Notification | Client reducer expectation | Roder source |
 | --- | --- | --- |
-| `thread/started` | `params.thread` is a desktop `Thread`; it becomes active and is inserted into the sidebar. | Session creation. |
+| `thread/started` | `params.thread` is a protocol `Thread`; it becomes active and is inserted into the thread list. | Thread creation. |
 | `turn/started` | `params.threadId` and `params.turn.id`; busy state becomes true. | Runtime turn start. |
 | `item/started` | `params.item` with `type: "agentMessage"` or `tool.*`; creates in-progress visible rows. | Runtime assistant/tool start events. |
 | `item/agentMessage/delta` | `threadId`, `turnId`, `itemId`, `delta`, optional `phase`; appends assistant text. | Inference text/commentary/reasoning deltas. |
-| `item/completed` | `params.item` converts to one or more completed conversation messages. | Runtime assistant/tool completion. |
+| `item/completed` | `params.item` converts to one or more completed transcript items. | Runtime assistant/tool completion. |
 | `turn/completed` | `params.turn.id`; busy state clears when it matches the active turn. | Runtime turn completion. |
 | `thread/status/changed` | `threadId`, `status`; sidebar status updates. `activeFlags` marks wait states such as `approvalRequired`, `userInputRequired`, and `planExitRequired`. | Runtime active/idle/wait state changes. |
-| `session/approvalRequested` | `approvalId`, `toolId`, `toolName`, `threadId`, and `turnId`; clients should prompt and answer with `session/resolve_approval`. | Runtime tool policy approval request. |
-| `session/approvalResolved` | `approvalId`, `approved`, `threadId`, and `turnId`; clients clear the approval prompt. | Runtime tool policy approval resolution. |
-| `session/userInputRequested` | `requestId`, `questions`, `threadId`, and `turnId`; clients should prompt and answer with `session/resolve_user_input`. | Runtime `request_user_input` tool request. |
-| `session/userInputResolved` | `requestId`, `answers`, `threadId`, and `turnId`; clients clear the input prompt. | Runtime user-input resolution. |
-| `session/planExitRequested` | `requestId`, `targetMode`, optional `planSummary`, `threadId`, and `turnId`; clients should prompt and answer with `session/exit_plan`. | Runtime plan-mode exit request. |
-| `session/planExitResolved` | `requestId`, `approved`, `targetMode`, `resolvedMode`, `threadId`, and `turnId`; clients clear the plan-exit prompt. | Runtime plan-mode exit resolution. |
+| `thread/approvalRequested` | `approvalId`, `toolId`, `toolName`, `threadId`, and `turnId`; clients should prompt and answer with `thread/resolve_approval`. | Runtime tool policy approval request. |
+| `thread/approvalResolved` | `approvalId`, `approved`, `threadId`, and `turnId`; clients clear the approval prompt. | Runtime tool policy approval resolution. |
+| `thread/userInputRequested` | `requestId`, `questions`, `threadId`, and `turnId`; clients should prompt and answer with `thread/resolve_user_input`. | Runtime `request_user_input` tool request. |
+| `thread/userInputResolved` | `requestId`, `answers`, `threadId`, and `turnId`; clients clear the input prompt. | Runtime user-input resolution. |
+| `thread/planExitRequested` | `requestId`, `targetMode`, optional `planSummary`, `threadId`, and `turnId`; clients should prompt and answer with `thread/exit_plan`. | Runtime plan-mode exit request. |
+| `thread/planExitResolved` | `requestId`, `approved`, `targetMode`, `resolvedMode`, `threadId`, and `turnId`; clients clear the plan-exit prompt. | Runtime plan-mode exit resolution. |
 | `command/exec/outputDelta` | `processId`, `stream`, `deltaBase64`, and `capReached`; appends streamed command output. | `command/exec` with `streamStdoutStderr: true`. |
 | `process.started`, `process.output`, `process.exited`, `process.stopping`, `process.stopped`, `process.failed` | Process descriptor/output payloads; refresh process monitor rows and output tails. | Roder process registry. |
 | `skills/catalogLoaded`, `skills/configApplied`, `skills/activationResolved`, `skills/indexRendered`, `skills/invoked`, `skills/autoActivated`, `skills/skipped` | Update skills manager or diagnostics panels. | Runtime skills registry and injection paths. |
@@ -75,7 +75,7 @@ surface for desktop, TUI, CLI, and sibling clients.
 | `automations/runSkipped` | `run` plus `reason`; show missed or suppressed work. | Scheduler missed-run/catch-up handling. |
 | `automations/needsInput` | `run` plus `error`; prompt that automation could not proceed unattended. | Automation worker approval or user-input wait. |
 
-Automation clients should treat scheduler state as process-local. Desktop may
+Automation clients should treat scheduler state as process-local. App clients may
 launch an app-server with scheduler enablement; a TUI-local app-server should
 only read and manage automations unless explicitly launched with scheduler
 flags. See `docs/app-server/automations.md` for method payloads, missed-run
@@ -85,7 +85,7 @@ behavior, and lease recovery.
 
 The current method manifest is checked in at
 `schemas/app-server/roder-app-server.v1.json`, and
-`schemas/app-server/methods.schema.json` describes the manifest shape. Desktop
+`schemas/app-server/methods.schema.json` describes the manifest shape. App
 and sibling clients that generate low-level method helpers should use those
 files rather than scraping `docs/app-server/api.md`.
 

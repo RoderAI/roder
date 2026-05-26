@@ -18,7 +18,7 @@ use roder_api::remote_runner::RunnerDestination;
 use roder_api::tui_status::{PaletteSourceDescriptor, built_in_status_segments};
 use roder_ext_anthropic::AnthropicExtension;
 use roder_ext_gemini::GeminiExtension;
-use roder_ext_jsonl_session::JsonlSessionExtension;
+use roder_ext_jsonl_thread_store::JsonlThreadStoreExtension;
 use roder_ext_memory::MemoryExtension;
 use roder_ext_openai_embeddings::OpenAiEmbeddingsExtension;
 use roder_ext_openai_responses::{OpenAiResponsesEngine, OpenAiResponsesExtension};
@@ -62,7 +62,7 @@ pub struct DefaultRegistryConfig {
     pub poolside_api_key: Option<String>,
     pub poolside_base_url: Option<String>,
     pub custom_inference_providers: Vec<CustomInferenceProviderConfig>,
-    pub session_dir: Option<PathBuf>,
+    pub thread_dir: Option<PathBuf>,
     pub workspace: Option<PathBuf>,
     pub tool_path_scope: roder_tools::ToolPathScope,
     pub command_shell: String,
@@ -90,7 +90,7 @@ impl Default for DefaultRegistryConfig {
             poolside_api_key: None,
             poolside_base_url: None,
             custom_inference_providers: Vec::new(),
-            session_dir: None,
+            thread_dir: None,
             workspace: None,
             tool_path_scope: roder_tools::ToolPathScope::default(),
             command_shell: roder_api::command_shell::default_command_shell(),
@@ -219,10 +219,10 @@ pub fn build_default_registry(config: DefaultRegistryConfig) -> anyhow::Result<E
 
     let roder_home = roder_home_dir()?;
     context::install_code_index_context_provider(&mut builder, &workspace, &roder_home)?;
-    let session_dir = config
-        .session_dir
-        .unwrap_or_else(|| roder_home.join("sessions"));
-    builder.install(JsonlSessionExtension::new(session_dir))?;
+    let thread_dir = config
+        .thread_dir
+        .unwrap_or_else(|| roder_home.join("threads"));
+    builder.install(JsonlThreadStoreExtension::new(thread_dir))?;
     builder.install(MemoryExtension::new(roder_home.join("memory")))?;
     builder.install(OpenAiEmbeddingsExtension::from_env())?;
 
@@ -362,7 +362,7 @@ fn built_in_tui_services() -> Vec<ProvidedService> {
 fn built_in_palette_sources() -> Vec<PaletteSourceDescriptor> {
     [
         ("commands", "Commands", 100),
-        ("sessions", "Sessions", 90),
+        ("threads", "Threads", 90),
         ("agents", "Agents", 80),
         ("models", "Models", 70),
         ("modes", "Modes", 60),
@@ -647,7 +647,7 @@ mod tests {
             poolside_api_key: Some("poolside".to_string()),
             poolside_base_url: None,
             custom_inference_providers: Vec::new(),
-            session_dir: None,
+            thread_dir: None,
             workspace: None,
             tool_path_scope: roder_tools::ToolPathScope::default(),
             command_shell: "bash".to_string(),
@@ -752,13 +752,13 @@ mod tests {
             .map(|source| source.id.as_str())
             .collect::<Vec<_>>();
 
-        for expected in ["mode", "model", "session", "branch", "usage", "mcp"] {
+        for expected in ["mode", "model", "thread", "branch", "usage", "mcp"] {
             assert!(
                 status_ids.contains(&expected),
                 "missing status segment {expected}: {status_ids:?}"
             );
         }
-        for expected in ["commands", "sessions", "agents", "models", "modes"] {
+        for expected in ["commands", "threads", "agents", "models", "modes"] {
             assert!(
                 palette_ids.contains(&expected),
                 "missing palette source {expected}: {palette_ids:?}"

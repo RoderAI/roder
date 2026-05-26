@@ -40,11 +40,11 @@ fn discovery_tools_advertise_retrieval_metadata() {
 async fn discovery_tools_list_search_read_and_record_promotion() {
     let _guard = ENV_LOCK.lock().unwrap();
     let root = temp_dir("tools");
-    let session = temp_dir("session");
+    let state = temp_dir("state");
     write_fixture_catalog(&root);
     unsafe {
         std::env::set_var("RODER_DISCOVERY_CATALOG_DIR", &root);
-        std::env::set_var("RODER_DISCOVERY_SESSION_DIR", &session);
+        std::env::set_var("RODER_DISCOVERY_STATE_DIR", &state);
     }
 
     let mut registry = ToolRegistry::default();
@@ -68,11 +68,11 @@ async fn discovery_tools_list_search_read_and_record_promotion() {
     )
     .await;
     assert!(read.text.contains("\"query\""));
-    assert!(session.join("discovery/promotions.json").exists());
+    assert!(state.join("discovery/promotions.json").exists());
 
     unsafe {
         std::env::remove_var("RODER_DISCOVERY_CATALOG_DIR");
-        std::env::remove_var("RODER_DISCOVERY_SESSION_DIR");
+        std::env::remove_var("RODER_DISCOVERY_STATE_DIR");
     }
 }
 

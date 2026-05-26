@@ -4,7 +4,7 @@ Roder API transcripts are JSONL files that capture the public app-server boundar
 
 ## Recording
 
-Record a normal TUI session:
+Record a normal TUI run:
 
 ```sh
 roder --record-api-transcript .roder/transcripts/bug.jsonl

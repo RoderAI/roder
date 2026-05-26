@@ -320,12 +320,12 @@ fn now_unix_secs() -> u64 {
 mod tests {
     use super::*;
     use futures::StreamExt;
-    use roder_api::conversation::{ConversationItem, UserMessage};
     use roder_api::inference::{
         InferenceEvent, InstructionBundle, ModelSelection, OutputConfig, ReasoningConfig,
         RuntimeHints,
     };
     use roder_api::tools::{ToolChoice, ToolSpec};
+    use roder_api::transcript::{TranscriptItem, UserMessage};
     use serde_json::{Value, json};
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     use tokio::net::TcpListener;
@@ -365,7 +365,7 @@ mod tests {
                 model: "poolside/laguna-m.1".to_string(),
             },
             instructions: InstructionBundle::default(),
-            conversation: vec![ConversationItem::UserMessage(UserMessage::text("hi"))],
+            transcript: vec![TranscriptItem::UserMessage(UserMessage::text("hi"))],
             tools: vec![ToolSpec {
                 name: "exec_command".to_string(),
                 description: "Run a command".to_string(),
@@ -456,7 +456,7 @@ mod tests {
                 model: "poolside/laguna-m.1".to_string(),
             },
             instructions: InstructionBundle::default(),
-            conversation: vec![ConversationItem::UserMessage(UserMessage::text("hi"))],
+            transcript: vec![TranscriptItem::UserMessage(UserMessage::text("hi"))],
             tools: Vec::new(),
             tool_choice: ToolChoice::Auto,
             reasoning: ReasoningConfig {

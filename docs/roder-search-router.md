@@ -18,7 +18,7 @@ All methods accept:
 - `retrieval/metrics` returns measured outcomes, route accepted/ignored/failed counts, outcome counts, mode counts, and a short debugging summary.
 - `retrieval/promoted` returns discovery promotion, warm-cache, expiration, and skipped-promotion state for the turn.
 
-The methods read persisted session events. If a thread has no session store, or the turn predates retrieval event emission, the result can be empty even when the model searched manually.
+The methods read persisted thread events. If a thread has no thread store, or the turn predates retrieval event emission, the result can be empty even when the model searched manually.
 
 ## Reading Router Misses
 

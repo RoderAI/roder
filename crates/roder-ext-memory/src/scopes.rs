@@ -7,7 +7,7 @@ pub fn descriptor(scope: MemoryScope) -> MemoryScopeDescriptor {
         MemoryScope::User(user) => format!("User memory: {user}"),
         MemoryScope::Workspace(workspace) => format!("Workspace memory: {workspace}"),
         MemoryScope::Project(project) => format!("Project memory: {project}"),
-        MemoryScope::Session(session) => format!("Session memory: {session}"),
+        MemoryScope::Thread(thread) => format!("Thread memory: {thread}"),
     };
     MemoryScopeDescriptor { id, scope, label }
 }

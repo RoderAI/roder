@@ -9,7 +9,7 @@ use roder_api::goals::{
     ThreadGoalUpdated, validate_thread_goal_budget, validate_thread_goal_objective,
 };
 use roder_api::inference::InstructionBundle;
-use roder_api::session::SessionStore;
+use roder_api::thread::ThreadStore;
 use time::{Duration, OffsetDateTime};
 use tokio::sync::Mutex;
 
@@ -26,20 +26,20 @@ struct GoalCache {
 #[derive(Clone)]
 pub struct RuntimeGoalController {
     bus: EventBus,
-    session_store: Option<Arc<dyn SessionStore>>,
-    session_root: Option<PathBuf>,
+    thread_store: Option<Arc<dyn ThreadStore>>,
+    thread_root: Option<PathBuf>,
     cache: Arc<Mutex<GoalCache>>,
 }
 
 impl RuntimeGoalController {
-    pub fn new(bus: EventBus, session_store: Option<Arc<dyn SessionStore>>) -> Self {
-        let session_root = session_store
+    pub fn new(bus: EventBus, thread_store: Option<Arc<dyn ThreadStore>>) -> Self {
+        let thread_root = thread_store
             .as_ref()
-            .and_then(|store| store.local_session_root());
+            .and_then(|store| store.local_thread_root());
         Self {
             bus,
-            session_store,
-            session_root,
+            thread_store,
+            thread_root,
             cache: Arc::new(Mutex::new(GoalCache::default())),
         }
     }
@@ -155,7 +155,7 @@ impl RuntimeGoalController {
     }
 
     fn goal_path(&self, thread_id: &ThreadId) -> Option<PathBuf> {
-        self.session_root
+        self.thread_root
             .as_ref()
             .map(|root| root.join(thread_id).join(GOAL_STATE_FILE))
     }
@@ -179,7 +179,7 @@ impl RuntimeGoalController {
 
     async fn emit_goal_event(&self, event: RoderEvent) {
         let envelope = self.bus.emit(event);
-        if let (Some(store), Some(thread_id)) = (&self.session_store, envelope.thread_id.as_ref()) {
+        if let (Some(store), Some(thread_id)) = (&self.thread_store, envelope.thread_id.as_ref()) {
             let _ = store.append_event(thread_id, &envelope).await;
         }
     }

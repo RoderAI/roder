@@ -1,12 +1,12 @@
 use std::collections::{BTreeMap, HashMap, HashSet};
 
 use futures::StreamExt;
-use roder_api::conversation::ConversationItem;
 use roder_api::inference::{
     AgentInferenceRequest, CompletionMetadata, InferenceEvent, InferenceEventStream, MessageDelta,
     ReasoningDelta, TokenUsage, ToolCallCompleted,
 };
 use roder_api::tools::ToolChoice;
+use roder_api::transcript::TranscriptItem;
 use serde_json::{Value, json};
 
 pub async fn stream_chat_completions(
@@ -166,17 +166,17 @@ fn chat_messages(request: &AgentInferenceRequest, tool_name_map: &ChatToolNameMa
     if let Some(developer) = &request.instructions.developer {
         messages.push(json!({ "role": "system", "content": developer }));
     }
-    for item in &request.conversation {
+    for item in &request.transcript {
         match item {
-            ConversationItem::UserMessage(message) => {
+            TranscriptItem::UserMessage(message) => {
                 messages.push(json!({ "role": "user", "content": message.text }));
             }
-            ConversationItem::AssistantMessage(message) => {
+            TranscriptItem::AssistantMessage(message) => {
                 if !message.text.is_empty() {
                     messages.push(json!({ "role": "assistant", "content": message.text }));
                 }
             }
-            ConversationItem::ToolCall(call) => {
+            TranscriptItem::ToolCall(call) => {
                 messages.push(json!({
                     "role": "assistant",
                     "content": null,
@@ -190,22 +190,22 @@ fn chat_messages(request: &AgentInferenceRequest, tool_name_map: &ChatToolNameMa
                     }],
                 }));
             }
-            ConversationItem::ToolResult(result) => {
+            TranscriptItem::ToolResult(result) => {
                 messages.push(json!({
                     "role": "tool",
                     "tool_call_id": result.id,
                     "content": result.result,
                 }));
             }
-            ConversationItem::ContextCompaction(compaction) => {
+            TranscriptItem::ContextCompaction(compaction) => {
                 messages.push(json!({ "role": "system", "content": compaction.summary }));
             }
-            ConversationItem::ReasoningSummary(summary) => {
+            TranscriptItem::ReasoningSummary(summary) => {
                 messages.push(json!({ "role": "assistant", "content": summary.text }));
             }
-            ConversationItem::FileChange(_)
-            | ConversationItem::Error(_)
-            | ConversationItem::ProviderMetadata(_) => {}
+            TranscriptItem::FileChange(_)
+            | TranscriptItem::Error(_)
+            | TranscriptItem::ProviderMetadata(_) => {}
         }
     }
     messages
@@ -442,19 +442,17 @@ fn estimate_prompt_tokens(request: &AgentInferenceRequest, tools: &[Value]) -> u
             .as_deref()
             .unwrap_or_default()
             .len();
-    for item in &request.conversation {
+    for item in &request.transcript {
         chars = chars.saturating_add(match item {
-            ConversationItem::UserMessage(message) => message.text.len(),
-            ConversationItem::AssistantMessage(message) => message.text.len(),
-            ConversationItem::ToolCall(call) => {
-                call.name.len().saturating_add(call.arguments.len())
-            }
-            ConversationItem::ToolResult(result) => result.result.len(),
-            ConversationItem::ContextCompaction(compaction) => compaction.summary.len(),
-            ConversationItem::ReasoningSummary(summary) => summary.text.len(),
-            ConversationItem::FileChange(_)
-            | ConversationItem::Error(_)
-            | ConversationItem::ProviderMetadata(_) => 0,
+            TranscriptItem::UserMessage(message) => message.text.len(),
+            TranscriptItem::AssistantMessage(message) => message.text.len(),
+            TranscriptItem::ToolCall(call) => call.name.len().saturating_add(call.arguments.len()),
+            TranscriptItem::ToolResult(result) => result.result.len(),
+            TranscriptItem::ContextCompaction(compaction) => compaction.summary.len(),
+            TranscriptItem::ReasoningSummary(summary) => summary.text.len(),
+            TranscriptItem::FileChange(_)
+            | TranscriptItem::Error(_)
+            | TranscriptItem::ProviderMetadata(_) => 0,
         });
     }
     chars = chars.saturating_add(

@@ -2,37 +2,37 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use anyhow::Context;
-use roder_api::conversation::{ConversationItem, TurnItem};
 use roder_api::events::{EventEnvelope, RoderEvent, ThreadId, TurnId};
 use roder_api::extension_state::ExtensionStateRecord;
-use roder_api::session::{
-    SessionMetadata, SessionStore, SessionStoreFactory, ThreadSnapshot, TurnRecord,
+use roder_api::thread::{
+    ThreadMetadata, ThreadSnapshot, ThreadStore, ThreadStoreFactory, TurnRecord,
 };
+use roder_api::transcript::TranscriptItem;
 use time::OffsetDateTime;
 use tokio::fs::{self, OpenOptions};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 
-pub struct JsonlSessionStore {
+pub struct JsonlThreadStore {
     pub base_path: PathBuf,
 }
 
-impl JsonlSessionStore {
-    fn session_dir(&self, thread_id: &ThreadId) -> PathBuf {
+impl JsonlThreadStore {
+    fn thread_dir(&self, thread_id: &ThreadId) -> PathBuf {
         self.base_path.join(thread_id)
     }
 
-    fn archived_session_dir(&self, thread_id: &ThreadId) -> PathBuf {
-        archived_sessions_root(&self.base_path).join(thread_id)
+    fn archived_thread_dir(&self, thread_id: &ThreadId) -> PathBuf {
+        archived_threads_root(&self.base_path).join(thread_id)
     }
 
     async fn read_turns(&self, thread_id: &ThreadId) -> anyhow::Result<Vec<TurnRecord>> {
-        let file_path = self.session_dir(thread_id).join("turn_items.jsonl");
+        let file_path = self.thread_dir(thread_id).join("transcript_items.jsonl");
         if !file_path.exists() {
             return Ok(Vec::new());
         }
         let file = fs::File::open(&file_path)
             .await
-            .with_context(|| format!("open turn item log {}", file_path.display()))?;
+            .with_context(|| format!("open transcript item log {}", file_path.display()))?;
         let reader = BufReader::new(file);
         let mut lines = reader.lines();
         let mut turns: Vec<TurnRecord> = Vec::new();
@@ -40,17 +40,18 @@ impl JsonlSessionStore {
         while let Some(line) = lines
             .next_line()
             .await
-            .with_context(|| format!("read turn item log {}", file_path.display()))?
+            .with_context(|| format!("read transcript item log {}", file_path.display()))?
         {
             line_number += 1;
             if line.trim().is_empty() {
                 continue;
             }
-            let stream = serde_json::Deserializer::from_str(&line).into_iter::<PersistedTurnItem>();
+            let stream =
+                serde_json::Deserializer::from_str(&line).into_iter::<PersistedTranscriptItem>();
             for persisted in stream {
                 let persisted = persisted.with_context(|| {
                     format!(
-                        "parse turn item record in {}:{}",
+                        "parse transcript item record in {}:{}",
                         file_path.display(),
                         line_number
                     )
@@ -76,78 +77,78 @@ impl JsonlSessionStore {
 }
 
 #[async_trait::async_trait]
-impl SessionStore for JsonlSessionStore {
-    fn id(&self) -> roder_api::session::SessionStoreId {
-        "jsonl".to_string()
+impl ThreadStore for JsonlThreadStore {
+    fn id(&self) -> roder_api::thread::ThreadStoreId {
+        "jsonl-thread-store".to_string()
     }
 
-    fn local_session_root(&self) -> Option<PathBuf> {
+    fn local_thread_root(&self) -> Option<PathBuf> {
         Some(self.base_path.clone())
     }
 
-    async fn create_session(&self, metadata: SessionMetadata) -> anyhow::Result<SessionMetadata> {
-        let dir = self.session_dir(&metadata.thread_id);
+    async fn create_thread(&self, metadata: ThreadMetadata) -> anyhow::Result<ThreadMetadata> {
+        let dir = self.thread_dir(&metadata.thread_id);
         fs::create_dir_all(&dir)
             .await
-            .with_context(|| format!("create session directory {}", dir.display()))?;
+            .with_context(|| format!("create thread directory {}", dir.display()))?;
         let metadata_path = dir.join("metadata.json");
         fs::write(
             &metadata_path,
-            serde_json::to_vec_pretty(&metadata).context("serialize session metadata")?,
+            serde_json::to_vec_pretty(&metadata).context("serialize thread metadata")?,
         )
         .await
-        .with_context(|| format!("write session metadata {}", metadata_path.display()))?;
+        .with_context(|| format!("write thread metadata {}", metadata_path.display()))?;
         Ok(metadata)
     }
 
-    async fn update_session_metadata(
+    async fn update_thread_metadata(
         &self,
-        metadata: SessionMetadata,
-    ) -> anyhow::Result<SessionMetadata> {
-        let dir = self.session_dir(&metadata.thread_id);
+        metadata: ThreadMetadata,
+    ) -> anyhow::Result<ThreadMetadata> {
+        let dir = self.thread_dir(&metadata.thread_id);
         fs::create_dir_all(&dir)
             .await
-            .with_context(|| format!("create session directory {}", dir.display()))?;
+            .with_context(|| format!("create thread directory {}", dir.display()))?;
         let metadata_path = dir.join("metadata.json");
         fs::write(
             &metadata_path,
-            serde_json::to_vec_pretty(&metadata).context("serialize session metadata")?,
+            serde_json::to_vec_pretty(&metadata).context("serialize thread metadata")?,
         )
         .await
-        .with_context(|| format!("write session metadata {}", metadata_path.display()))?;
+        .with_context(|| format!("write thread metadata {}", metadata_path.display()))?;
         Ok(metadata)
     }
 
-    async fn list_sessions(&self) -> anyhow::Result<Vec<SessionMetadata>> {
+    async fn list_threads(&self) -> anyhow::Result<Vec<ThreadMetadata>> {
         if !self.base_path.exists() {
             return Ok(Vec::new());
         }
         let mut entries = fs::read_dir(&self.base_path)
             .await
-            .with_context(|| format!("read session directory {}", self.base_path.display()))?;
-        let mut sessions = Vec::new();
+            .with_context(|| format!("read thread directory {}", self.base_path.display()))?;
+        let mut threads = Vec::new();
         while let Some(entry) = entries
             .next_entry()
             .await
-            .with_context(|| format!("read session entry under {}", self.base_path.display()))?
+            .with_context(|| format!("read thread entry under {}", self.base_path.display()))?
         {
             let file_type = entry.file_type().await.with_context(|| {
-                format!("read session entry type under {}", self.base_path.display())
+                format!("read thread entry type under {}", self.base_path.display())
             })?;
             if file_type.is_dir() {
                 let thread_id = entry.file_name().to_string_lossy().to_string();
                 let metadata = self
                     .load_or_infer_metadata(&entry.path(), &thread_id)
                     .await?;
-                sessions.push(metadata);
+                threads.push(metadata);
             }
         }
-        sessions.sort_by_key(|session| std::cmp::Reverse(session.updated_at));
-        Ok(sessions)
+        threads.sort_by_key(|thread| std::cmp::Reverse(thread.updated_at));
+        Ok(threads)
     }
 
-    async fn load_session(&self, thread_id: &ThreadId) -> anyhow::Result<Option<ThreadSnapshot>> {
-        let dir = self.session_dir(thread_id);
+    async fn load_thread(&self, thread_id: &ThreadId) -> anyhow::Result<Option<ThreadSnapshot>> {
+        let dir = self.thread_dir(thread_id);
         if !dir.exists() {
             return Ok(None);
         }
@@ -164,25 +165,25 @@ impl SessionStore for JsonlSessionStore {
         }))
     }
 
-    async fn archive_session(&self, thread_id: &ThreadId) -> anyhow::Result<bool> {
-        let source = self.session_dir(thread_id);
+    async fn archive_thread(&self, thread_id: &ThreadId) -> anyhow::Result<bool> {
+        let source = self.thread_dir(thread_id);
         if !source.exists() {
             return Ok(false);
         }
-        let archive_root = archived_sessions_root(&self.base_path);
+        let archive_root = archived_threads_root(&self.base_path);
         fs::create_dir_all(&archive_root).await.with_context(|| {
             format!(
-                "create archived sessions directory {}",
+                "create archived threads directory {}",
                 archive_root.display()
             )
         })?;
-        let destination = self.archived_session_dir(thread_id);
+        let destination = self.archived_thread_dir(thread_id);
         if destination.exists() {
-            anyhow::bail!("archived session already exists: {}", destination.display());
+            anyhow::bail!("archived thread already exists: {}", destination.display());
         }
         fs::rename(&source, &destination).await.with_context(|| {
             format!(
-                "archive session {} from {} to {}",
+                "archive thread {} from {} to {}",
                 thread_id,
                 source.display(),
                 destination.display()
@@ -196,10 +197,10 @@ impl SessionStore for JsonlSessionStore {
         thread_id: &ThreadId,
         envelope: &EventEnvelope,
     ) -> anyhow::Result<()> {
-        let dir = self.session_dir(thread_id);
+        let dir = self.thread_dir(thread_id);
         fs::create_dir_all(&dir)
             .await
-            .with_context(|| format!("create session directory {}", dir.display()))?;
+            .with_context(|| format!("create thread directory {}", dir.display()))?;
         let file_path = dir.join("events.jsonl");
         let mut file = OpenOptions::new()
             .create(true)
@@ -219,29 +220,30 @@ impl SessionStore for JsonlSessionStore {
         &self,
         thread_id: &ThreadId,
         turn_id: &TurnId,
-        item: &TurnItem,
+        item: &TranscriptItem,
     ) -> anyhow::Result<()> {
-        let dir = self.session_dir(thread_id);
+        let dir = self.thread_dir(thread_id);
         fs::create_dir_all(&dir)
             .await
-            .with_context(|| format!("create session directory {}", dir.display()))?;
-        let file_path = dir.join("turn_items.jsonl");
+            .with_context(|| format!("create thread directory {}", dir.display()))?;
+        let file_path = dir.join("transcript_items.jsonl");
         let mut file = OpenOptions::new()
             .create(true)
             .append(true)
             .open(&file_path)
             .await
-            .with_context(|| format!("open turn item log {}", file_path.display()))?;
-        let persisted = PersistedTurnItem {
+            .with_context(|| format!("open transcript item log {}", file_path.display()))?;
+        let persisted = PersistedTranscriptItem {
             turn_id: turn_id.clone(),
             timestamp: OffsetDateTime::now_utc(),
             item: item.clone(),
         };
-        let mut line = serde_json::to_vec(&persisted).context("serialize turn item record")?;
+        let mut line =
+            serde_json::to_vec(&persisted).context("serialize transcript item record")?;
         line.push(b'\n');
         file.write_all(&line)
             .await
-            .with_context(|| format!("append turn item record to {}", file_path.display()))?;
+            .with_context(|| format!("append transcript item record to {}", file_path.display()))?;
         self.update_metadata_for_turn_item(thread_id, item).await?;
         Ok(())
     }
@@ -251,10 +253,10 @@ impl SessionStore for JsonlSessionStore {
         thread_id: &ThreadId,
         record: &ExtensionStateRecord,
     ) -> anyhow::Result<()> {
-        let dir = self.session_dir(thread_id);
+        let dir = self.thread_dir(thread_id);
         fs::create_dir_all(&dir)
             .await
-            .with_context(|| format!("create session directory {}", dir.display()))?;
+            .with_context(|| format!("create thread directory {}", dir.display()))?;
         let file_path = dir.join("extension_state.jsonl");
         let mut file = OpenOptions::new()
             .create(true)
@@ -271,12 +273,12 @@ impl SessionStore for JsonlSessionStore {
     }
 }
 
-impl JsonlSessionStore {
+impl JsonlThreadStore {
     async fn load_extension_states(
         &self,
         thread_id: &ThreadId,
     ) -> anyhow::Result<Vec<ExtensionStateRecord>> {
-        let file_path = self.session_dir(thread_id).join("extension_state.jsonl");
+        let file_path = self.thread_dir(thread_id).join("extension_state.jsonl");
         if !file_path.exists() {
             return Ok(Vec::new());
         }
@@ -312,7 +314,7 @@ impl JsonlSessionStore {
     }
 
     async fn load_events(&self, thread_id: &ThreadId) -> anyhow::Result<Vec<EventEnvelope>> {
-        let file_path = self.session_dir(thread_id).join("events.jsonl");
+        let file_path = self.thread_dir(thread_id).join("events.jsonl");
         if !file_path.exists() {
             return Ok(Vec::new());
         }
@@ -349,26 +351,26 @@ impl JsonlSessionStore {
     async fn update_metadata_for_turn_item(
         &self,
         thread_id: &ThreadId,
-        item: &TurnItem,
+        item: &TranscriptItem,
     ) -> anyhow::Result<()> {
-        let metadata_path = self.session_dir(thread_id).join("metadata.json");
-        let session_dir = self.session_dir(thread_id);
+        let metadata_path = self.thread_dir(thread_id).join("metadata.json");
+        let thread_dir = self.thread_dir(thread_id);
         let (mut metadata, count_current_item) = if metadata_path.exists() {
             let data = fs::read(&metadata_path)
                 .await
-                .with_context(|| format!("read session metadata {}", metadata_path.display()))?;
+                .with_context(|| format!("read thread metadata {}", metadata_path.display()))?;
             match parse_metadata_tolerant(&data) {
                 Ok((metadata, _needs_repair)) => (self.with_derived_title(metadata).await?, true),
-                Err(_) => (self.infer_metadata(&session_dir, thread_id).await, false),
+                Err(_) => (self.infer_metadata(&thread_dir, thread_id).await, false),
             }
         } else {
-            (self.infer_metadata(&session_dir, thread_id).await, false)
+            (self.infer_metadata(&thread_dir, thread_id).await, false)
         };
         metadata.updated_at = OffsetDateTime::now_utc();
         if count_current_item
             && matches!(
                 item,
-                ConversationItem::UserMessage(_) | ConversationItem::AssistantMessage(_)
+                TranscriptItem::UserMessage(_) | TranscriptItem::AssistantMessage(_)
             )
         {
             metadata.message_count = metadata.message_count.saturating_add(1);
@@ -377,16 +379,16 @@ impl JsonlSessionStore {
             .title
             .as_ref()
             .is_none_or(|title| title.trim().is_empty())
-            && let ConversationItem::UserMessage(message) = item
+            && let TranscriptItem::UserMessage(message) = item
         {
             metadata.title = title_from_user_text(&message.text);
         }
         fs::write(
             &metadata_path,
-            serde_json::to_vec_pretty(&metadata).context("serialize session metadata")?,
+            serde_json::to_vec_pretty(&metadata).context("serialize thread metadata")?,
         )
         .await
-        .with_context(|| format!("write session metadata {}", metadata_path.display()))?;
+        .with_context(|| format!("write thread metadata {}", metadata_path.display()))?;
         Ok(())
     }
 
@@ -394,12 +396,12 @@ impl JsonlSessionStore {
         &self,
         dir: &Path,
         thread_id: &ThreadId,
-    ) -> anyhow::Result<SessionMetadata> {
+    ) -> anyhow::Result<ThreadMetadata> {
         let metadata_path = dir.join("metadata.json");
         if metadata_path.exists() {
             let data = fs::read(&metadata_path)
                 .await
-                .with_context(|| format!("read session metadata {}", metadata_path.display()))?;
+                .with_context(|| format!("read thread metadata {}", metadata_path.display()))?;
             match parse_metadata_tolerant(&data) {
                 Ok((metadata, needs_repair)) => {
                     let metadata = self.with_derived_title(metadata).await?;
@@ -421,7 +423,7 @@ impl JsonlSessionStore {
         Ok(metadata)
     }
 
-    async fn repair_metadata_file(&self, metadata_path: &Path, metadata: &SessionMetadata) {
+    async fn repair_metadata_file(&self, metadata_path: &Path, metadata: &ThreadMetadata) {
         let Ok(serialized) = serde_json::to_vec_pretty(metadata) else {
             return;
         };
@@ -434,7 +436,7 @@ impl JsonlSessionStore {
         let _ = fs::write(metadata_path, serialized).await;
     }
 
-    async fn infer_metadata(&self, dir: &Path, thread_id: &ThreadId) -> SessionMetadata {
+    async fn infer_metadata(&self, dir: &Path, thread_id: &ThreadId) -> ThreadMetadata {
         let mut title = None;
         let mut provider = None;
         let mut model = None;
@@ -450,16 +452,16 @@ impl JsonlSessionStore {
                 }
                 for item in turn.items {
                     match item {
-                        ConversationItem::UserMessage(message) => {
+                        TranscriptItem::UserMessage(message) => {
                             message_count = message_count.saturating_add(1);
                             if title.is_none() {
                                 title = title_from_user_text(&message.text);
                             }
                         }
-                        ConversationItem::AssistantMessage(_) => {
+                        TranscriptItem::AssistantMessage(_) => {
                             message_count = message_count.saturating_add(1);
                         }
-                        ConversationItem::ProviderMetadata(metadata) => {
+                        TranscriptItem::ProviderMetadata(metadata) => {
                             if provider.is_none() {
                                 provider = metadata_string_field(&metadata, "provider")
                                     .or_else(|| metadata_string_field(&metadata, "provider_id"));
@@ -487,7 +489,7 @@ impl JsonlSessionStore {
         }
 
         let fallback_time = OffsetDateTime::now_utc();
-        SessionMetadata {
+        ThreadMetadata {
             thread_id: thread_id.clone(),
             title,
             workspace: None,
@@ -503,8 +505,8 @@ impl JsonlSessionStore {
 
     async fn with_derived_title(
         &self,
-        mut metadata: SessionMetadata,
-    ) -> anyhow::Result<SessionMetadata> {
+        mut metadata: ThreadMetadata,
+    ) -> anyhow::Result<ThreadMetadata> {
         if metadata
             .title
             .as_ref()
@@ -517,7 +519,7 @@ impl JsonlSessionStore {
         };
         for turn in turns {
             for item in turn.items {
-                if let ConversationItem::UserMessage(message) = item
+                if let TranscriptItem::UserMessage(message) = item
                     && let Some(title) = title_from_user_text(&message.text)
                 {
                     metadata.title = Some(title);
@@ -529,8 +531,8 @@ impl JsonlSessionStore {
     }
 }
 
-fn parse_metadata_tolerant(data: &[u8]) -> serde_json::Result<(SessionMetadata, bool)> {
-    match serde_json::from_slice::<SessionMetadata>(data) {
+fn parse_metadata_tolerant(data: &[u8]) -> serde_json::Result<(ThreadMetadata, bool)> {
+    match serde_json::from_slice::<ThreadMetadata>(data) {
         Ok(metadata) => Ok((metadata, false)),
         Err(strict_err) => {
             let mut deserializer = serde_json::Deserializer::from_slice(data);
@@ -592,19 +594,19 @@ fn truncate_chars(value: &str, max: usize) -> String {
     out
 }
 
-fn archived_sessions_root(active_sessions_root: &Path) -> PathBuf {
-    active_sessions_root
+fn archived_threads_root(active_threads_root: &Path) -> PathBuf {
+    active_threads_root
         .parent()
-        .map(|parent| parent.join("archived_sessions"))
-        .unwrap_or_else(|| active_sessions_root.with_file_name("archived_sessions"))
+        .map(|parent| parent.join("archived_threads"))
+        .unwrap_or_else(|| active_threads_root.with_file_name("archived_threads"))
 }
 
 #[derive(serde::Serialize, serde::Deserialize)]
-struct PersistedTurnItem {
+struct PersistedTranscriptItem {
     turn_id: TurnId,
     #[serde(with = "time::serde::rfc3339")]
     timestamp: OffsetDateTime,
-    item: TurnItem,
+    item: TranscriptItem,
 }
 
 fn project_turn_completion(turns: &mut [TurnRecord], events: &[EventEnvelope]) {
@@ -621,17 +623,17 @@ fn project_turn_completion(turns: &mut [TurnRecord], events: &[EventEnvelope]) {
     }
 }
 
-pub struct JsonlSessionStoreFactory {
+pub struct JsonlThreadStoreFactory {
     pub base_path: PathBuf,
 }
 
-impl SessionStoreFactory for JsonlSessionStoreFactory {
-    fn id(&self) -> roder_api::session::SessionStoreId {
-        "jsonl".to_string()
+impl ThreadStoreFactory for JsonlThreadStoreFactory {
+    fn id(&self) -> roder_api::thread::ThreadStoreId {
+        "jsonl-thread-store".to_string()
     }
 
-    fn create(&self) -> Arc<dyn SessionStore> {
-        Arc::new(JsonlSessionStore {
+    fn create(&self) -> Arc<dyn ThreadStore> {
+        Arc::new(JsonlThreadStore {
             base_path: self.base_path.clone(),
         })
     }
@@ -640,18 +642,20 @@ impl SessionStoreFactory for JsonlSessionStoreFactory {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use roder_api::conversation::{AssistantMessage, ConversationItem, UserMessage};
     use roder_api::events::{EventSource, SubagentTraceCreated, TurnCompleted};
     use roder_api::trace::{
         ParentTurnRef, SubagentDestination, SubagentDestinationKind, SubagentTraceStatus,
         SubagentTraceSummary,
     };
+    use roder_api::transcript::{AssistantMessage, TranscriptItem, UserMessage};
 
     #[tokio::test]
-    async fn load_session_projects_turn_items_and_completion() {
-        let base_path =
-            std::env::temp_dir().join(format!("roder-jsonl-session-test-{}", uuid::Uuid::new_v4()));
-        let store = JsonlSessionStore {
+    async fn load_thread_projects_turn_items_and_completion() {
+        let base_path = std::env::temp_dir().join(format!(
+            "roder-jsonl-thread-store-test-{}",
+            uuid::Uuid::new_v4()
+        ));
+        let store = JsonlThreadStore {
             base_path: base_path.clone(),
         };
         let thread_id = "thread-a".to_string();
@@ -659,7 +663,7 @@ mod tests {
         let now = OffsetDateTime::UNIX_EPOCH;
 
         store
-            .create_session(SessionMetadata {
+            .create_thread(ThreadMetadata {
                 thread_id: thread_id.clone(),
                 title: Some("Resume me".to_string()),
                 workspace: Some("/workspace".to_string()),
@@ -677,7 +681,7 @@ mod tests {
             .append_turn_item(
                 &thread_id,
                 &turn_id,
-                &ConversationItem::UserMessage(UserMessage::text("hello")),
+                &TranscriptItem::UserMessage(UserMessage::text("hello")),
             )
             .await
             .unwrap();
@@ -685,7 +689,7 @@ mod tests {
             .append_turn_item(
                 &thread_id,
                 &turn_id,
-                &ConversationItem::AssistantMessage(AssistantMessage {
+                &TranscriptItem::AssistantMessage(AssistantMessage {
                     text: "world".to_string(),
                     phase: None,
                 }),
@@ -713,7 +717,7 @@ mod tests {
             .await
             .unwrap();
 
-        let snapshot = store.load_session(&thread_id).await.unwrap().unwrap();
+        let snapshot = store.load_thread(&thread_id).await.unwrap().unwrap();
 
         assert_eq!(
             snapshot.metadata.unwrap().title.as_deref(),
@@ -729,17 +733,17 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn archive_session_moves_session_out_of_active_list() {
+    async fn archive_thread_moves_thread_out_of_active_list() {
         let base_path =
             std::env::temp_dir().join(format!("roder-jsonl-archive-test-{}", uuid::Uuid::new_v4()));
-        let store = JsonlSessionStore {
+        let store = JsonlThreadStore {
             base_path: base_path.clone(),
         };
         let thread_id = "thread-archive".to_string();
         let now = OffsetDateTime::UNIX_EPOCH;
 
         store
-            .create_session(SessionMetadata {
+            .create_thread(ThreadMetadata {
                 thread_id: thread_id.clone(),
                 title: Some("Archive me".to_string()),
                 workspace: Some("/workspace".to_string()),
@@ -754,20 +758,20 @@ mod tests {
             .await
             .unwrap();
 
-        assert!(store.archive_session(&thread_id).await.unwrap());
-        assert!(store.list_sessions().await.unwrap().is_empty());
-        assert!(store.load_session(&thread_id).await.unwrap().is_none());
+        assert!(store.archive_thread(&thread_id).await.unwrap());
+        assert!(store.list_threads().await.unwrap().is_empty());
+        assert!(store.load_thread(&thread_id).await.unwrap().is_none());
         assert!(
             base_path
                 .parent()
                 .unwrap()
-                .join("archived_sessions")
+                .join("archived_threads")
                 .join(&thread_id)
                 .join("metadata.json")
                 .exists()
         );
 
-        let _ = fs::remove_dir_all(base_path.parent().unwrap().join("archived_sessions")).await;
+        let _ = fs::remove_dir_all(base_path.parent().unwrap().join("archived_threads")).await;
         let _ = fs::remove_dir_all(base_path).await;
     }
 
@@ -777,14 +781,14 @@ mod tests {
             "roder-jsonl-extension-state-{}",
             uuid::Uuid::new_v4()
         ));
-        let store = JsonlSessionStore {
+        let store = JsonlThreadStore {
             base_path: base_path.clone(),
         };
         let thread_id = "thread-state".to_string();
         let now = OffsetDateTime::UNIX_EPOCH;
 
         store
-            .create_session(SessionMetadata {
+            .create_thread(ThreadMetadata {
                 thread_id: thread_id.clone(),
                 title: None,
                 workspace: None,
@@ -814,7 +818,7 @@ mod tests {
             .await
             .unwrap();
 
-        let snapshot = store.load_session(&thread_id).await.unwrap().unwrap();
+        let snapshot = store.load_thread(&thread_id).await.unwrap().unwrap();
 
         assert_eq!(snapshot.extension_states.len(), 1);
         assert_eq!(snapshot.extension_states[0].extension_id, "demo");
@@ -829,7 +833,7 @@ mod tests {
             "roder-jsonl-subagent-trace-{}",
             uuid::Uuid::new_v4()
         ));
-        let store = JsonlSessionStore {
+        let store = JsonlThreadStore {
             base_path: base_path.clone(),
         };
         let thread_id = "parent-thread".to_string();
@@ -837,7 +841,7 @@ mod tests {
         let now = OffsetDateTime::UNIX_EPOCH;
 
         store
-            .create_session(SessionMetadata {
+            .create_thread(ThreadMetadata {
                 thread_id: thread_id.clone(),
                 title: Some("Trace me".to_string()),
                 workspace: None,
@@ -896,7 +900,7 @@ mod tests {
             .await
             .unwrap();
 
-        let snapshot = store.load_session(&thread_id).await.unwrap().unwrap();
+        let snapshot = store.load_thread(&thread_id).await.unwrap().unwrap();
 
         assert_eq!(snapshot.events.len(), 1);
         assert_eq!(
@@ -920,10 +924,12 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn load_session_preserves_provider_metadata_with_encrypted_reasoning() {
-        let base_path =
-            std::env::temp_dir().join(format!("roder-jsonl-session-test-{}", uuid::Uuid::new_v4()));
-        let store = JsonlSessionStore {
+    async fn load_thread_preserves_provider_metadata_with_encrypted_reasoning() {
+        let base_path = std::env::temp_dir().join(format!(
+            "roder-jsonl-thread-store-test-{}",
+            uuid::Uuid::new_v4()
+        ));
+        let store = JsonlThreadStore {
             base_path: base_path.clone(),
         };
         let thread_id = "thread-encrypted-reasoning".to_string();
@@ -940,7 +946,7 @@ mod tests {
         });
 
         store
-            .create_session(SessionMetadata {
+            .create_thread(ThreadMetadata {
                 thread_id: thread_id.clone(),
                 title: Some("Resume encrypted reasoning".to_string()),
                 workspace: None,
@@ -958,16 +964,16 @@ mod tests {
             .append_turn_item(
                 &thread_id,
                 &turn_id,
-                &ConversationItem::ProviderMetadata(metadata.clone()),
+                &TranscriptItem::ProviderMetadata(metadata.clone()),
             )
             .await
             .unwrap();
 
-        let snapshot = store.load_session(&thread_id).await.unwrap().unwrap();
+        let snapshot = store.load_thread(&thread_id).await.unwrap().unwrap();
 
         assert_eq!(
             snapshot.turns[0].items[0],
-            ConversationItem::ProviderMetadata(metadata)
+            TranscriptItem::ProviderMetadata(metadata)
         );
 
         let _ = fs::remove_dir_all(base_path).await;
@@ -979,7 +985,7 @@ mod tests {
             "roder-jsonl-metadata-test-{}",
             uuid::Uuid::new_v4()
         ));
-        let store = JsonlSessionStore {
+        let store = JsonlThreadStore {
             base_path: base_path.clone(),
         };
         let thread_id = "thread-metadata".to_string();
@@ -987,7 +993,7 @@ mod tests {
         let now = OffsetDateTime::UNIX_EPOCH;
 
         store
-            .create_session(SessionMetadata {
+            .create_thread(ThreadMetadata {
                 thread_id: thread_id.clone(),
                 title: Some("Metadata".to_string()),
                 workspace: None,
@@ -1005,7 +1011,7 @@ mod tests {
             .append_turn_item(
                 &thread_id,
                 &turn_id,
-                &ConversationItem::UserMessage(UserMessage::text("hello")),
+                &TranscriptItem::UserMessage(UserMessage::text("hello")),
             )
             .await
             .unwrap();
@@ -1013,7 +1019,7 @@ mod tests {
             .append_turn_item(
                 &thread_id,
                 &turn_id,
-                &ConversationItem::ProviderMetadata(serde_json::json!({"id": "resp_1"})),
+                &TranscriptItem::ProviderMetadata(serde_json::json!({"id": "resp_1"})),
             )
             .await
             .unwrap();
@@ -1021,7 +1027,7 @@ mod tests {
             .append_turn_item(
                 &thread_id,
                 &turn_id,
-                &ConversationItem::AssistantMessage(AssistantMessage {
+                &TranscriptItem::AssistantMessage(AssistantMessage {
                     text: "world".to_string(),
                     phase: None,
                 }),
@@ -1029,19 +1035,19 @@ mod tests {
             .await
             .unwrap();
 
-        let sessions = store.list_sessions().await.unwrap();
+        let threads = store.list_threads().await.unwrap();
 
-        assert_eq!(sessions[0].message_count, 2);
-        assert!(sessions[0].updated_at > now);
+        assert_eq!(threads[0].message_count, 2);
+        assert!(threads[0].updated_at > now);
 
         let _ = fs::remove_dir_all(base_path).await;
     }
 
     #[tokio::test]
-    async fn first_user_message_names_untitled_session() {
+    async fn first_user_message_names_untitled_thread() {
         let base_path =
             std::env::temp_dir().join(format!("roder-jsonl-title-test-{}", uuid::Uuid::new_v4()));
-        let store = JsonlSessionStore {
+        let store = JsonlThreadStore {
             base_path: base_path.clone(),
         };
         let thread_id = "thread-title".to_string();
@@ -1049,7 +1055,7 @@ mod tests {
         let now = OffsetDateTime::UNIX_EPOCH;
 
         store
-            .create_session(SessionMetadata {
+            .create_thread(ThreadMetadata {
                 thread_id: thread_id.clone(),
                 title: None,
                 workspace: Some("/workspace/gode".to_string()),
@@ -1067,35 +1073,35 @@ mod tests {
             .append_turn_item(
                 &thread_id,
                 &turn_id,
-                &ConversationItem::UserMessage(UserMessage::text(
-                    "please make resume sessions easier to find",
+                &TranscriptItem::UserMessage(UserMessage::text(
+                    "please make resume threads easier to find",
                 )),
             )
             .await
             .unwrap();
 
-        let sessions = store.list_sessions().await.unwrap();
-        let snapshot = store.load_session(&thread_id).await.unwrap().unwrap();
+        let threads = store.list_threads().await.unwrap();
+        let snapshot = store.load_thread(&thread_id).await.unwrap().unwrap();
 
         assert_eq!(
-            sessions[0].title.as_deref(),
-            Some("please make resume sessions easier to find")
+            threads[0].title.as_deref(),
+            Some("please make resume threads easier to find")
         );
         assert_eq!(
             snapshot.metadata.unwrap().title.as_deref(),
-            Some("please make resume sessions easier to find")
+            Some("please make resume threads easier to find")
         );
 
         let _ = fs::remove_dir_all(base_path).await;
     }
 
     #[tokio::test]
-    async fn list_sessions_recovers_malformed_metadata_from_turn_log() {
+    async fn list_threads_recovers_malformed_metadata_from_turn_log() {
         let base_path = std::env::temp_dir().join(format!(
             "roder-jsonl-recover-list-test-{}",
             uuid::Uuid::new_v4()
         ));
-        let store = JsonlSessionStore {
+        let store = JsonlThreadStore {
             base_path: base_path.clone(),
         };
         let thread_id = "thread-recover-list".to_string();
@@ -1103,7 +1109,7 @@ mod tests {
         let now = OffsetDateTime::UNIX_EPOCH;
 
         store
-            .create_session(SessionMetadata {
+            .create_thread(ThreadMetadata {
                 thread_id: thread_id.clone(),
                 title: Some("Will be corrupted".to_string()),
                 workspace: Some("/workspace".to_string()),
@@ -1121,7 +1127,7 @@ mod tests {
             .append_turn_item(
                 &thread_id,
                 &turn_id,
-                &ConversationItem::UserMessage(UserMessage::text("recover this session")),
+                &TranscriptItem::UserMessage(UserMessage::text("recover this thread")),
             )
             .await
             .unwrap();
@@ -1129,7 +1135,7 @@ mod tests {
             .append_turn_item(
                 &thread_id,
                 &turn_id,
-                &ConversationItem::AssistantMessage(AssistantMessage {
+                &TranscriptItem::AssistantMessage(AssistantMessage {
                     text: "continuing".to_string(),
                     phase: None,
                 }),
@@ -1137,35 +1143,35 @@ mod tests {
             .await
             .unwrap();
         fs::write(
-            store.session_dir(&thread_id).join("metadata.json"),
+            store.thread_dir(&thread_id).join("metadata.json"),
             "{broken",
         )
         .await
         .unwrap();
 
-        let sessions = store.list_sessions().await.unwrap();
+        let threads = store.list_threads().await.unwrap();
 
-        assert_eq!(sessions.len(), 1);
-        assert_eq!(sessions[0].thread_id, thread_id);
-        assert_eq!(sessions[0].title.as_deref(), Some("recover this session"));
-        assert_eq!(sessions[0].message_count, 2);
+        assert_eq!(threads.len(), 1);
+        assert_eq!(threads[0].thread_id, thread_id);
+        assert_eq!(threads[0].title.as_deref(), Some("recover this thread"));
+        assert_eq!(threads[0].message_count, 2);
 
-        let repaired = fs::read(store.session_dir(&thread_id).join("metadata.json"))
+        let repaired = fs::read(store.thread_dir(&thread_id).join("metadata.json"))
             .await
             .unwrap();
-        let repaired = serde_json::from_slice::<SessionMetadata>(&repaired).unwrap();
+        let repaired = serde_json::from_slice::<ThreadMetadata>(&repaired).unwrap();
         assert_eq!(repaired.thread_id, thread_id);
 
         let _ = fs::remove_dir_all(base_path).await;
     }
 
     #[tokio::test]
-    async fn load_session_recovers_malformed_metadata_and_continues() {
+    async fn load_thread_recovers_malformed_metadata_and_continues() {
         let base_path = std::env::temp_dir().join(format!(
             "roder-jsonl-recover-load-test-{}",
             uuid::Uuid::new_v4()
         ));
-        let store = JsonlSessionStore {
+        let store = JsonlThreadStore {
             base_path: base_path.clone(),
         };
         let thread_id = "thread-recover-load".to_string();
@@ -1173,7 +1179,7 @@ mod tests {
         let now = OffsetDateTime::UNIX_EPOCH;
 
         store
-            .create_session(SessionMetadata {
+            .create_thread(ThreadMetadata {
                 thread_id: thread_id.clone(),
                 title: None,
                 workspace: Some("/workspace".to_string()),
@@ -1191,18 +1197,18 @@ mod tests {
             .append_turn_item(
                 &thread_id,
                 &turn_id,
-                &ConversationItem::UserMessage(UserMessage::text("resume despite metadata")),
+                &TranscriptItem::UserMessage(UserMessage::text("resume despite metadata")),
             )
             .await
             .unwrap();
         fs::write(
-            store.session_dir(&thread_id).join("metadata.json"),
+            store.thread_dir(&thread_id).join("metadata.json"),
             "not json",
         )
         .await
         .unwrap();
 
-        let snapshot = store.load_session(&thread_id).await.unwrap().unwrap();
+        let snapshot = store.load_thread(&thread_id).await.unwrap().unwrap();
         let metadata = snapshot.metadata.unwrap();
 
         assert_eq!(metadata.thread_id, thread_id);
@@ -1213,18 +1219,18 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn load_session_accepts_valid_metadata_with_trailing_garbage_and_repairs_file() {
+    async fn load_thread_accepts_valid_metadata_with_trailing_garbage_and_repairs_file() {
         let base_path = std::env::temp_dir().join(format!(
             "roder-jsonl-trailing-metadata-test-{}",
             uuid::Uuid::new_v4()
         ));
-        let store = JsonlSessionStore {
+        let store = JsonlThreadStore {
             base_path: base_path.clone(),
         };
         let thread_id = "thread-trailing-metadata".to_string();
         let now = OffsetDateTime::UNIX_EPOCH;
 
-        let metadata = SessionMetadata {
+        let metadata = ThreadMetadata {
             thread_id: thread_id.clone(),
             title: Some("Recover trailing metadata".to_string()),
             workspace: Some("/workspace".to_string()),
@@ -1236,7 +1242,7 @@ mod tests {
             updated_at: now,
             message_count: 1,
         };
-        let dir = store.session_dir(&thread_id);
+        let dir = store.thread_dir(&thread_id);
         fs::create_dir_all(&dir).await.unwrap();
         let mut corrupted = serde_json::to_string_pretty(&metadata).unwrap();
         corrupted.push('}');
@@ -1244,7 +1250,7 @@ mod tests {
             .await
             .unwrap();
 
-        let snapshot = store.load_session(&thread_id).await.unwrap().unwrap();
+        let snapshot = store.load_thread(&thread_id).await.unwrap().unwrap();
         let loaded = snapshot.metadata.unwrap();
 
         assert_eq!(loaded.thread_id, thread_id);
@@ -1254,7 +1260,7 @@ mod tests {
         assert_eq!(loaded.message_count, 1);
 
         let repaired = fs::read(dir.join("metadata.json")).await.unwrap();
-        serde_json::from_slice::<SessionMetadata>(&repaired).unwrap();
+        serde_json::from_slice::<ThreadMetadata>(&repaired).unwrap();
 
         let _ = fs::remove_dir_all(base_path).await;
     }
@@ -1265,7 +1271,7 @@ mod tests {
             "roder-jsonl-recover-append-test-{}",
             uuid::Uuid::new_v4()
         ));
-        let store = JsonlSessionStore {
+        let store = JsonlThreadStore {
             base_path: base_path.clone(),
         };
         let thread_id = "thread-recover-append".to_string();
@@ -1273,7 +1279,7 @@ mod tests {
         let now = OffsetDateTime::UNIX_EPOCH;
 
         store
-            .create_session(SessionMetadata {
+            .create_thread(ThreadMetadata {
                 thread_id: thread_id.clone(),
                 title: None,
                 workspace: None,
@@ -1288,7 +1294,7 @@ mod tests {
             .await
             .unwrap();
         fs::write(
-            store.session_dir(&thread_id).join("metadata.json"),
+            store.thread_dir(&thread_id).join("metadata.json"),
             "{\"thread_id\":\"thread-recover-append\"} trailing",
         )
         .await
@@ -1298,25 +1304,25 @@ mod tests {
             .append_turn_item(
                 &thread_id,
                 &turn_id,
-                &ConversationItem::UserMessage(UserMessage::text("repair me")),
+                &TranscriptItem::UserMessage(UserMessage::text("repair me")),
             )
             .await
             .unwrap();
 
-        let sessions = store.list_sessions().await.unwrap();
+        let threads = store.list_threads().await.unwrap();
 
-        assert_eq!(sessions[0].thread_id, thread_id);
-        assert_eq!(sessions[0].title.as_deref(), Some("repair me"));
-        assert_eq!(sessions[0].message_count, 1);
+        assert_eq!(threads[0].thread_id, thread_id);
+        assert_eq!(threads[0].title.as_deref(), Some("repair me"));
+        assert_eq!(threads[0].message_count, 1);
 
         let _ = fs::remove_dir_all(base_path).await;
     }
 
     #[tokio::test]
-    async fn load_session_accepts_concatenated_jsonl_records() {
+    async fn load_thread_accepts_concatenated_jsonl_records() {
         let base_path =
             std::env::temp_dir().join(format!("roder-jsonl-concat-test-{}", uuid::Uuid::new_v4()));
-        let store = JsonlSessionStore {
+        let store = JsonlThreadStore {
             base_path: base_path.clone(),
         };
         let thread_id = "thread-concat".to_string();
@@ -1324,7 +1330,7 @@ mod tests {
         let now = OffsetDateTime::UNIX_EPOCH;
 
         store
-            .create_session(SessionMetadata {
+            .create_thread(ThreadMetadata {
                 thread_id: thread_id.clone(),
                 title: Some("Concatenated jsonl".to_string()),
                 workspace: None,
@@ -1339,16 +1345,16 @@ mod tests {
             .await
             .unwrap();
 
-        let dir = store.session_dir(&thread_id);
-        let first = PersistedTurnItem {
+        let dir = store.thread_dir(&thread_id);
+        let first = PersistedTranscriptItem {
             turn_id: turn_id.clone(),
             timestamp: now,
-            item: ConversationItem::UserMessage(UserMessage::text("first")),
+            item: TranscriptItem::UserMessage(UserMessage::text("first")),
         };
-        let second = PersistedTurnItem {
+        let second = PersistedTranscriptItem {
             turn_id: turn_id.clone(),
             timestamp: now,
-            item: ConversationItem::AssistantMessage(AssistantMessage {
+            item: TranscriptItem::AssistantMessage(AssistantMessage {
                 text: "second".to_string(),
                 phase: None,
             }),
@@ -1358,11 +1364,11 @@ mod tests {
             serde_json::to_string(&first).unwrap(),
             serde_json::to_string(&second).unwrap()
         );
-        fs::write(dir.join("turn_items.jsonl"), concatenated)
+        fs::write(dir.join("transcript_items.jsonl"), concatenated)
             .await
             .unwrap();
 
-        let snapshot = store.load_session(&thread_id).await.unwrap().unwrap();
+        let snapshot = store.load_thread(&thread_id).await.unwrap().unwrap();
 
         assert_eq!(snapshot.turns.len(), 1);
         assert_eq!(snapshot.turns[0].items.len(), 2);
@@ -1376,14 +1382,14 @@ mod tests {
             "roder-jsonl-malformed-test-{}",
             uuid::Uuid::new_v4()
         ));
-        let store = JsonlSessionStore {
+        let store = JsonlThreadStore {
             base_path: base_path.clone(),
         };
         let thread_id = "thread-malformed".to_string();
         let now = OffsetDateTime::UNIX_EPOCH;
 
         store
-            .create_session(SessionMetadata {
+            .create_thread(ThreadMetadata {
                 thread_id: thread_id.clone(),
                 title: Some("Malformed jsonl".to_string()),
                 workspace: None,
@@ -1398,34 +1404,34 @@ mod tests {
             .await
             .unwrap();
         fs::write(
-            store.session_dir(&thread_id).join("turn_items.jsonl"),
+            store.thread_dir(&thread_id).join("transcript_items.jsonl"),
             "{\"turn_id\":\"broken\"\n",
         )
         .await
         .unwrap();
 
-        let err = store.load_session(&thread_id).await.unwrap_err();
+        let err = store.load_thread(&thread_id).await.unwrap_err();
         let rendered = format!("{err:#}");
 
-        assert!(rendered.contains("parse turn item record in"));
-        assert!(rendered.contains("turn_items.jsonl:1"));
+        assert!(rendered.contains("parse transcript item record in"));
+        assert!(rendered.contains("transcript_items.jsonl:1"));
 
         let _ = fs::remove_dir_all(base_path).await;
     }
 
     #[tokio::test]
-    async fn load_missing_session_returns_none() {
+    async fn load_missing_thread_returns_none() {
         let base_path = std::env::temp_dir().join(format!(
-            "roder-jsonl-missing-session-test-{}",
+            "roder-jsonl-missing-thread-test-{}",
             uuid::Uuid::new_v4()
         ));
-        let store = JsonlSessionStore {
+        let store = JsonlThreadStore {
             base_path: base_path.clone(),
         };
 
         assert!(
             store
-                .load_session(&"missing".to_string())
+                .load_thread(&"missing".to_string())
                 .await
                 .unwrap()
                 .is_none()

@@ -116,7 +116,7 @@ impl AppServer {
         Ok(serde_json::to_value(DiscoveryRefreshResult {
             catalog: result.catalog,
             catalog_root: result.catalog_root.display().to_string(),
-            session_state_dir: result.session_state_dir.display().to_string(),
+            promotion_state_dir: result.promotion_state_dir.display().to_string(),
             written_files: result
                 .written_files
                 .into_iter()
@@ -201,7 +201,7 @@ impl AppServer {
             &skills,
             &DiscoveryCatalogBuildOptions::new(
                 self.discovery_catalog_root(),
-                self.discovery_session_state_dir(),
+                self.discovery_promotion_state_dir(),
             ),
         )
         .map_err(internal_error)
@@ -214,15 +214,15 @@ impl AppServer {
         default_roder_dir().join("discovery")
     }
 
-    fn discovery_session_state_dir(&self) -> PathBuf {
-        if let Ok(path) = std::env::var("RODER_DISCOVERY_SESSION_DIR") {
+    fn discovery_promotion_state_dir(&self) -> PathBuf {
+        if let Ok(path) = std::env::var("RODER_DISCOVERY_STATE_DIR") {
             return PathBuf::from(path);
         }
-        default_roder_dir().join("sessions").join("discovery-state")
+        default_roder_dir().join("threads").join("discovery-state")
     }
 
     fn promotion_store(&self) -> PromotionStore {
-        PromotionStore::new(self.discovery_session_state_dir())
+        PromotionStore::new(self.discovery_promotion_state_dir())
     }
 
     fn promote_discovery_item(

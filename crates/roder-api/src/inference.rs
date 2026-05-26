@@ -3,10 +3,10 @@ use std::pin::Pin;
 use futures::Stream;
 use serde::{Deserialize, Serialize};
 
-use crate::conversation::ConversationItem;
 use crate::extension::InferenceEngineId;
 use crate::reliability::ReliabilityRequestPolicy;
 use crate::tools::{ToolChoice, ToolSpec};
+use crate::transcript::TranscriptItem;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ModelSelection {
@@ -259,7 +259,7 @@ pub struct RuntimeHints {
 pub struct AgentInferenceRequest {
     pub model: ModelSelection,
     pub instructions: InstructionBundle,
-    pub conversation: Vec<ConversationItem>,
+    pub transcript: Vec<TranscriptItem>,
     pub tools: Vec<ToolSpec>,
     pub tool_choice: ToolChoice,
     pub reasoning: ReasoningConfig,

@@ -20,7 +20,7 @@ impl AppServer {
     ) -> Result<serde_json::Value, JsonRpcError> {
         let snapshot = self
             .runtime
-            .load_session(&params.thread_id)
+            .load_thread(&params.thread_id)
             .await
             .map_err(internal_error)?
             .ok_or_else(|| invalid_params(format!("unknown thread {:?}", params.thread_id)))?;
@@ -48,7 +48,7 @@ impl AppServer {
     ) -> Result<serde_json::Value, JsonRpcError> {
         let snapshot = self
             .runtime
-            .load_session(&params.thread_id)
+            .load_thread(&params.thread_id)
             .await
             .map_err(internal_error)?
             .ok_or_else(|| invalid_params(format!("unknown thread {:?}", params.thread_id)))?;
@@ -102,7 +102,7 @@ impl AppServer {
     ) -> Result<serde_json::Value, JsonRpcError> {
         let snapshot = self
             .runtime
-            .load_session(&params.thread_id)
+            .load_thread(&params.thread_id)
             .await
             .map_err(internal_error)?
             .ok_or_else(|| invalid_params(format!("unknown thread {:?}", params.thread_id)))?;

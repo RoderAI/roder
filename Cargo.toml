@@ -66,7 +66,7 @@ roder-ext-anthropic = { path = "crates/roder-ext-anthropic" }
 roder-ext-disk-context = { path = "crates/roder-ext-disk-context" }
 roder-ext-gemini = { path = "crates/roder-ext-gemini" }
 roder-ext-firecrawl-search = { path = "crates/roder-ext-firecrawl-search" }
-roder-ext-jsonl-session = { path = "crates/roder-ext-jsonl-session" }
+roder-ext-jsonl-thread-store = { path = "crates/roder-ext-jsonl-thread-store" }
 roder-ext-memory = { path = "crates/roder-ext-memory" }
 roder-ext-notify-desktop = { path = "crates/roder-ext-notify-desktop" }
 roder-ext-notify-terminal = { path = "crates/roder-ext-notify-terminal" }

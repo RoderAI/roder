@@ -3,7 +3,6 @@ use std::time::Duration;
 
 use futures::stream;
 use roder_api::catalog::PROVIDER_MOCK;
-use roder_api::conversation::ConversationItem;
 use roder_api::extension::{ExtensionRegistryBuilder, InferenceEngineId, ToolProviderId};
 use roder_api::goals::{ThreadGoalPatch, ThreadGoalStatus};
 use roder_api::inference::{
@@ -15,6 +14,7 @@ use roder_api::tools::{
     ToolCall, ToolContributor, ToolExecutionContext, ToolExecutor, ToolRegistry, ToolResult,
     ToolSpec,
 };
+use roder_api::transcript::TranscriptItem;
 use roder_core::{Runtime, RuntimeConfig, StartTurnRequest, default_instructions};
 use serde_json::json;
 
@@ -253,13 +253,13 @@ async fn active_goal_continues_after_turn_until_model_completes_goal() {
         "initial request should include active-goal instructions"
     );
     assert!(
-        requests[1].conversation.iter().any(|item| matches!(
+        requests[1].transcript.iter().any(|item| matches!(
             item,
-            ConversationItem::UserMessage(message)
+            TranscriptItem::UserMessage(message)
                 if message.text.contains("Continue working autonomously toward the active goal")
         )),
         "continuation request should be started by the runtime: {:?}",
-        requests[1].conversation
+        requests[1].transcript
     );
     let continuation_tools = requests[1]
         .tools

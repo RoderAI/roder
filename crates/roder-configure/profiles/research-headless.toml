@@ -9,7 +9,7 @@ include_app_server = true
 include_cli = true
 extensions = [
   "openai-responses",
-  "jsonl-session",
+  "jsonl-thread-store",
   "disk-context",
   "memory",
   "subagents",
@@ -18,7 +18,7 @@ extensions = [
   "notify-terminal",
 ]
 default_provider = "openai-responses"
-default_session_store = "jsonl-session"
+default_thread_store = "jsonl-thread-store"
 
 [distribution.config_overrides.subagents]
 max_depth = 1

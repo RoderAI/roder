@@ -1,7 +1,6 @@
 use std::sync::{Arc, Mutex};
 
 use futures::stream;
-use roder_api::conversation::ConversationItem;
 use roder_api::events::RoderEvent;
 use roder_api::extension::ExtensionRegistryBuilder;
 use roder_api::inference::{
@@ -14,6 +13,7 @@ use roder_api::tools::{
     ToolCall, ToolChoice, ToolContributor, ToolExecutionContext, ToolExecutor, ToolRegistry,
     ToolResult, ToolSpec,
 };
+use roder_api::transcript::TranscriptItem;
 use roder_core::{Runtime, RuntimeConfig, StartTurnRequest};
 use serde_json::json;
 
@@ -82,10 +82,10 @@ async fn eval_deadline_finalization_disables_tools_and_completes_turn() {
     assert!(requests[1].tools.is_empty());
     assert_eq!(requests[1].tool_choice, ToolChoice::None);
     assert!(
-        requests[1].conversation.iter().any(|item| {
+        requests[1].transcript.iter().any(|item| {
             matches!(
                 item,
-                ConversationItem::UserMessage(message)
+                TranscriptItem::UserMessage(message)
                     if message.text.contains("Eval deadline finalization")
             )
         }),
@@ -161,10 +161,10 @@ async fn eval_deadline_finalization_interrupts_model_stream_at_reserve() {
     assert!(saw_partial);
     assert_eq!(requests.len(), 2);
     assert!(
-        requests[1].conversation.iter().any(|item| {
+        requests[1].transcript.iter().any(|item| {
             matches!(
                 item,
-                ConversationItem::UserMessage(message)
+                TranscriptItem::UserMessage(message)
                     if message.text.contains("Eval deadline finalization")
             )
         }),

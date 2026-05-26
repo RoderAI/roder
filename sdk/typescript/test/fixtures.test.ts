@@ -39,7 +39,7 @@ test("typescript sdk replays approval fixture", async () => {
     approvals: {
       onToolApproval(request) {
         seen.push((request as { approvalId: string }).approvalId);
-        return { approved: true, message: "fixture approval" };
+        return { approved: true };
       },
     },
   });
@@ -47,7 +47,7 @@ test("typescript sdk replays approval fixture", async () => {
   await agent.send("read file");
   emitNotifications(transport, fixture);
 
-  await eventually(() => seen.includes("approval-1") && transport.seenMethods.includes("session/resolve_approval"));
+  await eventually(() => seen.includes("approval-1") && transport.seenMethods.includes("thread/resolve_approval"));
 });
 
 test("typescript sdk replays user input and plan exit fixture", async () => {
@@ -59,10 +59,10 @@ test("typescript sdk replays user input and plan exit fixture", async () => {
     model: { provider: "mock", id: "mock" },
     approvals: {
       onUserInput() {
-        return { response: "fixture answer" };
+        return { answers: "fixture answer" };
       },
       onPlanExit() {
-        return { accepted: true, message: "fixture plan accepted" };
+        return { approved: true };
       },
     },
   });
@@ -72,8 +72,8 @@ test("typescript sdk replays user input and plan exit fixture", async () => {
 
   await eventually(
     () =>
-      transport.seenMethods.includes("session/resolve_user_input") &&
-      transport.seenMethods.includes("session/exit_plan"),
+      transport.seenMethods.includes("thread/resolve_user_input") &&
+      transport.seenMethods.includes("thread/exit_plan"),
   );
 });
 
@@ -121,6 +121,7 @@ function fixtureTransport(fixture: Fixture): InMemoryTransport & { seenMethods: 
     const expected = requests.shift();
     const response = responses.shift();
     assert.equal(request.method, expected?.method);
+    assert.deepEqual(request.params ?? {}, expected?.params ?? {});
     seenMethods.push(request.method);
     return { ...(response ?? { jsonrpc: "2.0", id: request.id, result: {} }), id: request.id };
   }) as InMemoryTransport & { seenMethods: string[] };

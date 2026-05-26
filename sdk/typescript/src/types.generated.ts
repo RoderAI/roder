@@ -405,7 +405,7 @@ export const appServerManifest = {
       "paramsType": "InitializeParams",
       "resultType": "InitializeResult",
       "stability": "stable",
-      "featureGroup": "session",
+      "featureGroup": "app",
       "idempotency": "idempotent",
       "sideEffect": "readOnly"
     },
@@ -980,51 +980,6 @@ export const appServerManifest = {
       "sideEffect": "localState"
     },
     {
-      "method": "session/exit_plan",
-      "paramsType": "SessionExitPlanParams",
-      "resultType": "SessionExitPlanResult",
-      "stability": "stable",
-      "featureGroup": "session",
-      "idempotency": "nonIdempotent",
-      "sideEffect": "localState"
-    },
-    {
-      "method": "session/get",
-      "paramsType": "SessionGetParams",
-      "resultType": "SessionGetResult",
-      "stability": "stable",
-      "featureGroup": "session",
-      "idempotency": "idempotent",
-      "sideEffect": "readOnly"
-    },
-    {
-      "method": "session/resolve_approval",
-      "paramsType": "SessionResolveApprovalParams",
-      "resultType": "SessionResolveApprovalResult",
-      "stability": "stable",
-      "featureGroup": "session",
-      "idempotency": "nonIdempotent",
-      "sideEffect": "localState"
-    },
-    {
-      "method": "session/resolve_user_input",
-      "paramsType": "SessionResolveUserInputParams",
-      "resultType": "SessionResolveUserInputResult",
-      "stability": "stable",
-      "featureGroup": "session",
-      "idempotency": "nonIdempotent",
-      "sideEffect": "localState"
-    },
-    {
-      "method": "session/set_mode",
-      "paramsType": "SessionSetModeParams",
-      "resultType": "SessionSetModeResult",
-      "stability": "stable",
-      "featureGroup": "session",
-      "idempotency": "nonIdempotent",
-      "sideEffect": "localState"
-    },
-    {
       "method": "settings/get",
       "paramsType": "SettingsGetParams",
       "resultType": "SettingsGetResult",
@@ -1055,6 +1010,15 @@ export const appServerManifest = {
       "method": "settings/set_search_index",
       "paramsType": "SettingsSetSearchIndexParams",
       "resultType": "SettingsSetSearchIndexResult",
+      "stability": "stable",
+      "featureGroup": "settings",
+      "idempotency": "nonIdempotent",
+      "sideEffect": "localState"
+    },
+    {
+      "method": "settings/set_shell",
+      "paramsType": "SettingsSetShellParams",
+      "resultType": "SettingsSetShellResult",
       "stability": "stable",
       "featureGroup": "settings",
       "idempotency": "nonIdempotent",
@@ -1252,7 +1216,7 @@ export const appServerManifest = {
       "paramsType": "ThreadArchiveParams",
       "resultType": "ThreadArchiveResult",
       "stability": "stable",
-      "featureGroup": "threads",
+      "featureGroup": "thread",
       "idempotency": "nonIdempotent",
       "sideEffect": "localState"
     },
@@ -1261,16 +1225,58 @@ export const appServerManifest = {
       "paramsType": "ThreadAttachParams",
       "resultType": "ThreadAttachResult",
       "stability": "stable",
-      "featureGroup": "threads",
+      "featureGroup": "thread",
       "idempotency": "nonIdempotent",
       "sideEffect": "localState"
+    },
+    {
+      "method": "thread/exit_plan",
+      "paramsType": "ThreadExitPlanParams",
+      "resultType": "ThreadExitPlanResult",
+      "stability": "stable",
+      "featureGroup": "thread",
+      "idempotency": "nonIdempotent",
+      "sideEffect": "localState"
+    },
+    {
+      "method": "thread/goal/clear",
+      "paramsType": "ThreadGoalClearParams",
+      "resultType": "ThreadGoalClearResult",
+      "stability": "stable",
+      "featureGroup": "thread",
+      "idempotency": "nonIdempotent",
+      "sideEffect": "localState",
+      "notifications": [
+        "thread/goal/cleared"
+      ]
+    },
+    {
+      "method": "thread/goal/get",
+      "paramsType": "ThreadGoalGetParams",
+      "resultType": "ThreadGoalGetResult",
+      "stability": "stable",
+      "featureGroup": "thread",
+      "idempotency": "idempotent",
+      "sideEffect": "readOnly"
+    },
+    {
+      "method": "thread/goal/set",
+      "paramsType": "ThreadGoalSetParams",
+      "resultType": "ThreadGoalSetResult",
+      "stability": "stable",
+      "featureGroup": "thread",
+      "idempotency": "nonIdempotent",
+      "sideEffect": "localState",
+      "notifications": [
+        "thread/goal/updated"
+      ]
     },
     {
       "method": "thread/list",
       "paramsType": "ThreadListParams",
       "resultType": "ThreadListResult",
       "stability": "stable",
-      "featureGroup": "threads",
+      "featureGroup": "thread",
       "idempotency": "idempotent",
       "sideEffect": "readOnly"
     },
@@ -1279,16 +1285,43 @@ export const appServerManifest = {
       "paramsType": "ThreadReadParams",
       "resultType": "ThreadReadResult",
       "stability": "stable",
-      "featureGroup": "threads",
+      "featureGroup": "thread",
       "idempotency": "idempotent",
       "sideEffect": "readOnly"
+    },
+    {
+      "method": "thread/resolve_approval",
+      "paramsType": "ThreadResolveApprovalParams",
+      "resultType": "ThreadResolveApprovalResult",
+      "stability": "stable",
+      "featureGroup": "thread",
+      "idempotency": "nonIdempotent",
+      "sideEffect": "localState"
+    },
+    {
+      "method": "thread/resolve_user_input",
+      "paramsType": "ThreadResolveUserInputParams",
+      "resultType": "ThreadResolveUserInputResult",
+      "stability": "stable",
+      "featureGroup": "thread",
+      "idempotency": "nonIdempotent",
+      "sideEffect": "localState"
     },
     {
       "method": "thread/roadmap/open",
       "paramsType": "ThreadRoadmapOpenParams",
       "resultType": "ThreadRoadmapOpenResult",
       "stability": "stable",
-      "featureGroup": "threads",
+      "featureGroup": "thread",
+      "idempotency": "nonIdempotent",
+      "sideEffect": "localState"
+    },
+    {
+      "method": "thread/set_mode",
+      "paramsType": "ThreadSetModeParams",
+      "resultType": "ThreadSetModeResult",
+      "stability": "stable",
+      "featureGroup": "thread",
       "idempotency": "nonIdempotent",
       "sideEffect": "localState"
     },
@@ -1297,9 +1330,18 @@ export const appServerManifest = {
       "paramsType": "ThreadStartParams",
       "resultType": "ThreadStartResult",
       "stability": "stable",
-      "featureGroup": "threads",
+      "featureGroup": "thread",
       "idempotency": "nonIdempotent",
       "sideEffect": "localState"
+    },
+    {
+      "method": "thread/state",
+      "paramsType": "ThreadStateParams",
+      "resultType": "ThreadStateResult",
+      "stability": "stable",
+      "featureGroup": "thread",
+      "idempotency": "idempotent",
+      "sideEffect": "readOnly"
     },
     {
       "method": "tools/call",
@@ -1532,15 +1574,11 @@ export const appServerMethods = [
   "search_index/rebuild",
   "search_index/status",
   "search_index/warmup",
-  "session/exit_plan",
-  "session/get",
-  "session/resolve_approval",
-  "session/resolve_user_input",
-  "session/set_mode",
   "settings/get",
   "settings/set_default_mode",
   "settings/set_file_backed_dynamic_context",
   "settings/set_search_index",
+  "settings/set_shell",
   "settings/set_web_search",
   "skills/list",
   "skills/read",
@@ -1563,10 +1601,18 @@ export const appServerMethods = [
   "team/start",
   "thread/archive",
   "thread/attach",
+  "thread/exit_plan",
+  "thread/goal/clear",
+  "thread/goal/get",
+  "thread/goal/set",
   "thread/list",
   "thread/read",
+  "thread/resolve_approval",
+  "thread/resolve_user_input",
   "thread/roadmap/open",
+  "thread/set_mode",
   "thread/start",
+  "thread/state",
   "tools/call",
   "tools/list",
   "turn/interrupt",

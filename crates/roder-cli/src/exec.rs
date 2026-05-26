@@ -339,7 +339,7 @@ async fn read_turn_items(
     client: &LocalAppClient,
     thread_id: &str,
     turn_id: &str,
-) -> anyhow::Result<Option<Vec<roder_protocol::DesktopItem>>> {
+) -> anyhow::Result<Option<Vec<roder_protocol::Item>>> {
     let res = client
         .send_request(JsonRpcRequest {
             jsonrpc: "2.0".to_string(),
