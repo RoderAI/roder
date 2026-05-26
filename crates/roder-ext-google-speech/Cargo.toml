@@ -9,12 +9,12 @@ category = "speech-transcriber"
 display_name = "Google Speech"
 description = "Google Cloud Speech-to-Text transcription provider."
 default_in_profiles = ["full"]
-required_env = ["RODER_GOOGLE_SPEECH_ACCESS_TOKEN", "RODER_GOOGLE_SPEECH_PROJECT"]
-optional_env = ["RODER_GOOGLE_SPEECH_LOCATION"]
+required_env = []
+optional_env = ["RODER_GOOGLE_SPEECH_PROJECT", "GOOGLE_CLOUD_PROJECT", "RODER_GOOGLE_SPEECH_ACCESS_TOKEN", "RODER_GOOGLE_SPEECH_API_KEY", "GEMINI_API_TOKEN", "GEMINI_API_KEY", "GOOGLE_API_KEY", "RODER_GOOGLE_SPEECH_LOCATION"]
 conflicts_with = []
-required_capabilities = ["network.speech.googleapis.com", "secret.read.RODER_GOOGLE_SPEECH_ACCESS_TOKEN"]
+required_capabilities = ["network.speech.googleapis.com", "secret.read.google_speech_credentials"]
 extension_path = "::GoogleSpeechExtension::new"
-docs_url = "https://cloud.google.com/speech-to-text/v2/docs"
+docs_url = "https://cloud.google.com/speech-to-text/docs"
 
 [dependencies]
 anyhow.workspace = true

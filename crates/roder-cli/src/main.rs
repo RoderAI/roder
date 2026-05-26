@@ -1093,6 +1093,7 @@ pub(crate) async fn build_runtime_from_config(
         openai_api_key: keys.openai,
         openai_speech_api_key: keys.openai_speech,
         google_speech_access_token: keys.google_speech_access_token,
+        google_speech_api_key: keys.google_speech_api_key,
         google_speech_project_id: keys.google_speech_project_id,
         google_speech_location: keys.google_speech_location,
         anthropic_api_key: keys.anthropic,
@@ -1969,6 +1970,7 @@ struct ProviderKeys {
     openai: Option<String>,
     openai_speech: Option<String>,
     google_speech_access_token: Option<String>,
+    google_speech_api_key: Option<String>,
     google_speech_project_id: Option<String>,
     google_speech_location: Option<String>,
     anthropic: Option<String>,
@@ -2013,8 +2015,12 @@ fn provider_keys(cfg: &roder_config::Config) -> ProviderKeys {
                     .and_then(|p| p.api_key_env.as_deref())
                     .and_then(env_nonempty)
             }),
-        google_speech_access_token: std::env::var("RODER_GOOGLE_SPEECH_ACCESS_TOKEN")
+        google_speech_access_token: std::env::var("RODER_GOOGLE_SPEECH_ACCESS_TOKEN").ok(),
+        google_speech_api_key: std::env::var("RODER_GOOGLE_SPEECH_API_KEY")
             .ok()
+            .or_else(|| std::env::var("GEMINI_API_TOKEN").ok())
+            .or_else(|| std::env::var("GEMINI_API_KEY").ok())
+            .or_else(|| std::env::var("GOOGLE_API_KEY").ok())
             .or_else(|| {
                 cfg.providers
                     .get("google-speech")
@@ -2534,6 +2540,7 @@ mod tests {
             openai: None,
             openai_speech: None,
             google_speech_access_token: None,
+            google_speech_api_key: None,
             google_speech_project_id: None,
             google_speech_location: None,
             anthropic: None,

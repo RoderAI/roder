@@ -30,6 +30,9 @@ impl RoderExtension for GoogleSpeechExtension {
                 "secret.read.RODER_GOOGLE_SPEECH_ACCESS_TOKEN",
             ));
         }
+        if self.config.api_key.is_some() {
+            required_capabilities.push(CapabilityRequest::new("secret.read.google_api_key"));
+        }
         ExtensionManifest {
             id: "roder-ext-google-speech".to_string(),
             name: "Google Speech".to_string(),
@@ -70,6 +73,22 @@ mod tests {
                 .required_capabilities
                 .iter()
                 .any(|capability| capability.id == "secret.read.RODER_GOOGLE_SPEECH_ACCESS_TOKEN")
+        );
+    }
+
+    #[test]
+    fn manifest_tracks_google_speech_api_key_secret() {
+        let manifest = GoogleSpeechExtension::new(GoogleSpeechConfig {
+            api_key: Some("key".to_string()),
+            ..GoogleSpeechConfig::default()
+        })
+        .manifest();
+
+        assert!(
+            manifest
+                .required_capabilities
+                .iter()
+                .any(|capability| capability.id == "secret.read.google_api_key")
         );
     }
 }

@@ -54,6 +54,7 @@ pub struct DefaultRegistryConfig {
     pub openai_api_key: Option<String>,
     pub openai_speech_api_key: Option<String>,
     pub google_speech_access_token: Option<String>,
+    pub google_speech_api_key: Option<String>,
     pub google_speech_project_id: Option<String>,
     pub google_speech_location: Option<String>,
     pub anthropic_api_key: Option<String>,
@@ -90,6 +91,7 @@ impl Default for DefaultRegistryConfig {
             openai_api_key: None,
             openai_speech_api_key: None,
             google_speech_access_token: None,
+            google_speech_api_key: None,
             google_speech_project_id: None,
             google_speech_location: None,
             anthropic_api_key: None,
@@ -160,6 +162,7 @@ pub fn build_default_registry(config: DefaultRegistryConfig) -> anyhow::Result<E
     ))?;
     builder.install(GoogleSpeechExtension::new(GoogleSpeechConfig {
         access_token: config.google_speech_access_token,
+        api_key: config.google_speech_api_key,
         project_id: config.google_speech_project_id,
         location: config
             .google_speech_location
@@ -686,6 +689,7 @@ mod tests {
             openai_api_key: Some("openai".to_string()),
             openai_speech_api_key: None,
             google_speech_access_token: None,
+            google_speech_api_key: None,
             google_speech_project_id: None,
             google_speech_location: None,
             anthropic_api_key: Some("anthropic".to_string()),
