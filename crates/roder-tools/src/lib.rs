@@ -490,7 +490,7 @@ mod tests {
         assert_eq!(grep.data["candidate_files"], 1);
         assert_eq!(grep.data["verified_files"], 1);
         assert_eq!(grep.data["stale"], false);
-        assert_eq!(grep.data["index_version"], "roder-search-v1");
+        assert_eq!(grep.data["index_version"], "roder-search-v2");
         assert_eq!(grep.data["retrieval_mode"], "exact_text");
 
         let scan = run_tool(

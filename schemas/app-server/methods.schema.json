@@ -115,6 +115,7 @@
               "processes/stop",
               "processes/stopAll",
               "processes/subscribe",
+              "providers/clear",
               "providers/configure",
               "providers/list",
               "providers/select",

@@ -270,6 +270,7 @@ mod tests {
             },
             cwd: "/tmp".to_string(),
             name: None,
+            usage: None,
             turns: Some(vec![Turn {
                 id: "turn-a".to_string(),
                 items,
@@ -279,6 +280,7 @@ mod tests {
                 started_at: None,
                 completed_at: None,
                 duration_ms: None,
+                usage: None,
             }]),
         }
     }

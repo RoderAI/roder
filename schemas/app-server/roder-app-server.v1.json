@@ -753,6 +753,15 @@
       ]
     },
     {
+      "method": "providers/clear",
+      "paramsType": "ProvidersClearParams",
+      "resultType": "ProvidersClearResult",
+      "stability": "stable",
+      "featureGroup": "providers",
+      "idempotency": "nonIdempotent",
+      "sideEffect": "localState"
+    },
+    {
       "method": "providers/configure",
       "paramsType": "ProvidersConfigureParams",
       "resultType": "ProvidersConfigureResult",

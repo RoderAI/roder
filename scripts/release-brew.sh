@@ -71,6 +71,35 @@ fi
 root="$(git rev-parse --show-toplevel)"
 cd "$root"
 
+workspace_version="$(python3 - <<'PY'
+import re
+
+in_workspace_package = False
+with open("Cargo.toml", encoding="utf-8") as manifest:
+    for raw_line in manifest:
+        line = raw_line.strip()
+        if line == "[workspace.package]":
+            in_workspace_package = True
+            continue
+        if line.startswith("[") and line.endswith("]"):
+            in_workspace_package = False
+        if in_workspace_package:
+            match = re.match(r"version\s*=\s*\"([^\"]+)\"", line)
+            if match:
+                print(match.group(1))
+                raise SystemExit(0)
+raise SystemExit("workspace package version not found")
+PY
+)"
+
+if [[ "$workspace_version" != "$version" ]]; then
+  cat >&2 <<EOF
+release-brew: VERSION=$version does not match [workspace.package].version=$workspace_version.
+Bump the root Cargo.toml workspace version first, then rerun this release.
+EOF
+  exit 1
+fi
+
 if [[ -n "$(git status --porcelain)" ]]; then
   if [[ "${ALLOW_DIRTY:-0}" == "1" ]]; then
     echo "release-brew: warning: working tree is dirty; archive/formula may not include uncommitted changes" >&2

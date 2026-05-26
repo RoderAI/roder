@@ -134,6 +134,12 @@ impl AppServer {
                 })
                 .await
             }
+            "providers/clear" => {
+                self.decode_and(req.params, |p| async move {
+                    self.handle_provider_clear(p).await
+                })
+                .await
+            }
             "providers/select" => {
                 self.decode_and(req.params, |p| async move {
                     self.handle_provider_select(p).await
@@ -1274,6 +1280,26 @@ impl AppServer {
         Ok(serde_json::to_value(ProviderConfigureResult {
             provider,
             authenticated: true,
+        })
+        .unwrap())
+    }
+
+    async fn handle_provider_clear(
+        &self,
+        params: ProviderClearParams,
+    ) -> Result<serde_json::Value, JsonRpcError> {
+        let provider = roder_api::catalog::normalize_provider_id(params.provider.trim());
+        if provider.is_empty() {
+            return Err(invalid_params("provider is required"));
+        }
+        if !self.persist_user_config {
+            return Err(internal_error(
+                "provider API key persistence is disabled for this app-server",
+            ));
+        }
+        roder_config::delete_provider_api_key(&provider).map_err(internal_error)?;
+        Ok(serde_json::to_value(ProviderClearResult {
+            provider,
         })
         .unwrap())
     }
@@ -3751,10 +3777,18 @@ async fn provider_auth_status(
 ) -> (bool, Option<String>) {
     match metadata.auth_type {
         ProviderAuthType::None => (true, None),
-        ProviderAuthType::ApiKey => (
-            metadata.auth_configured.unwrap_or(true),
-            metadata.auth_label.clone(),
-        ),
+        ProviderAuthType::ApiKey => {
+            let configured = if let Ok(cfg) = roder_config::load_config() {
+                if let Some(p) = cfg.providers.get(provider_id) {
+                    p.api_key.is_some() || p.api_key_env.as_ref().is_some_and(|var| std::env::var(var).is_ok())
+                } else {
+                    metadata.auth_configured.unwrap_or(true)
+                }
+            } else {
+                metadata.auth_configured.unwrap_or(true)
+            };
+            (configured, metadata.auth_label.clone())
+        }
         ProviderAuthType::OAuth if provider_id == roder_api::catalog::PROVIDER_CODEX => {
             match roder_codex_auth::status().await {
                 Ok(Some(tokens)) if !tokens.account_id.is_empty() => {

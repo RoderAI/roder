@@ -80,7 +80,8 @@ use roder_protocol::{
     PluginListInstalledResult, PluginPreviewInstallParams, PluginPreviewInstallResult,
     PluginUninstallParams, PluginUninstallResult, ProcessesGetParams, ProcessesGetResult,
     ProcessesListParams, ProcessesListResult, ProcessesStopAllParams, ProcessesStopAllResult,
-    ProcessesStopParams, ProcessesStopResult, ProviderAuthResult, ProviderSelectParams,
+    ProcessesStopParams, ProcessesStopResult, ProviderAuthResult, ProviderClearParams,
+    ProviderClearResult, ProviderConfigureParams, ProviderConfigureResult, ProviderSelectParams,
     ProviderSelectResult, ProvidersListResult, RetrievalMetricsResult, RetrievalPromotedResult,
     RetrievalRecommendationsResult, RetrievalTurnParams, RunnersDeleteResult, RunnersListResult,
     RunnersSelectParams, RunnersSelectResult, RunnersSessionResult, SearchIndexClearParams,
@@ -2448,6 +2449,75 @@ async fn providers_list_exposes_cursor_api_key_models() {
     assert!(cursor.models.iter().any(|model| model.id == "composer-2.5"));
     assert!(cursor.capabilities.tool_calls);
     assert!(!cursor.capabilities.structured_output);
+}
+
+#[tokio::test]
+async fn providers_clear_removes_api_key() {
+    let temp_dir = std::env::temp_dir().join(format!("roder-test-{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir_all(&temp_dir).unwrap();
+    unsafe {
+        std::env::set_var("RODER_CONFIG_DIR", &temp_dir);
+    }
+
+    let registry = build_default_registry(DefaultRegistryConfig::default()).unwrap();
+    let runtime = Arc::new(Runtime::new(registry, Default::default()).unwrap());
+    let server = AppServer::new(runtime).with_user_config_persistence();
+    let client = LocalAppClient::new(Arc::new(server));
+
+    // Initially cursor is not authenticated
+    let providers: ProvidersListResult = request(&client, "providers/list", None).await;
+    let cursor = providers
+        .providers
+        .iter()
+        .find(|provider| provider.id == PROVIDER_CURSOR)
+        .expect("cursor provider should be listed");
+    assert!(!cursor.authenticated);
+
+    // Configure it
+    let configure_params = ProviderConfigureParams {
+        provider: PROVIDER_CURSOR.to_string(),
+        api_key: "secret-cursor-key".to_string(),
+    };
+    let configure_res: ProviderConfigureResult = request(
+        &client,
+        "providers/configure",
+        Some(serde_json::to_value(configure_params).unwrap()),
+    )
+    .await;
+    assert!(configure_res.authenticated);
+
+    // Check providers list again to verify authenticated is true
+    let providers: ProvidersListResult = request(&client, "providers/list", None).await;
+    let cursor = providers
+        .providers
+        .iter()
+        .find(|provider| provider.id == PROVIDER_CURSOR)
+        .expect("cursor provider should be listed");
+    assert!(cursor.authenticated);
+
+    // Clear it
+    let clear_params = ProviderClearParams {
+        provider: PROVIDER_CURSOR.to_string(),
+    };
+    let clear_res: ProviderClearResult = request(
+        &client,
+        "providers/clear",
+        Some(serde_json::to_value(clear_params).unwrap()),
+    )
+    .await;
+    assert_eq!(clear_res.provider, PROVIDER_CURSOR);
+
+    // Check providers list again to verify authenticated is false
+    let providers: ProvidersListResult = request(&client, "providers/list", None).await;
+    let cursor = providers
+        .providers
+        .iter()
+        .find(|provider| provider.id == PROVIDER_CURSOR)
+        .expect("cursor provider should be listed");
+    assert!(!cursor.authenticated);
+
+    // Clean up temp dir
+    let _ = std::fs::remove_dir_all(&temp_dir);
 }
 
 #[tokio::test]

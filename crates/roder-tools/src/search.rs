@@ -1,5 +1,7 @@
+use std::path::Path;
 use std::sync::Arc;
 
+use ignore::WalkBuilder;
 use roder_api::tools::{
     ToolCall, ToolExecutionContext, ToolExecutor, ToolRegistry, ToolResult, ToolSpec,
 };
@@ -272,27 +274,46 @@ struct GlobArgs {
 }
 
 pub(crate) fn visit_files(
-    root: &std::path::Path,
-    visitor: &mut dyn FnMut(&std::path::Path) -> anyhow::Result<()>,
+    root: &Path,
+    visitor: &mut dyn FnMut(&Path) -> anyhow::Result<()>,
 ) -> anyhow::Result<()> {
     if root.is_file() {
         return visitor(root);
     }
-    for entry in std::fs::read_dir(root)? {
+    let mut walk = WalkBuilder::new(root);
+    walk.standard_filters(true)
+        .hidden(false)
+        .require_git(false)
+        .filter_entry({
+            let root = root.to_path_buf();
+            move |entry| !ignored_path(&root, entry.path())
+        })
+        .sort_by_file_path(|left, right| left.cmp(right));
+
+    for entry in walk.build() {
         let entry = entry?;
         let path = entry.path();
-        let file_name = entry.file_name();
-        let file_name = file_name.to_string_lossy();
-        if entry.file_type()?.is_dir() {
-            if file_name == ".git" || file_name == "target" {
-                continue;
-            }
-            visit_files(&path, visitor)?;
-        } else {
-            visitor(&path)?;
+        if path == root {
+            continue;
+        }
+        if entry
+            .file_type()
+            .is_some_and(|file_type| file_type.is_file())
+        {
+            visitor(path)?;
         }
     }
     Ok(())
+}
+
+fn ignored_path(root: &Path, path: &Path) -> bool {
+    let Ok(relative) = path.strip_prefix(root) else {
+        return true;
+    };
+    relative.components().any(|component| {
+        let value = component.as_os_str().to_string_lossy();
+        matches!(value.as_ref(), ".git" | ".roder" | "target")
+    })
 }
 
 fn merge_search_metadata(data: &mut Value, metadata: &roder_search::SearchMetadata) {
@@ -345,152 +366,5 @@ pub(crate) fn wildcard_match(pattern: &str, text: &str) -> bool {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::backend::LocalWorkspaceBackend;
-    use roder_api::tools::{LocalWorkspaceHandle, ToolExecutionContext};
-    use std::path::{Path, PathBuf};
-    use std::sync::Arc;
-
-    #[test]
-    fn wildcard_match_supports_star_and_question_mark() {
-        assert!(wildcard_match("src/*.rs", "src/main.rs"));
-        assert!(wildcard_match("src/??.rs", "src/io.rs"));
-        assert!(!wildcard_match("src/*.rs", "README.md"));
-    }
-
-    #[tokio::test]
-    async fn grep_paging_result_includes_continuation_text_and_data() {
-        let root = test_workspace("grep-paging");
-        let dir = root.join("src");
-        std::fs::create_dir_all(&dir).unwrap();
-        std::fs::write(dir.join("a.rs"), "needle a\n").unwrap();
-        std::fs::write(dir.join("b.rs"), "needle b\n").unwrap();
-        let workspace = Workspace::new(root.clone()).unwrap();
-        let tool = GrepTool {
-            workspace: workspace.clone(),
-            backend: Arc::new(LocalWorkspaceBackend::new(workspace)),
-        };
-
-        let result = tool
-            .execute(
-                context(&root),
-                call(
-                    "grep",
-                    json!({"query": "needle", "path": "src", "limit": 1}),
-                ),
-            )
-            .await
-            .unwrap();
-
-        assert!(result.text.contains("call grep"));
-        assert!(result.text.contains("\"offset\":1"));
-        assert_eq!(result.data["omitted_lines"], 1);
-        assert_eq!(result.data["continuation_tool"], "grep");
-        assert_eq!(result.data["continuation_args"]["query"], "needle");
-        assert_eq!(result.data["continuation_args"]["offset"], 1);
-
-        let _ = std::fs::remove_dir_all(root);
-    }
-
-    #[tokio::test]
-    async fn glob_paging_result_includes_continuation_text_and_data() {
-        let root = test_workspace("glob-paging");
-        let dir = root.join("src");
-        std::fs::create_dir_all(&dir).unwrap();
-        std::fs::write(dir.join("a.rs"), "").unwrap();
-        std::fs::write(dir.join("b.rs"), "").unwrap();
-        let workspace = Workspace::new(root.clone()).unwrap();
-        let tool = GlobTool {
-            workspace: workspace.clone(),
-            backend: Arc::new(LocalWorkspaceBackend::new(workspace)),
-        };
-
-        let result = tool
-            .execute(
-                context(&root),
-                call("glob", json!({"pattern": "src/*.rs", "limit": 1})),
-            )
-            .await
-            .unwrap();
-
-        assert!(result.text.contains("call glob"));
-        assert!(result.text.contains("\"offset\":1"));
-        assert_eq!(result.data["omitted_lines"], 1);
-        assert_eq!(result.data["continuation_tool"], "glob");
-        assert_eq!(result.data["continuation_args"]["pattern"], "src/*.rs");
-        assert_eq!(result.data["continuation_args"]["offset"], 1);
-
-        let _ = std::fs::remove_dir_all(root);
-    }
-
-    #[tokio::test]
-    async fn grep_response_format_concise_truncates_long_matches() {
-        let root = test_workspace("grep-response-format");
-        let dir = root.join("src");
-        std::fs::create_dir_all(&dir).unwrap();
-        std::fs::write(dir.join("a.rs"), format!("needle {}\n", "x".repeat(400))).unwrap();
-        let workspace = Workspace::new(root.clone()).unwrap();
-        let tool = GrepTool {
-            workspace: workspace.clone(),
-            backend: Arc::new(LocalWorkspaceBackend::new(workspace)),
-        };
-
-        let concise = tool
-            .execute(
-                context(&root),
-                call("grep", json!({"query": "needle", "path": "src"})),
-            )
-            .await
-            .unwrap();
-        let detailed = tool
-            .execute(
-                context(&root),
-                call(
-                    "grep",
-                    json!({"query": "needle", "path": "src", "response_format": "detailed"}),
-                ),
-            )
-            .await
-            .unwrap();
-
-        assert_eq!(concise.data["response_format"], "concise");
-        assert!(concise.text.contains("..."));
-        assert!(concise.text.len() < detailed.text.len());
-        assert_eq!(detailed.data["response_format"], "detailed");
-        assert!(!detailed.text.contains("..."));
-
-        let _ = std::fs::remove_dir_all(root);
-    }
-
-    fn context(workspace: &Path) -> ToolExecutionContext {
-        ToolExecutionContext::new(
-            "thread-a",
-            "turn-a",
-            roder_api::policy_mode::PolicyMode::Default,
-        )
-        .with_workspace_handle(Arc::new(LocalWorkspaceHandle::new(workspace)))
-    }
-
-    fn call(name: &str, arguments: serde_json::Value) -> ToolCall {
-        ToolCall {
-            id: format!("call-{name}"),
-            name: name.to_string(),
-            raw_arguments: arguments.to_string(),
-            arguments,
-            thread_id: "thread-a".to_string(),
-            turn_id: "turn-a".to_string(),
-        }
-    }
-
-    fn test_workspace(name: &str) -> PathBuf {
-        let stamp = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_nanos();
-        let path = std::env::temp_dir().join(format!("roder-tools-{name}-{stamp}"));
-        let _ = std::fs::remove_dir_all(&path);
-        std::fs::create_dir_all(&path).unwrap();
-        path
-    }
-}
+#[path = "search_tests.rs"]
+mod tests;
