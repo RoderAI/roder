@@ -125,10 +125,6 @@ pub const HAIKU_REASONING: &[ReasoningOption] = &[
 
 pub const GEMINI_REASONING: &[ReasoningOption] = &[
     ReasoningOption {
-        effort: REASONING_NONE,
-        description: "No explicit Gemini thinking configuration",
-    },
-    ReasoningOption {
         effort: REASONING_MINIMAL,
         description: "Minimal Gemini thinking",
     },
@@ -143,10 +139,6 @@ pub const GEMINI_REASONING: &[ReasoningOption] = &[
     ReasoningOption {
         effort: REASONING_HIGH,
         description: "High Gemini thinking",
-    },
-    ReasoningOption {
-        effort: REASONING_XHIGH,
-        description: "High Gemini thinking with extra budget where supported",
     },
 ];
 
@@ -263,7 +255,7 @@ pub const BUILT_IN_PROVIDERS: &[ProviderCatalogEntry] = &[
         id: PROVIDER_GEMINI,
         name: "Gemini",
         kind: PROVIDER_KIND_GEMINI,
-        default_model: "gemini-3.1-pro-preview",
+        default_model: "gemini-3.5-flash",
         base_url: None,
         env_key: Some("GEMINI_API_TOKEN"),
         env_aliases: GEMINI_ENV_ALIASES,
@@ -406,6 +398,12 @@ pub const BUILT_IN_MODELS: &[ModelCatalogEntry] = &[
         180_000,
         REASONING_NONE,
         &[],
+    ),
+    gemini_model(
+        "gemini-3.5-flash",
+        "Gemini 3.5 Flash",
+        "Stable Gemini Flash model for agentic coding, tool use, and long-horizon workflows.",
+        REASONING_MEDIUM,
     ),
     gemini_model(
         "gemini-3.1-pro-preview",
@@ -983,6 +981,37 @@ mod tests {
     }
 
     #[test]
+    fn gemini_provider_defaults_to_stable_35_flash() {
+        let provider = BUILT_IN_PROVIDERS
+            .iter()
+            .find(|provider| provider.id == PROVIDER_GEMINI)
+            .unwrap();
+
+        assert_eq!(provider.default_model, "gemini-3.5-flash");
+
+        let model = lookup_model("gemini-3.5-flash").unwrap();
+        assert_eq!(model.display_name, "Gemini 3.5 Flash");
+        assert_eq!(model.provider, PROVIDER_GEMINI);
+        assert_eq!(model.context_window, 1_048_576);
+        assert_eq!(model.default_reasoning, REASONING_MEDIUM);
+        assert!(model.supports_tools);
+        assert!(model.supports_structured);
+        assert_eq!(
+            model
+                .supported_reasoning
+                .iter()
+                .map(|option| option.effort)
+                .collect::<Vec<_>>(),
+            vec![
+                REASONING_MINIMAL,
+                REASONING_LOW,
+                REASONING_MEDIUM,
+                REASONING_HIGH
+            ]
+        );
+    }
+
+    #[test]
     fn catalog_contains_gode_visible_models() {
         let ids = built_in_models(false)
             .into_iter()
@@ -997,6 +1026,7 @@ mod tests {
                 "claude-opus-4-7",
                 "claude-sonnet-4-6",
                 "claude-haiku-4-5-20251001",
+                "gemini-3.5-flash",
                 "gemini-3.1-pro-preview",
                 "gemini-3.1-pro-preview-customtools",
                 "gemini-3-flash-preview",
@@ -1030,7 +1060,7 @@ mod tests {
         assert_eq!(models_for_provider(PROVIDER_OPENAI, false).len(), 2);
         assert_eq!(models_for_codex(false).len(), 3);
         assert_eq!(models_for_provider(PROVIDER_ANTHROPIC, false).len(), 3);
-        assert_eq!(models_for_provider(PROVIDER_GEMINI, false).len(), 4);
+        assert_eq!(models_for_provider(PROVIDER_GEMINI, false).len(), 5);
         assert_eq!(models_for_provider(PROVIDER_XAI, false).len(), 4);
         assert_eq!(models_for_provider(PROVIDER_SUPERGROK, false).len(), 4);
         assert_eq!(models_for_provider(PROVIDER_OPENCODE, false).len(), 6);

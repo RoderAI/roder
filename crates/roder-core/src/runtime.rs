@@ -6,7 +6,8 @@ use anyhow::Context;
 use futures::StreamExt;
 use futures::future::{AbortHandle, Abortable, BoxFuture, try_join_all};
 use roder_api::catalog::{
-    EDIT_TOOL_EDIT, EDIT_TOOL_PATCH, REASONING_NONE, built_in_model_profile, lookup_model,
+    EDIT_TOOL_EDIT, EDIT_TOOL_PATCH, PROVIDER_GEMINI, REASONING_NONE, built_in_model_profile,
+    lookup_model,
 };
 use roder_api::context::PolicyGate;
 use roder_api::events::*;
@@ -232,6 +233,7 @@ impl Runtime {
         if registry.inference_engines.is_empty() {
             anyhow::bail!("at least one inference engine must be registered");
         }
+        validate_runtime_config_reasoning(&config)?;
 
         let bus = EventBus::new(1024);
         let thread_store = registry
@@ -2719,6 +2721,19 @@ fn validate_reasoning_effort(model: &str, effort: &str) -> anyhow::Result<()> {
     }
 }
 
+fn validate_runtime_config_reasoning(cfg: &RuntimeConfig) -> anyhow::Result<()> {
+    let Some(reasoning) = cfg.reasoning.as_deref() else {
+        return Ok(());
+    };
+    let Some(entry) = lookup_model(&cfg.default_model) else {
+        return Ok(());
+    };
+    if entry.provider != PROVIDER_GEMINI {
+        return Ok(());
+    }
+    validate_reasoning_effort(&cfg.default_model, reasoning)
+}
+
 fn model_supports_reasoning(model: &str, effort: &str) -> bool {
     lookup_model(model)
         .map(|entry| {
@@ -2856,6 +2871,7 @@ mod tests {
     use futures::stream;
     use roder_api::catalog::{
         REASONING_HIGH, REASONING_LOW, REASONING_MEDIUM, REASONING_MINIMAL, REASONING_NONE,
+        REASONING_XHIGH,
     };
     use roder_api::extension::ExtensionRegistryBuilder;
     use roder_api::inference::{
@@ -2955,6 +2971,29 @@ mod tests {
         assert_eq!(
             effective_reasoning_for_model(&cfg, "gpt-5.5"),
             REASONING_MEDIUM
+        );
+    }
+
+    #[test]
+    fn unsupported_configured_gemini_reasoning_is_rejected() {
+        let mut builder = ExtensionRegistryBuilder::new();
+        builder.inference_engine(std::sync::Arc::new(FakeInferenceEngine));
+
+        let err = match Runtime::new(
+            builder.build().unwrap(),
+            RuntimeConfig {
+                default_model: "gemini-3.5-flash".to_string(),
+                reasoning: Some(REASONING_XHIGH.to_string()),
+                ..RuntimeConfig::default()
+            },
+        ) {
+            Ok(_) => panic!("expected unsupported Gemini reasoning to be rejected"),
+            Err(err) => err,
+        };
+
+        assert!(
+            err.to_string()
+                .contains("model gemini-3.5-flash does not support reasoning effort xhigh")
         );
     }
 

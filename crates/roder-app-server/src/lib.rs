@@ -20,6 +20,7 @@ mod retrieval;
 mod search_index;
 pub mod server;
 mod skills;
+mod speech;
 pub mod transcript;
 
 pub use automations::AppServerFeatureConfig;
