@@ -1403,7 +1403,11 @@ impl Runtime {
         let engine = self.engine_for(&provider)?;
         let capabilities = engine.capabilities();
         let model_profile = model_profile_for_model(&cfg, &model);
-        let tools = self.filtered_tool_specs(&cfg, &model, model_profile.as_ref());
+        let tools = if capabilities.tool_calls {
+            self.filtered_tool_specs(&cfg, &model, model_profile.as_ref())
+        } else {
+            Vec::new()
+        };
         let workspace = req.workspace.clone().or_else(|| cfg.workspace.clone());
         let parallel_tool_calls = parallel_tool_calls_for_model(&cfg, &model);
         let tool_choice = if tools.is_empty() {
@@ -1587,7 +1591,7 @@ impl Runtime {
                 && runtime_profile == RuntimeProfile::Eval
                 && !deadline_finalization_requested
                 && !transcript_has_task_ledger(&transcript);
-            let task_ledger_tools = task_ledger_required_this_round
+            let task_ledger_tools = (capabilities.tool_calls && task_ledger_required_this_round)
                 .then(|| self.task_ledger_tool_specs(model_profile.as_ref()))
                 .filter(|tools| !tools.is_empty());
             let request_tools = if deadline_finalization_requested {

@@ -1107,6 +1107,10 @@ pub(crate) async fn build_runtime_from_config(
         opencode_go_project_id: keys.opencode_go_project_id,
         poolside_api_key: keys.poolside,
         poolside_base_url: keys.poolside_base_url,
+        cursor_api_key: keys.cursor,
+        cursor_access_token: keys.cursor_access_token,
+        cursor_agent_service_url: keys.cursor_agent_service_url,
+        cursor_backend_base_url: keys.cursor_backend_base_url,
         custom_inference_providers: custom_inference_provider_configs,
         thread_dir: None,
         workspace: workspace.clone(),
@@ -1979,6 +1983,10 @@ struct ProviderKeys {
     opencode_go_project_id: Option<String>,
     poolside: Option<String>,
     poolside_base_url: Option<String>,
+    cursor: Option<String>,
+    cursor_access_token: Option<String>,
+    cursor_agent_service_url: Option<String>,
+    cursor_backend_base_url: Option<String>,
 }
 
 fn provider_keys(cfg: &roder_config::Config) -> ProviderKeys {
@@ -2135,6 +2143,28 @@ fn provider_keys(cfg: &roder_config::Config) -> ProviderKeys {
             .and_then(|p| p.base_url.clone())
             .or_else(|| std::env::var("RODER_POOLSIDE_BASE_URL").ok())
             .or_else(|| std::env::var("POOLSIDE_BASE_URL").ok()),
+        cursor: std::env::var("CURSOR_API_KEY")
+            .ok()
+            .or_else(|| std::env::var("RODER_CURSOR_API_KEY").ok())
+            .or_else(|| cfg.providers.get("cursor").and_then(|p| p.api_key.clone()))
+            .or_else(|| {
+                cfg.providers
+                    .get("cursor")
+                    .and_then(|p| p.api_key_env.as_deref())
+                    .and_then(env_nonempty)
+            }),
+        cursor_access_token: std::env::var("CURSOR_ACCESS_TOKEN")
+            .ok()
+            .or_else(|| std::env::var("CURSOR_AUTH_TOKEN").ok()),
+        cursor_agent_service_url: cfg
+            .providers
+            .get("cursor")
+            .and_then(|p| p.base_url.clone())
+            .or_else(|| std::env::var("RODER_CURSOR_AGENT_SERVICE_URL").ok())
+            .or_else(|| std::env::var("CURSOR_AGENT_SERVICE_URL").ok()),
+        cursor_backend_base_url: std::env::var("RODER_CURSOR_BACKEND_BASE_URL")
+            .ok()
+            .or_else(|| std::env::var("CURSOR_BACKEND_BASE_URL").ok()),
     }
 }
 
@@ -2174,6 +2204,7 @@ fn is_builtin_provider_id(id: &str) -> bool {
             | "opencode"
             | "opencode-go"
             | "poolside"
+            | "cursor"
     )
 }
 
