@@ -11,6 +11,7 @@ use roder_protocol::{
 };
 use tokio::io::AsyncReadExt;
 use tokio::process::{Child, Command};
+use tokio::task::JoinHandle;
 
 use super::{TuiApp, composer_text, composer_textarea, decode_response};
 
@@ -45,6 +46,7 @@ pub(super) struct VoiceState {
     hold_idle_stop: Duration,
     recording: Option<VoiceRecording>,
     transcribing: bool,
+    transcription_task: Option<JoinHandle<anyhow::Result<String>>>,
     unavailable_reported: bool,
 }
 
@@ -97,6 +99,7 @@ impl Default for VoiceState {
             hold_idle_stop: DEFAULT_HOLD_IDLE_STOP,
             recording: None,
             transcribing: false,
+            transcription_task: None,
             unavailable_reported: false,
         }
     }
@@ -242,6 +245,25 @@ impl VoiceState {
 
     pub(super) fn is_transcribing(&self) -> bool {
         self.transcribing
+    }
+
+    fn start_transcribing(&mut self, task: JoinHandle<anyhow::Result<String>>) {
+        self.transcribing = true;
+        self.transcription_task = Some(task);
+    }
+
+    fn transcription_finished(&self) -> bool {
+        self.transcription_task
+            .as_ref()
+            .is_some_and(JoinHandle::is_finished)
+    }
+
+    fn take_transcription_task(&mut self) -> Option<JoinHandle<anyhow::Result<String>>> {
+        self.transcription_task.take()
+    }
+
+    fn finish_transcribing(&mut self) {
+        self.transcribing = false;
     }
 
     pub(super) fn provider(&self) -> Option<&str> {
@@ -406,6 +428,22 @@ where
         }
     }
 
+    pub(super) async fn finish_voice_transcription_if_ready(&mut self) {
+        if !self.voice.transcription_finished() {
+            return;
+        }
+        let Some(task) = self.voice.take_transcription_task() else {
+            self.voice.finish_transcribing();
+            return;
+        };
+        self.voice.finish_transcribing();
+        match task.await {
+            Ok(Ok(text)) => self.insert_voice_transcript(&text),
+            Ok(Err(err)) => self.record_error(format!("voice transcription failed: {err}")),
+            Err(err) => self.record_error(format!("voice transcription task failed: {err}")),
+        }
+    }
+
     fn save_voice_config(&self) -> anyhow::Result<()> {
         super::save_tui_value(
             &["voice", "enabled"],
@@ -459,43 +497,22 @@ where
                     "voice recording stopped after {:.1}s",
                     elapsed.as_secs_f32()
                 ));
-                self.voice.transcribing = true;
-                let transcript = self.transcribe_voice_audio(audio).await;
-                self.voice.transcribing = false;
-                match transcript {
-                    Ok(text) => self.insert_voice_transcript(&text),
-                    Err(err) => self.record_error(format!("voice transcription failed: {err}")),
-                }
+                self.start_voice_transcription(audio);
             }
         }
     }
 
-    async fn transcribe_voice_audio(&mut self, audio: Vec<u8>) -> anyhow::Result<String> {
-        let res = self
-            .client
-            .send_request(JsonRpcRequest {
-                jsonrpc: "2.0".to_string(),
-                id: Some(serde_json::json!(1)),
-                method: "speech/transcribe".to_string(),
-                params: Some(serde_json::to_value(SpeechTranscribeParams {
-                    provider: self.voice.provider.clone(),
-                    model: self.voice.model.clone(),
-                    audio: SpeechAudioPayload {
-                        bytes_base64: base64::engine::general_purpose::STANDARD.encode(audio),
-                        mime_type: self.voice.mime_type.clone(),
-                        filename: Some("voice.wav".to_string()),
-                    },
-                    language: self.voice.language.clone(),
-                    prompt: Some(
-                        "Transcribe coding dictation for a terminal composer.".to_string(),
-                    ),
-                    diarization: false,
-                    metadata: BTreeMap::new(),
-                })?),
-            })
-            .await;
-        let result: SpeechTranscribeResult = decode_response(res)?;
-        Ok(result.text)
+    fn start_voice_transcription(&mut self, audio: Vec<u8>) {
+        let client = self.client.clone();
+        let provider = self.voice.provider.clone();
+        let model = self.voice.model.clone();
+        let mime_type = self.voice.mime_type.clone();
+        let language = self.voice.language.clone();
+        let task = tokio::spawn(async move {
+            transcribe_voice_audio(client, provider, model, mime_type, language, audio).await
+        });
+        self.voice.start_transcribing(task);
+        self.push_event("voice transcription started".to_string());
     }
 
     fn insert_voice_transcript(&mut self, text: &str) {
@@ -513,6 +530,41 @@ where
         self.timeline.focus_composer();
         self.push_event("voice transcript inserted".to_string());
     }
+}
+
+async fn transcribe_voice_audio<C>(
+    client: C,
+    provider: Option<String>,
+    model: Option<String>,
+    mime_type: String,
+    language: Option<String>,
+    audio: Vec<u8>,
+) -> anyhow::Result<String>
+where
+    C: AppClient,
+{
+    let res = client
+        .send_request(JsonRpcRequest {
+            jsonrpc: "2.0".to_string(),
+            id: Some(serde_json::json!(1)),
+            method: "speech/transcribe".to_string(),
+            params: Some(serde_json::to_value(SpeechTranscribeParams {
+                provider,
+                model,
+                audio: SpeechAudioPayload {
+                    bytes_base64: base64::engine::general_purpose::STANDARD.encode(audio),
+                    mime_type,
+                    filename: Some("voice.wav".to_string()),
+                },
+                language,
+                prompt: Some("Transcribe coding dictation for a terminal composer.".to_string()),
+                diarization: false,
+                metadata: BTreeMap::new(),
+            })?),
+        })
+        .await;
+    let result: SpeechTranscribeResult = decode_response(res)?;
+    Ok(result.text)
 }
 
 enum VoiceStartResult {

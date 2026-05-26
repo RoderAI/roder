@@ -1451,6 +1451,7 @@ where
             advance_top_status_animation(&mut self.animation_frame, &mut next_animation_tick, now);
             self.tick_streaming_animations(now, session.terminal_mut().size()?.width);
             self.stop_idle_voice_recording(now).await;
+            self.finish_voice_transcription_if_ready().await;
             session.terminal_mut().draw(|f| {
                 self.render(f);
                 if options.record_ui_frames
@@ -3325,6 +3326,7 @@ where
         let Some(area) = voice_helper_area(composer_area) else {
             return;
         };
+        f.render_widget(Clear, area);
         f.render_widget(
             voice_transcribing_widget(self.theme, self.working_spinner, self.animation_frame),
             area,
@@ -5697,7 +5699,7 @@ fn voice_transcribing_widget(
             format!(" {} ", padded_spinner_frame(spinner, frame)),
             theme.running(),
         ),
-        Span::styled("transcribing voice...", theme.muted()),
+        Span::styled("transcribing...", theme.muted()),
     ]))
 }
 
@@ -5715,7 +5717,7 @@ fn voice_helper_area(composer_area: Rect) -> Option<Rect> {
 }
 
 fn voice_helper_width() -> u16 {
-    26
+    20
 }
 
 fn rect_contains(area: Rect, column: u16, row: u16) -> bool {
