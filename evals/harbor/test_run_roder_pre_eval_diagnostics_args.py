@@ -250,6 +250,10 @@ class PreEvalDiagnosticsArgsTests(unittest.TestCase):
             line for line in calls.splitlines() if "preflight_tbench_images.py" in line
         )
         self.assertIn("--offline", preflight_call)
+        summary_call = next(
+            line for line in calls.splitlines() if "write_pre_eval_summary.py" in line
+        )
+        self.assertIn("--offline-images", summary_call)
 
     def test_default_tests_run_harbor_python_unittest_gate(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
@@ -400,6 +404,63 @@ class PreEvalDiagnosticsArgsTests(unittest.TestCase):
         self.assertIn("LIVE=unset", unittest_call)
         self.assertIn("REPLACE=unset", unittest_call)
         self.assertIn("SKIP=unset", unittest_call)
+
+    def test_harbor_python_tests_do_not_inherit_pre_eval_handoff_env(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            temp_path = Path(temp)
+            fake_bin = temp_path / "bin"
+            fake_bin.mkdir()
+            fake_python = fake_bin / "python3"
+            fake_python.write_text(
+                "#!/usr/bin/env bash\n"
+                "printf 'python3 %s SUMMARY=%s CAMPAIGN=%s ANALYSIS=%s\\n' \"$*\" "
+                "\"${RODER_HARBOR_PRE_EVAL_SUMMARY-unset}\" "
+                "\"${RODER_HARBOR_PRE_EVAL_CAMPAIGN_SUMMARY-unset}\" "
+                "\"${RODER_HARBOR_PRE_EVAL_ANALYSIS-unset}\" >> \"$CALL_LOG\"\n"
+                "exit 0\n"
+            )
+            fake_python.chmod(0o755)
+            fake_cargo = fake_bin / "cargo"
+            fake_cargo.write_text(
+                "#!/usr/bin/env bash\n"
+                "printf 'cargo %s\\n' \"$*\" >> \"$CALL_LOG\"\n"
+                "exit 0\n"
+            )
+            fake_cargo.chmod(0o755)
+            call_log = temp_path / "calls.log"
+            env = {
+                **dict(PATH=f"{fake_bin}:{os.environ['PATH']}"),
+                "CALL_LOG": str(call_log),
+                "HOME": str(temp_path),
+                "RODER_HARBOR_PRE_EVAL_SUMMARY": str(temp_path / "summary.json"),
+                "RODER_HARBOR_PRE_EVAL_CAMPAIGN_SUMMARY": str(
+                    temp_path / "campaign-summary.json"
+                ),
+                "RODER_HARBOR_PRE_EVAL_ANALYSIS": str(temp_path / "analysis.json"),
+            }
+
+            result = subprocess.run(
+                [
+                    str(SCRIPT),
+                    "--output-dir",
+                    str(temp_path / "diagnostics"),
+                ],
+                cwd=ROOT,
+                env=env,
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                check=False,
+            )
+            calls = call_log.read_text()
+
+        self.assertEqual(0, result.returncode, result.stderr)
+        unittest_call = next(
+            line for line in calls.splitlines() if "-m unittest discover" in line
+        )
+        self.assertIn("SUMMARY=unset", unittest_call)
+        self.assertIn("CAMPAIGN=unset", unittest_call)
+        self.assertIn("ANALYSIS=unset", unittest_call)
 
     def test_failed_harbor_python_tests_write_blocked_summary(self) -> None:
         with tempfile.TemporaryDirectory() as temp:

@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import sys
 from datetime import datetime, timezone
@@ -26,6 +27,17 @@ PRESETS: dict[str, dict[str, Any]] = {
         "require_no_overlap": True,
         "expect_unique_tasks": 18,
         "expect_projected_passes": 68,
+        "expect_campaigns": [
+            "validated-conversions",
+            "historical-wins",
+        ],
+        "expect_routes": [
+            "validated-conversions/medium-validated",
+            "validated-conversions/xhigh-validated",
+            "validated-conversions/xhigh-plan-first",
+            "historical-wins/policy-framed",
+            "historical-wins/environment-targeted",
+        ],
         "expect_tasks": [
             "password-recovery",
             "qemu-startup",
@@ -45,6 +57,12 @@ def load_json_object(path: Path) -> dict[str, Any]:
     if not isinstance(value, dict):
         raise ValueError(f"{path} must contain a JSON object")
     return value
+
+
+def file_sha256(path: Path) -> str | None:
+    if not path.exists():
+        return None
+    return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
 def summarize_campaign_manifests(
@@ -85,6 +103,7 @@ def summarize_campaign_manifests(
             {
                 "campaign": campaign_name,
                 "manifest": str(path),
+                "manifestSha256": file_sha256(path),
                 "routes": len(route_entries),
                 "tasks": campaign_task_rows,
                 "uniqueTasks": len(campaign_tasks),
@@ -210,12 +229,16 @@ def expectation_issues(
     *,
     expected_unique_tasks: int | None = None,
     expected_projected_passes: int | None = None,
+    expected_campaigns: list[str] | tuple[str, ...] | None = None,
+    expected_routes: list[str] | tuple[str, ...] | None = None,
     expected_tasks: list[str] | tuple[str, ...] | None = None,
     expected_owners: list[str] | tuple[str, ...] | None = None,
 ) -> list[str]:
     summary = report["summary"]
     projection = report["scoreProjection"]
     unique_tasks = set(summary["uniqueTaskNames"])
+    campaigns = campaign_names(report)
+    routes = route_names(report)
     owners_by_task = task_owners_by_name(report)
     checks = [
         (
@@ -235,6 +258,12 @@ def expectation_issues(
         if expected is not None and actual != expected
     ]
     missing_tasks = sorted(set(expected_tasks or ()).difference(unique_tasks))
+    missing_campaigns = sorted(set(expected_campaigns or ()).difference(campaigns))
+    missing_routes = sorted(set(expected_routes or ()).difference(routes))
+    if missing_campaigns:
+        issues.append("missing expected campaigns: " + ", ".join(missing_campaigns))
+    if missing_routes:
+        issues.append("missing expected routes: " + ", ".join(missing_routes))
     if missing_tasks:
         issues.append("missing expected tasks: " + ", ".join(missing_tasks))
     for expectation in expected_owners or ():
@@ -246,6 +275,26 @@ def expectation_issues(
                 f"{task_name} expected owner {expected_owner}, got {actual}"
             )
     return issues
+
+
+def campaign_names(report: dict[str, Any]) -> set[str]:
+    return {
+        str(campaign.get("campaign"))
+        for campaign in report.get("campaigns", [])
+        if isinstance(campaign, dict) and campaign.get("campaign")
+    }
+
+
+def route_names(report: dict[str, Any]) -> set[str]:
+    names: set[str] = set()
+    for campaign in report.get("campaigns", []):
+        if not isinstance(campaign, dict):
+            continue
+        campaign_name = str(campaign.get("campaign") or "")
+        for route in campaign.get("routeEntries", []):
+            if isinstance(route, dict) and route.get("name"):
+                names.add(f"{campaign_name}/{route['name']}")
+    return names
 
 
 def task_owners_by_name(report: dict[str, Any]) -> dict[str, list[str]]:
@@ -300,6 +349,19 @@ def parse_args() -> argparse.Namespace:
         help="Exit non-zero unless the combined projection reaches this pass count.",
     )
     parser.add_argument(
+        "--expect-campaign",
+        action="append",
+        default=[],
+        help="Require a campaign name to be present in the combined manifests. Repeatable.",
+    )
+    parser.add_argument(
+        "--expect-route",
+        action="append",
+        default=[],
+        metavar="CAMPAIGN/ROUTE",
+        help="Require a campaign route to be present in the combined manifests. Repeatable.",
+    )
+    parser.add_argument(
         "--expect-task",
         action="append",
         default=[],
@@ -334,7 +396,28 @@ def apply_preset(args: argparse.Namespace) -> argparse.Namespace:
     args.expect_owner = list(dict.fromkeys(
         [*preset.get("expect_owners", []), *args.expect_owner]
     ))
+    args.expect_campaign = list(dict.fromkeys(
+        [*preset.get("expect_campaigns", []), *args.expect_campaign]
+    ))
+    args.expect_route = list(dict.fromkeys(
+        [*preset.get("expect_routes", []), *args.expect_route]
+    ))
     return args
+
+
+def validation_summary(args: argparse.Namespace, issues: list[str]) -> dict[str, Any]:
+    return {
+        "status": "blocked" if issues else "ok",
+        "preset": args.preset,
+        "issues": issues,
+        "requireNoOverlap": bool(args.require_no_overlap),
+        "expectUniqueTasks": args.expect_unique_tasks,
+        "expectProjectedPasses": args.expect_projected_passes,
+        "expectCampaigns": list(args.expect_campaign),
+        "expectRoutes": list(args.expect_route),
+        "expectTasks": list(args.expect_task),
+        "expectOwners": list(args.expect_owner),
+    }
 
 
 def main() -> int:
@@ -346,6 +429,27 @@ def main() -> int:
     except Exception as exc:
         print(f"summarize_tbench_campaigns: {exc}", file=sys.stderr)
         return 2
+
+    issues: list[str] = []
+    if args.require_no_overlap and report["duplicates"]:
+        names = ", ".join(item["taskName"] for item in report["duplicates"])
+        issues.append(f"duplicate campaign tasks: {names}")
+    try:
+        issues.extend(
+            expectation_issues(
+                report,
+                expected_unique_tasks=args.expect_unique_tasks,
+                expected_projected_passes=args.expect_projected_passes,
+                expected_campaigns=args.expect_campaign,
+                expected_routes=args.expect_route,
+                expected_tasks=args.expect_task,
+                expected_owners=args.expect_owner,
+            )
+        )
+    except ValueError as exc:
+        print(f"summarize_tbench_campaigns: {exc}", file=sys.stderr)
+        return 2
+    report["validation"] = validation_summary(args, issues)
 
     if args.json_path:
         args.json_path.parent.mkdir(parents=True, exist_ok=True)
@@ -359,21 +463,6 @@ def main() -> int:
     if not args.json_path and not args.markdown:
         print(markdown, end="")
 
-    if args.require_no_overlap and report["duplicates"]:
-        names = ", ".join(item["taskName"] for item in report["duplicates"])
-        print(f"summarize_tbench_campaigns: duplicate campaign tasks: {names}", file=sys.stderr)
-        return 1
-    try:
-        issues = expectation_issues(
-            report,
-            expected_unique_tasks=args.expect_unique_tasks,
-            expected_projected_passes=args.expect_projected_passes,
-            expected_tasks=args.expect_task,
-            expected_owners=args.expect_owner,
-        )
-    except ValueError as exc:
-        print(f"summarize_tbench_campaigns: {exc}", file=sys.stderr)
-        return 2
     if issues:
         print(
             "summarize_tbench_campaigns: expectation mismatch: " + "; ".join(issues),

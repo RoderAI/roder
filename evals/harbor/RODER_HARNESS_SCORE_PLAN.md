@@ -23,14 +23,21 @@ clean routed run, the expected score is 65/89: 50 baseline passes,
 
 The historical-wins campaign adds the three already-observed wins that were not
 in the validated-conversions route set: `password-recovery`, `qemu-startup`, and
-`vulnerable-secret`. Use `summarize_tbench_campaigns.py --require-no-overlap
---expect-unique-tasks 18 --expect-projected-passes 68 --expect-task ...
---expect-owner ...`
-against both manifests before a live run, with those three task names passed as
-explicit `--expect-task` checks and their reviewed route assignments passed as
-`--expect-owner` checks. The intended combined projection is 18 unique candidates
-and 68/89, leaving 5 passes to beat Codex CLI and 8 to beat the direct SOTA
-target.
+`vulnerable-secret`. Use
+`summarize_tbench_campaigns.py --preset validated-plus-historical` against both
+manifests before a live run. The preset checks campaign/route skeleton, overlap,
+18 unique candidates, 68 projected passes, the three historical-win task names,
+and their reviewed route assignments. Save the JSON output as the combined
+campaign handoff so the validation status, expectation set, and input manifest
+SHA-256 bindings are durable. The pre-eval and launch gates also enforce the
+expected preset, reviewed route skeleton, zero duplicate tasks, 18 unique tasks,
+and 68 projected passes before Harbor can start. That leaves 5 passes to beat
+Codex CLI and 8 to beat the direct SOTA target.
+Pass the saved handoff into `run-roder-pre-eval-diagnostics.sh
+--campaign-summary` before launch so the small local loop blocks stale or failed
+campaign composition. For the guarded full-run wrapper, also set
+`RODER_HARBOR_PRE_EVAL_CAMPAIGN_SUMMARY` to the same saved handoff so the
+launch plan is bound to that campaign summary before Harbor can start.
 
 ## Validated Conversions
 

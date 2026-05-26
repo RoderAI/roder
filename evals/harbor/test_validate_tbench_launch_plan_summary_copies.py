@@ -75,6 +75,37 @@ class LaunchPlanSummaryCopyTests(unittest.TestCase):
         self.assertFalse(result.ok)
         self.assertIn("pre-eval Harbor config summary SHA-256 mismatch", result.issues)
 
+    def test_rejects_copied_deadline_policy_mismatch(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            temp_path = Path(temp)
+            summary = write_clean_summary_fixture(temp_path)
+            summary_data = json.loads(summary.read_text())
+            plan = ready_plan()
+            plan["harborConfig"] = str(temp_path / "tbench.json")
+            config_sha = sha256((temp_path / "tbench.json").read_bytes()).hexdigest()
+            plan["harborConfigSha256"] = config_sha
+            plan["preEvalHarborConfigSha256"] = config_sha
+            plan["preEvalSummary"] = str(summary)
+            plan["preEvalSummarySha256"] = sha256(summary.read_bytes()).hexdigest()
+            plan["prebuiltBinary"] = summary_data["prebuiltBinary"]
+            plan["authFile"] = summary_data["authFile"]
+            plan["harborHarness"] = summary_data["checks"]["harborHarness"]
+            plan["imagePreflight"] = summary_data["checks"]["imagePreflight"]
+            plan["deadlinePolicy"] = {
+                "overrideTimeoutSec": 900,
+                "softTimeoutSec": 890,
+                "evalDeadlineSeconds": 870,
+            }
+
+            result = self.module.validate_plan(
+                plan,
+                require_ready=True,
+                verify_pre_eval_summary=True,
+            )
+
+        self.assertFalse(result.ok)
+        self.assertIn("deadline policy summary mismatch", result.issues)
+
     def test_rejects_copied_prebuilt_hash_mismatch(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
             temp_path = Path(temp)

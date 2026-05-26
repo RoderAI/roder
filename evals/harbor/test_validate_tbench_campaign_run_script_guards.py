@@ -82,6 +82,56 @@ class ValidateTbenchCampaignRunScriptGuardTests(unittest.TestCase):
         self.assertNotEqual(0, result.returncode)
         self.assertIn("runScript pre-eval summary guard mismatch", result.stderr)
 
+    def test_rejects_generated_run_script_missing_pre_eval_run_context_init(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            output_dir = Path(temp) / "campaign"
+            manifest = generate_campaign(output_dir)
+            data = json.loads(manifest.read_text())
+            run_script = Path(data["runScript"])
+            script = run_script.read_text()
+            expected = "pre_eval_ran_here=0"
+            self.assertIn(expected, script)
+            run_script.write_text(script.replace(expected, "# pre_eval_ran_here=0", 1))
+
+            result = validate_campaign(manifest)
+
+        self.assertNotEqual(0, result.returncode)
+        self.assertIn("runScript pre-eval run-context init mismatch", result.stderr)
+
+    def test_rejects_generated_run_script_missing_pre_eval_run_context_update(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            output_dir = Path(temp) / "campaign"
+            manifest = generate_campaign(output_dir)
+            data = json.loads(manifest.read_text())
+            run_script = Path(data["runScript"])
+            script = run_script.read_text()
+            expected = "pre_eval_ran_here=1"
+            self.assertIn(expected, script)
+            run_script.write_text(script.replace(expected, "# pre_eval_ran_here=1", 1))
+
+            result = validate_campaign(manifest)
+
+        self.assertNotEqual(0, result.returncode)
+        self.assertIn("runScript pre-eval run-context update mismatch", result.stderr)
+
+    def test_rejects_generated_run_script_missing_launch_plan_run_context_arg(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            output_dir = Path(temp) / "campaign"
+            manifest = generate_campaign(output_dir)
+            data = json.loads(manifest.read_text())
+            run_script = Path(data["runScript"])
+            script = run_script.read_text()
+            expected = "launch_plan_run_context_args=(--pre-eval-ran-here)"
+            self.assertIn(expected, script)
+            run_script.write_text(
+                script.replace(expected, "# launch_plan_run_context_args=()", 1)
+            )
+
+            result = validate_campaign(manifest)
+
+        self.assertNotEqual(0, result.returncode)
+        self.assertIn("runScript launch-plan run-context arg mismatch", result.stderr)
+
     def test_rejects_generated_run_script_with_replace_guard_hidden_in_comment(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
             output_dir = Path(temp) / "campaign"

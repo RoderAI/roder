@@ -21,9 +21,11 @@ from pre_eval_live_checks import (  # noqa: E402
     validate_prebuilt_file,
 )
 from pre_eval_config_summary import DEFAULT_CONFIGS  # noqa: E402
+from pre_eval_campaign_summary_validation import validate_campaign_summary  # noqa: E402
 from pre_eval_harness_summary import DEFAULT_HARNESS_FILES  # noqa: E402
 from pre_eval_image_preflight_validation import validate_image_preflight  # noqa: E402
 from pre_eval_summary_tbench_validation import validate_tbench_diagnostics  # noqa: E402
+from tbench_deadline_policy import validate_deadline_policy as validate_deadline_policy_fields  # noqa: E402
 
 NON_BLOCKING_STATUSES = {"ok", "passed", "skipped"}
 
@@ -54,6 +56,8 @@ def validate_summary(
     verify_prebuilt_binary: bool = False,
     verify_auth_file: bool = False,
     verify_image_manifest: bool = False,
+    require_campaign_summary: bool = False,
+    expected_campaign_summary: Path | str | None = None,
     require_image_config: str | None = None,
     required_configs: list[Path] | tuple[Path, ...] | None = None,
     max_age_seconds: int | None = None,
@@ -69,6 +73,7 @@ def validate_summary(
     blocked_checks = list_value(summary.get("blockedChecks"))
     if blocked_checks:
         issues.append("blocked checks: " + ", ".join(str(item) for item in blocked_checks))
+    validate_pre_eval_options(issues, options, checks)
 
     required_config_paths = list(required_configs or [])
     image_config = options.get("imageConfig")
@@ -109,8 +114,39 @@ def validate_summary(
         required_config=require_image_config,
     )
     validate_analysis(issues, checks, options, require_analysis)
+    validate_campaign_summary(
+        issues,
+        checks,
+        options,
+        require_campaign_summary or expected_campaign_summary is not None,
+        expected_campaign_summary=expected_campaign_summary,
+    )
 
     return ValidationResult(ok=not issues, issues=issues)
+
+
+def validate_pre_eval_options(
+    issues: list[str],
+    options: dict[str, Any],
+    checks: dict[str, Any],
+) -> None:
+    if options.get("offlineImages") is True and options.get("preflightImages") is not True:
+        issues.append("offlineImages requires preflightImages")
+    if options.get("pullImages") is True and options.get("preflightImages") is not True:
+        issues.append("pullImages requires preflightImages")
+    if options.get("offlineImages") is True and options.get("pullImages") is True:
+        issues.append("offlineImages cannot be combined with pullImages")
+    option_check = checks.get("preEvalOptions")
+    if not isinstance(option_check, dict):
+        issues.append("preEvalOptions check missing")
+        return
+    if option_check.get("status") != "passed":
+        issues.append(f"preEvalOptions status is {option_check.get('status') or '<missing>'}")
+    option_issues = list_value(option_check.get("issues"))
+    for issue in option_issues:
+        text = str(issue)
+        if text not in issues:
+            issues.append(text)
 
 
 def validate_freshness(
@@ -165,6 +201,11 @@ def validate_harbor_configs(
     config_issues = list_value(check.get("issues"))
     if config_issues:
         issues.append("harbor config issues: " + "; ".join(str(item) for item in config_issues))
+    validate_deadline_policy_fields(
+        issues,
+        check.get("deadlinePolicy"),
+        issue_prefix="harborConfigs deadlinePolicy",
+    )
     config_count = optional_int_value(check.get("configs"))
     entries = check.get("entries")
     if config_count is not None:
@@ -347,6 +388,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--verify-prebuilt-binary", action="store_true")
     parser.add_argument("--verify-auth-file", action="store_true")
     parser.add_argument("--verify-image-manifest", action="store_true")
+    parser.add_argument("--require-campaign-summary", action="store_true")
+    parser.add_argument("--campaign-summary", type=Path)
     parser.add_argument("--require-image-config")
     parser.add_argument("--require-config", type=Path, action="append", default=[])
     parser.add_argument("--max-age-seconds", type=int)
@@ -373,6 +416,8 @@ def main() -> int:
         verify_prebuilt_binary=args.verify_prebuilt_binary,
         verify_auth_file=args.verify_auth_file,
         verify_image_manifest=args.verify_image_manifest,
+        require_campaign_summary=args.require_campaign_summary,
+        expected_campaign_summary=args.campaign_summary,
         require_image_config=args.require_image_config,
         required_configs=tuple(args.require_config),
         max_age_seconds=args.max_age_seconds,

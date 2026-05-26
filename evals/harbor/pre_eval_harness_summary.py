@@ -13,7 +13,26 @@ if str(HARBOR_DIR) not in sys.path:
 from pre_eval_live_checks import combined_file_digest, file_sha256
 
 
-DEFAULT_HARNESS_FILES = (
+def harbor_test_files() -> tuple[Path, ...]:
+    return tuple(
+        Path("evals/harbor") / path.name
+        for path in sorted(HARBOR_DIR.glob("test_*.py"), key=lambda item: item.name)
+    )
+
+
+def unique_paths(paths: tuple[Path, ...]) -> tuple[Path, ...]:
+    seen: set[str] = set()
+    unique: list[Path] = []
+    for path in paths:
+        key = path.as_posix()
+        if key in seen:
+            continue
+        seen.add(key)
+        unique.append(path)
+    return tuple(unique)
+
+
+CORE_HARNESS_FILES = (
     Path("evals/harbor/roder_harbor_agent.py"),
     Path("evals/harbor/roder_harbor_agent_config.py"),
     Path("evals/harbor/roder_benchmark_guidance.py"),
@@ -38,13 +57,20 @@ DEFAULT_HARNESS_FILES = (
     Path("evals/harbor/tbench_campaign_score_projection.py"),
     Path("evals/harbor/tbench_campaign_run_script.py"),
     Path("evals/harbor/tbench_campaign_script_commands.py"),
+    Path("evals/harbor/tbench_campaign_run_script_writer.py"),
+    Path("evals/harbor/tbench_campaign_launch_plans.py"),
     Path("evals/harbor/validate_harbor_readiness.py"),
     Path("evals/harbor/validate_pre_eval_summary.py"),
     Path("evals/harbor/validate_pre_eval_tbench_diagnostics.py"),
     Path("evals/harbor/validate_tbench_analysis.py"),
     Path("evals/harbor/validate_tbench_launch_plan.py"),
+    Path("evals/harbor/write_tbench_launch_plan.py"),
+    Path("evals/harbor/launch_plan_campaign_summary_validation.py"),
     Path("evals/harbor/launch_plan_dependency_validation.py"),
+    Path("evals/harbor/launch_plan_summary_copies.py"),
     Path("evals/harbor/write_pre_eval_summary.py"),
+    Path("evals/harbor/pre_eval_campaign_summary.py"),
+    Path("evals/harbor/pre_eval_campaign_summary_validation.py"),
     Path("evals/harbor/pre_eval_config_summary.py"),
     Path("evals/harbor/pre_eval_file_summary.py"),
     Path("evals/harbor/pre_eval_git_summary.py"),
@@ -55,21 +81,53 @@ DEFAULT_HARNESS_FILES = (
     Path("evals/harbor/pre_eval_summary_tbench_validation.py"),
     Path("evals/harbor/tbench_analysis_constants.py"),
     Path("evals/harbor/tbench_campaign_image_preflight.py"),
+    Path("evals/harbor/tbench_campaign_route_readiness.py"),
+    Path("evals/harbor/tbench_deadline_policy.py"),
     Path("evals/harbor/tbench_diagnostic_contract.py"),
     Path("evals/harbor/test_suggest_tbench_campaign.py"),
     Path("evals/harbor/test_summarize_tbench_campaigns.py"),
+    Path("evals/harbor/test_summarize_tbench_campaigns_validation.py"),
+    Path("evals/harbor/test_generate_tbench_campaign.py"),
     Path("evals/harbor/test_run_roder_pre_eval_diagnostics_args.py"),
+    Path("evals/harbor/test_run_roder_pre_eval_campaign_summary_args.py"),
+    Path("evals/harbor/test_run_roder_tbench_full_campaign_summary.py"),
+    Path("evals/harbor/test_run_roder_tbench_full_dry_run_image_gate.py"),
+    Path("evals/harbor/test_run_roder_tbench_full_harness_source.py"),
+    Path("evals/harbor/test_run_roder_tbench_smoke_gate.py"),
+    Path("evals/harbor/test_write_pre_eval_campaign_summary.py"),
+    Path("evals/harbor/test_validate_tbench_campaign.py"),
     Path("evals/harbor/test_validate_tbench_campaign_run_script.py"),
+    Path("evals/harbor/test_validate_tbench_campaign_run_script_campaign_summary.py"),
     Path("evals/harbor/test_validate_tbench_campaign_run_script_guards.py"),
     Path("evals/harbor/test_validate_tbench_campaign_run_script_summary.py"),
     Path("evals/harbor/test_validate_tbench_campaign_handoff.py"),
     Path("evals/harbor/test_validate_tbench_campaign_score_projection.py"),
     Path("evals/harbor/test_run_roder_tbench_full_gate.py"),
+    Path("evals/harbor/test_validate_pre_eval_summary.py"),
     Path("evals/harbor/test_validate_pre_eval_summary_configs.py"),
+    Path("evals/harbor/test_validate_pre_eval_summary_campaign.py"),
+    Path("evals/harbor/test_validate_pre_eval_summary_image_counts.py"),
+    Path("evals/harbor/test_validate_pre_eval_summary_image_manifest.py"),
+    Path("evals/harbor/test_validate_pre_eval_summary_image_task_mapping.py"),
+    Path("evals/harbor/test_validate_pre_eval_summary_tbench.py"),
+    Path("evals/harbor/test_validate_tbench_launch_plan.py"),
+    Path("evals/harbor/test_validate_tbench_launch_plan_campaign_summary.py"),
+    Path("evals/harbor/test_validate_tbench_launch_plan_campaign_summary_copies.py"),
+    Path("evals/harbor/test_validate_tbench_launch_plan_harness_copies.py"),
+    Path("evals/harbor/test_validate_tbench_launch_plan_hashes.py"),
+    Path("evals/harbor/test_validate_tbench_launch_plan_image_manifest.py"),
+    Path("evals/harbor/test_validate_tbench_launch_plan_live_files.py"),
+    Path("evals/harbor/test_validate_tbench_launch_plan_option_copies.py"),
+    Path("evals/harbor/test_validate_tbench_launch_plan_snapshots.py"),
+    Path("evals/harbor/test_write_pre_eval_campaign_manifest_coverage.py"),
+    Path("evals/harbor/test_tbench_deadline_policy.py"),
     Path("evals/harbor/test_validate_pre_eval_summary_harness.py"),
     Path("evals/harbor/test_validate_tbench_launch_plan_harness.py"),
     Path("evals/harbor/test_validate_tbench_launch_plan_summary_copies.py"),
+    Path("evals/harbor/test_validate_tbench_campaign_launch_plans.py"),
+    Path("evals/harbor/test_write_tbench_launch_plan.py"),
 )
+DEFAULT_HARNESS_FILES = unique_paths((*CORE_HARNESS_FILES, *harbor_test_files()))
 
 
 def harness_summary(paths: tuple[Path, ...] | list[Path] | None = None) -> dict[str, Any]:

@@ -8,7 +8,7 @@ from datetime import datetime, timezone
 from hashlib import sha256
 from pathlib import Path
 
-from pre_eval_config_summary import DEFAULT_CONFIGS
+from pre_eval_config_summary import DEFAULT_CONFIGS, deadline_policy_summary
 from pre_eval_harness_summary import DEFAULT_HARNESS_FILES
 from tbench_diagnostic_test_data import passing_tbench_diagnostics_summary
 
@@ -92,6 +92,8 @@ def clean_summary(
             "requirePrebuilt": True,
             "requireAuth": True,
             "preflightImages": preflight_images,
+            "offlineImages": False,
+            "pullImages": False,
             "imageConfig": (
                 "evals/harbor/tbench-full-gpt55-medium.json"
                 if preflight_images
@@ -111,10 +113,12 @@ def clean_summary(
             "validJson": True,
         },
         "checks": {
+            "preEvalOptions": {"status": "passed", "issues": []},
             "harborReadiness": {"status": "passed"},
             "harborConfigs": {
                 "status": "passed",
                 "issues": [],
+                "deadlinePolicy": deadline_policy_summary(),
                 "entries": config_entries(),
             },
             "harborHarness": harness_summary(),
@@ -162,6 +166,8 @@ def add_clean_image_preflight(
                 {
                     "clean": True,
                     "config": "evals/harbor/tbench-full-gpt55-medium.json",
+                    "offline": False,
+                    "pull": False,
                     "summary": {
                         "tasks": 89,
                         "unique_images": 89,
@@ -191,6 +197,7 @@ def add_clean_image_preflight(
         )
     summary["checks"]["imagePreflight"] = {
         "status": "passed",
+        "offline": False,
         "config": "evals/harbor/tbench-full-gpt55-medium.json",
         "manifest": str(manifest),
         "tasks": 89,

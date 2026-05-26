@@ -99,6 +99,10 @@ def validate_route_image_manifest_details(
         "selectionErrors": list_value(manifest.get("selection_errors")),
         "blockedTasks": [],
     }
+    if "offline" in manifest:
+        image_preflight["offline"] = manifest.get("offline")
+    if "pull" in manifest:
+        image_preflight["pull"] = manifest.get("pull")
     manifest_issues: list[str] = []
     validate_image_preflight_evidence(manifest_issues, image_preflight)
     validate_image_preflight_clean_details(manifest_issues, image_preflight)

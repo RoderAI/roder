@@ -51,6 +51,7 @@ class PreEvalOptionsSummaryTests(unittest.TestCase):
             include_speed=False,
             require_prebuilt=False,
             preflight_images=preflight_images,
+            offline_images=False,
             pull_images=False,
             image_config="evals/harbor/tbench-full-gpt55-medium.json",
             analysis_target="",
