@@ -352,13 +352,6 @@ const METHOD_SPECS: &[AppServerMethodSpecSeed] = &[
         LocalState,
         NonIdempotent
     ),
-    method_spec!("speech/providers/list", "speech", ReadOnly, Idempotent),
-    method_spec!(
-        "speech/transcribe",
-        "speech",
-        ExternalProcess,
-        NonIdempotent
-    ),
     method_spec!("settings/get", "settings", ReadOnly, Idempotent),
     method_spec!(
         "settings/set_default_mode",
@@ -389,6 +382,25 @@ const METHOD_SPECS: &[AppServerMethodSpecSeed] = &[
     method_spec!("skills/read", "skills", ReadOnly, Idempotent),
     method_spec!("skills/setEnabled", "skills", LocalState, NonIdempotent),
     method_spec!("skills/setExposure", "skills", LocalState, NonIdempotent),
+    method_spec!("speech/providers/list", "speech", ReadOnly, Idempotent),
+    method_spec!(
+        "speech/synthesis/providers/list",
+        "speech",
+        ReadOnly,
+        Idempotent
+    ),
+    method_spec!(
+        "speech/synthesize",
+        "speech",
+        ExternalProcess,
+        NonIdempotent
+    ),
+    method_spec!(
+        "speech/transcribe",
+        "speech",
+        ExternalProcess,
+        NonIdempotent
+    ),
     method_spec!("tasks/cancel", "tasks", LocalState, NonIdempotent),
     method_spec!("tasks/get", "tasks", ReadOnly, Idempotent),
     method_spec!("tasks/list", "tasks", ReadOnly, Idempotent),
@@ -511,6 +523,8 @@ mod tests {
             "automations/list",
             "processes/list",
             "speech/providers/list",
+            "speech/synthesis/providers/list",
+            "speech/synthesize",
             "speech/transcribe",
         ] {
             assert!(methods.contains(required), "missing {required}");

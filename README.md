@@ -251,6 +251,8 @@ Poolside provider setup is documented in [`docs/roder-poolside-providers.md`](./
 
 Cursor provider setup is documented in [`docs/roder-cursor-provider.md`](./docs/roder-cursor-provider.md). Use `cursor/composer-2.5` with `CURSOR_API_KEY` or `RODER_CURSOR_API_KEY`; Roder exchanges the key and calls Cursor AgentService directly without invoking the Cursor CLI at inference runtime.
 
+Xiaomi MiMo provider setup is documented in [`docs/roder-xiaomi-mimo-providers.md`](./docs/roder-xiaomi-mimo-providers.md). Use `xiaomi-mimo/<model>` with `MIMO_API_KEY` for pay-as-you-go API access, or `xiaomi-mimo-token-plan/<model>` with `MIMO_TOKEN_PLAN_API_KEY` and the exclusive Token Plan base URL. Xiaomi TTS models are exposed through `roder speech synthesis-providers` and `speech/synthesize`, not the text model catalog.
+
 Custom OpenAI-compatible providers can be added with a provider-specific base URL:
 
 ```toml

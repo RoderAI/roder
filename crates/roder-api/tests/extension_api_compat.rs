@@ -9,8 +9,9 @@ use roder_api::extension::{
 use roder_api::inference::ProviderAuthType;
 use roder_api::speech::{
     SpeechAudio, SpeechCapabilities, SpeechModelDescriptor, SpeechProviderContext,
-    SpeechProviderMetadata, SpeechTranscriber, SpeechTranscriptionRequest,
-    SpeechTranscriptionResult,
+    SpeechProviderMetadata, SpeechSynthesisCapabilities, SpeechSynthesisModelDescriptor,
+    SpeechSynthesisRequest, SpeechSynthesisResult, SpeechSynthesizer, SpeechTranscriber,
+    SpeechTranscriptionRequest, SpeechTranscriptionResult,
 };
 use roder_api::tools::{
     ToolCall, ToolContributor, ToolExecutionContext, ToolExecutor, ToolRegistry, ToolResult,
@@ -125,6 +126,23 @@ fn registry_installs_speech_transcribers() {
             .provided_services()
             .contains(&ProvidedService::SpeechTranscriber(
                 "test-speech".to_string()
+            ))
+    );
+}
+
+#[test]
+fn registry_installs_speech_synthesizers() {
+    let mut builder = ExtensionRegistryBuilder::new();
+    builder.install(SpeechSynthesisExtension).unwrap();
+
+    let registry = builder.build().unwrap();
+
+    assert!(registry.speech_synthesizer("test-synthesis").is_some());
+    assert!(
+        registry
+            .provided_services()
+            .contains(&ProvidedService::SpeechSynthesizer(
+                "test-synthesis".to_string()
             ))
     );
 }
@@ -394,6 +412,82 @@ impl SpeechTranscriber for TestSpeechTranscriber {
             language: Some("en".to_string()),
             duration_millis: None,
             segments: Vec::new(),
+            provider_response_id: None,
+            metadata: serde_json::json!({}),
+        })
+    }
+}
+
+struct SpeechSynthesisExtension;
+
+impl RoderExtension for SpeechSynthesisExtension {
+    fn manifest(&self) -> ExtensionManifest {
+        ExtensionManifest {
+            id: "speech-synthesis".to_string(),
+            name: "speech synthesis".to_string(),
+            version: Version::new(0, 1, 0),
+            api_version: "0.1.0".to_string(),
+            description: None,
+            provides: vec![ProvidedService::SpeechSynthesizer(
+                "test-synthesis".to_string(),
+            )],
+            required_capabilities: Vec::new(),
+        }
+    }
+
+    fn install(&self, registry: &mut ExtensionRegistryBuilder) -> anyhow::Result<()> {
+        registry.speech_synthesizer(Arc::new(TestSpeechSynthesizer));
+        Ok(())
+    }
+}
+
+struct TestSpeechSynthesizer;
+
+#[async_trait::async_trait]
+impl SpeechSynthesizer for TestSpeechSynthesizer {
+    fn id(&self) -> roder_api::extension::SpeechSynthesizerId {
+        "test-synthesis".to_string()
+    }
+
+    fn capabilities(&self) -> SpeechSynthesisCapabilities {
+        SpeechSynthesisCapabilities {
+            batch: true,
+            streaming: false,
+            builtin_voices: true,
+            voice_design: false,
+            voice_clone: false,
+            prompt: true,
+        }
+    }
+
+    fn metadata(&self) -> SpeechProviderMetadata {
+        SpeechProviderMetadata::local("Test Speech Synthesis")
+    }
+
+    async fn list_models(
+        &self,
+        _ctx: SpeechProviderContext<'_>,
+    ) -> anyhow::Result<Vec<SpeechSynthesisModelDescriptor>> {
+        Ok(vec![SpeechSynthesisModelDescriptor {
+            id: "test-tts".to_string(),
+            name: "Test TTS".to_string(),
+            description: None,
+            capabilities: self.capabilities(),
+        }])
+    }
+
+    async fn synthesize(
+        &self,
+        _ctx: SpeechProviderContext<'_>,
+        request: SpeechSynthesisRequest,
+    ) -> anyhow::Result<SpeechSynthesisResult> {
+        Ok(SpeechSynthesisResult {
+            audio: SpeechAudio {
+                bytes: request.text.into_bytes(),
+                mime_type: "audio/wav".to_string(),
+                filename: None,
+            },
+            duration_millis: None,
             provider_response_id: None,
             metadata: serde_json::json!({}),
         })

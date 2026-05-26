@@ -5,6 +5,10 @@ use crate::inference::{
     ModelSchemaPolicy, ProviderFamily, ReasoningEffortDescriptor,
 };
 
+mod xiaomi_mimo;
+
+pub use xiaomi_mimo::{XIAOMI_MIMO_ENV_ALIASES, XIAOMI_MIMO_TOKEN_PLAN_ENV_ALIASES};
+
 pub const PROVIDER_MOCK: &str = "mock";
 pub const PROVIDER_OPENAI: &str = "openai";
 pub const PROVIDER_CODEX: &str = "codex";
@@ -16,6 +20,8 @@ pub const PROVIDER_OPENCODE: &str = "opencode";
 pub const PROVIDER_OPENCODE_GO: &str = "opencode-go";
 pub const PROVIDER_POOLSIDE: &str = "poolside";
 pub const PROVIDER_CURSOR: &str = "cursor";
+pub const PROVIDER_XIAOMI_MIMO: &str = "xiaomi-mimo";
+pub const PROVIDER_XIAOMI_MIMO_TOKEN_PLAN: &str = "xiaomi-mimo-token-plan";
 
 pub const PROVIDER_KIND_MOCK: &str = "mock";
 pub const PROVIDER_KIND_OPENAI: &str = "openai";
@@ -26,6 +32,7 @@ pub const PROVIDER_KIND_XAI: &str = "xai";
 pub const PROVIDER_KIND_OPENCODE: &str = "opencode";
 pub const PROVIDER_KIND_POOLSIDE: &str = "poolside";
 pub const PROVIDER_KIND_CURSOR: &str = "cursor";
+pub const PROVIDER_KIND_XIAOMI_MIMO: &str = PROVIDER_KIND_CHAT_COMPLETIONS;
 
 pub const REASONING_NONE: &str = "none";
 pub const REASONING_MINIMAL: &str = "minimal";
@@ -330,6 +337,8 @@ pub const BUILT_IN_PROVIDERS: &[ProviderCatalogEntry] = &[
         requires_auth: true,
         supports_websockets: false,
     },
+    xiaomi_mimo::PAY_AS_YOU_GO_PROVIDER,
+    xiaomi_mimo::TOKEN_PLAN_PROVIDER,
 ];
 
 pub const BUILT_IN_MODELS: &[ModelCatalogEntry] = &[
@@ -616,6 +625,16 @@ pub const BUILT_IN_MODELS: &[ModelCatalogEntry] = &[
         "Poolside lightweight agentic coding model.",
         REASONING_MEDIUM,
     ),
+    xiaomi_mimo::PAYG_V25_PRO,
+    xiaomi_mimo::PAYG_V2_PRO,
+    xiaomi_mimo::PAYG_V25,
+    xiaomi_mimo::PAYG_V2_OMNI,
+    xiaomi_mimo::PAYG_V2_FLASH,
+    xiaomi_mimo::TOKEN_PLAN_V25_PRO,
+    xiaomi_mimo::TOKEN_PLAN_V2_PRO,
+    xiaomi_mimo::TOKEN_PLAN_V25,
+    xiaomi_mimo::TOKEN_PLAN_V2_OMNI,
+    xiaomi_mimo::TOKEN_PLAN_V2_FLASH,
     ModelCatalogEntry {
         id: "composer-2.5",
         display_name: "Composer 2.5",
@@ -906,6 +925,7 @@ pub fn provider_family_for_provider(provider: &str) -> ProviderFamily {
         PROVIDER_OPENCODE | PROVIDER_OPENCODE_GO => ProviderFamily::Opencode,
         PROVIDER_POOLSIDE => ProviderFamily::Poolside,
         PROVIDER_CURSOR => ProviderFamily::Cursor,
+        PROVIDER_XIAOMI_MIMO | PROVIDER_XIAOMI_MIMO_TOKEN_PLAN => ProviderFamily::OpenAi,
         _ => ProviderFamily::Mock,
     }
 }
@@ -1008,7 +1028,9 @@ mod tests {
                 "opencode",
                 "opencode-go",
                 "poolside",
-                "cursor"
+                "cursor",
+                "xiaomi-mimo",
+                "xiaomi-mimo-token-plan"
             ]
         );
     }
@@ -1084,6 +1106,16 @@ mod tests {
                 "deepseek-v4-flash",
                 "poolside/laguna-m.1",
                 "poolside/laguna-xs.2",
+                "mimo-v2.5-pro",
+                "mimo-v2-pro",
+                "mimo-v2.5",
+                "mimo-v2-omni",
+                "mimo-v2-flash",
+                "mimo-v2.5-pro",
+                "mimo-v2-pro",
+                "mimo-v2.5",
+                "mimo-v2-omni",
+                "mimo-v2-flash",
                 "composer-2.5",
             ]
         );
@@ -1101,6 +1133,11 @@ mod tests {
         assert_eq!(models_for_provider(PROVIDER_OPENCODE_GO, false).len(), 4);
         assert_eq!(models_for_provider(PROVIDER_POOLSIDE, false).len(), 2);
         assert_eq!(models_for_provider(PROVIDER_CURSOR, false).len(), 1);
+        assert_eq!(models_for_provider(PROVIDER_XIAOMI_MIMO, false).len(), 5);
+        assert_eq!(
+            models_for_provider(PROVIDER_XIAOMI_MIMO_TOKEN_PLAN, false).len(),
+            5
+        );
         assert_eq!(models_for_provider(PROVIDER_MOCK, true).len(), 1);
     }
 
@@ -1131,6 +1168,39 @@ mod tests {
                 .collect::<Vec<_>>(),
             vec![REASONING_NONE, REASONING_MEDIUM]
         );
+    }
+
+    #[test]
+    fn xiaomi_mimo_catalog_uses_chat_completions_kind_and_exact_model_ids() {
+        let provider = BUILT_IN_PROVIDERS
+            .iter()
+            .find(|provider| provider.id == PROVIDER_XIAOMI_MIMO)
+            .unwrap();
+        let token_plan = BUILT_IN_PROVIDERS
+            .iter()
+            .find(|provider| provider.id == PROVIDER_XIAOMI_MIMO_TOKEN_PLAN)
+            .unwrap();
+
+        assert_eq!(provider.kind, PROVIDER_KIND_CHAT_COMPLETIONS);
+        assert_eq!(token_plan.kind, PROVIDER_KIND_CHAT_COMPLETIONS);
+        assert_eq!(provider.env_key, Some("MIMO_API_KEY"));
+        assert_eq!(token_plan.env_key, Some("MIMO_TOKEN_PLAN_API_KEY"));
+
+        let ids = models_for_provider(PROVIDER_XIAOMI_MIMO, false)
+            .into_iter()
+            .map(|model| model.id)
+            .collect::<Vec<_>>();
+        assert_eq!(
+            ids,
+            vec![
+                "mimo-v2.5-pro",
+                "mimo-v2-pro",
+                "mimo-v2.5",
+                "mimo-v2-omni",
+                "mimo-v2-flash"
+            ]
+        );
+        assert!(lookup_model("out-of-v2-flash").is_none());
     }
 
     #[test]
