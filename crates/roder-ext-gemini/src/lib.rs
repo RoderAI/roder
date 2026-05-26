@@ -1,4 +1,5 @@
 pub mod extension;
+mod media;
 pub mod provider;
 mod schema;
 
