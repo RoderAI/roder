@@ -40,6 +40,10 @@ for app, TUI, CLI, SDK, and sibling clients.
 | `automations/runs` | automation history | Read run history, including failed and skipped missed runs. | Use `state` filtering for failed, running, or skipped views. |
 | `automations/cancelRun` | stop automation run | Cancel a queued or running automation run. | Cancellation is run-id scoped. |
 
+Thread metadata is required to carry an absolute workspace. The app-server
+projects that workspace into `Thread.cwd`; it does not synthesize a fallback cwd
+from the app-server process when persisted metadata is missing or invalid.
+
 ## Required Client Notifications
 
 | Notification | Client reducer expectation | Roder source |

@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
 use time::OffsetDateTime;
 
 use crate::events::{EventEnvelope, ThreadId, TurnId};
@@ -14,7 +14,8 @@ use crate::transcript::TranscriptItem;
 pub struct ThreadMetadata {
     pub thread_id: ThreadId,
     pub title: Option<String>,
-    pub workspace: Option<String>,
+    #[serde(deserialize_with = "deserialize_thread_workspace")]
+    pub workspace: String,
     pub provider: Option<String>,
     pub model: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -26,6 +27,24 @@ pub struct ThreadMetadata {
     #[serde(with = "time::serde::rfc3339")]
     pub updated_at: OffsetDateTime,
     pub message_count: u32,
+}
+
+pub fn validate_thread_workspace(workspace: &str) -> anyhow::Result<String> {
+    let workspace = workspace.trim();
+    anyhow::ensure!(!workspace.is_empty(), "thread workspace is required");
+    anyhow::ensure!(
+        std::path::Path::new(workspace).is_absolute(),
+        "thread workspace must be an absolute path: {workspace}"
+    );
+    Ok(workspace.to_string())
+}
+
+fn deserialize_thread_workspace<'de, D>(deserializer: D) -> Result<String, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let workspace = String::deserialize(deserializer)?;
+    validate_thread_workspace(&workspace).map_err(serde::de::Error::custom)
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -118,7 +137,7 @@ mod tests {
         let value = serde_json::to_value(ThreadMetadata {
             thread_id: "thread-a".to_string(),
             title: None,
-            workspace: None,
+            workspace: "/workspace".to_string(),
             provider: None,
             model: None,
             runner_destination: None,
@@ -131,5 +150,43 @@ mod tests {
 
         assert_eq!(value["created_at"], "1970-01-01T00:00:00Z");
         assert_eq!(value["updated_at"], "1970-01-01T00:00:00Z");
+        assert_eq!(value["workspace"], "/workspace");
+    }
+
+    #[test]
+    fn thread_metadata_requires_workspace_when_deserializing() {
+        let value = serde_json::json!({
+            "thread_id": "thread-a",
+            "title": null,
+            "provider": null,
+            "model": null,
+            "created_at": "1970-01-01T00:00:00Z",
+            "updated_at": "1970-01-01T00:00:00Z",
+            "message_count": 0
+        });
+
+        let result = serde_json::from_value::<ThreadMetadata>(value);
+
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn thread_metadata_rejects_blank_or_relative_workspace_when_deserializing() {
+        for workspace in ["", "project"] {
+            let value = serde_json::json!({
+                "thread_id": "thread-a",
+                "title": null,
+                "workspace": workspace,
+                "provider": null,
+                "model": null,
+                "created_at": "1970-01-01T00:00:00Z",
+                "updated_at": "1970-01-01T00:00:00Z",
+                "message_count": 0
+            });
+
+            let result = serde_json::from_value::<ThreadMetadata>(value);
+
+            assert!(result.is_err(), "workspace {workspace:?} should fail");
+        }
     }
 }

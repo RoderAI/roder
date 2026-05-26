@@ -57,12 +57,11 @@ impl Runtime {
         }))
         .await;
 
-        let cfg = self.status().await;
         let query = ContextQuery {
             thread_id: req.thread_id.clone(),
             turn_id: turn_id.clone(),
             prompt: req.message.clone(),
-            workspace: req.workspace.clone().or(cfg.workspace),
+            workspace: Some(req.workspace.clone()),
             token_budget: None,
         };
         let mut blocks = self.skill_context_blocks(req, turn_id).await;
@@ -322,6 +321,10 @@ mod tests {
     use crate::runtime::{Runtime, RuntimeConfig, StartTurnRequest};
 
     use super::*;
+
+    fn test_workspace() -> String {
+        std::env::current_dir().unwrap().display().to_string()
+    }
 
     #[tokio::test]
     async fn skills_context_renders_global_index_and_direct_invocation() {
@@ -693,7 +696,7 @@ mod tests {
             images: Vec::new(),
             provider_override: None,
             model_override: None,
-            workspace: None,
+            workspace: test_workspace(),
             instructions: Default::default(),
             task_ledger_required: false,
         }

@@ -212,7 +212,7 @@ async fn active_goal_continues_after_turn_until_model_completes_goal() {
             images: Vec::new(),
             provider_override: None,
             model_override: None,
-            workspace: None,
+            workspace: std::env::current_dir().unwrap().display().to_string(),
             instructions: default_instructions(),
             task_ledger_required: false,
         })

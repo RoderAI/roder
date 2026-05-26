@@ -6,6 +6,7 @@ use roder_api::events::{EventEnvelope, RoderEvent, ThreadId, TurnId};
 use roder_api::extension_state::ExtensionStateRecord;
 use roder_api::thread::{
     ThreadMetadata, ThreadSnapshot, ThreadStore, ThreadStoreFactory, TurnRecord,
+    validate_thread_workspace,
 };
 use roder_api::transcript::TranscriptItem;
 use time::OffsetDateTime;
@@ -87,6 +88,7 @@ impl ThreadStore for JsonlThreadStore {
     }
 
     async fn create_thread(&self, metadata: ThreadMetadata) -> anyhow::Result<ThreadMetadata> {
+        validate_thread_workspace(&metadata.workspace)?;
         let dir = self.thread_dir(&metadata.thread_id);
         fs::create_dir_all(&dir)
             .await
@@ -100,6 +102,7 @@ impl ThreadStore for JsonlThreadStore {
         &self,
         metadata: ThreadMetadata,
     ) -> anyhow::Result<ThreadMetadata> {
+        validate_thread_workspace(&metadata.workspace)?;
         let dir = self.thread_dir(&metadata.thread_id);
         fs::create_dir_all(&dir)
             .await
@@ -344,17 +347,21 @@ impl JsonlThreadStore {
         item: &TranscriptItem,
     ) -> anyhow::Result<()> {
         let metadata_path = self.thread_dir(thread_id).join("metadata.json");
-        let thread_dir = self.thread_dir(thread_id);
         let (mut metadata, count_current_item) = if metadata_path.exists() {
             let data = fs::read(&metadata_path)
                 .await
                 .with_context(|| format!("read thread metadata {}", metadata_path.display()))?;
             match parse_metadata_tolerant(&data) {
                 Ok((metadata, _needs_repair)) => (self.with_derived_title(metadata).await?, true),
-                Err(_) => (self.infer_metadata(&thread_dir, thread_id).await, false),
+                Err(err) => {
+                    anyhow::bail!(
+                        "thread metadata invalid for {}: {err}",
+                        metadata_path.display()
+                    )
+                }
             }
         } else {
-            (self.infer_metadata(&thread_dir, thread_id).await, false)
+            anyhow::bail!("thread metadata missing for {}", thread_id);
         };
         metadata.updated_at = OffsetDateTime::now_utc();
         if count_current_item
@@ -396,87 +403,16 @@ impl JsonlThreadStore {
                     return Ok(metadata);
                 }
                 Err(_) => {
-                    let metadata = self.infer_metadata(dir, thread_id).await;
-                    self.repair_metadata_file(&metadata_path, &metadata).await;
-                    return Ok(metadata);
+                    anyhow::bail!("thread metadata invalid for {}", metadata_path.display());
                 }
             }
         }
 
-        let metadata = self.infer_metadata(dir, thread_id).await;
-        self.repair_metadata_file(&metadata_path, &metadata).await;
-        Ok(metadata)
+        anyhow::bail!("thread metadata missing for {}", thread_id);
     }
 
     async fn repair_metadata_file(&self, metadata_path: &Path, metadata: &ThreadMetadata) {
         let _ = write_metadata_file(metadata_path, metadata).await;
-    }
-
-    async fn infer_metadata(&self, dir: &Path, thread_id: &ThreadId) -> ThreadMetadata {
-        let mut title = None;
-        let mut provider = None;
-        let mut model = None;
-        let mut created_at = None;
-        let mut updated_at = None;
-        let mut message_count = 0u32;
-
-        if let Ok(turns) = self.read_turns(thread_id).await {
-            for turn in turns {
-                track_timestamp(&mut created_at, &mut updated_at, turn.created_at);
-                if let Some(completed_at) = turn.completed_at {
-                    track_timestamp(&mut created_at, &mut updated_at, completed_at);
-                }
-                for item in turn.items {
-                    match item {
-                        TranscriptItem::UserMessage(message) => {
-                            message_count = message_count.saturating_add(1);
-                            if title.is_none() {
-                                title = title_from_user_text(&message.text);
-                            }
-                        }
-                        TranscriptItem::AssistantMessage(_) => {
-                            message_count = message_count.saturating_add(1);
-                        }
-                        TranscriptItem::ProviderMetadata(metadata) => {
-                            if provider.is_none() {
-                                provider = metadata_string_field(&metadata, "provider")
-                                    .or_else(|| metadata_string_field(&metadata, "provider_id"));
-                            }
-                            if model.is_none() {
-                                model = metadata_string_field(&metadata, "model");
-                            }
-                        }
-                        _ => {}
-                    }
-                }
-            }
-        }
-
-        if let Ok(events) = self.load_events(thread_id).await {
-            for envelope in events {
-                track_timestamp(&mut created_at, &mut updated_at, envelope.timestamp);
-            }
-        }
-
-        if (created_at.is_none() || updated_at.is_none())
-            && let Some(modified_at) = modified_at(dir).await
-        {
-            track_timestamp(&mut created_at, &mut updated_at, modified_at);
-        }
-
-        let fallback_time = OffsetDateTime::now_utc();
-        ThreadMetadata {
-            thread_id: thread_id.clone(),
-            title,
-            workspace: None,
-            provider,
-            model,
-            runner_destination: None,
-            runner_state: None,
-            created_at: created_at.unwrap_or(fallback_time),
-            updated_at: updated_at.unwrap_or(fallback_time),
-            message_count,
-        }
     }
 
     async fn with_derived_title(
@@ -550,35 +486,6 @@ fn parse_metadata_tolerant(data: &[u8]) -> serde_json::Result<(ThreadMetadata, b
                 Err(_) => Err(strict_err),
             }
         }
-    }
-}
-
-fn metadata_string_field(value: &serde_json::Value, field: &str) -> Option<String> {
-    value
-        .get(field)
-        .and_then(serde_json::Value::as_str)
-        .filter(|value| !value.trim().is_empty())
-        .map(str::to_string)
-}
-
-async fn modified_at(path: &Path) -> Option<OffsetDateTime> {
-    fs::metadata(path)
-        .await
-        .ok()
-        .and_then(|metadata| metadata.modified().ok())
-        .map(OffsetDateTime::from)
-}
-
-fn track_timestamp(
-    created_at: &mut Option<OffsetDateTime>,
-    updated_at: &mut Option<OffsetDateTime>,
-    timestamp: OffsetDateTime,
-) {
-    if created_at.is_none_or(|created| timestamp < created) {
-        *created_at = Some(timestamp);
-    }
-    if updated_at.is_none_or(|updated| timestamp > updated) {
-        *updated_at = Some(timestamp);
     }
 }
 
@@ -675,7 +582,7 @@ mod tests {
             .create_thread(ThreadMetadata {
                 thread_id: thread_id.clone(),
                 title: Some("Resume me".to_string()),
-                workspace: Some("/workspace".to_string()),
+                workspace: "/workspace".to_string(),
                 provider: Some("mock".to_string()),
                 model: Some("mock".to_string()),
                 runner_destination: None,
@@ -755,7 +662,7 @@ mod tests {
             .create_thread(ThreadMetadata {
                 thread_id: thread_id.clone(),
                 title: Some("Archive me".to_string()),
-                workspace: Some("/workspace".to_string()),
+                workspace: "/workspace".to_string(),
                 provider: Some("mock".to_string()),
                 model: Some("mock".to_string()),
                 runner_destination: None,
@@ -800,7 +707,7 @@ mod tests {
             .create_thread(ThreadMetadata {
                 thread_id: thread_id.clone(),
                 title: None,
-                workspace: None,
+                workspace: "/workspace".to_string(),
                 provider: None,
                 model: None,
                 runner_destination: None,
@@ -853,7 +760,7 @@ mod tests {
             .create_thread(ThreadMetadata {
                 thread_id: thread_id.clone(),
                 title: Some("Trace me".to_string()),
-                workspace: None,
+                workspace: "/workspace".to_string(),
                 provider: Some("mock".to_string()),
                 model: Some("mock".to_string()),
                 runner_destination: None,
@@ -958,7 +865,7 @@ mod tests {
             .create_thread(ThreadMetadata {
                 thread_id: thread_id.clone(),
                 title: Some("Resume encrypted reasoning".to_string()),
-                workspace: None,
+                workspace: "/workspace".to_string(),
                 provider: Some("openai".to_string()),
                 model: Some("gpt-5.5".to_string()),
                 runner_destination: None,
@@ -1005,7 +912,7 @@ mod tests {
             .create_thread(ThreadMetadata {
                 thread_id: thread_id.clone(),
                 title: Some("Metadata".to_string()),
-                workspace: None,
+                workspace: "/workspace".to_string(),
                 provider: Some("mock".to_string()),
                 model: Some("mock".to_string()),
                 runner_destination: None,
@@ -1067,7 +974,7 @@ mod tests {
             .create_thread(ThreadMetadata {
                 thread_id: thread_id.clone(),
                 title: None,
-                workspace: Some("/workspace/gode".to_string()),
+                workspace: "/workspace/gode".to_string(),
                 provider: Some("mock".to_string()),
                 model: Some("mock".to_string()),
                 runner_destination: None,
@@ -1105,7 +1012,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn list_threads_recovers_malformed_metadata_from_turn_log() {
+    async fn list_threads_rejects_malformed_metadata() {
         let base_path = std::env::temp_dir().join(format!(
             "roder-jsonl-recover-list-test-{}",
             uuid::Uuid::new_v4()
@@ -1121,7 +1028,7 @@ mod tests {
             .create_thread(ThreadMetadata {
                 thread_id: thread_id.clone(),
                 title: Some("Will be corrupted".to_string()),
-                workspace: Some("/workspace".to_string()),
+                workspace: "/workspace".to_string(),
                 provider: Some("mock".to_string()),
                 model: Some("mock".to_string()),
                 runner_destination: None,
@@ -1158,24 +1065,15 @@ mod tests {
         .await
         .unwrap();
 
-        let threads = store.list_threads().await.unwrap();
+        let error = store.list_threads().await.unwrap_err();
 
-        assert_eq!(threads.len(), 1);
-        assert_eq!(threads[0].thread_id, thread_id);
-        assert_eq!(threads[0].title.as_deref(), Some("recover this thread"));
-        assert_eq!(threads[0].message_count, 2);
-
-        let repaired = fs::read(store.thread_dir(&thread_id).join("metadata.json"))
-            .await
-            .unwrap();
-        let repaired = serde_json::from_slice::<ThreadMetadata>(&repaired).unwrap();
-        assert_eq!(repaired.thread_id, thread_id);
+        assert!(error.to_string().contains("thread metadata invalid"));
 
         let _ = fs::remove_dir_all(base_path).await;
     }
 
     #[tokio::test]
-    async fn load_thread_recovers_malformed_metadata_and_continues() {
+    async fn load_thread_rejects_malformed_metadata() {
         let base_path = std::env::temp_dir().join(format!(
             "roder-jsonl-recover-load-test-{}",
             uuid::Uuid::new_v4()
@@ -1191,7 +1089,7 @@ mod tests {
             .create_thread(ThreadMetadata {
                 thread_id: thread_id.clone(),
                 title: None,
-                workspace: Some("/workspace".to_string()),
+                workspace: "/workspace".to_string(),
                 provider: Some("mock".to_string()),
                 model: Some("mock".to_string()),
                 runner_destination: None,
@@ -1217,12 +1115,9 @@ mod tests {
         .await
         .unwrap();
 
-        let snapshot = store.load_thread(&thread_id).await.unwrap().unwrap();
-        let metadata = snapshot.metadata.unwrap();
+        let error = store.load_thread(&thread_id).await.unwrap_err();
 
-        assert_eq!(metadata.thread_id, thread_id);
-        assert_eq!(metadata.title.as_deref(), Some("resume despite metadata"));
-        assert_eq!(snapshot.turns.len(), 1);
+        assert!(error.to_string().contains("thread metadata invalid"));
 
         let _ = fs::remove_dir_all(base_path).await;
     }
@@ -1242,7 +1137,7 @@ mod tests {
         let metadata = ThreadMetadata {
             thread_id: thread_id.clone(),
             title: Some("Recover trailing metadata".to_string()),
-            workspace: Some("/workspace".to_string()),
+            workspace: "/workspace".to_string(),
             provider: Some("codex".to_string()),
             model: Some("gpt-5.5".to_string()),
             runner_destination: None,
@@ -1275,7 +1170,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn append_turn_item_repairs_malformed_metadata() {
+    async fn append_turn_item_rejects_malformed_metadata() {
         let base_path = std::env::temp_dir().join(format!(
             "roder-jsonl-recover-append-test-{}",
             uuid::Uuid::new_v4()
@@ -1291,7 +1186,7 @@ mod tests {
             .create_thread(ThreadMetadata {
                 thread_id: thread_id.clone(),
                 title: None,
-                workspace: None,
+                workspace: "/workspace".to_string(),
                 provider: None,
                 model: None,
                 runner_destination: None,
@@ -1309,20 +1204,16 @@ mod tests {
         .await
         .unwrap();
 
-        store
+        let error = store
             .append_turn_item(
                 &thread_id,
                 &turn_id,
                 &TranscriptItem::UserMessage(UserMessage::text("repair me")),
             )
             .await
-            .unwrap();
+            .unwrap_err();
 
-        let threads = store.list_threads().await.unwrap();
-
-        assert_eq!(threads[0].thread_id, thread_id);
-        assert_eq!(threads[0].title.as_deref(), Some("repair me"));
-        assert_eq!(threads[0].message_count, 1);
+        assert!(error.to_string().contains("thread metadata invalid"));
 
         let _ = fs::remove_dir_all(base_path).await;
     }
@@ -1342,7 +1233,7 @@ mod tests {
             .create_thread(ThreadMetadata {
                 thread_id: thread_id.clone(),
                 title: Some("Concatenated jsonl".to_string()),
-                workspace: None,
+                workspace: "/workspace".to_string(),
                 provider: Some("mock".to_string()),
                 model: Some("mock".to_string()),
                 runner_destination: None,
@@ -1401,7 +1292,7 @@ mod tests {
             .create_thread(ThreadMetadata {
                 thread_id: thread_id.clone(),
                 title: Some("Malformed jsonl".to_string()),
-                workspace: None,
+                workspace: "/workspace".to_string(),
                 provider: Some("mock".to_string()),
                 model: Some("mock".to_string()),
                 runner_destination: None,

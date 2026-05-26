@@ -32,8 +32,7 @@ use crate::automations::AppServerFeatureConfig;
 use crate::notifications;
 use crate::protocol_contract::{
     idle_thread_status, protocol_thread_from_metadata, protocol_turn_from_record,
-    protocol_turn_images, protocol_turn_message, required_thread_workspace,
-    thread_status_for_activity,
+    protocol_turn_images, protocol_turn_message, thread_status_for_activity,
 };
 
 #[derive(Debug, serde::Deserialize)]
@@ -1442,9 +1441,9 @@ impl AppServer {
         &self,
         metadata: roder_api::thread::ThreadMetadata,
         turns: Option<Vec<Turn>>,
-    ) -> Result<Thread, JsonRpcError> {
+    ) -> Thread {
         let status = self.live_thread_status(&metadata.thread_id).await;
-        protocol_thread_from_metadata(metadata, turns, status).map_err(internal_error)
+        protocol_thread_from_metadata(metadata, turns, status)
     }
 
     async fn thread_with_live_status(&self, mut thread: Thread) -> Thread {
@@ -1465,7 +1464,7 @@ impl AppServer {
         for metadata in thread_metadata {
             threads.push(
                 self.protocol_thread_from_metadata_with_live_status(metadata, None)
-                    .await?,
+                    .await,
             );
         }
         let protocol_threads = self
@@ -1503,14 +1502,13 @@ impl AppServer {
             .runtime
             .create_thread_with(roder_core::CreateThreadRequest {
                 title: None,
-                workspace: Some(cwd.clone()),
+                workspace: cwd.clone(),
                 provider: params.model_provider.clone(),
                 model: params.model.clone(),
             })
             .await
             .map_err(internal_error)?;
-        let thread = protocol_thread_from_metadata(metadata, None, idle_thread_status())
-            .map_err(internal_error)?;
+        let thread = protocol_thread_from_metadata(metadata, None, idle_thread_status());
         self.protocol_threads
             .write()
             .await
@@ -1553,7 +1551,7 @@ impl AppServer {
         let thread = match thread {
             Some((metadata, turns)) => Some(
                 self.protocol_thread_from_metadata_with_live_status(metadata, turns)
-                    .await?,
+                    .await,
             ),
             None => None,
         };
@@ -1573,7 +1571,7 @@ impl AppServer {
                         metadata,
                         params.include_turns.then(Vec::new),
                     )
-                    .await?,
+                    .await,
                 ),
                 None => None,
             }
@@ -1744,14 +1742,13 @@ impl AppServer {
             .runtime
             .create_thread_with(CreateThreadRequest {
                 title: Some(format!("Roadmap worker: {task_id}")),
-                workspace: Some(self.roadmap_workspace()?.display().to_string()),
+                workspace: self.roadmap_workspace()?.display().to_string(),
                 provider: Some(cfg.default_provider.clone()),
                 model: Some(cfg.default_model.clone()),
             })
             .await
             .map_err(internal_error)?;
-        let protocol_thread = protocol_thread_from_metadata(metadata, None, idle_thread_status())
-            .map_err(internal_error)?;
+        let protocol_thread = protocol_thread_from_metadata(metadata, None, idle_thread_status());
         self.protocol_threads
             .write()
             .await
@@ -1934,7 +1931,7 @@ impl AppServer {
             let metadata = snapshot.metadata.ok_or_else(|| {
                 internal_error(format!("thread metadata missing for {}", params.thread_id))
             })?;
-            required_thread_workspace(&metadata).map_err(internal_error)?
+            metadata.workspace
         } else {
             self.protocol_threads
                 .read()
@@ -1951,7 +1948,7 @@ impl AppServer {
                 images,
                 provider_override,
                 model_override,
-                workspace: Some(workspace),
+                workspace,
                 instructions: default_instructions(),
                 task_ledger_required: params.task_ledger_required,
             })
@@ -2340,6 +2337,7 @@ impl AppServer {
         &self,
         params: CommandsRunParams,
     ) -> Result<serde_json::Value, JsonRpcError> {
+        let thread_id = params.thread_id;
         let workspace = params.workspace.clone();
         let expanded = self
             .expand_command(CommandsExpandParams {
@@ -2348,10 +2346,18 @@ impl AppServer {
                 workspace: params.workspace,
             })
             .await?;
+        let workspace = match workspace {
+            Some(workspace) => workspace,
+            None => self
+                .runtime
+                .workspace_for_thread(&thread_id)
+                .await
+                .map_err(internal_error)?,
+        };
         let turn_id = self
             .runtime
             .start_turn(StartTurnRequest {
-                thread_id: params.thread_id,
+                thread_id,
                 message: expanded.message.clone(),
                 images: Vec::new(),
                 provider_override: None,

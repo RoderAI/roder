@@ -5,45 +5,23 @@ pub(crate) fn protocol_thread_from_metadata(
     metadata: roder_api::thread::ThreadMetadata,
     turns: Option<Vec<Turn>>,
     status: ThreadStatus,
-) -> anyhow::Result<Thread> {
+) -> Thread {
     let preview = metadata
         .title
         .clone()
         .filter(|title| !title.trim().is_empty())
         .unwrap_or_else(|| "Untitled thread".to_string());
-    let cwd = required_thread_workspace(&metadata)?;
-    Ok(Thread {
+    Thread {
         id: metadata.thread_id.clone(),
         preview,
         model_provider: metadata.provider.unwrap_or_else(|| "mock".to_string()),
         created_at: metadata.created_at.unix_timestamp(),
         updated_at: metadata.updated_at.unix_timestamp(),
         status,
-        cwd,
+        cwd: metadata.workspace,
         name: metadata.title,
         turns,
-    })
-}
-
-pub(crate) fn required_thread_workspace(
-    metadata: &roder_api::thread::ThreadMetadata,
-) -> anyhow::Result<String> {
-    let Some(workspace) = metadata
-        .workspace
-        .as_deref()
-        .map(str::trim)
-        .filter(|workspace| !workspace.is_empty())
-    else {
-        anyhow::bail!("thread metadata missing workspace: {}", metadata.thread_id);
-    };
-    if !std::path::Path::new(workspace).is_absolute() {
-        anyhow::bail!(
-            "thread metadata workspace must be absolute for {}: {}",
-            metadata.thread_id,
-            workspace
-        );
     }
-    Ok(workspace.to_string())
 }
 
 pub(crate) fn idle_thread_status() -> ThreadStatus {
