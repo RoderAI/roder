@@ -139,9 +139,9 @@ mise run ci
 Useful focused tasks include `mise run rust:fmt`, `mise run rust:clippy`,
 `mise run python:sync`, and `mise run python:test:startup`.
 
-Release policy lives in [`docs/releases.md`](./docs/releases.md). Any Cargo
-workspace change must increase the root workspace version before it can merge
-to `main`/`master`, and the release workflow tags `vX.Y.Z` from that version.
+Release policy lives in [`docs/releases.md`](./docs/releases.md). Release-plz
+opens the version-bump PR for Cargo workspace changes and creates git-only
+releases after that PR merges.
 
 Install the standard Roder CLI locally with:
 
