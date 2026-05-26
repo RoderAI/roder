@@ -6610,10 +6610,10 @@ fn provider_api_key_items(
 }
 
 fn provider_api_key_url(provider_id: &str) -> &'static str {
-    if provider_id == "poolside" {
-        "https://platform.poolside.ai/api-keys"
-    } else {
-        "https://opencode.ai/auth"
+    match provider_id {
+        "cursor" => "https://cursor.com/dashboard/integrations",
+        "poolside" => "https://platform.poolside.ai/api-keys",
+        _ => "https://opencode.ai/auth",
     }
 }
 
@@ -9142,6 +9142,14 @@ mod tests {
 
         let pasted = provider_api_key_input_line("sk-secret", theme);
         assert_eq!(pasted.spans[1].content, "[api key hidden]");
+    }
+
+    #[test]
+    fn provider_api_key_url_uses_cursor_integrations_page() {
+        assert_eq!(
+            provider_api_key_url("cursor"),
+            "https://cursor.com/dashboard/integrations"
+        );
     }
 
     #[test]
