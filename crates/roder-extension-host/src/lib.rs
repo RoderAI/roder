@@ -4,9 +4,9 @@ use std::sync::Arc;
 use futures::stream;
 use roder_api::capabilities::CapabilityRequest;
 use roder_api::catalog::{
-    PROVIDER_ANTHROPIC, PROVIDER_CODEX, PROVIDER_GEMINI, PROVIDER_MOCK, PROVIDER_OPENAI,
-    PROVIDER_OPENCODE, PROVIDER_OPENCODE_GO, PROVIDER_POOLSIDE, PROVIDER_SUPERGROK, PROVIDER_XAI,
-    models_for_codex, models_for_provider,
+    PROVIDER_ANTHROPIC, PROVIDER_CODEX, PROVIDER_CURSOR, PROVIDER_GEMINI, PROVIDER_MOCK,
+    PROVIDER_OPENAI, PROVIDER_OPENCODE, PROVIDER_OPENCODE_GO, PROVIDER_POOLSIDE,
+    PROVIDER_SUPERGROK, PROVIDER_XAI, models_for_codex, models_for_provider,
 };
 use roder_api::extension::{
     ExtensionManifest, ExtensionRegistry, ExtensionRegistryBuilder, ProvidedService, RoderExtension,
@@ -17,6 +17,7 @@ use roder_api::policy_mode::PolicyMode;
 use roder_api::remote_runner::RunnerDestination;
 use roder_api::tui_status::{PaletteSourceDescriptor, built_in_status_segments};
 use roder_ext_anthropic::AnthropicExtension;
+use roder_ext_cursor::{CursorConfig, CursorExtension};
 use roder_ext_gemini::GeminiExtension;
 use roder_ext_google_speech::{GoogleSpeechConfig, GoogleSpeechExtension};
 use roder_ext_jsonl_thread_store::JsonlThreadStoreExtension;
@@ -67,6 +68,10 @@ pub struct DefaultRegistryConfig {
     pub opencode_go_project_id: Option<String>,
     pub poolside_api_key: Option<String>,
     pub poolside_base_url: Option<String>,
+    pub cursor_api_key: Option<String>,
+    pub cursor_access_token: Option<String>,
+    pub cursor_agent_service_url: Option<String>,
+    pub cursor_backend_base_url: Option<String>,
     pub custom_inference_providers: Vec<CustomInferenceProviderConfig>,
     pub thread_dir: Option<PathBuf>,
     pub workspace: Option<PathBuf>,
@@ -99,6 +104,10 @@ impl Default for DefaultRegistryConfig {
             opencode_go_project_id: None,
             poolside_api_key: None,
             poolside_base_url: None,
+            cursor_api_key: None,
+            cursor_access_token: None,
+            cursor_agent_service_url: None,
+            cursor_backend_base_url: None,
             custom_inference_providers: Vec::new(),
             thread_dir: None,
             workspace: None,
@@ -183,6 +192,13 @@ pub fn build_default_registry(config: DefaultRegistryConfig) -> anyhow::Result<E
     builder.install(PoolsideExtension::new(PoolsideConfig {
         api_key: config.poolside_api_key,
         base_url: config.poolside_base_url,
+    }))?;
+    builder.install(CursorExtension::new(CursorConfig {
+        api_key: config.cursor_api_key,
+        access_token: config.cursor_access_token,
+        agent_service_url: config.cursor_agent_service_url,
+        backend_base_url: config.cursor_backend_base_url,
+        workspace: config.workspace.clone(),
     }))?;
     for provider in config.custom_inference_providers {
         if known_provider_id(&provider.id) {
@@ -275,6 +291,7 @@ fn known_provider_id(id: &str) -> bool {
             | PROVIDER_OPENCODE
             | PROVIDER_OPENCODE_GO
             | PROVIDER_POOLSIDE
+            | PROVIDER_CURSOR
     )
 }
 
@@ -580,7 +597,7 @@ mod tests {
 
     use super::*;
     use roder_api::catalog::{
-        PROVIDER_ANTHROPIC, PROVIDER_GEMINI, PROVIDER_OPENAI, PROVIDER_OPENCODE,
+        PROVIDER_ANTHROPIC, PROVIDER_CURSOR, PROVIDER_GEMINI, PROVIDER_OPENAI, PROVIDER_OPENCODE,
         PROVIDER_OPENCODE_GO, PROVIDER_POOLSIDE, PROVIDER_SUPERGROK, PROVIDER_XAI,
     };
     use roder_api::interactive::{
@@ -683,6 +700,10 @@ mod tests {
             opencode_go_project_id: None,
             poolside_api_key: Some("poolside".to_string()),
             poolside_base_url: None,
+            cursor_api_key: Some("cursor".to_string()),
+            cursor_access_token: None,
+            cursor_agent_service_url: None,
+            cursor_backend_base_url: None,
             custom_inference_providers: Vec::new(),
             thread_dir: None,
             workspace: None,
@@ -706,6 +727,7 @@ mod tests {
             PROVIDER_OPENCODE,
             PROVIDER_OPENCODE_GO,
             PROVIDER_POOLSIDE,
+            PROVIDER_CURSOR,
         ] {
             assert!(
                 registry.inference_engine(provider).is_some(),

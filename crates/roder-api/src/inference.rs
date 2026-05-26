@@ -108,6 +108,7 @@ pub enum ProviderFamily {
     Xai,
     Opencode,
     Poolside,
+    Cursor,
 }
 
 #[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]

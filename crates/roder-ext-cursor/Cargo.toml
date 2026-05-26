@@ -1,0 +1,31 @@
+[package]
+name = "roder-ext-cursor"
+version.workspace = true
+edition.workspace = true
+
+[package.metadata.roder.distribution]
+id = "cursor"
+category = "inference-engine"
+display_name = "Cursor"
+description = "Cursor Composer direct AgentService inference provider."
+default_in_profiles = ["full", "research-headless"]
+required_env = []
+optional_env = ["CURSOR_API_KEY", "RODER_CURSOR_API_KEY", "CURSOR_ACCESS_TOKEN", "CURSOR_AUTH_TOKEN", "RODER_CURSOR_AGENT_SERVICE_URL", "RODER_CURSOR_BACKEND_BASE_URL"]
+conflicts_with = []
+required_capabilities = ["network.agentn.global.api5.cursor.sh", "network.api2.cursor.sh"]
+extension_path = "::CursorExtension::new"
+docs_url = "https://cursor.com"
+
+[dependencies]
+anyhow.workspace = true
+async-stream.workspace = true
+async-trait.workspace = true
+bytes.workspace = true
+futures.workspace = true
+reqwest = { workspace = true, features = ["json", "stream"] }
+roder-api.workspace = true
+semver.workspace = true
+serde = { workspace = true, features = ["derive"] }
+serde_json.workspace = true
+tokio.workspace = true
+uuid = { workspace = true, features = ["v4"] }

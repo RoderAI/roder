@@ -249,6 +249,8 @@ OpenCode provider setup is documented in [`docs/roder-opencode-providers.md`](./
 
 Poolside provider setup is documented in [`docs/roder-poolside-providers.md`](./docs/roder-poolside-providers.md). Use `poolside/laguna-m.1` or `poolside/laguna-xs.2` with `POOLSIDE_API_KEY` or a key stored from the provider menu; API keys are managed at [`https://platform.poolside.ai/api-keys`](https://platform.poolside.ai/api-keys).
 
+Cursor provider setup is documented in [`docs/roder-cursor-provider.md`](./docs/roder-cursor-provider.md). Use `cursor/composer-2.5` with `CURSOR_API_KEY` or `RODER_CURSOR_API_KEY`; Roder exchanges the key and calls Cursor AgentService directly without invoking the Cursor CLI at inference runtime.
+
 Custom OpenAI-compatible providers can be added with a provider-specific base URL:
 
 ```toml
