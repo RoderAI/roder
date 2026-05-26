@@ -1,11 +1,10 @@
 use roder_protocol::{
-    DesktopItem, DesktopThread, ThreadListParams, ThreadListResult, ThreadReadParams,
-    ThreadReadResult,
+    Item, Thread, ThreadListParams, ThreadListResult, ThreadReadParams, ThreadReadResult,
 };
 
 use super::*;
 
-pub(super) async fn threads_list<C>(client: &C) -> anyhow::Result<Vec<DesktopThread>>
+pub(super) async fn threads_list<C>(client: &C) -> anyhow::Result<Vec<Thread>>
 where
     C: AppClient,
 {
@@ -48,15 +47,15 @@ impl<C> TuiApp<C>
 where
     C: AppClient,
 {
-    pub(super) async fn load_session(&mut self, thread_id: String) {
+    pub(super) async fn load_thread(&mut self, thread_id: String) {
         match load_thread(&self.client, &thread_id).await {
             Ok(Some(thread)) => self.apply_thread(thread),
-            Ok(None) => self.record_error(format!("session not found: {}", short_id(&thread_id))),
+            Ok(None) => self.record_error(format!("thread not found: {}", short_id(&thread_id))),
             Err(err) => self.record_error(format!("thread/read failed: {err}")),
         }
     }
 
-    pub(super) fn apply_thread(&mut self, thread: DesktopThread) {
+    pub(super) fn apply_thread(&mut self, thread: Thread) {
         let thread_id = thread.id.clone();
         self.thread_id = thread_id.clone();
         self.active_turn_id = None;
@@ -78,35 +77,35 @@ where
         if !thread.model_provider.trim().is_empty() {
             self.provider = thread.model_provider.clone();
         }
-        self.session_title = thread
+        self.thread_title = thread
             .name
             .clone()
             .filter(|title| !title.trim().is_empty())
             .or_else(|| (!thread.preview.trim().is_empty()).then(|| thread.preview.clone()));
-        self.session_message_count = message_count_from_thread(&thread);
+        self.thread_message_count = message_count_from_thread(&thread);
 
         let mut item_count = 0usize;
         for turn in thread.turns.as_deref().unwrap_or_default() {
             for item in &turn.items {
                 item_count += 1;
-                self.push_desktop_item(item);
+                self.push_item(item);
             }
         }
 
-        if self.session_title.is_none() {
-            self.session_title = title_from_thread(&thread);
+        if self.thread_title.is_none() {
+            self.thread_title = title_from_thread(&thread);
         }
 
         self.timeline.push_system(format!(
-            "resumed session {} with {} saved item{}.",
+            "resumed thread {} with {} saved item{}.",
             short_id(&thread_id),
             item_count,
             if item_count == 1 { "" } else { "s" }
         ));
-        self.push_event(format!("resumed session {}", short_id(&thread_id)));
+        self.push_event(format!("resumed thread {}", short_id(&thread_id)));
     }
 
-    fn push_desktop_item(&mut self, item: &DesktopItem) {
+    fn push_item(&mut self, item: &Item) {
         match item.kind.as_str() {
             "userMessage" => {
                 let display = item.text.clone().unwrap_or_default();
@@ -176,26 +175,23 @@ where
         }
     }
 
-    pub(super) fn session_exit_summary(&self) -> TuiExitSummary {
+    pub(super) fn thread_exit_summary(&self) -> TuiExitSummary {
         let title = self
-            .session_title
+            .thread_title
             .clone()
             .filter(|title| !title.trim().is_empty())
-            .unwrap_or_else(|| format!("Session {}", short_id(&self.thread_id)));
+            .unwrap_or_else(|| format!("Thread {}", short_id(&self.thread_id)));
         TuiExitSummary {
             thread_id: self.thread_id.clone(),
             title,
             model: self.model.clone(),
-            message_count: self.session_message_count,
+            message_count: self.thread_message_count,
             resume_command: format!("roder resume {}", self.thread_id),
         }
     }
 }
 
-pub(super) async fn load_thread<C>(
-    client: &C,
-    thread_id: &str,
-) -> anyhow::Result<Option<DesktopThread>>
+pub(super) async fn load_thread<C>(client: &C, thread_id: &str) -> anyhow::Result<Option<Thread>>
 where
     C: AppClient,
 {
@@ -216,7 +212,7 @@ where
     Ok(decode_response::<ThreadReadResult>(res)?.thread)
 }
 
-fn title_from_thread(thread: &DesktopThread) -> Option<String> {
+fn title_from_thread(thread: &Thread) -> Option<String> {
     thread.turns.as_ref()?.iter().find_map(|turn| {
         turn.items.iter().find_map(|item| {
             (item.kind == "userMessage")
@@ -228,7 +224,7 @@ fn title_from_thread(thread: &DesktopThread) -> Option<String> {
     })
 }
 
-fn message_count_from_thread(thread: &DesktopThread) -> usize {
+fn message_count_from_thread(thread: &Thread) -> usize {
     thread
         .turns
         .as_deref()
@@ -239,7 +235,7 @@ fn message_count_from_thread(thread: &DesktopThread) -> usize {
         .count()
 }
 
-fn thread_has_user_message(thread: &DesktopThread) -> bool {
+fn thread_has_user_message(thread: &Thread) -> bool {
     thread
         .turns
         .as_deref()
@@ -257,25 +253,24 @@ fn thread_has_user_message(thread: &DesktopThread) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use roder_protocol::{DesktopThreadStatus, DesktopTurn};
+    use roder_protocol::{ThreadStatus, Turn};
 
     use super::*;
 
-    fn test_thread(items: Vec<DesktopItem>) -> DesktopThread {
-        DesktopThread {
+    fn test_thread(items: Vec<Item>) -> Thread {
+        Thread {
             id: "thread-a".to_string(),
-            session_id: "thread-a".to_string(),
             preview: String::new(),
             model_provider: "mock".to_string(),
             created_at: 0,
             updated_at: 0,
-            status: DesktopThreadStatus {
+            status: ThreadStatus {
                 kind: "idle".to_string(),
                 active_flags: Vec::new(),
             },
             cwd: "/tmp".to_string(),
             name: None,
-            turns: Some(vec![DesktopTurn {
+            turns: Some(vec![Turn {
                 id: "turn-a".to_string(),
                 items,
                 items_view: "all".to_string(),
@@ -288,8 +283,8 @@ mod tests {
         }
     }
 
-    fn item(kind: &str, text: Option<&str>) -> DesktopItem {
-        DesktopItem {
+    fn item(kind: &str, text: Option<&str>) -> Item {
+        Item {
             id: format!("{kind}-id"),
             kind: kind.to_string(),
             text: text.map(str::to_string),

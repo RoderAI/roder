@@ -394,7 +394,7 @@ mod tests {
     }
 
     #[test]
-    fn promotion_record_tracks_session_lifecycle() {
+    fn promotion_record_tracks_thread_lifecycle() {
         let record = DiscoveryPromotionRecord {
             item_id: "skill:roadmap-planning".to_string(),
             group_id: "skills".to_string(),

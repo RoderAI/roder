@@ -49,7 +49,7 @@ async def test_python_sdk_replays_approval_fixture() -> None:
 
     async def on_tool_approval(request: Any) -> dict[str, Any]:
         seen.append(request["approvalId"])
-        return {"approved": True, "message": "fixture approval"}
+        return {"approved": True}
 
     agent = await RoderAgent.create(
         transport=transport,
@@ -60,7 +60,7 @@ async def test_python_sdk_replays_approval_fixture() -> None:
 
     await agent.send("read file")
     await emit_notifications(transport, fixture)
-    await eventually(lambda: "approval-1" in seen and "session/resolve_approval" in transport.seen_methods)
+    await eventually(lambda: "approval-1" in seen and "thread/resolve_approval" in transport.seen_methods)
 
 
 @pytest.mark.anyio
@@ -72,16 +72,16 @@ async def test_python_sdk_replays_user_input_and_plan_exit_fixture() -> None:
         cwd="/workspace",
         model={"provider": "mock", "id": "mock"},
         approvals={
-            "on_user_input": lambda request: {"response": "fixture answer"},
-            "on_plan_exit": lambda request: {"accepted": True, "message": "fixture plan accepted"},
+            "on_user_input": lambda request: {"answers": "fixture answer"},
+            "on_plan_exit": lambda request: {"approved": True},
         },
     )
 
     await agent.send("ask me")
     await emit_notifications(transport, fixture)
     await eventually(
-        lambda: "session/resolve_user_input" in transport.seen_methods
-        and "session/exit_plan" in transport.seen_methods
+        lambda: "thread/resolve_user_input" in transport.seen_methods
+        and "thread/exit_plan" in transport.seen_methods
     )
 
 
@@ -120,6 +120,7 @@ class FixtureTransport(InMemoryTransport):
         expected = self.requests.pop(0)
         response = self.responses.pop(0)
         assert request["method"] == expected["method"]
+        assert request.get("params", {}) == expected.get("params", {})
         self.seen_methods.append(str(request["method"]))
         response = dict(response)
         response["id"] = request["id"]

@@ -1,7 +1,6 @@
 mod agent_control_tools;
 pub mod artifacts;
 pub mod bus;
-mod conversation;
 mod deadline_policy;
 pub mod fake_provider;
 mod goals;
@@ -22,6 +21,7 @@ mod tool_execution;
 mod tool_output;
 mod tool_preview;
 mod tool_validation;
+mod transcript;
 mod verification_gate;
 
 pub use bus::*;

@@ -133,7 +133,7 @@ pub struct ErrorRecord {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-pub enum ConversationItem {
+pub enum TranscriptItem {
     UserMessage(UserMessage),
     AssistantMessage(AssistantMessage),
     ReasoningSummary(ReasoningSummary),
@@ -144,8 +144,6 @@ pub enum ConversationItem {
     Error(ErrorRecord),
     ProviderMetadata(serde_json::Value),
 }
-
-pub type TurnItem = ConversationItem;
 
 #[cfg(test)]
 mod tests {

@@ -21,7 +21,7 @@ pub struct PaletteItem {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PaletteAction {
     SendCommand(String),
-    SwitchSession(ThreadId),
+    SwitchThread(ThreadId),
     SwitchModel {
         provider: String,
         model: String,
@@ -179,7 +179,7 @@ mod tests {
 
     #[test]
     fn source_filter_cycles_through_sources_then_all() {
-        let entries = vec![entry("commands"), entry("models"), entry("sessions")];
+        let entries = vec![entry("commands"), entry("models"), entry("threads")];
         assert_eq!(
             cycle_source_filter(None, &entries),
             Some("commands".to_string())
@@ -188,7 +188,7 @@ mod tests {
             cycle_source_filter(Some("commands"), &entries),
             Some("models".to_string())
         );
-        assert_eq!(cycle_source_filter(Some("sessions"), &entries), None);
+        assert_eq!(cycle_source_filter(Some("threads"), &entries), None);
     }
 
     fn entry(source_id: &str) -> PaletteEntry {

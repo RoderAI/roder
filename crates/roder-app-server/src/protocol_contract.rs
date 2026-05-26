@@ -1,10 +1,10 @@
-use roder_api::conversation::InputImage;
-use roder_protocol::{DesktopItem, DesktopThread, DesktopThreadStatus, DesktopTurn, TurnInputItem};
+use roder_api::transcript::InputImage;
+use roder_protocol::{Item, Thread, ThreadStatus, Turn, TurnInputItem};
 
-pub(crate) fn desktop_thread_from_metadata(
-    metadata: roder_api::session::SessionMetadata,
-    turns: Option<Vec<DesktopTurn>>,
-) -> DesktopThread {
+pub(crate) fn protocol_thread_from_metadata(
+    metadata: roder_api::thread::ThreadMetadata,
+    turns: Option<Vec<Turn>>,
+) -> Thread {
     let preview = metadata
         .title
         .clone()
@@ -14,14 +14,13 @@ pub(crate) fn desktop_thread_from_metadata(
         .workspace
         .clone()
         .unwrap_or_else(default_cwd_string);
-    DesktopThread {
+    Thread {
         id: metadata.thread_id.clone(),
-        session_id: metadata.thread_id,
         preview,
         model_provider: metadata.provider.unwrap_or_else(|| "mock".to_string()),
         created_at: metadata.created_at.unix_timestamp(),
         updated_at: metadata.updated_at.unix_timestamp(),
-        status: DesktopThreadStatus {
+        status: ThreadStatus {
             kind: "idle".to_string(),
             active_flags: Vec::new(),
         },
@@ -31,12 +30,14 @@ pub(crate) fn desktop_thread_from_metadata(
     }
 }
 
-pub(crate) fn desktop_turn_from_record(record: roder_api::session::TurnRecord) -> DesktopTurn {
+pub(crate) fn protocol_turn_from_record(record: roder_api::thread::TurnRecord) -> Turn {
     let items = record
         .items
         .into_iter()
         .enumerate()
-        .map(|(index, item)| desktop_item_from_turn_item(record.turn_id.as_str(), index, item))
+        .map(|(index, item)| {
+            protocol_item_from_transcript_item(record.turn_id.as_str(), index, item)
+        })
         .collect::<Vec<_>>();
     let status = if record.completed_at.is_some() {
         "completed"
@@ -47,7 +48,7 @@ pub(crate) fn desktop_turn_from_record(record: roder_api::session::TurnRecord) -
     let duration_ms = record
         .completed_at
         .map(|completed| (completed - record.created_at).whole_milliseconds().max(0) as i64);
-    DesktopTurn {
+    Turn {
         id: record.turn_id,
         items,
         items_view: "default".to_string(),
@@ -59,13 +60,13 @@ pub(crate) fn desktop_turn_from_record(record: roder_api::session::TurnRecord) -
     }
 }
 
-fn desktop_item_from_turn_item(
+fn protocol_item_from_transcript_item(
     turn_id: &str,
     index: usize,
-    item: roder_api::conversation::TurnItem,
-) -> DesktopItem {
+    item: roder_api::transcript::TranscriptItem,
+) -> Item {
     match item {
-        roder_api::conversation::ConversationItem::UserMessage(message) => DesktopItem {
+        roder_api::transcript::TranscriptItem::UserMessage(message) => Item {
             id: format!("{turn_id}-user-{index}"),
             kind: "userMessage".to_string(),
             text: Some(message.text),
@@ -75,7 +76,7 @@ fn desktop_item_from_turn_item(
             tool_call_id: None,
             payload: None,
         },
-        roder_api::conversation::ConversationItem::AssistantMessage(message) => DesktopItem {
+        roder_api::transcript::TranscriptItem::AssistantMessage(message) => Item {
             id: format!("{turn_id}-assistant-{index}"),
             kind: "agentMessage".to_string(),
             text: Some(message.text),
@@ -85,7 +86,7 @@ fn desktop_item_from_turn_item(
             tool_call_id: None,
             payload: None,
         },
-        roder_api::conversation::ConversationItem::ReasoningSummary(summary) => DesktopItem {
+        roder_api::transcript::TranscriptItem::ReasoningSummary(summary) => Item {
             id: format!("{turn_id}-reasoning-{index}"),
             kind: "reasoning".to_string(),
             text: Some(summary.text),
@@ -95,7 +96,7 @@ fn desktop_item_from_turn_item(
             tool_call_id: None,
             payload: None,
         },
-        roder_api::conversation::ConversationItem::ToolCall(call) => DesktopItem {
+        roder_api::transcript::TranscriptItem::ToolCall(call) => Item {
             id: call.id.clone(),
             kind: "toolCall".to_string(),
             text: None,
@@ -105,7 +106,7 @@ fn desktop_item_from_turn_item(
             tool_call_id: Some(call.id),
             payload: serde_json::from_str(&call.arguments).ok(),
         },
-        roder_api::conversation::ConversationItem::ToolResult(result) => DesktopItem {
+        roder_api::transcript::TranscriptItem::ToolResult(result) => Item {
             id: result.id.clone(),
             kind: "toolMessage".to_string(),
             text: Some(result.result),
@@ -122,7 +123,7 @@ fn desktop_item_from_turn_item(
             tool_call_id: Some(result.id),
             payload: result.display_payload,
         },
-        other => DesktopItem {
+        other => Item {
             id: format!("{turn_id}-item-{index}"),
             kind: "raw".to_string(),
             text: None,
@@ -135,7 +136,7 @@ fn desktop_item_from_turn_item(
     }
 }
 
-pub(crate) fn desktop_turn_message(input: &[TurnInputItem], prompt: Option<String>) -> String {
+pub(crate) fn protocol_turn_message(input: &[TurnInputItem], prompt: Option<String>) -> String {
     let text = input
         .iter()
         .filter(|item| item.kind == "text")
@@ -149,7 +150,7 @@ pub(crate) fn desktop_turn_message(input: &[TurnInputItem], prompt: Option<Strin
     }
 }
 
-pub(crate) fn desktop_turn_images(input: &[TurnInputItem]) -> Vec<InputImage> {
+pub(crate) fn protocol_turn_images(input: &[TurnInputItem]) -> Vec<InputImage> {
     input
         .iter()
         .filter(|item| matches!(item.kind.as_str(), "image" | "input_image"))
@@ -169,17 +170,17 @@ pub(crate) fn default_cwd_string() -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use roder_api::conversation::{ConversationItem, ToolResultRecord};
-    use roder_api::session::TurnRecord;
+    use roder_api::thread::TurnRecord;
+    use roder_api::transcript::{ToolResultRecord, TranscriptItem};
     use serde_json::json;
     use time::OffsetDateTime;
 
     #[test]
-    fn persisted_tool_result_rehydrates_payload_for_desktop() {
-        let turn = desktop_turn_from_record(TurnRecord {
+    fn persisted_tool_result_rehydrates_payload_for_client() {
+        let turn = protocol_turn_from_record(TurnRecord {
             thread_id: "thread-1".to_string(),
             turn_id: "turn-1".to_string(),
-            items: vec![ConversationItem::ToolResult(ToolResultRecord {
+            items: vec![TranscriptItem::ToolResult(ToolResultRecord {
                 id: "tool-1".to_string(),
                 name: Some("list_files".to_string()),
                 result: "src\nCargo.toml".to_string(),

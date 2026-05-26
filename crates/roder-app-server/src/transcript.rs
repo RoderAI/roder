@@ -345,7 +345,7 @@ mod tests {
             .send_request(JsonRpcRequest {
                 jsonrpc: "2.0".to_string(),
                 id: Some(json!(1)),
-                method: "session/get".to_string(),
+                method: "thread/state".to_string(),
                 params: None,
             })
             .await;
@@ -356,7 +356,7 @@ mod tests {
         notification_tx
             .send(JsonRpcNotification {
                 jsonrpc: "2.0".to_string(),
-                method: "session/changed".to_string(),
+                method: "thread/changed".to_string(),
                 params: json!({"threadId": "thread-a"}),
             })
             .unwrap();
@@ -380,7 +380,7 @@ mod tests {
         assert!(
             String::from_utf8(recorder.jsonl())
                 .unwrap()
-                .contains("session/get")
+                .contains("thread/state")
         );
     }
 

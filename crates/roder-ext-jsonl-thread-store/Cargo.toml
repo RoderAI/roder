@@ -1,19 +1,19 @@
 [package]
-name = "roder-ext-jsonl-session"
+name = "roder-ext-jsonl-thread-store"
 version.workspace = true
 edition.workspace = true
 
 [package.metadata.roder.distribution]
-id = "jsonl-session"
-category = "session-store"
-display_name = "JSONL Session Store"
-description = "Durable local JSONL session persistence."
+id = "jsonl-thread-store"
+category = "thread-store"
+display_name = "JSONL Thread Store"
+description = "Durable local JSONL thread persistence."
 default_in_profiles = ["full", "minimal", "openai-only", "anthropic-only", "research-headless"]
 required_env = []
 optional_env = []
 conflicts_with = []
 required_capabilities = ["fs.readwrite.roder-home"]
-extension_path = "::JsonlSessionExtension::new"
+extension_path = "::JsonlThreadStoreExtension::new"
 docs_url = ""
 
 [dependencies]

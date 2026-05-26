@@ -11,7 +11,7 @@ pub type ApiVersion = String;
 pub type InferenceEngineId = String;
 pub type ContextProviderId = String;
 pub type ContextPlannerId = String;
-pub type SessionStoreId = String;
+pub type ThreadStoreId = String;
 pub type CheckpointStoreId = String;
 pub type MemoryStoreId = String;
 pub type EmbeddingProviderId = String;
@@ -30,7 +30,7 @@ pub enum ProvidedService {
     InferenceEngine(InferenceEngineId),
     ContextProvider(ContextProviderId),
     ContextPlanner(ContextPlannerId),
-    SessionStore(SessionStoreId),
+    ThreadStore(ThreadStoreId),
     CheckpointStore(CheckpointStoreId),
     MemoryStore(MemoryStoreId),
     EmbeddingProvider(EmbeddingProviderId),
@@ -71,8 +71,8 @@ pub struct ExtensionRegistry {
     pub inference_engines: Vec<Arc<dyn crate::inference::InferenceEngine>>,
     pub context_providers: Vec<Arc<dyn crate::context::ContextProvider>>,
     pub context_planners: Vec<Arc<dyn crate::context::ContextPlanner>>,
-    pub session_stores: Vec<Arc<dyn crate::session::SessionStoreFactory>>,
-    pub checkpoint_stores: Vec<Arc<dyn crate::session::CheckpointStoreFactory>>,
+    pub thread_stores: Vec<Arc<dyn crate::thread::ThreadStoreFactory>>,
+    pub checkpoint_stores: Vec<Arc<dyn crate::thread::CheckpointStoreFactory>>,
     pub memory_stores: Vec<Arc<dyn crate::memory::MemoryStoreFactory>>,
     pub embedding_providers: Vec<Arc<dyn crate::embeddings::EmbeddingProvider>>,
     pub tools: Vec<Arc<dyn crate::tools::ToolContributor>>,
@@ -132,8 +132,8 @@ pub struct ExtensionRegistryBuilder {
     pub inference_engines: Vec<Arc<dyn crate::inference::InferenceEngine>>,
     pub context_providers: Vec<Arc<dyn crate::context::ContextProvider>>,
     pub context_planners: Vec<Arc<dyn crate::context::ContextPlanner>>,
-    pub session_stores: Vec<Arc<dyn crate::session::SessionStoreFactory>>,
-    pub checkpoint_stores: Vec<Arc<dyn crate::session::CheckpointStoreFactory>>,
+    pub thread_stores: Vec<Arc<dyn crate::thread::ThreadStoreFactory>>,
+    pub checkpoint_stores: Vec<Arc<dyn crate::thread::CheckpointStoreFactory>>,
     pub memory_stores: Vec<Arc<dyn crate::memory::MemoryStoreFactory>>,
     pub embedding_providers: Vec<Arc<dyn crate::embeddings::EmbeddingProvider>>,
     pub tools: Vec<Arc<dyn crate::tools::ToolContributor>>,
@@ -164,7 +164,7 @@ impl ExtensionRegistryBuilder {
             inference_engines: Vec::new(),
             context_providers: Vec::new(),
             context_planners: Vec::new(),
-            session_stores: Vec::new(),
+            thread_stores: Vec::new(),
             checkpoint_stores: Vec::new(),
             memory_stores: Vec::new(),
             embedding_providers: Vec::new(),
@@ -204,7 +204,7 @@ impl ExtensionRegistryBuilder {
             inference_engines: self.inference_engines,
             context_providers: self.context_providers,
             context_planners: self.context_planners,
-            session_stores: self.session_stores,
+            thread_stores: self.thread_stores,
             checkpoint_stores: self.checkpoint_stores,
             memory_stores: self.memory_stores,
             embedding_providers: self.embedding_providers,
@@ -252,13 +252,13 @@ impl ExtensionRegistryBuilder {
         self.context_planners.push(planner);
     }
 
-    pub fn session_store_factory(&mut self, store: Arc<dyn crate::session::SessionStoreFactory>) {
-        self.session_stores.push(store);
+    pub fn thread_store_factory(&mut self, store: Arc<dyn crate::thread::ThreadStoreFactory>) {
+        self.thread_stores.push(store);
     }
 
     pub fn checkpoint_store_factory(
         &mut self,
-        store: Arc<dyn crate::session::CheckpointStoreFactory>,
+        store: Arc<dyn crate::thread::CheckpointStoreFactory>,
     ) {
         self.checkpoint_stores.push(store);
     }
@@ -450,9 +450,9 @@ fn actual_services(builder: &ExtensionRegistryBuilder) -> anyhow::Result<Vec<Pro
     );
     services.extend(
         builder
-            .session_stores
+            .thread_stores
             .iter()
-            .map(|service| ProvidedService::SessionStore(service.id())),
+            .map(|service| ProvidedService::ThreadStore(service.id())),
     );
     services.extend(
         builder
@@ -603,7 +603,7 @@ fn service_label(service: &ProvidedService) -> String {
         ProvidedService::InferenceEngine(id) => format!("InferenceEngine({id})"),
         ProvidedService::ContextProvider(id) => format!("ContextProvider({id})"),
         ProvidedService::ContextPlanner(id) => format!("ContextPlanner({id})"),
-        ProvidedService::SessionStore(id) => format!("SessionStore({id})"),
+        ProvidedService::ThreadStore(id) => format!("ThreadStore({id})"),
         ProvidedService::CheckpointStore(id) => format!("CheckpointStore({id})"),
         ProvidedService::MemoryStore(id) => format!("MemoryStore({id})"),
         ProvidedService::EmbeddingProvider(id) => format!("EmbeddingProvider({id})"),

@@ -2,12 +2,12 @@ use std::sync::Arc;
 
 use roder_api::ToolSchemaPolicy;
 use roder_api::artifacts::{ContextArtifactKind, format_artifact_reference};
-use roder_api::conversation::{ToolResultRecord, tool_display_payload};
 use roder_api::events::*;
 use roder_api::policy_mode::{PolicyDecision, PolicyMode};
 use roder_api::subagents::SubagentExitReason;
 use roder_api::tools::ToolCall;
 use roder_api::tools::ToolResult;
+use roder_api::transcript::{ToolResultRecord, tool_display_payload};
 use serde_json::Value;
 use time::OffsetDateTime;
 
@@ -54,7 +54,7 @@ impl Runtime {
                     self.persist_turn_item(
                         thread_id,
                         turn_id,
-                        &roder_api::conversation::ConversationItem::ToolResult(item.clone()),
+                        &roder_api::transcript::TranscriptItem::ToolResult(item.clone()),
                     )
                     .await?;
                     self.emit(RoderEvent::ToolCallCompleted(ToolCallCompleted {
@@ -116,7 +116,7 @@ impl Runtime {
             self.persist_turn_item(
                 thread_id,
                 turn_id,
-                &roder_api::conversation::ConversationItem::ToolResult(item.clone()),
+                &roder_api::transcript::TranscriptItem::ToolResult(item.clone()),
             )
             .await?;
             self.emit(RoderEvent::ToolCallCompleted(ToolCallCompleted {
@@ -164,7 +164,7 @@ impl Runtime {
                 self.persist_turn_item(
                     thread_id,
                     turn_id,
-                    &roder_api::conversation::ConversationItem::ToolResult(item.clone()),
+                    &roder_api::transcript::TranscriptItem::ToolResult(item.clone()),
                 )
                 .await?;
                 self.emit(RoderEvent::ToolCallCompleted(ToolCallCompleted {
@@ -244,7 +244,7 @@ impl Runtime {
             self.persist_turn_item(
                 thread_id,
                 turn_id,
-                &roder_api::conversation::ConversationItem::ToolResult(item.clone()),
+                &roder_api::transcript::TranscriptItem::ToolResult(item.clone()),
             )
             .await?;
             self.emit(RoderEvent::ToolCallCompleted(ToolCallCompleted {
@@ -295,7 +295,7 @@ impl Runtime {
             self.persist_turn_item(
                 thread_id,
                 turn_id,
-                &roder_api::conversation::ConversationItem::ToolResult(item.clone()),
+                &roder_api::transcript::TranscriptItem::ToolResult(item.clone()),
             )
             .await?;
             self.emit(RoderEvent::ToolCallCompleted(ToolCallCompleted {
@@ -431,7 +431,7 @@ impl Runtime {
         self.persist_turn_item(
             thread_id,
             turn_id,
-            &roder_api::conversation::ConversationItem::ToolResult(item.clone()),
+            &roder_api::transcript::TranscriptItem::ToolResult(item.clone()),
         )
         .await?;
         self.emit(RoderEvent::ToolCallCompleted(ToolCallCompleted {

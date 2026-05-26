@@ -8,8 +8,8 @@ include_tui = true
 include_app_server = false
 include_cli = true
 extensions = [
-  "jsonl-session",
+  "jsonl-thread-store",
   "plan-mode",
   "notify-terminal",
 ]
-default_session_store = "jsonl-session"
+default_thread_store = "jsonl-thread-store"

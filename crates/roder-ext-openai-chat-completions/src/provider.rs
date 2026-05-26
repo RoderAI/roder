@@ -51,21 +51,21 @@ impl OpenAiChatCompletionsEngine {
                 content: dev.clone(),
             });
         }
-        for item in &req.conversation {
+        for item in &req.transcript {
             match item {
-                roder_api::conversation::ConversationItem::UserMessage(m) => {
+                roder_api::transcript::TranscriptItem::UserMessage(m) => {
                     messages.push(ChatMessage {
                         role: "user".to_string(),
                         content: m.text.clone(),
                     });
                 }
-                roder_api::conversation::ConversationItem::AssistantMessage(m) => {
+                roder_api::transcript::TranscriptItem::AssistantMessage(m) => {
                     messages.push(ChatMessage {
                         role: "assistant".to_string(),
                         content: m.text.clone(),
                     });
                 }
-                roder_api::conversation::ConversationItem::ToolResult(m) => {
+                roder_api::transcript::TranscriptItem::ToolResult(m) => {
                     messages.push(ChatMessage {
                         role: "tool".to_string(),
                         content: m.result.clone(),
@@ -177,10 +177,10 @@ fn number_to_u32(value: Option<&Value>) -> Option<u32> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use roder_api::conversation::{AssistantMessage, ConversationItem, UserMessage};
     use roder_api::inference::{
         InstructionBundle, ModelSelection, OutputConfig, ReasoningConfig, RuntimeHints,
     };
+    use roder_api::transcript::{AssistantMessage, TranscriptItem, UserMessage};
 
     fn request() -> AgentInferenceRequest {
         AgentInferenceRequest {
@@ -192,9 +192,9 @@ mod tests {
                 system: Some("You are a helpful assistant.".to_string()),
                 developer: Some("Be concise.".to_string()),
             },
-            conversation: vec![
-                ConversationItem::UserMessage(UserMessage::text("Hello")),
-                ConversationItem::AssistantMessage(AssistantMessage {
+            transcript: vec![
+                TranscriptItem::UserMessage(UserMessage::text("Hello")),
+                TranscriptItem::AssistantMessage(AssistantMessage {
                     text: "Hi there!".to_string(),
                     phase: None,
                 }),

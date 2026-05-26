@@ -12,7 +12,7 @@ extensions = [
   "disk-context",
   "firecrawl-search",
   "gemini",
-  "jsonl-session",
+  "jsonl-thread-store",
   "memory",
   "notify-desktop",
   "notify-terminal",
@@ -28,4 +28,4 @@ extensions = [
   "web-search",
 ]
 default_provider = "openai-responses"
-default_session_store = "jsonl-session"
+default_thread_store = "jsonl-thread-store"

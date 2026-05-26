@@ -3,12 +3,12 @@ use std::time::Duration;
 
 use futures::stream;
 use roder_api::catalog::PROVIDER_MOCK;
-use roder_api::conversation::ConversationItem;
 use roder_api::extension::{ExtensionRegistryBuilder, InferenceEngineId, ToolProviderId};
 use roder_api::inference::*;
 use roder_api::tools::{
     ToolCall, ToolContributor, ToolExecutionContext, ToolExecutor, ToolResult, ToolSpec,
 };
+use roder_api::transcript::TranscriptItem;
 use roder_core::{Runtime, RuntimeConfig, StartTurnRequest, default_instructions};
 use serde_json::json;
 
@@ -142,10 +142,10 @@ async fn oversized_tool_result_is_capped_before_next_provider_request() {
     let requests = engine.requests.lock().unwrap();
     assert_eq!(requests.len(), 2);
     let tool_result = requests[1]
-        .conversation
+        .transcript
         .iter()
         .find_map(|item| match item {
-            ConversationItem::ToolResult(result) => Some(result),
+            TranscriptItem::ToolResult(result) => Some(result),
             _ => None,
         })
         .expect("second provider request should include tool result");

@@ -3,7 +3,6 @@ use std::time::Duration;
 
 use futures::stream;
 use roder_api::catalog::PROVIDER_MOCK;
-use roder_api::conversation::ConversationItem;
 use roder_api::extension::{ExtensionRegistryBuilder, InferenceEngineId, ToolProviderId};
 use roder_api::inference::{
     AgentInferenceRequest, CompletionMetadata, InferenceCapabilities, InferenceEngine,
@@ -14,6 +13,7 @@ use roder_api::tools::{
     ToolCall, ToolContributor, ToolExecutionContext, ToolExecutor, ToolRegistry, ToolResult,
     ToolSpec,
 };
+use roder_api::transcript::TranscriptItem;
 use roder_app_server::{AppServer, LocalAppClient};
 use roder_core::{Runtime, RuntimeConfig};
 use roder_protocol::{
@@ -212,23 +212,23 @@ async fn turn_start_during_active_tool_call_steers_same_turn_after_tool_result()
         "steering should continue the same tool loop instead of starting another inference"
     );
     let tool_result_index = requests[1]
-        .conversation
+        .transcript
         .iter()
         .position(|item| {
             matches!(
                 item,
-                ConversationItem::ToolResult(result)
+                TranscriptItem::ToolResult(result)
                     if result.id == "call_blocking_echo" && result.result == "from tool"
             )
         })
         .expect("follow-up request should include the tool result");
     let steer_index = requests[1]
-        .conversation
+        .transcript
         .iter()
         .position(|item| {
             matches!(
                 item,
-                ConversationItem::UserMessage(message)
+                TranscriptItem::UserMessage(message)
                     if message.text == "use this extra constraint"
             )
         })
@@ -236,7 +236,7 @@ async fn turn_start_during_active_tool_call_steers_same_turn_after_tool_result()
     assert!(
         tool_result_index < steer_index,
         "steer message must be inserted after the tool result: {:?}",
-        requests[1].conversation
+        requests[1].transcript
     );
 }
 

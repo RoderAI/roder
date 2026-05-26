@@ -409,7 +409,7 @@ APP_SERVER_MANIFEST: dict[str, Any] = {
             "paramsType": "InitializeParams",
             "resultType": "InitializeResult",
             "stability": "stable",
-            "featureGroup": "session",
+            "featureGroup": "app",
             "idempotency": "idempotent",
             "sideEffect": "readOnly"
         },
@@ -984,51 +984,6 @@ APP_SERVER_MANIFEST: dict[str, Any] = {
             "sideEffect": "localState"
         },
         {
-            "method": "session/exit_plan",
-            "paramsType": "SessionExitPlanParams",
-            "resultType": "SessionExitPlanResult",
-            "stability": "stable",
-            "featureGroup": "session",
-            "idempotency": "nonIdempotent",
-            "sideEffect": "localState"
-        },
-        {
-            "method": "session/get",
-            "paramsType": "SessionGetParams",
-            "resultType": "SessionGetResult",
-            "stability": "stable",
-            "featureGroup": "session",
-            "idempotency": "idempotent",
-            "sideEffect": "readOnly"
-        },
-        {
-            "method": "session/resolve_approval",
-            "paramsType": "SessionResolveApprovalParams",
-            "resultType": "SessionResolveApprovalResult",
-            "stability": "stable",
-            "featureGroup": "session",
-            "idempotency": "nonIdempotent",
-            "sideEffect": "localState"
-        },
-        {
-            "method": "session/resolve_user_input",
-            "paramsType": "SessionResolveUserInputParams",
-            "resultType": "SessionResolveUserInputResult",
-            "stability": "stable",
-            "featureGroup": "session",
-            "idempotency": "nonIdempotent",
-            "sideEffect": "localState"
-        },
-        {
-            "method": "session/set_mode",
-            "paramsType": "SessionSetModeParams",
-            "resultType": "SessionSetModeResult",
-            "stability": "stable",
-            "featureGroup": "session",
-            "idempotency": "nonIdempotent",
-            "sideEffect": "localState"
-        },
-        {
             "method": "settings/get",
             "paramsType": "SettingsGetParams",
             "resultType": "SettingsGetResult",
@@ -1059,6 +1014,15 @@ APP_SERVER_MANIFEST: dict[str, Any] = {
             "method": "settings/set_search_index",
             "paramsType": "SettingsSetSearchIndexParams",
             "resultType": "SettingsSetSearchIndexResult",
+            "stability": "stable",
+            "featureGroup": "settings",
+            "idempotency": "nonIdempotent",
+            "sideEffect": "localState"
+        },
+        {
+            "method": "settings/set_shell",
+            "paramsType": "SettingsSetShellParams",
+            "resultType": "SettingsSetShellResult",
             "stability": "stable",
             "featureGroup": "settings",
             "idempotency": "nonIdempotent",
@@ -1256,7 +1220,7 @@ APP_SERVER_MANIFEST: dict[str, Any] = {
             "paramsType": "ThreadArchiveParams",
             "resultType": "ThreadArchiveResult",
             "stability": "stable",
-            "featureGroup": "threads",
+            "featureGroup": "thread",
             "idempotency": "nonIdempotent",
             "sideEffect": "localState"
         },
@@ -1265,16 +1229,58 @@ APP_SERVER_MANIFEST: dict[str, Any] = {
             "paramsType": "ThreadAttachParams",
             "resultType": "ThreadAttachResult",
             "stability": "stable",
-            "featureGroup": "threads",
+            "featureGroup": "thread",
             "idempotency": "nonIdempotent",
             "sideEffect": "localState"
+        },
+        {
+            "method": "thread/exit_plan",
+            "paramsType": "ThreadExitPlanParams",
+            "resultType": "ThreadExitPlanResult",
+            "stability": "stable",
+            "featureGroup": "thread",
+            "idempotency": "nonIdempotent",
+            "sideEffect": "localState"
+        },
+        {
+            "method": "thread/goal/clear",
+            "paramsType": "ThreadGoalClearParams",
+            "resultType": "ThreadGoalClearResult",
+            "stability": "stable",
+            "featureGroup": "thread",
+            "idempotency": "nonIdempotent",
+            "sideEffect": "localState",
+            "notifications": [
+                "thread/goal/cleared"
+            ]
+        },
+        {
+            "method": "thread/goal/get",
+            "paramsType": "ThreadGoalGetParams",
+            "resultType": "ThreadGoalGetResult",
+            "stability": "stable",
+            "featureGroup": "thread",
+            "idempotency": "idempotent",
+            "sideEffect": "readOnly"
+        },
+        {
+            "method": "thread/goal/set",
+            "paramsType": "ThreadGoalSetParams",
+            "resultType": "ThreadGoalSetResult",
+            "stability": "stable",
+            "featureGroup": "thread",
+            "idempotency": "nonIdempotent",
+            "sideEffect": "localState",
+            "notifications": [
+                "thread/goal/updated"
+            ]
         },
         {
             "method": "thread/list",
             "paramsType": "ThreadListParams",
             "resultType": "ThreadListResult",
             "stability": "stable",
-            "featureGroup": "threads",
+            "featureGroup": "thread",
             "idempotency": "idempotent",
             "sideEffect": "readOnly"
         },
@@ -1283,16 +1289,43 @@ APP_SERVER_MANIFEST: dict[str, Any] = {
             "paramsType": "ThreadReadParams",
             "resultType": "ThreadReadResult",
             "stability": "stable",
-            "featureGroup": "threads",
+            "featureGroup": "thread",
             "idempotency": "idempotent",
             "sideEffect": "readOnly"
+        },
+        {
+            "method": "thread/resolve_approval",
+            "paramsType": "ThreadResolveApprovalParams",
+            "resultType": "ThreadResolveApprovalResult",
+            "stability": "stable",
+            "featureGroup": "thread",
+            "idempotency": "nonIdempotent",
+            "sideEffect": "localState"
+        },
+        {
+            "method": "thread/resolve_user_input",
+            "paramsType": "ThreadResolveUserInputParams",
+            "resultType": "ThreadResolveUserInputResult",
+            "stability": "stable",
+            "featureGroup": "thread",
+            "idempotency": "nonIdempotent",
+            "sideEffect": "localState"
         },
         {
             "method": "thread/roadmap/open",
             "paramsType": "ThreadRoadmapOpenParams",
             "resultType": "ThreadRoadmapOpenResult",
             "stability": "stable",
-            "featureGroup": "threads",
+            "featureGroup": "thread",
+            "idempotency": "nonIdempotent",
+            "sideEffect": "localState"
+        },
+        {
+            "method": "thread/set_mode",
+            "paramsType": "ThreadSetModeParams",
+            "resultType": "ThreadSetModeResult",
+            "stability": "stable",
+            "featureGroup": "thread",
             "idempotency": "nonIdempotent",
             "sideEffect": "localState"
         },
@@ -1301,9 +1334,18 @@ APP_SERVER_MANIFEST: dict[str, Any] = {
             "paramsType": "ThreadStartParams",
             "resultType": "ThreadStartResult",
             "stability": "stable",
-            "featureGroup": "threads",
+            "featureGroup": "thread",
             "idempotency": "nonIdempotent",
             "sideEffect": "localState"
+        },
+        {
+            "method": "thread/state",
+            "paramsType": "ThreadStateParams",
+            "resultType": "ThreadStateResult",
+            "stability": "stable",
+            "featureGroup": "thread",
+            "idempotency": "idempotent",
+            "sideEffect": "readOnly"
         },
         {
             "method": "tools/call",
@@ -1534,15 +1576,11 @@ APP_SERVER_METHODS: tuple[str, ...] = (
     "search_index/rebuild",
     "search_index/status",
     "search_index/warmup",
-    "session/exit_plan",
-    "session/get",
-    "session/resolve_approval",
-    "session/resolve_user_input",
-    "session/set_mode",
     "settings/get",
     "settings/set_default_mode",
     "settings/set_file_backed_dynamic_context",
     "settings/set_search_index",
+    "settings/set_shell",
     "settings/set_web_search",
     "skills/list",
     "skills/read",
@@ -1565,10 +1603,18 @@ APP_SERVER_METHODS: tuple[str, ...] = (
     "team/start",
     "thread/archive",
     "thread/attach",
+    "thread/exit_plan",
+    "thread/goal/clear",
+    "thread/goal/get",
+    "thread/goal/set",
     "thread/list",
     "thread/read",
+    "thread/resolve_approval",
+    "thread/resolve_user_input",
     "thread/roadmap/open",
+    "thread/set_mode",
     "thread/start",
+    "thread/state",
     "tools/call",
     "tools/list",
     "turn/interrupt",
@@ -1584,7 +1630,7 @@ APP_SERVER_METHODS: tuple[str, ...] = (
     "workflow/scan",
 )
 
-AppServerMethod: TypeAlias = Literal["agents/list", "artifact/delete", "artifact/grep", "artifact/list", "artifact/read", "artifact/tail", "auth/codex/login", "auth/codex/logout", "auth/codex/status", "auth/supergrok/login", "auth/supergrok/logout", "auth/supergrok/status", "automations/cancelRun", "automations/create", "automations/delete", "automations/list", "automations/runNow", "automations/runs", "automations/status", "automations/update", "command/exec", "commands/expand", "commands/list", "commands/run", "discovery/groups", "discovery/promote", "discovery/promoted/clear", "discovery/promoted/list", "discovery/read", "discovery/refresh", "discovery/search", "eval/report/read", "eval/reports/list", "extensions/list", "fs/readDirectory", "fs/readFile", "hunk/list", "hunk/read", "hunk/rollback", "index/proofs/list", "index/readChunk", "index/rebuild", "index/search", "index/status", "initialize", "marketplaces/add", "marketplaces/install_default", "marketplaces/list", "marketplaces/plugin", "marketplaces/refresh", "marketplaces/remove", "marketplaces/search", "media/attachToTurn", "media/delete", "media/list", "media/read", "media/thumbnail", "memory/delete", "memory/list", "memory/provider/list", "memory/provider/set", "memory/query", "memory/read", "memory/recall/preview", "memory/save", "memory/update", "model/list", "plan/review/approve", "plan/review/comment", "plan/review/read", "plan/review/reject", "plan/review/rewrite", "plugins/disable", "plugins/install", "plugins/install_all_variants", "plugins/list_installed", "plugins/preview_install", "plugins/uninstall", "processes/get", "processes/list", "processes/stop", "processes/stopAll", "processes/subscribe", "providers/configure", "providers/list", "providers/select", "retrieval/metrics", "retrieval/promoted", "retrieval/recommendations", "roadmap/create", "roadmap/list", "roadmap/patch", "roadmap/read", "roadmap/task/update", "roadmap/thread/attach", "roadmap/thread/list", "roadmap/thread/spawn", "roadmap/validate", "runners/delete", "runners/list", "runners/ports", "runners/select", "runners/session", "runners/snapshot", "search_index/clear", "search_index/rebuild", "search_index/status", "search_index/warmup", "session/exit_plan", "session/get", "session/resolve_approval", "session/resolve_user_input", "session/set_mode", "settings/get", "settings/set_default_mode", "settings/set_file_backed_dynamic_context", "settings/set_search_index", "settings/set_web_search", "skills/list", "skills/read", "skills/setEnabled", "skills/setExposure", "tasks/cancel", "tasks/get", "tasks/list", "tasks/submit", "tasks/subscribe", "team/cleanup", "team/list", "team/member/focus", "team/member/interrupt", "team/member/message", "team/member/start", "team/pane/cleanup", "team/pane/focus", "team/read", "team/start", "thread/archive", "thread/attach", "thread/list", "thread/read", "thread/roadmap/open", "thread/start", "tools/call", "tools/list", "turn/interrupt", "turn/start", "turn/steer", "turn/subagentTrace/read", "turn/subagentTraces/list", "workflow/enable", "workflow/ignore", "workflow/preview", "workflow/refresh", "workflow/remove", "workflow/scan"]
+AppServerMethod: TypeAlias = Literal["agents/list", "artifact/delete", "artifact/grep", "artifact/list", "artifact/read", "artifact/tail", "auth/codex/login", "auth/codex/logout", "auth/codex/status", "auth/supergrok/login", "auth/supergrok/logout", "auth/supergrok/status", "automations/cancelRun", "automations/create", "automations/delete", "automations/list", "automations/runNow", "automations/runs", "automations/status", "automations/update", "command/exec", "commands/expand", "commands/list", "commands/run", "discovery/groups", "discovery/promote", "discovery/promoted/clear", "discovery/promoted/list", "discovery/read", "discovery/refresh", "discovery/search", "eval/report/read", "eval/reports/list", "extensions/list", "fs/readDirectory", "fs/readFile", "hunk/list", "hunk/read", "hunk/rollback", "index/proofs/list", "index/readChunk", "index/rebuild", "index/search", "index/status", "initialize", "marketplaces/add", "marketplaces/install_default", "marketplaces/list", "marketplaces/plugin", "marketplaces/refresh", "marketplaces/remove", "marketplaces/search", "media/attachToTurn", "media/delete", "media/list", "media/read", "media/thumbnail", "memory/delete", "memory/list", "memory/provider/list", "memory/provider/set", "memory/query", "memory/read", "memory/recall/preview", "memory/save", "memory/update", "model/list", "plan/review/approve", "plan/review/comment", "plan/review/read", "plan/review/reject", "plan/review/rewrite", "plugins/disable", "plugins/install", "plugins/install_all_variants", "plugins/list_installed", "plugins/preview_install", "plugins/uninstall", "processes/get", "processes/list", "processes/stop", "processes/stopAll", "processes/subscribe", "providers/configure", "providers/list", "providers/select", "retrieval/metrics", "retrieval/promoted", "retrieval/recommendations", "roadmap/create", "roadmap/list", "roadmap/patch", "roadmap/read", "roadmap/task/update", "roadmap/thread/attach", "roadmap/thread/list", "roadmap/thread/spawn", "roadmap/validate", "runners/delete", "runners/list", "runners/ports", "runners/select", "runners/session", "runners/snapshot", "search_index/clear", "search_index/rebuild", "search_index/status", "search_index/warmup", "settings/get", "settings/set_default_mode", "settings/set_file_backed_dynamic_context", "settings/set_search_index", "settings/set_shell", "settings/set_web_search", "skills/list", "skills/read", "skills/setEnabled", "skills/setExposure", "tasks/cancel", "tasks/get", "tasks/list", "tasks/submit", "tasks/subscribe", "team/cleanup", "team/list", "team/member/focus", "team/member/interrupt", "team/member/message", "team/member/start", "team/pane/cleanup", "team/pane/focus", "team/read", "team/start", "thread/archive", "thread/attach", "thread/exit_plan", "thread/goal/clear", "thread/goal/get", "thread/goal/set", "thread/list", "thread/read", "thread/resolve_approval", "thread/resolve_user_input", "thread/roadmap/open", "thread/set_mode", "thread/start", "thread/state", "tools/call", "tools/list", "turn/interrupt", "turn/start", "turn/steer", "turn/subagentTrace/read", "turn/subagentTraces/list", "workflow/enable", "workflow/ignore", "workflow/preview", "workflow/refresh", "workflow/remove", "workflow/scan"]
 
 
 class JsonRpcError(TypedDict, total=False):

@@ -24,13 +24,13 @@ pub struct StatusCell {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-pub struct SessionSummary {
+pub struct ThreadSummary {
     pub thread_id: String,
     pub title: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-pub struct SessionUsage {
+pub struct ThreadUsage {
     pub input_tokens: u64,
     pub output_tokens: u64,
     pub total_cost_usd: Option<f64>,
@@ -55,12 +55,12 @@ pub struct RunnerSummary {
 }
 
 pub struct StatusContext<'a> {
-    pub session: &'a SessionSummary,
+    pub thread: &'a ThreadSummary,
     pub policy_mode: PolicyMode,
     pub model: Option<&'a str>,
     pub model_profile: Option<&'a str>,
     pub model_switch_summary: Option<&'a str>,
-    pub usage: Option<&'a SessionUsage>,
+    pub usage: Option<&'a ThreadUsage>,
     pub git: Option<&'a GitSnapshot>,
     pub mcp: &'a [McpServerStatus],
     pub runner: Option<&'a RunnerSummary>,
@@ -137,10 +137,10 @@ pub fn built_in_status_segments() -> Vec<StatusSegment> {
                 .map(str::to_string)
                 .or_else(|| Some("Active model harness profile".to_string())),
         }),
-        StatusSegment::new("session", 80, 8, |ctx| StatusCell {
-            text: format!("session:{}", short_id(&ctx.session.thread_id)),
+        StatusSegment::new("thread", 80, 8, |ctx| StatusCell {
+            text: format!("thread:{}", short_id(&ctx.thread.thread_id)),
             style: StatusStyle::Muted,
-            tooltip: ctx.session.title.clone(),
+            tooltip: ctx.thread.title.clone(),
         }),
         StatusSegment::new("branch", 70, 8, |ctx| StatusCell {
             text: ctx
@@ -157,7 +157,7 @@ pub fn built_in_status_segments() -> Vec<StatusSegment> {
                 .map(|usage| format!("tok:{}", usage.input_tokens + usage.output_tokens))
                 .unwrap_or_else(|| "tok:-".to_string()),
             style: StatusStyle::Muted,
-            tooltip: Some("Session token usage".to_string()),
+            tooltip: Some("Thread token usage".to_string()),
         }),
         StatusSegment::new("mcp", 50, 6, |ctx| StatusCell {
             text: format!("mcp:{}", ctx.mcp.len()),

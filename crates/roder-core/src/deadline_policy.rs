@@ -1,4 +1,4 @@
-use roder_api::conversation::UserMessage;
+use roder_api::transcript::UserMessage;
 use time::OffsetDateTime;
 
 const DEFAULT_FINALIZATION_RESERVE_SECONDS: u64 = 30;

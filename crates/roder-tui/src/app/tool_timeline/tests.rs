@@ -921,7 +921,7 @@ fn turn_completed_renders_right_aligned_usage_summary() {
         input_tokens: 46_694,
         output_tokens: 1_240,
         reasoning_tokens: Some(512),
-        session_tokens: 100_200,
+        thread_tokens: 100_200,
     });
 
     let lines = rendered_lines(&mut timeline);
@@ -933,7 +933,7 @@ fn turn_completed_renders_right_aligned_usage_summary() {
     assert!(row.starts_with("  Turn completed in 1.2 sec."));
     assert!(
         row.trim_end()
-            .ends_with("↑ 46K  ↓ 1.2K  thinking 512  session 100K tokens")
+            .ends_with("↑ 46K  ↓ 1.2K  thinking 512  thread 100K tokens")
     );
 }
 
@@ -945,7 +945,7 @@ fn turn_completed_duration_summary_uses_human_units() {
         input_tokens: 400,
         output_tokens: 20,
         reasoning_tokens: None,
-        session_tokens: 420,
+        thread_tokens: 420,
     });
 
     let lines = rendered_lines(&mut timeline);
@@ -956,7 +956,7 @@ fn turn_completed_duration_summary_uses_human_units() {
 
     assert_eq!(
         row.trim_end(),
-        "  Turn completed in 2 min 5 sec.  ↑ 400  ↓ 20  session 420 tokens"
+        "  Turn completed in 2 min 5 sec.  ↑ 400  ↓ 20  thread 420 tokens"
     );
 }
 

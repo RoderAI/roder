@@ -3,7 +3,7 @@ use std::path::PathBuf;
 
 use anyhow::Context;
 use roder_protocol::{
-    AgentMessageDeltaNotification, DesktopItem, ItemCompletedNotification, ItemStartedNotification,
+    AgentMessageDeltaNotification, Item, ItemCompletedNotification, ItemStartedNotification,
     JsonRpcNotification, TurnCompletedNotification, TurnStartedNotification,
 };
 
@@ -139,7 +139,7 @@ impl ExecOutput {
         Ok(None)
     }
 
-    pub(crate) fn backfill_final_message(&mut self, items: &[DesktopItem]) {
+    pub(crate) fn backfill_final_message(&mut self, items: &[Item]) {
         if let Some(text) = items
             .iter()
             .rev()

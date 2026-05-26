@@ -1,5 +1,5 @@
 [package]
-name = "roder-session"
+name = "roder-thread-store"
 version.workspace = true
 edition.workspace = true
 

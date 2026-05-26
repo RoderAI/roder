@@ -23,8 +23,8 @@ version = "0.1.0"
 include_tui = true
 include_app_server = false
 include_cli = true
-extensions = ["jsonl-session"]
-default_session_store = "jsonl-session"
+extensions = ["jsonl-thread-store"]
+default_thread_store = "jsonl-thread-store"
 "#,
     )
     .unwrap();
@@ -32,7 +32,7 @@ default_session_store = "jsonl-session"
     let profile = Profile::load(&path).unwrap();
 
     assert_eq!(profile.id, "test");
-    assert_eq!(profile.manifest.extensions, vec!["jsonl-session"]);
+    assert_eq!(profile.manifest.extensions, vec!["jsonl-thread-store"]);
     let _ = fs::remove_file(path);
 }
 
@@ -126,9 +126,9 @@ version = "0.1.0"
 include_tui = true
 include_app_server = false
 include_cli = true
-extensions = ["openai-responses", "jsonl-session"]
+extensions = ["openai-responses", "jsonl-thread-store"]
 default_provider = "openai-responses"
-default_session_store = "jsonl-session"
+default_thread_store = "jsonl-thread-store"
 
 [distribution.config_overrides]
 disabled_capabilities = ["secret.read.OPENAI_API_KEY"]
