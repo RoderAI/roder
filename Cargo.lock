@@ -2943,6 +2943,7 @@ name = "roder-ext-openai-chat-completions"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "async-stream",
  "async-trait",
  "futures",
  "reqwest",
@@ -3311,6 +3312,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "roder-ext-xiaomi-mimo"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "base64",
+ "futures",
+ "reqwest",
+ "roder-api",
+ "roder-config",
+ "roder-ext-openai-chat-completions",
+ "semver",
+ "serde",
+ "serde_json",
+ "tokio",
+]
+
+[[package]]
 name = "roder-extension-host"
 version = "0.1.0"
 dependencies = [
@@ -3357,6 +3376,7 @@ dependencies = [
  "roder-ext-verification",
  "roder-ext-web-search",
  "roder-ext-xai",
+ "roder-ext-xiaomi-mimo",
  "roder-tools",
  "roder-web-search",
  "semver",

@@ -21,9 +21,10 @@ use automations::run_automations_cli;
 use evals::run_eval_cli;
 use marketplace::{run_marketplace_cli, run_plugin_cli, run_setup_cli};
 use roder_api::catalog::{
-    DEFAULT_MODEL_ID, PROVIDER_ANTHROPIC, PROVIDER_CODEX, PROVIDER_GEMINI, PROVIDER_MOCK,
-    PROVIDER_OPENAI, PROVIDER_OPENCODE, PROVIDER_OPENCODE_GO, PROVIDER_POOLSIDE,
-    PROVIDER_SUPERGROK, PROVIDER_XAI, normalize_provider_id,
+    DEFAULT_MODEL_ID, PROVIDER_ANTHROPIC, PROVIDER_CODEX, PROVIDER_CURSOR, PROVIDER_GEMINI,
+    PROVIDER_MOCK, PROVIDER_OPENAI, PROVIDER_OPENCODE, PROVIDER_OPENCODE_GO, PROVIDER_POOLSIDE,
+    PROVIDER_SUPERGROK, PROVIDER_XAI, PROVIDER_XIAOMI_MIMO, PROVIDER_XIAOMI_MIMO_TOKEN_PLAN,
+    normalize_provider_id,
 };
 use roder_api::command_shell::{default_command_shell, normalize_command_shell};
 use roder_api::inference::{HostedWebSearchConfig, RuntimeProfile};
@@ -1112,6 +1113,10 @@ pub(crate) async fn build_runtime_from_config(
         cursor_access_token: keys.cursor_access_token,
         cursor_agent_service_url: keys.cursor_agent_service_url,
         cursor_backend_base_url: keys.cursor_backend_base_url,
+        xiaomi_mimo_api_key: keys.xiaomi_mimo,
+        xiaomi_mimo_base_url: keys.xiaomi_mimo_base_url,
+        xiaomi_mimo_token_plan_api_key: keys.xiaomi_mimo_token_plan,
+        xiaomi_mimo_token_plan_base_url: keys.xiaomi_mimo_token_plan_base_url,
         custom_inference_providers: custom_inference_provider_configs,
         thread_dir: None,
         workspace: workspace.clone(),
@@ -1989,6 +1994,10 @@ struct ProviderKeys {
     cursor_access_token: Option<String>,
     cursor_agent_service_url: Option<String>,
     cursor_backend_base_url: Option<String>,
+    xiaomi_mimo: Option<String>,
+    xiaomi_mimo_base_url: Option<String>,
+    xiaomi_mimo_token_plan: Option<String>,
+    xiaomi_mimo_token_plan_base_url: Option<String>,
 }
 
 fn provider_keys(cfg: &roder_config::Config) -> ProviderKeys {
@@ -2171,6 +2180,50 @@ fn provider_keys(cfg: &roder_config::Config) -> ProviderKeys {
         cursor_backend_base_url: std::env::var("RODER_CURSOR_BACKEND_BASE_URL")
             .ok()
             .or_else(|| std::env::var("CURSOR_BACKEND_BASE_URL").ok()),
+        xiaomi_mimo: std::env::var("MIMO_API_KEY")
+            .ok()
+            .or_else(|| std::env::var("XIAOMI_MIMO_API_KEY").ok())
+            .or_else(|| std::env::var("RODER_XIAOMI_MIMO_API_KEY").ok())
+            .or_else(|| {
+                cfg.providers
+                    .get(PROVIDER_XIAOMI_MIMO)
+                    .and_then(|p| p.api_key.clone())
+            })
+            .or_else(|| {
+                cfg.providers
+                    .get(PROVIDER_XIAOMI_MIMO)
+                    .and_then(|p| p.api_key_env.as_deref())
+                    .and_then(env_nonempty)
+            }),
+        xiaomi_mimo_base_url: cfg
+            .providers
+            .get(PROVIDER_XIAOMI_MIMO)
+            .and_then(|p| p.base_url.clone())
+            .or_else(|| std::env::var("MIMO_BASE_URL").ok())
+            .or_else(|| std::env::var("XIAOMI_MIMO_BASE_URL").ok())
+            .or_else(|| std::env::var("RODER_XIAOMI_MIMO_BASE_URL").ok()),
+        xiaomi_mimo_token_plan: std::env::var("MIMO_TOKEN_PLAN_API_KEY")
+            .ok()
+            .or_else(|| std::env::var("XIAOMI_MIMO_TOKEN_PLAN_API_KEY").ok())
+            .or_else(|| std::env::var("RODER_XIAOMI_MIMO_TOKEN_PLAN_API_KEY").ok())
+            .or_else(|| {
+                cfg.providers
+                    .get(PROVIDER_XIAOMI_MIMO_TOKEN_PLAN)
+                    .and_then(|p| p.api_key.clone())
+            })
+            .or_else(|| {
+                cfg.providers
+                    .get(PROVIDER_XIAOMI_MIMO_TOKEN_PLAN)
+                    .and_then(|p| p.api_key_env.as_deref())
+                    .and_then(env_nonempty)
+            }),
+        xiaomi_mimo_token_plan_base_url: cfg
+            .providers
+            .get(PROVIDER_XIAOMI_MIMO_TOKEN_PLAN)
+            .and_then(|p| p.base_url.clone())
+            .or_else(|| std::env::var("MIMO_TOKEN_PLAN_BASE_URL").ok())
+            .or_else(|| std::env::var("XIAOMI_MIMO_TOKEN_PLAN_BASE_URL").ok())
+            .or_else(|| std::env::var("RODER_XIAOMI_MIMO_TOKEN_PLAN_BASE_URL").ok()),
     }
 }
 
@@ -2211,6 +2264,8 @@ fn is_builtin_provider_id(id: &str) -> bool {
             | "opencode-go"
             | "poolside"
             | "cursor"
+            | "xiaomi-mimo"
+            | "xiaomi-mimo-token-plan"
     )
 }
 
@@ -2521,8 +2576,15 @@ fn provider_can_be_registered(
     custom_providers: &[CustomInferenceProviderConfig],
 ) -> bool {
     match provider {
-        PROVIDER_MOCK | PROVIDER_CODEX | PROVIDER_SUPERGROK | PROVIDER_OPENCODE
-        | PROVIDER_OPENCODE_GO | PROVIDER_POOLSIDE => true,
+        PROVIDER_MOCK
+        | PROVIDER_CODEX
+        | PROVIDER_SUPERGROK
+        | PROVIDER_OPENCODE
+        | PROVIDER_OPENCODE_GO
+        | PROVIDER_POOLSIDE
+        | PROVIDER_XIAOMI_MIMO
+        | PROVIDER_XIAOMI_MIMO_TOKEN_PLAN => true,
+        PROVIDER_CURSOR => keys.cursor.is_some() || keys.cursor_access_token.is_some(),
         PROVIDER_OPENAI => keys.openai.is_some(),
         PROVIDER_ANTHROPIC => keys.anthropic.is_some(),
         PROVIDER_GEMINI => keys.gemini.is_some(),
@@ -2555,6 +2617,14 @@ mod tests {
             opencode_go_project_id: None,
             poolside: None,
             poolside_base_url: None,
+            cursor: None,
+            cursor_access_token: None,
+            cursor_agent_service_url: None,
+            cursor_backend_base_url: None,
+            xiaomi_mimo: None,
+            xiaomi_mimo_base_url: None,
+            xiaomi_mimo_token_plan: None,
+            xiaomi_mimo_token_plan_base_url: None,
         }
     }
 
@@ -2602,6 +2672,21 @@ mod tests {
         );
         assert_eq!(provider, "codex");
         assert_eq!(model.as_deref(), Some("gpt-5.5"));
+    }
+
+    #[test]
+    fn xiaomi_provider_slash_model_uses_exact_provider_ids() {
+        let (provider, model) =
+            resolve_provider_model(Some("xiaomi-mimo/mimo-v2.5-pro".to_string()), None);
+        assert_eq!(provider, PROVIDER_XIAOMI_MIMO);
+        assert_eq!(model.as_deref(), Some("mimo-v2.5-pro"));
+
+        let (provider, model) = resolve_provider_model(
+            Some("xiaomi-mimo-token-plan/mimo-v2.5-tts".to_string()),
+            None,
+        );
+        assert_eq!(provider, PROVIDER_XIAOMI_MIMO_TOKEN_PLAN);
+        assert_eq!(model.as_deref(), Some("mimo-v2.5-tts"));
     }
 
     #[test]

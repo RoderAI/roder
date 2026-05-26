@@ -4,8 +4,9 @@ use std::sync::Arc;
 use base64::Engine;
 use roder_app_server::{AppServer, LocalAppClient};
 use roder_protocol::{
-    JsonRpcRequest, SpeechAudioPayload, SpeechProvidersListResult, SpeechTranscribeParams,
-    SpeechTranscribeResult,
+    JsonRpcRequest, SpeechAudioPayload, SpeechProvidersListResult,
+    SpeechSynthesisProvidersListResult, SpeechSynthesizeParams, SpeechSynthesizeResult,
+    SpeechTranscribeParams, SpeechTranscribeResult,
 };
 use tokio::io::AsyncReadExt;
 
@@ -14,9 +15,13 @@ use crate::{CliOptions, build_runtime_from_config, decode_response};
 pub(crate) async fn run_speech_cli(args: &[String]) -> anyhow::Result<()> {
     match args.first().map(String::as_str) {
         Some("providers" | "list") => run_speech_providers(&args[1..]).await,
+        Some("synthesis-providers" | "synthesizers") => {
+            run_speech_synthesis_providers(&args[1..]).await
+        }
+        Some("synthesize") => run_speech_synthesize(&args[1..]).await,
         Some("transcribe") => run_speech_transcribe(&args[1..]).await,
         _ => anyhow::bail!(
-            "usage: roder speech providers [--json]\n       roder speech transcribe <audio-file|-> [--provider <id>] [--model <id>] [--language <code>] [--diarization] [--format text|json]"
+            "usage: roder speech providers [--json]\n       roder speech synthesis-providers [--json]\n       roder speech synthesize <text> [--provider <id>] [--model <id>] [--voice <id>] [--audio-format wav|pcm16] [--prompt <text>] [--output <path>] [--format json]\n       roder speech transcribe <audio-file|-> [--provider <id>] [--model <id>] [--language <code>] [--diarization] [--format text|json]"
         ),
     }
 }
@@ -30,6 +35,39 @@ async fn run_speech_providers(args: &[String]) -> anyhow::Result<()> {
                 jsonrpc: "2.0".to_string(),
                 id: Some(serde_json::json!(1)),
                 method: "speech/providers/list".to_string(),
+                params: None,
+            })
+            .await,
+    )?;
+
+    if json {
+        println!("{}", serde_json::to_string_pretty(&result)?);
+    } else {
+        for provider in result.providers {
+            let models = provider
+                .models
+                .iter()
+                .map(|model| model.id.as_str())
+                .collect::<Vec<_>>()
+                .join(",");
+            println!(
+                "{}\t{}\tauth={}\t{}",
+                provider.id, provider.name, provider.authenticated, models
+            );
+        }
+    }
+    Ok(())
+}
+
+async fn run_speech_synthesis_providers(args: &[String]) -> anyhow::Result<()> {
+    let json = args.iter().any(|arg| arg == "--json");
+    let client = local_client().await?;
+    let result: SpeechSynthesisProvidersListResult = decode_response(
+        client
+            .send_request(JsonRpcRequest {
+                jsonrpc: "2.0".to_string(),
+                id: Some(serde_json::json!(1)),
+                method: "speech/synthesis/providers/list".to_string(),
                 params: None,
             })
             .await,
@@ -89,6 +127,41 @@ async fn run_speech_transcribe(args: &[String]) -> anyhow::Result<()> {
     Ok(())
 }
 
+async fn run_speech_synthesize(args: &[String]) -> anyhow::Result<()> {
+    let options = SynthesizeOptions::parse(args)?;
+    let client = local_client().await?;
+    let result: SpeechSynthesizeResult = decode_response(
+        client
+            .send_request(JsonRpcRequest {
+                jsonrpc: "2.0".to_string(),
+                id: Some(serde_json::json!(1)),
+                method: "speech/synthesize".to_string(),
+                params: Some(serde_json::to_value(SpeechSynthesizeParams {
+                    provider: options.provider,
+                    model: options.model,
+                    text: options.text,
+                    voice: options.voice,
+                    audio_format: options.audio_format,
+                    prompt: options.prompt,
+                    voice_sample: None,
+                    metadata: Default::default(),
+                })?),
+            })
+            .await,
+    )?;
+
+    if options.format == OutputFormat::Json {
+        println!("{}", serde_json::to_string_pretty(&result)?);
+    } else if let Some(output) = options.output {
+        let bytes = base64::engine::general_purpose::STANDARD
+            .decode(result.audio.bytes_base64.as_bytes())?;
+        tokio::fs::write(output, bytes).await?;
+    } else {
+        println!("{}", result.audio.bytes_base64);
+    }
+    Ok(())
+}
+
 async fn local_client() -> anyhow::Result<LocalAppClient> {
     let (runtime, _) = build_runtime_from_config(CliOptions::default()).await?;
     Ok(LocalAppClient::new(Arc::new(AppServer::new(runtime))))
@@ -137,6 +210,90 @@ struct TranscribeOptions {
     language: Option<String>,
     diarization: bool,
     format: OutputFormat,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct SynthesizeOptions {
+    text: String,
+    provider: Option<String>,
+    model: Option<String>,
+    voice: Option<String>,
+    audio_format: Option<String>,
+    prompt: Option<String>,
+    output: Option<String>,
+    format: OutputFormat,
+}
+
+impl SynthesizeOptions {
+    fn parse(args: &[String]) -> anyhow::Result<Self> {
+        let mut text = None;
+        let mut provider = None;
+        let mut model = None;
+        let mut voice = None;
+        let mut audio_format = None;
+        let mut prompt = None;
+        let mut output = None;
+        let mut format = OutputFormat::Text;
+        let mut i = 0;
+        while i < args.len() {
+            match args[i].as_str() {
+                "--provider" => {
+                    provider = Some(required_value(args, &mut i, "--provider")?);
+                }
+                "--model" => {
+                    model = Some(required_value(args, &mut i, "--model")?);
+                }
+                "--voice" => {
+                    voice = Some(required_value(args, &mut i, "--voice")?);
+                }
+                "--audio-format" => {
+                    audio_format = Some(required_value(args, &mut i, "--audio-format")?);
+                }
+                "--prompt" => {
+                    prompt = Some(required_value(args, &mut i, "--prompt")?);
+                }
+                "--output" => {
+                    output = Some(required_value(args, &mut i, "--output")?);
+                }
+                "--format" => {
+                    format = match required_value(args, &mut i, "--format")?.as_str() {
+                        "text" => OutputFormat::Text,
+                        "json" => OutputFormat::Json,
+                        other => {
+                            anyhow::bail!("unsupported --format {other:?}; expected text or json")
+                        }
+                    };
+                }
+                "--help" | "-h" => {
+                    anyhow::bail!(
+                        "usage: roder speech synthesize <text> [--provider <id>] [--model <id>] [--voice <id>] [--audio-format wav|pcm16] [--prompt <text>] [--output <path>] [--format json]"
+                    );
+                }
+                arg if arg.starts_with('-') => {
+                    anyhow::bail!("unknown speech synthesize option {arg:?}");
+                }
+                arg => {
+                    if text.replace(arg.to_string()).is_some() {
+                        anyhow::bail!("speech synthesize accepts exactly one text argument");
+                    }
+                }
+            }
+            i += 1;
+        }
+        let Some(text) = text else {
+            anyhow::bail!("roder speech synthesize requires text");
+        };
+        Ok(Self {
+            text,
+            provider,
+            model,
+            voice,
+            audio_format,
+            prompt,
+            output,
+            format,
+        })
+    }
 }
 
 impl TranscribeOptions {
@@ -249,5 +406,30 @@ mod tests {
             audio_mime_type(Path::new("clip.unknown")),
             "application/octet-stream"
         );
+    }
+
+    #[test]
+    fn parses_synthesize_options() {
+        let options = SynthesizeOptions::parse(&[
+            "hello".to_string(),
+            "--provider".to_string(),
+            "xiaomi-mimo".to_string(),
+            "--model".to_string(),
+            "mimo-v2.5-tts".to_string(),
+            "--voice".to_string(),
+            "Chloe".to_string(),
+            "--audio-format".to_string(),
+            "wav".to_string(),
+            "--output".to_string(),
+            "out.wav".to_string(),
+        ])
+        .unwrap();
+
+        assert_eq!(options.text, "hello");
+        assert_eq!(options.provider.as_deref(), Some("xiaomi-mimo"));
+        assert_eq!(options.model.as_deref(), Some("mimo-v2.5-tts"));
+        assert_eq!(options.voice.as_deref(), Some("Chloe"));
+        assert_eq!(options.audio_format.as_deref(), Some("wav"));
+        assert_eq!(options.output.as_deref(), Some("out.wav"));
     }
 }
