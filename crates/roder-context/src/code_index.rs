@@ -35,6 +35,13 @@ impl ContextProvider for CodeIndexContextProvider {
     }
 
     async fn blocks(&self, query: &ContextQuery) -> anyhow::Result<Vec<ContextBlock>> {
+        if query
+            .workspace
+            .as_deref()
+            .is_some_and(|workspace| Path::new(workspace) != self.workspace)
+        {
+            return Ok(Vec::new());
+        }
         let status = self.store.status(&self.workspace)?;
         if status.status != CodeIndexStatus::Ready {
             return Ok(Vec::new());
@@ -232,6 +239,7 @@ mod tests {
             thread_id: "thread-a".to_string(),
             turn_id: "turn-a".to_string(),
             prompt: prompt.to_string(),
+            workspace: None,
             token_budget: None,
         }
     }

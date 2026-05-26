@@ -3631,6 +3631,98 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn context_entrypoint_hints_use_turn_workspace() {
+        let process_workspace = runtime_test_workspace("entrypoint-process");
+        let thread_workspace = runtime_test_workspace("entrypoint-thread");
+        std::fs::create_dir_all(process_workspace.join("src")).unwrap();
+        std::fs::create_dir_all(thread_workspace.join("src")).unwrap();
+        std::fs::write(
+            process_workspace.join("src/sidebar-thread-groups.ts"),
+            "export const desktopLeak = true;\n",
+        )
+        .unwrap();
+        std::fs::write(
+            thread_workspace.join("src/voice-plan-feedback.ts"),
+            "export const voicePlanFeedback = true;\n",
+        )
+        .unwrap();
+
+        let captured = Arc::new(StdMutex::new(None));
+        let mut builder = ExtensionRegistryBuilder::new();
+        builder.inference_engine(Arc::new(CapturingEngine {
+            request: captured.clone(),
+        }));
+        builder.context_planner(Arc::new(roder_context::EntrypointContextPlanner::new(
+            process_workspace.clone(),
+        )));
+        let runtime = Arc::new(
+            Runtime::new(
+                builder.build().unwrap(),
+                RuntimeConfig {
+                    workspace: Some(process_workspace.display().to_string()),
+                    ..RuntimeConfig::default()
+                },
+            )
+            .unwrap(),
+        );
+        let mut rx = runtime.subscribe_events();
+
+        let turn_id = runtime
+            .start_turn(StartTurnRequest {
+                thread_id: "thread-workspace-entrypoint".to_string(),
+                message: "investigate voice plan feedback".to_string(),
+                images: Vec::new(),
+                provider_override: None,
+                model_override: None,
+                workspace: Some(thread_workspace.display().to_string()),
+                instructions: crate::instructions::default_instructions(),
+                task_ledger_required: false,
+            })
+            .await
+            .unwrap();
+
+        tokio::time::timeout(std::time::Duration::from_secs(5), async {
+            loop {
+                let envelope = rx.recv().await.unwrap();
+                if envelope.turn_id.as_deref() != Some(&turn_id) {
+                    continue;
+                }
+                match envelope.event {
+                    RoderEvent::TurnCompleted(_) => break,
+                    RoderEvent::TurnFailed(event) => panic!("turn failed: {}", event.error),
+                    _ => {}
+                }
+            }
+        })
+        .await
+        .unwrap();
+
+        let request = captured.lock().unwrap().clone().expect("captured request");
+        let transcript_text = request
+            .transcript
+            .iter()
+            .map(|item| match item {
+                TranscriptItem::UserMessage(message) => message.text.as_str(),
+                _ => "",
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(transcript_text.contains("src/voice-plan-feedback.ts"));
+        assert!(!transcript_text.contains("src/sidebar-thread-groups.ts"));
+
+        let _ = std::fs::remove_dir_all(process_workspace);
+        let _ = std::fs::remove_dir_all(thread_workspace);
+    }
+
+    fn runtime_test_workspace(name: &str) -> std::path::PathBuf {
+        let path =
+            std::env::temp_dir().join(format!("roder-runtime-{name}-{}", uuid::Uuid::new_v4()));
+        let _ = std::fs::remove_dir_all(&path);
+        std::fs::create_dir_all(&path).unwrap();
+        path
+    }
+
+    #[tokio::test]
     async fn model_profile_user_model_knobs_override_profile_defaults() {
         let request = captured_profile_request(RuntimeConfig {
             default_provider: roder_api::catalog::PROVIDER_MOCK.to_string(),
