@@ -18,7 +18,7 @@ tokio.workspace = true
 uuid = { workspace = true, features = ["v4"] }
 
 [dev-dependencies]
-roder-ext-jsonl-session.workspace = true
+roder-ext-jsonl-thread-store.workspace = true
 roder-ext-task-ledger.workspace = true
 roder-ext-runner-unix-local.workspace = true
 roder-ext-verification.workspace = true

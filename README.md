@@ -4,7 +4,7 @@
 
 > Roder is the core harness. Everything else is a distribution, extension, provider, policy, interface, or experiment.
 
-Roder is not just another coding agent. It is the substrate underneath them — a stable, strongly typed Rust runtime that handles inference orchestration, tool execution, capability-scoped filesystem and process access, context assembly, session persistence, checkpointing, policy enforcement, event streaming, and replay, with extension points designed so that new model APIs, storage systems, context engines, sandbox backends, UIs, and training environments can be added without forking the core.
+Roder is not just another coding agent. It is the substrate underneath them — a stable, strongly typed Rust runtime that handles inference orchestration, tool execution, capability-scoped filesystem and process access, context assembly, thread persistence, checkpointing, policy enforcement, event streaming, and replay, with extension points designed so that new model APIs, storage systems, context engines, sandbox backends, UIs, and training environments can be added without forking the core.
 
 The full mission, design philosophy, and architectural commitments live in [`WHITEPAPER.md`](./WHITEPAPER.md). The phased implementation plan lives in [`roadmap/`](./roadmap/), entry point [`roadmap/00-feature-inventory-and-sequencing.md`](./roadmap/00-feature-inventory-and-sequencing.md).
 
@@ -12,22 +12,22 @@ The full mission, design philosophy, and architectural commitments live in [`WHI
 
 ## What Roder represents
 
-Most agent systems today are rebuilt repeatedly around the same primitives — model invocation, tool execution, sandboxing, context, session persistence, policy, event streaming, replay — usually in Python or Node.js. That works for fast iteration but fragments the ecosystem: every team re-solves the same harness problems in incompatible ways, and labs end up forking upstream because the architecture cannot express the modifications they need.
+Most agent systems today are rebuilt repeatedly around the same primitives — model invocation, tool execution, sandboxing, context, thread persistence, policy, event streaming, replay — usually in Python or Node.js. That works for fast iteration but fragments the ecosystem: every team re-solves the same harness problems in incompatible ways, and labs end up forking upstream because the architecture cannot express the modifications they need.
 
 Roder's bet is that this is unnecessary. The AI ecosystem should not need to rewrite the same agent harness every time a new model, product, research direction, or interaction paradigm appears.
 
 Roder aims to be that foundation, once, with:
 
 - **A stable core that owns invariants.** Lifecycle ordering, cancellation, event ordering, permission enforcement, tool routing, and capability checks live in `roder-core` and are not extensible — extensions provide behavior, but they cannot corrupt the runtime.
-- **A native extension kernel.** Inference engines, wire dialects, context providers, context planners, session stores, checkpoint stores, memory backends, policy contributors, sandbox backends, event sinks, and tool contributors all install through a single `RoderExtension` trait against `roder-api`.
-- **Canonical internal representations.** Conversations, turns, messages, tool calls, inference events, file changes, context blocks, sessions, checkpoints, and policy decisions are typed Roder concepts. Provider extensions translate to and from these canonical types; the core never sees Responses, Chat Completions, or Anthropic Messages wire formats.
+- **A native extension kernel.** Inference engines, wire dialects, context providers, context planners, thread stores, checkpoint stores, memory backends, policy contributors, sandbox backends, event sinks, and tool contributors all install through a single `RoderExtension` trait against `roder-api`.
+- **Canonical internal representations.** Threads, turns, transcript items, tool calls, inference events, file changes, context blocks, checkpoints, and policy decisions are typed Roder concepts. Provider extensions translate to and from these canonical types; the core never sees Responses, Chat Completions, or Anthropic Messages wire formats.
 - **Capability-based access.** Tools and extensions receive `ScopedFilesystem`, `ScopedProcessRunner`, `ScopedNetwork`, `ScopedSecrets`, `ApprovalClient`, and `EventSink` handles. There is no ambient `std::fs` or `std::process::Command` access.
 - **Event-sourced execution.** Every meaningful runtime transition is a typed event on the canonical bus. This makes Roder replayable, auditable, resumable, and usable as an RL trajectory substrate without bespoke instrumentation.
 - **App-server-first control plane.** The TUI is a client of the embedded local app server. IDE plugins, web UIs, headless CI runners, RL harnesses, and IDE extensions all speak the same control-plane protocol.
 
 The whitepaper lays out the long-term aspiration in §27: a maintained, reference-quality, extensible agent harness that labs, builders, researchers, and products can rely on. The core invariant from §26:
 
-> Everything important that happens in an agent run should be represented as a typed event, attached to a session, governed by capabilities, and reproducible through a stable runtime model.
+> Everything important that happens in an agent run should be represented as a typed event, attached to a thread, governed by capabilities, and reproducible through a stable runtime model.
 
 ---
 
@@ -50,7 +50,7 @@ crates/
   roder-extension-host/   Native extension installation and provider selection.
   roder-inference/        InferenceEngine + WireDialect surface and model registry.
   roder-context/          ContextProvider, ContextPlanner, context budgets, context blocks.
-  roder-session/          SessionStore, CheckpointStore, transcript model, replay primitives.
+  roder-thread-store/     ThreadStore, checkpoint storage, transcript model, replay primitives.
   roder-memory/           Memory store surface.
   roder-tools/            ToolSpec, ToolExecutor, tool routing, built-in tools.
   roder-sandbox/          Filesystem/process/network/secret brokers.
@@ -61,7 +61,7 @@ crates/
   roder-ext-openai-chat-completions/  Chat-Completions-style inference engine.
   roder-ext-anthropic/                Anthropic Messages-style inference engine.
   roder-ext-gemini/                   Native Gemini inference engine.
-  roder-ext-jsonl-session/            JSONL session/checkpoint storage.
+  roder-ext-jsonl-thread-store/       JSONL thread/checkpoint storage.
   roder-ext-disk-context/             On-disk context persistence.
   roder-ext-memory/                   Local memory extension.
 ```
@@ -93,13 +93,13 @@ Foundational and architectural plans:
 Phased implementation plans (selected highlights — see the index for the full list):
 
 - 01: Config, provider, and model catalog.
-- 02: Session and message store.
+- 02: Thread and transcript store.
 - 03: Tool permissions and hooks.
 - 04: Context, skills, and commands.
 - 05: MCP and LSP capabilities.
 - 06: TUI chat product.
 - 07: App-server, headless, and remote.
-- 11: Disk session and resume.
+- 11: Disk threads and resume.
 - 12: OpenAI Responses with compaction.
 - 13: Anthropic Messages support.
 - 17: Chat Completions custom models.
@@ -259,7 +259,7 @@ api_key_env = "LOCAL_OPENAI_API_KEY"
 
 Roder discovers models for custom providers in the background by trying `GET <base_url>/models` and then `GET <base_url>/v1/models`, caches successful results in `~/.roder/models-cache.json`, and keeps provider/model picker calls responsive by returning cached models immediately.
 
-App-server docs live under [`docs/app-server/`](./docs/app-server/): [`api.md`](./docs/app-server/api.md) is the integrator-facing JSON-RPC reference, [`protocol.md`](./docs/app-server/protocol.md) summarizes the desktop contract, and [`remote.md`](./docs/app-server/remote.md) covers remote WebSocket pairing, auth, and security assumptions.
+App-server docs live under [`docs/app-server/`](./docs/app-server/): [`api.md`](./docs/app-server/api.md) is the integrator-facing JSON-RPC reference, [`protocol.md`](./docs/app-server/protocol.md) summarizes the client contract, and [`remote.md`](./docs/app-server/remote.md) covers remote WebSocket pairing, auth, and security assumptions.
 
 Subagent setup for the `task` tool and disk-defined agents is documented in [`docs/roder-subagents.md`](./docs/roder-subagents.md). Transparent child trace events, app-server trace read/list methods, persistence behavior, and TUI controls are documented in [`docs/roder-subagent-traces.md`](./docs/roder-subagent-traces.md). Plan review artifacts, hunk records, app-server methods, and deferred rollback behavior are documented in [`docs/roder-plan-review-hunk-tracker.md`](./docs/roder-plan-review-hunk-tracker.md). Workflow import for AGENTS.md, skills, MCP, hooks, commands, and plugins is documented in [`docs/roder-workflow-import.md`](./docs/roder-workflow-import.md). Built-in skills, exposure rules, config, and feature bindings are documented in [`docs/roder-built-in-skills.md`](./docs/roder-built-in-skills.md). Plugin marketplace defaults, de-duplicated search, and install commands are documented in [`docs/roder-plugin-marketplaces.md`](./docs/roder-plugin-marketplaces.md). Terminal media generation, artifacts, previews, and generated-image attachments are documented in [`docs/roder-terminal-media-generation.md`](./docs/roder-terminal-media-generation.md). File-backed dynamic context, `read_artifact`/`grep_artifact`/`tail_artifact`, and artifact app-server methods are documented in [`docs/roder-file-backed-dynamic-context.md`](./docs/roder-file-backed-dynamic-context.md). SQLite vector memories, project/global scopes, embedding providers, and memory CLI/app-server controls are documented in [`docs/roder-memories.md`](./docs/roder-memories.md).
 
@@ -292,21 +292,21 @@ File-backed dynamic context is enabled by default. To disable it in config:
 file_backed_dynamic_context = false
 ```
 
-`tools/list` exposes the built-in coding tools plus Roder workflow helpers: `exec_command`, `write_stdin`, `update_plan`, `get_goal`, `create_goal`, `update_goal`, and `request_user_input`. `exec_command` starts a shell session and returns either final output or a `session_id`; `write_stdin` writes to or polls that session. When a model calls `request_user_input`, Roder emits `user_input.requested` and pauses the turn until a client answers with:
+`tools/list` exposes the built-in coding tools plus Roder workflow helpers: `exec_command`, `write_stdin`, `update_plan`, `get_goal`, `create_goal`, `update_goal`, and `request_user_input`. `exec_command` starts a shell session and returns either final output or a `session_id`; `write_stdin` writes to or polls that session. When a model calls `request_user_input`, Roder emits `thread/userInputRequested` and pauses the turn until a client answers with:
 
 ```json
 {
-  "method": "session/resolve_user_input",
+  "method": "thread/resolve_user_input",
   "params": {
-    "request_id": "user-input-1",
+    "requestId": "user-input-1",
     "answers": { "mode": "Safe" }
   }
 }
 ```
 
-The response is `{ "resolved": true }` when the request was pending. Roder then emits `user_input.resolved`, returns the answers to the model as the tool result, and continues the turn.
+The response is `{ "resolved": true }` when the request was pending. Roder then emits `thread/userInputResolved`, returns the answers to the model as the tool result, and continues the turn.
 
-A more complete quick-start (configuration, providers, session resume, app-server transports, MCP) will land alongside the corresponding roadmap phases.
+A more complete quick-start (configuration, providers, thread resume, app-server transports, MCP) will land alongside the corresponding roadmap phases.
 
 ---
 
@@ -348,7 +348,7 @@ fn main() -> anyhow::Result<()> {
     roder_cli::run(|registry| {
         registry.install(roder_ext_openai_responses::extension())?;
         registry.install(roder_ext_anthropic::extension())?;
-        registry.install(roder_ext_jsonl_session::extension())?;
+        registry.install(roder_ext_jsonl_thread_store::extension())?;
         registry.install(MyInferenceExtension)?;
         Ok(())
     })
@@ -361,7 +361,7 @@ No fork is required. The lab or product builds its own distribution.
 
 ## Relationship to `gode`
 
-This repository started as `gode`, a Go-native TUI coding agent and event-driven harness. That implementation proved the core behaviors Roder is built around: event-driven sessions, provider abstraction, tool routing, session storage, policy modes, and the app-server control plane.
+This repository started as `gode`, a Go-native TUI coding agent and event-driven harness. That implementation proved the core behaviors Roder is built around: event-driven threads, provider abstraction, tool routing, thread storage, policy modes, and the app-server control plane.
 
 Roder is now the active implementation. The previous Go code has been removed from this repository; new work should land in `crates/roder-*`, `docs/`, `roadmap/`, or the Rust CLI/TUI surfaces.
 

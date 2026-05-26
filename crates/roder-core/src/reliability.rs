@@ -1,7 +1,7 @@
-use roder_api::conversation::ToolResultRecord;
 use roder_api::reliability::{
     ReliabilityErrorClass, ReliabilityLimitDecision, ReliabilityLimitKind, ReliabilityRequestPolicy,
 };
+use roder_api::transcript::ToolResultRecord;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RuntimeReliabilityConfig {

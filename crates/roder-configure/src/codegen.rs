@@ -69,8 +69,8 @@ pub fn render(
                         manifest.default_provider.as_deref().unwrap_or(""),
                     ),
                     (
-                        "default_session_store",
-                        manifest.default_session_store.as_deref().unwrap_or(""),
+                        "default_thread_store",
+                        manifest.default_thread_store.as_deref().unwrap_or(""),
                     ),
                     ("config_overrides", &config_overrides(manifest)),
                     ("required_env", required_env.as_str()),

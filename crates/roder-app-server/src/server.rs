@@ -17,7 +17,7 @@ use roder_commands::{
     CommandsRegistryOptions, ExtensionCommandDirectory, expand_command,
 };
 use roder_core::{
-    CreateSessionRequest, Runtime, StartTurnRequest,
+    CreateThreadRequest, Runtime, StartTurnRequest,
     TeamMemberStartRequest as RuntimeTeamMemberStartRequest,
     TeamStartRequest as RuntimeTeamStartRequest, TeamState, default_instructions,
     media_artifacts::{MediaArtifactStore, default_media_artifact_dir},
@@ -29,11 +29,11 @@ use time::OffsetDateTime;
 use tokio::sync::{RwLock, broadcast};
 
 use crate::automations::AppServerFeatureConfig;
-use crate::desktop_contract::{
-    default_cwd_string, desktop_thread_from_metadata, desktop_turn_from_record,
-    desktop_turn_images, desktop_turn_message,
-};
 use crate::notifications;
+use crate::protocol_contract::{
+    default_cwd_string, protocol_thread_from_metadata, protocol_turn_from_record,
+    protocol_turn_images, protocol_turn_message,
+};
 
 #[derive(Debug, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -87,10 +87,10 @@ pub struct AppServer {
     pub(crate) persist_user_config: bool,
     pub(crate) features: AppServerFeatureConfig,
     pub(crate) automation_supervisor: Option<roder_automations::AutomationSupervisorHandle>,
-    pub(crate) desktop_threads: RwLock<std::collections::HashMap<String, DesktopThread>>,
-    pub(crate) desktop_thread_models: RwLock<std::collections::HashMap<String, (String, String)>>,
-    pub(crate) desktop_active_turns: RwLock<std::collections::HashMap<String, String>>,
-    pub(crate) desktop_notifications: broadcast::Sender<JsonRpcNotification>,
+    pub(crate) protocol_threads: RwLock<std::collections::HashMap<String, Thread>>,
+    pub(crate) protocol_thread_models: RwLock<std::collections::HashMap<String, (String, String)>>,
+    pub(crate) protocol_active_turns: RwLock<std::collections::HashMap<String, String>>,
+    pub(crate) protocol_notifications: broadcast::Sender<JsonRpcNotification>,
 }
 
 impl AppServer {
@@ -329,46 +329,46 @@ impl AppServer {
                 })
                 .await
             }
-            "session/get" => self.handle_session_get().await,
-            "session/set_mode" => {
+            "thread/state" => self.handle_thread_state().await,
+            "thread/set_mode" => {
                 self.decode_and(req.params, |p| async move {
-                    self.handle_session_set_mode(p).await
+                    self.handle_thread_set_mode(p).await
                 })
                 .await
             }
-            "session/exit_plan" => {
+            "thread/exit_plan" => {
                 self.decode_and(req.params, |p| async move {
-                    self.handle_session_exit_plan(p).await
+                    self.handle_thread_exit_plan(p).await
                 })
                 .await
             }
-            "session/resolve_approval" => {
+            "thread/resolve_approval" => {
                 self.decode_and(req.params, |p| async move {
-                    self.handle_session_resolve_approval(p).await
+                    self.handle_thread_resolve_approval(p).await
                 })
                 .await
             }
-            "session/resolve_user_input" => {
+            "thread/resolve_user_input" => {
                 self.decode_and(req.params, |p| async move {
-                    self.handle_session_resolve_user_input(p).await
+                    self.handle_thread_resolve_user_input(p).await
                 })
                 .await
             }
             "turn/start" => {
                 self.decode_and(req.params, |p| async move {
-                    self.handle_desktop_turn_start(p).await
+                    self.handle_protocol_turn_start(p).await
                 })
                 .await
             }
             "turn/interrupt" => {
                 self.decode_and(req.params, |p| async move {
-                    self.handle_desktop_turn_interrupt(p).await
+                    self.handle_protocol_turn_interrupt(p).await
                 })
                 .await
             }
             "turn/steer" => {
                 self.decode_and(req.params, |p| async move {
-                    self.handle_desktop_turn_steer(p).await
+                    self.handle_protocol_turn_steer(p).await
                 })
                 .await
             }
@@ -1156,7 +1156,7 @@ impl AppServer {
                 .unwrap_or_default();
             for model in provider_models {
                 let model_id = model.id;
-                models.push(DesktopModel {
+                models.push(Model {
                     is_default: provider_id == cfg.default_provider
                         && model_id == cfg.default_model,
                     id: model_id,
@@ -1180,7 +1180,7 @@ impl AppServer {
     ) -> Result<serde_json::Value, JsonRpcError> {
         let thread_id = params.thread_id.clone();
         let previous_model = if let Some(thread_id) = thread_id.as_deref() {
-            self.desktop_thread_model(thread_id).await
+            self.protocol_thread_model(thread_id).await
         } else {
             None
         };
@@ -1201,11 +1201,11 @@ impl AppServer {
                 )
             });
         if let Some(thread_id) = thread_id {
-            self.desktop_thread_models.write().await.insert(
+            self.protocol_thread_models.write().await.insert(
                 thread_id.clone(),
                 (cfg.default_provider.clone(), cfg.default_model.clone()),
             );
-            if let Some(thread) = self.desktop_threads.write().await.get_mut(&thread_id) {
+            if let Some(thread) = self.protocol_threads.write().await.get_mut(&thread_id) {
                 thread.model_provider = cfg.default_provider.clone();
                 thread.updated_at = OffsetDateTime::now_utc().unix_timestamp();
             }
@@ -1436,17 +1436,17 @@ impl AppServer {
         &self,
         params: ThreadListParams,
     ) -> Result<serde_json::Value, JsonRpcError> {
-        let mut sessions = self.runtime.list_sessions().await.map_err(internal_error)?;
-        sessions.sort_by_key(|session| std::cmp::Reverse(session.updated_at));
+        let mut thread_metadata = self.runtime.list_threads().await.map_err(internal_error)?;
+        thread_metadata.sort_by_key(|thread| std::cmp::Reverse(thread.updated_at));
         if let Some(limit) = params.limit {
-            sessions.truncate(limit);
+            thread_metadata.truncate(limit);
         }
-        let threads = sessions
+        let threads = thread_metadata
             .into_iter()
-            .map(|metadata| desktop_thread_from_metadata(metadata, None))
+            .map(|metadata| protocol_thread_from_metadata(metadata, None))
             .collect::<Vec<_>>();
         let mut threads = threads;
-        for thread in self.desktop_threads.read().await.values() {
+        for thread in self.protocol_threads.read().await.values() {
             if !threads.iter().any(|candidate| candidate.id == thread.id) {
                 threads.push(thread.clone());
             }
@@ -1465,7 +1465,7 @@ impl AppServer {
     ) -> Result<serde_json::Value, JsonRpcError> {
         let metadata = self
             .runtime
-            .create_session_with(roder_core::CreateSessionRequest {
+            .create_thread_with(roder_core::CreateThreadRequest {
                 title: None,
                 workspace: params.cwd.clone(),
                 provider: params.model_provider.clone(),
@@ -1480,17 +1480,17 @@ impl AppServer {
             .cwd
             .or_else(|| metadata.workspace.clone())
             .unwrap_or_else(default_cwd_string);
-        let thread = desktop_thread_from_metadata(metadata, None);
-        self.desktop_threads
+        let thread = protocol_thread_from_metadata(metadata, None);
+        self.protocol_threads
             .write()
             .await
             .insert(thread.id.clone(), thread.clone());
-        self.desktop_thread_models
+        self.protocol_thread_models
             .write()
             .await
             .insert(thread.id.clone(), (model_provider.clone(), model.clone()));
         let _ = self
-            .desktop_notifications
+            .protocol_notifications
             .send(notifications::thread_started_notification(thread.clone()));
         Ok(serde_json::to_value(ThreadStartResult {
             thread,
@@ -1507,7 +1507,7 @@ impl AppServer {
     ) -> Result<serde_json::Value, JsonRpcError> {
         let snapshot = self
             .runtime
-            .load_session(&params.thread_id)
+            .load_thread(&params.thread_id)
             .await
             .map_err(internal_error)?;
         let thread = snapshot.and_then(|snapshot| {
@@ -1515,30 +1515,30 @@ impl AppServer {
                 snapshot
                     .turns
                     .into_iter()
-                    .map(desktop_turn_from_record)
+                    .map(protocol_turn_from_record)
                     .collect()
             });
             snapshot
                 .metadata
-                .map(|metadata| desktop_thread_from_metadata(metadata, turns))
+                .map(|metadata| protocol_thread_from_metadata(metadata, turns))
         });
         let thread = if thread.is_some() {
             thread
         } else {
             self.runtime
-                .list_sessions()
+                .list_threads()
                 .await
                 .map_err(internal_error)?
                 .into_iter()
                 .find(|metadata| metadata.thread_id == params.thread_id)
                 .map(|metadata| {
-                    desktop_thread_from_metadata(metadata, params.include_turns.then(Vec::new))
+                    protocol_thread_from_metadata(metadata, params.include_turns.then(Vec::new))
                 })
         };
         let thread = if thread.is_some() {
             thread
         } else {
-            self.desktop_threads
+            self.protocol_threads
                 .read()
                 .await
                 .get(params.thread_id.as_str())
@@ -1559,15 +1559,18 @@ impl AppServer {
     ) -> Result<serde_json::Value, JsonRpcError> {
         let archived = self
             .runtime
-            .archive_session(&params.thread_id)
+            .archive_thread(&params.thread_id)
             .await
             .map_err(internal_error)?;
-        self.desktop_threads.write().await.remove(&params.thread_id);
-        self.desktop_thread_models
+        self.protocol_threads
             .write()
             .await
             .remove(&params.thread_id);
-        self.desktop_active_turns
+        self.protocol_thread_models
+            .write()
+            .await
+            .remove(&params.thread_id);
+        self.protocol_active_turns
             .write()
             .await
             .remove(&params.thread_id);
@@ -1696,7 +1699,7 @@ impl AppServer {
         let cfg = self.runtime.status().await;
         let metadata = self
             .runtime
-            .create_session_with(CreateSessionRequest {
+            .create_thread_with(CreateThreadRequest {
                 title: Some(format!("Roadmap worker: {task_id}")),
                 workspace: Some(self.roadmap_workspace()?.display().to_string()),
                 provider: Some(cfg.default_provider.clone()),
@@ -1704,26 +1707,26 @@ impl AppServer {
             })
             .await
             .map_err(internal_error)?;
-        let desktop_thread = desktop_thread_from_metadata(metadata, None);
-        self.desktop_threads
+        let protocol_thread = protocol_thread_from_metadata(metadata, None);
+        self.protocol_threads
             .write()
             .await
-            .insert(desktop_thread.id.clone(), desktop_thread.clone());
-        self.desktop_thread_models.write().await.insert(
-            desktop_thread.id.clone(),
+            .insert(protocol_thread.id.clone(), protocol_thread.clone());
+        self.protocol_thread_models.write().await.insert(
+            protocol_thread.id.clone(),
             (cfg.default_provider, cfg.default_model),
         );
         let _ = self
-            .desktop_notifications
+            .protocol_notifications
             .send(notifications::thread_started_notification(
-                desktop_thread.clone(),
+                protocol_thread.clone(),
             ));
         let thread = self
             .runtime
             .attach_roadmap_thread(
                 &params.path,
                 &task_id,
-                &desktop_thread.id,
+                &protocol_thread.id,
                 params
                     .title
                     .or_else(|| Some(format!("Roadmap worker: {task_id}"))),
@@ -1780,7 +1783,7 @@ impl AppServer {
         Ok(rel(&self.roadmap_workspace()?, path))
     }
 
-    async fn handle_session_get(&self) -> Result<serde_json::Value, JsonRpcError> {
+    async fn handle_thread_state(&self) -> Result<serde_json::Value, JsonRpcError> {
         let cfg = self.runtime.status().await;
         let pending =
             self.runtime
@@ -1795,31 +1798,31 @@ impl AppServer {
                     requested_at: pending.requested_at,
                     expires_at: pending.expires_at,
                 });
-        Ok(serde_json::to_value(SessionGetResult {
+        Ok(serde_json::to_value(ThreadStateResult {
             mode: cfg.policy_mode,
             pending_plan_exit: pending,
         })
         .unwrap())
     }
 
-    async fn handle_session_set_mode(
+    async fn handle_thread_set_mode(
         &self,
-        params: SessionSetModeParams,
+        params: ThreadSetModeParams,
     ) -> Result<serde_json::Value, JsonRpcError> {
         let cfg = self
             .runtime
             .set_policy_mode(params.mode, params.reason)
             .await
             .map_err(internal_error)?;
-        Ok(serde_json::to_value(SessionSetModeResult {
+        Ok(serde_json::to_value(ThreadSetModeResult {
             mode: cfg.policy_mode,
         })
         .unwrap())
     }
 
-    async fn handle_session_exit_plan(
+    async fn handle_thread_exit_plan(
         &self,
-        params: SessionExitPlanParams,
+        params: ThreadExitPlanParams,
     ) -> Result<serde_json::Value, JsonRpcError> {
         let resolved = self
             .runtime
@@ -1828,49 +1831,49 @@ impl AppServer {
             .map_err(internal_error)?
             .is_some();
         let cfg = self.runtime.status().await;
-        Ok(serde_json::to_value(SessionExitPlanResult {
+        Ok(serde_json::to_value(ThreadExitPlanResult {
             resolved,
             mode: cfg.policy_mode,
         })
         .unwrap())
     }
 
-    async fn handle_session_resolve_approval(
+    async fn handle_thread_resolve_approval(
         &self,
-        params: SessionResolveApprovalParams,
+        params: ThreadResolveApprovalParams,
     ) -> Result<serde_json::Value, JsonRpcError> {
         let resolved = self
             .runtime
             .resolve_tool_approval(&params.approval_id, params.approved)
             .await
             .map_err(internal_error)?;
-        Ok(serde_json::to_value(SessionResolveApprovalResult { resolved }).unwrap())
+        Ok(serde_json::to_value(ThreadResolveApprovalResult { resolved }).unwrap())
     }
 
-    async fn handle_session_resolve_user_input(
+    async fn handle_thread_resolve_user_input(
         &self,
-        params: SessionResolveUserInputParams,
+        params: ThreadResolveUserInputParams,
     ) -> Result<serde_json::Value, JsonRpcError> {
         let resolved = self
             .runtime
             .resolve_user_input(&params.request_id, params.answers)
             .await
             .map_err(internal_error)?;
-        Ok(serde_json::to_value(SessionResolveUserInputResult { resolved }).unwrap())
+        Ok(serde_json::to_value(ThreadResolveUserInputResult { resolved }).unwrap())
     }
 
-    async fn handle_desktop_turn_start(
+    async fn handle_protocol_turn_start(
         &self,
         params: TurnStartParams,
     ) -> Result<serde_json::Value, JsonRpcError> {
-        let message = desktop_turn_message(&params.input, params.prompt);
-        let images = desktop_turn_images(&params.input);
+        let message = protocol_turn_message(&params.input, params.prompt);
+        let images = protocol_turn_images(&params.input);
         if let Some(turn_id) = self.runtime.active_turn_for_thread(&params.thread_id).await {
             self.runtime
                 .steer_turn(params.thread_id.clone(), turn_id.clone(), message, images)
                 .await
                 .map_err(internal_error)?;
-            self.desktop_active_turns
+            self.protocol_active_turns
                 .write()
                 .await
                 .insert(params.thread_id, turn_id.clone());
@@ -1878,19 +1881,19 @@ impl AppServer {
         }
 
         let (provider_override, model_override) = self
-            .desktop_thread_model(&params.thread_id)
+            .protocol_thread_model(&params.thread_id)
             .await
             .map(|(provider, model)| (Some(provider), Some(model)))
             .unwrap_or((None, None));
         let mut workspace = self
             .runtime
-            .load_session(&params.thread_id)
+            .load_thread(&params.thread_id)
             .await
             .map_err(internal_error)?
             .and_then(|snapshot| snapshot.metadata.and_then(|metadata| metadata.workspace));
         if workspace.is_none() {
             workspace = self
-                .desktop_threads
+                .protocol_threads
                 .read()
                 .await
                 .get(&params.thread_id)
@@ -1910,21 +1913,21 @@ impl AppServer {
             })
             .await
             .map_err(internal_error)?;
-        self.desktop_active_turns
+        self.protocol_active_turns
             .write()
             .await
             .insert(params.thread_id, turn_id.clone());
         Ok(serde_json::to_value(TurnStartResult { turn_id }).unwrap())
     }
 
-    async fn handle_desktop_turn_interrupt(
+    async fn handle_protocol_turn_interrupt(
         &self,
         params: TurnInterruptParams,
     ) -> Result<serde_json::Value, JsonRpcError> {
         let turn_id = if let Some(turn_id) = params.turn_id.clone() {
             turn_id
         } else {
-            self.desktop_active_turns
+            self.protocol_active_turns
                 .read()
                 .await
                 .get(&params.thread_id)
@@ -1939,7 +1942,7 @@ impl AppServer {
             .interrupt_turn(params.thread_id.clone(), turn_id.clone())
             .await
             .map_err(internal_error)?;
-        self.desktop_active_turns
+        self.protocol_active_turns
             .write()
             .await
             .remove(&params.thread_id);
@@ -1949,7 +1952,7 @@ impl AppServer {
         .unwrap())
     }
 
-    async fn handle_desktop_turn_steer(
+    async fn handle_protocol_turn_steer(
         &self,
         params: TurnSteerParams,
     ) -> Result<serde_json::Value, JsonRpcError> {
@@ -1958,8 +1961,8 @@ impl AppServer {
             .steer_turn(
                 params.thread_id,
                 turn_id.clone(),
-                desktop_turn_message(&params.input, params.prompt),
-                desktop_turn_images(&params.input),
+                protocol_turn_message(&params.input, params.prompt),
+                protocol_turn_images(&params.input),
             )
             .await
             .map_err(internal_error)?;
@@ -2128,9 +2131,9 @@ impl AppServer {
         Ok(serde_json::to_value(TeamCleanupResult { cleaned }).unwrap())
     }
 
-    async fn desktop_thread_model(&self, thread_id: &str) -> Option<(String, String)> {
+    async fn protocol_thread_model(&self, thread_id: &str) -> Option<(String, String)> {
         if let Some(model) = self
-            .desktop_thread_models
+            .protocol_thread_models
             .read()
             .await
             .get(thread_id)
@@ -2139,7 +2142,7 @@ impl AppServer {
             return Some(model);
         }
         self.runtime
-            .list_sessions()
+            .list_threads()
             .await
             .ok()?
             .into_iter()
@@ -2472,7 +2475,7 @@ impl AppServer {
     ) -> Result<serde_json::Value, JsonRpcError> {
         let snapshot = self
             .runtime
-            .load_session(&params.thread_id)
+            .load_thread(&params.thread_id)
             .await
             .map_err(internal_error)?;
         let Some(snapshot) = snapshot else {
@@ -2529,7 +2532,7 @@ impl AppServer {
     ) -> Result<serde_json::Value, JsonRpcError> {
         let snapshot = self
             .runtime
-            .load_session(&params.thread_id)
+            .load_thread(&params.thread_id)
             .await
             .map_err(internal_error)?;
         let Some(snapshot) = snapshot else {
@@ -3095,7 +3098,7 @@ impl AppServer {
             mime_type: artifact.mime_type.clone(),
             data_url: data_url(&artifact.mime_type, &bytes_base64),
         };
-        let image = artifact_is_image(&artifact).then(|| roder_api::conversation::InputImage {
+        let image = artifact_is_image(&artifact).then(|| roder_api::transcript::InputImage {
             image_url: attachment.data_url.clone(),
         });
         Ok(serde_json::to_value(MediaAttachToTurnResult { attachment, image }).unwrap())
@@ -3349,7 +3352,7 @@ impl AppServer {
     ) -> Result<Option<PlanReview>, JsonRpcError> {
         let snapshot = self
             .runtime
-            .load_session(thread_id)
+            .load_thread(thread_id)
             .await
             .map_err(internal_error)?;
         let Some(snapshot) = snapshot else {
@@ -3402,7 +3405,7 @@ impl AppServer {
     async fn load_hunks(&self, thread_id: &String) -> Result<Vec<HunkRecord>, JsonRpcError> {
         let snapshot = self
             .runtime
-            .load_session(thread_id)
+            .load_thread(thread_id)
             .await
             .map_err(internal_error)?;
         let Some(snapshot) = snapshot else {
@@ -3462,11 +3465,11 @@ impl AppServer {
     }
 
     pub fn subscribe_notifications(&self) -> broadcast::Receiver<JsonRpcNotification> {
-        self.desktop_notifications.subscribe()
+        self.protocol_notifications.subscribe()
     }
 
     pub(crate) fn publish_notification(&self, notification: JsonRpcNotification) {
-        let _ = self.desktop_notifications.send(notification);
+        let _ = self.protocol_notifications.send(notification);
     }
 }
 

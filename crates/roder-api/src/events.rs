@@ -86,14 +86,14 @@ pub struct ExtensionRegistered {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SessionCreated {
+pub struct ThreadCreated {
     pub thread_id: ThreadId,
     #[serde(with = "time::serde::rfc3339")]
     pub timestamp: OffsetDateTime,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SessionLoaded {
+pub struct ThreadLoaded {
     pub thread_id: ThreadId,
     #[serde(with = "time::serde::rfc3339")]
     pub timestamp: OffsetDateTime,
@@ -743,7 +743,7 @@ pub struct FileChangePreviewReady {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct TurnItemAppended {
+pub struct TranscriptItemAppended {
     pub thread_id: ThreadId,
     pub turn_id: TurnId,
     pub item_type: String,
@@ -1008,8 +1008,8 @@ pub struct RoadmapChanged {
 pub enum RoderEvent {
     RuntimeStarted(RuntimeStarted),
     ExtensionRegistered(ExtensionRegistered),
-    SessionCreated(SessionCreated),
-    SessionLoaded(SessionLoaded),
+    ThreadCreated(ThreadCreated),
+    ThreadLoaded(ThreadLoaded),
     TurnStarted(TurnStarted),
     ContextAssemblyStarted(ContextAssemblyStarted),
     ContextBlockAdded(ContextBlockAdded),
@@ -1143,7 +1143,7 @@ pub enum RoderEvent {
     ProcessFailed(ProcessFailed),
     FileChangePreviewReady(FileChangePreviewReady),
     FileChanged(FileChanged),
-    TurnItemAppended(TurnItemAppended),
+    TranscriptItemAppended(TranscriptItemAppended),
     TurnCompleted(TurnCompleted),
     TurnFailed(TurnFailed),
     TurnPartialResult(TurnPartialResult),
@@ -1166,8 +1166,8 @@ impl RoderEvent {
         match self {
             RoderEvent::RuntimeStarted(_) => "runtime.started",
             RoderEvent::ExtensionRegistered(_) => "extension.registered",
-            RoderEvent::SessionCreated(_) => "session.created",
-            RoderEvent::SessionLoaded(_) => "session.loaded",
+            RoderEvent::ThreadCreated(_) => "thread.created",
+            RoderEvent::ThreadLoaded(_) => "thread.loaded",
             RoderEvent::TurnStarted(_) => "turn.started",
             RoderEvent::ContextAssemblyStarted(_) => "context.assembly_started",
             RoderEvent::ContextBlockAdded(_) => "context.block_added",
@@ -1305,7 +1305,7 @@ impl RoderEvent {
             RoderEvent::ProcessFailed(_) => "process.failed",
             RoderEvent::FileChangePreviewReady(_) => "file.change_preview_ready",
             RoderEvent::FileChanged(_) => "file.changed",
-            RoderEvent::TurnItemAppended(_) => "turn.item_appended",
+            RoderEvent::TranscriptItemAppended(_) => "turn.transcript_item_appended",
             RoderEvent::TurnCompleted(_) => "turn.completed",
             RoderEvent::TurnFailed(_) => "turn.failed",
             RoderEvent::TurnPartialResult(_) => "turn.partial_result",
@@ -1456,8 +1456,8 @@ impl RoderEvent {
 
     pub fn thread_id(&self) -> Option<&ThreadId> {
         match self {
-            RoderEvent::SessionCreated(e) => Some(&e.thread_id),
-            RoderEvent::SessionLoaded(e) => Some(&e.thread_id),
+            RoderEvent::ThreadCreated(e) => Some(&e.thread_id),
+            RoderEvent::ThreadLoaded(e) => Some(&e.thread_id),
             RoderEvent::TurnStarted(e) => Some(&e.thread_id),
             RoderEvent::ContextAssemblyStarted(e) => Some(&e.thread_id),
             RoderEvent::ContextBlockAdded(e) => Some(&e.thread_id),
@@ -1543,7 +1543,7 @@ impl RoderEvent {
             RoderEvent::TaskCancelled(e) => e.thread_id.as_ref(),
             RoderEvent::FileChangePreviewReady(e) => Some(&e.thread_id),
             RoderEvent::FileChanged(e) => Some(&e.thread_id),
-            RoderEvent::TurnItemAppended(e) => Some(&e.thread_id),
+            RoderEvent::TranscriptItemAppended(e) => Some(&e.thread_id),
             RoderEvent::TurnCompleted(e) => Some(&e.thread_id),
             RoderEvent::TurnFailed(e) => Some(&e.thread_id),
             RoderEvent::TurnPartialResult(e) => Some(&e.thread_id),
@@ -1697,7 +1697,7 @@ impl RoderEvent {
             RoderEvent::TaskCancelled(e) => e.turn_id.as_ref(),
             RoderEvent::FileChangePreviewReady(e) => Some(&e.turn_id),
             RoderEvent::FileChanged(e) => Some(&e.turn_id),
-            RoderEvent::TurnItemAppended(e) => Some(&e.turn_id),
+            RoderEvent::TranscriptItemAppended(e) => Some(&e.turn_id),
             RoderEvent::TurnCompleted(e) => Some(&e.turn_id),
             RoderEvent::TurnFailed(e) => Some(&e.turn_id),
             RoderEvent::TurnPartialResult(e) => Some(&e.turn_id),
@@ -1713,8 +1713,8 @@ impl RoderEvent {
             RoderEvent::SkillSkipped(e) => Some(&e.turn_id),
             RoderEvent::RuntimeStarted(_)
             | RoderEvent::ExtensionRegistered(_)
-            | RoderEvent::SessionCreated(_)
-            | RoderEvent::SessionLoaded(_)
+            | RoderEvent::ThreadCreated(_)
+            | RoderEvent::ThreadLoaded(_)
             | RoderEvent::WorkflowImportsDetected(_)
             | RoderEvent::WorkflowImportPreviewed(_)
             | RoderEvent::WorkflowImportEnabled(_)

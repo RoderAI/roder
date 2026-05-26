@@ -15,7 +15,7 @@ RODER_EVAL_OUTPUT_DIR=/tmp/roder-evals \
 
 The report includes task-ledger and verification tables. Verification fields show whether the gate was required, completed, failed, skipped, and whether any open gaps remain.
 
-Interactive users keep manual control by default. Use the default `interactive` profile for normal TUI/app-server sessions, or choose the stricter behavior explicitly with `--profile eval`, `runtime_profile = "eval"`, or `RODER_RUNTIME_PROFILE=eval`.
+Interactive users keep manual control by default. Use the default `interactive` profile for normal TUI/app-server threads, or choose the stricter behavior explicitly with `--profile eval`, `runtime_profile = "eval"`, or `RODER_RUNTIME_PROFILE=eval`.
 
 The verification tool receives:
 

@@ -19,7 +19,6 @@ mod remote;
 mod roadmap_workspace;
 mod runner;
 mod scroll_accel;
-mod session_resume;
 mod shortcuts;
 #[allow(dead_code)]
 mod skills;
@@ -30,6 +29,7 @@ mod subagent_trace_tests;
 #[allow(dead_code)]
 mod team_panes;
 mod team_ui;
+mod thread_resume;
 mod tool_detail;
 mod tool_timeline;
 mod turn_timer;
@@ -57,30 +57,30 @@ use ratatui::{
     },
 };
 use roder_api::catalog::lookup_model;
-use roder_api::conversation::InputImage;
 use roder_api::events::RoderEvent;
 use roder_api::inference::{
     HostedWebSearchMode, ProviderAuthType, ReasoningEffortDescriptor, TokenUsage,
 };
 use roder_api::policy_mode::{PolicyDecision, PolicyMode};
+use roder_api::transcript::InputImage;
 use roder_api_transcript::ApiTranscriptRecord;
 use roder_app_server::{
     AppClient, AppEventReceiver, AppServer, LocalAppClient, transcript::TranscriptRecorder,
 };
 use roder_protocol::{
     AgentsListResult, CommandDescriptor, CommandsExpandParams, CommandsExpandResult,
-    CommandsListResult, DesktopThread, JsonRpcRequest, JsonRpcResponse, PendingPlanExitDescriptor,
+    CommandsListResult, JsonRpcRequest, JsonRpcResponse, PendingPlanExitDescriptor,
     ProviderAuthResult, ProviderConfigureParams, ProviderConfigureResult, ProviderDescriptor,
     ProviderSelectParams, ProviderSelectResult, ProvidersListResult, RunnersListResult,
-    RunnersSelectParams, RunnersSelectResult, SessionExitPlanParams, SessionExitPlanResult,
-    SessionGetResult, SessionResolveApprovalParams, SessionResolveApprovalResult,
-    SessionSetModeParams, SessionSetModeResult, SettingsGetResult, SettingsSetDefaultModeParams,
+    RunnersSelectParams, RunnersSelectResult, SettingsGetResult, SettingsSetDefaultModeParams,
     SettingsSetDefaultModeResult, SettingsSetFileBackedDynamicContextParams,
     SettingsSetFileBackedDynamicContextResult, SettingsSetSearchIndexParams,
     SettingsSetSearchIndexResult, SettingsSetShellParams, SettingsSetShellResult,
     SettingsSetWebSearchParams, SettingsSetWebSearchResult, ShellSettings, TasksGetParams,
-    TasksGetResult, TasksListResult, TeamReadParams, TeamReadResult, ThreadGoal, ThreadStartParams,
-    ThreadStartResult, TurnInputItem, TurnInterruptParams, TurnStartParams, TurnSteerParams,
+    TasksGetResult, TasksListResult, TeamReadParams, TeamReadResult, Thread, ThreadExitPlanParams,
+    ThreadExitPlanResult, ThreadGoal, ThreadResolveApprovalParams, ThreadResolveApprovalResult,
+    ThreadSetModeParams, ThreadSetModeResult, ThreadStartParams, ThreadStartResult,
+    ThreadStateResult, TurnInputItem, TurnInterruptParams, TurnStartParams, TurnSteerParams,
 };
 use tokio::io::AsyncWriteExt;
 use tokio::process::Command;
@@ -802,7 +802,7 @@ enum ProviderMenuItem {
     ThemesSettings,
     MarketplacesSettings,
     PluginBrowser,
-    ResumeSessions,
+    ResumeThreads,
     DefaultMode(PolicyMode),
     Spinner(WorkingSpinner),
     WebSearchMode(HostedWebSearchMode),
@@ -815,7 +815,7 @@ enum ProviderMenuItem {
         provider_id: String,
         label: String,
     },
-    Session(Box<DesktopThread>),
+    Thread(Box<Thread>),
     Theme(String),
     MarketplaceDefault {
         id: &'static str,
@@ -882,7 +882,7 @@ impl ProviderMenuItem {
             Self::ThemesSettings => "Themes".to_string(),
             Self::MarketplacesSettings => "Plugin marketplaces".to_string(),
             Self::PluginBrowser => "Browse installable plugins".to_string(),
-            Self::ResumeSessions => "Resume session".to_string(),
+            Self::ResumeThreads => "Resume thread".to_string(),
             Self::DefaultMode(mode) => {
                 format!("Default mode: {}", settings_policy_mode_label(*mode))
             }
@@ -893,21 +893,21 @@ impl ProviderMenuItem {
             Self::Model(option) => option.label.clone(),
             Self::Reasoning(option) => format!("{} - {}", option.effort, option.description),
             Self::Runner { label, .. } => label.clone(),
-            Self::Session(session) => {
-                let workspace = if session.cwd.trim().is_empty() {
+            Self::Thread(thread) => {
+                let workspace = if thread.cwd.trim().is_empty() {
                     "(unknown)".to_string()
                 } else {
-                    session.cwd.clone()
+                    thread.cwd.clone()
                 };
                 format!(
                     "{} [{}] {}",
-                    session.updated_at,
-                    short_id(&session.id),
-                    session
+                    thread.updated_at,
+                    short_id(&thread.id),
+                    thread
                         .name
                         .clone()
                         .filter(|title| !title.trim().is_empty())
-                        .unwrap_or_else(|| format!("Session {}", short_id(&session.id)))
+                        .unwrap_or_else(|| format!("Thread {}", short_id(&thread.id)))
                         + &format!(" - {workspace}")
                 )
             }
@@ -956,15 +956,15 @@ where
 {
     client: C,
     thread_id: String,
-    session_title: Option<String>,
-    session_message_count: usize,
+    thread_title: Option<String>,
+    thread_message_count: usize,
     active_turn_id: Option<String>,
     active_turn_timer: TurnTimer,
     current_turn_input_tokens: u32,
     current_turn_output_tokens: u32,
     current_turn_reasoning_tokens: Option<u32>,
     current_turn_total_tokens: u32,
-    session_tokens: u64,
+    thread_tokens: u64,
     context_window_tokens: u64,
     provider: String,
     model: String,
@@ -1038,9 +1038,9 @@ where
 #[derive(Debug, Clone, Default, Eq, PartialEq)]
 pub enum TuiStartup {
     #[default]
-    NewSession,
+    NewThread,
     ResumeMenu,
-    ResumeSession(String),
+    ResumeThread(String),
     RoadmapOpen {
         path: Option<String>,
     },
@@ -1060,14 +1060,14 @@ pub struct TuiExitSummary {
 }
 
 #[derive(Debug, Clone, Eq, PartialEq)]
-struct SessionParts {
+struct ThreadParts {
     thread_id: String,
     provider: String,
-    session_model: String,
+    thread_model: String,
     requested_model: String,
     reasoning: String,
-    session_title: Option<String>,
-    session_message_count: usize,
+    thread_title: Option<String>,
+    thread_message_count: usize,
 }
 
 #[derive(Debug, serde::Deserialize)]
@@ -1077,7 +1077,7 @@ struct RoadmapThreadResponse {
 
 impl TuiApp<LocalAppClient> {
     pub async fn new(client: LocalAppClient, model: String) -> anyhow::Result<Self> {
-        Self::new_with_startup(client, model, TuiStartup::NewSession).await
+        Self::new_with_startup(client, model, TuiStartup::NewThread).await
     }
 
     pub async fn new_with_startup(
@@ -1111,8 +1111,8 @@ where
                 .find(|member| member.id == member_id)
                 .cloned()
                 .ok_or_else(|| anyhow::anyhow!("team member not found: {member_id}"))?;
-            let thread = session_resume::load_thread(&client, &member.thread_id).await?;
-            let session_model = member
+            let thread = thread_resume::load_thread(&client, &member.thread_id).await?;
+            let thread_model = member
                 .model
                 .clone()
                 .filter(|value| !value.trim().is_empty())
@@ -1134,17 +1134,17 @@ where
                         .count()
                 })
                 .unwrap_or_default();
-            let mut app = Self::from_session_parts(
+            let mut app = Self::from_thread_parts(
                 client,
                 remote_panel_server,
-                SessionParts {
+                ThreadParts {
                     thread_id: member.thread_id.clone(),
                     provider,
-                    session_model,
+                    thread_model,
                     requested_model: String::new(),
                     reasoning: "medium".to_string(),
-                    session_title: title,
-                    session_message_count: message_count,
+                    thread_title: title,
+                    thread_message_count: message_count,
                 },
             )
             .await?;
@@ -1157,12 +1157,12 @@ where
             return Ok(app);
         }
 
-        if let TuiStartup::ResumeSession(thread_id) = startup.clone() {
-            let thread = session_resume::load_thread(&client, &thread_id)
+        if let TuiStartup::ResumeThread(thread_id) = startup.clone() {
+            let thread = thread_resume::load_thread(&client, &thread_id)
                 .await?
-                .ok_or_else(|| anyhow::anyhow!("session not found: {}", short_id(&thread_id)))?;
+                .ok_or_else(|| anyhow::anyhow!("thread not found: {}", short_id(&thread_id)))?;
             let provider = thread.model_provider.clone();
-            let session_model = model.clone();
+            let thread_model = model.clone();
             let title = thread
                 .name
                 .clone()
@@ -1179,17 +1179,17 @@ where
                         .count()
                 })
                 .unwrap_or_default();
-            let mut app = Self::from_session_parts(
+            let mut app = Self::from_thread_parts(
                 client,
                 remote_panel_server,
-                SessionParts {
+                ThreadParts {
                     thread_id: thread_id.clone(),
                     provider,
-                    session_model,
+                    thread_model,
                     requested_model: String::new(),
                     reasoning: "medium".to_string(),
-                    session_title: title,
-                    session_message_count: message_count,
+                    thread_title: title,
+                    thread_message_count: message_count,
                 },
             )
             .await?;
@@ -1213,39 +1213,39 @@ where
         };
 
         let res = client.send_request(req).await;
-        let session = if let Some(result) = res.result {
+        let started = if let Some(result) = res.result {
             serde_json::from_value::<ThreadStartResult>(result)?
         } else {
-            anyhow::bail!("failed to create session: {:?}", res.error);
+            anyhow::bail!("failed to create thread: {:?}", res.error);
         };
 
         let selected_model = if model.is_empty() {
-            session.model.clone()
+            started.model.clone()
         } else {
             model.clone()
         };
-        let mut app = Self::from_session_parts(
+        let mut app = Self::from_thread_parts(
             client,
             remote_panel_server,
-            SessionParts {
-                thread_id: session.thread.id,
-                provider: session.model_provider,
-                session_model: selected_model,
+            ThreadParts {
+                thread_id: started.thread.id,
+                provider: started.model_provider,
+                thread_model: selected_model,
                 requested_model: model,
                 reasoning: "medium".to_string(),
-                session_title: None,
-                session_message_count: 0,
+                thread_title: None,
+                thread_message_count: 0,
             },
         )
         .await?;
 
         match startup {
-            TuiStartup::NewSession => {}
+            TuiStartup::NewThread => {}
             TuiStartup::ResumeMenu => {
                 app.open_resume_submenu().await;
             }
-            TuiStartup::ResumeSession(thread_id) => {
-                app.load_session(thread_id).await;
+            TuiStartup::ResumeThread(thread_id) => {
+                app.load_thread(thread_id).await;
             }
             TuiStartup::RoadmapOpen { path } => {
                 app.enter_roadmap_mode(path);
@@ -1256,19 +1256,19 @@ where
         Ok(app)
     }
 
-    async fn from_session_parts(
+    async fn from_thread_parts(
         client: C,
         remote_panel_server: Arc<AppServer>,
-        parts: SessionParts,
+        parts: ThreadParts,
     ) -> anyhow::Result<Self> {
-        let SessionParts {
+        let ThreadParts {
             thread_id,
             provider,
-            session_model,
+            thread_model,
             requested_model,
             reasoning,
-            session_title,
-            session_message_count,
+            thread_title,
+            thread_message_count,
         } = parts;
         let mut provider_state = ListState::default();
         provider_state.select(Some(0));
@@ -1288,7 +1288,7 @@ where
             let entries = crate::theme::discover_themes(&dirs);
             crate::theme::discovery::active_theme(&entries, None).map(|e| e.id.clone())
         };
-        let policy_state = session_get(&client).await.ok();
+        let policy_state = thread_state(&client).await.ok();
         let settings_state = settings_get(&client).await.ok();
         let shell_settings = settings_state
             .as_ref()
@@ -1296,13 +1296,13 @@ where
             .unwrap_or_else(default_shell_settings);
         let tui_config = load_tui_config().unwrap_or_default();
         let selected_model = if requested_model.is_empty() {
-            session_model
+            thread_model
         } else {
             requested_model
         };
         let model_context_window = context_window_for_model(&selected_model);
 
-        let command_catalog = session_resume::commands_list(&client)
+        let command_catalog = thread_resume::commands_list(&client)
             .await
             .unwrap_or_else(|_| built_in_command_catalog());
         let current_goal = goals::thread_goal_get(&client, &thread_id)
@@ -1315,15 +1315,15 @@ where
         Ok(Self {
             client,
             thread_id,
-            session_title,
-            session_message_count,
+            thread_title,
+            thread_message_count,
             active_turn_id: None,
             active_turn_timer: TurnTimer::default(),
             current_turn_input_tokens: 0,
             current_turn_output_tokens: 0,
             current_turn_reasoning_tokens: None,
             current_turn_total_tokens: 0,
-            session_tokens: 0,
+            thread_tokens: 0,
             context_window_tokens: 0,
             provider,
             model: selected_model,
@@ -1409,7 +1409,7 @@ where
     }
 
     pub fn exit_summary(&self) -> TuiExitSummary {
-        self.session_exit_summary()
+        self.thread_exit_summary()
     }
 
     pub async fn run(&mut self) -> anyhow::Result<()> {
@@ -1686,7 +1686,7 @@ where
                             input_tokens: self.current_turn_input_tokens,
                             output_tokens: self.current_turn_output_tokens,
                             reasoning_tokens: self.current_turn_reasoning_tokens,
-                            session_tokens: self.session_tokens,
+                            thread_tokens: self.thread_tokens,
                         });
                         self.current_turn_input_tokens = 0;
                         self.current_turn_output_tokens = 0;
@@ -1914,10 +1914,10 @@ where
                         ));
                     }
                     RoderEvent::PolicyExitPlanRequested(_) => {
-                        self.refresh_session_state().await;
+                        self.refresh_thread_state().await;
                     }
                     RoderEvent::PolicyExitPlanResolved(_) => {
-                        self.refresh_session_state().await;
+                        self.refresh_thread_state().await;
                     }
                     _ => {}
                 }
@@ -2098,7 +2098,7 @@ where
     }
 
     async fn resolve_tool_approval(&mut self, approval_id: String, approved: bool) {
-        let params = SessionResolveApprovalParams {
+        let params = ThreadResolveApprovalParams {
             approval_id: approval_id.clone(),
             approved,
         };
@@ -2106,31 +2106,31 @@ where
             .client
             .send_request(JsonRpcRequest {
                 jsonrpc: "2.0".to_string(),
-                id: Some(serde_json::json!("session/resolve_approval")),
-                method: "session/resolve_approval".to_string(),
+                id: Some(serde_json::json!("thread/resolve_approval")),
+                method: "thread/resolve_approval".to_string(),
                 params: Some(serde_json::to_value(params).unwrap()),
             })
             .await;
-        match decode_response::<SessionResolveApprovalResult>(res) {
+        match decode_response::<ThreadResolveApprovalResult>(res) {
             Ok(result) if result.resolved => {}
             Ok(_) => self.record_error(format!("approval not pending: {}", short_id(&approval_id))),
-            Err(err) => self.record_error(format!("session/resolve_approval failed: {err}")),
+            Err(err) => self.record_error(format!("thread/resolve_approval failed: {err}")),
         }
     }
 
-    async fn refresh_session_state(&mut self) {
-        match session_get(&self.client).await {
+    async fn refresh_thread_state(&mut self) {
+        match thread_state(&self.client).await {
             Ok(state) => {
                 self.policy_mode = state.mode;
                 self.pending_plan_exit = state.pending_plan_exit;
             }
-            Err(err) => self.record_error(format!("session/get failed: {err}")),
+            Err(err) => self.record_error(format!("thread/state failed: {err}")),
         }
     }
 
     async fn cycle_policy_mode(&mut self) {
         let next = next_policy_mode(self.policy_mode);
-        let params = SessionSetModeParams {
+        let params = ThreadSetModeParams {
             mode: next,
             reason: Some("tui mode switcher".to_string()),
         };
@@ -2138,12 +2138,12 @@ where
             .client
             .send_request(JsonRpcRequest {
                 jsonrpc: "2.0".to_string(),
-                id: Some(serde_json::json!("session/set_mode")),
-                method: "session/set_mode".to_string(),
+                id: Some(serde_json::json!("thread/set_mode")),
+                method: "thread/set_mode".to_string(),
                 params: Some(serde_json::to_value(params).unwrap()),
             })
             .await;
-        match decode_response::<SessionSetModeResult>(res) {
+        match decode_response::<ThreadSetModeResult>(res) {
             Ok(result) => {
                 self.policy_mode = result.mode;
                 self.timeline.push_system(format!(
@@ -2155,7 +2155,7 @@ where
                     policy_mode_label(result.mode)
                 ));
             }
-            Err(err) => self.record_error(format!("session/set_mode failed: {err}")),
+            Err(err) => self.record_error(format!("thread/set_mode failed: {err}")),
         }
     }
 
@@ -2163,7 +2163,7 @@ where
         let Some(pending) = self.pending_plan_exit.clone() else {
             return;
         };
-        let params = SessionExitPlanParams {
+        let params = ThreadExitPlanParams {
             request_id: pending.request_id.clone(),
             approved,
         };
@@ -2171,12 +2171,12 @@ where
             .client
             .send_request(JsonRpcRequest {
                 jsonrpc: "2.0".to_string(),
-                id: Some(serde_json::json!("session/exit_plan")),
-                method: "session/exit_plan".to_string(),
+                id: Some(serde_json::json!("thread/exit_plan")),
+                method: "thread/exit_plan".to_string(),
                 params: Some(serde_json::to_value(params).unwrap()),
             })
             .await;
-        match decode_response::<SessionExitPlanResult>(res) {
+        match decode_response::<ThreadExitPlanResult>(res) {
             Ok(result) => {
                 self.policy_mode = result.mode;
                 self.pending_plan_exit = None;
@@ -2186,7 +2186,7 @@ where
                     short_id(&pending.request_id)
                 ));
             }
-            Err(err) => self.record_error(format!("session/exit_plan failed: {err}")),
+            Err(err) => self.record_error(format!("thread/exit_plan failed: {err}")),
         }
     }
 
@@ -2349,7 +2349,7 @@ where
     }
 
     async fn refresh_command_catalog(&mut self) {
-        if let Ok(commands) = session_resume::commands_list(&self.client).await {
+        if let Ok(commands) = thread_resume::commands_list(&self.client).await {
             self.command_catalog = commands;
         }
     }
@@ -2727,7 +2727,7 @@ where
             self.record_error("roadmap worker monitor needs a selected worker".to_string());
             return;
         };
-        match session_resume::load_thread(&self.client, &thread_id).await {
+        match thread_resume::load_thread(&self.client, &thread_id).await {
             Ok(Some(thread)) => {
                 self.roadmap_mode = None;
                 self.apply_thread(thread);
@@ -2742,7 +2742,7 @@ where
             }
             Ok(None) => {
                 self.push_event(format!(
-                    "roadmap worker {} had no session; spawning replacement",
+                    "roadmap worker {} had no thread; spawning replacement",
                     short_id(&thread_id)
                 ));
                 if let Some(task_id) = task_id
@@ -2752,16 +2752,16 @@ where
                 }
                 let Some(thread) = self.spawn_roadmap_worker().await else {
                     self.record_error(format!(
-                        "roadmap worker session not found: {}",
+                        "roadmap worker thread not found: {}",
                         short_id(&thread_id)
                     ));
                     return;
                 };
-                match session_resume::load_thread(&self.client, &thread.thread_id).await {
-                    Ok(Some(desktop_thread)) => {
+                match thread_resume::load_thread(&self.client, &thread.thread_id).await {
+                    Ok(Some(protocol_thread)) => {
                         let replacement_id = thread.thread_id.clone();
                         self.roadmap_mode = None;
-                        self.apply_thread(desktop_thread);
+                        self.apply_thread(protocol_thread);
                         self.timeline.push_system(format!(
                             "monitoring replacement roadmap worker {}.",
                             short_id(&replacement_id)
@@ -2772,7 +2772,7 @@ where
                         ));
                     }
                     Ok(None) => self.record_error(format!(
-                        "replacement roadmap worker session not found: {}",
+                        "replacement roadmap worker thread not found: {}",
                         short_id(&thread.thread_id)
                     )),
                     Err(err) => self
@@ -2858,9 +2858,9 @@ where
     async fn start_prepared_prompt(&mut self, pending: PendingPrompt) {
         self.last_user_prompt = Some(pending.clone());
         self.timeline.push_user(pending.display.clone());
-        self.session_message_count = self.session_message_count.saturating_add(1);
-        if self.session_title.is_none() {
-            self.session_title = Some(truncate(&pending.display, 72));
+        self.thread_message_count = self.thread_message_count.saturating_add(1);
+        if self.thread_title.is_none() {
+            self.thread_title = Some(truncate(&pending.display, 72));
         }
         let thread_id = self.focused_thread_id().to_string();
         let params = TurnStartParams {
@@ -3336,7 +3336,7 @@ where
                 self.theme.muted(),
             ),
             Span::styled(
-                format!("  session {}", short_id(&self.thread_id)),
+                format!("  thread {}", short_id(&self.thread_id)),
                 self.theme.muted(),
             ),
         ];
@@ -3680,7 +3680,7 @@ where
                         }
                         ProviderMenuItem::FileBackedDynamicContextToggle(true) => "✓ ",
                         ProviderMenuItem::MessageFoldingToggle(true) => "✓ ",
-                        ProviderMenuItem::Session(session) if session.id == self.thread_id => "✓ ",
+                        ProviderMenuItem::Thread(thread) if thread.id == self.thread_id => "✓ ",
                         ProviderMenuItem::Theme(id)
                             if self.active_theme_id.as_deref() == Some(id.as_str()) =>
                         {
@@ -3696,7 +3696,7 @@ where
                         | ProviderMenuItem::ThemesSettings
                         | ProviderMenuItem::MarketplacesSettings
                         | ProviderMenuItem::PluginBrowser
-                        | ProviderMenuItem::ResumeSessions
+                        | ProviderMenuItem::ResumeThreads
                         | ProviderMenuItem::Reasoning(_) => "› ",
                         ProviderMenuItem::Back => "‹ ",
                         _ => "• ",
@@ -3724,7 +3724,7 @@ where
             ProviderPopupScreen::Spinner => " Working spinner (Enter select, Esc back) ",
             ProviderPopupScreen::WebSearch => " Web search provider (Enter select, Esc back) ",
             ProviderPopupScreen::Shell => " Shell command shell (Enter select, Esc back) ",
-            ProviderPopupScreen::Resume => " Resume session (Enter select, Esc back) ",
+            ProviderPopupScreen::Resume => " Resume thread (Enter select, Esc back) ",
             ProviderPopupScreen::Themes => " Themes (Enter select, Esc back) ",
             ProviderPopupScreen::Marketplaces => " Plugin marketplaces (Enter select, Esc back) ",
         };
@@ -4227,7 +4227,7 @@ where
             ProviderMenuItem::PluginBrowser => {
                 self.open_plugin_browser().await;
             }
-            ProviderMenuItem::ResumeSessions => {
+            ProviderMenuItem::ResumeThreads => {
                 self.open_resume_submenu().await;
             }
             ProviderMenuItem::Theme(id) => {
@@ -4290,9 +4290,9 @@ where
                 self.show_provider_popup = false;
                 self.select_runner(destination_id, provider_id).await;
             }
-            ProviderMenuItem::Session(session) => {
+            ProviderMenuItem::Thread(thread) => {
                 self.show_provider_popup = false;
-                self.load_session(session.id).await;
+                self.load_thread(thread.id).await;
             }
             ProviderMenuItem::Back => {
                 self.close_or_back_provider_popup();
@@ -4425,19 +4425,19 @@ where
     async fn open_resume_submenu(&mut self) {
         self.provider_popup_screen = ProviderPopupScreen::Resume;
         self.provider_menu_filter.clear();
-        match session_resume::threads_list(&self.client).await {
-            Ok(sessions) => {
-                self.provider_menu_items = sessions
+        match thread_resume::threads_list(&self.client).await {
+            Ok(threads) => {
+                self.provider_menu_items = threads
                     .into_iter()
                     .map(Box::new)
-                    .map(ProviderMenuItem::Session)
+                    .map(ProviderMenuItem::Thread)
                     .chain(std::iter::once(ProviderMenuItem::Back))
                     .collect();
                 let selected = self
                     .provider_menu_items
                     .iter()
                     .position(|item| {
-                        matches!(item, ProviderMenuItem::Session(session) if session.id == self.thread_id)
+                        matches!(item, ProviderMenuItem::Thread(thread) if thread.id == self.thread_id)
                     })
                     .unwrap_or(0);
                 self.provider_state.select(Some(selected));
@@ -5025,7 +5025,7 @@ where
             &mut self.current_turn_input_tokens,
             &mut self.current_turn_output_tokens,
             &mut self.current_turn_total_tokens,
-            &mut self.session_tokens,
+            &mut self.thread_tokens,
             &mut self.context_window_tokens,
             usage,
         );
@@ -5968,7 +5968,7 @@ fn main_provider_menu_items(providers: &[ProviderChoice]) -> Vec<ProviderMenuIte
         ProviderMenuItem::Settings,
         ProviderMenuItem::RoadmapMode,
         ProviderMenuItem::RunnerSettings,
-        ProviderMenuItem::ResumeSessions,
+        ProviderMenuItem::ResumeThreads,
         ProviderMenuItem::WebSearchSettings,
         ProviderMenuItem::SpinnerSettings,
         ProviderMenuItem::ThemesSettings,
@@ -6257,15 +6257,15 @@ fn decode_response<T: serde::de::DeserializeOwned>(res: JsonRpcResponse) -> anyh
     Ok(serde_json::from_value(result)?)
 }
 
-async fn session_get<C>(client: &C) -> anyhow::Result<SessionGetResult>
+async fn thread_state<C>(client: &C) -> anyhow::Result<ThreadStateResult>
 where
     C: AppClient,
 {
     let res = client
         .send_request(JsonRpcRequest {
             jsonrpc: "2.0".to_string(),
-            id: Some(serde_json::json!("session/get")),
-            method: "session/get".to_string(),
+            id: Some(serde_json::json!("thread/state")),
+            method: "thread/state".to_string(),
             params: None,
         })
         .await;
@@ -6554,7 +6554,7 @@ fn record_usage_counters(
     current_turn_input_tokens: &mut u32,
     current_turn_output_tokens: &mut u32,
     current_turn_total_tokens: &mut u32,
-    session_tokens: &mut u64,
+    thread_tokens: &mut u64,
     context_window_tokens: &mut u64,
     usage: TokenUsage,
 ) {
@@ -6566,7 +6566,7 @@ fn record_usage_counters(
     *current_turn_output_tokens = (*current_turn_output_tokens).max(usage.completion_tokens);
     if total_tokens > *current_turn_total_tokens {
         let delta = total_tokens - *current_turn_total_tokens;
-        *session_tokens = session_tokens.saturating_add(u64::from(delta));
+        *thread_tokens = thread_tokens.saturating_add(u64::from(delta));
         *current_turn_total_tokens = total_tokens;
     }
     if total_tokens > 0 {
@@ -6644,8 +6644,7 @@ mod tests {
     use roder_app_server::AppServer;
     use roder_core::Runtime;
     use roder_protocol::{
-        DesktopItem, DesktopThread, DesktopThreadStatus, DesktopTurn, ProviderDescriptor,
-        ProvidersListResult,
+        Item, ProviderDescriptor, ProvidersListResult, Thread, ThreadStatus, Turn,
     };
 
     fn test_app() -> TuiApp {
@@ -6656,15 +6655,15 @@ mod tests {
         TuiApp {
             client: LocalAppClient::new(server.clone()),
             thread_id: "thread-test".to_string(),
-            session_title: None,
-            session_message_count: 0,
+            thread_title: None,
+            thread_message_count: 0,
             active_turn_id: None,
             active_turn_timer: TurnTimer::default(),
             current_turn_input_tokens: 0,
             current_turn_output_tokens: 0,
             current_turn_reasoning_tokens: None,
             current_turn_total_tokens: 0,
-            session_tokens: 0,
+            thread_tokens: 0,
             context_window_tokens: 0,
             provider: "mock".to_string(),
             model: "mock".to_string(),
@@ -6759,22 +6758,21 @@ mod tests {
     #[test]
     fn resumed_task_ledger_tool_result_restores_plan_panel() {
         let mut app = test_app();
-        let thread = DesktopThread {
+        let thread = Thread {
             id: "thread-ledger".to_string(),
-            session_id: "thread-ledger".to_string(),
             preview: String::new(),
             model_provider: "mock".to_string(),
             created_at: 0,
             updated_at: 0,
-            status: DesktopThreadStatus {
+            status: ThreadStatus {
                 kind: "idle".to_string(),
                 active_flags: Vec::new(),
             },
             cwd: "/tmp".to_string(),
             name: None,
-            turns: Some(vec![DesktopTurn {
+            turns: Some(vec![Turn {
                 id: "turn-ledger".to_string(),
-                items: vec![DesktopItem {
+                items: vec![Item {
                     id: "tool-ledger".to_string(),
                     kind: "toolMessage".to_string(),
                     text: Some(
@@ -7602,18 +7600,18 @@ mod tests {
     }
 
     #[test]
-    fn usage_accounting_tracks_latest_context_window_separately_from_session_total() {
+    fn usage_accounting_tracks_latest_context_window_separately_from_thread_total() {
         let mut input = 0;
         let mut output = 0;
         let mut turn_total = 0;
-        let mut session_total = 0;
+        let mut thread_total = 0;
         let mut context_total = 0;
 
         record_usage_counters(
             &mut input,
             &mut output,
             &mut turn_total,
-            &mut session_total,
+            &mut thread_total,
             &mut context_total,
             TokenUsage {
                 prompt_tokens: 10_000,
@@ -7625,7 +7623,7 @@ mod tests {
             &mut input,
             &mut output,
             &mut turn_total,
-            &mut session_total,
+            &mut thread_total,
             &mut context_total,
             TokenUsage {
                 prompt_tokens: 10_500,
@@ -7637,7 +7635,7 @@ mod tests {
         assert_eq!(input, 10_500);
         assert_eq!(output, 1_500);
         assert_eq!(turn_total, 12_000);
-        assert_eq!(session_total, 12_000);
+        assert_eq!(thread_total, 12_000);
         assert_eq!(context_total, 12_000);
 
         input = 0;
@@ -7647,7 +7645,7 @@ mod tests {
             &mut input,
             &mut output,
             &mut turn_total,
-            &mut session_total,
+            &mut thread_total,
             &mut context_total,
             TokenUsage {
                 prompt_tokens: 20_000,
@@ -7656,7 +7654,7 @@ mod tests {
             },
         );
 
-        assert_eq!(session_total, 34_000);
+        assert_eq!(thread_total, 34_000);
         assert_eq!(context_total, 22_000);
     }
 
@@ -8295,7 +8293,7 @@ mod tests {
         ));
         assert!(matches!(
             items.get(5),
-            Some(ProviderMenuItem::ResumeSessions)
+            Some(ProviderMenuItem::ResumeThreads)
         ));
         assert!(matches!(
             items.get(6),

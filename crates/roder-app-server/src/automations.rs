@@ -88,13 +88,13 @@ impl AppServer {
             feature_config.automations.clone(),
         )));
         let tasks = BackgroundRunner::new(task_registry, BackgroundRunnerConfig::default());
-        let (desktop_notifications, _) = broadcast::channel(1024);
+        let (protocol_notifications, _) = broadcast::channel(1024);
         if tokio::runtime::Handle::try_current().is_ok() {
             notifications::spawn_task_event_bridge(Arc::clone(&runtime), tasks.clone());
             notifications::spawn_runtime_event_handlers(Arc::clone(&runtime), tasks.clone());
-            notifications::spawn_desktop_notification_bridge(
+            notifications::spawn_protocol_notification_bridge(
                 Arc::clone(&runtime),
-                desktop_notifications.clone(),
+                protocol_notifications.clone(),
             );
         }
         let automation_supervisor = if tokio::runtime::Handle::try_current().is_ok() {
@@ -113,10 +113,10 @@ impl AppServer {
             persist_user_config: false,
             features: feature_config,
             automation_supervisor,
-            desktop_threads: RwLock::new(std::collections::HashMap::new()),
-            desktop_thread_models: RwLock::new(std::collections::HashMap::new()),
-            desktop_active_turns: RwLock::new(std::collections::HashMap::new()),
-            desktop_notifications,
+            protocol_threads: RwLock::new(std::collections::HashMap::new()),
+            protocol_thread_models: RwLock::new(std::collections::HashMap::new()),
+            protocol_active_turns: RwLock::new(std::collections::HashMap::new()),
+            protocol_notifications,
         }
     }
 

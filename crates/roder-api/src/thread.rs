@@ -4,14 +4,14 @@ use std::sync::Arc;
 use serde::{Deserialize, Serialize};
 use time::OffsetDateTime;
 
-use crate::conversation::TurnItem;
 use crate::events::{EventEnvelope, ThreadId, TurnId};
-pub use crate::extension::{CheckpointStoreId, SessionStoreId};
+pub use crate::extension::{CheckpointStoreId, ThreadStoreId};
 use crate::extension_state::ExtensionStateRecord;
 use crate::remote_runner::{RunnerDestination, RunnerSessionState};
+use crate::transcript::TranscriptItem;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-pub struct SessionMetadata {
+pub struct ThreadMetadata {
     pub thread_id: ThreadId,
     pub title: Option<String>,
     pub workspace: Option<String>,
@@ -32,7 +32,7 @@ pub struct SessionMetadata {
 pub struct TurnRecord {
     pub thread_id: ThreadId,
     pub turn_id: TurnId,
-    pub items: Vec<TurnItem>,
+    pub items: Vec<TranscriptItem>,
     #[serde(with = "time::serde::rfc3339")]
     pub created_at: OffsetDateTime,
     #[serde(with = "time::serde::rfc3339::option")]
@@ -41,32 +41,32 @@ pub struct TurnRecord {
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct ThreadSnapshot {
-    pub metadata: Option<SessionMetadata>,
+    pub metadata: Option<ThreadMetadata>,
     pub events: Vec<EventEnvelope>,
     pub turns: Vec<TurnRecord>,
     pub extension_states: Vec<ExtensionStateRecord>,
 }
 
 #[async_trait::async_trait]
-pub trait SessionStore: Send + Sync {
-    fn id(&self) -> SessionStoreId;
+pub trait ThreadStore: Send + Sync {
+    fn id(&self) -> ThreadStoreId;
 
-    fn local_session_root(&self) -> Option<PathBuf> {
+    fn local_thread_root(&self) -> Option<PathBuf> {
         None
     }
 
-    async fn create_session(&self, metadata: SessionMetadata) -> anyhow::Result<SessionMetadata>;
-    async fn update_session_metadata(
+    async fn create_thread(&self, metadata: ThreadMetadata) -> anyhow::Result<ThreadMetadata>;
+    async fn update_thread_metadata(
         &self,
-        metadata: SessionMetadata,
-    ) -> anyhow::Result<SessionMetadata> {
+        metadata: ThreadMetadata,
+    ) -> anyhow::Result<ThreadMetadata> {
         Ok(metadata)
     }
-    async fn list_sessions(&self) -> anyhow::Result<Vec<SessionMetadata>>;
-    async fn load_session(&self, thread_id: &ThreadId) -> anyhow::Result<Option<ThreadSnapshot>>;
-    async fn archive_session(&self, thread_id: &ThreadId) -> anyhow::Result<bool> {
+    async fn list_threads(&self) -> anyhow::Result<Vec<ThreadMetadata>>;
+    async fn load_thread(&self, thread_id: &ThreadId) -> anyhow::Result<Option<ThreadSnapshot>>;
+    async fn archive_thread(&self, thread_id: &ThreadId) -> anyhow::Result<bool> {
         let _ = thread_id;
-        anyhow::bail!("session store {} does not support archive", self.id())
+        anyhow::bail!("thread store {} does not support archive", self.id())
     }
     async fn append_event(
         &self,
@@ -77,7 +77,7 @@ pub trait SessionStore: Send + Sync {
         &self,
         thread_id: &ThreadId,
         turn_id: &TurnId,
-        item: &TurnItem,
+        item: &TranscriptItem,
     ) -> anyhow::Result<()>;
     async fn append_extension_state(
         &self,
@@ -86,15 +86,15 @@ pub trait SessionStore: Send + Sync {
     ) -> anyhow::Result<()> {
         let _ = (thread_id, record);
         anyhow::bail!(
-            "session store {} does not support extension state",
+            "thread store {} does not support extension state",
             self.id()
         )
     }
 }
 
-pub trait SessionStoreFactory: Send + Sync + 'static {
-    fn id(&self) -> SessionStoreId;
-    fn create(&self) -> Arc<dyn SessionStore>;
+pub trait ThreadStoreFactory: Send + Sync + 'static {
+    fn id(&self) -> ThreadStoreId;
+    fn create(&self) -> Arc<dyn ThreadStore>;
 }
 
 #[async_trait::async_trait]
@@ -114,8 +114,8 @@ mod tests {
     use super::*;
 
     #[test]
-    fn session_metadata_timestamps_serialize_as_rfc3339_strings() {
-        let value = serde_json::to_value(SessionMetadata {
+    fn thread_metadata_timestamps_serialize_as_rfc3339_strings() {
+        let value = serde_json::to_value(ThreadMetadata {
             thread_id: "thread-a".to_string(),
             title: None,
             workspace: None,

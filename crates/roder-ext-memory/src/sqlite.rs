@@ -180,7 +180,7 @@ fn ensure_scope(conn: &Connection, scope: &MemoryScope) -> anyhow::Result<String
         MemoryScope::User(value) => ("user", Some(value.as_str())),
         MemoryScope::Workspace(value) => ("workspace", Some(value.as_str())),
         MemoryScope::Project(value) => ("project", Some(value.as_str())),
-        MemoryScope::Session(value) => ("session", Some(value.as_str())),
+        MemoryScope::Thread(value) => ("thread", Some(value.as_str())),
     };
     conn.execute(
         "INSERT OR IGNORE INTO memory_scopes(id, kind, value, label, created_at)
@@ -357,7 +357,7 @@ fn parse_scope(kind: &str, value: Option<String>) -> MemoryScope {
         "user" => MemoryScope::User(value.unwrap_or_default()),
         "workspace" => MemoryScope::Workspace(value.unwrap_or_default()),
         "project" => MemoryScope::Project(value.unwrap_or_default()),
-        "session" => MemoryScope::Session(value.unwrap_or_default()),
+        "thread" => MemoryScope::Thread(value.unwrap_or_default()),
         _ => MemoryScope::Workspace(value.unwrap_or_else(|| "unknown".to_string())),
     }
 }

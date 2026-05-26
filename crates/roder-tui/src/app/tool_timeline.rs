@@ -197,7 +197,7 @@ pub(super) struct TurnCompletedSummary {
     pub input_tokens: u32,
     pub output_tokens: u32,
     pub reasoning_tokens: Option<u32>,
-    pub session_tokens: u64,
+    pub thread_tokens: u64,
 }
 
 #[derive(Debug, Clone, Eq, PartialEq)]

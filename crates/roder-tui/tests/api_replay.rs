@@ -41,7 +41,7 @@ async fn replay_client_matches_requests_and_replays_events_and_notifications() {
             request: json!({
                 "jsonrpc": "2.0",
                 "id": 1,
-                "method": "session/get"
+                "method": "thread/state"
             }),
         },
         ApiTranscriptRecord::ApiResponse {
@@ -78,7 +78,7 @@ async fn replay_client_matches_requests_and_replays_events_and_notifications() {
         .send_request(JsonRpcRequest {
             jsonrpc: "2.0".to_string(),
             id: Some(json!(1)),
-            method: "session/get".to_string(),
+            method: "thread/state".to_string(),
             params: None,
         })
         .await;
@@ -108,7 +108,7 @@ async fn replay_client_reports_first_request_mismatch() {
             request: serde_json::to_value(JsonRpcRequest {
                 jsonrpc: "2.0".to_string(),
                 id: Some(json!(1)),
-                method: "session/get".to_string(),
+                method: "thread/state".to_string(),
                 params: None,
             })
             .unwrap(),

@@ -6,7 +6,7 @@ Roder stores local memories through the `roder-ext-memory` extension. The defaul
 
 - `global`: user-wide memory shared across projects.
 - `project:<id>`: project memory, normally resolved from the active workspace.
-- `workspace:<id>` and `session:<id>` remain valid API scopes for extension authors.
+- `workspace:<id>` and `thread:<id>` remain valid API scopes for extension authors.
 
 ## CLI
 

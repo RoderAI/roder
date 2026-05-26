@@ -186,7 +186,7 @@ impl ToolExecutor for DiscoveryReadTool {
             "{}\n{}\n{}",
             item_summary(&item),
             if promoted {
-                "promotion: recorded for this session"
+                "promotion: recorded for this thread"
             } else {
                 "promotion: skipped"
             },
@@ -258,17 +258,17 @@ fn catalog_root() -> anyhow::Result<PathBuf> {
         .join("discovery"))
 }
 
-fn session_state_dir() -> anyhow::Result<PathBuf> {
-    if let Ok(path) = std::env::var("RODER_DISCOVERY_SESSION_DIR") {
+fn promotion_state_dir() -> anyhow::Result<PathBuf> {
+    if let Ok(path) = std::env::var("RODER_DISCOVERY_STATE_DIR") {
         return Ok(PathBuf::from(path));
     }
     if let Some(path) = roder_data_dir() {
-        return Ok(path.join("sessions").join("discovery-state"));
+        return Ok(path.join("threads").join("discovery-state"));
     }
     Ok(dirs::home_dir()
         .ok_or_else(|| anyhow::anyhow!("could not resolve home directory"))?
         .join(".roder")
-        .join("sessions")
+        .join("threads")
         .join("discovery-state"))
 }
 
@@ -361,7 +361,7 @@ fn safe_catalog_path(root: &Path, relative: &str) -> anyhow::Result<PathBuf> {
 }
 
 fn record_promotion(ctx: &ToolExecutionContext, item: &DiscoveryCatalogItem) -> anyhow::Result<()> {
-    let path = session_state_dir()?
+    let path = promotion_state_dir()?
         .join("discovery")
         .join("promotions.json");
     if let Some(parent) = path.parent() {

@@ -39,16 +39,14 @@ export interface RoderApprovals {
 
 export interface ApprovalDecision {
   approved: boolean;
-  message?: string;
 }
 
 export interface UserInputDecision {
-  response: string;
+  answers: unknown;
 }
 
 export interface PlanExitDecision {
-  accepted: boolean;
-  message?: string;
+  approved: boolean;
 }
 
 export class RoderAgent {
@@ -148,25 +146,23 @@ export class RoderAgent {
     if (!approvals) {
       return;
     }
-    if (method === "session/approvalRequested" && approvals.onToolApproval) {
+    if (method === "thread/approvalRequested" && approvals.onToolApproval) {
       const decision = await approvals.onToolApproval(params);
-      await this.client.call("session/resolve_approval", {
+      await this.client.call("thread/resolve_approval", {
         approvalId: extractString(params, "approvalId"),
         approved: decision.approved,
-        message: decision.message,
       });
-    } else if (method === "session/userInputRequested" && approvals.onUserInput) {
+    } else if (method === "thread/userInputRequested" && approvals.onUserInput) {
       const decision = await approvals.onUserInput(params);
-      await this.client.call("session/resolve_user_input", {
+      await this.client.call("thread/resolve_user_input", {
         requestId: extractString(params, "requestId"),
-        response: decision.response,
+        answers: decision.answers,
       });
-    } else if (method === "session/planExitRequested" && approvals.onPlanExit) {
+    } else if (method === "thread/planExitRequested" && approvals.onPlanExit) {
       const decision = await approvals.onPlanExit(params);
-      await this.client.call("session/exit_plan", {
+      await this.client.call("thread/exit_plan", {
         requestId: extractString(params, "requestId"),
-        accepted: decision.accepted,
-        message: decision.message,
+        approved: decision.approved,
       });
     }
   }

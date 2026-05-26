@@ -218,18 +218,18 @@ async fn retry_sleep(policy: &ReliabilityRequestPolicy, attempt: u32) {
 
 fn gemini_contents(request: &AgentInferenceRequest) -> Vec<Value> {
     request
-        .conversation
+        .transcript
         .iter()
         .filter_map(|item| match item {
-            roder_api::conversation::ConversationItem::UserMessage(message) => Some(json!({
+            roder_api::transcript::TranscriptItem::UserMessage(message) => Some(json!({
                 "role": "user",
                 "parts": [{ "text": message.text }]
             })),
-            roder_api::conversation::ConversationItem::AssistantMessage(message) => Some(json!({
+            roder_api::transcript::TranscriptItem::AssistantMessage(message) => Some(json!({
                 "role": "model",
                 "parts": [{ "text": message.text }]
             })),
-            roder_api::conversation::ConversationItem::ToolCall(call) => Some(json!({
+            roder_api::transcript::TranscriptItem::ToolCall(call) => Some(json!({
                 "role": "model",
                 "parts": [{
                     "functionCall": {
@@ -239,7 +239,7 @@ fn gemini_contents(request: &AgentInferenceRequest) -> Vec<Value> {
                     }
                 }]
             })),
-            roder_api::conversation::ConversationItem::ToolResult(result) => Some(json!({
+            roder_api::transcript::TranscriptItem::ToolResult(result) => Some(json!({
                 "role": "user",
                 "parts": [{
                     "functionResponse": {
@@ -379,14 +379,14 @@ fn number_to_u32(value: Option<&Value>) -> Option<u32> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use roder_api::conversation::{
-        AssistantMessage, ConversationItem, ToolCallRecord, ToolResultRecord, UserMessage,
-    };
     use roder_api::inference::{
         InstructionBundle, ModelSelection, OutputConfig, ReasoningConfig, RuntimeHints,
     };
     use roder_api::reliability::ReliabilityRequestPolicy;
     use roder_api::tools::{ToolChoice, ToolSpec};
+    use roder_api::transcript::{
+        AssistantMessage, ToolCallRecord, ToolResultRecord, TranscriptItem, UserMessage,
+    };
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     use tokio::net::TcpListener;
 
@@ -400,18 +400,18 @@ mod tests {
                 system: Some("system".to_string()),
                 developer: Some("developer".to_string()),
             },
-            conversation: vec![
-                ConversationItem::UserMessage(UserMessage::text("Hello")),
-                ConversationItem::AssistantMessage(AssistantMessage {
+            transcript: vec![
+                TranscriptItem::UserMessage(UserMessage::text("Hello")),
+                TranscriptItem::AssistantMessage(AssistantMessage {
                     text: "Hi".to_string(),
                     phase: None,
                 }),
-                ConversationItem::ToolCall(ToolCallRecord {
+                TranscriptItem::ToolCall(ToolCallRecord {
                     id: "call_1".to_string(),
                     name: "shell".to_string(),
                     arguments: r#"{"cmd":"pwd"}"#.to_string(),
                 }),
-                ConversationItem::ToolResult(ToolResultRecord {
+                TranscriptItem::ToolResult(ToolResultRecord {
                     id: "call_1".to_string(),
                     name: Some("shell".to_string()),
                     result: "ok".to_string(),

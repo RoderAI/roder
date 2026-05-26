@@ -1,9 +1,9 @@
 use roder_api::ToolSpec;
-use roder_api::conversation::{ToolResultRecord, tool_display_payload};
 use roder_api::events::{
     RoderEvent, ThreadId, ToolCallValidationFailureClass, ToolCallValidationRecorded,
     ToolCallValidationRepairStatus, TurnId,
 };
+use roder_api::transcript::{ToolResultRecord, tool_display_payload};
 use serde_json::Value;
 use time::OffsetDateTime;
 

@@ -137,14 +137,14 @@ fn run_file_backed_fixture_benchmark(
     let payload = fixture_payload(fixture);
     let thread_id = format!("bench-{}", fixture.id);
     let turn_id = "turn-1".to_string();
-    let session_root = std::env::temp_dir().join(format!(
+    let thread_root = std::env::temp_dir().join(format!(
         "roder-file-backed-bench-{}-{}",
         fixture.id,
         std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)?
             .as_nanos()
     ));
-    let store = ContextArtifactStore::new_session_scoped(&session_root);
+    let store = ContextArtifactStore::new_thread_scoped(&thread_root);
     let artifact = store.create(CreateArtifactRequest {
         kind: fixture_kind(fixture),
         thread_id: &thread_id,
@@ -198,7 +198,7 @@ fn run_file_backed_fixture_benchmark(
         turn_wall_time_ms: u64::try_from(start.elapsed().as_millis()).unwrap_or(u64::MAX),
         recovered_detail,
     };
-    let _ = std::fs::remove_dir_all(session_root);
+    let _ = std::fs::remove_dir_all(thread_root);
     Ok(result)
 }
 

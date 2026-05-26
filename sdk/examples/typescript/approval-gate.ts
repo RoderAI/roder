@@ -16,7 +16,7 @@ const agent = await RoderAgent.create({
   approvals: {
     onToolApproval(request) {
       const toolName = (request as { toolName?: string }).toolName;
-      return { approved: toolName === "fs/readFile", message: "example policy" };
+      return { approved: toolName === "fs/readFile" };
     },
   },
 });
@@ -24,7 +24,7 @@ const agent = await RoderAgent.create({
 await agent.send("Read a file only if policy allows it");
 transport.emit({
   jsonrpc: "2.0",
-  method: "session/approvalRequested",
+  method: "thread/approvalRequested",
   params: { approvalId: "approval-example", toolName: "fs/readFile" },
 });
 await agent.close();

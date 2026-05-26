@@ -1,4 +1,4 @@
-use roder_protocol::DesktopItem;
+use roder_protocol::Item;
 use serde::Serialize;
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
@@ -61,8 +61,8 @@ pub(crate) struct ExecItem {
     pub payload: Option<serde_json::Value>,
 }
 
-impl From<DesktopItem> for ExecItem {
-    fn from(item: DesktopItem) -> Self {
+impl From<Item> for ExecItem {
+    fn from(item: Item) -> Self {
         Self {
             id: item.id,
             kind: item.kind,

@@ -30,7 +30,7 @@ The event envelope uses the parent thread and turn ids so clients can subscribe 
 - `turn/subagentTraces/list` with `threadId` and `turnId` returns the current trace summaries for a parent turn.
 - `turn/subagentTrace/read` with `threadId`, `traceId`, `offset`, and optional `limit` returns a bounded page of trace deltas plus `nextOffset` when more deltas exist.
 
-These methods read from the session event log. Live clients should subscribe to the event stream or JSON-RPC notifications and use read/list as resume or backfill paths.
+These methods read from the thread event log. Live clients should subscribe to the event stream or JSON-RPC notifications and use read/list as resume or backfill paths.
 
 ## TUI Behavior
 
@@ -48,7 +48,7 @@ Auto-follow remains active while the user is at the bottom of the timeline. Manu
 
 ## Persistence
 
-Trace events are appended to the session event log, so resume restores parent/child trace relationships and final statuses. Child turn ids are stored in each summary for future deep-linking, while trace pages stay bounded for UI and protocol consumers.
+Trace events are appended to the thread event log, so resume restores parent/child trace relationships and final statuses. Child turn ids are stored in each summary for future deep-linking, while trace pages stay bounded for UI and protocol consumers.
 
 ## Visual References
 

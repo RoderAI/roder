@@ -2571,7 +2571,7 @@ dependencies = [
  "roder-config",
  "roder-core",
  "roder-evals",
- "roder-ext-jsonl-session",
+ "roder-ext-jsonl-thread-store",
  "roder-ext-memory",
  "roder-ext-openai-embeddings",
  "roder-ext-subagents",
@@ -2627,7 +2627,7 @@ dependencies = [
  "roder-ext-anthropic",
  "roder-ext-disk-context",
  "roder-ext-gemini",
- "roder-ext-jsonl-session",
+ "roder-ext-jsonl-thread-store",
  "roder-ext-memory",
  "roder-ext-openai-responses",
  "roder-ext-subagents",
@@ -2740,7 +2740,7 @@ dependencies = [
  "async-trait",
  "futures",
  "roder-api",
- "roder-ext-jsonl-session",
+ "roder-ext-jsonl-thread-store",
  "roder-ext-runner-unix-local",
  "roder-ext-task-ledger",
  "roder-ext-verification",
@@ -2829,7 +2829,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "roder-ext-jsonl-session"
+name = "roder-ext-jsonl-thread-store"
 version = "0.1.0"
 dependencies = [
  "anyhow",
@@ -3262,7 +3262,7 @@ dependencies = [
  "roder-ext-anthropic",
  "roder-ext-firecrawl-search",
  "roder-ext-gemini",
- "roder-ext-jsonl-session",
+ "roder-ext-jsonl-thread-store",
  "roder-ext-memory",
  "roder-ext-notify-desktop",
  "roder-ext-notify-terminal",
@@ -3367,17 +3367,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "roder-session"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "roder-api",
- "serde",
- "serde_json",
- "tokio",
-]
-
-[[package]]
 name = "roder-skills"
 version = "0.1.0"
 dependencies = [
@@ -3424,6 +3413,17 @@ version = "0.1.0"
 dependencies = [
  "ratatui",
  "thiserror 2.0.18",
+]
+
+[[package]]
+name = "roder-thread-store"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "roder-api",
+ "serde",
+ "serde_json",
+ "tokio",
 ]
 
 [[package]]
