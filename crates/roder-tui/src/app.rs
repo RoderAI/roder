@@ -71,7 +71,7 @@ use roder_app_server::{
 use roder_protocol::{
     AgentsListResult, CommandDescriptor, CommandsExpandParams, CommandsExpandResult,
     CommandsListResult, JsonRpcRequest, JsonRpcResponse, PendingPlanExitDescriptor,
-    ProviderAuthResult, ProviderConfigureParams, ProviderConfigureResult, ProviderDescriptor,
+    ProviderAuthResult, ProviderClearParams, ProviderClearResult, ProviderConfigureParams, ProviderConfigureResult, ProviderDescriptor,
     ProviderSelectParams, ProviderSelectResult, ProvidersListResult, RunnersListResult,
     RunnersSelectParams, RunnersSelectResult, SettingsGetResult, SettingsSetDefaultModeParams,
     SettingsSetDefaultModeResult, SettingsSetFileBackedDynamicContextParams,
@@ -1571,6 +1571,35 @@ where
                                         && !key.modifiers.contains(KeyModifiers::CONTROL) =>
                                 {
                                     self.provider_menu_filter.push(c);
+                                }
+                                KeyCode::Delete
+                                    if self.provider_popup_screen
+                                        == ProviderPopupScreen::Providers =>
+                                {
+                                    if let Some(selected) = self.provider_state.selected() {
+                                        if let Some(ProviderMenuItem::Provider(provider)) = self
+                                            .filtered_provider_menu_items()
+                                            .get(selected)
+                                            .cloned()
+                                        {
+                                            self.clear_or_logout_provider(provider).await;
+                                        }
+                                    }
+                                }
+                                KeyCode::Backspace
+                                    if self.provider_popup_screen
+                                        == ProviderPopupScreen::Providers
+                                        && self.provider_menu_filter.is_empty() =>
+                                {
+                                    if let Some(selected) = self.provider_state.selected() {
+                                        if let Some(ProviderMenuItem::Provider(provider)) = self
+                                            .filtered_provider_menu_items()
+                                            .get(selected)
+                                            .cloned()
+                                        {
+                                            self.clear_or_logout_provider(provider).await;
+                                        }
+                                    }
                                 }
                                 _ if is_dialog_menu_previous_key(key) => {
                                     self.select_previous_provider_menu_item();
@@ -3861,6 +3890,93 @@ where
             })
             .await;
         decode_response(res)
+    }
+
+    async fn refresh_providers_list(&mut self) -> anyhow::Result<()> {
+        let list = self.providers_list().await?;
+        self.provider = list.active_provider.clone();
+        self.model = list.active_model.clone();
+        self.reasoning_effort = list.active_reasoning.clone();
+        self.provider_choices = provider_choices_from_list(&list);
+        self.model_options = provider_options_from_list(&list);
+        self.model_context_window =
+            context_window_from_options(&self.model_options, &self.provider, &self.model)
+                .or_else(|| context_window_for_model(&self.model));
+        Ok(())
+    }
+
+    async fn clear_or_logout_provider(&mut self, provider: ProviderChoice) {
+        if provider.auth_type == ProviderAuthType::OAuth {
+            if let Some(auth_flow) = ProviderAuthFlow::for_provider(&provider.provider_id) {
+                let res = self
+                    .client
+                    .send_request(JsonRpcRequest {
+                        jsonrpc: "2.0".to_string(),
+                        id: Some(serde_json::json!(auth_flow.logout_method)),
+                        method: auth_flow.logout_method.to_string(),
+                        params: None,
+                    })
+                    .await;
+                match decode_response::<serde_json::Value>(res) {
+                    Ok(_) => {
+                        self.timeline.push_system(format!("Logged out of {}.", auth_flow.display_name));
+                        self.push_event(format!("logged out of: {}", provider.provider_id));
+                    }
+                    Err(err) => {
+                        self.record_error(format!("Logout failed: {err}"));
+                    }
+                }
+            } else {
+                self.record_error(format!(
+                    "provider {} requires OAuth; no logout flow is available",
+                    provider.provider_id
+                ));
+            }
+        } else if provider.auth_type == ProviderAuthType::ApiKey {
+            let res = self
+                .client
+                .send_request(JsonRpcRequest {
+                    jsonrpc: "2.0".to_string(),
+                    id: Some(serde_json::json!("providers/clear")),
+                    method: "providers/clear".to_string(),
+                    params: Some(
+                        serde_json::to_value(ProviderClearParams {
+                            provider: provider.provider_id.clone(),
+                        })
+                        .unwrap(),
+                    ),
+                })
+                .await;
+            match decode_response::<ProviderClearResult>(res) {
+                Ok(_) => {
+                    self.timeline.push_system(format!("Cleared API key for {}.", provider.name));
+                    self.push_event(format!("provider cleared: {}", provider.provider_id));
+                }
+                Err(err) => {
+                    self.record_error(format!("providers/clear failed: {err}"));
+                }
+            }
+        }
+
+        // Refresh the provider list
+        if let Err(err) = self.refresh_providers_list().await {
+            self.record_error(format!("Failed to refresh providers: {err}"));
+            self.show_provider_popup = false;
+            return;
+        }
+
+        // Recreate the providers submenu
+        let saved_selected = self.provider_state.selected();
+        self.provider_menu_items = providers_menu_items(&self.provider_choices);
+        if let Some(sel) = saved_selected {
+            if sel < self.provider_menu_items.len() {
+                self.provider_state.select(Some(sel));
+            } else if !self.provider_menu_items.is_empty() {
+                self.provider_state.select(Some(self.provider_menu_items.len() - 1));
+            } else {
+                self.provider_state.select(None);
+            }
+        }
     }
 
     async fn speech_providers_list(&self) -> anyhow::Result<SpeechProvidersListResult> {
@@ -7186,6 +7302,7 @@ mod tests {
             },
             cwd: "/tmp".to_string(),
             name: None,
+            usage: None,
             turns: Some(vec![Turn {
                 id: "turn-ledger".to_string(),
                 items: vec![Item {
@@ -7207,6 +7324,7 @@ mod tests {
                 started_at: None,
                 completed_at: None,
                 duration_ms: None,
+                usage: None,
             }]),
         };
 

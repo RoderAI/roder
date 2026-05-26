@@ -4,6 +4,8 @@ use std::hash::{Hash, Hasher};
 use std::path::{Component, Path, PathBuf};
 use std::time::{Instant, UNIX_EPOCH};
 
+use ignore::WalkBuilder;
+
 use crate::postings::{FileId, Trigram, intersect_postings, trigrams};
 use crate::query::CompiledQuery;
 use crate::{INDEX_VERSION, SearchError, SearchOptions};
@@ -193,46 +195,35 @@ pub(crate) fn collect_text_files(
     max_file_size: u64,
 ) -> Result<Vec<TextFile>, SearchError> {
     let mut files = Vec::new();
-    collect_text_files_inner(root, scope, max_file_size, &mut files)?;
+    let mut walk = WalkBuilder::new(scope);
+    walk.standard_filters(true)
+        .hidden(false)
+        .require_git(false)
+        .filter_entry({
+            let root = root.to_path_buf();
+            move |entry| !ignored_path(&root, entry.path())
+        })
+        .sort_by_file_path(|left, right| left.cmp(right));
+
+    for entry in walk.build() {
+        let entry = entry.map_err(ignore_error)?;
+        let path = entry.path();
+        let metadata = match fs::symlink_metadata(path) {
+            Ok(metadata) => metadata,
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => continue,
+            Err(err) => return Err(SearchError::Io(err)),
+        };
+        if metadata.file_type().is_symlink() {
+            continue;
+        }
+        if metadata.is_file()
+            && let Some(file) = read_text_file(root, path, &metadata, max_file_size)?
+        {
+            files.push(file);
+        }
+    }
+    files.sort_by(|left, right| left.relative_path.cmp(&right.relative_path));
     Ok(files)
-}
-
-fn collect_text_files_inner(
-    root: &Path,
-    path: &Path,
-    max_file_size: u64,
-    files: &mut Vec<TextFile>,
-) -> Result<(), SearchError> {
-    let metadata = match fs::symlink_metadata(path) {
-        Ok(metadata) => metadata,
-        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(()),
-        Err(err) => return Err(SearchError::Io(err)),
-    };
-
-    if metadata.file_type().is_symlink() {
-        return Ok(());
-    }
-
-    if metadata.is_dir() {
-        if ignored_dir(path) {
-            return Ok(());
-        }
-        let mut entries = fs::read_dir(path)?
-            .collect::<Result<Vec<_>, _>>()?
-            .into_iter()
-            .map(|entry| entry.path())
-            .collect::<Vec<_>>();
-        entries.sort();
-        for entry in entries {
-            collect_text_files_inner(root, &entry, max_file_size, files)?;
-        }
-    } else if metadata.is_file()
-        && let Some(file) = read_text_file(root, path, &metadata, max_file_size)?
-    {
-        files.push(file);
-    }
-
-    Ok(())
 }
 
 fn read_text_file(
@@ -270,10 +261,18 @@ fn read_text_file(
     }))
 }
 
-fn ignored_dir(path: &Path) -> bool {
-    path.file_name()
-        .and_then(|name| name.to_str())
-        .is_some_and(|name| matches!(name, ".git" | ".roder" | "target"))
+fn ignored_path(root: &Path, path: &Path) -> bool {
+    let Ok(relative) = path.strip_prefix(root) else {
+        return true;
+    };
+    relative.components().any(|component| {
+        let value = component.as_os_str().to_string_lossy();
+        matches!(value.as_ref(), ".git" | ".roder" | "target")
+    })
+}
+
+fn ignore_error(err: ignore::Error) -> SearchError {
+    SearchError::Io(std::io::Error::other(err))
 }
 
 fn obvious_binary(path: &Path) -> bool {

@@ -44,6 +44,10 @@ run = "make test"
 description = "Run unit tests only (skip integration binaries)"
 run = "make test-fast"
 
+[tasks."release:check"]
+description = "Check that Cargo workspace changes include a workspace version bump"
+run = "make release-check"
+
 [tasks."rust:setup"]
 description = "Install Rust build tools (nextest) and ensure brew lld"
 run = [

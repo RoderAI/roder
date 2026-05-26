@@ -1255,6 +1255,16 @@ pub struct ProviderConfigureResult {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProviderClearParams {
+    pub provider: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProviderClearResult {
+    pub provider: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SubagentTracesListParams {
     pub thread_id: ThreadId,

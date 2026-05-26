@@ -1,0 +1,115 @@
+name: Release
+
+on:
+  push:
+    branches:
+      - main
+      - master
+    paths:
+      - Cargo.toml
+      - Cargo.lock
+      - crates/**
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Expected workspace version, without the leading v
+        required: false
+        type: string
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    env:
+      REQUESTED_VERSION: ${{ github.event.inputs.version || '' }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install Rust toolchain and linker
+        shell: bash
+        run: |
+          rustup toolchain install 1.95.0 --profile minimal
+          rustup default 1.95.0
+          sudo apt-get update
+          sudo apt-get install -y clang lld
+
+      - name: Read workspace version
+        id: version
+        shell: bash
+        run: |
+          version="$(python3 -c '
+          import re
+
+          in_workspace_package = False
+          with open("Cargo.toml", encoding="utf-8") as manifest:
+              for raw_line in manifest:
+                  line = raw_line.strip()
+                  if line == "[workspace.package]":
+                      in_workspace_package = True
+                      continue
+                  if line.startswith("[") and line.endswith("]"):
+                      in_workspace_package = False
+                  if in_workspace_package:
+                      match = re.match(r"version\s*=\s*\"([^\"]+)\"", line)
+                      if match:
+                          print(match.group(1))
+                          raise SystemExit(0)
+          raise SystemExit("workspace package version not found")
+          ')"
+          if [[ -n "$REQUESTED_VERSION" && "$REQUESTED_VERSION" != "$version" ]]; then
+            echo "Requested release version $REQUESTED_VERSION does not match Cargo.toml version $version" >&2
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - name: Check version bump
+        if: github.event_name == 'push'
+        shell: bash
+        run: scripts/check-version-bump.sh "${{ github.event.before }}"
+
+      - name: Check Cargo.lock
+        shell: bash
+        run: cargo metadata --locked --format-version 1 >/dev/null
+
+      - name: Test
+        shell: bash
+        run: make test
+
+      - name: Create tag
+        id: tag
+        shell: bash
+        run: |
+          tag="v${{ steps.version.outputs.version }}"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          if git rev-parse -q --verify "refs/tags/$tag" >/dev/null; then
+            echo "created=false" >> "$GITHUB_OUTPUT"
+            echo "Release tag $tag already exists"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag -a "$tag" -m "roder $tag"
+          git push origin "$tag"
+          echo "created=true" >> "$GITHUB_OUTPUT"
+
+      - name: Create GitHub release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tag="${{ steps.tag.outputs.tag }}"
+          if gh release view "$tag" >/dev/null 2>&1; then
+            echo "GitHub release $tag already exists"
+            exit 0
+          fi
+          gh release create "$tag" \
+            --title "Roder $tag" \
+            --generate-notes

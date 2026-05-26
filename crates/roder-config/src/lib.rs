@@ -656,6 +656,10 @@ pub fn save_provider_api_key(provider: &str, api_key: &str) -> anyhow::Result<()
     save_provider_api_key_to_path(config_path(), provider, api_key)
 }
 
+pub fn delete_provider_api_key(provider: &str) -> anyhow::Result<()> {
+    delete_provider_api_key_to_path(config_path(), provider)
+}
+
 pub fn save_skills_config(skills: &roder_skills::SkillsConfig) -> anyhow::Result<()> {
     save_skills_config_to_path(config_path(), skills)
 }
@@ -763,6 +767,18 @@ pub fn save_provider_api_key_to_path(
         .entry(provider.to_string())
         .or_default()
         .api_key = Some(api_key.to_string());
+    save_config_file_to_path(path, &config)
+}
+
+pub fn delete_provider_api_key_to_path(
+    path: impl AsRef<Path>,
+    provider: &str,
+) -> anyhow::Result<()> {
+    let path = path.as_ref();
+    let mut config = load_config_file_from_path(path)?;
+    if let Some(p) = config.providers.get_mut(provider) {
+        p.api_key = None;
+    }
     save_config_file_to_path(path, &config)
 }
 
