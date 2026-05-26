@@ -43,7 +43,8 @@
         "benchmark_guidance_enabled": true,
         "task_ledger_required": true,
         "policy_mode": "bypass",
-        "include_local_source": "true",
+        "include_prebuilt_binary": "true",
+        "include_local_source": "false",
         "soft_timeout_sec": 1780
       },
       "env": {}

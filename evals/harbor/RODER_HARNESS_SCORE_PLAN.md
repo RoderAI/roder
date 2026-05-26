@@ -13,11 +13,24 @@ reliability backlog.
 - Beat Codex CLI on this 89-task suite: at least 73/89 pass, +23 over baseline
 - Beat 84.7% directly on this suite: at least 76/89 pass, +26 over baseline
 
-The current targeted fixes are useful but not enough. If every validated
-conversion is stable in a routed full run, the expected score is now about
-61/89: 50 baseline passes, 4 medium-reasoning focused conversions, and 7
-additional xhigh-reasoning conversions. That is still 12 short of beating Codex
-CLI and 15 short of directly beating 84.7%.
+The current targeted fixes are useful but not enough. The generated
+validated-conversions manifest now records a `scoreProjection` block so this
+arithmetic is tied to the route set. If every generated route is stable in a
+clean routed run, the expected score is 65/89: 50 baseline passes,
+4 medium-reasoning focused conversions, 7 xhigh-reasoning conversions, and
+4 plan-first xhigh conversions. That is still 8 short of beating Codex CLI and
+11 short of directly beating 84.7%.
+
+The historical-wins campaign adds the three already-observed wins that were not
+in the validated-conversions route set: `password-recovery`, `qemu-startup`, and
+`vulnerable-secret`. Use `summarize_tbench_campaigns.py --require-no-overlap
+--expect-unique-tasks 18 --expect-projected-passes 68 --expect-task ...
+--expect-owner ...`
+against both manifests before a live run, with those three task names passed as
+explicit `--expect-task` checks and their reviewed route assignments passed as
+`--expect-owner` checks. The intended combined projection is 18 unique candidates
+and 68/89, leaving 5 passes to beat Codex CLI and 8 to beat the direct SOTA
+target.
 
 ## Validated Conversions
 
@@ -137,6 +150,10 @@ reasoning route:
    the 7 validated xhigh conversions above. Keep `qemu-startup` out unless the
    environment issue is separately addressed.
 
+   Generate and summarize the separate `historical-wins` route before launch so
+   `qemu-startup` stays reviewable as an environment-targeted historical win
+   instead of silently joining the validated conversion route.
+
 2. Split remaining scored failures into two categories:
    - task-strategy candidates where prompt/runtime guidance can plausibly lift
      score without changing task images
@@ -152,8 +169,8 @@ reasoning route:
      work can be made scoreable earlier
 
 4. Do not spend more full-run budget until the routed focused set shows the
-   current +11 conversions together in one clean run. That still leaves a
-   second tranche of at least 12 conversions to beat Codex CLI.
+   current +15 conversions together in one clean run. That still leaves a
+   second tranche of at least 8 conversions to beat Codex CLI.
 
 ## Reliability Work That Still Affects Score
 

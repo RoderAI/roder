@@ -4,6 +4,8 @@ use roder_api::conversation::ConversationItem;
 use roder_api::extension::InferenceEngineId;
 use roder_api::inference::*;
 
+mod tbench_diagnostics;
+
 pub struct FakeInferenceEngine;
 
 #[async_trait::async_trait]
@@ -58,6 +60,10 @@ impl InferenceEngine for FakeInferenceEngine {
                     arguments: task_ledger_arguments(complete),
                 },
             ))]);
+            return Ok(Box::pin(stream));
+        }
+        if let Some(tool_call) = tbench_diagnostics::next_tool_call(&request) {
+            let stream = stream::iter(vec![Ok(InferenceEvent::ToolCallCompleted(tool_call))]);
             return Ok(Box::pin(stream));
         }
         if should_write_file(&request) {

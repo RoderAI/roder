@@ -13,6 +13,14 @@ from harbor.models.trial.paths import EnvironmentPaths
 from roder_benchmark_guidance import TERMINAL_BENCH_GUIDANCE
 from roder_config_shell import rewrite_reasoning_shell_fragment
 from roder_exec_shell import roder_exec_shell_fragment
+from roder_harbor_agent_config import (
+    optional_bool,
+    optional_float,
+    optional_int,
+    optional_int_list,
+    reliability_config_toml,
+    speed_policy_config_toml,
+)
 from roder_plan_first import (
     implementation_prompt_for_instruction,
     plan_first_shell_fragment,
@@ -56,19 +64,19 @@ class RoderCli(BaseInstalledAgent):
             or os.environ.get("RODER_HARBOR_PREBUILT_BINARY")
             or self._source_dir / "evals/harbor/artifacts/roder-linux-amd64"
         ).expanduser()
-        guidance = self._optional_bool(
+        guidance = optional_bool(
             kwargs.get("benchmark_guidance_enabled")
             if "benchmark_guidance_enabled" in kwargs
             else os.environ.get("RODER_HARBOR_BENCHMARK_GUIDANCE_ENABLED")
         )
         self._benchmark_guidance_enabled = True if guidance is None else guidance
-        task_ledger = self._optional_bool(
+        task_ledger = optional_bool(
             kwargs.get("task_ledger_required")
             if "task_ledger_required" in kwargs
             else os.environ.get("RODER_HARBOR_TASK_LEDGER_REQUIRED")
         )
         self._task_ledger_required = False if task_ledger is None else task_ledger
-        plan_first = self._optional_bool(
+        plan_first = optional_bool(
             kwargs.get("plan_first_enabled")
             if "plan_first_enabled" in kwargs
             else os.environ.get("RODER_HARBOR_PLAN_FIRST_ENABLED")
@@ -87,7 +95,7 @@ class RoderCli(BaseInstalledAgent):
         plan_first_soft_timeout = kwargs.get("plan_first_soft_timeout_sec") or os.environ.get(
             "RODER_HARBOR_PLAN_FIRST_SOFT_TIMEOUT_SEC"
         )
-        self._plan_first_soft_timeout_sec = self._optional_int(plan_first_soft_timeout)
+        self._plan_first_soft_timeout_sec = optional_int(plan_first_soft_timeout)
         if self._plan_first_enabled and self._plan_first_soft_timeout_sec is None:
             self._plan_first_soft_timeout_sec = 360
         self._source_roots = tuple(
@@ -97,12 +105,12 @@ class RoderCli(BaseInstalledAgent):
             "RODER_HARBOR_SOFT_TIMEOUT_SEC"
         )
         self._soft_timeout_sec = int(float(soft_timeout)) if soft_timeout else None
-        self._speed_policy_enabled = self._optional_bool(
+        self._speed_policy_enabled = optional_bool(
             kwargs.get("speed_policy_enabled")
             if "speed_policy_enabled" in kwargs
             else os.environ.get("RODER_HARBOR_SPEED_POLICY_ENABLED")
         )
-        self._speed_policy_eval_deadline_seconds = self._optional_int(
+        self._speed_policy_eval_deadline_seconds = optional_int(
             kwargs.get("speed_policy_eval_deadline_seconds")
             if "speed_policy_eval_deadline_seconds" in kwargs
             else os.environ.get("RODER_HARBOR_SPEED_POLICY_EVAL_DEADLINE_SECONDS")
@@ -118,80 +126,47 @@ class RoderCli(BaseInstalledAgent):
             or os.environ.get("RODER_HARBOR_SPEED_POLICY_RECOVERY_REASONING"),
         }
         self._reliability = {
-            "provider_retry_max_attempts": self._optional_int(
+            "provider_retry_max_attempts": optional_int(
                 kwargs.get("reliability_provider_retry_max_attempts")
                 if "reliability_provider_retry_max_attempts" in kwargs
                 else os.environ.get("RODER_HARBOR_RELIABILITY_PROVIDER_RETRY_MAX_ATTEMPTS")
             ),
-            "provider_retry_initial_backoff_ms": self._optional_int(
+            "provider_retry_initial_backoff_ms": optional_int(
                 kwargs.get("reliability_provider_retry_initial_backoff_ms")
                 if "reliability_provider_retry_initial_backoff_ms" in kwargs
                 else os.environ.get("RODER_HARBOR_RELIABILITY_PROVIDER_RETRY_INITIAL_BACKOFF_MS")
             ),
-            "provider_retry_backoff_factor": self._optional_int(
+            "provider_retry_backoff_factor": optional_float(
                 kwargs.get("reliability_provider_retry_backoff_factor")
                 if "reliability_provider_retry_backoff_factor" in kwargs
                 else os.environ.get("RODER_HARBOR_RELIABILITY_PROVIDER_RETRY_BACKOFF_FACTOR")
             ),
-            "provider_retry_status_codes": self._optional_int_list(
+            "provider_retry_status_codes": optional_int_list(
                 kwargs.get("reliability_provider_retry_status_codes")
                 if "reliability_provider_retry_status_codes" in kwargs
                 else os.environ.get("RODER_HARBOR_RELIABILITY_PROVIDER_RETRY_STATUS_CODES")
             ),
-            "retry_empty_provider_body": self._optional_bool(
+            "retry_empty_provider_body": optional_bool(
                 kwargs.get("reliability_retry_empty_provider_body")
                 if "reliability_retry_empty_provider_body" in kwargs
                 else os.environ.get("RODER_HARBOR_RELIABILITY_RETRY_EMPTY_PROVIDER_BODY")
             ),
-            "max_consecutive_tool_failures": self._optional_int(
+            "max_consecutive_tool_failures": optional_int(
                 kwargs.get("reliability_max_consecutive_tool_failures")
                 if "reliability_max_consecutive_tool_failures" in kwargs
                 else os.environ.get("RODER_HARBOR_RELIABILITY_MAX_CONSECUTIVE_TOOL_FAILURES")
             ),
-            "max_tool_failures_per_turn": self._optional_int(
+            "max_tool_failures_per_turn": optional_int(
                 kwargs.get("reliability_max_tool_failures_per_turn")
                 if "reliability_max_tool_failures_per_turn" in kwargs
                 else os.environ.get("RODER_HARBOR_RELIABILITY_MAX_TOOL_FAILURES_PER_TURN")
             ),
-            "max_model_calls_per_turn": self._optional_int(
+            "max_model_calls_per_turn": optional_int(
                 kwargs.get("reliability_max_model_calls_per_turn")
                 if "reliability_max_model_calls_per_turn" in kwargs
                 else os.environ.get("RODER_HARBOR_RELIABILITY_MAX_MODEL_CALLS_PER_TURN")
             ),
         }
-
-    @staticmethod
-    def _optional_bool(value) -> bool | None:
-        if value is None:
-            return None
-        if isinstance(value, bool):
-            return value
-        text = str(value).strip().lower()
-        if text in {"1", "true", "yes", "on"}:
-            return True
-        if text in {"0", "false", "no", "off"}:
-            return False
-        raise ValueError(f"invalid boolean value: {value!r}")
-
-    @staticmethod
-    def _optional_int(value) -> int | None:
-        if value is None or value == "":
-            return None
-        return int(float(value))
-
-    @staticmethod
-    def _optional_int_list(value) -> list[int] | None:
-        if value is None or value == "":
-            return None
-        if isinstance(value, (list, tuple)):
-            return [int(item) for item in value]
-        return [int(part.strip()) for part in str(value).split(",") if part.strip()]
-
-    @staticmethod
-    def _toml_value(value) -> str:
-        if isinstance(value, bool):
-            return str(value).lower()
-        return json.dumps(value)
 
     @property
     def _install_agent_template_path(self) -> Path:
@@ -212,31 +187,6 @@ class RoderCli(BaseInstalledAgent):
             provider = self._provider or "codex"
             model = model_name
         return self._provider or provider, model
-
-    def _speed_policy_config_toml(self) -> str:
-        lines: list[str] = []
-        if self._speed_policy_enabled is not None:
-            lines.append(f"enabled = {str(self._speed_policy_enabled).lower()}")
-        if self._speed_policy_eval_deadline_seconds is not None:
-            lines.append(
-                f"eval_deadline_seconds = {self._speed_policy_eval_deadline_seconds}"
-            )
-        for key, value in self._speed_policy_reasoning.items():
-            if value:
-                lines.append(f"{key} = {json.dumps(str(value))}")
-        if not lines:
-            return ""
-        return "\n[speed_policy]\n" + "\n".join(lines) + "\n"
-
-    def _reliability_config_toml(self) -> str:
-        lines = [
-            f"{key} = {self._toml_value(value)}"
-            for key, value in self._reliability.items()
-            if value is not None
-        ]
-        if not lines:
-            return ""
-        return "\n[reliability]\n" + "\n".join(lines) + "\n"
 
     def _prompt_for_instruction(self, instruction: str) -> str:
         if not self._benchmark_guidance_enabled:
@@ -355,8 +305,8 @@ class RoderCli(BaseInstalledAgent):
             f"model = {json.dumps(model)}\n"
             f"reasoning = {json.dumps(str(self._reasoning))}\n"
             "runtime_profile = \"eval\"\n"
-            f"{self._speed_policy_config_toml()}"
-            f"{self._reliability_config_toml()}"
+            f"{speed_policy_config_toml(enabled=self._speed_policy_enabled, eval_deadline_seconds=self._speed_policy_eval_deadline_seconds, reasoning=self._speed_policy_reasoning)}"
+            f"{reliability_config_toml(self._reliability)}"
             "\n"
             "[policy_modes]\n"
             f"default = {json.dumps(str(self._policy_mode))}\n"

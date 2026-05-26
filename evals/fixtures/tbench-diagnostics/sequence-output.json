@@ -1,0 +1,23 @@
+{
+  "id": "tbench-sequence-output",
+  "title": "TBench bounded sequence output",
+  "prompt": "FAKE_TBENCH_PROTEIN_SEQUENCE: write a bounded DNA-only sequence file.",
+  "tags": ["tbench-diagnostic", "bounded-sequence-output", "tool:write_file"],
+  "timeoutMs": 10000,
+  "expected": {
+    "finalAnswerContains": ["hello from roder"],
+    "files": [
+      {
+        "path": "gblock.txt",
+        "exists": true,
+        "maxBytes": 3000,
+        "allowedChars": "ACGT\n"
+      }
+    ],
+    "verificationRequired": true
+  },
+  "constraints": [
+    "sequence artifacts must satisfy hard length and alphabet contracts",
+    "ambiguous bases or prose in sequence files are verifier failures"
+  ]
+}

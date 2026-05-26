@@ -1,0 +1,22 @@
+{
+  "id": "tbench-json-array-output",
+  "title": "TBench JSON array serialization",
+  "prompt": "FAKE_TBENCH_SAM_JSON: write segmentation coordinates as JSON arrays, not tuple-like strings.",
+  "tags": ["tbench-diagnostic", "json-array-output", "tool:write_file"],
+  "timeoutMs": 10000,
+  "expected": {
+    "finalAnswerContains": ["hello from roder"],
+    "files": [
+      {
+        "path": "sam-output.json",
+        "exists": true,
+        "jsonArrayFields": ["coords_x", "coords_y"]
+      }
+    ],
+    "verificationRequired": true
+  },
+  "constraints": [
+    "coordinate fields must be parseable JSON arrays",
+    "tuple strings or scalar coordinate fields are verifier failures"
+  ]
+}
