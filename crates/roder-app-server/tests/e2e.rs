@@ -2643,6 +2643,82 @@ async fn protocol_contract_methods_support_protocol_startup_contract() {
 }
 
 #[tokio::test]
+async fn thread_start_persists_resolved_cwd_when_client_omits_cwd() {
+    let mut builder = ExtensionRegistryBuilder::new();
+    builder.inference_engine(Arc::new(FakeInferenceEngine));
+    let store = RecordingThreadStoreFactory::default();
+    let snapshots = Arc::clone(&store.snapshots);
+    builder.thread_store_factory(Arc::new(store));
+    let runtime = Arc::new(
+        Runtime::new(
+            builder.build().unwrap(),
+            RuntimeConfig {
+                workspace: None,
+                ..Default::default()
+            },
+        )
+        .unwrap(),
+    );
+    let server = Arc::new(AppServer::new(runtime));
+    let client = LocalAppClient::new(server);
+
+    let started: ThreadStartResult = request(
+        &client,
+        "thread/start",
+        Some(
+            serde_json::to_value(ThreadStartParams {
+                model: None,
+                model_provider: None,
+                cwd: None,
+                ephemeral: false,
+            })
+            .unwrap(),
+        ),
+    )
+    .await;
+
+    assert!(!started.cwd.trim().is_empty());
+    assert_eq!(started.thread.cwd, started.cwd);
+    let persisted_workspace = snapshots
+        .lock()
+        .await
+        .get(&started.thread.id)
+        .and_then(|snapshot| snapshot.metadata.as_ref())
+        .and_then(|metadata| metadata.workspace.as_deref().map(str::to_string));
+    assert_eq!(persisted_workspace.as_deref(), Some(started.cwd.as_str()));
+
+    let read: ThreadReadResult = request(
+        &client,
+        "thread/read",
+        Some(
+            serde_json::to_value(ThreadReadParams {
+                thread_id: started.thread.id.clone(),
+                include_turns: false,
+            })
+            .unwrap(),
+        ),
+    )
+    .await;
+    assert_eq!(
+        read.thread.expect("thread/read returns thread").cwd,
+        started.cwd
+    );
+
+    let listed: ThreadListResult = request(
+        &client,
+        "thread/list",
+        Some(serde_json::to_value(ThreadListParams { limit: None }).unwrap()),
+    )
+    .await;
+    let listed_thread = listed
+        .data
+        .iter()
+        .find(|thread| thread.id == started.thread.id)
+        .expect("thread/list includes started thread");
+    assert_eq!(listed_thread.cwd, started.cwd);
+}
+
+#[tokio::test]
 async fn thread_snapshots_overlay_runtime_active_turn_status() {
     let mut builder = ExtensionRegistryBuilder::new();
     builder.inference_engine(Arc::new(PendingEngine));
