@@ -649,6 +649,52 @@ enabled; the wrapper applies that flag automatically unless
 The checked-in full config runs four Terminal-Bench trials at a time through
 Harbor's local orchestrator.
 
+## Gemini 3.5 Flash Validation
+
+`evals/harbor/tbench-gemini35-flash-validation.json` is the native-Gemini
+validation set for `gemini/gemini-3.5-flash`. It uses six Terminal-Bench 2.0
+tasks with existing GPT-5.5 pass evidence and clean Harbor verifier behavior:
+
+- Medium-run passes:
+  `configure-git-webserver`, `headless-terminal`, `regex-log`,
+  `sqlite-db-truncate`.
+- Xhigh rerun passes:
+  `kv-store-grpc`, `polyglot-c-py`.
+
+`db-wal-recovery` and `query-optimize` are intentionally excluded from this
+small validation set because they did not produce clean Harbor scoring artifacts
+during Gemini harness validation.
+
+The current clean baseline from May 26, 2026 is `5/6` (`83.3%`) with zero
+Harbor errors: five passes and one scored failure on `polyglot-c-py`.
+
+The full small-subset runbook is in
+`evals/harbor/GEMINI35_FLASH_VALIDATION.md`.
+
+Run the local non-live gates before using it:
+
+```sh
+python3 evals/harbor/preflight_tbench_images.py \
+  --config evals/harbor/tbench-gemini35-flash-validation.json \
+  --offline \
+  --manifest /tmp/roder-gemini35-flash-validation-images.json
+
+python3 evals/harbor/validate_harbor_readiness.py \
+  --config evals/harbor/tbench-gemini35-flash-validation.json
+```
+
+For a live Gemini validation run, provide a Gemini API key through
+`GEMINI_API_TOKEN`, `GEMINI_API_KEY`, `GOOGLE_API_KEY`,
+`GOOGLE_GENAI_API_KEY`, or `GOOGLE_AI_API_KEY`, then run Harbor explicitly:
+
+```sh
+PYTHONPATH="$PWD/evals/harbor${PYTHONPATH:+:$PYTHONPATH}" \
+  harbor run --config evals/harbor/tbench-gemini35-flash-validation.json
+```
+
+Analyze the result with `--expected-trials 6` so the same clean-run baseline
+blocks harness/provider errors without requiring a full 89-task run.
+
 ## Auth
 
 For the default `codex/gpt-5.5` model, the adapter copies

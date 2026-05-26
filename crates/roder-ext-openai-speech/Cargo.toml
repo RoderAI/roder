@@ -1,0 +1,29 @@
+[package]
+name = "roder-ext-openai-speech"
+version.workspace = true
+edition.workspace = true
+
+[package.metadata.roder.distribution]
+id = "openai-speech"
+category = "speech-transcriber"
+display_name = "OpenAI Speech"
+description = "OpenAI speech-to-text transcription provider."
+default_in_profiles = ["full", "openai-only"]
+required_env = ["OPENAI_API_KEY"]
+optional_env = ["OPENAI_BASE_URL"]
+conflicts_with = []
+required_capabilities = ["network.api.openai.com", "secret.read.OPENAI_API_KEY"]
+extension_path = "::OpenAiSpeechExtension::new"
+docs_url = "https://platform.openai.com/docs/guides/speech-to-text"
+
+[dependencies]
+anyhow.workspace = true
+async-trait.workspace = true
+reqwest = { workspace = true, features = ["json", "multipart"] }
+roder-api.workspace = true
+semver.workspace = true
+serde = { workspace = true, features = ["derive"] }
+serde_json.workspace = true
+
+[dev-dependencies]
+tokio.workspace = true

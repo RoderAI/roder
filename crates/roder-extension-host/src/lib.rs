@@ -18,10 +18,12 @@ use roder_api::remote_runner::RunnerDestination;
 use roder_api::tui_status::{PaletteSourceDescriptor, built_in_status_segments};
 use roder_ext_anthropic::AnthropicExtension;
 use roder_ext_gemini::GeminiExtension;
+use roder_ext_google_speech::{GoogleSpeechConfig, GoogleSpeechExtension};
 use roder_ext_jsonl_thread_store::JsonlThreadStoreExtension;
 use roder_ext_memory::MemoryExtension;
 use roder_ext_openai_embeddings::OpenAiEmbeddingsExtension;
 use roder_ext_openai_responses::{OpenAiResponsesEngine, OpenAiResponsesExtension};
+use roder_ext_openai_speech::OpenAiSpeechExtension;
 use roder_ext_opencode::{OpenCodeConfig, OpenCodeExtension};
 use roder_ext_poolside::{PoolsideConfig, PoolsideExtension};
 use roder_ext_runner_blaxel::BlaxelRunnerExtension;
@@ -49,6 +51,10 @@ pub use web_search::{DefaultWebSearchConfig, DefaultWebSearchProviderConfig};
 #[derive(Debug, Clone)]
 pub struct DefaultRegistryConfig {
     pub openai_api_key: Option<String>,
+    pub openai_speech_api_key: Option<String>,
+    pub google_speech_access_token: Option<String>,
+    pub google_speech_project_id: Option<String>,
+    pub google_speech_location: Option<String>,
     pub anthropic_api_key: Option<String>,
     pub gemini_api_key: Option<String>,
     pub xai_api_key: Option<String>,
@@ -77,6 +83,10 @@ impl Default for DefaultRegistryConfig {
     fn default() -> Self {
         Self {
             openai_api_key: None,
+            openai_speech_api_key: None,
+            google_speech_access_token: None,
+            google_speech_project_id: None,
+            google_speech_location: None,
             anthropic_api_key: None,
             gemini_api_key: None,
             xai_api_key: None,
@@ -132,6 +142,21 @@ pub fn build_default_registry(config: DefaultRegistryConfig) -> anyhow::Result<E
 
     builder.install(FakeProviderExtension)?;
     builder.install(CodexOAuthProviderExtension)?;
+
+    builder.install(OpenAiSpeechExtension::new(
+        config
+            .openai_speech_api_key
+            .clone()
+            .or_else(|| config.openai_api_key.clone()),
+    ))?;
+    builder.install(GoogleSpeechExtension::new(GoogleSpeechConfig {
+        access_token: config.google_speech_access_token,
+        project_id: config.google_speech_project_id,
+        location: config
+            .google_speech_location
+            .unwrap_or_else(|| "global".to_string()),
+        ..GoogleSpeechConfig::default()
+    }))?;
 
     if let Some(openai_key) = config.openai_api_key {
         builder.install(OpenAiResponsesExtension::new(openai_key))?;
@@ -621,6 +646,14 @@ mod tests {
     }
 
     #[test]
+    fn default_registry_installs_speech_transcribers_without_keys() {
+        let registry = build_default_registry(DefaultRegistryConfig::default()).unwrap();
+
+        assert!(registry.speech_transcriber("openai-speech").is_some());
+        assert!(registry.speech_transcriber("google-speech").is_some());
+    }
+
+    #[test]
     fn default_roder_home_dir_uses_home_roder() {
         let rendered = roder_home_dir()
             .unwrap()
@@ -634,6 +667,10 @@ mod tests {
     fn default_registry_with_keys_has_gode_provider_ids() {
         let registry = build_default_registry(DefaultRegistryConfig {
             openai_api_key: Some("openai".to_string()),
+            openai_speech_api_key: None,
+            google_speech_access_token: None,
+            google_speech_project_id: None,
+            google_speech_location: None,
             anthropic_api_key: Some("anthropic".to_string()),
             gemini_api_key: Some("gemini".to_string()),
             xai_api_key: Some("xai".to_string()),

@@ -112,6 +112,13 @@ impl AppServer {
             "initialize" => self.handle_initialize().await,
             "extensions/list" => self.handle_extensions_list().await,
             "providers/list" => self.handle_providers_list().await,
+            "speech/providers/list" => self.handle_speech_providers_list().await,
+            "speech/transcribe" => {
+                self.decode_and(req.params, |p| async move {
+                    self.handle_speech_transcribe(p).await
+                })
+                .await
+            }
             "providers/configure" => {
                 self.decode_and(req.params, |p| async move {
                     self.handle_provider_configure(p).await

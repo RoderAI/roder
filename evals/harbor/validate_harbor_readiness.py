@@ -16,6 +16,7 @@ from tbench_deadline_policy import TBENCH_DEADLINE_POLICY
 DEFAULT_CONFIGS = (
     Path("evals/harbor/tbench-full-gpt55-medium.json"),
     Path("evals/harbor/tbench-smoke.json"),
+    Path("evals/harbor/tbench-gemini35-flash-validation.json"),
 )
 REQUIRED_GITIGNORE_ENTRIES = (
     "evals/harbor/artifacts/",

@@ -6,6 +6,12 @@ use roder_api::capabilities::{
 use roder_api::extension::{
     ExtensionManifest, ExtensionRegistryBuilder, ProvidedService, RoderExtension,
 };
+use roder_api::inference::ProviderAuthType;
+use roder_api::speech::{
+    SpeechAudio, SpeechCapabilities, SpeechModelDescriptor, SpeechProviderContext,
+    SpeechProviderMetadata, SpeechTranscriber, SpeechTranscriptionRequest,
+    SpeechTranscriptionResult,
+};
 use roder_api::tools::{
     ToolCall, ToolContributor, ToolExecutionContext, ToolExecutor, ToolRegistry, ToolResult,
     ToolSpec,
@@ -104,6 +110,23 @@ fn registry_records_requested_and_granted_capabilities() {
     assert_eq!(statuses[1].id, "network.http");
     assert_eq!(statuses[1].decision, CapabilityDecision::Requested);
     assert_eq!(statuses[1].reason.as_deref(), Some("search extension"));
+}
+
+#[test]
+fn registry_installs_speech_transcribers() {
+    let mut builder = ExtensionRegistryBuilder::new();
+    builder.install(SpeechExtension).unwrap();
+
+    let registry = builder.build().unwrap();
+
+    assert!(registry.speech_transcriber("test-speech").is_some());
+    assert!(
+        registry
+            .provided_services()
+            .contains(&ProvidedService::SpeechTranscriber(
+                "test-speech".to_string()
+            ))
+    );
 }
 
 #[test]
@@ -283,6 +306,96 @@ impl ToolExecutor for TestToolExecutor {
             text: "ok".to_string(),
             data: serde_json::json!({}),
             is_error: false,
+        })
+    }
+}
+
+struct SpeechExtension;
+
+impl RoderExtension for SpeechExtension {
+    fn manifest(&self) -> ExtensionManifest {
+        ExtensionManifest {
+            id: "speech".to_string(),
+            name: "speech".to_string(),
+            version: Version::new(0, 1, 0),
+            api_version: "0.1.0".to_string(),
+            description: None,
+            provides: vec![ProvidedService::SpeechTranscriber(
+                "test-speech".to_string(),
+            )],
+            required_capabilities: Vec::new(),
+        }
+    }
+
+    fn install(&self, registry: &mut ExtensionRegistryBuilder) -> anyhow::Result<()> {
+        registry.speech_transcriber(Arc::new(TestSpeechTranscriber));
+        Ok(())
+    }
+}
+
+struct TestSpeechTranscriber;
+
+#[async_trait::async_trait]
+impl SpeechTranscriber for TestSpeechTranscriber {
+    fn id(&self) -> roder_api::extension::SpeechTranscriberId {
+        "test-speech".to_string()
+    }
+
+    fn capabilities(&self) -> SpeechCapabilities {
+        SpeechCapabilities {
+            batch: true,
+            streaming: false,
+            diarization: false,
+            timestamps: false,
+            language_hints: true,
+            prompt: true,
+        }
+    }
+
+    fn metadata(&self) -> SpeechProviderMetadata {
+        SpeechProviderMetadata {
+            name: "Test Speech".to_string(),
+            description: Some("test speech provider".to_string()),
+            auth_type: ProviderAuthType::None,
+            auth_label: None,
+            auth_configured: Some(true),
+            recommended: false,
+            sort_order: 100,
+        }
+    }
+
+    async fn list_models(
+        &self,
+        _ctx: SpeechProviderContext<'_>,
+    ) -> anyhow::Result<Vec<SpeechModelDescriptor>> {
+        Ok(vec![SpeechModelDescriptor {
+            id: "test-transcribe".to_string(),
+            name: "Test Transcribe".to_string(),
+            description: None,
+            capabilities: self.capabilities(),
+        }])
+    }
+
+    async fn transcribe(
+        &self,
+        _ctx: SpeechProviderContext<'_>,
+        request: SpeechTranscriptionRequest,
+    ) -> anyhow::Result<SpeechTranscriptionResult> {
+        assert_eq!(
+            request.audio,
+            SpeechAudio {
+                bytes: b"audio".to_vec(),
+                mime_type: "audio/wav".to_string(),
+                filename: Some("clip.wav".to_string()),
+            }
+        );
+        Ok(SpeechTranscriptionResult {
+            text: "hello".to_string(),
+            language: Some("en".to_string()),
+            duration_millis: None,
+            segments: Vec::new(),
+            provider_response_id: None,
+            metadata: serde_json::json!({}),
         })
     }
 }

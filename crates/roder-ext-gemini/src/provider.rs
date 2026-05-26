@@ -11,7 +11,10 @@ use roder_api::reliability::{
     provider_retry_status_cause,
 };
 use serde_json::{Value, json};
+use std::collections::{HashMap, HashSet};
 use std::time::Duration;
+
+use crate::schema::gemini_schema;
 
 pub struct GeminiEngine {
     api_key: String,
@@ -53,7 +56,7 @@ impl GeminiEngine {
                         json!({
                             "name": tool.name,
                             "description": tool.description,
-                            "parameters": tool.parameters,
+                            "parameters": gemini_schema(tool.parameters),
                         })
                     })
                     .collect::<Vec<_>>()
@@ -217,41 +220,132 @@ async fn retry_sleep(policy: &ReliabilityRequestPolicy, attempt: u32) {
 }
 
 fn gemini_contents(request: &AgentInferenceRequest) -> Vec<Value> {
-    request
-        .transcript
-        .iter()
-        .filter_map(|item| match item {
-            roder_api::transcript::TranscriptItem::UserMessage(message) => Some(json!({
-                "role": "user",
-                "parts": [{ "text": message.text }]
-            })),
-            roder_api::transcript::TranscriptItem::AssistantMessage(message) => Some(json!({
-                "role": "model",
-                "parts": [{ "text": message.text }]
-            })),
-            roder_api::transcript::TranscriptItem::ToolCall(call) => Some(json!({
-                "role": "model",
-                "parts": [{
-                    "functionCall": {
-                        "id": call.id,
-                        "name": call.name,
-                        "args": parse_json_object(&call.arguments)
-                    }
-                }]
-            })),
-            roder_api::transcript::TranscriptItem::ToolResult(result) => Some(json!({
-                "role": "user",
-                "parts": [{
-                    "functionResponse": {
-                        "id": result.id,
-                        "name": result.name.clone().unwrap_or_default(),
-                        "response": { "result": result.result, "is_error": result.is_error }
-                    }
-                }]
-            })),
-            _ => None,
-        })
-        .collect()
+    let mut contents = Vec::new();
+    let mut replay = GeminiProviderReplay::default();
+    for item in &request.transcript {
+        match item {
+            roder_api::transcript::TranscriptItem::UserMessage(message) => {
+                contents.push(json!({
+                    "role": "user",
+                    "parts": [{ "text": message.text }]
+                }));
+            }
+            roder_api::transcript::TranscriptItem::AssistantMessage(message) => {
+                contents.push(json!({
+                    "role": "model",
+                    "parts": [{ "text": message.text }]
+                }));
+            }
+            roder_api::transcript::TranscriptItem::ToolCall(call) => {
+                if replay.should_skip_tool_call(call) {
+                    continue;
+                }
+                contents.push(json!({
+                    "role": "model",
+                    "parts": [{
+                        "functionCall": {
+                            "id": call.id,
+                            "name": call.name,
+                            "args": parse_json_object(&call.arguments)
+                        }
+                    }]
+                }));
+            }
+            roder_api::transcript::TranscriptItem::ToolResult(result) => {
+                contents.push(json!({
+                    "role": "user",
+                    "parts": [{
+                        "functionResponse": {
+                            "id": result.id,
+                            "name": result.name.clone().unwrap_or_default(),
+                            "response": { "result": result.result, "is_error": result.is_error }
+                        }
+                    }]
+                }));
+            }
+            roder_api::transcript::TranscriptItem::ProviderMetadata(metadata) => {
+                append_provider_function_call_content(metadata, &mut contents, &mut replay);
+            }
+            _ => {}
+        }
+    }
+    contents
+}
+
+#[derive(Default)]
+struct GeminiProviderReplay {
+    call_ids: HashSet<String>,
+    call_keys: HashMap<(String, String), usize>,
+}
+
+impl GeminiProviderReplay {
+    fn record_part(&mut self, part: &Value) {
+        let Some(call) = part.get("functionCall") else {
+            return;
+        };
+        if let Some(id) = call.get("id").and_then(Value::as_str)
+            && !id.is_empty()
+        {
+            self.call_ids.insert(id.to_string());
+        }
+        if let Some(name) = call.get("name").and_then(Value::as_str) {
+            let args = call.get("args").cloned().unwrap_or_else(|| json!({}));
+            *self
+                .call_keys
+                .entry((name.to_string(), canonical_json(&args)))
+                .or_default() += 1;
+        }
+    }
+
+    fn should_skip_tool_call(&mut self, call: &roder_api::transcript::ToolCallRecord) -> bool {
+        if !call.id.is_empty() && self.call_ids.remove(&call.id) {
+            return true;
+        }
+        let key = (call.name.clone(), canonical_tool_arguments(&call.arguments));
+        let Some(count) = self.call_keys.get_mut(&key) else {
+            return false;
+        };
+        *count = count.saturating_sub(1);
+        if *count == 0 {
+            self.call_keys.remove(&key);
+        }
+        true
+    }
+}
+
+fn append_provider_function_call_content(
+    metadata: &Value,
+    contents: &mut Vec<Value>,
+    replay: &mut GeminiProviderReplay,
+) {
+    let Some(content) = metadata.pointer("/candidates/0/content") else {
+        return;
+    };
+    let Some(parts) = content.get("parts").and_then(Value::as_array) else {
+        return;
+    };
+    if !parts.iter().any(|part| part.get("functionCall").is_some()) {
+        return;
+    }
+    for part in parts {
+        replay.record_part(part);
+    }
+    let mut content = content.clone();
+    if content.get("role").is_none() {
+        content["role"] = json!("model");
+    }
+    contents.push(content);
+}
+
+fn canonical_tool_arguments(raw: &str) -> String {
+    serde_json::from_str::<Value>(raw)
+        .ok()
+        .unwrap_or_else(|| json!({}))
+        .to_string()
+}
+
+fn canonical_json(value: &Value) -> String {
+    value.to_string()
 }
 
 fn gemini_tool_config(choice: &roder_api::tools::ToolChoice) -> Value {
@@ -299,11 +393,11 @@ fn gemini_generation_config(request: &AgentInferenceRequest) -> Value {
 
 fn gemini_thinking_config(level: Option<&str>) -> Option<Value> {
     match level {
-        Some("none") => Some(json!({ "thinkingBudget": 0 })),
         Some("minimal") => Some(json!({ "thinkingLevel": "MINIMAL" })),
         Some("low") => Some(json!({ "thinkingLevel": "LOW" })),
         Some("medium") => Some(json!({ "thinkingLevel": "MEDIUM" })),
-        Some("high") | Some("xhigh") | None => Some(json!({ "thinkingLevel": "HIGH" })),
+        Some("high") => Some(json!({ "thinkingLevel": "HIGH" })),
+        None => None,
         Some(_) => None,
     }
 }
@@ -555,6 +649,66 @@ mod tests {
             schema.starts_with(r#"{"type":"object","required":["command"],"properties":"#),
             "{schema}"
         );
+    }
+
+    #[test]
+    fn replays_gemini_function_call_content_with_thought_signature() {
+        let mut request = request();
+        request.transcript = vec![
+            TranscriptItem::UserMessage(UserMessage::text("List files")),
+            TranscriptItem::ProviderMetadata(json!({
+                "candidates": [{
+                    "content": {
+                        "role": "model",
+                        "parts": [{
+                            "functionCall": {
+                                "name": "shell",
+                                "args": { "cmd": "ls" }
+                            },
+                            "thoughtSignature": "signed-thought"
+                        }]
+                    }
+                }]
+            })),
+            TranscriptItem::ToolCall(ToolCallRecord {
+                id: "call_1".to_string(),
+                name: "shell".to_string(),
+                arguments: r#"{"cmd":"ls"}"#.to_string(),
+            }),
+            TranscriptItem::ToolResult(ToolResultRecord {
+                id: "call_1".to_string(),
+                name: Some("shell".to_string()),
+                result: "Cargo.toml".to_string(),
+                display_payload: None,
+                is_error: false,
+            }),
+        ];
+
+        let body = GeminiEngine::map_request(&request);
+        let contents = body["contents"].as_array().unwrap();
+        let function_call_count = contents
+            .iter()
+            .filter(|content| {
+                content
+                    .pointer("/parts/0/functionCall/name")
+                    .and_then(Value::as_str)
+                    == Some("shell")
+            })
+            .count();
+
+        assert_eq!(function_call_count, 1);
+        assert_eq!(
+            contents[1]["parts"][0]["thoughtSignature"],
+            "signed-thought"
+        );
+        assert_eq!(contents[2]["parts"][0]["functionResponse"]["name"], "shell");
+    }
+
+    #[test]
+    fn rejects_unsupported_gemini_thinking_levels() {
+        assert_eq!(gemini_thinking_config(Some("xhigh")), None);
+        assert_eq!(gemini_thinking_config(Some("none")), None);
+        assert_eq!(gemini_thinking_config(None), None);
     }
 
     #[test]

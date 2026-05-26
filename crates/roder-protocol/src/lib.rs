@@ -1,5 +1,6 @@
 pub mod methods;
 pub mod schema;
+pub mod speech;
 
 use roder_api::artifacts::{
     ArtifactGrepPage, ArtifactReadPage, ArtifactTailPage, ContextArtifactDescriptor,
@@ -56,6 +57,8 @@ use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::collections::HashMap;
 use time::OffsetDateTime;
+
+pub use speech::*;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct JsonRpcRequest {

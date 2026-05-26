@@ -13,6 +13,7 @@ mod resume_picker;
 mod roadmap_cli;
 mod sdk_schema;
 mod skills;
+mod speech;
 #[cfg(test)]
 mod tui_config;
 
@@ -60,6 +61,7 @@ use roder_protocol::{
 use roder_tui::{TuiApp, TuiRunOptions, TuiStartup};
 use roder_web_search::WebSearchProviderKind;
 use skills::run_skills_cli;
+use speech::run_speech_cli;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::sync::mpsc;
 
@@ -124,6 +126,9 @@ async fn main() -> anyhow::Result<()> {
     }
     if matches!(args.first().map(String::as_str), Some("memory")) {
         return run_memory_cli(&args[1..]).await;
+    }
+    if matches!(args.first().map(String::as_str), Some("speech")) {
+        return run_speech_cli(&args[1..]).await;
     }
     if matches!(args.first().map(String::as_str), Some("team")) {
         return run_team_cli(&args[1..]).await;
@@ -1061,6 +1066,10 @@ pub(crate) async fn build_runtime_from_config(
     let workspace = std::env::current_dir().ok();
     let registry = build_default_registry(DefaultRegistryConfig {
         openai_api_key: keys.openai,
+        openai_speech_api_key: keys.openai_speech,
+        google_speech_access_token: keys.google_speech_access_token,
+        google_speech_project_id: keys.google_speech_project_id,
+        google_speech_location: keys.google_speech_location,
         anthropic_api_key: keys.anthropic,
         gemini_api_key: keys.gemini,
         xai_api_key: keys.xai,
@@ -1929,6 +1938,10 @@ fn home_dir() -> Option<PathBuf> {
 
 struct ProviderKeys {
     openai: Option<String>,
+    openai_speech: Option<String>,
+    google_speech_access_token: Option<String>,
+    google_speech_project_id: Option<String>,
+    google_speech_location: Option<String>,
     anthropic: Option<String>,
     gemini: Option<String>,
     xai: Option<String>,
@@ -1953,6 +1966,48 @@ fn provider_keys(cfg: &roder_config::Config) -> ProviderKeys {
                     .get("openai_responses")
                     .and_then(|p| p.api_key.clone())
             }),
+        openai_speech: std::env::var("RODER_OPENAI_SPEECH_API_KEY")
+            .ok()
+            .or_else(|| std::env::var("OPENAI_API_KEY").ok())
+            .or_else(|| {
+                cfg.providers
+                    .get("openai-speech")
+                    .and_then(|p| p.api_key.clone())
+            })
+            .or_else(|| {
+                cfg.providers
+                    .get("openai-speech")
+                    .and_then(|p| p.api_key_env.as_deref())
+                    .and_then(env_nonempty)
+            }),
+        google_speech_access_token: std::env::var("RODER_GOOGLE_SPEECH_ACCESS_TOKEN")
+            .ok()
+            .or_else(|| {
+                cfg.providers
+                    .get("google-speech")
+                    .and_then(|p| p.api_key.clone())
+            })
+            .or_else(|| {
+                cfg.providers
+                    .get("google-speech")
+                    .and_then(|p| p.api_key_env.as_deref())
+                    .and_then(env_nonempty)
+            }),
+        google_speech_project_id: std::env::var("RODER_GOOGLE_SPEECH_PROJECT")
+            .ok()
+            .or_else(|| std::env::var("GOOGLE_CLOUD_PROJECT").ok())
+            .or_else(|| {
+                cfg.providers
+                    .get("google-speech")
+                    .and_then(|p| p.project_id.clone())
+            })
+            .or_else(|| {
+                cfg.providers
+                    .get("google-speech")
+                    .and_then(|p| p.project_id_env.as_deref())
+                    .and_then(env_nonempty)
+            }),
+        google_speech_location: std::env::var("RODER_GOOGLE_SPEECH_LOCATION").ok(),
         anthropic: std::env::var("ANTHROPIC_API_KEY").ok().or_else(|| {
             cfg.providers
                 .get("anthropic")
@@ -2084,6 +2139,8 @@ fn is_builtin_provider_id(id: &str) -> bool {
         id,
         "mock"
             | "openai"
+            | "openai-speech"
+            | "google-speech"
             | "codex"
             | "anthropic"
             | "gemini"

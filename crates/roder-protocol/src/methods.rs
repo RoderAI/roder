@@ -352,6 +352,13 @@ const METHOD_SPECS: &[AppServerMethodSpecSeed] = &[
         LocalState,
         NonIdempotent
     ),
+    method_spec!("speech/providers/list", "speech", ReadOnly, Idempotent),
+    method_spec!(
+        "speech/transcribe",
+        "speech",
+        ExternalProcess,
+        NonIdempotent
+    ),
     method_spec!("settings/get", "settings", ReadOnly, Idempotent),
     method_spec!(
         "settings/set_default_mode",
@@ -503,6 +510,8 @@ mod tests {
             "memory/query",
             "automations/list",
             "processes/list",
+            "speech/providers/list",
+            "speech/transcribe",
         ] {
             assert!(methods.contains(required), "missing {required}");
         }
