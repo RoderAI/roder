@@ -174,6 +174,12 @@ struct ActiveTurnHandle {
     steers: Arc<Mutex<Vec<UserMessage>>>,
 }
 
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ThreadActivity {
+    pub active_turn_id: Option<TurnId>,
+    pub active_flags: Vec<String>,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum TurnRunOutcome {
     Completed,
@@ -1275,6 +1281,42 @@ impl Runtime {
             .await
             .iter()
             .find_map(|(turn_id, handle)| (&handle.thread_id == thread_id).then(|| turn_id.clone()))
+    }
+
+    pub async fn thread_activity(&self, thread_id: &ThreadId) -> ThreadActivity {
+        let Some(active_turn_id) = self.active_turn_for_thread(thread_id).await else {
+            return ThreadActivity::default();
+        };
+
+        let mut active_flags = Vec::new();
+        {
+            let pending_approvals = self.pending_tool_approvals.lock().await;
+            if pending_approvals
+                .values()
+                .any(|pending| &pending.thread_id == thread_id && pending.turn_id == active_turn_id)
+            {
+                active_flags.push("approvalRequired".to_string());
+            }
+        }
+        {
+            let pending_inputs = self.pending_user_inputs.lock().await;
+            if pending_inputs
+                .values()
+                .any(|pending| &pending.thread_id == thread_id && pending.turn_id == active_turn_id)
+            {
+                active_flags.push("userInputRequired".to_string());
+            }
+        }
+        if self.pending_plan_exit().await.is_some_and(|pending| {
+            &pending.thread_id == thread_id && pending.turn_id == active_turn_id
+        }) {
+            active_flags.push("planExitRequired".to_string());
+        }
+
+        ThreadActivity {
+            active_turn_id: Some(active_turn_id),
+            active_flags,
+        }
     }
 
     pub async fn interrupt_turn(&self, thread_id: ThreadId, turn_id: TurnId) -> anyhow::Result<()> {

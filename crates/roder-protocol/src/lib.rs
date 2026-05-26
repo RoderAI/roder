@@ -109,7 +109,7 @@ pub struct InitializeResult {
 pub struct ThreadStatus {
     #[serde(rename = "type")]
     pub kind: String,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub active_turn_id: Option<TurnId>,
     pub active_flags: Vec<String>,
 }
 
@@ -2655,6 +2655,39 @@ mod tests {
         assert_eq!(value["params"]["itemId"], "turn-1-assistant");
         assert_eq!(value["params"]["delta"], "hello");
         assert_eq!(value["params"]["phase"], "final_answer");
+    }
+
+    #[test]
+    fn thread_status_serializes_required_activity_fields() {
+        let idle = serde_json::to_value(ThreadStatus {
+            kind: "idle".to_string(),
+            active_turn_id: None,
+            active_flags: Vec::new(),
+        })
+        .unwrap();
+        assert_eq!(
+            idle,
+            serde_json::json!({
+                "type": "idle",
+                "activeTurnId": null,
+                "activeFlags": []
+            })
+        );
+
+        let running = serde_json::to_value(ThreadStatus {
+            kind: "running".to_string(),
+            active_turn_id: Some("turn-1".to_string()),
+            active_flags: vec!["approvalRequired".to_string()],
+        })
+        .unwrap();
+        assert_eq!(
+            running,
+            serde_json::json!({
+                "type": "running",
+                "activeTurnId": "turn-1",
+                "activeFlags": ["approvalRequired"]
+            })
+        );
     }
 
     #[test]

@@ -36,8 +36,8 @@ use roder_app_server::remote::{
 };
 use roder_app_server::{AppServer, AppServerFeatureConfig, LocalAppClient};
 use roder_core::{
-    PendingPlanExit, Runtime, RuntimeConfig, fake_provider::FakeInferenceEngine,
-    media_artifacts::MediaArtifactStore,
+    CreateThreadRequest, PendingPlanExit, Runtime, RuntimeConfig, StartTurnRequest,
+    default_instructions, fake_provider::FakeInferenceEngine, media_artifacts::MediaArtifactStore,
 };
 use roder_ext_jsonl_thread_store::store::JsonlThreadStoreFactory;
 use roder_ext_memory::MemoryExtension;
@@ -104,9 +104,10 @@ use roder_protocol::{
     ThreadReadResult, ThreadResolveApprovalParams, ThreadResolveApprovalResult,
     ThreadResolveUserInputParams, ThreadResolveUserInputResult, ThreadSetModeParams,
     ThreadSetModeResult, ThreadStartParams, ThreadStartResult, ThreadStateResult, ToolCallParams,
-    ToolCallResult, ToolsListResult, TurnInputItem, TurnInterruptParams, TurnStartParams,
-    TurnStartResult, TurnSteerParams, TurnSteerResult, WorkflowEnableParams, WorkflowEnableResult,
-    WorkflowPreviewParams, WorkflowPreviewResult, WorkflowScanParams, WorkflowScanResult,
+    ToolCallResult, ToolsListResult, TurnInputItem, TurnInterruptParams, TurnInterruptResult,
+    TurnStartParams, TurnStartResult, TurnSteerParams, TurnSteerResult, WorkflowEnableParams,
+    WorkflowEnableResult, WorkflowPreviewParams, WorkflowPreviewResult, WorkflowScanParams,
+    WorkflowScanResult,
 };
 use std::collections::HashMap;
 use std::sync::{Arc, LazyLock};
@@ -2642,6 +2643,58 @@ async fn protocol_contract_methods_support_protocol_startup_contract() {
 }
 
 #[tokio::test]
+async fn thread_snapshots_overlay_runtime_active_turn_status() {
+    let mut builder = ExtensionRegistryBuilder::new();
+    builder.inference_engine(Arc::new(PendingEngine));
+    let runtime = Arc::new(Runtime::new(builder.build().unwrap(), Default::default()).unwrap());
+    let server = Arc::new(AppServer::new(runtime));
+    let client = LocalAppClient::new(server);
+    let mut events = client.subscribe_events();
+
+    let thread_start = start_thread(&client).await;
+    let started = start_turn(&client, &thread_start.thread.id, "wait").await;
+    wait_for_event(&mut events, &thread_start.thread.id, "turn.started").await;
+
+    let read: ThreadReadResult = request(
+        &client,
+        "thread/read",
+        Some(
+            serde_json::to_value(ThreadReadParams {
+                thread_id: thread_start.thread.id.clone(),
+                include_turns: false,
+            })
+            .unwrap(),
+        ),
+    )
+    .await;
+    let read_thread = read.thread.expect("thread/read returns thread");
+    assert_eq!(read_thread.status.kind, "running");
+    assert_eq!(
+        read_thread.status.active_turn_id.as_deref(),
+        Some(started.turn_id.as_str())
+    );
+    assert!(read_thread.status.active_flags.is_empty());
+
+    let listed: ThreadListResult = request(
+        &client,
+        "thread/list",
+        Some(serde_json::to_value(ThreadListParams { limit: None }).unwrap()),
+    )
+    .await;
+    let listed_thread = listed
+        .data
+        .iter()
+        .find(|thread| thread.id == thread_start.thread.id)
+        .expect("thread/list includes active thread");
+    assert_eq!(listed_thread.status.kind, "running");
+    assert_eq!(
+        listed_thread.status.active_turn_id.as_deref(),
+        Some(started.turn_id.as_str())
+    );
+    assert!(listed_thread.status.active_flags.is_empty());
+}
+
+#[tokio::test]
 async fn thread_archive_removes_thread_from_protocol_thread_list() {
     let mut builder = ExtensionRegistryBuilder::new();
     builder.inference_engine(Arc::new(FakeInferenceEngine));
@@ -2751,6 +2804,11 @@ async fn protocol_contract_turn_methods_and_notifications_match_protocol_contrac
                 saw_item_completed = true;
             }
             "thread/status/changed" if notification.params["status"]["type"] == "running" => {
+                assert_eq!(notification.params["status"]["activeTurnId"], turn_id);
+                assert_eq!(
+                    notification.params["status"]["activeFlags"],
+                    serde_json::json!([])
+                );
                 saw_status_active = true;
             }
             "turn/completed" => {
@@ -2774,6 +2832,53 @@ async fn protocol_contract_turn_methods_and_notifications_match_protocol_contrac
         "missing active status notification: {methods:?}"
     );
     assert!(methods.iter().any(|method| method == "turn/completed"));
+}
+
+#[tokio::test]
+async fn protocol_contract_turn_interrupt_without_turn_id_uses_runtime_active_turn() {
+    let mut builder = ExtensionRegistryBuilder::new();
+    builder.inference_engine(Arc::new(PendingEngine));
+    let runtime = Arc::new(Runtime::new(builder.build().unwrap(), Default::default()).unwrap());
+    let server = Arc::new(AppServer::new(Arc::clone(&runtime)));
+    let client = LocalAppClient::new(server);
+
+    let metadata = runtime
+        .create_thread_with(CreateThreadRequest {
+            title: None,
+            workspace: Some("/tmp".to_string()),
+            provider: Some(PROVIDER_MOCK.to_string()),
+            model: Some("mock".to_string()),
+        })
+        .await
+        .unwrap();
+    let turn_id = runtime
+        .start_turn(StartTurnRequest {
+            thread_id: metadata.thread_id.clone(),
+            message: "wait".to_string(),
+            images: Vec::new(),
+            provider_override: Some(PROVIDER_MOCK.to_string()),
+            model_override: Some("mock".to_string()),
+            workspace: Some("/tmp".to_string()),
+            instructions: default_instructions(),
+            task_ledger_required: false,
+        })
+        .await
+        .unwrap();
+
+    let interrupted: TurnInterruptResult = request(
+        &client,
+        "turn/interrupt",
+        Some(
+            serde_json::to_value(TurnInterruptParams {
+                thread_id: metadata.thread_id,
+                turn_id: None,
+            })
+            .unwrap(),
+        ),
+    )
+    .await;
+
+    assert_eq!(interrupted.turn_id.as_deref(), Some(turn_id.as_str()));
 }
 
 #[tokio::test]
@@ -2873,6 +2978,43 @@ async fn protocol_notifications_surface_tool_approval_requests_and_resolution() 
     assert_eq!(
         waiting_status.params["status"]["activeFlags"],
         serde_json::json!(["approvalRequired"])
+    );
+
+    let read_waiting: ThreadReadResult = request(
+        &client,
+        "thread/read",
+        Some(
+            serde_json::to_value(ThreadReadParams {
+                thread_id: thread_start.thread.id.clone(),
+                include_turns: false,
+            })
+            .unwrap(),
+        ),
+    )
+    .await;
+    assert_eq!(
+        read_waiting
+            .thread
+            .expect("thread/read returns waiting thread")
+            .status
+            .active_flags,
+        vec!["approvalRequired".to_string()]
+    );
+
+    let listed_waiting: ThreadListResult = request(
+        &client,
+        "thread/list",
+        Some(serde_json::to_value(ThreadListParams { limit: None }).unwrap()),
+    )
+    .await;
+    let listed_thread = listed_waiting
+        .data
+        .iter()
+        .find(|thread| thread.id == thread_start.thread.id)
+        .expect("thread/list includes waiting thread");
+    assert_eq!(
+        listed_thread.status.active_flags,
+        vec!["approvalRequired".to_string()]
     );
 
     let resolved: ThreadResolveApprovalResult = request(

@@ -115,7 +115,6 @@ impl AppServer {
             automation_supervisor,
             protocol_threads: RwLock::new(std::collections::HashMap::new()),
             protocol_thread_models: RwLock::new(std::collections::HashMap::new()),
-            protocol_active_turns: RwLock::new(std::collections::HashMap::new()),
             protocol_notifications,
         }
     }
