@@ -7,8 +7,8 @@ use roder_api::automations::{
 };
 use roder_api::capabilities::CapabilityDecision;
 use roder_api::catalog::{
-    PROVIDER_CODEX, PROVIDER_MOCK, PROVIDER_OPENCODE, PROVIDER_OPENCODE_GO, PROVIDER_POOLSIDE,
-    PROVIDER_SUPERGROK, PROVIDER_XAI,
+    PROVIDER_CODEX, PROVIDER_CURSOR, PROVIDER_MOCK, PROVIDER_OPENCODE, PROVIDER_OPENCODE_GO,
+    PROVIDER_POOLSIDE, PROVIDER_SUPERGROK, PROVIDER_XAI,
 };
 use roder_api::code_index::CodeIndexStatus;
 use roder_api::discovery::DiscoverySourceKind;
@@ -2424,6 +2424,30 @@ async fn providers_list_exposes_poolside_api_key_models() {
             .iter()
             .any(|model| model.id == "poolside/laguna-m.1")
     );
+}
+
+#[tokio::test]
+async fn providers_list_exposes_cursor_api_key_models() {
+    let registry = build_default_registry(DefaultRegistryConfig {
+        cursor_api_key: Some("secret-cursor-key".to_string()),
+        ..DefaultRegistryConfig::default()
+    })
+    .unwrap();
+    let runtime = Arc::new(Runtime::new(registry, Default::default()).unwrap());
+    let server = Arc::new(AppServer::new(runtime));
+    let client = LocalAppClient::new(server);
+
+    let providers: ProvidersListResult = request(&client, "providers/list", None).await;
+    let cursor = providers
+        .providers
+        .iter()
+        .find(|provider| provider.id == PROVIDER_CURSOR)
+        .expect("cursor provider should be listed");
+    assert_eq!(cursor.auth_type, ProviderAuthType::ApiKey);
+    assert!(cursor.authenticated);
+    assert!(cursor.models.iter().any(|model| model.id == "composer-2.5"));
+    assert!(cursor.capabilities.tool_calls);
+    assert!(!cursor.capabilities.structured_output);
 }
 
 #[tokio::test]

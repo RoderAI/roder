@@ -173,6 +173,64 @@ async fn eval_deadline_finalization_interrupts_model_stream_at_reserve() {
     assert_eq!(requests[1].tool_choice, ToolChoice::None);
 }
 
+#[tokio::test]
+async fn provider_without_tool_capability_receives_no_tools() {
+    let requests = Arc::new(Mutex::new(Vec::new()));
+    let mut builder = ExtensionRegistryBuilder::new();
+    builder.inference_engine(Arc::new(NoToolEngine {
+        requests: requests.clone(),
+    }));
+    builder.tool_contributor(Arc::new(SlowToolContributor));
+    let runtime = Arc::new(
+        Runtime::new(
+            builder.build().unwrap(),
+            RuntimeConfig {
+                default_provider: roder_api::catalog::PROVIDER_MOCK.to_string(),
+                default_model: "mock".to_string(),
+                policy_mode: PolicyMode::Bypass,
+                ..RuntimeConfig::default()
+            },
+        )
+        .unwrap(),
+    );
+    let mut rx = runtime.subscribe_events();
+
+    let turn_id = runtime
+        .start_turn(StartTurnRequest {
+            thread_id: "thread-no-tool-provider".to_string(),
+            message: "answer without tools".to_string(),
+            images: Vec::new(),
+            provider_override: None,
+            model_override: None,
+            workspace: None,
+            instructions: InstructionBundle::default(),
+            task_ledger_required: false,
+        })
+        .await
+        .unwrap();
+
+    tokio::time::timeout(std::time::Duration::from_secs(5), async {
+        loop {
+            let envelope = rx.recv().await.unwrap();
+            if envelope.turn_id.as_deref() != Some(&turn_id) {
+                continue;
+            }
+            match envelope.event {
+                RoderEvent::TurnCompleted(_) => break,
+                RoderEvent::TurnFailed(event) => panic!("turn failed: {}", event.error),
+                _ => {}
+            }
+        }
+    })
+    .await
+    .unwrap();
+
+    let requests = requests.lock().unwrap();
+    assert_eq!(requests.len(), 1);
+    assert!(requests[0].tools.is_empty());
+    assert_eq!(requests[0].tool_choice, ToolChoice::None);
+}
+
 struct DeadlineFinalizationEngine {
     requests: Arc<Mutex<Vec<AgentInferenceRequest>>>,
 }
@@ -285,6 +343,49 @@ impl InferenceEngine for ReserveBoundaryEngine {
         Ok(Box::pin(stream::iter(vec![
             Ok(InferenceEvent::MessageDelta(MessageDelta {
                 text: "finalized at reserve boundary".to_string(),
+                phase: None,
+            })),
+            Ok(InferenceEvent::Completed(CompletionMetadata {
+                stop_reason: Some("stop".to_string()),
+                provider_response_id: None,
+            })),
+        ])))
+    }
+}
+
+struct NoToolEngine {
+    requests: Arc<Mutex<Vec<AgentInferenceRequest>>>,
+}
+
+#[async_trait::async_trait]
+impl InferenceEngine for NoToolEngine {
+    fn id(&self) -> String {
+        roder_api::catalog::PROVIDER_MOCK.to_string()
+    }
+
+    fn capabilities(&self) -> InferenceCapabilities {
+        InferenceCapabilities::text_only()
+    }
+
+    async fn list_models(
+        &self,
+        _ctx: InferenceProviderContext<'_>,
+    ) -> anyhow::Result<Vec<roder_api::inference::ModelDescriptor>> {
+        Ok(roder_api::catalog::models_for_provider(
+            roder_api::catalog::PROVIDER_MOCK,
+            true,
+        ))
+    }
+
+    async fn stream_turn(
+        &self,
+        _ctx: InferenceTurnContext<'_>,
+        request: AgentInferenceRequest,
+    ) -> anyhow::Result<InferenceEventStream> {
+        self.requests.lock().unwrap().push(request);
+        Ok(Box::pin(stream::iter(vec![
+            Ok(InferenceEvent::MessageDelta(MessageDelta {
+                text: "done".to_string(),
                 phase: None,
             })),
             Ok(InferenceEvent::Completed(CompletionMetadata {

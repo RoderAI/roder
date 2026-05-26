@@ -15,6 +15,7 @@ pub const PROVIDER_SUPERGROK: &str = "supergrok";
 pub const PROVIDER_OPENCODE: &str = "opencode";
 pub const PROVIDER_OPENCODE_GO: &str = "opencode-go";
 pub const PROVIDER_POOLSIDE: &str = "poolside";
+pub const PROVIDER_CURSOR: &str = "cursor";
 
 pub const PROVIDER_KIND_MOCK: &str = "mock";
 pub const PROVIDER_KIND_OPENAI: &str = "openai";
@@ -24,6 +25,7 @@ pub const PROVIDER_KIND_GEMINI: &str = "gemini";
 pub const PROVIDER_KIND_XAI: &str = "xai";
 pub const PROVIDER_KIND_OPENCODE: &str = "opencode";
 pub const PROVIDER_KIND_POOLSIDE: &str = "poolside";
+pub const PROVIDER_KIND_CURSOR: &str = "cursor";
 
 pub const REASONING_NONE: &str = "none";
 pub const REASONING_MINIMAL: &str = "minimal";
@@ -317,6 +319,17 @@ pub const BUILT_IN_PROVIDERS: &[ProviderCatalogEntry] = &[
         requires_auth: true,
         supports_websockets: false,
     },
+    ProviderCatalogEntry {
+        id: PROVIDER_CURSOR,
+        name: "Cursor",
+        kind: PROVIDER_KIND_CURSOR,
+        default_model: "composer-2.5",
+        base_url: Some("https://agentn.global.api5.cursor.sh"),
+        env_key: Some("CURSOR_API_KEY"),
+        env_aliases: &["RODER_CURSOR_API_KEY"],
+        requires_auth: true,
+        supports_websockets: false,
+    },
 ];
 
 pub const BUILT_IN_MODELS: &[ModelCatalogEntry] = &[
@@ -604,6 +617,23 @@ pub const BUILT_IN_MODELS: &[ModelCatalogEntry] = &[
         REASONING_MEDIUM,
     ),
     ModelCatalogEntry {
+        id: "composer-2.5",
+        display_name: "Composer 2.5",
+        description: "Cursor Composer model exposed through direct AgentService inference.",
+        provider: PROVIDER_CURSOR,
+        default_reasoning: REASONING_NONE,
+        supported_reasoning: &[],
+        context_window: 200_000,
+        max_context_window: 200_000,
+        auto_compact_token_limit: 180_000,
+        supports_compaction: true,
+        supports_images: false,
+        supports_tools: false,
+        supports_structured: false,
+        edit_tool: None,
+        hidden: false,
+    },
+    ModelCatalogEntry {
         id: "text-embedding-3-large",
         display_name: "Text Embedding 3 Large",
         description: "OpenAI embedding model for local semantic memories.",
@@ -875,6 +905,7 @@ pub fn provider_family_for_provider(provider: &str) -> ProviderFamily {
         PROVIDER_XAI | PROVIDER_SUPERGROK => ProviderFamily::Xai,
         PROVIDER_OPENCODE | PROVIDER_OPENCODE_GO => ProviderFamily::Opencode,
         PROVIDER_POOLSIDE => ProviderFamily::Poolside,
+        PROVIDER_CURSOR => ProviderFamily::Cursor,
         _ => ProviderFamily::Mock,
     }
 }
@@ -928,6 +959,7 @@ pub fn normalize_provider_id(provider: &str) -> String {
         "opencode" => PROVIDER_OPENCODE.to_string(),
         "go" | "opencode_go" | "opencode-go" => PROVIDER_OPENCODE_GO.to_string(),
         "laguna" | "poolside" => PROVIDER_POOLSIDE.to_string(),
+        "composer" | "cursor-composer" => PROVIDER_CURSOR.to_string(),
         provider => provider.to_string(),
     }
 }
@@ -975,7 +1007,8 @@ mod tests {
                 "supergrok",
                 "opencode",
                 "opencode-go",
-                "poolside"
+                "poolside",
+                "cursor"
             ]
         );
     }
@@ -1051,6 +1084,7 @@ mod tests {
                 "deepseek-v4-flash",
                 "poolside/laguna-m.1",
                 "poolside/laguna-xs.2",
+                "composer-2.5",
             ]
         );
     }
@@ -1066,6 +1100,7 @@ mod tests {
         assert_eq!(models_for_provider(PROVIDER_OPENCODE, false).len(), 6);
         assert_eq!(models_for_provider(PROVIDER_OPENCODE_GO, false).len(), 4);
         assert_eq!(models_for_provider(PROVIDER_POOLSIDE, false).len(), 2);
+        assert_eq!(models_for_provider(PROVIDER_CURSOR, false).len(), 1);
         assert_eq!(models_for_provider(PROVIDER_MOCK, true).len(), 1);
     }
 
@@ -1135,6 +1170,19 @@ mod tests {
         assert_eq!(normalize_provider_id("grok-oauth"), PROVIDER_SUPERGROK);
         assert_eq!(normalize_provider_id("supergrok"), PROVIDER_SUPERGROK);
         assert_eq!(normalize_provider_id("laguna"), PROVIDER_POOLSIDE);
+        assert_eq!(normalize_provider_id("composer"), PROVIDER_CURSOR);
+    }
+
+    #[test]
+    fn cursor_catalog_profile_is_text_only_agentservice() {
+        let composer = lookup_model("composer-2.5").unwrap();
+        assert_eq!(composer.provider, PROVIDER_CURSOR);
+        assert!(!composer.supports_tools);
+        assert!(!composer.supports_structured);
+
+        let profile = built_in_model_profile("composer-2.5").unwrap();
+        assert_eq!(profile.provider_family, ProviderFamily::Cursor);
+        assert_eq!(profile.parallel_tool_calls, Some(false));
     }
 
     #[test]
