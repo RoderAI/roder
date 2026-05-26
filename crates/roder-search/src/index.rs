@@ -273,7 +273,30 @@ fn read_text_file(
 fn ignored_dir(path: &Path) -> bool {
     path.file_name()
         .and_then(|name| name.to_str())
-        .is_some_and(|name| matches!(name, ".git" | ".roder" | "target"))
+        .is_some_and(|name| {
+            matches!(
+                name,
+                ".cache"
+                    | ".git"
+                    | ".gradle"
+                    | ".next"
+                    | ".nuxt"
+                    | ".parcel-cache"
+                    | ".roder"
+                    | ".svelte-kit"
+                    | ".turbo"
+                    | ".vite"
+                    | ".yarn"
+                    | "DerivedData"
+                    | "Pods"
+                    | "build"
+                    | "coverage"
+                    | "dist"
+                    | "node_modules"
+                    | "out"
+                    | "target"
+            )
+        })
 }
 
 fn obvious_binary(path: &Path) -> bool {
