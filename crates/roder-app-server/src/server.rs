@@ -1492,23 +1492,27 @@ impl AppServer {
         &self,
         params: ThreadStartParams,
     ) -> Result<serde_json::Value, JsonRpcError> {
+        let cfg = self.runtime.status().await;
+        let model = params.model.clone().unwrap_or(cfg.default_model);
+        let model_provider = params
+            .model_provider
+            .clone()
+            .unwrap_or(cfg.default_provider);
+        let cwd = params
+            .cwd
+            .clone()
+            .or_else(|| cfg.workspace.clone())
+            .unwrap_or_else(default_cwd_string);
         let metadata = self
             .runtime
             .create_thread_with(roder_core::CreateThreadRequest {
                 title: None,
-                workspace: params.cwd.clone(),
+                workspace: Some(cwd.clone()),
                 provider: params.model_provider.clone(),
                 model: params.model.clone(),
             })
             .await
             .map_err(internal_error)?;
-        let cfg = self.runtime.status().await;
-        let model = params.model.unwrap_or(cfg.default_model);
-        let model_provider = params.model_provider.unwrap_or(cfg.default_provider);
-        let cwd = params
-            .cwd
-            .or_else(|| metadata.workspace.clone())
-            .unwrap_or_else(default_cwd_string);
         let thread = protocol_thread_from_metadata(metadata, None, idle_thread_status());
         self.protocol_threads
             .write()

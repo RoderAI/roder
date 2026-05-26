@@ -92,12 +92,7 @@ impl ThreadStore for JsonlThreadStore {
             .await
             .with_context(|| format!("create thread directory {}", dir.display()))?;
         let metadata_path = dir.join("metadata.json");
-        fs::write(
-            &metadata_path,
-            serde_json::to_vec_pretty(&metadata).context("serialize thread metadata")?,
-        )
-        .await
-        .with_context(|| format!("write thread metadata {}", metadata_path.display()))?;
+        write_metadata_file(&metadata_path, &metadata).await?;
         Ok(metadata)
     }
 
@@ -110,12 +105,7 @@ impl ThreadStore for JsonlThreadStore {
             .await
             .with_context(|| format!("create thread directory {}", dir.display()))?;
         let metadata_path = dir.join("metadata.json");
-        fs::write(
-            &metadata_path,
-            serde_json::to_vec_pretty(&metadata).context("serialize thread metadata")?,
-        )
-        .await
-        .with_context(|| format!("write thread metadata {}", metadata_path.display()))?;
+        write_metadata_file(&metadata_path, &metadata).await?;
         Ok(metadata)
     }
 
@@ -383,12 +373,7 @@ impl JsonlThreadStore {
         {
             metadata.title = title_from_user_text(&message.text);
         }
-        fs::write(
-            &metadata_path,
-            serde_json::to_vec_pretty(&metadata).context("serialize thread metadata")?,
-        )
-        .await
-        .with_context(|| format!("write thread metadata {}", metadata_path.display()))?;
+        write_metadata_file(&metadata_path, &metadata).await?;
         Ok(())
     }
 
@@ -424,16 +409,7 @@ impl JsonlThreadStore {
     }
 
     async fn repair_metadata_file(&self, metadata_path: &Path, metadata: &ThreadMetadata) {
-        let Ok(serialized) = serde_json::to_vec_pretty(metadata) else {
-            return;
-        };
-        let Some(parent) = metadata_path.parent() else {
-            return;
-        };
-        if fs::create_dir_all(parent).await.is_err() {
-            return;
-        }
-        let _ = fs::write(metadata_path, serialized).await;
+        let _ = write_metadata_file(metadata_path, metadata).await;
     }
 
     async fn infer_metadata(&self, dir: &Path, thread_id: &ThreadId) -> ThreadMetadata {
@@ -529,6 +505,39 @@ impl JsonlThreadStore {
         }
         Ok(metadata)
     }
+}
+
+async fn write_metadata_file(
+    metadata_path: &Path,
+    metadata: &ThreadMetadata,
+) -> anyhow::Result<()> {
+    let serialized = serde_json::to_vec_pretty(metadata).context("serialize thread metadata")?;
+    let parent = metadata_path
+        .parent()
+        .with_context(|| format!("metadata path has no parent: {}", metadata_path.display()))?;
+    fs::create_dir_all(parent)
+        .await
+        .with_context(|| format!("create thread directory {}", parent.display()))?;
+    let file_name = metadata_path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("metadata.json");
+    let tmp_path =
+        metadata_path.with_file_name(format!(".{file_name}.{}.tmp", uuid::Uuid::new_v4()));
+    fs::write(&tmp_path, serialized)
+        .await
+        .with_context(|| format!("write thread metadata temp {}", tmp_path.display()))?;
+    if let Err(err) = fs::rename(&tmp_path, metadata_path).await {
+        let _ = fs::remove_file(&tmp_path).await;
+        return Err(err).with_context(|| {
+            format!(
+                "replace thread metadata {} with {}",
+                metadata_path.display(),
+                tmp_path.display()
+            )
+        });
+    }
+    Ok(())
 }
 
 fn parse_metadata_tolerant(data: &[u8]) -> serde_json::Result<(ThreadMetadata, bool)> {
