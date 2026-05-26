@@ -2740,6 +2740,7 @@ dependencies = [
  "async-trait",
  "futures",
  "roder-api",
+ "roder-context",
  "roder-ext-jsonl-thread-store",
  "roder-ext-runner-unix-local",
  "roder-ext-task-ledger",

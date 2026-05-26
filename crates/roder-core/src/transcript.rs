@@ -57,10 +57,12 @@ impl Runtime {
         }))
         .await;
 
+        let cfg = self.status().await;
         let query = ContextQuery {
             thread_id: req.thread_id.clone(),
             turn_id: turn_id.clone(),
             prompt: req.message.clone(),
+            workspace: req.workspace.clone().or(cfg.workspace),
             token_budget: None,
         };
         let mut blocks = self.skill_context_blocks(req, turn_id).await;
