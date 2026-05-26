@@ -48,7 +48,7 @@ async fn eval_deadline_finalization_disables_tools_and_completes_turn() {
             images: Vec::new(),
             provider_override: None,
             model_override: None,
-            workspace: None,
+            workspace: std::env::current_dir().unwrap().display().to_string(),
             instructions: InstructionBundle::default(),
             task_ledger_required: false,
         })
@@ -130,7 +130,7 @@ async fn eval_deadline_finalization_interrupts_model_stream_at_reserve() {
             images: Vec::new(),
             provider_override: None,
             model_override: None,
-            workspace: None,
+            workspace: std::env::current_dir().unwrap().display().to_string(),
             instructions: InstructionBundle::default(),
             task_ledger_required: false,
         })

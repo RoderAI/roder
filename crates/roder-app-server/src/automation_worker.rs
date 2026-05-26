@@ -107,7 +107,7 @@ pub async fn execute_automation_task(
     let thread = runtime
         .create_thread_with(CreateThreadRequest {
             title: Some(format!("Automation: {}", input.definition.name)),
-            workspace: Some(input.definition.project.cwd.clone()),
+            workspace: input.definition.project.cwd.clone(),
             provider: input.definition.model_provider.clone(),
             model: input.definition.model.clone(),
         })
@@ -120,7 +120,7 @@ pub async fn execute_automation_task(
             images: Vec::new(),
             provider_override: input.definition.model_provider.clone(),
             model_override: input.definition.model.clone(),
-            workspace: Some(input.definition.project.cwd.clone()),
+            workspace: input.definition.project.cwd.clone(),
             instructions: default_instructions(),
             task_ledger_required: false,
         })

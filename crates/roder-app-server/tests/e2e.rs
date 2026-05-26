@@ -2690,7 +2690,13 @@ async fn thread_start_rejects_missing_or_blank_cwd() {
 async fn thread_snapshots_reject_metadata_without_workspace() {
     let mut builder = ExtensionRegistryBuilder::new();
     builder.inference_engine(Arc::new(FakeInferenceEngine));
-    builder.thread_store_factory(Arc::new(RecordingThreadStoreFactory::default()));
+    let thread_root = std::env::temp_dir().join(format!(
+        "roder-missing-workspace-metadata-{}",
+        uuid::Uuid::new_v4()
+    ));
+    builder.thread_store_factory(Arc::new(JsonlThreadStoreFactory {
+        base_path: thread_root.clone(),
+    }));
     let runtime = Arc::new(
         Runtime::new(
             builder.build().unwrap(),
@@ -2701,15 +2707,22 @@ async fn thread_snapshots_reject_metadata_without_workspace() {
         )
         .unwrap(),
     );
-    let metadata = runtime
-        .create_thread_with(CreateThreadRequest {
-            title: Some("legacy missing workspace".to_string()),
-            workspace: None,
-            provider: Some(PROVIDER_MOCK.to_string()),
-            model: Some("mock".to_string()),
+    let thread_id = "legacy-missing-workspace".to_string();
+    std::fs::create_dir_all(thread_root.join(&thread_id)).unwrap();
+    std::fs::write(
+        thread_root.join(&thread_id).join("metadata.json"),
+        serde_json::json!({
+            "thread_id": thread_id.clone(),
+            "title": "legacy missing workspace",
+            "provider": PROVIDER_MOCK,
+            "model": "mock",
+            "created_at": "1970-01-01T00:00:00Z",
+            "updated_at": "1970-01-01T00:00:00Z",
+            "message_count": 0
         })
-        .await
-        .unwrap();
+        .to_string(),
+    )
+    .unwrap();
     let server = Arc::new(AppServer::new(runtime));
     let client = LocalAppClient::new(server);
 
@@ -2720,7 +2733,7 @@ async fn thread_snapshots_reject_metadata_without_workspace() {
             method: "thread/read".to_string(),
             params: Some(
                 serde_json::to_value(ThreadReadParams {
-                    thread_id: metadata.thread_id,
+                    thread_id: thread_id.clone(),
                     include_turns: false,
                 })
                 .unwrap(),
@@ -2732,7 +2745,7 @@ async fn thread_snapshots_reject_metadata_without_workspace() {
         .error
         .expect("thread/read should reject missing workspace metadata");
     assert_eq!(error.code, -32000);
-    assert!(error.message.contains("missing workspace"));
+    assert!(error.message.contains("thread metadata invalid"));
 
     let response = client
         .send_request(JsonRpcRequest {
@@ -2747,7 +2760,9 @@ async fn thread_snapshots_reject_metadata_without_workspace() {
         .error
         .expect("thread/list should reject missing workspace metadata");
     assert_eq!(error.code, -32000);
-    assert!(error.message.contains("missing workspace"));
+    assert!(error.message.contains("thread metadata invalid"));
+
+    let _ = std::fs::remove_dir_all(thread_root);
 }
 
 #[tokio::test]
@@ -2953,7 +2968,7 @@ async fn protocol_contract_turn_interrupt_without_turn_id_uses_runtime_active_tu
     let metadata = runtime
         .create_thread_with(CreateThreadRequest {
             title: None,
-            workspace: Some("/tmp".to_string()),
+            workspace: "/tmp".to_string(),
             provider: Some(PROVIDER_MOCK.to_string()),
             model: Some("mock".to_string()),
         })
@@ -2966,7 +2981,7 @@ async fn protocol_contract_turn_interrupt_without_turn_id_uses_runtime_active_tu
             images: Vec::new(),
             provider_override: Some(PROVIDER_MOCK.to_string()),
             model_override: Some("mock".to_string()),
-            workspace: Some("/tmp".to_string()),
+            workspace: "/tmp".to_string(),
             instructions: default_instructions(),
             task_ledger_required: false,
         })
