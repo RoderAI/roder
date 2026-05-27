@@ -1,0 +1,31 @@
+{
+  "id": "tbench-artifact-checkpoint",
+  "title": "TBench artifact checkpoint",
+  "prompt": "FAKE_TBENCH_ARTIFACT_CHECKPOINT: create the required scoreable artifact before finalizing and complete the task ledger.",
+  "tags": ["tbench-diagnostic", "artifact-checkpoint", "task-ledger", "tool:write_file"],
+  "timeoutMs": 10000,
+  "expected": {
+    "finalAnswerContains": ["hello from roder"],
+    "files": [
+      {
+        "path": "primers.fasta",
+        "exists": true,
+        "contains": [">primer_forward", "ACGTACGTACGT"],
+        "maxBytes": 256,
+        "allowedChars": ">_abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789\n"
+      }
+    ],
+    "commandChecks": [
+      {
+        "command": "python3 - <<'PY'\nfrom pathlib import Path\ntext = Path('primers.fasta').read_text()\nassert text.startswith('>primer_forward\\n'), text\nassert '>primer_reverse\\n' in text, text\nPY",
+        "expectedExitCode": 0
+      }
+    ],
+    "verificationRequired": true,
+    "taskLedgerRequired": true
+  },
+  "constraints": [
+    "scoreable Terminal-Bench artifacts must exist before finalization",
+    "use the task ledger to keep required output files checkpointed before slow follow-up work"
+  ]
+}

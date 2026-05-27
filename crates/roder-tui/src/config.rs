@@ -41,7 +41,7 @@ impl TuiAppConfig {
 pub fn built_in_palette_sources() -> Vec<PaletteSourceDescriptor> {
     [
         ("commands", "Commands", 100),
-        ("sessions", "Sessions", 90),
+        ("threads", "Threads", 90),
         ("agents", "Agents", 80),
         ("models", "Models", 70),
         ("modes", "Modes", 60),
@@ -75,7 +75,7 @@ mod tests {
 
         let ids = config.enabled_palette_source_ids();
         assert!(ids.contains("commands"));
-        assert!(ids.contains("sessions"));
+        assert!(ids.contains("threads"));
         assert!(ids.contains("modes"));
         assert!(ids.contains("settings"));
         assert!(ids.contains("marketplaces"));

@@ -76,17 +76,17 @@ test("agent approval callback resolves approval requests", async () => {
     approvals: {
       onToolApproval(request) {
         assert.deepEqual(request, { approvalId: "approval-1", toolName: "fs/readFile" });
-        return { approved: true, message: "read-only" };
+        return { approved: true };
       },
     },
   });
 
   transport.emit({
     jsonrpc: "2.0",
-    method: "session/approvalRequested",
+    method: "thread/approvalRequested",
     params: { approvalId: "approval-1", toolName: "fs/readFile" },
   });
-  await eventually(() => methods.includes("session/resolve_approval"));
+  await eventually(() => methods.includes("thread/resolve_approval"));
 });
 
 async function eventually(assertion: () => boolean): Promise<void> {

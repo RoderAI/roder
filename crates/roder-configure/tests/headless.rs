@@ -72,8 +72,8 @@ version = "0.1.0"
 include_tui = true
 include_app_server = false
 include_cli = true
-extensions = ["jsonl-session", "plan-mode", "notify-terminal"]
-default_session_store = "jsonl-session"
+extensions = ["jsonl-thread-store", "plan-mode", "notify-terminal"]
+default_thread_store = "jsonl-thread-store"
 "#,
     );
     let out = std::env::temp_dir().join(format!("roder-headless-{}", std::process::id()));

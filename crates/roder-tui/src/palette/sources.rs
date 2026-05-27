@@ -2,8 +2,8 @@ use roder_api::inference::HostedWebSearchMode;
 use roder_api::marketplace::MarketplaceDescriptor;
 use roder_api::policy_mode::PolicyMode;
 use roder_protocol::{
-    AgentDescriptor, CommandDescriptor, DesktopThread, ProvidersListResult, RunnersListResult,
-    SearchIndexSettings, WebSearchSettings,
+    AgentDescriptor, CommandDescriptor, ProvidersListResult, RunnersListResult,
+    SearchIndexSettings, ShellSettings, SpeechProvidersListResult, Thread, WebSearchSettings,
 };
 
 use super::{PaletteAction, PaletteItem, StaticPaletteSource};
@@ -521,23 +521,21 @@ pub fn roadmap_source() -> StaticPaletteSource {
     )
 }
 
-pub fn session_source(sessions: &[DesktopThread]) -> StaticPaletteSource {
+pub fn thread_source(threads: &[Thread]) -> StaticPaletteSource {
     StaticPaletteSource::new(
-        "sessions",
-        "Sessions",
-        sessions
+        "threads",
+        "Threads",
+        threads
             .iter()
-            .map(|session| {
-                let short_id = short_id(&session.id).to_string();
-                let title = session
+            .map(|thread| {
+                let short_id = short_id(&thread.id).to_string();
+                let title = thread
                     .name
                     .clone()
                     .filter(|title| !title.trim().is_empty())
-                    .or_else(|| {
-                        (!session.preview.trim().is_empty()).then(|| session.preview.clone())
-                    })
-                    .unwrap_or_else(|| format!("Session {short_id}"));
-                let message_count = session
+                    .or_else(|| (!thread.preview.trim().is_empty()).then(|| thread.preview.clone()))
+                    .unwrap_or_else(|| format!("Thread {short_id}"));
+                let message_count = thread
                     .turns
                     .as_deref()
                     .unwrap_or_default()
@@ -545,20 +543,20 @@ pub fn session_source(sessions: &[DesktopThread]) -> StaticPaletteSource {
                     .flat_map(|turn| turn.items.iter())
                     .filter(|item| matches!(item.kind.as_str(), "userMessage" | "agentMessage"))
                     .count();
-                let subtitle = Some(format!("{} - {} messages", session.cwd, message_count));
+                let subtitle = Some(format!("{} - {} messages", thread.cwd, message_count));
                 (
                     PaletteItem {
-                        id: session.id.clone(),
+                        id: thread.id.clone(),
                         title,
                         subtitle,
                         keywords: vec![
-                            session.id.clone(),
-                            session.model_provider.clone(),
-                            session.cwd.clone(),
+                            thread.id.clone(),
+                            thread.model_provider.clone(),
+                            thread.cwd.clone(),
                         ],
                         icon: Some('#'),
                     },
-                    PaletteAction::SwitchSession(session.id.clone()),
+                    PaletteAction::SwitchThread(thread.id.clone()),
                 )
             })
             .collect(),
@@ -731,6 +729,10 @@ fn swatch_hint(color: ratatui::style::Color) -> String {
 pub fn settings_source(
     web_search: &WebSearchSettings,
     search_index: &SearchIndexSettings,
+    shell: &ShellSettings,
+    speech: Option<&SpeechProvidersListResult>,
+    active_voice_provider: Option<&str>,
+    active_voice_model: Option<&str>,
 ) -> StaticPaletteSource {
     let search_index_items = [
         (
@@ -761,6 +763,43 @@ pub fn settings_source(
             "Do not send the hosted web_search tool to the provider",
         ),
     ];
+    let voice_items = speech
+        .into_iter()
+        .flat_map(|speech| speech.providers.iter())
+        .flat_map(|provider| {
+            provider.models.iter().map(move |model| {
+                let active = active_voice_provider == Some(provider.id.as_str())
+                    && active_voice_model == Some(model.id.as_str());
+                let active_suffix = if active { " (active)" } else { "" };
+                let subtitle = voice_model_subtitle(provider, model);
+                (
+                    PaletteItem {
+                        id: format!("voice:{}:{}", provider.id, model.id),
+                        title: format!(
+                            "Voice model: {} / {}{active_suffix}",
+                            provider.name, model.name
+                        ),
+                        subtitle,
+                        keywords: vec![
+                            "voice".to_string(),
+                            "speech".to_string(),
+                            "dictation".to_string(),
+                            "transcribe".to_string(),
+                            provider.id.clone(),
+                            provider.name.clone(),
+                            model.id.clone(),
+                            model.name.clone(),
+                        ],
+                        icon: Some('V'),
+                    },
+                    PaletteAction::SetVoiceModel {
+                        provider: provider.id.clone(),
+                        model: model.id.clone(),
+                    },
+                )
+            })
+        });
+
     StaticPaletteSource::new(
         "settings",
         "Settings",
@@ -814,6 +853,34 @@ pub fn settings_source(
                     PaletteAction::SetWebSearchMode(mode),
                 )
             }))
+            .chain(shell.options.iter().cloned().map(|choice| {
+                let active_suffix = if choice == shell.shell {
+                    " (active)"
+                } else {
+                    ""
+                };
+                (
+                    PaletteItem {
+                        id: format!("shell:{choice}"),
+                        title: format!("Shell command shell: {choice}{active_suffix}"),
+                        subtitle: Some(
+                            "Choose the shell used by shell and default exec_command calls"
+                                .to_string(),
+                        ),
+                        keywords: vec![
+                            "shell".to_string(),
+                            "command".to_string(),
+                            "exec".to_string(),
+                            "bash".to_string(),
+                            "zsh".to_string(),
+                            "fish".to_string(),
+                        ],
+                        icon: Some('$'),
+                    },
+                    PaletteAction::SetShell(choice),
+                )
+            }))
+            .chain(voice_items)
             .chain(std::iter::once((
                 PaletteItem {
                     id: "settings:automations".to_string(),
@@ -904,6 +971,29 @@ fn runner_capabilities_summary(provider: &roder_protocol::RunnerProviderDescript
     }
 }
 
+fn voice_model_subtitle(
+    provider: &roder_protocol::SpeechProviderDescriptor,
+    model: &roder_api::speech::SpeechModelDescriptor,
+) -> Option<String> {
+    let mut parts = Vec::new();
+    if !provider.authenticated {
+        parts.push("not authenticated".to_string());
+    }
+    if let Some(description) = model
+        .description
+        .as_deref()
+        .or(provider.description.as_deref())
+        .filter(|description| !description.trim().is_empty())
+    {
+        parts.push(description.to_string());
+    }
+    if parts.is_empty() {
+        None
+    } else {
+        Some(parts.join(" - "))
+    }
+}
+
 fn model_entry(
     provider_id: &str,
     model_id: &str,
@@ -964,8 +1054,12 @@ mod tests {
         MarketplaceDescriptor, MarketplaceKind, MarketplaceSource, MarketplaceState,
     };
     use roder_api::remote_runner::RunnerCapabilities;
+    use roder_api::speech::{SpeechCapabilities, SpeechModelDescriptor};
     use roder_api::subagents::SubagentPermissionMode;
-    use roder_protocol::{ProviderDescriptor, RunnerProviderDescriptor, RunnerStatus};
+    use roder_protocol::{
+        ProviderDescriptor, RunnerProviderDescriptor, RunnerStatus, SpeechProviderDescriptor,
+        SpeechProvidersListResult,
+    };
 
     use super::*;
 
@@ -1032,23 +1126,112 @@ mod tests {
                 mode: HostedWebSearchMode::Cached,
             },
             &SearchIndexSettings { enabled: true },
+            &ShellSettings {
+                shell: "bash".to_string(),
+                options: vec!["zsh".to_string(), "bash".to_string()],
+            },
+            None,
+            None,
+            None,
         );
         let entries = source.entries();
 
-        assert!(entries[0].item.title.contains("(active)"));
+        let active_search_index = entries
+            .iter()
+            .find(|entry| matches!(entry.action, PaletteAction::SetSearchIndexEnabled(true)))
+            .expect("enabled search index row");
+        assert!(active_search_index.item.title.contains("(active)"));
         assert_eq!(
-            entries[1].action,
-            PaletteAction::SetSearchIndexEnabled(false)
+            entries
+                .iter()
+                .find(|entry| matches!(entry.action, PaletteAction::SetSearchIndexEnabled(false)))
+                .unwrap()
+                .action,
+            PaletteAction::SetSearchIndexEnabled(false),
         );
-        assert!(entries[2].item.title.contains("(active)"));
+        let active_web_search = entries
+            .iter()
+            .find(|entry| {
+                matches!(
+                    entry.action,
+                    PaletteAction::SetWebSearchMode(HostedWebSearchMode::Cached)
+                )
+            })
+            .expect("cached web search row");
+        assert!(active_web_search.item.title.contains("(active)"));
         assert_eq!(
-            entries[3].action,
-            PaletteAction::SetWebSearchMode(HostedWebSearchMode::Live)
+            entries
+                .iter()
+                .find(|entry| {
+                    matches!(
+                        entry.action,
+                        PaletteAction::SetWebSearchMode(HostedWebSearchMode::Live)
+                    )
+                })
+                .unwrap()
+                .action,
+            PaletteAction::SetWebSearchMode(HostedWebSearchMode::Live),
         );
+        let active_shell = entries
+            .iter()
+            .find(|entry| entry.action == PaletteAction::SetShell("bash".to_string()))
+            .expect("active shell row");
+        assert!(active_shell.item.title.contains("(active)"));
         assert_eq!(
             entries.last().unwrap().action,
             PaletteAction::OpenSkillsManager
         );
+    }
+
+    #[test]
+    fn settings_source_maps_speech_models_to_voice_model_actions() {
+        let source = settings_source(
+            &WebSearchSettings {
+                mode: HostedWebSearchMode::Cached,
+            },
+            &SearchIndexSettings { enabled: true },
+            &ShellSettings {
+                shell: "bash".to_string(),
+                options: vec!["bash".to_string()],
+            },
+            Some(&SpeechProvidersListResult {
+                providers: vec![SpeechProviderDescriptor {
+                    id: "openai-speech".to_string(),
+                    name: "OpenAI".to_string(),
+                    description: Some("OpenAI speech models".to_string()),
+                    auth_type: ProviderAuthType::ApiKey,
+                    auth_label: Some("OPENAI_API_KEY".to_string()),
+                    authenticated: true,
+                    auth_detail: None,
+                    recommended: true,
+                    sort_order: 0,
+                    capabilities: SpeechCapabilities::default(),
+                    models: vec![SpeechModelDescriptor {
+                        id: "gpt-4o-transcribe".to_string(),
+                        name: "GPT-4o Transcribe".to_string(),
+                        description: Some("High accuracy transcription".to_string()),
+                        capabilities: SpeechCapabilities::default(),
+                    }],
+                }],
+            }),
+            Some("openai-speech"),
+            Some("gpt-4o-transcribe"),
+        );
+        let entries = source.entries();
+        let voice = entries
+            .iter()
+            .find(|entry| entry.item.id == "voice:openai-speech:gpt-4o-transcribe")
+            .expect("voice model row");
+
+        assert_eq!(
+            voice.action,
+            PaletteAction::SetVoiceModel {
+                provider: "openai-speech".to_string(),
+                model: "gpt-4o-transcribe".to_string()
+            }
+        );
+        assert!(voice.item.title.contains("(active)"));
+        assert!(voice.item.keywords.contains(&"dictation".to_string()));
     }
 
     #[test]
@@ -1058,6 +1241,13 @@ mod tests {
                 mode: HostedWebSearchMode::Cached,
             },
             &SearchIndexSettings { enabled: true },
+            &ShellSettings {
+                shell: "bash".to_string(),
+                options: vec!["zsh".to_string(), "bash".to_string()],
+            },
+            None,
+            None,
+            None,
         );
         let entries = source.entries();
         let automations = entries

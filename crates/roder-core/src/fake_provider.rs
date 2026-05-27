@@ -1,8 +1,10 @@
 use futures::stream;
 use roder_api::catalog::{PROVIDER_MOCK, models_for_provider};
-use roder_api::conversation::ConversationItem;
 use roder_api::extension::InferenceEngineId;
 use roder_api::inference::*;
+use roder_api::transcript::TranscriptItem;
+
+mod tbench_diagnostics;
 
 pub struct FakeInferenceEngine;
 
@@ -58,6 +60,10 @@ impl InferenceEngine for FakeInferenceEngine {
                     arguments: task_ledger_arguments(complete),
                 },
             ))]);
+            return Ok(Box::pin(stream));
+        }
+        if let Some(tool_call) = tbench_diagnostics::next_tool_call(&request) {
+            let stream = stream::iter(vec![Ok(InferenceEvent::ToolCallCompleted(tool_call))]);
             return Ok(Box::pin(stream));
         }
         if should_write_file(&request) {
@@ -189,7 +195,7 @@ impl InferenceEngine for FakeInferenceEngine {
             let stream = stream::iter(vec![Ok(InferenceEvent::ToolCallCompleted(
                 ToolCallCompleted {
                     id: "fake-verification".to_string(),
-                    name: "verification.review".to_string(),
+                    name: "verification_review".to_string(),
                     arguments: verification_arguments(failed),
                 },
             ))]);
@@ -232,20 +238,20 @@ impl InferenceEngine for FakeInferenceEngine {
 
 fn should_request_user_input(request: &AgentInferenceRequest) -> bool {
     prompt_contains(request, "FAKE_REQUEST_USER_INPUT")
-        && !request.conversation.iter().any(|item| {
+        && !request.transcript.iter().any(|item| {
             matches!(
                 item,
-                ConversationItem::ToolResult(result)
+                TranscriptItem::ToolResult(result)
                     if result.name.as_deref() == Some("request_user_input")
             )
         })
 }
 
 fn user_input_unavailable(request: &AgentInferenceRequest) -> bool {
-    request.conversation.iter().any(|item| {
+    request.transcript.iter().any(|item| {
         matches!(
             item,
-            ConversationItem::ToolResult(result)
+            TranscriptItem::ToolResult(result)
                 if result.name.as_deref() == Some("request_user_input")
                     && result.is_error
                     && result.result.contains("User input is unavailable")
@@ -256,10 +262,10 @@ fn user_input_unavailable(request: &AgentInferenceRequest) -> bool {
 fn should_update_task_ledger(request: &AgentInferenceRequest) -> bool {
     (prompt_contains(request, "FAKE_TASK_LEDGER_UPDATE")
         || prompt_contains(request, "FAKE_TASK_LEDGER_COMPLETE"))
-        && !request.conversation.iter().any(|item| {
+        && !request.transcript.iter().any(|item| {
             matches!(
                 item,
-                ConversationItem::ToolResult(result)
+                TranscriptItem::ToolResult(result)
                     if result.name.as_deref() == Some("task_ledger.update")
             )
         })
@@ -267,10 +273,10 @@ fn should_update_task_ledger(request: &AgentInferenceRequest) -> bool {
 
 fn should_write_file(request: &AgentInferenceRequest) -> bool {
     prompt_contains(request, "FAKE_WRITE_FILE")
-        && !request.conversation.iter().any(|item| {
+        && !request.transcript.iter().any(|item| {
             matches!(
                 item,
-                ConversationItem::ToolResult(result)
+                TranscriptItem::ToolResult(result)
                     if result.name.as_deref() == Some("write_file")
             )
         })
@@ -278,20 +284,20 @@ fn should_write_file(request: &AgentInferenceRequest) -> bool {
 
 fn should_grep(request: &AgentInferenceRequest) -> bool {
     prompt_contains(request, "FAKE_GREP_INDEXED")
-        && !request.conversation.iter().any(|item| {
+        && !request.transcript.iter().any(|item| {
             matches!(
                 item,
-                ConversationItem::ToolResult(result) if result.name.as_deref() == Some("grep")
+                TranscriptItem::ToolResult(result) if result.name.as_deref() == Some("grep")
             )
         })
 }
 
 fn should_discovery_search(request: &AgentInferenceRequest) -> bool {
     prompt_contains(request, "FAKE_DISCOVERY_SEARCH")
-        && !request.conversation.iter().any(|item| {
+        && !request.transcript.iter().any(|item| {
             matches!(
                 item,
-                ConversationItem::ToolResult(result)
+                TranscriptItem::ToolResult(result)
                     if result.name.as_deref() == Some("discovery.search")
             )
         })
@@ -299,17 +305,17 @@ fn should_discovery_search(request: &AgentInferenceRequest) -> bool {
 
 fn should_discovery_read(request: &AgentInferenceRequest) -> bool {
     prompt_contains(request, "FAKE_DISCOVERY_PROMOTE")
-        && request.conversation.iter().any(|item| {
+        && request.transcript.iter().any(|item| {
             matches!(
                 item,
-                ConversationItem::ToolResult(result)
+                TranscriptItem::ToolResult(result)
                     if result.name.as_deref() == Some("discovery.search")
             )
         })
-        && !request.conversation.iter().any(|item| {
+        && !request.transcript.iter().any(|item| {
             matches!(
                 item,
-                ConversationItem::ToolResult(result)
+                TranscriptItem::ToolResult(result)
                     if result.name.as_deref() == Some("discovery.read")
             )
         })
@@ -344,46 +350,46 @@ fn should_close_fake_agent(request: &AgentInferenceRequest) -> bool {
 }
 
 fn should_complete_verification(request: &AgentInferenceRequest) -> bool {
-    request.conversation.iter().any(|item| {
+    request.transcript.iter().any(|item| {
         matches!(
             item,
-            ConversationItem::UserMessage(message)
+            TranscriptItem::UserMessage(message)
                 if message.text.contains("Verification gate blocked final completion")
         )
-    }) && !request.conversation.iter().any(|item| {
+    }) && !request.transcript.iter().any(|item| {
         matches!(
             item,
-            ConversationItem::ToolResult(result)
-                if result.name.as_deref() == Some("verification.review")
+            TranscriptItem::ToolResult(result)
+                if result.name.as_deref() == Some("verification_review")
         )
     })
 }
 
 fn verification_failed(request: &AgentInferenceRequest) -> bool {
-    request.conversation.iter().any(|item| {
+    request.transcript.iter().any(|item| {
         matches!(
             item,
-            ConversationItem::ToolResult(result)
-                if result.name.as_deref() == Some("verification.review")
+            TranscriptItem::ToolResult(result)
+                if result.name.as_deref() == Some("verification_review")
                     && result.result.contains("Verification failed")
         )
     })
 }
 
 fn has_tool_result(request: &AgentInferenceRequest, name: &str) -> bool {
-    request.conversation.iter().any(|item| {
+    request.transcript.iter().any(|item| {
         matches!(
             item,
-            ConversationItem::ToolResult(result) if result.name.as_deref() == Some(name)
+            TranscriptItem::ToolResult(result) if result.name.as_deref() == Some(name)
         )
     })
 }
 
 fn prompt_contains(request: &AgentInferenceRequest, needle: &str) -> bool {
-    request.conversation.iter().any(|item| {
+    request.transcript.iter().any(|item| {
         matches!(
             item,
-            ConversationItem::UserMessage(message) if message.text.contains(needle)
+            TranscriptItem::UserMessage(message) if message.text.contains(needle)
         )
     })
 }

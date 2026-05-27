@@ -83,12 +83,12 @@ Known notification methods are normalized to SDK event names:
 | `turn.started` | `turn/started` |
 | `turn.delta` | `turn/delta` |
 | `turn.completed` | `turn/completed` |
-| `approval.requested` | `session/approvalRequested` |
-| `approval.resolved` | `session/approvalResolved` |
-| `user_input.requested` | `session/userInputRequested` |
-| `user_input.resolved` | `session/userInputResolved` |
-| `plan_exit.requested` | `session/planExitRequested` |
-| `plan_exit.resolved` | `session/planExitResolved` |
+| `approval.requested` | `thread/approvalRequested` |
+| `approval.resolved` | `thread/approvalResolved` |
+| `user_input.requested` | `thread/userInputRequested` |
+| `user_input.resolved` | `thread/userInputResolved` |
+| `plan_exit.requested` | `thread/planExitRequested` |
+| `plan_exit.resolved` | `thread/planExitResolved` |
 | `command.output_delta` | `command/outputDelta` |
 
 Permissive mode yields unknown notifications as `raw.notification`. Strict mode drops unknown notifications.
@@ -100,7 +100,7 @@ Permissive mode yields unknown notifications as `raw.notification`. Strict mode 
 | providers/models | generated method map | `listProviders`, `listModels` / `list_providers`, `list_models` |
 | thread | generated method map | `send`, `readThread`, `listThreads` / `send`, `read_thread`, `list_threads` |
 | turn | generated method map | `RoderRun.cancel`, `RoderRun.wait` |
-| session approvals | generated method map | callback resolution |
+| thread approvals | generated method map | callback resolution |
 | tools/commands | generated method map | `listTools`, `listCommands` / `list_tools`, `list_commands` |
 | tasks/teams/plugins/media/memory/workflow | generated method map | explicit low-level calls |
 

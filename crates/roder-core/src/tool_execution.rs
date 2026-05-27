@@ -2,12 +2,12 @@ use std::sync::Arc;
 
 use roder_api::ToolSchemaPolicy;
 use roder_api::artifacts::{ContextArtifactKind, format_artifact_reference};
-use roder_api::conversation::{ToolResultRecord, tool_display_payload};
 use roder_api::events::*;
 use roder_api::policy_mode::{PolicyDecision, PolicyMode};
 use roder_api::subagents::SubagentExitReason;
 use roder_api::tools::ToolCall;
 use roder_api::tools::ToolResult;
+use roder_api::transcript::{ToolResultRecord, tool_display_payload};
 use serde_json::Value;
 use time::OffsetDateTime;
 
@@ -54,7 +54,7 @@ impl Runtime {
                     self.persist_turn_item(
                         thread_id,
                         turn_id,
-                        &roder_api::conversation::ConversationItem::ToolResult(item.clone()),
+                        &roder_api::transcript::TranscriptItem::ToolResult(item.clone()),
                     )
                     .await?;
                     self.emit(RoderEvent::ToolCallCompleted(ToolCallCompleted {
@@ -116,7 +116,7 @@ impl Runtime {
             self.persist_turn_item(
                 thread_id,
                 turn_id,
-                &roder_api::conversation::ConversationItem::ToolResult(item.clone()),
+                &roder_api::transcript::TranscriptItem::ToolResult(item.clone()),
             )
             .await?;
             self.emit(RoderEvent::ToolCallCompleted(ToolCallCompleted {
@@ -164,7 +164,7 @@ impl Runtime {
                 self.persist_turn_item(
                     thread_id,
                     turn_id,
-                    &roder_api::conversation::ConversationItem::ToolResult(item.clone()),
+                    &roder_api::transcript::TranscriptItem::ToolResult(item.clone()),
                 )
                 .await?;
                 self.emit(RoderEvent::ToolCallCompleted(ToolCallCompleted {
@@ -204,7 +204,11 @@ impl Runtime {
             turn_id.clone(),
             mode,
             workspace.or(runtime_config.workspace.as_deref()),
+            Some(&runtime_config.command_shell),
         );
+        if let Some(remaining) = crate::runtime::deadline_remaining_seconds(deadline) {
+            ctx = ctx.with_deadline_remaining_seconds(remaining);
+        }
         let decision = DefaultPolicyGate::new()
             .decide_with_contributors(&tool_call, mode, &ctx, &self.registry.policy_contributors)
             .await?;
@@ -240,7 +244,7 @@ impl Runtime {
             self.persist_turn_item(
                 thread_id,
                 turn_id,
-                &roder_api::conversation::ConversationItem::ToolResult(item.clone()),
+                &roder_api::transcript::TranscriptItem::ToolResult(item.clone()),
             )
             .await?;
             self.emit(RoderEvent::ToolCallCompleted(ToolCallCompleted {
@@ -291,7 +295,7 @@ impl Runtime {
             self.persist_turn_item(
                 thread_id,
                 turn_id,
-                &roder_api::conversation::ConversationItem::ToolResult(item.clone()),
+                &roder_api::transcript::TranscriptItem::ToolResult(item.clone()),
             )
             .await?;
             self.emit(RoderEvent::ToolCallCompleted(ToolCallCompleted {
@@ -427,7 +431,7 @@ impl Runtime {
         self.persist_turn_item(
             thread_id,
             turn_id,
-            &roder_api::conversation::ConversationItem::ToolResult(item.clone()),
+            &roder_api::transcript::TranscriptItem::ToolResult(item.clone()),
         )
         .await?;
         self.emit(RoderEvent::ToolCallCompleted(ToolCallCompleted {
@@ -820,7 +824,7 @@ impl Runtime {
 }
 
 fn is_subagent_task_tool(name: &str) -> bool {
-    name == "task" || name.starts_with("task_")
+    name == "task" || (name.starts_with("task_") && !name.contains('.'))
 }
 
 fn subagent_error_kind(data: &Value) -> String {
@@ -842,4 +846,16 @@ fn json_string_array(value: Option<&Value>) -> Vec<String> {
                 .collect()
         })
         .unwrap_or_default()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::is_subagent_task_tool;
+
+    #[test]
+    fn subagent_task_tool_detection_excludes_task_ledger_namespace() {
+        assert!(is_subagent_task_tool("task"));
+        assert!(is_subagent_task_tool("task_explore"));
+        assert!(!is_subagent_task_tool("task_ledger.update"));
+    }
 }

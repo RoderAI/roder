@@ -23,12 +23,12 @@ const EVENT_TYPES: Record<string, RoderSdkEvent["type"]> = {
   "turn/started": "turn.started",
   "turn/delta": "turn.delta",
   "turn/completed": "turn.completed",
-  "session/approvalRequested": "approval.requested",
-  "session/approvalResolved": "approval.resolved",
-  "session/userInputRequested": "user_input.requested",
-  "session/userInputResolved": "user_input.resolved",
-  "session/planExitRequested": "plan_exit.requested",
-  "session/planExitResolved": "plan_exit.resolved",
+  "thread/approvalRequested": "approval.requested",
+  "thread/approvalResolved": "approval.resolved",
+  "thread/userInputRequested": "user_input.requested",
+  "thread/userInputResolved": "user_input.resolved",
+  "thread/planExitRequested": "plan_exit.requested",
+  "thread/planExitResolved": "plan_exit.resolved",
   "command/outputDelta": "command.output_delta",
 };
 

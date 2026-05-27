@@ -126,30 +126,28 @@ class RoderAgent:
             await self._handle_callback_notification(str(notification.get("method")), notification.get("params"))
 
     async def _handle_callback_notification(self, method: str, params: Any) -> None:
-        if method == "session/approvalRequested" and "on_tool_approval" in self.approvals:
+        if method == "thread/approvalRequested" and "on_tool_approval" in self.approvals:
             decision = await _maybe_await(self.approvals["on_tool_approval"](params))
             await self.client.call(
-                "session/resolve_approval",
+                "thread/resolve_approval",
                 {
                     "approvalId": _extract_string(params, "approvalId"),
                     "approved": bool(decision.get("approved")),
-                    "message": decision.get("message"),
                 },
             )
-        elif method == "session/userInputRequested" and "on_user_input" in self.approvals:
+        elif method == "thread/userInputRequested" and "on_user_input" in self.approvals:
             decision = await _maybe_await(self.approvals["on_user_input"](params))
             await self.client.call(
-                "session/resolve_user_input",
-                {"requestId": _extract_string(params, "requestId"), "response": decision.get("response")},
+                "thread/resolve_user_input",
+                {"requestId": _extract_string(params, "requestId"), "answers": decision.get("answers")},
             )
-        elif method == "session/planExitRequested" and "on_plan_exit" in self.approvals:
+        elif method == "thread/planExitRequested" and "on_plan_exit" in self.approvals:
             decision = await _maybe_await(self.approvals["on_plan_exit"](params))
             await self.client.call(
-                "session/exit_plan",
+                "thread/exit_plan",
                 {
                     "requestId": _extract_string(params, "requestId"),
-                    "accepted": bool(decision.get("accepted")),
-                    "message": decision.get("message"),
+                    "approved": bool(decision.get("approved")),
                 },
             )
 

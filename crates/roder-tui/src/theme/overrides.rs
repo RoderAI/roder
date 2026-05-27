@@ -21,6 +21,7 @@ use crate::theme::node_tree::CrossCuttingTag;
 pub const KNOWN_VARS: &[&str] = &[
     "background",
     "text",
+    "commentary",
     "muted",
     "subtle",
     "accent",

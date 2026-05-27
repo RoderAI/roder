@@ -4,23 +4,19 @@ use std::time::Instant;
 
 use anyhow::Context;
 use roder_api::catalog::PROVIDER_MOCK;
-use roder_api::events::{RoderEvent, ThreadId, TurnId};
-use roder_api::extension::ExtensionRegistryBuilder;
-use roder_api::inference::{
-    HostedWebSearchConfig, InferenceEvent, InstructionBundle, RuntimeProfile,
-};
-use roder_api::policy_mode::PolicyMode;
-use roder_core::fake_provider::FakeInferenceEngine;
-use roder_core::{Runtime, RuntimeConfig, RuntimeSpeedPolicyConfig, StartTurnRequest};
+use roder_api::events::RoderEvent;
+use roder_api::inference::{InstructionBundle, RuntimeProfile};
+use roder_core::StartTurnRequest;
 use serde::{Deserialize, Serialize};
 use time::OffsetDateTime;
-use tokio::sync::broadcast;
-use tokio::time::{Duration, timeout};
+use tokio::time::Duration;
 
 mod baseline;
+mod fixture_metrics;
 mod lazy_discovery;
 mod reliability;
 mod report;
+mod runtime_harness;
 #[cfg(test)]
 mod tests;
 mod workspace;
@@ -35,9 +31,13 @@ pub use report::{
     read_eval_report, write_eval_report_files,
 };
 
+use fixture_metrics::fixture_command_check_metrics;
 use lazy_discovery::lazy_discovery_metrics;
 use reliability::fixture_reliability_injection;
 use report::{eval_metrics, trajectory_excerpt};
+use runtime_harness::{
+    TurnCollectionError, build_fake_runtime, collect_turn_events, deadline_seconds_from_timeout_ms,
+};
 use workspace::{
     create_workspace, failure_class_for_fixture, grade_expected_evidence, run_workspace_setup,
 };
@@ -311,7 +311,7 @@ async fn run_offline_fixture(
                 provider_override: Some(provider.to_string()),
                 model_override: Some(profile_run.model.clone()),
                 reasoning_override: None,
-                workspace: Some(workspace.path.display().to_string()),
+                workspace: workspace.path.display().to_string(),
                 instructions: InstructionBundle::default(),
                 task_ledger_required: fixture.expected.task_ledger_required,
             })
@@ -374,6 +374,7 @@ async fn run_offline_fixture(
     let trajectory = EvalTrajectory::from_events(thread_id.clone(), turn_id.clone(), &events);
     let trace_excerpt = trajectory_excerpt(&trajectory);
     let mut metrics = eval_metrics(&events, start.elapsed().as_millis(), &outcome);
+    metrics.extend(fixture_command_check_metrics(fixture, &outcome));
     metrics.extend(lazy_discovery_metrics(fixture, &events, &outcome));
     metrics.extend(grade_retrieval_router_fixture(fixture, &events, &outcome));
     let report = EvalReport {
@@ -439,112 +440,6 @@ fn grade_task_ledger_requirement(
         anyhow::bail!("task ledger incomplete: {}", incomplete.join(", "));
     }
     Ok(())
-}
-
-fn build_fake_runtime(
-    fixture: &EvalFixture,
-    workspace: &Path,
-    provider: &str,
-    model: &str,
-    runtime_profile: RuntimeProfile,
-    speed_policy_enabled: bool,
-    turn_deadline_seconds: Option<u64>,
-) -> anyhow::Result<Runtime> {
-    let mut builder = ExtensionRegistryBuilder::new();
-    builder.inference_engine(Arc::new(FakeInferenceEngine));
-    builder.tool_contributor(Arc::new(roder_tools::BuiltinCodingToolsContributor::new(
-        workspace.to_path_buf(),
-    )?));
-    builder.tool_contributor(Arc::new(
-        roder_ext_task_ledger::TaskLedgerToolContributor::default(),
-    ));
-    builder.tool_contributor(Arc::new(
-        roder_ext_verification::VerificationToolContributor,
-    ));
-    if !fixture.tags.iter().any(|tag| tag == "router:off") {
-        builder.context_planner(Arc::new(roder_context::RetrievalRouterPlanner));
-    }
-    builder.context_planner(Arc::new(roder_context::EntrypointContextPlanner::new(
-        workspace.to_path_buf(),
-    )));
-    Runtime::new(
-        builder.build()?,
-        RuntimeConfig {
-            default_provider: provider.to_string(),
-            default_model: model.to_string(),
-            hosted_web_search: HostedWebSearchConfig::disabled(),
-            workspace: Some(workspace.display().to_string()),
-            policy_mode: PolicyMode::Bypass,
-            runtime_profile,
-            speed_policy: RuntimeSpeedPolicyConfig {
-                enabled: speed_policy_enabled,
-                ..RuntimeSpeedPolicyConfig::default()
-            },
-            turn_deadline_seconds,
-            ..RuntimeConfig::default()
-        },
-    )
-}
-
-fn deadline_seconds_from_timeout_ms(timeout_ms: u64) -> u64 {
-    timeout_ms.div_ceil(1000).max(1)
-}
-
-async fn collect_turn_events(
-    rx: &mut broadcast::Receiver<roder_api::events::EventEnvelope>,
-    thread_id: &ThreadId,
-    turn_id: &TurnId,
-    wait_for: Duration,
-    final_answer: &mut String,
-) -> Result<Vec<RoderEvent>, TurnCollectionError> {
-    let mut events = Vec::new();
-    let result = timeout(wait_for, async {
-        loop {
-            let envelope = match rx.recv().await {
-                Ok(envelope) => envelope,
-                Err(broadcast::error::RecvError::Lagged(_)) => continue,
-                Err(broadcast::error::RecvError::Closed) => break Ok(()),
-            };
-            if envelope.thread_id.as_ref() != Some(thread_id)
-                || envelope.turn_id.as_ref() != Some(turn_id)
-            {
-                continue;
-            }
-            if let RoderEvent::InferenceEventReceived(event) = &envelope.event
-                && let InferenceEvent::MessageDelta(delta) = &event.event
-            {
-                final_answer.push_str(&delta.text);
-            }
-            let terminal = match &envelope.event {
-                RoderEvent::TurnCompleted(_) => Some(Ok(())),
-                RoderEvent::TurnFailed(event) => Some(Err(event.error.clone())),
-                _ => None,
-            };
-            events.push(envelope.event);
-            if let Some(done) = terminal {
-                break done;
-            }
-        }
-    })
-    .await;
-    match result {
-        Ok(Ok(())) => Ok(events),
-        Ok(Err(error)) => Err(TurnCollectionError::Failed {
-            error,
-            collected: events,
-        }),
-        Err(_) => Err(TurnCollectionError::Timeout { collected: events }),
-    }
-}
-
-enum TurnCollectionError {
-    Timeout {
-        collected: Vec<RoderEvent>,
-    },
-    Failed {
-        error: String,
-        collected: Vec<RoderEvent>,
-    },
 }
 
 fn default_provider() -> String {

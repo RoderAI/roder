@@ -1,7 +1,7 @@
-use roder_api::conversation::ToolResultRecord;
 use roder_api::reliability::{
     ReliabilityErrorClass, ReliabilityLimitDecision, ReliabilityLimitKind, ReliabilityRequestPolicy,
 };
+use roder_api::transcript::ToolResultRecord;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RuntimeReliabilityConfig {
@@ -19,7 +19,7 @@ impl Default for RuntimeReliabilityConfig {
     fn default() -> Self {
         Self {
             max_consecutive_tool_failures: 5,
-            max_tool_failures_per_turn: 10,
+            max_tool_failures_per_turn: 128,
             max_model_calls_per_turn: 512,
             provider_retry_max_attempts: 3,
             provider_retry_initial_backoff_ms: 1_000,
@@ -57,6 +57,17 @@ pub(crate) struct ReliabilityLimitHit {
     pub current: u32,
     pub limit: u32,
     pub message: String,
+}
+
+pub(crate) fn provider_stream_retry_cause(message: &str) -> Option<&'static str> {
+    let lower = message.to_ascii_lowercase();
+    if lower.contains("error decoding response body") {
+        return Some("stream_decode_error");
+    }
+    if lower.contains("stream closed before response.completed") {
+        return Some("stream_closed_before_completed");
+    }
+    None
 }
 
 impl TurnReliabilityState {
@@ -157,7 +168,7 @@ mod tests {
     fn reliability_limits_reset_consecutive_failures_after_success() {
         let cfg = RuntimeReliabilityConfig {
             max_consecutive_tool_failures: 2,
-            max_tool_failures_per_turn: 10,
+            max_tool_failures_per_turn: 128,
             ..RuntimeReliabilityConfig::default()
         };
         let mut state = TurnReliabilityState::default();
@@ -193,5 +204,18 @@ mod tests {
             RuntimeReliabilityConfig::default().max_model_calls_per_turn,
             512
         );
+    }
+
+    #[test]
+    fn provider_stream_retry_cause_classifies_transient_stream_failures() {
+        assert_eq!(
+            provider_stream_retry_cause("error decoding response body"),
+            Some("stream_decode_error")
+        );
+        assert_eq!(
+            provider_stream_retry_cause("stream closed before response.completed"),
+            Some("stream_closed_before_completed")
+        );
+        assert_eq!(provider_stream_retry_cause("invalid request body"), None);
     }
 }

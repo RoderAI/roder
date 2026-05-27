@@ -1,5 +1,6 @@
 pub mod methods;
 pub mod schema;
+pub mod speech;
 
 use roder_api::artifacts::{
     ArtifactGrepPage, ArtifactReadPage, ArtifactTailPage, ContextArtifactDescriptor,
@@ -15,14 +16,14 @@ use roder_api::code_index::{
     ContentProof,
 };
 use roder_api::context::ContextBlock;
-use roder_api::conversation::InputImage;
 use roder_api::discovery::{
     DiscoveryCatalog, DiscoveryCatalogGroup, DiscoveryCatalogItem, DiscoveryPromotionRecord,
 };
 use roder_api::events::{ThreadId, TurnId};
 use roder_api::extension::{ExtensionId, ExtensionManifest};
+pub use roder_api::goals::{ThreadGoal, ThreadGoalStatus};
 use roder_api::inference::{
-    HostedWebSearchMode, InferenceCapabilities, ModelDescriptor, ProviderAuthType,
+    HostedWebSearchMode, InferenceCapabilities, ModelDescriptor, ProviderAuthType, TokenUsage,
 };
 use roder_api::marketplace::{
     DedupedMarketplacePlugin, DefaultMarketplaceSelection, InstalledPluginRecord,
@@ -46,8 +47,10 @@ use roder_api::teams::{
     AgentTeamDisplayMode, TeamId, TeamMailboxMessage, TeamMemberDescriptor, TeamMemberId,
     TeamMemberStatus, TeamTaskDescriptor,
 };
+use roder_api::thread::ThreadUsageMetadata;
 use roder_api::tools::ToolSpec;
 use roder_api::trace::{SubagentTraceDelta, SubagentTraceId, SubagentTraceSummary};
+use roder_api::transcript::InputImage;
 use roder_api::workflow::{
     WorkflowImportDecision, WorkflowImportItem, WorkflowImportScan, WorkflowImportState,
 };
@@ -55,6 +58,8 @@ use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::collections::HashMap;
 use time::OffsetDateTime;
+
+pub use speech::*;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct JsonRpcRequest {
@@ -105,36 +110,37 @@ pub struct InitializeResult {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct DesktopThreadStatus {
+pub struct ThreadStatus {
     #[serde(rename = "type")]
     pub kind: String,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub active_turn_id: Option<TurnId>,
     pub active_flags: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct DesktopThread {
+pub struct Thread {
     pub id: ThreadId,
-    pub session_id: ThreadId,
     pub preview: String,
     pub model_provider: String,
     pub model: String,
     pub created_at: i64,
     pub updated_at: i64,
-    pub status: DesktopThreadStatus,
+    pub status: ThreadStatus,
     pub cwd: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub name: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub turns: Option<Vec<DesktopTurn>>,
+    pub turns: Option<Vec<Turn>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub usage: Option<ThreadUsageMetadata>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct DesktopTurn {
+pub struct Turn {
     pub id: TurnId,
-    pub items: Vec<DesktopItem>,
+    pub items: Vec<Item>,
     pub items_view: String,
     pub status: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -145,11 +151,13 @@ pub struct DesktopTurn {
     pub completed_at: Option<i64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub duration_ms: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub usage: Option<TokenUsage>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct DesktopItem {
+pub struct Item {
     pub id: String,
     #[serde(rename = "type")]
     pub kind: String,
@@ -173,7 +181,7 @@ pub struct ThreadStartParams {
     pub model: Option<String>,
     pub model_provider: Option<String>,
     pub reasoning: Option<String>,
-    pub cwd: Option<String>,
+    pub cwd: String,
     #[serde(default)]
     pub ephemeral: bool,
 }
@@ -181,7 +189,7 @@ pub struct ThreadStartParams {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ThreadStartResult {
-    pub thread: DesktopThread,
+    pub thread: Thread,
     pub model: String,
     pub model_provider: String,
     pub reasoning: String,
@@ -197,7 +205,7 @@ pub struct ThreadListParams {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ThreadListResult {
-    pub data: Vec<DesktopThread>,
+    pub data: Vec<Thread>,
     pub next_cursor: Option<String>,
     pub backwards_cursor: Option<String>,
 }
@@ -213,7 +221,7 @@ pub struct ThreadReadParams {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ThreadReadResult {
-    pub thread: Option<DesktopThread>,
+    pub thread: Option<Thread>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -227,6 +235,68 @@ pub struct ThreadArchiveParams {
 pub struct ThreadArchiveResult {
     pub thread_id: ThreadId,
     pub archived: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ThreadGoalGetParams {
+    pub thread_id: ThreadId,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ThreadGoalGetResult {
+    pub goal: Option<ThreadGoal>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ThreadGoalSetParams {
+    pub thread_id: ThreadId,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub objective: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub status: Option<ThreadGoalStatus>,
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "deserialize_goal_token_budget_patch"
+    )]
+    pub token_budget: Option<Option<i64>>,
+}
+
+fn deserialize_goal_token_budget_patch<'de, D>(
+    deserializer: D,
+) -> Result<Option<Option<i64>>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let value = serde_json::Value::deserialize(deserializer)?;
+    match value {
+        serde_json::Value::Null => Ok(Some(None)),
+        value => i64::deserialize(value)
+            .map(Some)
+            .map(Some)
+            .map_err(serde::de::Error::custom),
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ThreadGoalSetResult {
+    pub goal: Option<ThreadGoal>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ThreadGoalClearParams {
+    pub thread_id: ThreadId,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ThreadGoalClearResult {
+    pub cleared: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -247,6 +317,8 @@ pub struct TurnStartParams {
     #[serde(default)]
     pub input: Vec<TurnInputItem>,
     pub prompt: Option<String>,
+    #[serde(default)]
+    pub task_ledger_required: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -287,12 +359,12 @@ pub struct TurnInterruptResult {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ModelListResult {
-    pub models: Vec<DesktopModel>,
+    pub models: Vec<Model>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct DesktopModel {
+pub struct Model {
     pub id: String,
     pub name: String,
     pub model_provider: String,
@@ -414,28 +486,41 @@ pub struct MemoryRecallPreviewResult {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ThreadStartedNotification {
-    pub thread: DesktopThread,
+    pub thread: Thread,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ThreadStatusChangedNotification {
     pub thread_id: ThreadId,
-    pub status: DesktopThreadStatus,
+    pub status: ThreadStatus,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ThreadGoalUpdatedNotification {
+    pub thread_id: ThreadId,
+    pub goal: ThreadGoal,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ThreadGoalClearedNotification {
+    pub thread_id: ThreadId,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct TurnStartedNotification {
     pub thread_id: ThreadId,
-    pub turn: DesktopTurn,
+    pub turn: Turn,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct TurnCompletedNotification {
     pub thread_id: ThreadId,
-    pub turn: DesktopTurn,
+    pub turn: Turn,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -460,7 +545,7 @@ pub struct TurnPartialResultNotification {
 pub struct ItemStartedNotification {
     pub thread_id: ThreadId,
     pub turn_id: TurnId,
-    pub item: DesktopItem,
+    pub item: Item,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -468,7 +553,7 @@ pub struct ItemStartedNotification {
 pub struct ItemCompletedNotification {
     pub thread_id: ThreadId,
     pub turn_id: TurnId,
-    pub item: DesktopItem,
+    pub item: Item,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -932,6 +1017,12 @@ pub struct SearchIndexSettings {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ShellSettings {
+    pub shell: String,
+    pub options: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub enum SearchIndexStatusState {
     Disabled,
@@ -1164,6 +1255,16 @@ pub struct ProviderConfigureParams {
 pub struct ProviderConfigureResult {
     pub provider: String,
     pub authenticated: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProviderClearParams {
+    pub provider: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProviderClearResult {
+    pub provider: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1489,7 +1590,7 @@ pub struct DiscoveryReadResult {
 pub struct DiscoveryRefreshResult {
     pub catalog: DiscoveryCatalog,
     pub catalog_root: String,
-    pub session_state_dir: String,
+    pub promotion_state_dir: String,
     pub written_files: Vec<String>,
 }
 
@@ -1973,6 +2074,7 @@ pub struct ProviderSelectResult {
 pub struct SettingsGetResult {
     pub web_search: WebSearchSettings,
     pub search_index: SearchIndexSettings,
+    pub shell: ShellSettings,
     pub default_mode: PolicyMode,
     pub file_backed_dynamic_context: bool,
 }
@@ -1995,6 +2097,16 @@ pub struct SettingsSetSearchIndexParams {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SettingsSetSearchIndexResult {
     pub search_index: SearchIndexSettings,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SettingsSetShellParams {
+    pub shell: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SettingsSetShellResult {
+    pub shell: ShellSettings,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -2024,12 +2136,14 @@ pub struct ProviderAuthResult {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SessionGetResult {
+#[serde(rename_all = "camelCase")]
+pub struct ThreadStateResult {
     pub mode: PolicyMode,
     pub pending_plan_exit: Option<PendingPlanExitDescriptor>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct PendingPlanExitDescriptor {
     pub thread_id: ThreadId,
     pub turn_id: TurnId,
@@ -2041,47 +2155,55 @@ pub struct PendingPlanExitDescriptor {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SessionSetModeParams {
+#[serde(rename_all = "camelCase")]
+pub struct ThreadSetModeParams {
     pub mode: PolicyMode,
     pub reason: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SessionSetModeResult {
+#[serde(rename_all = "camelCase")]
+pub struct ThreadSetModeResult {
     pub mode: PolicyMode,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SessionExitPlanParams {
+#[serde(rename_all = "camelCase")]
+pub struct ThreadExitPlanParams {
     pub request_id: String,
     pub approved: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SessionExitPlanResult {
+#[serde(rename_all = "camelCase")]
+pub struct ThreadExitPlanResult {
     pub resolved: bool,
     pub mode: PolicyMode,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SessionResolveApprovalParams {
+#[serde(rename_all = "camelCase")]
+pub struct ThreadResolveApprovalParams {
     pub approval_id: String,
     pub approved: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SessionResolveApprovalResult {
+#[serde(rename_all = "camelCase")]
+pub struct ThreadResolveApprovalResult {
     pub resolved: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SessionResolveUserInputParams {
+#[serde(rename_all = "camelCase")]
+pub struct ThreadResolveUserInputParams {
     pub request_id: String,
     pub answers: serde_json::Value,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SessionResolveUserInputResult {
+#[serde(rename_all = "camelCase")]
+pub struct ThreadResolveUserInputResult {
     pub resolved: bool,
 }
 
@@ -2499,7 +2621,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn desktop_turn_start_params_accept_desktop_input_shape() {
+    fn protocol_turn_start_params_accept_input_shape() {
         let params: TurnStartParams = serde_json::from_value(serde_json::json!({
             "threadId": "thread-1",
             "input": [
@@ -2517,10 +2639,22 @@ mod tests {
             params.input[1].image_url.as_deref(),
             Some("data:image/png;base64,YWJj")
         );
+        assert!(!params.task_ledger_required);
     }
 
     #[test]
-    fn desktop_notifications_serialize_with_json_rpc_method_and_camel_case_params() {
+    fn protocol_turn_start_params_accept_task_ledger_required() {
+        let params: TurnStartParams = serde_json::from_value(serde_json::json!({
+            "threadId": "thread-1",
+            "taskLedgerRequired": true
+        }))
+        .unwrap();
+
+        assert!(params.task_ledger_required);
+    }
+
+    #[test]
+    fn protocol_notifications_serialize_with_json_rpc_method_and_camel_case_params() {
         let notification = JsonRpcNotification {
             jsonrpc: "2.0".to_string(),
             method: "item/agentMessage/delta".to_string(),
@@ -2542,6 +2676,39 @@ mod tests {
         assert_eq!(value["params"]["itemId"], "turn-1-assistant");
         assert_eq!(value["params"]["delta"], "hello");
         assert_eq!(value["params"]["phase"], "final_answer");
+    }
+
+    #[test]
+    fn thread_status_serializes_required_activity_fields() {
+        let idle = serde_json::to_value(ThreadStatus {
+            kind: "idle".to_string(),
+            active_turn_id: None,
+            active_flags: Vec::new(),
+        })
+        .unwrap();
+        assert_eq!(
+            idle,
+            serde_json::json!({
+                "type": "idle",
+                "activeTurnId": null,
+                "activeFlags": []
+            })
+        );
+
+        let running = serde_json::to_value(ThreadStatus {
+            kind: "running".to_string(),
+            active_turn_id: Some("turn-1".to_string()),
+            active_flags: vec!["approvalRequired".to_string()],
+        })
+        .unwrap();
+        assert_eq!(
+            running,
+            serde_json::json!({
+                "type": "running",
+                "activeTurnId": "turn-1",
+                "activeFlags": ["approvalRequired"]
+            })
+        );
     }
 
     #[test]
@@ -3092,6 +3259,23 @@ mod tests {
         })
         .unwrap();
         assert_eq!(value["summary"], "partial evidence");
+    }
+
+    #[test]
+    fn thread_goal_set_params_preserve_null_budget_clear() {
+        let params: ThreadGoalSetParams = serde_json::from_value(serde_json::json!({
+            "threadId": "thread-a",
+            "tokenBudget": null
+        }))
+        .unwrap();
+        assert_eq!(params.thread_id, "thread-a");
+        assert_eq!(params.token_budget, Some(None));
+
+        let params: ThreadGoalSetParams = serde_json::from_value(serde_json::json!({
+            "threadId": "thread-a"
+        }))
+        .unwrap();
+        assert_eq!(params.token_budget, None);
     }
 
     #[test]

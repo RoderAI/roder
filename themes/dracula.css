@@ -19,6 +19,7 @@
     --yellow:   #f1fa8c;
 
     --text:               var(--fg);
+    --commentary:         #ffffff;
     --muted:              var(--comment);
     --subtle:             var(--current);
     --accent:             var(--pink);

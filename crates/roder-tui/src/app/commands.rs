@@ -12,7 +12,10 @@ pub(super) fn built_in_command_catalog() -> Vec<CommandDescriptor> {
             "Summarize the current thread and continue with a smaller context.",
         ),
         ("help", "Show available commands and common workflows."),
-        ("goal", "Create a new active goal from an objective."),
+        (
+            "goal",
+            "Inspect, set, pause, resume, edit, or clear the thread goal.",
+        ),
         ("retry", "Resubmit the last user message."),
         ("model", "Show or change the active model."),
         ("agents", "List configured subagents."),
@@ -26,12 +29,13 @@ pub(super) fn built_in_command_catalog() -> Vec<CommandDescriptor> {
             "Preview, install, list, disable, or uninstall marketplace plugins.",
         ),
         ("remote", "Open the remote app-server pairing panel."),
+        ("voice", "Toggle voice dictation into the composer."),
         ("roadmap", "Open document-first roadmapping mode."),
     ]
     .into_iter()
     .map(|(name, description)| {
         let argument_hint = match name {
-            "goal" => Some("<objective>".to_string()),
+            "goal" => Some("[pause|resume|edit|clear|<objective>]".to_string()),
             "commit" => Some("[path-or-message]".to_string()),
             "marketplace" => {
                 Some("list|install-default|add|remove|refresh|search|show [args]".to_string())
@@ -40,6 +44,7 @@ pub(super) fn built_in_command_catalog() -> Vec<CommandDescriptor> {
                 Some("preview|install|install-all|list|disable|uninstall [args]".to_string())
             }
             "ps" => Some("all|stop <id>|stop-all --confirm|<id>".to_string()),
+            "voice" => Some("[hold|tap|off|status]".to_string()),
             "roadmap" => Some("[plan]".to_string()),
             _ => None,
         };
@@ -130,7 +135,7 @@ pub(super) fn help_text(commands: &[CommandDescriptor]) -> String {
     let mut lines = vec![
         "Slash commands:".to_string(),
         "/clear - Clear the visible conversation state.".to_string(),
-        "/goal <objective> - Create a new active goal.".to_string(),
+        "/goal [pause|resume|edit|clear|<objective>] - Manage the thread goal.".to_string(),
         "/retry - Resubmit the last user message.".to_string(),
         "/model - Show or change the active model.".to_string(),
         "/agents - List configured subagents.".to_string(),
@@ -140,6 +145,7 @@ pub(super) fn help_text(commands: &[CommandDescriptor]) -> String {
         "/commit [path-or-message] - Create a scoped git commit.".to_string(),
         "/marketplace <command> - Manage plugin marketplaces.".to_string(),
         "/plugin <command> - Manage marketplace plugin installs.".to_string(),
+        "/voice [hold|tap|off|status] - Toggle voice dictation into the composer.".to_string(),
     ];
     for command in commands {
         if matches!(
@@ -154,6 +160,7 @@ pub(super) fn help_text(commands: &[CommandDescriptor]) -> String {
                 | "marketplace"
                 | "plugin"
                 | "commit"
+                | "voice"
         ) {
             continue;
         }
@@ -220,11 +227,18 @@ mod tests {
         let help = help_text(&sample_commands());
 
         assert!(help.contains("Slash commands:"));
-        assert!(help.contains("/goal <objective> - Create a new active goal."));
+        assert!(
+            help.contains("/goal [pause|resume|edit|clear|<objective>] - Manage the thread goal.")
+        );
         assert!(help.contains("/retry - Resubmit the last user message."));
         assert!(help.contains("/commit [path-or-message] - Create a scoped git commit."));
         assert!(help.contains("/marketplace <command> - Manage plugin marketplaces."));
         assert!(help.contains("/plugin <command> - Manage marketplace plugin installs."));
+        assert!(
+            help.contains(
+                "/voice [hold|tap|off|status] - Toggle voice dictation into the composer."
+            )
+        );
         assert!(help.contains("/help - Run command."));
     }
 
@@ -254,6 +268,7 @@ mod tests {
                 "marketplace",
                 "plugin",
                 "remote",
+                "voice",
                 "roadmap"
             ]
         );
@@ -262,7 +277,7 @@ mod tests {
                 .iter()
                 .find(|command| command.name == "goal")
                 .and_then(|command| command.argument_hint.as_deref()),
-            Some("<objective>")
+            Some("[pause|resume|edit|clear|<objective>]")
         );
         assert_eq!(
             commands
@@ -291,6 +306,13 @@ mod tests {
                 .find(|command| command.name == "ps")
                 .and_then(|command| command.argument_hint.as_deref()),
             Some("all|stop <id>|stop-all --confirm|<id>")
+        );
+        assert_eq!(
+            commands
+                .iter()
+                .find(|command| command.name == "voice")
+                .and_then(|command| command.argument_hint.as_deref()),
+            Some("[hold|tap|off|status]")
         );
         assert_eq!(
             commands

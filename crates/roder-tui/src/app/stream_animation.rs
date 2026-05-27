@@ -10,6 +10,7 @@ use super::Theme;
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
 pub(super) enum StreamFadePalette {
     Accent,
+    Commentary,
     Neutral,
 }
 
@@ -316,6 +317,7 @@ fn stream_gradient_color(age: usize, theme: Theme, palette: StreamFadePalette) -
             6..=9 => theme.text,
             _ => theme.muted,
         },
+        StreamFadePalette::Commentary => theme.commentary,
         StreamFadePalette::Neutral => match age {
             0..=4 => theme.text,
             5..=9 => theme.muted,
@@ -398,6 +400,27 @@ mod tests {
                 .any(|span| span.style.fg == Some(theme.accent))
         );
         assert!(rendered.is_animating());
+    }
+
+    #[test]
+    fn commentary_stream_fade_uses_commentary_color() {
+        let theme = Theme::for_dark_background(true);
+        let rendered = AnimatedText::new("thinking".to_string(), String::new(), 8);
+        let lines = animated_plain_lines(
+            &rendered,
+            theme.commentary(),
+            theme,
+            StreamFadePalette::Commentary,
+        );
+
+        let colors = lines[0]
+            .spans
+            .iter()
+            .filter_map(|span| span.style.fg)
+            .collect::<Vec<_>>();
+        assert!(!colors.contains(&theme.accent));
+        assert!(!colors.contains(&theme.accent_soft));
+        assert!(colors.iter().all(|color| *color == theme.commentary));
     }
 
     #[test]

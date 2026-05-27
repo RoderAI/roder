@@ -3,6 +3,7 @@ mod automations;
 mod commands;
 mod composer;
 mod dialog;
+mod goals;
 mod input_queue;
 mod media;
 #[allow(dead_code)]
@@ -15,9 +16,9 @@ mod plugin_browser;
 mod processes;
 #[allow(dead_code)]
 mod remote;
+mod roadmap_workspace;
 mod runner;
 mod scroll_accel;
-mod session_resume;
 mod shortcuts;
 #[allow(dead_code)]
 mod skills;
@@ -28,9 +29,11 @@ mod subagent_trace_tests;
 #[allow(dead_code)]
 mod team_panes;
 mod team_ui;
+mod thread_resume;
 mod tool_detail;
 mod tool_timeline;
 mod turn_timer;
+mod voice;
 mod workflow_import;
 
 use std::collections::{HashMap, HashSet};
@@ -55,30 +58,31 @@ use ratatui::{
     },
 };
 use roder_api::catalog::lookup_model;
-use roder_api::conversation::InputImage;
 use roder_api::events::RoderEvent;
 use roder_api::inference::{
     HostedWebSearchMode, ProviderAuthType, ReasoningEffortDescriptor, TokenUsage,
 };
 use roder_api::policy_mode::{PolicyDecision, PolicyMode};
+use roder_api::transcript::InputImage;
 use roder_api_transcript::ApiTranscriptRecord;
 use roder_app_server::{
     AppClient, AppEventReceiver, AppServer, LocalAppClient, transcript::TranscriptRecorder,
 };
 use roder_protocol::{
     AgentsListResult, CommandDescriptor, CommandsExpandParams, CommandsExpandResult,
-    CommandsListResult, DesktopThread, JsonRpcRequest, JsonRpcResponse, PendingPlanExitDescriptor,
-    ProviderAuthResult, ProviderConfigureParams, ProviderConfigureResult, ProviderDescriptor,
-    ProviderSelectParams, ProviderSelectResult, ProvidersListResult, RunnersListResult,
-    RunnersSelectParams, RunnersSelectResult, SessionExitPlanParams, SessionExitPlanResult,
-    SessionGetResult, SessionResolveApprovalParams, SessionResolveApprovalResult,
-    SessionSetModeParams, SessionSetModeResult, SettingsGetResult, SettingsSetDefaultModeParams,
-    SettingsSetDefaultModeResult, SettingsSetFileBackedDynamicContextParams,
-    SettingsSetFileBackedDynamicContextResult, SettingsSetSearchIndexParams,
-    SettingsSetSearchIndexResult, SettingsSetWebSearchParams, SettingsSetWebSearchResult,
-    TasksGetParams, TasksGetResult, TasksListResult, TeamReadParams, TeamReadResult,
-    ThreadStartParams, ThreadStartResult, TurnInputItem, TurnInterruptParams, TurnStartParams,
-    TurnSteerParams,
+    CommandsListResult, JsonRpcRequest, JsonRpcResponse, PendingPlanExitDescriptor,
+    ProviderAuthResult, ProviderClearParams, ProviderClearResult, ProviderConfigureParams,
+    ProviderConfigureResult, ProviderDescriptor, ProviderSelectParams, ProviderSelectResult,
+    ProvidersListResult, RunnersListResult, RunnersSelectParams, RunnersSelectResult,
+    SettingsGetResult, SettingsSetDefaultModeParams, SettingsSetDefaultModeResult,
+    SettingsSetFileBackedDynamicContextParams, SettingsSetFileBackedDynamicContextResult,
+    SettingsSetSearchIndexParams, SettingsSetSearchIndexResult, SettingsSetShellParams,
+    SettingsSetShellResult, SettingsSetWebSearchParams, SettingsSetWebSearchResult, ShellSettings,
+    SpeechProvidersListResult, TasksGetParams, TasksGetResult, TasksListResult, TeamReadParams,
+    TeamReadResult, Thread, ThreadExitPlanParams, ThreadExitPlanResult, ThreadGoal,
+    ThreadResolveApprovalParams, ThreadResolveApprovalResult, ThreadSetModeParams,
+    ThreadSetModeResult, ThreadStartParams, ThreadStartResult, ThreadStateResult, TurnInputItem,
+    TurnInterruptParams, TurnStartParams, TurnSteerParams,
 };
 use tokio::io::AsyncWriteExt;
 use tokio::process::Command;
@@ -103,6 +107,8 @@ use plan_panel::{
 };
 use plugin_browser::PluginBrowserState;
 use remote::{RemotePanelController, render_remote_panel_lines};
+use roadmap_workspace::{RoadmapWorkspaceMeta, render_roadmap_workspace};
+use roder_roadmap::ThreadAttachment;
 use scroll_accel::ScrollSettings;
 use shortcuts::FooterShortcutContext;
 use team_ui::{TeamUiState, is_team_focus_next_key, is_team_focus_previous_key};
@@ -112,6 +118,7 @@ use tool_timeline::{
     fallback_entry,
 };
 use turn_timer::TurnTimer;
+use voice::{VoiceConfig, VoiceMode, VoiceState};
 
 const TOP_STATUS_ANIMATION_FPS: u64 = 6;
 const MAX_VISIBLE_SLASH_COMMANDS: usize = 16;
@@ -170,6 +177,7 @@ fn pending_turn_input(text: String, images: Vec<InputImage>) -> Vec<TurnInputIte
 struct Theme {
     text: Color,
     text_strong: Color,
+    commentary: Color,
     muted: Color,
     subtle: Color,
     accent: Color,
@@ -224,6 +232,7 @@ impl Theme {
             return Self {
                 text: Color::Reset,
                 text_strong: Color::Reset,
+                commentary: Color::Indexed(15),
                 muted: Color::Indexed(244),
                 subtle: Color::Indexed(245),
                 accent: Color::Indexed(212),
@@ -258,6 +267,7 @@ impl Theme {
         Self {
             text: Color::Reset,
             text_strong: Color::Reset,
+            commentary: Color::Indexed(16),
             muted: Color::Indexed(240),
             subtle: Color::Indexed(240),
             accent: Color::Indexed(198),
@@ -303,6 +313,7 @@ impl Theme {
         }
         set!(text, "text");
         set!(text_strong, "text");
+        set!(commentary, "commentary");
         set!(muted, "muted");
         set!(subtle, "subtle");
         set!(accent, "accent");
@@ -401,6 +412,10 @@ impl Theme {
         Style::default()
             .fg(self.text_strong)
             .add_modifier(Modifier::BOLD)
+    }
+
+    fn commentary(self) -> Style {
+        Style::default().fg(self.commentary)
     }
 
     fn muted(self) -> Style {
@@ -525,6 +540,13 @@ struct ReasoningOptionChoice {
 }
 
 #[derive(Debug, Clone)]
+struct VoiceModelChoice {
+    provider_id: String,
+    model_id: String,
+    label: String,
+}
+
+#[derive(Debug, Clone)]
 struct ProviderChoice {
     provider_id: String,
     name: String,
@@ -562,12 +584,6 @@ impl ProviderAuthFlow {
             _ => None,
         }
     }
-}
-
-#[derive(Debug, Clone, serde::Deserialize)]
-struct WorkflowToolCallResult {
-    text: String,
-    is_error: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -630,6 +646,8 @@ enum ProviderPopupScreen {
     Runners,
     Spinner,
     WebSearch,
+    VoiceModels,
+    Shell,
     Resume,
     Themes,
     Marketplaces,
@@ -788,16 +806,20 @@ enum ProviderMenuItem {
     RunnerSettings,
     SpinnerSettings,
     WebSearchSettings,
+    VoiceModelSettings,
+    ShellSettings(String),
     SearchIndexToggle(bool),
     FileBackedDynamicContextToggle(bool),
     MessageFoldingToggle(bool),
     ThemesSettings,
     MarketplacesSettings,
     PluginBrowser,
-    ResumeSessions,
+    ResumeThreads,
     DefaultMode(PolicyMode),
     Spinner(WorkingSpinner),
     WebSearchMode(HostedWebSearchMode),
+    VoiceModel(VoiceModelChoice),
+    ShellChoice(String),
     Provider(ProviderChoice),
     Model(ProviderOption),
     Reasoning(ReasoningOptionChoice),
@@ -806,7 +828,7 @@ enum ProviderMenuItem {
         provider_id: String,
         label: String,
     },
-    Session(Box<DesktopThread>),
+    Thread(Box<Thread>),
     Theme(String),
     MarketplaceDefault {
         id: &'static str,
@@ -857,6 +879,8 @@ impl ProviderMenuItem {
             Self::RunnerSettings => "Runners".to_string(),
             Self::SpinnerSettings => "Working spinner".to_string(),
             Self::WebSearchSettings => "Web search provider".to_string(),
+            Self::VoiceModelSettings => "Voice model".to_string(),
+            Self::ShellSettings(shell) => format!("Shell command shell: {shell}"),
             Self::SearchIndexToggle(enabled) => format!(
                 "Instant regex search: {}",
                 if *enabled { "on" } else { "off" }
@@ -872,31 +896,33 @@ impl ProviderMenuItem {
             Self::ThemesSettings => "Themes".to_string(),
             Self::MarketplacesSettings => "Plugin marketplaces".to_string(),
             Self::PluginBrowser => "Browse installable plugins".to_string(),
-            Self::ResumeSessions => "Resume session".to_string(),
+            Self::ResumeThreads => "Resume thread".to_string(),
             Self::DefaultMode(mode) => {
                 format!("Default mode: {}", settings_policy_mode_label(*mode))
             }
             Self::Spinner(spinner) => spinner.label().to_string(),
             Self::WebSearchMode(mode) => web_search_mode_label(*mode).to_string(),
+            Self::VoiceModel(choice) => choice.label.clone(),
+            Self::ShellChoice(shell) => shell.clone(),
             Self::Provider(provider) => provider.label(),
             Self::Model(option) => option.label.clone(),
             Self::Reasoning(option) => format!("{} - {}", option.effort, option.description),
             Self::Runner { label, .. } => label.clone(),
-            Self::Session(session) => {
-                let workspace = if session.cwd.trim().is_empty() {
+            Self::Thread(thread) => {
+                let workspace = if thread.cwd.trim().is_empty() {
                     "(unknown)".to_string()
                 } else {
-                    session.cwd.clone()
+                    thread.cwd.clone()
                 };
                 format!(
                     "{} [{}] {}",
-                    session.updated_at,
-                    short_id(&session.id),
-                    session
+                    thread.updated_at,
+                    short_id(&thread.id),
+                    thread
                         .name
                         .clone()
                         .filter(|title| !title.trim().is_empty())
-                        .unwrap_or_else(|| format!("Session {}", short_id(&session.id)))
+                        .unwrap_or_else(|| format!("Thread {}", short_id(&thread.id)))
                         + &format!(" - {workspace}")
                 )
             }
@@ -945,15 +971,15 @@ where
 {
     client: C,
     thread_id: String,
-    session_title: Option<String>,
-    session_message_count: usize,
+    thread_title: Option<String>,
+    thread_message_count: usize,
     active_turn_id: Option<String>,
     active_turn_timer: TurnTimer,
     current_turn_input_tokens: u32,
     current_turn_output_tokens: u32,
     current_turn_reasoning_tokens: Option<u32>,
     current_turn_total_tokens: u32,
-    session_tokens: u64,
+    thread_tokens: u64,
     context_window_tokens: u64,
     provider: String,
     model: String,
@@ -992,6 +1018,8 @@ where
     timeline_settings: TimelineSettings,
     web_search_mode: HostedWebSearchMode,
     search_index_enabled: bool,
+    command_shell: String,
+    command_shell_options: Vec<String>,
     file_backed_dynamic_context: bool,
     confirm_dialog: Option<ConfirmDialogState>,
     tool_detail_modal: Option<ToolDetailModal>,
@@ -1003,8 +1031,10 @@ where
     last_user_prompt: Option<PendingPrompt>,
     command_catalog: Vec<CommandDescriptor>,
     slash_command_selection: usize,
+    voice: VoiceState,
     policy_mode: PolicyMode,
     pending_plan_exit: Option<PendingPlanExitDescriptor>,
+    current_goal: Option<ThreadGoal>,
     compaction_active: bool,
     theme: Theme,
     /// Id of the currently-applied theme (basename of the `.css` file). `None`
@@ -1024,9 +1054,9 @@ where
 #[derive(Debug, Clone, Default, Eq, PartialEq)]
 pub enum TuiStartup {
     #[default]
-    NewSession,
+    NewThread,
     ResumeMenu,
-    ResumeSession(String),
+    ResumeThread(String),
     RoadmapOpen {
         path: Option<String>,
     },
@@ -1046,19 +1076,24 @@ pub struct TuiExitSummary {
 }
 
 #[derive(Debug, Clone, Eq, PartialEq)]
-struct SessionParts {
+struct ThreadParts {
     thread_id: String,
     provider: String,
-    session_model: String,
+    thread_model: String,
     requested_model: String,
     reasoning: String,
-    session_title: Option<String>,
-    session_message_count: usize,
+    thread_title: Option<String>,
+    thread_message_count: usize,
+}
+
+#[derive(Debug, serde::Deserialize)]
+struct RoadmapThreadResponse {
+    thread: ThreadAttachment,
 }
 
 impl TuiApp<LocalAppClient> {
     pub async fn new(client: LocalAppClient, model: String) -> anyhow::Result<Self> {
-        Self::new_with_startup(client, model, TuiStartup::NewSession).await
+        Self::new_with_startup(client, model, TuiStartup::NewThread).await
     }
 
     pub async fn new_with_startup(
@@ -1092,8 +1127,8 @@ where
                 .find(|member| member.id == member_id)
                 .cloned()
                 .ok_or_else(|| anyhow::anyhow!("team member not found: {member_id}"))?;
-            let thread = session_resume::load_thread(&client, &member.thread_id).await?;
-            let session_model = member
+            let thread = thread_resume::load_thread(&client, &member.thread_id).await?;
+            let thread_model = member
                 .model
                 .clone()
                 .filter(|value| !value.trim().is_empty())
@@ -1115,17 +1150,17 @@ where
                         .count()
                 })
                 .unwrap_or_default();
-            let mut app = Self::from_session_parts(
+            let mut app = Self::from_thread_parts(
                 client,
                 remote_panel_server,
-                SessionParts {
+                ThreadParts {
                     thread_id: member.thread_id.clone(),
                     provider,
-                    session_model,
+                    thread_model,
                     requested_model: String::new(),
                     reasoning: "medium".to_string(),
-                    session_title: title,
-                    session_message_count: message_count,
+                    thread_title: title,
+                    thread_message_count: message_count,
                 },
             )
             .await?;
@@ -1138,12 +1173,12 @@ where
             return Ok(app);
         }
 
-        if let TuiStartup::ResumeSession(thread_id) = startup.clone() {
-            let thread = session_resume::load_thread(&client, &thread_id)
+        if let TuiStartup::ResumeThread(thread_id) = startup.clone() {
+            let thread = thread_resume::load_thread(&client, &thread_id)
                 .await?
-                .ok_or_else(|| anyhow::anyhow!("session not found: {}", short_id(&thread_id)))?;
+                .ok_or_else(|| anyhow::anyhow!("thread not found: {}", short_id(&thread_id)))?;
             let provider = thread.model_provider.clone();
-            let session_model = model.clone();
+            let thread_model = model.clone();
             let title = thread
                 .name
                 .clone()
@@ -1160,17 +1195,17 @@ where
                         .count()
                 })
                 .unwrap_or_default();
-            let mut app = Self::from_session_parts(
+            let mut app = Self::from_thread_parts(
                 client,
                 remote_panel_server,
-                SessionParts {
+                ThreadParts {
                     thread_id: thread_id.clone(),
                     provider,
-                    session_model,
+                    thread_model,
                     requested_model: String::new(),
                     reasoning: "medium".to_string(),
-                    session_title: title,
-                    session_message_count: message_count,
+                    thread_title: title,
+                    thread_message_count: message_count,
                 },
             )
             .await?;
@@ -1187,7 +1222,7 @@ where
                     model: (!model.trim().is_empty()).then(|| model.clone()),
                     model_provider: None,
                     reasoning: None,
-                    cwd: None,
+                    cwd: std::env::current_dir()?.display().to_string(),
                     ephemeral: false,
                 })
                 .unwrap(),
@@ -1195,39 +1230,39 @@ where
         };
 
         let res = client.send_request(req).await;
-        let session = if let Some(result) = res.result {
+        let started = if let Some(result) = res.result {
             serde_json::from_value::<ThreadStartResult>(result)?
         } else {
-            anyhow::bail!("failed to create session: {:?}", res.error);
+            anyhow::bail!("failed to create thread: {:?}", res.error);
         };
 
         let selected_model = if model.is_empty() {
-            session.model.clone()
+            started.model.clone()
         } else {
             model.clone()
         };
-        let mut app = Self::from_session_parts(
+        let mut app = Self::from_thread_parts(
             client,
             remote_panel_server,
-            SessionParts {
-                thread_id: session.thread.id,
-                provider: session.model_provider,
-                session_model: selected_model,
+            ThreadParts {
+                thread_id: started.thread.id,
+                provider: started.model_provider,
+                thread_model: selected_model,
                 requested_model: model,
                 reasoning: "medium".to_string(),
-                session_title: None,
-                session_message_count: 0,
+                thread_title: None,
+                thread_message_count: 0,
             },
         )
         .await?;
 
         match startup {
-            TuiStartup::NewSession => {}
+            TuiStartup::NewThread => {}
             TuiStartup::ResumeMenu => {
                 app.open_resume_submenu().await;
             }
-            TuiStartup::ResumeSession(thread_id) => {
-                app.load_session(thread_id).await;
+            TuiStartup::ResumeThread(thread_id) => {
+                app.load_thread(thread_id).await;
             }
             TuiStartup::RoadmapOpen { path } => {
                 app.enter_roadmap_mode(path);
@@ -1238,19 +1273,19 @@ where
         Ok(app)
     }
 
-    async fn from_session_parts(
+    async fn from_thread_parts(
         client: C,
         remote_panel_server: Arc<AppServer>,
-        parts: SessionParts,
+        parts: ThreadParts,
     ) -> anyhow::Result<Self> {
-        let SessionParts {
+        let ThreadParts {
             thread_id,
             provider,
-            session_model,
+            thread_model,
             requested_model,
             reasoning,
-            session_title,
-            session_message_count,
+            thread_title,
+            thread_message_count,
         } = parts;
         let mut provider_state = ListState::default();
         provider_state.select(Some(0));
@@ -1270,34 +1305,42 @@ where
             let entries = crate::theme::discover_themes(&dirs);
             crate::theme::discovery::active_theme(&entries, None).map(|e| e.id.clone())
         };
-        let policy_state = session_get(&client).await.ok();
+        let policy_state = thread_state(&client).await.ok();
         let settings_state = settings_get(&client).await.ok();
+        let shell_settings = settings_state
+            .as_ref()
+            .map(|settings| settings.shell.clone())
+            .unwrap_or_else(default_shell_settings);
         let tui_config = load_tui_config().unwrap_or_default();
         let selected_model = if requested_model.is_empty() {
-            session_model
+            thread_model
         } else {
             requested_model
         };
         let model_context_window = context_window_for_model(&selected_model);
 
-        let command_catalog = session_resume::commands_list(&client)
+        let command_catalog = thread_resume::commands_list(&client)
             .await
             .unwrap_or_else(|_| built_in_command_catalog());
+        let current_goal = goals::thread_goal_get(&client, &thread_id)
+            .await
+            .ok()
+            .and_then(|result| result.goal);
         let scroll_settings = tui_config.scroll_settings();
         let timeline_settings = tui_config.timeline_settings();
 
         Ok(Self {
             client,
             thread_id,
-            session_title,
-            session_message_count,
+            thread_title,
+            thread_message_count,
             active_turn_id: None,
             active_turn_timer: TurnTimer::default(),
             current_turn_input_tokens: 0,
             current_turn_output_tokens: 0,
             current_turn_reasoning_tokens: None,
             current_turn_total_tokens: 0,
-            session_tokens: 0,
+            thread_tokens: 0,
             context_window_tokens: 0,
             provider,
             model: selected_model,
@@ -1342,6 +1385,8 @@ where
                 .as_ref()
                 .map(|settings| settings.search_index.enabled)
                 .unwrap_or(true),
+            command_shell: shell_settings.shell,
+            command_shell_options: shell_settings.options,
             file_backed_dynamic_context: settings_state
                 .map(|settings| settings.file_backed_dynamic_context)
                 .unwrap_or(true),
@@ -1355,11 +1400,13 @@ where
             last_user_prompt: None,
             command_catalog,
             slash_command_selection: 0,
+            voice: VoiceState::from_config(tui_config.voice.clone().unwrap_or_default()),
             policy_mode: policy_state
                 .as_ref()
                 .map(|state| state.mode)
                 .unwrap_or_default(),
             pending_plan_exit: policy_state.and_then(|state| state.pending_plan_exit),
+            current_goal,
             compaction_active: false,
             theme,
             active_theme_id,
@@ -1380,7 +1427,7 @@ where
     }
 
     pub fn exit_summary(&self) -> TuiExitSummary {
-        self.session_exit_summary()
+        self.thread_exit_summary()
     }
 
     pub async fn run(&mut self) -> anyhow::Result<()> {
@@ -1404,6 +1451,8 @@ where
             let now = clock.now();
             advance_top_status_animation(&mut self.animation_frame, &mut next_animation_tick, now);
             self.tick_streaming_animations(now, session.terminal_mut().size()?.width);
+            self.stop_idle_voice_recording(now).await;
+            self.finish_voice_transcription_if_ready().await;
             session.terminal_mut().draw(|f| {
                 self.render(f);
                 if options.record_ui_frames
@@ -1418,6 +1467,9 @@ where
             if input.poll(self.animation_poll_timeout(next_animation_tick, clock.now()))? {
                 match input.read()? {
                     Event::Key(key) => {
+                        if self.handle_voice_key(key).await {
+                            continue;
+                        }
                         if !should_handle_key_event(key) {
                             continue;
                         }
@@ -1521,6 +1573,35 @@ where
                                 {
                                     self.provider_menu_filter.push(c);
                                 }
+                                KeyCode::Delete
+                                    if self.provider_popup_screen
+                                        == ProviderPopupScreen::Providers =>
+                                {
+                                    if let Some(selected) = self.provider_state.selected() {
+                                        if let Some(ProviderMenuItem::Provider(provider)) = self
+                                            .filtered_provider_menu_items()
+                                            .get(selected)
+                                            .cloned()
+                                        {
+                                            self.clear_or_logout_provider(provider).await;
+                                        }
+                                    }
+                                }
+                                KeyCode::Backspace
+                                    if self.provider_popup_screen
+                                        == ProviderPopupScreen::Providers
+                                        && self.provider_menu_filter.is_empty() =>
+                                {
+                                    if let Some(selected) = self.provider_state.selected() {
+                                        if let Some(ProviderMenuItem::Provider(provider)) = self
+                                            .filtered_provider_menu_items()
+                                            .get(selected)
+                                            .cloned()
+                                        {
+                                            self.clear_or_logout_provider(provider).await;
+                                        }
+                                    }
+                                }
                                 _ if is_dialog_menu_previous_key(key) => {
                                     self.select_previous_provider_menu_item();
                                 }
@@ -1542,6 +1623,9 @@ where
                                 }
                                 _ => {}
                             }
+                        } else if self.roadmap_mode.is_some() && self.handle_roadmap_key(key).await
+                        {
+                            continue;
                         } else {
                             if is_team_focus_next_key(key) {
                                 self.cycle_team_focus(true);
@@ -1654,7 +1738,7 @@ where
                             input_tokens: self.current_turn_input_tokens,
                             output_tokens: self.current_turn_output_tokens,
                             reasoning_tokens: self.current_turn_reasoning_tokens,
-                            session_tokens: self.session_tokens,
+                            thread_tokens: self.thread_tokens,
                         });
                         self.current_turn_input_tokens = 0;
                         self.current_turn_output_tokens = 0;
@@ -1715,6 +1799,20 @@ where
                                     call.id,
                                     ToolTimelineEntry::new(call.name, call.arguments),
                                 );
+                            }
+                            roder_api::inference::InferenceEvent::HostedToolCallStarted(call) => {
+                                self.record_tool_requested_with_id(
+                                    call.id,
+                                    fallback_entry(call.name),
+                                );
+                            }
+                            roder_api::inference::InferenceEvent::HostedToolCallCompleted(call) => {
+                                let tool_id = call.id.clone();
+                                self.record_tool_requested_with_id(
+                                    tool_id.clone(),
+                                    ToolTimelineEntry::new(call.name, call.arguments),
+                                );
+                                self.record_tool_completed(&tool_id, false, None);
                             }
                             roder_api::inference::InferenceEvent::Compaction(compaction) => {
                                 self.record_compaction_progress(&compaction.status);
@@ -1800,6 +1898,13 @@ where
                     RoderEvent::ToolCallCompleted(ev) => {
                         self.record_tool_completed(&ev.tool_id, ev.is_error, ev.output);
                     }
+                    RoderEvent::ThreadGoalUpdated(ev) if ev.thread_id == self.thread_id => {
+                        self.current_goal = Some(ev.goal);
+                    }
+                    RoderEvent::ThreadGoalCleared(ev) if ev.thread_id == self.thread_id => {
+                        self.current_goal = None;
+                    }
+                    RoderEvent::ThreadGoalUpdated(_) | RoderEvent::ThreadGoalCleared(_) => {}
                     RoderEvent::SubagentTraceCreated(ev) => {
                         self.timeline.record_subagent_trace_created(ev.summary);
                     }
@@ -1861,10 +1966,10 @@ where
                         ));
                     }
                     RoderEvent::PolicyExitPlanRequested(_) => {
-                        self.refresh_session_state().await;
+                        self.refresh_thread_state().await;
                     }
                     RoderEvent::PolicyExitPlanResolved(_) => {
-                        self.refresh_session_state().await;
+                        self.refresh_thread_state().await;
                     }
                     _ => {}
                 }
@@ -2045,7 +2150,7 @@ where
     }
 
     async fn resolve_tool_approval(&mut self, approval_id: String, approved: bool) {
-        let params = SessionResolveApprovalParams {
+        let params = ThreadResolveApprovalParams {
             approval_id: approval_id.clone(),
             approved,
         };
@@ -2053,31 +2158,31 @@ where
             .client
             .send_request(JsonRpcRequest {
                 jsonrpc: "2.0".to_string(),
-                id: Some(serde_json::json!("session/resolve_approval")),
-                method: "session/resolve_approval".to_string(),
+                id: Some(serde_json::json!("thread/resolve_approval")),
+                method: "thread/resolve_approval".to_string(),
                 params: Some(serde_json::to_value(params).unwrap()),
             })
             .await;
-        match decode_response::<SessionResolveApprovalResult>(res) {
+        match decode_response::<ThreadResolveApprovalResult>(res) {
             Ok(result) if result.resolved => {}
             Ok(_) => self.record_error(format!("approval not pending: {}", short_id(&approval_id))),
-            Err(err) => self.record_error(format!("session/resolve_approval failed: {err}")),
+            Err(err) => self.record_error(format!("thread/resolve_approval failed: {err}")),
         }
     }
 
-    async fn refresh_session_state(&mut self) {
-        match session_get(&self.client).await {
+    async fn refresh_thread_state(&mut self) {
+        match thread_state(&self.client).await {
             Ok(state) => {
                 self.policy_mode = state.mode;
                 self.pending_plan_exit = state.pending_plan_exit;
             }
-            Err(err) => self.record_error(format!("session/get failed: {err}")),
+            Err(err) => self.record_error(format!("thread/state failed: {err}")),
         }
     }
 
     async fn cycle_policy_mode(&mut self) {
         let next = next_policy_mode(self.policy_mode);
-        let params = SessionSetModeParams {
+        let params = ThreadSetModeParams {
             mode: next,
             reason: Some("tui mode switcher".to_string()),
         };
@@ -2085,12 +2190,12 @@ where
             .client
             .send_request(JsonRpcRequest {
                 jsonrpc: "2.0".to_string(),
-                id: Some(serde_json::json!("session/set_mode")),
-                method: "session/set_mode".to_string(),
+                id: Some(serde_json::json!("thread/set_mode")),
+                method: "thread/set_mode".to_string(),
                 params: Some(serde_json::to_value(params).unwrap()),
             })
             .await;
-        match decode_response::<SessionSetModeResult>(res) {
+        match decode_response::<ThreadSetModeResult>(res) {
             Ok(result) => {
                 self.policy_mode = result.mode;
                 self.timeline.push_system(format!(
@@ -2102,7 +2207,7 @@ where
                     policy_mode_label(result.mode)
                 ));
             }
-            Err(err) => self.record_error(format!("session/set_mode failed: {err}")),
+            Err(err) => self.record_error(format!("thread/set_mode failed: {err}")),
         }
     }
 
@@ -2110,7 +2215,7 @@ where
         let Some(pending) = self.pending_plan_exit.clone() else {
             return;
         };
-        let params = SessionExitPlanParams {
+        let params = ThreadExitPlanParams {
             request_id: pending.request_id.clone(),
             approved,
         };
@@ -2118,12 +2223,12 @@ where
             .client
             .send_request(JsonRpcRequest {
                 jsonrpc: "2.0".to_string(),
-                id: Some(serde_json::json!("session/exit_plan")),
-                method: "session/exit_plan".to_string(),
+                id: Some(serde_json::json!("thread/exit_plan")),
+                method: "thread/exit_plan".to_string(),
                 params: Some(serde_json::to_value(params).unwrap()),
             })
             .await;
-        match decode_response::<SessionExitPlanResult>(res) {
+        match decode_response::<ThreadExitPlanResult>(res) {
             Ok(result) => {
                 self.policy_mode = result.mode;
                 self.pending_plan_exit = None;
@@ -2133,7 +2238,7 @@ where
                     short_id(&pending.request_id)
                 ));
             }
-            Err(err) => self.record_error(format!("session/exit_plan failed: {err}")),
+            Err(err) => self.record_error(format!("thread/exit_plan failed: {err}")),
         }
     }
 
@@ -2269,6 +2374,9 @@ where
             "roadmap" => {
                 self.run_roadmap_slash_command(&args);
             }
+            "voice" => {
+                self.run_voice_slash_command(&args).await;
+            }
             _ => {
                 self.run_custom_slash_command(name, args).await;
             }
@@ -2296,30 +2404,9 @@ where
     }
 
     async fn refresh_command_catalog(&mut self) {
-        if let Ok(commands) = session_resume::commands_list(&self.client).await {
+        if let Ok(commands) = thread_resume::commands_list(&self.client).await {
             self.command_catalog = commands;
         }
-    }
-
-    async fn run_goal_slash_command(&mut self, args: &str) {
-        let objective = args.trim();
-        if objective.is_empty() {
-            match self.goal_get().await {
-                Ok(text) => self.timeline.push_system(text),
-                Err(err) => self.record_error(format!("get_goal failed: {err}")),
-            }
-            self.push_event("slash command: /goal".to_string());
-            return;
-        }
-
-        match self.goal_create(objective).await {
-            Ok(text) => self.timeline.push_system(text),
-            Err(err) => self.record_error(format!("create_goal failed: {err}")),
-        }
-        self.push_event(format!(
-            "slash command: /goal{}",
-            slash_command_suffix(args)
-        ));
     }
 
     async fn run_retry_slash_command(&mut self) {
@@ -2507,6 +2594,258 @@ where
         self.enter_roadmap_mode(path);
     }
 
+    async fn handle_roadmap_key(&mut self, key: KeyEvent) -> bool {
+        if key.modifiers.contains(KeyModifiers::CONTROL) {
+            return false;
+        }
+        match key.code {
+            KeyCode::Esc | KeyCode::Char('q') => {
+                self.roadmap_mode = None;
+                self.push_event("left roadmapping mode".to_string());
+                true
+            }
+            KeyCode::Down | KeyCode::Char('j') => {
+                self.move_roadmap_focus(true);
+                true
+            }
+            KeyCode::Up | KeyCode::Char('k') => {
+                self.move_roadmap_focus(false);
+                true
+            }
+            KeyCode::Tab => {
+                if let Some(roadmap) = self.roadmap_mode.as_mut() {
+                    let pane = roadmap.focus_next_pane();
+                    self.push_event(format!("roadmap pane {}", pane.label()));
+                }
+                true
+            }
+            KeyCode::BackTab => {
+                if let Some(roadmap) = self.roadmap_mode.as_mut() {
+                    let pane = roadmap.focus_previous_pane();
+                    self.push_event(format!("roadmap pane {}", pane.label()));
+                }
+                true
+            }
+            KeyCode::Char('t') => {
+                if let Some(roadmap) = self.roadmap_mode.as_mut()
+                    && let Some(thread_id) = roadmap.select_next_thread().map(str::to_string)
+                {
+                    self.push_event(format!("roadmap worker {thread_id}"));
+                }
+                true
+            }
+            KeyCode::Char('v') => {
+                if let Some(roadmap) = self.roadmap_mode.as_mut() {
+                    roadmap.validate_selected_document();
+                    self.push_event("roadmap validated".to_string());
+                }
+                true
+            }
+            KeyCode::Char('s') => {
+                let _ = self.spawn_roadmap_worker().await;
+                true
+            }
+            KeyCode::Enter | KeyCode::Char('e') => {
+                if self.roadmap_mode.as_ref().is_some_and(|roadmap| {
+                    roadmap.focused_pane == crate::roadmap::RoadmapPaneFocus::Agents
+                }) {
+                    self.monitor_selected_roadmap_worker().await;
+                } else {
+                    self.execute_focused_roadmap_task().await;
+                }
+                true
+            }
+            _ => false,
+        }
+    }
+
+    fn move_roadmap_focus(&mut self, forward: bool) {
+        let Some(roadmap) = self.roadmap_mode.as_mut() else {
+            return;
+        };
+        match roadmap.focused_pane {
+            crate::roadmap::RoadmapPaneFocus::Plans => {
+                let result = if forward {
+                    roadmap.focus_next_plan()
+                } else {
+                    roadmap.focus_previous_plan()
+                }
+                .map(|plan| plan.map(str::to_string));
+                match result {
+                    Ok(Some(plan)) => self.push_event(format!("roadmap plan {plan}")),
+                    Ok(None) => {}
+                    Err(err) => self.record_error(format!("roadmap plan navigation failed: {err}")),
+                }
+            }
+            crate::roadmap::RoadmapPaneFocus::Tasks => {
+                let task_id = if forward {
+                    roadmap.focus_next_task()
+                } else {
+                    roadmap.focus_previous_task()
+                }
+                .map(str::to_string);
+                if let Some(task_id) = task_id {
+                    self.push_event(format!("roadmap focus {task_id}"));
+                }
+            }
+            crate::roadmap::RoadmapPaneFocus::Agents => {
+                let thread_id = if forward {
+                    roadmap.select_next_thread()
+                } else {
+                    roadmap.select_previous_thread()
+                }
+                .map(str::to_string);
+                if let Some(thread_id) = thread_id {
+                    self.push_event(format!("roadmap worker {thread_id}"));
+                }
+            }
+            crate::roadmap::RoadmapPaneFocus::TaskDetail
+            | crate::roadmap::RoadmapPaneFocus::Validation
+            | crate::roadmap::RoadmapPaneFocus::Activity => {
+                let label = roadmap.focused_pane.label();
+                if forward {
+                    roadmap.scroll_focused_pane_down();
+                } else {
+                    roadmap.scroll_focused_pane_up();
+                }
+                self.push_event(format!("roadmap {label} scroll"));
+            }
+        }
+    }
+
+    async fn spawn_roadmap_worker(&mut self) -> Option<ThreadAttachment> {
+        let Some((path, task_id)) = self.selected_roadmap_task_ref() else {
+            self.record_error("roadmap worker spawn needs a selected task".to_string());
+            return None;
+        };
+        let res = self
+            .client
+            .send_request(JsonRpcRequest {
+                jsonrpc: "2.0".to_string(),
+                id: Some(serde_json::json!("roadmap/thread/spawn")),
+                method: "roadmap/thread/spawn".to_string(),
+                params: Some(serde_json::json!({
+                    "path": path,
+                    "taskId": task_id,
+                })),
+            })
+            .await;
+        match decode_response::<RoadmapThreadResponse>(res) {
+            Ok(response) => {
+                if let Some(roadmap) = self.roadmap_mode.as_mut() {
+                    roadmap.selected_thread_id = Some(response.thread.thread_id.clone());
+                    roadmap.attached_threads.push(response.thread.clone());
+                }
+                self.push_event(format!(
+                    "spawned roadmap worker {}",
+                    response.thread.thread_id
+                ));
+                Some(response.thread)
+            }
+            Err(err) => {
+                self.record_error(format!("roadmap worker spawn failed: {err}"));
+                None
+            }
+        }
+    }
+
+    async fn execute_focused_roadmap_task(&mut self) {
+        let Some(roadmap) = self.roadmap_mode.as_ref() else {
+            return;
+        };
+        let task = roadmap
+            .focused_task_heading()
+            .unwrap_or("focused roadmap task");
+        let display = format!("Execute roadmap task: {task}");
+        let message = roadmap.prompt_context(
+            "Execute or continue the focused roadmap task. Use the roadmap document as source of truth, steer attached workers if present, and update task state only with evidence.",
+        );
+        let pending = PendingPrompt::with_images(display, message, Vec::new());
+        if self.active_turn_id.is_some() {
+            self.steer_prepared_prompt(pending).await;
+        } else {
+            self.start_prepared_prompt(pending).await;
+        }
+    }
+
+    async fn monitor_selected_roadmap_worker(&mut self) {
+        let Some((thread_id, task_id)) = self.roadmap_mode.as_ref().and_then(|roadmap| {
+            let thread_id = roadmap.selected_thread_id.clone()?;
+            let task_id = roadmap
+                .attached_threads
+                .iter()
+                .find(|thread| thread.thread_id == thread_id)
+                .and_then(|thread| thread.task_id.clone())
+                .or_else(|| roadmap.focused_task_id.clone());
+            Some((thread_id, task_id))
+        }) else {
+            self.record_error("roadmap worker monitor needs a selected worker".to_string());
+            return;
+        };
+        match thread_resume::load_thread(&self.client, &thread_id).await {
+            Ok(Some(thread)) => {
+                self.roadmap_mode = None;
+                self.apply_thread(thread);
+                self.timeline.push_system(format!(
+                    "monitoring roadmap worker {}.",
+                    short_id(&thread_id)
+                ));
+                self.push_event(format!(
+                    "monitoring roadmap worker {}",
+                    short_id(&thread_id)
+                ));
+            }
+            Ok(None) => {
+                self.push_event(format!(
+                    "roadmap worker {} had no thread; spawning replacement",
+                    short_id(&thread_id)
+                ));
+                if let Some(task_id) = task_id
+                    && let Some(roadmap) = self.roadmap_mode.as_mut()
+                {
+                    roadmap.focused_task_id = Some(task_id);
+                }
+                let Some(thread) = self.spawn_roadmap_worker().await else {
+                    self.record_error(format!(
+                        "roadmap worker thread not found: {}",
+                        short_id(&thread_id)
+                    ));
+                    return;
+                };
+                match thread_resume::load_thread(&self.client, &thread.thread_id).await {
+                    Ok(Some(protocol_thread)) => {
+                        let replacement_id = thread.thread_id.clone();
+                        self.roadmap_mode = None;
+                        self.apply_thread(protocol_thread);
+                        self.timeline.push_system(format!(
+                            "monitoring replacement roadmap worker {}.",
+                            short_id(&replacement_id)
+                        ));
+                        self.push_event(format!(
+                            "monitoring replacement roadmap worker {}",
+                            short_id(&replacement_id)
+                        ));
+                    }
+                    Ok(None) => self.record_error(format!(
+                        "replacement roadmap worker thread not found: {}",
+                        short_id(&thread.thread_id)
+                    )),
+                    Err(err) => self
+                        .record_error(format!("replacement roadmap worker monitor failed: {err}")),
+                }
+            }
+            Err(err) => self.record_error(format!("roadmap worker monitor failed: {err}")),
+        }
+    }
+
+    fn selected_roadmap_task_ref(&self) -> Option<(String, String)> {
+        let roadmap = self.roadmap_mode.as_ref()?;
+        Some((
+            roadmap.selected_plan.clone()?,
+            roadmap.focused_task_id.clone()?,
+        ))
+    }
+
     async fn expand_slash_command(
         &self,
         name: &str,
@@ -2574,15 +2913,16 @@ where
     async fn start_prepared_prompt(&mut self, pending: PendingPrompt) {
         self.last_user_prompt = Some(pending.clone());
         self.timeline.push_user(pending.display.clone());
-        self.session_message_count = self.session_message_count.saturating_add(1);
-        if self.session_title.is_none() {
-            self.session_title = Some(truncate(&pending.display, 72));
+        self.thread_message_count = self.thread_message_count.saturating_add(1);
+        if self.thread_title.is_none() {
+            self.thread_title = Some(truncate(&pending.display, 72));
         }
         let thread_id = self.focused_thread_id().to_string();
         let params = TurnStartParams {
             thread_id,
             input: pending_turn_input(pending.message, pending.images),
             prompt: None,
+            task_ledger_required: false,
         };
         let client = self.client.clone();
         tokio::spawn(async move {
@@ -2851,11 +3191,31 @@ where
             // the themed surface instead of the terminal's native background.
             f.render_widget(Block::default().style(Style::default().bg(bg)), area);
         }
-        style_composer_for_current_mode(&mut self.composer, self.theme, self.policy_mode);
         if let Some(roadmap) = self.roadmap_mode.as_ref() {
-            self.composer
-                .set_placeholder_text(roadmap.composer_placeholder());
+            let activity = self
+                .timeline
+                .render_with_frame(self.theme, area, self.animation_frame)
+                .text;
+            render_roadmap_workspace(
+                f,
+                area,
+                roadmap,
+                self.theme,
+                RoadmapWorkspaceMeta {
+                    model: self.model.clone(),
+                    status: if self.active_turn_id.is_some() {
+                        working_status_label(self.compaction_active).to_string()
+                    } else {
+                        "roadmap ready".to_string()
+                    },
+                    active_turn: self.active_turn_id.is_some(),
+                },
+                activity,
+            );
+            self.render_overlays(f, area);
+            return;
         }
+        style_composer_for_current_mode(&mut self.composer, self.theme, self.policy_mode);
         let event_height = event_log_height(self.show_event_log, self.events.len());
         let attachment_height = image_attachment_height(self.image_attachments.len());
         let queue_height = queued_prompt_height(self.queued_prompts.len());
@@ -2944,6 +3304,7 @@ where
         }
         self.render_copied_helper(f, chunks[composer_index], Instant::now());
         f.render_widget(&self.composer, chunks[composer_index]);
+        self.render_voice_transcribing_helper(f, chunks[composer_index]);
         self.render_plan_counter(f, chunks[composer_index]);
         composer_index += 1;
         if slash_height > 0 {
@@ -2955,6 +3316,10 @@ where
         }
         f.render_widget(self.footer(area.width), chunks[composer_index]);
 
+        self.render_overlays(f, area);
+    }
+
+    fn render_overlays(&mut self, f: &mut Frame<'_>, area: Rect) {
         if self.show_provider_popup {
             self.render_provider_popup(f, area);
         }
@@ -2982,6 +3347,20 @@ where
             return;
         };
         f.render_widget(copied_helper_widget(self.theme), area);
+    }
+
+    fn render_voice_transcribing_helper(&self, f: &mut Frame<'_>, composer_area: Rect) {
+        if !self.voice.is_transcribing() {
+            return;
+        }
+        let Some(area) = voice_helper_area(composer_area) else {
+            return;
+        };
+        f.render_widget(Clear, area);
+        f.render_widget(
+            voice_transcribing_widget(self.theme, self.working_spinner, self.animation_frame),
+            area,
+        );
     }
 
     fn render_plan_counter(&mut self, f: &mut Frame<'_>, composer_area: Rect) {
@@ -3027,7 +3406,7 @@ where
                 self.theme.muted(),
             ),
             Span::styled(
-                format!("  session {}", short_id(&self.thread_id)),
+                format!("  thread {}", short_id(&self.thread_id)),
                 self.theme.muted(),
             ),
         ];
@@ -3298,10 +3677,19 @@ where
         } else {
             ""
         };
+        let voice_hint = self
+            .voice
+            .footer_hint(composer_text(&self.composer).trim().is_empty())
+            .unwrap_or_default();
         let roadmap_hint = self
             .roadmap_mode
             .as_ref()
             .map(|state| format!("  roadmap:{}", state.label()))
+            .unwrap_or_default();
+        let goal_hint = self
+            .current_goal
+            .as_ref()
+            .map(|goal| format!("  goal:{}", goals::goal_footer_label(goal)))
             .unwrap_or_default();
         let shortcut_context = match self.timeline.focus() {
             TimelineFocus::Timeline => FooterShortcutContext::Timeline,
@@ -3315,8 +3703,7 @@ where
         Paragraph::new(line_with_gap(
             vec![Span::styled(
                 format!(
-                    " {status}  mode:{}{queue_hint}{pending_hint}{shell_hint}{roadmap_hint}  {interaction_hint}",
-                    policy_mode_label(self.policy_mode),
+                    " {status}{queue_hint}{pending_hint}{shell_hint}{voice_hint}{roadmap_hint}{goal_hint}  {interaction_hint}",
                     queue_hint = if self.queued_prompts.is_empty() {
                         String::new()
                     } else {
@@ -3362,9 +3749,18 @@ where
                         ProviderMenuItem::WebSearchMode(mode) if *mode == self.web_search_mode => {
                             "✓ "
                         }
+                        ProviderMenuItem::VoiceModel(choice)
+                            if self.voice.provider() == Some(choice.provider_id.as_str())
+                                && self.voice.model() == Some(choice.model_id.as_str()) =>
+                        {
+                            "✓ "
+                        }
+                        ProviderMenuItem::ShellChoice(shell) if shell == &self.command_shell => {
+                            "✓ "
+                        }
                         ProviderMenuItem::FileBackedDynamicContextToggle(true) => "✓ ",
                         ProviderMenuItem::MessageFoldingToggle(true) => "✓ ",
-                        ProviderMenuItem::Session(session) if session.id == self.thread_id => "✓ ",
+                        ProviderMenuItem::Thread(thread) if thread.id == self.thread_id => "✓ ",
                         ProviderMenuItem::Theme(id)
                             if self.active_theme_id.as_deref() == Some(id.as_str()) =>
                         {
@@ -3376,10 +3772,12 @@ where
                         | ProviderMenuItem::RunnerSettings
                         | ProviderMenuItem::SpinnerSettings
                         | ProviderMenuItem::WebSearchSettings
+                        | ProviderMenuItem::VoiceModelSettings
+                        | ProviderMenuItem::ShellSettings(_)
                         | ProviderMenuItem::ThemesSettings
                         | ProviderMenuItem::MarketplacesSettings
                         | ProviderMenuItem::PluginBrowser
-                        | ProviderMenuItem::ResumeSessions
+                        | ProviderMenuItem::ResumeThreads
                         | ProviderMenuItem::Reasoning(_) => "› ",
                         ProviderMenuItem::Back => "‹ ",
                         _ => "• ",
@@ -3406,7 +3804,9 @@ where
             ProviderPopupScreen::Runners => " Runners (Enter select, Esc back) ",
             ProviderPopupScreen::Spinner => " Working spinner (Enter select, Esc back) ",
             ProviderPopupScreen::WebSearch => " Web search provider (Enter select, Esc back) ",
-            ProviderPopupScreen::Resume => " Resume session (Enter select, Esc back) ",
+            ProviderPopupScreen::VoiceModels => " Voice model (Enter select, Esc back) ",
+            ProviderPopupScreen::Shell => " Shell command shell (Enter select, Esc back) ",
+            ProviderPopupScreen::Resume => " Resume thread (Enter select, Esc back) ",
             ProviderPopupScreen::Themes => " Themes (Enter select, Esc back) ",
             ProviderPopupScreen::Marketplaces => " Plugin marketplaces (Enter select, Esc back) ",
         };
@@ -3487,6 +3887,109 @@ where
                 jsonrpc: "2.0".to_string(),
                 id: Some(serde_json::json!("providers/list")),
                 method: "providers/list".to_string(),
+                params: None,
+            })
+            .await;
+        decode_response(res)
+    }
+
+    async fn refresh_providers_list(&mut self) -> anyhow::Result<()> {
+        let list = self.providers_list().await?;
+        self.provider = list.active_provider.clone();
+        self.model = list.active_model.clone();
+        self.reasoning_effort = list.active_reasoning.clone();
+        self.provider_choices = provider_choices_from_list(&list);
+        self.model_options = provider_options_from_list(&list);
+        self.model_context_window =
+            context_window_from_options(&self.model_options, &self.provider, &self.model)
+                .or_else(|| context_window_for_model(&self.model));
+        Ok(())
+    }
+
+    async fn clear_or_logout_provider(&mut self, provider: ProviderChoice) {
+        if provider.auth_type == ProviderAuthType::OAuth {
+            if let Some(auth_flow) = ProviderAuthFlow::for_provider(&provider.provider_id) {
+                let res = self
+                    .client
+                    .send_request(JsonRpcRequest {
+                        jsonrpc: "2.0".to_string(),
+                        id: Some(serde_json::json!(auth_flow.logout_method)),
+                        method: auth_flow.logout_method.to_string(),
+                        params: None,
+                    })
+                    .await;
+                match decode_response::<serde_json::Value>(res) {
+                    Ok(_) => {
+                        self.timeline
+                            .push_system(format!("Logged out of {}.", auth_flow.display_name));
+                        self.push_event(format!("logged out of: {}", provider.provider_id));
+                    }
+                    Err(err) => {
+                        self.record_error(format!("Logout failed: {err}"));
+                    }
+                }
+            } else {
+                self.record_error(format!(
+                    "provider {} requires OAuth; no logout flow is available",
+                    provider.provider_id
+                ));
+            }
+        } else if provider.auth_type == ProviderAuthType::ApiKey {
+            let res = self
+                .client
+                .send_request(JsonRpcRequest {
+                    jsonrpc: "2.0".to_string(),
+                    id: Some(serde_json::json!("providers/clear")),
+                    method: "providers/clear".to_string(),
+                    params: Some(
+                        serde_json::to_value(ProviderClearParams {
+                            provider: provider.provider_id.clone(),
+                        })
+                        .unwrap(),
+                    ),
+                })
+                .await;
+            match decode_response::<ProviderClearResult>(res) {
+                Ok(_) => {
+                    self.timeline
+                        .push_system(format!("Cleared API key for {}.", provider.name));
+                    self.push_event(format!("provider cleared: {}", provider.provider_id));
+                }
+                Err(err) => {
+                    self.record_error(format!("providers/clear failed: {err}"));
+                }
+            }
+        }
+
+        // Refresh the provider list
+        if let Err(err) = self.refresh_providers_list().await {
+            self.record_error(format!("Failed to refresh providers: {err}"));
+            self.show_provider_popup = false;
+            return;
+        }
+
+        // Recreate the providers submenu
+        let saved_selected = self.provider_state.selected();
+        self.provider_menu_items = providers_menu_items(&self.provider_choices);
+        if let Some(sel) = saved_selected {
+            if sel < self.provider_menu_items.len() {
+                self.provider_state.select(Some(sel));
+            } else if !self.provider_menu_items.is_empty() {
+                self.provider_state
+                    .select(Some(self.provider_menu_items.len() - 1));
+            } else {
+                self.provider_state.select(None);
+            }
+        }
+    }
+
+    async fn speech_providers_list(&self) -> anyhow::Result<SpeechProvidersListResult> {
+        let res = self
+            .client
+            .send_request(JsonRpcRequest {
+                jsonrpc: "2.0".to_string(),
+                id: Some(serde_json::json!("speech/providers/list")),
+                method: "speech/providers/list".to_string(),
                 params: None,
             })
             .await;
@@ -3577,47 +4080,6 @@ where
         decode_response(res)
     }
 
-    async fn goal_get(&self) -> anyhow::Result<String> {
-        self.workflow_tool_text("get_goal", serde_json::json!({}))
-            .await
-    }
-
-    async fn goal_create(&self, objective: &str) -> anyhow::Result<String> {
-        self.workflow_tool_text(
-            "create_goal",
-            serde_json::json!({
-                "objective": objective,
-                "replace": true,
-            }),
-        )
-        .await
-    }
-
-    async fn workflow_tool_text(
-        &self,
-        tool_name: &str,
-        arguments: serde_json::Value,
-    ) -> anyhow::Result<String> {
-        let res = self
-            .client
-            .send_request(JsonRpcRequest {
-                jsonrpc: "2.0".to_string(),
-                id: Some(serde_json::json!(format!("workflow/{tool_name}"))),
-                method: "tools/call".to_string(),
-                params: Some(serde_json::json!({
-                    "thread_id": self.thread_id,
-                    "tool_name": tool_name,
-                    "arguments": arguments,
-                })),
-            })
-            .await;
-        let result = decode_response::<self::WorkflowToolCallResult>(res)?;
-        if result.is_error {
-            anyhow::bail!(result.text);
-        }
-        Ok(result.text)
-    }
-
     async fn set_web_search_mode(&mut self, mode: HostedWebSearchMode) {
         let res = self
             .client
@@ -3664,6 +4126,7 @@ where
                 self.provider_menu_items = settings_menu_items(
                     self.timeline_settings,
                     self.search_index_enabled,
+                    &self.command_shell,
                     self.file_backed_dynamic_context,
                 );
                 self.timeline.push_system(format!(
@@ -3685,6 +4148,38 @@ where
             }
             Err(err) => {
                 self.record_error(format!("failed to set instant regex search: {err}"));
+            }
+        }
+    }
+
+    async fn set_command_shell(&mut self, shell: String) {
+        let res = self
+            .client
+            .send_request(JsonRpcRequest {
+                jsonrpc: "2.0".to_string(),
+                id: Some(serde_json::json!("settings/set_shell")),
+                method: "settings/set_shell".to_string(),
+                params: Some(serde_json::to_value(SettingsSetShellParams { shell }).unwrap()),
+            })
+            .await;
+
+        match decode_response::<SettingsSetShellResult>(res) {
+            Ok(result) => {
+                self.command_shell = result.shell.shell;
+                self.command_shell_options = result.shell.options;
+                self.timeline.push_system(format!(
+                    "shell command shell set to {}.",
+                    self.command_shell
+                ));
+                self.push_event(format!(
+                    "shell command shell selected: {}",
+                    self.command_shell
+                ));
+                self.show_provider_popup = false;
+            }
+            Err(err) => {
+                self.record_error(format!("failed to set shell command shell: {err}"));
+                self.show_provider_popup = false;
             }
         }
     }
@@ -3796,6 +4291,20 @@ where
             self.provider_state.select(Some(0));
             return;
         }
+        if self.provider_popup_screen == ProviderPopupScreen::VoiceModels {
+            self.open_settings_submenu();
+            self.provider_state.select(
+                self.provider_menu_items
+                    .iter()
+                    .position(|item| matches!(item, ProviderMenuItem::VoiceModelSettings))
+                    .or(Some(0)),
+            );
+            return;
+        }
+        if self.provider_popup_screen == ProviderPopupScreen::Shell {
+            self.open_settings_submenu();
+            return;
+        }
         if self.provider_popup_screen == ProviderPopupScreen::Resume {
             self.provider_popup_screen = ProviderPopupScreen::Main;
             self.provider_menu_items = main_provider_menu_items(&self.provider_choices);
@@ -3901,6 +4410,12 @@ where
             ProviderMenuItem::WebSearchSettings => {
                 self.open_web_search_submenu();
             }
+            ProviderMenuItem::VoiceModelSettings => {
+                self.open_voice_models_submenu().await;
+            }
+            ProviderMenuItem::ShellSettings(_) => {
+                self.open_shell_submenu();
+            }
             ProviderMenuItem::ThemesSettings => {
                 self.open_themes_submenu();
             }
@@ -3910,7 +4425,7 @@ where
             ProviderMenuItem::PluginBrowser => {
                 self.open_plugin_browser().await;
             }
-            ProviderMenuItem::ResumeSessions => {
+            ProviderMenuItem::ResumeThreads => {
                 self.open_resume_submenu().await;
             }
             ProviderMenuItem::Theme(id) => {
@@ -3933,6 +4448,13 @@ where
             }
             ProviderMenuItem::WebSearchMode(mode) => {
                 self.set_web_search_mode(mode).await;
+            }
+            ProviderMenuItem::VoiceModel(choice) => {
+                self.show_provider_popup = false;
+                self.set_voice_model(choice.provider_id, choice.model_id);
+            }
+            ProviderMenuItem::ShellChoice(shell) => {
+                self.set_command_shell(shell).await;
             }
             ProviderMenuItem::SearchIndexToggle(enabled) => {
                 self.set_search_index_enabled(!enabled).await;
@@ -3970,9 +4492,9 @@ where
                 self.show_provider_popup = false;
                 self.select_runner(destination_id, provider_id).await;
             }
-            ProviderMenuItem::Session(session) => {
+            ProviderMenuItem::Thread(thread) => {
                 self.show_provider_popup = false;
-                self.load_session(session.id).await;
+                self.load_thread(thread.id).await;
             }
             ProviderMenuItem::Back => {
                 self.close_or_back_provider_popup();
@@ -4020,6 +4542,7 @@ where
         self.provider_menu_items = settings_menu_items(
             self.timeline_settings,
             self.search_index_enabled,
+            &self.command_shell,
             self.file_backed_dynamic_context,
         );
         let selected = self
@@ -4083,22 +4606,69 @@ where
         self.provider_state.select(Some(selected));
     }
 
+    async fn open_voice_models_submenu(&mut self) {
+        self.provider_popup_screen = ProviderPopupScreen::VoiceModels;
+        self.provider_menu_filter.clear();
+        match self.speech_providers_list().await {
+            Ok(providers) => {
+                self.provider_menu_items = voice_model_menu_items(&providers);
+                let selected = self
+                    .provider_menu_items
+                    .iter()
+                    .position(|item| {
+                        matches!(
+                            item,
+                            ProviderMenuItem::VoiceModel(choice)
+                                if self.voice.provider() == Some(choice.provider_id.as_str())
+                                    && self.voice.model() == Some(choice.model_id.as_str())
+                        )
+                    })
+                    .or_else(|| first_selectable_provider_menu_index(&self.provider_menu_items));
+                self.provider_state.select(selected);
+            }
+            Err(err) => {
+                self.provider_menu_items = vec![ProviderMenuItem::Back];
+                self.provider_state.select(Some(0));
+                self.record_error(format!("speech/providers/list failed: {err}"));
+            }
+        }
+        self.show_provider_popup = true;
+    }
+
+    fn open_shell_submenu(&mut self) {
+        self.provider_popup_screen = ProviderPopupScreen::Shell;
+        self.provider_menu_filter.clear();
+        self.provider_menu_items = self
+            .command_shell_options
+            .iter()
+            .cloned()
+            .map(ProviderMenuItem::ShellChoice)
+            .chain(std::iter::once(ProviderMenuItem::Back))
+            .collect();
+        let selected = self
+            .provider_menu_items
+            .iter()
+            .position(|item| matches!(item, ProviderMenuItem::ShellChoice(shell) if shell == &self.command_shell))
+            .unwrap_or(0);
+        self.provider_state.select(Some(selected));
+    }
+
     async fn open_resume_submenu(&mut self) {
         self.provider_popup_screen = ProviderPopupScreen::Resume;
         self.provider_menu_filter.clear();
-        match session_resume::threads_list(&self.client).await {
-            Ok(sessions) => {
-                self.provider_menu_items = sessions
+        match thread_resume::threads_list(&self.client).await {
+            Ok(threads) => {
+                self.provider_menu_items = threads
                     .into_iter()
                     .map(Box::new)
-                    .map(ProviderMenuItem::Session)
+                    .map(ProviderMenuItem::Thread)
                     .chain(std::iter::once(ProviderMenuItem::Back))
                     .collect();
                 let selected = self
                     .provider_menu_items
                     .iter()
                     .position(|item| {
-                        matches!(item, ProviderMenuItem::Session(session) if session.id == self.thread_id)
+                        matches!(item, ProviderMenuItem::Thread(thread) if thread.id == self.thread_id)
                     })
                     .unwrap_or(0);
                 self.provider_state.select(Some(selected));
@@ -4285,6 +4855,7 @@ where
         self.provider_menu_items = settings_menu_items(
             self.timeline_settings,
             self.search_index_enabled,
+            &self.command_shell,
             self.file_backed_dynamic_context,
         );
         if let Some(selected) = self.provider_state.selected() {
@@ -4685,7 +5256,7 @@ where
             &mut self.current_turn_input_tokens,
             &mut self.current_turn_output_tokens,
             &mut self.current_turn_total_tokens,
-            &mut self.session_tokens,
+            &mut self.thread_tokens,
             &mut self.context_window_tokens,
             usage,
         );
@@ -4741,6 +5312,7 @@ struct TuiUserConfig {
     scroll_acceleration: Option<TuiScrollAccelerationConfig>,
     scroll_speed: Option<f32>,
     timeline: Option<TuiTimelineConfig>,
+    voice: Option<VoiceConfig>,
 }
 
 #[derive(Debug, Clone, Copy, Default)]
@@ -4783,7 +5355,15 @@ fn load_tui_config() -> anyhow::Result<TuiUserConfig> {
         return Ok(TuiUserConfig::default());
     }
     let contents = std::fs::read_to_string(path)?;
-    let value = contents.parse::<toml::Value>()?;
+    let value = match toml::from_str::<toml::Value>(&contents) {
+        Ok(value) => value,
+        Err(_) => {
+            return Ok(TuiUserConfig {
+                voice: fallback_voice_config_from_text(&contents),
+                ..TuiUserConfig::default()
+            });
+        }
+    };
     Ok(TuiUserConfig {
         spinner: value
             .get("tui")
@@ -4814,7 +5394,117 @@ fn load_tui_config() -> anyhow::Result<TuiUserConfig> {
                     .get("message_folding")
                     .and_then(|enabled| enabled.as_bool()),
             }),
+        voice: value
+            .get("tui")
+            .and_then(|tui| tui.get("voice"))
+            .and_then(|config| config.as_table())
+            .map(|config| VoiceConfig {
+                enabled: config.get("enabled").and_then(|enabled| enabled.as_bool()),
+                mode: config
+                    .get("mode")
+                    .and_then(|mode| mode.as_str())
+                    .and_then(VoiceMode::from_config_value),
+                record_command: config
+                    .get("record_command")
+                    .and_then(|command| command.as_str())
+                    .map(str::to_string),
+                provider: config
+                    .get("provider")
+                    .and_then(|provider| provider.as_str())
+                    .map(str::to_string),
+                model: config
+                    .get("model")
+                    .and_then(|model| model.as_str())
+                    .map(str::to_string),
+                language: config
+                    .get("language")
+                    .and_then(|language| language.as_str())
+                    .map(str::to_string),
+                mime_type: config
+                    .get("mime_type")
+                    .and_then(|mime_type| mime_type.as_str())
+                    .map(str::to_string),
+                hold_idle_stop_millis: config
+                    .get("hold_idle_stop_millis")
+                    .and_then(toml::Value::as_integer)
+                    .and_then(|value| u64::try_from(value).ok()),
+            }),
     })
+}
+
+fn fallback_voice_config_from_text(contents: &str) -> Option<VoiceConfig> {
+    let values = fallback_toml_table_assignments(contents, "tui.voice");
+    if values.is_empty() {
+        return None;
+    }
+    Some(VoiceConfig {
+        enabled: values.get("enabled").and_then(|value| match value.trim() {
+            "true" => Some(true),
+            "false" => Some(false),
+            _ => None,
+        }),
+        mode: values
+            .get("mode")
+            .and_then(|value| fallback_toml_string(value))
+            .and_then(VoiceMode::from_config_value),
+        record_command: values
+            .get("record_command")
+            .and_then(|value| fallback_toml_string(value).map(str::to_string)),
+        provider: values
+            .get("provider")
+            .and_then(|value| fallback_toml_string(value).map(str::to_string)),
+        model: values
+            .get("model")
+            .and_then(|value| fallback_toml_string(value).map(str::to_string)),
+        language: values
+            .get("language")
+            .and_then(|value| fallback_toml_string(value).map(str::to_string)),
+        mime_type: values
+            .get("mime_type")
+            .and_then(|value| fallback_toml_string(value).map(str::to_string)),
+        hold_idle_stop_millis: values
+            .get("hold_idle_stop_millis")
+            .and_then(|value| value.trim().parse::<u64>().ok()),
+    })
+}
+
+fn fallback_toml_table_assignments<'a>(
+    contents: &'a str,
+    table_name: &str,
+) -> HashMap<&'a str, &'a str> {
+    let header = format!("[{table_name}]");
+    let mut in_table = false;
+    let mut values = HashMap::new();
+    for line in contents.lines() {
+        let trimmed = line.trim();
+        if trimmed.starts_with('[') && trimmed.ends_with(']') {
+            in_table = trimmed == header;
+            continue;
+        }
+        if !in_table {
+            continue;
+        }
+        let Some((key, value)) = trimmed.split_once('=') else {
+            continue;
+        };
+        let key = key.trim();
+        if !key.is_empty() && !key.starts_with('#') {
+            values.insert(key, value.trim());
+        }
+    }
+    values
+}
+
+fn fallback_toml_string(value: &str) -> Option<&str> {
+    let value = value.trim();
+    value
+        .strip_prefix('"')
+        .and_then(|value| value.strip_suffix('"'))
+        .or_else(|| {
+            value
+                .strip_prefix('\'')
+                .and_then(|value| value.strip_suffix('\''))
+        })
 }
 
 fn save_tui_spinner(spinner: &str) -> anyhow::Result<()> {
@@ -4830,8 +5520,22 @@ fn save_tui_message_folding(enabled: bool) -> anyhow::Result<()> {
 
 fn save_tui_value(path_segments: &[&str], saved_value: toml::Value) -> anyhow::Result<()> {
     let path = tui_config_path();
-    let mut value = if path.exists() {
-        std::fs::read_to_string(&path)?.parse::<toml::Value>()?
+    let contents = if path.exists() {
+        Some(std::fs::read_to_string(&path)?)
+    } else {
+        None
+    };
+    let mut value = if let Some(contents) = contents.as_deref() {
+        match toml::from_str::<toml::Value>(contents)
+            .and_then(|value| ensure_tui_config_table_shape(value, path_segments))
+        {
+            Ok(value) => value,
+            Err(_err) => {
+                let updated = patch_tui_config_text(contents, path_segments, saved_value)?;
+                write_tui_config_file(&path, updated)?;
+                return Ok(());
+            }
+        }
     } else {
         toml::Value::Table(toml::map::Map::new())
     };
@@ -4847,10 +5551,55 @@ fn save_tui_value(path_segments: &[&str], saved_value: toml::Value) -> anyhow::R
         .ok_or_else(|| anyhow::anyhow!("[tui] config must be a TOML table"))?;
     insert_nested_toml_value(tui, path_segments, saved_value)?;
 
+    write_tui_config_file(&path, toml::to_string_pretty(&value)?)?;
+    Ok(())
+}
+
+fn ensure_tui_config_table_shape(
+    mut value: toml::Value,
+    path_segments: &[&str],
+) -> Result<toml::Value, toml::de::Error> {
+    let Some(root) = value.as_table_mut() else {
+        return toml::from_str("=");
+    };
+    if let Some(tui) = root.get_mut("tui")
+        && !tui.is_table()
+    {
+        return toml::from_str("=");
+    }
+    let Some(tui) = root.get_mut("tui").and_then(toml::Value::as_table_mut) else {
+        return Ok(value);
+    };
+    if nested_tui_path_conflicts(tui, path_segments) {
+        return toml::from_str("=");
+    }
+    Ok(value)
+}
+
+fn nested_tui_path_conflicts(
+    table: &toml::map::Map<String, toml::Value>,
+    path_segments: &[&str],
+) -> bool {
+    let Some((first, rest)) = path_segments.split_first() else {
+        return true;
+    };
+    if rest.is_empty() {
+        return false;
+    }
+    match table.get(*first) {
+        Some(toml::Value::Table(child)) => nested_tui_path_conflicts(child, rest),
+        Some(_) => true,
+        None => false,
+    }
+}
+
+fn write_tui_config_file(path: &Path, contents: String) -> anyhow::Result<()> {
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)?;
     }
-    std::fs::write(path, toml::to_string_pretty(&value)?)?;
+    let tmp = path.with_extension("toml.tmp");
+    std::fs::write(&tmp, contents)?;
+    std::fs::rename(tmp, path)?;
     Ok(())
 }
 
@@ -4873,6 +5622,80 @@ fn insert_nested_toml_value(
         .as_table_mut()
         .ok_or_else(|| anyhow::anyhow!("[tui.{first}] config must be a TOML table"))?;
     insert_nested_toml_value(child, rest, value)
+}
+
+fn patch_tui_config_text(
+    contents: &str,
+    path_segments: &[&str],
+    value: toml::Value,
+) -> anyhow::Result<String> {
+    let Some((key, table_segments)) = path_segments.split_last() else {
+        anyhow::bail!("config key path must not be empty");
+    };
+    let table_name = std::iter::once("tui")
+        .chain(table_segments.iter().copied())
+        .collect::<Vec<_>>()
+        .join(".");
+    let literal = toml_value_literal(value)?;
+    let assignment = format!("{key} = {literal}");
+
+    let mut lines = contents.lines().map(str::to_string).collect::<Vec<_>>();
+    let header = format!("[{table_name}]");
+    let section_start = lines
+        .iter()
+        .position(|line| line.trim() == header)
+        .map(|index| index + 1);
+
+    if let Some(start) = section_start {
+        let end = lines[start..]
+            .iter()
+            .position(|line| {
+                let trimmed = line.trim();
+                trimmed.starts_with('[') && trimmed.ends_with(']')
+            })
+            .map(|offset| start + offset)
+            .unwrap_or(lines.len());
+        if let Some(existing) = lines[start..end]
+            .iter()
+            .position(|line| toml_assignment_key(line).is_some_and(|existing| existing == *key))
+            .map(|offset| start + offset)
+        {
+            lines[existing] = assignment;
+        } else {
+            lines.insert(end, assignment);
+        }
+    } else {
+        if !lines.last().is_none_or(|line| line.trim().is_empty()) {
+            lines.push(String::new());
+        }
+        lines.push(header);
+        lines.push(assignment);
+    }
+
+    let mut updated = lines.join("\n");
+    updated.push('\n');
+    Ok(updated)
+}
+
+fn toml_assignment_key(line: &str) -> Option<&str> {
+    let trimmed = line.trim_start();
+    if trimmed.starts_with('#') || trimmed.starts_with('[') {
+        return None;
+    }
+    trimmed
+        .split_once('=')
+        .map(|(key, _)| key.trim())
+        .filter(|key| !key.is_empty())
+}
+
+fn toml_value_literal(value: toml::Value) -> anyhow::Result<String> {
+    match value {
+        toml::Value::Boolean(value) => Ok(value.to_string()),
+        toml::Value::String(value) => Ok(format!("{value:?}")),
+        toml::Value::Integer(value) => Ok(value.to_string()),
+        toml::Value::Float(value) if value.is_finite() => Ok(value.to_string()),
+        other => anyhow::bail!("unsupported fallback TOML value: {other:?}"),
+    }
 }
 
 fn tui_config_path() -> PathBuf {
@@ -4984,6 +5807,37 @@ fn copied_helper_area(composer_area: Rect) -> Option<Rect> {
 
 fn copied_helper_width() -> u16 {
     (2 + COPIED_HELPER_LABEL.chars().count()) as u16
+}
+
+fn voice_transcribing_widget(
+    theme: Theme,
+    spinner: WorkingSpinner,
+    frame: u64,
+) -> Paragraph<'static> {
+    Paragraph::new(Line::from(vec![
+        Span::styled(
+            format!(" {} ", padded_spinner_frame(spinner, frame)),
+            theme.running(),
+        ),
+        Span::styled("transcribing...", theme.muted()),
+    ]))
+}
+
+fn voice_helper_area(composer_area: Rect) -> Option<Rect> {
+    if composer_area.width == 0 {
+        return None;
+    }
+    let width = voice_helper_width().min(composer_area.width);
+    Some(Rect::new(
+        composer_area.x + composer_area.width.saturating_sub(width + 2),
+        composer_area.y,
+        width,
+        1,
+    ))
+}
+
+fn voice_helper_width() -> u16 {
+    20
 }
 
 fn rect_contains(area: Rect, column: u16, row: u16) -> bool {
@@ -5628,7 +6482,7 @@ fn main_provider_menu_items(providers: &[ProviderChoice]) -> Vec<ProviderMenuIte
         ProviderMenuItem::Settings,
         ProviderMenuItem::RoadmapMode,
         ProviderMenuItem::RunnerSettings,
-        ProviderMenuItem::ResumeSessions,
+        ProviderMenuItem::ResumeThreads,
         ProviderMenuItem::WebSearchSettings,
         ProviderMenuItem::SpinnerSettings,
         ProviderMenuItem::ThemesSettings,
@@ -5710,6 +6564,7 @@ fn providers_menu_items(providers: &[ProviderChoice]) -> Vec<ProviderMenuItem> {
 fn settings_menu_items(
     timeline_settings: TimelineSettings,
     search_index_enabled: bool,
+    command_shell: &str,
     file_backed_dynamic_context: bool,
 ) -> Vec<ProviderMenuItem> {
     [
@@ -5722,6 +6577,8 @@ fn settings_menu_items(
     .map(ProviderMenuItem::DefaultMode)
     .chain([
         ProviderMenuItem::SearchIndexToggle(search_index_enabled),
+        ProviderMenuItem::ShellSettings(command_shell.to_string()),
+        ProviderMenuItem::VoiceModelSettings,
         ProviderMenuItem::FileBackedDynamicContextToggle(file_backed_dynamic_context),
         ProviderMenuItem::MessageFoldingToggle(timeline_settings.message_folding),
         ProviderMenuItem::Back,
@@ -5767,6 +6624,25 @@ fn models_menu_items(
         items.extend(provider_models.into_iter().map(ProviderMenuItem::Model));
     }
 
+    items.push(ProviderMenuItem::Back);
+    items
+}
+
+fn voice_model_menu_items(providers: &SpeechProvidersListResult) -> Vec<ProviderMenuItem> {
+    let mut items = Vec::new();
+    for provider in &providers.providers {
+        if provider.models.is_empty() {
+            continue;
+        }
+        items.push(ProviderMenuItem::Section(provider.name.clone()));
+        items.extend(provider.models.iter().map(|model| {
+            ProviderMenuItem::VoiceModel(VoiceModelChoice {
+                provider_id: provider.id.clone(),
+                model_id: model.id.clone(),
+                label: format!("{} / {}", provider.name, model.name),
+            })
+        }));
+    }
     items.push(ProviderMenuItem::Back);
     items
 }
@@ -5854,10 +6730,10 @@ fn provider_api_key_items(
 }
 
 fn provider_api_key_url(provider_id: &str) -> &'static str {
-    if provider_id == "poolside" {
-        "https://platform.poolside.ai/api-keys"
-    } else {
-        "https://opencode.ai/auth"
+    match provider_id {
+        "cursor" => "https://cursor.com/dashboard/integrations",
+        "poolside" => "https://platform.poolside.ai/api-keys",
+        _ => "https://opencode.ai/auth",
     }
 }
 
@@ -5915,15 +6791,15 @@ fn decode_response<T: serde::de::DeserializeOwned>(res: JsonRpcResponse) -> anyh
     Ok(serde_json::from_value(result)?)
 }
 
-async fn session_get<C>(client: &C) -> anyhow::Result<SessionGetResult>
+async fn thread_state<C>(client: &C) -> anyhow::Result<ThreadStateResult>
 where
     C: AppClient,
 {
     let res = client
         .send_request(JsonRpcRequest {
             jsonrpc: "2.0".to_string(),
-            id: Some(serde_json::json!("session/get")),
-            method: "session/get".to_string(),
+            id: Some(serde_json::json!("thread/state")),
+            method: "thread/state".to_string(),
             params: None,
         })
         .await;
@@ -5963,6 +6839,14 @@ where
         })
         .await;
     decode_response(res)
+}
+
+fn default_shell_settings() -> ShellSettings {
+    let shell = roder_api::command_shell::default_command_shell();
+    ShellSettings {
+        options: roder_api::command_shell::command_shell_options(&shell),
+        shell,
+    }
 }
 
 fn next_policy_mode(mode: PolicyMode) -> PolicyMode {
@@ -6204,7 +7088,7 @@ fn record_usage_counters(
     current_turn_input_tokens: &mut u32,
     current_turn_output_tokens: &mut u32,
     current_turn_total_tokens: &mut u32,
-    session_tokens: &mut u64,
+    thread_tokens: &mut u64,
     context_window_tokens: &mut u64,
     usage: TokenUsage,
 ) {
@@ -6216,7 +7100,7 @@ fn record_usage_counters(
     *current_turn_output_tokens = (*current_turn_output_tokens).max(usage.completion_tokens);
     if total_tokens > *current_turn_total_tokens {
         let delta = total_tokens - *current_turn_total_tokens;
-        *session_tokens = session_tokens.saturating_add(u64::from(delta));
+        *thread_tokens = thread_tokens.saturating_add(u64::from(delta));
         *current_turn_total_tokens = total_tokens;
     }
     if total_tokens > 0 {
@@ -6289,12 +7173,13 @@ mod tests {
     use super::*;
     use std::sync::Arc;
 
+    use ratatui::{Terminal, backend::TestBackend};
     use roder_api::teams::{TeamMemberDescriptor, TeamMemberRole, TeamMemberStatus};
     use roder_app_server::AppServer;
     use roder_core::Runtime;
     use roder_protocol::{
-        DesktopItem, DesktopThread, DesktopThreadStatus, DesktopTurn, ProviderDescriptor,
-        ProvidersListResult,
+        Item, ProviderDescriptor, ProvidersListResult, SpeechProvidersListResult, Thread,
+        ThreadStatus, Turn,
     };
 
     fn test_app() -> TuiApp {
@@ -6305,15 +7190,15 @@ mod tests {
         TuiApp {
             client: LocalAppClient::new(server.clone()),
             thread_id: "thread-test".to_string(),
-            session_title: None,
-            session_message_count: 0,
+            thread_title: None,
+            thread_message_count: 0,
             active_turn_id: None,
             active_turn_timer: TurnTimer::default(),
             current_turn_input_tokens: 0,
             current_turn_output_tokens: 0,
             current_turn_reasoning_tokens: None,
             current_turn_total_tokens: 0,
-            session_tokens: 0,
+            thread_tokens: 0,
             context_window_tokens: 0,
             provider: "mock".to_string(),
             model: "mock".to_string(),
@@ -6352,6 +7237,8 @@ mod tests {
             timeline_settings: TimelineSettings::default(),
             web_search_mode: HostedWebSearchMode::Cached,
             search_index_enabled: true,
+            command_shell: "bash".to_string(),
+            command_shell_options: vec!["zsh".to_string(), "bash".to_string()],
             file_backed_dynamic_context: true,
             confirm_dialog: None,
             tool_detail_modal: None,
@@ -6367,8 +7254,10 @@ mod tests {
             last_user_prompt: None,
             command_catalog: built_in_command_catalog(),
             slash_command_selection: 0,
+            voice: VoiceState::default(),
             policy_mode: PolicyMode::Default,
             pending_plan_exit: None,
+            current_goal: None,
             compaction_active: false,
             theme,
             active_theme_id: None,
@@ -6405,23 +7294,24 @@ mod tests {
     #[test]
     fn resumed_task_ledger_tool_result_restores_plan_panel() {
         let mut app = test_app();
-        let thread = DesktopThread {
+        let thread = Thread {
             id: "thread-ledger".to_string(),
-            session_id: "thread-ledger".to_string(),
             preview: String::new(),
             model_provider: "mock".to_string(),
             model: "mock".to_string(),
             created_at: 0,
             updated_at: 0,
-            status: DesktopThreadStatus {
+            status: ThreadStatus {
                 kind: "idle".to_string(),
+                active_turn_id: None,
                 active_flags: Vec::new(),
             },
             cwd: "/tmp".to_string(),
             name: None,
-            turns: Some(vec![DesktopTurn {
+            usage: None,
+            turns: Some(vec![Turn {
                 id: "turn-ledger".to_string(),
-                items: vec![DesktopItem {
+                items: vec![Item {
                     id: "tool-ledger".to_string(),
                     kind: "toolMessage".to_string(),
                     text: Some(
@@ -6440,6 +7330,7 @@ mod tests {
                 started_at: None,
                 completed_at: None,
                 duration_ms: None,
+                usage: None,
             }]),
         };
 
@@ -6448,6 +7339,50 @@ mod tests {
         assert!(app.plan_panel.is_visible());
         assert_eq!(app.plan_panel.len(), 2);
         assert_eq!(app.plan_panel.completed_count(), 1);
+    }
+
+    #[test]
+    fn apply_thread_uses_protocol_active_turn_status() {
+        let mut app = test_app();
+        let running = Thread {
+            id: "thread-running".to_string(),
+            preview: String::new(),
+            model_provider: "mock".to_string(),
+            created_at: 0,
+            updated_at: 0,
+            status: ThreadStatus {
+                kind: "running".to_string(),
+                active_turn_id: Some("turn-live".to_string()),
+                active_flags: Vec::new(),
+            },
+            cwd: "/tmp".to_string(),
+            name: None,
+            turns: None,
+        };
+
+        app.apply_thread(running);
+
+        assert_eq!(app.active_turn_id.as_deref(), Some("turn-live"));
+
+        let idle = Thread {
+            id: "thread-idle".to_string(),
+            preview: String::new(),
+            model_provider: "mock".to_string(),
+            created_at: 0,
+            updated_at: 0,
+            status: ThreadStatus {
+                kind: "idle".to_string(),
+                active_turn_id: None,
+                active_flags: Vec::new(),
+            },
+            cwd: "/tmp".to_string(),
+            name: None,
+            turns: None,
+        };
+
+        app.apply_thread(idle);
+
+        assert_eq!(app.active_turn_id, None);
     }
 
     #[test]
@@ -6490,6 +7425,37 @@ mod tests {
             .map(|cell| cell.symbol.as_str())
             .collect::<String>();
         assert!(footer.contains("roadmap:20-roadmapping-mode.md"));
+    }
+
+    #[test]
+    fn voice_mode_is_visible_in_empty_composer_footer() {
+        let mut app = test_app();
+        app.voice.enable_for_test();
+
+        let mut buffer = Buffer::empty(Rect::new(0, 0, 100, 1));
+        app.footer(100).render(buffer.area, &mut buffer);
+        let footer = buffer_row_cells(&buffer, 0)
+            .iter()
+            .map(|cell| cell.symbol.as_str())
+            .collect::<String>();
+
+        assert!(footer.contains("hold Space to speak"));
+    }
+
+    #[test]
+    fn footer_omits_policy_mode_label() {
+        let mut app = test_app();
+        app.policy_mode = PolicyMode::Bypass;
+
+        let mut buffer = Buffer::empty(Rect::new(0, 0, 100, 1));
+        app.footer(100).render(buffer.area, &mut buffer);
+        let footer = buffer_row_cells(&buffer, 0)
+            .iter()
+            .map(|cell| cell.symbol.as_str())
+            .collect::<String>();
+
+        assert!(footer.contains("ready"));
+        assert!(!footer.contains("mode:"));
     }
 
     #[test]
@@ -6569,6 +7535,231 @@ mod tests {
     }
 
     #[test]
+    fn roadmap_mode_uses_custom_workspace_instead_of_chat_frame() {
+        let mut app = test_app();
+        app.enter_roadmap_mode(Some("roadmap/20-roadmapping-mode.md".to_string()));
+
+        let backend = TestBackend::new(120, 36);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal.draw(|f| app.render(f)).unwrap();
+        let buffer = terminal.backend().buffer();
+        let rows = (0..buffer.area.height)
+            .map(|row| {
+                buffer_row_cells(buffer, row)
+                    .iter()
+                    .map(|cell| cell.symbol.as_str())
+                    .collect::<String>()
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        assert!(rows.contains("Roadmap Manager"));
+        assert!(rows.contains("Task Queue"));
+        assert!(rows.contains("Agent Lanes"));
+        assert!(rows.contains("Validation"));
+        assert!(!rows.contains("Send"));
+    }
+
+    #[tokio::test]
+    async fn roadmap_workspace_keys_manage_tasks_and_leave_mode() {
+        let mut app = test_app();
+        let workspace = temp_roadmap_workspace();
+        std::fs::write(
+            workspace.join("roadmap/20-roadmapping-mode.md"),
+            "# Roadmapping Mode Implementation Plan\n\n**Goal:** Add roadmapping mode.\n**Architecture:** Roadmap documents are first-class state.\n**Tech Stack:** Rust.\n\n## Owned Paths\n\n- Modify: `crates/roder-tui/src/roadmap.rs`\n\n## Tasks\n\n- [ ] Add roadmap tests\n- [ ] Wire roadmap keys\n\nRun:\n\n```sh\ncargo test -p roder-tui roadmap\n```\n\nAcceptance:\n- Roadmap mode renders.\n\n## Phase Acceptance\n\n- [ ] TUI works.\n",
+        )
+        .unwrap();
+        std::fs::write(
+            workspace.join("roadmap/21-second-plan.md"),
+            "# Second Plan\n\n**Goal:** Exercise plan focus.\n**Architecture:** Roadmap documents are first-class state.\n**Tech Stack:** Rust.\n\n## Owned Paths\n\n- Modify: `crates/roder-tui/src/app.rs`\n\n## Tasks\n\n- [ ] Second plan task\n\nRun:\n\n```sh\ncargo test -p roder-tui roadmap\n```\n\nAcceptance:\n- Plan navigation works.\n\n## Phase Acceptance\n\n- [ ] TUI works.\n",
+        )
+        .unwrap();
+        app.roadmap_mode = Some(
+            RoadmapModeState::load(&workspace, Some("20-roadmapping-mode.md".to_string())).unwrap(),
+        );
+
+        assert_eq!(
+            app.roadmap_mode
+                .as_ref()
+                .and_then(|state| state.focused_task_id.as_deref()),
+            Some("task-add-roadmap-tests")
+        );
+        assert_eq!(
+            app.roadmap_mode.as_ref().map(|state| state.focused_pane),
+            Some(crate::roadmap::RoadmapPaneFocus::Tasks)
+        );
+
+        assert!(
+            app.handle_roadmap_key(KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE))
+                .await
+        );
+        assert_eq!(
+            app.roadmap_mode.as_ref().map(|state| state.focused_pane),
+            Some(crate::roadmap::RoadmapPaneFocus::TaskDetail)
+        );
+
+        assert!(
+            app.handle_roadmap_key(KeyEvent::new(KeyCode::BackTab, KeyModifiers::SHIFT))
+                .await
+        );
+        assert_eq!(
+            app.roadmap_mode.as_ref().map(|state| state.focused_pane),
+            Some(crate::roadmap::RoadmapPaneFocus::Tasks)
+        );
+
+        app.roadmap_mode.as_mut().unwrap().focused_pane = crate::roadmap::RoadmapPaneFocus::Plans;
+        assert!(
+            app.handle_roadmap_key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE))
+                .await
+        );
+        assert_eq!(
+            app.roadmap_mode
+                .as_ref()
+                .and_then(|state| state.selected_plan.as_deref()),
+            Some("roadmap/21-second-plan.md")
+        );
+        assert!(
+            app.handle_roadmap_key(KeyEvent::new(KeyCode::Up, KeyModifiers::NONE))
+                .await
+        );
+        assert_eq!(
+            app.roadmap_mode
+                .as_ref()
+                .and_then(|state| state.selected_plan.as_deref()),
+            Some("roadmap/20-roadmapping-mode.md")
+        );
+
+        app.roadmap_mode.as_mut().unwrap().focused_pane = crate::roadmap::RoadmapPaneFocus::Tasks;
+        assert!(
+            app.handle_roadmap_key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE))
+                .await
+        );
+        assert_eq!(
+            app.roadmap_mode
+                .as_ref()
+                .and_then(|state| state.focused_task_id.as_deref()),
+            Some("task-wire-roadmap-keys")
+        );
+
+        app.roadmap_mode.as_mut().unwrap().attach_thread("thread-a");
+        app.roadmap_mode.as_mut().unwrap().attach_thread("thread-b");
+        app.roadmap_mode.as_mut().unwrap().focused_pane = crate::roadmap::RoadmapPaneFocus::Agents;
+        assert!(
+            app.handle_roadmap_key(KeyEvent::new(KeyCode::Up, KeyModifiers::NONE))
+                .await
+        );
+        assert_eq!(
+            app.roadmap_mode
+                .as_ref()
+                .and_then(|state| state.selected_thread_id.as_deref()),
+            Some("thread-a")
+        );
+        assert!(
+            app.handle_roadmap_key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE))
+                .await
+        );
+        assert_eq!(
+            app.roadmap_mode
+                .as_ref()
+                .and_then(|state| state.selected_thread_id.as_deref()),
+            Some("thread-b")
+        );
+
+        app.roadmap_mode.as_mut().unwrap().focused_pane =
+            crate::roadmap::RoadmapPaneFocus::Activity;
+        assert!(
+            app.handle_roadmap_key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE))
+                .await
+        );
+        assert_eq!(
+            app.roadmap_mode.as_ref().map(|state| state.activity_scroll),
+            Some(1)
+        );
+        assert!(
+            app.handle_roadmap_key(KeyEvent::new(KeyCode::Up, KeyModifiers::NONE))
+                .await
+        );
+        assert_eq!(
+            app.roadmap_mode.as_ref().map(|state| state.activity_scroll),
+            Some(0)
+        );
+
+        assert!(
+            app.handle_roadmap_key(KeyEvent::new(KeyCode::Char('v'), KeyModifiers::NONE))
+                .await
+        );
+        assert!(
+            app.roadmap_mode
+                .as_ref()
+                .is_some_and(|state| state.validation_diagnostics.is_empty())
+        );
+
+        assert!(
+            app.handle_roadmap_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE))
+                .await
+        );
+        assert!(app.roadmap_mode.is_none(), "events: {:?}", app.events);
+    }
+
+    #[tokio::test]
+    async fn roadmap_worker_enter_loads_worker_chat_view() {
+        let mut app = test_app();
+        let worker = start_test_thread(&app).await;
+        app.roadmap_mode = Some(RoadmapModeState::new(Some(
+            "roadmap/20-roadmapping-mode.md".to_string(),
+        )));
+        let roadmap = app.roadmap_mode.as_mut().unwrap();
+        roadmap.focused_pane = crate::roadmap::RoadmapPaneFocus::Agents;
+        roadmap.attach_thread(worker.thread.id.clone());
+
+        assert!(
+            app.handle_roadmap_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE))
+                .await
+        );
+
+        assert!(app.roadmap_mode.is_none());
+        assert_eq!(app.thread_id, worker.thread.id);
+        let render = app.timeline.render(app.theme, Rect::new(0, 0, 100, 8));
+        let rows = rendered_text_rows(&render.text, 100, 8, render.text_scroll);
+        assert!(
+            rows.iter()
+                .any(|row| row.text.contains("monitoring roadmap worker"))
+        );
+    }
+
+    fn temp_roadmap_workspace() -> PathBuf {
+        let unique = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let path = std::env::temp_dir().join(format!("roder-tui-roadmap-{unique}"));
+        std::fs::create_dir_all(path.join("roadmap")).unwrap();
+        path
+    }
+
+    async fn start_test_thread(app: &TuiApp) -> ThreadStartResult {
+        let res = app
+            .client
+            .send_request(JsonRpcRequest {
+                jsonrpc: "2.0".to_string(),
+                id: Some(serde_json::json!("thread/start")),
+                method: "thread/start".to_string(),
+                params: Some(
+                    serde_json::to_value(ThreadStartParams {
+                        model: Some("mock".to_string()),
+                        model_provider: Some("mock".to_string()),
+                        reasoning: None,
+                        cwd: std::env::current_dir().unwrap().display().to_string(),
+                        ephemeral: false,
+                    })
+                    .unwrap(),
+                ),
+            })
+            .await;
+        decode_response::<ThreadStartResult>(res).unwrap()
+    }
+
+    #[test]
     fn interrupt_params_target_focused_team_member() {
         let mut app = test_app();
         app.team_ui.set_team("team-1".to_string(), test_members());
@@ -6587,6 +7778,18 @@ mod tests {
             assert_eq!(theme.text, Color::Reset);
             assert_eq!(theme.text_strong, Color::Reset);
         }
+    }
+
+    #[test]
+    fn commentary_theme_role_uses_white_on_dark_backgrounds() {
+        assert_eq!(
+            Theme::for_dark_background(true).commentary,
+            Color::Indexed(15)
+        );
+        assert_eq!(
+            Theme::for_dark_background(false).commentary,
+            Color::Indexed(16)
+        );
     }
 
     fn test_members() -> Vec<TeamMemberDescriptor> {
@@ -6628,6 +7831,7 @@ mod tests {
             let colors = [
                 theme.text,
                 theme.text_strong,
+                theme.commentary,
                 theme.muted,
                 theme.subtle,
                 theme.accent,
@@ -6996,42 +8200,34 @@ mod tests {
     }
 
     #[test]
-    fn usage_accounting_tracks_latest_context_window_separately_from_session_total() {
+    fn usage_accounting_tracks_latest_context_window_separately_from_thread_total() {
         let mut input = 0;
         let mut output = 0;
         let mut turn_total = 0;
-        let mut session_total = 0;
+        let mut thread_total = 0;
         let mut context_total = 0;
 
         record_usage_counters(
             &mut input,
             &mut output,
             &mut turn_total,
-            &mut session_total,
+            &mut thread_total,
             &mut context_total,
-            TokenUsage {
-                prompt_tokens: 10_000,
-                completion_tokens: 1_000,
-                total_tokens: 11_000,
-            },
+            TokenUsage::new(10_000, 1_000, 11_000),
         );
         record_usage_counters(
             &mut input,
             &mut output,
             &mut turn_total,
-            &mut session_total,
+            &mut thread_total,
             &mut context_total,
-            TokenUsage {
-                prompt_tokens: 10_500,
-                completion_tokens: 1_500,
-                total_tokens: 12_000,
-            },
+            TokenUsage::new(10_500, 1_500, 12_000),
         );
 
         assert_eq!(input, 10_500);
         assert_eq!(output, 1_500);
         assert_eq!(turn_total, 12_000);
-        assert_eq!(session_total, 12_000);
+        assert_eq!(thread_total, 12_000);
         assert_eq!(context_total, 12_000);
 
         input = 0;
@@ -7041,16 +8237,12 @@ mod tests {
             &mut input,
             &mut output,
             &mut turn_total,
-            &mut session_total,
+            &mut thread_total,
             &mut context_total,
-            TokenUsage {
-                prompt_tokens: 20_000,
-                completion_tokens: 2_000,
-                total_tokens: 22_000,
-            },
+            TokenUsage::new(20_000, 2_000, 22_000),
         );
 
-        assert_eq!(session_total, 34_000);
+        assert_eq!(thread_total, 34_000);
         assert_eq!(context_total, 22_000);
     }
 
@@ -7322,6 +8514,18 @@ mod tests {
     #[test]
     fn copied_helper_area_is_absent_on_top_row() {
         assert_eq!(copied_helper_area(Rect::new(0, 0, 100, 3)), None);
+    }
+
+    #[test]
+    fn voice_helper_sits_inside_composer_top_right() {
+        let composer = Rect::new(4, 5, 80, 3);
+        let area = voice_helper_area(composer).expect("voice helper should fit");
+
+        assert_eq!(area.y, composer.y);
+        assert_eq!(area.height, 1);
+        assert_eq!(area.width, voice_helper_width());
+        assert!(area.x >= composer.x);
+        assert!(area.x + area.width <= composer.x + composer.width);
     }
 
     #[test]
@@ -7689,7 +8893,7 @@ mod tests {
         ));
         assert!(matches!(
             items.get(5),
-            Some(ProviderMenuItem::ResumeSessions)
+            Some(ProviderMenuItem::ResumeThreads)
         ));
         assert!(matches!(
             items.get(6),
@@ -7764,6 +8968,11 @@ mod tests {
             "Instant regex search: on"
         );
         assert_eq!(
+            ProviderMenuItem::ShellSettings("bash".to_string()).label(),
+            "Shell command shell: bash"
+        );
+        assert_eq!(ProviderMenuItem::VoiceModelSettings.label(), "Voice model");
+        assert_eq!(
             ProviderMenuItem::FileBackedDynamicContextToggle(true).label(),
             "File-backed dynamic context: on"
         );
@@ -7772,7 +8981,7 @@ mod tests {
 
     #[test]
     fn settings_menu_includes_toggles_before_back() {
-        let items = settings_menu_items(TimelineSettings::default(), true, true);
+        let items = settings_menu_items(TimelineSettings::default(), true, "bash", true);
 
         assert!(matches!(
             items.get(4),
@@ -7780,13 +8989,58 @@ mod tests {
         ));
         assert!(matches!(
             items.get(5),
-            Some(ProviderMenuItem::FileBackedDynamicContextToggle(true))
+            Some(ProviderMenuItem::ShellSettings(shell)) if shell == "bash"
         ));
         assert!(matches!(
             items.get(6),
+            Some(ProviderMenuItem::VoiceModelSettings)
+        ));
+        assert!(matches!(
+            items.get(7),
+            Some(ProviderMenuItem::FileBackedDynamicContextToggle(true))
+        ));
+        assert!(matches!(
+            items.get(8),
             Some(ProviderMenuItem::MessageFoldingToggle(false))
         ));
-        assert!(matches!(items.get(7), Some(ProviderMenuItem::Back)));
+        assert!(matches!(items.get(9), Some(ProviderMenuItem::Back)));
+    }
+
+    #[test]
+    fn voice_model_menu_groups_speech_models_by_provider() {
+        let items = voice_model_menu_items(&SpeechProvidersListResult {
+            providers: vec![roder_protocol::SpeechProviderDescriptor {
+                id: "openai-speech".to_string(),
+                name: "OpenAI".to_string(),
+                description: None,
+                auth_type: ProviderAuthType::ApiKey,
+                auth_label: Some("OPENAI_API_KEY".to_string()),
+                authenticated: true,
+                auth_detail: None,
+                recommended: true,
+                sort_order: 0,
+                capabilities: roder_api::speech::SpeechCapabilities::default(),
+                models: vec![roder_api::speech::SpeechModelDescriptor {
+                    id: "gpt-4o-mini-transcribe".to_string(),
+                    name: "GPT-4o Mini Transcribe".to_string(),
+                    description: None,
+                    capabilities: roder_api::speech::SpeechCapabilities::default(),
+                }],
+            }],
+        });
+
+        assert!(matches!(
+            items.first(),
+            Some(ProviderMenuItem::Section(label)) if label == "OpenAI"
+        ));
+        assert!(matches!(
+            &items[1],
+            ProviderMenuItem::VoiceModel(choice)
+                if choice.provider_id == "openai-speech"
+                    && choice.model_id == "gpt-4o-mini-transcribe"
+                    && choice.label.contains("GPT-4o Mini Transcribe")
+        ));
+        assert!(matches!(items.last(), Some(ProviderMenuItem::Back)));
     }
 
     #[test]
@@ -7979,6 +9233,41 @@ mod tests {
     }
 
     #[test]
+    fn provider_menu_includes_cursor_composer_model() {
+        let providers = vec![ProviderChoice {
+            provider_id: "cursor".to_string(),
+            name: "Cursor".to_string(),
+            description: Some("Cursor Composer via direct AgentService API".to_string()),
+            auth_type: ProviderAuthType::ApiKey,
+            authenticated: true,
+            auth_detail: None,
+            default_model: Some("composer-2.5".to_string()),
+            recommended: true,
+        }];
+        let models = vec![ProviderOption {
+            provider_id: "cursor".to_string(),
+            model_id: "composer-2.5".to_string(),
+            label: "cursor/composer-2.5 (Composer 2.5)".to_string(),
+            context_window: Some(200_000),
+            default_reasoning: None,
+            reasoning_options: Vec::new(),
+        }];
+
+        let items = models_menu_items(&models, &providers);
+
+        assert!(matches!(
+            &items[0],
+            ProviderMenuItem::Section(label) if label == "Cursor"
+        ));
+        assert!(matches!(
+            &items[1],
+            ProviderMenuItem::Model(option)
+                if option.provider_id == "cursor"
+                    && option.model_id == "composer-2.5"
+        ));
+    }
+
+    #[test]
     fn provider_menu_filter_does_not_return_section_headers() {
         let items = vec![
             ProviderMenuItem::Section("OpenCode".to_string()),
@@ -8022,6 +9311,14 @@ mod tests {
 
         let pasted = provider_api_key_input_line("sk-secret", theme);
         assert_eq!(pasted.spans[1].content, "[api key hidden]");
+    }
+
+    #[test]
+    fn provider_api_key_url_uses_cursor_integrations_page() {
+        assert_eq!(
+            provider_api_key_url("cursor"),
+            "https://cursor.com/dashboard/integrations"
+        );
     }
 
     #[test]

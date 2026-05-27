@@ -14,7 +14,7 @@ async def main() -> None:
         return {"jsonrpc": "2.0", "id": request["id"], "result": {"ok": True}}
 
     async def on_tool_approval(request: dict) -> dict:
-        return {"approved": request.get("toolName") == "fs/readFile", "message": "example policy"}
+        return {"approved": request.get("toolName") == "fs/readFile"}
 
     agent = await RoderAgent.create(
         transport=InMemoryTransport(handler),

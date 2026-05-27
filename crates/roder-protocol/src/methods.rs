@@ -202,7 +202,7 @@ const METHOD_SPECS: &[AppServerMethodSpecSeed] = &[
     method_spec!("index/rebuild", "code-index", LocalState, NonIdempotent),
     method_spec!("index/search", "code-index", ReadOnly, Idempotent),
     method_spec!("index/status", "code-index", ReadOnly, Idempotent),
-    method_spec!("initialize", "session", ReadOnly, Idempotent),
+    method_spec!("initialize", "app", ReadOnly, Idempotent),
     method_spec!(
         "marketplaces/add",
         "marketplaces",
@@ -292,6 +292,7 @@ const METHOD_SPECS: &[AppServerMethodSpecSeed] = &[
         Idempotent,
         ["processes/changed"]
     ),
+    method_spec!("providers/clear", "providers", LocalState, NonIdempotent),
     method_spec!(
         "providers/configure",
         "providers",
@@ -352,21 +353,6 @@ const METHOD_SPECS: &[AppServerMethodSpecSeed] = &[
         LocalState,
         NonIdempotent
     ),
-    method_spec!("session/exit_plan", "session", LocalState, NonIdempotent),
-    method_spec!("session/get", "session", ReadOnly, Idempotent),
-    method_spec!(
-        "session/resolve_approval",
-        "session",
-        LocalState,
-        NonIdempotent
-    ),
-    method_spec!(
-        "session/resolve_user_input",
-        "session",
-        LocalState,
-        NonIdempotent
-    ),
-    method_spec!("session/set_mode", "session", LocalState, NonIdempotent),
     method_spec!("settings/get", "settings", ReadOnly, Idempotent),
     method_spec!(
         "settings/set_default_mode",
@@ -386,6 +372,7 @@ const METHOD_SPECS: &[AppServerMethodSpecSeed] = &[
         LocalState,
         NonIdempotent
     ),
+    method_spec!("settings/set_shell", "settings", LocalState, NonIdempotent),
     method_spec!(
         "settings/set_web_search",
         "settings",
@@ -396,6 +383,25 @@ const METHOD_SPECS: &[AppServerMethodSpecSeed] = &[
     method_spec!("skills/read", "skills", ReadOnly, Idempotent),
     method_spec!("skills/setEnabled", "skills", LocalState, NonIdempotent),
     method_spec!("skills/setExposure", "skills", LocalState, NonIdempotent),
+    method_spec!("speech/providers/list", "speech", ReadOnly, Idempotent),
+    method_spec!(
+        "speech/synthesis/providers/list",
+        "speech",
+        ReadOnly,
+        Idempotent
+    ),
+    method_spec!(
+        "speech/synthesize",
+        "speech",
+        ExternalProcess,
+        NonIdempotent
+    ),
+    method_spec!(
+        "speech/transcribe",
+        "speech",
+        ExternalProcess,
+        NonIdempotent
+    ),
     method_spec!("tasks/cancel", "tasks", LocalState, NonIdempotent),
     method_spec!("tasks/get", "tasks", ReadOnly, Idempotent),
     method_spec!("tasks/list", "tasks", ReadOnly, Idempotent),
@@ -423,12 +429,42 @@ const METHOD_SPECS: &[AppServerMethodSpecSeed] = &[
     method_spec!("team/pane/focus", "teams", LocalState, NonIdempotent),
     method_spec!("team/read", "teams", ReadOnly, Idempotent),
     method_spec!("team/start", "teams", LocalState, NonIdempotent),
-    method_spec!("thread/archive", "threads", LocalState, NonIdempotent),
-    method_spec!("thread/attach", "threads", LocalState, NonIdempotent),
-    method_spec!("thread/list", "threads", ReadOnly, Idempotent),
-    method_spec!("thread/read", "threads", ReadOnly, Idempotent),
-    method_spec!("thread/roadmap/open", "threads", LocalState, NonIdempotent),
-    method_spec!("thread/start", "threads", LocalState, NonIdempotent),
+    method_spec!("thread/archive", "thread", LocalState, NonIdempotent),
+    method_spec!("thread/attach", "thread", LocalState, NonIdempotent),
+    method_spec!("thread/exit_plan", "thread", LocalState, NonIdempotent),
+    method_spec!(
+        "thread/goal/clear",
+        "thread",
+        LocalState,
+        NonIdempotent,
+        ["thread/goal/cleared"]
+    ),
+    method_spec!("thread/goal/get", "thread", ReadOnly, Idempotent),
+    method_spec!(
+        "thread/goal/set",
+        "thread",
+        LocalState,
+        NonIdempotent,
+        ["thread/goal/updated"]
+    ),
+    method_spec!("thread/list", "thread", ReadOnly, Idempotent),
+    method_spec!("thread/read", "thread", ReadOnly, Idempotent),
+    method_spec!(
+        "thread/resolve_approval",
+        "thread",
+        LocalState,
+        NonIdempotent
+    ),
+    method_spec!(
+        "thread/resolve_user_input",
+        "thread",
+        LocalState,
+        NonIdempotent
+    ),
+    method_spec!("thread/roadmap/open", "thread", LocalState, NonIdempotent),
+    method_spec!("thread/set_mode", "thread", LocalState, NonIdempotent),
+    method_spec!("thread/start", "thread", LocalState, NonIdempotent),
+    method_spec!("thread/state", "thread", ReadOnly, Idempotent),
     method_spec!("tools/call", "tools", LocalState, NonIdempotent),
     method_spec!("tools/list", "tools", ReadOnly, Idempotent),
     method_spec!("turn/interrupt", "turns", LocalState, NonIdempotent),
@@ -473,7 +509,7 @@ mod tests {
             "settings/get",
             "thread/start",
             "turn/start",
-            "session/resolve_approval",
+            "thread/resolve_approval",
             "tools/call",
             "commands/list",
             "tasks/submit",
@@ -487,6 +523,10 @@ mod tests {
             "memory/query",
             "automations/list",
             "processes/list",
+            "speech/providers/list",
+            "speech/synthesis/providers/list",
+            "speech/synthesize",
+            "speech/transcribe",
         ] {
             assert!(methods.contains(required), "missing {required}");
         }

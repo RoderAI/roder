@@ -3,12 +3,12 @@ use std::time::Duration;
 
 use futures::stream;
 use roder_api::catalog::PROVIDER_MOCK;
-use roder_api::conversation::ConversationItem;
 use roder_api::extension::{ExtensionRegistryBuilder, InferenceEngineId, ToolProviderId};
 use roder_api::inference::*;
 use roder_api::tools::{
     ToolCall, ToolContributor, ToolExecutionContext, ToolExecutor, ToolResult, ToolSpec,
 };
+use roder_api::transcript::TranscriptItem;
 use roder_core::{Runtime, RuntimeConfig, StartTurnRequest, default_instructions};
 use serde_json::json;
 use tokio::sync::Notify;
@@ -387,10 +387,10 @@ impl InferenceEngine for AgentControlEngine {
     ) -> anyhow::Result<InferenceEventStream> {
         let is_parent = ctx.thread_id == "thread-agent-control";
         let has_result = |name: &str| {
-            request.conversation.iter().any(|item| {
+            request.transcript.iter().any(|item| {
                 matches!(
                     item,
-                    ConversationItem::ToolResult(result)
+                    TranscriptItem::ToolResult(result)
                         if result.name.as_deref() == Some(name)
                 )
             })
@@ -524,10 +524,10 @@ impl InferenceEngine for ErrorRecoveringEngine {
     ) -> anyhow::Result<InferenceEventStream> {
         let mut requests = self.requests.lock().unwrap();
         requests.push(request);
-        let has_tool_error = requests.last().unwrap().conversation.iter().any(|item| {
+        let has_tool_error = requests.last().unwrap().transcript.iter().any(|item| {
             matches!(
                 item,
-                ConversationItem::ToolResult(result)
+                TranscriptItem::ToolResult(result)
                     if result.is_error
                         && result.result.contains("path does not exist")
             )
@@ -669,6 +669,7 @@ async fn run_turn_continues_after_tool_result() {
                 model_edit_tools: std::collections::HashMap::new(),
                 model_parallel_tool_calls: std::collections::HashMap::new(),
                 model_profiles: std::collections::HashMap::new(),
+                command_shell: roder_api::command_shell::default_command_shell(),
                 workspace: None,
                 policy_mode: roder_api::policy_mode::PolicyMode::Default,
                 runtime_profile: roder_api::inference::RuntimeProfile::Interactive,
@@ -692,7 +693,7 @@ async fn run_turn_continues_after_tool_result() {
             provider_override: None,
             model_override: None,
             reasoning_override: None,
-            workspace: None,
+            workspace: std::env::current_dir().unwrap().display().to_string(),
 
             instructions: default_instructions(),
             task_ledger_required: false,
@@ -723,11 +724,11 @@ async fn run_turn_continues_after_tool_result() {
     );
     assert!(
         requests[1]
-            .conversation
+            .transcript
             .iter()
-            .any(|item| matches!(item, ConversationItem::ToolResult(result) if result.result == "from tool")),
+            .any(|item| matches!(item, TranscriptItem::ToolResult(result) if result.result == "from tool")),
         "second request should include the tool result: {:?}",
-        requests[1].conversation
+        requests[1].transcript
     );
 }
 
@@ -755,6 +756,7 @@ async fn run_turn_executes_parallel_tool_call_batch_concurrently() {
                 model_edit_tools: std::collections::HashMap::new(),
                 model_parallel_tool_calls: std::collections::HashMap::new(),
                 model_profiles: std::collections::HashMap::new(),
+                command_shell: roder_api::command_shell::default_command_shell(),
                 workspace: None,
                 policy_mode: roder_api::policy_mode::PolicyMode::Default,
                 runtime_profile: roder_api::inference::RuntimeProfile::Interactive,
@@ -778,7 +780,7 @@ async fn run_turn_executes_parallel_tool_call_batch_concurrently() {
             provider_override: None,
             model_override: None,
             reasoning_override: None,
-            workspace: None,
+            workspace: std::env::current_dir().unwrap().display().to_string(),
 
             instructions: default_instructions(),
             task_ledger_required: false,
@@ -819,9 +821,9 @@ async fn run_turn_executes_parallel_tool_call_batch_concurrently() {
     assert_eq!(requests.len(), 2);
     assert_eq!(requests[0].runtime.parallel_tool_calls, Some(true));
     let result_count = requests[1]
-        .conversation
+        .transcript
         .iter()
-        .filter(|item| matches!(item, ConversationItem::ToolResult(_)))
+        .filter(|item| matches!(item, TranscriptItem::ToolResult(_)))
         .count();
     assert_eq!(result_count, 2);
 }
@@ -842,7 +844,7 @@ async fn provider_start_errors_are_emitted_for_the_active_thread() {
             provider_override: None,
             model_override: None,
             reasoning_override: None,
-            workspace: None,
+            workspace: std::env::current_dir().unwrap().display().to_string(),
 
             instructions: default_instructions(),
             task_ledger_required: false,
@@ -884,6 +886,7 @@ async fn commentary_phase_messages_are_preserved_for_next_provider_request() {
                 model_edit_tools: std::collections::HashMap::new(),
                 model_parallel_tool_calls: std::collections::HashMap::new(),
                 model_profiles: std::collections::HashMap::new(),
+                command_shell: roder_api::command_shell::default_command_shell(),
                 workspace: None,
                 policy_mode: roder_api::policy_mode::PolicyMode::Default,
                 runtime_profile: roder_api::inference::RuntimeProfile::Interactive,
@@ -907,7 +910,7 @@ async fn commentary_phase_messages_are_preserved_for_next_provider_request() {
             provider_override: None,
             model_override: None,
             reasoning_override: None,
-            workspace: None,
+            workspace: std::env::current_dir().unwrap().display().to_string(),
 
             instructions: default_instructions(),
             task_ledger_required: false,
@@ -920,14 +923,14 @@ async fn commentary_phase_messages_are_preserved_for_next_provider_request() {
     let requests = engine.requests.lock().unwrap();
     assert_eq!(requests.len(), 2);
     assert!(
-        requests[1].conversation.iter().any(|item| matches!(
+        requests[1].transcript.iter().any(|item| matches!(
             item,
-            ConversationItem::AssistantMessage(message)
+            TranscriptItem::AssistantMessage(message)
                 if message.text == "I will inspect first."
                     && message.phase.as_deref() == Some("commentary")
         )),
         "second request should preserve commentary assistant message: {:?}",
-        requests[1].conversation
+        requests[1].transcript
     );
 }
 
@@ -955,7 +958,7 @@ async fn steer_turn_is_included_in_next_provider_request() {
             provider_override: None,
             model_override: None,
             reasoning_override: None,
-            workspace: None,
+            workspace: std::env::current_dir().unwrap().display().to_string(),
 
             instructions: default_instructions(),
             task_ledger_required: false,
@@ -980,11 +983,11 @@ async fn steer_turn_is_included_in_next_provider_request() {
     let requests = engine.requests.lock().unwrap();
     assert_eq!(requests.len(), 2);
     assert!(
-        requests[1].conversation.iter().any(|item| {
-            matches!(item, ConversationItem::UserMessage(message) if message.text == "use the new constraint")
+        requests[1].transcript.iter().any(|item| {
+            matches!(item, TranscriptItem::UserMessage(message) if message.text == "use the new constraint")
         }),
         "second request should include steer message: {:?}",
-        requests[1].conversation
+        requests[1].transcript
     );
 }
 
@@ -1010,6 +1013,7 @@ async fn runtime_advertises_apply_patch_only_for_patch_models() {
                 model_edit_tools: std::collections::HashMap::new(),
                 model_parallel_tool_calls: std::collections::HashMap::new(),
                 model_profiles: std::collections::HashMap::new(),
+                command_shell: roder_api::command_shell::default_command_shell(),
                 workspace: None,
                 policy_mode: roder_api::policy_mode::PolicyMode::Default,
                 runtime_profile: roder_api::inference::RuntimeProfile::Interactive,
@@ -1033,7 +1037,7 @@ async fn runtime_advertises_apply_patch_only_for_patch_models() {
             provider_override: None,
             model_override: None,
             reasoning_override: None,
-            workspace: None,
+            workspace: std::env::current_dir().unwrap().display().to_string(),
 
             instructions: default_instructions(),
             task_ledger_required: false,
@@ -1077,6 +1081,7 @@ async fn runtime_uses_custom_model_edit_tool_override() {
                 )]),
                 model_parallel_tool_calls: std::collections::HashMap::new(),
                 model_profiles: std::collections::HashMap::new(),
+                command_shell: roder_api::command_shell::default_command_shell(),
                 workspace: None,
                 policy_mode: roder_api::policy_mode::PolicyMode::Default,
                 runtime_profile: roder_api::inference::RuntimeProfile::Interactive,
@@ -1134,7 +1139,7 @@ async fn model_can_spawn_long_lived_subagent_with_agent_control_tool() {
             provider_override: None,
             model_override: None,
             reasoning_override: None,
-            workspace: None,
+            workspace: std::env::current_dir().unwrap().display().to_string(),
             instructions: default_instructions(),
             task_ledger_required: false,
         })
@@ -1200,6 +1205,7 @@ async fn tool_execution_errors_are_returned_to_model() {
                 model_edit_tools: std::collections::HashMap::new(),
                 model_parallel_tool_calls: std::collections::HashMap::new(),
                 model_profiles: std::collections::HashMap::new(),
+                command_shell: roder_api::command_shell::default_command_shell(),
                 workspace: None,
                 policy_mode: roder_api::policy_mode::PolicyMode::Default,
                 runtime_profile: roder_api::inference::RuntimeProfile::Interactive,
@@ -1223,7 +1229,7 @@ async fn tool_execution_errors_are_returned_to_model() {
             provider_override: None,
             model_override: None,
             reasoning_override: None,
-            workspace: None,
+            workspace: std::env::current_dir().unwrap().display().to_string(),
 
             instructions: default_instructions(),
             task_ledger_required: false,
@@ -1236,15 +1242,15 @@ async fn tool_execution_errors_are_returned_to_model() {
     let requests = engine.requests.lock().unwrap();
     assert_eq!(requests.len(), 2);
     assert!(
-        requests[1].conversation.iter().any(|item| matches!(
+        requests[1].transcript.iter().any(|item| matches!(
             item,
-            ConversationItem::ToolResult(result)
+            TranscriptItem::ToolResult(result)
                 if result.name.as_deref() == Some("failing_tool")
                     && result.is_error
                     && result.result == "path does not exist: crates/roder-tui/src/main.rs"
         )),
         "second request should include the tool error result: {:?}",
-        requests[1].conversation
+        requests[1].transcript
     );
 }
 
@@ -1270,6 +1276,7 @@ async fn run_turn_allows_more_than_eight_tool_rounds() {
                 model_edit_tools: std::collections::HashMap::new(),
                 model_parallel_tool_calls: std::collections::HashMap::new(),
                 model_profiles: std::collections::HashMap::new(),
+                command_shell: roder_api::command_shell::default_command_shell(),
                 workspace: None,
                 policy_mode: roder_api::policy_mode::PolicyMode::Default,
                 runtime_profile: roder_api::inference::RuntimeProfile::Interactive,
@@ -1293,7 +1300,7 @@ async fn run_turn_allows_more_than_eight_tool_rounds() {
             provider_override: None,
             model_override: None,
             reasoning_override: None,
-            workspace: None,
+            workspace: std::env::current_dir().unwrap().display().to_string(),
 
             instructions: default_instructions(),
             task_ledger_required: false,
@@ -1337,6 +1344,7 @@ async fn unknown_tool_completion_is_marked_as_error() {
                 model_edit_tools: std::collections::HashMap::new(),
                 model_parallel_tool_calls: std::collections::HashMap::new(),
                 model_profiles: std::collections::HashMap::new(),
+                command_shell: roder_api::command_shell::default_command_shell(),
                 workspace: None,
                 policy_mode: roder_api::policy_mode::PolicyMode::Default,
                 runtime_profile: roder_api::inference::RuntimeProfile::Interactive,
@@ -1360,7 +1368,7 @@ async fn unknown_tool_completion_is_marked_as_error() {
             provider_override: None,
             model_override: None,
             reasoning_override: None,
-            workspace: None,
+            workspace: std::env::current_dir().unwrap().display().to_string(),
 
             instructions: default_instructions(),
             task_ledger_required: false,

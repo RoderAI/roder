@@ -3,11 +3,11 @@
 This document is the canonical integrator-facing reference for the Roder
 app-server API. It describes the JSON-RPC methods implemented by
 `crates/roder-app-server`, the shared wire DTOs in `crates/roder-protocol`, and
-the notification stream emitted to desktop or sibling clients.
+the notification stream emitted to app, TUI, SDK, or sibling clients.
 
 > Maintenance note: update this document with the `roder-app-server-docs` skill
 > whenever app-server methods, request/response types, events, auth/config
-> behavior, provider/model behavior, or session/thread semantics change.
+> behavior, provider/model behavior, or thread semantics change.
 
 ## Overview
 
@@ -16,7 +16,7 @@ use it to:
 
 - initialize against the current runtime, provider, model, workspace, and
   settings.
-- create or resume sessions and desktop-shaped threads.
+- create or resume threads.
 - start, steer, interrupt, and observe turns.
 - list/select providers, models, runners, tools, agents, commands, skills,
   memories, media artifacts, workflow imports, plan reviews, hunks,
@@ -99,22 +99,19 @@ Provider auth is provider-specific:
   surface.
 
 Config persistence is opt-in on the `AppServer` instance. When enabled,
-`providers/select`, `settings/set_web_search`, `settings/set_default_mode`, and
-`settings/set_file_backed_dynamic_context` write the selected defaults to
+`providers/select`, `settings/set_web_search`, `settings/set_shell`,
+`settings/set_default_mode`, and `settings/set_file_backed_dynamic_context`
+write the selected defaults to
 `~/.roder/config.toml`.
 
 ## Core Concepts
 
-`session` is the persisted runtime conversation unit used by the Roder runtime.
-App-server clients interact with sessions through the desktop-facing `thread/*`
-methods.
-
-`thread` is the desktop-facing view of a Roder session. It is shaped as:
+`thread` is the persisted runtime container and the top-level client-visible
+thread object. It is shaped as:
 
 ```json
 {
   "id": "thread-123",
-  "sessionId": "thread-123",
   "preview": "Untitled thread",
   "modelProvider": "openai",
   "createdAt": 1770000000,
@@ -146,8 +143,8 @@ methods.
 provider id plus model id, for example `openai` and `gpt-5.5`, or provider
 catalog entries that intentionally use Codex provider IDs.
 
-`mode` is Roder's policy mode. App-server clients see it in `session/get` and
-can change it with `session/set_mode` or `settings/set_default_mode`.
+`mode` is Roder's policy mode. App-server clients see it in `thread/state` and
+can change it with `thread/set_mode` or `settings/set_default_mode`.
 
 ## Method Index
 
@@ -155,15 +152,16 @@ Core:
 
 | Method | Purpose |
 | --- | --- |
-| `initialize` | Desktop startup handshake with active provider, model, and cwd. |
+| `initialize` | Startup handshake with active provider, model, and cwd. |
 | `extensions/list` | List extension manifests and capability status. |
 | `providers/list` | List providers, auth status, capabilities, and models. |
 | `providers/configure` | Persist an API key for an API-key provider. |
 | `providers/select` | Select active default provider/model/reasoning. |
-| `model/list` | List desktop model descriptors. |
-| `settings/get` | Read hosted web search mode, search-index status, default policy mode, and file-backed context status. |
+| `model/list` | List protocol model descriptors. |
+| `settings/get` | Read hosted web search mode, search-index status, shell command shell, default policy mode, and file-backed context status. |
 | `settings/set_web_search` | Set hosted web search mode. |
 | `settings/set_search_index` | Enable or disable the persistent regex search index. |
+| `settings/set_shell` | Set the shell used by the `shell` tool and default `exec_command` calls. |
 | `settings/set_default_mode` | Set default policy mode. |
 | `settings/set_file_backed_dynamic_context` | Enable or disable file-backed dynamic context. |
 | `auth/codex/login` | Start Codex OAuth login. |
@@ -172,23 +170,30 @@ Core:
 | `auth/supergrok/login` | Start SuperGrok OAuth login. |
 | `auth/supergrok/status` | Read SuperGrok OAuth status. |
 | `auth/supergrok/logout` | Clear SuperGrok OAuth credentials. |
+| `speech/providers/list` | List speech transcription providers and models. |
+| `speech/transcribe` | Transcribe audio through a registered speech provider. |
+| `speech/synthesis/providers/list` | List speech synthesis providers and TTS models. |
+| `speech/synthesize` | Generate speech audio through a registered synthesis provider. |
 
-Sessions, threads, and turns:
+Threads and turns:
 
 | Method | Purpose |
 | --- | --- |
-| `thread/start` | Create a desktop thread/session. |
-| `thread/list` | List desktop threads. |
-| `thread/read` | Read a desktop thread with optional turns. |
-| `thread/archive` | Archive a desktop thread and remove it from active listings. |
-| `turn/start` | Start a desktop turn from rich text input. |
-| `turn/steer` | Add user input to an active desktop turn. |
-| `turn/interrupt` | Interrupt an active desktop turn. |
-| `session/get` | Read policy mode and pending plan-exit state. |
-| `session/set_mode` | Set the live policy mode. |
-| `session/exit_plan` | Resolve a pending plan-exit request. |
-| `session/resolve_approval` | Resolve a pending tool approval request. |
-| `session/resolve_user_input` | Resolve a pending model-requested user input request. |
+| `thread/start` | Create a thread. |
+| `thread/list` | List threads. |
+| `thread/read` | Read a thread with optional turns. |
+| `thread/archive` | Archive a thread and remove it from active listings. |
+| `thread/goal/get` | Read the thread goal state. |
+| `thread/goal/set` | Create or update the thread goal state. |
+| `thread/goal/clear` | Clear the thread goal state. |
+| `turn/start` | Start a turn from rich text input. |
+| `turn/steer` | Add user input to an active turn. |
+| `turn/interrupt` | Interrupt an active turn. |
+| `thread/state` | Read policy mode and pending plan-exit state. |
+| `thread/set_mode` | Set the live policy mode. |
+| `thread/exit_plan` | Resolve a pending plan-exit request. |
+| `thread/resolve_approval` | Resolve a pending tool approval request. |
+| `thread/resolve_user_input` | Resolve a pending model-requested user input request. |
 
 Tools, commands, files, agents, and tasks:
 
@@ -199,7 +204,7 @@ Tools, commands, files, agents, and tasks:
 | `discovery/groups` | List lazy discovery catalog groups. |
 | `discovery/search` | Search lazy discovery items. |
 | `discovery/read` | Read and optionally promote one discovery item. |
-| `discovery/promote` | Promote one discovery item for a session. |
+| `discovery/promote` | Promote one discovery item for a thread. |
 | `discovery/promoted/list` | List promoted discovery items. |
 | `discovery/promoted/clear` | Clear promoted discovery state. |
 | `skills/list` | List skill descriptors and diagnostics visible to the runtime. |
@@ -335,7 +340,7 @@ Review, hunks, workflow imports, media, and memory:
 
 ### `initialize`
 
-Purpose: Perform the desktop startup handshake.
+Purpose: Perform the app-server startup handshake.
 
 Request:
 
@@ -473,6 +478,98 @@ Errors:
 - Runtime provider/model validation errors return code `-32000` with
   `data.details`.
 
+### `speech/synthesis/providers/list`
+
+Purpose: Discover registered text-to-speech providers, auth state, synthesis
+capabilities, and TTS models.
+
+Request:
+
+```json
+{}
+```
+
+Response:
+
+```json
+{
+  "providers": [
+    {
+      "id": "xiaomi-mimo",
+      "name": "Xiaomi MiMo Speech Synthesis",
+      "authType": "api_key",
+      "authLabel": "MIMO_API_KEY",
+      "authenticated": false,
+      "capabilities": {
+        "batch": true,
+        "streaming": false,
+        "builtinVoices": true,
+        "voiceDesign": true,
+        "voiceClone": true,
+        "prompt": true
+      },
+      "models": [
+        {
+          "id": "mimo-v2.5-tts",
+          "name": "MiMo V2.5 TTS"
+        }
+      ]
+    }
+  ]
+}
+```
+
+Behavior:
+
+- Providers are sorted by `sortOrder`, then name.
+- Model listing failures for an individual provider are treated as an empty
+  model list.
+- Xiaomi MiMo TTS providers share provider ids with the corresponding billing
+  provider: `xiaomi-mimo` and `xiaomi-mimo-token-plan`.
+
+### `speech/synthesize`
+
+Purpose: Generate audio from text through a registered speech synthesis
+provider.
+
+Request:
+
+```json
+{
+  "provider": "xiaomi-mimo",
+  "model": "mimo-v2.5-tts",
+  "text": "Hello from Roder.",
+  "voice": "Chloe",
+  "audioFormat": "wav",
+  "prompt": "Warm, clear narration."
+}
+```
+
+Response:
+
+```json
+{
+  "provider": "xiaomi-mimo",
+  "model": "mimo-v2.5-tts",
+  "audio": {
+    "bytesBase64": "...",
+    "mimeType": "audio/wav",
+    "filename": null
+  },
+  "durationMillis": null,
+  "providerResponseId": "chat-response-id",
+  "metadata": {}
+}
+```
+
+Behavior:
+
+- If `provider` is omitted, the first registered speech synthesis provider is
+  used.
+- If `model` is omitted, the provider's first listed synthesis model is used.
+- `voiceSample` accepts the same `bytesBase64`, `mimeType`, and `filename`
+  shape as speech transcription audio payloads.
+
 ### `settings/get`
 
 Purpose: Read runtime settings that app-server clients commonly expose.
@@ -489,6 +586,7 @@ Response:
 {
   "web_search": { "mode": "cached" },
   "search_index": { "enabled": true },
+  "shell": { "shell": "bash", "options": ["zsh", "bash"] },
   "default_mode": "default",
   "file_backed_dynamic_context": true
 }
@@ -498,6 +596,9 @@ Notes:
 
 - `web_search.mode` is one of `disabled`, `cached`, or `live`.
 - `search_index.enabled` controls the persistent regex search-index methods.
+- `shell.shell` is the active shell used by the `shell` tool and by
+  `exec_command` calls that do not pass a `shell` override. `shell.options`
+  lists selectable shells for UI clients.
 - `default_mode` is a `PolicyMode` value from `roder-api`.
 - `file_backed_dynamic_context` controls whether long tool output, command
   output, and compaction source material are written to context artifacts.
@@ -556,6 +657,37 @@ Behavior:
   enabled.
 - Publishes `search_index/statusChanged` after the setting changes so clients
   can refresh index status displays.
+
+### `settings/set_shell`
+
+Purpose: Change the shell used by command execution tools.
+
+Request:
+
+```json
+{
+  "shell": "zsh"
+}
+```
+
+Response:
+
+```json
+{
+  "shell": { "shell": "zsh", "options": ["zsh", "bash"] }
+}
+```
+
+Behavior:
+
+- Updates runtime state immediately for future `shell` tool calls and
+  `exec_command` calls without an explicit `shell` parameter.
+- `exec_command.shell` remains a per-call override.
+- Persists `[tools].shell` when app-server config persistence is enabled.
+
+Errors:
+
+- Empty `shell` returns JSON-RPC code `-32602`.
 
 ### `settings/set_default_mode`
 
@@ -642,7 +774,7 @@ Errors:
 
 ### `thread/start`
 
-Purpose: Create a desktop thread backed by a Roder session.
+Purpose: Create a thread.
 
 Request:
 
@@ -662,13 +794,16 @@ Response:
 {
   "thread": {
     "id": "thread-123",
-    "sessionId": "thread-123",
     "preview": "Untitled thread",
     "modelProvider": "openai",
     "model": "gpt-5.5",
     "createdAt": 1770000000,
     "updatedAt": 1770000000,
-    "status": { "type": "idle" },
+    "status": {
+      "type": "idle",
+      "activeTurnId": null,
+      "activeFlags": []
+    },
     "cwd": "/Users/pz/w/gode"
   },
   "model": "gpt-5.5",
@@ -680,7 +815,8 @@ Response:
 
 Behavior:
 
-- Creates a persisted runtime session with optional provider/model/workspace.
+- Creates a persisted runtime thread with optional provider/model and required absolute workspace `cwd`.
+- Rejects missing, empty, or relative `cwd`; thread snapshots do not fall back to the app-server process cwd.
 - Stores the selected provider/model/reasoning for later `turn/start` overrides.
 - If `reasoning` is omitted, returns and stores the effective reasoning effort for the selected model.
 - Emits `thread/started`.
@@ -688,7 +824,7 @@ Behavior:
 
 ### `thread/list`
 
-Purpose: Bootstrap or refresh a desktop sidebar.
+Purpose: Bootstrap or refresh a thread list.
 
 Request:
 
@@ -705,12 +841,11 @@ Response:
   "data": [
     {
       "id": "thread-123",
-      "sessionId": "thread-123",
       "preview": "Fix tests",
       "modelProvider": "openai",
       "createdAt": 1770000000,
       "updatedAt": 1770000100,
-      "status": { "type": "idle" },
+      "status": { "type": "idle", "activeTurnId": null, "activeFlags": [] },
       "cwd": "/Users/pz/w/gode",
       "name": "Fix tests"
     }
@@ -722,14 +857,16 @@ Response:
 
 Behavior:
 
-- Lists persisted runtime sessions sorted by newest `updatedAt` first.
+- Lists persisted runtime threads sorted by newest `updatedAt` first.
 - Applies `limit` when supplied.
-- Merges in desktop threads that are in memory but not in persisted sessions.
+- Merges in protocol threads that are in memory but not yet persisted.
+- Persisted thread metadata must include an absolute workspace; invalid metadata
+  is rejected instead of projected with a fallback cwd.
 - Cursor fields are currently always null.
 
 ### `thread/read`
 
-Purpose: Read one desktop thread and optionally include turns/items.
+Purpose: Read one thread and optionally include turns/items.
 
 Request:
 
@@ -746,19 +883,32 @@ Response:
 {
   "thread": {
     "id": "thread-123",
-    "sessionId": "thread-123",
     "preview": "Fix tests",
     "modelProvider": "openai",
     "createdAt": 1770000000,
     "updatedAt": 1770000100,
-    "status": { "type": "idle" },
+    "status": { "type": "idle", "activeTurnId": null, "activeFlags": [] },
     "cwd": "/Users/pz/w/gode",
+    "usage": {
+      "prompt_tokens": 100,
+      "completion_tokens": 10,
+      "total_tokens": 110,
+      "cached_prompt_tokens": 92,
+      "cache_hit_rate": 0.92
+    },
     "turns": [
       {
         "id": "turn-123",
         "items": [],
         "itemsView": "default",
-        "status": "completed"
+        "status": "completed",
+        "usage": {
+          "prompt_tokens": 100,
+          "completion_tokens": 10,
+          "total_tokens": 110,
+          "cached_prompt_tokens": 92,
+          "cache_hit_rate": 0.92
+        }
       }
     ]
   }
@@ -767,13 +917,18 @@ Response:
 
 Behavior:
 
-- Reads a persisted session snapshot first.
-- Falls back to persisted session metadata and then in-memory desktop threads.
+- Reads a persisted thread snapshot first.
+- Falls back to persisted thread metadata and then in-memory protocol threads,
+  but never to the app-server process cwd.
+- Persisted thread metadata must include an absolute workspace; invalid metadata
+  is rejected instead of projected with a fallback cwd.
+- Includes aggregate thread `usage` and per-turn `usage` when provider usage
+  was reported; `cache_hit_rate` is `cached_prompt_tokens / prompt_tokens`.
 - Returns `{"thread": null}` when the thread is unknown.
 
 ### `thread/archive`
 
-Purpose: Archive a desktop thread and remove it from active app-server thread
+Purpose: Archive a thread and remove it from active app-server thread
 lists.
 
 Request:
@@ -795,19 +950,120 @@ Response:
 
 Behavior:
 
-- Calls the runtime session archive path for the supplied `threadId`.
-- Removes in-memory desktop thread, selected model, and active-turn state for
+- Calls the runtime thread archive path for the supplied `threadId`.
+- Removes in-memory protocol thread, selected model, and active-turn state for
   the thread.
 - After archive, `thread/list` no longer returns the thread and `thread/read`
   returns `{ "thread": null }`.
 
 Errors:
 
-- Session-store or archive failures return code `-32000` with `data.details`.
+- Thread-store or archive failures return code `-32000` with `data.details`.
+
+### `thread/goal/get`
+
+Purpose: Read the durable goal state for a thread.
+
+Request:
+
+```json
+{
+  "threadId": "thread-123"
+}
+```
+
+Response:
+
+```json
+{
+  "goal": {
+    "threadId": "thread-123",
+    "objective": "Ship the goal parity slice",
+    "status": "active",
+    "tokenBudget": 20000,
+    "tokensUsed": 1200,
+    "timeUsedSeconds": 180,
+    "createdAt": "2026-05-22T09:00:00Z",
+    "updatedAt": "2026-05-22T09:03:00Z"
+  }
+}
+```
+
+Behavior:
+
+- Returns `{ "goal": null }` when no goal is set.
+- Goal status is one of `active`, `paused`, `blocked`, `usageLimited`,
+  `budgetLimited`, or `complete`.
+
+### `thread/goal/set`
+
+Purpose: Create or update the durable goal state for a thread.
+
+Request:
+
+```json
+{
+  "threadId": "thread-123",
+  "objective": "Ship the goal parity slice",
+  "status": "active",
+  "tokenBudget": 20000
+}
+```
+
+Response:
+
+```json
+{
+  "goal": {
+    "threadId": "thread-123",
+    "objective": "Ship the goal parity slice",
+    "status": "active",
+    "tokenBudget": 20000,
+    "tokensUsed": 0,
+    "timeUsedSeconds": 0,
+    "createdAt": "2026-05-22T09:00:00Z",
+    "updatedAt": "2026-05-22T09:00:00Z"
+  }
+}
+```
+
+Behavior:
+
+- Creates a goal when `objective` is supplied and no goal exists.
+- Updates only supplied fields when a goal already exists.
+- `objective` must be non-empty and at most 4000 characters.
+- `tokenBudget`, when supplied, must be positive. Send `null` to clear the
+  budget.
+- Emits `thread/goal/updated` after a goal is created or updated.
+
+### `thread/goal/clear`
+
+Purpose: Clear the durable goal state for a thread.
+
+Request:
+
+```json
+{
+  "threadId": "thread-123"
+}
+```
+
+Response:
+
+```json
+{
+  "cleared": true
+}
+```
+
+Behavior:
+
+- Returns `false` when no goal existed.
+- Emits `thread/goal/cleared` when a goal was removed.
 
 ### `turn/start`
 
-Purpose: Start a desktop turn on a thread.
+Purpose: Start a turn on a thread.
 
 Request:
 
@@ -832,24 +1088,26 @@ Behavior:
 
 - Concatenates text input blocks with newlines.
 - Uses `prompt` as a transition fallback only when text input is empty.
-- Uses the thread's selected provider/model when known.
-- Starts a runtime turn and records the active turn id for optional
-  `turn/interrupt`.
+- If the thread already has an active runtime turn, queues the input as
+  same-turn steering and returns that active `turnId`.
+- Otherwise uses the thread's selected provider/model when known, starts a
+  runtime turn with the thread's persisted workspace, and records the active
+  turn id for optional `turn/interrupt`.
 
 Notifications:
 
 - `turn/started`
 - `thread/status/changed` with status `running`
 - zero or more `item/agentMessage/delta`, `item/started`, and `item/completed`
-- optional wait-state notifications: `session/approvalRequested`,
-  `session/userInputRequested`, or `session/planExitRequested`, paired with
+- optional wait-state notifications: `thread/approvalRequested`,
+  `thread/userInputRequested`, or `thread/planExitRequested`, paired with
   their corresponding resolved notifications when the client answers
 - terminal `turn/completed`
 - `thread/status/changed` with status `idle`
 
 ### `turn/steer`
 
-Purpose: Send additional user input to an active desktop turn.
+Purpose: Send additional user input to an active turn.
 
 Request:
 
@@ -879,7 +1137,7 @@ Behavior:
 
 ### `turn/interrupt`
 
-Purpose: Interrupt a desktop turn.
+Purpose: Interrupt a turn.
 
 Request:
 
@@ -908,7 +1166,7 @@ Errors:
 - If no `turnId` is supplied and no active turn is known, returns code
   `-32602` with message `no active turn for thread ...`.
 
-### `session/get`
+### `thread/state`
 
 Purpose: Read current policy mode and any pending plan-exit request.
 
@@ -923,19 +1181,19 @@ Response:
 ```json
 {
   "mode": "plan",
-  "pending_plan_exit": {
-    "thread_id": "thread-123",
-    "turn_id": "turn-123",
-    "request_id": "request-123",
-    "target_mode": "default",
-    "plan_summary": "Implement the test first.",
-    "requested_at": "2026-05-18T12:00:00Z",
-    "expires_at": null
+  "pendingPlanExit": {
+    "threadId": "thread-123",
+    "turnId": "turn-123",
+    "requestId": "request-123",
+    "targetMode": "default",
+    "planSummary": "Implement the test first.",
+    "requestedAt": "2026-05-18T12:00:00Z",
+    "expiresAt": null
   }
 }
 ```
 
-### `session/set_mode`
+### `thread/set_mode`
 
 Purpose: Set the live policy mode.
 
@@ -944,7 +1202,7 @@ Request:
 ```json
 {
   "mode": "accept_edits",
-  "reason": "desktop toggle"
+  "reason": "client toggle"
 }
 ```
 
@@ -956,7 +1214,7 @@ Response:
 }
 ```
 
-### `session/exit_plan`
+### `thread/exit_plan`
 
 Purpose: Approve or reject a pending plan-mode exit.
 
@@ -964,7 +1222,7 @@ Request:
 
 ```json
 {
-  "request_id": "request-123",
+  "requestId": "request-123",
   "approved": true
 }
 ```
@@ -978,7 +1236,7 @@ Response:
 }
 ```
 
-### `session/resolve_approval`
+### `thread/resolve_approval`
 
 Purpose: Resolve a pending tool approval.
 
@@ -986,7 +1244,7 @@ Request:
 
 ```json
 {
-  "approval_id": "approval-123",
+  "approvalId": "approval-123",
   "approved": true
 }
 ```
@@ -999,7 +1257,7 @@ Response:
 }
 ```
 
-### `session/resolve_user_input`
+### `thread/resolve_user_input`
 
 Purpose: Resolve a pending `request_user_input` tool request.
 
@@ -1007,7 +1265,7 @@ Request:
 
 ```json
 {
-  "request_id": "input-123",
+  "requestId": "input-123",
   "answers": {
     "choice": "continue"
   }
@@ -1212,7 +1470,7 @@ Response:
 
 Behavior:
 
-- Only `get_goal` and `create_goal` can be called directly.
+- Only `get_goal`, `create_goal`, and `update_goal` can be called directly.
 - Other tool names return code `-32602`.
 
 ### Discovery methods
@@ -1768,7 +2026,7 @@ Behavior:
 ### Subagent traces
 
 Purpose: Read subagent trace summaries and paged trace deltas from persisted
-session events.
+thread events.
 
 Examples:
 
@@ -1796,7 +2054,7 @@ Examples:
 
 Behavior:
 
-- Missing sessions return empty trace lists or empty event pages.
+- Missing threads return empty trace lists or empty event pages.
 - Read defaults to `limit: 100`; limit is clamped to at least 1.
 - `nextOffset` is present only when more events remain.
 
@@ -1941,7 +2199,7 @@ Example status response:
 
 Behavior:
 
-- Scheduling is disabled by default. Desktop clients may enable scheduler
+- Scheduling is disabled by default. App clients may enable scheduler
   ownership for their app-server process; ordinary TUI-local app servers should
   remain scheduler-disabled unless explicitly requested.
 - Disabled scheduler instances can still serve read/manage APIs when
@@ -2861,9 +3119,9 @@ Behavior:
   `-32000` with a message that the artifact does not belong to the thread.
 - `artifact/delete` refuses non-Roder-owned artifacts and emits the runtime
   `artifact/deleted` event when deletion succeeds.
-- In the normal JSONL session store, artifact files are stored under
-  `<sessionDir>/<threadId>/artifacts/<turnId>/`, beside the session's
-  `metadata.json`, `events.jsonl`, and `turn_items.jsonl`.
+- In the normal JSONL thread store, artifact files are stored under
+  `<threadStoreDir>/<threadId>/artifacts/<turnId>/`, beside the thread's
+  `metadata.json`, `events.jsonl`, and `transcript_items.jsonl`.
 
 ### Search index methods
 
@@ -3111,7 +3369,7 @@ Notifications:
 
 ### Retrieval router methods
 
-Purpose: Let desktop and diagnostic clients inspect the retrieval route
+Purpose: Let app and diagnostic clients inspect the retrieval route
 decisions, outcomes, and promoted capability state recorded for a turn.
 
 Request shape for all retrieval methods:
@@ -3369,13 +3627,12 @@ or the remote WebSocket notification stream for remote clients.
 {
   "thread": {
     "id": "thread-123",
-    "sessionId": "thread-123",
     "preview": "Untitled thread",
     "modelProvider": "openai",
     "model": "gpt-5.5",
     "createdAt": 1770000000,
     "updatedAt": 1770000000,
-    "status": { "type": "idle" },
+    "status": { "type": "idle", "activeTurnId": null, "activeFlags": [] },
     "cwd": "/Users/pz/w/gode"
   }
 }
@@ -3408,11 +3665,13 @@ or the remote WebSocket notification stream for remote clients.
 }
 ```
 
-`item/started` and `item/completed` carry `threadId`, `turnId`, and a desktop
+`item/started` and `item/completed` carry `threadId`, `turnId`, and a protocol
 `item` object. Tool items use `type: "tool.<name>"` when the tool name is known.
 
 `turn/completed` carries `threadId` and a terminal `turn` whose `status` is
-`completed`, `failed`, or `interrupted`.
+`completed`, `failed`, or `interrupted`. Completed and failed turns include
+`turn.usage` when provider usage was reported, including `cached_prompt_tokens`
+and `cache_hit_rate`.
 
 `thread/status/changed`:
 
@@ -3423,7 +3682,32 @@ or the remote WebSocket notification stream for remote clients.
 }
 ```
 
-`session/approvalRequested`:
+`thread/goal/updated`:
+
+```json
+{
+  "threadId": "thread-123",
+  "goal": {
+    "threadId": "thread-123",
+    "objective": "Ship the goal parity slice",
+    "status": "active",
+    "tokensUsed": 1200,
+    "timeUsedSeconds": 180,
+    "createdAt": "2026-05-22T09:00:00Z",
+    "updatedAt": "2026-05-22T09:03:00Z"
+  }
+}
+```
+
+`thread/goal/cleared`:
+
+```json
+{
+  "threadId": "thread-123"
+}
+```
+
+`thread/approvalRequested`:
 
 ```json
 {
@@ -3436,11 +3720,11 @@ or the remote WebSocket notification stream for remote clients.
 }
 ```
 
-Clients answer with `session/resolve_approval`. `session/approvalResolved`
+Clients answer with `thread/resolve_approval`. `thread/approvalResolved`
 echoes `threadId`, `turnId`, `approvalId`, `toolId`, `toolName`, and
 `approved`.
 
-`session/userInputRequested`:
+`thread/userInputRequested`:
 
 ```json
 {
@@ -3457,10 +3741,10 @@ echoes `threadId`, `turnId`, `approvalId`, `toolId`, `toolName`, and
 }
 ```
 
-Clients answer with `session/resolve_user_input`. `session/userInputResolved`
+Clients answer with `thread/resolve_user_input`. `thread/userInputResolved`
 echoes `threadId`, `turnId`, `requestId`, and `answers`.
 
-`session/planExitRequested`:
+`thread/planExitRequested`:
 
 ```json
 {
@@ -3472,7 +3756,7 @@ echoes `threadId`, `turnId`, `requestId`, and `answers`.
 }
 ```
 
-Clients answer with `session/exit_plan`. `session/planExitResolved` echoes
+Clients answer with `thread/exit_plan`. `thread/planExitResolved` echoes
 `threadId`, `turnId`, `requestId`, `approved`, `targetMode`, and
 `resolvedMode`.
 
@@ -3522,7 +3806,7 @@ Example:
 
 ### Automation notifications
 
-Automation notifications let desktop and sibling clients distinguish running,
+Automation notifications let app and sibling clients distinguish running,
 terminal, skipped, and blocked scheduled work:
 
 ```json
@@ -3634,11 +3918,11 @@ Cancellation and interruption:
 
 ## Persistence and Contract Notes
 
-- `thread/list` and `thread/read` use persisted sessions first and in-memory
-  desktop threads as a fallback.
-- `providers/select`, `settings/set_web_search`, `settings/set_default_mode`,
-  and `settings/set_file_backed_dynamic_context` persist only when the
-  app-server instance enables user-config persistence.
+- `thread/list` and `thread/read` use persisted threads first and in-memory
+  protocol threads as a fallback.
+- `providers/select`, `settings/set_web_search`, `settings/set_shell`,
+  `settings/set_default_mode`, and `settings/set_file_backed_dynamic_context`
+  persist only when the app-server instance enables user-config persistence.
 - Workflow import decisions are persisted under `~/.roder/workflow-imports.json`
   unless `RODER_WORKFLOW_IMPORTS_PATH` is set.
 - Media artifact storage is configured by `media.artifacts_dir`,

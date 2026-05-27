@@ -14,7 +14,7 @@ pub enum MemoryScope {
     User(String),
     Workspace(String),
     Project(String),
-    Session(String),
+    Thread(String),
 }
 
 impl MemoryScope {
@@ -24,7 +24,7 @@ impl MemoryScope {
             MemoryScope::User(id) => format!("user:{id}"),
             MemoryScope::Workspace(id) => format!("workspace:{id}"),
             MemoryScope::Project(id) => format!("project:{id}"),
-            MemoryScope::Session(id) => format!("session:{id}"),
+            MemoryScope::Thread(id) => format!("thread:{id}"),
         }
     }
 }

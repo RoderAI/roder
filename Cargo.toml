@@ -13,6 +13,7 @@ anyhow = "1.0.102"
 async-trait = "0.1.89"
 async-stream = "0.3.6"
 base64 = "0.22.1"
+bytes = "1.11.1"
 chrono = "0.4.42"
 chrono-tz = "0.10.4"
 croner = "3.0.1"
@@ -24,7 +25,7 @@ ignore = "0.4.25"
 rand = "0.10.1"
 qrcode = { version = "0.14.1", default-features = false }
 ratatui = { version = "0.30.0", features = ["crossterm_0_29"] }
-reqwest = { version = "0.13.3", default-features = false, features = ["form", "http2", "json", "native-tls", "system-proxy"] }
+reqwest = { version = "0.13.3", default-features = false, features = ["form", "http2", "json", "rustls", "system-proxy"] }
 rusqlite = { version = "0.38.0", features = ["bundled"] }
 semver = "1.0.28"
 serde = "1.0.228"
@@ -41,6 +42,7 @@ tokio = { version = "1.52.3", default-features = false, features = [
     "net",
     "process",
     "rt-multi-thread",
+    "signal",
     "sync",
     "time",
 ] }
@@ -62,15 +64,19 @@ roder-code-index = { path = "crates/roder-code-index" }
 roder-roadmap = { path = "crates/roder-roadmap" }
 roder-supergrok-auth = { path = "crates/roder-supergrok-auth" }
 roder-ext-anthropic = { path = "crates/roder-ext-anthropic" }
+roder-ext-cursor = { path = "crates/roder-ext-cursor" }
 roder-ext-disk-context = { path = "crates/roder-ext-disk-context" }
 roder-ext-gemini = { path = "crates/roder-ext-gemini" }
 roder-ext-firecrawl-search = { path = "crates/roder-ext-firecrawl-search" }
-roder-ext-jsonl-session = { path = "crates/roder-ext-jsonl-session" }
+roder-ext-jsonl-thread-store = { path = "crates/roder-ext-jsonl-thread-store" }
 roder-ext-memory = { path = "crates/roder-ext-memory" }
 roder-ext-notify-desktop = { path = "crates/roder-ext-notify-desktop" }
 roder-ext-notify-terminal = { path = "crates/roder-ext-notify-terminal" }
 roder-ext-openai-responses = { path = "crates/roder-ext-openai-responses" }
+roder-ext-openai-chat-completions = { path = "crates/roder-ext-openai-chat-completions" }
 roder-ext-openai-embeddings = { path = "crates/roder-ext-openai-embeddings" }
+roder-ext-openai-speech = { path = "crates/roder-ext-openai-speech" }
+roder-ext-google-speech = { path = "crates/roder-ext-google-speech" }
 roder-ext-opencode = { path = "crates/roder-ext-opencode" }
 roder-ext-parallel-search = { path = "crates/roder-ext-parallel-search" }
 roder-ext-perplexity-search = { path = "crates/roder-ext-perplexity-search" }
@@ -93,6 +99,7 @@ roder-ext-verification = { path = "crates/roder-ext-verification" }
 roder-ext-tavily-search = { path = "crates/roder-ext-tavily-search" }
 roder-ext-web-search = { path = "crates/roder-ext-web-search" }
 roder-ext-xai = { path = "crates/roder-ext-xai" }
+roder-ext-xiaomi-mimo = { path = "crates/roder-ext-xiaomi-mimo" }
 roder-extension-host = { path = "crates/roder-extension-host" }
 roder-evals = { path = "crates/roder-evals" }
 roder-protocol = { path = "crates/roder-protocol" }

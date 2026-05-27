@@ -22,36 +22,36 @@ async def _ready(tui: TuiSession, gode_bin: str, gode_env: dict[str, str]) -> No
 
 
 class TestPolicyMode:
-    async def test_shift_tab_switches_to_accept_edits(
+    async def test_shift_tab_switches_to_accept_all(
         self, tui: TuiSession, gode_bin: str, gode_env: dict[str, str]
     ) -> None:
         await _ready(tui, gode_bin, gode_env)
         await tui.press("shift+tab")
         # The transcript prints a banner and the composer border picks
         # up the mode name.
-        await tui.wait_for_text("policy mode set to accept_edits", timeout=3)
-        await tui.wait_for_text("accept_edits", timeout=2)
+        await tui.wait_for_text("policy mode set to accept_all", timeout=3)
+        await tui.wait_for_text("Accept All", timeout=2)
 
-    async def test_status_bar_reflects_mode(
+    async def test_prompt_border_reflects_mode_without_footer_duplicate(
         self, tui: TuiSession, gode_bin: str, gode_env: dict[str, str]
     ) -> None:
         await _ready(tui, gode_bin, gode_env)
         await tui.press("shift+tab")
-        await tui.wait_for_text("policy mode set to accept_edits")
+        await tui.wait_for_text("policy mode set to accept_all")
+        await tui.wait_for_text("Accept All", timeout=2)
         await tui.wait_for_stable(quiet_ms=120)
-        assert "mode:accept_edits" in tui.screen.row(tui.screen.rows - 1)
+        assert "mode:" not in tui.screen.row(tui.screen.rows - 1)
 
     async def test_mode_cycles_back_to_default(
         self, tui: TuiSession, gode_bin: str, gode_env: dict[str, str]
     ) -> None:
         """Several shift+tab presses should eventually land back on default."""
         await _ready(tui, gode_bin, gode_env)
-        for _ in range(6):
+        for _ in range(3):
             await tui.press("shift+tab")
             await tui.wait_for_stable(quiet_ms=120, timeout=2)
-            if "mode:default" in tui.screen.row(tui.screen.rows - 1):
-                return
-        raise AssertionError("never returned to mode:default after 6 shift+tab presses")
+        await tui.wait_for_text("policy mode set to default", timeout=2)
+        assert "mode:" not in tui.screen.row(tui.screen.rows - 1)
 
 
 class TestShellMode:

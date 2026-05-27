@@ -9,9 +9,9 @@ include_app_server = true
 include_cli = true
 extensions = [
   "openai-responses",
-  "jsonl-session",
+  "jsonl-thread-store",
   "plan-mode",
   "notify-terminal",
 ]
 default_provider = "openai-responses"
-default_session_store = "jsonl-session"
+default_thread_store = "jsonl-thread-store"

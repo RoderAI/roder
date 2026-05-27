@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
 use futures::stream;
@@ -74,7 +75,7 @@ async fn reliability_limits_model_call_emits_interactive_continuation_decision()
             provider_override: None,
             model_override: None,
             reasoning_override: None,
-            workspace: None,
+            workspace: std::env::current_dir().unwrap().display().to_string(),
             instructions: default_instructions(),
             task_ledger_required: false,
         })
@@ -106,6 +107,31 @@ async fn reliability_limits_model_call_emits_interactive_continuation_decision()
     assert!(saw_partial);
 }
 
+#[test]
+fn reliability_default_tool_failure_limit_allows_extended_recovery() {
+    assert_eq!(
+        RuntimeReliabilityConfig::default().max_tool_failures_per_turn,
+        128
+    );
+}
+
+#[tokio::test]
+async fn reliability_tool_failure_count_resets_between_turns() {
+    let runtime = runtime_with_once_failing_tool(RuntimeReliabilityConfig {
+        max_consecutive_tool_failures: 10,
+        max_tool_failures_per_turn: 2,
+        ..RuntimeReliabilityConfig::default()
+    });
+    let mut events = runtime.subscribe_events();
+    let thread_id = "thread-reliability-reset";
+
+    runtime.start_turn(turn(thread_id)).await.unwrap();
+    wait_for_completed_turn(&mut events, thread_id).await;
+
+    runtime.start_turn(turn(thread_id)).await.unwrap();
+    wait_for_completed_turn(&mut events, thread_id).await;
+}
+
 fn runtime_with_failing_tool(reliability: RuntimeReliabilityConfig) -> Arc<Runtime> {
     let mut builder = ExtensionRegistryBuilder::new();
     builder.inference_engine(Arc::new(RepeatingToolEngine {
@@ -119,6 +145,15 @@ fn runtime_with_final_engine(reliability: RuntimeReliabilityConfig) -> Arc<Runti
     let mut builder = ExtensionRegistryBuilder::new();
     builder.inference_engine(Arc::new(FinalEngine));
     runtime(builder, reliability, RuntimeProfile::Interactive)
+}
+
+fn runtime_with_once_failing_tool(reliability: RuntimeReliabilityConfig) -> Arc<Runtime> {
+    let mut builder = ExtensionRegistryBuilder::new();
+    builder.inference_engine(Arc::new(OncePerTurnToolEngine {
+        requests_by_turn: Mutex::new(HashMap::new()),
+    }));
+    builder.tool_contributor(Arc::new(FailingToolContributor));
+    runtime(builder, reliability, RuntimeProfile::Eval)
 }
 
 fn runtime(
@@ -148,9 +183,31 @@ fn turn(thread_id: &str) -> StartTurnRequest {
         provider_override: None,
         model_override: None,
         reasoning_override: None,
-        workspace: None,
+        workspace: std::env::current_dir().unwrap().display().to_string(),
         instructions: default_instructions(),
         task_ledger_required: false,
+    }
+}
+
+async fn wait_for_completed_turn(
+    events: &mut tokio::sync::broadcast::Receiver<roder_api::events::EventEnvelope>,
+    thread_id: &str,
+) {
+    loop {
+        let envelope = tokio::time::timeout(std::time::Duration::from_secs(2), events.recv())
+            .await
+            .unwrap()
+            .unwrap();
+        match &envelope.event {
+            RoderEvent::ReliabilityLimitRecorded(event) if event.context.thread_id == thread_id => {
+                panic!("unexpected reliability limit: {event:?}");
+            }
+            RoderEvent::TurnFailed(failed) if failed.thread_id == thread_id => {
+                panic!("turn failed: {failed:?}");
+            }
+            RoderEvent::TurnCompleted(completed) if completed.thread_id == thread_id => break,
+            _ => {}
+        }
     }
 }
 
@@ -191,6 +248,63 @@ impl InferenceEngine for RepeatingToolEngine {
             })),
             Ok(InferenceEvent::Completed(CompletionMetadata {
                 stop_reason: Some("tool_calls".to_string()),
+                provider_response_id: None,
+            })),
+        ])))
+    }
+}
+
+struct OncePerTurnToolEngine {
+    requests_by_turn: Mutex<HashMap<String, usize>>,
+}
+
+#[async_trait::async_trait]
+impl InferenceEngine for OncePerTurnToolEngine {
+    fn id(&self) -> InferenceEngineId {
+        PROVIDER_MOCK.to_string()
+    }
+
+    fn capabilities(&self) -> InferenceCapabilities {
+        InferenceCapabilities::coding_agent_default()
+    }
+
+    async fn list_models(
+        &self,
+        _ctx: InferenceProviderContext<'_>,
+    ) -> anyhow::Result<Vec<ModelDescriptor>> {
+        Ok(Vec::new())
+    }
+
+    async fn stream_turn(
+        &self,
+        ctx: InferenceTurnContext<'_>,
+        _request: AgentInferenceRequest,
+    ) -> anyhow::Result<InferenceEventStream> {
+        let mut requests = self.requests_by_turn.lock().unwrap();
+        let request_count = requests.entry(ctx.turn_id.to_string()).or_default();
+        *request_count += 1;
+        if *request_count == 1 {
+            let call_id = format!("call-{}", ctx.turn_id);
+            return Ok(Box::pin(stream::iter(vec![
+                Ok(InferenceEvent::ToolCallCompleted(ToolCallCompleted {
+                    id: call_id,
+                    name: "unstable".to_string(),
+                    arguments: "{}".to_string(),
+                })),
+                Ok(InferenceEvent::Completed(CompletionMetadata {
+                    stop_reason: Some("tool_calls".to_string()),
+                    provider_response_id: None,
+                })),
+            ])));
+        }
+
+        Ok(Box::pin(stream::iter(vec![
+            Ok(InferenceEvent::MessageDelta(MessageDelta {
+                text: "recovered".to_string(),
+                phase: None,
+            })),
+            Ok(InferenceEvent::Completed(CompletionMetadata {
+                stop_reason: Some("stop".to_string()),
                 provider_response_id: None,
             })),
         ])))

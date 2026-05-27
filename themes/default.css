@@ -13,6 +13,7 @@
     background: transparent;
 
     --text: reset;
+    --commentary: ansi(15);
     --muted: ansi(244);
     --subtle: ansi(245);
     --accent: ansi(212);

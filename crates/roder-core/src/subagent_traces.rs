@@ -4,7 +4,7 @@ use roder_api::events::{
     RoderEvent, SubagentTraceCompleted, SubagentTraceCreated, SubagentTraceDeltaEvent,
     SubagentTraceFailed, SubagentTraceStatusChanged,
 };
-use roder_api::session::SessionStore;
+use roder_api::thread::ThreadStore;
 use roder_api::trace::{
     ParentTurnRef, SubagentTraceDelta, SubagentTraceId, SubagentTraceSink, SubagentTraceStatus,
     SubagentTraceSummary,
@@ -16,17 +16,17 @@ use crate::bus::EventBus;
 #[derive(Clone)]
 pub(crate) struct RuntimeSubagentTraceSink {
     bus: EventBus,
-    session_store: Option<Arc<dyn SessionStore>>,
+    thread_store: Option<Arc<dyn ThreadStore>>,
 }
 
 impl RuntimeSubagentTraceSink {
-    pub(crate) fn new(bus: EventBus, session_store: Option<Arc<dyn SessionStore>>) -> Self {
-        Self { bus, session_store }
+    pub(crate) fn new(bus: EventBus, thread_store: Option<Arc<dyn ThreadStore>>) -> Self {
+        Self { bus, thread_store }
     }
 
     async fn emit(&self, event: RoderEvent) {
         let envelope = self.bus.emit(event);
-        if let (Some(store), Some(thread_id)) = (&self.session_store, envelope.thread_id.as_ref()) {
+        if let (Some(store), Some(thread_id)) = (&self.thread_store, envelope.thread_id.as_ref()) {
             let _ = store.append_event(thread_id, &envelope).await;
         }
     }

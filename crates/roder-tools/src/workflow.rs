@@ -11,16 +11,9 @@ use crate::files::{parse, require_nonempty, result};
 
 pub(crate) fn register(registry: &mut ToolRegistry) -> anyhow::Result<()> {
     let plan_state = Arc::new(Mutex::new(PlanState::default()));
-    let goal_state = Arc::new(Mutex::new(GoalState::default()));
 
     registry.register(Arc::new(UpdatePlanTool { state: plan_state }))?;
-    registry.register(Arc::new(GetGoalTool {
-        state: goal_state.clone(),
-    }))?;
-    registry.register(Arc::new(CreateGoalTool {
-        state: goal_state.clone(),
-    }))?;
-    registry.register(Arc::new(UpdateGoalTool { state: goal_state }))?;
+    crate::goals::register(registry)?;
     registry.register(Arc::new(RequestUserInputTool))
 }
 
@@ -44,42 +37,9 @@ enum PlanStatus {
     Completed,
 }
 
-#[derive(Debug, Default)]
-struct GoalState {
-    active: Option<Goal>,
-}
-
-#[derive(Debug, Clone)]
-struct Goal {
-    objective: String,
-    token_budget: Option<u64>,
-    status: GoalStatus,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum GoalStatus {
-    Active,
-    Complete,
-}
-
 #[derive(Debug)]
 struct UpdatePlanTool {
     state: Arc<Mutex<PlanState>>,
-}
-
-#[derive(Debug)]
-struct GetGoalTool {
-    state: Arc<Mutex<GoalState>>,
-}
-
-#[derive(Debug)]
-struct CreateGoalTool {
-    state: Arc<Mutex<GoalState>>,
-}
-
-#[derive(Debug)]
-struct UpdateGoalTool {
-    state: Arc<Mutex<GoalState>>,
 }
 
 #[derive(Debug)]
@@ -154,123 +114,6 @@ impl ToolExecutor for UpdatePlanTool {
             }),
             false,
         ))
-    }
-}
-
-#[async_trait::async_trait]
-impl ToolExecutor for GetGoalTool {
-    fn spec(&self) -> ToolSpec {
-        ToolSpec {
-            name: "get_goal".to_string(),
-            description: "Get the current goal for this thread.".to_string(),
-            parameters: empty_params(),
-        }
-    }
-
-    async fn execute(
-        &self,
-        _ctx: ToolExecutionContext,
-        call: ToolCall,
-    ) -> anyhow::Result<ToolResult> {
-        let state = self.state.lock().await;
-        let data = goal_state_json(&state);
-        Ok(result(call, goal_text(&data), data, false))
-    }
-}
-
-#[async_trait::async_trait]
-impl ToolExecutor for CreateGoalTool {
-    fn spec(&self) -> ToolSpec {
-        ToolSpec {
-            name: "create_goal".to_string(),
-            description: "Create a new active goal when no goal is currently defined.".to_string(),
-            parameters: json!({
-                "type": "object",
-                "properties": {
-                    "objective": { "type": "string" },
-                    "token_budget": {
-                        "type": "integer",
-                        "minimum": 1
-                    },
-                    "replace": {
-                        "type": "boolean",
-                        "description": "Replace an existing active goal when true."
-                    }
-                },
-                "required": ["objective"],
-                "additionalProperties": false
-            }),
-        }
-    }
-
-    async fn execute(
-        &self,
-        _ctx: ToolExecutionContext,
-        call: ToolCall,
-    ) -> anyhow::Result<ToolResult> {
-        let args = parse::<CreateGoalArgs>(&call)?;
-        let objective = args.objective.trim().to_string();
-        require_nonempty(&objective, "objective")?;
-        let mut state = self.state.lock().await;
-        if matches!(
-            state.active.as_ref().map(|goal| goal.status),
-            Some(GoalStatus::Active)
-        ) && !args.replace.unwrap_or(false)
-        {
-            return Ok(error_result(
-                call,
-                "an active goal already exists".to_string(),
-            ));
-        }
-        state.active = Some(Goal {
-            objective,
-            token_budget: args.token_budget,
-            status: GoalStatus::Active,
-        });
-        let data = goal_state_json(&state);
-        Ok(result(call, goal_text(&data), data, false))
-    }
-}
-
-#[async_trait::async_trait]
-impl ToolExecutor for UpdateGoalTool {
-    fn spec(&self) -> ToolSpec {
-        ToolSpec {
-            name: "update_goal".to_string(),
-            description: "Update the existing goal. Only status=complete is supported.".to_string(),
-            parameters: json!({
-                "type": "object",
-                "properties": {
-                    "status": {
-                        "type": "string",
-                        "enum": ["complete"]
-                    }
-                },
-                "required": ["status"],
-                "additionalProperties": false
-            }),
-        }
-    }
-
-    async fn execute(
-        &self,
-        _ctx: ToolExecutionContext,
-        call: ToolCall,
-    ) -> anyhow::Result<ToolResult> {
-        let args = parse::<UpdateGoalArgs>(&call)?;
-        if args.status != "complete" {
-            return Ok(error_result(
-                call,
-                "update_goal only accepts status=complete".to_string(),
-            ));
-        }
-        let mut state = self.state.lock().await;
-        let Some(goal) = state.active.as_mut() else {
-            return Ok(error_result(call, "no active goal exists".to_string()));
-        };
-        goal.status = GoalStatus::Complete;
-        let data = goal_state_json(&state);
-        Ok(result(call, goal_text(&data), data, false))
     }
 }
 
@@ -366,18 +209,6 @@ struct UpdatePlanArgs {
 }
 
 #[derive(Deserialize)]
-struct CreateGoalArgs {
-    objective: String,
-    token_budget: Option<u64>,
-    replace: Option<bool>,
-}
-
-#[derive(Deserialize)]
-struct UpdateGoalArgs {
-    status: String,
-}
-
-#[derive(Deserialize)]
 struct RequestUserInputArgs {
     questions: Vec<UserQuestion>,
 }
@@ -394,14 +225,6 @@ struct UserQuestion {
 struct UserInputOption {
     label: String,
     description: String,
-}
-
-fn empty_params() -> Value {
-    json!({
-        "type": "object",
-        "properties": {},
-        "additionalProperties": false
-    })
 }
 
 fn error_result(call: ToolCall, message: String) -> ToolResult {
@@ -451,43 +274,6 @@ fn status_label(status: &PlanStatus) -> &'static str {
     }
 }
 
-fn goal_state_json(state: &GoalState) -> Value {
-    let goal = state.active.as_ref().map(|goal| {
-        json!({
-            "objective": goal.objective,
-            "status": match goal.status {
-                GoalStatus::Active => "active",
-                GoalStatus::Complete => "complete",
-            },
-            "token_budget": goal.token_budget,
-        })
-    });
-    json!({
-        "goal": goal,
-        "has_active_goal": matches!(
-            state.active.as_ref().map(|goal| goal.status),
-            Some(GoalStatus::Active)
-        ),
-    })
-}
-
-fn goal_text(data: &Value) -> String {
-    match data.get("goal") {
-        Some(Value::Object(goal)) => {
-            let objective = goal
-                .get("objective")
-                .and_then(Value::as_str)
-                .unwrap_or_default();
-            let status = goal
-                .get("status")
-                .and_then(Value::as_str)
-                .unwrap_or_default();
-            format!("Goal {status}: {objective}")
-        }
-        _ => "No active goal.".to_string(),
-    }
-}
-
 fn user_question_json(question: &UserQuestion) -> Value {
     json!({
         "header": question.header,
@@ -534,44 +320,6 @@ mod tests {
             .unwrap();
 
         assert!(result.is_error);
-    }
-
-    #[tokio::test]
-    async fn goal_tools_create_get_and_complete_goal() {
-        let state = Arc::new(Mutex::new(GoalState::default()));
-        let create = CreateGoalTool {
-            state: state.clone(),
-        };
-        let get = GetGoalTool {
-            state: state.clone(),
-        };
-        let update = UpdateGoalTool { state };
-
-        let created = create
-            .execute(
-                context(),
-                call("create_goal", json!({ "objective": "Ship parity" })),
-            )
-            .await
-            .unwrap();
-        assert!(!created.is_error);
-        assert_eq!(created.data["has_active_goal"], true);
-
-        let current = get
-            .execute(context(), call("get_goal", json!({})))
-            .await
-            .unwrap();
-        assert!(current.text.contains("Ship parity"));
-
-        let completed = update
-            .execute(
-                context(),
-                call("update_goal", json!({ "status": "complete" })),
-            )
-            .await
-            .unwrap();
-        assert!(!completed.is_error);
-        assert_eq!(completed.data["has_active_goal"], false);
     }
 
     #[tokio::test]

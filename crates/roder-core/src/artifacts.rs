@@ -19,7 +19,7 @@ pub struct ContextArtifactStore {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ArtifactStorageLayout {
     LegacyRoot,
-    SessionScoped,
+    ThreadScoped,
 }
 
 #[derive(Debug, Clone)]
@@ -40,10 +40,10 @@ impl ContextArtifactStore {
         }
     }
 
-    pub fn new_session_scoped(session_root: impl Into<PathBuf>) -> Self {
+    pub fn new_thread_scoped(thread_root: impl Into<PathBuf>) -> Self {
         Self {
-            root: session_root.into(),
-            layout: ArtifactStorageLayout::SessionScoped,
+            root: thread_root.into(),
+            layout: ArtifactStorageLayout::ThreadScoped,
         }
     }
 
@@ -196,7 +196,7 @@ impl ContextArtifactStore {
         let thread_dir = self.root.join(safe_component(thread_id));
         match self.layout {
             ArtifactStorageLayout::LegacyRoot => thread_dir.join(safe_component(turn_id)),
-            ArtifactStorageLayout::SessionScoped => {
+            ArtifactStorageLayout::ThreadScoped => {
                 thread_dir.join("artifacts").join(safe_component(turn_id))
             }
         }
@@ -404,10 +404,10 @@ mod tests {
     use super::*;
 
     #[test]
-    fn artifact_store_writes_session_scoped_reads_greps_tails_and_deletes_by_thread() {
+    fn artifact_store_writes_thread_scoped_reads_greps_tails_and_deletes_by_thread() {
         let root =
             std::env::temp_dir().join(format!("roder-context-artifacts-{}", uuid::Uuid::new_v4()));
-        let store = ContextArtifactStore::new_session_scoped(&root);
+        let store = ContextArtifactStore::new_thread_scoped(&root);
         let artifact = store
             .create(CreateArtifactRequest {
                 kind: ContextArtifactKind::ToolOutput,
