@@ -116,6 +116,7 @@ async fn policy_bypass_mode_emits_bypass_active_and_executes_with_effective_mode
             images: Vec::new(),
             provider_override: None,
             model_override: None,
+            reasoning_override: None,
             workspace: std::env::current_dir().unwrap().display().to_string(),
 
             instructions: default_instructions(),
@@ -167,6 +168,7 @@ async fn policy_plan_mode_denies_write_tool_and_skips_executor() {
             images: Vec::new(),
             provider_override: None,
             model_override: None,
+            reasoning_override: None,
             workspace: std::env::current_dir().unwrap().display().to_string(),
 
             instructions: default_instructions(),
@@ -212,6 +214,7 @@ async fn policy_default_mode_grep_executes_without_approval_for_destructive_quer
             images: Vec::new(),
             provider_override: None,
             model_override: None,
+            reasoning_override: None,
             workspace: std::env::current_dir().unwrap().display().to_string(),
 
             instructions: default_instructions(),
@@ -255,6 +258,7 @@ async fn policy_default_mode_process_waits_for_approval_before_executing() {
             images: Vec::new(),
             provider_override: None,
             model_override: None,
+            reasoning_override: None,
             workspace: std::env::current_dir().unwrap().display().to_string(),
 
             instructions: default_instructions(),
@@ -312,6 +316,7 @@ async fn switching_to_accept_all_auto_approves_pending_shell_tool() {
             images: Vec::new(),
             provider_override: None,
             model_override: None,
+            reasoning_override: None,
             workspace: std::env::current_dir().unwrap().display().to_string(),
 
             instructions: default_instructions(),
@@ -380,6 +385,7 @@ async fn extension_policy_contributor_can_deny_tool_call() {
             images: Vec::new(),
             provider_override: None,
             model_override: None,
+            reasoning_override: None,
             workspace: std::env::current_dir().unwrap().display().to_string(),
 
             instructions: default_instructions(),
@@ -434,6 +440,7 @@ async fn extension_policy_contributor_can_require_approval() {
             images: Vec::new(),
             provider_override: None,
             model_override: None,
+            reasoning_override: None,
             workspace: std::env::current_dir().unwrap().display().to_string(),
 
             instructions: default_instructions(),

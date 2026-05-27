@@ -61,6 +61,7 @@ pub(crate) async fn run_exec_cli(args: &[String]) -> anyhow::Result<()> {
                     params: Some(serde_json::to_value(ThreadStartParams {
                         model: Some(default_model),
                         model_provider: None,
+                        reasoning: None,
                         cwd,
                         ephemeral: options.ephemeral,
                     })?),
@@ -89,6 +90,10 @@ pub(crate) async fn run_exec_cli(args: &[String]) -> anyhow::Result<()> {
                 thread_id: thread_id.clone(),
                 input: turn_input_items(&options.images),
                 prompt,
+                model_provider: None,
+                model: None,
+                reasoning: None,
+                policy_mode: None,
                 task_ledger_required: options.task_ledger_required,
             })?),
         })

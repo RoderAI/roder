@@ -587,6 +587,9 @@ Response:
   "web_search": { "mode": "cached" },
   "search_index": { "enabled": true },
   "shell": { "shell": "bash", "options": ["zsh", "bash"] },
+  "default_provider": "openai",
+  "default_model": "gpt-5.5",
+  "default_reasoning": "medium",
   "default_mode": "default",
   "file_backed_dynamic_context": true
 }
@@ -599,6 +602,8 @@ Notes:
 - `shell.shell` is the active shell used by the `shell` tool and by
   `exec_command` calls that do not pass a `shell` override. `shell.options`
   lists selectable shells for UI clients.
+- `default_provider`, `default_model`, `default_reasoning`, and `default_mode`
+  initialize client controls; per-turn overrides are supplied to `turn/start`.
 - `default_mode` is a `PolicyMode` value from `roder-api`.
 - `file_backed_dynamic_context` controls whether long tool output, command
   output, and compaction source material are written to context artifacts.
@@ -782,6 +787,7 @@ Request:
 {
   "model": "gpt-5.5",
   "modelProvider": "openai",
+  "reasoning": "high",
   "cwd": "/Users/pz/w/gode",
   "ephemeral": false
 }
@@ -795,6 +801,7 @@ Response:
     "id": "thread-123",
     "preview": "Untitled thread",
     "modelProvider": "openai",
+    "model": "gpt-5.5",
     "createdAt": 1770000000,
     "updatedAt": 1770000000,
     "status": {
@@ -806,6 +813,7 @@ Response:
   },
   "model": "gpt-5.5",
   "modelProvider": "openai",
+  "reasoning": "high",
   "cwd": "/Users/pz/w/gode"
 }
 ```
@@ -814,7 +822,8 @@ Behavior:
 
 - Creates a persisted runtime thread with optional provider/model and required absolute workspace `cwd`.
 - Rejects missing, empty, or relative `cwd`; thread snapshots do not fall back to the app-server process cwd.
-- Stores the selected provider/model for later `turn/start` overrides.
+- Stores the selected provider/model/reasoning for later `turn/start` overrides.
+- If `reasoning` is omitted, returns and stores the effective reasoning effort for the selected model.
 - Emits `thread/started`.
 - `ephemeral` is accepted by the DTO but is not currently used by the handler.
 
@@ -1068,7 +1077,11 @@ Request:
   "threadId": "thread-123",
   "input": [
     { "type": "text", "text": "inspect this repo" }
-  ]
+  ],
+  "modelProvider": "openai",
+  "model": "gpt-5.5",
+  "reasoning": "high",
+  "policyMode": "default"
 }
 ```
 
@@ -1086,9 +1099,11 @@ Behavior:
 - Uses `prompt` as a transition fallback only when text input is empty.
 - If the thread already has an active runtime turn, queues the input as
   same-turn steering and returns that active `turnId`.
-- Otherwise uses the thread's selected provider/model when known, starts a
-  runtime turn with the thread's persisted workspace, and records the active
-  turn id for optional `turn/interrupt`.
+- Otherwise uses explicit model/provider/reasoning overrides first, then the
+  thread selection, then runtime defaults. If `policyMode` is supplied, applies
+  it as the live policy mode before starting the turn.
+- Starts a runtime turn with the thread's persisted workspace and records the
+  active turn id for optional `turn/interrupt`.
 
 Notifications:
 
@@ -3625,6 +3640,7 @@ or the remote WebSocket notification stream for remote clients.
     "id": "thread-123",
     "preview": "Untitled thread",
     "modelProvider": "openai",
+    "model": "gpt-5.5",
     "createdAt": 1770000000,
     "updatedAt": 1770000000,
     "status": { "type": "idle", "activeTurnId": null, "activeFlags": [] },

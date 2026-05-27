@@ -88,8 +88,16 @@ pub struct AppServer {
     pub(crate) features: AppServerFeatureConfig,
     pub(crate) automation_supervisor: Option<roder_automations::AutomationSupervisorHandle>,
     pub(crate) protocol_threads: RwLock<std::collections::HashMap<String, Thread>>,
-    pub(crate) protocol_thread_models: RwLock<std::collections::HashMap<String, (String, String)>>,
+    pub(crate) protocol_thread_models:
+        RwLock<std::collections::HashMap<String, ProtocolThreadModelSelection>>,
     pub(crate) protocol_notifications: broadcast::Sender<JsonRpcNotification>,
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct ProtocolThreadModelSelection {
+    pub provider: String,
+    pub model: String,
+    pub reasoning: Option<String>,
 }
 
 impl AppServer {
@@ -1205,33 +1213,45 @@ impl AppServer {
         } else {
             None
         };
-        let cfg = self
-            .runtime
-            .select_provider(params.provider, params.model, params.reasoning)
-            .await
-            .map_err(internal_error)?;
+        let cfg = if thread_id.is_some() {
+            self.runtime
+                .preview_provider_selection(params.provider, params.model, params.reasoning)
+                .await
+                .map_err(internal_error)?
+        } else {
+            self.runtime
+                .select_provider(params.provider, params.model, params.reasoning)
+                .await
+                .map_err(internal_error)?
+        };
         let model_profile = active_model_profile_label(&cfg);
         let model_switch_summary = previous_model
-            .filter(|(provider, model)| {
-                provider != &cfg.default_provider || model != &cfg.default_model
+            .filter(|selection| {
+                selection.provider != cfg.default_provider || selection.model != cfg.default_model
             })
-            .map(|(provider, model)| {
+            .map(|selection| {
                 format!(
-                    "Model switch summary: previous profile {provider}/{model}. Current profile {}/{}.",
-                    cfg.default_provider, model_profile
+                    "Model switch summary: previous profile {}/{}. Current profile {}/{}.",
+                    selection.provider, selection.model, cfg.default_provider, model_profile
                 )
             });
-        if let Some(thread_id) = thread_id {
+        let reasoning = Runtime::effective_reasoning_for_config(&cfg);
+        if let Some(thread_id) = thread_id.as_ref() {
             self.protocol_thread_models.write().await.insert(
                 thread_id.clone(),
-                (cfg.default_provider.clone(), cfg.default_model.clone()),
+                ProtocolThreadModelSelection {
+                    provider: cfg.default_provider.clone(),
+                    model: cfg.default_model.clone(),
+                    reasoning: Some(reasoning.clone()),
+                },
             );
-            if let Some(thread) = self.protocol_threads.write().await.get_mut(&thread_id) {
+            if let Some(thread) = self.protocol_threads.write().await.get_mut(thread_id) {
                 thread.model_provider = cfg.default_provider.clone();
+                thread.model = cfg.default_model.clone();
                 thread.updated_at = OffsetDateTime::now_utc().unix_timestamp();
             }
         }
-        if self.persist_user_config {
+        if thread_id.is_none() && self.persist_user_config {
             roder_config::save_default_provider_model_reasoning(
                 &cfg.default_provider,
                 &cfg.default_model,
@@ -1242,7 +1262,7 @@ impl AppServer {
         Ok(serde_json::to_value(ProviderSelectResult {
             provider: cfg.default_provider,
             model: cfg.default_model,
-            reasoning: self.runtime.effective_reasoning().await,
+            reasoning,
             model_profile: Some(model_profile),
             model_switch_summary,
         })
@@ -1310,6 +1330,9 @@ impl AppServer {
                 enabled: roder_search::search_index_enabled(),
             },
             shell: shell_settings(&cfg.command_shell),
+            default_provider: cfg.default_provider.clone(),
+            default_model: cfg.default_model.clone(),
+            default_reasoning: Runtime::effective_reasoning_for_config(&cfg),
             default_mode: cfg.policy_mode,
             file_backed_dynamic_context: cfg.file_backed_dynamic_context,
         })
@@ -1531,11 +1554,14 @@ impl AppServer {
         params: ThreadStartParams,
     ) -> Result<serde_json::Value, JsonRpcError> {
         let cfg = self.runtime.status().await;
-        let model = params.model.clone().unwrap_or(cfg.default_model);
+        let model = params
+            .model
+            .clone()
+            .unwrap_or_else(|| cfg.default_model.clone());
         let model_provider = params
             .model_provider
             .clone()
-            .unwrap_or(cfg.default_provider);
+            .unwrap_or_else(|| cfg.default_provider.clone());
         let cwd = required_thread_start_cwd(&params.cwd)?;
         let metadata = self
             .runtime
@@ -1547,15 +1573,23 @@ impl AppServer {
             })
             .await
             .map_err(internal_error)?;
+        let reasoning = params
+            .reasoning
+            .clone()
+            .unwrap_or_else(|| Runtime::effective_reasoning_for_config(&cfg));
         let thread = protocol_thread_from_metadata(metadata, None, idle_thread_status());
         self.protocol_threads
             .write()
             .await
             .insert(thread.id.clone(), thread.clone());
-        self.protocol_thread_models
-            .write()
-            .await
-            .insert(thread.id.clone(), (model_provider.clone(), model.clone()));
+        self.protocol_thread_models.write().await.insert(
+            thread.id.clone(),
+            ProtocolThreadModelSelection {
+                provider: model_provider.clone(),
+                model: model.clone(),
+                reasoning: Some(reasoning.clone()),
+            },
+        );
         let _ = self
             .protocol_notifications
             .send(notifications::thread_started_notification(thread.clone()));
@@ -1563,6 +1597,7 @@ impl AppServer {
             thread,
             model,
             model_provider,
+            reasoning,
             cwd,
         })
         .unwrap())
@@ -1792,9 +1827,14 @@ impl AppServer {
             .write()
             .await
             .insert(protocol_thread.id.clone(), protocol_thread.clone());
+        let reasoning = Runtime::effective_reasoning_for_config(&cfg);
         self.protocol_thread_models.write().await.insert(
             protocol_thread.id.clone(),
-            (cfg.default_provider, cfg.default_model),
+            ProtocolThreadModelSelection {
+                provider: cfg.default_provider,
+                model: cfg.default_model,
+                reasoning: Some(reasoning),
+            },
         );
         let _ = self
             .protocol_notifications
@@ -1956,11 +1996,20 @@ impl AppServer {
             return Ok(serde_json::to_value(TurnStartResult { turn_id }).unwrap());
         }
 
-        let (provider_override, model_override) = self
+        let (thread_provider, thread_model, thread_reasoning) = self
             .protocol_thread_model(&params.thread_id)
             .await
-            .map(|(provider, model)| (Some(provider), Some(model)))
-            .unwrap_or((None, None));
+            .map(|selection| {
+                (
+                    Some(selection.provider),
+                    Some(selection.model),
+                    selection.reasoning,
+                )
+            })
+            .unwrap_or((None, None, None));
+        let provider_override = params.model_provider.or(thread_provider);
+        let model_override = params.model.or(thread_model);
+        let reasoning_override = params.reasoning.or(thread_reasoning);
         let snapshot = self
             .runtime
             .load_thread(&params.thread_id)
@@ -1979,6 +2028,15 @@ impl AppServer {
                 .map(|thread| thread.cwd.clone())
                 .ok_or_else(|| not_found(format!("thread not found: {}", params.thread_id)))?
         };
+        if let Some(policy_mode) = params.policy_mode {
+            self.runtime
+                .set_policy_mode(
+                    policy_mode,
+                    Some("turn/start selected policy mode".to_string()),
+                )
+                .await
+                .map_err(internal_error)?;
+        }
         let turn_id = self
             .runtime
             .start_turn(StartTurnRequest {
@@ -1987,6 +2045,7 @@ impl AppServer {
                 images,
                 provider_override,
                 model_override,
+                reasoning_override,
                 workspace,
                 instructions: default_instructions(),
                 task_ledger_required: params.task_ledger_required,
@@ -2201,7 +2260,7 @@ impl AppServer {
         Ok(serde_json::to_value(TeamCleanupResult { cleaned }).unwrap())
     }
 
-    async fn protocol_thread_model(&self, thread_id: &str) -> Option<(String, String)> {
+    async fn protocol_thread_model(&self, thread_id: &str) -> Option<ProtocolThreadModelSelection> {
         if let Some(model) = self
             .protocol_thread_models
             .read()
@@ -2218,7 +2277,11 @@ impl AppServer {
             .into_iter()
             .find(|metadata| metadata.thread_id == thread_id)
             .and_then(|metadata| match (metadata.provider, metadata.model) {
-                (Some(provider), Some(model)) => Some((provider, model)),
+                (Some(provider), Some(model)) => Some(ProtocolThreadModelSelection {
+                    provider,
+                    model,
+                    reasoning: None,
+                }),
                 _ => None,
             })
     }
@@ -2401,6 +2464,7 @@ impl AppServer {
                 images: Vec::new(),
                 provider_override: None,
                 model_override: expanded.model.clone(),
+                reasoning_override: None,
                 workspace,
                 instructions: default_instructions(),
                 task_ledger_required: false,

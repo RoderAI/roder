@@ -120,6 +120,7 @@ pub async fn execute_automation_task(
             images: Vec::new(),
             provider_override: input.definition.model_provider.clone(),
             model_override: input.definition.model.clone(),
+            reasoning_override: None,
             workspace: input.definition.project.cwd.clone(),
             instructions: default_instructions(),
             task_ledger_required: false,

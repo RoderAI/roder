@@ -302,6 +302,7 @@ impl Runtime {
                 images: Vec::new(),
                 provider_override: None,
                 model_override: None,
+                reasoning_override: None,
                 workspace,
                 instructions: crate::default_instructions(),
                 task_ledger_required: false,
