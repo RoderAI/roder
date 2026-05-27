@@ -1,0 +1,2 @@
+step 1 action: opened fixture page
+final datum: Fixture Heading

@@ -103,6 +103,16 @@ pub fn built_in_commands() -> Vec<CommandSpec> {
             "Open document-first roadmapping mode.",
             "Open document-first roadmapping mode for a selected roadmap plan.",
         ),
+        (
+            "webwright:run",
+            "Run a one-shot Webwright browser task.",
+            "Use the bound Webwright skill in one-shot mode. Prepare a Webwright workspace, create a critical-point plan, author and run an instrumented Playwright final_script.py, verify screenshots and final_script_log.txt, then report the final datum.\n\nMode: run\nOption contract: Treat the command arguments below as plain user data. If the user includes `--start-url`, `--task-id`, or `--output-dir`, pass those exact values to Webwright helper tools as `startUrl`, `taskId`, or `outputDir`; otherwise infer only from the task text.\n\nTask and options:\n{{arguments}}",
+        ),
+        (
+            "webwright:craft",
+            "Craft a reusable Webwright CLI script.",
+            "Use the bound Webwright skill in CLI tool mode. Parameterize the task, create a Webwright workspace, author an import-safe argparse final_script.py with defaults from the concrete task values, verify a no-argument run and --help output, then report the final datum and usage.\n\nMode: craft\nOption contract: Treat the command arguments below as plain user data. If the user includes `--start-url`, `--task-id`, or `--output-dir`, pass those exact values to Webwright helper tools as `startUrl`, `taskId`, or `outputDir`; otherwise infer only from the task text.\n\nTask and options:\n{{arguments}}",
+        ),
     ]
     .into_iter()
     .map(|(name, description, body)| CommandSpec {
@@ -118,6 +128,8 @@ pub fn built_in_commands() -> Vec<CommandSpec> {
             "ps" => Some("all|stop <id>|stop-all --confirm|<id>".to_string()),
             "voice" => Some("[hold|tap|off|status]".to_string()),
             "roadmap" => Some("[plan]".to_string()),
+            "webwright:run" => Some("<natural-language web task>".to_string()),
+            "webwright:craft" => Some("<natural-language web task with concrete values>".to_string()),
             _ => None,
         },
         allowed_tools: Vec::new(),
@@ -142,6 +154,16 @@ fn feature_skill_bindings(name: &str) -> Vec<roder_api::skills::FeatureSkillBind
             required: true,
             activation_reason: roder_api::skills::SkillActivationReason::FeatureBinding,
         }],
+        "webwright:run" | "webwright:craft" => {
+            vec![roder_api::skills::FeatureSkillBinding {
+                feature_id: format!("command:{name}"),
+                skill_selector: roder_api::skills::SkillSelector::Name {
+                    name: "webwright".to_string(),
+                },
+                required: true,
+                activation_reason: roder_api::skills::SkillActivationReason::FeatureBinding,
+            }]
+        }
         _ => Vec::new(),
     }
 }

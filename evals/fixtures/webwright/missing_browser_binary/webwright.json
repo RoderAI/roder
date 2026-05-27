@@ -1,0 +1,9 @@
+{
+  "taskId": "missing-browser-binary",
+  "task": "Show the dependency diagnostic for a missing browser binary.",
+  "mode": "run",
+  "browser": "firefox",
+  "headless": true,
+  "createdAt": "2026-05-27T00:00:00Z",
+  "verificationState": "failed"
+}

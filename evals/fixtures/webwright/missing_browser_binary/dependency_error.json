@@ -1,0 +1,4 @@
+{
+  "kind": "missing_browser_binary",
+  "message": "Firefox browser binaries are required. Run `python3 -m playwright install firefox`."
+}

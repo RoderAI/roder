@@ -1,0 +1,11 @@
+{
+  "taskId": "basic-success",
+  "task": "Open the local fixture page and report the fixture heading.",
+  "mode": "run",
+  "startUrl": "http://127.0.0.1:8000/index.html",
+  "browser": "firefox",
+  "headless": true,
+  "createdAt": "2026-05-26T00:00:00Z",
+  "latestRun": 1,
+  "verificationState": "passed"
+}

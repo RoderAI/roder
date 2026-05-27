@@ -1,13 +1,20 @@
 use std::sync::Arc;
 
+use anyhow::Context;
+use futures::StreamExt;
 use roder_api::catalog::built_in_model_profile;
 use roder_api::events::{EventEnvelope, RoderEvent};
 use roder_api::inference::{
-    HostedWebSearchMode, InferenceProviderContext, InferenceProviderMetadata, ProviderAuthType,
+    AgentInferenceRequest, HostedWebSearchConfig, HostedWebSearchMode, InferenceEngine,
+    InferenceEvent, InferenceProviderContext, InferenceProviderMetadata, InferenceTurnContext,
+    InstructionBundle, ModelSelection, OutputConfig, ProviderAuthType, ReasoningConfig,
+    RuntimeHints, RuntimeProfile,
 };
 use roder_api::media::{MediaArtifact, MediaAttachment, data_url};
 use roder_api::memory::{MemoryProviderSelection, MemoryQuery, MemoryRecord};
 use roder_api::plan_review::{HunkRecord, PlanComment, PlanReview, PlanReviewStatus, PlanRewrite};
+use roder_api::tools::ToolChoice;
+use roder_api::transcript::{InputImage, TranscriptItem, UserMessage};
 use roder_api::workflow::{
     WorkflowImportDecision, WorkflowImportDecisionKind, WorkflowImportItem, WorkflowImportScan,
     WorkflowImportState,
@@ -556,6 +563,66 @@ impl AppServer {
                 .await
             }
             "tasks/subscribe" => self.handle_tasks_subscribe().await,
+            "webwright/prepare" => {
+                self.decode_and(req.params, |p| async move {
+                    self.handle_webwright_prepare(p).await
+                })
+                .await
+            }
+            "webwright/artifacts" => {
+                self.decode_and(req.params, |p| async move {
+                    self.handle_webwright_artifacts(p).await
+                })
+                .await
+            }
+            "webwright/latestRun" => {
+                self.decode_and(req.params, |p| async move {
+                    self.handle_webwright_latest_run(p).await
+                })
+                .await
+            }
+            "webwright/report" => {
+                self.decode_and(req.params, |p| async move {
+                    self.handle_webwright_report(p).await
+                })
+                .await
+            }
+            "webwright/verify" => {
+                self.decode_and(req.params, |p| async move {
+                    self.handle_webwright_verify(p).await
+                })
+                .await
+            }
+            "webwright/visualJudge" => {
+                self.decode_and(req.params, |p| async move {
+                    self.handle_webwright_visual_judge(p).await
+                })
+                .await
+            }
+            "webwright/export" => {
+                self.decode_and(req.params, |p| async move {
+                    self.handle_webwright_export(p).await
+                })
+                .await
+            }
+            "webwright/setup" => {
+                self.decode_and(req.params, |p| async move {
+                    self.handle_webwright_setup(p).await
+                })
+                .await
+            }
+            "webwright/submit" => {
+                self.decode_and(req.params, |p| async move {
+                    self.handle_webwright_submit(p).await
+                })
+                .await
+            }
+            "webwright/rerun" => {
+                self.decode_and(req.params, |p| async move {
+                    self.handle_webwright_rerun(p).await
+                })
+                .await
+            }
             "processes/list" => {
                 match req
                     .params
@@ -2297,6 +2364,14 @@ impl AppServer {
         &self,
         params: TasksSubmitParams,
     ) -> Result<serde_json::Value, JsonRpcError> {
+        let task = self.submit_task(params).await?;
+        Ok(serde_json::to_value(TasksSubmitResult { task }).unwrap())
+    }
+
+    async fn submit_task(
+        &self,
+        params: TasksSubmitParams,
+    ) -> Result<roder_api::tasks::TaskHandle, JsonRpcError> {
         let runtime_cfg = self.runtime.status().await;
         let workspace = params.workspace.or(runtime_cfg.workspace).or_else(|| {
             std::env::current_dir()
@@ -2327,8 +2402,7 @@ impl AppServer {
         } else {
             None
         };
-        let task = self
-            .tasks
+        self.tasks
             .submit(
                 params.executor_id,
                 params.input,
@@ -2342,8 +2416,7 @@ impl AppServer {
                 },
             )
             .await
-            .map_err(internal_error)?;
-        Ok(serde_json::to_value(TasksSubmitResult { task }).unwrap())
+            .map_err(internal_error)
     }
 
     async fn handle_tasks_list(&self) -> Result<serde_json::Value, JsonRpcError> {
@@ -2414,6 +2487,248 @@ impl AppServer {
             ],
         })
         .unwrap())
+    }
+
+    async fn handle_webwright_prepare(
+        &self,
+        params: WebwrightPrepareParams,
+    ) -> Result<serde_json::Value, JsonRpcError> {
+        let root = self
+            .webwright_workspace_root(params.workspace.clone())
+            .await?;
+        let result = crate::webwright::prepare(&root, params).map_err(invalid_params)?;
+        Ok(serde_json::to_value(result).unwrap())
+    }
+
+    async fn handle_webwright_artifacts(
+        &self,
+        params: WebwrightWorkspaceParams,
+    ) -> Result<serde_json::Value, JsonRpcError> {
+        let root = self
+            .webwright_workspace_root(params.workspace_root.clone())
+            .await?;
+        let result = crate::webwright::artifacts(&root, params).map_err(invalid_params)?;
+        Ok(serde_json::to_value(result).unwrap())
+    }
+
+    async fn handle_webwright_latest_run(
+        &self,
+        params: WebwrightWorkspaceParams,
+    ) -> Result<serde_json::Value, JsonRpcError> {
+        let root = self
+            .webwright_workspace_root(params.workspace_root.clone())
+            .await?;
+        let result = crate::webwright::latest_run(&root, params).map_err(invalid_params)?;
+        Ok(serde_json::to_value(result).unwrap())
+    }
+
+    async fn handle_webwright_report(
+        &self,
+        params: WebwrightWorkspaceParams,
+    ) -> Result<serde_json::Value, JsonRpcError> {
+        let root = self
+            .webwright_workspace_root(params.workspace_root.clone())
+            .await?;
+        let result = crate::webwright::report(&root, params).map_err(invalid_params)?;
+        Ok(serde_json::to_value(result).unwrap())
+    }
+
+    async fn handle_webwright_verify(
+        &self,
+        params: WebwrightWorkspaceParams,
+    ) -> Result<serde_json::Value, JsonRpcError> {
+        let root = self
+            .webwright_workspace_root(params.workspace_root.clone())
+            .await?;
+        let result = crate::webwright::verify(&root, params).map_err(invalid_params)?;
+        Ok(serde_json::to_value(result).unwrap())
+    }
+
+    async fn handle_webwright_visual_judge(
+        &self,
+        params: WebwrightVisualJudgeParams,
+    ) -> Result<serde_json::Value, JsonRpcError> {
+        let root = self
+            .webwright_workspace_root(params.workspace_root.clone())
+            .await?;
+        let cfg = self.runtime.status().await;
+        let provider = cfg.default_provider;
+        let model = cfg.default_model;
+        let engine = self.runtime.registry().inference_engine(&provider);
+        let provider_image_input = engine
+            .as_ref()
+            .map(|engine| engine.capabilities().image_input)
+            .unwrap_or(false);
+        let step = crate::webwright::visual_judge_step(
+            &root,
+            params,
+            provider.clone(),
+            model.clone(),
+            provider_image_input,
+        )
+        .map_err(invalid_params)?;
+        let result = match step {
+            crate::webwright::WebwrightVisualJudgeStep::Done(result) => result,
+            crate::webwright::WebwrightVisualJudgeStep::Ready {
+                workspace,
+                prepared,
+                provider,
+                model,
+            } => match engine {
+                Some(engine) => match self
+                    .run_webwright_visual_judge(engine, &provider, &model, &prepared)
+                    .await
+                {
+                    Ok(response) => crate::webwright::complete_visual_judge(
+                        &prepared, provider, model, response,
+                    )
+                    .map_err(internal_error)?,
+                    Err(err) => crate::webwright::fail_visual_judge(
+                        &workspace,
+                        Some(&prepared),
+                        provider,
+                        model,
+                        err.to_string(),
+                    )
+                    .map_err(internal_error)?,
+                },
+                None => crate::webwright::fail_visual_judge(
+                    &workspace,
+                    Some(&prepared),
+                    provider,
+                    model,
+                    "active provider is not registered".to_string(),
+                )
+                .map_err(internal_error)?,
+            },
+        };
+        Ok(serde_json::to_value(result).unwrap())
+    }
+
+    async fn handle_webwright_export(
+        &self,
+        params: WebwrightExportParams,
+    ) -> Result<serde_json::Value, JsonRpcError> {
+        let root = self
+            .webwright_workspace_root(params.workspace_root.clone())
+            .await?;
+        let result = crate::webwright::export(&root, params).map_err(invalid_params)?;
+        Ok(serde_json::to_value(result).unwrap())
+    }
+
+    async fn handle_webwright_setup(
+        &self,
+        params: WebwrightSetupParams,
+    ) -> Result<serde_json::Value, JsonRpcError> {
+        let result = crate::webwright::setup(params).map_err(invalid_params)?;
+        Ok(serde_json::to_value(result).unwrap())
+    }
+
+    async fn handle_webwright_submit(
+        &self,
+        params: WebwrightSubmitParams,
+    ) -> Result<serde_json::Value, JsonRpcError> {
+        let input = crate::webwright::submit_input(params.clone()).map_err(invalid_params)?;
+        let task = self
+            .submit_task(TasksSubmitParams {
+                executor_id: crate::webwright::task_executor_id(),
+                input,
+                thread_id: params.thread_id,
+                turn_id: params.turn_id,
+                workspace: params.workspace,
+            })
+            .await?;
+        Ok(serde_json::to_value(WebwrightSubmitResult { task }).unwrap())
+    }
+
+    async fn handle_webwright_rerun(
+        &self,
+        params: WebwrightRerunParams,
+    ) -> Result<serde_json::Value, JsonRpcError> {
+        let root = self
+            .webwright_workspace_root(params.workspace_root.clone())
+            .await?;
+        let thread_id = params.thread_id.clone();
+        let turn_id = params.turn_id.clone();
+        let plan = crate::webwright::prepare_rerun(&root, params).map_err(invalid_params)?;
+        let task = self
+            .submit_task(TasksSubmitParams {
+                executor_id: crate::webwright::process_executor_id(),
+                input: plan.task_input.clone(),
+                thread_id,
+                turn_id,
+                workspace: Some(root.display().to_string()),
+            })
+            .await?;
+        Ok(serde_json::to_value(crate::webwright::rerun_result(task, plan)).unwrap())
+    }
+
+    async fn webwright_workspace_root(
+        &self,
+        requested: Option<String>,
+    ) -> Result<std::path::PathBuf, JsonRpcError> {
+        let runtime_workspace = self.runtime.status().await.workspace;
+        crate::webwright::workspace_root(runtime_workspace, requested).map_err(invalid_params)
+    }
+
+    async fn run_webwright_visual_judge(
+        &self,
+        engine: Arc<dyn InferenceEngine>,
+        provider: &str,
+        model: &str,
+        prepared: &roder_ext_webwright::WebwrightPreparedVisualJudge,
+    ) -> anyhow::Result<String> {
+        let image_url = screenshot_data_url(&prepared.screenshot_path)?;
+        let request = AgentInferenceRequest {
+            model: ModelSelection {
+                provider: provider.to_string(),
+                model: model.to_string(),
+            },
+            instructions: InstructionBundle::default(),
+            transcript: vec![TranscriptItem::UserMessage(UserMessage::with_images(
+                prepared.prompt.clone(),
+                vec![InputImage { image_url }],
+            ))],
+            tools: Vec::new(),
+            tool_choice: ToolChoice::None,
+            reasoning: ReasoningConfig::default(),
+            output: OutputConfig {
+                max_tokens: Some(600),
+                temperature: Some(0.0),
+                top_p: None,
+                response_format: None,
+            },
+            runtime: RuntimeHints {
+                profile: RuntimeProfile::Eval,
+                hosted_web_search: HostedWebSearchConfig::disabled(),
+                ..RuntimeHints::default()
+            },
+            metadata: serde_json::json!({
+                "feature": "webwright_visual_judge",
+                "workspaceStored": true
+            }),
+        };
+        let thread_id = format!("webwright-visual-{}", uuid::Uuid::new_v4());
+        let turn_id = "visual-judge";
+        let mut stream = engine
+            .stream_turn(
+                InferenceTurnContext {
+                    thread_id: &thread_id,
+                    turn_id,
+                },
+                request,
+            )
+            .await?;
+        let mut response = String::new();
+        while let Some(event) = stream.next().await {
+            match event? {
+                InferenceEvent::MessageDelta(delta) => response.push_str(&delta.text),
+                InferenceEvent::Failed(failure) => anyhow::bail!(failure.message),
+                InferenceEvent::Completed(_) => break,
+                _ => {}
+            }
+        }
+        Ok(response)
     }
 
     async fn handle_commands_list(&self) -> Result<serde_json::Value, JsonRpcError> {
@@ -3866,6 +4181,14 @@ fn save_workflow_decisions(decisions: &[WorkflowImportDecision]) -> anyhow::Resu
 fn artifact_is_image(artifact: &MediaArtifact) -> bool {
     matches!(artifact.kind, roder_api::media::MediaKind::Image)
         && artifact.mime_type.starts_with("image/")
+}
+
+fn screenshot_data_url(path: &std::path::Path) -> anyhow::Result<String> {
+    let bytes = std::fs::read(path)
+        .map_err(anyhow::Error::from)
+        .with_context(|| format!("read screenshot {}", path.display()))?;
+    let bytes_base64 = base64::Engine::encode(&base64::engine::general_purpose::STANDARD, bytes);
+    Ok(data_url("image/png", &bytes_base64))
 }
 
 fn selected_memory_provider() -> MemoryProviderSelection {

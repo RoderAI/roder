@@ -2552,6 +2552,191 @@ pub struct TasksSubscribeResult {
     pub event_kinds: Vec<String>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WebwrightPrepareParams {
+    pub task: String,
+    #[serde(default)]
+    pub mode: Option<String>,
+    #[serde(default)]
+    pub start_url: Option<String>,
+    #[serde(default)]
+    pub task_id: Option<String>,
+    #[serde(default)]
+    pub browser: Option<String>,
+    #[serde(default)]
+    pub headless: Option<bool>,
+    #[serde(default)]
+    pub output_dir: Option<String>,
+    #[serde(default)]
+    pub workspace: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WebwrightWorkspaceParams {
+    pub workspace: String,
+    #[serde(default)]
+    pub workspace_root: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WebwrightSubmitParams {
+    pub task: String,
+    #[serde(default)]
+    pub mode: Option<String>,
+    #[serde(default)]
+    pub start_url: Option<String>,
+    #[serde(default)]
+    pub task_id: Option<String>,
+    #[serde(default)]
+    pub browser: Option<String>,
+    #[serde(default)]
+    pub headless: Option<bool>,
+    #[serde(default)]
+    pub output_dir: Option<String>,
+    #[serde(default)]
+    pub timeout_seconds: Option<u64>,
+    #[serde(default)]
+    pub thread_id: Option<ThreadId>,
+    #[serde(default)]
+    pub turn_id: Option<TurnId>,
+    #[serde(default)]
+    pub workspace: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WebwrightSetupParams {
+    #[serde(default)]
+    pub python: Option<String>,
+    #[serde(default)]
+    pub browser: Option<String>,
+    #[serde(default)]
+    pub dry_run: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WebwrightRerunParams {
+    pub workspace: String,
+    #[serde(default)]
+    pub workspace_root: Option<String>,
+    #[serde(default)]
+    pub python: Option<String>,
+    #[serde(default)]
+    pub thread_id: Option<ThreadId>,
+    #[serde(default)]
+    pub turn_id: Option<TurnId>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WebwrightExportParams {
+    pub workspace: String,
+    #[serde(default)]
+    pub workspace_root: Option<String>,
+    pub output_dir: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WebwrightVisualJudgeParams {
+    pub workspace: String,
+    #[serde(default)]
+    pub workspace_root: Option<String>,
+    #[serde(default)]
+    pub run_id: Option<u32>,
+    #[serde(default)]
+    pub enabled: Option<bool>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WebwrightPrepareResult {
+    pub task_id: String,
+    pub workspace: serde_json::Value,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WebwrightArtifactsResult {
+    pub workspace: serde_json::Value,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WebwrightLatestRunResult {
+    pub latest_run: Option<u32>,
+    pub run: Option<serde_json::Value>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WebwrightReportResult {
+    pub task_definition: Option<serde_json::Value>,
+    pub report: Option<serde_json::Value>,
+    pub rendered_text: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WebwrightVerifyResult {
+    pub verification: serde_json::Value,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WebwrightSubmitResult {
+    pub task: TaskHandle,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WebwrightSetupStepResult {
+    pub label: String,
+    pub command: Vec<String>,
+    pub status: String,
+    pub stdout_tail: String,
+    pub stderr_tail: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WebwrightSetupResult {
+    pub roder_home: String,
+    pub runtime_dir: String,
+    pub python: String,
+    pub browser: String,
+    pub dry_run: bool,
+    pub installed: bool,
+    pub steps: Vec<WebwrightSetupStepResult>,
+    pub message: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WebwrightRerunResult {
+    pub task: TaskHandle,
+    pub run_id: u32,
+    pub run_dir: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WebwrightExportResult {
+    pub export_dir: String,
+    pub files: Vec<String>,
+    pub excluded: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WebwrightVisualJudgeResult {
+    pub visual_judge: serde_json::Value,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct ProcessesListParams {

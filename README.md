@@ -189,6 +189,8 @@ cargo run -p roder-configure -- --format json validate ./profile.toml
 
 See [`docs/distributions.md`](./docs/distributions.md) for built-in profiles, custom profile format, capability declarations, and worked examples for OpenAI-only, Tavily-enabled, research-headless, and customer-facing no-TUI distributions.
 
+The `full` profile includes the first-party Webwright browser-agent extension; see [`docs/roder-webwright-browser-agent.md`](./docs/roder-webwright-browser-agent.md) for first-time setup, browser selection, CLI, app-server, artifact, export, and visual-judge details.
+
 The configurator must not write API keys into generated files. Put secrets in environment variables such as `OPENAI_API_KEY`; generated docs and configs list the required env-var names instead of secret values.
 
 ## Remote runner destinations

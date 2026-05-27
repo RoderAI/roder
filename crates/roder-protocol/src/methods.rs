@@ -472,6 +472,31 @@ const METHOD_SPECS: &[AppServerMethodSpecSeed] = &[
     method_spec!("turn/steer", "turns", LocalState, NonIdempotent),
     method_spec!("turn/subagentTrace/read", "turns", ReadOnly, Idempotent),
     method_spec!("turn/subagentTraces/list", "turns", ReadOnly, Idempotent),
+    method_spec!("webwright/artifacts", "webwright", ReadOnly, Idempotent),
+    method_spec!("webwright/export", "webwright", LocalState, NonIdempotent),
+    method_spec!("webwright/latestRun", "webwright", ReadOnly, Idempotent),
+    method_spec!("webwright/prepare", "webwright", LocalState, NonIdempotent),
+    method_spec!("webwright/report", "webwright", ReadOnly, Idempotent),
+    method_spec!(
+        "webwright/rerun",
+        "webwright",
+        ExternalProcess,
+        NonIdempotent
+    ),
+    method_spec!(
+        "webwright/setup",
+        "webwright",
+        ExternalProcess,
+        NonIdempotent
+    ),
+    method_spec!("webwright/submit", "webwright", LocalState, NonIdempotent),
+    method_spec!("webwright/verify", "webwright", ReadOnly, Idempotent),
+    method_spec!(
+        "webwright/visualJudge",
+        "webwright",
+        LocalState,
+        NonIdempotent
+    ),
     method_spec!("workflow/enable", "workflow", LocalState, NonIdempotent),
     method_spec!("workflow/ignore", "workflow", LocalState, NonIdempotent),
     method_spec!("workflow/preview", "workflow", ReadOnly, Idempotent),
@@ -513,6 +538,7 @@ mod tests {
             "tools/call",
             "commands/list",
             "tasks/submit",
+            "webwright/prepare",
             "team/member/message",
             "plan/review/comment",
             "hunk/rollback",
