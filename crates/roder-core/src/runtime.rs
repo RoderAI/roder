@@ -2587,7 +2587,9 @@ impl Runtime {
 
     pub async fn emit(&self, event: RoderEvent) -> EventEnvelope {
         let envelope = self.bus.emit(event);
-        if let (Some(store), Some(thread_id)) = (&self.thread_store, envelope.thread_id.as_ref()) {
+        if let (Some(store), Some(thread_id)) = (&self.thread_store, envelope.thread_id.as_ref())
+            && should_persist_thread_event(thread_id)
+        {
             let _ = store.append_event(thread_id, &envelope).await;
         }
         envelope
@@ -3001,6 +3003,10 @@ pub fn validate_edit_tool(value: &str) -> anyhow::Result<()> {
             "unsupported edit_tool {value:?}; allowed values: {EDIT_TOOL_PATCH}, {EDIT_TOOL_EDIT}"
         ),
     }
+}
+
+fn should_persist_thread_event(thread_id: &str) -> bool {
+    thread_id != "runtime"
 }
 
 #[cfg(test)]
@@ -4160,6 +4166,33 @@ mod tests {
         let developer = request.instructions.developer.unwrap();
         assert!(developer.contains("base developer"));
         assert!(developer.contains("non-interactive profile"));
+    }
+
+    #[tokio::test]
+    async fn global_policy_mode_changes_do_not_create_runtime_thread_directory() {
+        let workspace = runtime_test_workspace("global-policy-mode");
+        let thread_root = workspace.join("threads");
+        let mut builder = ExtensionRegistryBuilder::new();
+        builder.inference_engine(Arc::new(FakeInferenceEngine));
+        builder.thread_store_factory(Arc::new(JsonlThreadStoreFactory {
+            base_path: thread_root.clone(),
+        }));
+        let runtime = Runtime::new(
+            builder.build().unwrap(),
+            RuntimeConfig {
+                workspace: Some(workspace.display().to_string()),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+
+        runtime
+            .set_policy_mode(PolicyMode::AcceptAll, Some("test".to_string()))
+            .await
+            .unwrap();
+
+        assert!(!thread_root.join("runtime").exists());
+        let _ = std::fs::remove_dir_all(workspace);
     }
 
     #[tokio::test]

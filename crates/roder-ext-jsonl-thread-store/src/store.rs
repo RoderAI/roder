@@ -131,6 +131,9 @@ impl ThreadStore for JsonlThreadStore {
             })?;
             if file_type.is_dir() {
                 let thread_id = entry.file_name().to_string_lossy().to_string();
+                if is_runtime_event_directory_without_metadata(&thread_id, &entry.path()) {
+                    continue;
+                }
                 let metadata = self
                     .load_or_infer_metadata(&entry.path(), &thread_id)
                     .await?;
@@ -518,6 +521,10 @@ fn archived_threads_root(active_threads_root: &Path) -> PathBuf {
         .unwrap_or_else(|| active_threads_root.with_file_name("archived_threads"))
 }
 
+fn is_runtime_event_directory_without_metadata(thread_id: &str, dir: &Path) -> bool {
+    thread_id == "runtime" && !dir.join("metadata.json").exists()
+}
+
 #[derive(serde::Serialize, serde::Deserialize)]
 struct PersistedTranscriptItem {
     turn_id: TurnId,
@@ -695,6 +702,26 @@ mod tests {
         );
 
         let _ = fs::remove_dir_all(base_path.parent().unwrap().join("archived_threads")).await;
+        let _ = fs::remove_dir_all(base_path).await;
+    }
+
+    #[tokio::test]
+    async fn list_threads_skips_runtime_event_directory_without_metadata() {
+        let base_path = std::env::temp_dir().join(format!(
+            "roder-jsonl-runtime-sentinel-test-{}",
+            uuid::Uuid::new_v4()
+        ));
+        let store = JsonlThreadStore {
+            base_path: base_path.clone(),
+        };
+        let runtime_dir = store.thread_dir(&"runtime".to_string());
+        fs::create_dir_all(&runtime_dir).await.unwrap();
+        fs::write(runtime_dir.join("events.jsonl"), "{}\n")
+            .await
+            .unwrap();
+
+        assert!(store.list_threads().await.unwrap().is_empty());
+
         let _ = fs::remove_dir_all(base_path).await;
     }
 
