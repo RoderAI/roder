@@ -45,9 +45,11 @@ use crate::teams::{
     AgentTeamDisplayMode, TeamId, TeamMemberId, TeamMemberRole, TeamMemberStatus,
     TeamTaskDescriptor,
 };
+use crate::thread::ThreadItemEvent;
 use crate::trace::{
     ParentTurnRef, SubagentTraceDelta, SubagentTraceId, SubagentTraceStatus, SubagentTraceSummary,
 };
+use crate::transcript::TranscriptItem;
 use crate::workflow::{WorkflowImportDecision, WorkflowImportError, WorkflowImportItem};
 
 pub use crate::policy_mode::{
@@ -192,6 +194,11 @@ pub struct InferenceEventReceived {
     pub event: InferenceEvent,
     #[serde(with = "time::serde::rfc3339")]
     pub timestamp: OffsetDateTime,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ThreadItemEventRecorded {
+    pub item_event: ThreadItemEvent,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -747,6 +754,8 @@ pub struct TranscriptItemAppended {
     pub thread_id: ThreadId,
     pub turn_id: TurnId,
     pub item_type: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub item: Option<TranscriptItem>,
     #[serde(with = "time::serde::rfc3339")]
     pub timestamp: OffsetDateTime,
 }
@@ -1022,6 +1031,7 @@ pub enum RoderEvent {
     ContextCompactionRecorded(ContextCompactionRecorded),
     InferenceStarted(InferenceStarted),
     InferenceEventReceived(InferenceEventReceived),
+    ThreadItemEventRecorded(ThreadItemEventRecorded),
     ToolCallRequested(ToolCallRequested),
     ToolCallValidationRecorded(ToolCallValidationRecorded),
     ReliabilityFailureRecorded(ReliabilityFailureRecorded),
@@ -1182,6 +1192,7 @@ impl RoderEvent {
             RoderEvent::ContextCompactionRecorded(_) => "context.compaction_recorded",
             RoderEvent::InferenceStarted(_) => "inference.started",
             RoderEvent::InferenceEventReceived(_) => "inference.event_received",
+            RoderEvent::ThreadItemEventRecorded(_) => "thread.item_event_recorded",
             RoderEvent::ToolCallRequested(_) => "tool.call_requested",
             RoderEvent::ToolCallValidationRecorded(_) => "tool.call_validation",
             RoderEvent::ReliabilityFailureRecorded(_) => "reliability.failure",
@@ -1333,6 +1344,7 @@ impl RoderEvent {
             RoderEvent::InferenceEventReceived(_) | RoderEvent::InferenceStarted(_) => {
                 EventSource::Provider
             }
+            RoderEvent::ThreadItemEventRecorded(_) => EventSource::Core,
             RoderEvent::ReliabilityRetryRecorded(_) => EventSource::Provider,
             RoderEvent::ReliabilityFailureRecorded(_)
             | RoderEvent::ReliabilityLimitRecorded(_)
@@ -1470,6 +1482,7 @@ impl RoderEvent {
             RoderEvent::ContextCompactionRecorded(e) => Some(&e.thread_id),
             RoderEvent::InferenceStarted(e) => Some(&e.thread_id),
             RoderEvent::InferenceEventReceived(e) => Some(&e.thread_id),
+            RoderEvent::ThreadItemEventRecorded(e) => Some(&e.item_event.thread_id),
             RoderEvent::ToolCallRequested(e) => Some(&e.thread_id),
             RoderEvent::ToolCallValidationRecorded(e) => Some(&e.thread_id),
             RoderEvent::ReliabilityFailureRecorded(e) => Some(&e.context.thread_id),
@@ -1626,6 +1639,7 @@ impl RoderEvent {
             RoderEvent::ContextCompactionRecorded(e) => Some(&e.turn_id),
             RoderEvent::InferenceStarted(e) => Some(&e.turn_id),
             RoderEvent::InferenceEventReceived(e) => Some(&e.turn_id),
+            RoderEvent::ThreadItemEventRecorded(e) => Some(&e.item_event.turn_id),
             RoderEvent::ToolCallRequested(e) => Some(&e.turn_id),
             RoderEvent::ToolCallValidationRecorded(e) => Some(&e.turn_id),
             RoderEvent::ReliabilityFailureRecorded(e) => Some(&e.context.turn_id),

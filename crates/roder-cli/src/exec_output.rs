@@ -3,8 +3,8 @@ use std::path::PathBuf;
 
 use anyhow::Context;
 use roder_protocol::{
-    AgentMessageDeltaNotification, Item, ItemCompletedNotification, ItemStartedNotification,
-    JsonRpcNotification, TurnCompletedNotification, TurnStartedNotification,
+    Item, JsonRpcNotification, ThreadItemDelta, ThreadItemEvent, ThreadItemEventKind,
+    TurnCompletedNotification, TurnStartedNotification,
 };
 
 use crate::exec_events::{ExecEvent, ExecItem, ExecUsage};
@@ -62,50 +62,74 @@ impl ExecOutput {
                 }
             }
             "item/started" => {
-                let params: ItemStartedNotification =
-                    serde_json::from_value(notification.params.clone())?;
-                if params.thread_id == thread_id && params.turn_id == turn_id {
-                    self.emit_event(ExecEvent::ItemStarted {
-                        item: params.item.into(),
-                    })?;
+                let params: ThreadItemEvent = serde_json::from_value(notification.params.clone())?;
+                if params.thread_id == thread_id
+                    && params.turn_id == turn_id
+                    && let ThreadItemEventKind::ItemStarted { item } = params.event
+                {
+                    self.emit_event(ExecEvent::ItemStarted { item: item.into() })?;
                 }
             }
             "item/completed" => {
-                let params: ItemCompletedNotification =
-                    serde_json::from_value(notification.params.clone())?;
-                if params.thread_id == thread_id && params.turn_id == turn_id {
-                    if params.item.kind == "agentMessage"
-                        && let Some(text) = params.item.text.as_deref()
-                    {
+                let params: ThreadItemEvent = serde_json::from_value(notification.params.clone())?;
+                if params.thread_id == thread_id
+                    && params.turn_id == turn_id
+                    && let ThreadItemEventKind::ItemCompleted { item } = params.event
+                {
+                    if let Item::AgentMessage { text, .. } = &item {
                         self.final_message = Some(text.to_string());
                     }
-                    self.emit_event(ExecEvent::ItemCompleted {
-                        item: params.item.into(),
-                    })?;
+                    self.emit_event(ExecEvent::ItemCompleted { item: item.into() })?;
                 }
             }
             "item/agentMessage/delta" => {
-                let params: AgentMessageDeltaNotification =
-                    serde_json::from_value(notification.params.clone())?;
-                if params.thread_id == thread_id && params.turn_id == turn_id {
+                let params: ThreadItemEvent = serde_json::from_value(notification.params.clone())?;
+                if params.thread_id == thread_id
+                    && params.turn_id == turn_id
+                    && let ThreadItemEventKind::ItemDelta { item_id, delta } = params.event
+                    && let ThreadItemDelta::AgentMessageText { delta, phase } = delta
+                {
                     let text = {
-                        let text = self
-                            .message_items
-                            .entry(params.item_id.clone())
-                            .or_default();
-                        text.push_str(&params.delta);
+                        let text = self.message_items.entry(item_id.clone()).or_default();
+                        text.push_str(&delta);
                         text.clone()
                     };
-                    if params.phase.as_deref() != Some("reasoning") {
+                    if phase.as_deref() != Some("reasoning") {
                         self.final_message = Some(text.clone());
                     }
                     self.emit_event(ExecEvent::ItemUpdated {
                         item: ExecItem {
-                            id: params.item_id,
+                            id: item_id,
                             kind: "agentMessage".to_string(),
                             text: Some(text.clone()),
                             status: Some("inProgress".to_string()),
-                            phase: params.phase,
+                            phase,
+                            tool_name: None,
+                            tool_call_id: None,
+                            payload: None,
+                        },
+                    })?;
+                }
+            }
+            "item/reasoning/textDelta" => {
+                let params: ThreadItemEvent = serde_json::from_value(notification.params.clone())?;
+                if params.thread_id == thread_id
+                    && params.turn_id == turn_id
+                    && let ThreadItemEventKind::ItemDelta { item_id, delta } = params.event
+                    && let ThreadItemDelta::ReasoningText { delta, .. } = delta
+                {
+                    let text = {
+                        let text = self.message_items.entry(item_id.clone()).or_default();
+                        text.push_str(&delta);
+                        text.clone()
+                    };
+                    self.emit_event(ExecEvent::ItemUpdated {
+                        item: ExecItem {
+                            id: item_id,
+                            kind: "reasoning".to_string(),
+                            text: Some(text),
+                            status: Some("inProgress".to_string()),
+                            phase: Some("reasoning".to_string()),
                             tool_name: None,
                             tool_call_id: None,
                             payload: None,
@@ -140,13 +164,12 @@ impl ExecOutput {
     }
 
     pub(crate) fn backfill_final_message(&mut self, items: &[Item]) {
-        if let Some(text) = items
+        if let Some(Item::AgentMessage { text, .. }) = items
             .iter()
             .rev()
-            .find(|item| item.kind == "agentMessage" && item.phase.as_deref() != Some("reasoning"))
-            .and_then(|item| item.text.clone())
+            .find(|item| matches!(item, Item::AgentMessage { phase, .. } if phase.as_deref() != Some("reasoning")))
         {
-            self.final_message = Some(text);
+            self.final_message = Some(text.clone());
         }
     }
 
@@ -200,10 +223,19 @@ mod tests {
             jsonrpc: "2.0".to_string(),
             method: "item/agentMessage/delta".to_string(),
             params: serde_json::json!({
+                "seq": 1,
+                "eventId": "event_1",
                 "threadId": "thread_1",
                 "turnId": "turn_1",
-                "itemId": "item_1",
-                "delta": "hello",
+                "timestamp": "1970-01-01T00:00:00Z",
+                "event": {
+                    "type": "itemDelta",
+                    "itemId": "item_1",
+                    "delta": {
+                        "type": "agentMessageText",
+                        "delta": "hello"
+                    }
+                }
             }),
         };
 

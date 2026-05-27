@@ -1,3 +1,4 @@
+use roder_api::thread::ThreadItemStatus;
 use roder_protocol::{
     Item, Thread, ThreadListParams, ThreadListResult, ThreadReadParams, ThreadReadResult,
 };
@@ -113,70 +114,68 @@ where
     }
 
     fn push_item(&mut self, item: &Item) {
-        match item.kind.as_str() {
-            "userMessage" => {
-                let display = item.text.clone().unwrap_or_default();
+        match item {
+            Item::UserMessage { text, images, .. } => {
+                let display = text.clone();
                 self.last_user_prompt = Some(PendingPrompt::with_images(
                     display.clone(),
                     display.clone(),
-                    Vec::new(),
+                    images.clone(),
                 ));
                 self.timeline.push_user(display);
             }
-            "agentMessage" => {
-                self.timeline.push_assistant_delta_immediate(
-                    item.text.as_deref().unwrap_or_default(),
-                    item.phase.clone(),
-                );
-            }
-            "reasoning" => {
+            Item::AgentMessage { text, phase, .. } => {
                 self.timeline
-                    .push_reasoning_delta(item.text.as_deref().unwrap_or_default());
+                    .push_assistant_delta_immediate(text, phase.clone());
             }
-            "toolMessage" => {
-                let tool_id = item.tool_call_id.clone().unwrap_or_else(|| item.id.clone());
+            Item::Reasoning {
+                content, summary, ..
+            } => {
+                let text = if content.is_empty() {
+                    summary.join("\n")
+                } else {
+                    content.join("")
+                };
+                if !text.trim().is_empty() {
+                    self.timeline.push_reasoning_delta(&text);
+                }
+            }
+            Item::ToolExecution {
+                tool_call_id,
+                tool_name,
+                status,
+                input,
+                output,
+                error,
+                ..
+            } => {
+                let tool_id = tool_call_id.clone();
                 if !self.tool_names.contains_key(&tool_id) {
-                    let name = item
-                        .tool_name
-                        .clone()
-                        .unwrap_or_else(|| format!("tool {}", short_id(&tool_id)));
+                    let arguments = input.as_ref().map(ToString::to_string).unwrap_or_default();
                     self.record_tool_requested_with_id(
                         tool_id.clone(),
-                        ToolTimelineEntry::new(name, ""),
+                        ToolTimelineEntry::new(tool_name.clone(), arguments),
                     );
                 }
-                self.record_tool_completed(
-                    &tool_id,
-                    item.status.as_deref() == Some("failed"),
-                    item.text
-                        .clone()
-                        .or_else(|| item.payload.as_ref().map(ToString::to_string)),
-                );
+                if !matches!(status, ThreadItemStatus::InProgress) {
+                    self.record_tool_completed(
+                        &tool_id,
+                        matches!(status, ThreadItemStatus::Failed),
+                        error.clone().or_else(|| output.clone()),
+                    );
+                }
             }
-            kind if kind.starts_with("tool.") || kind == "toolCall" => {
-                let tool_id = item.tool_call_id.clone().unwrap_or_else(|| item.id.clone());
-                let name = item
-                    .tool_name
-                    .clone()
-                    .or_else(|| kind.strip_prefix("tool.").map(str::to_string))
-                    .unwrap_or_else(|| "tool".to_string());
-                let arguments = item
-                    .payload
-                    .as_ref()
-                    .map(ToString::to_string)
-                    .unwrap_or_default();
-                self.record_tool_requested_with_id(
-                    tool_id,
-                    ToolTimelineEntry::new(name, arguments),
-                );
+            Item::Compaction { summary, .. } => {
+                if !summary.trim().is_empty() {
+                    self.timeline.push_system(summary.clone());
+                }
             }
-            "error" => {
-                self.timeline
-                    .push_error(item.text.clone().unwrap_or_else(|| "error".to_string()));
+            Item::Error { message, .. } => {
+                self.timeline.push_error(message.clone());
             }
-            _ => {
-                if let Some(text) = item.text.as_ref().filter(|text| !text.trim().is_empty()) {
-                    self.timeline.push_system(text.clone());
+            Item::Raw { payload, .. } => {
+                if let Some(text) = payload.as_str().filter(|text| !text.trim().is_empty()) {
+                    self.timeline.push_system(text.to_string());
                 }
             }
         }
@@ -222,11 +221,11 @@ where
 fn title_from_thread(thread: &Thread) -> Option<String> {
     thread.turns.as_ref()?.iter().find_map(|turn| {
         turn.items.iter().find_map(|item| {
-            (item.kind == "userMessage")
-                .then_some(item.text.as_deref())
-                .flatten()
-                .filter(|text| !text.trim().is_empty())
-                .map(|text| truncate(text.trim(), 72))
+            if let Item::UserMessage { text, .. } = item {
+                (!text.trim().is_empty()).then(|| truncate(text.trim(), 72))
+            } else {
+                None
+            }
         })
     })
 }
@@ -238,7 +237,7 @@ fn message_count_from_thread(thread: &Thread) -> usize {
         .unwrap_or_default()
         .iter()
         .flat_map(|turn| turn.items.iter())
-        .filter(|item| matches!(item.kind.as_str(), "userMessage" | "agentMessage"))
+        .filter(|item| matches!(item, Item::UserMessage { .. } | Item::AgentMessage { .. }))
         .count()
 }
 
@@ -249,13 +248,7 @@ fn thread_has_user_message(thread: &Thread) -> bool {
         .unwrap_or_default()
         .iter()
         .flat_map(|turn| turn.items.iter())
-        .any(|item| {
-            item.kind == "userMessage"
-                && item
-                    .text
-                    .as_deref()
-                    .is_some_and(|text| !text.trim().is_empty())
-        })
+        .any(|item| matches!(item, Item::UserMessage { text, .. } if !text.trim().is_empty()))
 }
 
 #[cfg(test)]
@@ -294,22 +287,36 @@ mod tests {
         }
     }
 
-    fn item(kind: &str, text: Option<&str>) -> Item {
-        Item {
-            id: format!("{kind}-id"),
-            kind: kind.to_string(),
-            text: text.map(str::to_string),
-            status: None,
+    fn user_message(text: &str) -> Item {
+        Item::UserMessage {
+            id: "userMessage-id".to_string(),
+            text: text.to_string(),
+            images: Vec::new(),
+            status: Some(ThreadItemStatus::Completed),
+        }
+    }
+
+    fn agent_message(text: &str) -> Item {
+        Item::AgentMessage {
+            id: "agentMessage-id".to_string(),
+            text: text.to_string(),
             phase: None,
-            tool_name: None,
-            tool_call_id: None,
-            payload: None,
+            status: Some(ThreadItemStatus::Completed),
+        }
+    }
+
+    fn reasoning(text: &str) -> Item {
+        Item::Reasoning {
+            id: "reasoning-id".to_string(),
+            summary: Vec::new(),
+            content: vec![text.to_string()],
+            status: Some(ThreadItemStatus::Completed),
         }
     }
 
     #[test]
     fn derives_resume_title_from_first_user_message() {
-        let thread = test_thread(vec![item("userMessage", Some("explain this repository"))]);
+        let thread = test_thread(vec![user_message("explain this repository")]);
 
         assert_eq!(
             title_from_thread(&thread).as_deref(),
@@ -320,9 +327,9 @@ mod tests {
     #[test]
     fn counts_user_and_assistant_messages_only() {
         let thread = test_thread(vec![
-            item("userMessage", Some("hi")),
-            item("agentMessage", Some("hello")),
-            item("reasoning", Some("thinking")),
+            user_message("hi"),
+            agent_message("hello"),
+            reasoning("thinking"),
         ]);
 
         assert_eq!(message_count_from_thread(&thread), 2);
@@ -330,8 +337,8 @@ mod tests {
 
     #[test]
     fn detects_threads_with_user_messages() {
-        let with_user = test_thread(vec![item("userMessage", Some("hi"))]);
-        let assistant_only = test_thread(vec![item("agentMessage", Some("hello"))]);
+        let with_user = test_thread(vec![user_message("hi")]);
+        let assistant_only = test_thread(vec![agent_message("hello")]);
 
         assert!(thread_has_user_message(&with_user));
         assert!(!thread_has_user_message(&assistant_only));

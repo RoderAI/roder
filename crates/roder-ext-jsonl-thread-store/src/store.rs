@@ -5,8 +5,8 @@ use anyhow::Context;
 use roder_api::events::{EventEnvelope, RoderEvent, ThreadId, TurnId};
 use roder_api::extension_state::ExtensionStateRecord;
 use roder_api::thread::{
-    ThreadMetadata, ThreadSnapshot, ThreadStore, ThreadStoreFactory, TurnRecord,
-    validate_thread_workspace,
+    ThreadItemEvent, ThreadMetadata, ThreadSnapshot, ThreadStore, ThreadStoreFactory, TurnRecord,
+    public_item_event_from_transcript_item, validate_thread_workspace,
 };
 use roder_api::transcript::TranscriptItem;
 use time::OffsetDateTime;
@@ -75,6 +75,96 @@ impl JsonlThreadStore {
             }
         }
         Ok(turns)
+    }
+
+    async fn load_or_migrate_item_events(
+        &self,
+        thread_id: &ThreadId,
+        turns: &[TurnRecord],
+    ) -> anyhow::Result<Vec<ThreadItemEvent>> {
+        let file_path = self.thread_dir(thread_id).join("item_events.jsonl");
+        if file_path.exists() {
+            return self.load_item_events(thread_id).await;
+        }
+
+        if turns.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let mut events = Vec::new();
+        for turn in turns {
+            for (index, item) in turn.items.iter().enumerate() {
+                events.push(public_item_event_from_transcript_item(
+                    thread_id,
+                    &turn.turn_id,
+                    events.len() as u64 + 1,
+                    turn.created_at,
+                    index,
+                    item,
+                ));
+            }
+        }
+        write_item_events_atomic(&file_path, &events).await?;
+        Ok(events)
+    }
+
+    async fn load_item_events(&self, thread_id: &ThreadId) -> anyhow::Result<Vec<ThreadItemEvent>> {
+        let file_path = self.thread_dir(thread_id).join("item_events.jsonl");
+        if !file_path.exists() {
+            return Ok(Vec::new());
+        }
+        let file = fs::File::open(&file_path)
+            .await
+            .with_context(|| format!("open item event log {}", file_path.display()))?;
+        let reader = BufReader::new(file);
+        let mut lines = reader.lines();
+        let mut events = Vec::new();
+        let mut line_number = 0usize;
+        while let Some(line) = lines
+            .next_line()
+            .await
+            .with_context(|| format!("read item event log {}", file_path.display()))?
+        {
+            line_number += 1;
+            if line.trim().is_empty() {
+                continue;
+            }
+            let stream = serde_json::Deserializer::from_str(&line).into_iter::<ThreadItemEvent>();
+            for event in stream {
+                events.push(event.with_context(|| {
+                    format!(
+                        "parse item event record in {}:{}",
+                        file_path.display(),
+                        line_number
+                    )
+                })?);
+            }
+        }
+        Ok(events)
+    }
+
+    async fn write_item_event(
+        &self,
+        thread_id: &ThreadId,
+        item_event: &ThreadItemEvent,
+    ) -> anyhow::Result<()> {
+        let dir = self.thread_dir(thread_id);
+        fs::create_dir_all(&dir)
+            .await
+            .with_context(|| format!("create thread directory {}", dir.display()))?;
+        let file_path = dir.join("item_events.jsonl");
+        let mut file = OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&file_path)
+            .await
+            .with_context(|| format!("open item event log {}", file_path.display()))?;
+        let mut line = serde_json::to_vec(item_event).context("serialize item event record")?;
+        line.push(b'\n');
+        file.write_all(&line)
+            .await
+            .with_context(|| format!("append item event record to {}", file_path.display()))?;
+        Ok(())
     }
 }
 
@@ -152,12 +242,14 @@ impl ThreadStore for JsonlThreadStore {
         let metadata = Some(self.load_or_infer_metadata(&dir, thread_id).await?);
         let events = self.load_events(thread_id).await?;
         let mut turns = self.read_turns(thread_id).await?;
+        let item_events = self.load_or_migrate_item_events(thread_id, &turns).await?;
         let extension_states = self.load_extension_states(thread_id).await?;
         project_turn_completion(&mut turns, &events);
         Ok(Some(ThreadSnapshot {
             metadata,
             events,
             turns,
+            item_events,
             extension_states,
         }))
     }
@@ -223,6 +315,7 @@ impl ThreadStore for JsonlThreadStore {
         fs::create_dir_all(&dir)
             .await
             .with_context(|| format!("create thread directory {}", dir.display()))?;
+        let timestamp = OffsetDateTime::now_utc();
         let file_path = dir.join("transcript_items.jsonl");
         let mut file = OpenOptions::new()
             .create(true)
@@ -232,7 +325,7 @@ impl ThreadStore for JsonlThreadStore {
             .with_context(|| format!("open transcript item log {}", file_path.display()))?;
         let persisted = PersistedTranscriptItem {
             turn_id: turn_id.clone(),
-            timestamp: OffsetDateTime::now_utc(),
+            timestamp,
             item: item.clone(),
         };
         let mut line =
@@ -243,6 +336,14 @@ impl ThreadStore for JsonlThreadStore {
             .with_context(|| format!("append transcript item record to {}", file_path.display()))?;
         self.update_metadata_for_turn_item(thread_id, item).await?;
         Ok(())
+    }
+
+    async fn append_item_event(
+        &self,
+        thread_id: &ThreadId,
+        item_event: &ThreadItemEvent,
+    ) -> anyhow::Result<()> {
+        self.write_item_event(thread_id, item_event).await
     }
 
     async fn append_extension_state(
@@ -480,6 +581,43 @@ async fn write_metadata_file(
     Ok(())
 }
 
+async fn write_item_events_atomic(
+    file_path: &Path,
+    events: &[ThreadItemEvent],
+) -> anyhow::Result<()> {
+    let parent = file_path
+        .parent()
+        .with_context(|| format!("item event path has no parent: {}", file_path.display()))?;
+    fs::create_dir_all(parent)
+        .await
+        .with_context(|| format!("create thread directory {}", parent.display()))?;
+    let file_name = file_path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("item_events.jsonl");
+    let tmp_path = file_path.with_file_name(format!(".{file_name}.{}.tmp", uuid::Uuid::new_v4()));
+    let mut contents = Vec::new();
+    for event in events {
+        let mut line = serde_json::to_vec(event).context("serialize item event record")?;
+        line.push(b'\n');
+        contents.extend(line);
+    }
+    fs::write(&tmp_path, contents)
+        .await
+        .with_context(|| format!("write item event temp {}", tmp_path.display()))?;
+    if let Err(err) = fs::rename(&tmp_path, file_path).await {
+        let _ = fs::remove_file(&tmp_path).await;
+        return Err(err).with_context(|| {
+            format!(
+                "replace item event log {} with {}",
+                file_path.display(),
+                tmp_path.display()
+            )
+        });
+    }
+    Ok(())
+}
+
 fn parse_metadata_tolerant(data: &[u8]) -> serde_json::Result<(ThreadMetadata, bool)> {
     match serde_json::from_slice::<ThreadMetadata>(data) {
         Ok(metadata) => Ok((metadata, false)),
@@ -570,6 +708,11 @@ impl ThreadStoreFactory for JsonlThreadStoreFactory {
 mod tests {
     use super::*;
     use roder_api::events::{EventSource, SubagentTraceCreated, TurnCompleted};
+    use roder_api::inference::InferenceEvent;
+    use roder_api::thread::{
+        ThreadItem, ThreadItemDelta, ThreadItemEventKind, ThreadItemStatus,
+        project_thread_item_events,
+    };
     use roder_api::trace::{
         ParentTurnRef, SubagentDestination, SubagentDestinationKind, SubagentTraceStatus,
         SubagentTraceSummary,
@@ -657,6 +800,189 @@ mod tests {
         assert_eq!(snapshot.turns[0].turn_id, turn_id);
         assert_eq!(snapshot.turns[0].items.len(), 2);
         assert_eq!(snapshot.turns[0].completed_at, Some(now));
+
+        let _ = fs::remove_dir_all(base_path).await;
+    }
+
+    #[tokio::test]
+    async fn load_thread_migrates_legacy_transcript_items_to_typed_item_events() {
+        let base_path = std::env::temp_dir().join(format!(
+            "roder-jsonl-thread-item-migration-test-{}",
+            uuid::Uuid::new_v4()
+        ));
+        let store = JsonlThreadStore {
+            base_path: base_path.clone(),
+        };
+        let thread_id = "thread-migrate".to_string();
+        let turn_id = "turn-migrate".to_string();
+        let now = OffsetDateTime::UNIX_EPOCH;
+
+        store
+            .create_thread(ThreadMetadata {
+                thread_id: thread_id.clone(),
+                title: Some("Migrate me".to_string()),
+                workspace: "/workspace".to_string(),
+                provider: Some("mock".to_string()),
+                model: Some("mock".to_string()),
+                runner_destination: None,
+                runner_state: None,
+                created_at: now,
+                updated_at: now,
+                message_count: 0,
+                usage: None,
+            })
+            .await
+            .unwrap();
+
+        let dir = store.thread_dir(&thread_id);
+        let records = [
+            PersistedTranscriptItem {
+                turn_id: turn_id.clone(),
+                timestamp: now,
+                item: TranscriptItem::UserMessage(UserMessage::text("tell me")),
+            },
+            PersistedTranscriptItem {
+                turn_id: turn_id.clone(),
+                timestamp: now,
+                item: TranscriptItem::ReasoningSummary(roder_api::transcript::ReasoningSummary {
+                    text: "Inspecting".to_string(),
+                }),
+            },
+            PersistedTranscriptItem {
+                turn_id: turn_id.clone(),
+                timestamp: now,
+                item: TranscriptItem::AssistantMessage(AssistantMessage {
+                    text: "Done".to_string(),
+                    phase: Some("final_answer".to_string()),
+                }),
+            },
+        ];
+        let mut contents = String::new();
+        for record in records {
+            contents.push_str(&serde_json::to_string(&record).unwrap());
+            contents.push('\n');
+        }
+        fs::write(dir.join("transcript_items.jsonl"), contents)
+            .await
+            .unwrap();
+
+        let snapshot = store.load_thread(&thread_id).await.unwrap().unwrap();
+        let projected = project_thread_item_events(&snapshot.item_events);
+
+        assert!(dir.join("item_events.jsonl").exists());
+        assert_eq!(projected.len(), 1);
+        assert_eq!(
+            projected[0].items,
+            vec![
+                ThreadItem::UserMessage {
+                    id: "turn-migrate-user".to_string(),
+                    text: "tell me".to_string(),
+                    images: Vec::new(),
+                    status: Some(ThreadItemStatus::Completed),
+                },
+                ThreadItem::Reasoning {
+                    id: "turn-migrate-agent-reasoning".to_string(),
+                    summary: Vec::new(),
+                    content: vec!["Inspecting".to_string()],
+                    status: Some(ThreadItemStatus::Completed),
+                },
+                ThreadItem::AgentMessage {
+                    id: "turn-migrate-agent-final_answer".to_string(),
+                    text: "Done".to_string(),
+                    phase: Some("final_answer".to_string()),
+                    status: Some(ThreadItemStatus::Completed),
+                },
+            ]
+        );
+
+        let _ = fs::remove_dir_all(base_path).await;
+    }
+
+    #[tokio::test]
+    async fn append_event_keeps_raw_events_separate_from_public_item_events() {
+        let base_path = std::env::temp_dir().join(format!(
+            "roder-jsonl-item-event-seq-test-{}",
+            uuid::Uuid::new_v4()
+        ));
+        let store = JsonlThreadStore {
+            base_path: base_path.clone(),
+        };
+        let thread_id = "thread-item-seq".to_string();
+        let turn_id = "turn-item-seq".to_string();
+        let now = OffsetDateTime::UNIX_EPOCH;
+
+        store
+            .create_thread(ThreadMetadata {
+                thread_id: thread_id.clone(),
+                title: Some("Keep item seq".to_string()),
+                workspace: "/workspace".to_string(),
+                provider: Some("mock".to_string()),
+                model: Some("mock".to_string()),
+                runner_destination: None,
+                runner_state: None,
+                created_at: now,
+                updated_at: now,
+                message_count: 0,
+                usage: None,
+            })
+            .await
+            .unwrap();
+        store
+            .append_event(
+                &thread_id,
+                &EventEnvelope {
+                    event_id: "raw-reasoning-event".to_string(),
+                    seq: 1,
+                    timestamp: now,
+                    source: EventSource::Core,
+                    kind: "inference.event_received".to_string(),
+                    thread_id: Some(thread_id.clone()),
+                    turn_id: Some(turn_id.clone()),
+                    event: RoderEvent::InferenceEventReceived(
+                        roder_api::events::InferenceEventReceived {
+                            thread_id: thread_id.clone(),
+                            turn_id: turn_id.clone(),
+                            event: InferenceEvent::ReasoningDelta(
+                                roder_api::inference::ReasoningDelta {
+                                    text: "thinking".to_string(),
+                                },
+                            ),
+                            timestamp: now,
+                        },
+                    ),
+                },
+            )
+            .await
+            .unwrap();
+
+        let item_events = store.load_item_events(&thread_id).await.unwrap();
+        assert!(item_events.is_empty());
+
+        store
+            .append_item_event(
+                &thread_id,
+                &ThreadItemEvent {
+                    seq: 1,
+                    event_id: "item-event-1".to_string(),
+                    thread_id: thread_id.clone(),
+                    turn_id: turn_id.clone(),
+                    timestamp: now,
+                    event: ThreadItemEventKind::ItemDelta {
+                        item_id: "turn-item-seq-agent-reasoning".to_string(),
+                        delta: ThreadItemDelta::ReasoningText {
+                            delta: "thinking".to_string(),
+                            content_index: 0,
+                        },
+                    },
+                },
+            )
+            .await
+            .unwrap();
+
+        let item_events = store.load_item_events(&thread_id).await.unwrap();
+        assert_eq!(item_events.len(), 1);
+        assert_eq!(item_events[0].seq, 1);
+        assert_eq!(item_events[0].event_id, "item-event-1");
 
         let _ = fs::remove_dir_all(base_path).await;
     }

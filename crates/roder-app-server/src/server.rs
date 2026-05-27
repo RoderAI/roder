@@ -31,8 +31,8 @@ use tokio::sync::{RwLock, broadcast};
 use crate::automations::AppServerFeatureConfig;
 use crate::notifications;
 use crate::protocol_contract::{
-    idle_thread_status, protocol_thread_from_metadata, protocol_turn_from_record,
-    protocol_turn_images, protocol_turn_message, thread_status_for_activity,
+    idle_thread_status, protocol_thread_from_metadata, protocol_turn_images, protocol_turn_message,
+    protocol_turns_from_snapshot, thread_status_for_activity,
 };
 
 #[derive(Debug, serde::Deserialize)]
@@ -1613,13 +1613,9 @@ impl AppServer {
             .await
             .map_err(internal_error)?;
         let thread = snapshot.and_then(|snapshot| {
-            let turns = params.include_turns.then(|| {
-                snapshot
-                    .turns
-                    .into_iter()
-                    .map(protocol_turn_from_record)
-                    .collect()
-            });
+            let turns = params
+                .include_turns
+                .then(|| protocol_turns_from_snapshot(&snapshot));
             snapshot.metadata.map(|metadata| (metadata, turns))
         });
         let thread = match thread {

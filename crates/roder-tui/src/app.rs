@@ -70,7 +70,7 @@ use roder_app_server::{
 };
 use roder_protocol::{
     AgentsListResult, CommandDescriptor, CommandsExpandParams, CommandsExpandResult,
-    CommandsListResult, JsonRpcRequest, JsonRpcResponse, PendingPlanExitDescriptor,
+    CommandsListResult, Item, JsonRpcRequest, JsonRpcResponse, PendingPlanExitDescriptor,
     ProviderAuthResult, ProviderClearParams, ProviderClearResult, ProviderConfigureParams,
     ProviderConfigureResult, ProviderDescriptor, ProviderSelectParams, ProviderSelectResult,
     ProvidersListResult, RunnersListResult, RunnersSelectParams, RunnersSelectResult,
@@ -1152,7 +1152,9 @@ where
                     turns
                         .iter()
                         .flat_map(|turn| turn.items.iter())
-                        .filter(|item| matches!(item.kind.as_str(), "userMessage" | "agentMessage"))
+                        .filter(|item| {
+                            matches!(item, Item::UserMessage { .. } | Item::AgentMessage { .. })
+                        })
                         .count()
                 })
                 .unwrap_or_default();
@@ -1201,7 +1203,9 @@ where
                     turns
                         .iter()
                         .flat_map(|turn| turn.items.iter())
-                        .filter(|item| matches!(item.kind.as_str(), "userMessage" | "agentMessage"))
+                        .filter(|item| {
+                            matches!(item, Item::UserMessage { .. } | Item::AgentMessage { .. })
+                        })
                         .count()
                 })
                 .unwrap_or_default();
@@ -7191,6 +7195,7 @@ mod tests {
 
     use ratatui::{Terminal, backend::TestBackend};
     use roder_api::teams::{TeamMemberDescriptor, TeamMemberRole, TeamMemberStatus};
+    use roder_api::thread::ThreadItemStatus;
     use roder_app_server::AppServer;
     use roder_core::Runtime;
     use roder_protocol::{
@@ -7327,18 +7332,17 @@ mod tests {
             usage: None,
             turns: Some(vec![Turn {
                 id: "turn-ledger".to_string(),
-                items: vec![Item {
+                items: vec![Item::ToolExecution {
                     id: "tool-ledger".to_string(),
-                    kind: "toolMessage".to_string(),
-                    text: Some(
+                    tool_call_id: "tool-ledger".to_string(),
+                    tool_name: "task_ledger.update".to_string(),
+                    status: ThreadItemStatus::Completed,
+                    input: None,
+                    output: Some(
                         "Task ledger: 1/2 completed\n- completed: Inspect [inspect]\n- in_progress: Verify [verify]"
                             .to_string(),
                     ),
-                    status: Some("completed".to_string()),
-                    phase: None,
-                    tool_name: Some("task_ledger.update".to_string()),
-                    tool_call_id: Some("tool-ledger".to_string()),
-                    payload: None,
+                    error: None,
                 }],
                 items_view: "all".to_string(),
                 status: "completed".to_string(),
