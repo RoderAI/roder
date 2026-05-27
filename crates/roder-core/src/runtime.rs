@@ -6,7 +6,8 @@ use anyhow::Context;
 use futures::StreamExt;
 use futures::future::{AbortHandle, Abortable, BoxFuture, try_join_all};
 use roder_api::catalog::{
-    EDIT_TOOL_EDIT, EDIT_TOOL_PATCH, REASONING_NONE, built_in_model_profile, lookup_model,
+    EDIT_TOOL_EDIT, EDIT_TOOL_PATCH, PROVIDER_GEMINI, REASONING_NONE, built_in_model_profile,
+    lookup_model,
 };
 use roder_api::context::PolicyGate;
 use roder_api::events::*;
@@ -15,7 +16,7 @@ use roder_api::inference::{
     AgentInferenceRequest, HostedWebSearchConfig, HostedWebSearchMode, InferenceEngine,
     InferenceEvent, InferenceTurnContext, InstructionBundle, ModelHarnessProfile,
     ModelSchemaPolicy, ModelSelection, OutputConfig, ReasoningConfig, RuntimeHints, RuntimeProfile,
-    ToolCallCompleted,
+    TokenUsage, ToolCallCompleted,
 };
 use roder_api::policy_mode::{PolicyDecision, PolicyMode};
 use roder_api::reliability::{
@@ -26,7 +27,9 @@ use roder_api::reliability::{
 use roder_api::remote_runner::{RemoteRunnerSession, RunnerDestination};
 use roder_api::subagents::SubagentDefinition;
 use roder_api::teams::TeamMemberStatus;
-use roder_api::thread::{ThreadMetadata, ThreadSnapshot, ThreadStore, validate_thread_workspace};
+use roder_api::thread::{
+    ThreadMetadata, ThreadSnapshot, ThreadStore, ThreadUsageMetadata, validate_thread_workspace,
+};
 use roder_api::tools::{ToolCall, ToolChoice, ToolExecutionContext, ToolRegistry, ToolResult};
 use roder_api::transcript::{
     AssistantMessage, ErrorRecord, InputImage, ReasoningSummary, ToolCallRecord, ToolResultRecord,
@@ -238,6 +241,7 @@ impl Runtime {
         if registry.inference_engines.is_empty() {
             anyhow::bail!("at least one inference engine must be registered");
         }
+        validate_runtime_config_reasoning(&config)?;
 
         let bus = EventBus::new(1024);
         let thread_store = registry
@@ -723,6 +727,7 @@ impl Runtime {
             created_at: now,
             updated_at: now,
             message_count: 0,
+            usage: None,
         };
 
         let metadata = if let Some(store) = &self.thread_store {
@@ -1232,6 +1237,32 @@ impl Runtime {
         Ok(())
     }
 
+    async fn record_thread_usage_metadata(
+        &self,
+        thread_id: &ThreadId,
+        usage: &TokenUsage,
+    ) -> anyhow::Result<()> {
+        if usage.is_empty() {
+            return Ok(());
+        }
+        let Some(store) = &self.thread_store else {
+            return Ok(());
+        };
+        let Some(snapshot) = store.load_thread(thread_id).await? else {
+            return Ok(());
+        };
+        let Some(mut metadata) = snapshot.metadata else {
+            return Ok(());
+        };
+        metadata
+            .usage
+            .get_or_insert_with(ThreadUsageMetadata::default)
+            .add_token_usage(usage);
+        metadata.updated_at = OffsetDateTime::now_utc();
+        store.update_thread_metadata(metadata).await?;
+        Ok(())
+    }
+
     pub fn start_turn(
         self: &Arc<Self>,
         mut req: StartTurnRequest,
@@ -1274,6 +1305,7 @@ impl Runtime {
                             turn_id: turn_id_for_task.clone(),
                             error: err.to_string(),
                             error_kind: None,
+                            usage: None,
                             timestamp: OffsetDateTime::now_utc(),
                         }))
                         .await;
@@ -1437,7 +1469,11 @@ impl Runtime {
         let engine = self.engine_for(&provider)?;
         let capabilities = engine.capabilities();
         let model_profile = model_profile_for_model(&cfg, &model);
-        let tools = self.filtered_tool_specs(&cfg, &model, model_profile.as_ref());
+        let tools = if capabilities.tool_calls {
+            self.filtered_tool_specs(&cfg, &model, model_profile.as_ref())
+        } else {
+            Vec::new()
+        };
         let workspace = req.workspace.clone();
         let parallel_tool_calls = parallel_tool_calls_for_model(&cfg, &model);
         let tool_choice = if tools.is_empty() {
@@ -1477,7 +1513,7 @@ impl Runtime {
             VerificationGateState::new(req.message.clone(), runtime_profile);
         let mut speed_policy = SpeedPolicyState::default();
         let mut reliability = TurnReliabilityState::default();
-        let mut turn_usage_tokens = 0_i64;
+        let mut turn_usage = TokenUsage::default();
         let mut deadline_finalization_requested = false;
         let mut deadline_scoreable_completion_requested = false;
         let mut task_ledger_completion_reminders = 0_u8;
@@ -1621,7 +1657,7 @@ impl Runtime {
                 && runtime_profile == RuntimeProfile::Eval
                 && !deadline_finalization_requested
                 && !transcript_has_task_ledger(&transcript);
-            let task_ledger_tools = task_ledger_required_this_round
+            let task_ledger_tools = (capabilities.tool_calls && task_ledger_required_this_round)
                 .then(|| self.task_ledger_tool_specs(model_profile.as_ref()))
                 .filter(|tools| !tools.is_empty());
             let request_tools = if deadline_finalization_requested {
@@ -1844,6 +1880,7 @@ impl Runtime {
                             turn_id: turn_id.clone(),
                             error,
                             error_kind: None,
+                            usage: None,
                             timestamp: OffsetDateTime::now_utc(),
                         }))
                         .await;
@@ -1910,6 +1947,7 @@ impl Runtime {
                             turn_id: turn_id.clone(),
                             error: failure.message,
                             error_kind: None,
+                            usage: None,
                             timestamp: OffsetDateTime::now_utc(),
                         }))
                         .await;
@@ -1922,8 +1960,7 @@ impl Runtime {
                         return Ok(TurnRunOutcome::Stopped);
                     }
                     InferenceEvent::Usage(usage) => {
-                        turn_usage_tokens =
-                            turn_usage_tokens.saturating_add(usage.total_tokens as i64);
+                        turn_usage.add_assign(&usage);
                     }
                     InferenceEvent::Completed(_)
                     | InferenceEvent::Compaction(_)
@@ -2161,6 +2198,7 @@ impl Runtime {
                 turn_id: turn_id.clone(),
                 error: message,
                 error_kind: None,
+                usage: None,
                 timestamp: OffsetDateTime::now_utc(),
             }))
             .await;
@@ -2225,6 +2263,10 @@ impl Runtime {
             .await?;
         }
 
+        let turn_usage_tokens = turn_usage.total_tokens as i64;
+        let completed_usage = (!turn_usage.is_empty()).then_some(turn_usage.clone());
+        self.record_thread_usage_metadata(&req.thread_id, &turn_usage)
+            .await?;
         self.goals
             .account_turn_usage(
                 &req.thread_id,
@@ -2235,6 +2277,7 @@ impl Runtime {
         self.emit(RoderEvent::TurnCompleted(TurnCompleted {
             thread_id: req.thread_id.clone(),
             turn_id: turn_id.clone(),
+            usage: completed_usage,
             timestamp: OffsetDateTime::now_utc(),
         }))
         .await;
@@ -2303,6 +2346,7 @@ impl Runtime {
             turn_id: turn_id.clone(),
             error: message,
             error_kind: None,
+            usage: None,
             timestamp: OffsetDateTime::now_utc(),
         }))
         .await;
@@ -2348,6 +2392,7 @@ impl Runtime {
             turn_id: turn_id.clone(),
             error: message,
             error_kind: Some("deadline_timeout".to_string()),
+            usage: None,
             timestamp: OffsetDateTime::now_utc(),
         }))
         .await;
@@ -2429,6 +2474,7 @@ impl Runtime {
             turn_id: turn_id.clone(),
             error: message,
             error_kind: Some("reliability_limit".to_string()),
+            usage: None,
             timestamp: OffsetDateTime::now_utc(),
         }))
         .await;
@@ -2783,6 +2829,19 @@ fn validate_reasoning_effort(model: &str, effort: &str) -> anyhow::Result<()> {
     }
 }
 
+fn validate_runtime_config_reasoning(cfg: &RuntimeConfig) -> anyhow::Result<()> {
+    let Some(reasoning) = cfg.reasoning.as_deref() else {
+        return Ok(());
+    };
+    let Some(entry) = lookup_model(&cfg.default_model) else {
+        return Ok(());
+    };
+    if entry.provider != PROVIDER_GEMINI {
+        return Ok(());
+    }
+    validate_reasoning_effort(&cfg.default_model, reasoning)
+}
+
 fn model_supports_reasoning(model: &str, effort: &str) -> bool {
     lookup_model(model)
         .map(|entry| {
@@ -2920,6 +2979,7 @@ mod tests {
     use futures::stream;
     use roder_api::catalog::{
         REASONING_HIGH, REASONING_LOW, REASONING_MEDIUM, REASONING_MINIMAL, REASONING_NONE,
+        REASONING_XHIGH,
     };
     use roder_api::extension::ExtensionRegistryBuilder;
     use roder_api::inference::{
@@ -3023,6 +3083,29 @@ mod tests {
         assert_eq!(
             effective_reasoning_for_model(&cfg, "gpt-5.5"),
             REASONING_MEDIUM
+        );
+    }
+
+    #[test]
+    fn unsupported_configured_gemini_reasoning_is_rejected() {
+        let mut builder = ExtensionRegistryBuilder::new();
+        builder.inference_engine(std::sync::Arc::new(FakeInferenceEngine));
+
+        let err = match Runtime::new(
+            builder.build().unwrap(),
+            RuntimeConfig {
+                default_model: "gemini-3.5-flash".to_string(),
+                reasoning: Some(REASONING_XHIGH.to_string()),
+                ..RuntimeConfig::default()
+            },
+        ) {
+            Ok(_) => panic!("expected unsupported Gemini reasoning to be rejected"),
+            Err(err) => err,
+        };
+
+        assert!(
+            err.to_string()
+                .contains("model gemini-3.5-flash does not support reasoning effort xhigh")
         );
     }
 

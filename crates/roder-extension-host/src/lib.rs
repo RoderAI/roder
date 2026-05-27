@@ -4,8 +4,9 @@ use std::sync::Arc;
 use futures::stream;
 use roder_api::capabilities::CapabilityRequest;
 use roder_api::catalog::{
-    PROVIDER_ANTHROPIC, PROVIDER_CODEX, PROVIDER_GEMINI, PROVIDER_MOCK, PROVIDER_OPENAI,
-    PROVIDER_OPENCODE, PROVIDER_OPENCODE_GO, PROVIDER_POOLSIDE, PROVIDER_SUPERGROK, PROVIDER_XAI,
+    PROVIDER_ANTHROPIC, PROVIDER_CODEX, PROVIDER_CURSOR, PROVIDER_GEMINI, PROVIDER_MOCK,
+    PROVIDER_OPENAI, PROVIDER_OPENCODE, PROVIDER_OPENCODE_GO, PROVIDER_POOLSIDE,
+    PROVIDER_SUPERGROK, PROVIDER_XAI, PROVIDER_XIAOMI_MIMO, PROVIDER_XIAOMI_MIMO_TOKEN_PLAN,
     models_for_codex, models_for_provider,
 };
 use roder_api::extension::{
@@ -17,11 +18,14 @@ use roder_api::policy_mode::PolicyMode;
 use roder_api::remote_runner::RunnerDestination;
 use roder_api::tui_status::{PaletteSourceDescriptor, built_in_status_segments};
 use roder_ext_anthropic::AnthropicExtension;
+use roder_ext_cursor::{CursorConfig, CursorExtension};
 use roder_ext_gemini::GeminiExtension;
+use roder_ext_google_speech::{GoogleSpeechConfig, GoogleSpeechExtension};
 use roder_ext_jsonl_thread_store::JsonlThreadStoreExtension;
 use roder_ext_memory::MemoryExtension;
 use roder_ext_openai_embeddings::OpenAiEmbeddingsExtension;
 use roder_ext_openai_responses::{OpenAiResponsesEngine, OpenAiResponsesExtension};
+use roder_ext_openai_speech::OpenAiSpeechExtension;
 use roder_ext_opencode::{OpenCodeConfig, OpenCodeExtension};
 use roder_ext_poolside::{PoolsideConfig, PoolsideExtension};
 use roder_ext_runner_blaxel::BlaxelRunnerExtension;
@@ -34,6 +38,7 @@ use roder_ext_runner_runloop::RunloopRunnerExtension;
 use roder_ext_runner_unix_local::UnixLocalRunnerExtension;
 use roder_ext_runner_vercel::VercelRunnerExtension;
 use roder_ext_xai::XaiExtension;
+use roder_ext_xiaomi_mimo::{XiaomiMimoConfig, XiaomiMimoExtension};
 use semver::Version;
 
 mod context;
@@ -49,6 +54,11 @@ pub use web_search::{DefaultWebSearchConfig, DefaultWebSearchProviderConfig};
 #[derive(Debug, Clone)]
 pub struct DefaultRegistryConfig {
     pub openai_api_key: Option<String>,
+    pub openai_speech_api_key: Option<String>,
+    pub google_speech_access_token: Option<String>,
+    pub google_speech_api_key: Option<String>,
+    pub google_speech_project_id: Option<String>,
+    pub google_speech_location: Option<String>,
     pub anthropic_api_key: Option<String>,
     pub gemini_api_key: Option<String>,
     pub xai_api_key: Option<String>,
@@ -61,6 +71,14 @@ pub struct DefaultRegistryConfig {
     pub opencode_go_project_id: Option<String>,
     pub poolside_api_key: Option<String>,
     pub poolside_base_url: Option<String>,
+    pub cursor_api_key: Option<String>,
+    pub cursor_access_token: Option<String>,
+    pub cursor_agent_service_url: Option<String>,
+    pub cursor_backend_base_url: Option<String>,
+    pub xiaomi_mimo_api_key: Option<String>,
+    pub xiaomi_mimo_base_url: Option<String>,
+    pub xiaomi_mimo_token_plan_api_key: Option<String>,
+    pub xiaomi_mimo_token_plan_base_url: Option<String>,
     pub custom_inference_providers: Vec<CustomInferenceProviderConfig>,
     pub thread_dir: Option<PathBuf>,
     pub workspace: Option<PathBuf>,
@@ -77,6 +95,11 @@ impl Default for DefaultRegistryConfig {
     fn default() -> Self {
         Self {
             openai_api_key: None,
+            openai_speech_api_key: None,
+            google_speech_access_token: None,
+            google_speech_api_key: None,
+            google_speech_project_id: None,
+            google_speech_location: None,
             anthropic_api_key: None,
             gemini_api_key: None,
             xai_api_key: None,
@@ -89,6 +112,14 @@ impl Default for DefaultRegistryConfig {
             opencode_go_project_id: None,
             poolside_api_key: None,
             poolside_base_url: None,
+            cursor_api_key: None,
+            cursor_access_token: None,
+            cursor_agent_service_url: None,
+            cursor_backend_base_url: None,
+            xiaomi_mimo_api_key: None,
+            xiaomi_mimo_base_url: None,
+            xiaomi_mimo_token_plan_api_key: None,
+            xiaomi_mimo_token_plan_base_url: None,
             custom_inference_providers: Vec::new(),
             thread_dir: None,
             workspace: None,
@@ -133,6 +164,22 @@ pub fn build_default_registry(config: DefaultRegistryConfig) -> anyhow::Result<E
     builder.install(FakeProviderExtension)?;
     builder.install(CodexOAuthProviderExtension)?;
 
+    builder.install(OpenAiSpeechExtension::new(
+        config
+            .openai_speech_api_key
+            .clone()
+            .or_else(|| config.openai_api_key.clone()),
+    ))?;
+    builder.install(GoogleSpeechExtension::new(GoogleSpeechConfig {
+        access_token: config.google_speech_access_token,
+        api_key: config.google_speech_api_key,
+        project_id: config.google_speech_project_id,
+        location: config
+            .google_speech_location
+            .unwrap_or_else(|| "global".to_string()),
+        ..GoogleSpeechConfig::default()
+    }))?;
+
     if let Some(openai_key) = config.openai_api_key {
         builder.install(OpenAiResponsesExtension::new(openai_key))?;
     }
@@ -158,6 +205,19 @@ pub fn build_default_registry(config: DefaultRegistryConfig) -> anyhow::Result<E
     builder.install(PoolsideExtension::new(PoolsideConfig {
         api_key: config.poolside_api_key,
         base_url: config.poolside_base_url,
+    }))?;
+    builder.install(CursorExtension::new(CursorConfig {
+        api_key: config.cursor_api_key,
+        access_token: config.cursor_access_token,
+        agent_service_url: config.cursor_agent_service_url,
+        backend_base_url: config.cursor_backend_base_url,
+        workspace: config.workspace.clone(),
+    }))?;
+    builder.install(XiaomiMimoExtension::new(XiaomiMimoConfig {
+        api_key: config.xiaomi_mimo_api_key,
+        base_url: config.xiaomi_mimo_base_url,
+        token_plan_api_key: config.xiaomi_mimo_token_plan_api_key,
+        token_plan_base_url: config.xiaomi_mimo_token_plan_base_url,
     }))?;
     for provider in config.custom_inference_providers {
         if known_provider_id(&provider.id) {
@@ -250,6 +310,9 @@ fn known_provider_id(id: &str) -> bool {
             | PROVIDER_OPENCODE
             | PROVIDER_OPENCODE_GO
             | PROVIDER_POOLSIDE
+            | PROVIDER_CURSOR
+            | PROVIDER_XIAOMI_MIMO
+            | PROVIDER_XIAOMI_MIMO_TOKEN_PLAN
     )
 }
 
@@ -555,8 +618,9 @@ mod tests {
 
     use super::*;
     use roder_api::catalog::{
-        PROVIDER_ANTHROPIC, PROVIDER_GEMINI, PROVIDER_OPENAI, PROVIDER_OPENCODE,
+        PROVIDER_ANTHROPIC, PROVIDER_CURSOR, PROVIDER_GEMINI, PROVIDER_OPENAI, PROVIDER_OPENCODE,
         PROVIDER_OPENCODE_GO, PROVIDER_POOLSIDE, PROVIDER_SUPERGROK, PROVIDER_XAI,
+        PROVIDER_XIAOMI_MIMO, PROVIDER_XIAOMI_MIMO_TOKEN_PLAN,
     };
     use roder_api::interactive::{
         HandlerOutcome, HoverCursor, InteractiveEvent, InteractiveRegion, InteractiveRegionHandler,
@@ -621,6 +685,14 @@ mod tests {
     }
 
     #[test]
+    fn default_registry_installs_speech_transcribers_without_keys() {
+        let registry = build_default_registry(DefaultRegistryConfig::default()).unwrap();
+
+        assert!(registry.speech_transcriber("openai-speech").is_some());
+        assert!(registry.speech_transcriber("google-speech").is_some());
+    }
+
+    #[test]
     fn default_roder_home_dir_uses_home_roder() {
         let rendered = roder_home_dir()
             .unwrap()
@@ -634,6 +706,11 @@ mod tests {
     fn default_registry_with_keys_has_gode_provider_ids() {
         let registry = build_default_registry(DefaultRegistryConfig {
             openai_api_key: Some("openai".to_string()),
+            openai_speech_api_key: None,
+            google_speech_access_token: None,
+            google_speech_api_key: None,
+            google_speech_project_id: None,
+            google_speech_location: None,
             anthropic_api_key: Some("anthropic".to_string()),
             gemini_api_key: Some("gemini".to_string()),
             xai_api_key: Some("xai".to_string()),
@@ -646,6 +723,16 @@ mod tests {
             opencode_go_project_id: None,
             poolside_api_key: Some("poolside".to_string()),
             poolside_base_url: None,
+            cursor_api_key: Some("cursor".to_string()),
+            cursor_access_token: None,
+            cursor_agent_service_url: None,
+            cursor_backend_base_url: None,
+            xiaomi_mimo_api_key: Some("mimo".to_string()),
+            xiaomi_mimo_base_url: None,
+            xiaomi_mimo_token_plan_api_key: Some("tp-mimo".to_string()),
+            xiaomi_mimo_token_plan_base_url: Some(
+                "https://token-plan-cn.xiaomimimo.com/v1".to_string(),
+            ),
             custom_inference_providers: Vec::new(),
             thread_dir: None,
             workspace: None,
@@ -669,6 +756,9 @@ mod tests {
             PROVIDER_OPENCODE,
             PROVIDER_OPENCODE_GO,
             PROVIDER_POOLSIDE,
+            PROVIDER_CURSOR,
+            PROVIDER_XIAOMI_MIMO,
+            PROVIDER_XIAOMI_MIMO_TOKEN_PLAN,
         ] {
             assert!(
                 registry.inference_engine(provider).is_some(),
@@ -696,6 +786,24 @@ mod tests {
         let metadata = provider.metadata();
         assert_eq!(metadata.name, "Local OpenAI");
         assert_eq!(metadata.auth_configured, Some(false));
+    }
+
+    #[test]
+    fn default_registry_installs_xiaomi_speech_synthesis_surfaces_without_keys() {
+        let registry = build_default_registry(DefaultRegistryConfig::default()).unwrap();
+
+        assert!(registry.inference_engine(PROVIDER_XIAOMI_MIMO).is_some());
+        assert!(
+            registry
+                .inference_engine(PROVIDER_XIAOMI_MIMO_TOKEN_PLAN)
+                .is_some()
+        );
+        assert!(registry.speech_synthesizer(PROVIDER_XIAOMI_MIMO).is_some());
+        assert!(
+            registry
+                .speech_synthesizer(PROVIDER_XIAOMI_MIMO_TOKEN_PLAN)
+                .is_some()
+        );
     }
 
     #[test]

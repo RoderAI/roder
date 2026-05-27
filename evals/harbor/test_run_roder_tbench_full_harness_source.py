@@ -39,6 +39,22 @@ class RunRoderTbenchFullHarnessSourceTests(unittest.TestCase):
             script,
         )
 
+    def test_full_run_threads_campaign_summary_into_pre_eval_when_set(self) -> None:
+        script = full_gate_helpers.SCRIPT.read_text()
+
+        self.assertIn(
+            'pre_eval_args+=(--campaign-summary "$pre_eval_campaign_summary")',
+            script,
+        )
+        self.assertIn(
+            'summary_validation_args+=(--require-campaign-summary)',
+            script,
+        )
+        self.assertIn(
+            'summary_validation_args+=(--campaign-summary "$pre_eval_campaign_summary")',
+            script,
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

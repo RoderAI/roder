@@ -7,6 +7,7 @@ import hashlib
 from pathlib import Path
 from typing import Any
 
+from tbench_deadline_policy import deadline_policy_summary
 from validate_harbor_readiness import validate_config as validate_readiness_config
 
 
@@ -27,6 +28,7 @@ def harbor_config_summary(paths: tuple[Path, ...] | list[Path] | None = None) ->
         "status": "failed" if issues else "passed",
         "configs": len(entries),
         "issues": issues,
+        "deadlinePolicy": deadline_policy_summary(),
         "entries": entries,
     }
 

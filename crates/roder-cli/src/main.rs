@@ -13,13 +13,19 @@ mod resume_picker;
 mod roadmap_cli;
 mod sdk_schema;
 mod skills;
+mod speech;
 #[cfg(test)]
 mod tui_config;
 
 use automations::run_automations_cli;
 use evals::run_eval_cli;
 use marketplace::{run_marketplace_cli, run_plugin_cli, run_setup_cli};
-use roder_api::catalog::{DEFAULT_MODEL_ID, PROVIDER_MOCK, normalize_provider_id};
+use roder_api::catalog::{
+    DEFAULT_MODEL_ID, PROVIDER_ANTHROPIC, PROVIDER_CODEX, PROVIDER_CURSOR, PROVIDER_GEMINI,
+    PROVIDER_MOCK, PROVIDER_OPENAI, PROVIDER_OPENCODE, PROVIDER_OPENCODE_GO, PROVIDER_POOLSIDE,
+    PROVIDER_SUPERGROK, PROVIDER_XAI, PROVIDER_XIAOMI_MIMO, PROVIDER_XIAOMI_MIMO_TOKEN_PLAN,
+    normalize_provider_id,
+};
 use roder_api::command_shell::{default_command_shell, normalize_command_shell};
 use roder_api::inference::{HostedWebSearchConfig, RuntimeProfile};
 use roder_api::notifications::NotificationKind;
@@ -60,6 +66,7 @@ use roder_protocol::{
 use roder_tui::{TuiApp, TuiRunOptions, TuiStartup};
 use roder_web_search::WebSearchProviderKind;
 use skills::run_skills_cli;
+use speech::run_speech_cli;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::sync::mpsc;
 
@@ -124,6 +131,9 @@ async fn main() -> anyhow::Result<()> {
     }
     if matches!(args.first().map(String::as_str), Some("memory")) {
         return run_memory_cli(&args[1..]).await;
+    }
+    if matches!(args.first().map(String::as_str), Some("speech")) {
+        return run_speech_cli(&args[1..]).await;
     }
     if matches!(args.first().map(String::as_str), Some("team")) {
         return run_team_cli(&args[1..]).await;
@@ -1020,7 +1030,28 @@ pub(crate) async fn build_runtime_from_config(
     let reliability = resolve_reliability_config(cfg.reliability.as_ref());
     let custom_inference_provider_configs = custom_inference_providers(&cfg);
     let skills_config = cfg.skills.clone();
-    let (default_provider, configured_model) = resolve_provider_model(cfg.provider, cfg.model);
+    let (mut default_provider, mut configured_model) =
+        resolve_provider_model(cfg.provider, cfg.model);
+    if let Some(repair) = repair_unregistered_default_provider(
+        &default_provider,
+        &keys,
+        &custom_inference_provider_configs,
+    ) {
+        let original_provider = std::mem::replace(&mut default_provider, repair.provider);
+        configured_model = Some(repair.model);
+        eprintln!(
+            "warning: default provider {original_provider:?} is not registered; using {:?}",
+            default_provider
+        );
+        if repair.persist
+            && let Err(err) = roder_config::save_default_provider_model(
+                &default_provider,
+                configured_model.as_deref().unwrap_or(DEFAULT_MODEL_ID),
+            )
+        {
+            eprintln!("warning: failed to repair default provider in config.toml: {err}");
+        }
+    }
     let default_model = configured_model.clone().unwrap_or_else(|| {
         if default_provider == PROVIDER_MOCK {
             "mock".to_string()
@@ -1061,6 +1092,11 @@ pub(crate) async fn build_runtime_from_config(
     let workspace = std::env::current_dir().ok();
     let registry = build_default_registry(DefaultRegistryConfig {
         openai_api_key: keys.openai,
+        openai_speech_api_key: keys.openai_speech,
+        google_speech_access_token: keys.google_speech_access_token,
+        google_speech_api_key: keys.google_speech_api_key,
+        google_speech_project_id: keys.google_speech_project_id,
+        google_speech_location: keys.google_speech_location,
         anthropic_api_key: keys.anthropic,
         gemini_api_key: keys.gemini,
         xai_api_key: keys.xai,
@@ -1073,6 +1109,14 @@ pub(crate) async fn build_runtime_from_config(
         opencode_go_project_id: keys.opencode_go_project_id,
         poolside_api_key: keys.poolside,
         poolside_base_url: keys.poolside_base_url,
+        cursor_api_key: keys.cursor,
+        cursor_access_token: keys.cursor_access_token,
+        cursor_agent_service_url: keys.cursor_agent_service_url,
+        cursor_backend_base_url: keys.cursor_backend_base_url,
+        xiaomi_mimo_api_key: keys.xiaomi_mimo,
+        xiaomi_mimo_base_url: keys.xiaomi_mimo_base_url,
+        xiaomi_mimo_token_plan_api_key: keys.xiaomi_mimo_token_plan,
+        xiaomi_mimo_token_plan_base_url: keys.xiaomi_mimo_token_plan_base_url,
         custom_inference_providers: custom_inference_provider_configs,
         thread_dir: None,
         workspace: workspace.clone(),
@@ -1929,6 +1973,11 @@ fn home_dir() -> Option<PathBuf> {
 
 struct ProviderKeys {
     openai: Option<String>,
+    openai_speech: Option<String>,
+    google_speech_access_token: Option<String>,
+    google_speech_api_key: Option<String>,
+    google_speech_project_id: Option<String>,
+    google_speech_location: Option<String>,
     anthropic: Option<String>,
     gemini: Option<String>,
     xai: Option<String>,
@@ -1941,6 +1990,14 @@ struct ProviderKeys {
     opencode_go_project_id: Option<String>,
     poolside: Option<String>,
     poolside_base_url: Option<String>,
+    cursor: Option<String>,
+    cursor_access_token: Option<String>,
+    cursor_agent_service_url: Option<String>,
+    cursor_backend_base_url: Option<String>,
+    xiaomi_mimo: Option<String>,
+    xiaomi_mimo_base_url: Option<String>,
+    xiaomi_mimo_token_plan: Option<String>,
+    xiaomi_mimo_token_plan_base_url: Option<String>,
 }
 
 fn provider_keys(cfg: &roder_config::Config) -> ProviderKeys {
@@ -1953,6 +2010,52 @@ fn provider_keys(cfg: &roder_config::Config) -> ProviderKeys {
                     .get("openai_responses")
                     .and_then(|p| p.api_key.clone())
             }),
+        openai_speech: std::env::var("RODER_OPENAI_SPEECH_API_KEY")
+            .ok()
+            .or_else(|| std::env::var("OPENAI_API_KEY").ok())
+            .or_else(|| {
+                cfg.providers
+                    .get("openai-speech")
+                    .and_then(|p| p.api_key.clone())
+            })
+            .or_else(|| {
+                cfg.providers
+                    .get("openai-speech")
+                    .and_then(|p| p.api_key_env.as_deref())
+                    .and_then(env_nonempty)
+            }),
+        google_speech_access_token: std::env::var("RODER_GOOGLE_SPEECH_ACCESS_TOKEN").ok(),
+        google_speech_api_key: std::env::var("RODER_GOOGLE_SPEECH_API_KEY")
+            .ok()
+            .or_else(|| std::env::var("GEMINI_API_TOKEN").ok())
+            .or_else(|| std::env::var("GEMINI_API_KEY").ok())
+            .or_else(|| std::env::var("GOOGLE_API_KEY").ok())
+            .or_else(|| {
+                cfg.providers
+                    .get("google-speech")
+                    .and_then(|p| p.api_key.clone())
+            })
+            .or_else(|| {
+                cfg.providers
+                    .get("google-speech")
+                    .and_then(|p| p.api_key_env.as_deref())
+                    .and_then(env_nonempty)
+            }),
+        google_speech_project_id: std::env::var("RODER_GOOGLE_SPEECH_PROJECT")
+            .ok()
+            .or_else(|| std::env::var("GOOGLE_CLOUD_PROJECT").ok())
+            .or_else(|| {
+                cfg.providers
+                    .get("google-speech")
+                    .and_then(|p| p.project_id.clone())
+            })
+            .or_else(|| {
+                cfg.providers
+                    .get("google-speech")
+                    .and_then(|p| p.project_id_env.as_deref())
+                    .and_then(env_nonempty)
+            }),
+        google_speech_location: std::env::var("RODER_GOOGLE_SPEECH_LOCATION").ok(),
         anthropic: std::env::var("ANTHROPIC_API_KEY").ok().or_else(|| {
             cfg.providers
                 .get("anthropic")
@@ -2055,6 +2158,72 @@ fn provider_keys(cfg: &roder_config::Config) -> ProviderKeys {
             .and_then(|p| p.base_url.clone())
             .or_else(|| std::env::var("RODER_POOLSIDE_BASE_URL").ok())
             .or_else(|| std::env::var("POOLSIDE_BASE_URL").ok()),
+        cursor: std::env::var("CURSOR_API_KEY")
+            .ok()
+            .or_else(|| std::env::var("RODER_CURSOR_API_KEY").ok())
+            .or_else(|| cfg.providers.get("cursor").and_then(|p| p.api_key.clone()))
+            .or_else(|| {
+                cfg.providers
+                    .get("cursor")
+                    .and_then(|p| p.api_key_env.as_deref())
+                    .and_then(env_nonempty)
+            }),
+        cursor_access_token: std::env::var("CURSOR_ACCESS_TOKEN")
+            .ok()
+            .or_else(|| std::env::var("CURSOR_AUTH_TOKEN").ok()),
+        cursor_agent_service_url: cfg
+            .providers
+            .get("cursor")
+            .and_then(|p| p.base_url.clone())
+            .or_else(|| std::env::var("RODER_CURSOR_AGENT_SERVICE_URL").ok())
+            .or_else(|| std::env::var("CURSOR_AGENT_SERVICE_URL").ok()),
+        cursor_backend_base_url: std::env::var("RODER_CURSOR_BACKEND_BASE_URL")
+            .ok()
+            .or_else(|| std::env::var("CURSOR_BACKEND_BASE_URL").ok()),
+        xiaomi_mimo: std::env::var("MIMO_API_KEY")
+            .ok()
+            .or_else(|| std::env::var("XIAOMI_MIMO_API_KEY").ok())
+            .or_else(|| std::env::var("RODER_XIAOMI_MIMO_API_KEY").ok())
+            .or_else(|| {
+                cfg.providers
+                    .get(PROVIDER_XIAOMI_MIMO)
+                    .and_then(|p| p.api_key.clone())
+            })
+            .or_else(|| {
+                cfg.providers
+                    .get(PROVIDER_XIAOMI_MIMO)
+                    .and_then(|p| p.api_key_env.as_deref())
+                    .and_then(env_nonempty)
+            }),
+        xiaomi_mimo_base_url: cfg
+            .providers
+            .get(PROVIDER_XIAOMI_MIMO)
+            .and_then(|p| p.base_url.clone())
+            .or_else(|| std::env::var("MIMO_BASE_URL").ok())
+            .or_else(|| std::env::var("XIAOMI_MIMO_BASE_URL").ok())
+            .or_else(|| std::env::var("RODER_XIAOMI_MIMO_BASE_URL").ok()),
+        xiaomi_mimo_token_plan: std::env::var("MIMO_TOKEN_PLAN_API_KEY")
+            .ok()
+            .or_else(|| std::env::var("XIAOMI_MIMO_TOKEN_PLAN_API_KEY").ok())
+            .or_else(|| std::env::var("RODER_XIAOMI_MIMO_TOKEN_PLAN_API_KEY").ok())
+            .or_else(|| {
+                cfg.providers
+                    .get(PROVIDER_XIAOMI_MIMO_TOKEN_PLAN)
+                    .and_then(|p| p.api_key.clone())
+            })
+            .or_else(|| {
+                cfg.providers
+                    .get(PROVIDER_XIAOMI_MIMO_TOKEN_PLAN)
+                    .and_then(|p| p.api_key_env.as_deref())
+                    .and_then(env_nonempty)
+            }),
+        xiaomi_mimo_token_plan_base_url: cfg
+            .providers
+            .get(PROVIDER_XIAOMI_MIMO_TOKEN_PLAN)
+            .and_then(|p| p.base_url.clone())
+            .or_else(|| std::env::var("MIMO_TOKEN_PLAN_BASE_URL").ok())
+            .or_else(|| std::env::var("XIAOMI_MIMO_TOKEN_PLAN_BASE_URL").ok())
+            .or_else(|| std::env::var("RODER_XIAOMI_MIMO_TOKEN_PLAN_BASE_URL").ok()),
     }
 }
 
@@ -2084,6 +2253,8 @@ fn is_builtin_provider_id(id: &str) -> bool {
         id,
         "mock"
             | "openai"
+            | "openai-speech"
+            | "google-speech"
             | "codex"
             | "anthropic"
             | "gemini"
@@ -2092,6 +2263,9 @@ fn is_builtin_provider_id(id: &str) -> bool {
             | "opencode"
             | "opencode-go"
             | "poolside"
+            | "cursor"
+            | "xiaomi-mimo"
+            | "xiaomi-mimo-token-plan"
     )
 }
 
@@ -2363,9 +2537,96 @@ fn resolve_provider_model(
     (normalize_provider_id(&provider), model)
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ProviderRepair {
+    provider: String,
+    model: String,
+    persist: bool,
+}
+
+fn repair_unregistered_default_provider(
+    provider: &str,
+    keys: &ProviderKeys,
+    custom_providers: &[CustomInferenceProviderConfig],
+) -> Option<ProviderRepair> {
+    if provider_can_be_registered(provider, keys, custom_providers) {
+        return None;
+    }
+    Some(ProviderRepair {
+        provider: PROVIDER_CODEX.to_string(),
+        model: DEFAULT_MODEL_ID.to_string(),
+        persist: should_persist_provider_repair(provider, custom_providers),
+    })
+}
+
+fn should_persist_provider_repair(
+    provider: &str,
+    custom_providers: &[CustomInferenceProviderConfig],
+) -> bool {
+    if env_nonempty("RODER_PROVIDER").is_some() {
+        return false;
+    }
+    !is_builtin_provider_id(provider)
+        && !custom_providers.iter().any(|custom| custom.id == provider)
+}
+
+fn provider_can_be_registered(
+    provider: &str,
+    keys: &ProviderKeys,
+    custom_providers: &[CustomInferenceProviderConfig],
+) -> bool {
+    match provider {
+        PROVIDER_MOCK
+        | PROVIDER_CODEX
+        | PROVIDER_SUPERGROK
+        | PROVIDER_OPENCODE
+        | PROVIDER_OPENCODE_GO
+        | PROVIDER_POOLSIDE
+        | PROVIDER_XIAOMI_MIMO
+        | PROVIDER_XIAOMI_MIMO_TOKEN_PLAN => true,
+        PROVIDER_CURSOR => keys.cursor.is_some() || keys.cursor_access_token.is_some(),
+        PROVIDER_OPENAI => keys.openai.is_some(),
+        PROVIDER_ANTHROPIC => keys.anthropic.is_some(),
+        PROVIDER_GEMINI => keys.gemini.is_some(),
+        PROVIDER_XAI => keys.xai.is_some(),
+        provider => custom_providers.iter().any(|custom| custom.id == provider),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn provider_keys_for_test() -> ProviderKeys {
+        ProviderKeys {
+            openai: None,
+            openai_speech: None,
+            google_speech_access_token: None,
+            google_speech_api_key: None,
+            google_speech_project_id: None,
+            google_speech_location: None,
+            anthropic: None,
+            gemini: None,
+            xai: None,
+            xai_base_url: None,
+            opencode: None,
+            opencode_base_url: None,
+            opencode_project_id: None,
+            opencode_go: None,
+            opencode_go_base_url: None,
+            opencode_go_project_id: None,
+            poolside: None,
+            poolside_base_url: None,
+            cursor: None,
+            cursor_access_token: None,
+            cursor_agent_service_url: None,
+            cursor_backend_base_url: None,
+            xiaomi_mimo: None,
+            xiaomi_mimo_base_url: None,
+            xiaomi_mimo_token_plan: None,
+            xiaomi_mimo_token_plan_base_url: None,
+        }
+    }
 
     #[test]
     fn provider_slash_model_sets_default_model() {
@@ -2411,6 +2672,56 @@ mod tests {
         );
         assert_eq!(provider, "codex");
         assert_eq!(model.as_deref(), Some("gpt-5.5"));
+    }
+
+    #[test]
+    fn xiaomi_provider_slash_model_uses_exact_provider_ids() {
+        let (provider, model) =
+            resolve_provider_model(Some("xiaomi-mimo/mimo-v2.5-pro".to_string()), None);
+        assert_eq!(provider, PROVIDER_XIAOMI_MIMO);
+        assert_eq!(model.as_deref(), Some("mimo-v2.5-pro"));
+
+        let (provider, model) = resolve_provider_model(
+            Some("xiaomi-mimo-token-plan/mimo-v2.5-tts".to_string()),
+            None,
+        );
+        assert_eq!(provider, PROVIDER_XIAOMI_MIMO_TOKEN_PLAN);
+        assert_eq!(model.as_deref(), Some("mimo-v2.5-tts"));
+    }
+
+    #[test]
+    fn startup_repairs_unknown_default_provider_to_codex() {
+        let repair = repair_unregistered_default_provider("cursor", &provider_keys_for_test(), &[])
+            .expect("unknown provider should be repaired");
+
+        assert_eq!(repair.provider, PROVIDER_CODEX);
+        assert_eq!(repair.model, DEFAULT_MODEL_ID);
+    }
+
+    #[test]
+    fn startup_does_not_persist_builtin_provider_repair_for_missing_key() {
+        let repair =
+            repair_unregistered_default_provider(PROVIDER_OPENAI, &provider_keys_for_test(), &[])
+                .expect("missing API key should fall back for this run");
+
+        assert_eq!(repair.provider, PROVIDER_CODEX);
+        assert!(!repair.persist);
+    }
+
+    #[test]
+    fn startup_accepts_custom_default_provider() {
+        let repair = repair_unregistered_default_provider(
+            "local-openai",
+            &provider_keys_for_test(),
+            &[CustomInferenceProviderConfig {
+                id: "local-openai".to_string(),
+                name: None,
+                api_key: None,
+                base_url: "http://localhost:11434/v1".to_string(),
+            }],
+        );
+
+        assert_eq!(repair, None);
     }
 
     #[test]

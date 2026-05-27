@@ -7,10 +7,59 @@ use time::OffsetDateTime;
 use crate::events::{EventEnvelope, ThreadId, TurnId};
 pub use crate::extension::{CheckpointStoreId, ThreadStoreId};
 use crate::extension_state::ExtensionStateRecord;
+use crate::inference::{TokenUsage, cache_hit_rate};
 use crate::remote_runner::{RunnerDestination, RunnerSessionState};
 use crate::transcript::TranscriptItem;
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+pub struct ThreadUsageMetadata {
+    #[serde(default)]
+    pub prompt_tokens: u64,
+    #[serde(default)]
+    pub completion_tokens: u64,
+    #[serde(default)]
+    pub total_tokens: u64,
+    #[serde(default)]
+    pub cached_prompt_tokens: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cache_hit_rate: Option<f64>,
+}
+
+impl ThreadUsageMetadata {
+    pub fn add_token_usage(&mut self, usage: &TokenUsage) {
+        self.prompt_tokens = self
+            .prompt_tokens
+            .saturating_add(u64::from(usage.prompt_tokens));
+        self.completion_tokens = self
+            .completion_tokens
+            .saturating_add(u64::from(usage.completion_tokens));
+        self.total_tokens = self
+            .total_tokens
+            .saturating_add(u64::from(usage.total_tokens));
+        self.cached_prompt_tokens = self
+            .cached_prompt_tokens
+            .saturating_add(u64::from(usage.cached_prompt_tokens));
+        self.cache_hit_rate = if self.prompt_tokens == 0 {
+            None
+        } else if self.prompt_tokens > u64::from(u32::MAX) {
+            Some(
+                (self.cached_prompt_tokens.min(self.prompt_tokens) as f64)
+                    / (self.prompt_tokens as f64),
+            )
+        } else {
+            cache_hit_rate(self.prompt_tokens as u32, self.cached_prompt_tokens as u32)
+        };
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.prompt_tokens == 0
+            && self.completion_tokens == 0
+            && self.total_tokens == 0
+            && self.cached_prompt_tokens == 0
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct ThreadMetadata {
     pub thread_id: ThreadId,
     pub title: Option<String>,
@@ -27,6 +76,8 @@ pub struct ThreadMetadata {
     #[serde(with = "time::serde::rfc3339")]
     pub updated_at: OffsetDateTime,
     pub message_count: u32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub usage: Option<ThreadUsageMetadata>,
 }
 
 pub fn validate_thread_workspace(workspace: &str) -> anyhow::Result<String> {
@@ -56,6 +107,8 @@ pub struct TurnRecord {
     pub created_at: OffsetDateTime,
     #[serde(with = "time::serde::rfc3339::option")]
     pub completed_at: Option<OffsetDateTime>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub usage: Option<TokenUsage>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -145,6 +198,7 @@ mod tests {
             created_at: OffsetDateTime::UNIX_EPOCH,
             updated_at: OffsetDateTime::UNIX_EPOCH,
             message_count: 0,
+            usage: None,
         })
         .unwrap();
 
@@ -188,5 +242,17 @@ mod tests {
 
             assert!(result.is_err(), "workspace {workspace:?} should fail");
         }
+    }
+
+    #[test]
+    fn thread_usage_metadata_accumulates_cache_hit_rate() {
+        let mut usage = ThreadUsageMetadata::default();
+
+        usage.add_token_usage(&TokenUsage::new(100, 10, 110).with_cached_prompt_tokens(92));
+        usage.add_token_usage(&TokenUsage::new(50, 5, 55).with_cached_prompt_tokens(43));
+
+        assert_eq!(usage.prompt_tokens, 150);
+        assert_eq!(usage.cached_prompt_tokens, 135);
+        assert!((usage.cache_hit_rate.unwrap() - 0.9).abs() < f64::EPSILON);
     }
 }

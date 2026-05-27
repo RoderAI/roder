@@ -361,12 +361,80 @@ class PreEvalSummaryTests(unittest.TestCase):
                     "requirePrebuilt": True,
                     "requireAuth": True,
                     "preflightImages": True,
+                    "offlineImages": False,
                     "pullImages": True,
                     "imageConfig": "evals/harbor/tbench-full-gpt55-medium.json",
                     "analysisTarget": None,
                     "analysisBaseline": None,
+                    "campaignSummary": None,
                 },
                 summary["options"],
+            )
+
+    def test_summary_records_offline_image_preflight_intent(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            image_manifest = root / "image-preflight.json"
+            write_image_manifest(image_manifest, clean=True, offline=True)
+
+            summary = self.build_summary(
+                root,
+                tbench_outcomes=["pass"],
+                preflight_images=True,
+                offline_images=True,
+                image_config="evals/harbor/tbench-full-gpt55-medium.json",
+                image_manifest=image_manifest,
+            )
+
+            self.assertTrue(summary["options"]["offlineImages"])
+            self.assertFalse(summary["options"]["pullImages"])
+            self.assertTrue(summary["checks"]["imagePreflight"]["offline"])
+
+    def test_summary_blocks_offline_image_preflight_mismatch(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            image_manifest = root / "image-preflight.json"
+            write_image_manifest(image_manifest, clean=True, offline=False)
+
+            summary = self.build_summary(
+                root,
+                tbench_outcomes=["pass"],
+                preflight_images=True,
+                offline_images=True,
+                image_config="evals/harbor/tbench-full-gpt55-medium.json",
+                image_manifest=image_manifest,
+            )
+
+            self.assertEqual("blocked", summary["status"])
+            self.assertEqual(["imagePreflight"], summary["blockedChecks"])
+            self.assertEqual("failed", summary["checks"]["imagePreflight"]["status"])
+            self.assertIn(
+                "image preflight did not run in offline mode",
+                summary["checks"]["imagePreflight"]["issues"],
+            )
+
+    def test_summary_blocks_contradictory_image_preflight_options(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            image_manifest = root / "image-preflight.json"
+            write_image_manifest(image_manifest, clean=True, offline=True)
+
+            summary = self.build_summary(
+                root,
+                tbench_outcomes=["pass"],
+                preflight_images=True,
+                offline_images=True,
+                pull_images=True,
+                image_config="evals/harbor/tbench-full-gpt55-medium.json",
+                image_manifest=image_manifest,
+            )
+
+            self.assertEqual("blocked", summary["status"])
+            self.assertIn("preEvalOptions", summary["blockedChecks"])
+            self.assertEqual("failed", summary["checks"]["preEvalOptions"]["status"])
+            self.assertIn(
+                "offlineImages cannot be combined with pullImages",
+                summary["checks"]["preEvalOptions"]["issues"],
             )
 
 

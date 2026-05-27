@@ -21,6 +21,7 @@ pub(crate) fn protocol_thread_from_metadata(
         cwd: metadata.workspace,
         name: metadata.title,
         turns,
+        usage: metadata.usage,
     }
 }
 
@@ -77,6 +78,7 @@ pub(crate) fn protocol_turn_from_record(record: roder_api::thread::TurnRecord) -
         started_at: Some(record.created_at.unix_timestamp()),
         completed_at: record.completed_at.map(|time| time.unix_timestamp()),
         duration_ms,
+        usage: record.usage,
     }
 }
 
@@ -203,6 +205,7 @@ mod tests {
             })],
             created_at: OffsetDateTime::UNIX_EPOCH,
             completed_at: Some(OffsetDateTime::UNIX_EPOCH),
+            usage: None,
         });
 
         let item = turn.items.first().expect("tool item");

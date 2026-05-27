@@ -18,14 +18,22 @@ def validate_route_command_order(result: Any, tokens: list[str], routes: list[An
         config = route.get("config")
         job_dir = route.get("jobDir")
         analysis_json = route.get("analysisJson")
-        if not all(isinstance(value, str) and value for value in (config, job_dir, analysis_json)):
+        launch_plan = route.get("launchPlan")
+        if not all(
+            isinstance(value, str) and value
+            for value in (config, job_dir, analysis_json, launch_plan)
+        ):
             continue
         positions = (
+            ready_launch_plan_command_index(tokens, str(launch_plan)),
+            ready_launch_plan_validation_index(tokens, str(launch_plan)),
             harbor_run_index(tokens, str(config)),
             analysis_command_index(tokens, str(job_dir)),
             baseline_validation_command_index(tokens, str(analysis_json)),
         )
-        if None not in positions and not (positions[0] < positions[1] < positions[2]):
+        if None not in positions and not (
+            positions[0] < positions[1] < positions[2] < positions[3] < positions[4]
+        ):
             bad_routes.append(str(route.get("name") or "<missing>"))
     if bad_routes:
         result.add("runScript route command order mismatch: " + ", ".join(bad_routes))
@@ -60,6 +68,29 @@ def harbor_run_index(tokens: list[str], config: str) -> int | None:
     return None
 
 
+def ready_launch_plan_command_index(tokens: list[str], launch_plan: str) -> int | None:
+    for index, token in enumerate(tokens):
+        if token != "evals/harbor/write_tbench_launch_plan.py":
+            continue
+        window = tokens[index + 1 : index + 36]
+        if flag_value(window, "--output") == launch_plan and "--dry-run" not in window:
+            return index
+    return None
+
+
+def ready_launch_plan_validation_index(tokens: list[str], launch_plan: str) -> int | None:
+    for index, token in enumerate(tokens):
+        if (
+            token == "evals/harbor/validate_tbench_launch_plan.py"
+            and index + 1 < len(tokens)
+            and tokens[index + 1] == launch_plan
+        ):
+            window = tokens[index + 2 : index + 16]
+            if "--require-ready" in window:
+                return index
+    return None
+
+
 def analysis_command_index(tokens: list[str], job_dir: str) -> int | None:
     for index, token in enumerate(tokens):
         if (
@@ -86,8 +117,12 @@ def final_campaign_validation_index(tokens: list[str]) -> int | None:
     for index, token in enumerate(tokens):
         if token != "evals/harbor/validate_tbench_campaign.py":
             continue
-        window = tokens[index + 2 : index + 10]
-        if "--require-image-preflight" in window and "--require-analysis" in window:
+        window = tokens[index + 2 : index + 12]
+        if (
+            "--require-image-preflight" in window
+            and "--require-analysis" in window
+            and "--require-launch-plans" in window
+        ):
             return index
     return None
 
@@ -164,6 +199,129 @@ def expected_image_preflight_tuples(routes: list[Any]) -> list[tuple[str, str, s
         if isinstance(config, str) and config and isinstance(image_manifest, str) and image_manifest:
             tuples.append((config, "${preflight_args[@]}", image_manifest))
     return tuples
+
+
+def expected_launch_plan_tuples(
+    routes: list[Any],
+) -> list[tuple[str, ...]]:
+    tuples: list[tuple[str, ...]] = []
+    for route in routes:
+        if not isinstance(route, dict):
+            continue
+        launch_plan = route.get("launchPlan")
+        config = route.get("config")
+        job_dir = route.get("jobDir")
+        analysis_json = route.get("analysisJson")
+        analysis_markdown = route.get("analysisMarkdown")
+        image_manifest = route.get("imageManifest")
+        if all(
+            isinstance(value, str) and value
+            for value in (
+                launch_plan,
+                config,
+                job_dir,
+                analysis_json,
+                analysis_markdown,
+                image_manifest,
+            )
+        ):
+            base = (
+                str(launch_plan),
+                str(config),
+                str(job_dir),
+                str(analysis_json),
+                str(analysis_markdown),
+                str(image_manifest),
+            )
+            required_bindings = (
+                "$pre_eval_summary",
+                "$pre_eval_output_dir",
+                "$pre_eval_max_age_seconds",
+                "1",
+                "1",
+            )
+            tuples.append((*base, *required_bindings, "0"))
+            tuples.append((*base, *required_bindings, "1"))
+    return tuples
+
+
+def launch_plan_command_tuples(tokens: list[str]) -> list[tuple[str, ...]]:
+    commands: list[tuple[str, ...]] = []
+    for index, token in enumerate(tokens):
+        if token != "evals/harbor/write_tbench_launch_plan.py":
+            continue
+        window = tokens[index + 1 : index + 36]
+        values = {
+            "--output": flag_value(window, "--output"),
+            "--harbor-config": flag_value(window, "--harbor-config"),
+            "--job-dir": flag_value(window, "--job-dir"),
+            "--analysis-json": flag_value(window, "--analysis-json"),
+            "--analysis-markdown": flag_value(window, "--analysis-markdown"),
+            "--image-preflight-manifest": flag_value(
+                window,
+                "--image-preflight-manifest",
+            ),
+        }
+        if all(values.values()):
+            commands.append(
+                (
+                    str(values["--output"]),
+                    str(values["--harbor-config"]),
+                    str(values["--job-dir"]),
+                    str(values["--analysis-json"]),
+                    str(values["--analysis-markdown"]),
+                    str(values["--image-preflight-manifest"]),
+                    str(flag_value(window, "--pre-eval-summary") or ""),
+                    str(flag_value(window, "--pre-eval-output-dir") or ""),
+                    str(flag_value(window, "--max-pre-eval-age-seconds") or ""),
+                    "1" if "--require-image-preflight" in window else "0",
+                    "1"
+                    if any("launch_plan_run_context_args" in token for token in window)
+                    else "0",
+                    "1" if "--dry-run" in window else "0",
+                )
+            )
+    return commands
+
+
+def expected_launch_plan_validation_tuples(routes: list[Any]) -> list[tuple[str, ...]]:
+    tuples: list[tuple[str, ...]] = []
+    for route in routes:
+        if isinstance(route, dict) and isinstance(route.get("launchPlan"), str):
+            launch_plan = str(route["launchPlan"])
+            required = ("1", "1", "1", "1", "1", "1", "1", "1")
+            tuples.append((launch_plan, "allow_dry_run", *required))
+            tuples.append((launch_plan, "require_ready", *required))
+    return tuples
+
+
+def launch_plan_validation_command_tuples(tokens: list[str]) -> list[tuple[str, ...]]:
+    commands: list[tuple[str, ...]] = []
+    for index, token in enumerate(tokens):
+        if token != "evals/harbor/validate_tbench_launch_plan.py" or index + 1 >= len(tokens):
+            continue
+        window = tokens[index + 2 : index + 22]
+        mode = None
+        if "--allow-dry-run" in window:
+            mode = "allow_dry_run"
+        elif "--require-ready" in window:
+            mode = "require_ready"
+        if mode:
+            commands.append(
+                (
+                    tokens[index + 1],
+                    mode,
+                    "1" if "--require-image-preflight" in window else "0",
+                    "1" if "--verify-image-manifest" in window else "0",
+                    "1" if "--verify-pre-eval-summary" in window else "0",
+                    "1" if "--verify-harbor-config" in window else "0",
+                    "1" if "--verify-prebuilt-binary" in window else "0",
+                    "1" if "--verify-auth-file" in window else "0",
+                    "1" if "--verify-harness-files" in window else "0",
+                    "1" if flag_value(window, "--max-pre-eval-age-seconds") else "0",
+                )
+            )
+    return commands
 
 
 def image_preflight_command_tuples(tokens: list[str]) -> list[tuple[str, str, str]]:
@@ -267,27 +425,34 @@ def baseline_validation_command_tuples(tokens: list[str]) -> list[tuple[str, str
     return commands
 
 
-def expected_campaign_validation_tuples() -> list[tuple[str, str, str, str]]:
+def expected_campaign_validation_tuples() -> list[tuple[str, str, str, str, str, str]]:
     return [
-        ("$MANIFEST", "0", "0", ""),
-        ("$MANIFEST", "1", "0", "$PREFLIGHT_DIR"),
-        ("$MANIFEST", "1", "1", "$PREFLIGHT_DIR"),
+        ("$MANIFEST", "0", "0", "0", "0", ""),
+        ("$MANIFEST", "1", "0", "0", "0", "$PREFLIGHT_DIR"),
+        ("$MANIFEST", "1", "0", "1", "1", "$PREFLIGHT_DIR"),
+        ("$MANIFEST", "1", "1", "1", "0", "$PREFLIGHT_DIR"),
     ]
 
 
-def campaign_validation_command_tuples(tokens: list[str]) -> list[tuple[str, str, str, str]]:
-    commands: list[tuple[str, str, str, str]] = []
+def campaign_validation_command_tuples(tokens: list[str]) -> list[tuple[str, str, str, str, str, str]]:
+    commands: list[tuple[str, str, str, str, str, str]] = []
     for index, token in enumerate(tokens):
         if token != "evals/harbor/validate_tbench_campaign.py" or index + 1 >= len(tokens):
             continue
-        window = tokens[index + 2 : index + 10]
+        window = tokens[index + 2 : index + 14]
         require_image_preflight = "1" if "--require-image-preflight" in window else "0"
         require_analysis = "1" if "--require-analysis" in window else "0"
+        require_launch_plans = "1" if "--require-launch-plans" in window else "0"
+        allow_dry_run_launch_plans = (
+            "1" if "--allow-dry-run-launch-plans" in window else "0"
+        )
         commands.append(
             (
                 tokens[index + 1],
                 require_image_preflight,
                 require_analysis,
+                require_launch_plans,
+                allow_dry_run_launch_plans,
                 flag_value(window, "--preflight-dir") or "",
             )
         )

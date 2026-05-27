@@ -110,6 +110,29 @@ class ValidateTbenchCampaignTests(unittest.TestCase):
 
         self.assertEqual(0, result.returncode, result.stderr)
 
+    def test_accepts_offline_route_image_preflight_manifest(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            output_dir = Path(temp) / "campaign"
+            manifest = generate_campaign(output_dir)
+            data = json.loads(manifest.read_text())
+            for route in data["routes"]:
+                write_image_manifest(
+                    output_dir / f"{route['name']}-images.json",
+                    config=route["config"],
+                    tasks=route["taskCount"],
+                    task_names=route["tasks"],
+                    offline=True,
+                )
+
+            result = validate_campaign(
+                manifest,
+                "--require-image-preflight",
+                "--preflight-dir",
+                str(output_dir),
+            )
+
+        self.assertEqual(0, result.returncode, result.stderr)
+
     def test_uses_explicit_route_image_preflight_manifest_path(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
             output_dir = Path(temp) / "campaign"
@@ -496,6 +519,7 @@ def write_image_manifest(
     config: str,
     tasks: int,
     task_names: list[str] | None = None,
+    offline: bool | None = None,
 ) -> None:
     names = task_names or [f"task-{index}" for index in range(tasks)]
     manifest = {
@@ -523,6 +547,8 @@ def write_image_manifest(
             for index in range(tasks)
         ],
     }
+    if offline is not None:
+        manifest["offline"] = offline
     path.write_text(json.dumps(manifest, indent=2) + "\n")
 
 

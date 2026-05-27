@@ -170,6 +170,10 @@ Core:
 | `auth/supergrok/login` | Start SuperGrok OAuth login. |
 | `auth/supergrok/status` | Read SuperGrok OAuth status. |
 | `auth/supergrok/logout` | Clear SuperGrok OAuth credentials. |
+| `speech/providers/list` | List speech transcription providers and models. |
+| `speech/transcribe` | Transcribe audio through a registered speech provider. |
+| `speech/synthesis/providers/list` | List speech synthesis providers and TTS models. |
+| `speech/synthesize` | Generate speech audio through a registered synthesis provider. |
 
 Threads and turns:
 
@@ -473,6 +477,98 @@ Errors:
 
 - Runtime provider/model validation errors return code `-32000` with
   `data.details`.
+
+### `speech/synthesis/providers/list`
+
+Purpose: Discover registered text-to-speech providers, auth state, synthesis
+capabilities, and TTS models.
+
+Request:
+
+```json
+{}
+```
+
+Response:
+
+```json
+{
+  "providers": [
+    {
+      "id": "xiaomi-mimo",
+      "name": "Xiaomi MiMo Speech Synthesis",
+      "authType": "api_key",
+      "authLabel": "MIMO_API_KEY",
+      "authenticated": false,
+      "capabilities": {
+        "batch": true,
+        "streaming": false,
+        "builtinVoices": true,
+        "voiceDesign": true,
+        "voiceClone": true,
+        "prompt": true
+      },
+      "models": [
+        {
+          "id": "mimo-v2.5-tts",
+          "name": "MiMo V2.5 TTS"
+        }
+      ]
+    }
+  ]
+}
+```
+
+Behavior:
+
+- Providers are sorted by `sortOrder`, then name.
+- Model listing failures for an individual provider are treated as an empty
+  model list.
+- Xiaomi MiMo TTS providers share provider ids with the corresponding billing
+  provider: `xiaomi-mimo` and `xiaomi-mimo-token-plan`.
+
+### `speech/synthesize`
+
+Purpose: Generate audio from text through a registered speech synthesis
+provider.
+
+Request:
+
+```json
+{
+  "provider": "xiaomi-mimo",
+  "model": "mimo-v2.5-tts",
+  "text": "Hello from Roder.",
+  "voice": "Chloe",
+  "audioFormat": "wav",
+  "prompt": "Warm, clear narration."
+}
+```
+
+Response:
+
+```json
+{
+  "provider": "xiaomi-mimo",
+  "model": "mimo-v2.5-tts",
+  "audio": {
+    "bytesBase64": "...",
+    "mimeType": "audio/wav",
+    "filename": null
+  },
+  "durationMillis": null,
+  "providerResponseId": "chat-response-id",
+  "metadata": {}
+}
+```
+
+Behavior:
+
+- If `provider` is omitted, the first registered speech synthesis provider is
+  used.
+- If `model` is omitted, the provider's first listed synthesis model is used.
+- `voiceSample` accepts the same `bytesBase64`, `mimeType`, and `filename`
+  shape as speech transcription audio payloads.
 
 ### `settings/get`
 
@@ -789,12 +885,26 @@ Response:
     "updatedAt": 1770000100,
     "status": { "type": "idle", "activeTurnId": null, "activeFlags": [] },
     "cwd": "/Users/pz/w/gode",
+    "usage": {
+      "prompt_tokens": 100,
+      "completion_tokens": 10,
+      "total_tokens": 110,
+      "cached_prompt_tokens": 92,
+      "cache_hit_rate": 0.92
+    },
     "turns": [
       {
         "id": "turn-123",
         "items": [],
         "itemsView": "default",
-        "status": "completed"
+        "status": "completed",
+        "usage": {
+          "prompt_tokens": 100,
+          "completion_tokens": 10,
+          "total_tokens": 110,
+          "cached_prompt_tokens": 92,
+          "cache_hit_rate": 0.92
+        }
       }
     ]
   }
@@ -808,6 +918,8 @@ Behavior:
   but never to the app-server process cwd.
 - Persisted thread metadata must include an absolute workspace; invalid metadata
   is rejected instead of projected with a fallback cwd.
+- Includes aggregate thread `usage` and per-turn `usage` when provider usage
+  was reported; `cache_hit_rate` is `cached_prompt_tokens / prompt_tokens`.
 - Returns `{"thread": null}` when the thread is unknown.
 
 ### `thread/archive`
@@ -3552,7 +3664,9 @@ or the remote WebSocket notification stream for remote clients.
 `item` object. Tool items use `type: "tool.<name>"` when the tool name is known.
 
 `turn/completed` carries `threadId` and a terminal `turn` whose `status` is
-`completed`, `failed`, or `interrupted`.
+`completed`, `failed`, or `interrupted`. Completed and failed turns include
+`turn.usage` when provider usage was reported, including `cached_prompt_tokens`
+and `cache_hit_rate`.
 
 `thread/status/changed`:
 

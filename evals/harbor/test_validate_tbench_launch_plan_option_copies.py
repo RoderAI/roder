@@ -89,6 +89,26 @@ class LaunchPlanOptionCopyTests(unittest.TestCase):
         self.assertFalse(result.ok)
         self.assertIn("pre-eval summary pullImages mismatch", result.issues)
 
+    def test_rejects_offline_option_mismatch(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            temp_path = Path(temp)
+            summary = write_clean_summary_fixture(temp_path)
+            summary_data = json.loads(summary.read_text())
+            summary_data["options"]["offlineImages"] = True
+            summary_data["checks"]["imagePreflight"]["offline"] = True
+            summary.write_text(json.dumps(summary_data) + "\n")
+            plan = bind_plan_to_summary(summary, temp_path)
+            plan["offlinePreflight"] = False
+
+            result = self.module.validate_plan(
+                plan,
+                require_ready=True,
+                verify_pre_eval_summary=True,
+            )
+
+        self.assertFalse(result.ok)
+        self.assertIn("pre-eval summary offlineImages mismatch", result.issues)
+
 
 if __name__ == "__main__":
     unittest.main()

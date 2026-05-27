@@ -22,6 +22,8 @@ pub type EventSinkId = String;
 pub type TaskExecutorId = String;
 pub type NotificationSinkId = String;
 pub type InteractiveRegionHandlerId = String;
+pub type SpeechTranscriberId = String;
+pub type SpeechSynthesizerId = String;
 
 pub const SUPPORTED_EXTENSION_API_VERSION: &str = "0.1.0";
 
@@ -41,6 +43,8 @@ pub enum ProvidedService {
     TaskExecutor(TaskExecutorId),
     NotificationSink(NotificationSinkId),
     InteractiveRegionHandler(InteractiveRegionHandlerId),
+    SpeechTranscriber(SpeechTranscriberId),
+    SpeechSynthesizer(SpeechSynthesizerId),
     RemoteRunnerProvider(crate::remote_runner::RemoteRunnerProviderId),
     StatusSegment(crate::tui_status::StatusSegmentId),
     PaletteSource(crate::tui_status::PaletteSourceId),
@@ -82,6 +86,8 @@ pub struct ExtensionRegistry {
     pub task_executors: Vec<Arc<dyn crate::tasks::TaskExecutor>>,
     pub notification_sinks: Vec<Arc<dyn crate::notifications::NotificationSink>>,
     pub interactive_region_handlers: Vec<Arc<dyn crate::interactive::InteractiveRegionHandler>>,
+    pub speech_transcribers: Vec<Arc<dyn crate::speech::SpeechTranscriber>>,
+    pub speech_synthesizers: Vec<Arc<dyn crate::speech::SpeechSynthesizer>>,
     pub remote_runner_providers: Vec<Arc<dyn crate::remote_runner::RemoteRunnerProvider>>,
     pub status_segments: Vec<crate::tui_status::StatusSegment>,
     pub palette_sources: Vec<crate::tui_status::PaletteSourceDescriptor>,
@@ -98,6 +104,26 @@ impl ExtensionRegistry {
 
     pub fn default_inference_engine(&self) -> Option<Arc<dyn crate::inference::InferenceEngine>> {
         self.inference_engines.first().cloned()
+    }
+
+    pub fn speech_transcriber(
+        &self,
+        id: &str,
+    ) -> Option<Arc<dyn crate::speech::SpeechTranscriber>> {
+        self.speech_transcribers
+            .iter()
+            .find(|transcriber| transcriber.id() == id)
+            .cloned()
+    }
+
+    pub fn speech_synthesizer(
+        &self,
+        id: &str,
+    ) -> Option<Arc<dyn crate::speech::SpeechSynthesizer>> {
+        self.speech_synthesizers
+            .iter()
+            .find(|synthesizer| synthesizer.id() == id)
+            .cloned()
     }
 
     pub fn provided_services(&self) -> Vec<ProvidedService> {
@@ -143,6 +169,8 @@ pub struct ExtensionRegistryBuilder {
     pub task_executors: Vec<Arc<dyn crate::tasks::TaskExecutor>>,
     pub notification_sinks: Vec<Arc<dyn crate::notifications::NotificationSink>>,
     pub interactive_region_handlers: Vec<Arc<dyn crate::interactive::InteractiveRegionHandler>>,
+    pub speech_transcribers: Vec<Arc<dyn crate::speech::SpeechTranscriber>>,
+    pub speech_synthesizers: Vec<Arc<dyn crate::speech::SpeechSynthesizer>>,
     pub remote_runner_providers: Vec<Arc<dyn crate::remote_runner::RemoteRunnerProvider>>,
     pub status_segments: Vec<crate::tui_status::StatusSegment>,
     pub palette_sources: Vec<crate::tui_status::PaletteSourceDescriptor>,
@@ -175,6 +203,8 @@ impl ExtensionRegistryBuilder {
             task_executors: Vec::new(),
             notification_sinks: Vec::new(),
             interactive_region_handlers: Vec::new(),
+            speech_transcribers: Vec::new(),
+            speech_synthesizers: Vec::new(),
             remote_runner_providers: Vec::new(),
             status_segments: Vec::new(),
             palette_sources: Vec::new(),
@@ -215,6 +245,8 @@ impl ExtensionRegistryBuilder {
             task_executors: self.task_executors,
             notification_sinks: self.notification_sinks,
             interactive_region_handlers: self.interactive_region_handlers,
+            speech_transcribers: self.speech_transcribers,
+            speech_synthesizers: self.speech_synthesizers,
             remote_runner_providers: self.remote_runner_providers,
             status_segments: self.status_segments,
             palette_sources: self.palette_sources,
@@ -303,6 +335,14 @@ impl ExtensionRegistryBuilder {
         handler: Arc<dyn crate::interactive::InteractiveRegionHandler>,
     ) {
         self.interactive_region_handlers.push(handler);
+    }
+
+    pub fn speech_transcriber(&mut self, transcriber: Arc<dyn crate::speech::SpeechTranscriber>) {
+        self.speech_transcribers.push(transcriber);
+    }
+
+    pub fn speech_synthesizer(&mut self, synthesizer: Arc<dyn crate::speech::SpeechSynthesizer>) {
+        self.speech_synthesizers.push(synthesizer);
     }
 
     pub fn remote_runner_provider(
@@ -516,6 +556,18 @@ fn actual_services(builder: &ExtensionRegistryBuilder) -> anyhow::Result<Vec<Pro
     );
     services.extend(
         builder
+            .speech_transcribers
+            .iter()
+            .map(|service| ProvidedService::SpeechTranscriber(service.id())),
+    );
+    services.extend(
+        builder
+            .speech_synthesizers
+            .iter()
+            .map(|service| ProvidedService::SpeechSynthesizer(service.id())),
+    );
+    services.extend(
+        builder
             .remote_runner_providers
             .iter()
             .map(|service| ProvidedService::RemoteRunnerProvider(service.id())),
@@ -616,6 +668,8 @@ fn service_label(service: &ProvidedService) -> String {
         ProvidedService::InteractiveRegionHandler(id) => {
             format!("InteractiveRegionHandler({id})")
         }
+        ProvidedService::SpeechTranscriber(id) => format!("SpeechTranscriber({id})"),
+        ProvidedService::SpeechSynthesizer(id) => format!("SpeechSynthesizer({id})"),
         ProvidedService::RemoteRunnerProvider(id) => format!("RemoteRunnerProvider({id})"),
         ProvidedService::StatusSegment(id) => format!("StatusSegment({id})"),
         ProvidedService::PaletteSource(id) => format!("PaletteSource({id})"),

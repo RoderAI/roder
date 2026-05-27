@@ -7,12 +7,16 @@ import importlib.util
 import json
 import os
 import stat
+import sys
 import tempfile
 import unittest
 from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[2]
+HARBOR_DIR = ROOT / "evals/harbor"
+if str(HARBOR_DIR) not in sys.path:
+    sys.path.insert(0, str(HARBOR_DIR))
 MODULE_PATH = ROOT / "evals/harbor/validate_harbor_readiness.py"
 
 
@@ -46,6 +50,22 @@ class HarborReadinessValidationTests(unittest.TestCase):
         )
 
         self.assertEqual([], issues)
+
+    def test_default_configs_include_gemini_35_flash_validation_set(self) -> None:
+        config_paths = [str(path) for path in self.module.DEFAULT_CONFIGS]
+        self.assertIn("evals/harbor/tbench-gemini35-flash-validation.json", config_paths)
+
+        config = self.load_config("tbench-gemini35-flash-validation.json")
+        agent = config["agents"][0]
+        dataset = config["datasets"][0]
+
+        self.assertEqual("gemini/gemini-3.5-flash", agent["model_name"])
+        self.assertEqual("medium", agent["kwargs"]["reasoning"])
+        self.assertEqual(6, dataset["n_tasks"])
+        self.assertEqual(6, len(dataset["task_names"]))
+        self.assertLessEqual(len(dataset["task_names"]), 8)
+        self.assertNotIn("db-wal-recovery", dataset["task_names"])
+        self.assertNotIn("query-optimize", dataset["task_names"])
 
     def test_deadline_regression_is_reported(self) -> None:
         config = self.load_config("tbench-full-gpt55-medium.json")

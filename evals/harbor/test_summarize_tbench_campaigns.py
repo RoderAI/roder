@@ -263,6 +263,111 @@ class SummarizeTbenchCampaignsTests(unittest.TestCase):
             result.stderr,
         )
 
+    def test_validated_plus_historical_preset_blocks_renamed_validated_campaign(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            temp_path = Path(temp)
+            validated_dir = temp_path / "validated-conversions"
+            historical_dir = temp_path / "historical-wins"
+            for campaign, output_dir in (
+                ("validated-conversions", validated_dir),
+                ("historical-wins", historical_dir),
+            ):
+                result = subprocess.run(
+                    [
+                        "python3",
+                        str(GENERATE),
+                        "--campaign",
+                        campaign,
+                        "--output-dir",
+                        str(output_dir),
+                    ],
+                    cwd=ROOT,
+                    text=True,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    check=False,
+                )
+                self.assertEqual(0, result.returncode, result.stderr)
+            renamed = json.loads(
+                (validated_dir / "validated-conversions-manifest.json").read_text()
+            )
+            renamed["campaign"] = "renamed-conversions"
+            renamed_manifest = temp_path / "renamed-manifest.json"
+            renamed_manifest.write_text(json.dumps(renamed, indent=2) + "\n")
+
+            result = subprocess.run(
+                [
+                    "python3",
+                    str(MODULE_PATH),
+                    str(renamed_manifest),
+                    str(historical_dir / "historical-wins-manifest.json"),
+                    "--preset",
+                    "validated-plus-historical",
+                ],
+                cwd=ROOT,
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                check=False,
+            )
+
+        self.assertEqual(1, result.returncode)
+        self.assertIn("missing expected campaigns: validated-conversions", result.stderr)
+
+    def test_expected_campaign_cli_blocks_missing_campaign(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            temp_path = Path(temp)
+            manifest = write_manifest(
+                temp_path / "manifest.json",
+                campaign="actual",
+                routes=[{"name": "route-a", "tasks": ["one-task"]}],
+            )
+
+            result = subprocess.run(
+                [
+                    "python3",
+                    str(MODULE_PATH),
+                    str(manifest),
+                    "--expect-campaign",
+                    "expected",
+                ],
+                cwd=ROOT,
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                check=False,
+            )
+
+        self.assertEqual(1, result.returncode)
+        self.assertIn("missing expected campaigns: expected", result.stderr)
+
+    def test_expected_route_cli_blocks_missing_route(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            temp_path = Path(temp)
+            manifest = write_manifest(
+                temp_path / "manifest.json",
+                campaign="actual",
+                routes=[{"name": "route-a", "tasks": ["one-task"]}],
+            )
+
+            result = subprocess.run(
+                [
+                    "python3",
+                    str(MODULE_PATH),
+                    str(manifest),
+                    "--expect-route",
+                    "actual/route-b",
+                ],
+                cwd=ROOT,
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                check=False,
+            )
+
+        self.assertEqual(1, result.returncode)
+        self.assertIn("missing expected routes: actual/route-b", result.stderr)
+
     def test_expected_projection_cli_blocks_stale_campaign_math(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
             temp_path = Path(temp)

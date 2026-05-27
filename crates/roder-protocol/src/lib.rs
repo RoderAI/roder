@@ -1,5 +1,6 @@
 pub mod methods;
 pub mod schema;
+pub mod speech;
 
 use roder_api::artifacts::{
     ArtifactGrepPage, ArtifactReadPage, ArtifactTailPage, ContextArtifactDescriptor,
@@ -22,7 +23,7 @@ use roder_api::events::{ThreadId, TurnId};
 use roder_api::extension::{ExtensionId, ExtensionManifest};
 pub use roder_api::goals::{ThreadGoal, ThreadGoalStatus};
 use roder_api::inference::{
-    HostedWebSearchMode, InferenceCapabilities, ModelDescriptor, ProviderAuthType,
+    HostedWebSearchMode, InferenceCapabilities, ModelDescriptor, ProviderAuthType, TokenUsage,
 };
 use roder_api::marketplace::{
     DedupedMarketplacePlugin, DefaultMarketplaceSelection, InstalledPluginRecord,
@@ -46,6 +47,7 @@ use roder_api::teams::{
     AgentTeamDisplayMode, TeamId, TeamMailboxMessage, TeamMemberDescriptor, TeamMemberId,
     TeamMemberStatus, TeamTaskDescriptor,
 };
+use roder_api::thread::ThreadUsageMetadata;
 use roder_api::tools::ToolSpec;
 use roder_api::trace::{SubagentTraceDelta, SubagentTraceId, SubagentTraceSummary};
 use roder_api::transcript::InputImage;
@@ -56,6 +58,8 @@ use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::collections::HashMap;
 use time::OffsetDateTime;
+
+pub use speech::*;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct JsonRpcRequest {
@@ -127,6 +131,8 @@ pub struct Thread {
     pub name: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub turns: Option<Vec<Turn>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub usage: Option<ThreadUsageMetadata>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -144,6 +150,8 @@ pub struct Turn {
     pub completed_at: Option<i64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub duration_ms: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub usage: Option<TokenUsage>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1244,6 +1252,16 @@ pub struct ProviderConfigureParams {
 pub struct ProviderConfigureResult {
     pub provider: String,
     pub authenticated: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProviderClearParams {
+    pub provider: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProviderClearResult {
+    pub provider: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

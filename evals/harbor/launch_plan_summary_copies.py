@@ -29,7 +29,9 @@ def validate_plan_copies_match_summary(
     validate_auth_copy(issues, plan, summary)
     validate_harness_copy(issues, plan, summary)
     validate_harness_tests_copy(issues, plan, summary)
+    validate_deadline_policy_copy(issues, plan, summary)
     validate_image_preflight_copy(issues, plan, summary)
+    validate_campaign_summary_copy(issues, plan, summary)
 
 
 def validate_prebuilt_copy(
@@ -121,6 +123,22 @@ def validate_harness_tests_copy(
         issues.append("harbor harness tests summary status mismatch")
 
 
+def validate_deadline_policy_copy(
+    issues: list[str],
+    plan: dict[str, Any],
+    summary: dict[str, Any],
+) -> None:
+    summary_policy = dict_value(
+        dict_value(dict_value(summary.get("checks")).get("harborConfigs")).get(
+            "deadlinePolicy"
+        )
+    )
+    if not summary_policy:
+        return
+    if dict_value(plan.get("deadlinePolicy")) != summary_policy:
+        issues.append("deadline policy summary mismatch")
+
+
 def validate_image_preflight_copy(
     issues: list[str],
     plan: dict[str, Any],
@@ -149,6 +167,46 @@ def validate_image_preflight_copy(
             field in plan_image_preflight or field in summary_image_preflight
         ) and plan_image_preflight.get(field) != summary_image_preflight.get(field):
             issues.append(f"image preflight summary {field} mismatch")
+
+
+def validate_campaign_summary_copy(
+    issues: list[str],
+    plan: dict[str, Any],
+    summary: dict[str, Any],
+) -> None:
+    summary_campaign = dict_value(
+        dict_value(summary.get("checks")).get("campaignSummary")
+    )
+    plan_campaign = dict_value(plan.get("campaignSummary"))
+    if not summary_campaign:
+        return
+    if not plan_campaign:
+        issues.append("campaign summary status mismatch")
+        return
+    for field in (
+        "status",
+        "summaryJson",
+        "summaryJsonSha256",
+        "preset",
+        "validationStatus",
+        "issues",
+        "uniqueTasks",
+        "projectedPasses",
+        "duplicateTasks",
+        "duplicates",
+        "requireNoOverlap",
+        "expectUniqueTasks",
+        "expectProjectedPasses",
+        "expectCampaigns",
+        "expectRoutes",
+        "expectTasks",
+        "expectOwners",
+        "manifests",
+    ):
+        if (
+            field in plan_campaign or field in summary_campaign
+        ) and plan_campaign.get(field) != summary_campaign.get(field):
+            issues.append(f"campaign summary {field} mismatch")
 
 
 def summary_config_hash(summary: dict[str, Any], path: Any) -> str | None:

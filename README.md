@@ -139,6 +139,10 @@ mise run ci
 Useful focused tasks include `mise run rust:fmt`, `mise run rust:clippy`,
 `mise run python:sync`, and `mise run python:test:startup`.
 
+Release policy lives in [`docs/releases.md`](./docs/releases.md). Release-plz
+opens the version-bump PR for Cargo workspace changes and creates git-only
+releases after that PR merges.
+
 Install the standard Roder CLI locally with:
 
 ```sh
@@ -248,6 +252,10 @@ xAI Grok and SuperGrok provider setup is documented in [`docs/roder-xai-grok-pro
 OpenCode provider setup is documented in [`docs/roder-opencode-providers.md`](./docs/roder-opencode-providers.md). Use `opencode/<model>` for OpenCode Zen models or `opencode-go/<model>` for OpenCode Go models, with API keys from [`https://opencode.ai/auth`](https://opencode.ai/auth).
 
 Poolside provider setup is documented in [`docs/roder-poolside-providers.md`](./docs/roder-poolside-providers.md). Use `poolside/laguna-m.1` or `poolside/laguna-xs.2` with `POOLSIDE_API_KEY` or a key stored from the provider menu; API keys are managed at [`https://platform.poolside.ai/api-keys`](https://platform.poolside.ai/api-keys).
+
+Cursor provider setup is documented in [`docs/roder-cursor-provider.md`](./docs/roder-cursor-provider.md). Use `cursor/composer-2.5` with `CURSOR_API_KEY` or `RODER_CURSOR_API_KEY`; Roder exchanges the key and calls Cursor AgentService directly without invoking the Cursor CLI at inference runtime.
+
+Xiaomi MiMo provider setup is documented in [`docs/roder-xiaomi-mimo-providers.md`](./docs/roder-xiaomi-mimo-providers.md). Use `xiaomi-mimo/<model>` with `MIMO_API_KEY` for pay-as-you-go API access, or `xiaomi-mimo-token-plan/<model>` with `MIMO_TOKEN_PLAN_API_KEY` and the exclusive Token Plan base URL. Xiaomi TTS models are exposed through `roder speech synthesis-providers` and `speech/synthesize`, not the text model catalog.
 
 Custom OpenAI-compatible providers can be added with a provider-specific base URL:
 

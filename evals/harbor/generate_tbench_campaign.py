@@ -7,7 +7,6 @@ import argparse
 import hashlib
 import json
 import os
-import shlex
 import sys
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -16,6 +15,7 @@ from typing import Any
 
 from rerun_tbench_subset import build_subset_config
 from tbench_campaign_handoff import pre_eval_handoff
+from tbench_campaign_run_script_writer import write_run_script
 from tbench_campaign_score_projection import score_projection_for_tasks
 
 
@@ -230,6 +230,7 @@ def write_campaign(
         analysis_markdown = output_dir / f"{route.name}.md"
         analysis_manifest_dir = output_dir / "manifests" / route.name
         image_manifest = output_dir / f"{route.name}-images.json"
+        launch_plan = output_dir / f"{route.name}-launch-plan.json"
         route_entries.append(
             {
                 "name": route.name,
@@ -242,6 +243,7 @@ def write_campaign(
                 "analysisMarkdown": str(analysis_markdown),
                 "analysisManifestDir": str(analysis_manifest_dir),
                 "imageManifest": str(image_manifest),
+                "launchPlan": str(launch_plan),
                 "reasoning": route.reasoning,
                 "planFirst": route.plan_first,
                 "planFirstReasoning": route.plan_first_reasoning,
@@ -279,156 +281,6 @@ def write_campaign(
         routes=route_entries,
     )
     return manifest
-
-
-def write_run_script(
-    *,
-    path: Path,
-    repo_root: Path,
-    manifest_path: Path,
-    output_dir: Path,
-    routes: list[dict[str, Any]],
-) -> None:
-    lines = [
-        "#!/usr/bin/env bash",
-        "set -euo pipefail",
-        "",
-        f"REPO_ROOT=${{RODER_REPO_ROOT:-{shlex.quote(str(repo_root))}}}",
-        'cd "$REPO_ROOT"',
-        'export PYTHONPATH="$PWD/evals/harbor${PYTHONPATH:+:$PYTHONPATH}"',
-        "",
-        f"MANIFEST={shlex.quote(str(manifest_path))}",
-        f"PREFLIGHT_DIR={shlex.quote(str(output_dir))}",
-        'dry_run="${RODER_HARBOR_DRY_RUN:-0}"',
-        "",
-        'python3 evals/harbor/validate_tbench_campaign.py "$MANIFEST"',
-        "",
-        'if [[ "${RODER_HARBOR_PREFLIGHT_PULL:-}" == "1" ]]; then',
-        "  preflight_args=(--pull)",
-        "else",
-        "  preflight_args=(--offline)",
-        "fi",
-        "",
-    ]
-    for route in routes:
-        config = str(route["config"])
-        image_manifest = str(route["imageManifest"])
-        lines.extend(
-            [
-                f"python3 evals/harbor/preflight_tbench_images.py --config {shlex.quote(config)} "
-                f'"${{preflight_args[@]}}" --manifest {shlex.quote(image_manifest)}',
-            ]
-        )
-    lines.extend(
-        [
-            "",
-            'python3 evals/harbor/validate_tbench_campaign.py "$MANIFEST" '
-            '--require-image-preflight --preflight-dir "$PREFLIGHT_DIR"',
-            "",
-            'if [[ "$dry_run" != "1" && "${RODER_HARBOR_LIVE_TBENCH:-}" != "1" ]]; then',
-            "  echo \"Campaign preflight complete. Set RODER_HARBOR_LIVE_TBENCH=1 to run Harbor routes.\"",
-            "  exit 0",
-            "fi",
-            "",
-            'pre_eval_max_age_seconds="${RODER_HARBOR_PRE_EVAL_MAX_AGE_SECONDS:-7200}"',
-            'pre_eval_summary="${RODER_HARBOR_PRE_EVAL_SUMMARY:-}"',
-            'pre_eval_output_dir="${RODER_HARBOR_PRE_EVAL_OUTPUT_DIR:-$PREFLIGHT_DIR/pre-eval}"',
-            'if [[ -z "$pre_eval_summary" ]]; then',
-            "  pre_eval_args=(--require-prebuilt --require-auth --output-dir \"$pre_eval_output_dir\")",
-            *[
-                f"  pre_eval_args+=(--config {shlex.quote(str(route['config']))})"
-                for route in routes
-            ],
-            '  if [[ -n "${RODER_HARBOR_PRE_EVAL_ANALYSIS:-}" ]]; then',
-            '    pre_eval_args+=(--analysis "$RODER_HARBOR_PRE_EVAL_ANALYSIS")',
-            '    if [[ -n "${RODER_HARBOR_PRE_EVAL_ANALYSIS_BASELINE:-}" ]]; then',
-            '      pre_eval_args+=(--analysis-baseline "$RODER_HARBOR_PRE_EVAL_ANALYSIS_BASELINE")',
-            "    fi",
-            "  fi",
-            '  evals/harbor/run-roder-pre-eval-diagnostics.sh "${pre_eval_args[@]}"',
-            '  pre_eval_summary="$pre_eval_output_dir/pre-eval-summary.json"',
-            "fi",
-            "summary_validation_args=(",
-            '  "$pre_eval_summary"',
-            "  --require-prebuilt",
-            "  --require-auth",
-            "  --require-tests",
-            "  --verify-harbor-configs",
-            "  --verify-harness-files",
-            "  --verify-prebuilt-binary",
-            "  --verify-auth-file",
-            '  --max-age-seconds "$pre_eval_max_age_seconds"',
-            ")",
-            *[
-                f"summary_validation_args+=(--require-config {shlex.quote(str(route['config']))})"
-                for route in routes
-            ],
-            'if [[ -n "${RODER_HARBOR_PRE_EVAL_ANALYSIS:-}" || "${RODER_HARBOR_PRE_EVAL_REQUIRE_ANALYSIS:-}" == "1" ]]; then',
-            "  summary_validation_args+=(--require-analysis)",
-            "fi",
-            'python3 evals/harbor/validate_pre_eval_summary.py "${summary_validation_args[@]}"',
-            "",
-            'if [[ "$dry_run" == "1" ]]; then',
-            '  echo "Campaign dry-run complete. Pre-eval summary validated: $pre_eval_summary"',
-            "  exit 0",
-            "fi",
-            "",
-            "if ! command -v harbor >/dev/null 2>&1; then",
-            "  echo \"harbor is not on PATH. Install it with: uv tool install harbor\" >&2",
-            "  exit 1",
-            "fi",
-            "",
-            "route_job_dirs=(",
-            *[
-                f"  {shlex.quote(str(route['jobDir']))}"
-                for route in routes
-            ],
-            ")",
-            'if [[ "${RODER_HARBOR_REPLACE_JOB:-}" != "1" ]]; then',
-            '  for job_dir in "${route_job_dirs[@]}"; do',
-            '    if [[ -e "$job_dir" ]]; then',
-            '      echo "$job_dir already exists. Set RODER_HARBOR_REPLACE_JOB=1 to replace it." >&2',
-            "      exit 2",
-            "    fi",
-            "  done",
-            "else",
-            '  for job_dir in "${route_job_dirs[@]}"; do',
-            '    rm -rf "$job_dir"',
-            "  done",
-            "fi",
-            "",
-        ]
-    )
-    for route in routes:
-        lines.extend(
-            [
-                f"harbor run --config {shlex.quote(str(route['config']))}",
-                (
-                    "python3 evals/harbor/analyze_tbench_run.py "
-                    f"{shlex.quote(str(route['jobDir']))} "
-                    "--require-clean "
-                    f"--json {shlex.quote(str(route['analysisJson']))} "
-                    f"--markdown {shlex.quote(str(route['analysisMarkdown']))} "
-                    f"--manifest-dir {shlex.quote(str(route['analysisManifestDir']))} "
-                    "--group-scored-failures"
-                ),
-                (
-                    "python3 evals/harbor/validate_tbench_analysis.py "
-                    f"{shlex.quote(str(route['analysisJson']))} "
-                    "--baseline evals/harbor/tbench-clean-baseline.json "
-                    f"--expected-trials {int(route['taskCount'])}"
-                ),
-            ]
-        )
-    lines.extend(
-        [
-            "",
-            'python3 evals/harbor/validate_tbench_campaign.py "$MANIFEST" '
-            '--require-image-preflight --require-analysis --preflight-dir "$PREFLIGHT_DIR"',
-        ]
-    )
-    path.write_text("\n".join(lines).rstrip() + "\n")
-    path.chmod(path.stat().st_mode | 0o755)
 
 
 def parse_args() -> argparse.Namespace:

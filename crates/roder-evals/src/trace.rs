@@ -16,7 +16,7 @@ pub struct EvalRun {
     pub tags: Vec<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct EvalTrajectory {
     pub thread_id: ThreadId,
@@ -25,7 +25,7 @@ pub struct EvalTrajectory {
     pub events: Vec<EvalTrajectoryEvent>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct EvalTrajectoryEvent {
     #[serde(with = "time::serde::rfc3339")]
@@ -49,12 +49,15 @@ pub struct EvalTrajectoryEvent {
     pub is_error: bool,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct EvalTokenUsage {
     pub prompt_tokens: u32,
     pub completion_tokens: u32,
     pub total_tokens: u32,
+    pub cached_prompt_tokens: u32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cache_hit_rate: Option<f64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -245,6 +248,8 @@ impl EvalTrajectoryEvent {
                         prompt_tokens: usage.prompt_tokens,
                         completion_tokens: usage.completion_tokens,
                         total_tokens: usage.total_tokens,
+                        cached_prompt_tokens: usage.cached_prompt_tokens,
+                        cache_hit_rate: usage.cache_hit_rate,
                     });
                 }
                 Some(event)
@@ -418,6 +423,8 @@ mod tests {
                     prompt_tokens: 10,
                     completion_tokens: 5,
                     total_tokens: 15,
+                    cached_prompt_tokens: 9,
+                    cache_hit_rate: Some(0.9),
                 }),
                 timestamp: OffsetDateTime::UNIX_EPOCH,
             }),

@@ -32,7 +32,9 @@ from launch_plan_dependency_validation import (  # noqa: E402
     validate_required_dependency_snapshots,
     validate_required_sha256,
 )
+from launch_plan_campaign_summary_validation import validate_campaign_summary  # noqa: E402
 from launch_plan_summary_copies import validate_plan_copies_match_summary  # noqa: E402
+from tbench_deadline_policy import validate_deadline_policy  # noqa: E402
 from validate_pre_eval_summary import validate_summary as validate_pre_eval_summary  # noqa: E402
 
 VALID_STATUSES = {"dry_run", "ready", "blocked"}
@@ -48,6 +50,7 @@ REQUIRED_SHA256_FIELDS = (
     "preEvalHarborConfigSha256",
     "preEvalSummarySha256",
 )
+VALID_IMAGE_PREFLIGHT_SOURCES = {"pre_eval_summary", "route_manifest"}
 
 
 class ValidationResult:
@@ -75,6 +78,7 @@ def validate_plan(
     verify_auth_file: bool = False,
     verify_harness_files: bool = False,
     verify_image_manifest: bool = False,
+    require_campaign_summary: bool = False,
     max_pre_eval_age_seconds: int | None = None,
     now: datetime | None = None,
 ) -> ValidationResult:
@@ -88,6 +92,10 @@ def validate_plan(
         issues.append(f"launchStatus is {status or '<missing>'}, expected ready")
     if status == "dry_run" and not allow_dry_run and not require_ready:
         issues.append("launchStatus is dry_run; pass --allow-dry-run to accept it")
+    if status == "dry_run" and plan.get("dryRun") is not True:
+        issues.append("dry_run launch plan dryRun is not true")
+    if status == "dry_run" and plan.get("wouldRunHarbor") is True:
+        issues.append("dry_run launch plan would run Harbor")
     if blocked_reasons:
         issues.append("launch blocked: " + ", ".join(str(item) for item in blocked_reasons))
     if status == "blocked" and not blocked_reasons:
@@ -96,14 +104,25 @@ def validate_plan(
         issues.append("ready launch plan would not run Harbor")
     if status == "blocked" and plan.get("wouldRunHarbor") is True:
         issues.append("blocked launch plan would still run Harbor")
+    validate_deadline_policy(
+        issues,
+        plan.get("deadlinePolicy"),
+        issue_prefix="deadlinePolicy",
+    )
     if require_image_preflight and plan.get("requireImagePreflight") is not True:
         issues.append("required image preflight is not enabled")
+    validate_image_preflight_source(issues, plan)
     if require_image_preflight:
         validate_image_preflight(
             issues,
             plan,
             verify_manifest=verify_image_manifest,
         )
+    validate_campaign_summary(
+        issues,
+        plan,
+        required=require_campaign_summary,
+    )
     validate_pre_eval_summary_status(issues, plan.get("preEvalSummaryStatus"))
     if verify_pre_eval_summary:
         validate_pre_eval_summary_file(
@@ -206,13 +225,15 @@ def validate_pre_eval_summary_file(
         require_prebuilt=True,
         require_auth=True,
         require_tests=True,
-        require_image_preflight=plan.get("requireImagePreflight") is True,
+        require_image_preflight=summary_image_preflight_required(plan),
         require_analysis=plan.get("requireAnalysis") is True,
         verify_harbor_configs=True,
         verify_harness_files=True,
         verify_prebuilt_binary=True,
         verify_auth_file=True,
         verify_image_manifest=verify_image_manifest,
+        require_campaign_summary=plan.get("requireCampaignSummary") is True,
+        expected_campaign_summary=campaign_summary_json_path(plan),
         max_age_seconds=max_age_seconds,
         now=now,
     )
@@ -269,16 +290,58 @@ def validate_pre_eval_options_match_summary(
     summary: dict[str, Any],
 ) -> None:
     options = summary.get("options") if isinstance(summary.get("options"), dict) else {}
-    if isinstance(options.get("preflightImages"), bool):
+    if (
+        image_preflight_source(plan) != "route_manifest"
+        and isinstance(options.get("preflightImages"), bool)
+    ):
         if plan.get("requireImagePreflight") is not options["preflightImages"]:
             issues.append("pre-eval summary preflightImages mismatch")
     if isinstance(options.get("pullImages"), bool):
         if plan.get("pullPreflight") is not options["pullImages"]:
             issues.append("pre-eval summary pullImages mismatch")
+    if (
+        image_preflight_source(plan) != "route_manifest"
+        and isinstance(options.get("offlineImages"), bool)
+    ):
+        if plan.get("offlinePreflight") is not options["offlineImages"]:
+            issues.append("pre-eval summary offlineImages mismatch")
 
 
 def dict_value(value: Any) -> dict[str, Any]:
     return value if isinstance(value, dict) else {}
+
+
+def image_preflight_source(plan: dict[str, Any]) -> str:
+    source = plan.get("imagePreflightSource")
+    return source if isinstance(source, str) and source else "pre_eval_summary"
+
+
+def validate_image_preflight_source(issues: list[str], plan: dict[str, Any]) -> None:
+    source = image_preflight_source(plan)
+    if source not in VALID_IMAGE_PREFLIGHT_SOURCES:
+        issues.append(f"imagePreflightSource is {source}")
+        return
+    image_preflight = plan.get("imagePreflight")
+    if not isinstance(image_preflight, dict):
+        return
+    embedded_source = image_preflight.get("source")
+    if isinstance(embedded_source, str) and embedded_source and embedded_source != source:
+        issues.append("imagePreflight.source mismatch")
+
+
+def summary_image_preflight_required(plan: dict[str, Any]) -> bool:
+    return (
+        plan.get("requireImagePreflight") is True
+        and image_preflight_source(plan) != "route_manifest"
+    )
+
+
+def campaign_summary_json_path(plan: dict[str, Any]) -> Path | None:
+    campaign_summary = dict_value(plan.get("campaignSummary"))
+    summary_json = campaign_summary.get("summaryJson")
+    if not isinstance(summary_json, str) or not summary_json:
+        return None
+    return Path(summary_json)
 
 
 def validate_harbor_config_file(issues: list[str], plan: dict[str, Any]) -> None:
@@ -404,6 +467,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--verify-auth-file", action="store_true")
     parser.add_argument("--verify-harness-files", action="store_true")
     parser.add_argument("--verify-image-manifest", action="store_true")
+    parser.add_argument("--require-campaign-summary", action="store_true")
     parser.add_argument("--max-pre-eval-age-seconds", type=int)
     return parser.parse_args()
 
@@ -427,6 +491,7 @@ def main() -> int:
         verify_auth_file=args.verify_auth_file,
         verify_harness_files=args.verify_harness_files,
         verify_image_manifest=args.verify_image_manifest,
+        require_campaign_summary=args.require_campaign_summary,
         max_pre_eval_age_seconds=args.max_pre_eval_age_seconds,
     )
     if result.ok:

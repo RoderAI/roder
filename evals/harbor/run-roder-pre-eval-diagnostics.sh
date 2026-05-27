@@ -22,6 +22,7 @@ auth_file_set=0
 image_preflight_config="evals/harbor/tbench-full-gpt55-medium.json"
 image_preflight_config_set=0
 image_preflight_manifest=""
+campaign_summary=""
 extra_config_paths=()
 config_attestation_paths=()
 harbor_readiness_status="passed"
@@ -32,7 +33,7 @@ current_step=""
 
 usage() {
   cat <<'EOF'
-usage: evals/harbor/run-roder-pre-eval-diagnostics.sh [--include-speed] [--require-prebuilt] [--require-auth] [--auth-file PATH] [--preflight-images] [--offline-images] [--pull-images] [--image-config PATH] [--config PATH] [--analysis PATH] [--analysis-baseline PATH] [--skip-tests] [--output-dir DIR]
+usage: evals/harbor/run-roder-pre-eval-diagnostics.sh [--include-speed] [--require-prebuilt] [--require-auth] [--auth-file PATH] [--preflight-images] [--offline-images] [--pull-images] [--image-config PATH] [--config PATH] [--analysis PATH] [--analysis-baseline PATH] [--campaign-summary PATH] [--skip-tests] [--output-dir DIR]
 
 Runs the small local diagnostic loop before spending a Harbor Terminal-Bench run.
 
@@ -59,6 +60,8 @@ Optional:
   --analysis PATH  validate a prior Harbor analyzer JSON or job dir against the clean-run baseline
   --analysis-baseline PATH
                    baseline JSON for --analysis (default: evals/harbor/tbench-clean-baseline.json)
+  --campaign-summary PATH
+                   validate and record a combined campaign summary handoff
   --skip-tests     skip Harbor Python and roder-evals unit test gates
   --output-dir DIR write reports under DIR instead of evals/reports/pre-eval-diagnostics/<timestamp>
 EOF
@@ -135,6 +138,14 @@ while [[ $# -gt 0 ]]; do
       fi
       analysis_baseline="$2"
       analysis_baseline_set=1
+      shift 2
+      ;;
+    --campaign-summary)
+      if [[ $# -lt 2 ]]; then
+        echo "--campaign-summary requires a value" >&2
+        exit 2
+      fi
+      campaign_summary="$2"
       shift 2
       ;;
     --output-dir)
@@ -238,6 +249,10 @@ run_step_without_harbor_run_control_env() {
     -u RODER_HARBOR_LIVE_TBENCH \
     -u RODER_HARBOR_REPLACE_JOB \
     -u RODER_HARBOR_SKIP_PREFLIGHT \
+    -u RODER_HARBOR_PRE_EVAL_SUMMARY \
+    -u RODER_HARBOR_PRE_EVAL_CAMPAIGN_SUMMARY \
+    -u RODER_HARBOR_PRE_EVAL_ANALYSIS \
+    -u RODER_HARBOR_PRE_EVAL_REQUIRE_ANALYSIS \
     "$@"
 }
 
@@ -273,6 +288,9 @@ write_summary() {
   if [[ "$preflight_images" == "1" ]]; then
     summary_args+=(--preflight-images)
   fi
+  if [[ "$offline_images" == "1" ]]; then
+    summary_args+=(--offline-images)
+  fi
   if [[ "$pull_images" == "1" ]]; then
     summary_args+=(--pull-images)
   fi
@@ -289,6 +307,9 @@ write_summary() {
   fi
   if [[ -n "$image_preflight_manifest" ]]; then
     summary_args+=(--image-manifest "$image_preflight_manifest")
+  fi
+  if [[ -n "$campaign_summary" ]]; then
+    summary_args+=(--campaign-summary "$campaign_summary")
   fi
   run_step python3 evals/harbor/write_pre_eval_summary.py "${summary_args[@]}" "$@"
 }

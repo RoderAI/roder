@@ -7,8 +7,8 @@ use roder_api::automations::{
 };
 use roder_api::capabilities::CapabilityDecision;
 use roder_api::catalog::{
-    PROVIDER_CODEX, PROVIDER_MOCK, PROVIDER_OPENCODE, PROVIDER_OPENCODE_GO, PROVIDER_POOLSIDE,
-    PROVIDER_SUPERGROK, PROVIDER_XAI,
+    PROVIDER_CODEX, PROVIDER_CURSOR, PROVIDER_MOCK, PROVIDER_OPENCODE, PROVIDER_OPENCODE_GO,
+    PROVIDER_POOLSIDE, PROVIDER_SUPERGROK, PROVIDER_XAI,
 };
 use roder_api::code_index::CodeIndexStatus;
 use roder_api::discovery::DiscoverySourceKind;
@@ -80,7 +80,8 @@ use roder_protocol::{
     PluginListInstalledResult, PluginPreviewInstallParams, PluginPreviewInstallResult,
     PluginUninstallParams, PluginUninstallResult, ProcessesGetParams, ProcessesGetResult,
     ProcessesListParams, ProcessesListResult, ProcessesStopAllParams, ProcessesStopAllResult,
-    ProcessesStopParams, ProcessesStopResult, ProviderAuthResult, ProviderSelectParams,
+    ProcessesStopParams, ProcessesStopResult, ProviderAuthResult, ProviderClearParams,
+    ProviderClearResult, ProviderConfigureParams, ProviderConfigureResult, ProviderSelectParams,
     ProviderSelectResult, ProvidersListResult, RetrievalMetricsResult, RetrievalPromotedResult,
     RetrievalRecommendationsResult, RetrievalTurnParams, RunnersDeleteResult, RunnersListResult,
     RunnersSelectParams, RunnersSelectResult, RunnersSessionResult, SearchIndexClearParams,
@@ -131,6 +132,8 @@ static DISCOVERY_TEST_LOCK: LazyLock<Mutex<()>> = LazyLock::new(|| Mutex::new(()
 static SKILLS_TEST_LOCK: LazyLock<Mutex<()>> = LazyLock::new(|| Mutex::new(()));
 
 struct PendingEngine;
+
+struct UsageReportingEngine;
 
 struct ImageRecordingEngine {
     requests: Mutex<Vec<AgentInferenceRequest>>,
@@ -231,6 +234,16 @@ impl ThreadStore for RecordingThreadStore {
         Ok(metadata)
     }
 
+    async fn update_thread_metadata(
+        &self,
+        metadata: ThreadMetadata,
+    ) -> anyhow::Result<ThreadMetadata> {
+        if let Some(snapshot) = self.snapshots.lock().await.get_mut(&metadata.thread_id) {
+            snapshot.metadata = Some(metadata.clone());
+        }
+        Ok(metadata)
+    }
+
     async fn list_threads(&self) -> anyhow::Result<Vec<ThreadMetadata>> {
         Ok(self
             .snapshots
@@ -261,6 +274,15 @@ impl ThreadStore for RecordingThreadStore {
         envelope: &roder_api::events::EventEnvelope,
     ) -> anyhow::Result<()> {
         if let Some(snapshot) = self.snapshots.lock().await.get_mut(thread_id) {
+            if let roder_api::events::RoderEvent::TurnCompleted(event) = &envelope.event
+                && let Some(turn) = snapshot
+                    .turns
+                    .iter_mut()
+                    .find(|turn| turn.turn_id == event.turn_id)
+            {
+                turn.completed_at = Some(event.timestamp);
+                turn.usage = event.usage.clone();
+            }
             snapshot.events.push(envelope.clone());
         }
         Ok(())
@@ -287,6 +309,7 @@ impl ThreadStore for RecordingThreadStore {
                     items: vec![item.clone()],
                     created_at: OffsetDateTime::now_utc(),
                     completed_at: None,
+                    usage: None,
                 });
             }
         }
@@ -329,6 +352,44 @@ impl InferenceEngine for PendingEngine {
         _request: AgentInferenceRequest,
     ) -> anyhow::Result<InferenceEventStream> {
         Ok(Box::pin(stream::pending()))
+    }
+}
+
+#[async_trait::async_trait]
+impl InferenceEngine for UsageReportingEngine {
+    fn id(&self) -> InferenceEngineId {
+        PROVIDER_MOCK.to_string()
+    }
+
+    fn capabilities(&self) -> InferenceCapabilities {
+        InferenceCapabilities::text_only()
+    }
+
+    async fn list_models(
+        &self,
+        _ctx: InferenceProviderContext<'_>,
+    ) -> anyhow::Result<Vec<ModelDescriptor>> {
+        Ok(Vec::new())
+    }
+
+    async fn stream_turn(
+        &self,
+        _ctx: InferenceTurnContext<'_>,
+        _request: AgentInferenceRequest,
+    ) -> anyhow::Result<InferenceEventStream> {
+        Ok(Box::pin(futures::stream::iter(vec![
+            Ok(InferenceEvent::MessageDelta(MessageDelta {
+                text: "usage recorded".to_string(),
+                phase: None,
+            })),
+            Ok(InferenceEvent::Usage(
+                TokenUsage::new(100, 10, 110).with_cached_prompt_tokens(92),
+            )),
+            Ok(InferenceEvent::Completed(CompletionMetadata {
+                stop_reason: Some("stop".to_string()),
+                provider_response_id: None,
+            })),
+        ])))
     }
 }
 
@@ -2368,6 +2429,99 @@ async fn providers_list_exposes_poolside_api_key_models() {
 }
 
 #[tokio::test]
+async fn providers_list_exposes_cursor_api_key_models() {
+    let registry = build_default_registry(DefaultRegistryConfig {
+        cursor_api_key: Some("secret-cursor-key".to_string()),
+        ..DefaultRegistryConfig::default()
+    })
+    .unwrap();
+    let runtime = Arc::new(Runtime::new(registry, Default::default()).unwrap());
+    let server = Arc::new(AppServer::new(runtime));
+    let client = LocalAppClient::new(server);
+
+    let providers: ProvidersListResult = request(&client, "providers/list", None).await;
+    let cursor = providers
+        .providers
+        .iter()
+        .find(|provider| provider.id == PROVIDER_CURSOR)
+        .expect("cursor provider should be listed");
+    assert_eq!(cursor.auth_type, ProviderAuthType::ApiKey);
+    assert!(cursor.authenticated);
+    assert!(cursor.models.iter().any(|model| model.id == "composer-2.5"));
+    assert!(cursor.capabilities.tool_calls);
+    assert!(!cursor.capabilities.structured_output);
+}
+
+#[tokio::test]
+async fn providers_clear_removes_api_key() {
+    let temp_dir = std::env::temp_dir().join(format!("roder-test-{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir_all(&temp_dir).unwrap();
+    unsafe {
+        std::env::set_var("RODER_CONFIG_DIR", &temp_dir);
+    }
+
+    let registry = build_default_registry(DefaultRegistryConfig::default()).unwrap();
+    let runtime = Arc::new(Runtime::new(registry, Default::default()).unwrap());
+    let server = AppServer::new(runtime).with_user_config_persistence();
+    let client = LocalAppClient::new(Arc::new(server));
+
+    // Initially cursor is not authenticated
+    let providers: ProvidersListResult = request(&client, "providers/list", None).await;
+    let cursor = providers
+        .providers
+        .iter()
+        .find(|provider| provider.id == PROVIDER_CURSOR)
+        .expect("cursor provider should be listed");
+    assert!(!cursor.authenticated);
+
+    // Configure it
+    let configure_params = ProviderConfigureParams {
+        provider: PROVIDER_CURSOR.to_string(),
+        api_key: "secret-cursor-key".to_string(),
+    };
+    let configure_res: ProviderConfigureResult = request(
+        &client,
+        "providers/configure",
+        Some(serde_json::to_value(configure_params).unwrap()),
+    )
+    .await;
+    assert!(configure_res.authenticated);
+
+    // Check providers list again to verify authenticated is true
+    let providers: ProvidersListResult = request(&client, "providers/list", None).await;
+    let cursor = providers
+        .providers
+        .iter()
+        .find(|provider| provider.id == PROVIDER_CURSOR)
+        .expect("cursor provider should be listed");
+    assert!(cursor.authenticated);
+
+    // Clear it
+    let clear_params = ProviderClearParams {
+        provider: PROVIDER_CURSOR.to_string(),
+    };
+    let clear_res: ProviderClearResult = request(
+        &client,
+        "providers/clear",
+        Some(serde_json::to_value(clear_params).unwrap()),
+    )
+    .await;
+    assert_eq!(clear_res.provider, PROVIDER_CURSOR);
+
+    // Check providers list again to verify authenticated is false
+    let providers: ProvidersListResult = request(&client, "providers/list", None).await;
+    let cursor = providers
+        .providers
+        .iter()
+        .find(|provider| provider.id == PROVIDER_CURSOR)
+        .expect("cursor provider should be listed");
+    assert!(!cursor.authenticated);
+
+    // Clean up temp dir
+    let _ = std::fs::remove_dir_all(&temp_dir);
+}
+
+#[tokio::test]
 async fn supergrok_auth_status_is_exposed_through_app_server() {
     let runtime = Arc::new(Runtime::fake().unwrap());
     let server = Arc::new(AppServer::new(runtime));
@@ -3002,6 +3156,64 @@ async fn protocol_contract_turn_interrupt_without_turn_id_uses_runtime_active_tu
     .await;
 
     assert_eq!(interrupted.turn_id.as_deref(), Some(turn_id.as_str()));
+}
+
+#[tokio::test]
+async fn turn_usage_cache_metrics_are_exposed_on_notifications_and_thread_metadata() {
+    let mut builder = ExtensionRegistryBuilder::new();
+    builder.inference_engine(Arc::new(UsageReportingEngine));
+    builder.thread_store_factory(Arc::new(RecordingThreadStoreFactory::default()));
+    let runtime = Arc::new(Runtime::new(builder.build().unwrap(), Default::default()).unwrap());
+    let server = Arc::new(AppServer::new(runtime));
+    let client = LocalAppClient::new(server);
+    let mut notifications = client.subscribe_notifications();
+    let thread = start_thread(&client).await;
+    let thread_id = thread.thread.id.clone();
+    let turn = start_turn(&client, &thread_id, "record usage").await;
+
+    let completed =
+        wait_for_notification(&mut notifications, "turn/completed", Some(&thread_id)).await;
+
+    assert_eq!(completed.params["turn"]["id"], turn.turn_id);
+    assert_eq!(completed.params["turn"]["usage"]["prompt_tokens"], 100);
+    assert_eq!(
+        completed.params["turn"]["usage"]["cached_prompt_tokens"],
+        92
+    );
+    assert!(
+        (completed.params["turn"]["usage"]["cache_hit_rate"]
+            .as_f64()
+            .unwrap()
+            - 0.92)
+            .abs()
+            < f64::EPSILON
+    );
+
+    let read: ThreadReadResult = request(
+        &client,
+        "thread/read",
+        Some(
+            serde_json::to_value(ThreadReadParams {
+                thread_id,
+                include_turns: true,
+            })
+            .unwrap(),
+        ),
+    )
+    .await;
+    let thread = read.thread.expect("thread/read returns persisted thread");
+    let usage = thread.usage.expect("thread metadata includes usage");
+    assert_eq!(usage.prompt_tokens, 100);
+    assert_eq!(usage.cached_prompt_tokens, 92);
+    assert!((usage.cache_hit_rate.unwrap() - 0.92).abs() < f64::EPSILON);
+    assert_eq!(
+        thread.turns.unwrap()[0]
+            .usage
+            .as_ref()
+            .unwrap()
+            .cached_prompt_tokens,
+        92
+    );
 }
 
 #[tokio::test]
