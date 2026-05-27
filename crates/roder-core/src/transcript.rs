@@ -459,10 +459,15 @@ mod tests {
             },
         )
         .unwrap();
+        let thread_id = runtime
+            .create_thread(Some("Context compaction".to_string()))
+            .await
+            .unwrap()
+            .thread_id;
         let mut events = runtime.subscribe_events();
         let compacted = runtime
             .compact_transcript_if_needed(
-                &"thread".to_string(),
+                &thread_id,
                 &"turn".to_string(),
                 "mock",
                 vec![
@@ -495,7 +500,7 @@ mod tests {
         ));
         let artifacts = runtime
             .context_artifacts()
-            .list_artifacts(&"thread".to_string())
+            .list_artifacts(&thread_id)
             .unwrap();
         let history = artifacts
             .iter()
@@ -505,13 +510,13 @@ mod tests {
             .unwrap();
         let grep = runtime
             .context_artifacts()
-            .grep_artifact(&"thread".to_string(), &history.id, "old answer", 0, 10)
+            .grep_artifact(&thread_id, &history.id, "old answer", 0, 10)
             .unwrap();
         assert_eq!(grep.total_matches, 1);
         assert!(
             history.store_path.starts_with(
                 thread_root
-                    .join("thread")
+                    .join(&thread_id)
                     .join("artifacts")
                     .join("turn")
                     .to_string_lossy()
@@ -626,10 +631,15 @@ mod tests {
             },
         )
         .unwrap();
+        let thread_id = runtime
+            .create_thread(Some("Legacy compaction".to_string()))
+            .await
+            .unwrap()
+            .thread_id;
 
         let compacted = runtime
             .compact_transcript_if_needed(
-                &"thread".to_string(),
+                &thread_id,
                 &"turn".to_string(),
                 "mock",
                 vec![
@@ -659,7 +669,7 @@ mod tests {
         assert!(
             runtime
                 .context_artifacts()
-                .list_artifacts(&"thread".to_string())
+                .list_artifacts(&thread_id)
                 .unwrap()
                 .is_empty()
         );
@@ -696,6 +706,7 @@ mod tests {
             images: Vec::new(),
             provider_override: None,
             model_override: None,
+            reasoning_override: None,
             workspace: test_workspace(),
             instructions: Default::default(),
             task_ledger_required: false,

@@ -439,6 +439,7 @@ fn searchable_text(thread: &Thread) -> String {
         thread_title(thread),
         thread.cwd.clone(),
         thread.model_provider.clone(),
+        thread.model.clone(),
         thread.id.clone(),
     ]
     .join(" ")
@@ -456,7 +457,7 @@ fn thread_title(thread: &Thread) -> String {
 
 fn thread_line(thread: &Thread, width: usize) -> String {
     let workspace = compacted_workspace(Some(thread.cwd.as_str()));
-    let model = thread.model_provider.as_str();
+    let model = thread_model_label(thread);
     let date = human_time(thread.updated_at);
     let message_count = thread_message_count(thread);
     let title = thread_title(thread);
@@ -477,7 +478,7 @@ fn thread_line(thread: &Thread, width: usize) -> String {
 
     let title = truncate(&title, title_width);
     let workspace = truncate(&workspace, workspace_width);
-    let model = truncate(model, model_width);
+    let model = truncate(&model, model_width);
     let right = truncate(&right, right_width.max(1));
 
     let line = format!(
@@ -485,6 +486,16 @@ fn thread_line(thread: &Thread, width: usize) -> String {
         date, title, workspace, model, right,
     );
     fit_line(&line, width)
+}
+
+fn thread_model_label(thread: &Thread) -> String {
+    if thread.model.trim().is_empty() {
+        thread.model_provider.clone()
+    } else if thread.model_provider.trim().is_empty() {
+        thread.model.clone()
+    } else {
+        format!("{}/{}", thread.model_provider, thread.model)
+    }
 }
 
 fn thread_message_count(thread: &Thread) -> usize {
@@ -691,6 +702,7 @@ mod tests {
             id: id.to_string(),
             preview: title.unwrap_or("Untitled thread").to_string(),
             model_provider: "mock".to_string(),
+            model: "mock".to_string(),
             created_at: OffsetDateTime::UNIX_EPOCH.unix_timestamp(),
             updated_at: updated_at.unix_timestamp(),
             status: ThreadStatus {

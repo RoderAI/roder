@@ -43,6 +43,7 @@ async fn eval_runtime_retries_transient_provider_stream_decode_failure() {
             images: Vec::new(),
             provider_override: None,
             model_override: None,
+            reasoning_override: None,
             workspace: std::env::current_dir().unwrap().display().to_string(),
             instructions: InstructionBundle::default(),
             task_ledger_required: false,

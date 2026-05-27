@@ -552,6 +552,7 @@ pub fn thread_source(threads: &[Thread]) -> StaticPaletteSource {
                         keywords: vec![
                             thread.id.clone(),
                             thread.model_provider.clone(),
+                            thread.model.clone(),
                             thread.cwd.clone(),
                         ],
                         icon: Some('#'),

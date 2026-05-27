@@ -8,7 +8,7 @@ use roder_api::automations::{
 use roder_api::capabilities::CapabilityDecision;
 use roder_api::catalog::{
     PROVIDER_CODEX, PROVIDER_CURSOR, PROVIDER_MOCK, PROVIDER_OPENCODE, PROVIDER_OPENCODE_GO,
-    PROVIDER_POOLSIDE, PROVIDER_SUPERGROK, PROVIDER_XAI,
+    PROVIDER_POOLSIDE, PROVIDER_SUPERGROK, PROVIDER_XAI, REASONING_HIGH, REASONING_MEDIUM,
 };
 use roder_api::code_index::CodeIndexStatus;
 use roder_api::discovery::DiscoverySourceKind;
@@ -1001,6 +1001,184 @@ async fn model_switch_providers_select_updates_protocol_thread_model_for_next_tu
     let request = wait_for_recorded_request(&engine).await;
     assert_eq!(request.model.provider, PROVIDER_MOCK);
     assert_eq!(request.model.model, "alternate-mock-model");
+}
+
+#[tokio::test]
+async fn model_switch_with_thread_id_does_not_change_global_default_model() {
+    let engine = Arc::new(TaskCallingEngine {
+        hang_child: false,
+        parent_calls: Mutex::new(0),
+        requests: Mutex::new(Vec::new()),
+    });
+    let mut builder = ExtensionRegistryBuilder::new();
+    builder.inference_engine(engine);
+    let runtime = Arc::new(Runtime::new(builder.build().unwrap(), Default::default()).unwrap());
+    let server = Arc::new(AppServer::new(runtime));
+    let client = LocalAppClient::new(server);
+
+    let started: ThreadStartResult = request(
+        &client,
+        "thread/start",
+        Some(serde_json::json!({
+            "model": "mock",
+            "modelProvider": PROVIDER_MOCK,
+            "cwd": "/tmp",
+            "ephemeral": false
+        })),
+    )
+    .await;
+
+    let _: ProviderSelectResult = request(
+        &client,
+        "providers/select",
+        Some(
+            serde_json::to_value(ProviderSelectParams {
+                provider: PROVIDER_MOCK.to_string(),
+                model: Some("alternate-mock-model".to_string()),
+                reasoning: Some("none".to_string()),
+                thread_id: Some(started.thread.id.clone()),
+            })
+            .unwrap(),
+        ),
+    )
+    .await;
+
+    let initialized: InitializeResult = request(&client, "initialize", None).await;
+    assert_eq!(initialized.provider, PROVIDER_MOCK);
+    assert_eq!(initialized.model, "mock");
+
+    let next_thread = start_thread(&client).await;
+    assert_eq!(next_thread.model_provider, PROVIDER_MOCK);
+    assert_eq!(next_thread.model, "mock");
+}
+
+#[tokio::test]
+async fn model_switch_with_thread_id_preserves_effective_reasoning_for_turn() {
+    let engine = Arc::new(TaskCallingEngine::new(false));
+    let mut builder = ExtensionRegistryBuilder::new();
+    builder.inference_engine(engine.clone());
+    let runtime = Arc::new(Runtime::new(builder.build().unwrap(), Default::default()).unwrap());
+    let server = Arc::new(AppServer::new(runtime));
+    let client = LocalAppClient::new(server);
+
+    let started = start_thread(&client).await;
+
+    let selected: ProviderSelectResult = request(
+        &client,
+        "providers/select",
+        Some(
+            serde_json::to_value(ProviderSelectParams {
+                provider: PROVIDER_MOCK.to_string(),
+                model: Some("gpt-5.5".to_string()),
+                reasoning: None,
+                thread_id: Some(started.thread.id.clone()),
+            })
+            .unwrap(),
+        ),
+    )
+    .await;
+    assert_eq!(selected.reasoning, REASONING_MEDIUM);
+
+    let _: ProviderSelectResult = request(
+        &client,
+        "providers/select",
+        Some(
+            serde_json::to_value(ProviderSelectParams {
+                provider: PROVIDER_MOCK.to_string(),
+                model: Some("gpt-5.5".to_string()),
+                reasoning: Some(REASONING_HIGH.to_string()),
+                thread_id: None,
+            })
+            .unwrap(),
+        ),
+    )
+    .await;
+
+    let _: TurnStartResult = request(
+        &client,
+        "turn/start",
+        Some(serde_json::json!({
+            "threadId": started.thread.id,
+            "input": [{ "type": "text", "text": "hello" }]
+        })),
+    )
+    .await;
+
+    let request = wait_for_recorded_request(&engine).await;
+    assert_eq!(request.model.provider, PROVIDER_MOCK);
+    assert_eq!(request.model.model, "gpt-5.5");
+    assert_eq!(request.reasoning.level.as_deref(), Some(REASONING_MEDIUM));
+}
+
+#[tokio::test]
+async fn settings_get_exposes_model_reasoning_and_policy_defaults() {
+    let mut builder = ExtensionRegistryBuilder::new();
+    builder.inference_engine(Arc::new(FakeInferenceEngine));
+    let runtime = Arc::new(
+        Runtime::new(
+            builder.build().unwrap(),
+            RuntimeConfig {
+                default_provider: PROVIDER_MOCK.to_string(),
+                default_model: "gpt-5.5".to_string(),
+                reasoning: Some(REASONING_HIGH.to_string()),
+                policy_mode: PolicyMode::AcceptAll,
+                ..Default::default()
+            },
+        )
+        .unwrap(),
+    );
+    let server = Arc::new(AppServer::new(runtime));
+    let client = LocalAppClient::new(server);
+
+    let settings: SettingsGetResult = request(&client, "settings/get", None).await;
+
+    assert_eq!(settings.default_provider, PROVIDER_MOCK);
+    assert_eq!(settings.default_model, "gpt-5.5");
+    assert_eq!(settings.default_reasoning, REASONING_HIGH);
+    assert_eq!(settings.default_mode, PolicyMode::AcceptAll);
+}
+
+#[tokio::test]
+async fn turn_start_selected_controls_override_defaults_for_next_turn() {
+    let engine = Arc::new(TaskCallingEngine::new(false));
+    let mut builder = ExtensionRegistryBuilder::new();
+    builder.inference_engine(engine.clone());
+    let runtime = Arc::new(
+        Runtime::new(
+            builder.build().unwrap(),
+            RuntimeConfig {
+                default_provider: PROVIDER_MOCK.to_string(),
+                default_model: "mock".to_string(),
+                reasoning: Some(REASONING_MEDIUM.to_string()),
+                ..Default::default()
+            },
+        )
+        .unwrap(),
+    );
+    let server = Arc::new(AppServer::new(runtime.clone()));
+    let client = LocalAppClient::new(server);
+
+    let started = start_thread(&client).await;
+
+    let _: TurnStartResult = request(
+        &client,
+        "turn/start",
+        Some(serde_json::json!({
+            "threadId": started.thread.id,
+            "input": [{ "type": "text", "text": "hello" }],
+            "modelProvider": PROVIDER_MOCK,
+            "model": "gpt-5.5",
+            "reasoning": REASONING_HIGH,
+            "policyMode": "plan"
+        })),
+    )
+    .await;
+
+    let request = wait_for_recorded_request(&engine).await;
+    assert_eq!(request.model.provider, PROVIDER_MOCK);
+    assert_eq!(request.model.model, "gpt-5.5");
+    assert_eq!(request.reasoning.level.as_deref(), Some(REASONING_HIGH));
+    assert_eq!(runtime.status().await.policy_mode, PolicyMode::Plan);
 }
 
 #[tokio::test]
@@ -3135,6 +3313,7 @@ async fn protocol_contract_turn_interrupt_without_turn_id_uses_runtime_active_tu
             images: Vec::new(),
             provider_override: Some(PROVIDER_MOCK.to_string()),
             model_override: Some("mock".to_string()),
+            reasoning_override: None,
             workspace: "/tmp".to_string(),
             instructions: default_instructions(),
             task_ledger_required: false,
@@ -6635,6 +6814,7 @@ async fn start_thread(client: &LocalAppClient) -> ThreadStartResult {
             serde_json::to_value(ThreadStartParams {
                 model: None,
                 model_provider: None,
+                reasoning: None,
                 cwd: test_cwd(),
                 ephemeral: false,
             })
@@ -6657,6 +6837,10 @@ async fn start_turn(client: &LocalAppClient, thread_id: &str, text: &str) -> Tur
                 thread_id: thread_id.to_string(),
                 input: text_input(text),
                 prompt: None,
+                model_provider: None,
+                model: None,
+                reasoning: None,
+                policy_mode: None,
                 task_ledger_required: false,
             })
             .unwrap(),

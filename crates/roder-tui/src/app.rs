@@ -1132,6 +1132,12 @@ where
                 .model
                 .clone()
                 .filter(|value| !value.trim().is_empty())
+                .or_else(|| {
+                    thread
+                        .as_ref()
+                        .map(|thread| thread.model.clone())
+                        .filter(|value| !value.trim().is_empty())
+                })
                 .unwrap_or_else(|| model.clone());
             let provider = member
                 .model_provider
@@ -1178,7 +1184,11 @@ where
                 .await?
                 .ok_or_else(|| anyhow::anyhow!("thread not found: {}", short_id(&thread_id)))?;
             let provider = thread.model_provider.clone();
-            let thread_model = model.clone();
+            let thread_model = if thread.model.trim().is_empty() {
+                model.clone()
+            } else {
+                thread.model.clone()
+            };
             let title = thread
                 .name
                 .clone()
@@ -1221,6 +1231,7 @@ where
                 serde_json::to_value(ThreadStartParams {
                     model: (!model.trim().is_empty()).then(|| model.clone()),
                     model_provider: None,
+                    reasoning: None,
                     cwd: std::env::current_dir()?.display().to_string(),
                     ephemeral: false,
                 })
@@ -1235,7 +1246,9 @@ where
             anyhow::bail!("failed to create thread: {:?}", res.error);
         };
 
-        let selected_model = if model.is_empty() {
+        let selected_model = if !started.thread.model.trim().is_empty() {
+            started.thread.model.clone()
+        } else if !started.model.trim().is_empty() {
             started.model.clone()
         } else {
             model.clone()
@@ -1248,7 +1261,7 @@ where
                 provider: started.model_provider,
                 thread_model: selected_model,
                 requested_model: model,
-                reasoning: "medium".to_string(),
+                reasoning: started.reasoning,
                 thread_title: None,
                 thread_message_count: 0,
             },
@@ -2921,6 +2934,10 @@ where
             thread_id,
             input: pending_turn_input(pending.message, pending.images),
             prompt: None,
+            model_provider: Some(self.provider.clone()),
+            model: Some(self.model.clone()),
+            reasoning: Some(self.reasoning_effort.clone()),
+            policy_mode: Some(self.policy_mode),
             task_ledger_required: false,
         };
         let client = self.client.clone();
@@ -7297,6 +7314,7 @@ mod tests {
             id: "thread-ledger".to_string(),
             preview: String::new(),
             model_provider: "mock".to_string(),
+            model: "mock".to_string(),
             created_at: 0,
             updated_at: 0,
             status: ThreadStatus {
@@ -7346,6 +7364,7 @@ mod tests {
             id: "thread-running".to_string(),
             preview: String::new(),
             model_provider: "mock".to_string(),
+            model: "mock".to_string(),
             created_at: 0,
             updated_at: 0,
             status: ThreadStatus {
@@ -7355,6 +7374,7 @@ mod tests {
             },
             cwd: "/tmp".to_string(),
             name: None,
+            usage: None,
             turns: None,
         };
 
@@ -7366,6 +7386,7 @@ mod tests {
             id: "thread-idle".to_string(),
             preview: String::new(),
             model_provider: "mock".to_string(),
+            model: "mock".to_string(),
             created_at: 0,
             updated_at: 0,
             status: ThreadStatus {
@@ -7375,6 +7396,7 @@ mod tests {
             },
             cwd: "/tmp".to_string(),
             name: None,
+            usage: None,
             turns: None,
         };
 
@@ -7746,6 +7768,7 @@ mod tests {
                     serde_json::to_value(ThreadStartParams {
                         model: Some("mock".to_string()),
                         model_provider: Some("mock".to_string()),
+                        reasoning: None,
                         cwd: std::env::current_dir().unwrap().display().to_string(),
                         ephemeral: false,
                     })

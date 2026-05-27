@@ -310,6 +310,7 @@ async fn run_offline_fixture(
                 images: Vec::new(),
                 provider_override: Some(provider.to_string()),
                 model_override: Some(profile_run.model.clone()),
+                reasoning_override: None,
                 workspace: workspace.path.display().to_string(),
                 instructions: InstructionBundle::default(),
                 task_ledger_required: fixture.expected.task_ledger_required,
