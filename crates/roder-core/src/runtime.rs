@@ -27,7 +27,9 @@ use roder_api::reliability::{
 use roder_api::remote_runner::{RemoteRunnerSession, RunnerDestination};
 use roder_api::subagents::SubagentDefinition;
 use roder_api::teams::TeamMemberStatus;
-use roder_api::thread::{ThreadMetadata, ThreadSnapshot, ThreadStore, ThreadUsageMetadata};
+use roder_api::thread::{
+    ThreadMetadata, ThreadSnapshot, ThreadStore, ThreadUsageMetadata, validate_thread_workspace,
+};
 use roder_api::tools::{ToolCall, ToolChoice, ToolExecutionContext, ToolRegistry, ToolResult};
 use roder_api::transcript::{
     AssistantMessage, ErrorRecord, InputImage, ReasoningSummary, ToolCallRecord, ToolResultRecord,
@@ -129,15 +131,15 @@ pub struct StartTurnRequest {
     pub images: Vec<InputImage>,
     pub provider_override: Option<String>,
     pub model_override: Option<String>,
-    pub workspace: Option<String>,
+    pub workspace: String,
     pub instructions: InstructionBundle,
     pub task_ledger_required: bool,
 }
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone)]
 pub struct CreateThreadRequest {
     pub title: Option<String>,
-    pub workspace: Option<String>,
+    pub workspace: String,
     pub provider: Option<String>,
     pub model: Option<String>,
 }
@@ -173,6 +175,12 @@ struct ActiveTurnHandle {
     thread_id: ThreadId,
     abort: AbortHandle,
     steers: Arc<Mutex<Vec<UserMessage>>>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ThreadActivity {
+    pub active_turn_id: Option<TurnId>,
+    pub active_flags: Vec<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -694,7 +702,9 @@ impl Runtime {
     pub async fn create_thread(&self, title: Option<String>) -> anyhow::Result<ThreadMetadata> {
         self.create_thread_with(CreateThreadRequest {
             title,
-            ..CreateThreadRequest::default()
+            workspace: self.workspace.display().to_string(),
+            provider: None,
+            model: None,
         })
         .await
     }
@@ -705,10 +715,11 @@ impl Runtime {
     ) -> anyhow::Result<ThreadMetadata> {
         let cfg = self.config.read().await.clone();
         let now = OffsetDateTime::now_utc();
+        let workspace = validate_thread_workspace(&req.workspace)?;
         let metadata = ThreadMetadata {
             thread_id: uuid::Uuid::new_v4().to_string(),
             title: req.title,
-            workspace: req.workspace.or(cfg.workspace),
+            workspace,
             provider: Some(req.provider.unwrap_or(cfg.default_provider)),
             model: Some(req.model.unwrap_or(cfg.default_model)),
             runner_destination: cfg.remote_runner_destination.clone(),
@@ -748,12 +759,15 @@ impl Runtime {
 
     pub async fn start_team(&self, req: TeamStartRequest) -> anyhow::Result<TeamState> {
         let cfg = self.config.read().await.clone();
+        let workspace = self.workspace.display().to_string();
         let lead_thread_id = match req.lead_thread_id {
             Some(thread_id) => thread_id,
             None => {
                 self.create_thread_with(CreateThreadRequest {
                     title: Some("Team lead".to_string()),
-                    ..CreateThreadRequest::default()
+                    workspace: workspace.clone(),
+                    provider: None,
+                    model: None,
                 })
                 .await?
                 .thread_id
@@ -771,9 +785,9 @@ impl Runtime {
             let thread = self
                 .create_thread_with(CreateThreadRequest {
                     title: Some(member.name.clone()),
+                    workspace: workspace.clone(),
                     provider: member.model_provider.clone(),
                     model: member.model.clone(),
-                    ..CreateThreadRequest::default()
                 })
                 .await?;
             let member_id = format!("member-{}", index + 1);
@@ -838,9 +852,9 @@ impl Runtime {
         let thread = self
             .create_thread_with(CreateThreadRequest {
                 title: Some(req.name.clone()),
+                workspace: self.workspace.display().to_string(),
                 provider: req.model_provider.clone(),
                 model: req.model.clone(),
-                ..CreateThreadRequest::default()
             })
             .await?;
         let team = self
@@ -894,6 +908,7 @@ impl Runtime {
         self.teams
             .append_mailbox_message(team_id, None, member_id.to_string(), message.clone())
             .await?;
+        let workspace = self.workspace.display().to_string();
         let turn_id = if member.status == TeamMemberStatus::Running {
             if let Some(turn_id) = member.current_turn_id.clone() {
                 self.steer_turn(
@@ -911,7 +926,7 @@ impl Runtime {
                     images: Vec::new(),
                     provider_override: member.model_provider.clone(),
                     model_override: member.model.clone(),
-                    workspace: None,
+                    workspace: workspace.clone(),
                     instructions: crate::default_instructions(),
                     task_ledger_required: false,
                 })
@@ -924,7 +939,7 @@ impl Runtime {
                 images: Vec::new(),
                 provider_override: member.model_provider.clone(),
                 model_override: member.model.clone(),
-                workspace: None,
+                workspace,
                 instructions: crate::default_instructions(),
                 task_ledger_required: false,
             })
@@ -1142,6 +1157,20 @@ impl Runtime {
         Ok(loaded)
     }
 
+    pub async fn workspace_for_thread(&self, thread_id: &ThreadId) -> anyhow::Result<String> {
+        if let Some(store) = &self.thread_store {
+            let snapshot = store
+                .load_thread(thread_id)
+                .await?
+                .ok_or_else(|| anyhow::anyhow!("thread not found: {thread_id}"))?;
+            let metadata = snapshot
+                .metadata
+                .ok_or_else(|| anyhow::anyhow!("thread metadata missing for {thread_id}"))?;
+            return Ok(metadata.workspace);
+        }
+        Ok(self.workspace.display().to_string())
+    }
+
     async fn runner_session_for_thread(
         &self,
         thread_id: &ThreadId,
@@ -1236,9 +1265,10 @@ impl Runtime {
 
     pub fn start_turn(
         self: &Arc<Self>,
-        req: StartTurnRequest,
+        mut req: StartTurnRequest,
     ) -> BoxFuture<'_, anyhow::Result<TurnId>> {
         Box::pin(async move {
+            req.workspace = validate_thread_workspace(&req.workspace)?;
             let cfg = self.config.read().await.clone();
             let provider = req
                 .provider_override
@@ -1305,6 +1335,42 @@ impl Runtime {
             .await
             .iter()
             .find_map(|(turn_id, handle)| (&handle.thread_id == thread_id).then(|| turn_id.clone()))
+    }
+
+    pub async fn thread_activity(&self, thread_id: &ThreadId) -> ThreadActivity {
+        let Some(active_turn_id) = self.active_turn_for_thread(thread_id).await else {
+            return ThreadActivity::default();
+        };
+
+        let mut active_flags = Vec::new();
+        {
+            let pending_approvals = self.pending_tool_approvals.lock().await;
+            if pending_approvals
+                .values()
+                .any(|pending| &pending.thread_id == thread_id && pending.turn_id == active_turn_id)
+            {
+                active_flags.push("approvalRequired".to_string());
+            }
+        }
+        {
+            let pending_inputs = self.pending_user_inputs.lock().await;
+            if pending_inputs
+                .values()
+                .any(|pending| &pending.thread_id == thread_id && pending.turn_id == active_turn_id)
+            {
+                active_flags.push("userInputRequired".to_string());
+            }
+        }
+        if self.pending_plan_exit().await.is_some_and(|pending| {
+            &pending.thread_id == thread_id && pending.turn_id == active_turn_id
+        }) {
+            active_flags.push("planExitRequired".to_string());
+        }
+
+        ThreadActivity {
+            active_turn_id: Some(active_turn_id),
+            active_flags,
+        }
     }
 
     pub async fn interrupt_turn(&self, thread_id: ThreadId, turn_id: TurnId) -> anyhow::Result<()> {
@@ -1408,7 +1474,7 @@ impl Runtime {
         } else {
             Vec::new()
         };
-        let workspace = req.workspace.clone().or_else(|| cfg.workspace.clone());
+        let workspace = req.workspace.clone();
         let parallel_tool_calls = parallel_tool_calls_for_model(&cfg, &model);
         let tool_choice = if tools.is_empty() {
             ToolChoice::None
@@ -2078,7 +2144,7 @@ impl Runtime {
                     &turn_id,
                     tool_calls,
                     parallel_tool_calls,
-                    workspace.as_deref(),
+                    Some(workspace.as_str()),
                     turn_deadline,
                 )
                 .await?;
@@ -2925,6 +2991,10 @@ mod tests {
     use roder_ext_jsonl_thread_store::store::JsonlThreadStoreFactory;
     use std::sync::Mutex as StdMutex;
 
+    fn test_workspace() -> String {
+        std::env::current_dir().unwrap().display().to_string()
+    }
+
     #[test]
     fn server_side_compaction_uses_catalog_ninety_percent_default() {
         assert_eq!(
@@ -2956,7 +3026,7 @@ mod tests {
         let metadata = runtime
             .create_thread_with(CreateThreadRequest {
                 title: Some("Automation: nightly status".to_string()),
-                workspace: Some("/tmp/project".to_string()),
+                workspace: "/tmp/project".to_string(),
                 provider: Some("mock".to_string()),
                 model: Some("mock".to_string()),
             })
@@ -2967,7 +3037,7 @@ mod tests {
             metadata.title.as_deref(),
             Some("Automation: nightly status")
         );
-        assert_eq!(metadata.workspace.as_deref(), Some("/tmp/project"));
+        assert_eq!(metadata.workspace, "/tmp/project");
         assert_eq!(metadata.provider.as_deref(), Some("mock"));
         assert_eq!(metadata.model.as_deref(), Some("mock"));
     }
@@ -3640,7 +3710,7 @@ mod tests {
                 images: Vec::new(),
                 provider_override: None,
                 model_override: None,
-                workspace: None,
+                workspace: test_workspace(),
                 instructions: InstructionBundle {
                     system: None,
                     developer: Some("base developer".to_string()),
@@ -3709,6 +3779,98 @@ mod tests {
                 .and_then(serde_json::Value::as_str),
             Some("standard_required_first")
         );
+    }
+
+    #[tokio::test]
+    async fn context_entrypoint_hints_use_turn_workspace() {
+        let process_workspace = runtime_test_workspace("entrypoint-process");
+        let thread_workspace = runtime_test_workspace("entrypoint-thread");
+        std::fs::create_dir_all(process_workspace.join("src")).unwrap();
+        std::fs::create_dir_all(thread_workspace.join("src")).unwrap();
+        std::fs::write(
+            process_workspace.join("src/sidebar-thread-groups.ts"),
+            "export const desktopLeak = true;\n",
+        )
+        .unwrap();
+        std::fs::write(
+            thread_workspace.join("src/voice-plan-feedback.ts"),
+            "export const voicePlanFeedback = true;\n",
+        )
+        .unwrap();
+
+        let captured = Arc::new(StdMutex::new(None));
+        let mut builder = ExtensionRegistryBuilder::new();
+        builder.inference_engine(Arc::new(CapturingEngine {
+            request: captured.clone(),
+        }));
+        builder.context_planner(Arc::new(roder_context::EntrypointContextPlanner::new(
+            process_workspace.clone(),
+        )));
+        let runtime = Arc::new(
+            Runtime::new(
+                builder.build().unwrap(),
+                RuntimeConfig {
+                    workspace: Some(process_workspace.display().to_string()),
+                    ..RuntimeConfig::default()
+                },
+            )
+            .unwrap(),
+        );
+        let mut rx = runtime.subscribe_events();
+
+        let turn_id = runtime
+            .start_turn(StartTurnRequest {
+                thread_id: "thread-workspace-entrypoint".to_string(),
+                message: "investigate voice plan feedback".to_string(),
+                images: Vec::new(),
+                provider_override: None,
+                model_override: None,
+                workspace: thread_workspace.display().to_string(),
+                instructions: crate::instructions::default_instructions(),
+                task_ledger_required: false,
+            })
+            .await
+            .unwrap();
+
+        tokio::time::timeout(std::time::Duration::from_secs(5), async {
+            loop {
+                let envelope = rx.recv().await.unwrap();
+                if envelope.turn_id.as_deref() != Some(&turn_id) {
+                    continue;
+                }
+                match envelope.event {
+                    RoderEvent::TurnCompleted(_) => break,
+                    RoderEvent::TurnFailed(event) => panic!("turn failed: {}", event.error),
+                    _ => {}
+                }
+            }
+        })
+        .await
+        .unwrap();
+
+        let request = captured.lock().unwrap().clone().expect("captured request");
+        let transcript_text = request
+            .transcript
+            .iter()
+            .map(|item| match item {
+                TranscriptItem::UserMessage(message) => message.text.as_str(),
+                _ => "",
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(transcript_text.contains("src/voice-plan-feedback.ts"));
+        assert!(!transcript_text.contains("src/sidebar-thread-groups.ts"));
+
+        let _ = std::fs::remove_dir_all(process_workspace);
+        let _ = std::fs::remove_dir_all(thread_workspace);
+    }
+
+    fn runtime_test_workspace(name: &str) -> std::path::PathBuf {
+        let path =
+            std::env::temp_dir().join(format!("roder-runtime-{name}-{}", uuid::Uuid::new_v4()));
+        let _ = std::fs::remove_dir_all(&path);
+        std::fs::create_dir_all(&path).unwrap();
+        path
     }
 
     #[tokio::test]
@@ -3791,7 +3953,7 @@ mod tests {
                     images: Vec::new(),
                     provider_override: None,
                     model_override,
-                    workspace: None,
+                    workspace: test_workspace(),
                     instructions: InstructionBundle::default(),
                     task_ledger_required: false,
                 })
@@ -3918,7 +4080,7 @@ mod tests {
                 images: Vec::new(),
                 provider_override: None,
                 model_override: None,
-                workspace: None,
+                workspace: test_workspace(),
                 instructions: InstructionBundle {
                     system: None,
                     developer: Some("base developer".to_string()),
@@ -3985,7 +4147,7 @@ mod tests {
                 images: Vec::new(),
                 provider_override: None,
                 model_override: None,
-                workspace: None,
+                workspace: test_workspace(),
                 instructions: InstructionBundle::default(),
                 task_ledger_required: true,
             })
@@ -4056,7 +4218,7 @@ mod tests {
                 images: Vec::new(),
                 provider_override: None,
                 model_override: None,
-                workspace: None,
+                workspace: test_workspace(),
                 instructions: InstructionBundle::default(),
                 task_ledger_required: true,
             })
@@ -4130,7 +4292,7 @@ mod tests {
                 images: Vec::new(),
                 provider_override: None,
                 model_override: None,
-                workspace: None,
+                workspace: test_workspace(),
                 instructions: InstructionBundle::default(),
                 task_ledger_required: true,
             })
@@ -4253,7 +4415,7 @@ mod tests {
                 images: Vec::new(),
                 provider_override: None,
                 model_override: None,
-                workspace: None,
+                workspace: test_workspace(),
                 instructions: InstructionBundle::default(),
                 task_ledger_required: false,
             })
@@ -4329,7 +4491,7 @@ mod tests {
                 images: Vec::new(),
                 provider_override: None,
                 model_override: None,
-                workspace: None,
+                workspace: test_workspace(),
                 instructions: InstructionBundle::default(),
                 task_ledger_required: false,
             })
@@ -4414,7 +4576,7 @@ mod tests {
                 images: Vec::new(),
                 provider_override: None,
                 model_override: None,
-                workspace: None,
+                workspace: test_workspace(),
                 instructions: InstructionBundle::default(),
                 task_ledger_required: false,
             })

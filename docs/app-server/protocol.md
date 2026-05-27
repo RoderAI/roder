@@ -9,7 +9,7 @@ for app, TUI, CLI, SDK, and sibling clients.
 | Method | Client caller | Roder backing behavior | Notes |
 | --- | --- | --- | --- |
 | `initialize` | startup handshake | Return app-server status, capabilities, cwd, active model, and provider metadata. | Startup entrypoint. |
-| `thread/start` | new chat | Create a Roder thread with `model`, optional `modelProvider`, `cwd`, and `ephemeral`. | Returns a protocol `Thread`. |
+| `thread/start` | new chat | Create a Roder thread with `model`, optional `modelProvider`, required absolute `cwd`, and `ephemeral`. | Returns a protocol `Thread`; missing, empty, or relative cwd is rejected. |
 | `thread/list` | sidebar bootstrap/refresh | List persisted Roder threads as stable protocol `Thread` objects. | Pagination cursors are reserved. |
 | `thread/read` | thread switch | Read a persisted thread by `threadId`; include turns/items when `includeTurns` is true. | Returns `thread: null` when not found. |
 | `thread/archive` | archive/delete thread action | Archive a persisted thread and remove in-memory protocol state for that thread. | `thread/list` no longer returns archived threads. |
@@ -39,6 +39,10 @@ for app, TUI, CLI, SDK, and sibling clients.
 | `automations/runNow` | manual automation run | Queue one immediate automation occurrence through the normal run path. | Uses the same task/thread/turn audit path as scheduled runs. |
 | `automations/runs` | automation history | Read run history, including failed and skipped missed runs. | Use `state` filtering for failed, running, or skipped views. |
 | `automations/cancelRun` | stop automation run | Cancel a queued or running automation run. | Cancellation is run-id scoped. |
+
+Thread metadata is required to carry an absolute workspace. The app-server
+projects that workspace into `Thread.cwd`; it does not synthesize a fallback cwd
+from the app-server process when persisted metadata is missing or invalid.
 
 ## Required Client Notifications
 

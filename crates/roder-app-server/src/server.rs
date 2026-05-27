@@ -31,8 +31,8 @@ use tokio::sync::{RwLock, broadcast};
 use crate::automations::AppServerFeatureConfig;
 use crate::notifications;
 use crate::protocol_contract::{
-    default_cwd_string, protocol_thread_from_metadata, protocol_turn_from_record,
-    protocol_turn_images, protocol_turn_message,
+    idle_thread_status, protocol_thread_from_metadata, protocol_turn_from_record,
+    protocol_turn_images, protocol_turn_message, thread_status_for_activity,
 };
 
 #[derive(Debug, serde::Deserialize)]
@@ -89,7 +89,6 @@ pub struct AppServer {
     pub(crate) automation_supervisor: Option<roder_automations::AutomationSupervisorHandle>,
     pub(crate) protocol_threads: RwLock<std::collections::HashMap<String, Thread>>,
     pub(crate) protocol_thread_models: RwLock<std::collections::HashMap<String, (String, String)>>,
-    pub(crate) protocol_active_turns: RwLock<std::collections::HashMap<String, String>>,
     pub(crate) protocol_notifications: broadcast::Sender<JsonRpcNotification>,
 }
 
@@ -1298,10 +1297,7 @@ impl AppServer {
             ));
         }
         roder_config::delete_provider_api_key(&provider).map_err(internal_error)?;
-        Ok(serde_json::to_value(ProviderClearResult {
-            provider,
-        })
-        .unwrap())
+        Ok(serde_json::to_value(ProviderClearResult { provider }).unwrap())
     }
 
     async fn handle_settings_get(&self) -> Result<serde_json::Value, JsonRpcError> {
@@ -1474,6 +1470,26 @@ impl AppServer {
         .unwrap())
     }
 
+    async fn live_thread_status(&self, thread_id: &str) -> ThreadStatus {
+        let thread_id = thread_id.to_string();
+        let activity = self.runtime.thread_activity(&thread_id).await;
+        thread_status_for_activity(activity.active_turn_id, activity.active_flags)
+    }
+
+    async fn protocol_thread_from_metadata_with_live_status(
+        &self,
+        metadata: roder_api::thread::ThreadMetadata,
+        turns: Option<Vec<Turn>>,
+    ) -> Thread {
+        let status = self.live_thread_status(&metadata.thread_id).await;
+        protocol_thread_from_metadata(metadata, turns, status)
+    }
+
+    async fn thread_with_live_status(&self, mut thread: Thread) -> Thread {
+        thread.status = self.live_thread_status(&thread.id).await;
+        thread
+    }
+
     async fn handle_thread_list(
         &self,
         params: ThreadListParams,
@@ -1483,14 +1499,23 @@ impl AppServer {
         if let Some(limit) = params.limit {
             thread_metadata.truncate(limit);
         }
-        let threads = thread_metadata
-            .into_iter()
-            .map(|metadata| protocol_thread_from_metadata(metadata, None))
+        let mut threads = Vec::new();
+        for metadata in thread_metadata {
+            threads.push(
+                self.protocol_thread_from_metadata_with_live_status(metadata, None)
+                    .await,
+            );
+        }
+        let protocol_threads = self
+            .protocol_threads
+            .read()
+            .await
+            .values()
+            .cloned()
             .collect::<Vec<_>>();
-        let mut threads = threads;
-        for thread in self.protocol_threads.read().await.values() {
+        for thread in protocol_threads {
             if !threads.iter().any(|candidate| candidate.id == thread.id) {
-                threads.push(thread.clone());
+                threads.push(self.thread_with_live_status(thread).await);
             }
         }
         Ok(serde_json::to_value(ThreadListResult {
@@ -1505,24 +1530,24 @@ impl AppServer {
         &self,
         params: ThreadStartParams,
     ) -> Result<serde_json::Value, JsonRpcError> {
+        let cfg = self.runtime.status().await;
+        let model = params.model.clone().unwrap_or(cfg.default_model);
+        let model_provider = params
+            .model_provider
+            .clone()
+            .unwrap_or(cfg.default_provider);
+        let cwd = required_thread_start_cwd(&params.cwd)?;
         let metadata = self
             .runtime
             .create_thread_with(roder_core::CreateThreadRequest {
                 title: None,
-                workspace: params.cwd.clone(),
+                workspace: cwd.clone(),
                 provider: params.model_provider.clone(),
                 model: params.model.clone(),
             })
             .await
             .map_err(internal_error)?;
-        let cfg = self.runtime.status().await;
-        let model = params.model.unwrap_or(cfg.default_model);
-        let model_provider = params.model_provider.unwrap_or(cfg.default_provider);
-        let cwd = params
-            .cwd
-            .or_else(|| metadata.workspace.clone())
-            .unwrap_or_else(default_cwd_string);
-        let thread = protocol_thread_from_metadata(metadata, None);
+        let thread = protocol_thread_from_metadata(metadata, None, idle_thread_status());
         self.protocol_threads
             .write()
             .await
@@ -1560,37 +1585,54 @@ impl AppServer {
                     .map(protocol_turn_from_record)
                     .collect()
             });
-            snapshot
-                .metadata
-                .map(|metadata| protocol_thread_from_metadata(metadata, turns))
+            snapshot.metadata.map(|metadata| (metadata, turns))
         });
-        let thread = if thread.is_some() {
-            thread
-        } else {
-            self.runtime
-                .list_threads()
-                .await
-                .map_err(internal_error)?
-                .into_iter()
-                .find(|metadata| metadata.thread_id == params.thread_id)
-                .map(|metadata| {
-                    protocol_thread_from_metadata(metadata, params.include_turns.then(Vec::new))
-                })
+        let thread = match thread {
+            Some((metadata, turns)) => Some(
+                self.protocol_thread_from_metadata_with_live_status(metadata, turns)
+                    .await,
+            ),
+            None => None,
         };
         let thread = if thread.is_some() {
             thread
         } else {
-            self.protocol_threads
+            let metadata = self
+                .runtime
+                .list_threads()
+                .await
+                .map_err(internal_error)?
+                .into_iter()
+                .find(|metadata| metadata.thread_id == params.thread_id);
+            match metadata {
+                Some(metadata) => Some(
+                    self.protocol_thread_from_metadata_with_live_status(
+                        metadata,
+                        params.include_turns.then(Vec::new),
+                    )
+                    .await,
+                ),
+                None => None,
+            }
+        };
+        let thread = if thread.is_some() {
+            thread
+        } else {
+            let thread = self
+                .protocol_threads
                 .read()
                 .await
                 .get(params.thread_id.as_str())
-                .cloned()
-                .map(|mut thread| {
+                .cloned();
+            match thread {
+                Some(mut thread) => {
                     if params.include_turns && thread.turns.is_none() {
                         thread.turns = Some(Vec::new());
                     }
-                    thread
-                })
+                    Some(self.thread_with_live_status(thread).await)
+                }
+                None => None,
+            }
         };
         Ok(serde_json::to_value(ThreadReadResult { thread }).unwrap())
     }
@@ -1609,10 +1651,6 @@ impl AppServer {
             .await
             .remove(&params.thread_id);
         self.protocol_thread_models
-            .write()
-            .await
-            .remove(&params.thread_id);
-        self.protocol_active_turns
             .write()
             .await
             .remove(&params.thread_id);
@@ -1743,13 +1781,13 @@ impl AppServer {
             .runtime
             .create_thread_with(CreateThreadRequest {
                 title: Some(format!("Roadmap worker: {task_id}")),
-                workspace: Some(self.roadmap_workspace()?.display().to_string()),
+                workspace: self.roadmap_workspace()?.display().to_string(),
                 provider: Some(cfg.default_provider.clone()),
                 model: Some(cfg.default_model.clone()),
             })
             .await
             .map_err(internal_error)?;
-        let protocol_thread = protocol_thread_from_metadata(metadata, None);
+        let protocol_thread = protocol_thread_from_metadata(metadata, None, idle_thread_status());
         self.protocol_threads
             .write()
             .await
@@ -1915,10 +1953,6 @@ impl AppServer {
                 .steer_turn(params.thread_id.clone(), turn_id.clone(), message, images)
                 .await
                 .map_err(internal_error)?;
-            self.protocol_active_turns
-                .write()
-                .await
-                .insert(params.thread_id, turn_id.clone());
             return Ok(serde_json::to_value(TurnStartResult { turn_id }).unwrap());
         }
 
@@ -1927,20 +1961,24 @@ impl AppServer {
             .await
             .map(|(provider, model)| (Some(provider), Some(model)))
             .unwrap_or((None, None));
-        let mut workspace = self
+        let snapshot = self
             .runtime
             .load_thread(&params.thread_id)
             .await
-            .map_err(internal_error)?
-            .and_then(|snapshot| snapshot.metadata.and_then(|metadata| metadata.workspace));
-        if workspace.is_none() {
-            workspace = self
-                .protocol_threads
+            .map_err(internal_error)?;
+        let workspace = if let Some(snapshot) = snapshot {
+            let metadata = snapshot.metadata.ok_or_else(|| {
+                internal_error(format!("thread metadata missing for {}", params.thread_id))
+            })?;
+            metadata.workspace
+        } else {
+            self.protocol_threads
                 .read()
                 .await
                 .get(&params.thread_id)
-                .map(|thread| thread.cwd.clone());
-        }
+                .map(|thread| thread.cwd.clone())
+                .ok_or_else(|| not_found(format!("thread not found: {}", params.thread_id)))?
+        };
         let turn_id = self
             .runtime
             .start_turn(StartTurnRequest {
@@ -1955,10 +1993,6 @@ impl AppServer {
             })
             .await
             .map_err(internal_error)?;
-        self.protocol_active_turns
-            .write()
-            .await
-            .insert(params.thread_id, turn_id.clone());
         Ok(serde_json::to_value(TurnStartResult { turn_id }).unwrap())
     }
 
@@ -1969,11 +2003,9 @@ impl AppServer {
         let turn_id = if let Some(turn_id) = params.turn_id.clone() {
             turn_id
         } else {
-            self.protocol_active_turns
-                .read()
+            self.runtime
+                .active_turn_for_thread(&params.thread_id)
                 .await
-                .get(&params.thread_id)
-                .cloned()
                 .ok_or_else(|| JsonRpcError {
                     code: -32602,
                     message: format!("no active turn for thread {:?}", params.thread_id),
@@ -1984,10 +2016,6 @@ impl AppServer {
             .interrupt_turn(params.thread_id.clone(), turn_id.clone())
             .await
             .map_err(internal_error)?;
-        self.protocol_active_turns
-            .write()
-            .await
-            .remove(&params.thread_id);
         Ok(serde_json::to_value(TurnInterruptResult {
             turn_id: Some(turn_id),
         })
@@ -2348,6 +2376,7 @@ impl AppServer {
         &self,
         params: CommandsRunParams,
     ) -> Result<serde_json::Value, JsonRpcError> {
+        let thread_id = params.thread_id;
         let workspace = params.workspace.clone();
         let expanded = self
             .expand_command(CommandsExpandParams {
@@ -2356,10 +2385,18 @@ impl AppServer {
                 workspace: params.workspace,
             })
             .await?;
+        let workspace = match workspace {
+            Some(workspace) => workspace,
+            None => self
+                .runtime
+                .workspace_for_thread(&thread_id)
+                .await
+                .map_err(internal_error)?,
+        };
         let turn_id = self
             .runtime
             .start_turn(StartTurnRequest {
-                thread_id: params.thread_id,
+                thread_id,
                 message: expanded.message.clone(),
                 images: Vec::new(),
                 provider_override: None,
@@ -3523,6 +3560,17 @@ fn invalid_params(err: impl std::fmt::Display) -> JsonRpcError {
     }
 }
 
+fn required_thread_start_cwd(cwd: &str) -> Result<String, JsonRpcError> {
+    let cwd = cwd.trim();
+    if cwd.is_empty() {
+        return Err(invalid_params("thread/start requires cwd"));
+    }
+    if !std::path::Path::new(cwd).is_absolute() {
+        return Err(invalid_params("thread/start cwd must be an absolute path"));
+    }
+    Ok(cwd.to_string())
+}
+
 fn shell_settings(shell: &str) -> ShellSettings {
     ShellSettings {
         shell: shell.to_string(),
@@ -3780,7 +3828,10 @@ async fn provider_auth_status(
         ProviderAuthType::ApiKey => {
             let configured = if let Ok(cfg) = roder_config::load_config() {
                 if let Some(p) = cfg.providers.get(provider_id) {
-                    p.api_key.is_some() || p.api_key_env.as_ref().is_some_and(|var| std::env::var(var).is_ok())
+                    p.api_key.is_some()
+                        || p.api_key_env
+                            .as_ref()
+                            .is_some_and(|var| std::env::var(var).is_ok())
                 } else {
                     metadata.auth_configured.unwrap_or(true)
                 }

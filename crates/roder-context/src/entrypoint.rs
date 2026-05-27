@@ -36,7 +36,18 @@ impl ContextPlanner for EntrypointContextPlanner {
         query: &ContextQuery,
         mut provider_blocks: Vec<ContextBlock>,
     ) -> anyhow::Result<ContextPlan> {
-        let candidates = discover_entrypoints(&self.workspace, &query.prompt)?;
+        let workspace = query
+            .workspace
+            .as_deref()
+            .map(Path::new)
+            .unwrap_or(&self.workspace);
+        if !workspace.is_dir() {
+            provider_blocks.sort_by_key(|block| std::cmp::Reverse(block.priority));
+            return Ok(ContextPlan {
+                blocks: provider_blocks,
+            });
+        }
+        let candidates = discover_entrypoints(workspace, &query.prompt)?;
         if !candidates.is_empty() {
             provider_blocks.push(render_entrypoint_block(&candidates));
         }
@@ -317,6 +328,7 @@ mod tests {
             thread_id: "thread-a".to_string(),
             turn_id: "turn-a".to_string(),
             prompt: prompt.to_string(),
+            workspace: None,
             token_budget: None,
         }
     }

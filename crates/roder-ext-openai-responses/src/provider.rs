@@ -23,6 +23,8 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 const FINAL_ANSWER_PHASE: &str = "final_answer";
 const DEFAULT_MODELS_CACHE_TTL: Duration = Duration::from_secs(6 * 60 * 60);
+const DEFAULT_RESPONSES_STREAM_IDLE_TIMEOUT: Duration = Duration::from_secs(60);
+const RESPONSES_STREAM_IDLE_TIMEOUT_ENV: &str = "RODER_RESPONSES_STREAM_IDLE_TIMEOUT_MS";
 
 pub struct OpenAiResponsesEngine {
     api_key: Option<String>,
@@ -615,9 +617,30 @@ async fn send_responses_request(
     body: &Value,
     policy: Option<&ReliabilityRequestPolicy>,
 ) -> anyhow::Result<RetriedResponse> {
+    send_responses_request_with_idle_timeout(
+        base_url,
+        api_key,
+        headers,
+        grok_conversation_id,
+        body,
+        policy,
+        responses_stream_idle_timeout(),
+    )
+    .await
+}
+
+async fn send_responses_request_with_idle_timeout(
+    base_url: &str,
+    api_key: &str,
+    headers: &[(String, String)],
+    grok_conversation_id: Option<&str>,
+    body: &Value,
+    policy: Option<&ReliabilityRequestPolicy>,
+    idle_timeout: Duration,
+) -> anyhow::Result<RetriedResponse> {
     let policy = policy.cloned().unwrap_or_default();
     let attempts = policy.provider_retry_max_attempts.max(1);
-    let client = reqwest::Client::new();
+    let client = responses_stream_client(idle_timeout)?;
     let mut last_error = None;
     let mut retry_events = Vec::new();
     for attempt in 1..=attempts {
@@ -630,14 +653,15 @@ async fn send_responses_request(
         if let Some(thread_id) = grok_conversation_id.filter(|id| !id.is_empty()) {
             request = request.header("x-grok-conv-id", thread_id);
         }
-        match request.json(body).send().await {
-            Ok(response) if response.status().is_success() => {
+        let response = tokio::time::timeout(idle_timeout, request.json(body).send()).await;
+        match response {
+            Ok(Ok(response)) if response.status().is_success() => {
                 return Ok(RetriedResponse {
                     response,
                     retry_events,
                 });
             }
-            Ok(response) => {
+            Ok(Ok(response)) => {
                 let status = response.status();
                 let text = response.text().await.unwrap_or_default();
                 let retryable = policy
@@ -655,10 +679,39 @@ async fn send_responses_request(
                     continue;
                 }
             }
-            Err(err) => {
-                last_error = Some(err.to_string());
+            Ok(Err(err)) => {
+                let timed_out = err.is_timeout();
+                last_error = Some(if timed_out {
+                    format!(
+                        "OpenAI Responses request timed out after {}ms: {err}",
+                        idle_timeout.as_millis()
+                    )
+                } else {
+                    err.to_string()
+                });
                 if attempt < attempts {
-                    push_retry_event(&mut retry_events, attempt, "transport_error", &policy);
+                    let cause = if timed_out {
+                        "transport_timeout"
+                    } else {
+                        "transport_error"
+                    };
+                    push_retry_event(&mut retry_events, attempt, cause, &policy);
+                    retry_sleep(&policy, attempt).await;
+                    continue;
+                }
+            }
+            Err(_) => {
+                last_error = Some(format!(
+                    "OpenAI Responses request timed out waiting for response headers after {}ms",
+                    idle_timeout.as_millis()
+                ));
+                if attempt < attempts {
+                    push_retry_event(
+                        &mut retry_events,
+                        attempt,
+                        "response_headers_timeout",
+                        &policy,
+                    );
                     retry_sleep(&policy, attempt).await;
                     continue;
                 }
@@ -667,6 +720,21 @@ async fn send_responses_request(
         break;
     }
     anyhow::bail!(last_error.unwrap_or_else(|| "OpenAI Responses request failed".to_string()))
+}
+
+fn responses_stream_client(idle_timeout: Duration) -> anyhow::Result<reqwest::Client> {
+    Ok(reqwest::Client::builder()
+        .read_timeout(idle_timeout)
+        .build()?)
+}
+
+fn responses_stream_idle_timeout() -> Duration {
+    std::env::var(RESPONSES_STREAM_IDLE_TIMEOUT_ENV)
+        .ok()
+        .and_then(|value| value.parse::<u64>().ok())
+        .filter(|millis| *millis > 0)
+        .map(Duration::from_millis)
+        .unwrap_or(DEFAULT_RESPONSES_STREAM_IDLE_TIMEOUT)
 }
 
 fn push_retry_event(
@@ -1606,6 +1674,7 @@ fn number_to_u32(value: Option<&Value>) -> Option<u32> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use futures::StreamExt;
     use roder_api::inference::{
         InstructionBundle, ModelSelection, OutputConfig, ReasoningConfig, RuntimeHints,
     };
@@ -1737,6 +1806,61 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn responses_stream_surfaces_silent_provider_timeout() {
+        let base_url = spawn_silent_responses_server().await;
+        let response = send_responses_request_with_idle_timeout(
+            &base_url,
+            "secret",
+            &[],
+            None,
+            &json!({ "model": "gpt-5.5" }),
+            None,
+            Duration::from_millis(50),
+        )
+        .await
+        .unwrap();
+
+        let mut stream = stream_responses_sse(response.response, HashMap::new(), Vec::new());
+        let next = tokio::time::timeout(Duration::from_secs(1), stream.next())
+            .await
+            .expect("silent responses stream should surface an idle timeout");
+
+        assert!(
+            next.expect("stream should yield the timeout error")
+                .is_err(),
+            "silent responses stream should yield an error"
+        );
+    }
+
+    #[tokio::test]
+    async fn responses_request_surfaces_silent_headers_timeout() {
+        let base_url = spawn_silent_headers_server().await;
+        let policy = ReliabilityRequestPolicy {
+            provider_retry_max_attempts: 1,
+            ..ReliabilityRequestPolicy::default()
+        };
+        let result = send_responses_request_with_idle_timeout(
+            &base_url,
+            "secret",
+            &[],
+            None,
+            &json!({ "model": "gpt-5.5" }),
+            Some(&policy),
+            Duration::from_millis(50),
+        )
+        .await;
+        let error = match result {
+            Ok(_) => panic!("silent response headers should time out"),
+            Err(error) => error,
+        };
+
+        assert!(
+            error.to_string().contains("timed out") || error.to_string().contains("timeout"),
+            "expected timeout error, got {error:#}"
+        );
+    }
+
+    #[tokio::test]
     async fn custom_provider_list_models_returns_cached_models_without_waiting_for_refresh() {
         let cache_file = std::env::temp_dir().join(format!(
             "roder-custom-models-cache-{}-{}.json",
@@ -1809,6 +1933,55 @@ mod tests {
                 );
                 stream.write_all(response.as_bytes()).await.unwrap();
             }
+        });
+        format!("http://{addr}")
+    }
+
+    async fn spawn_silent_responses_server() -> String {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            let Ok((mut stream, _)) = listener.accept().await else {
+                return;
+            };
+            let mut buf = [0_u8; 2048];
+            let n = stream.read(&mut buf).await.unwrap_or(0);
+            let request = String::from_utf8_lossy(&buf[..n]);
+            let path = request
+                .lines()
+                .next()
+                .and_then(|line| line.split_whitespace().nth(1))
+                .unwrap_or("");
+            assert_eq!(path, "/responses");
+            let response = concat!(
+                "HTTP/1.1 200 OK\r\n",
+                "content-type: text/event-stream\r\n",
+                "connection: keep-alive\r\n",
+                "\r\n"
+            );
+            stream.write_all(response.as_bytes()).await.unwrap();
+            tokio::time::sleep(Duration::from_secs(2)).await;
+        });
+        format!("http://{addr}")
+    }
+
+    async fn spawn_silent_headers_server() -> String {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            let Ok((mut stream, _)) = listener.accept().await else {
+                return;
+            };
+            let mut buf = [0_u8; 2048];
+            let n = stream.read(&mut buf).await.unwrap_or(0);
+            let request = String::from_utf8_lossy(&buf[..n]);
+            let path = request
+                .lines()
+                .next()
+                .and_then(|line| line.split_whitespace().nth(1))
+                .unwrap_or("");
+            assert_eq!(path, "/responses");
+            tokio::time::sleep(Duration::from_secs(2)).await;
         });
         format!("http://{addr}")
     }

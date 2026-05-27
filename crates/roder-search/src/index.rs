@@ -267,7 +267,28 @@ fn ignored_path(root: &Path, path: &Path) -> bool {
     };
     relative.components().any(|component| {
         let value = component.as_os_str().to_string_lossy();
-        matches!(value.as_ref(), ".git" | ".roder" | "target")
+        matches!(
+            value.as_ref(),
+            ".cache"
+                | ".git"
+                | ".gradle"
+                | ".next"
+                | ".nuxt"
+                | ".parcel-cache"
+                | ".roder"
+                | ".svelte-kit"
+                | ".turbo"
+                | ".vite"
+                | ".yarn"
+                | "DerivedData"
+                | "Pods"
+                | "build"
+                | "coverage"
+                | "dist"
+                | "node_modules"
+                | "out"
+                | "target"
+        )
     })
 }
 

@@ -695,6 +695,7 @@ mod tests {
             updated_at: updated_at.unix_timestamp(),
             status: ThreadStatus {
                 kind: "idle".to_string(),
+                active_turn_id: None,
                 active_flags: Vec::new(),
             },
             cwd: workspace.unwrap_or("/tmp").to_string(),

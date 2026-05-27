@@ -71,13 +71,13 @@ use roder_app_server::{
 use roder_protocol::{
     AgentsListResult, CommandDescriptor, CommandsExpandParams, CommandsExpandResult,
     CommandsListResult, JsonRpcRequest, JsonRpcResponse, PendingPlanExitDescriptor,
-    ProviderAuthResult, ProviderClearParams, ProviderClearResult, ProviderConfigureParams, ProviderConfigureResult, ProviderDescriptor,
-    ProviderSelectParams, ProviderSelectResult, ProvidersListResult, RunnersListResult,
-    RunnersSelectParams, RunnersSelectResult, SettingsGetResult, SettingsSetDefaultModeParams,
-    SettingsSetDefaultModeResult, SettingsSetFileBackedDynamicContextParams,
-    SettingsSetFileBackedDynamicContextResult, SettingsSetSearchIndexParams,
-    SettingsSetSearchIndexResult, SettingsSetShellParams, SettingsSetShellResult,
-    SettingsSetWebSearchParams, SettingsSetWebSearchResult, ShellSettings,
+    ProviderAuthResult, ProviderClearParams, ProviderClearResult, ProviderConfigureParams,
+    ProviderConfigureResult, ProviderDescriptor, ProviderSelectParams, ProviderSelectResult,
+    ProvidersListResult, RunnersListResult, RunnersSelectParams, RunnersSelectResult,
+    SettingsGetResult, SettingsSetDefaultModeParams, SettingsSetDefaultModeResult,
+    SettingsSetFileBackedDynamicContextParams, SettingsSetFileBackedDynamicContextResult,
+    SettingsSetSearchIndexParams, SettingsSetSearchIndexResult, SettingsSetShellParams,
+    SettingsSetShellResult, SettingsSetWebSearchParams, SettingsSetWebSearchResult, ShellSettings,
     SpeechProvidersListResult, TasksGetParams, TasksGetResult, TasksListResult, TeamReadParams,
     TeamReadResult, Thread, ThreadExitPlanParams, ThreadExitPlanResult, ThreadGoal,
     ThreadResolveApprovalParams, ThreadResolveApprovalResult, ThreadSetModeParams,
@@ -1221,7 +1221,7 @@ where
                 serde_json::to_value(ThreadStartParams {
                     model: (!model.trim().is_empty()).then(|| model.clone()),
                     model_provider: None,
-                    cwd: None,
+                    cwd: std::env::current_dir()?.display().to_string(),
                     ephemeral: false,
                 })
                 .unwrap(),
@@ -3919,7 +3919,8 @@ where
                     .await;
                 match decode_response::<serde_json::Value>(res) {
                     Ok(_) => {
-                        self.timeline.push_system(format!("Logged out of {}.", auth_flow.display_name));
+                        self.timeline
+                            .push_system(format!("Logged out of {}.", auth_flow.display_name));
                         self.push_event(format!("logged out of: {}", provider.provider_id));
                     }
                     Err(err) => {
@@ -3949,7 +3950,8 @@ where
                 .await;
             match decode_response::<ProviderClearResult>(res) {
                 Ok(_) => {
-                    self.timeline.push_system(format!("Cleared API key for {}.", provider.name));
+                    self.timeline
+                        .push_system(format!("Cleared API key for {}.", provider.name));
                     self.push_event(format!("provider cleared: {}", provider.provider_id));
                 }
                 Err(err) => {
@@ -3972,7 +3974,8 @@ where
             if sel < self.provider_menu_items.len() {
                 self.provider_state.select(Some(sel));
             } else if !self.provider_menu_items.is_empty() {
-                self.provider_state.select(Some(self.provider_menu_items.len() - 1));
+                self.provider_state
+                    .select(Some(self.provider_menu_items.len() - 1));
             } else {
                 self.provider_state.select(None);
             }
@@ -7298,6 +7301,7 @@ mod tests {
             updated_at: 0,
             status: ThreadStatus {
                 kind: "idle".to_string(),
+                active_turn_id: None,
                 active_flags: Vec::new(),
             },
             cwd: "/tmp".to_string(),
@@ -7333,6 +7337,50 @@ mod tests {
         assert!(app.plan_panel.is_visible());
         assert_eq!(app.plan_panel.len(), 2);
         assert_eq!(app.plan_panel.completed_count(), 1);
+    }
+
+    #[test]
+    fn apply_thread_uses_protocol_active_turn_status() {
+        let mut app = test_app();
+        let running = Thread {
+            id: "thread-running".to_string(),
+            preview: String::new(),
+            model_provider: "mock".to_string(),
+            created_at: 0,
+            updated_at: 0,
+            status: ThreadStatus {
+                kind: "running".to_string(),
+                active_turn_id: Some("turn-live".to_string()),
+                active_flags: Vec::new(),
+            },
+            cwd: "/tmp".to_string(),
+            name: None,
+            turns: None,
+        };
+
+        app.apply_thread(running);
+
+        assert_eq!(app.active_turn_id.as_deref(), Some("turn-live"));
+
+        let idle = Thread {
+            id: "thread-idle".to_string(),
+            preview: String::new(),
+            model_provider: "mock".to_string(),
+            created_at: 0,
+            updated_at: 0,
+            status: ThreadStatus {
+                kind: "idle".to_string(),
+                active_turn_id: None,
+                active_flags: Vec::new(),
+            },
+            cwd: "/tmp".to_string(),
+            name: None,
+            turns: None,
+        };
+
+        app.apply_thread(idle);
+
+        assert_eq!(app.active_turn_id, None);
     }
 
     #[test]
@@ -7698,7 +7746,7 @@ mod tests {
                     serde_json::to_value(ThreadStartParams {
                         model: Some("mock".to_string()),
                         model_provider: Some("mock".to_string()),
-                        cwd: None,
+                        cwd: std::env::current_dir().unwrap().display().to_string(),
                         ephemeral: false,
                     })
                     .unwrap(),

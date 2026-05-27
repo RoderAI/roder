@@ -294,7 +294,7 @@ impl Runtime {
         let Some(goal) = self.goals.active_goal(&thread_id).await? else {
             return Ok(None);
         };
-        let cfg = self.status().await;
+        let workspace = self.workspace_for_thread(&thread_id).await?;
         let turn_id = self
             .start_turn(StartTurnRequest {
                 thread_id: thread_id.clone(),
@@ -302,7 +302,7 @@ impl Runtime {
                 images: Vec::new(),
                 provider_override: None,
                 model_override: None,
-                workspace: cfg.workspace,
+                workspace,
                 instructions: crate::default_instructions(),
                 task_ledger_required: false,
             })

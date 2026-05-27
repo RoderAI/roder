@@ -105,6 +105,8 @@ fn binary_files_are_skipped() {
 fn ignored_dirs_are_skipped() {
     let workspace = TempWorkspace::new();
     workspace.write(".git/config", "needle\n");
+    workspace.write("node_modules/pkg/index.js", "needle\n");
+    workspace.write("dist/assets/index.js", "needle\n");
     workspace.write("target/log.txt", "needle\n");
     workspace.write("src/lib.rs", "needle\n");
 
