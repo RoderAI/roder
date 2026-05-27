@@ -7,8 +7,8 @@ use roder_api::automations::{
 };
 use roder_api::capabilities::CapabilityDecision;
 use roder_api::catalog::{
-    PROVIDER_CODEX, PROVIDER_MOCK, PROVIDER_OPENCODE, PROVIDER_OPENCODE_GO, PROVIDER_POOLSIDE,
-    PROVIDER_SUPERGROK, PROVIDER_XAI, REASONING_HIGH, REASONING_MEDIUM,
+    PROVIDER_CODEX, PROVIDER_CURSOR, PROVIDER_MOCK, PROVIDER_OPENCODE, PROVIDER_OPENCODE_GO,
+    PROVIDER_POOLSIDE, PROVIDER_SUPERGROK, PROVIDER_XAI, REASONING_HIGH, REASONING_MEDIUM,
 };
 use roder_api::code_index::CodeIndexStatus;
 use roder_api::discovery::DiscoverySourceKind;
@@ -27,19 +27,19 @@ use roder_api::retrieval::{
     RetrievalOutcomeKind, RetrievalPromotionSkipped, RetrievalRecommendation, RetrievalResultUsed,
     RetrievalRouteAccepted, RetrievalRouteIgnored, RetrievalRoutePlan, RetrievalRoutePlanned,
 };
-use roder_api::session::{SessionMetadata, SessionStore, SessionStoreFactory, ThreadSnapshot};
 use roder_api::skills::{SkillActivationState, SkillExposure, SkillSelector};
 use roder_api::subagents::{SubagentDefinition, SubagentPermissionMode};
 use roder_api::tasks::TaskState;
+use roder_api::thread::{ThreadMetadata, ThreadSnapshot, ThreadStore, ThreadStoreFactory};
 use roder_app_server::remote::{
     RemoteServerOptions, RemoteToken, listen_remote_websocket, listen_remote_websocket_controller,
 };
 use roder_app_server::{AppServer, AppServerFeatureConfig, LocalAppClient};
 use roder_core::{
-    PendingPlanExit, Runtime, RuntimeConfig, fake_provider::FakeInferenceEngine,
-    media_artifacts::MediaArtifactStore,
+    CreateThreadRequest, PendingPlanExit, Runtime, RuntimeConfig, StartTurnRequest,
+    default_instructions, fake_provider::FakeInferenceEngine, media_artifacts::MediaArtifactStore,
 };
-use roder_ext_jsonl_session::store::JsonlSessionStoreFactory;
+use roder_ext_jsonl_thread_store::store::JsonlThreadStoreFactory;
 use roder_ext_memory::MemoryExtension;
 use roder_ext_openai_embeddings::OpenAiEmbeddingsExtension;
 use roder_ext_subagents::{
@@ -80,19 +80,18 @@ use roder_protocol::{
     PluginListInstalledResult, PluginPreviewInstallParams, PluginPreviewInstallResult,
     PluginUninstallParams, PluginUninstallResult, ProcessesGetParams, ProcessesGetResult,
     ProcessesListParams, ProcessesListResult, ProcessesStopAllParams, ProcessesStopAllResult,
-    ProcessesStopParams, ProcessesStopResult, ProviderAuthResult, ProviderSelectParams,
+    ProcessesStopParams, ProcessesStopResult, ProviderAuthResult, ProviderClearParams,
+    ProviderClearResult, ProviderConfigureParams, ProviderConfigureResult, ProviderSelectParams,
     ProviderSelectResult, ProvidersListResult, RetrievalMetricsResult, RetrievalPromotedResult,
     RetrievalRecommendationsResult, RetrievalTurnParams, RunnersDeleteResult, RunnersListResult,
     RunnersSelectParams, RunnersSelectResult, RunnersSessionResult, SearchIndexClearParams,
     SearchIndexClearResult, SearchIndexRebuildParams, SearchIndexRebuildResult,
     SearchIndexStatusParams, SearchIndexStatusResult, SearchIndexStatusState,
-    SearchIndexWarmupParams, SearchIndexWarmupResult, SessionExitPlanParams, SessionExitPlanResult,
-    SessionGetResult, SessionResolveApprovalParams, SessionResolveApprovalResult,
-    SessionResolveUserInputParams, SessionResolveUserInputResult, SessionSetModeParams,
-    SessionSetModeResult, SettingsGetResult, SettingsSetDefaultModeParams,
-    SettingsSetDefaultModeResult, SettingsSetFileBackedDynamicContextParams,
-    SettingsSetFileBackedDynamicContextResult, SettingsSetSearchIndexParams,
-    SettingsSetSearchIndexResult, SettingsSetWebSearchParams, SettingsSetWebSearchResult,
+    SearchIndexWarmupParams, SearchIndexWarmupResult, SettingsGetResult,
+    SettingsSetDefaultModeParams, SettingsSetDefaultModeResult,
+    SettingsSetFileBackedDynamicContextParams, SettingsSetFileBackedDynamicContextResult,
+    SettingsSetSearchIndexParams, SettingsSetSearchIndexResult, SettingsSetShellParams,
+    SettingsSetShellResult, SettingsSetWebSearchParams, SettingsSetWebSearchResult,
     SkillsListResult, SkillsSetEnabledParams, SkillsSetExposureParams, SkillsUpdateResult,
     SubagentTraceReadParams, SubagentTraceReadResult, SubagentTracesListParams,
     SubagentTracesListResult, TasksGetParams, TasksGetResult, TasksListResult, TasksSubmitParams,
@@ -100,11 +99,16 @@ use roder_protocol::{
     TeamMemberInterruptParams, TeamMemberInterruptResult, TeamMemberMessageParams,
     TeamMemberMessageResult, TeamMemberStartParams, TeamMemberStartResult, TeamReadParams,
     TeamReadResult, TeamStartMemberParams, TeamStartParams, TeamStartResult, ThreadArchiveParams,
-    ThreadArchiveResult, ThreadListParams, ThreadListResult, ThreadReadParams, ThreadReadResult,
-    ThreadStartParams, ThreadStartResult, ToolCallParams, ToolCallResult, ToolsListResult,
-    TurnInputItem, TurnInterruptParams, TurnStartParams, TurnStartResult, TurnSteerParams,
-    TurnSteerResult, WorkflowEnableParams, WorkflowEnableResult, WorkflowPreviewParams,
-    WorkflowPreviewResult, WorkflowScanParams, WorkflowScanResult,
+    ThreadArchiveResult, ThreadExitPlanParams, ThreadExitPlanResult, ThreadGoalClearParams,
+    ThreadGoalClearResult, ThreadGoalGetParams, ThreadGoalGetResult, ThreadGoalSetParams,
+    ThreadGoalSetResult, ThreadGoalStatus, ThreadListParams, ThreadListResult, ThreadReadParams,
+    ThreadReadResult, ThreadResolveApprovalParams, ThreadResolveApprovalResult,
+    ThreadResolveUserInputParams, ThreadResolveUserInputResult, ThreadSetModeParams,
+    ThreadSetModeResult, ThreadStartParams, ThreadStartResult, ThreadStateResult, ToolCallParams,
+    ToolCallResult, ToolsListResult, TurnInputItem, TurnInterruptParams, TurnInterruptResult,
+    TurnStartParams, TurnStartResult, TurnSteerParams, TurnSteerResult, WorkflowEnableParams,
+    WorkflowEnableResult, WorkflowPreviewParams, WorkflowPreviewResult, WorkflowScanParams,
+    WorkflowScanResult,
 };
 use std::collections::HashMap;
 use std::sync::{Arc, LazyLock};
@@ -129,50 +133,52 @@ static SKILLS_TEST_LOCK: LazyLock<Mutex<()>> = LazyLock::new(|| Mutex::new(()));
 
 struct PendingEngine;
 
+struct UsageReportingEngine;
+
 struct ImageRecordingEngine {
     requests: Mutex<Vec<AgentInferenceRequest>>,
 }
 
-struct FailingSessionStoreFactory;
+struct FailingThreadStoreFactory;
 
-struct FailingSessionStore;
+struct FailingThreadStore;
 
 #[derive(Clone, Default)]
-struct RecordingSessionStoreFactory {
+struct RecordingThreadStoreFactory {
     snapshots: Arc<Mutex<HashMap<String, ThreadSnapshot>>>,
 }
 
-struct RecordingSessionStore {
+struct RecordingThreadStore {
     snapshots: Arc<Mutex<HashMap<String, ThreadSnapshot>>>,
 }
 
-impl SessionStoreFactory for FailingSessionStoreFactory {
-    fn id(&self) -> roder_api::session::SessionStoreId {
+impl ThreadStoreFactory for FailingThreadStoreFactory {
+    fn id(&self) -> roder_api::thread::ThreadStoreId {
         "failing".to_string()
     }
 
-    fn create(&self) -> Arc<dyn SessionStore> {
-        Arc::new(FailingSessionStore)
+    fn create(&self) -> Arc<dyn ThreadStore> {
+        Arc::new(FailingThreadStore)
     }
 }
 
 #[async_trait::async_trait]
-impl SessionStore for FailingSessionStore {
-    fn id(&self) -> roder_api::session::SessionStoreId {
+impl ThreadStore for FailingThreadStore {
+    fn id(&self) -> roder_api::thread::ThreadStoreId {
         "failing".to_string()
     }
 
-    async fn create_session(&self, metadata: SessionMetadata) -> anyhow::Result<SessionMetadata> {
+    async fn create_thread(&self, metadata: ThreadMetadata) -> anyhow::Result<ThreadMetadata> {
         Ok(metadata)
     }
 
-    async fn list_sessions(&self) -> anyhow::Result<Vec<SessionMetadata>> {
+    async fn list_threads(&self) -> anyhow::Result<Vec<ThreadMetadata>> {
         anyhow::bail!(
-            "parse session metadata /tmp/roder/sessions/bad/metadata.json: trailing characters at line 1 column 450"
+            "parse thread metadata /tmp/roder/threads/bad/metadata.json: trailing characters at line 1 column 450"
         );
     }
 
-    async fn load_session(
+    async fn load_thread(
         &self,
         _thread_id: &roder_api::events::ThreadId,
     ) -> anyhow::Result<Option<ThreadSnapshot>> {
@@ -191,31 +197,31 @@ impl SessionStore for FailingSessionStore {
         &self,
         _thread_id: &roder_api::events::ThreadId,
         _turn_id: &roder_api::events::TurnId,
-        _item: &roder_api::conversation::TurnItem,
+        _item: &roder_api::transcript::TranscriptItem,
     ) -> anyhow::Result<()> {
         Ok(())
     }
 }
 
-impl SessionStoreFactory for RecordingSessionStoreFactory {
-    fn id(&self) -> roder_api::session::SessionStoreId {
+impl ThreadStoreFactory for RecordingThreadStoreFactory {
+    fn id(&self) -> roder_api::thread::ThreadStoreId {
         "recording".to_string()
     }
 
-    fn create(&self) -> Arc<dyn SessionStore> {
-        Arc::new(RecordingSessionStore {
+    fn create(&self) -> Arc<dyn ThreadStore> {
+        Arc::new(RecordingThreadStore {
             snapshots: Arc::clone(&self.snapshots),
         })
     }
 }
 
 #[async_trait::async_trait]
-impl SessionStore for RecordingSessionStore {
-    fn id(&self) -> roder_api::session::SessionStoreId {
+impl ThreadStore for RecordingThreadStore {
+    fn id(&self) -> roder_api::thread::ThreadStoreId {
         "recording".to_string()
     }
 
-    async fn create_session(&self, metadata: SessionMetadata) -> anyhow::Result<SessionMetadata> {
+    async fn create_thread(&self, metadata: ThreadMetadata) -> anyhow::Result<ThreadMetadata> {
         self.snapshots.lock().await.insert(
             metadata.thread_id.clone(),
             ThreadSnapshot {
@@ -228,7 +234,17 @@ impl SessionStore for RecordingSessionStore {
         Ok(metadata)
     }
 
-    async fn list_sessions(&self) -> anyhow::Result<Vec<SessionMetadata>> {
+    async fn update_thread_metadata(
+        &self,
+        metadata: ThreadMetadata,
+    ) -> anyhow::Result<ThreadMetadata> {
+        if let Some(snapshot) = self.snapshots.lock().await.get_mut(&metadata.thread_id) {
+            snapshot.metadata = Some(metadata.clone());
+        }
+        Ok(metadata)
+    }
+
+    async fn list_threads(&self) -> anyhow::Result<Vec<ThreadMetadata>> {
         Ok(self
             .snapshots
             .lock()
@@ -238,14 +254,14 @@ impl SessionStore for RecordingSessionStore {
             .collect())
     }
 
-    async fn load_session(
+    async fn load_thread(
         &self,
         thread_id: &roder_api::events::ThreadId,
     ) -> anyhow::Result<Option<ThreadSnapshot>> {
         Ok(self.snapshots.lock().await.get(thread_id).cloned())
     }
 
-    async fn archive_session(
+    async fn archive_thread(
         &self,
         thread_id: &roder_api::events::ThreadId,
     ) -> anyhow::Result<bool> {
@@ -258,6 +274,15 @@ impl SessionStore for RecordingSessionStore {
         envelope: &roder_api::events::EventEnvelope,
     ) -> anyhow::Result<()> {
         if let Some(snapshot) = self.snapshots.lock().await.get_mut(thread_id) {
+            if let roder_api::events::RoderEvent::TurnCompleted(event) = &envelope.event
+                && let Some(turn) = snapshot
+                    .turns
+                    .iter_mut()
+                    .find(|turn| turn.turn_id == event.turn_id)
+            {
+                turn.completed_at = Some(event.timestamp);
+                turn.usage = event.usage.clone();
+            }
             snapshot.events.push(envelope.clone());
         }
         Ok(())
@@ -267,7 +292,7 @@ impl SessionStore for RecordingSessionStore {
         &self,
         thread_id: &roder_api::events::ThreadId,
         turn_id: &roder_api::events::TurnId,
-        item: &roder_api::conversation::TurnItem,
+        item: &roder_api::transcript::TranscriptItem,
     ) -> anyhow::Result<()> {
         let mut snapshots = self.snapshots.lock().await;
         if let Some(snapshot) = snapshots.get_mut(thread_id) {
@@ -278,12 +303,13 @@ impl SessionStore for RecordingSessionStore {
             {
                 turn.items.push(item.clone());
             } else {
-                snapshot.turns.push(roder_api::session::TurnRecord {
+                snapshot.turns.push(roder_api::thread::TurnRecord {
                     thread_id: thread_id.clone(),
                     turn_id: turn_id.clone(),
                     items: vec![item.clone()],
                     created_at: OffsetDateTime::now_utc(),
                     completed_at: None,
+                    usage: None,
                 });
             }
         }
@@ -326,6 +352,44 @@ impl InferenceEngine for PendingEngine {
         _request: AgentInferenceRequest,
     ) -> anyhow::Result<InferenceEventStream> {
         Ok(Box::pin(stream::pending()))
+    }
+}
+
+#[async_trait::async_trait]
+impl InferenceEngine for UsageReportingEngine {
+    fn id(&self) -> InferenceEngineId {
+        PROVIDER_MOCK.to_string()
+    }
+
+    fn capabilities(&self) -> InferenceCapabilities {
+        InferenceCapabilities::text_only()
+    }
+
+    async fn list_models(
+        &self,
+        _ctx: InferenceProviderContext<'_>,
+    ) -> anyhow::Result<Vec<ModelDescriptor>> {
+        Ok(Vec::new())
+    }
+
+    async fn stream_turn(
+        &self,
+        _ctx: InferenceTurnContext<'_>,
+        _request: AgentInferenceRequest,
+    ) -> anyhow::Result<InferenceEventStream> {
+        Ok(Box::pin(futures::stream::iter(vec![
+            Ok(InferenceEvent::MessageDelta(MessageDelta {
+                text: "usage recorded".to_string(),
+                phase: None,
+            })),
+            Ok(InferenceEvent::Usage(
+                TokenUsage::new(100, 10, 110).with_cached_prompt_tokens(92),
+            )),
+            Ok(InferenceEvent::Completed(CompletionMetadata {
+                stop_reason: Some("stop".to_string()),
+                provider_response_id: None,
+            })),
+        ])))
     }
 }
 
@@ -638,8 +702,7 @@ async fn test_app_server_e2e() {
     assert_eq!(providers.providers[0].id, PROVIDER_MOCK);
 
     let tools: ToolsListResult = request(&client, "tools/list", None).await;
-    assert_eq!(tools.tools.len(), 1);
-    assert_eq!(tools.tools[0].name, "echo");
+    assert!(tools.tools.iter().any(|tool| tool.name == "echo"));
 
     let selected: ProviderSelectResult = request(
         &client,
@@ -686,34 +749,34 @@ async fn test_app_server_e2e() {
     assert_eq!(error.code, -32000);
     assert!(error.message.contains("missing-provider"));
 
-    let session = start_thread(&client).await;
-    assert_eq!(session.model_provider, PROVIDER_MOCK);
-    assert_eq!(session.model, "alternate-mock-model");
-    assert!(!session.thread.id.is_empty());
+    let thread_start = start_thread(&client).await;
+    assert_eq!(thread_start.model_provider, PROVIDER_MOCK);
+    assert_eq!(thread_start.model, "alternate-mock-model");
+    assert!(!thread_start.thread.id.is_empty());
 
-    let sessions: ThreadListResult = request(
+    let threads: ThreadListResult = request(
         &client,
         "thread/list",
         Some(serde_json::to_value(ThreadListParams { limit: None }).unwrap()),
     )
     .await;
     assert!(
-        sessions
+        threads
             .data
             .iter()
-            .any(|thread| thread.id == session.thread.id)
+            .any(|thread| thread.id == thread_start.thread.id)
     );
 
-    let started = start_turn(&client, &session.thread.id, "Hello").await;
+    let started = start_turn(&client, &thread_start.thread.id, "Hello").await;
     assert!(!started.turn_id.is_empty());
 
     let mut kinds = Vec::new();
-    for _ in 0..12 {
+    for _ in 0..20 {
         let envelope = tokio::time::timeout(Duration::from_secs(2), events.recv())
             .await
             .unwrap()
             .unwrap();
-        if envelope.thread_id.as_deref() == Some(&session.thread.id) {
+        if envelope.thread_id.as_deref() == Some(&thread_start.thread.id) {
             kinds.push(envelope.kind);
         }
         if kinds.iter().any(|kind| kind == "turn.completed") {
@@ -740,7 +803,138 @@ async fn test_app_server_e2e() {
 }
 
 #[tokio::test]
-async fn model_switch_providers_select_updates_desktop_thread_model_for_next_turn() {
+async fn thread_goal_methods_share_state_with_goal_tools() {
+    let workspace =
+        std::env::temp_dir().join(format!("roder-goal-app-server-{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir_all(&workspace).unwrap();
+
+    let mut builder = ExtensionRegistryBuilder::new();
+    builder.inference_engine(Arc::new(FakeInferenceEngine));
+    builder.tool_contributor(roder_tools::builtin_coding_tools_contributor(workspace).unwrap());
+    let runtime = Arc::new(Runtime::new(builder.build().unwrap(), Default::default()).unwrap());
+    let server = Arc::new(AppServer::new(runtime));
+    let client = LocalAppClient::new(server);
+    let mut notifications = client.subscribe_notifications();
+    let thread = start_thread(&client).await.thread;
+
+    let set: ThreadGoalSetResult = request(
+        &client,
+        "thread/goal/set",
+        Some(
+            serde_json::to_value(ThreadGoalSetParams {
+                thread_id: thread.id.clone(),
+                objective: Some("Ship shared goal state".to_string()),
+                status: Some(ThreadGoalStatus::Active),
+                token_budget: Some(Some(25)),
+            })
+            .unwrap(),
+        ),
+    )
+    .await;
+    let goal = set.goal.expect("created goal");
+    assert_eq!(goal.objective, "Ship shared goal state");
+    assert_eq!(goal.status, ThreadGoalStatus::Active);
+    assert_eq!(goal.token_budget, Some(25));
+    let updated =
+        wait_for_notification(&mut notifications, "thread/goal/updated", Some(&thread.id)).await;
+    assert_eq!(
+        updated.params["goal"]["objective"],
+        "Ship shared goal state"
+    );
+
+    let tool_get: ToolCallResult = request(
+        &client,
+        "tools/call",
+        Some(
+            serde_json::to_value(ToolCallParams {
+                thread_id: thread.id.clone(),
+                tool_name: "get_goal".to_string(),
+                arguments: serde_json::json!({}),
+            })
+            .unwrap(),
+        ),
+    )
+    .await;
+    assert!(!tool_get.is_error);
+    assert!(tool_get.text.contains("Ship shared goal state"));
+
+    let tool_update: ToolCallResult = request(
+        &client,
+        "tools/call",
+        Some(
+            serde_json::to_value(ToolCallParams {
+                thread_id: thread.id.clone(),
+                tool_name: "update_goal".to_string(),
+                arguments: serde_json::json!({ "status": "blocked" }),
+            })
+            .unwrap(),
+        ),
+    )
+    .await;
+    assert!(!tool_update.is_error);
+
+    let get: ThreadGoalGetResult = request(
+        &client,
+        "thread/goal/get",
+        Some(
+            serde_json::to_value(ThreadGoalGetParams {
+                thread_id: thread.id.clone(),
+            })
+            .unwrap(),
+        ),
+    )
+    .await;
+    assert_eq!(
+        get.goal.expect("goal after tool update").status,
+        ThreadGoalStatus::Blocked
+    );
+
+    let invalid = request_error(
+        &client,
+        "thread/goal/set",
+        Some(
+            serde_json::to_value(ThreadGoalSetParams {
+                thread_id: thread.id.clone(),
+                objective: Some(" ".to_string()),
+                status: None,
+                token_budget: None,
+            })
+            .unwrap(),
+        ),
+    )
+    .await;
+    assert!(invalid.message.contains("goal objective cannot be empty"));
+
+    let clear: ThreadGoalClearResult = request(
+        &client,
+        "thread/goal/clear",
+        Some(
+            serde_json::to_value(ThreadGoalClearParams {
+                thread_id: thread.id.clone(),
+            })
+            .unwrap(),
+        ),
+    )
+    .await;
+    assert!(clear.cleared);
+    wait_for_notification(&mut notifications, "thread/goal/cleared", Some(&thread.id)).await;
+
+    let get: ThreadGoalGetResult = request(
+        &client,
+        "thread/goal/get",
+        Some(
+            serde_json::to_value(ThreadGoalGetParams {
+                thread_id: thread.id,
+            })
+            .unwrap(),
+        ),
+    )
+    .await;
+    assert!(get.goal.is_none());
+}
+
+#[tokio::test]
+async fn model_switch_providers_select_updates_protocol_thread_model_for_next_turn() {
     let engine = Arc::new(TaskCallingEngine {
         hang_child: false,
         parent_calls: Mutex::new(0),
@@ -968,7 +1162,10 @@ async fn roadmap_methods_update_documents_threads_and_notifications() {
         })),
     )
     .await;
-    assert_eq!(created["path"], "roadmap/21-new-plan.md");
+    assert_eq!(
+        created["path"].as_str().unwrap().replace('\\', "/"),
+        "roadmap/21-new-plan.md"
+    );
 
     let patched: serde_json::Value = request(
         &client,
@@ -1021,8 +1218,21 @@ async fn roadmap_methods_update_documents_threads_and_notifications() {
         spawned["thread"]["thread_id"]
             .as_str()
             .unwrap()
-            .starts_with("thread-")
+            .trim()
+            .len()
+            > 0
     );
+    let spawned_thread_id = spawned["thread"]["thread_id"].as_str().unwrap();
+    let spawned_thread: serde_json::Value = request(
+        &client,
+        "thread/read",
+        Some(serde_json::json!({
+            "threadId": spawned_thread_id,
+            "includeTurns": true
+        })),
+    )
+    .await;
+    assert_eq!(spawned_thread["thread"]["id"], spawned_thread_id);
 
     let attached: serde_json::Value = request(
         &client,
@@ -1090,7 +1300,7 @@ async fn roadmap_methods_update_documents_threads_and_notifications() {
 }
 
 #[tokio::test]
-async fn desktop_turn_uses_thread_cwd_for_workspace_tools() {
+async fn protocol_turn_uses_thread_cwd_for_workspace_tools() {
     let root = std::env::temp_dir().join(format!("roder-thread-cwd-e2e-{}", uuid::Uuid::new_v4()));
     let process_workspace = root.join("process-workspace");
     let thread_workspace = root.join("thread-workspace");
@@ -1205,11 +1415,11 @@ async fn turn_start_passes_image_input_to_model_request() {
 
     let request = wait_for_image_recorded_request(&engine).await;
     let user_message = request
-        .conversation
+        .transcript
         .iter()
         .rev()
         .find_map(|item| match item {
-            roder_api::conversation::ConversationItem::UserMessage(message) => Some(message),
+            roder_api::transcript::TranscriptItem::UserMessage(message) => Some(message),
             _ => None,
         })
         .expect("user message in inference request");
@@ -2264,6 +2474,12 @@ async fn providers_select_opencode_non_reasoning_model_preserves_reasoning_prefe
 
 #[tokio::test]
 async fn providers_list_separates_opencode_zen_and_go_models() {
+    let cache_path = std::env::temp_dir().join(format!(
+        "roder-opencode-provider-list-e2e-{}.json",
+        uuid::Uuid::new_v4()
+    ));
+    let _models_cache = EnvVarGuard::set("RODER_MODELS_CACHE_PATH", &cache_path);
+
     let registry = build_default_registry(DefaultRegistryConfig {
         opencode_api_key: Some("secret-opencode-key".to_string()),
         opencode_go_api_key: Some("secret-opencode-go-key".to_string()),
@@ -2317,6 +2533,99 @@ async fn providers_list_exposes_poolside_api_key_models() {
             .iter()
             .any(|model| model.id == "poolside/laguna-m.1")
     );
+}
+
+#[tokio::test]
+async fn providers_list_exposes_cursor_api_key_models() {
+    let registry = build_default_registry(DefaultRegistryConfig {
+        cursor_api_key: Some("secret-cursor-key".to_string()),
+        ..DefaultRegistryConfig::default()
+    })
+    .unwrap();
+    let runtime = Arc::new(Runtime::new(registry, Default::default()).unwrap());
+    let server = Arc::new(AppServer::new(runtime));
+    let client = LocalAppClient::new(server);
+
+    let providers: ProvidersListResult = request(&client, "providers/list", None).await;
+    let cursor = providers
+        .providers
+        .iter()
+        .find(|provider| provider.id == PROVIDER_CURSOR)
+        .expect("cursor provider should be listed");
+    assert_eq!(cursor.auth_type, ProviderAuthType::ApiKey);
+    assert!(cursor.authenticated);
+    assert!(cursor.models.iter().any(|model| model.id == "composer-2.5"));
+    assert!(cursor.capabilities.tool_calls);
+    assert!(!cursor.capabilities.structured_output);
+}
+
+#[tokio::test]
+async fn providers_clear_removes_api_key() {
+    let temp_dir = std::env::temp_dir().join(format!("roder-test-{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir_all(&temp_dir).unwrap();
+    unsafe {
+        std::env::set_var("RODER_CONFIG_DIR", &temp_dir);
+    }
+
+    let registry = build_default_registry(DefaultRegistryConfig::default()).unwrap();
+    let runtime = Arc::new(Runtime::new(registry, Default::default()).unwrap());
+    let server = AppServer::new(runtime).with_user_config_persistence();
+    let client = LocalAppClient::new(Arc::new(server));
+
+    // Initially cursor is not authenticated
+    let providers: ProvidersListResult = request(&client, "providers/list", None).await;
+    let cursor = providers
+        .providers
+        .iter()
+        .find(|provider| provider.id == PROVIDER_CURSOR)
+        .expect("cursor provider should be listed");
+    assert!(!cursor.authenticated);
+
+    // Configure it
+    let configure_params = ProviderConfigureParams {
+        provider: PROVIDER_CURSOR.to_string(),
+        api_key: "secret-cursor-key".to_string(),
+    };
+    let configure_res: ProviderConfigureResult = request(
+        &client,
+        "providers/configure",
+        Some(serde_json::to_value(configure_params).unwrap()),
+    )
+    .await;
+    assert!(configure_res.authenticated);
+
+    // Check providers list again to verify authenticated is true
+    let providers: ProvidersListResult = request(&client, "providers/list", None).await;
+    let cursor = providers
+        .providers
+        .iter()
+        .find(|provider| provider.id == PROVIDER_CURSOR)
+        .expect("cursor provider should be listed");
+    assert!(cursor.authenticated);
+
+    // Clear it
+    let clear_params = ProviderClearParams {
+        provider: PROVIDER_CURSOR.to_string(),
+    };
+    let clear_res: ProviderClearResult = request(
+        &client,
+        "providers/clear",
+        Some(serde_json::to_value(clear_params).unwrap()),
+    )
+    .await;
+    assert_eq!(clear_res.provider, PROVIDER_CURSOR);
+
+    // Check providers list again to verify authenticated is false
+    let providers: ProvidersListResult = request(&client, "providers/list", None).await;
+    let cursor = providers
+        .providers
+        .iter()
+        .find(|provider| provider.id == PROVIDER_CURSOR)
+        .expect("cursor provider should be listed");
+    assert!(!cursor.authenticated);
+
+    // Clean up temp dir
+    let _ = std::fs::remove_dir_all(&temp_dir);
 }
 
 #[tokio::test]
@@ -2437,7 +2746,7 @@ async fn internal_errors_include_structured_details() {
     let engine = Arc::new(FakeInferenceEngine);
     let mut builder = ExtensionRegistryBuilder::new();
     builder.inference_engine(engine);
-    builder.session_store_factory(Arc::new(FailingSessionStoreFactory));
+    builder.thread_store_factory(Arc::new(FailingThreadStoreFactory));
     let runtime = Arc::new(Runtime::new(builder.build().unwrap(), Default::default()).unwrap());
     let server = Arc::new(AppServer::new(runtime));
     let client = LocalAppClient::new(server);
@@ -2454,7 +2763,7 @@ async fn internal_errors_include_structured_details() {
     let error = response.error.expect("missing internal error");
 
     assert_eq!(error.code, -32000);
-    assert!(error.message.contains("parse session metadata"));
+    assert!(error.message.contains("parse thread metadata"));
     assert!(
         error
             .data
@@ -2503,16 +2812,16 @@ async fn turn_steer_accepts_active_turn() {
     let client = LocalAppClient::new(server);
     let mut events = client.subscribe_events();
 
-    let session = start_thread(&client).await;
-    let started = start_turn(&client, &session.thread.id, "start").await;
-    wait_for_event(&mut events, &session.thread.id, "turn.started").await;
+    let thread_start = start_thread(&client).await;
+    let started = start_turn(&client, &thread_start.thread.id, "start").await;
+    wait_for_event(&mut events, &thread_start.thread.id, "turn.started").await;
 
     let steered: TurnSteerResult = request(
         &client,
         "turn/steer",
         Some(
             serde_json::to_value(TurnSteerParams {
-                thread_id: session.thread.id.clone(),
+                thread_id: thread_start.thread.id.clone(),
                 expected_turn_id: started.turn_id.clone(),
                 input: text_input("change direction"),
                 prompt: None,
@@ -2523,7 +2832,7 @@ async fn turn_steer_accepts_active_turn() {
     .await;
     assert_eq!(steered.turn_id, started.turn_id);
 
-    let event = wait_for_event(&mut events, &session.thread.id, "turn.steered").await;
+    let event = wait_for_event(&mut events, &thread_start.thread.id, "turn.steered").await;
     assert_eq!(event.turn_id.as_deref(), Some(started.turn_id.as_str()));
 
     let _: roder_protocol::TurnInterruptResult = request(
@@ -2531,7 +2840,7 @@ async fn turn_steer_accepts_active_turn() {
         "turn/interrupt",
         Some(
             serde_json::to_value(TurnInterruptParams {
-                thread_id: session.thread.id,
+                thread_id: thread_start.thread.id,
                 turn_id: Some(started.turn_id),
             })
             .unwrap(),
@@ -2541,7 +2850,7 @@ async fn turn_steer_accepts_active_turn() {
 }
 
 #[tokio::test]
-async fn desktop_contract_methods_support_desktop_startup_contract() {
+async fn protocol_contract_methods_support_protocol_startup_contract() {
     let runtime = Arc::new(Runtime::fake().unwrap());
     let server = Arc::new(AppServer::new(runtime));
     let client = LocalAppClient::new(server);
@@ -2595,10 +2904,185 @@ async fn desktop_contract_methods_support_desktop_startup_contract() {
 }
 
 #[tokio::test]
-async fn thread_archive_removes_session_from_desktop_thread_list() {
+async fn thread_start_rejects_missing_or_blank_cwd() {
+    let runtime = Arc::new(Runtime::fake().unwrap());
+    let server = Arc::new(AppServer::new(runtime));
+    let client = LocalAppClient::new(server);
+
+    for params in [
+        serde_json::json!({
+            "model": "mock",
+            "modelProvider": PROVIDER_MOCK,
+            "ephemeral": false,
+        }),
+        serde_json::json!({
+            "model": "mock",
+            "modelProvider": PROVIDER_MOCK,
+            "cwd": "",
+            "ephemeral": false,
+        }),
+        serde_json::json!({
+            "model": "mock",
+            "modelProvider": PROVIDER_MOCK,
+            "cwd": ".",
+            "ephemeral": false,
+        }),
+    ] {
+        let response = client
+            .send_request(JsonRpcRequest {
+                jsonrpc: "2.0".to_string(),
+                id: Some(serde_json::json!("thread/start")),
+                method: "thread/start".to_string(),
+                params: Some(params),
+            })
+            .await;
+
+        let error = response.error.expect("thread/start should reject cwd");
+        assert_eq!(error.code, -32602);
+        assert!(
+            error.message.contains("cwd"),
+            "unexpected error message: {}",
+            error.message
+        );
+    }
+}
+
+#[tokio::test]
+async fn thread_snapshots_reject_metadata_without_workspace() {
     let mut builder = ExtensionRegistryBuilder::new();
     builder.inference_engine(Arc::new(FakeInferenceEngine));
-    builder.session_store_factory(Arc::new(RecordingSessionStoreFactory::default()));
+    let thread_root = std::env::temp_dir().join(format!(
+        "roder-missing-workspace-metadata-{}",
+        uuid::Uuid::new_v4()
+    ));
+    builder.thread_store_factory(Arc::new(JsonlThreadStoreFactory {
+        base_path: thread_root.clone(),
+    }));
+    let runtime = Arc::new(
+        Runtime::new(
+            builder.build().unwrap(),
+            RuntimeConfig {
+                workspace: None,
+                ..Default::default()
+            },
+        )
+        .unwrap(),
+    );
+    let thread_id = "legacy-missing-workspace".to_string();
+    std::fs::create_dir_all(thread_root.join(&thread_id)).unwrap();
+    std::fs::write(
+        thread_root.join(&thread_id).join("metadata.json"),
+        serde_json::json!({
+            "thread_id": thread_id.clone(),
+            "title": "legacy missing workspace",
+            "provider": PROVIDER_MOCK,
+            "model": "mock",
+            "created_at": "1970-01-01T00:00:00Z",
+            "updated_at": "1970-01-01T00:00:00Z",
+            "message_count": 0
+        })
+        .to_string(),
+    )
+    .unwrap();
+    let server = Arc::new(AppServer::new(runtime));
+    let client = LocalAppClient::new(server);
+
+    let response = client
+        .send_request(JsonRpcRequest {
+            jsonrpc: "2.0".to_string(),
+            id: Some(serde_json::json!("thread/read")),
+            method: "thread/read".to_string(),
+            params: Some(
+                serde_json::to_value(ThreadReadParams {
+                    thread_id: thread_id.clone(),
+                    include_turns: false,
+                })
+                .unwrap(),
+            ),
+        })
+        .await;
+
+    let error = response
+        .error
+        .expect("thread/read should reject missing workspace metadata");
+    assert_eq!(error.code, -32000);
+    assert!(error.message.contains("thread metadata invalid"));
+
+    let response = client
+        .send_request(JsonRpcRequest {
+            jsonrpc: "2.0".to_string(),
+            id: Some(serde_json::json!("thread/list")),
+            method: "thread/list".to_string(),
+            params: Some(serde_json::to_value(ThreadListParams { limit: None }).unwrap()),
+        })
+        .await;
+
+    let error = response
+        .error
+        .expect("thread/list should reject missing workspace metadata");
+    assert_eq!(error.code, -32000);
+    assert!(error.message.contains("thread metadata invalid"));
+
+    let _ = std::fs::remove_dir_all(thread_root);
+}
+
+#[tokio::test]
+async fn thread_snapshots_overlay_runtime_active_turn_status() {
+    let mut builder = ExtensionRegistryBuilder::new();
+    builder.inference_engine(Arc::new(PendingEngine));
+    let runtime = Arc::new(Runtime::new(builder.build().unwrap(), Default::default()).unwrap());
+    let server = Arc::new(AppServer::new(runtime));
+    let client = LocalAppClient::new(server);
+    let mut events = client.subscribe_events();
+
+    let thread_start = start_thread(&client).await;
+    let started = start_turn(&client, &thread_start.thread.id, "wait").await;
+    wait_for_event(&mut events, &thread_start.thread.id, "turn.started").await;
+
+    let read: ThreadReadResult = request(
+        &client,
+        "thread/read",
+        Some(
+            serde_json::to_value(ThreadReadParams {
+                thread_id: thread_start.thread.id.clone(),
+                include_turns: false,
+            })
+            .unwrap(),
+        ),
+    )
+    .await;
+    let read_thread = read.thread.expect("thread/read returns thread");
+    assert_eq!(read_thread.status.kind, "running");
+    assert_eq!(
+        read_thread.status.active_turn_id.as_deref(),
+        Some(started.turn_id.as_str())
+    );
+    assert!(read_thread.status.active_flags.is_empty());
+
+    let listed: ThreadListResult = request(
+        &client,
+        "thread/list",
+        Some(serde_json::to_value(ThreadListParams { limit: None }).unwrap()),
+    )
+    .await;
+    let listed_thread = listed
+        .data
+        .iter()
+        .find(|thread| thread.id == thread_start.thread.id)
+        .expect("thread/list includes active thread");
+    assert_eq!(listed_thread.status.kind, "running");
+    assert_eq!(
+        listed_thread.status.active_turn_id.as_deref(),
+        Some(started.turn_id.as_str())
+    );
+    assert!(listed_thread.status.active_flags.is_empty());
+}
+
+#[tokio::test]
+async fn thread_archive_removes_thread_from_protocol_thread_list() {
+    let mut builder = ExtensionRegistryBuilder::new();
+    builder.inference_engine(Arc::new(FakeInferenceEngine));
+    builder.thread_store_factory(Arc::new(RecordingThreadStoreFactory::default()));
     let runtime = Arc::new(Runtime::new(builder.build().unwrap(), Default::default()).unwrap());
     let server = Arc::new(AppServer::new(runtime));
     let client = LocalAppClient::new(server);
@@ -2619,14 +3103,14 @@ async fn thread_archive_removes_session_from_desktop_thread_list() {
     assert!(archived.archived);
     assert_eq!(archived.thread_id, started.thread.id);
 
-    let sessions: ThreadListResult = request(
+    let threads: ThreadListResult = request(
         &client,
         "thread/list",
         Some(serde_json::to_value(ThreadListParams { limit: None }).unwrap()),
     )
     .await;
     assert!(
-        !sessions
+        !threads
             .data
             .iter()
             .any(|thread| thread.id == archived.thread_id)
@@ -2634,7 +3118,7 @@ async fn thread_archive_removes_session_from_desktop_thread_list() {
 }
 
 #[tokio::test]
-async fn desktop_contract_turn_methods_and_notifications_match_desktop_contract() {
+async fn protocol_contract_turn_methods_and_notifications_match_protocol_contract() {
     let runtime = Arc::new(Runtime::fake().unwrap());
     let server = Arc::new(AppServer::new(runtime));
     let client = LocalAppClient::new(server);
@@ -2704,6 +3188,11 @@ async fn desktop_contract_turn_methods_and_notifications_match_desktop_contract(
                 saw_item_completed = true;
             }
             "thread/status/changed" if notification.params["status"]["type"] == "running" => {
+                assert_eq!(notification.params["status"]["activeTurnId"], turn_id);
+                assert_eq!(
+                    notification.params["status"]["activeFlags"],
+                    serde_json::json!([])
+                );
                 saw_status_active = true;
             }
             "turn/completed" => {
@@ -2730,7 +3219,113 @@ async fn desktop_contract_turn_methods_and_notifications_match_desktop_contract(
 }
 
 #[tokio::test]
-async fn desktop_contract_turn_interrupt_uses_active_turn_when_turn_id_is_omitted() {
+async fn protocol_contract_turn_interrupt_without_turn_id_uses_runtime_active_turn() {
+    let mut builder = ExtensionRegistryBuilder::new();
+    builder.inference_engine(Arc::new(PendingEngine));
+    let runtime = Arc::new(Runtime::new(builder.build().unwrap(), Default::default()).unwrap());
+    let server = Arc::new(AppServer::new(Arc::clone(&runtime)));
+    let client = LocalAppClient::new(server);
+
+    let metadata = runtime
+        .create_thread_with(CreateThreadRequest {
+            title: None,
+            workspace: "/tmp".to_string(),
+            provider: Some(PROVIDER_MOCK.to_string()),
+            model: Some("mock".to_string()),
+        })
+        .await
+        .unwrap();
+    let turn_id = runtime
+        .start_turn(StartTurnRequest {
+            thread_id: metadata.thread_id.clone(),
+            message: "wait".to_string(),
+            images: Vec::new(),
+            provider_override: Some(PROVIDER_MOCK.to_string()),
+            model_override: Some("mock".to_string()),
+            reasoning_override: None,
+            workspace: "/tmp".to_string(),
+            instructions: default_instructions(),
+            task_ledger_required: false,
+        })
+        .await
+        .unwrap();
+
+    let interrupted: TurnInterruptResult = request(
+        &client,
+        "turn/interrupt",
+        Some(
+            serde_json::to_value(TurnInterruptParams {
+                thread_id: metadata.thread_id,
+                turn_id: None,
+            })
+            .unwrap(),
+        ),
+    )
+    .await;
+
+    assert_eq!(interrupted.turn_id.as_deref(), Some(turn_id.as_str()));
+}
+
+#[tokio::test]
+async fn turn_usage_cache_metrics_are_exposed_on_notifications_and_thread_metadata() {
+    let mut builder = ExtensionRegistryBuilder::new();
+    builder.inference_engine(Arc::new(UsageReportingEngine));
+    builder.thread_store_factory(Arc::new(RecordingThreadStoreFactory::default()));
+    let runtime = Arc::new(Runtime::new(builder.build().unwrap(), Default::default()).unwrap());
+    let server = Arc::new(AppServer::new(runtime));
+    let client = LocalAppClient::new(server);
+    let mut notifications = client.subscribe_notifications();
+    let thread = start_thread(&client).await;
+    let thread_id = thread.thread.id.clone();
+    let turn = start_turn(&client, &thread_id, "record usage").await;
+
+    let completed =
+        wait_for_notification(&mut notifications, "turn/completed", Some(&thread_id)).await;
+
+    assert_eq!(completed.params["turn"]["id"], turn.turn_id);
+    assert_eq!(completed.params["turn"]["usage"]["prompt_tokens"], 100);
+    assert_eq!(
+        completed.params["turn"]["usage"]["cached_prompt_tokens"],
+        92
+    );
+    assert!(
+        (completed.params["turn"]["usage"]["cache_hit_rate"]
+            .as_f64()
+            .unwrap()
+            - 0.92)
+            .abs()
+            < f64::EPSILON
+    );
+
+    let read: ThreadReadResult = request(
+        &client,
+        "thread/read",
+        Some(
+            serde_json::to_value(ThreadReadParams {
+                thread_id,
+                include_turns: true,
+            })
+            .unwrap(),
+        ),
+    )
+    .await;
+    let thread = read.thread.expect("thread/read returns persisted thread");
+    let usage = thread.usage.expect("thread metadata includes usage");
+    assert_eq!(usage.prompt_tokens, 100);
+    assert_eq!(usage.cached_prompt_tokens, 92);
+    assert!((usage.cache_hit_rate.unwrap() - 0.92).abs() < f64::EPSILON);
+    assert_eq!(
+        thread.turns.unwrap()[0]
+            .usage
+            .as_ref()
+            .unwrap()
+            .cached_prompt_tokens,
+        92
+    );
+}
+
+#[tokio::test]
+async fn protocol_contract_turn_interrupt_uses_active_turn_when_turn_id_is_omitted() {
     let mut builder = ExtensionRegistryBuilder::new();
     builder.inference_engine(Arc::new(PendingEngine));
     let runtime = Arc::new(Runtime::new(builder.build().unwrap(), Default::default()).unwrap());
@@ -2791,7 +3386,7 @@ async fn desktop_contract_turn_interrupt_uses_active_turn_when_turn_id_is_omitte
 }
 
 #[tokio::test]
-async fn desktop_notifications_surface_tool_approval_requests_and_resolution() {
+async fn protocol_notifications_surface_tool_approval_requests_and_resolution() {
     let mut builder = ExtensionRegistryBuilder::new();
     builder.inference_engine(Arc::new(ApprovalRequiredEngine {
         calls: Mutex::new(0),
@@ -2802,13 +3397,13 @@ async fn desktop_notifications_surface_tool_approval_requests_and_resolution() {
     let client = LocalAppClient::new(server);
     let mut notifications = client.subscribe_notifications();
 
-    let session = start_thread(&client).await;
-    let _started = start_turn(&client, &session.thread.id, "what branch are you on?").await;
+    let thread_start = start_thread(&client).await;
+    let _started = start_turn(&client, &thread_start.thread.id, "what branch are you on?").await;
 
     let approval = wait_for_notification(
         &mut notifications,
-        "session/approvalRequested",
-        Some(&session.thread.id),
+        "thread/approvalRequested",
+        Some(&thread_start.thread.id),
     )
     .await;
     assert_eq!(approval.params["turnId"].as_str().is_some(), true);
@@ -2819,7 +3414,7 @@ async fn desktop_notifications_surface_tool_approval_requests_and_resolution() {
     let waiting_status = wait_for_notification(
         &mut notifications,
         "thread/status/changed",
-        Some(&session.thread.id),
+        Some(&thread_start.thread.id),
     )
     .await;
     assert_eq!(waiting_status.params["status"]["type"], "running");
@@ -2828,11 +3423,48 @@ async fn desktop_notifications_surface_tool_approval_requests_and_resolution() {
         serde_json::json!(["approvalRequired"])
     );
 
-    let resolved: SessionResolveApprovalResult = request(
+    let read_waiting: ThreadReadResult = request(
         &client,
-        "session/resolve_approval",
+        "thread/read",
         Some(
-            serde_json::to_value(SessionResolveApprovalParams {
+            serde_json::to_value(ThreadReadParams {
+                thread_id: thread_start.thread.id.clone(),
+                include_turns: false,
+            })
+            .unwrap(),
+        ),
+    )
+    .await;
+    assert_eq!(
+        read_waiting
+            .thread
+            .expect("thread/read returns waiting thread")
+            .status
+            .active_flags,
+        vec!["approvalRequired".to_string()]
+    );
+
+    let listed_waiting: ThreadListResult = request(
+        &client,
+        "thread/list",
+        Some(serde_json::to_value(ThreadListParams { limit: None }).unwrap()),
+    )
+    .await;
+    let listed_thread = listed_waiting
+        .data
+        .iter()
+        .find(|thread| thread.id == thread_start.thread.id)
+        .expect("thread/list includes waiting thread");
+    assert_eq!(
+        listed_thread.status.active_flags,
+        vec!["approvalRequired".to_string()]
+    );
+
+    let resolved: ThreadResolveApprovalResult = request(
+        &client,
+        "thread/resolve_approval",
+        Some(
+            serde_json::to_value(ThreadResolveApprovalParams {
                 approval_id: "approval-shell-1".to_string(),
                 approved: false,
             })
@@ -2844,8 +3476,8 @@ async fn desktop_notifications_surface_tool_approval_requests_and_resolution() {
 
     let resolved_notification = wait_for_notification(
         &mut notifications,
-        "session/approvalResolved",
-        Some(&session.thread.id),
+        "thread/approvalResolved",
+        Some(&thread_start.thread.id),
     )
     .await;
     assert_eq!(
@@ -2856,7 +3488,7 @@ async fn desktop_notifications_surface_tool_approval_requests_and_resolution() {
 }
 
 #[tokio::test]
-async fn desktop_contract_fs_and_command_methods_match_desktop_contract() {
+async fn protocol_contract_fs_and_command_methods_match_protocol_contract() {
     let runtime = Arc::new(Runtime::fake().unwrap());
     let server = Arc::new(AppServer::new(runtime.clone()));
     let client = LocalAppClient::new(server);
@@ -2972,11 +3604,11 @@ async fn desktop_contract_fs_and_command_methods_match_desktop_contract() {
 async fn artifacts_methods_list_read_grep_tail_delete_and_command_spill() {
     let data_dir =
         std::env::temp_dir().join(format!("roder-artifact-e2e-{}", uuid::Uuid::new_v4()));
-    let session_root = data_dir.join("sessions");
+    let thread_root = data_dir.join("threads");
     let mut builder = ExtensionRegistryBuilder::new();
     builder.inference_engine(Arc::new(FakeInferenceEngine));
-    builder.session_store_factory(Arc::new(JsonlSessionStoreFactory {
-        base_path: session_root.clone(),
+    builder.thread_store_factory(Arc::new(JsonlThreadStoreFactory {
+        base_path: thread_root.clone(),
     }));
     let runtime = Arc::new(
         Runtime::new(
@@ -3028,7 +3660,7 @@ async fn artifacts_methods_list_read_grep_tail_delete_and_command_spill() {
         .store_path;
     assert!(
         artifact_path.starts_with(
-            session_root
+            thread_root
                 .join("app-server")
                 .join("artifacts")
                 .join("process-artifact-1")
@@ -3469,7 +4101,7 @@ async fn discovery_methods_refresh_search_read_promote_list_and_clear() {
     ));
     let workspace = root.join("workspace");
     let catalog_dir = root.join("catalog");
-    let session_dir = root.join("session");
+    let state_dir = root.join("state");
     std::fs::create_dir_all(&workspace).unwrap();
     std::fs::write(
         workspace.join(".mcp.json"),
@@ -3478,7 +4110,7 @@ async fn discovery_methods_refresh_search_read_promote_list_and_clear() {
     .unwrap();
     unsafe {
         std::env::set_var("RODER_DISCOVERY_CATALOG_DIR", &catalog_dir);
-        std::env::set_var("RODER_DISCOVERY_SESSION_DIR", &session_dir);
+        std::env::set_var("RODER_DISCOVERY_STATE_DIR", &state_dir);
     }
 
     let registry = build_default_registry(DefaultRegistryConfig {
@@ -3636,22 +4268,22 @@ async fn discovery_methods_refresh_search_read_promote_list_and_clear() {
 
     unsafe {
         std::env::remove_var("RODER_DISCOVERY_CATALOG_DIR");
-        std::env::remove_var("RODER_DISCOVERY_SESSION_DIR");
+        std::env::remove_var("RODER_DISCOVERY_STATE_DIR");
     }
     let _ = std::fs::remove_dir_all(root);
 }
 
 #[tokio::test]
 async fn retrieval_methods_read_recommendations_metrics_and_promotions() {
-    let store: Arc<dyn SessionStoreFactory> = Arc::new(RecordingSessionStoreFactory::default());
+    let store: Arc<dyn ThreadStoreFactory> = Arc::new(RecordingThreadStoreFactory::default());
     let mut builder = ExtensionRegistryBuilder::new();
     builder.inference_engine(Arc::new(FakeInferenceEngine));
-    builder.session_store_factory(store);
+    builder.thread_store_factory(store);
     let runtime = Arc::new(Runtime::new(builder.build().unwrap(), Default::default()).unwrap());
     let client = LocalAppClient::new(Arc::new(AppServer::new(runtime.clone())));
 
-    let session = start_thread(&client).await;
-    let thread_id = session.thread.id.clone();
+    let thread_start = start_thread(&client).await;
+    let thread_id = thread_start.thread.id.clone();
     let turn_id = "turn-retrieval".to_string();
     let route_id = "route-retrieval".to_string();
     let timestamp = OffsetDateTime::UNIX_EPOCH;
@@ -4052,13 +4684,13 @@ async fn skills_manager_can_disable_commit_and_update_exposure() {
 async fn automations_create_run_now_status_and_runs() {
     let root = std::env::temp_dir().join(format!("roder-automations-e2e-{}", uuid::Uuid::new_v4()));
     let project = root.join("project");
-    let session_root = root.join("sessions");
+    let thread_root = root.join("threads");
     let store_path = root.join("automations.sqlite3");
     std::fs::create_dir_all(&project).unwrap();
     let mut builder = ExtensionRegistryBuilder::new();
     builder.inference_engine(Arc::new(FakeInferenceEngine));
-    builder.session_store_factory(Arc::new(JsonlSessionStoreFactory {
-        base_path: session_root,
+    builder.thread_store_factory(Arc::new(JsonlThreadStoreFactory {
+        base_path: thread_root,
     }));
     let runtime = Arc::new(
         Runtime::new(
@@ -4149,13 +4781,13 @@ async fn automations_create_due_tick_run_and_persisted_thread_read() {
         uuid::Uuid::new_v4()
     ));
     let project = root.join("project");
-    let session_root = root.join("sessions");
+    let thread_root = root.join("threads");
     let store_path = root.join("automations.sqlite3");
     std::fs::create_dir_all(&project).unwrap();
     let mut builder = ExtensionRegistryBuilder::new();
     builder.inference_engine(Arc::new(FakeInferenceEngine));
-    builder.session_store_factory(Arc::new(JsonlSessionStoreFactory {
-        base_path: session_root,
+    builder.thread_store_factory(Arc::new(JsonlThreadStoreFactory {
+        base_path: thread_root,
     }));
     let runtime = Arc::new(
         Runtime::new(
@@ -4324,10 +4956,10 @@ async fn discovery_catalog_includes_runtime_skills() {
     let workspace = root.join("workspace");
     std::fs::create_dir_all(&workspace).unwrap();
     let previous_catalog = std::env::var_os("RODER_DISCOVERY_CATALOG_DIR");
-    let previous_session = std::env::var_os("RODER_DISCOVERY_SESSION_DIR");
+    let previous_state = std::env::var_os("RODER_DISCOVERY_STATE_DIR");
     unsafe {
         std::env::set_var("RODER_DISCOVERY_CATALOG_DIR", root.join("catalog"));
-        std::env::set_var("RODER_DISCOVERY_SESSION_DIR", root.join("session"));
+        std::env::set_var("RODER_DISCOVERY_STATE_DIR", root.join("state"));
     }
 
     let runtime = Arc::new(Runtime::fake().unwrap());
@@ -4361,10 +4993,10 @@ async fn discovery_catalog_includes_runtime_skills() {
         } else {
             std::env::remove_var("RODER_DISCOVERY_CATALOG_DIR");
         }
-        if let Some(value) = previous_session {
-            std::env::set_var("RODER_DISCOVERY_SESSION_DIR", value);
+        if let Some(value) = previous_state {
+            std::env::set_var("RODER_DISCOVERY_STATE_DIR", value);
         } else {
-            std::env::remove_var("RODER_DISCOVERY_SESSION_DIR");
+            std::env::remove_var("RODER_DISCOVERY_STATE_DIR");
         }
     }
     let _ = std::fs::remove_dir_all(root);
@@ -4377,13 +5009,13 @@ async fn commands_run_expands_and_starts_turn() {
     let client = LocalAppClient::new(server);
     let mut events = client.subscribe_events();
 
-    let session = start_thread(&client).await;
+    let thread_start = start_thread(&client).await;
     let result: CommandsRunResult = request(
         &client,
         "commands/run",
         Some(
             serde_json::to_value(CommandsRunParams {
-                thread_id: session.thread.id.clone(),
+                thread_id: thread_start.thread.id.clone(),
                 name: "init".to_string(),
                 arguments: String::new(),
                 workspace: None,
@@ -4395,7 +5027,7 @@ async fn commands_run_expands_and_starts_turn() {
 
     assert!(!result.turn_id.is_empty());
     assert_eq!(result.expanded.command.name, "init");
-    wait_for_event(&mut events, &session.thread.id, "turn.completed").await;
+    wait_for_event(&mut events, &thread_start.thread.id, "turn.completed").await;
 }
 
 #[tokio::test]
@@ -4726,17 +5358,16 @@ async fn tools_call_can_create_and_get_goal() {
     let server = Arc::new(AppServer::new(runtime));
     let client = LocalAppClient::new(server);
 
-    let session = start_thread(&client).await;
+    let thread_start = start_thread(&client).await;
     let created: ToolCallResult = request(
         &client,
         "tools/call",
         Some(
             serde_json::to_value(ToolCallParams {
-                thread_id: session.thread.id.clone(),
+                thread_id: thread_start.thread.id.clone(),
                 tool_name: "create_goal".to_string(),
                 arguments: serde_json::json!({
                     "objective": "Ship slash goal",
-                    "replace": true,
                 }),
             })
             .unwrap(),
@@ -4745,14 +5376,43 @@ async fn tools_call_can_create_and_get_goal() {
     .await;
 
     assert!(!created.is_error, "create_goal failed: {created:?}");
-    assert_eq!(created.text, "Goal active: Ship slash goal");
+    assert!(created.text.contains("Ship slash goal"));
+
+    let replaced: ToolCallResult = request(
+        &client,
+        "tools/call",
+        Some(
+            serde_json::to_value(ToolCallParams {
+                thread_id: thread_start.thread.id.clone(),
+                tool_name: "create_goal".to_string(),
+                arguments: serde_json::json!({
+                    "objective": "Ship replacement goal",
+                    "token_budget": 200,
+                }),
+            })
+            .unwrap(),
+        ),
+    )
+    .await;
+
+    assert!(
+        !replaced.is_error,
+        "create_goal replacement failed: {replaced:?}"
+    );
+    assert!(replaced.text.contains("Ship replacement goal"));
+    assert_eq!(replaced.data["hasActiveGoal"], true);
+    assert_eq!(replaced.data["goal"]["objective"], "Ship replacement goal");
+    assert_eq!(replaced.data["goal"]["status"], "active");
+    assert_eq!(replaced.data["goal"]["tokenBudget"], 200);
+    assert_eq!(replaced.data["goal"]["tokensUsed"], 0);
+    assert_eq!(replaced.data["goal"]["timeUsedSeconds"], 0);
 
     let current: ToolCallResult = request(
         &client,
         "tools/call",
         Some(
             serde_json::to_value(ToolCallParams {
-                thread_id: session.thread.id,
+                thread_id: thread_start.thread.id,
                 tool_name: "get_goal".to_string(),
                 arguments: serde_json::json!({}),
             })
@@ -4762,7 +5422,7 @@ async fn tools_call_can_create_and_get_goal() {
     .await;
 
     assert!(!current.is_error, "get_goal failed: {current:?}");
-    assert_eq!(current.text, "Goal active: Ship slash goal");
+    assert!(current.text.contains("Ship replacement goal"));
 }
 
 #[tokio::test]
@@ -4779,13 +5439,13 @@ async fn request_user_input_tool_waits_for_app_server_resolution() {
     let mut events = client.subscribe_events();
     let mut notifications = client.subscribe_notifications();
 
-    let session = start_thread(&client).await;
-    let _started = start_turn(&client, &session.thread.id, "ask me").await;
+    let thread_start = start_thread(&client).await;
+    let _started = start_turn(&client, &thread_start.thread.id, "ask me").await;
 
     let requested_notification = wait_for_notification(
         &mut notifications,
-        "session/userInputRequested",
-        Some(&session.thread.id),
+        "thread/userInputRequested",
+        Some(&thread_start.thread.id),
     )
     .await;
     assert_eq!(requested_notification.params["questions"][0]["id"], "mode");
@@ -4814,11 +5474,11 @@ async fn request_user_input_tool_waits_for_app_server_resolution() {
         Some(request_id.as_str())
     );
 
-    let resolved: SessionResolveUserInputResult = request(
+    let resolved: ThreadResolveUserInputResult = request(
         &client,
-        "session/resolve_user_input",
+        "thread/resolve_user_input",
         Some(
-            serde_json::to_value(SessionResolveUserInputParams {
+            serde_json::to_value(ThreadResolveUserInputParams {
                 request_id: request_id.clone(),
                 answers: serde_json::json!({ "mode": "Safe" }),
             })
@@ -4830,8 +5490,8 @@ async fn request_user_input_tool_waits_for_app_server_resolution() {
 
     let resolved_notification = wait_for_notification(
         &mut notifications,
-        "session/userInputResolved",
-        Some(&session.thread.id),
+        "thread/userInputResolved",
+        Some(&thread_start.thread.id),
     )
     .await;
     assert_eq!(resolved_notification.params["requestId"], request_id);
@@ -4915,6 +5575,35 @@ async fn search_index_setting_can_be_set_and_observed() {
     let settings: SettingsGetResult = request(&client, "settings/get", None).await;
     assert!(!settings.search_index.enabled);
     roder_search::set_search_index_enabled(true);
+}
+
+#[tokio::test]
+async fn shell_setting_can_be_set_and_observed() {
+    let runtime = Arc::new(Runtime::fake().unwrap());
+    let server = Arc::new(AppServer::new(runtime.clone()));
+    let client = LocalAppClient::new(server);
+
+    let settings: SettingsGetResult = request(&client, "settings/get", None).await;
+    assert!(!settings.shell.shell.trim().is_empty());
+    assert!(settings.shell.options.contains(&"zsh".to_string()));
+    assert!(settings.shell.options.contains(&"bash".to_string()));
+
+    let changed: SettingsSetShellResult = request(
+        &client,
+        "settings/set_shell",
+        Some(
+            serde_json::to_value(SettingsSetShellParams {
+                shell: "bash".to_string(),
+            })
+            .unwrap(),
+        ),
+    )
+    .await;
+    assert_eq!(changed.shell.shell, "bash");
+
+    let settings: SettingsGetResult = request(&client, "settings/get", None).await;
+    assert_eq!(settings.shell.shell, "bash");
+    assert_eq!(runtime.status().await.command_shell, "bash");
 }
 
 #[tokio::test]
@@ -5271,20 +5960,20 @@ async fn settings_default_mode_can_be_set_and_observed() {
 }
 
 #[tokio::test]
-async fn session_policy_mode_can_be_set_and_observed() {
+async fn thread_policy_mode_can_be_set_and_observed() {
     let runtime = Arc::new(Runtime::fake().unwrap());
     let server = Arc::new(AppServer::new(runtime));
     let client = LocalAppClient::new(server);
     let mut events = client.subscribe_events();
 
-    let state: SessionGetResult = request(&client, "session/get", None).await;
+    let state: ThreadStateResult = request(&client, "thread/state", None).await;
     assert_eq!(state.mode, PolicyMode::Default);
 
-    let changed: SessionSetModeResult = request(
+    let changed: ThreadSetModeResult = request(
         &client,
-        "session/set_mode",
+        "thread/set_mode",
         Some(
-            serde_json::to_value(SessionSetModeParams {
+            serde_json::to_value(ThreadSetModeParams {
                 mode: PolicyMode::Plan,
                 reason: Some("test".to_string()),
             })
@@ -5294,7 +5983,7 @@ async fn session_policy_mode_can_be_set_and_observed() {
     .await;
     assert_eq!(changed.mode, PolicyMode::Plan);
 
-    let state: SessionGetResult = request(&client, "session/get", None).await;
+    let state: ThreadStateResult = request(&client, "thread/state", None).await;
     assert_eq!(state.mode, PolicyMode::Plan);
 
     let mut saw_mode_changed = false;
@@ -5312,7 +6001,7 @@ async fn session_policy_mode_can_be_set_and_observed() {
 }
 
 #[tokio::test]
-async fn session_exit_plan_resolves_pending_request() {
+async fn thread_exit_plan_resolves_pending_request() {
     let runtime = Arc::new(Runtime::fake().unwrap());
     runtime
         .set_policy_mode(PolicyMode::Plan, Some("test setup".to_string()))
@@ -5335,7 +6024,7 @@ async fn session_exit_plan_resolves_pending_request() {
 
     let requested_notification = wait_for_notification(
         &mut notifications,
-        "session/planExitRequested",
+        "thread/planExitRequested",
         Some("thread-plan"),
     )
     .await;
@@ -5346,7 +6035,7 @@ async fn session_exit_plan_resolves_pending_request() {
         "Implement approved edits"
     );
 
-    let state: SessionGetResult = request(&client, "session/get", None).await;
+    let state: ThreadStateResult = request(&client, "thread/state", None).await;
     assert_eq!(
         state
             .pending_plan_exit
@@ -5355,11 +6044,11 @@ async fn session_exit_plan_resolves_pending_request() {
         Some("exit-plan-1")
     );
 
-    let resolved: SessionExitPlanResult = request(
+    let resolved: ThreadExitPlanResult = request(
         &client,
-        "session/exit_plan",
+        "thread/exit_plan",
         Some(
-            serde_json::to_value(SessionExitPlanParams {
+            serde_json::to_value(ThreadExitPlanParams {
                 request_id: "exit-plan-1".to_string(),
                 approved: true,
             })
@@ -5372,7 +6061,7 @@ async fn session_exit_plan_resolves_pending_request() {
 
     let resolved_notification = wait_for_notification(
         &mut notifications,
-        "session/planExitResolved",
+        "thread/planExitResolved",
         Some("thread-plan"),
     )
     .await;
@@ -5380,7 +6069,7 @@ async fn session_exit_plan_resolves_pending_request() {
     assert_eq!(resolved_notification.params["approved"], true);
     assert_eq!(resolved_notification.params["resolvedMode"], "default");
 
-    let state: SessionGetResult = request(&client, "session/get", None).await;
+    let state: ThreadStateResult = request(&client, "thread/state", None).await;
     assert_eq!(state.mode, PolicyMode::Default);
     assert!(state.pending_plan_exit.is_none());
 
@@ -5399,7 +6088,7 @@ async fn session_exit_plan_resolves_pending_request() {
 }
 
 #[tokio::test]
-async fn session_exit_plan_timeout_rejects_late_approval() {
+async fn thread_exit_plan_timeout_rejects_late_approval() {
     let runtime = Arc::new(Runtime::fake().unwrap());
     runtime
         .set_policy_mode(PolicyMode::Plan, Some("test setup".to_string()))
@@ -5420,11 +6109,11 @@ async fn session_exit_plan_timeout_rejects_late_approval() {
     let client = LocalAppClient::new(server);
     let mut events = client.subscribe_events();
 
-    let resolved: SessionExitPlanResult = request(
+    let resolved: ThreadExitPlanResult = request(
         &client,
-        "session/exit_plan",
+        "thread/exit_plan",
         Some(
-            serde_json::to_value(SessionExitPlanParams {
+            serde_json::to_value(ThreadExitPlanParams {
                 request_id: "exit-plan-expired".to_string(),
                 approved: true,
             })
@@ -5435,7 +6124,7 @@ async fn session_exit_plan_timeout_rejects_late_approval() {
     assert!(resolved.resolved);
     assert_eq!(resolved.mode, PolicyMode::Plan);
 
-    let state: SessionGetResult = request(&client, "session/get", None).await;
+    let state: ThreadStateResult = request(&client, "thread/state", None).await;
     assert_eq!(state.mode, PolicyMode::Plan);
     assert!(state.pending_plan_exit.is_none());
 
@@ -5460,8 +6149,8 @@ async fn task_tool_emits_subagent_events_before_tool_completion() {
     let client = LocalAppClient::new(server);
     let mut events = client.subscribe_events();
 
-    let session = start_thread(&client).await;
-    let started = start_turn(&client, &session.thread.id, "delegate this").await;
+    let thread_start = start_thread(&client).await;
+    let started = start_turn(&client, &thread_start.thread.id, "delegate this").await;
 
     let mut kinds = Vec::new();
     let mut child_parent_ids = Vec::new();
@@ -5513,7 +6202,7 @@ async fn task_tool_emits_subagent_events_before_tool_completion() {
     assert!(
         child_parent_ids
             .iter()
-            .all(|(thread_id, turn_id)| thread_id == &session.thread.id
+            .all(|(thread_id, turn_id)| thread_id == &thread_start.thread.id
                 && turn_id == &started.turn_id),
         "subagent events should carry parent ids: {child_parent_ids:?}"
     );
@@ -5521,7 +6210,7 @@ async fn task_tool_emits_subagent_events_before_tool_completion() {
 
 #[tokio::test]
 async fn subagent_trace_methods_list_read_and_stream_notifications() {
-    let store: Arc<dyn SessionStoreFactory> = Arc::new(RecordingSessionStoreFactory::default());
+    let store: Arc<dyn ThreadStoreFactory> = Arc::new(RecordingThreadStoreFactory::default());
     let runtime = subagent_runtime_with_store(
         InProcessDispatcherConfig::default().default_timeout_seconds,
         false,
@@ -5532,27 +6221,27 @@ async fn subagent_trace_methods_list_read_and_stream_notifications() {
     let mut events = client.subscribe_events();
     let mut notifications = client.subscribe_notifications();
 
-    let session = start_thread(&client).await;
-    let started = start_turn(&client, &session.thread.id, "delegate this").await;
+    let thread_start = start_thread(&client).await;
+    let started = start_turn(&client, &thread_start.thread.id, "delegate this").await;
 
     let trace_notification =
         wait_for_notification(&mut notifications, "turn/subagentTraceCreated", None).await;
     assert_eq!(
         trace_notification.params["summary"]["parent"]["threadId"],
-        session.thread.id
+        thread_start.thread.id
     );
     assert_eq!(
         trace_notification.params["summary"]["parent"]["turnId"],
         started.turn_id
     );
-    wait_for_event(&mut events, &session.thread.id, "turn.completed").await;
+    wait_for_event(&mut events, &thread_start.thread.id, "turn.completed").await;
 
     let traces: SubagentTracesListResult = request(
         &client,
         "turn/subagentTraces/list",
         Some(
             serde_json::to_value(SubagentTracesListParams {
-                thread_id: session.thread.id.clone(),
+                thread_id: thread_start.thread.id.clone(),
                 turn_id: started.turn_id.clone(),
             })
             .unwrap(),
@@ -5560,7 +6249,7 @@ async fn subagent_trace_methods_list_read_and_stream_notifications() {
     )
     .await;
     assert_eq!(traces.traces.len(), 1);
-    assert_eq!(traces.traces[0].parent.thread_id, session.thread.id);
+    assert_eq!(traces.traces[0].parent.thread_id, thread_start.thread.id);
     assert_eq!(traces.traces[0].parent.turn_id, started.turn_id);
 
     let page: SubagentTraceReadResult = request(
@@ -5568,7 +6257,7 @@ async fn subagent_trace_methods_list_read_and_stream_notifications() {
         "turn/subagentTrace/read",
         Some(
             serde_json::to_value(SubagentTraceReadParams {
-                thread_id: session.thread.id,
+                thread_id: thread_start.thread.id,
                 trace_id: traces.traces[0].trace_id.clone(),
                 offset: 0,
                 limit: Some(1),
@@ -5583,15 +6272,15 @@ async fn subagent_trace_methods_list_read_and_stream_notifications() {
 }
 
 #[tokio::test]
-async fn plan_review_and_hunk_methods_round_trip_through_session_events() {
-    let store: Arc<dyn SessionStoreFactory> = Arc::new(RecordingSessionStoreFactory::default());
+async fn plan_review_and_hunk_methods_round_trip_through_thread_events() {
+    let store: Arc<dyn ThreadStoreFactory> = Arc::new(RecordingThreadStoreFactory::default());
     let workspace =
         std::env::temp_dir().join(format!("roder-plan-review-{}", uuid::Uuid::new_v4()));
     std::fs::create_dir_all(workspace.join("src")).unwrap();
     std::fs::write(workspace.join("src/lib.rs"), "new\n").unwrap();
     let mut builder = ExtensionRegistryBuilder::new();
     builder.inference_engine(Arc::new(FakeInferenceEngine));
-    builder.session_store_factory(store);
+    builder.thread_store_factory(store);
     let runtime = Arc::new(
         Runtime::new(
             builder.build().unwrap(),
@@ -5606,11 +6295,11 @@ async fn plan_review_and_hunk_methods_round_trip_through_session_events() {
     let client = LocalAppClient::new(server);
     let mut notifications = client.subscribe_notifications();
 
-    let session = start_thread(&client).await;
+    let thread_start = start_thread(&client).await;
     let now = OffsetDateTime::now_utc();
     let review = PlanReview {
         id: "review-1".to_string(),
-        thread_id: session.thread.id.clone(),
+        thread_id: thread_start.thread.id.clone(),
         turn_id: "turn-1".to_string(),
         status: PlanReviewStatus::AwaitingReview,
         title: "Review plan".to_string(),
@@ -5634,7 +6323,7 @@ async fn plan_review_and_hunk_methods_round_trip_through_session_events() {
             roder_api::events::HunkRecorded {
                 hunk: HunkRecord {
                     id: "hunk-1".to_string(),
-                    thread_id: session.thread.id.clone(),
+                    thread_id: thread_start.thread.id.clone(),
                     turn_id: "turn-1".to_string(),
                     path: "src/lib.rs".to_string(),
                     old_start: 1,
@@ -5675,7 +6364,7 @@ async fn plan_review_and_hunk_methods_round_trip_through_session_events() {
         "plan/review/comment",
         Some(
             serde_json::to_value(PlanReviewCommentParams {
-                thread_id: session.thread.id.clone(),
+                thread_id: thread_start.thread.id.clone(),
                 review_id: "review-1".to_string(),
                 anchor: PlanCommentAnchor::Hunk {
                     hunk_id: "hunk-1".to_string(),
@@ -5696,7 +6385,7 @@ async fn plan_review_and_hunk_methods_round_trip_through_session_events() {
         "plan/review/approve",
         Some(
             serde_json::to_value(PlanReviewApproveParams {
-                thread_id: session.thread.id.clone(),
+                thread_id: thread_start.thread.id.clone(),
                 review_id: "review-1".to_string(),
             })
             .unwrap(),
@@ -5708,7 +6397,7 @@ async fn plan_review_and_hunk_methods_round_trip_through_session_events() {
         "plan/review/read",
         Some(
             serde_json::to_value(PlanReviewReadParams {
-                thread_id: session.thread.id.clone(),
+                thread_id: thread_start.thread.id.clone(),
                 review_id: "review-1".to_string(),
             })
             .unwrap(),
@@ -5724,7 +6413,7 @@ async fn plan_review_and_hunk_methods_round_trip_through_session_events() {
         "hunk/list",
         Some(
             serde_json::to_value(HunkListParams {
-                thread_id: session.thread.id.clone(),
+                thread_id: thread_start.thread.id.clone(),
                 turn_id: Some("turn-1".to_string()),
                 review_id: Some("review-1".to_string()),
             })
@@ -5739,7 +6428,7 @@ async fn plan_review_and_hunk_methods_round_trip_through_session_events() {
         "hunk/read",
         Some(
             serde_json::to_value(HunkReadParams {
-                thread_id: session.thread.id.clone(),
+                thread_id: thread_start.thread.id.clone(),
                 hunk_id: "hunk-1".to_string(),
                 offset: 0,
                 limit: Some(1),
@@ -5755,7 +6444,7 @@ async fn plan_review_and_hunk_methods_round_trip_through_session_events() {
         "hunk/rollback",
         Some(
             serde_json::to_value(HunkRollbackParams {
-                thread_id: session.thread.id,
+                thread_id: thread_start.thread.id,
                 hunk_id: "hunk-1".to_string(),
                 confirmed: true,
             })
@@ -5793,8 +6482,8 @@ async fn subagent_failed_events_redact_private_agent_material() {
     let client = LocalAppClient::new(server);
     let mut events = client.subscribe_events();
 
-    let session = start_thread(&client).await;
-    let _: TurnStartResult = start_turn(&client, &session.thread.id, "delegate this").await;
+    let thread_start = start_thread(&client).await;
+    let _: TurnStartResult = start_turn(&client, &thread_start.thread.id, "delegate this").await;
 
     let failed = loop {
         let envelope = tokio::time::timeout(Duration::from_secs(2), events.recv())
@@ -5826,7 +6515,7 @@ fn subagent_runtime_with_options(default_timeout_seconds: u64, hang_child: bool)
 fn subagent_runtime_with_store(
     default_timeout_seconds: u64,
     hang_child: bool,
-    store: Option<Arc<dyn SessionStoreFactory>>,
+    store: Option<Arc<dyn ThreadStoreFactory>>,
 ) -> Arc<Runtime> {
     let engine = Arc::new(TaskCallingEngine::new(hang_child));
     let mut engines = InferenceEngineRegistry::new();
@@ -5865,7 +6554,7 @@ fn subagent_runtime_with_store(
     builder.inference_engine(engine);
     builder.tool_contributor(roder_tools::echo_tool_contributor());
     if let Some(store) = store {
-        builder.session_store_factory(store);
+        builder.thread_store_factory(store);
     }
     builder
         .install(SubagentsExtension::new(dispatcher))
@@ -6019,6 +6708,33 @@ fn text_input(text: &str) -> Vec<TurnInputItem> {
     }]
 }
 
+struct EnvVarGuard {
+    key: &'static str,
+    previous: Option<std::ffi::OsString>,
+}
+
+impl EnvVarGuard {
+    fn set(key: &'static str, value: impl AsRef<std::ffi::OsStr>) -> Self {
+        let previous = std::env::var_os(key);
+        unsafe {
+            std::env::set_var(key, value);
+        }
+        Self { key, previous }
+    }
+}
+
+impl Drop for EnvVarGuard {
+    fn drop(&mut self) {
+        unsafe {
+            if let Some(value) = &self.previous {
+                std::env::set_var(self.key, value);
+            } else {
+                std::env::remove_var(self.key);
+            }
+        }
+    }
+}
+
 async fn start_thread(client: &LocalAppClient) -> ThreadStartResult {
     request(
         client,
@@ -6028,13 +6744,17 @@ async fn start_thread(client: &LocalAppClient) -> ThreadStartResult {
                 model: None,
                 model_provider: None,
                 reasoning: None,
-                cwd: None,
+                cwd: test_cwd(),
                 ephemeral: false,
             })
             .unwrap(),
         ),
     )
     .await
+}
+
+fn test_cwd() -> String {
+    std::env::current_dir().unwrap().display().to_string()
 }
 
 async fn start_turn(client: &LocalAppClient, thread_id: &str, text: &str) -> TurnStartResult {
@@ -6046,6 +6766,7 @@ async fn start_turn(client: &LocalAppClient, thread_id: &str, text: &str) -> Tur
                 thread_id: thread_id.to_string(),
                 input: text_input(text),
                 prompt: None,
+                task_ledger_required: false,
             })
             .unwrap(),
         ),

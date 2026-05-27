@@ -9,10 +9,10 @@ use crossterm::style::{
     Attribute, Color, Print, ResetColor, SetAttribute, SetBackgroundColor, SetForegroundColor,
 };
 use crossterm::terminal::{self, Clear, ClearType};
-use roder_protocol::DesktopThread;
+use roder_protocol::Thread;
 use time::UtcOffset;
 
-const MAX_VISIBLE_SESSIONS: usize = 10;
+const MAX_VISIBLE_THREADS: usize = 10;
 const HEADER_ROWS: u16 = 3;
 const FOOTER_ROWS: u16 = 2;
 const ROW_HOT_ACCENT: Color = Color::Rgb {
@@ -31,14 +31,14 @@ const HINT_ACCENT: Color = Color::Rgb {
     b: 195,
 };
 
-pub fn pick_session(sessions: &[DesktopThread]) -> anyhow::Result<Option<String>> {
-    if sessions.is_empty() {
-        println!("No saved sessions found.");
+pub fn pick_thread(threads: &[Thread]) -> anyhow::Result<Option<String>> {
+    if threads.is_empty() {
+        println!("No saved threads found.");
         return Ok(None);
     }
 
     let mut stdout = io::stdout();
-    let start_row = reserve_picker_space(&mut stdout, picker_height(sessions.len()))?;
+    let start_row = reserve_picker_space(&mut stdout, picker_height(threads.len()))?;
     let raw = RawModeGuard::enter()?;
     execute!(stdout, Hide)?;
     let current_dir = std::env::current_dir()
@@ -48,8 +48,8 @@ pub fn pick_session(sessions: &[DesktopThread]) -> anyhow::Result<Option<String>
 
     let mut query = String::new();
     let mut selected = 0usize;
-    let mut matches = filtered_sessions(
-        sessions,
+    let mut matches = filtered_threads(
+        threads,
         &query,
         only_current_directory,
         current_dir.as_deref(),
@@ -58,7 +58,7 @@ pub fn pick_session(sessions: &[DesktopThread]) -> anyhow::Result<Option<String>
         &mut stdout,
         start_row,
         &query,
-        sessions,
+        threads,
         &matches,
         selected,
         only_current_directory,
@@ -81,7 +81,7 @@ pub fn pick_session(sessions: &[DesktopThread]) -> anyhow::Result<Option<String>
                 let Some(index) = matches.get(selected).copied() else {
                     continue;
                 };
-                break Some(sessions[index].id.clone());
+                break Some(threads[index].id.clone());
             }
             Event::Key(KeyEvent {
                 code: KeyCode::Up, ..
@@ -100,8 +100,8 @@ pub fn pick_session(sessions: &[DesktopThread]) -> anyhow::Result<Option<String>
                 ..
             }) if modifiers == KeyModifiers::CONTROL => {
                 only_current_directory = !only_current_directory;
-                matches = filtered_sessions(
-                    sessions,
+                matches = filtered_threads(
+                    threads,
                     &query,
                     only_current_directory,
                     current_dir.as_deref(),
@@ -113,8 +113,8 @@ pub fn pick_session(sessions: &[DesktopThread]) -> anyhow::Result<Option<String>
                 ..
             }) => {
                 query.pop();
-                matches = filtered_sessions(
-                    sessions,
+                matches = filtered_threads(
+                    threads,
                     &query,
                     only_current_directory,
                     current_dir.as_deref(),
@@ -127,8 +127,8 @@ pub fn pick_session(sessions: &[DesktopThread]) -> anyhow::Result<Option<String>
                 ..
             }) if modifiers.is_empty() || modifiers == KeyModifiers::SHIFT => {
                 query.push(ch);
-                matches = filtered_sessions(
-                    sessions,
+                matches = filtered_threads(
+                    threads,
                     &query,
                     only_current_directory,
                     current_dir.as_deref(),
@@ -142,7 +142,7 @@ pub fn pick_session(sessions: &[DesktopThread]) -> anyhow::Result<Option<String>
             &mut stdout,
             start_row,
             &query,
-            sessions,
+            threads,
             &matches,
             selected,
             only_current_directory,
@@ -157,12 +157,12 @@ pub fn pick_session(sessions: &[DesktopThread]) -> anyhow::Result<Option<String>
     )?;
     drop(raw);
     if let Some(thread_id) = picked.as_deref()
-        && let Some(session) = sessions.iter().find(|session| session.id == thread_id)
+        && let Some(thread) = threads.iter().find(|thread| thread.id == thread_id)
     {
         println!(
             "Resuming {} ({})",
-            session_title(session),
-            short_id(&session.id)
+            thread_title(thread),
+            short_id(&thread.id)
         );
     }
     Ok(picked)
@@ -172,14 +172,14 @@ fn render(
     stdout: &mut io::Stdout,
     start_row: u16,
     query: &str,
-    sessions: &[DesktopThread],
+    threads: &[Thread],
     matches: &[usize],
     selected: usize,
     only_current_directory: bool,
 ) -> anyhow::Result<()> {
     let width = render_width();
-    let visible = visible_session_count(matches.len(), start_row);
-    let scroll_start = session_window_start(selected, matches.len(), visible);
+    let visible = visible_thread_count(matches.len(), start_row);
+    let scroll_start = thread_window_start(selected, matches.len(), visible);
     execute!(
         stdout,
         MoveTo(0, start_row),
@@ -189,7 +189,7 @@ fn render(
         stdout,
         start_row,
         &format!(
-            "Search saved sessions ({}): {query}",
+            "Search saved threads ({}): {query}",
             if only_current_directory {
                 "current folder"
             } else {
@@ -210,7 +210,7 @@ fn render(
         render_line(
             stdout,
             start_row.saturating_add(HEADER_ROWS),
-            "No matching sessions.",
+            "No matching threads.",
             width,
             false,
         )?;
@@ -222,9 +222,9 @@ fn render(
         let Some(index) = matches.get(scroll_start + row).copied() else {
             break;
         };
-        let session = &sessions[index];
+        let thread = &threads[index];
         let is_selected = scroll_start + row == selected;
-        let mut line = session_line(session, width);
+        let mut line = thread_line(thread, width);
         if is_selected {
             line.insert_str(0, "> ");
         } else {
@@ -332,19 +332,19 @@ fn render_width() -> usize {
     usize::from(width.saturating_sub(1).max(1))
 }
 
-fn visible_session_count(match_count: usize, start_row: u16) -> usize {
+fn visible_thread_count(match_count: usize, start_row: u16) -> usize {
     let height = terminal::size().map(|(_, height)| height).unwrap_or(24);
     let available_rows = height
         .saturating_sub(start_row)
         .saturating_sub(HEADER_ROWS)
         .saturating_sub(2);
     let visible_by_height = usize::from(available_rows.max(1));
-    match_count.min(MAX_VISIBLE_SESSIONS).min(visible_by_height)
+    match_count.min(MAX_VISIBLE_THREADS).min(visible_by_height)
 }
 
 fn picker_height(match_count: usize) -> u16 {
     HEADER_ROWS
-        .saturating_add(match_count.clamp(1, MAX_VISIBLE_SESSIONS) as u16)
+        .saturating_add(match_count.clamp(1, MAX_VISIBLE_THREADS) as u16)
         .saturating_add(FOOTER_ROWS)
 }
 
@@ -380,7 +380,7 @@ fn clamp_selection(selected: usize, match_count: usize) -> usize {
     }
 }
 
-fn session_window_start(selected: usize, match_count: usize, visible: usize) -> usize {
+fn thread_window_start(selected: usize, match_count: usize, visible: usize) -> usize {
     if match_count <= visible {
         return 0;
     }
@@ -390,27 +390,24 @@ fn session_window_start(selected: usize, match_count: usize, visible: usize) -> 
     selected.saturating_sub(half_window).min(max_start)
 }
 
-fn filtered_sessions(
-    sessions: &[DesktopThread],
+fn filtered_threads(
+    threads: &[Thread],
     query: &str,
     only_current_directory: bool,
     current_dir: Option<&str>,
 ) -> Vec<usize> {
     let current_path = current_dir.map(|dir| normalize_path_for_filter(Path::new(dir)));
     let query = query.trim().to_ascii_lowercase();
-    let mut matches: Vec<_> = sessions
+    let mut matches: Vec<_> = threads
         .iter()
         .enumerate()
-        .filter_map(|(index, session)| {
+        .filter_map(|(index, thread)| {
             if only_current_directory
-                && !session_in_current_directory(
-                    Some(session.cwd.as_str()),
-                    current_path.as_deref(),
-                )
+                && !thread_in_current_directory(Some(thread.cwd.as_str()), current_path.as_deref())
             {
                 return None;
             }
-            if query.is_empty() || searchable_text(session).contains(&query) {
+            if query.is_empty() || searchable_text(thread).contains(&query) {
                 Some(index)
             } else {
                 None
@@ -418,55 +415,52 @@ fn filtered_sessions(
         })
         .collect();
 
-    matches.sort_by(|left, right| sessions[*right].updated_at.cmp(&sessions[*left].updated_at));
+    matches.sort_by(|left, right| threads[*right].updated_at.cmp(&threads[*left].updated_at));
     matches
 }
 
-fn session_in_current_directory(
-    session_workspace: Option<&str>,
-    current_dir: Option<&Path>,
-) -> bool {
+fn thread_in_current_directory(thread_workspace: Option<&str>, current_dir: Option<&Path>) -> bool {
     let Some(current_dir) = current_dir else {
         return false;
     };
-    let Some(session_workspace) = session_workspace else {
+    let Some(thread_workspace) = thread_workspace else {
         return false;
     };
-    let normalized_session_workspace = normalize_path_for_filter(Path::new(session_workspace));
-    normalized_session_workspace.starts_with(current_dir)
+    let normalized_thread_workspace = normalize_path_for_filter(Path::new(thread_workspace));
+    normalized_thread_workspace.starts_with(current_dir)
 }
 
 fn normalize_path_for_filter(path: &Path) -> PathBuf {
     fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf())
 }
 
-fn searchable_text(session: &DesktopThread) -> String {
+fn searchable_text(thread: &Thread) -> String {
     [
-        session_title(session),
-        session.cwd.clone(),
-        session.model_provider.clone(),
-        session.id.clone(),
+        thread_title(thread),
+        thread.cwd.clone(),
+        thread.model_provider.clone(),
+        thread.id.clone(),
     ]
     .join(" ")
     .to_ascii_lowercase()
 }
 
-fn session_title(session: &DesktopThread) -> String {
-    session
+fn thread_title(thread: &Thread) -> String {
+    thread
         .name
         .clone()
         .filter(|title| !title.trim().is_empty())
-        .or_else(|| (!session.preview.trim().is_empty()).then(|| session.preview.clone()))
-        .unwrap_or_else(|| format!("Session {}", short_id(&session.id)))
+        .or_else(|| (!thread.preview.trim().is_empty()).then(|| thread.preview.clone()))
+        .unwrap_or_else(|| format!("Thread {}", short_id(&thread.id)))
 }
 
-fn session_line(session: &DesktopThread, width: usize) -> String {
-    let workspace = compacted_workspace(Some(session.cwd.as_str()));
-    let model = session.model_provider.as_str();
-    let date = human_time(session.updated_at);
-    let message_count = session_message_count(session);
-    let title = session_title(session);
-    let short_id = short_id(&session.id);
+fn thread_line(thread: &Thread, width: usize) -> String {
+    let workspace = compacted_workspace(Some(thread.cwd.as_str()));
+    let model = thread.model_provider.as_str();
+    let date = human_time(thread.updated_at);
+    let message_count = thread_message_count(thread);
+    let title = thread_title(thread);
+    let short_id = short_id(&thread.id);
 
     let reserved = 20 + 3; // date + separators.
     let free = width.saturating_sub(reserved.max(1));
@@ -493,8 +487,8 @@ fn session_line(session: &DesktopThread, width: usize) -> String {
     fit_line(&line, width)
 }
 
-fn session_message_count(session: &DesktopThread) -> usize {
-    session
+fn thread_message_count(thread: &Thread) -> usize {
+    thread
         .turns
         .as_deref()
         .unwrap_or_default()
@@ -576,57 +570,57 @@ impl Drop for RawModeGuard {
 
 #[cfg(test)]
 mod tests {
-    use roder_protocol::{DesktopItem, DesktopThreadStatus, DesktopTurn};
+    use roder_protocol::{Item, ThreadStatus, Turn};
     use time::{Duration, OffsetDateTime};
 
     use super::*;
 
     #[test]
-    fn filters_sessions_by_title_workspace_and_id() {
-        let sessions = vec![
-            session(
+    fn filters_threads_by_title_workspace_and_id() {
+        let threads = vec![
+            thread(
                 "thread-alpha",
                 Some("Fix resume menu"),
                 Some("/Users/pz/w/gode"),
             ),
-            session("thread-beta", Some("Other work"), Some("/tmp/example")),
+            thread("thread-beta", Some("Other work"), Some("/tmp/example")),
         ];
 
-        let no_query = filtered_sessions(&sessions, "", false, None);
+        let no_query = filtered_threads(&threads, "", false, None);
         assert_eq!(no_query.len(), 2);
-        assert_eq!(filtered_sessions(&sessions, "gode", false, None), vec![0]);
-        assert_eq!(filtered_sessions(&sessions, "beta", false, None), vec![1]);
-        assert_eq!(filtered_sessions(&sessions, "resume", false, None), vec![0]);
+        assert_eq!(filtered_threads(&threads, "gode", false, None), vec![0]);
+        assert_eq!(filtered_threads(&threads, "beta", false, None), vec![1]);
+        assert_eq!(filtered_threads(&threads, "resume", false, None), vec![0]);
     }
 
     #[test]
     fn filters_only_current_directory() {
-        let sessions = vec![
-            session(
+        let threads = vec![
+            thread(
                 "thread-alpha",
                 Some("Fix resume menu"),
                 Some("/Users/pz/w/gode"),
             ),
-            session("thread-beta", Some("Other work"), Some("/tmp/example")),
+            thread("thread-beta", Some("Other work"), Some("/tmp/example")),
         ];
 
         let current = Some("/Users/pz/w/gode");
-        let all = filtered_sessions(&sessions, "", false, current);
-        let local = filtered_sessions(&sessions, "", true, current);
+        let all = filtered_threads(&threads, "", false, current);
+        let local = filtered_threads(&threads, "", true, current);
 
         assert_eq!(all.len(), 2);
         assert_eq!(local, vec![0]);
     }
 
     #[test]
-    fn session_line_includes_directory_model_count_and_short_id() {
-        let session = session(
+    fn thread_line_includes_directory_model_count_and_short_id() {
+        let thread = thread(
             "123456789abcdef",
             Some("Fix resume menu"),
             Some("/Users/pz/w/gode"),
         );
 
-        let detail = session_line(&session, 220);
+        let detail = thread_line(&thread, 220);
 
         assert!(detail.contains("gode"));
         assert!(detail.contains("mock"));
@@ -639,8 +633,8 @@ mod tests {
         assert_eq!(picker_height(0), HEADER_ROWS + 1 + FOOTER_ROWS);
         assert_eq!(picker_height(3), HEADER_ROWS + 3 + FOOTER_ROWS);
         assert_eq!(
-            picker_height(MAX_VISIBLE_SESSIONS + 20),
-            HEADER_ROWS + MAX_VISIBLE_SESSIONS as u16 + FOOTER_ROWS
+            picker_height(MAX_VISIBLE_THREADS + 20),
+            HEADER_ROWS + MAX_VISIBLE_THREADS as u16 + FOOTER_ROWS
         );
     }
 
@@ -658,7 +652,7 @@ mod tests {
         assert_eq!(line, "abcdefg...");
     }
 
-    fn session(id: &str, title: Option<&str>, workspace: Option<&str>) -> DesktopThread {
+    fn thread(id: &str, title: Option<&str>, workspace: Option<&str>) -> Thread {
         thread_with_updated_at(
             id,
             title,
@@ -668,22 +662,22 @@ mod tests {
     }
 
     #[test]
-    fn sorts_filtered_sessions_by_updated_at_desc() {
+    fn sorts_filtered_threads_by_updated_at_desc() {
         let older = thread_with_updated_at(
             "thread-old",
-            Some("Older session"),
+            Some("Older thread"),
             Some(std::env::temp_dir().to_string_lossy().as_ref()),
             OffsetDateTime::UNIX_EPOCH + Duration::seconds(1),
         );
         let newer = thread_with_updated_at(
             "thread-new",
-            Some("Newer session"),
+            Some("Newer thread"),
             Some(std::env::temp_dir().to_string_lossy().as_ref()),
             OffsetDateTime::UNIX_EPOCH + Duration::seconds(10),
         );
-        let sessions = vec![older, newer];
+        let threads = vec![older, newer];
 
-        let results = filtered_sessions(&sessions, "", false, None);
+        let results = filtered_threads(&threads, "", false, None);
         assert_eq!(results, vec![1, 0]);
     }
 
@@ -692,22 +686,22 @@ mod tests {
         title: Option<&str>,
         workspace: Option<&str>,
         updated_at: OffsetDateTime,
-    ) -> DesktopThread {
-        DesktopThread {
+    ) -> Thread {
+        Thread {
             id: id.to_string(),
-            session_id: id.to_string(),
             preview: title.unwrap_or("Untitled thread").to_string(),
             model_provider: "mock".to_string(),
             model: "mock".to_string(),
             created_at: OffsetDateTime::UNIX_EPOCH.unix_timestamp(),
             updated_at: updated_at.unix_timestamp(),
-            status: DesktopThreadStatus {
+            status: ThreadStatus {
                 kind: "idle".to_string(),
+                active_turn_id: None,
                 active_flags: Vec::new(),
             },
             cwd: workspace.unwrap_or("/tmp").to_string(),
             name: title.map(str::to_string),
-            turns: Some(vec![DesktopTurn {
+            turns: Some(vec![Turn {
                 id: "turn-a".to_string(),
                 items: vec![
                     item("userMessage", Some("hi")),
@@ -719,12 +713,14 @@ mod tests {
                 started_at: None,
                 completed_at: None,
                 duration_ms: None,
+                usage: None,
             }]),
+            usage: None,
         }
     }
 
-    fn item(kind: &str, text: Option<&str>) -> DesktopItem {
-        DesktopItem {
+    fn item(kind: &str, text: Option<&str>) -> Item {
+        Item {
             id: format!("{kind}-id"),
             kind: kind.to_string(),
             text: text.map(str::to_string),

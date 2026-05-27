@@ -1,0 +1,28 @@
+{
+  "id": "tbench-output-directory-hygiene",
+  "title": "TBench output directory hygiene",
+  "prompt": "FAKE_TBENCH_OUTPUT_DIRECTORY_HYGIENE: write only the required submission file.",
+  "tags": ["tbench-diagnostic", "output-directory-hygiene", "tool:write_file"],
+  "timeoutMs": 10000,
+  "expected": {
+    "finalAnswerContains": ["hello from roder"],
+    "files": [
+      {
+        "path": "submission/main.rs",
+        "exists": true,
+        "contains": ["fn main()"]
+      }
+    ],
+    "commandChecks": [
+      {
+        "command": "python3 - <<'PY'\nfrom pathlib import Path\nentries = sorted(path.name for path in Path('submission').iterdir())\nassert entries == ['main.rs'], entries\nPY",
+        "expectedExitCode": 0
+      }
+    ],
+    "verificationRequired": true
+  },
+  "constraints": [
+    "temporary validation binaries must not be left in required output directories",
+    "final submission directories should contain exactly the files the verifier expects"
+  ]
+}

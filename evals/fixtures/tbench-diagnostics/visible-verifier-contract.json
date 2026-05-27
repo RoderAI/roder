@@ -1,0 +1,37 @@
+{
+  "id": "tbench-visible-verifier-contract",
+  "title": "TBench visible verifier contract",
+  "prompt": "FAKE_TBENCH_VISIBLE_VERIFIER_CONTRACT: inspect the visible verifier constants and write the exact required result.",
+  "tags": ["tbench-diagnostic", "visible-verifier-contract", "tool:write_file"],
+  "timeoutMs": 10000,
+  "workspace": {
+    "files": [
+      {
+        "path": "tests/test_contract.py",
+        "contents": "EXPECTED = 'GritLM/GritLM-7B'\n"
+      }
+    ]
+  },
+  "expected": {
+    "finalAnswerContains": ["hello from roder"],
+    "files": [
+      {
+        "path": "result.txt",
+        "exists": true,
+        "exactContents": "GritLM/GritLM-7B\n",
+        "maxBytes": 64
+      }
+    ],
+    "commandChecks": [
+      {
+        "command": "python3 - <<'PY'\nfrom pathlib import Path\nexpected = 'GritLM/GritLM-7B'\nassert Path('tests/test_contract.py').read_text().count(expected) == 1\nassert Path('result.txt').read_text() == expected + '\\n'\nPY",
+        "expectedExitCode": 0
+      }
+    ],
+    "verificationRequired": true
+  },
+  "constraints": [
+    "visible verifier constants and exact expected values are part of the task contract",
+    "the final artifact must match the verifier-visible value, not a plausible live or heuristic candidate"
+  ]
+}

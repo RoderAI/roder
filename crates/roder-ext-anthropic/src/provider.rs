@@ -233,18 +233,18 @@ async fn retry_sleep(policy: &ReliabilityRequestPolicy, attempt: u32) {
 
 fn anthropic_messages(request: &AgentInferenceRequest) -> Vec<Value> {
     request
-        .conversation
+        .transcript
         .iter()
         .filter_map(|item| match item {
-            roder_api::conversation::ConversationItem::UserMessage(message) => Some(json!({
+            roder_api::transcript::TranscriptItem::UserMessage(message) => Some(json!({
                 "role": "user",
                 "content": [{ "type": "text", "text": message.text }]
             })),
-            roder_api::conversation::ConversationItem::AssistantMessage(message) => Some(json!({
+            roder_api::transcript::TranscriptItem::AssistantMessage(message) => Some(json!({
                 "role": "assistant",
                 "content": [{ "type": "text", "text": message.text }]
             })),
-            roder_api::conversation::ConversationItem::ToolCall(call) => Some(json!({
+            roder_api::transcript::TranscriptItem::ToolCall(call) => Some(json!({
                 "role": "assistant",
                 "content": [{
                     "type": "tool_use",
@@ -253,7 +253,7 @@ fn anthropic_messages(request: &AgentInferenceRequest) -> Vec<Value> {
                     "input": parse_json_object(&call.arguments)
                 }]
             })),
-            roder_api::conversation::ConversationItem::ToolResult(result) => Some(json!({
+            roder_api::transcript::TranscriptItem::ToolResult(result) => Some(json!({
                 "role": "user",
                 "content": [{
                     "type": "tool_result",
@@ -338,13 +338,22 @@ fn extract_tool_calls(value: &Value) -> Vec<ToolCallCompleted> {
 
 fn extract_usage(value: &Value) -> Option<TokenUsage> {
     let usage = value.get("usage")?;
-    let prompt_tokens = number_to_u32(usage.get("input_tokens")).unwrap_or_default();
+    let uncached_prompt_tokens = number_to_u32(usage.get("input_tokens")).unwrap_or_default();
+    let cache_creation_tokens =
+        number_to_u32(usage.get("cache_creation_input_tokens")).unwrap_or_default();
+    let cache_read_tokens = number_to_u32(usage.get("cache_read_input_tokens")).unwrap_or_default();
+    let prompt_tokens = uncached_prompt_tokens
+        .saturating_add(cache_creation_tokens)
+        .saturating_add(cache_read_tokens);
     let completion_tokens = number_to_u32(usage.get("output_tokens")).unwrap_or_default();
-    Some(TokenUsage {
-        prompt_tokens,
-        completion_tokens,
-        total_tokens: prompt_tokens + completion_tokens,
-    })
+    Some(
+        TokenUsage::new(
+            prompt_tokens,
+            completion_tokens,
+            prompt_tokens.saturating_add(completion_tokens),
+        )
+        .with_cached_prompt_tokens(cache_read_tokens),
+    )
 }
 
 fn number_to_u32(value: Option<&Value>) -> Option<u32> {
@@ -354,14 +363,14 @@ fn number_to_u32(value: Option<&Value>) -> Option<u32> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use roder_api::conversation::{
-        AssistantMessage, ConversationItem, ToolCallRecord, ToolResultRecord, UserMessage,
-    };
     use roder_api::inference::{
         InstructionBundle, ModelSelection, OutputConfig, ReasoningConfig, RuntimeHints,
     };
     use roder_api::reliability::ReliabilityRequestPolicy;
     use roder_api::tools::{ToolChoice, ToolSpec};
+    use roder_api::transcript::{
+        AssistantMessage, ToolCallRecord, ToolResultRecord, TranscriptItem, UserMessage,
+    };
     use std::sync::Arc;
     use std::sync::atomic::{AtomicUsize, Ordering};
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -377,18 +386,18 @@ mod tests {
                 system: Some("system".to_string()),
                 developer: Some("developer".to_string()),
             },
-            conversation: vec![
-                ConversationItem::UserMessage(UserMessage::text("Hello")),
-                ConversationItem::AssistantMessage(AssistantMessage {
+            transcript: vec![
+                TranscriptItem::UserMessage(UserMessage::text("Hello")),
+                TranscriptItem::AssistantMessage(AssistantMessage {
                     text: "Hi".to_string(),
                     phase: None,
                 }),
-                ConversationItem::ToolCall(ToolCallRecord {
+                TranscriptItem::ToolCall(ToolCallRecord {
                     id: "toolu_1".to_string(),
                     name: "shell".to_string(),
                     arguments: r#"{"cmd":"pwd"}"#.to_string(),
                 }),
-                ConversationItem::ToolResult(ToolResultRecord {
+                TranscriptItem::ToolResult(ToolResultRecord {
                     id: "toolu_1".to_string(),
                     name: Some("shell".to_string()),
                     result: "ok".to_string(),
@@ -527,7 +536,12 @@ mod tests {
                 { "type": "tool_use", "id": "toolu_2", "name": "shell", "input": { "cmd": "ls" } },
                 { "type": "text", "text": " world" }
             ],
-            "usage": { "input_tokens": 11, "output_tokens": 7 }
+            "usage": {
+                "input_tokens": 2,
+                "cache_creation_input_tokens": 1,
+                "cache_read_input_tokens": 8,
+                "output_tokens": 7
+            }
         });
         assert_eq!(extract_message_text(&value), "hello world");
         assert_eq!(
@@ -540,11 +554,7 @@ mod tests {
         );
         assert_eq!(
             extract_usage(&value),
-            Some(TokenUsage {
-                prompt_tokens: 11,
-                completion_tokens: 7,
-                total_tokens: 18,
-            })
+            Some(TokenUsage::new(11, 7, 18).with_cached_prompt_tokens(8))
         );
     }
 

@@ -4,7 +4,7 @@ Roder's eval runtime profile is for unattended runs. It keeps chat-friendly beha
 
 - `request_user_input` returns a model-visible unavailable result instead of waiting for a user.
 - Decomposed eval fixtures can set `expected.taskLedgerRequired = true`; missing, stale, or incomplete task ledgers fail the eval.
-- Code-changing eval turns must call `verification.review` before final completion.
+- Code-changing eval turns must call `verification_review` before final completion.
 
 Run the local verification suite with:
 
@@ -15,7 +15,7 @@ RODER_EVAL_OUTPUT_DIR=/tmp/roder-evals \
 
 The report includes task-ledger and verification tables. Verification fields show whether the gate was required, completed, failed, skipped, and whether any open gaps remain.
 
-Interactive users keep manual control by default. Use the default `interactive` profile for normal TUI/app-server sessions, or choose the stricter behavior explicitly with `--profile eval`, `runtime_profile = "eval"`, or `RODER_RUNTIME_PROFILE=eval`.
+Interactive users keep manual control by default. Use the default `interactive` profile for normal TUI/app-server threads, or choose the stricter behavior explicitly with `--profile eval`, `runtime_profile = "eval"`, or `RODER_RUNTIME_PROFILE=eval`.
 
 The verification tool receives:
 

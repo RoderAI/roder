@@ -464,6 +464,7 @@ mod tests {
             thread_id: "thread-a".to_string(),
             turn_id: "turn-a".to_string(),
             prompt: prompt.to_string(),
+            workspace: None,
             token_budget: None,
         }
     }

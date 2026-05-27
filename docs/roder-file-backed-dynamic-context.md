@@ -22,14 +22,14 @@ RODER_FILE_BACKED_DYNAMIC_CONTEXT=false roder
 
 ## Storage
 
-Context artifacts live inside each JSONL session directory:
+Context artifacts live inside each JSONL thread directory:
 
 ```text
-$RODER_DATA_DIR/sessions/<thread-id>/artifacts/<turn-id>/<artifact-id>.txt
-$RODER_DATA_DIR/sessions/<thread-id>/artifacts/<turn-id>/<artifact-id>.json
+$RODER_DATA_DIR/threads/<thread-id>/artifacts/<turn-id>/<artifact-id>.txt
+$RODER_DATA_DIR/threads/<thread-id>/artifacts/<turn-id>/<artifact-id>.json
 ```
 
-If `RODER_DATA_DIR` is not set, the default JSONL session store uses `~/.roder/sessions/<thread-id>/artifacts/...`. Runtimes without a local session store fall back to `~/.roder/context-artifacts`, but the normal CLI/app-server path stores artifacts beside session metadata, events, and turn logs.
+If `RODER_DATA_DIR` is not set, the default JSONL thread store uses `~/.roder/threads/<thread-id>/artifacts/...`. Runtimes without a local thread store fall back to `~/.roder/context-artifacts`, but the normal CLI/app-server path stores artifacts beside thread metadata, events, and turn logs.
 
 Artifacts are addressed by id and thread. Model tools and app-server methods never require a filesystem path, and cross-thread reads are rejected.
 
@@ -72,7 +72,7 @@ Tools are scoped to the current `thread_id` in `ToolExecutionContext`.
 
 ## App-Server Methods
 
-Desktop and app-server clients can use:
+App and app-server clients can use:
 
 ```text
 artifact/list
@@ -91,7 +91,7 @@ All methods require `threadId`. Read, grep, tail, and delete also require `artif
 Artifacts are Roder-owned by default and can be removed through `artifact/delete`. For local cleanup during development, remove the data-dir subdirectory:
 
 ```sh
-rm -rf "${RODER_DATA_DIR:-$HOME/.roder}/sessions/<thread-id>/artifacts"
+rm -rf "${RODER_DATA_DIR:-$HOME/.roder}/threads/<thread-id>/artifacts"
 ```
 
 ## Offline Evals

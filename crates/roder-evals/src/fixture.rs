@@ -61,6 +61,14 @@ pub struct EvalExpectedFile {
     pub exists: bool,
     #[serde(default)]
     pub contains: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub exact_contents: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_bytes: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub allowed_chars: Option<String>,
+    #[serde(default)]
+    pub json_array_fields: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -168,6 +176,10 @@ mod tests {
                     path: PathBuf::from("config.toml"),
                     exists: true,
                     contains: vec!["retries = 3".to_string()],
+                    exact_contents: None,
+                    max_bytes: None,
+                    allowed_chars: None,
+                    json_array_fields: Vec::new(),
                 }],
                 command_checks: vec![EvalExpectedCommand {
                     command: "cargo test".to_string(),

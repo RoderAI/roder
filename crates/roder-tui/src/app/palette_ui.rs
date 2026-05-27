@@ -1,4 +1,4 @@
-use super::session_resume::{agents_list, commands_list, threads_list};
+use super::thread_resume::{agents_list, commands_list, threads_list};
 use super::*;
 use crate::palette::{
     PaletteAction, collect_entries, cycle_source_filter,
@@ -8,9 +8,8 @@ use crate::palette::{
     skills::skill_source,
     sources::{
         agent_source, command_source, marketplace_source, media_source, memories_source,
-        mode_source, model_source, remote_source, roadmap_source, runner_source, session_source,
-        settings_source, theme_source,
-        workflow_import_source,
+        mode_source, model_source, remote_source, roadmap_source, runner_source, settings_source,
+        theme_source, thread_source, workflow_import_source,
     },
 };
 use crate::theme::{discover_themes, discovery::default_directories};
@@ -38,7 +37,7 @@ where
     pub(super) async fn open_resume_palette(&mut self) {
         self.show_provider_popup = false;
         self.palette_query.clear();
-        self.palette_source_filter = Some("sessions".to_string());
+        self.palette_source_filter = Some("threads".to_string());
         self.populate_palette().await;
     }
 
@@ -47,8 +46,8 @@ where
             self.command_catalog = commands;
         }
 
-        let sessions = match threads_list(&self.client).await {
-            Ok(sessions) => sessions,
+        let threads = match threads_list(&self.client).await {
+            Ok(threads) => threads,
             Err(err) => {
                 self.push_event(format!("thread/list unavailable: {err}"));
                 Vec::new()
@@ -67,6 +66,17 @@ where
                 self.push_event(format!("providers/list unavailable: {err}"));
                 None
             }
+        };
+        let speech_providers = if self.palette_source_enabled("settings") {
+            match self.speech_providers_list().await {
+                Ok(providers) => Some(providers),
+                Err(err) => {
+                    self.push_event(format!("speech/providers/list unavailable: {err}"));
+                    None
+                }
+            }
+        } else {
+            None
         };
         let settings = match self.settings_get().await {
             Ok(settings) => Some(settings),
@@ -108,8 +118,8 @@ where
         if self.palette_source_enabled("commands") {
             sources.push(command_source(&self.command_catalog));
         }
-        if self.palette_source_enabled("sessions") {
-            sources.push(session_source(&sessions));
+        if self.palette_source_enabled("threads") {
+            sources.push(thread_source(&threads));
         }
         if self.palette_source_enabled("agents") {
             sources.push(agent_source(&agents));
@@ -120,7 +130,14 @@ where
         if self.palette_source_enabled("settings")
             && let Some(settings) = settings.as_ref()
         {
-            sources.push(settings_source(&settings.web_search, &settings.search_index));
+            sources.push(settings_source(
+                &settings.web_search,
+                &settings.search_index,
+                &settings.shell,
+                speech_providers.as_ref(),
+                self.voice.provider(),
+                self.voice.model(),
+            ));
         }
         if self.palette_source_enabled("runners")
             && let Some(runners) = runners.as_ref()
@@ -288,8 +305,8 @@ where
                     self.composer.insert_str(format!("/{command} "));
                 }
             }
-            PaletteAction::SwitchSession(thread_id) => {
-                self.load_session(thread_id).await;
+            PaletteAction::SwitchThread(thread_id) => {
+                self.load_thread(thread_id).await;
             }
             PaletteAction::SwitchModel { provider, model } => {
                 self.select_provider_model_params(ProviderSelectParams {
@@ -308,6 +325,12 @@ where
             }
             PaletteAction::SetSearchIndexEnabled(enabled) => {
                 self.set_search_index_enabled(enabled).await;
+            }
+            PaletteAction::SetShell(shell) => {
+                self.set_command_shell(shell).await;
+            }
+            PaletteAction::SetVoiceModel { provider, model } => {
+                self.set_voice_model(provider, model);
             }
             PaletteAction::SetSkillEnabled { selector, enabled } => {
                 self.set_skill_enabled(selector, enabled).await;
@@ -392,7 +415,6 @@ where
             .await;
         decode_response(res)
     }
-
 }
 
 #[cfg(test)]

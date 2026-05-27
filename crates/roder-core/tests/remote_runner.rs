@@ -14,13 +14,13 @@ use roder_api::remote_runner::{
     RunnerFileReadRequest, RunnerFileReadResult, RunnerFileWriteRequest, RunnerManifest,
     RunnerPortRequest, RunnerPortResult, RunnerSessionState, RunnerSnapshotRef,
 };
-use roder_api::session::SessionStore;
+use roder_api::thread::ThreadStore;
 use roder_api::tools::{
     ToolCall, ToolContributor, ToolExecutionContext, ToolExecutor, ToolRegistry, ToolResult,
     ToolSpec,
 };
 use roder_core::{Runtime, RuntimeConfig, StartTurnRequest, default_instructions};
-use roder_ext_jsonl_session::store::{JsonlSessionStore, JsonlSessionStoreFactory};
+use roder_ext_jsonl_thread_store::store::{JsonlThreadStore, JsonlThreadStoreFactory};
 use roder_ext_runner_unix_local::UnixLocalRunnerProvider;
 use time::OffsetDateTime;
 
@@ -399,13 +399,13 @@ async fn remote_runner_state_persists_and_resumes_between_turns() {
     let workspace = temp_dir("remote-runner-workspace");
     let runtime = runtime(session_dir.clone(), workspace.clone()).await;
     let mut events = runtime.subscribe_events();
-    let metadata = runtime.create_session(None).await.unwrap();
+    let metadata = runtime.create_thread(None).await.unwrap();
     assert!(metadata.runner_destination.is_some());
     assert!(metadata.runner_state.is_none());
 
     start_and_wait(&runtime, &mut events, &metadata.thread_id, "first").await;
     let first_state = runtime
-        .load_session(&metadata.thread_id)
+        .load_thread(&metadata.thread_id)
         .await
         .unwrap()
         .unwrap()
@@ -416,7 +416,7 @@ async fn remote_runner_state_persists_and_resumes_between_turns() {
 
     start_and_wait(&runtime, &mut events, &metadata.thread_id, "second").await;
     let second_state = runtime
-        .load_session(&metadata.thread_id)
+        .load_thread(&metadata.thread_id)
         .await
         .unwrap()
         .unwrap()
@@ -439,8 +439,8 @@ async fn stale_remote_runner_state_falls_back_to_fresh_session() {
     let workspace = temp_dir("remote-runner-stale-workspace");
     let runtime = runtime(session_dir.clone(), workspace.clone()).await;
     let mut events = runtime.subscribe_events();
-    let metadata = runtime.create_session(None).await.unwrap();
-    let store = JsonlSessionStore {
+    let metadata = runtime.create_thread(None).await.unwrap();
+    let store = JsonlThreadStore {
         base_path: session_dir.clone(),
     };
     let mut stale = metadata;
@@ -452,11 +452,11 @@ async fn stale_remote_runner_state_falls_back_to_fresh_session() {
         metadata: serde_json::json!({ "root": "/definitely/missing/runner/root" }),
     });
     stale.updated_at = OffsetDateTime::now_utc();
-    store.update_session_metadata(stale.clone()).await.unwrap();
+    store.update_thread_metadata(stale.clone()).await.unwrap();
 
     start_and_wait(&runtime, &mut events, &stale.thread_id, "recover").await;
     let recovered = runtime
-        .load_session(&stale.thread_id)
+        .load_thread(&stale.thread_id)
         .await
         .unwrap()
         .unwrap()
@@ -482,7 +482,7 @@ async fn mock_runner_e2e_tools_command_port_snapshot_resume_and_continue() {
     });
     let mut builder = ExtensionRegistryBuilder::new();
     builder.inference_engine(engine);
-    builder.session_store_factory(Arc::new(JsonlSessionStoreFactory {
+    builder.thread_store_factory(Arc::new(JsonlThreadStoreFactory {
         base_path: session_dir.clone(),
     }));
     builder.remote_runner_provider(Arc::new(provider.clone()));
@@ -502,6 +502,7 @@ async fn mock_runner_e2e_tools_command_port_snapshot_resume_and_continue() {
                 model_edit_tools: std::collections::HashMap::new(),
                 model_parallel_tool_calls: std::collections::HashMap::new(),
                 model_profiles: std::collections::HashMap::new(),
+                command_shell: roder_api::command_shell::default_command_shell(),
                 workspace: Some(workspace.display().to_string()),
                 policy_mode: roder_api::policy_mode::PolicyMode::AcceptAll,
                 runtime_profile: roder_api::inference::RuntimeProfile::Interactive,
@@ -521,7 +522,7 @@ async fn mock_runner_e2e_tools_command_port_snapshot_resume_and_continue() {
         .unwrap(),
     );
     let mut events = runtime.subscribe_events();
-    let metadata = runtime.create_session(None).await.unwrap();
+    let metadata = runtime.create_thread(None).await.unwrap();
 
     start_and_wait(&runtime, &mut events, &metadata.thread_id, "write and read").await;
     assert_eq!(
@@ -537,7 +538,7 @@ async fn mock_runner_e2e_tools_command_port_snapshot_resume_and_continue() {
     );
 
     let runner_state = runtime
-        .load_session(&metadata.thread_id)
+        .load_thread(&metadata.thread_id)
         .await
         .unwrap()
         .unwrap()
@@ -587,7 +588,7 @@ async fn runtime(session_dir: PathBuf, workspace: PathBuf) -> Arc<Runtime> {
     builder.inference_engine(Arc::new(FinalEngine {
         requests: Mutex::new(0),
     }));
-    builder.session_store_factory(Arc::new(JsonlSessionStoreFactory {
+    builder.thread_store_factory(Arc::new(JsonlThreadStoreFactory {
         base_path: session_dir,
     }));
     builder.remote_runner_provider(Arc::new(UnixLocalRunnerProvider::default()));
@@ -604,6 +605,7 @@ async fn runtime(session_dir: PathBuf, workspace: PathBuf) -> Arc<Runtime> {
                 model_edit_tools: std::collections::HashMap::new(),
                 model_parallel_tool_calls: std::collections::HashMap::new(),
                 model_profiles: std::collections::HashMap::new(),
+                command_shell: roder_api::command_shell::default_command_shell(),
                 workspace: Some(workspace.display().to_string()),
                 policy_mode: roder_api::policy_mode::PolicyMode::Default,
                 runtime_profile: roder_api::inference::RuntimeProfile::Interactive,
@@ -638,7 +640,7 @@ async fn start_and_wait(
             provider_override: None,
             model_override: None,
             reasoning_override: None,
-            workspace: None,
+            workspace: std::env::current_dir().unwrap().display().to_string(),
 
             instructions: default_instructions(),
             task_ledger_required: false,

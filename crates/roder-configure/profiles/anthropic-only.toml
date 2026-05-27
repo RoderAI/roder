@@ -9,9 +9,9 @@ include_app_server = true
 include_cli = true
 extensions = [
   "anthropic",
-  "jsonl-session",
+  "jsonl-thread-store",
   "plan-mode",
   "notify-terminal",
 ]
 default_provider = "anthropic"
-default_session_store = "jsonl-session"
+default_thread_store = "jsonl-thread-store"

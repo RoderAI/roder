@@ -16,7 +16,7 @@ The live control tools are model-facing tools available to the orchestrating age
 | `list_agents` | List teammates owned by the caller thread. |
 | `close_agent` | Close a teammate when it is no longer needed. |
 
-`spawn_agent` creates or reuses the caller thread's team, starts a teammate session, and sends the initial message through the same runtime path as `team/member/message`. The child has its own thread id, turn id, model selection, policy mode, tool registry, event stream, and app-server-visible team state.
+`spawn_agent` creates or reuses the caller thread's team, starts a teammate thread, and sends the initial message through the same runtime path as `team/member/message`. The child has its own thread id, turn id, model selection, policy mode, tool registry, event stream, and app-server-visible team state.
 
 Example `spawn_agent` arguments:
 

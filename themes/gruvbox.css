@@ -20,6 +20,7 @@
     --orange:     #fe8019;
 
     --text:               var(--fg1);
+    --commentary:         #ffffff;
     --muted:              var(--gray);
     --subtle:             var(--bg2);
     --accent:             var(--yellow);

@@ -5,6 +5,10 @@ use crate::inference::{
     ModelSchemaPolicy, ProviderFamily, ReasoningEffortDescriptor,
 };
 
+mod xiaomi_mimo;
+
+pub use xiaomi_mimo::{XIAOMI_MIMO_ENV_ALIASES, XIAOMI_MIMO_TOKEN_PLAN_ENV_ALIASES};
+
 pub const PROVIDER_MOCK: &str = "mock";
 pub const PROVIDER_OPENAI: &str = "openai";
 pub const PROVIDER_CODEX: &str = "codex";
@@ -15,6 +19,9 @@ pub const PROVIDER_SUPERGROK: &str = "supergrok";
 pub const PROVIDER_OPENCODE: &str = "opencode";
 pub const PROVIDER_OPENCODE_GO: &str = "opencode-go";
 pub const PROVIDER_POOLSIDE: &str = "poolside";
+pub const PROVIDER_CURSOR: &str = "cursor";
+pub const PROVIDER_XIAOMI_MIMO: &str = "xiaomi-mimo";
+pub const PROVIDER_XIAOMI_MIMO_TOKEN_PLAN: &str = "xiaomi-mimo-token-plan";
 
 pub const PROVIDER_KIND_MOCK: &str = "mock";
 pub const PROVIDER_KIND_OPENAI: &str = "openai";
@@ -24,6 +31,8 @@ pub const PROVIDER_KIND_GEMINI: &str = "gemini";
 pub const PROVIDER_KIND_XAI: &str = "xai";
 pub const PROVIDER_KIND_OPENCODE: &str = "opencode";
 pub const PROVIDER_KIND_POOLSIDE: &str = "poolside";
+pub const PROVIDER_KIND_CURSOR: &str = "cursor";
+pub const PROVIDER_KIND_XIAOMI_MIMO: &str = PROVIDER_KIND_CHAT_COMPLETIONS;
 
 pub const REASONING_NONE: &str = "none";
 pub const REASONING_MINIMAL: &str = "minimal";
@@ -125,10 +134,6 @@ pub const HAIKU_REASONING: &[ReasoningOption] = &[
 
 pub const GEMINI_REASONING: &[ReasoningOption] = &[
     ReasoningOption {
-        effort: REASONING_NONE,
-        description: "No explicit Gemini thinking configuration",
-    },
-    ReasoningOption {
         effort: REASONING_MINIMAL,
         description: "Minimal Gemini thinking",
     },
@@ -143,10 +148,6 @@ pub const GEMINI_REASONING: &[ReasoningOption] = &[
     ReasoningOption {
         effort: REASONING_HIGH,
         description: "High Gemini thinking",
-    },
-    ReasoningOption {
-        effort: REASONING_XHIGH,
-        description: "High Gemini thinking with extra budget where supported",
     },
 ];
 
@@ -263,7 +264,7 @@ pub const BUILT_IN_PROVIDERS: &[ProviderCatalogEntry] = &[
         id: PROVIDER_GEMINI,
         name: "Gemini",
         kind: PROVIDER_KIND_GEMINI,
-        default_model: "gemini-3.1-pro-preview",
+        default_model: "gemini-3.5-flash",
         base_url: None,
         env_key: Some("GEMINI_API_TOKEN"),
         env_aliases: GEMINI_ENV_ALIASES,
@@ -325,6 +326,19 @@ pub const BUILT_IN_PROVIDERS: &[ProviderCatalogEntry] = &[
         requires_auth: true,
         supports_websockets: false,
     },
+    ProviderCatalogEntry {
+        id: PROVIDER_CURSOR,
+        name: "Cursor",
+        kind: PROVIDER_KIND_CURSOR,
+        default_model: "composer-2.5",
+        base_url: Some("https://agentn.global.api5.cursor.sh"),
+        env_key: Some("CURSOR_API_KEY"),
+        env_aliases: &["RODER_CURSOR_API_KEY"],
+        requires_auth: true,
+        supports_websockets: false,
+    },
+    xiaomi_mimo::PAY_AS_YOU_GO_PROVIDER,
+    xiaomi_mimo::TOKEN_PLAN_PROVIDER,
 ];
 
 pub const BUILT_IN_MODELS: &[ModelCatalogEntry] = &[
@@ -406,6 +420,12 @@ pub const BUILT_IN_MODELS: &[ModelCatalogEntry] = &[
         180_000,
         REASONING_NONE,
         &[],
+    ),
+    gemini_model(
+        "gemini-3.5-flash",
+        "Gemini 3.5 Flash",
+        "Stable Gemini Flash model for agentic coding, tool use, and long-horizon workflows.",
+        REASONING_MEDIUM,
     ),
     gemini_model(
         "gemini-3.1-pro-preview",
@@ -605,6 +625,33 @@ pub const BUILT_IN_MODELS: &[ModelCatalogEntry] = &[
         "Poolside lightweight agentic coding model.",
         REASONING_MEDIUM,
     ),
+    xiaomi_mimo::PAYG_V25_PRO,
+    xiaomi_mimo::PAYG_V2_PRO,
+    xiaomi_mimo::PAYG_V25,
+    xiaomi_mimo::PAYG_V2_OMNI,
+    xiaomi_mimo::PAYG_V2_FLASH,
+    xiaomi_mimo::TOKEN_PLAN_V25_PRO,
+    xiaomi_mimo::TOKEN_PLAN_V2_PRO,
+    xiaomi_mimo::TOKEN_PLAN_V25,
+    xiaomi_mimo::TOKEN_PLAN_V2_OMNI,
+    xiaomi_mimo::TOKEN_PLAN_V2_FLASH,
+    ModelCatalogEntry {
+        id: "composer-2.5",
+        display_name: "Composer 2.5",
+        description: "Cursor Composer model exposed through direct AgentService inference.",
+        provider: PROVIDER_CURSOR,
+        default_reasoning: REASONING_NONE,
+        supported_reasoning: &[],
+        context_window: 200_000,
+        max_context_window: 200_000,
+        auto_compact_token_limit: 180_000,
+        supports_compaction: true,
+        supports_images: false,
+        supports_tools: false,
+        supports_structured: false,
+        edit_tool: None,
+        hidden: false,
+    },
     ModelCatalogEntry {
         id: "text-embedding-3-large",
         display_name: "Text Embedding 3 Large",
@@ -877,6 +924,8 @@ pub fn provider_family_for_provider(provider: &str) -> ProviderFamily {
         PROVIDER_XAI | PROVIDER_SUPERGROK => ProviderFamily::Xai,
         PROVIDER_OPENCODE | PROVIDER_OPENCODE_GO => ProviderFamily::Opencode,
         PROVIDER_POOLSIDE => ProviderFamily::Poolside,
+        PROVIDER_CURSOR => ProviderFamily::Cursor,
+        PROVIDER_XIAOMI_MIMO | PROVIDER_XIAOMI_MIMO_TOKEN_PLAN => ProviderFamily::OpenAi,
         _ => ProviderFamily::Mock,
     }
 }
@@ -930,6 +979,7 @@ pub fn normalize_provider_id(provider: &str) -> String {
         "opencode" => PROVIDER_OPENCODE.to_string(),
         "go" | "opencode_go" | "opencode-go" => PROVIDER_OPENCODE_GO.to_string(),
         "laguna" | "poolside" => PROVIDER_POOLSIDE.to_string(),
+        "composer" | "cursor-composer" => PROVIDER_CURSOR.to_string(),
         provider => provider.to_string(),
     }
 }
@@ -977,7 +1027,41 @@ mod tests {
                 "supergrok",
                 "opencode",
                 "opencode-go",
-                "poolside"
+                "poolside",
+                "cursor",
+                "xiaomi-mimo",
+                "xiaomi-mimo-token-plan"
+            ]
+        );
+    }
+
+    #[test]
+    fn gemini_provider_defaults_to_stable_35_flash() {
+        let provider = BUILT_IN_PROVIDERS
+            .iter()
+            .find(|provider| provider.id == PROVIDER_GEMINI)
+            .unwrap();
+
+        assert_eq!(provider.default_model, "gemini-3.5-flash");
+
+        let model = lookup_model("gemini-3.5-flash").unwrap();
+        assert_eq!(model.display_name, "Gemini 3.5 Flash");
+        assert_eq!(model.provider, PROVIDER_GEMINI);
+        assert_eq!(model.context_window, 1_048_576);
+        assert_eq!(model.default_reasoning, REASONING_MEDIUM);
+        assert!(model.supports_tools);
+        assert!(model.supports_structured);
+        assert_eq!(
+            model
+                .supported_reasoning
+                .iter()
+                .map(|option| option.effort)
+                .collect::<Vec<_>>(),
+            vec![
+                REASONING_MINIMAL,
+                REASONING_LOW,
+                REASONING_MEDIUM,
+                REASONING_HIGH
             ]
         );
     }
@@ -997,6 +1081,7 @@ mod tests {
                 "claude-opus-4-7",
                 "claude-sonnet-4-6",
                 "claude-haiku-4-5-20251001",
+                "gemini-3.5-flash",
                 "gemini-3.1-pro-preview",
                 "gemini-3.1-pro-preview-customtools",
                 "gemini-3-flash-preview",
@@ -1021,6 +1106,17 @@ mod tests {
                 "deepseek-v4-flash",
                 "poolside/laguna-m.1",
                 "poolside/laguna-xs.2",
+                "mimo-v2.5-pro",
+                "mimo-v2-pro",
+                "mimo-v2.5",
+                "mimo-v2-omni",
+                "mimo-v2-flash",
+                "mimo-v2.5-pro",
+                "mimo-v2-pro",
+                "mimo-v2.5",
+                "mimo-v2-omni",
+                "mimo-v2-flash",
+                "composer-2.5",
             ]
         );
     }
@@ -1030,12 +1126,18 @@ mod tests {
         assert_eq!(models_for_provider(PROVIDER_OPENAI, false).len(), 2);
         assert_eq!(models_for_codex(false).len(), 3);
         assert_eq!(models_for_provider(PROVIDER_ANTHROPIC, false).len(), 3);
-        assert_eq!(models_for_provider(PROVIDER_GEMINI, false).len(), 4);
+        assert_eq!(models_for_provider(PROVIDER_GEMINI, false).len(), 5);
         assert_eq!(models_for_provider(PROVIDER_XAI, false).len(), 4);
         assert_eq!(models_for_provider(PROVIDER_SUPERGROK, false).len(), 4);
         assert_eq!(models_for_provider(PROVIDER_OPENCODE, false).len(), 6);
         assert_eq!(models_for_provider(PROVIDER_OPENCODE_GO, false).len(), 4);
         assert_eq!(models_for_provider(PROVIDER_POOLSIDE, false).len(), 2);
+        assert_eq!(models_for_provider(PROVIDER_CURSOR, false).len(), 1);
+        assert_eq!(models_for_provider(PROVIDER_XIAOMI_MIMO, false).len(), 5);
+        assert_eq!(
+            models_for_provider(PROVIDER_XIAOMI_MIMO_TOKEN_PLAN, false).len(),
+            5
+        );
         assert_eq!(models_for_provider(PROVIDER_MOCK, true).len(), 1);
     }
 
@@ -1066,6 +1168,39 @@ mod tests {
                 .collect::<Vec<_>>(),
             vec![REASONING_NONE, REASONING_MEDIUM]
         );
+    }
+
+    #[test]
+    fn xiaomi_mimo_catalog_uses_chat_completions_kind_and_exact_model_ids() {
+        let provider = BUILT_IN_PROVIDERS
+            .iter()
+            .find(|provider| provider.id == PROVIDER_XIAOMI_MIMO)
+            .unwrap();
+        let token_plan = BUILT_IN_PROVIDERS
+            .iter()
+            .find(|provider| provider.id == PROVIDER_XIAOMI_MIMO_TOKEN_PLAN)
+            .unwrap();
+
+        assert_eq!(provider.kind, PROVIDER_KIND_CHAT_COMPLETIONS);
+        assert_eq!(token_plan.kind, PROVIDER_KIND_CHAT_COMPLETIONS);
+        assert_eq!(provider.env_key, Some("MIMO_API_KEY"));
+        assert_eq!(token_plan.env_key, Some("MIMO_TOKEN_PLAN_API_KEY"));
+
+        let ids = models_for_provider(PROVIDER_XIAOMI_MIMO, false)
+            .into_iter()
+            .map(|model| model.id)
+            .collect::<Vec<_>>();
+        assert_eq!(
+            ids,
+            vec![
+                "mimo-v2.5-pro",
+                "mimo-v2-pro",
+                "mimo-v2.5",
+                "mimo-v2-omni",
+                "mimo-v2-flash"
+            ]
+        );
+        assert!(lookup_model("out-of-v2-flash").is_none());
     }
 
     #[test]
@@ -1105,6 +1240,19 @@ mod tests {
         assert_eq!(normalize_provider_id("grok-oauth"), PROVIDER_SUPERGROK);
         assert_eq!(normalize_provider_id("supergrok"), PROVIDER_SUPERGROK);
         assert_eq!(normalize_provider_id("laguna"), PROVIDER_POOLSIDE);
+        assert_eq!(normalize_provider_id("composer"), PROVIDER_CURSOR);
+    }
+
+    #[test]
+    fn cursor_catalog_profile_is_text_only_agentservice() {
+        let composer = lookup_model("composer-2.5").unwrap();
+        assert_eq!(composer.provider, PROVIDER_CURSOR);
+        assert!(!composer.supports_tools);
+        assert!(!composer.supports_structured);
+
+        let profile = built_in_model_profile("composer-2.5").unwrap();
+        assert_eq!(profile.provider_family, ProviderFamily::Cursor);
+        assert_eq!(profile.parallel_tool_calls, Some(false));
     }
 
     #[test]

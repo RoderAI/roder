@@ -6,10 +6,11 @@ The configurator binary is `roder-configure`.
 
 ## Built-In Profiles
 
-- `minimal`: CLI/TUI with JSONL sessions, plan mode, and terminal notifications.
-- `openai-only`: OpenAI Responses, JSONL sessions, plan mode, terminal notifications, CLI, TUI, and app server.
-- `anthropic-only`: Anthropic Messages, JSONL sessions, plan mode, terminal notifications, CLI, TUI, and app server.
+- `minimal`: CLI/TUI with JSONL thread storage, plan mode, and terminal notifications.
+- `openai-only`: OpenAI Responses, JSONL thread storage, plan mode, terminal notifications, CLI, TUI, and app server.
+- `anthropic-only`: Anthropic Messages, JSONL thread storage, plan mode, terminal notifications, CLI, TUI, and app server.
 - `research-headless`: no TUI; app server, OpenAI Responses, disk context, memory, subagents, process tasks, plan mode, and terminal notifications.
+- `tavily`: OpenAI Responses plus the web-search router and Tavily-backed search enabled through `TAVILY_API_KEY`.
 - `full`: all first-party extension metadata currently declared in the workspace.
 
 List profiles:
@@ -68,15 +69,15 @@ include_app_server = true
 include_cli = true
 extensions = [
   "openai-responses",
-  "jsonl-session",
+  "jsonl-thread-store",
   "plan-mode",
   "notify-terminal",
 ]
 default_provider = "openai-responses"
-default_session_store = "jsonl-session"
+default_thread_store = "jsonl-thread-store"
 ```
 
-Profiles are strict: unknown fields are rejected. Validation checks that selected extension ids exist, default provider/session-store ids are selected, single-select storage categories are not duplicated, and declared conflicts are caught before generation.
+Profiles are strict: unknown fields are rejected. Validation checks that selected extension ids exist, default provider/thread-store ids are selected, single-select storage categories are not duplicated, and declared conflicts are caught before generation.
 
 ## Capability Declarations
 
@@ -100,7 +101,7 @@ cargo run -p roder-configure -- catalog show openai-responses
 
 ### Lab OpenAI Responses Build
 
-Use the `openai-only` profile when the lab wants a reproducible binary that only ships the OpenAI Responses inference path plus local JSONL sessions.
+Use the `openai-only` profile when the lab wants a reproducible binary that only ships the OpenAI Responses inference path plus local JSONL thread storage.
 
 ```sh
 cargo run -p roder-configure -- profile show openai-only > profile.toml
@@ -120,7 +121,19 @@ cargo run -p roder-configure -- --format json validate profile.toml
 cargo run -p roder-configure -- generate --profile profile.toml --out dist/research-roder
 ```
 
-The profile includes JSONL replay-oriented sessions, disk context, memory, subagents, and process tasks.
+The profile includes JSONL replay-oriented thread storage, disk context, memory, subagents, and process tasks.
+
+### Tavily-Enabled Web Search Build
+
+Use `tavily` when you want a normal CLI/TUI/app-server build with external Tavily web search configured. The generated profile enables the web-search router, selects `provider = "tavily"`, and keeps secrets in environment variables.
+
+```sh
+cargo run -p roder-configure -- profile show tavily > tavily-profile.toml
+cargo run -p roder-configure -- validate tavily-profile.toml
+cargo run -p roder-configure -- generate --profile tavily-profile.toml --out dist/tavily-roder --build
+```
+
+Set `OPENAI_API_KEY` and `TAVILY_API_KEY` at runtime. `TAVILY_PROJECT` is optional and is read only when set.
 
 ### Customer-Facing No-TUI Build
 
@@ -138,12 +151,12 @@ include_app_server = true
 include_cli = true
 extensions = [
   "openai-responses",
-  "jsonl-session",
+  "jsonl-thread-store",
   "plan-mode",
   "notify-terminal",
 ]
 default_provider = "openai-responses"
-default_session_store = "jsonl-session"
+default_thread_store = "jsonl-thread-store"
 ```
 
 Then run:

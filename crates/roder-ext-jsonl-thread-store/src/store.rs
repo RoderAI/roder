@@ -1,0 +1,1360 @@
+use std::path::{Path, PathBuf};
+use std::sync::Arc;
+
+use anyhow::Context;
+use roder_api::events::{EventEnvelope, RoderEvent, ThreadId, TurnId};
+use roder_api::extension_state::ExtensionStateRecord;
+use roder_api::thread::{
+    ThreadMetadata, ThreadSnapshot, ThreadStore, ThreadStoreFactory, TurnRecord,
+    validate_thread_workspace,
+};
+use roder_api::transcript::TranscriptItem;
+use time::OffsetDateTime;
+use tokio::fs::{self, OpenOptions};
+use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+
+pub struct JsonlThreadStore {
+    pub base_path: PathBuf,
+}
+
+impl JsonlThreadStore {
+    fn thread_dir(&self, thread_id: &ThreadId) -> PathBuf {
+        self.base_path.join(thread_id)
+    }
+
+    fn archived_thread_dir(&self, thread_id: &ThreadId) -> PathBuf {
+        archived_threads_root(&self.base_path).join(thread_id)
+    }
+
+    async fn read_turns(&self, thread_id: &ThreadId) -> anyhow::Result<Vec<TurnRecord>> {
+        let file_path = self.thread_dir(thread_id).join("transcript_items.jsonl");
+        if !file_path.exists() {
+            return Ok(Vec::new());
+        }
+        let file = fs::File::open(&file_path)
+            .await
+            .with_context(|| format!("open transcript item log {}", file_path.display()))?;
+        let reader = BufReader::new(file);
+        let mut lines = reader.lines();
+        let mut turns: Vec<TurnRecord> = Vec::new();
+        let mut line_number = 0usize;
+        while let Some(line) = lines
+            .next_line()
+            .await
+            .with_context(|| format!("read transcript item log {}", file_path.display()))?
+        {
+            line_number += 1;
+            if line.trim().is_empty() {
+                continue;
+            }
+            let stream =
+                serde_json::Deserializer::from_str(&line).into_iter::<PersistedTranscriptItem>();
+            for persisted in stream {
+                let persisted = persisted.with_context(|| {
+                    format!(
+                        "parse transcript item record in {}:{}",
+                        file_path.display(),
+                        line_number
+                    )
+                })?;
+                if let Some(turn) = turns
+                    .iter_mut()
+                    .find(|turn| turn.turn_id == persisted.turn_id)
+                {
+                    turn.items.push(persisted.item);
+                } else {
+                    turns.push(TurnRecord {
+                        thread_id: thread_id.clone(),
+                        turn_id: persisted.turn_id,
+                        items: vec![persisted.item],
+                        created_at: persisted.timestamp,
+                        completed_at: None,
+                        usage: None,
+                    });
+                }
+            }
+        }
+        Ok(turns)
+    }
+}
+
+#[async_trait::async_trait]
+impl ThreadStore for JsonlThreadStore {
+    fn id(&self) -> roder_api::thread::ThreadStoreId {
+        "jsonl-thread-store".to_string()
+    }
+
+    fn local_thread_root(&self) -> Option<PathBuf> {
+        Some(self.base_path.clone())
+    }
+
+    async fn create_thread(&self, metadata: ThreadMetadata) -> anyhow::Result<ThreadMetadata> {
+        validate_thread_workspace(&metadata.workspace)?;
+        let dir = self.thread_dir(&metadata.thread_id);
+        fs::create_dir_all(&dir)
+            .await
+            .with_context(|| format!("create thread directory {}", dir.display()))?;
+        let metadata_path = dir.join("metadata.json");
+        write_metadata_file(&metadata_path, &metadata).await?;
+        Ok(metadata)
+    }
+
+    async fn update_thread_metadata(
+        &self,
+        metadata: ThreadMetadata,
+    ) -> anyhow::Result<ThreadMetadata> {
+        validate_thread_workspace(&metadata.workspace)?;
+        let dir = self.thread_dir(&metadata.thread_id);
+        fs::create_dir_all(&dir)
+            .await
+            .with_context(|| format!("create thread directory {}", dir.display()))?;
+        let metadata_path = dir.join("metadata.json");
+        write_metadata_file(&metadata_path, &metadata).await?;
+        Ok(metadata)
+    }
+
+    async fn list_threads(&self) -> anyhow::Result<Vec<ThreadMetadata>> {
+        if !self.base_path.exists() {
+            return Ok(Vec::new());
+        }
+        let mut entries = fs::read_dir(&self.base_path)
+            .await
+            .with_context(|| format!("read thread directory {}", self.base_path.display()))?;
+        let mut threads = Vec::new();
+        while let Some(entry) = entries
+            .next_entry()
+            .await
+            .with_context(|| format!("read thread entry under {}", self.base_path.display()))?
+        {
+            let file_type = entry.file_type().await.with_context(|| {
+                format!("read thread entry type under {}", self.base_path.display())
+            })?;
+            if file_type.is_dir() {
+                let thread_id = entry.file_name().to_string_lossy().to_string();
+                let metadata = self
+                    .load_or_infer_metadata(&entry.path(), &thread_id)
+                    .await?;
+                threads.push(metadata);
+            }
+        }
+        threads.sort_by_key(|thread| std::cmp::Reverse(thread.updated_at));
+        Ok(threads)
+    }
+
+    async fn load_thread(&self, thread_id: &ThreadId) -> anyhow::Result<Option<ThreadSnapshot>> {
+        let dir = self.thread_dir(thread_id);
+        if !dir.exists() {
+            return Ok(None);
+        }
+        let metadata = Some(self.load_or_infer_metadata(&dir, thread_id).await?);
+        let events = self.load_events(thread_id).await?;
+        let mut turns = self.read_turns(thread_id).await?;
+        let extension_states = self.load_extension_states(thread_id).await?;
+        project_turn_completion(&mut turns, &events);
+        Ok(Some(ThreadSnapshot {
+            metadata,
+            events,
+            turns,
+            extension_states,
+        }))
+    }
+
+    async fn archive_thread(&self, thread_id: &ThreadId) -> anyhow::Result<bool> {
+        let source = self.thread_dir(thread_id);
+        if !source.exists() {
+            return Ok(false);
+        }
+        let archive_root = archived_threads_root(&self.base_path);
+        fs::create_dir_all(&archive_root).await.with_context(|| {
+            format!(
+                "create archived threads directory {}",
+                archive_root.display()
+            )
+        })?;
+        let destination = self.archived_thread_dir(thread_id);
+        if destination.exists() {
+            anyhow::bail!("archived thread already exists: {}", destination.display());
+        }
+        fs::rename(&source, &destination).await.with_context(|| {
+            format!(
+                "archive thread {} from {} to {}",
+                thread_id,
+                source.display(),
+                destination.display()
+            )
+        })?;
+        Ok(true)
+    }
+
+    async fn append_event(
+        &self,
+        thread_id: &ThreadId,
+        envelope: &EventEnvelope,
+    ) -> anyhow::Result<()> {
+        let dir = self.thread_dir(thread_id);
+        fs::create_dir_all(&dir)
+            .await
+            .with_context(|| format!("create thread directory {}", dir.display()))?;
+        let file_path = dir.join("events.jsonl");
+        let mut file = OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&file_path)
+            .await
+            .with_context(|| format!("open event log {}", file_path.display()))?;
+        let mut line = serde_json::to_vec(envelope).context("serialize event envelope")?;
+        line.push(b'\n');
+        file.write_all(&line)
+            .await
+            .with_context(|| format!("append event record to {}", file_path.display()))?;
+        Ok(())
+    }
+
+    async fn append_turn_item(
+        &self,
+        thread_id: &ThreadId,
+        turn_id: &TurnId,
+        item: &TranscriptItem,
+    ) -> anyhow::Result<()> {
+        let dir = self.thread_dir(thread_id);
+        fs::create_dir_all(&dir)
+            .await
+            .with_context(|| format!("create thread directory {}", dir.display()))?;
+        let file_path = dir.join("transcript_items.jsonl");
+        let mut file = OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&file_path)
+            .await
+            .with_context(|| format!("open transcript item log {}", file_path.display()))?;
+        let persisted = PersistedTranscriptItem {
+            turn_id: turn_id.clone(),
+            timestamp: OffsetDateTime::now_utc(),
+            item: item.clone(),
+        };
+        let mut line =
+            serde_json::to_vec(&persisted).context("serialize transcript item record")?;
+        line.push(b'\n');
+        file.write_all(&line)
+            .await
+            .with_context(|| format!("append transcript item record to {}", file_path.display()))?;
+        self.update_metadata_for_turn_item(thread_id, item).await?;
+        Ok(())
+    }
+
+    async fn append_extension_state(
+        &self,
+        thread_id: &ThreadId,
+        record: &ExtensionStateRecord,
+    ) -> anyhow::Result<()> {
+        let dir = self.thread_dir(thread_id);
+        fs::create_dir_all(&dir)
+            .await
+            .with_context(|| format!("create thread directory {}", dir.display()))?;
+        let file_path = dir.join("extension_state.jsonl");
+        let mut file = OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&file_path)
+            .await
+            .with_context(|| format!("open extension state log {}", file_path.display()))?;
+        let mut line = serde_json::to_vec(record).context("serialize extension state record")?;
+        line.push(b'\n');
+        file.write_all(&line)
+            .await
+            .with_context(|| format!("append extension state record to {}", file_path.display()))?;
+        Ok(())
+    }
+}
+
+impl JsonlThreadStore {
+    async fn load_extension_states(
+        &self,
+        thread_id: &ThreadId,
+    ) -> anyhow::Result<Vec<ExtensionStateRecord>> {
+        let file_path = self.thread_dir(thread_id).join("extension_state.jsonl");
+        if !file_path.exists() {
+            return Ok(Vec::new());
+        }
+        let file = fs::File::open(&file_path)
+            .await
+            .with_context(|| format!("open extension state log {}", file_path.display()))?;
+        let reader = BufReader::new(file);
+        let mut lines = reader.lines();
+        let mut records = Vec::new();
+        let mut line_number = 0usize;
+        while let Some(line) = lines
+            .next_line()
+            .await
+            .with_context(|| format!("read extension state log {}", file_path.display()))?
+        {
+            line_number += 1;
+            if line.trim().is_empty() {
+                continue;
+            }
+            let stream =
+                serde_json::Deserializer::from_str(&line).into_iter::<ExtensionStateRecord>();
+            for record in stream {
+                records.push(record.with_context(|| {
+                    format!(
+                        "parse extension state record in {}:{}",
+                        file_path.display(),
+                        line_number
+                    )
+                })?);
+            }
+        }
+        Ok(records)
+    }
+
+    async fn load_events(&self, thread_id: &ThreadId) -> anyhow::Result<Vec<EventEnvelope>> {
+        let file_path = self.thread_dir(thread_id).join("events.jsonl");
+        if !file_path.exists() {
+            return Ok(Vec::new());
+        }
+        let file = fs::File::open(&file_path)
+            .await
+            .with_context(|| format!("open event log {}", file_path.display()))?;
+        let reader = BufReader::new(file);
+        let mut lines = reader.lines();
+        let mut events = Vec::new();
+        let mut line_number = 0usize;
+        while let Some(line) = lines
+            .next_line()
+            .await
+            .with_context(|| format!("read event log {}", file_path.display()))?
+        {
+            line_number += 1;
+            if line.trim().is_empty() {
+                continue;
+            }
+            let stream = serde_json::Deserializer::from_str(&line).into_iter::<EventEnvelope>();
+            for event in stream {
+                events.push(event.with_context(|| {
+                    format!(
+                        "parse event record in {}:{}",
+                        file_path.display(),
+                        line_number
+                    )
+                })?);
+            }
+        }
+        Ok(events)
+    }
+
+    async fn update_metadata_for_turn_item(
+        &self,
+        thread_id: &ThreadId,
+        item: &TranscriptItem,
+    ) -> anyhow::Result<()> {
+        let metadata_path = self.thread_dir(thread_id).join("metadata.json");
+        let (mut metadata, count_current_item) = if metadata_path.exists() {
+            let data = fs::read(&metadata_path)
+                .await
+                .with_context(|| format!("read thread metadata {}", metadata_path.display()))?;
+            match parse_metadata_tolerant(&data) {
+                Ok((metadata, _needs_repair)) => (self.with_derived_title(metadata).await?, true),
+                Err(err) => {
+                    anyhow::bail!(
+                        "thread metadata invalid for {}: {err}",
+                        metadata_path.display()
+                    )
+                }
+            }
+        } else {
+            anyhow::bail!("thread metadata missing for {}", thread_id);
+        };
+        metadata.updated_at = OffsetDateTime::now_utc();
+        if count_current_item
+            && matches!(
+                item,
+                TranscriptItem::UserMessage(_) | TranscriptItem::AssistantMessage(_)
+            )
+        {
+            metadata.message_count = metadata.message_count.saturating_add(1);
+        }
+        if metadata
+            .title
+            .as_ref()
+            .is_none_or(|title| title.trim().is_empty())
+            && let TranscriptItem::UserMessage(message) = item
+        {
+            metadata.title = title_from_user_text(&message.text);
+        }
+        write_metadata_file(&metadata_path, &metadata).await?;
+        Ok(())
+    }
+
+    async fn load_or_infer_metadata(
+        &self,
+        dir: &Path,
+        thread_id: &ThreadId,
+    ) -> anyhow::Result<ThreadMetadata> {
+        let metadata_path = dir.join("metadata.json");
+        if metadata_path.exists() {
+            let data = fs::read(&metadata_path)
+                .await
+                .with_context(|| format!("read thread metadata {}", metadata_path.display()))?;
+            match parse_metadata_tolerant(&data) {
+                Ok((metadata, needs_repair)) => {
+                    let metadata = self.with_derived_title(metadata).await?;
+                    if needs_repair {
+                        self.repair_metadata_file(&metadata_path, &metadata).await;
+                    }
+                    return Ok(metadata);
+                }
+                Err(_) => {
+                    anyhow::bail!("thread metadata invalid for {}", metadata_path.display());
+                }
+            }
+        }
+
+        anyhow::bail!("thread metadata missing for {}", thread_id);
+    }
+
+    async fn repair_metadata_file(&self, metadata_path: &Path, metadata: &ThreadMetadata) {
+        let _ = write_metadata_file(metadata_path, metadata).await;
+    }
+
+    async fn with_derived_title(
+        &self,
+        mut metadata: ThreadMetadata,
+    ) -> anyhow::Result<ThreadMetadata> {
+        if metadata
+            .title
+            .as_ref()
+            .is_some_and(|title| !title.trim().is_empty())
+        {
+            return Ok(metadata);
+        }
+        let Ok(turns) = self.read_turns(&metadata.thread_id).await else {
+            return Ok(metadata);
+        };
+        for turn in turns {
+            for item in turn.items {
+                if let TranscriptItem::UserMessage(message) = item
+                    && let Some(title) = title_from_user_text(&message.text)
+                {
+                    metadata.title = Some(title);
+                    return Ok(metadata);
+                }
+            }
+        }
+        Ok(metadata)
+    }
+}
+
+async fn write_metadata_file(
+    metadata_path: &Path,
+    metadata: &ThreadMetadata,
+) -> anyhow::Result<()> {
+    let serialized = serde_json::to_vec_pretty(metadata).context("serialize thread metadata")?;
+    let parent = metadata_path
+        .parent()
+        .with_context(|| format!("metadata path has no parent: {}", metadata_path.display()))?;
+    fs::create_dir_all(parent)
+        .await
+        .with_context(|| format!("create thread directory {}", parent.display()))?;
+    let file_name = metadata_path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("metadata.json");
+    let tmp_path =
+        metadata_path.with_file_name(format!(".{file_name}.{}.tmp", uuid::Uuid::new_v4()));
+    fs::write(&tmp_path, serialized)
+        .await
+        .with_context(|| format!("write thread metadata temp {}", tmp_path.display()))?;
+    if let Err(err) = fs::rename(&tmp_path, metadata_path).await {
+        let _ = fs::remove_file(&tmp_path).await;
+        return Err(err).with_context(|| {
+            format!(
+                "replace thread metadata {} with {}",
+                metadata_path.display(),
+                tmp_path.display()
+            )
+        });
+    }
+    Ok(())
+}
+
+fn parse_metadata_tolerant(data: &[u8]) -> serde_json::Result<(ThreadMetadata, bool)> {
+    match serde_json::from_slice::<ThreadMetadata>(data) {
+        Ok(metadata) => Ok((metadata, false)),
+        Err(strict_err) => {
+            let mut deserializer = serde_json::Deserializer::from_slice(data);
+            match serde::Deserialize::deserialize(&mut deserializer) {
+                Ok(metadata) => Ok((metadata, true)),
+                Err(_) => Err(strict_err),
+            }
+        }
+    }
+}
+
+fn title_from_user_text(text: &str) -> Option<String> {
+    let folded = text.split_whitespace().collect::<Vec<_>>().join(" ");
+    if folded.is_empty() {
+        None
+    } else {
+        Some(truncate_chars(&folded, 72))
+    }
+}
+
+fn truncate_chars(value: &str, max: usize) -> String {
+    if value.chars().count() <= max {
+        return value.to_string();
+    }
+    if max <= 3 {
+        return value.chars().take(max).collect();
+    }
+    let mut out = value.chars().take(max - 3).collect::<String>();
+    out.push_str("...");
+    out
+}
+
+fn archived_threads_root(active_threads_root: &Path) -> PathBuf {
+    active_threads_root
+        .parent()
+        .map(|parent| parent.join("archived_threads"))
+        .unwrap_or_else(|| active_threads_root.with_file_name("archived_threads"))
+}
+
+#[derive(serde::Serialize, serde::Deserialize)]
+struct PersistedTranscriptItem {
+    turn_id: TurnId,
+    #[serde(with = "time::serde::rfc3339")]
+    timestamp: OffsetDateTime,
+    item: TranscriptItem,
+}
+
+fn project_turn_completion(turns: &mut [TurnRecord], events: &[EventEnvelope]) {
+    for envelope in events {
+        let (turn_id, timestamp, usage) = match &envelope.event {
+            RoderEvent::TurnCompleted(event) => {
+                (&event.turn_id, event.timestamp, event.usage.clone())
+            }
+            RoderEvent::TurnFailed(event) => (&event.turn_id, event.timestamp, event.usage.clone()),
+            RoderEvent::TurnInterrupted(event) => (&event.turn_id, event.timestamp, None),
+            _ => continue,
+        };
+        if let Some(turn) = turns.iter_mut().find(|turn| &turn.turn_id == turn_id) {
+            turn.completed_at = Some(timestamp);
+            turn.usage = usage;
+        }
+    }
+}
+
+pub struct JsonlThreadStoreFactory {
+    pub base_path: PathBuf,
+}
+
+impl ThreadStoreFactory for JsonlThreadStoreFactory {
+    fn id(&self) -> roder_api::thread::ThreadStoreId {
+        "jsonl-thread-store".to_string()
+    }
+
+    fn create(&self) -> Arc<dyn ThreadStore> {
+        Arc::new(JsonlThreadStore {
+            base_path: self.base_path.clone(),
+        })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use roder_api::events::{EventSource, SubagentTraceCreated, TurnCompleted};
+    use roder_api::trace::{
+        ParentTurnRef, SubagentDestination, SubagentDestinationKind, SubagentTraceStatus,
+        SubagentTraceSummary,
+    };
+    use roder_api::transcript::{AssistantMessage, TranscriptItem, UserMessage};
+
+    #[tokio::test]
+    async fn load_thread_projects_turn_items_and_completion() {
+        let base_path = std::env::temp_dir().join(format!(
+            "roder-jsonl-thread-store-test-{}",
+            uuid::Uuid::new_v4()
+        ));
+        let store = JsonlThreadStore {
+            base_path: base_path.clone(),
+        };
+        let thread_id = "thread-a".to_string();
+        let turn_id = "turn-a".to_string();
+        let now = OffsetDateTime::UNIX_EPOCH;
+
+        store
+            .create_thread(ThreadMetadata {
+                thread_id: thread_id.clone(),
+                title: Some("Resume me".to_string()),
+                workspace: "/workspace".to_string(),
+                provider: Some("mock".to_string()),
+                model: Some("mock".to_string()),
+                runner_destination: None,
+                runner_state: None,
+                created_at: now,
+                updated_at: now,
+                message_count: 0,
+                usage: None,
+            })
+            .await
+            .unwrap();
+        store
+            .append_turn_item(
+                &thread_id,
+                &turn_id,
+                &TranscriptItem::UserMessage(UserMessage::text("hello")),
+            )
+            .await
+            .unwrap();
+        store
+            .append_turn_item(
+                &thread_id,
+                &turn_id,
+                &TranscriptItem::AssistantMessage(AssistantMessage {
+                    text: "world".to_string(),
+                    phase: None,
+                }),
+            )
+            .await
+            .unwrap();
+        store
+            .append_event(
+                &thread_id,
+                &EventEnvelope {
+                    event_id: "event-a".to_string(),
+                    seq: 1,
+                    timestamp: now,
+                    source: EventSource::Core,
+                    kind: "turn.completed".to_string(),
+                    thread_id: Some(thread_id.clone()),
+                    turn_id: Some(turn_id.clone()),
+                    event: RoderEvent::TurnCompleted(TurnCompleted {
+                        thread_id: thread_id.clone(),
+                        turn_id: turn_id.clone(),
+                        usage: None,
+                        timestamp: now,
+                    }),
+                },
+            )
+            .await
+            .unwrap();
+
+        let snapshot = store.load_thread(&thread_id).await.unwrap().unwrap();
+
+        assert_eq!(
+            snapshot.metadata.unwrap().title.as_deref(),
+            Some("Resume me")
+        );
+        assert_eq!(snapshot.events.len(), 1);
+        assert_eq!(snapshot.turns.len(), 1);
+        assert_eq!(snapshot.turns[0].turn_id, turn_id);
+        assert_eq!(snapshot.turns[0].items.len(), 2);
+        assert_eq!(snapshot.turns[0].completed_at, Some(now));
+
+        let _ = fs::remove_dir_all(base_path).await;
+    }
+
+    #[tokio::test]
+    async fn archive_thread_moves_thread_out_of_active_list() {
+        let base_path =
+            std::env::temp_dir().join(format!("roder-jsonl-archive-test-{}", uuid::Uuid::new_v4()));
+        let store = JsonlThreadStore {
+            base_path: base_path.clone(),
+        };
+        let thread_id = "thread-archive".to_string();
+        let now = OffsetDateTime::UNIX_EPOCH;
+
+        store
+            .create_thread(ThreadMetadata {
+                thread_id: thread_id.clone(),
+                title: Some("Archive me".to_string()),
+                workspace: "/workspace".to_string(),
+                provider: Some("mock".to_string()),
+                model: Some("mock".to_string()),
+                runner_destination: None,
+                runner_state: None,
+                created_at: now,
+                updated_at: now,
+                message_count: 0,
+                usage: None,
+            })
+            .await
+            .unwrap();
+
+        assert!(store.archive_thread(&thread_id).await.unwrap());
+        assert!(store.list_threads().await.unwrap().is_empty());
+        assert!(store.load_thread(&thread_id).await.unwrap().is_none());
+        assert!(
+            base_path
+                .parent()
+                .unwrap()
+                .join("archived_threads")
+                .join(&thread_id)
+                .join("metadata.json")
+                .exists()
+        );
+
+        let _ = fs::remove_dir_all(base_path.parent().unwrap().join("archived_threads")).await;
+        let _ = fs::remove_dir_all(base_path).await;
+    }
+
+    #[tokio::test]
+    async fn extension_state_round_trips_through_thread_snapshot() {
+        let base_path = std::env::temp_dir().join(format!(
+            "roder-jsonl-extension-state-{}",
+            uuid::Uuid::new_v4()
+        ));
+        let store = JsonlThreadStore {
+            base_path: base_path.clone(),
+        };
+        let thread_id = "thread-state".to_string();
+        let now = OffsetDateTime::UNIX_EPOCH;
+
+        store
+            .create_thread(ThreadMetadata {
+                thread_id: thread_id.clone(),
+                title: None,
+                workspace: "/workspace".to_string(),
+                provider: None,
+                model: None,
+                runner_destination: None,
+                runner_state: None,
+                created_at: now,
+                updated_at: now,
+                message_count: 0,
+                usage: None,
+            })
+            .await
+            .unwrap();
+        store
+            .append_extension_state(
+                &thread_id,
+                &roder_api::extension_state::ExtensionStateRecord {
+                    extension_id: "demo".to_string(),
+                    key: "prefs".to_string(),
+                    scope: roder_api::extension_state::ExtensionStoreScope::Thread {
+                        thread_id: thread_id.clone(),
+                    },
+                    schema_version: 2,
+                    value: serde_json::json!({ "theme": "dark" }),
+                },
+            )
+            .await
+            .unwrap();
+
+        let snapshot = store.load_thread(&thread_id).await.unwrap().unwrap();
+
+        assert_eq!(snapshot.extension_states.len(), 1);
+        assert_eq!(snapshot.extension_states[0].extension_id, "demo");
+        assert_eq!(snapshot.extension_states[0].value["theme"], "dark");
+
+        let _ = fs::remove_dir_all(base_path).await;
+    }
+
+    #[tokio::test]
+    async fn subagent_trace_events_round_trip_through_thread_snapshot() {
+        let base_path = std::env::temp_dir().join(format!(
+            "roder-jsonl-subagent-trace-{}",
+            uuid::Uuid::new_v4()
+        ));
+        let store = JsonlThreadStore {
+            base_path: base_path.clone(),
+        };
+        let thread_id = "parent-thread".to_string();
+        let turn_id = "parent-turn".to_string();
+        let now = OffsetDateTime::UNIX_EPOCH;
+
+        store
+            .create_thread(ThreadMetadata {
+                thread_id: thread_id.clone(),
+                title: Some("Trace me".to_string()),
+                workspace: "/workspace".to_string(),
+                provider: Some("mock".to_string()),
+                model: Some("mock".to_string()),
+                runner_destination: None,
+                runner_state: None,
+                created_at: now,
+                updated_at: now,
+                message_count: 0,
+                usage: None,
+            })
+            .await
+            .unwrap();
+        store
+            .append_event(
+                &thread_id,
+                &EventEnvelope {
+                    event_id: "trace-event".to_string(),
+                    seq: 1,
+                    timestamp: now,
+                    source: EventSource::Extension,
+                    kind: "turn/subagentTraceCreated".to_string(),
+                    thread_id: Some(thread_id.clone()),
+                    turn_id: Some(turn_id.clone()),
+                    event: RoderEvent::SubagentTraceCreated(SubagentTraceCreated {
+                        summary: SubagentTraceSummary {
+                            trace_id: "trace-1".to_string(),
+                            parent: ParentTurnRef {
+                                thread_id: thread_id.clone(),
+                                turn_id: turn_id.clone(),
+                            },
+                            child_thread_id: "child-thread".to_string(),
+                            child_turn_id: "child-turn".to_string(),
+                            title: "Inspect".to_string(),
+                            role: "explore".to_string(),
+                            model: Some("mock".to_string()),
+                            lane: None,
+                            status: SubagentTraceStatus::Running,
+                            elapsed_ms: 0,
+                            usage: None,
+                            destination: Some(SubagentDestination {
+                                kind: SubagentDestinationKind::InProcess,
+                                label: "in-process".to_string(),
+                                path: None,
+                                provider_id: None,
+                                destination_id: None,
+                            }),
+                            latest_activity: Some("running".to_string()),
+                            error_summary: None,
+                            exit_reason: None,
+                        },
+                        timestamp: now,
+                    }),
+                },
+            )
+            .await
+            .unwrap();
+
+        let snapshot = store.load_thread(&thread_id).await.unwrap().unwrap();
+
+        assert_eq!(snapshot.events.len(), 1);
+        assert_eq!(
+            snapshot.events[0].thread_id.as_deref(),
+            Some("parent-thread")
+        );
+        assert_eq!(snapshot.events[0].turn_id.as_deref(), Some("parent-turn"));
+        match &snapshot.events[0].event {
+            RoderEvent::SubagentTraceCreated(event) => {
+                assert_eq!(event.summary.trace_id, "trace-1");
+                assert_eq!(event.summary.child_thread_id, "child-thread");
+                assert_eq!(
+                    event.summary.destination.as_ref().unwrap().label,
+                    "in-process"
+                );
+            }
+            event => panic!("unexpected event: {event:?}"),
+        }
+
+        let _ = fs::remove_dir_all(base_path).await;
+    }
+
+    #[tokio::test]
+    async fn load_thread_preserves_provider_metadata_with_encrypted_reasoning() {
+        let base_path = std::env::temp_dir().join(format!(
+            "roder-jsonl-thread-store-test-{}",
+            uuid::Uuid::new_v4()
+        ));
+        let store = JsonlThreadStore {
+            base_path: base_path.clone(),
+        };
+        let thread_id = "thread-encrypted-reasoning".to_string();
+        let turn_id = "turn-encrypted-reasoning".to_string();
+        let now = OffsetDateTime::UNIX_EPOCH;
+        let metadata = serde_json::json!({
+            "id": "resp_1",
+            "output": [{
+                "id": "rs_1",
+                "type": "reasoning",
+                "encrypted_content": "opaque-thinking-state",
+                "summary": []
+            }]
+        });
+
+        store
+            .create_thread(ThreadMetadata {
+                thread_id: thread_id.clone(),
+                title: Some("Resume encrypted reasoning".to_string()),
+                workspace: "/workspace".to_string(),
+                provider: Some("openai".to_string()),
+                model: Some("gpt-5.5".to_string()),
+                runner_destination: None,
+                runner_state: None,
+                created_at: now,
+                updated_at: now,
+                message_count: 0,
+                usage: None,
+            })
+            .await
+            .unwrap();
+        store
+            .append_turn_item(
+                &thread_id,
+                &turn_id,
+                &TranscriptItem::ProviderMetadata(metadata.clone()),
+            )
+            .await
+            .unwrap();
+
+        let snapshot = store.load_thread(&thread_id).await.unwrap().unwrap();
+
+        assert_eq!(
+            snapshot.turns[0].items[0],
+            TranscriptItem::ProviderMetadata(metadata)
+        );
+
+        let _ = fs::remove_dir_all(base_path).await;
+    }
+
+    #[tokio::test]
+    async fn append_turn_item_updates_metadata_counts_and_recency() {
+        let base_path = std::env::temp_dir().join(format!(
+            "roder-jsonl-metadata-test-{}",
+            uuid::Uuid::new_v4()
+        ));
+        let store = JsonlThreadStore {
+            base_path: base_path.clone(),
+        };
+        let thread_id = "thread-metadata".to_string();
+        let turn_id = "turn-metadata".to_string();
+        let now = OffsetDateTime::UNIX_EPOCH;
+
+        store
+            .create_thread(ThreadMetadata {
+                thread_id: thread_id.clone(),
+                title: Some("Metadata".to_string()),
+                workspace: "/workspace".to_string(),
+                provider: Some("mock".to_string()),
+                model: Some("mock".to_string()),
+                runner_destination: None,
+                runner_state: None,
+                created_at: now,
+                updated_at: now,
+                message_count: 0,
+                usage: None,
+            })
+            .await
+            .unwrap();
+        store
+            .append_turn_item(
+                &thread_id,
+                &turn_id,
+                &TranscriptItem::UserMessage(UserMessage::text("hello")),
+            )
+            .await
+            .unwrap();
+        store
+            .append_turn_item(
+                &thread_id,
+                &turn_id,
+                &TranscriptItem::ProviderMetadata(serde_json::json!({"id": "resp_1"})),
+            )
+            .await
+            .unwrap();
+        store
+            .append_turn_item(
+                &thread_id,
+                &turn_id,
+                &TranscriptItem::AssistantMessage(AssistantMessage {
+                    text: "world".to_string(),
+                    phase: None,
+                }),
+            )
+            .await
+            .unwrap();
+
+        let threads = store.list_threads().await.unwrap();
+
+        assert_eq!(threads[0].message_count, 2);
+        assert!(threads[0].updated_at > now);
+
+        let _ = fs::remove_dir_all(base_path).await;
+    }
+
+    #[tokio::test]
+    async fn first_user_message_names_untitled_thread() {
+        let base_path =
+            std::env::temp_dir().join(format!("roder-jsonl-title-test-{}", uuid::Uuid::new_v4()));
+        let store = JsonlThreadStore {
+            base_path: base_path.clone(),
+        };
+        let thread_id = "thread-title".to_string();
+        let turn_id = "turn-title".to_string();
+        let now = OffsetDateTime::UNIX_EPOCH;
+
+        store
+            .create_thread(ThreadMetadata {
+                thread_id: thread_id.clone(),
+                title: None,
+                workspace: "/workspace/gode".to_string(),
+                provider: Some("mock".to_string()),
+                model: Some("mock".to_string()),
+                runner_destination: None,
+                runner_state: None,
+                created_at: now,
+                updated_at: now,
+                message_count: 0,
+                usage: None,
+            })
+            .await
+            .unwrap();
+        store
+            .append_turn_item(
+                &thread_id,
+                &turn_id,
+                &TranscriptItem::UserMessage(UserMessage::text(
+                    "please make resume threads easier to find",
+                )),
+            )
+            .await
+            .unwrap();
+
+        let threads = store.list_threads().await.unwrap();
+        let snapshot = store.load_thread(&thread_id).await.unwrap().unwrap();
+
+        assert_eq!(
+            threads[0].title.as_deref(),
+            Some("please make resume threads easier to find")
+        );
+        assert_eq!(
+            snapshot.metadata.unwrap().title.as_deref(),
+            Some("please make resume threads easier to find")
+        );
+
+        let _ = fs::remove_dir_all(base_path).await;
+    }
+
+    #[tokio::test]
+    async fn list_threads_rejects_malformed_metadata() {
+        let base_path = std::env::temp_dir().join(format!(
+            "roder-jsonl-recover-list-test-{}",
+            uuid::Uuid::new_v4()
+        ));
+        let store = JsonlThreadStore {
+            base_path: base_path.clone(),
+        };
+        let thread_id = "thread-recover-list".to_string();
+        let turn_id = "turn-recover-list".to_string();
+        let now = OffsetDateTime::UNIX_EPOCH;
+
+        store
+            .create_thread(ThreadMetadata {
+                thread_id: thread_id.clone(),
+                title: Some("Will be corrupted".to_string()),
+                workspace: "/workspace".to_string(),
+                provider: Some("mock".to_string()),
+                model: Some("mock".to_string()),
+                runner_destination: None,
+                runner_state: None,
+                created_at: now,
+                updated_at: now,
+                message_count: 0,
+                usage: None,
+            })
+            .await
+            .unwrap();
+        store
+            .append_turn_item(
+                &thread_id,
+                &turn_id,
+                &TranscriptItem::UserMessage(UserMessage::text("recover this thread")),
+            )
+            .await
+            .unwrap();
+        store
+            .append_turn_item(
+                &thread_id,
+                &turn_id,
+                &TranscriptItem::AssistantMessage(AssistantMessage {
+                    text: "continuing".to_string(),
+                    phase: None,
+                }),
+            )
+            .await
+            .unwrap();
+        fs::write(
+            store.thread_dir(&thread_id).join("metadata.json"),
+            "{broken",
+        )
+        .await
+        .unwrap();
+
+        let error = store.list_threads().await.unwrap_err();
+
+        assert!(error.to_string().contains("thread metadata invalid"));
+
+        let _ = fs::remove_dir_all(base_path).await;
+    }
+
+    #[tokio::test]
+    async fn load_thread_rejects_malformed_metadata() {
+        let base_path = std::env::temp_dir().join(format!(
+            "roder-jsonl-recover-load-test-{}",
+            uuid::Uuid::new_v4()
+        ));
+        let store = JsonlThreadStore {
+            base_path: base_path.clone(),
+        };
+        let thread_id = "thread-recover-load".to_string();
+        let turn_id = "turn-recover-load".to_string();
+        let now = OffsetDateTime::UNIX_EPOCH;
+
+        store
+            .create_thread(ThreadMetadata {
+                thread_id: thread_id.clone(),
+                title: None,
+                workspace: "/workspace".to_string(),
+                provider: Some("mock".to_string()),
+                model: Some("mock".to_string()),
+                runner_destination: None,
+                runner_state: None,
+                created_at: now,
+                updated_at: now,
+                message_count: 0,
+                usage: None,
+            })
+            .await
+            .unwrap();
+        store
+            .append_turn_item(
+                &thread_id,
+                &turn_id,
+                &TranscriptItem::UserMessage(UserMessage::text("resume despite metadata")),
+            )
+            .await
+            .unwrap();
+        fs::write(
+            store.thread_dir(&thread_id).join("metadata.json"),
+            "not json",
+        )
+        .await
+        .unwrap();
+
+        let error = store.load_thread(&thread_id).await.unwrap_err();
+
+        assert!(error.to_string().contains("thread metadata invalid"));
+
+        let _ = fs::remove_dir_all(base_path).await;
+    }
+
+    #[tokio::test]
+    async fn load_thread_accepts_valid_metadata_with_trailing_garbage_and_repairs_file() {
+        let base_path = std::env::temp_dir().join(format!(
+            "roder-jsonl-trailing-metadata-test-{}",
+            uuid::Uuid::new_v4()
+        ));
+        let store = JsonlThreadStore {
+            base_path: base_path.clone(),
+        };
+        let thread_id = "thread-trailing-metadata".to_string();
+        let now = OffsetDateTime::UNIX_EPOCH;
+
+        let metadata = ThreadMetadata {
+            thread_id: thread_id.clone(),
+            title: Some("Recover trailing metadata".to_string()),
+            workspace: "/workspace".to_string(),
+            provider: Some("codex".to_string()),
+            model: Some("gpt-5.5".to_string()),
+            runner_destination: None,
+            runner_state: None,
+            created_at: now,
+            updated_at: now,
+            message_count: 1,
+            usage: None,
+        };
+        let dir = store.thread_dir(&thread_id);
+        fs::create_dir_all(&dir).await.unwrap();
+        let mut corrupted = serde_json::to_string_pretty(&metadata).unwrap();
+        corrupted.push('}');
+        fs::write(dir.join("metadata.json"), corrupted)
+            .await
+            .unwrap();
+
+        let snapshot = store.load_thread(&thread_id).await.unwrap().unwrap();
+        let loaded = snapshot.metadata.unwrap();
+
+        assert_eq!(loaded.thread_id, thread_id);
+        assert_eq!(loaded.title.as_deref(), Some("Recover trailing metadata"));
+        assert_eq!(loaded.provider.as_deref(), Some("codex"));
+        assert_eq!(loaded.model.as_deref(), Some("gpt-5.5"));
+        assert_eq!(loaded.message_count, 1);
+
+        let repaired = fs::read(dir.join("metadata.json")).await.unwrap();
+        serde_json::from_slice::<ThreadMetadata>(&repaired).unwrap();
+
+        let _ = fs::remove_dir_all(base_path).await;
+    }
+
+    #[tokio::test]
+    async fn append_turn_item_rejects_malformed_metadata() {
+        let base_path = std::env::temp_dir().join(format!(
+            "roder-jsonl-recover-append-test-{}",
+            uuid::Uuid::new_v4()
+        ));
+        let store = JsonlThreadStore {
+            base_path: base_path.clone(),
+        };
+        let thread_id = "thread-recover-append".to_string();
+        let turn_id = "turn-recover-append".to_string();
+        let now = OffsetDateTime::UNIX_EPOCH;
+
+        store
+            .create_thread(ThreadMetadata {
+                thread_id: thread_id.clone(),
+                title: None,
+                workspace: "/workspace".to_string(),
+                provider: None,
+                model: None,
+                runner_destination: None,
+                runner_state: None,
+                created_at: now,
+                updated_at: now,
+                message_count: 0,
+                usage: None,
+            })
+            .await
+            .unwrap();
+        fs::write(
+            store.thread_dir(&thread_id).join("metadata.json"),
+            "{\"thread_id\":\"thread-recover-append\"} trailing",
+        )
+        .await
+        .unwrap();
+
+        let error = store
+            .append_turn_item(
+                &thread_id,
+                &turn_id,
+                &TranscriptItem::UserMessage(UserMessage::text("repair me")),
+            )
+            .await
+            .unwrap_err();
+
+        assert!(error.to_string().contains("thread metadata invalid"));
+
+        let _ = fs::remove_dir_all(base_path).await;
+    }
+
+    #[tokio::test]
+    async fn load_thread_accepts_concatenated_jsonl_records() {
+        let base_path =
+            std::env::temp_dir().join(format!("roder-jsonl-concat-test-{}", uuid::Uuid::new_v4()));
+        let store = JsonlThreadStore {
+            base_path: base_path.clone(),
+        };
+        let thread_id = "thread-concat".to_string();
+        let turn_id = "turn-concat".to_string();
+        let now = OffsetDateTime::UNIX_EPOCH;
+
+        store
+            .create_thread(ThreadMetadata {
+                thread_id: thread_id.clone(),
+                title: Some("Concatenated jsonl".to_string()),
+                workspace: "/workspace".to_string(),
+                provider: Some("mock".to_string()),
+                model: Some("mock".to_string()),
+                runner_destination: None,
+                runner_state: None,
+                created_at: now,
+                updated_at: now,
+                message_count: 0,
+                usage: None,
+            })
+            .await
+            .unwrap();
+
+        let dir = store.thread_dir(&thread_id);
+        let first = PersistedTranscriptItem {
+            turn_id: turn_id.clone(),
+            timestamp: now,
+            item: TranscriptItem::UserMessage(UserMessage::text("first")),
+        };
+        let second = PersistedTranscriptItem {
+            turn_id: turn_id.clone(),
+            timestamp: now,
+            item: TranscriptItem::AssistantMessage(AssistantMessage {
+                text: "second".to_string(),
+                phase: None,
+            }),
+        };
+        let concatenated = format!(
+            "{}{}\n",
+            serde_json::to_string(&first).unwrap(),
+            serde_json::to_string(&second).unwrap()
+        );
+        fs::write(dir.join("transcript_items.jsonl"), concatenated)
+            .await
+            .unwrap();
+
+        let snapshot = store.load_thread(&thread_id).await.unwrap().unwrap();
+
+        assert_eq!(snapshot.turns.len(), 1);
+        assert_eq!(snapshot.turns[0].items.len(), 2);
+
+        let _ = fs::remove_dir_all(base_path).await;
+    }
+
+    #[tokio::test]
+    async fn malformed_turn_item_reports_file_and_line() {
+        let base_path = std::env::temp_dir().join(format!(
+            "roder-jsonl-malformed-test-{}",
+            uuid::Uuid::new_v4()
+        ));
+        let store = JsonlThreadStore {
+            base_path: base_path.clone(),
+        };
+        let thread_id = "thread-malformed".to_string();
+        let now = OffsetDateTime::UNIX_EPOCH;
+
+        store
+            .create_thread(ThreadMetadata {
+                thread_id: thread_id.clone(),
+                title: Some("Malformed jsonl".to_string()),
+                workspace: "/workspace".to_string(),
+                provider: Some("mock".to_string()),
+                model: Some("mock".to_string()),
+                runner_destination: None,
+                runner_state: None,
+                created_at: now,
+                updated_at: now,
+                message_count: 0,
+                usage: None,
+            })
+            .await
+            .unwrap();
+        fs::write(
+            store.thread_dir(&thread_id).join("transcript_items.jsonl"),
+            "{\"turn_id\":\"broken\"\n",
+        )
+        .await
+        .unwrap();
+
+        let err = store.load_thread(&thread_id).await.unwrap_err();
+        let rendered = format!("{err:#}");
+
+        assert!(rendered.contains("parse transcript item record in"));
+        assert!(rendered.contains("transcript_items.jsonl:1"));
+
+        let _ = fs::remove_dir_all(base_path).await;
+    }
+
+    #[tokio::test]
+    async fn load_missing_thread_returns_none() {
+        let base_path = std::env::temp_dir().join(format!(
+            "roder-jsonl-missing-thread-test-{}",
+            uuid::Uuid::new_v4()
+        ));
+        let store = JsonlThreadStore {
+            base_path: base_path.clone(),
+        };
+
+        assert!(
+            store
+                .load_thread(&"missing".to_string())
+                .await
+                .unwrap()
+                .is_none()
+        );
+
+        let _ = fs::remove_dir_all(base_path).await;
+    }
+}

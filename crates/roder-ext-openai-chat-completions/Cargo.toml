@@ -18,6 +18,7 @@ docs_url = "https://platform.openai.com/docs/api-reference/chat"
 
 [dependencies]
 anyhow.workspace = true
+async-stream.workspace = true
 async-trait.workspace = true
 futures.workspace = true
 reqwest = { workspace = true, features = ["json", "stream"] }

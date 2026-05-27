@@ -1,35 +1,95 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use ratatui::text::{Line, Span, Text};
+use ratatui::text::Text;
 use roder_roadmap::{
     Diagnostic, Document, DocumentSummary, ListOptions, ThreadAttachment, list_documents,
     parse_document, validate_document,
 };
 use time::OffsetDateTime;
 
+mod control_view;
+
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub struct RoadmapModeState {
+    pub workspace: Option<PathBuf>,
     pub selected_plan: Option<String>,
     pub documents: Vec<DocumentSummary>,
     pub selected_document: Option<Document>,
+    pub focused_pane: RoadmapPaneFocus,
     pub focused_task_id: Option<String>,
     pub attached_threads: Vec<ThreadAttachment>,
     pub selected_thread_id: Option<String>,
     pub validation_diagnostics: Vec<Diagnostic>,
+    pub task_detail_scroll: u16,
+    pub validation_scroll: u16,
+    pub activity_scroll: u16,
     pub composer_text: String,
+}
+
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+pub enum RoadmapPaneFocus {
+    Plans,
+    Tasks,
+    TaskDetail,
+    Agents,
+    Validation,
+    Activity,
+}
+
+impl RoadmapPaneFocus {
+    const ORDER: [Self; 6] = [
+        Self::Plans,
+        Self::Tasks,
+        Self::TaskDetail,
+        Self::Agents,
+        Self::Validation,
+        Self::Activity,
+    ];
+
+    fn next(self) -> Self {
+        let index = Self::ORDER
+            .iter()
+            .position(|pane| *pane == self)
+            .unwrap_or(0);
+        Self::ORDER[(index + 1) % Self::ORDER.len()]
+    }
+
+    fn previous(self) -> Self {
+        let index = Self::ORDER
+            .iter()
+            .position(|pane| *pane == self)
+            .unwrap_or(0);
+        Self::ORDER[(index + Self::ORDER.len() - 1) % Self::ORDER.len()]
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Plans => "plans",
+            Self::Tasks => "tasks",
+            Self::TaskDetail => "task",
+            Self::Agents => "agents",
+            Self::Validation => "validation",
+            Self::Activity => "activity",
+        }
+    }
 }
 
 impl RoadmapModeState {
     pub fn new(selected_plan: Option<String>) -> Self {
         Self {
+            workspace: None,
             selected_plan,
             documents: Vec::new(),
             selected_document: None,
+            focused_pane: RoadmapPaneFocus::Tasks,
             focused_task_id: None,
             attached_threads: Vec::new(),
             selected_thread_id: None,
             validation_diagnostics: Vec::new(),
+            task_detail_scroll: 0,
+            validation_scroll: 0,
+            activity_scroll: 0,
             composer_text: String::new(),
         }
     }
@@ -57,13 +117,18 @@ impl RoadmapModeState {
         });
 
         Ok(Self {
+            workspace: Some(workspace.to_path_buf()),
             selected_plan: selected_path.map(|path| rel(workspace, &path)),
             documents,
             selected_document,
+            focused_pane: RoadmapPaneFocus::Tasks,
             focused_task_id,
             attached_threads: Vec::new(),
             selected_thread_id: None,
             validation_diagnostics,
+            task_detail_scroll: 0,
+            validation_scroll: 0,
+            activity_scroll: 0,
             composer_text: String::new(),
         })
     }
@@ -123,6 +188,81 @@ impl RoadmapModeState {
         self.focused_task_id.as_deref()
     }
 
+    pub fn focus_next_plan(&mut self) -> anyhow::Result<Option<&str>> {
+        self.focus_plan_by_delta(1)
+    }
+
+    pub fn focus_previous_plan(&mut self) -> anyhow::Result<Option<&str>> {
+        self.focus_plan_by_delta(-1)
+    }
+
+    fn focus_plan_by_delta(&mut self, delta: isize) -> anyhow::Result<Option<&str>> {
+        if self.documents.is_empty() {
+            self.selected_plan = None;
+            self.selected_document = None;
+            self.focused_task_id = None;
+            return Ok(None);
+        }
+        let current = self
+            .selected_document
+            .as_ref()
+            .and_then(|selected| {
+                self.documents
+                    .iter()
+                    .position(|document| document.path == selected.path)
+            })
+            .or_else(|| {
+                self.selected_plan.as_deref().and_then(|selected| {
+                    self.documents
+                        .iter()
+                        .position(|document| document.path.ends_with(selected))
+                })
+            })
+            .unwrap_or(0);
+        let last = self.documents.len().saturating_sub(1);
+        let next = if delta.is_negative() {
+            current.saturating_sub(delta.unsigned_abs())
+        } else {
+            current.saturating_add(delta as usize).min(last)
+        };
+        self.select_plan_at(next)?;
+        Ok(self.selected_plan.as_deref())
+    }
+
+    fn select_plan_at(&mut self, index: usize) -> anyhow::Result<()> {
+        let Some(summary) = self.documents.get(index) else {
+            return Ok(());
+        };
+        let document = read_document(&summary.path)?;
+        self.selected_plan = Some(
+            self.workspace
+                .as_deref()
+                .map(|workspace| rel(workspace, &summary.path))
+                .unwrap_or_else(|| summary.path.display().to_string().replace('\\', "/")),
+        );
+        self.focused_task_id = document
+            .tasks
+            .iter()
+            .find(|task| !task.checked)
+            .or_else(|| document.tasks.first())
+            .map(|task| task.id.clone());
+        self.validation_diagnostics = validate_document(&document).diagnostics;
+        self.selected_document = Some(document);
+        self.task_detail_scroll = 0;
+        self.validation_scroll = 0;
+        Ok(())
+    }
+
+    pub fn focus_next_pane(&mut self) -> RoadmapPaneFocus {
+        self.focused_pane = self.focused_pane.next();
+        self.focused_pane
+    }
+
+    pub fn focus_previous_pane(&mut self) -> RoadmapPaneFocus {
+        self.focused_pane = self.focused_pane.previous();
+        self.focused_pane
+    }
+
     pub fn attach_thread(&mut self, thread_id: impl Into<String>) {
         let thread_id = thread_id.into();
         let now = OffsetDateTime::now_utc();
@@ -164,6 +304,59 @@ impl RoadmapModeState {
         self.selected_thread_id.as_deref()
     }
 
+    pub fn select_previous_thread(&mut self) -> Option<&str> {
+        if self.attached_threads.is_empty() {
+            self.selected_thread_id = None;
+            return None;
+        }
+        let current = self
+            .selected_thread_id
+            .as_deref()
+            .and_then(|id| {
+                self.attached_threads
+                    .iter()
+                    .position(|thread| thread.thread_id == id)
+            })
+            .unwrap_or(0);
+        let previous = if current == 0 {
+            self.attached_threads.len().saturating_sub(1)
+        } else {
+            current - 1
+        };
+        self.selected_thread_id = Some(self.attached_threads[previous].thread_id.clone());
+        self.selected_thread_id.as_deref()
+    }
+
+    pub fn scroll_focused_pane_down(&mut self) {
+        match self.focused_pane {
+            RoadmapPaneFocus::TaskDetail => {
+                self.task_detail_scroll = self.task_detail_scroll.saturating_add(1);
+            }
+            RoadmapPaneFocus::Validation => {
+                self.validation_scroll = self.validation_scroll.saturating_add(1);
+            }
+            RoadmapPaneFocus::Activity => {
+                self.activity_scroll = self.activity_scroll.saturating_add(1);
+            }
+            _ => {}
+        }
+    }
+
+    pub fn scroll_focused_pane_up(&mut self) {
+        match self.focused_pane {
+            RoadmapPaneFocus::TaskDetail => {
+                self.task_detail_scroll = self.task_detail_scroll.saturating_sub(1);
+            }
+            RoadmapPaneFocus::Validation => {
+                self.validation_scroll = self.validation_scroll.saturating_sub(1);
+            }
+            RoadmapPaneFocus::Activity => {
+                self.activity_scroll = self.activity_scroll.saturating_sub(1);
+            }
+            _ => {}
+        }
+    }
+
     pub fn validate_selected_document(&mut self) {
         self.validation_diagnostics = self
             .selected_document
@@ -199,98 +392,7 @@ impl RoadmapModeState {
     }
 
     pub fn render_text(&self) -> Text<'static> {
-        let mut lines = Vec::new();
-        lines.push(Line::from(vec![
-            Span::raw("Roadmap "),
-            Span::raw(self.label()),
-        ]));
-        lines.push(Line::from(""));
-        lines.push(Line::from("Documents"));
-        if self.documents.is_empty() {
-            lines.push(Line::from("  no roadmap documents found"));
-        } else {
-            for document in self.documents.iter().take(8) {
-                let marker = if self
-                    .selected_plan
-                    .as_deref()
-                    .is_some_and(|path| document.path.ends_with(path))
-                {
-                    ">"
-                } else {
-                    " "
-                };
-                lines.push(Line::from(format!(
-                    "{marker} {}  {}/{}",
-                    document.title,
-                    document.checked_tasks,
-                    document.checked_tasks + document.unchecked_tasks
-                )));
-            }
-        }
-        lines.push(Line::from(""));
-        lines.push(Line::from("Outline"));
-        if let Some(document) = self.selected_document.as_ref() {
-            for task in document.tasks.iter().take(10) {
-                let marker = if self.focused_task_id.as_deref() == Some(task.id.as_str()) {
-                    ">"
-                } else {
-                    " "
-                };
-                let checkbox = if task.checked { "[x]" } else { "[ ]" };
-                lines.push(Line::from(format!(
-                    "{marker} {checkbox} {}  {}",
-                    task.id, task.heading
-                )));
-            }
-            lines.push(Line::from(""));
-            lines.push(Line::from("Document"));
-            lines.push(Line::from(format!("  {}", document.title)));
-            lines.push(Line::from(format!("  Goal: {}", document.goal)));
-            lines.push(Line::from(format!(
-                "  Architecture: {}",
-                document.architecture
-            )));
-            lines.push(Line::from(format!("  Tech Stack: {}", document.tech_stack)));
-        } else {
-            lines.push(Line::from("  select or create a roadmap document"));
-        }
-        lines.push(Line::from(""));
-        lines.push(Line::from("Focused Task"));
-        lines.push(Line::from(format!(
-            "  {}",
-            self.focused_task_heading().unwrap_or("none")
-        )));
-        lines.push(Line::from(""));
-        lines.push(Line::from("Thread Pane"));
-        if self.attached_threads.is_empty() {
-            lines.push(Line::from("  no attached roadmap threads"));
-        } else {
-            for thread in self.attached_threads.iter().take(5) {
-                let marker = if self.selected_thread_id.as_deref() == Some(&thread.thread_id) {
-                    ">"
-                } else {
-                    " "
-                };
-                lines.push(Line::from(format!(
-                    "{marker} {}  {}",
-                    thread.thread_id,
-                    thread.task_id.as_deref().unwrap_or("-")
-                )));
-            }
-        }
-        lines.push(Line::from(""));
-        lines.push(Line::from("Validation"));
-        if self.validation_diagnostics.is_empty() {
-            lines.push(Line::from("  ok"));
-        } else {
-            for diagnostic in self.validation_diagnostics.iter().take(5) {
-                lines.push(Line::from(format!(
-                    "  {:?}: {}",
-                    diagnostic.severity, diagnostic.message
-                )));
-            }
-        }
-        Text::from(lines)
+        control_view::render_control_text(self)
     }
 }
 
@@ -321,6 +423,7 @@ fn rel(workspace: &Path, path: &Path) -> String {
         .unwrap_or(path)
         .display()
         .to_string()
+        .replace('\\', "/")
 }
 
 #[cfg(test)]
@@ -342,7 +445,7 @@ mod tests {
     }
 
     #[test]
-    fn roadmap_model_loads_document_outline_and_validation() {
+    fn roadmap_model_loads_document_control_surface() {
         let workspace = temp_workspace();
         fs::write(workspace.join("roadmap/20-roadmapping-mode.md"), fixture()).unwrap();
 
@@ -366,10 +469,11 @@ mod tests {
             })
             .collect::<Vec<_>>()
             .join("\n");
-        assert!(rendered.contains("Documents"));
-        assert!(rendered.contains("Outline"));
-        assert!(rendered.contains("Thread Pane"));
-        assert!(rendered.contains("Validation"));
+        assert!(rendered.contains("Plans"));
+        assert!(rendered.contains("Task Queue"));
+        assert!(rendered.contains("Agent Lanes"));
+        assert!(rendered.contains("Validation Gate"));
+        assert!(rendered.contains("Operator Surface"));
     }
 
     #[test]
@@ -406,6 +510,24 @@ mod tests {
                 .checkbox_toggle_confirmation()
                 .unwrap()
                 .contains("Evidence is required")
+        );
+    }
+
+    #[test]
+    fn roadmap_model_renders_repo_sized_state_without_stack_pressure() {
+        let workspace = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .and_then(|path| path.parent())
+            .expect("workspace root")
+            .to_path_buf();
+        let state = RoadmapModeState::load(&workspace, None).unwrap();
+        let rendered = state.render_text();
+
+        assert!(
+            rendered
+                .lines
+                .iter()
+                .any(|line| line.spans.iter().any(|span| span.content.contains("Plans")))
         );
     }
 

@@ -4,6 +4,7 @@
 /tmp/
 .gode/
 .roder/
+.roder-harness/
 __pycache__/
 .pytest_cache/
 .mypy_cache/
@@ -13,6 +14,11 @@ __pycache__/
 target/
 .target-roadmap-local/
 .claude/
+
+# Eval and Harbor run outputs
+evals/harbor/artifacts/
+evals/harbor/jobs/
+evals/reports/
 
 # SDK package artifacts
 sdk/typescript/dist/

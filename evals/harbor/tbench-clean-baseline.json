@@ -1,0 +1,53 @@
+{
+  "version": 1,
+  "expectations": [
+    {
+      "metric": "analysis_consistency",
+      "minCount": 1
+    },
+    {
+      "metric": "clean",
+      "minCount": 1
+    },
+    {
+      "metric": "harbor_n_errors",
+      "maxCount": 0
+    },
+    {
+      "metric": "harness_error_total",
+      "maxCount": 0
+    },
+    {
+      "metric": "unknown_error",
+      "maxCount": 0
+    },
+    {
+      "metric": "missing_artifacts",
+      "maxCount": 0
+    },
+    {
+      "metric": "provider_api_invalid_tool_name",
+      "maxCount": 0
+    },
+    {
+      "metric": "provider_stream_decode_error",
+      "maxCount": 0
+    },
+    {
+      "metric": "provider_stream_incomplete",
+      "maxCount": 0
+    },
+    {
+      "metric": "roder_exec_error_status",
+      "maxCount": 0
+    },
+    {
+      "metric": "task_dirs",
+      "minCount": 89
+    },
+    {
+      "metric": "scored_trials",
+      "minCount": 89
+    }
+  ]
+}

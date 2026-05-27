@@ -6,28 +6,35 @@ use anyhow::Context;
 use futures::StreamExt;
 use futures::future::{AbortHandle, Abortable, BoxFuture, try_join_all};
 use roder_api::catalog::{
-    EDIT_TOOL_EDIT, EDIT_TOOL_PATCH, REASONING_NONE, built_in_model_profile, lookup_model,
+    EDIT_TOOL_EDIT, EDIT_TOOL_PATCH, PROVIDER_GEMINI, REASONING_NONE, built_in_model_profile,
+    lookup_model,
 };
 use roder_api::context::PolicyGate;
-use roder_api::conversation::{
-    AssistantMessage, ConversationItem, ErrorRecord, InputImage, ReasoningSummary, ToolCallRecord,
-    ToolResultRecord, UserMessage,
-};
 use roder_api::events::*;
 use roder_api::extension::ExtensionRegistry;
 use roder_api::inference::{
     AgentInferenceRequest, HostedWebSearchConfig, HostedWebSearchMode, InferenceEngine,
     InferenceEvent, InferenceTurnContext, InstructionBundle, ModelHarnessProfile,
     ModelSchemaPolicy, ModelSelection, OutputConfig, ReasoningConfig, RuntimeHints, RuntimeProfile,
-    ToolCallCompleted,
+    TokenUsage, ToolCallCompleted,
 };
 use roder_api::policy_mode::{PolicyDecision, PolicyMode};
-use roder_api::reliability::{ReliabilityContext, ReliabilityDetails, ReliabilityLimitRecorded};
+use roder_api::reliability::{
+    ReliabilityContext, ReliabilityDetails, ReliabilityErrorClass, ReliabilityLimitRecorded,
+    ReliabilityRequestPolicy, ReliabilityRetryDecision, ReliabilityRetryRecorded,
+    provider_retry_delay_ms,
+};
 use roder_api::remote_runner::{RemoteRunnerSession, RunnerDestination};
-use roder_api::session::{SessionMetadata, SessionStore, ThreadSnapshot};
 use roder_api::subagents::SubagentDefinition;
 use roder_api::teams::TeamMemberStatus;
+use roder_api::thread::{
+    ThreadMetadata, ThreadSnapshot, ThreadStore, ThreadUsageMetadata, validate_thread_workspace,
+};
 use roder_api::tools::{ToolCall, ToolChoice, ToolExecutionContext, ToolRegistry, ToolResult};
+use roder_api::transcript::{
+    AssistantMessage, ErrorRecord, InputImage, ReasoningSummary, ToolCallRecord, ToolResultRecord,
+    TranscriptItem, UserMessage,
+};
 use roder_sandbox::ScopedFilesystem;
 use roder_sandbox::process::LocalProcessRunner;
 use roder_skills::{SkillRegistry, SkillRegistryOptions};
@@ -37,11 +44,15 @@ use tokio::sync::{Mutex, RwLock, oneshot};
 use crate::artifacts::{ContextArtifactStore, default_context_artifact_dir};
 use crate::bus::EventBus;
 use crate::fake_provider::FakeInferenceEngine;
+use crate::goals::RuntimeGoalController;
 use crate::instructions::{
     apply_model_instruction_overlay, apply_runtime_profile, apply_task_ledger_required,
 };
 use crate::policy_gate::DefaultPolicyGate;
-use crate::reliability::{ReliabilityLimitHit, RuntimeReliabilityConfig, TurnReliabilityState};
+use crate::reliability::{
+    ReliabilityLimitHit, RuntimeReliabilityConfig, TurnReliabilityState,
+    provider_stream_retry_cause,
+};
 pub use crate::speed_policy::RuntimeSpeedPolicyConfig;
 use crate::speed_policy::{SpeedPolicyState, reasoning_from_decision};
 use crate::subagent_traces::RuntimeSubagentTraceSink;
@@ -50,9 +61,19 @@ use crate::verification_gate::VerificationGateState;
 
 const MAX_TOOL_ROUNDS_PER_TURN: usize = 1024;
 const FINAL_ANSWER_PHASE: &str = "final_answer";
+const TASK_LEDGER_TOOL_NAME: &str = "task_ledger.update";
+const TASK_LEDGER_COMPLETION_REMINDER_LIMIT: u8 = 2;
+const TASK_LEDGER_SCOREABLE_CHECKPOINT_SECONDS: u64 = 180;
+const TASK_LEDGER_SCOREABLE_CHECKPOINT_LIMIT: u8 = 1;
 pub(crate) const MIN_CHILD_DEADLINE_SECONDS: u64 = 2;
 const MODEL_PROFILE_TRACE_KIND: &str = "model_profile_segment";
 const MODEL_SWITCH_SUMMARY_PREFIX: &str = "Model switch summary:";
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum InferenceTimeoutAction {
+    ScoreableCheckpoint,
+    Finalization,
+}
 
 #[derive(Debug, Clone)]
 pub struct RuntimeConfig {
@@ -65,6 +86,7 @@ pub struct RuntimeConfig {
     pub model_edit_tools: HashMap<String, String>,
     pub model_parallel_tool_calls: HashMap<String, bool>,
     pub model_profiles: HashMap<String, ModelHarnessProfile>,
+    pub command_shell: String,
     pub workspace: Option<String>,
     pub policy_mode: PolicyMode,
     pub runtime_profile: RuntimeProfile,
@@ -88,6 +110,7 @@ impl Default for RuntimeConfig {
             model_edit_tools: HashMap::new(),
             model_parallel_tool_calls: HashMap::new(),
             model_profiles: HashMap::new(),
+            command_shell: roder_api::command_shell::default_command_shell(),
             workspace: None,
             policy_mode: PolicyMode::Default,
             runtime_profile: RuntimeProfile::Interactive,
@@ -109,15 +132,15 @@ pub struct StartTurnRequest {
     pub provider_override: Option<String>,
     pub model_override: Option<String>,
     pub reasoning_override: Option<String>,
-    pub workspace: Option<String>,
+    pub workspace: String,
     pub instructions: InstructionBundle,
     pub task_ledger_required: bool,
 }
 
-#[derive(Debug, Clone, Default)]
-pub struct CreateSessionRequest {
+#[derive(Debug, Clone)]
+pub struct CreateThreadRequest {
     pub title: Option<String>,
-    pub workspace: Option<String>,
+    pub workspace: String,
     pub provider: Option<String>,
     pub model: Option<String>,
 }
@@ -150,8 +173,21 @@ pub(crate) struct PendingUserInput {
 
 #[derive(Clone)]
 struct ActiveTurnHandle {
+    thread_id: ThreadId,
     abort: AbortHandle,
     steers: Arc<Mutex<Vec<UserMessage>>>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ThreadActivity {
+    pub active_turn_id: Option<TurnId>,
+    pub active_flags: Vec<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum TurnRunOutcome {
+    Completed,
+    Stopped,
 }
 
 impl PendingPlanExit {
@@ -194,8 +230,9 @@ pub struct Runtime {
     workspace: PathBuf,
     teams: TeamManager,
     pub(crate) roadmaps: Mutex<roder_roadmap::RoadmapRuntime>,
+    pub(crate) goals: Arc<RuntimeGoalController>,
     context_artifacts: Arc<ContextArtifactStore>,
-    pub(crate) session_store: Option<Arc<dyn SessionStore>>,
+    pub(crate) thread_store: Option<Arc<dyn ThreadStore>>,
     pub(crate) tool_registry: ToolRegistry,
     pub(crate) skills: RwLock<SkillRegistry>,
 }
@@ -205,10 +242,11 @@ impl Runtime {
         if registry.inference_engines.is_empty() {
             anyhow::bail!("at least one inference engine must be registered");
         }
+        validate_runtime_config_reasoning(&config)?;
 
         let bus = EventBus::new(1024);
-        let session_store = registry
-            .session_stores
+        let thread_store = registry
+            .thread_stores
             .first()
             .map(|factory| factory.create());
         let mut tool_registry = ToolRegistry::default();
@@ -230,12 +268,16 @@ impl Runtime {
             .clone()
             .unwrap_or_else(|| workspace.join(".roder"));
         let context_artifacts = Arc::new(
-            session_store
+            thread_store
                 .as_ref()
-                .and_then(|store| store.local_session_root())
-                .map(ContextArtifactStore::new_session_scoped)
+                .and_then(|store| store.local_thread_root())
+                .map(ContextArtifactStore::new_thread_scoped)
                 .unwrap_or_else(|| ContextArtifactStore::new(default_context_artifact_dir())),
         );
+        let goals = Arc::new(RuntimeGoalController::new(
+            bus.clone(),
+            thread_store.clone(),
+        ));
         let runtime = Self {
             bus,
             registry,
@@ -252,8 +294,9 @@ impl Runtime {
                 workspace,
                 roadmap_data_dir,
             )),
+            goals,
             context_artifacts,
-            session_store,
+            thread_store,
             tool_registry,
             skills: RwLock::new(SkillRegistry::load(SkillRegistryOptions::new(
                 PathBuf::new(),
@@ -318,6 +361,7 @@ impl Runtime {
             "slash-command".to_string(),
             runtime_config.policy_mode,
             runtime_config.workspace.as_deref(),
+            Some(&runtime_config.command_shell),
         );
         executor.execute(ctx, tool_call).await
     }
@@ -328,13 +372,16 @@ impl Runtime {
         turn_id: TurnId,
         mode: PolicyMode,
         workspace: Option<&str>,
+        command_shell: Option<&str>,
     ) -> ToolExecutionContext {
         let mut ctx = ToolExecutionContext::new(thread_id, turn_id, mode)
+            .with_command_shell(command_shell.unwrap_or_default())
             .with_process_runner(Arc::new(LocalProcessRunner))
             .with_context_artifacts(self.context_artifacts.clone())
+            .with_goal_controller(self.goals.clone())
             .with_subagent_trace_sink(Arc::new(RuntimeSubagentTraceSink::new(
                 self.bus.clone(),
-                self.session_store.clone(),
+                self.thread_store.clone(),
             )));
         if let Some(workspace) = workspace {
             ctx = ctx.with_workspace_handle(Arc::new(ScopedFilesystem::new(workspace)));
@@ -384,6 +431,12 @@ impl Runtime {
     pub async fn set_file_backed_dynamic_context(&self, enabled: bool) -> RuntimeConfig {
         let mut cfg = self.config.write().await;
         cfg.file_backed_dynamic_context = enabled;
+        cfg.clone()
+    }
+
+    pub async fn set_command_shell(&self, shell: String) -> RuntimeConfig {
+        let mut cfg = self.config.write().await;
+        cfg.command_shell = shell;
         cfg.clone()
     }
 
@@ -665,24 +718,27 @@ impl Runtime {
         effective_reasoning_for_model(cfg, &cfg.default_model)
     }
 
-    pub async fn create_session(&self, title: Option<String>) -> anyhow::Result<SessionMetadata> {
-        self.create_session_with(CreateSessionRequest {
+    pub async fn create_thread(&self, title: Option<String>) -> anyhow::Result<ThreadMetadata> {
+        self.create_thread_with(CreateThreadRequest {
             title,
-            ..CreateSessionRequest::default()
+            workspace: self.workspace.display().to_string(),
+            provider: None,
+            model: None,
         })
         .await
     }
 
-    pub async fn create_session_with(
+    pub async fn create_thread_with(
         &self,
-        req: CreateSessionRequest,
-    ) -> anyhow::Result<SessionMetadata> {
+        req: CreateThreadRequest,
+    ) -> anyhow::Result<ThreadMetadata> {
         let cfg = self.config.read().await.clone();
         let now = OffsetDateTime::now_utc();
-        let metadata = SessionMetadata {
+        let workspace = validate_thread_workspace(&req.workspace)?;
+        let metadata = ThreadMetadata {
             thread_id: uuid::Uuid::new_v4().to_string(),
             title: req.title,
-            workspace: req.workspace.or(cfg.workspace),
+            workspace,
             provider: Some(req.provider.unwrap_or(cfg.default_provider)),
             model: Some(req.model.unwrap_or(cfg.default_model)),
             runner_destination: cfg.remote_runner_destination.clone(),
@@ -690,14 +746,15 @@ impl Runtime {
             created_at: now,
             updated_at: now,
             message_count: 0,
+            usage: None,
         };
 
-        let metadata = if let Some(store) = &self.session_store {
-            store.create_session(metadata).await?
+        let metadata = if let Some(store) = &self.thread_store {
+            store.create_thread(metadata).await?
         } else {
             metadata
         };
-        self.emit(RoderEvent::SessionCreated(SessionCreated {
+        self.emit(RoderEvent::ThreadCreated(ThreadCreated {
             thread_id: metadata.thread_id.clone(),
             timestamp: OffsetDateTime::now_utc(),
         }))
@@ -705,28 +762,31 @@ impl Runtime {
         Ok(metadata)
     }
 
-    pub async fn list_sessions(&self) -> anyhow::Result<Vec<SessionMetadata>> {
-        if let Some(store) = &self.session_store {
-            return store.list_sessions().await;
+    pub async fn list_threads(&self) -> anyhow::Result<Vec<ThreadMetadata>> {
+        if let Some(store) = &self.thread_store {
+            return store.list_threads().await;
         }
         Ok(Vec::new())
     }
 
-    pub async fn archive_session(&self, thread_id: &str) -> anyhow::Result<bool> {
-        if let Some(store) = &self.session_store {
-            return store.archive_session(&thread_id.to_string()).await;
+    pub async fn archive_thread(&self, thread_id: &str) -> anyhow::Result<bool> {
+        if let Some(store) = &self.thread_store {
+            return store.archive_thread(&thread_id.to_string()).await;
         }
         Ok(false)
     }
 
     pub async fn start_team(&self, req: TeamStartRequest) -> anyhow::Result<TeamState> {
         let cfg = self.config.read().await.clone();
+        let workspace = self.workspace.display().to_string();
         let lead_thread_id = match req.lead_thread_id {
             Some(thread_id) => thread_id,
             None => {
-                self.create_session_with(CreateSessionRequest {
+                self.create_thread_with(CreateThreadRequest {
                     title: Some("Team lead".to_string()),
-                    ..CreateSessionRequest::default()
+                    workspace: workspace.clone(),
+                    provider: None,
+                    model: None,
                 })
                 .await?
                 .thread_id
@@ -742,11 +802,11 @@ impl Runtime {
 
         for (index, member) in req.members.into_iter().enumerate() {
             let thread = self
-                .create_session_with(CreateSessionRequest {
+                .create_thread_with(CreateThreadRequest {
                     title: Some(member.name.clone()),
+                    workspace: workspace.clone(),
                     provider: member.model_provider.clone(),
                     model: member.model.clone(),
-                    ..CreateSessionRequest::default()
                 })
                 .await?;
             let member_id = format!("member-{}", index + 1);
@@ -809,11 +869,11 @@ impl Runtime {
     ) -> anyhow::Result<TeamState> {
         let cfg = self.config.read().await.clone();
         let thread = self
-            .create_session_with(CreateSessionRequest {
+            .create_thread_with(CreateThreadRequest {
                 title: Some(req.name.clone()),
+                workspace: self.workspace.display().to_string(),
                 provider: req.model_provider.clone(),
                 model: req.model.clone(),
-                ..CreateSessionRequest::default()
             })
             .await?;
         let team = self
@@ -867,6 +927,7 @@ impl Runtime {
         self.teams
             .append_mailbox_message(team_id, None, member_id.to_string(), message.clone())
             .await?;
+        let workspace = self.workspace.display().to_string();
         let turn_id = if member.status == TeamMemberStatus::Running {
             if let Some(turn_id) = member.current_turn_id.clone() {
                 self.steer_turn(
@@ -885,7 +946,7 @@ impl Runtime {
                     provider_override: member.model_provider.clone(),
                     model_override: member.model.clone(),
                     reasoning_override: None,
-                    workspace: None,
+                    workspace: workspace.clone(),
                     instructions: crate::default_instructions(),
                     task_ledger_required: false,
                 })
@@ -899,7 +960,7 @@ impl Runtime {
                 provider_override: member.model_provider.clone(),
                 model_override: member.model.clone(),
                 reasoning_override: None,
-                workspace: None,
+                workspace,
                 instructions: crate::default_instructions(),
                 task_ledger_required: false,
             })
@@ -1098,23 +1159,37 @@ impl Runtime {
         Ok(())
     }
 
-    pub async fn load_session(
+    pub async fn load_thread(
         &self,
         thread_id: &ThreadId,
     ) -> anyhow::Result<Option<ThreadSnapshot>> {
-        let loaded = if let Some(store) = &self.session_store {
-            store.load_session(thread_id).await?
+        let loaded = if let Some(store) = &self.thread_store {
+            store.load_thread(thread_id).await?
         } else {
             None
         };
         if loaded.is_some() {
-            self.emit(RoderEvent::SessionLoaded(SessionLoaded {
+            self.emit(RoderEvent::ThreadLoaded(ThreadLoaded {
                 thread_id: thread_id.clone(),
                 timestamp: OffsetDateTime::now_utc(),
             }))
             .await;
         }
         Ok(loaded)
+    }
+
+    pub async fn workspace_for_thread(&self, thread_id: &ThreadId) -> anyhow::Result<String> {
+        if let Some(store) = &self.thread_store {
+            let snapshot = store
+                .load_thread(thread_id)
+                .await?
+                .ok_or_else(|| anyhow::anyhow!("thread not found: {thread_id}"))?;
+            let metadata = snapshot
+                .metadata
+                .ok_or_else(|| anyhow::anyhow!("thread metadata missing for {thread_id}"))?;
+            return Ok(metadata.workspace);
+        }
+        Ok(self.workspace.display().to_string())
     }
 
     async fn runner_session_for_thread(
@@ -1136,9 +1211,9 @@ impl Runtime {
                     destination.provider_id
                 )
             })?;
-        let persisted_state = if let Some(store) = &self.session_store {
+        let persisted_state = if let Some(store) = &self.thread_store {
             store
-                .load_session(thread_id)
+                .load_thread(thread_id)
                 .await?
                 .and_then(|snapshot| snapshot.metadata)
                 .and_then(|metadata| metadata.runner_state)
@@ -1167,10 +1242,10 @@ impl Runtime {
         let Some((destination, session)) = runner else {
             return Ok(());
         };
-        let Some(store) = &self.session_store else {
+        let Some(store) = &self.thread_store else {
             return Ok(());
         };
-        let Some(snapshot) = store.load_session(thread_id).await? else {
+        let Some(snapshot) = store.load_thread(thread_id).await? else {
             return Ok(());
         };
         let Some(mut metadata) = snapshot.metadata else {
@@ -1179,15 +1254,42 @@ impl Runtime {
         metadata.runner_destination = Some(destination.clone());
         metadata.runner_state = Some(session.state());
         metadata.updated_at = OffsetDateTime::now_utc();
-        store.update_session_metadata(metadata).await?;
+        store.update_thread_metadata(metadata).await?;
+        Ok(())
+    }
+
+    async fn record_thread_usage_metadata(
+        &self,
+        thread_id: &ThreadId,
+        usage: &TokenUsage,
+    ) -> anyhow::Result<()> {
+        if usage.is_empty() {
+            return Ok(());
+        }
+        let Some(store) = &self.thread_store else {
+            return Ok(());
+        };
+        let Some(snapshot) = store.load_thread(thread_id).await? else {
+            return Ok(());
+        };
+        let Some(mut metadata) = snapshot.metadata else {
+            return Ok(());
+        };
+        metadata
+            .usage
+            .get_or_insert_with(ThreadUsageMetadata::default)
+            .add_token_usage(usage);
+        metadata.updated_at = OffsetDateTime::now_utc();
+        store.update_thread_metadata(metadata).await?;
         Ok(())
     }
 
     pub fn start_turn(
         self: &Arc<Self>,
-        req: StartTurnRequest,
+        mut req: StartTurnRequest,
     ) -> BoxFuture<'_, anyhow::Result<TurnId>> {
         Box::pin(async move {
+            req.workspace = validate_thread_workspace(&req.workspace)?;
             let cfg = self.config.read().await.clone();
             let provider = req
                 .provider_override
@@ -1197,6 +1299,7 @@ impl Runtime {
             let turn_id = uuid::Uuid::new_v4().to_string();
             let (abort_handle, abort_registration) = AbortHandle::new_pair();
             let active = ActiveTurnHandle {
+                thread_id: req.thread_id.clone(),
                 abort: abort_handle,
                 steers: Arc::new(Mutex::new(Vec::new())),
             };
@@ -1214,22 +1317,81 @@ impl Runtime {
                     abort_registration,
                 )
                 .await;
-                if let Ok(Err(err)) = result {
+                let completed = matches!(&result, Ok(Ok(TurnRunOutcome::Completed)));
+                if let Ok(Err(err)) = &result {
                     // run_turn emits failures after the stream starts; this covers setup/startup errors.
                     runtime
                         .emit(RoderEvent::TurnFailed(TurnFailed {
-                            thread_id: thread_id_for_task,
+                            thread_id: thread_id_for_task.clone(),
                             turn_id: turn_id_for_task.clone(),
                             error: err.to_string(),
                             error_kind: None,
+                            usage: None,
                             timestamp: OffsetDateTime::now_utc(),
                         }))
                         .await;
                 }
                 runtime.active_turns.write().await.remove(&turn_id_for_task);
+                if completed {
+                    let _ = runtime
+                        .continue_active_goal_after_turn(thread_id_for_task)
+                        .await;
+                }
             });
             Ok(turn_id)
         })
+    }
+
+    pub(crate) async fn has_active_turn_for_thread(&self, thread_id: &ThreadId) -> bool {
+        self.active_turns
+            .read()
+            .await
+            .values()
+            .any(|handle| &handle.thread_id == thread_id)
+    }
+
+    pub async fn active_turn_for_thread(&self, thread_id: &ThreadId) -> Option<TurnId> {
+        self.active_turns
+            .read()
+            .await
+            .iter()
+            .find_map(|(turn_id, handle)| (&handle.thread_id == thread_id).then(|| turn_id.clone()))
+    }
+
+    pub async fn thread_activity(&self, thread_id: &ThreadId) -> ThreadActivity {
+        let Some(active_turn_id) = self.active_turn_for_thread(thread_id).await else {
+            return ThreadActivity::default();
+        };
+
+        let mut active_flags = Vec::new();
+        {
+            let pending_approvals = self.pending_tool_approvals.lock().await;
+            if pending_approvals
+                .values()
+                .any(|pending| &pending.thread_id == thread_id && pending.turn_id == active_turn_id)
+            {
+                active_flags.push("approvalRequired".to_string());
+            }
+        }
+        {
+            let pending_inputs = self.pending_user_inputs.lock().await;
+            if pending_inputs
+                .values()
+                .any(|pending| &pending.thread_id == thread_id && pending.turn_id == active_turn_id)
+            {
+                active_flags.push("userInputRequired".to_string());
+            }
+        }
+        if self.pending_plan_exit().await.is_some_and(|pending| {
+            &pending.thread_id == thread_id && pending.turn_id == active_turn_id
+        }) {
+            active_flags.push("planExitRequired".to_string());
+        }
+
+        ThreadActivity {
+            active_turn_id: Some(active_turn_id),
+            active_flags,
+        }
     }
 
     pub async fn interrupt_turn(&self, thread_id: ThreadId, turn_id: TurnId) -> anyhow::Result<()> {
@@ -1293,18 +1455,19 @@ impl Runtime {
         self: &Arc<Self>,
         req: StartTurnRequest,
         turn_id: TurnId,
-    ) -> anyhow::Result<()> {
+    ) -> anyhow::Result<TurnRunOutcome> {
+        let turn_started_at = OffsetDateTime::now_utc();
         self.emit(RoderEvent::TurnStarted(TurnStarted {
             thread_id: req.thread_id.clone(),
             turn_id: turn_id.clone(),
             runtime_profile: self.config.read().await.runtime_profile,
-            timestamp: OffsetDateTime::now_utc(),
+            timestamp: turn_started_at,
         }))
         .await;
         self.persist_turn_item(
             &req.thread_id,
             &turn_id,
-            &ConversationItem::UserMessage(UserMessage::with_images(
+            &TranscriptItem::UserMessage(UserMessage::with_images(
                 req.message.clone(),
                 req.images.clone(),
             )),
@@ -1323,6 +1486,8 @@ impl Runtime {
         }
         let runtime_profile = cfg.runtime_profile;
         let turn_deadline = turn_deadline_for_config(&cfg);
+        let deadline_finalization_reserve =
+            crate::deadline_policy::finalization_reserve_seconds(cfg.turn_deadline_seconds);
         let provider = req
             .provider_override
             .clone()
@@ -1334,36 +1499,40 @@ impl Runtime {
         let engine = self.engine_for(&provider)?;
         let capabilities = engine.capabilities();
         let model_profile = model_profile_for_model(&cfg, &model);
-        let tools = self.filtered_tool_specs(&cfg, &model, model_profile.as_ref());
-        let workspace = req.workspace.clone().or_else(|| cfg.workspace.clone());
+        let tools = if capabilities.tool_calls {
+            self.filtered_tool_specs(&cfg, &model, model_profile.as_ref())
+        } else {
+            Vec::new()
+        };
+        let workspace = req.workspace.clone();
         let parallel_tool_calls = parallel_tool_calls_for_model(&cfg, &model);
         let tool_choice = if tools.is_empty() {
             ToolChoice::None
         } else {
             ToolChoice::Auto
         };
-        let mut conversation = self.conversation_for_turn(&req, &turn_id, &model).await?;
+        let mut transcript = self.transcript_for_turn(&req, &turn_id, &model).await?;
         if let Some(summary) = model_switch_summary(
-            &conversation,
+            &transcript,
             model_profile.as_ref(),
             &provider,
             &model,
             &tools,
         ) {
-            let item = ConversationItem::UserMessage(UserMessage::text(summary));
+            let item = TranscriptItem::UserMessage(UserMessage::text(summary));
             self.persist_turn_item(&req.thread_id, &turn_id, &item)
                 .await?;
-            conversation.push(item);
+            transcript.push(item);
         }
         let runner_session = self.runner_session_for_thread(&req.thread_id).await?;
-        if !capabilities.image_input && conversation_has_images(&conversation) {
+        if !capabilities.image_input && transcript_has_images(&transcript) {
             self.fail_turn_with_error(
                 &req.thread_id,
                 &turn_id,
                 format!("provider {provider} does not support image input"),
             )
             .await?;
-            return Ok(());
+            return Ok(TurnRunOutcome::Stopped);
         }
         let mut final_assistant_text = String::new();
         let mut final_phase_messages = Vec::<AssistantMessage>::new();
@@ -1374,26 +1543,85 @@ impl Runtime {
             VerificationGateState::new(req.message.clone(), runtime_profile);
         let mut speed_policy = SpeedPolicyState::default();
         let mut reliability = TurnReliabilityState::default();
+        let mut turn_usage = TokenUsage::default();
+        let mut deadline_finalization_requested = false;
+        let mut deadline_scoreable_completion_requested = false;
+        let mut task_ledger_completion_reminders = 0_u8;
+        let mut task_ledger_scoreable_checkpoints = 0_u8;
+        let mut provider_stream_retry_attempts = 0_u32;
 
-        for _ in 0..MAX_TOOL_ROUNDS_PER_TURN {
+        'tool_rounds: for _ in 0..MAX_TOOL_ROUNDS_PER_TURN {
             if let Some(deadline) = turn_deadline
                 && deadline_expired(deadline)
             {
-                self.fail_turn_due_to_deadline(&req.thread_id, &turn_id, deadline, &conversation)
+                self.fail_turn_due_to_deadline(&req.thread_id, &turn_id, deadline, &transcript)
                     .await?;
-                return Ok(());
+                return Ok(TurnRunOutcome::Stopped);
             }
             let steers = self.drain_turn_steers(&turn_id).await;
-            self.append_steers(&req, &turn_id, &mut conversation, steers)
+            self.append_steers(&req, &turn_id, &mut transcript, steers)
                 .await?;
-            if !capabilities.image_input && conversation_has_images(&conversation) {
+            if runtime_profile == RuntimeProfile::Eval
+                && let Some(remaining) = crate::deadline_policy::should_start_finalization(
+                    turn_deadline,
+                    deadline_finalization_reserve,
+                    deadline_finalization_requested || deadline_scoreable_completion_requested,
+                )
+            {
+                if req.task_ledger_required
+                    && task_ledger_completion_reminders < TASK_LEDGER_COMPLETION_REMINDER_LIMIT
+                    && let Some(prompt) = task_ledger_completion_prompt(&transcript)
+                {
+                    task_ledger_completion_reminders += 1;
+                    deadline_scoreable_completion_requested = true;
+                    let item = TranscriptItem::UserMessage(UserMessage::text(
+                        task_ledger_deadline_completion_prompt(
+                            remaining,
+                            deadline_finalization_reserve,
+                            &prompt,
+                        ),
+                    ));
+                    self.persist_turn_item(&req.thread_id, &turn_id, &item)
+                        .await?;
+                    transcript.push(item);
+                    continue 'tool_rounds;
+                } else {
+                    self.start_deadline_finalization(
+                        &req.thread_id,
+                        &turn_id,
+                        &mut transcript,
+                        remaining,
+                    )
+                    .await?;
+                    deadline_finalization_requested = true;
+                }
+            }
+            if runtime_profile == RuntimeProfile::Eval
+                && req.task_ledger_required
+                && !deadline_finalization_requested
+                && task_ledger_scoreable_checkpoints < TASK_LEDGER_SCOREABLE_CHECKPOINT_LIMIT
+                && let Some(remaining) = deadline_remaining_seconds(turn_deadline)
+                && remaining <= TASK_LEDGER_SCOREABLE_CHECKPOINT_SECONDS
+                && remaining > deadline_finalization_reserve
+                && let Some(prompt) = task_ledger_completion_prompt(&transcript)
+            {
+                task_ledger_scoreable_checkpoints += 1;
+                let item = TranscriptItem::UserMessage(UserMessage::text(
+                    task_ledger_scoreable_checkpoint_prompt(remaining, &prompt),
+                ));
+                self.persist_turn_item(&req.thread_id, &turn_id, &item)
+                    .await?;
+                transcript.push(item);
+                continue 'tool_rounds;
+            }
+            if !capabilities.image_input && transcript_has_images(&transcript) {
                 self.fail_turn_with_error(
                     &req.thread_id,
                     &turn_id,
                     format!("provider {provider} does not support image input"),
                 )
                 .await?;
-                return Ok(());
+                return Ok(TurnRunOutcome::Stopped);
             }
 
             let speed_policy_decision =
@@ -1408,10 +1636,10 @@ impl Runtime {
                     &provider,
                     &model,
                     limit,
-                    &conversation,
+                    &transcript,
                 )
                 .await?;
-                return Ok(());
+                return Ok(TurnRunOutcome::Stopped);
             }
             self.emit(RoderEvent::InferenceStarted(InferenceStarted {
                 thread_id: req.thread_id.clone(),
@@ -1429,10 +1657,14 @@ impl Runtime {
             }
             if req.task_ledger_required
                 && runtime_profile == RuntimeProfile::Eval
-                && !conversation_has_task_ledger(&conversation)
+                && !transcript_has_task_ledger(&transcript)
             {
                 instructions = apply_task_ledger_required(instructions);
             }
+            instructions = self
+                .goals
+                .apply_goal_instructions(&req.thread_id, instructions)
+                .await?;
             let mut request_metadata = serde_json::json!({});
             if let Some(decision) = &speed_policy_decision {
                 request_metadata["speedPolicy"] = serde_json::json!(decision);
@@ -1451,15 +1683,47 @@ impl Runtime {
                     "autoCompactTokenLimit": profile.auto_compact_token_limit,
                 });
             }
+            let task_ledger_required_this_round = req.task_ledger_required
+                && runtime_profile == RuntimeProfile::Eval
+                && !deadline_finalization_requested
+                && !transcript_has_task_ledger(&transcript);
+            let task_ledger_tools = (capabilities.tool_calls && task_ledger_required_this_round)
+                .then(|| self.task_ledger_tool_specs(model_profile.as_ref()))
+                .filter(|tools| !tools.is_empty());
+            let request_tools = if deadline_finalization_requested {
+                Vec::new()
+            } else if let Some(ledger_tools) = &task_ledger_tools {
+                ledger_tools.clone()
+            } else {
+                tools.clone()
+            };
+            let request_tool_choice = if deadline_finalization_requested {
+                ToolChoice::None
+            } else if task_ledger_tools.is_some() {
+                ToolChoice::Specific(TASK_LEDGER_TOOL_NAME.to_string())
+            } else {
+                tool_choice.clone()
+            };
+            if deadline_finalization_requested {
+                request_metadata["deadlineFinalization"] = serde_json::json!({
+                    "reserveSeconds": deadline_finalization_reserve,
+                    "remainingSeconds": deadline_remaining_seconds(turn_deadline),
+                });
+            } else if deadline_scoreable_completion_requested {
+                request_metadata["deadlineScoreableCompletion"] = serde_json::json!({
+                    "reserveSeconds": deadline_finalization_reserve,
+                    "remainingSeconds": deadline_remaining_seconds(turn_deadline),
+                });
+            }
             let request = AgentInferenceRequest {
                 model: ModelSelection {
                     provider: provider.clone(),
                     model: model.clone(),
                 },
                 instructions,
-                conversation: conversation.clone(),
-                tools: tools.clone(),
-                tool_choice: tool_choice.clone(),
+                transcript: transcript.clone(),
+                tools: request_tools,
+                tool_choice: request_tool_choice,
                 reasoning: reasoning_from_decision(
                     speed_policy_decision.as_ref(),
                     reasoning_for_model(&cfg, &model),
@@ -1483,18 +1747,54 @@ impl Runtime {
                 turn_id: &turn_id,
             };
             let stream_future = engine.stream_turn(ctx, request);
-            let mut stream = if let Some(deadline) = turn_deadline {
+            let mut stream = if let Some((deadline, timeout_action)) = inference_timeout_deadline(
+                turn_deadline,
+                runtime_profile,
+                req.task_ledger_required,
+                deadline_finalization_reserve,
+                deadline_finalization_requested || deadline_scoreable_completion_requested,
+                task_ledger_scoreable_checkpoints,
+                &transcript,
+            ) {
                 match tokio::time::timeout_at(deadline_instant(deadline), stream_future).await {
                     Ok(stream) => stream?,
                     Err(_) => {
+                        if runtime_profile == RuntimeProfile::Eval
+                            && !deadline_finalization_requested
+                        {
+                            let remaining = deadline_remaining_seconds(turn_deadline).unwrap_or(0);
+                            if timeout_action == InferenceTimeoutAction::ScoreableCheckpoint
+                                && task_ledger_scoreable_checkpoints
+                                    < TASK_LEDGER_SCOREABLE_CHECKPOINT_LIMIT
+                                && let Some(prompt) = task_ledger_completion_prompt(&transcript)
+                            {
+                                task_ledger_scoreable_checkpoints += 1;
+                                let item = TranscriptItem::UserMessage(UserMessage::text(
+                                    task_ledger_scoreable_checkpoint_prompt(remaining, &prompt),
+                                ));
+                                self.persist_turn_item(&req.thread_id, &turn_id, &item)
+                                    .await?;
+                                transcript.push(item);
+                                continue 'tool_rounds;
+                            }
+                            self.start_deadline_finalization(
+                                &req.thread_id,
+                                &turn_id,
+                                &mut transcript,
+                                remaining,
+                            )
+                            .await?;
+                            deadline_finalization_requested = true;
+                            continue 'tool_rounds;
+                        }
                         self.fail_turn_due_to_deadline(
                             &req.thread_id,
                             &turn_id,
                             deadline,
-                            &conversation,
+                            &transcript,
                         )
                         .await?;
-                        return Ok(());
+                        return Ok(TurnRunOutcome::Stopped);
                     }
                 }
             } else {
@@ -1507,18 +1807,55 @@ impl Runtime {
             let mut provider_metadata = None;
 
             loop {
-                let next = if let Some(deadline) = turn_deadline {
+                let next = if let Some((deadline, timeout_action)) = inference_timeout_deadline(
+                    turn_deadline,
+                    runtime_profile,
+                    req.task_ledger_required,
+                    deadline_finalization_reserve,
+                    deadline_finalization_requested || deadline_scoreable_completion_requested,
+                    task_ledger_scoreable_checkpoints,
+                    &transcript,
+                ) {
                     match tokio::time::timeout_at(deadline_instant(deadline), stream.next()).await {
                         Ok(next) => next,
                         Err(_) => {
+                            if runtime_profile == RuntimeProfile::Eval
+                                && !deadline_finalization_requested
+                            {
+                                let remaining =
+                                    deadline_remaining_seconds(turn_deadline).unwrap_or(0);
+                                if timeout_action == InferenceTimeoutAction::ScoreableCheckpoint
+                                    && task_ledger_scoreable_checkpoints
+                                        < TASK_LEDGER_SCOREABLE_CHECKPOINT_LIMIT
+                                    && let Some(prompt) = task_ledger_completion_prompt(&transcript)
+                                {
+                                    task_ledger_scoreable_checkpoints += 1;
+                                    let item = TranscriptItem::UserMessage(UserMessage::text(
+                                        task_ledger_scoreable_checkpoint_prompt(remaining, &prompt),
+                                    ));
+                                    self.persist_turn_item(&req.thread_id, &turn_id, &item)
+                                        .await?;
+                                    transcript.push(item);
+                                    continue 'tool_rounds;
+                                }
+                                self.start_deadline_finalization(
+                                    &req.thread_id,
+                                    &turn_id,
+                                    &mut transcript,
+                                    remaining,
+                                )
+                                .await?;
+                                deadline_finalization_requested = true;
+                                continue 'tool_rounds;
+                            }
                             self.fail_turn_due_to_deadline(
                                 &req.thread_id,
                                 &turn_id,
                                 deadline,
-                                &conversation,
+                                &transcript,
                             )
                             .await?;
-                            return Ok(());
+                            return Ok(TurnRunOutcome::Stopped);
                         }
                     }
                 } else {
@@ -1530,11 +1867,50 @@ impl Runtime {
                 let event = match res {
                     Ok(event) => event,
                     Err(err) => {
+                        let error = err.to_string();
+                        if runtime_profile == RuntimeProfile::Eval
+                            && !deadline_finalization_requested
+                            && let Some(cause) = provider_stream_retry_cause(&error)
+                        {
+                            let retry_attempt = provider_stream_retry_attempts.saturating_add(1);
+                            let policy: ReliabilityRequestPolicy = cfg.reliability.clone().into();
+                            if retry_attempt < policy.provider_retry_max_attempts {
+                                provider_stream_retry_attempts = retry_attempt;
+                                let delay_ms = provider_retry_delay_ms(&policy, retry_attempt);
+                                self.emit(RoderEvent::ReliabilityRetryRecorded(
+                                    ReliabilityRetryRecorded {
+                                        context: ReliabilityContext {
+                                            thread_id: req.thread_id.clone(),
+                                            turn_id: turn_id.clone(),
+                                            provider: Some(provider.clone()),
+                                            model: Some(model.clone()),
+                                            ..ReliabilityContext::default()
+                                        },
+                                        error_class: ReliabilityErrorClass::ProviderError,
+                                        decision: ReliabilityRetryDecision::Retry,
+                                        attempt: retry_attempt,
+                                        max_attempts: policy.provider_retry_max_attempts,
+                                        delay_ms: Some(delay_ms),
+                                        details: ReliabilityDetails::redacted(format!(
+                                            "{cause}: {error}"
+                                        )),
+                                        timestamp: OffsetDateTime::now_utc(),
+                                    },
+                                ))
+                                .await;
+                                if delay_ms > 0 {
+                                    tokio::time::sleep(std::time::Duration::from_millis(delay_ms))
+                                        .await;
+                                }
+                                continue 'tool_rounds;
+                            }
+                        }
                         self.emit(RoderEvent::TurnFailed(TurnFailed {
                             thread_id: req.thread_id.clone(),
                             turn_id: turn_id.clone(),
-                            error: err.to_string(),
+                            error,
                             error_kind: None,
+                            usage: None,
                             timestamp: OffsetDateTime::now_utc(),
                         }))
                         .await;
@@ -1591,7 +1967,7 @@ impl Runtime {
                         self.persist_turn_item(
                             &req.thread_id,
                             &turn_id,
-                            &ConversationItem::Error(ErrorRecord {
+                            &TranscriptItem::Error(ErrorRecord {
                                 message: failure.message.clone(),
                             }),
                         )
@@ -1601,6 +1977,7 @@ impl Runtime {
                             turn_id: turn_id.clone(),
                             error: failure.message,
                             error_kind: None,
+                            usage: None,
                             timestamp: OffsetDateTime::now_utc(),
                         }))
                         .await;
@@ -1610,11 +1987,15 @@ impl Runtime {
                             TeamMemberStatus::Failed,
                         )
                         .await?;
-                        return Ok(());
+                        return Ok(TurnRunOutcome::Stopped);
+                    }
+                    InferenceEvent::Usage(usage) => {
+                        turn_usage.add_assign(&usage);
                     }
                     InferenceEvent::Completed(_)
-                    | InferenceEvent::Usage(_)
                     | InferenceEvent::Compaction(_)
+                    | InferenceEvent::HostedToolCallStarted(_)
+                    | InferenceEvent::HostedToolCallCompleted(_)
                     | InferenceEvent::ToolCallStarted(_)
                     | InferenceEvent::ToolCallDelta(_) => {}
                     InferenceEvent::ProviderMetadata(metadata) => {
@@ -1631,10 +2012,10 @@ impl Runtime {
                 let steers = self.drain_turn_steers(&turn_id).await;
                 if !steers.is_empty() {
                     for message in phase_messages {
-                        let item = ConversationItem::AssistantMessage(message);
+                        let item = TranscriptItem::AssistantMessage(message);
                         self.persist_turn_item(&req.thread_id, &turn_id, &item)
                             .await?;
-                        conversation.push(item);
+                        transcript.push(item);
                         self.persist_model_profile_segment(
                             &req.thread_id,
                             &turn_id,
@@ -1646,13 +2027,13 @@ impl Runtime {
                         .await?;
                     }
                     if !assistant_text.is_empty() {
-                        let assistant = ConversationItem::AssistantMessage(AssistantMessage {
+                        let assistant = TranscriptItem::AssistantMessage(AssistantMessage {
                             text: assistant_text,
                             phase: Some(FINAL_ANSWER_PHASE.to_string()),
                         });
                         self.persist_turn_item(&req.thread_id, &turn_id, &assistant)
                             .await?;
-                        conversation.push(assistant);
+                        transcript.push(assistant);
                         self.persist_model_profile_segment(
                             &req.thread_id,
                             &turn_id,
@@ -1664,16 +2045,32 @@ impl Runtime {
                         .await?;
                     }
                     if let Some(metadata) = provider_metadata {
-                        let item = ConversationItem::ProviderMetadata(metadata);
+                        let item = TranscriptItem::ProviderMetadata(metadata);
                         self.persist_turn_item(&req.thread_id, &turn_id, &item)
                             .await?;
-                        conversation.push(item);
+                        transcript.push(item);
                     }
-                    self.append_steers(&req, &turn_id, &mut conversation, steers)
+                    self.append_steers(&req, &turn_id, &mut transcript, steers)
                         .await?;
                     continue;
                 }
-                if let Some(prompt) = verification_gate.blocking_prompt() {
+                if !deadline_finalization_requested
+                    && req.task_ledger_required
+                    && runtime_profile == RuntimeProfile::Eval
+                    && task_ledger_completion_reminders < TASK_LEDGER_COMPLETION_REMINDER_LIMIT
+                    && (!assistant_text.trim().is_empty() || !phase_messages.is_empty())
+                    && let Some(prompt) = task_ledger_completion_prompt(&transcript)
+                {
+                    task_ledger_completion_reminders += 1;
+                    let item = TranscriptItem::UserMessage(UserMessage::text(prompt));
+                    self.persist_turn_item(&req.thread_id, &turn_id, &item)
+                        .await?;
+                    transcript.push(item);
+                    continue;
+                }
+                if !deadline_finalization_requested
+                    && let Some(prompt) = verification_gate.blocking_prompt()
+                {
                     speed_policy.record_verification_required();
                     self.emit(RoderEvent::VerificationRequired(VerificationRequired {
                         thread_id: req.thread_id.clone(),
@@ -1686,11 +2083,20 @@ impl Runtime {
                         timestamp: OffsetDateTime::now_utc(),
                     }))
                     .await;
-                    let item = ConversationItem::UserMessage(UserMessage::text(prompt));
+                    let item = TranscriptItem::UserMessage(UserMessage::text(prompt));
                     self.persist_turn_item(&req.thread_id, &turn_id, &item)
                         .await?;
-                    conversation.push(item);
+                    transcript.push(item);
                     continue;
+                }
+                if deadline_finalization_requested
+                    && assistant_text.trim().is_empty()
+                    && phase_messages.is_empty()
+                {
+                    assistant_text = format!(
+                        "Deadline finalization completed without model text. {}",
+                        turn_partial_result(&transcript)
+                    );
                 }
                 final_phase_messages = phase_messages;
                 final_assistant_text = assistant_text;
@@ -1701,10 +2107,10 @@ impl Runtime {
             }
 
             for message in phase_messages {
-                let item = ConversationItem::AssistantMessage(message);
+                let item = TranscriptItem::AssistantMessage(message);
                 self.persist_turn_item(&req.thread_id, &turn_id, &item)
                     .await?;
-                conversation.push(item);
+                transcript.push(item);
                 self.persist_model_profile_segment(
                     &req.thread_id,
                     &turn_id,
@@ -1716,7 +2122,7 @@ impl Runtime {
                 .await?;
             }
             if !assistant_text.is_empty() {
-                conversation.push(ConversationItem::AssistantMessage(AssistantMessage {
+                transcript.push(TranscriptItem::AssistantMessage(AssistantMessage {
                     text: assistant_text,
                     phase: Some(FINAL_ANSWER_PHASE.to_string()),
                 }));
@@ -1731,20 +2137,20 @@ impl Runtime {
                 .await?;
             }
             if let Some(metadata) = provider_metadata {
-                let item = ConversationItem::ProviderMetadata(metadata);
+                let item = TranscriptItem::ProviderMetadata(metadata);
                 self.persist_turn_item(&req.thread_id, &turn_id, &item)
                     .await?;
-                conversation.push(item);
+                transcript.push(item);
             }
             for call in &tool_calls {
-                let tool_item = ConversationItem::ToolCall(ToolCallRecord {
+                let tool_item = TranscriptItem::ToolCall(ToolCallRecord {
                     id: call.id.clone(),
                     name: call.name.clone(),
                     arguments: call.arguments.clone(),
                 });
                 self.persist_turn_item(&req.thread_id, &turn_id, &tool_item)
                     .await?;
-                conversation.push(tool_item);
+                transcript.push(tool_item);
                 self.persist_model_profile_segment(
                     &req.thread_id,
                     &turn_id,
@@ -1758,9 +2164,9 @@ impl Runtime {
             if let Some(deadline) = turn_deadline
                 && deadline_expired(deadline)
             {
-                self.fail_turn_due_to_deadline(&req.thread_id, &turn_id, deadline, &conversation)
+                self.fail_turn_due_to_deadline(&req.thread_id, &turn_id, deadline, &transcript)
                     .await?;
-                return Ok(());
+                return Ok(TurnRunOutcome::Stopped);
             }
             let results = self
                 .route_tool_calls(
@@ -1768,7 +2174,7 @@ impl Runtime {
                     &turn_id,
                     tool_calls,
                     parallel_tool_calls,
-                    workspace.as_deref(),
+                    Some(workspace.as_str()),
                     turn_deadline,
                 )
                 .await?;
@@ -1783,14 +2189,14 @@ impl Runtime {
                     &provider,
                     &model,
                     limit,
-                    &conversation,
+                    &transcript,
                 )
                 .await?;
-                return Ok(());
+                return Ok(TurnRunOutcome::Stopped);
             }
             for result in results {
                 verification_gate.record_tool_result(&result);
-                conversation.push(ConversationItem::ToolResult(result));
+                transcript.push(TranscriptItem::ToolResult(result));
                 self.persist_model_profile_segment(
                     &req.thread_id,
                     &turn_id,
@@ -1801,8 +2207,8 @@ impl Runtime {
                 )
                 .await?;
             }
-            conversation = self
-                .compact_conversation_if_needed(&req.thread_id, &turn_id, &model, conversation)
+            transcript = self
+                .compact_transcript_if_needed(&req.thread_id, &turn_id, &model, transcript)
                 .await?;
         }
 
@@ -1812,7 +2218,7 @@ impl Runtime {
             self.persist_turn_item(
                 &req.thread_id,
                 &turn_id,
-                &ConversationItem::Error(ErrorRecord {
+                &TranscriptItem::Error(ErrorRecord {
                     message: message.clone(),
                 }),
             )
@@ -1822,19 +2228,20 @@ impl Runtime {
                 turn_id: turn_id.clone(),
                 error: message,
                 error_kind: None,
+                usage: None,
                 timestamp: OffsetDateTime::now_utc(),
             }))
             .await;
             self.complete_team_member_turn(&req.thread_id, &turn_id, TeamMemberStatus::Failed)
                 .await?;
-            return Ok(());
+            return Ok(TurnRunOutcome::Stopped);
         }
 
         if !final_reasoning_text.is_empty() {
             self.persist_turn_item(
                 &req.thread_id,
                 &turn_id,
-                &ConversationItem::ReasoningSummary(ReasoningSummary {
+                &TranscriptItem::ReasoningSummary(ReasoningSummary {
                     text: final_reasoning_text,
                 }),
             )
@@ -1844,7 +2251,7 @@ impl Runtime {
             self.persist_turn_item(
                 &req.thread_id,
                 &turn_id,
-                &ConversationItem::AssistantMessage(message),
+                &TranscriptItem::AssistantMessage(message),
             )
             .await?;
             self.persist_model_profile_segment(
@@ -1861,7 +2268,7 @@ impl Runtime {
             self.persist_turn_item(
                 &req.thread_id,
                 &turn_id,
-                &ConversationItem::AssistantMessage(AssistantMessage {
+                &TranscriptItem::AssistantMessage(AssistantMessage {
                     text: final_assistant_text,
                     phase: Some(FINAL_ANSWER_PHASE.to_string()),
                 }),
@@ -1881,14 +2288,26 @@ impl Runtime {
             self.persist_turn_item(
                 &req.thread_id,
                 &turn_id,
-                &ConversationItem::ProviderMetadata(metadata),
+                &TranscriptItem::ProviderMetadata(metadata),
             )
             .await?;
         }
 
+        let turn_usage_tokens = turn_usage.total_tokens as i64;
+        let completed_usage = (!turn_usage.is_empty()).then_some(turn_usage.clone());
+        self.record_thread_usage_metadata(&req.thread_id, &turn_usage)
+            .await?;
+        self.goals
+            .account_turn_usage(
+                &req.thread_id,
+                turn_usage_tokens,
+                OffsetDateTime::now_utc() - turn_started_at,
+            )
+            .await?;
         self.emit(RoderEvent::TurnCompleted(TurnCompleted {
             thread_id: req.thread_id.clone(),
             turn_id: turn_id.clone(),
+            usage: completed_usage,
             timestamp: OffsetDateTime::now_utc(),
         }))
         .await;
@@ -1896,7 +2315,7 @@ impl Runtime {
             .await?;
         self.persist_runner_state(&req.thread_id, runner_session.as_ref())
             .await?;
-        Ok(())
+        Ok(TurnRunOutcome::Completed)
     }
 
     async fn drain_turn_steers(&self, turn_id: &TurnId) -> Vec<UserMessage> {
@@ -1947,7 +2366,7 @@ impl Runtime {
         self.persist_turn_item(
             thread_id,
             turn_id,
-            &ConversationItem::Error(ErrorRecord {
+            &TranscriptItem::Error(ErrorRecord {
                 message: message.clone(),
             }),
         )
@@ -1957,6 +2376,7 @@ impl Runtime {
             turn_id: turn_id.clone(),
             error: message,
             error_kind: None,
+            usage: None,
             timestamp: OffsetDateTime::now_utc(),
         }))
         .await;
@@ -1970,9 +2390,9 @@ impl Runtime {
         thread_id: &ThreadId,
         turn_id: &TurnId,
         deadline: OffsetDateTime,
-        conversation: &[ConversationItem],
+        transcript: &[TranscriptItem],
     ) -> anyhow::Result<()> {
-        let partial_result = turn_partial_result(conversation);
+        let partial_result = turn_partial_result(transcript);
         self.emit(RoderEvent::TurnPartialResult(TurnPartialResult {
             thread_id: thread_id.clone(),
             turn_id: turn_id.clone(),
@@ -1992,7 +2412,7 @@ impl Runtime {
         self.persist_turn_item(
             thread_id,
             turn_id,
-            &ConversationItem::Error(ErrorRecord {
+            &TranscriptItem::Error(ErrorRecord {
                 message: format!("{message}: {partial_result}"),
             }),
         )
@@ -2002,11 +2422,34 @@ impl Runtime {
             turn_id: turn_id.clone(),
             error: message,
             error_kind: Some("deadline_timeout".to_string()),
+            usage: None,
             timestamp: OffsetDateTime::now_utc(),
         }))
         .await;
         self.complete_team_member_turn(thread_id, turn_id, TeamMemberStatus::Failed)
             .await?;
+        Ok(())
+    }
+
+    async fn start_deadline_finalization(
+        &self,
+        thread_id: &ThreadId,
+        turn_id: &TurnId,
+        transcript: &mut Vec<TranscriptItem>,
+        remaining_seconds: u64,
+    ) -> anyhow::Result<()> {
+        let item = TranscriptItem::UserMessage(crate::deadline_policy::finalization_message(
+            remaining_seconds,
+        ));
+        self.persist_turn_item(thread_id, turn_id, &item).await?;
+        transcript.push(item);
+        self.emit(RoderEvent::TurnPartialResult(TurnPartialResult {
+            thread_id: thread_id.clone(),
+            turn_id: turn_id.clone(),
+            summary: turn_partial_result(transcript),
+            timestamp: OffsetDateTime::now_utc(),
+        }))
+        .await;
         Ok(())
     }
 
@@ -2017,7 +2460,7 @@ impl Runtime {
         provider: &str,
         model: &str,
         limit: ReliabilityLimitHit,
-        conversation: &[ConversationItem],
+        transcript: &[TranscriptItem],
     ) -> anyhow::Result<()> {
         self.emit(RoderEvent::ReliabilityLimitRecorded(
             ReliabilityLimitRecorded {
@@ -2039,7 +2482,7 @@ impl Runtime {
             },
         ))
         .await;
-        let partial_result = turn_partial_result(conversation);
+        let partial_result = turn_partial_result(transcript);
         self.emit(RoderEvent::TurnPartialResult(TurnPartialResult {
             thread_id: thread_id.clone(),
             turn_id: turn_id.clone(),
@@ -2051,7 +2494,7 @@ impl Runtime {
         self.persist_turn_item(
             thread_id,
             turn_id,
-            &ConversationItem::Error(ErrorRecord {
+            &TranscriptItem::Error(ErrorRecord {
                 message: format!("{message}: {partial_result}"),
             }),
         )
@@ -2061,6 +2504,7 @@ impl Runtime {
             turn_id: turn_id.clone(),
             error: message,
             error_kind: Some("reliability_limit".to_string()),
+            usage: None,
             timestamp: OffsetDateTime::now_utc(),
         }))
         .await;
@@ -2073,7 +2517,7 @@ impl Runtime {
         &self,
         req: &StartTurnRequest,
         turn_id: &TurnId,
-        conversation: &mut Vec<ConversationItem>,
+        transcript: &mut Vec<TranscriptItem>,
         steers: Vec<UserMessage>,
     ) -> anyhow::Result<()> {
         for mut steer in steers {
@@ -2081,10 +2525,10 @@ impl Runtime {
             if steer.text.is_empty() && steer.images.is_empty() {
                 continue;
             }
-            let item = ConversationItem::UserMessage(steer);
+            let item = TranscriptItem::UserMessage(steer);
             self.persist_turn_item(&req.thread_id, turn_id, &item)
                 .await?;
-            conversation.push(item);
+            transcript.push(item);
         }
         Ok(())
     }
@@ -2098,7 +2542,7 @@ impl Runtime {
         model: &str,
         segment: &str,
     ) -> anyhow::Result<()> {
-        let item = ConversationItem::ProviderMetadata(model_profile_segment_metadata(
+        let item = TranscriptItem::ProviderMetadata(model_profile_segment_metadata(
             profile, provider, model, segment,
         ));
         self.persist_turn_item(thread_id, turn_id, &item).await
@@ -2116,6 +2560,20 @@ impl Runtime {
         )
     }
 
+    fn task_ledger_tool_specs(
+        &self,
+        profile: Option<&ModelHarnessProfile>,
+    ) -> Vec<roder_api::tools::ToolSpec> {
+        self.tool_registry
+            .get(TASK_LEDGER_TOOL_NAME)
+            .map(|tool| {
+                tool.spec()
+                    .normalized_for_model_profile(schema_policy_for_model(profile))
+            })
+            .into_iter()
+            .collect()
+    }
+
     fn engine_for(&self, provider: &str) -> anyhow::Result<Arc<dyn InferenceEngine>> {
         self.registry
             .inference_engine(provider)
@@ -2129,7 +2587,7 @@ impl Runtime {
 
     pub async fn emit(&self, event: RoderEvent) -> EventEnvelope {
         let envelope = self.bus.emit(event);
-        if let (Some(store), Some(thread_id)) = (&self.session_store, envelope.thread_id.as_ref()) {
+        if let (Some(store), Some(thread_id)) = (&self.thread_store, envelope.thread_id.as_ref()) {
             let _ = store.append_event(thread_id, &envelope).await;
         }
         envelope
@@ -2139,24 +2597,24 @@ impl Runtime {
         &self,
         thread_id: &ThreadId,
         turn_id: &TurnId,
-        item: &ConversationItem,
+        item: &TranscriptItem,
     ) -> anyhow::Result<()> {
-        if let Some(store) = &self.session_store {
+        if let Some(store) = &self.thread_store {
             store.append_turn_item(thread_id, turn_id, item).await?;
         }
-        self.emit(RoderEvent::TurnItemAppended(TurnItemAppended {
+        self.emit(RoderEvent::TranscriptItemAppended(TranscriptItemAppended {
             thread_id: thread_id.clone(),
             turn_id: turn_id.clone(),
             item_type: match item {
-                ConversationItem::UserMessage(_) => "user_message",
-                ConversationItem::AssistantMessage(_) => "assistant_message",
-                ConversationItem::ReasoningSummary(_) => "reasoning_summary",
-                ConversationItem::ToolCall(_) => "tool_call",
-                ConversationItem::ToolResult(_) => "tool_result",
-                ConversationItem::FileChange(_) => "file_change",
-                ConversationItem::ContextCompaction(_) => "context_compaction",
-                ConversationItem::Error(_) => "error",
-                ConversationItem::ProviderMetadata(_) => "provider_metadata",
+                TranscriptItem::UserMessage(_) => "user_message",
+                TranscriptItem::AssistantMessage(_) => "assistant_message",
+                TranscriptItem::ReasoningSummary(_) => "reasoning_summary",
+                TranscriptItem::ToolCall(_) => "tool_call",
+                TranscriptItem::ToolResult(_) => "tool_result",
+                TranscriptItem::FileChange(_) => "file_change",
+                TranscriptItem::ContextCompaction(_) => "context_compaction",
+                TranscriptItem::Error(_) => "error",
+                TranscriptItem::ProviderMetadata(_) => "provider_metadata",
             }
             .to_string(),
             timestamp: OffsetDateTime::now_utc(),
@@ -2166,22 +2624,70 @@ impl Runtime {
     }
 }
 
-fn conversation_has_images(conversation: &[ConversationItem]) -> bool {
-    conversation.iter().any(|item| {
+fn transcript_has_images(transcript: &[TranscriptItem]) -> bool {
+    transcript.iter().any(|item| {
         matches!(
             item,
-            ConversationItem::UserMessage(message) if !message.images.is_empty()
+            TranscriptItem::UserMessage(message) if !message.images.is_empty()
         )
     })
 }
 
-fn conversation_has_task_ledger(conversation: &[ConversationItem]) -> bool {
-    conversation.iter().any(|item| {
+fn transcript_has_task_ledger(transcript: &[TranscriptItem]) -> bool {
+    transcript.iter().any(|item| {
         matches!(
             item,
-            ConversationItem::ToolResult(result)
-                if result.name.as_deref() == Some("task_ledger.update") && !result.is_error
+            TranscriptItem::ToolResult(result)
+                if result.name.as_deref() == Some(TASK_LEDGER_TOOL_NAME) && !result.is_error
         )
+    })
+}
+
+fn task_ledger_completion_prompt(transcript: &[TranscriptItem]) -> Option<String> {
+    let latest = transcript.iter().rev().find_map(|item| match item {
+        TranscriptItem::ToolResult(result)
+            if result.name.as_deref() == Some(TASK_LEDGER_TOOL_NAME) && !result.is_error =>
+        {
+            Some(result.result.as_str())
+        }
+        _ => None,
+    })?;
+    if !task_ledger_has_open_items(latest) {
+        return None;
+    }
+
+    let mut ledger = latest.chars().take(1500).collect::<String>();
+    if latest.chars().nth(1500).is_some() {
+        ledger.push_str("...");
+    }
+    Some(format!(
+        "Task Ledger Completion Required: the latest task ledger still has pending or in-progress items. Do not provide a final answer yet. Use tools to complete the remaining scoreable work, create or update any required output files, then call `{TASK_LEDGER_TOOL_NAME}` with every task completed and evidence before finalizing.\n\nLatest ledger:\n{ledger}"
+    ))
+}
+
+fn task_ledger_deadline_completion_prompt(
+    remaining_seconds: u64,
+    reserve_seconds: u64,
+    completion_prompt: &str,
+) -> String {
+    format!(
+        "Eval deadline scoreable completion: {remaining_seconds} seconds remain in the {reserve_seconds}-second finalization reserve. Do not browse, search, or start slow work. Use the available tools now to create or update the required scoreable output files, run only a quick local check if needed, then update the task ledger to completed before finalizing.\n\n{completion_prompt}"
+    )
+}
+
+fn task_ledger_scoreable_checkpoint_prompt(
+    remaining_seconds: u64,
+    completion_prompt: &str,
+) -> String {
+    format!(
+        "Scoreable Output Checkpoint: {remaining_seconds} seconds remain before the eval deadline. Before any further research, browsing, or long commands, use tools now to ensure the required output file(s) exist with the best evidence-backed answer, even if provisional. If a scoreable file already exists, read it and preserve that candidate unless you have stronger task-specific evidence for a replacement. Do not overwrite a plausible dated, historical, or local-evidence candidate with a current live-page, partial-coverage, or weaker guess merely to refresh the checkpoint. You may continue refining afterward, but do not apologize or finalize until the scoreable file exists and the task ledger is updated.\n\n{completion_prompt}"
+    )
+}
+
+fn task_ledger_has_open_items(ledger: &str) -> bool {
+    ledger.lines().any(|line| {
+        let line = line.trim_start();
+        line.starts_with("- pending:") || line.starts_with("- in_progress:")
     })
 }
 
@@ -2219,18 +2725,53 @@ fn deadline_instant(deadline: OffsetDateTime) -> tokio::time::Instant {
     tokio::time::Instant::now() + (deadline - now).unsigned_abs()
 }
 
-fn turn_partial_result(conversation: &[ConversationItem]) -> String {
-    let tool_results = conversation
+fn inference_timeout_deadline(
+    deadline: Option<OffsetDateTime>,
+    runtime_profile: RuntimeProfile,
+    task_ledger_required: bool,
+    reserve_seconds: u64,
+    finalization_requested: bool,
+    task_ledger_scoreable_checkpoints: u8,
+    transcript: &[TranscriptItem],
+) -> Option<(OffsetDateTime, InferenceTimeoutAction)> {
+    let deadline = deadline?;
+    if runtime_profile == RuntimeProfile::Eval
+        && task_ledger_required
+        && !finalization_requested
+        && task_ledger_scoreable_checkpoints < TASK_LEDGER_SCOREABLE_CHECKPOINT_LIMIT
+        && TASK_LEDGER_SCOREABLE_CHECKPOINT_SECONDS > reserve_seconds
+        && task_ledger_completion_prompt(transcript).is_some()
+    {
+        let checkpoint_deadline =
+            deadline - Duration::seconds(TASK_LEDGER_SCOREABLE_CHECKPOINT_SECONDS as i64);
+        if checkpoint_deadline > OffsetDateTime::now_utc() {
+            return Some((
+                checkpoint_deadline,
+                InferenceTimeoutAction::ScoreableCheckpoint,
+            ));
+        }
+    }
+    if runtime_profile == RuntimeProfile::Eval && !finalization_requested {
+        return Some((
+            deadline - Duration::seconds(reserve_seconds as i64),
+            InferenceTimeoutAction::Finalization,
+        ));
+    }
+    Some((deadline, InferenceTimeoutAction::Finalization))
+}
+
+fn turn_partial_result(transcript: &[TranscriptItem]) -> String {
+    let tool_results = transcript
         .iter()
-        .filter(|item| matches!(item, ConversationItem::ToolResult(_)))
+        .filter(|item| matches!(item, TranscriptItem::ToolResult(_)))
         .count();
-    let assistant_messages = conversation
+    let assistant_messages = transcript
         .iter()
-        .filter(|item| matches!(item, ConversationItem::AssistantMessage(_)))
+        .filter(|item| matches!(item, TranscriptItem::AssistantMessage(_)))
         .count();
     format!(
-        "partial turn state: {} conversation items, {assistant_messages} assistant messages, {tool_results} tool results",
-        conversation.len()
+        "partial turn state: {} transcript items, {assistant_messages} assistant messages, {tool_results} tool results",
+        transcript.len()
     )
 }
 
@@ -2318,6 +2859,19 @@ fn validate_reasoning_effort(model: &str, effort: &str) -> anyhow::Result<()> {
     }
 }
 
+fn validate_runtime_config_reasoning(cfg: &RuntimeConfig) -> anyhow::Result<()> {
+    let Some(reasoning) = cfg.reasoning.as_deref() else {
+        return Ok(());
+    };
+    let Some(entry) = lookup_model(&cfg.default_model) else {
+        return Ok(());
+    };
+    if entry.provider != PROVIDER_GEMINI {
+        return Ok(());
+    }
+    validate_reasoning_effort(&cfg.default_model, reasoning)
+}
+
 fn model_supports_reasoning(model: &str, effort: &str) -> bool {
     lookup_model(model)
         .map(|entry| {
@@ -2381,13 +2935,13 @@ fn model_profile_segment_metadata(
 }
 
 fn model_switch_summary(
-    conversation: &[ConversationItem],
+    transcript: &[TranscriptItem],
     profile: Option<&ModelHarnessProfile>,
     provider: &str,
     model: &str,
     tools: &[roder_api::tools::ToolSpec],
 ) -> Option<String> {
-    let previous = latest_model_profile_segment(conversation)?;
+    let previous = latest_model_profile_segment(transcript)?;
     let previous_model = previous
         .get("model")
         .and_then(serde_json::Value::as_str)
@@ -2430,9 +2984,9 @@ fn model_switch_summary(
     ))
 }
 
-fn latest_model_profile_segment(conversation: &[ConversationItem]) -> Option<&serde_json::Value> {
-    conversation.iter().rev().find_map(|item| {
-        let ConversationItem::ProviderMetadata(value) = item else {
+fn latest_model_profile_segment(transcript: &[TranscriptItem]) -> Option<&serde_json::Value> {
+    transcript.iter().rev().find_map(|item| {
+        let TranscriptItem::ProviderMetadata(value) = item else {
             return None;
         };
         (value.get("kind").and_then(serde_json::Value::as_str) == Some(MODEL_PROFILE_TRACE_KIND))
@@ -2455,6 +3009,7 @@ mod tests {
     use futures::stream;
     use roder_api::catalog::{
         REASONING_HIGH, REASONING_LOW, REASONING_MEDIUM, REASONING_MINIMAL, REASONING_NONE,
+        REASONING_XHIGH,
     };
     use roder_api::extension::ExtensionRegistryBuilder;
     use roder_api::inference::{
@@ -2463,8 +3018,12 @@ mod tests {
         ModelProfileReasoning, ModelSchemaPolicy, ProviderFamily,
     };
     use roder_api::tools::{ToolContributor, ToolExecutor, ToolSpec};
-    use roder_ext_jsonl_session::store::JsonlSessionStoreFactory;
+    use roder_ext_jsonl_thread_store::store::JsonlThreadStoreFactory;
     use std::sync::Mutex as StdMutex;
+
+    fn test_workspace() -> String {
+        std::env::current_dir().unwrap().display().to_string()
+    }
 
     #[test]
     fn server_side_compaction_uses_catalog_ninety_percent_default() {
@@ -2495,9 +3054,9 @@ mod tests {
     async fn automations_can_create_project_thread_with_model_overrides() {
         let runtime = Runtime::fake().unwrap();
         let metadata = runtime
-            .create_session_with(CreateSessionRequest {
+            .create_thread_with(CreateThreadRequest {
                 title: Some("Automation: nightly status".to_string()),
-                workspace: Some("/tmp/project".to_string()),
+                workspace: "/tmp/project".to_string(),
                 provider: Some("mock".to_string()),
                 model: Some("mock".to_string()),
             })
@@ -2508,7 +3067,7 @@ mod tests {
             metadata.title.as_deref(),
             Some("Automation: nightly status")
         );
-        assert_eq!(metadata.workspace.as_deref(), Some("/tmp/project"));
+        assert_eq!(metadata.workspace, "/tmp/project");
         assert_eq!(metadata.provider.as_deref(), Some("mock"));
         assert_eq!(metadata.model.as_deref(), Some("mock"));
     }
@@ -2554,6 +3113,29 @@ mod tests {
         assert_eq!(
             effective_reasoning_for_model(&cfg, "gpt-5.5"),
             REASONING_MEDIUM
+        );
+    }
+
+    #[test]
+    fn unsupported_configured_gemini_reasoning_is_rejected() {
+        let mut builder = ExtensionRegistryBuilder::new();
+        builder.inference_engine(std::sync::Arc::new(FakeInferenceEngine));
+
+        let err = match Runtime::new(
+            builder.build().unwrap(),
+            RuntimeConfig {
+                default_model: "gemini-3.5-flash".to_string(),
+                reasoning: Some(REASONING_XHIGH.to_string()),
+                ..RuntimeConfig::default()
+            },
+        ) {
+            Ok(_) => panic!("expected unsupported Gemini reasoning to be rejected"),
+            Err(err) => err,
+        };
+
+        assert!(
+            err.to_string()
+                .contains("model gemini-3.5-flash does not support reasoning effort xhigh")
         );
     }
 
@@ -2689,6 +3271,97 @@ mod tests {
         }
     }
 
+    struct TaskLedgerCompletionGateEngine {
+        calls: StdMutex<u32>,
+        requests: Arc<StdMutex<Vec<AgentInferenceRequest>>>,
+    }
+
+    #[async_trait::async_trait]
+    impl InferenceEngine for TaskLedgerCompletionGateEngine {
+        fn id(&self) -> String {
+            roder_api::catalog::PROVIDER_MOCK.to_string()
+        }
+
+        fn capabilities(&self) -> InferenceCapabilities {
+            InferenceCapabilities::coding_agent_default()
+        }
+
+        async fn list_models(
+            &self,
+            _ctx: InferenceProviderContext<'_>,
+        ) -> anyhow::Result<Vec<roder_api::inference::ModelDescriptor>> {
+            Ok(roder_api::catalog::models_for_provider(
+                roder_api::catalog::PROVIDER_MOCK,
+                true,
+            ))
+        }
+
+        async fn stream_turn(
+            &self,
+            _ctx: InferenceTurnContext<'_>,
+            request: AgentInferenceRequest,
+        ) -> anyhow::Result<InferenceEventStream> {
+            self.requests.lock().unwrap().push(request);
+            let mut calls = self.calls.lock().unwrap();
+            *calls += 1;
+            let events = match *calls {
+                1 => vec![Ok(InferenceEvent::ToolCallCompleted(ToolCallCompleted {
+                    id: "ledger-open".to_string(),
+                    name: TASK_LEDGER_TOOL_NAME.to_string(),
+                    arguments: serde_json::json!({
+                        "tasks": [
+                            {
+                                "id": "inspect",
+                                "content": "Inspect local assets",
+                                "status": "completed",
+                                "evidence": "listed workspace"
+                            },
+                            {
+                                "id": "write",
+                                "content": "Write /app/result.txt",
+                                "status": "pending"
+                            }
+                        ],
+                        "requireCompletionEvidence": true
+                    })
+                    .to_string(),
+                }))],
+                3 => vec![Ok(InferenceEvent::ToolCallCompleted(ToolCallCompleted {
+                    id: "ledger-complete".to_string(),
+                    name: TASK_LEDGER_TOOL_NAME.to_string(),
+                    arguments: serde_json::json!({
+                        "tasks": [
+                            {
+                                "id": "inspect",
+                                "content": "Inspect local assets",
+                                "status": "completed",
+                                "evidence": "listed workspace"
+                            },
+                            {
+                                "id": "write",
+                                "content": "Write /app/result.txt",
+                                "status": "completed",
+                                "evidence": "wrote answer"
+                            }
+                        ],
+                        "requireCompletionEvidence": true
+                    })
+                    .to_string(),
+                }))],
+                _ => vec![Ok(InferenceEvent::MessageDelta(MessageDelta {
+                    text: "final".to_string(),
+                    phase: None,
+                }))],
+            };
+            Ok(Box::pin(stream::iter(events.into_iter().chain(
+                std::iter::once(Ok(InferenceEvent::Completed(CompletionMetadata {
+                    stop_reason: Some("stop".to_string()),
+                    provider_response_id: None,
+                }))),
+            ))))
+        }
+    }
+
     struct VerificationGateEngine {
         calls: StdMutex<u32>,
     }
@@ -2734,10 +3407,10 @@ mod tests {
                     text: "done too early".to_string(),
                     phase: None,
                 }))],
-                3 if request.conversation.iter().any(|item| {
+                3 if request.transcript.iter().any(|item| {
                     matches!(
                         item,
-                        ConversationItem::UserMessage(message)
+                        TranscriptItem::UserMessage(message)
                             if message.text.contains("Verification gate blocked final completion")
                     )
                 }) =>
@@ -2813,10 +3486,10 @@ mod tests {
                     })
                     .to_string(),
                 }))],
-                3 if request.conversation.iter().any(|item| {
+                3 if request.transcript.iter().any(|item| {
                     matches!(
                         item,
-                        ConversationItem::UserMessage(message)
+                        TranscriptItem::UserMessage(message)
                             if message.text.contains("Verification gate blocked final completion")
                     )
                 }) =>
@@ -3068,7 +3741,7 @@ mod tests {
                 provider_override: None,
                 model_override: None,
                 reasoning_override: None,
-                workspace: None,
+                workspace: test_workspace(),
                 instructions: InstructionBundle {
                     system: None,
                     developer: Some("base developer".to_string()),
@@ -3140,6 +3813,99 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn context_entrypoint_hints_use_turn_workspace() {
+        let process_workspace = runtime_test_workspace("entrypoint-process");
+        let thread_workspace = runtime_test_workspace("entrypoint-thread");
+        std::fs::create_dir_all(process_workspace.join("src")).unwrap();
+        std::fs::create_dir_all(thread_workspace.join("src")).unwrap();
+        std::fs::write(
+            process_workspace.join("src/sidebar-thread-groups.ts"),
+            "export const desktopLeak = true;\n",
+        )
+        .unwrap();
+        std::fs::write(
+            thread_workspace.join("src/voice-plan-feedback.ts"),
+            "export const voicePlanFeedback = true;\n",
+        )
+        .unwrap();
+
+        let captured = Arc::new(StdMutex::new(None));
+        let mut builder = ExtensionRegistryBuilder::new();
+        builder.inference_engine(Arc::new(CapturingEngine {
+            request: captured.clone(),
+        }));
+        builder.context_planner(Arc::new(roder_context::EntrypointContextPlanner::new(
+            process_workspace.clone(),
+        )));
+        let runtime = Arc::new(
+            Runtime::new(
+                builder.build().unwrap(),
+                RuntimeConfig {
+                    workspace: Some(process_workspace.display().to_string()),
+                    ..RuntimeConfig::default()
+                },
+            )
+            .unwrap(),
+        );
+        let mut rx = runtime.subscribe_events();
+
+        let turn_id = runtime
+            .start_turn(StartTurnRequest {
+                thread_id: "thread-workspace-entrypoint".to_string(),
+                message: "investigate voice plan feedback".to_string(),
+                images: Vec::new(),
+                provider_override: None,
+                model_override: None,
+                reasoning_override: None,
+                workspace: thread_workspace.display().to_string(),
+                instructions: crate::instructions::default_instructions(),
+                task_ledger_required: false,
+            })
+            .await
+            .unwrap();
+
+        tokio::time::timeout(std::time::Duration::from_secs(5), async {
+            loop {
+                let envelope = rx.recv().await.unwrap();
+                if envelope.turn_id.as_deref() != Some(&turn_id) {
+                    continue;
+                }
+                match envelope.event {
+                    RoderEvent::TurnCompleted(_) => break,
+                    RoderEvent::TurnFailed(event) => panic!("turn failed: {}", event.error),
+                    _ => {}
+                }
+            }
+        })
+        .await
+        .unwrap();
+
+        let request = captured.lock().unwrap().clone().expect("captured request");
+        let transcript_text = request
+            .transcript
+            .iter()
+            .map(|item| match item {
+                TranscriptItem::UserMessage(message) => message.text.as_str(),
+                _ => "",
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(transcript_text.contains("src/voice-plan-feedback.ts"));
+        assert!(!transcript_text.contains("src/sidebar-thread-groups.ts"));
+
+        let _ = std::fs::remove_dir_all(process_workspace);
+        let _ = std::fs::remove_dir_all(thread_workspace);
+    }
+
+    fn runtime_test_workspace(name: &str) -> std::path::PathBuf {
+        let path =
+            std::env::temp_dir().join(format!("roder-runtime-{name}-{}", uuid::Uuid::new_v4()));
+        let _ = std::fs::remove_dir_all(&path);
+        std::fs::create_dir_all(&path).unwrap();
+        path
+    }
+
+    #[tokio::test]
     async fn model_profile_user_model_knobs_override_profile_defaults() {
         let request = captured_profile_request(RuntimeConfig {
             default_provider: roder_api::catalog::PROVIDER_MOCK.to_string(),
@@ -3177,16 +3943,16 @@ mod tests {
     #[tokio::test]
     async fn model_switch_injects_summary_and_records_profile_segments() {
         let requests = Arc::new(StdMutex::new(Vec::new()));
-        let session_root = std::env::temp_dir().join(format!(
-            "roder-model-switch-session-{}",
+        let thread_root = std::env::temp_dir().join(format!(
+            "roder-model-switch-thread-{}",
             uuid::Uuid::new_v4()
         ));
         let mut builder = ExtensionRegistryBuilder::new();
         builder.inference_engine(Arc::new(SwitchCaptureEngine {
             requests: requests.clone(),
         }));
-        builder.session_store_factory(Arc::new(JsonlSessionStoreFactory {
-            base_path: session_root.clone(),
+        builder.thread_store_factory(Arc::new(JsonlThreadStoreFactory {
+            base_path: thread_root.clone(),
         }));
         builder.tool_contributor(Arc::new(ProfileToolContributor));
         let mut claude_profile = test_model_profile("claude-haiku-4-5-20251001");
@@ -3220,7 +3986,7 @@ mod tests {
                     provider_override: None,
                     model_override,
                     reasoning_override: None,
-                    workspace: None,
+                    workspace: test_workspace(),
                     instructions: InstructionBundle::default(),
                     task_ledger_required: false,
                 })
@@ -3245,10 +4011,10 @@ mod tests {
 
         let captured = requests.lock().unwrap().clone();
         assert_eq!(captured.len(), 2);
-        assert!(captured[1].conversation.iter().any(|item| {
+        assert!(captured[1].transcript.iter().any(|item| {
             matches!(
                 item,
-                ConversationItem::UserMessage(message)
+                TranscriptItem::UserMessage(message)
                     if message.text.starts_with(MODEL_SWITCH_SUMMARY_PREFIX)
                         && message.text.contains("previous profile mock/gpt-5.5")
                         && message.text.contains("Current profile mock/claude-haiku-4-5-20251001")
@@ -3257,10 +4023,10 @@ mod tests {
         }));
 
         let snapshot = runtime
-            .session_store
+            .thread_store
             .as_ref()
             .unwrap()
-            .load_session(&"thread-model-switch".to_string())
+            .load_thread(&"thread-model-switch".to_string())
             .await
             .unwrap()
             .unwrap();
@@ -3271,7 +4037,7 @@ mod tests {
             .filter(|item| {
                 matches!(
                     item,
-                    ConversationItem::ProviderMetadata(value)
+                    TranscriptItem::ProviderMetadata(value)
                         if value.get("kind").and_then(serde_json::Value::as_str)
                             == Some(MODEL_PROFILE_TRACE_KIND)
                             && value.get("segment").and_then(serde_json::Value::as_str)
@@ -3280,7 +4046,7 @@ mod tests {
             })
             .count();
         assert!(trace_segments >= 2);
-        let _ = std::fs::remove_dir_all(session_root);
+        let _ = std::fs::remove_dir_all(thread_root);
     }
 
     struct CountingTaskTool {
@@ -3348,7 +4114,7 @@ mod tests {
                 provider_override: None,
                 model_override: None,
                 reasoning_override: None,
-                workspace: None,
+                workspace: test_workspace(),
                 instructions: InstructionBundle {
                     system: None,
                     developer: Some("base developer".to_string()),
@@ -3393,6 +4159,9 @@ mod tests {
         builder.inference_engine(Arc::new(CapturingEngine {
             request: captured.clone(),
         }));
+        builder.tool_contributor(Arc::new(
+            roder_ext_task_ledger::TaskLedgerToolContributor::default(),
+        ));
         let runtime = Arc::new(
             Runtime::new(
                 builder.build().unwrap(),
@@ -3413,7 +4182,7 @@ mod tests {
                 provider_override: None,
                 model_override: None,
                 reasoning_override: None,
-                workspace: None,
+                workspace: test_workspace(),
                 instructions: InstructionBundle::default(),
                 task_ledger_required: true,
             })
@@ -3437,6 +4206,219 @@ mod tests {
         let developer = request.instructions.developer.unwrap();
         assert!(developer.contains("Task Ledger Required"));
         assert!(developer.contains("task_ledger.update"));
+        let tool_names: Vec<_> = request
+            .tools
+            .iter()
+            .map(|tool| tool.name.as_str())
+            .collect();
+        assert!(
+            tool_names.contains(&TASK_LEDGER_TOOL_NAME),
+            "tool names: {tool_names:?}"
+        );
+        assert_eq!(
+            request.tool_choice,
+            ToolChoice::Specific(TASK_LEDGER_TOOL_NAME.to_string())
+        );
+        assert_eq!(request.tools.len(), 1);
+        assert_eq!(request.tools[0].name, TASK_LEDGER_TOOL_NAME);
+    }
+
+    #[tokio::test]
+    async fn eval_task_ledger_blocks_final_answer_until_open_items_are_completed() {
+        let requests = Arc::new(StdMutex::new(Vec::new()));
+        let mut builder = ExtensionRegistryBuilder::new();
+        builder.inference_engine(Arc::new(TaskLedgerCompletionGateEngine {
+            calls: StdMutex::new(0),
+            requests: requests.clone(),
+        }));
+        builder.tool_contributor(Arc::new(
+            roder_ext_task_ledger::TaskLedgerToolContributor::default(),
+        ));
+        let runtime = Arc::new(
+            Runtime::new(
+                builder.build().unwrap(),
+                RuntimeConfig {
+                    runtime_profile: RuntimeProfile::Eval,
+                    policy_mode: PolicyMode::Bypass,
+                    ..RuntimeConfig::default()
+                },
+            )
+            .unwrap(),
+        );
+        let mut rx = runtime.subscribe_events();
+        let turn_id = runtime
+            .start_turn(StartTurnRequest {
+                thread_id: "thread-ledger-completion".to_string(),
+                message: "write the answer file".to_string(),
+                images: Vec::new(),
+                provider_override: None,
+                model_override: None,
+                reasoning_override: None,
+                workspace: test_workspace(),
+                instructions: InstructionBundle::default(),
+                task_ledger_required: true,
+            })
+            .await
+            .unwrap();
+
+        tokio::time::timeout(std::time::Duration::from_secs(5), async {
+            loop {
+                let envelope = rx.recv().await.unwrap();
+                if envelope.turn_id.as_deref() != Some(&turn_id) {
+                    continue;
+                }
+                match envelope.event {
+                    RoderEvent::TurnCompleted(_) => break,
+                    RoderEvent::TurnFailed(event) => panic!("turn failed: {}", event.error),
+                    _ => {}
+                }
+            }
+        })
+        .await
+        .unwrap();
+
+        let requests = requests.lock().unwrap().clone();
+        assert_eq!(requests.len(), 4);
+        assert!(requests[2].transcript.iter().any(|item| {
+            matches!(
+                item,
+                TranscriptItem::UserMessage(message)
+                    if message.text.contains("Task Ledger Completion Required")
+                        && message.text.contains("Write /app/result.txt")
+            )
+        }));
+        assert!(requests[3].transcript.iter().any(|item| {
+            matches!(
+                item,
+                TranscriptItem::ToolResult(result)
+                    if result.name.as_deref() == Some(TASK_LEDGER_TOOL_NAME)
+                        && result.result.contains("Task ledger: 2/2 completed")
+            )
+        }));
+    }
+
+    #[tokio::test]
+    async fn eval_task_ledger_checkpoint_requests_scoreable_file_before_final_reserve() {
+        let requests = Arc::new(StdMutex::new(Vec::new()));
+        let mut builder = ExtensionRegistryBuilder::new();
+        builder.inference_engine(Arc::new(TaskLedgerCompletionGateEngine {
+            calls: StdMutex::new(0),
+            requests: requests.clone(),
+        }));
+        builder.tool_contributor(Arc::new(
+            roder_ext_task_ledger::TaskLedgerToolContributor::default(),
+        ));
+        let runtime = Arc::new(
+            Runtime::new(
+                builder.build().unwrap(),
+                RuntimeConfig {
+                    runtime_profile: RuntimeProfile::Eval,
+                    policy_mode: PolicyMode::Bypass,
+                    turn_deadline_seconds: Some(120),
+                    ..RuntimeConfig::default()
+                },
+            )
+            .unwrap(),
+        );
+        let mut rx = runtime.subscribe_events();
+        let turn_id = runtime
+            .start_turn(StartTurnRequest {
+                thread_id: "thread-ledger-checkpoint".to_string(),
+                message: "write the answer file".to_string(),
+                images: Vec::new(),
+                provider_override: None,
+                model_override: None,
+                reasoning_override: None,
+                workspace: test_workspace(),
+                instructions: InstructionBundle::default(),
+                task_ledger_required: true,
+            })
+            .await
+            .unwrap();
+
+        tokio::time::timeout(std::time::Duration::from_secs(5), async {
+            loop {
+                let envelope = rx.recv().await.unwrap();
+                if envelope.turn_id.as_deref() != Some(&turn_id) {
+                    continue;
+                }
+                match envelope.event {
+                    RoderEvent::TurnCompleted(_) => break,
+                    RoderEvent::TurnFailed(event) => panic!("turn failed: {}", event.error),
+                    _ => {}
+                }
+            }
+        })
+        .await
+        .unwrap();
+
+        let requests = requests.lock().unwrap().clone();
+        assert!(requests.len() >= 2);
+        assert!(requests[1].transcript.iter().any(|item| {
+            matches!(
+                item,
+                TranscriptItem::UserMessage(message)
+                    if message.text.contains("Scoreable Output Checkpoint")
+                        && message.text.contains("ensure the required output file(s) exist")
+                        && message.text.contains("Write /app/result.txt")
+            )
+        }));
+    }
+
+    #[test]
+    fn deadline_task_ledger_prompt_preserves_scoreable_work_instruction() {
+        let prompt = task_ledger_deadline_completion_prompt(
+            12,
+            30,
+            "Task Ledger Completion Required: write /app/result.txt, then call task_ledger.update",
+        );
+
+        assert!(prompt.contains("12 seconds remain"));
+        assert!(prompt.contains("create or update the required scoreable output files"));
+        assert!(prompt.contains("write /app/result.txt"));
+        assert!(prompt.contains(TASK_LEDGER_TOOL_NAME));
+    }
+
+    #[test]
+    fn scoreable_checkpoint_prompt_preserves_provisional_file_instruction() {
+        let prompt = task_ledger_scoreable_checkpoint_prompt(
+            120,
+            "Task Ledger Completion Required: write /app/result.txt, then call task_ledger.update",
+        );
+
+        assert!(prompt.contains("120 seconds remain"));
+        assert!(prompt.contains("best evidence-backed answer"));
+        assert!(prompt.contains("even if provisional"));
+        assert!(prompt.contains("preserve that candidate"));
+        assert!(prompt.contains("partial-coverage"));
+        assert!(prompt.contains("write /app/result.txt"));
+        assert!(prompt.contains(TASK_LEDGER_TOOL_NAME));
+    }
+
+    #[test]
+    fn open_task_ledger_moves_inference_timeout_to_scoreable_checkpoint() {
+        let deadline = Some(OffsetDateTime::now_utc() + Duration::seconds(870));
+        let transcript = vec![TranscriptItem::ToolResult(ToolResultRecord {
+            id: "ledger-open".to_string(),
+            name: Some(TASK_LEDGER_TOOL_NAME.to_string()),
+            result: "Task ledger: 0/1 completed\n- pending: Write /app/result.txt [write]"
+                .to_string(),
+            display_payload: None,
+            is_error: false,
+        })];
+
+        let (_, action) = inference_timeout_deadline(
+            deadline,
+            RuntimeProfile::Eval,
+            true,
+            30,
+            false,
+            0,
+            &transcript,
+        )
+        .unwrap();
+
+        assert_eq!(action, InferenceTimeoutAction::ScoreableCheckpoint);
     }
 
     #[tokio::test]
@@ -3471,7 +4453,7 @@ mod tests {
                 provider_override: None,
                 model_override: None,
                 reasoning_override: None,
-                workspace: None,
+                workspace: test_workspace(),
                 instructions: InstructionBundle::default(),
                 task_ledger_required: false,
             })
@@ -3548,7 +4530,7 @@ mod tests {
                 provider_override: None,
                 model_override: None,
                 reasoning_override: None,
-                workspace: None,
+                workspace: test_workspace(),
                 instructions: InstructionBundle::default(),
                 task_ledger_required: false,
             })
@@ -3634,7 +4616,7 @@ mod tests {
                 provider_override: None,
                 model_override: None,
                 reasoning_override: None,
-                workspace: None,
+                workspace: test_workspace(),
                 instructions: InstructionBundle::default(),
                 task_ledger_required: false,
             })
@@ -3655,7 +4637,7 @@ mod tests {
                         saw_partial = event.summary.contains("partial turn state");
                     }
                     RoderEvent::TurnDeadlineExceeded(event) => {
-                        saw_deadline = event.partial_result.contains("conversation items");
+                        saw_deadline = event.partial_result.contains("transcript items");
                     }
                     RoderEvent::TurnFailed(event) => {
                         failed_kind = event.error_kind;

@@ -7,7 +7,6 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use futures::StreamExt;
 use roder_api::catalog::{PROVIDER_OPENCODE, PROVIDER_OPENCODE_GO, models_for_provider};
-use roder_api::conversation::ConversationItem;
 use roder_api::extension::InferenceEngineId;
 use roder_api::inference::{
     AgentInferenceRequest, CompletionMetadata, InferenceCapabilities, InferenceEngine,
@@ -20,6 +19,7 @@ use roder_api::reliability::{
     provider_retry_status_cause,
 };
 use roder_api::tools::ToolChoice;
+use roder_api::transcript::TranscriptItem;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
@@ -542,17 +542,17 @@ fn chat_messages(request: &AgentInferenceRequest, tool_name_map: &ChatToolNameMa
     if let Some(developer) = &request.instructions.developer {
         messages.push(json!({ "role": "system", "content": developer }));
     }
-    for item in &request.conversation {
+    for item in &request.transcript {
         match item {
-            ConversationItem::UserMessage(message) => {
+            TranscriptItem::UserMessage(message) => {
                 messages.push(json!({ "role": "user", "content": message.text }));
             }
-            ConversationItem::AssistantMessage(message) => {
+            TranscriptItem::AssistantMessage(message) => {
                 if !message.text.is_empty() {
                     messages.push(json!({ "role": "assistant", "content": message.text }));
                 }
             }
-            ConversationItem::ToolCall(call) => {
+            TranscriptItem::ToolCall(call) => {
                 messages.push(json!({
                     "role": "assistant",
                     "content": null,
@@ -566,22 +566,22 @@ fn chat_messages(request: &AgentInferenceRequest, tool_name_map: &ChatToolNameMa
                     }],
                 }));
             }
-            ConversationItem::ToolResult(result) => {
+            TranscriptItem::ToolResult(result) => {
                 messages.push(json!({
                     "role": "tool",
                     "tool_call_id": result.id,
                     "content": result.result,
                 }));
             }
-            ConversationItem::ContextCompaction(compaction) => {
+            TranscriptItem::ContextCompaction(compaction) => {
                 messages.push(json!({ "role": "system", "content": compaction.summary }));
             }
-            ConversationItem::ReasoningSummary(summary) => {
+            TranscriptItem::ReasoningSummary(summary) => {
                 messages.push(json!({ "role": "assistant", "content": summary.text }));
             }
-            ConversationItem::FileChange(_)
-            | ConversationItem::Error(_)
-            | ConversationItem::ProviderMetadata(_) => {}
+            TranscriptItem::FileChange(_)
+            | TranscriptItem::Error(_)
+            | TranscriptItem::ProviderMetadata(_) => {}
         }
     }
     messages
@@ -724,11 +724,17 @@ impl ChatStreamState {
 
 fn extract_chat_usage(value: &Value) -> Option<TokenUsage> {
     let usage = value.get("usage")?;
-    Some(TokenUsage {
-        prompt_tokens: number_to_u32(usage.get("prompt_tokens")).unwrap_or_default(),
-        completion_tokens: number_to_u32(usage.get("completion_tokens")).unwrap_or_default(),
-        total_tokens: number_to_u32(usage.get("total_tokens")).unwrap_or_default(),
-    })
+    let cached_prompt_tokens = number_to_u32(usage.pointer("/prompt_tokens_details/cached_tokens"))
+        .or_else(|| number_to_u32(usage.pointer("/input_tokens_details/cached_tokens")))
+        .unwrap_or_default();
+    Some(
+        TokenUsage::new(
+            number_to_u32(usage.get("prompt_tokens")).unwrap_or_default(),
+            number_to_u32(usage.get("completion_tokens")).unwrap_or_default(),
+            number_to_u32(usage.get("total_tokens")).unwrap_or_default(),
+        )
+        .with_cached_prompt_tokens(cached_prompt_tokens),
+    )
 }
 
 fn number_to_u32(value: Option<&Value>) -> Option<u32> {
@@ -867,13 +873,13 @@ fn now_unix_secs() -> u64 {
 mod tests {
     use super::*;
     use futures::StreamExt;
-    use roder_api::conversation::{ConversationItem, UserMessage};
     use roder_api::inference::InferenceEngine;
     use roder_api::inference::{
         InstructionBundle, ModelSelection, OutputConfig, ReasoningConfig, RuntimeHints,
     };
     use roder_api::reliability::ReliabilityRequestPolicy;
     use roder_api::tools::{ToolChoice, ToolSpec};
+    use roder_api::transcript::{TranscriptItem, UserMessage};
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     use tokio::net::TcpListener;
 
@@ -970,7 +976,7 @@ mod tests {
                 model: "minimax-m2.5-free".to_string(),
             },
             instructions: InstructionBundle::default(),
-            conversation: vec![ConversationItem::UserMessage(UserMessage::text("hi"))],
+            transcript: vec![TranscriptItem::UserMessage(UserMessage::text("hi"))],
             tools: vec![ToolSpec {
                 name: "exec_command".to_string(),
                 description: "Run a command".to_string(),
@@ -1079,7 +1085,7 @@ mod tests {
                 system: None,
                 developer: Some("profile overlay".to_string()),
             },
-            conversation: vec![ConversationItem::UserMessage(UserMessage::text("edit"))],
+            transcript: vec![TranscriptItem::UserMessage(UserMessage::text("edit"))],
             tools: vec![ToolSpec {
                 name: "edit".to_string(),
                 description: "Edit a file".to_string(),
@@ -1140,7 +1146,7 @@ mod tests {
                 model: "minimax-m2.5-free".to_string(),
             },
             instructions: InstructionBundle::default(),
-            conversation: vec![ConversationItem::UserMessage(UserMessage::text("hi"))],
+            transcript: vec![TranscriptItem::UserMessage(UserMessage::text("hi"))],
             tools: vec![ToolSpec {
                 name: "exec_command".to_string(),
                 description: "Run a command".to_string(),

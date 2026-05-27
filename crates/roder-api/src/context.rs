@@ -37,6 +37,8 @@ pub struct ContextQuery {
     pub thread_id: ThreadId,
     pub turn_id: TurnId,
     pub prompt: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub workspace: Option<String>,
     pub token_budget: Option<u32>,
 }
 

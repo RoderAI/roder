@@ -2,11 +2,11 @@ use roder_api::catalog::{PROVIDER_OPENAI, PROVIDER_SUPERGROK, PROVIDER_XAI, mode
 use roder_api::extension::InferenceEngineId;
 use roder_api::inference::CompactionProgress;
 use roder_api::inference::{
-    AgentInferenceRequest, CompletionMetadata, HostedWebSearchMode, InferenceCapabilities,
-    InferenceEngine, InferenceEvent, InferenceEventStream, InferenceFailure,
-    InferenceProviderContext, InferenceProviderMetadata, InferenceTurnContext, MessageDelta,
-    ModelDescriptor, ProviderAuthType, ReasoningDelta, TokenUsage, ToolCallCompleted,
-    ToolCallDelta, ToolCallStarted,
+    AgentInferenceRequest, CompletionMetadata, HostedToolCallCompleted, HostedToolCallStarted,
+    HostedWebSearchMode, InferenceCapabilities, InferenceEngine, InferenceEvent,
+    InferenceEventStream, InferenceFailure, InferenceProviderContext, InferenceProviderMetadata,
+    InferenceTurnContext, MessageDelta, ModelDescriptor, ProviderAuthType, ReasoningDelta,
+    TokenUsage, ToolCallCompleted, ToolCallDelta, ToolCallStarted,
 };
 use roder_api::reliability::{
     ReliabilityRequestPolicy, provider_retry_delay_ms, provider_retry_metadata,
@@ -23,6 +23,8 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 const FINAL_ANSWER_PHASE: &str = "final_answer";
 const DEFAULT_MODELS_CACHE_TTL: Duration = Duration::from_secs(6 * 60 * 60);
+const DEFAULT_RESPONSES_STREAM_IDLE_TIMEOUT: Duration = Duration::from_secs(60);
+const RESPONSES_STREAM_IDLE_TIMEOUT_ENV: &str = "RODER_RESPONSES_STREAM_IDLE_TIMEOUT_MS";
 
 pub struct OpenAiResponsesEngine {
     api_key: Option<String>,
@@ -121,9 +123,10 @@ impl OpenAiResponsesEngine {
         request: &AgentInferenceRequest,
         options: RequestMappingOptions<'_>,
     ) -> (Value, ResponsesToolNameMap) {
+        let (tools, tool_name_map) = responses_tools(request);
         let mut body = json!({
             "model": request.model.model,
-            "input": response_input_items(request),
+            "input": response_input_items(request, &tool_name_map),
             "store": false,
             "stream": true,
         });
@@ -167,7 +170,6 @@ impl OpenAiResponsesEngine {
                 body["include"] = json!(["reasoning.encrypted_content"]);
             }
         }
-        let (tools, tool_name_map) = responses_tools(request);
         if !tools.is_empty() {
             body["tools"] = json!(tools);
             body["tool_choice"] = match &request.tool_choice {
@@ -235,6 +237,13 @@ impl ResponsesToolNameMap {
         self.tool_name_to_api_name
             .get(tool_name)
             .map_or(tool_name, String::as_str)
+    }
+
+    fn replay_api_name(&self, tool_name: &str) -> String {
+        self.tool_name_to_api_name
+            .get(tool_name)
+            .cloned()
+            .unwrap_or_else(|| responses_api_tool_name(tool_name))
     }
 }
 
@@ -450,16 +459,7 @@ fn responses_tools(request: &AgentInferenceRequest) -> (Vec<Value>, ResponsesToo
 }
 
 fn responses_tool_name(tool_name: &str, used_tool_names: &mut HashSet<String>) -> String {
-    let base_name = tool_name
-        .chars()
-        .map(|c| {
-            if c.is_ascii_alphanumeric() || c == '_' || c == '-' {
-                c
-            } else {
-                '_'
-            }
-        })
-        .collect::<String>();
+    let base_name = responses_api_tool_name(tool_name);
     if used_tool_names.insert(base_name.clone()) {
         return base_name;
     }
@@ -471,6 +471,24 @@ fn responses_tool_name(tool_name: &str, used_tool_names: &mut HashSet<String>) -
         }
     }
     unreachable!()
+}
+
+fn responses_api_tool_name(tool_name: &str) -> String {
+    let name = tool_name
+        .chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || c == '_' || c == '-' {
+                c
+            } else {
+                '_'
+            }
+        })
+        .collect::<String>();
+    if name.is_empty() {
+        "tool".to_string()
+    } else {
+        name
+    }
 }
 
 fn map_tool_name<'a>(tool_name: &'a str, tool_name_map: &'a HashMap<String, String>) -> &'a str {
@@ -599,9 +617,30 @@ async fn send_responses_request(
     body: &Value,
     policy: Option<&ReliabilityRequestPolicy>,
 ) -> anyhow::Result<RetriedResponse> {
+    send_responses_request_with_idle_timeout(
+        base_url,
+        api_key,
+        headers,
+        grok_conversation_id,
+        body,
+        policy,
+        responses_stream_idle_timeout(),
+    )
+    .await
+}
+
+async fn send_responses_request_with_idle_timeout(
+    base_url: &str,
+    api_key: &str,
+    headers: &[(String, String)],
+    grok_conversation_id: Option<&str>,
+    body: &Value,
+    policy: Option<&ReliabilityRequestPolicy>,
+    idle_timeout: Duration,
+) -> anyhow::Result<RetriedResponse> {
     let policy = policy.cloned().unwrap_or_default();
     let attempts = policy.provider_retry_max_attempts.max(1);
-    let client = reqwest::Client::new();
+    let client = responses_stream_client(idle_timeout)?;
     let mut last_error = None;
     let mut retry_events = Vec::new();
     for attempt in 1..=attempts {
@@ -614,14 +653,15 @@ async fn send_responses_request(
         if let Some(thread_id) = grok_conversation_id.filter(|id| !id.is_empty()) {
             request = request.header("x-grok-conv-id", thread_id);
         }
-        match request.json(body).send().await {
-            Ok(response) if response.status().is_success() => {
+        let response = tokio::time::timeout(idle_timeout, request.json(body).send()).await;
+        match response {
+            Ok(Ok(response)) if response.status().is_success() => {
                 return Ok(RetriedResponse {
                     response,
                     retry_events,
                 });
             }
-            Ok(response) => {
+            Ok(Ok(response)) => {
                 let status = response.status();
                 let text = response.text().await.unwrap_or_default();
                 let retryable = policy
@@ -639,10 +679,39 @@ async fn send_responses_request(
                     continue;
                 }
             }
-            Err(err) => {
-                last_error = Some(err.to_string());
+            Ok(Err(err)) => {
+                let timed_out = err.is_timeout();
+                last_error = Some(if timed_out {
+                    format!(
+                        "OpenAI Responses request timed out after {}ms: {err}",
+                        idle_timeout.as_millis()
+                    )
+                } else {
+                    err.to_string()
+                });
                 if attempt < attempts {
-                    push_retry_event(&mut retry_events, attempt, "transport_error", &policy);
+                    let cause = if timed_out {
+                        "transport_timeout"
+                    } else {
+                        "transport_error"
+                    };
+                    push_retry_event(&mut retry_events, attempt, cause, &policy);
+                    retry_sleep(&policy, attempt).await;
+                    continue;
+                }
+            }
+            Err(_) => {
+                last_error = Some(format!(
+                    "OpenAI Responses request timed out waiting for response headers after {}ms",
+                    idle_timeout.as_millis()
+                ));
+                if attempt < attempts {
+                    push_retry_event(
+                        &mut retry_events,
+                        attempt,
+                        "response_headers_timeout",
+                        &policy,
+                    );
                     retry_sleep(&policy, attempt).await;
                     continue;
                 }
@@ -651,6 +720,21 @@ async fn send_responses_request(
         break;
     }
     anyhow::bail!(last_error.unwrap_or_else(|| "OpenAI Responses request failed".to_string()))
+}
+
+fn responses_stream_client(idle_timeout: Duration) -> anyhow::Result<reqwest::Client> {
+    Ok(reqwest::Client::builder()
+        .read_timeout(idle_timeout)
+        .build()?)
+}
+
+fn responses_stream_idle_timeout() -> Duration {
+    std::env::var(RESPONSES_STREAM_IDLE_TIMEOUT_ENV)
+        .ok()
+        .and_then(|value| value.parse::<u64>().ok())
+        .filter(|millis| *millis > 0)
+        .map(Duration::from_millis)
+        .unwrap_or(DEFAULT_RESPONSES_STREAM_IDLE_TIMEOUT)
 }
 
 fn push_retry_event(
@@ -752,6 +836,8 @@ struct ResponsesStreamState {
     tool_call_ids: HashMap<String, String>,
     tool_name_map: HashMap<String, String>,
     emitted_tool_call_ids: HashSet<String>,
+    emitted_hosted_tool_start_ids: HashSet<String>,
+    emitted_hosted_tool_complete_ids: HashSet<String>,
     reasoning_delta_keys: HashSet<String>,
 }
 
@@ -881,12 +967,28 @@ fn events_from_sse_event(
                 if is_compaction_item(item) {
                     return vec![compaction_event(item, "started")];
                 }
+                if let Some(call) = hosted_tool_call_started_from_item(item) {
+                    return emit_hosted_tool_start_once(call, state)
+                        .into_iter()
+                        .collect();
+                }
                 if let Some(call) = started_function_call(item, state) {
                     return vec![InferenceEvent::ToolCallStarted(call)];
                 }
             }
             Vec::new()
         }
+        "response.web_search_call.searching" => event
+            .data
+            .get("item_id")
+            .and_then(Value::as_str)
+            .map(|id| HostedToolCallStarted {
+                id: id.to_string(),
+                name: "web_search".to_string(),
+            })
+            .and_then(|call| emit_hosted_tool_start_once(call, state))
+            .into_iter()
+            .collect(),
         "response.function_call_arguments.delta" => {
             if let Some(item_id) = event.data.get("item_id").and_then(Value::as_str)
                 && let Some(delta) = event.data.get("delta").and_then(Value::as_str)
@@ -922,6 +1024,9 @@ fn events_from_sse_event(
                 if let Some(message) = message_delta_from_done_item(item, state) {
                     events.push(message);
                 }
+                if let Some(call) = hosted_tool_call_completed_from_item(item) {
+                    events.extend(emit_hosted_tool_completed_events(call, state));
+                }
                 events.extend(
                     extract_tool_calls_from_item(item, &state.tool_name_map)
                         .into_iter()
@@ -935,6 +1040,9 @@ fn events_from_sse_event(
             let response = event.data.get("response").unwrap_or(&event.data);
             let mut events = Vec::new();
             events.extend(message_deltas_from_response(response, state));
+            for call in extract_hosted_tool_calls(response) {
+                events.extend(emit_hosted_tool_completed_events(call, state));
+            }
             for call in extract_tool_calls(response, &state.tool_name_map) {
                 if let Some(call) = emit_tool_call_once(call, state) {
                     events.push(call);
@@ -989,6 +1097,90 @@ fn output_text_phase(data: &Value, state: &ResponsesStreamState) -> String {
 
 fn is_final_answer_phase(phase: &str) -> bool {
     phase.is_empty() || phase == FINAL_ANSWER_PHASE
+}
+
+fn hosted_tool_call_started_from_item(item: &Value) -> Option<HostedToolCallStarted> {
+    let name = hosted_tool_name(item)?;
+    let id = item.get("id").and_then(Value::as_str)?;
+    Some(HostedToolCallStarted {
+        id: id.to_string(),
+        name: name.to_string(),
+    })
+}
+
+fn hosted_tool_call_completed_from_item(item: &Value) -> Option<HostedToolCallCompleted> {
+    let name = hosted_tool_name(item)?;
+    let id = item.get("id").and_then(Value::as_str)?;
+    Some(HostedToolCallCompleted {
+        id: id.to_string(),
+        name: name.to_string(),
+        arguments: hosted_tool_arguments(item),
+    })
+}
+
+fn hosted_tool_name(item: &Value) -> Option<&'static str> {
+    match item.get("type").and_then(Value::as_str) {
+        Some("web_search_call") => Some("web_search"),
+        _ => None,
+    }
+}
+
+fn hosted_tool_arguments(item: &Value) -> String {
+    let Some(action) = item.get("action").and_then(Value::as_object) else {
+        return "{}".to_string();
+    };
+    let mut arguments = serde_json::Map::new();
+    if let Some(action_type) = action.get("type").and_then(Value::as_str) {
+        arguments.insert("action".to_string(), Value::String(action_type.to_string()));
+    }
+    if let Some(query) = action
+        .get("query")
+        .or_else(|| action.get("pattern"))
+        .and_then(Value::as_str)
+    {
+        arguments.insert("query".to_string(), Value::String(query.to_string()));
+    } else if let Some(queries) = action.get("queries").and_then(Value::as_array)
+        && let Some(query) = queries.first().and_then(Value::as_str)
+    {
+        arguments.insert("query".to_string(), Value::String(query.to_string()));
+    }
+    if let Some(url) = action.get("url").and_then(Value::as_str) {
+        arguments.insert("url".to_string(), Value::String(url.to_string()));
+    }
+    Value::Object(arguments).to_string()
+}
+
+fn emit_hosted_tool_start_once(
+    call: HostedToolCallStarted,
+    state: &mut ResponsesStreamState,
+) -> Option<InferenceEvent> {
+    state
+        .emitted_hosted_tool_start_ids
+        .insert(call.id.clone())
+        .then_some(InferenceEvent::HostedToolCallStarted(call))
+}
+
+fn emit_hosted_tool_completed_events(
+    call: HostedToolCallCompleted,
+    state: &mut ResponsesStreamState,
+) -> Vec<InferenceEvent> {
+    let mut events = Vec::new();
+    if let Some(started) = emit_hosted_tool_start_once(
+        HostedToolCallStarted {
+            id: call.id.clone(),
+            name: call.name.clone(),
+        },
+        state,
+    ) {
+        events.push(started);
+    }
+    if state
+        .emitted_hosted_tool_complete_ids
+        .insert(call.id.clone())
+    {
+        events.push(InferenceEvent::HostedToolCallCompleted(call));
+    }
+    events
 }
 
 fn record_output_item(item: &Value, state: &mut ResponsesStreamState) {
@@ -1187,56 +1379,63 @@ fn error_body_excerpt(body: &str) -> String {
     excerpt
 }
 
-fn response_input_items(request: &AgentInferenceRequest) -> Vec<Value> {
+fn response_input_items(
+    request: &AgentInferenceRequest,
+    tool_name_map: &ResponsesToolNameMap,
+) -> Vec<Value> {
     let mut items = Vec::new();
     let mut provider_output_call_ids = HashSet::new();
 
-    for conversation_item in &request.conversation {
+    for conversation_item in &request.transcript {
         let mapped = match conversation_item {
-            roder_api::conversation::ConversationItem::UserMessage(message) => Some(json!({
+            roder_api::transcript::TranscriptItem::UserMessage(message) => Some(json!({
                 "type": "message",
                 "role": "user",
                 "content": user_message_content(message)
             })),
-            roder_api::conversation::ConversationItem::AssistantMessage(message) => Some(json!({
+            roder_api::transcript::TranscriptItem::AssistantMessage(message) => Some(json!({
                 "type": "message",
                 "role": "assistant",
                 "phase": message.phase.as_deref().unwrap_or(FINAL_ANSWER_PHASE),
                 "content": [{ "type": "output_text", "text": message.text }]
             })),
-            roder_api::conversation::ConversationItem::ReasoningSummary(summary) => Some(json!({
+            roder_api::transcript::TranscriptItem::ReasoningSummary(summary) => Some(json!({
                 "type": "reasoning",
                 "summary": [{ "type": "summary_text", "text": summary.text }]
             })),
-            roder_api::conversation::ConversationItem::ToolCall(call) => {
+            roder_api::transcript::TranscriptItem::ToolCall(call) => {
                 if provider_output_call_ids.contains(&call.id) {
                     None
                 } else {
                     let item_id = fallback_function_call_item_id(&call.id);
+                    let name = tool_name_map.replay_api_name(&call.name);
                     Some(json!({
                         "type": "function_call",
                         "id": item_id,
                         "call_id": call.id,
-                        "name": call.name,
+                        "name": name,
                         "arguments": call.arguments,
                         "status": "completed"
                     }))
                 }
             }
-            roder_api::conversation::ConversationItem::ToolResult(result) => Some(json!({
+            roder_api::transcript::TranscriptItem::ToolResult(result) => Some(json!({
                 "type": "function_call_output",
                 "call_id": result.id,
                 "output": result.result
             })),
-            roder_api::conversation::ConversationItem::ContextCompaction(compaction) => {
-                Some(json!({
-                    "type": "message",
-                    "role": "user",
-                    "content": [{ "type": "input_text", "text": format!("Context summary:\n{}", compaction.summary) }]
-                }))
-            }
-            roder_api::conversation::ConversationItem::ProviderMetadata(metadata) => {
-                append_provider_output_items(metadata, &mut items, &mut provider_output_call_ids);
+            roder_api::transcript::TranscriptItem::ContextCompaction(compaction) => Some(json!({
+                "type": "message",
+                "role": "user",
+                "content": [{ "type": "input_text", "text": format!("Context summary:\n{}", compaction.summary) }]
+            })),
+            roder_api::transcript::TranscriptItem::ProviderMetadata(metadata) => {
+                append_provider_output_items(
+                    metadata,
+                    &mut items,
+                    &mut provider_output_call_ids,
+                    tool_name_map,
+                );
                 None
             }
             _ => None,
@@ -1249,7 +1448,7 @@ fn response_input_items(request: &AgentInferenceRequest) -> Vec<Value> {
     items
 }
 
-fn user_message_content(message: &roder_api::conversation::UserMessage) -> Vec<Value> {
+fn user_message_content(message: &roder_api::transcript::UserMessage) -> Vec<Value> {
     let mut content = Vec::new();
     if !message.text.is_empty() {
         content.push(json!({ "type": "input_text", "text": message.text }));
@@ -1280,6 +1479,7 @@ fn append_provider_output_items(
     metadata: &Value,
     items: &mut Vec<Value>,
     provider_output_call_ids: &mut HashSet<String>,
+    tool_name_map: &ResponsesToolNameMap,
 ) {
     let Some(output) = metadata.get("output").and_then(Value::as_array) else {
         return;
@@ -1290,7 +1490,11 @@ fn append_provider_output_items(
                 if let Some(call_id) = item.get("call_id").and_then(Value::as_str) {
                     provider_output_call_ids.insert(call_id.to_string());
                 }
-                items.push(item.clone());
+                let mut item = item.clone();
+                if let Some(name) = item.get("name").and_then(Value::as_str) {
+                    item["name"] = json!(tool_name_map.replay_api_name(name));
+                }
+                items.push(item);
             }
             Some("reasoning") => items.push(item.clone()),
             Some(kind) if is_compaction_type(kind) => items.push(item.clone()),
@@ -1383,6 +1587,16 @@ fn extract_tool_calls(
         .collect()
 }
 
+fn extract_hosted_tool_calls(value: &Value) -> Vec<HostedToolCallCompleted> {
+    let Some(output) = value.get("output").and_then(|v| v.as_array()) else {
+        return Vec::new();
+    };
+    output
+        .iter()
+        .filter_map(hosted_tool_call_completed_from_item)
+        .collect()
+}
+
 #[cfg(test)]
 fn extract_output_text(value: &Value) -> Option<String> {
     let output = value.get("output")?.as_array()?;
@@ -1441,11 +1655,16 @@ fn extract_usage(value: &Value) -> Option<TokenUsage> {
     let completion_tokens = number_to_u32(usage.get("output_tokens"));
     let total_tokens = number_to_u32(usage.get("total_tokens"))
         .or_else(|| Some(prompt_tokens? + completion_tokens?));
-    Some(TokenUsage {
-        prompt_tokens: prompt_tokens.unwrap_or_default(),
-        completion_tokens: completion_tokens.unwrap_or_default(),
-        total_tokens: total_tokens.unwrap_or_default(),
-    })
+    let cached_prompt_tokens =
+        number_to_u32(usage.pointer("/input_tokens_details/cached_tokens")).unwrap_or_default();
+    Some(
+        TokenUsage::new(
+            prompt_tokens.unwrap_or_default(),
+            completion_tokens.unwrap_or_default(),
+            total_tokens.unwrap_or_default(),
+        )
+        .with_cached_prompt_tokens(cached_prompt_tokens),
+    )
 }
 
 fn number_to_u32(value: Option<&Value>) -> Option<u32> {
@@ -1455,14 +1674,14 @@ fn number_to_u32(value: Option<&Value>) -> Option<u32> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use roder_api::conversation::{
-        AssistantMessage, ConversationItem, InputImage, ToolCallRecord, ToolResultRecord,
-        UserMessage,
-    };
+    use futures::StreamExt;
     use roder_api::inference::{
         InstructionBundle, ModelSelection, OutputConfig, ReasoningConfig, RuntimeHints,
     };
     use roder_api::reliability::ReliabilityRequestPolicy;
+    use roder_api::transcript::{
+        AssistantMessage, InputImage, ToolCallRecord, ToolResultRecord, TranscriptItem, UserMessage,
+    };
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     use tokio::net::TcpListener;
 
@@ -1476,9 +1695,9 @@ mod tests {
                 system: Some("be helpful".to_string()),
                 developer: None,
             },
-            conversation: vec![
-                ConversationItem::UserMessage(UserMessage::text("Hello")),
-                ConversationItem::AssistantMessage(AssistantMessage {
+            transcript: vec![
+                TranscriptItem::UserMessage(UserMessage::text("Hello")),
+                TranscriptItem::AssistantMessage(AssistantMessage {
                     text: "Hi".to_string(),
                     phase: None,
                 }),
@@ -1509,6 +1728,11 @@ mod tests {
             },
             metadata: json!({}),
         }
+    }
+
+    fn input_items(request: &AgentInferenceRequest) -> Vec<Value> {
+        let (_, tool_name_map) = responses_tools(request);
+        response_input_items(request, &tool_name_map)
     }
 
     #[tokio::test]
@@ -1582,6 +1806,61 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn responses_stream_surfaces_silent_provider_timeout() {
+        let base_url = spawn_silent_responses_server().await;
+        let response = send_responses_request_with_idle_timeout(
+            &base_url,
+            "secret",
+            &[],
+            None,
+            &json!({ "model": "gpt-5.5" }),
+            None,
+            Duration::from_millis(50),
+        )
+        .await
+        .unwrap();
+
+        let mut stream = stream_responses_sse(response.response, HashMap::new(), Vec::new());
+        let next = tokio::time::timeout(Duration::from_secs(1), stream.next())
+            .await
+            .expect("silent responses stream should surface an idle timeout");
+
+        assert!(
+            next.expect("stream should yield the timeout error")
+                .is_err(),
+            "silent responses stream should yield an error"
+        );
+    }
+
+    #[tokio::test]
+    async fn responses_request_surfaces_silent_headers_timeout() {
+        let base_url = spawn_silent_headers_server().await;
+        let policy = ReliabilityRequestPolicy {
+            provider_retry_max_attempts: 1,
+            ..ReliabilityRequestPolicy::default()
+        };
+        let result = send_responses_request_with_idle_timeout(
+            &base_url,
+            "secret",
+            &[],
+            None,
+            &json!({ "model": "gpt-5.5" }),
+            Some(&policy),
+            Duration::from_millis(50),
+        )
+        .await;
+        let error = match result {
+            Ok(_) => panic!("silent response headers should time out"),
+            Err(error) => error,
+        };
+
+        assert!(
+            error.to_string().contains("timed out") || error.to_string().contains("timeout"),
+            "expected timeout error, got {error:#}"
+        );
+    }
+
+    #[tokio::test]
     async fn custom_provider_list_models_returns_cached_models_without_waiting_for_refresh() {
         let cache_file = std::env::temp_dir().join(format!(
             "roder-custom-models-cache-{}-{}.json",
@@ -1634,8 +1913,7 @@ mod tests {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
         tokio::spawn(async move {
-            let mut routes = routes.into_iter();
-            while let Some((expected_path, status, body)) = routes.next() {
+            for (expected_path, status, body) in routes {
                 let Ok((mut stream, _)) = listener.accept().await else {
                     return;
                 };
@@ -1655,6 +1933,55 @@ mod tests {
                 );
                 stream.write_all(response.as_bytes()).await.unwrap();
             }
+        });
+        format!("http://{addr}")
+    }
+
+    async fn spawn_silent_responses_server() -> String {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            let Ok((mut stream, _)) = listener.accept().await else {
+                return;
+            };
+            let mut buf = [0_u8; 2048];
+            let n = stream.read(&mut buf).await.unwrap_or(0);
+            let request = String::from_utf8_lossy(&buf[..n]);
+            let path = request
+                .lines()
+                .next()
+                .and_then(|line| line.split_whitespace().nth(1))
+                .unwrap_or("");
+            assert_eq!(path, "/responses");
+            let response = concat!(
+                "HTTP/1.1 200 OK\r\n",
+                "content-type: text/event-stream\r\n",
+                "connection: keep-alive\r\n",
+                "\r\n"
+            );
+            stream.write_all(response.as_bytes()).await.unwrap();
+            tokio::time::sleep(Duration::from_secs(2)).await;
+        });
+        format!("http://{addr}")
+    }
+
+    async fn spawn_silent_headers_server() -> String {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            let Ok((mut stream, _)) = listener.accept().await else {
+                return;
+            };
+            let mut buf = [0_u8; 2048];
+            let n = stream.read(&mut buf).await.unwrap_or(0);
+            let request = String::from_utf8_lossy(&buf[..n]);
+            let path = request
+                .lines()
+                .next()
+                .and_then(|line| line.split_whitespace().nth(1))
+                .unwrap_or("");
+            assert_eq!(path, "/responses");
+            tokio::time::sleep(Duration::from_secs(2)).await;
         });
         format!("http://{addr}")
     }
@@ -1734,12 +2061,12 @@ mod tests {
     #[test]
     fn preserves_assistant_message_phase_for_responses_replay() {
         let mut request = request();
-        request.conversation = vec![ConversationItem::AssistantMessage(AssistantMessage {
+        request.transcript = vec![TranscriptItem::AssistantMessage(AssistantMessage {
             text: "I will inspect first.".to_string(),
             phase: Some("commentary".to_string()),
         })];
 
-        let input = response_input_items(&request);
+        let input = input_items(&request);
         assert_eq!(input[0]["role"], "assistant");
         assert_eq!(input[0]["phase"], "commentary");
         assert_eq!(input[0]["content"][0]["text"], "I will inspect first.");
@@ -1748,14 +2075,14 @@ mod tests {
     #[test]
     fn maps_user_images_to_responses_input_image_content() {
         let mut request = request();
-        request.conversation = vec![ConversationItem::UserMessage(UserMessage::with_images(
+        request.transcript = vec![TranscriptItem::UserMessage(UserMessage::with_images(
             "what is shown?",
             vec![InputImage {
                 image_url: "data:image/png;base64,YWJj".to_string(),
             }],
         ))];
 
-        let input = response_input_items(&request);
+        let input = input_items(&request);
         assert_eq!(input[0]["role"], "user");
         assert_eq!(input[0]["content"][0]["type"], "input_text");
         assert_eq!(input[0]["content"][0]["text"], "what is shown?");
@@ -1851,6 +2178,90 @@ mod tests {
     }
 
     #[test]
+    fn replays_unsafe_tool_call_names_as_openai_safe_names() {
+        let mut request = request();
+        request.tools = vec![roder_api::tools::ToolSpec {
+            name: "tool.discovery.list".to_string(),
+            description: "list discovery tools".to_string(),
+            parameters: json!({ "type": "object" }),
+        }];
+        request.transcript = vec![
+            TranscriptItem::UserMessage(UserMessage::text("List discovery tools")),
+            TranscriptItem::ToolCall(ToolCallRecord {
+                id: "call_1".to_string(),
+                name: "tool.discovery.list".to_string(),
+                arguments: "{}".to_string(),
+            }),
+            TranscriptItem::ToolResult(ToolResultRecord {
+                id: "call_1".to_string(),
+                name: Some("tool.discovery.list".to_string()),
+                result: "[]".to_string(),
+                display_payload: None,
+                is_error: false,
+            }),
+        ];
+
+        let body = OpenAiResponsesEngine::map_request(&request);
+
+        assert_eq!(body["tools"][0]["name"], "tool_discovery_list");
+        assert_eq!(body["input"][1]["type"], "function_call");
+        assert_eq!(body["input"][1]["name"], "tool_discovery_list");
+        assert_eq!(body["input"][2]["type"], "function_call_output");
+    }
+
+    #[test]
+    fn replays_provider_function_call_names_as_openai_safe_names() {
+        let mut request = request();
+        request.tools = vec![roder_api::tools::ToolSpec {
+            name: "tool.discovery.list".to_string(),
+            description: "list discovery tools".to_string(),
+            parameters: json!({ "type": "object" }),
+        }];
+        request.transcript = vec![
+            TranscriptItem::UserMessage(UserMessage::text("List discovery tools")),
+            TranscriptItem::ProviderMetadata(json!({
+                "output": [
+                    {
+                        "id": "fc_1",
+                        "type": "function_call",
+                        "status": "completed",
+                        "call_id": "call_1",
+                        "name": "tool.discovery.list",
+                        "arguments": "{}"
+                    }
+                ]
+            })),
+            TranscriptItem::ToolCall(ToolCallRecord {
+                id: "call_1".to_string(),
+                name: "tool.discovery.list".to_string(),
+                arguments: "{}".to_string(),
+            }),
+            TranscriptItem::ToolResult(ToolResultRecord {
+                id: "call_1".to_string(),
+                name: Some("tool.discovery.list".to_string()),
+                result: "[]".to_string(),
+                display_payload: None,
+                is_error: false,
+            }),
+        ];
+
+        let body = OpenAiResponsesEngine::map_request(&request);
+
+        assert_eq!(body["input"][1]["type"], "function_call");
+        assert_eq!(body["input"][1]["name"], "tool_discovery_list");
+        assert_eq!(
+            body["input"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .filter(|item| item["type"] == "function_call")
+                .count(),
+            1
+        );
+        assert_eq!(body["input"][2]["type"], "function_call_output");
+    }
+
+    #[test]
     fn hosted_web_search_without_function_tools_remains_available() {
         let mut request = request();
         request.tools.clear();
@@ -1918,9 +2329,9 @@ mod tests {
     #[test]
     fn replays_provider_function_call_items_before_tool_outputs() {
         let mut request = request();
-        request.conversation = vec![
-            ConversationItem::UserMessage(UserMessage::text("List files")),
-            ConversationItem::ProviderMetadata(json!({
+        request.transcript = vec![
+            TranscriptItem::UserMessage(UserMessage::text("List files")),
+            TranscriptItem::ProviderMetadata(json!({
                 "output": [
                     {
                         "id": "rs_1",
@@ -1938,12 +2349,12 @@ mod tests {
                     }
                 ]
             })),
-            ConversationItem::ToolCall(ToolCallRecord {
+            TranscriptItem::ToolCall(ToolCallRecord {
                 id: "call_1".to_string(),
                 name: "list_files".to_string(),
                 arguments: "{\"path\":\".\"}".to_string(),
             }),
-            ConversationItem::ToolResult(ToolResultRecord {
+            TranscriptItem::ToolResult(ToolResultRecord {
                 id: "call_1".to_string(),
                 name: Some("list_files".to_string()),
                 result: "Cargo.toml".to_string(),
@@ -1952,7 +2363,7 @@ mod tests {
             }),
         ];
 
-        let input = response_input_items(&request);
+        let input = input_items(&request);
         assert_eq!(input[1]["type"], "reasoning");
         assert_eq!(input[1]["encrypted_content"], "encrypted-thinking");
         assert_eq!(input[2]["id"], "fc_1");
@@ -1972,8 +2383,8 @@ mod tests {
     #[test]
     fn replays_provider_compaction_items() {
         let mut request = request();
-        request.conversation = vec![
-            ConversationItem::ProviderMetadata(json!({
+        request.transcript = vec![
+            TranscriptItem::ProviderMetadata(json!({
                 "output": [
                     {
                         "id": "cmp_1",
@@ -1982,10 +2393,10 @@ mod tests {
                     }
                 ]
             })),
-            ConversationItem::UserMessage(UserMessage::text("Continue")),
+            TranscriptItem::UserMessage(UserMessage::text("Continue")),
         ];
 
-        let input = response_input_items(&request);
+        let input = input_items(&request);
         assert_eq!(input[0]["type"], "compaction");
         assert_eq!(input[0]["encrypted_content"], "opaque");
         assert_eq!(input[1]["role"], "user");
@@ -1994,14 +2405,14 @@ mod tests {
     #[test]
     fn fallback_function_call_items_use_responses_item_id_prefix() {
         let mut request = request();
-        request.conversation = vec![
-            ConversationItem::UserMessage(UserMessage::text("List files")),
-            ConversationItem::ToolCall(ToolCallRecord {
+        request.transcript = vec![
+            TranscriptItem::UserMessage(UserMessage::text("List files")),
+            TranscriptItem::ToolCall(ToolCallRecord {
                 id: "call_1".to_string(),
                 name: "list_files".to_string(),
                 arguments: "{\"path\":\".\"}".to_string(),
             }),
-            ConversationItem::ToolResult(ToolResultRecord {
+            TranscriptItem::ToolResult(ToolResultRecord {
                 id: "call_1".to_string(),
                 name: Some("list_files".to_string()),
                 result: "Cargo.toml".to_string(),
@@ -2010,7 +2421,7 @@ mod tests {
             }),
         ];
 
-        let input = response_input_items(&request);
+        let input = input_items(&request);
         assert_eq!(input[1]["type"], "function_call");
         assert_eq!(input[1]["id"], "fc_1");
         assert_eq!(input[1]["call_id"], "call_1");
@@ -2038,14 +2449,16 @@ mod tests {
 
     #[test]
     fn extracts_responses_usage() {
-        let value = json!({ "usage": { "input_tokens": 3, "output_tokens": 4 } });
+        let value = json!({
+            "usage": {
+                "input_tokens": 10,
+                "output_tokens": 4,
+                "input_tokens_details": { "cached_tokens": 9 }
+            }
+        });
         assert_eq!(
             extract_usage(&value),
-            Some(TokenUsage {
-                prompt_tokens: 3,
-                completion_tokens: 4,
-                total_tokens: 7,
-            })
+            Some(TokenUsage::new(10, 4, 14).with_cached_prompt_tokens(9))
         );
     }
 
@@ -2165,11 +2578,8 @@ mod tests {
         assert!(events.iter().any(|event| {
             matches!(
                 event,
-                InferenceEvent::Usage(TokenUsage {
-                    prompt_tokens: 3,
-                    completion_tokens: 4,
-                    total_tokens: 7,
-                })
+                InferenceEvent::Usage(usage)
+                    if *usage == TokenUsage::new(3, 4, 7).with_cached_prompt_tokens(0)
             )
         }));
         assert!(events.iter().any(|event| {
@@ -2501,6 +2911,106 @@ mod tests {
                 arguments: "{\"text\":\"hello\"}".to_string(),
             })]
         );
+    }
+
+    #[test]
+    fn emits_hosted_web_search_tool_events() {
+        let mut state = ResponsesStreamState::default();
+        let added = SseEvent {
+            event: Some("response.output_item.added".to_string()),
+            data: json!({
+                "type": "response.output_item.added",
+                "item": {
+                    "id": "ws_1",
+                    "type": "web_search_call",
+                    "status": "in_progress"
+                }
+            }),
+        };
+        assert_eq!(
+            events_from_sse_event(&added, &mut state),
+            vec![InferenceEvent::HostedToolCallStarted(
+                HostedToolCallStarted {
+                    id: "ws_1".to_string(),
+                    name: "web_search".to_string(),
+                }
+            )]
+        );
+
+        let done = SseEvent {
+            event: Some("response.output_item.done".to_string()),
+            data: json!({
+                "type": "response.output_item.done",
+                "item": {
+                    "id": "ws_1",
+                    "type": "web_search_call",
+                    "status": "completed",
+                    "action": {
+                        "type": "search",
+                        "query": "pandelis zembashis"
+                    }
+                }
+            }),
+        };
+        assert_eq!(
+            events_from_sse_event(&done, &mut state),
+            vec![InferenceEvent::HostedToolCallCompleted(
+                HostedToolCallCompleted {
+                    id: "ws_1".to_string(),
+                    name: "web_search".to_string(),
+                    arguments: r#"{"action":"search","query":"pandelis zembashis"}"#.to_string(),
+                }
+            )]
+        );
+    }
+
+    #[test]
+    fn emits_unstreamed_hosted_web_search_from_completed_response() {
+        let mut state = ResponsesStreamState::default();
+        let completed = SseEvent {
+            event: Some("response.completed".to_string()),
+            data: json!({
+                "type": "response.completed",
+                "response": {
+                    "id": "resp_1",
+                    "status": "completed",
+                    "output": [
+                        {
+                            "id": "ws_1",
+                            "type": "web_search_call",
+                            "status": "completed",
+                            "action": {
+                                "type": "search",
+                                "queries": ["pandelis zembashis"]
+                            }
+                        }
+                    ],
+                    "usage": {
+                        "input_tokens": 1,
+                        "output_tokens": 2,
+                        "total_tokens": 3
+                    }
+                }
+            }),
+        };
+
+        let events = events_from_sse_event(&completed, &mut state);
+
+        assert!(events.iter().any(|event| matches!(
+            event,
+            InferenceEvent::HostedToolCallStarted(HostedToolCallStarted { id, name })
+                if id == "ws_1" && name == "web_search"
+        )));
+        assert!(events.iter().any(|event| matches!(
+            event,
+            InferenceEvent::HostedToolCallCompleted(HostedToolCallCompleted {
+                id,
+                name,
+                arguments
+            }) if id == "ws_1"
+                && name == "web_search"
+                && arguments == r#"{"action":"search","query":"pandelis zembashis"}"#
+        )));
     }
 
     #[test]

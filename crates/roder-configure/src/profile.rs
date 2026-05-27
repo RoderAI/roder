@@ -66,7 +66,7 @@ struct StrictDistributionManifest {
     #[serde(default)]
     default_provider: Option<String>,
     #[serde(default)]
-    default_session_store: Option<String>,
+    default_thread_store: Option<String>,
     #[serde(default)]
     config_overrides: serde_json::Value,
 }
@@ -129,6 +129,10 @@ pub const BUILT_IN_PROFILES: &[BuiltInProfile] = &[
         source: include_str!("../profiles/research-headless.toml"),
     },
     BuiltInProfile {
+        id: "tavily",
+        source: include_str!("../profiles/tavily.toml"),
+    },
+    BuiltInProfile {
         id: "full",
         source: include_str!("../profiles/full.toml"),
     },
@@ -150,7 +154,7 @@ fn parse_profile(source: &str, path: String) -> Result<Profile, ProfileError> {
             include_cli: parsed.manifest.include_cli,
             extensions: parsed.manifest.extensions,
             default_provider: parsed.manifest.default_provider,
-            default_session_store: parsed.manifest.default_session_store,
+            default_thread_store: parsed.manifest.default_thread_store,
             config_overrides: parsed.manifest.config_overrides,
         },
     })
@@ -199,7 +203,7 @@ fn validate_profile(
     }
 
     for category in [
-        ExtensionCategory::SessionStore,
+        ExtensionCategory::ThreadStore,
         ExtensionCategory::CheckpointStore,
         ExtensionCategory::MemoryStore,
     ] {
@@ -216,8 +220,8 @@ fn validate_profile(
     if let Some(default_provider) = &profile.manifest.default_provider {
         require_selected(&selected, "default_provider", default_provider)?;
     }
-    if let Some(default_session_store) = &profile.manifest.default_session_store {
-        require_selected(&selected, "default_session_store", default_session_store)?;
+    if let Some(default_thread_store) = &profile.manifest.default_thread_store {
+        require_selected(&selected, "default_thread_store", default_thread_store)?;
     }
 
     Ok(ValidationReport { required_env })

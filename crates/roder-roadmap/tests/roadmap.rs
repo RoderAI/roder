@@ -2,8 +2,9 @@ use std::fs;
 use std::path::PathBuf;
 
 use roder_roadmap::{
-    DiagnosticSeverity, ListOptions, RoadmapState, RoadmapStateStore, ThreadAttachment,
-    list_documents, parse_document, set_task_checked, validate_document,
+    DiagnosticSeverity, ListOptions, RoadmapRuntime, RoadmapState, RoadmapStateStore,
+    RoadmapTaskStatus, ThreadAttachment, build_control_snapshot, list_documents, parse_document,
+    set_task_checked, validate_document,
 };
 use time::OffsetDateTime;
 
@@ -206,6 +207,40 @@ fn state_store_round_trips_with_atomic_path() {
 
     assert_eq!(store.path(), dir.join("roadmaps").join("state.json"));
     assert_eq!(store.load().unwrap(), Some(state));
+}
+
+#[test]
+fn control_snapshot_summarizes_tasks_threads_and_dispatch_prompts() {
+    let dir = temp_dir("roadmap-control");
+    let data_dir = dir.join(".roder");
+    let roadmap_dir = dir.join("roadmap");
+    fs::create_dir_all(&roadmap_dir).unwrap();
+    let path = roadmap_dir.join("20-roadmapping-mode.md");
+    fs::write(&path, fixture(false)).unwrap();
+    let task_id = parse_document(&path, &fs::read_to_string(&path).unwrap()).tasks[0]
+        .id
+        .clone();
+    let mut runtime = RoadmapRuntime::new(&dir, &data_dir);
+    runtime.open_roadmap(&path).unwrap();
+    runtime
+        .attach_roadmap_thread(&path, &task_id, "thread-a", Some("worker a".to_string()))
+        .unwrap();
+
+    let snapshot = build_control_snapshot(&dir, &data_dir, Some("20-roadmapping-mode.md")).unwrap();
+    let selected = snapshot.selected.unwrap();
+
+    assert_eq!(
+        selected.path,
+        PathBuf::from("roadmap/20-roadmapping-mode.md")
+    );
+    assert_eq!(selected.tasks[0].status, RoadmapTaskStatus::Assigned);
+    assert_eq!(selected.tasks[0].threads[0].thread_id, "thread-a");
+    assert!(
+        selected.tasks[0]
+            .dispatch_prompt
+            .contains("You are a Roder roadmap worker")
+    );
+    assert!(snapshot.next_action.contains("select") || snapshot.next_action.contains("dispatch"));
 }
 
 fn fixture(checked: bool) -> String {

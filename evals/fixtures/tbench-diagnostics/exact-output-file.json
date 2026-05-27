@@ -1,0 +1,22 @@
+{
+  "id": "tbench-exact-output-file",
+  "title": "TBench exact required output file",
+  "prompt": "FAKE_TBENCH_GCODE_OUTPUT: write the exact required output file before finalizing.",
+  "tags": ["tbench-diagnostic", "required-output", "tool:write_file"],
+  "timeoutMs": 10000,
+  "expected": {
+    "finalAnswerContains": ["hello from roder"],
+    "files": [
+      {
+        "path": "out.txt",
+        "exists": true,
+        "exactContents": "flag{gc0d3_iz_ch4LLenGiNg}\n"
+      }
+    ],
+    "verificationRequired": true
+  },
+  "constraints": [
+    "final chat text is not enough for exact-answer TBench tasks",
+    "write the required file and verify its exact contents before finalizing"
+  ]
+}

@@ -1,8 +1,9 @@
 mod agent_control_tools;
 pub mod artifacts;
 pub mod bus;
-mod conversation;
+mod deadline_policy;
 pub mod fake_provider;
+mod goals;
 mod instructions;
 pub mod media_artifacts;
 pub mod model_profiles;
@@ -20,9 +21,11 @@ mod tool_execution;
 mod tool_output;
 mod tool_preview;
 mod tool_validation;
+mod transcript;
 mod verification_gate;
 
 pub use bus::*;
+pub use goals::*;
 pub use instructions::*;
 pub use reliability::RuntimeReliabilityConfig;
 pub use runtime::*;

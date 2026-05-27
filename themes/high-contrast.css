@@ -7,6 +7,7 @@
     /* Thick borders for unambiguous frame edges. */
     border-style: thick;
     --text: #ffffff;
+    --commentary: #ffffff;
     --muted: #ffff00;
     --subtle: #ffff00;
     --accent: #00ffff;

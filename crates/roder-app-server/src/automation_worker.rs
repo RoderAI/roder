@@ -10,7 +10,7 @@ use roder_api::tasks::{
     TaskExecutionContext, TaskExecutionResult, TaskExecutor, TaskOutputStream, TaskSpec,
 };
 use roder_automations::{AutomationStore, AutomationSupervisorConfig, ScheduledOccurrence};
-use roder_core::{CreateSessionRequest, Runtime, StartTurnRequest, default_instructions};
+use roder_core::{CreateThreadRequest, Runtime, StartTurnRequest, default_instructions};
 use serde::{Deserialize, Serialize};
 use time::OffsetDateTime;
 
@@ -105,9 +105,9 @@ pub async fn execute_automation_task(
         .await?;
 
     let thread = runtime
-        .create_session_with(CreateSessionRequest {
+        .create_thread_with(CreateThreadRequest {
             title: Some(format!("Automation: {}", input.definition.name)),
-            workspace: Some(input.definition.project.cwd.clone()),
+            workspace: input.definition.project.cwd.clone(),
             provider: input.definition.model_provider.clone(),
             model: input.definition.model.clone(),
         })
@@ -121,7 +121,7 @@ pub async fn execute_automation_task(
             provider_override: input.definition.model_provider.clone(),
             model_override: input.definition.model.clone(),
             reasoning_override: None,
-            workspace: Some(input.definition.project.cwd.clone()),
+            workspace: input.definition.project.cwd.clone(),
             instructions: default_instructions(),
             task_ledger_required: false,
         })
@@ -336,6 +336,8 @@ mod tests {
             },
         );
 
+        let store = AutomationStore::open(&store_path).unwrap();
+        store.upsert_automation(&definition, None).unwrap();
         let queued = server
             .submit_automation_run(definition.clone(), occurrence)
             .await
@@ -351,7 +353,6 @@ mod tests {
                 .any(|task| task.spec.kind == AUTOMATION_TASK_EXECUTOR_ID)
         );
 
-        let store = AutomationStore::open(&store_path).unwrap();
         let completed = wait_for_run_state(&store, &queued.run_id, AutomationRunState::Completed)
             .await
             .unwrap();
@@ -382,11 +383,12 @@ mod tests {
             },
         );
 
+        let store = AutomationStore::open(&store_path).unwrap();
+        store.upsert_automation(&definition, None).unwrap();
         let queued = server
             .submit_automation_run(definition.clone(), occurrence)
             .await
             .unwrap();
-        let store = AutomationStore::open(&store_path).unwrap();
         let failed = wait_for_run_state(&store, &queued.run_id, AutomationRunState::Failed)
             .await
             .unwrap();

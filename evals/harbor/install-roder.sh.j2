@@ -1,0 +1,88 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+export DEBIAN_FRONTEND=noninteractive
+
+mkdir -p /logs/agent
+touch \
+  /logs/agent/roder-cli.txt \
+  /logs/agent/roder-events.jsonl \
+  /logs/agent/roder-last-message.txt \
+  /logs/agent/roder-stderr.txt \
+  /logs/agent/setup-summary.txt
+exec > >(tee -a /logs/agent/setup-summary.txt) 2>&1
+
+echo "Roder Harbor setup started"
+if [ -f /etc/os-release ]; then
+  cat /etc/os-release
+fi
+
+apt_install() {
+  apt-get install -y --no-install-recommends "$@"
+}
+
+apt_install_optional() {
+  if ! apt_install "$@"; then
+    echo "Optional apt package install failed: $*" >&2
+  fi
+}
+
+apt-get update
+apt_install \
+  ca-certificates \
+  python3
+apt_install_optional ripgrep
+
+if [ -f /installed-agent/roder ]; then
+  install -m 0755 /installed-agent/roder /usr/local/bin/roder
+  if roder --version >/logs/agent/roder-version.txt 2>>/logs/agent/roder-stderr.txt; then
+    cat /logs/agent/roder-version.txt
+  else
+    echo "roder --version is unavailable; continuing with roder exec --help self-test."
+  fi
+  if ! roder exec --help >/logs/agent/roder-exec-help.txt 2>>/logs/agent/roder-stderr.txt; then
+    echo "Uploaded /installed-agent/roder is not executable in this task container." >&2
+    file /usr/local/bin/roder >&2 || true
+    ldd /usr/local/bin/roder >&2 || true
+    exit 1
+  fi
+  echo "Prebuilt roder self-test passed."
+  exit 0
+fi
+
+apt_install \
+  build-essential \
+  clang \
+  curl \
+  git \
+  lld \
+  libssl-dev \
+  pkg-config
+
+if ! command -v cargo >/dev/null 2>&1; then
+  curl --proto '=https' --tlsv1.2 -fsSL https://sh.rustup.rs \
+    | sh -s -- -y --profile minimal --default-toolchain stable
+fi
+
+source "$HOME/.cargo/env"
+
+if [ -f /installed-agent/roder-source.tar.gz ]; then
+  rm -rf /opt/roder-src
+  mkdir -p /opt/roder-src
+  tar -xzf /installed-agent/roder-source.tar.gz -C /opt/roder-src
+elif [ -n "${RODER_HARBOR_GIT_URL:-}" ]; then
+  rm -rf /opt/roder-src
+  git clone "${RODER_HARBOR_GIT_URL}" /opt/roder-src
+  if [ -n "${RODER_HARBOR_GIT_REF:-}" ]; then
+    git -C /opt/roder-src checkout "${RODER_HARBOR_GIT_REF}"
+  fi
+else
+  echo "No /installed-agent/roder-source.tar.gz or RODER_HARBOR_GIT_URL provided." >&2
+  exit 1
+fi
+
+cd /opt/roder-src
+cargo build -p roder-cli --bin roder
+install -m 0755 target/debug/roder /usr/local/bin/roder
+roder exec --help >/logs/agent/roder-exec-help.txt 2>>/logs/agent/roder-stderr.txt
+echo "Source-built roder self-test passed."

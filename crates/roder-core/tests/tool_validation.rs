@@ -161,7 +161,7 @@ fn turn(thread_id: &str) -> StartTurnRequest {
         provider_override: None,
         model_override: None,
         reasoning_override: None,
-        workspace: None,
+        workspace: std::env::current_dir().unwrap().display().to_string(),
         instructions: default_instructions(),
         task_ledger_required: false,
     }

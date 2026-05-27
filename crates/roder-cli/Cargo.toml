@@ -9,6 +9,7 @@ path = "src/main.rs"
 
 [dependencies]
 anyhow.workspace = true
+base64.workspace = true
 crossterm.workspace = true
 ratatui.workspace = true
 time.workspace = true
@@ -23,7 +24,7 @@ roder-evals.workspace = true
 roder-ext-anthropic.workspace = true
 roder-ext-disk-context.workspace = true
 roder-ext-gemini.workspace = true
-roder-ext-jsonl-session.workspace = true
+roder-ext-jsonl-thread-store.workspace = true
 roder-ext-memory.workspace = true
 roder-ext-openai-responses.workspace = true
 roder-ext-subagents.workspace = true

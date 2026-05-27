@@ -403,7 +403,7 @@
       "paramsType": "InitializeParams",
       "resultType": "InitializeResult",
       "stability": "stable",
-      "featureGroup": "session",
+      "featureGroup": "app",
       "idempotency": "idempotent",
       "sideEffect": "readOnly"
     },
@@ -753,6 +753,15 @@
       ]
     },
     {
+      "method": "providers/clear",
+      "paramsType": "ProvidersClearParams",
+      "resultType": "ProvidersClearResult",
+      "stability": "stable",
+      "featureGroup": "providers",
+      "idempotency": "nonIdempotent",
+      "sideEffect": "localState"
+    },
+    {
       "method": "providers/configure",
       "paramsType": "ProvidersConfigureParams",
       "resultType": "ProvidersConfigureResult",
@@ -978,51 +987,6 @@
       "sideEffect": "localState"
     },
     {
-      "method": "session/exit_plan",
-      "paramsType": "SessionExitPlanParams",
-      "resultType": "SessionExitPlanResult",
-      "stability": "stable",
-      "featureGroup": "session",
-      "idempotency": "nonIdempotent",
-      "sideEffect": "localState"
-    },
-    {
-      "method": "session/get",
-      "paramsType": "SessionGetParams",
-      "resultType": "SessionGetResult",
-      "stability": "stable",
-      "featureGroup": "session",
-      "idempotency": "idempotent",
-      "sideEffect": "readOnly"
-    },
-    {
-      "method": "session/resolve_approval",
-      "paramsType": "SessionResolveApprovalParams",
-      "resultType": "SessionResolveApprovalResult",
-      "stability": "stable",
-      "featureGroup": "session",
-      "idempotency": "nonIdempotent",
-      "sideEffect": "localState"
-    },
-    {
-      "method": "session/resolve_user_input",
-      "paramsType": "SessionResolveUserInputParams",
-      "resultType": "SessionResolveUserInputResult",
-      "stability": "stable",
-      "featureGroup": "session",
-      "idempotency": "nonIdempotent",
-      "sideEffect": "localState"
-    },
-    {
-      "method": "session/set_mode",
-      "paramsType": "SessionSetModeParams",
-      "resultType": "SessionSetModeResult",
-      "stability": "stable",
-      "featureGroup": "session",
-      "idempotency": "nonIdempotent",
-      "sideEffect": "localState"
-    },
-    {
       "method": "settings/get",
       "paramsType": "SettingsGetParams",
       "resultType": "SettingsGetResult",
@@ -1053,6 +1017,15 @@
       "method": "settings/set_search_index",
       "paramsType": "SettingsSetSearchIndexParams",
       "resultType": "SettingsSetSearchIndexResult",
+      "stability": "stable",
+      "featureGroup": "settings",
+      "idempotency": "nonIdempotent",
+      "sideEffect": "localState"
+    },
+    {
+      "method": "settings/set_shell",
+      "paramsType": "SettingsSetShellParams",
+      "resultType": "SettingsSetShellResult",
       "stability": "stable",
       "featureGroup": "settings",
       "idempotency": "nonIdempotent",
@@ -1102,6 +1075,42 @@
       "featureGroup": "skills",
       "idempotency": "nonIdempotent",
       "sideEffect": "localState"
+    },
+    {
+      "method": "speech/providers/list",
+      "paramsType": "SpeechProvidersListParams",
+      "resultType": "SpeechProvidersListResult",
+      "stability": "stable",
+      "featureGroup": "speech",
+      "idempotency": "idempotent",
+      "sideEffect": "readOnly"
+    },
+    {
+      "method": "speech/synthesis/providers/list",
+      "paramsType": "SpeechSynthesisProvidersListParams",
+      "resultType": "SpeechSynthesisProvidersListResult",
+      "stability": "stable",
+      "featureGroup": "speech",
+      "idempotency": "idempotent",
+      "sideEffect": "readOnly"
+    },
+    {
+      "method": "speech/synthesize",
+      "paramsType": "SpeechSynthesizeParams",
+      "resultType": "SpeechSynthesizeResult",
+      "stability": "stable",
+      "featureGroup": "speech",
+      "idempotency": "nonIdempotent",
+      "sideEffect": "externalProcess"
+    },
+    {
+      "method": "speech/transcribe",
+      "paramsType": "SpeechTranscribeParams",
+      "resultType": "SpeechTranscribeResult",
+      "stability": "stable",
+      "featureGroup": "speech",
+      "idempotency": "nonIdempotent",
+      "sideEffect": "externalProcess"
     },
     {
       "method": "tasks/cancel",
@@ -1250,7 +1259,7 @@
       "paramsType": "ThreadArchiveParams",
       "resultType": "ThreadArchiveResult",
       "stability": "stable",
-      "featureGroup": "threads",
+      "featureGroup": "thread",
       "idempotency": "nonIdempotent",
       "sideEffect": "localState"
     },
@@ -1259,16 +1268,58 @@
       "paramsType": "ThreadAttachParams",
       "resultType": "ThreadAttachResult",
       "stability": "stable",
-      "featureGroup": "threads",
+      "featureGroup": "thread",
       "idempotency": "nonIdempotent",
       "sideEffect": "localState"
+    },
+    {
+      "method": "thread/exit_plan",
+      "paramsType": "ThreadExitPlanParams",
+      "resultType": "ThreadExitPlanResult",
+      "stability": "stable",
+      "featureGroup": "thread",
+      "idempotency": "nonIdempotent",
+      "sideEffect": "localState"
+    },
+    {
+      "method": "thread/goal/clear",
+      "paramsType": "ThreadGoalClearParams",
+      "resultType": "ThreadGoalClearResult",
+      "stability": "stable",
+      "featureGroup": "thread",
+      "idempotency": "nonIdempotent",
+      "sideEffect": "localState",
+      "notifications": [
+        "thread/goal/cleared"
+      ]
+    },
+    {
+      "method": "thread/goal/get",
+      "paramsType": "ThreadGoalGetParams",
+      "resultType": "ThreadGoalGetResult",
+      "stability": "stable",
+      "featureGroup": "thread",
+      "idempotency": "idempotent",
+      "sideEffect": "readOnly"
+    },
+    {
+      "method": "thread/goal/set",
+      "paramsType": "ThreadGoalSetParams",
+      "resultType": "ThreadGoalSetResult",
+      "stability": "stable",
+      "featureGroup": "thread",
+      "idempotency": "nonIdempotent",
+      "sideEffect": "localState",
+      "notifications": [
+        "thread/goal/updated"
+      ]
     },
     {
       "method": "thread/list",
       "paramsType": "ThreadListParams",
       "resultType": "ThreadListResult",
       "stability": "stable",
-      "featureGroup": "threads",
+      "featureGroup": "thread",
       "idempotency": "idempotent",
       "sideEffect": "readOnly"
     },
@@ -1277,16 +1328,43 @@
       "paramsType": "ThreadReadParams",
       "resultType": "ThreadReadResult",
       "stability": "stable",
-      "featureGroup": "threads",
+      "featureGroup": "thread",
       "idempotency": "idempotent",
       "sideEffect": "readOnly"
+    },
+    {
+      "method": "thread/resolve_approval",
+      "paramsType": "ThreadResolveApprovalParams",
+      "resultType": "ThreadResolveApprovalResult",
+      "stability": "stable",
+      "featureGroup": "thread",
+      "idempotency": "nonIdempotent",
+      "sideEffect": "localState"
+    },
+    {
+      "method": "thread/resolve_user_input",
+      "paramsType": "ThreadResolveUserInputParams",
+      "resultType": "ThreadResolveUserInputResult",
+      "stability": "stable",
+      "featureGroup": "thread",
+      "idempotency": "nonIdempotent",
+      "sideEffect": "localState"
     },
     {
       "method": "thread/roadmap/open",
       "paramsType": "ThreadRoadmapOpenParams",
       "resultType": "ThreadRoadmapOpenResult",
       "stability": "stable",
-      "featureGroup": "threads",
+      "featureGroup": "thread",
+      "idempotency": "nonIdempotent",
+      "sideEffect": "localState"
+    },
+    {
+      "method": "thread/set_mode",
+      "paramsType": "ThreadSetModeParams",
+      "resultType": "ThreadSetModeResult",
+      "stability": "stable",
+      "featureGroup": "thread",
       "idempotency": "nonIdempotent",
       "sideEffect": "localState"
     },
@@ -1295,9 +1373,18 @@
       "paramsType": "ThreadStartParams",
       "resultType": "ThreadStartResult",
       "stability": "stable",
-      "featureGroup": "threads",
+      "featureGroup": "thread",
       "idempotency": "nonIdempotent",
       "sideEffect": "localState"
+    },
+    {
+      "method": "thread/state",
+      "paramsType": "ThreadStateParams",
+      "resultType": "ThreadStateResult",
+      "stability": "stable",
+      "featureGroup": "thread",
+      "idempotency": "idempotent",
+      "sideEffect": "readOnly"
     },
     {
       "method": "tools/call",

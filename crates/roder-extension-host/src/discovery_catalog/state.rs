@@ -9,9 +9,9 @@ pub struct PromotionStore {
 }
 
 impl PromotionStore {
-    pub fn new(session_state_dir: impl AsRef<Path>) -> Self {
+    pub fn new(promotion_state_dir: impl AsRef<Path>) -> Self {
         Self {
-            path: session_state_dir
+            path: promotion_state_dir
                 .as_ref()
                 .join("discovery")
                 .join("promotions.json"),

@@ -67,7 +67,7 @@ where
     }
 
     pub(super) async fn resolve_diff_approval(&mut self, approval_id: String, approved: bool) {
-        let params = SessionResolveApprovalParams {
+        let params = ThreadResolveApprovalParams {
             approval_id: approval_id.clone(),
             approved,
         };
@@ -75,15 +75,15 @@ where
             .client
             .send_request(JsonRpcRequest {
                 jsonrpc: "2.0".to_string(),
-                id: Some(serde_json::json!("session/resolve_approval")),
-                method: "session/resolve_approval".to_string(),
+                id: Some(serde_json::json!("thread/resolve_approval")),
+                method: "thread/resolve_approval".to_string(),
                 params: Some(serde_json::to_value(params).unwrap()),
             })
             .await;
-        match decode_response::<SessionResolveApprovalResult>(res) {
+        match decode_response::<ThreadResolveApprovalResult>(res) {
             Ok(result) if result.resolved => {}
             Ok(_) => self.record_error(format!("approval not pending: {}", short_id(&approval_id))),
-            Err(err) => self.record_error(format!("session/resolve_approval failed: {err}")),
+            Err(err) => self.record_error(format!("thread/resolve_approval failed: {err}")),
         }
     }
 

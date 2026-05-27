@@ -5,10 +5,6 @@ use std::time::{Duration, Instant};
 
 use anyhow::{Context, bail};
 use futures::StreamExt;
-use roder_api::conversation::{
-    AssistantMessage, ConversationItem, ToolCallRecord, ToolResultRecord, UserMessage,
-    tool_display_payload,
-};
 use roder_api::events::{ThreadId, TurnId};
 use roder_api::extension::{InferenceEngineId, SubagentDispatcherId};
 use roder_api::inference::{
@@ -25,6 +21,10 @@ use roder_api::tools::{ToolCall, ToolChoice, ToolExecutionContext, ToolRegistry}
 use roder_api::trace::{
     PagedTraceText, ParentTurnRef, SubagentTraceDelta, SubagentTraceItem, SubagentTraceSink,
     SubagentTraceStatus,
+};
+use roder_api::transcript::{
+    AssistantMessage, ToolCallRecord, ToolResultRecord, TranscriptItem, UserMessage,
+    tool_display_payload,
 };
 use tokio::sync::Semaphore;
 
@@ -417,7 +417,7 @@ impl InProcessDispatcher {
         let mut transcript = BoundedTranscript::new(max_result_chars);
         transcript.push_text("user", request.prompt.clone());
 
-        let mut conversation = vec![ConversationItem::UserMessage(UserMessage::text(
+        let mut model_transcript = vec![TranscriptItem::UserMessage(UserMessage::text(
             request.prompt.clone(),
         ))];
         let mut usage = None;
@@ -437,7 +437,7 @@ impl InProcessDispatcher {
                     system: definition.system_prompt.clone(),
                     developer: Some(subagent_developer_instructions(lane, &request)),
                 },
-                conversation: conversation.clone(),
+                transcript: model_transcript.clone(),
                 tools: tools.specs(),
                 tool_choice: if tools.is_empty() {
                     ToolChoice::None
@@ -570,6 +570,8 @@ impl InProcessDispatcher {
                         .await;
                     }
                     InferenceEvent::ToolCallDelta(_)
+                    | InferenceEvent::HostedToolCallStarted(_)
+                    | InferenceEvent::HostedToolCallCompleted(_)
                     | InferenceEvent::Compaction(_)
                     | InferenceEvent::ProviderMetadata(_) => {}
                 }
@@ -586,13 +588,13 @@ impl InProcessDispatcher {
 
             if !assistant_text.is_empty() {
                 transcript.push_text("assistant", assistant_text.clone());
-                conversation.push(ConversationItem::AssistantMessage(AssistantMessage {
+                model_transcript.push(TranscriptItem::AssistantMessage(AssistantMessage {
                     text: assistant_text,
                     phase: None,
                 }));
             }
             for call in tool_calls {
-                conversation.push(ConversationItem::ToolCall(ToolCallRecord {
+                model_transcript.push(TranscriptItem::ToolCall(ToolCallRecord {
                     id: call.id.clone(),
                     name: call.name.clone(),
                     arguments: call.arguments.clone(),
@@ -616,7 +618,7 @@ impl InProcessDispatcher {
                     },
                 )
                 .await;
-                conversation.push(ConversationItem::ToolResult(result));
+                model_transcript.push(TranscriptItem::ToolResult(result));
             }
         }
 

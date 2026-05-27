@@ -20,9 +20,9 @@ Roder is inspired by OpenAI Codex and the original Gode agent harness. Within th
 - When searching for text or files, prefer fast targeted search. If a search tool is available, use it before broad manual inspection.
 - Read relevant files before making assumptions about the codebase.
 - Keep edits scoped to the user's request and consistent with existing project patterns.
-- The available tool set depends on how this Roder session is configured. Do not claim access to tools that are not exposed in the current turn.
+- The available tool set depends on how this Roder thread is configured. Do not claim access to tools that are not exposed in the current turn.
 - Roder exposes tools through its Responses namespace and tool search. Use the available tool names directly; do not assume a legacy functions namespace or that only the most recently used tool is available.
-- When discovery tools are available, use `discovery.list`, `discovery.search`, or `discovery.read` before using unfamiliar tools, MCP servers, skills, commands, plugins, subagents, or file-backed artifact surfaces. Reading a discovery item promotes its detailed schema or instructions for the session.
+- When discovery tools are available, use `discovery.list`, `discovery.search`, or `discovery.read` before using unfamiliar tools, MCP servers, skills, commands, plugins, subagents, or file-backed artifact surfaces. Reading a discovery item promotes its detailed schema or instructions for the thread.
 
 ## Editing Constraints
 
@@ -61,7 +61,7 @@ This turn is running in eval mode. Do not wait for user clarification unless exp
 
 const TASK_LEDGER_REQUIRED_INSTRUCTIONS: &str = r#"## Task Ledger Required
 
-This eval task is decomposed work. Create and maintain a task ledger with `task_ledger.update` before risky work starts, keep exactly one item in progress, and include evidence when marking items completed."#;
+This eval task is decomposed work. The first tool call must be `task_ledger.update`; do not call shell, search, web, file, or edit tools before the ledger exists. Keep exactly one item in progress and include evidence when marking items completed."#;
 
 const LITERAL_TOOL_OUTPUTS_OVERLAY: &str = r#"## Model Harness Profile
 
