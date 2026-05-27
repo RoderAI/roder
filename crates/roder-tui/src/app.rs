@@ -1617,6 +1617,21 @@ where
                                         }
                                     }
                                 }
+                                KeyCode::Char('d') | KeyCode::Char('r')
+                                    if self.provider_popup_screen
+                                        == ProviderPopupScreen::Providers
+                                        && key.modifiers.contains(KeyModifiers::CONTROL) =>
+                                {
+                                    if let Some(selected) = self.provider_state.selected() {
+                                        if let Some(ProviderMenuItem::Provider(provider)) = self
+                                            .filtered_provider_menu_items()
+                                            .get(selected)
+                                            .cloned()
+                                        {
+                                            self.clear_or_logout_provider(provider).await;
+                                        }
+                                    }
+                                }
                                 KeyCode::Backspace
                                     if self.provider_popup_screen
                                         == ProviderPopupScreen::Providers
@@ -3794,6 +3809,54 @@ where
         ))
     }
 
+    fn provider_popup_title(&self) -> String {
+        match self.provider_popup_screen {
+            ProviderPopupScreen::Main => " Menu (Enter select, Esc close) ".to_string(),
+            ProviderPopupScreen::Providers => {
+                let selected_provider = self.provider_state.selected().and_then(|idx| {
+                    self.filtered_provider_menu_items().get(idx).cloned()
+                }).and_then(|item| {
+                    match item {
+                        ProviderMenuItem::Provider(p) => Some(p),
+                        _ => None,
+                    }
+                });
+
+                let reset_action = if let Some(provider) = selected_provider {
+                    if provider.authenticated {
+                        if provider.auth_type == ProviderAuthType::OAuth {
+                            "sign out"
+                        } else {
+                            "clear"
+                        }
+                    } else {
+                        "reset"
+                    }
+                } else {
+                    "reset"
+                };
+
+                if self.provider_menu_filter.is_empty() {
+                    format!(" Providers (Enter select, Backspace {}, Esc back) ", reset_action)
+                } else {
+                    format!(" Providers (Enter select, Ctrl-R {}, Esc back) ", reset_action)
+                }
+            }
+            ProviderPopupScreen::ApiKey => " Paste API key (Enter save, Esc back) ".to_string(),
+            ProviderPopupScreen::Models => " Models by provider (Enter select, Esc back) ".to_string(),
+            ProviderPopupScreen::Reasoning => " Reasoning effort (Enter select, Esc back) ".to_string(),
+            ProviderPopupScreen::Settings => " Settings (Enter select, Esc back) ".to_string(),
+            ProviderPopupScreen::Runners => " Runners (Enter select, Esc back) ".to_string(),
+            ProviderPopupScreen::Spinner => " Working spinner (Enter select, Esc back) ".to_string(),
+            ProviderPopupScreen::WebSearch => " Web search provider (Enter select, Esc back) ".to_string(),
+            ProviderPopupScreen::VoiceModels => " Voice model (Enter select, Esc back) ".to_string(),
+            ProviderPopupScreen::Shell => " Shell command shell (Enter select, Esc back) ".to_string(),
+            ProviderPopupScreen::Resume => " Resume thread (Enter select, Esc back) ".to_string(),
+            ProviderPopupScreen::Themes => " Themes (Enter select, Esc back) ".to_string(),
+            ProviderPopupScreen::Marketplaces => " Plugin marketplaces (Enter select, Esc back) ".to_string(),
+        }
+    }
+
     fn render_provider_popup(&mut self, f: &mut Frame<'_>, area: Rect) {
         let menu_area = centered_rect(area, area.width.min(72), area.height.min(16));
         let visible_items = self.filtered_provider_menu_items();
@@ -3867,22 +3930,7 @@ where
                 })
                 .collect()
         };
-        let title = match self.provider_popup_screen {
-            ProviderPopupScreen::Main => " Menu (Enter select, Esc close) ",
-            ProviderPopupScreen::Providers => " Providers (Enter select, Esc back) ",
-            ProviderPopupScreen::ApiKey => " Paste API key (Enter save, Esc back) ",
-            ProviderPopupScreen::Models => " Models by provider (Enter select, Esc back) ",
-            ProviderPopupScreen::Reasoning => " Reasoning effort (Enter select, Esc back) ",
-            ProviderPopupScreen::Settings => " Settings (Enter select, Esc back) ",
-            ProviderPopupScreen::Runners => " Runners (Enter select, Esc back) ",
-            ProviderPopupScreen::Spinner => " Working spinner (Enter select, Esc back) ",
-            ProviderPopupScreen::WebSearch => " Web search provider (Enter select, Esc back) ",
-            ProviderPopupScreen::VoiceModels => " Voice model (Enter select, Esc back) ",
-            ProviderPopupScreen::Shell => " Shell command shell (Enter select, Esc back) ",
-            ProviderPopupScreen::Resume => " Resume thread (Enter select, Esc back) ",
-            ProviderPopupScreen::Themes => " Themes (Enter select, Esc back) ",
-            ProviderPopupScreen::Marketplaces => " Plugin marketplaces (Enter select, Esc back) ",
-        };
+        let title = self.provider_popup_title();
         let borders = if self.theme.borders_visible {
             Borders::ALL
         } else {
@@ -3893,7 +3941,7 @@ where
             .border_type(self.theme.border_type)
             .style(self.theme.dialog_surface())
             .border_style(self.theme.dialog())
-            .title(Span::styled(title, self.theme.accent()));
+            .title(Span::styled(&title, self.theme.accent()));
         let inner = block.inner(menu_area);
         let chunks = Layout::default()
             .direction(Direction::Vertical)
@@ -7576,6 +7624,92 @@ mod tests {
 
         assert!(!app.show_provider_popup);
         assert!(app.roadmap_mode.is_some());
+    }
+
+    #[tokio::test]
+    async fn provider_menu_clear_or_logout_triggers_proper_auth_action() {
+        let mut app = test_app();
+
+        // 1. API key provider clear
+        let api_key_provider = ProviderChoice {
+            provider_id: "google".to_string(),
+            name: "Google".to_string(),
+            description: None,
+            auth_type: ProviderAuthType::ApiKey,
+            authenticated: true,
+            auth_detail: Some("configured".to_string()),
+            default_model: None,
+            recommended: false,
+        };
+        app.clear_or_logout_provider(api_key_provider).await;
+
+        // 2. OAuth provider logout
+        let oauth_provider = ProviderChoice {
+            provider_id: "codex".to_string(),
+            name: "Codex".to_string(),
+            description: None,
+            auth_type: ProviderAuthType::OAuth,
+            authenticated: true,
+            auth_detail: Some("signed in".to_string()),
+            default_model: None,
+            recommended: true,
+        };
+        app.clear_or_logout_provider(oauth_provider).await;
+    }
+
+    #[test]
+    fn provider_popup_header_displays_correct_action_for_selected_provider() {
+        let mut app = test_app();
+        app.show_provider_popup = true;
+        app.provider_popup_screen = ProviderPopupScreen::Providers;
+
+        // 1. Unauthenticated provider selected -> reset
+        let unauth_provider = ProviderChoice {
+            provider_id: "google".to_string(),
+            name: "Google".to_string(),
+            description: None,
+            auth_type: ProviderAuthType::ApiKey,
+            authenticated: false,
+            auth_detail: None,
+            default_model: None,
+            recommended: false,
+        };
+        app.provider_menu_items = vec![ProviderMenuItem::Provider(unauth_provider)];
+        app.provider_state.select(Some(0));
+        let title = app.provider_popup_title();
+        assert!(title.contains("Backspace reset"));
+
+        // 2. Authenticated API key provider selected -> clear
+        let api_key_provider = ProviderChoice {
+            provider_id: "google".to_string(),
+            name: "Google".to_string(),
+            description: None,
+            auth_type: ProviderAuthType::ApiKey,
+            authenticated: true,
+            auth_detail: Some("configured".to_string()),
+            default_model: None,
+            recommended: false,
+        };
+        app.provider_menu_items = vec![ProviderMenuItem::Provider(api_key_provider)];
+        app.provider_state.select(Some(0));
+        let title = app.provider_popup_title();
+        assert!(title.contains("Backspace clear"));
+
+        // 3. Authenticated OAuth provider selected -> sign out
+        let oauth_provider = ProviderChoice {
+            provider_id: "codex".to_string(),
+            name: "Codex".to_string(),
+            description: None,
+            auth_type: ProviderAuthType::OAuth,
+            authenticated: true,
+            auth_detail: Some("signed in".to_string()),
+            default_model: None,
+            recommended: true,
+        };
+        app.provider_menu_items = vec![ProviderMenuItem::Provider(oauth_provider)];
+        app.provider_state.select(Some(0));
+        let title = app.provider_popup_title();
+        assert!(title.contains("Backspace sign out"));
     }
 
     #[test]
