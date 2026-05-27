@@ -1,4 +1,4 @@
-#[allow(dead_code)]
+#![allow(dead_code, clippy::collapsible_if, clippy::too_many_arguments)]
 mod automations;
 mod commands;
 mod composer;
@@ -203,6 +203,7 @@ struct Theme {
     dialog_key_bg: Color,
     selection_fg: Color,
     selection_bg: Color,
+    thinking: Color,
     /// If true, renderers skip nodes whose CSS class would resolve to
     /// `display: none`. The CSS engine populates this from the active
     /// stylesheet — see `crate::theme::overrides::ThemeOverrides::hides`.
@@ -258,6 +259,7 @@ impl Theme {
                 dialog_key_bg: Color::Indexed(238),
                 selection_fg: Color::Reset,
                 selection_bg: Color::Indexed(212),
+                thinking: Color::Indexed(220),
                 hide_thinking: false,
                 body_background: None,
                 border_type: BorderType::Rounded,
@@ -293,6 +295,7 @@ impl Theme {
             dialog_key_bg: Color::Indexed(252),
             selection_fg: Color::Reset,
             selection_bg: Color::Indexed(198),
+            thinking: Color::Indexed(130),
             hide_thinking: false,
             body_background: None,
             border_type: BorderType::Rounded,
@@ -315,6 +318,7 @@ impl Theme {
         set!(text, "text");
         set!(text_strong, "text");
         set!(commentary, "commentary");
+        set!(thinking, "thinking");
         set!(muted, "muted");
         set!(subtle, "subtle");
         set!(accent, "accent");
@@ -417,6 +421,10 @@ impl Theme {
 
     fn commentary(self) -> Style {
         Style::default().fg(self.commentary)
+    }
+
+    pub(super) fn thinking(self) -> Style {
+        Style::default().fg(self.thinking)
     }
 
     fn muted(self) -> Style {
@@ -590,6 +598,12 @@ impl ProviderAuthFlow {
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct ImageAttachment {
     path: PathBuf,
+}
+
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+struct ImageAttachmentRemoveButton {
+    index: usize,
+    area: Rect,
 }
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
@@ -1028,6 +1042,7 @@ where
     remote_panel: RemotePanelController,
     roadmap_mode: Option<RoadmapModeState>,
     image_attachments: Vec<ImageAttachment>,
+    last_image_attachment_remove_buttons: Vec<ImageAttachmentRemoveButton>,
     queued_prompts: PromptQueue,
     last_user_prompt: Option<PendingPrompt>,
     command_catalog: Vec<CommandDescriptor>,
@@ -1410,6 +1425,7 @@ where
             remote_panel,
             roadmap_mode: None,
             image_attachments: Vec::new(),
+            last_image_attachment_remove_buttons: Vec::new(),
             queued_prompts: PromptQueue::default(),
             last_user_prompt: None,
             command_catalog,
@@ -3074,6 +3090,9 @@ where
         if self.confirm_dialog.is_some() || self.show_provider_popup {
             return;
         }
+        if self.handle_image_attachment_mouse(mouse) {
+            return;
+        }
         if self.handle_plan_counter_mouse(mouse) {
             return;
         }
@@ -3095,6 +3114,27 @@ where
             return;
         }
         let _ = self.handle_mouse_selection(mouse);
+    }
+
+    fn handle_image_attachment_mouse(&mut self, mouse: MouseEvent) -> bool {
+        if !matches!(mouse.kind, MouseEventKind::Down(MouseButton::Left)) {
+            return false;
+        }
+        let Some(button) = self
+            .last_image_attachment_remove_buttons
+            .iter()
+            .find(|button| rect_contains(button.area, mouse.column, mouse.row))
+            .copied()
+        else {
+            return false;
+        };
+        if button.index >= self.image_attachments.len() {
+            return false;
+        }
+        let attachment = self.image_attachments.remove(button.index);
+        self.last_image_attachment_remove_buttons.clear();
+        self.push_event(format!("detached image {}", attachment.label()));
+        true
     }
 
     fn handle_plan_counter_mouse(&mut self, mouse: MouseEvent) -> bool {
@@ -3298,8 +3338,10 @@ where
             transcript_index + 1
         };
         if attachment_height > 0 {
-            f.render_widget(self.image_attachment_bar(), chunks[composer_index]);
+            self.render_image_attachment_bar(f, chunks[composer_index]);
             composer_index += 1;
+        } else {
+            self.last_image_attachment_remove_buttons.clear();
         }
         if queue_height > 0 {
             f.render_widget(self.queued_prompt_bar(), chunks[composer_index]);
@@ -3534,6 +3576,16 @@ where
                     .title(Span::styled(" events ", self.theme.muted())),
             )
             .wrap(Wrap { trim: false })
+    }
+
+    fn render_image_attachment_bar(&mut self, f: &mut Frame<'_>, area: Rect) {
+        f.render_widget(self.image_attachment_bar(), area);
+        self.last_image_attachment_remove_buttons =
+            image_attachment_remove_buttons(area, self.image_attachments.len());
+        for button in &self.last_image_attachment_remove_buttons {
+            f.render_widget(Clear, button.area);
+            f.render_widget(Paragraph::new("[x]").style(self.theme.error()), button.area);
+        }
     }
 
     fn image_attachment_bar(&self) -> Paragraph<'static> {
@@ -5789,6 +5841,21 @@ fn image_attachment_height(count: usize) -> u16 {
     }
 }
 
+fn image_attachment_remove_buttons(area: Rect, count: usize) -> Vec<ImageAttachmentRemoveButton> {
+    if count == 0 || area.width < 3 || area.height < 2 {
+        return Vec::new();
+    }
+    let first_visible_index = count.saturating_sub(3);
+    let visible_count = count.min(3).min(usize::from(area.height.saturating_sub(1)));
+    let x = area.x + area.width.saturating_sub(3);
+    (0..visible_count)
+        .map(|row| ImageAttachmentRemoveButton {
+            index: first_visible_index + row,
+            area: Rect::new(x, area.y + 1 + row as u16, 3, 1),
+        })
+        .collect()
+}
+
 fn queued_prompt_height(count: usize) -> u16 {
     if count == 0 {
         0
@@ -7271,6 +7338,7 @@ mod tests {
             ),
             roadmap_mode: None,
             image_attachments: Vec::new(),
+            last_image_attachment_remove_buttons: Vec::new(),
             queued_prompts: PromptQueue::default(),
             last_user_prompt: None,
             command_catalog: built_in_command_catalog(),
@@ -8078,7 +8146,7 @@ mod tests {
             })
             .collect::<Vec<_>>();
 
-        assert_eq!(rows.iter().filter(|row| row.contains("◆")).count(), 1);
+        assert_eq!(rows.iter().filter(|row| row.contains("↻")).count(), 1);
         assert!(rows.iter().any(|row| row.contains("Exec Command")));
         assert!(rows.iter().any(|row| row.contains("done")));
         assert!(!rows.iter().any(|row| row.contains("Write Stdin")));
@@ -8147,7 +8215,7 @@ mod tests {
             })
             .collect::<Vec<_>>();
 
-        assert_eq!(rows.iter().filter(|row| row.contains("◆")).count(), 1);
+        assert_eq!(rows.iter().filter(|row| row.contains("↻")).count(), 1);
         assert!(rows.iter().any(|row| row.contains("Exec Command")));
         assert!(rows.iter().any(|row| row.contains("finished")));
         assert!(!rows.iter().any(|row| row.contains("Write Stdin")));
@@ -8628,6 +8696,81 @@ mod tests {
         assert_eq!(image_attachment_height(1), 2);
         assert_eq!(image_attachment_height(3), 4);
         assert_eq!(image_attachment_height(10), 4);
+    }
+
+    #[test]
+    fn image_attachment_remove_buttons_track_visible_rows() {
+        let buttons = image_attachment_remove_buttons(Rect::new(10, 20, 80, 4), 5);
+
+        assert_eq!(
+            buttons,
+            vec![
+                ImageAttachmentRemoveButton {
+                    index: 2,
+                    area: Rect::new(87, 21, 3, 1),
+                },
+                ImageAttachmentRemoveButton {
+                    index: 3,
+                    area: Rect::new(87, 22, 3, 1),
+                },
+                ImageAttachmentRemoveButton {
+                    index: 4,
+                    area: Rect::new(87, 23, 3, 1),
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn image_attachment_bar_renders_remove_button() {
+        let mut app = test_app();
+        app.image_attachments
+            .push(ImageAttachment::new(PathBuf::from("/tmp/one.png")));
+        let backend = TestBackend::new(100, 20);
+        let mut terminal = Terminal::new(backend).unwrap();
+
+        terminal.draw(|f| app.render(f)).unwrap();
+
+        assert_eq!(app.last_image_attachment_remove_buttons.len(), 1);
+        let buffer = terminal.backend().buffer();
+        let rows = (0..buffer.area.height)
+            .map(|row| {
+                buffer_row_cells(buffer, row)
+                    .iter()
+                    .map(|cell| cell.symbol.as_str())
+                    .collect::<String>()
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(rows.contains("[x]"));
+    }
+
+    #[test]
+    fn clicking_image_attachment_remove_button_detaches_that_image() {
+        let mut app = test_app();
+        app.image_attachments = vec![
+            ImageAttachment::new(PathBuf::from("/tmp/one.png")),
+            ImageAttachment::new(PathBuf::from("/tmp/two.png")),
+        ];
+        app.last_image_attachment_remove_buttons = vec![ImageAttachmentRemoveButton {
+            index: 0,
+            area: Rect::new(90, 10, 3, 1),
+        }];
+
+        app.handle_mouse(MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column: 91,
+            row: 10,
+            modifiers: KeyModifiers::NONE,
+        });
+
+        assert_eq!(app.image_attachments.len(), 1);
+        assert_eq!(app.image_attachments[0].label(), "two.png");
+        assert!(
+            app.events
+                .iter()
+                .any(|event| event == "detached image one.png")
+        );
     }
 
     #[test]

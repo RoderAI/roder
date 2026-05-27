@@ -1,3 +1,4 @@
+#![allow(dead_code)]
 use ratatui::{
     style::{Modifier, Style},
     text::{Line, Span},
@@ -127,8 +128,9 @@ pub(super) fn tool_diff_preview(entry: &ToolTimelineEntry) -> Option<ToolDiffPre
 pub(super) fn tool_diff_preview_lines(
     preview: &ToolDiffPreview,
     theme: Theme,
+    width: u16,
 ) -> Vec<Line<'static>> {
-    render_diff_lines(preview, theme)
+    render_diff_lines(preview, theme, width)
 }
 
 fn apply_patch_preview(arguments: &str) -> Option<ToolDiffPreview> {
@@ -173,17 +175,15 @@ fn write_file_preview(arguments: &str) -> Option<ToolDiffPreview> {
     Some(ToolDiffPreview { files: vec![file] })
 }
 
-fn render_diff_lines(preview: &ToolDiffPreview, theme: Theme) -> Vec<Line<'static>> {
+fn render_diff_lines(preview: &ToolDiffPreview, theme: Theme, width: u16) -> Vec<Line<'static>> {
     let mut lines = Vec::new();
     let mut rendered = 0usize;
     for file in &preview.files {
-        if preview.files.len() > 1 {
-            if rendered >= MAX_PATCH_PREVIEW_LINES {
-                break;
-            }
-            lines.push(file_header_line(file, theme));
-            rendered += 1;
+        if rendered >= MAX_PATCH_PREVIEW_LINES {
+            break;
         }
+        lines.push(file_header_line(file, theme, width));
+        rendered += 1;
 
         let mut before_line = 1usize;
         let mut after_line = 1usize;
@@ -207,7 +207,7 @@ fn render_diff_lines(preview: &ToolDiffPreview, theme: Theme) -> Vec<Line<'stati
     if preview
         .files
         .iter()
-        .map(|file| file.lines.len() + usize::from(preview.files.len() > 1))
+        .map(|file| file.lines.len() + 1)
         .sum::<usize>()
         > MAX_PATCH_PREVIEW_LINES
     {
@@ -222,18 +222,26 @@ fn render_diff_lines(preview: &ToolDiffPreview, theme: Theme) -> Vec<Line<'stati
     lines
 }
 
-fn file_header_line(file: &FileDiffPreview, theme: Theme) -> Line<'static> {
+fn file_header_line(file: &FileDiffPreview, theme: Theme, width: u16) -> Line<'static> {
+    // Left-aligned: "  ▶ path"
+    // Right-aligned: "+2 -1"
+    let left_text = format!("  ▶ {}", file.path);
+    let left_len = left_text.chars().count();
+    
+    // Format right-aligned count
+    let add_str = format!("+{}", file.additions);
+    let del_str = format!("-{}", file.deletions);
+    let right_len = add_str.chars().count() + 1 + del_str.chars().count(); // "+2 -1"
+    
+    let pad_len = usize::from(width).saturating_sub(left_len + right_len);
+    
     Line::from(vec![
-        Span::styled("  ".to_string(), theme.subtle()),
-        Span::styled(
-            format!(
-                "{} {} ({})",
-                file.action.label(),
-                file.path,
-                change_counts(file.additions, file.deletions)
-            ),
-            theme.tool(),
-        ),
+        Span::styled("  ▶ ", theme.subtle()),
+        Span::styled(file.path.clone(), Style::default().add_modifier(Modifier::BOLD)),
+        Span::styled(" ".repeat(pad_len), Style::default()),
+        Span::styled(add_str, Style::default().fg(theme.diff_added)),
+        Span::styled(" ", Style::default()),
+        Span::styled(del_str, Style::default().fg(theme.diff_removed)),
     ])
 }
 

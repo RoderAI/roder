@@ -14,6 +14,7 @@
 
     --text: reset;
     --commentary: ansi(15);
+    --thinking: ansi(220);
     --muted: ansi(244);
     --subtle: ansi(245);
     --accent: ansi(212);
