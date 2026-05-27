@@ -3973,6 +3973,16 @@ mod tests {
             )
             .unwrap(),
         );
+        let thread_id = runtime
+            .create_thread_with(CreateThreadRequest {
+                title: Some("Model switch".to_string()),
+                workspace: test_workspace(),
+                provider: None,
+                model: None,
+            })
+            .await
+            .unwrap()
+            .thread_id;
         let mut rx = runtime.subscribe_events();
         for (message, model_override) in [
             ("first turn", None),
@@ -3980,7 +3990,7 @@ mod tests {
         ] {
             let turn_id = runtime
                 .start_turn(StartTurnRequest {
-                    thread_id: "thread-model-switch".to_string(),
+                    thread_id: thread_id.clone(),
                     message: message.to_string(),
                     images: Vec::new(),
                     provider_override: None,
@@ -4026,7 +4036,7 @@ mod tests {
             .thread_store
             .as_ref()
             .unwrap()
-            .load_thread(&"thread-model-switch".to_string())
+            .load_thread(&thread_id)
             .await
             .unwrap()
             .unwrap();
