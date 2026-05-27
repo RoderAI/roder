@@ -57,9 +57,13 @@ where
 
     pub(super) fn apply_thread(&mut self, thread: Thread) {
         let thread_id = thread.id.clone();
+        let active_turn_id = thread.status.active_turn_id.clone();
         self.thread_id = thread_id.clone();
-        self.active_turn_id = None;
+        self.active_turn_id = active_turn_id;
         self.active_turn_timer = TurnTimer::default();
+        if self.active_turn_id.is_some() {
+            self.active_turn_timer.start(Instant::now());
+        }
         self.current_turn_input_tokens = 0;
         self.current_turn_output_tokens = 0;
         self.current_turn_reasoning_tokens = None;
@@ -266,6 +270,7 @@ mod tests {
             updated_at: 0,
             status: ThreadStatus {
                 kind: "idle".to_string(),
+                active_turn_id: None,
                 active_flags: Vec::new(),
             },
             cwd: "/tmp".to_string(),

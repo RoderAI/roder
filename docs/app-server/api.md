@@ -797,7 +797,11 @@ Response:
     "modelProvider": "openai",
     "createdAt": 1770000000,
     "updatedAt": 1770000000,
-    "status": { "type": "idle" },
+    "status": {
+      "type": "idle",
+      "activeTurnId": null,
+      "activeFlags": []
+    },
     "cwd": "/Users/pz/w/gode"
   },
   "model": "gpt-5.5",
@@ -808,7 +812,8 @@ Response:
 
 Behavior:
 
-- Creates a persisted runtime thread with optional provider/model/workspace.
+- Creates a persisted runtime thread with optional provider/model and required absolute workspace `cwd`.
+- Rejects missing, empty, or relative `cwd`; thread snapshots do not fall back to the app-server process cwd.
 - Stores the selected provider/model for later `turn/start` overrides.
 - Emits `thread/started`.
 - `ephemeral` is accepted by the DTO but is not currently used by the handler.
@@ -836,7 +841,7 @@ Response:
       "modelProvider": "openai",
       "createdAt": 1770000000,
       "updatedAt": 1770000100,
-      "status": { "type": "idle" },
+      "status": { "type": "idle", "activeTurnId": null, "activeFlags": [] },
       "cwd": "/Users/pz/w/gode",
       "name": "Fix tests"
     }
@@ -851,6 +856,8 @@ Behavior:
 - Lists persisted runtime threads sorted by newest `updatedAt` first.
 - Applies `limit` when supplied.
 - Merges in protocol threads that are in memory but not yet persisted.
+- Persisted thread metadata must include an absolute workspace; invalid metadata
+  is rejected instead of projected with a fallback cwd.
 - Cursor fields are currently always null.
 
 ### `thread/read`
@@ -876,7 +883,7 @@ Response:
     "modelProvider": "openai",
     "createdAt": 1770000000,
     "updatedAt": 1770000100,
-    "status": { "type": "idle" },
+    "status": { "type": "idle", "activeTurnId": null, "activeFlags": [] },
     "cwd": "/Users/pz/w/gode",
     "usage": {
       "prompt_tokens": 100,
@@ -907,7 +914,10 @@ Response:
 Behavior:
 
 - Reads a persisted thread snapshot first.
-- Falls back to persisted thread metadata and then in-memory protocol threads.
+- Falls back to persisted thread metadata and then in-memory protocol threads,
+  but never to the app-server process cwd.
+- Persisted thread metadata must include an absolute workspace; invalid metadata
+  is rejected instead of projected with a fallback cwd.
 - Includes aggregate thread `usage` and per-turn `usage` when provider usage
   was reported; `cache_hit_rate` is `cached_prompt_tokens / prompt_tokens`.
 - Returns `{"thread": null}` when the thread is unknown.
@@ -1077,7 +1087,8 @@ Behavior:
 - If the thread already has an active runtime turn, queues the input as
   same-turn steering and returns that active `turnId`.
 - Otherwise uses the thread's selected provider/model when known, starts a
-  runtime turn, and records the active turn id for optional `turn/interrupt`.
+  runtime turn with the thread's persisted workspace, and records the active
+  turn id for optional `turn/interrupt`.
 
 Notifications:
 
@@ -3616,7 +3627,7 @@ or the remote WebSocket notification stream for remote clients.
     "modelProvider": "openai",
     "createdAt": 1770000000,
     "updatedAt": 1770000000,
-    "status": { "type": "idle" },
+    "status": { "type": "idle", "activeTurnId": null, "activeFlags": [] },
     "cwd": "/Users/pz/w/gode"
   }
 }

@@ -158,7 +158,7 @@ async fn turn_start_during_active_tool_call_steers_same_turn_after_tool_result()
             serde_json::to_value(ThreadStartParams {
                 model: None,
                 model_provider: None,
-                cwd: None,
+                cwd: std::env::current_dir().unwrap().display().to_string(),
                 ephemeral: false,
             })
             .unwrap(),

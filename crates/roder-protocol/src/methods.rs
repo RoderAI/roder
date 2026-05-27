@@ -292,12 +292,7 @@ const METHOD_SPECS: &[AppServerMethodSpecSeed] = &[
         Idempotent,
         ["processes/changed"]
     ),
-    method_spec!(
-        "providers/clear",
-        "providers",
-        LocalState,
-        NonIdempotent
-    ),
+    method_spec!("providers/clear", "providers", LocalState, NonIdempotent),
     method_spec!(
         "providers/configure",
         "providers",
