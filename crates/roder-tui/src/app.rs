@@ -2934,6 +2934,10 @@ where
             thread_id,
             input: pending_turn_input(pending.message, pending.images),
             prompt: None,
+            model_provider: Some(self.provider.clone()),
+            model: Some(self.model.clone()),
+            reasoning: Some(self.reasoning_effort.clone()),
+            policy_mode: Some(self.policy_mode),
             task_ledger_required: false,
         };
         let client = self.client.clone();

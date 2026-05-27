@@ -317,6 +317,14 @@ pub struct TurnStartParams {
     #[serde(default)]
     pub input: Vec<TurnInputItem>,
     pub prompt: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model_provider: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reasoning: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub policy_mode: Option<PolicyMode>,
     #[serde(default)]
     pub task_ledger_required: bool,
 }
@@ -2075,6 +2083,9 @@ pub struct SettingsGetResult {
     pub web_search: WebSearchSettings,
     pub search_index: SearchIndexSettings,
     pub shell: ShellSettings,
+    pub default_provider: String,
+    pub default_model: String,
+    pub default_reasoning: String,
     pub default_mode: PolicyMode,
     pub file_backed_dynamic_context: bool,
 }
@@ -2651,6 +2662,23 @@ mod tests {
         .unwrap();
 
         assert!(params.task_ledger_required);
+    }
+
+    #[test]
+    fn protocol_turn_start_params_accept_selected_controls() {
+        let params: TurnStartParams = serde_json::from_value(serde_json::json!({
+            "threadId": "thread-1",
+            "modelProvider": "mock",
+            "model": "gpt-5.5",
+            "reasoning": "high",
+            "policyMode": "plan"
+        }))
+        .unwrap();
+
+        assert_eq!(params.model_provider.as_deref(), Some("mock"));
+        assert_eq!(params.model.as_deref(), Some("gpt-5.5"));
+        assert_eq!(params.reasoning.as_deref(), Some("high"));
+        assert_eq!(params.policy_mode, Some(PolicyMode::Plan));
     }
 
     #[test]

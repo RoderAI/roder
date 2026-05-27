@@ -90,6 +90,10 @@ pub(crate) async fn run_exec_cli(args: &[String]) -> anyhow::Result<()> {
                 thread_id: thread_id.clone(),
                 input: turn_input_items(&options.images),
                 prompt,
+                model_provider: None,
+                model: None,
+                reasoning: None,
+                policy_mode: None,
                 task_ledger_required: options.task_ledger_required,
             })?),
         })
