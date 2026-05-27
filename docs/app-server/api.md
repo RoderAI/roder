@@ -135,9 +135,9 @@ thread object. It is shaped as:
 }
 ```
 
-`item` is a visible row or event within a turn. Known item `type` values include
-`userMessage`, `agentMessage`, `reasoning`, `toolCall`, `toolMessage`,
-`tool.<name>`, and `raw`.
+`item` is a typed visible row or event within a turn. Public item `type` values
+are `userMessage`, `agentMessage`, `reasoning`, `toolExecution`, `compaction`,
+`error`, and `raw`.
 
 `provider` is an inference backend. Provider/model notation is exposed as a
 provider id plus model id, for example `openai` and `gpt-5.5`, or provider
@@ -1109,7 +1109,8 @@ Notifications:
 
 - `turn/started`
 - `thread/status/changed` with status `running`
-- zero or more `item/agentMessage/delta`, `item/started`, and `item/completed`
+- zero or more typed item-event notifications such as `item/started`,
+  `item/agentMessage/delta`, `item/reasoning/textDelta`, and `item/completed`
 - optional wait-state notifications: `thread/approvalRequested`,
   `thread/userInputRequested`, or `thread/planExitRequested`, paired with
   their corresponding resolved notifications when the client answers
@@ -3668,16 +3669,29 @@ or the remote WebSocket notification stream for remote clients.
 
 ```json
 {
+  "seq": 12,
+  "eventId": "event-12",
   "threadId": "thread-123",
   "turnId": "turn-123",
-  "itemId": "turn-123-agent-final_answer",
-  "delta": "Hello",
-  "phase": "final_answer"
+  "timestamp": "2026-05-27T12:00:00Z",
+  "event": {
+    "type": "itemDelta",
+    "itemId": "turn-123-agent-final_answer",
+    "delta": {
+      "type": "agentMessageText",
+      "delta": "Hello",
+      "phase": "final_answer"
+    }
+  }
 }
 ```
 
-`item/started` and `item/completed` carry `threadId`, `turnId`, and a protocol
-`item` object. Tool items use `type: "tool.<name>"` when the tool name is known.
+`item/started`, `item/completed`, `item/agentMessage/delta`,
+`item/reasoning/textDelta`, `item/reasoning/summaryPartAdded`, and
+`item/reasoning/summaryTextDelta` all carry the same typed item-event envelope:
+`seq`, `eventId`, `threadId`, `turnId`, `timestamp`, and `event`. The `event`
+is `itemStarted`, `itemDelta`, or `itemCompleted`, and every lifecycle update
+targets the same stable item id that later appears in `thread/read`.
 
 `turn/completed` carries `threadId` and a terminal `turn` whose `status` is
 `completed`, `failed`, or `interrupted`. Completed and failed turns include
