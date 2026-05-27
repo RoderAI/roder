@@ -1450,6 +1450,96 @@
       "sideEffect": "readOnly"
     },
     {
+      "method": "webwright/artifacts",
+      "paramsType": "WebwrightArtifactsParams",
+      "resultType": "WebwrightArtifactsResult",
+      "stability": "stable",
+      "featureGroup": "webwright",
+      "idempotency": "idempotent",
+      "sideEffect": "readOnly"
+    },
+    {
+      "method": "webwright/export",
+      "paramsType": "WebwrightExportParams",
+      "resultType": "WebwrightExportResult",
+      "stability": "stable",
+      "featureGroup": "webwright",
+      "idempotency": "nonIdempotent",
+      "sideEffect": "localState"
+    },
+    {
+      "method": "webwright/latestRun",
+      "paramsType": "WebwrightLatestRunParams",
+      "resultType": "WebwrightLatestRunResult",
+      "stability": "stable",
+      "featureGroup": "webwright",
+      "idempotency": "idempotent",
+      "sideEffect": "readOnly"
+    },
+    {
+      "method": "webwright/prepare",
+      "paramsType": "WebwrightPrepareParams",
+      "resultType": "WebwrightPrepareResult",
+      "stability": "stable",
+      "featureGroup": "webwright",
+      "idempotency": "nonIdempotent",
+      "sideEffect": "localState"
+    },
+    {
+      "method": "webwright/report",
+      "paramsType": "WebwrightReportParams",
+      "resultType": "WebwrightReportResult",
+      "stability": "stable",
+      "featureGroup": "webwright",
+      "idempotency": "idempotent",
+      "sideEffect": "readOnly"
+    },
+    {
+      "method": "webwright/rerun",
+      "paramsType": "WebwrightRerunParams",
+      "resultType": "WebwrightRerunResult",
+      "stability": "stable",
+      "featureGroup": "webwright",
+      "idempotency": "nonIdempotent",
+      "sideEffect": "externalProcess"
+    },
+    {
+      "method": "webwright/setup",
+      "paramsType": "WebwrightSetupParams",
+      "resultType": "WebwrightSetupResult",
+      "stability": "stable",
+      "featureGroup": "webwright",
+      "idempotency": "nonIdempotent",
+      "sideEffect": "externalProcess"
+    },
+    {
+      "method": "webwright/submit",
+      "paramsType": "WebwrightSubmitParams",
+      "resultType": "WebwrightSubmitResult",
+      "stability": "stable",
+      "featureGroup": "webwright",
+      "idempotency": "nonIdempotent",
+      "sideEffect": "localState"
+    },
+    {
+      "method": "webwright/verify",
+      "paramsType": "WebwrightVerifyParams",
+      "resultType": "WebwrightVerifyResult",
+      "stability": "stable",
+      "featureGroup": "webwright",
+      "idempotency": "idempotent",
+      "sideEffect": "readOnly"
+    },
+    {
+      "method": "webwright/visualJudge",
+      "paramsType": "WebwrightVisualJudgeParams",
+      "resultType": "WebwrightVisualJudgeResult",
+      "stability": "stable",
+      "featureGroup": "webwright",
+      "idempotency": "nonIdempotent",
+      "sideEffect": "localState"
+    },
+    {
       "method": "workflow/enable",
       "paramsType": "WorkflowEnableParams",
       "resultType": "WorkflowEnableResult",

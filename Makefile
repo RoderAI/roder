@@ -50,7 +50,11 @@ TEST_ARGS ?= --workspace --features roder-app-server/e2e-tests
 build:
 	@mkdir -p $(dir $(BINARY))
 	cargo build -p roder-cli --bin roder
+	rm -f "$(BINARY)"
 	cp target/debug/roder "$(BINARY)"
+	@if [ "$$(uname)" = "Darwin" ]; then \
+		codesign -f -s - "$(BINARY)" 2>/dev/null || true; \
+	fi
 
 install:
 	cargo build --release -p roder-cli --bin roder
