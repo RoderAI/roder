@@ -106,7 +106,11 @@ use roder_protocol::{
     ThreadResolveUserInputParams, ThreadResolveUserInputResult, ThreadSetModeParams,
     ThreadSetModeResult, ThreadStartParams, ThreadStartResult, ThreadStateResult, ToolCallParams,
     ToolCallResult, ToolsListResult, TurnInputItem, TurnInterruptParams, TurnInterruptResult,
-    TurnStartParams, TurnStartResult, TurnSteerParams, TurnSteerResult, WorkflowEnableParams,
+    TurnStartParams, TurnStartResult, TurnSteerParams, TurnSteerResult, WebwrightArtifactsResult,
+    WebwrightExportParams, WebwrightExportResult, WebwrightLatestRunResult, WebwrightPrepareParams,
+    WebwrightPrepareResult, WebwrightReportResult, WebwrightRerunParams, WebwrightRerunResult,
+    WebwrightSetupParams, WebwrightSetupResult, WebwrightVerifyResult, WebwrightVisualJudgeParams,
+    WebwrightVisualJudgeResult, WebwrightWorkspaceParams, WorkflowEnableParams,
     WorkflowEnableResult, WorkflowPreviewParams, WorkflowPreviewResult, WorkflowScanParams,
     WorkflowScanResult,
 };
@@ -418,12 +422,17 @@ impl InferenceEngine for ImageRecordingEngine {
         request: AgentInferenceRequest,
     ) -> anyhow::Result<InferenceEventStream> {
         self.requests.lock().await.push(request);
-        Ok(Box::pin(futures::stream::iter(vec![Ok(
-            InferenceEvent::Completed(CompletionMetadata {
+        Ok(Box::pin(futures::stream::iter(vec![
+            Ok(InferenceEvent::MessageDelta(MessageDelta {
+                text: r#"{"passed": true, "observations": ["fixture visible"], "concerns": []}"#
+                    .to_string(),
+                phase: None,
+            })),
+            Ok(InferenceEvent::Completed(CompletionMetadata {
                 stop_reason: Some("stop".to_string()),
                 provider_response_id: None,
-            }),
-        )])))
+            })),
+        ])))
     }
 }
 
@@ -4603,6 +4612,15 @@ async fn commands_list_expand_and_skills_are_deterministic() {
             .iter()
             .any(|command| command.name == "commit")
     );
+    let webwright_run = first
+        .commands
+        .iter()
+        .find(|command| command.name == "webwright:run")
+        .expect("missing webwright run slash command");
+    assert_eq!(
+        webwright_run.argument_hint.as_deref(),
+        Some("<natural-language web task>")
+    );
 
     let expanded: CommandsExpandResult = request(
         &client,
@@ -4640,6 +4658,46 @@ async fn commands_list_expand_and_skills_are_deterministic() {
     assert!(commit.message.contains("bound commit skill"));
     assert!(commit.context_blocks.iter().any(|block| {
         block.text.starts_with("<skill name=\"commit\"") && block.text.contains("git status")
+    }));
+
+    let webwright: CommandsExpandResult = request(
+        &client,
+        "commands/expand",
+        Some(
+            serde_json::to_value(CommandsExpandParams {
+                name: "webwright:run".to_string(),
+                arguments: "Open the fixture page".to_string(),
+                workspace: None,
+            })
+            .unwrap(),
+        ),
+    )
+    .await;
+    assert_eq!(webwright.command.name, "webwright:run");
+    assert!(webwright.message.contains("Open the fixture page"));
+    assert!(webwright.context_blocks.iter().any(|block| {
+        block.text.starts_with("<skill name=\"webwright\"")
+            && block.text.contains("webwright.prepare_workspace")
+    }));
+
+    let webwright_craft: CommandsExpandResult = request(
+        &client,
+        "commands/expand",
+        Some(
+            serde_json::to_value(CommandsExpandParams {
+                name: "webwright:craft".to_string(),
+                arguments: "Download the report for account 123".to_string(),
+                workspace: None,
+            })
+            .unwrap(),
+        ),
+    )
+    .await;
+    assert_eq!(webwright_craft.command.name, "webwright:craft");
+    assert!(webwright_craft.message.contains("argparse"));
+    assert!(webwright_craft.message.contains("--help"));
+    assert!(webwright_craft.context_blocks.iter().any(|block| {
+        block.text.starts_with("<skill name=\"webwright\"") && block.text.contains("--help")
     }));
 }
 
@@ -5099,6 +5157,392 @@ async fn commands_run_expands_and_starts_turn() {
     assert!(!result.turn_id.is_empty());
     assert_eq!(result.expanded.command.name, "init");
     wait_for_event(&mut events, &thread_start.thread.id, "turn.completed").await;
+}
+
+#[tokio::test]
+async fn webwright_setup_dry_run_exposes_selected_browser_install_plan() {
+    let workspace =
+        std::env::temp_dir().join(format!("roder-webwright-setup-{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir_all(&workspace).unwrap();
+    let registry = build_default_registry(DefaultRegistryConfig {
+        workspace: Some(workspace.clone()),
+        ..DefaultRegistryConfig::default()
+    })
+    .unwrap();
+    let runtime = Arc::new(Runtime::new(registry, Default::default()).unwrap());
+    let server = Arc::new(AppServer::new(runtime));
+    let client = LocalAppClient::new(server);
+
+    let setup: WebwrightSetupResult = request(
+        &client,
+        "webwright/setup",
+        Some(
+            serde_json::to_value(WebwrightSetupParams {
+                python: Some("/usr/bin/python3".to_string()),
+                browser: Some("chromium".to_string()),
+                dry_run: true,
+            })
+            .unwrap(),
+        ),
+    )
+    .await;
+
+    assert_eq!(setup.browser, "chromium");
+    assert!(setup.dry_run);
+    assert!(!setup.installed);
+    assert!(setup.runtime_dir.ends_with("python/webwright"));
+    assert!(
+        setup
+            .python
+            .ends_with(".roder/python/webwright/venv/bin/python")
+    );
+    assert!(setup.steps.iter().any(|step| {
+        step.command
+            == vec![
+                setup.python.clone(),
+                "-m".to_string(),
+                "playwright".to_string(),
+                "install".to_string(),
+                "chromium".to_string(),
+            ]
+    }));
+    assert!(
+        !workspace
+            .join(".roder/python/webwright/setup.json")
+            .exists()
+    );
+}
+
+#[tokio::test]
+async fn webwright_methods_prepare_inspect_verify_report_and_rerun() {
+    let workspace =
+        std::env::temp_dir().join(format!("roder-webwright-e2e-{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir_all(&workspace).unwrap();
+    let registry = build_default_registry(DefaultRegistryConfig {
+        workspace: Some(workspace.clone()),
+        ..DefaultRegistryConfig::default()
+    })
+    .unwrap();
+    let runtime = Arc::new(Runtime::new(registry, Default::default()).unwrap());
+    let server = Arc::new(AppServer::new(runtime));
+    let client = LocalAppClient::new(server);
+
+    let prepared: WebwrightPrepareResult = request(
+        &client,
+        "webwright/prepare",
+        Some(
+            serde_json::to_value(WebwrightPrepareParams {
+                task: "Open the fixture page".to_string(),
+                mode: Some("run".to_string()),
+                start_url: None,
+                task_id: Some("fixture-page".to_string()),
+                browser: None,
+                headless: None,
+                output_dir: None,
+                workspace: Some(workspace.display().to_string()),
+            })
+            .unwrap(),
+        ),
+    )
+    .await;
+    assert_eq!(prepared.task_id, "fixture-page");
+    let webwright_workspace = prepared.workspace["root"].as_str().unwrap().to_string();
+    assert!(
+        workspace
+            .join(".roder/webwright/fixture-page/plan.md")
+            .is_file()
+    );
+
+    let artifacts: WebwrightArtifactsResult = request(
+        &client,
+        "webwright/artifacts",
+        Some(
+            serde_json::to_value(WebwrightWorkspaceParams {
+                workspace: webwright_workspace.clone(),
+                workspace_root: Some(workspace.display().to_string()),
+            })
+            .unwrap(),
+        ),
+    )
+    .await;
+    assert_eq!(artifacts.workspace["latestRun"], serde_json::Value::Null);
+
+    std::fs::write(
+        workspace.join(".roder/webwright/fixture-page/final_script.py"),
+        "printf 'step 1 action: rerun\\nfinal datum: ok\\n' > final_script_log.txt\nmkdir -p screenshots\nprintf png > screenshots/final_execution_001_ok.png\n",
+    )
+    .unwrap();
+    std::fs::write(
+        workspace.join(".roder/webwright/fixture-page/plan.md"),
+        "# Critical Points\n- [x] CP1: Complete the requested Webwright task: Open the fixture page\n",
+    )
+    .unwrap();
+    let rerun: WebwrightRerunResult = request(
+        &client,
+        "webwright/rerun",
+        Some(
+            serde_json::to_value(WebwrightRerunParams {
+                workspace: webwright_workspace.clone(),
+                workspace_root: Some(workspace.display().to_string()),
+                python: Some("sh".to_string()),
+                thread_id: None,
+                turn_id: None,
+            })
+            .unwrap(),
+        ),
+    )
+    .await;
+    assert_eq!(rerun.run_id, 1);
+    for _ in 0..100 {
+        let observed: TasksGetResult = request(
+            &client,
+            "tasks/get",
+            Some(
+                serde_json::to_value(TasksGetParams {
+                    task_id: rerun.task.task_id.clone(),
+                })
+                .unwrap(),
+            ),
+        )
+        .await;
+        if observed.task.state == TaskState::Completed {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(25)).await;
+    }
+
+    let latest: WebwrightLatestRunResult = request(
+        &client,
+        "webwright/latestRun",
+        Some(
+            serde_json::to_value(WebwrightWorkspaceParams {
+                workspace: webwright_workspace.clone(),
+                workspace_root: Some(workspace.display().to_string()),
+            })
+            .unwrap(),
+        ),
+    )
+    .await;
+    assert_eq!(latest.latest_run, Some(1));
+    assert!(latest.run.is_some());
+
+    let processes: ProcessesListResult = request(
+        &client,
+        "processes/list",
+        Some(
+            serde_json::to_value(ProcessesListParams {
+                include_completed: true,
+            })
+            .unwrap(),
+        ),
+    )
+    .await;
+    assert!(
+        processes
+            .processes
+            .iter()
+            .any(|process| process.task_id.as_deref() == Some(rerun.task.task_id.as_str()))
+    );
+
+    let verification: WebwrightVerifyResult = request(
+        &client,
+        "webwright/verify",
+        Some(
+            serde_json::to_value(WebwrightWorkspaceParams {
+                workspace: webwright_workspace.clone(),
+                workspace_root: Some(workspace.display().to_string()),
+            })
+            .unwrap(),
+        ),
+    )
+    .await;
+    assert_eq!(verification.verification["passed"], true);
+    assert_eq!(verification.verification["predicted_label"], "success");
+
+    std::fs::write(
+        workspace.join(".roder/webwright/fixture-page/cookies.json"),
+        "{\"token\":\"secret\"}",
+    )
+    .unwrap();
+    let exported: WebwrightExportResult = request(
+        &client,
+        "webwright/export",
+        Some(
+            serde_json::to_value(WebwrightExportParams {
+                workspace: webwright_workspace.clone(),
+                workspace_root: Some(workspace.display().to_string()),
+                output_dir: ".roder/webwright-exports/fixture-page".to_string(),
+            })
+            .unwrap(),
+        ),
+    )
+    .await;
+    assert!(
+        exported
+            .files
+            .contains(&"webwright-export.json".to_string())
+    );
+    assert!(exported.excluded.contains(&"cookies.json".to_string()));
+
+    let repo_root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../..")
+        .canonicalize()
+        .unwrap();
+    let fixture = repo_root.join("evals/fixtures/webwright/basic_success");
+    let report: WebwrightReportResult = request(
+        &client,
+        "webwright/report",
+        Some(
+            serde_json::to_value(WebwrightWorkspaceParams {
+                workspace: fixture.display().to_string(),
+                workspace_root: Some(repo_root.display().to_string()),
+            })
+            .unwrap(),
+        ),
+    )
+    .await;
+    assert!(report.task_definition.is_some());
+    assert!(report.report.is_some());
+    assert!(report
+        .rendered_text
+        .as_deref()
+        .is_some_and(|text| text.contains("Fixture result") && text.contains("Fixture Heading")));
+}
+
+#[tokio::test]
+async fn webwright_visual_judge_uses_image_provider_and_stores_record() {
+    let workspace =
+        std::env::temp_dir().join(format!("roder-webwright-visual-{}", uuid::Uuid::new_v4()));
+    let webwright_workspace = workspace.join(".roder/webwright/fixture-page");
+    write_webwright_visual_fixture(&webwright_workspace);
+
+    let engine = Arc::new(ImageRecordingEngine {
+        requests: Mutex::new(Vec::new()),
+    });
+    let mut builder = ExtensionRegistryBuilder::new();
+    builder.inference_engine(engine.clone());
+    let runtime = Arc::new(
+        Runtime::new(
+            builder.build().unwrap(),
+            RuntimeConfig {
+                workspace: Some(workspace.display().to_string()),
+                ..RuntimeConfig::default()
+            },
+        )
+        .unwrap(),
+    );
+    let server = Arc::new(AppServer::new(runtime));
+    let client = LocalAppClient::new(server);
+
+    let judged: WebwrightVisualJudgeResult = request(
+        &client,
+        "webwright/visualJudge",
+        Some(
+            serde_json::to_value(WebwrightVisualJudgeParams {
+                workspace: webwright_workspace.display().to_string(),
+                workspace_root: Some(workspace.display().to_string()),
+                run_id: None,
+                enabled: Some(true),
+            })
+            .unwrap(),
+        ),
+    )
+    .await;
+    assert_eq!(judged.visual_judge["status"], "completed");
+    assert_eq!(judged.visual_judge["passed"], true);
+    let record_path = judged.visual_judge["recordPath"].as_str().unwrap();
+    assert!(record_path.ends_with("visual_judge/run_001.json"));
+    assert!(std::path::Path::new(record_path).is_file());
+
+    let inference = wait_for_image_recorded_request(&engine).await;
+    let user_message = inference
+        .transcript
+        .iter()
+        .find_map(|item| match item {
+            roder_api::transcript::TranscriptItem::UserMessage(message) => Some(message),
+            _ => None,
+        })
+        .expect("visual judge user message");
+    assert!(user_message.text.contains("Critical points:"));
+    assert!(
+        user_message
+            .text
+            .contains("Final datum: final datum: fixture ok")
+    );
+    assert_eq!(user_message.images.len(), 1);
+    assert!(
+        user_message.images[0]
+            .image_url
+            .starts_with("data:image/png;base64,")
+    );
+}
+
+#[tokio::test]
+async fn webwright_visual_judge_skips_without_image_input_provider() {
+    let workspace = std::env::temp_dir().join(format!(
+        "roder-webwright-visual-skip-{}",
+        uuid::Uuid::new_v4()
+    ));
+    let webwright_workspace = workspace.join(".roder/webwright/fixture-page");
+    write_webwright_visual_fixture(&webwright_workspace);
+
+    let runtime = Arc::new(Runtime::fake().unwrap());
+    let server = Arc::new(AppServer::new(runtime));
+    let client = LocalAppClient::new(server);
+
+    let judged: WebwrightVisualJudgeResult = request(
+        &client,
+        "webwright/visualJudge",
+        Some(
+            serde_json::to_value(WebwrightVisualJudgeParams {
+                workspace: webwright_workspace.display().to_string(),
+                workspace_root: Some(workspace.display().to_string()),
+                run_id: None,
+                enabled: Some(true),
+            })
+            .unwrap(),
+        ),
+    )
+    .await;
+    assert_eq!(judged.visual_judge["status"], "skipped");
+    assert!(
+        judged.visual_judge["reason"]
+            .as_str()
+            .unwrap()
+            .contains("does not support image input")
+    );
+}
+
+fn write_webwright_visual_fixture(root: &std::path::Path) {
+    let run = root.join("final_runs/run_001");
+    std::fs::create_dir_all(run.join("screenshots")).unwrap();
+    std::fs::write(
+        root.join("webwright.json"),
+        r#"{
+  "taskId": "fixture-page",
+  "task": "Open the fixture page",
+  "mode": "run",
+  "browser": "firefox",
+  "headless": true,
+  "createdAt": "0",
+  "latestRun": 1,
+  "verificationState": "success"
+}"#,
+    )
+    .unwrap();
+    std::fs::write(
+        root.join("plan.md"),
+        "# Critical Points\n- [x] CP1: Fixture page is visible\n",
+    )
+    .unwrap();
+    std::fs::write(root.join("final_script.py"), "def main():\n    pass\n").unwrap();
+    std::fs::write(run.join("final_script.py"), "def main():\n    pass\n").unwrap();
+    std::fs::write(
+        run.join("final_script_log.txt"),
+        "final datum: fixture ok\n",
+    )
+    .unwrap();
+    std::fs::write(run.join("screenshots/final_execution_001_ok.png"), b"png").unwrap();
 }
 
 #[tokio::test]

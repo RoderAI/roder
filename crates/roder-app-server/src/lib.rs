@@ -22,6 +22,7 @@ pub mod server;
 mod skills;
 mod speech;
 pub mod transcript;
+mod webwright;
 
 pub use automations::AppServerFeatureConfig;
 pub use client::*;

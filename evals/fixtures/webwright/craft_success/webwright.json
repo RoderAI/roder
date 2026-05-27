@@ -1,0 +1,11 @@
+{
+  "taskId": "craft-success",
+  "task": "Create a reusable CLI that reports the fixture heading.",
+  "mode": "craft",
+  "startUrl": "http://127.0.0.1:8000/index.html",
+  "browser": "firefox",
+  "headless": true,
+  "createdAt": "2026-05-27T00:00:00Z",
+  "latestRun": 1,
+  "verificationState": "passed"
+}

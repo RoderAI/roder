@@ -44,6 +44,7 @@ roder-ext-task-ledger.workspace = true
 roder-ext-task-process.workspace = true
 roder-ext-verification.workspace = true
 roder-ext-tavily-search.workspace = true
+roder-ext-webwright.workspace = true
 roder-ext-web-search.workspace = true
 roder-ext-xai.workspace = true
 roder-ext-xiaomi-mimo.workspace = true

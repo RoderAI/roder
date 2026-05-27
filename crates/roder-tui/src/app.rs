@@ -34,6 +34,7 @@ mod tool_detail;
 mod tool_timeline;
 mod turn_timer;
 mod voice;
+mod webwright;
 mod workflow_import;
 
 use std::collections::{HashMap, HashSet};
@@ -1333,6 +1334,7 @@ where
 
         let command_catalog = thread_resume::commands_list(&client)
             .await
+            .map(commands::with_local_commands)
             .unwrap_or_else(|_| built_in_command_catalog());
         let current_goal = goals::thread_goal_get(&client, &thread_id)
             .await
@@ -2389,6 +2391,9 @@ where
             "voice" => {
                 self.run_voice_slash_command(&args).await;
             }
+            "webwright" => {
+                self.run_webwright_slash_command(&args).await;
+            }
             _ => {
                 self.run_custom_slash_command(name, args).await;
             }
@@ -2417,7 +2422,7 @@ where
 
     async fn refresh_command_catalog(&mut self) {
         if let Ok(commands) = thread_resume::commands_list(&self.client).await {
-            self.command_catalog = commands;
+            self.command_catalog = commands::with_local_commands(commands);
         }
     }
 

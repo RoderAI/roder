@@ -2592,6 +2592,7 @@ dependencies = [
  "roder-ext-memory",
  "roder-ext-openai-embeddings",
  "roder-ext-subagents",
+ "roder-ext-webwright",
  "roder-extension-host",
  "roder-protocol",
  "roder-roadmap",
@@ -3300,6 +3301,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "roder-ext-webwright"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "roder-api",
+ "roder-config",
+ "semver",
+ "serde",
+ "serde_json",
+ "time",
+ "tokio",
+ "uuid",
+]
+
+[[package]]
 name = "roder-ext-xai"
 version = "0.1.0"
 dependencies = [
@@ -3376,6 +3393,7 @@ dependencies = [
  "roder-ext-tavily-search",
  "roder-ext-verification",
  "roder-ext-web-search",
+ "roder-ext-webwright",
  "roder-ext-xai",
  "roder-ext-xiaomi-mimo",
  "roder-tools",

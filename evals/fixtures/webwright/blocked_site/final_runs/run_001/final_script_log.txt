@@ -1,0 +1,2 @@
+step 1 action: attempted blocked site
+final datum: blocked by fixture policy

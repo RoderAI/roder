@@ -1,0 +1,3 @@
+step 1 action: opened fixture page
+step 2 action: captured heading evidence
+final datum: Fixture Heading

@@ -45,6 +45,8 @@ pub enum ExtensionCategory {
     TaskExecutor,
     StatusSegment,
     PaletteSource,
+    SpeechTranscriber,
+    SpeechSynthesizer,
     Other(String),
 }
 
@@ -191,6 +193,22 @@ mod tests {
             serde_json::to_value(decoded).unwrap(),
             serde_json::json!({ "other": "browser-automation" })
         );
+    }
+
+    #[test]
+    fn speech_extension_categories_parse_from_metadata() {
+        #[derive(Deserialize)]
+        struct CategoryFixture {
+            category: ExtensionCategory,
+        }
+
+        let transcriber: CategoryFixture =
+            toml::from_str(r#"category = "speech-transcriber""#).unwrap();
+        let synthesizer: CategoryFixture =
+            toml::from_str(r#"category = "speech-synthesizer""#).unwrap();
+
+        assert_eq!(transcriber.category, ExtensionCategory::SpeechTranscriber);
+        assert_eq!(synthesizer.category, ExtensionCategory::SpeechSynthesizer);
     }
 
     #[test]

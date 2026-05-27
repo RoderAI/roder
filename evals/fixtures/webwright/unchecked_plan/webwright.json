@@ -1,0 +1,10 @@
+{
+  "taskId": "unchecked-plan",
+  "task": "Open the fixture page",
+  "mode": "run",
+  "browser": "firefox",
+  "headless": true,
+  "createdAt": "2026-05-26T00:00:00Z",
+  "latestRun": 1,
+  "verificationState": "pending"
+}

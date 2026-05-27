@@ -1,0 +1,11 @@
+{
+  "taskId": "blocked-site",
+  "task": "Open a blocked site and report a useful diagnostic.",
+  "mode": "run",
+  "startUrl": "https://blocked.invalid/",
+  "browser": "firefox",
+  "headless": true,
+  "createdAt": "2026-05-27T00:00:00Z",
+  "latestRun": 1,
+  "verificationState": "failed"
+}

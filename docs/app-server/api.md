@@ -224,6 +224,16 @@ Tools, commands, files, agents, and tasks:
 | `tasks/get` | Read task handle plus logs. |
 | `tasks/cancel` | Cancel a task. |
 | `tasks/subscribe` | Return supported task event kinds. |
+| `webwright/prepare` | Create a Webwright workspace with starter artifacts. |
+| `webwright/submit` | Submit a Webwright browser task. |
+| `webwright/artifacts` | Read a structured Webwright workspace summary. |
+| `webwright/latestRun` | Read the latest Webwright run summary. |
+| `webwright/verify` | Verify the latest Webwright run artifacts. |
+| `webwright/report` | Read Task2UI-style report data. |
+| `webwright/rerun` | Rerun a workspace `final_script.py` as a process task. |
+| `webwright/setup` | Create a managed Python Playwright runtime and install a selected browser. |
+| `webwright/export` | Export a sanitized Webwright workspace package. |
+| `webwright/visualJudge` | Optionally judge the latest screenshot with the active image-capable provider. |
 | `processes/list` | List Roder-owned local and remote processes. |
 | `processes/get` | Read one process descriptor plus output tail. |
 | `processes/stop` | Stop one Roder-owned process. |
@@ -1631,6 +1641,11 @@ Notifications:
 
 Purpose: List available slash commands.
 
+Built-in commands include workflow commands such as `commit`, `roadmap`,
+`webwright:run`, and `webwright:craft`. The Webwright commands bind the
+built-in `webwright` skill during expansion, so clients should preserve returned
+context blocks rather than trying to reimplement the browser-agent prompt.
+
 Request:
 
 ```json
@@ -1818,6 +1833,136 @@ Errors:
   ]
 }
 ```
+
+### `webwright/setup`, `webwright/prepare`, `webwright/submit`, `webwright/artifacts`, `webwright/latestRun`, `webwright/verify`, `webwright/report`, `webwright/rerun`, `webwright/export`, `webwright/visualJudge`
+
+Purpose: Drive Roder's first-party Webwright browser task workflow through the
+app-server without requiring TUI filesystem scraping.
+
+Key request shapes:
+
+```json
+{
+  "method": "webwright/setup",
+  "params": {
+    "browser": "firefox",
+    "dryRun": false
+  }
+}
+```
+
+```json
+{
+  "method": "webwright/prepare",
+  "params": {
+    "task": "Open the fixture page and extract the heading",
+    "mode": "run",
+    "taskId": "fixture-heading",
+    "workspace": "/Users/pz/w/gode"
+  }
+}
+```
+
+```json
+{
+  "method": "webwright/rerun",
+  "params": {
+    "workspace": ".roder/webwright/fixture-heading",
+    "workspaceRoot": "/Users/pz/w/gode"
+  }
+}
+```
+
+```json
+{
+  "method": "webwright/export",
+  "params": {
+    "workspace": ".roder/webwright/fixture-heading",
+    "workspaceRoot": "/Users/pz/w/gode",
+    "outputDir": ".roder/webwright-exports/fixture-heading"
+  }
+}
+```
+
+```json
+{
+  "method": "webwright/visualJudge",
+  "params": {
+    "workspace": ".roder/webwright/fixture-heading",
+    "workspaceRoot": "/Users/pz/w/gode",
+    "enabled": true
+  }
+}
+```
+
+Setup response shape:
+
+```json
+{
+  "roderHome": "/Users/pz/.roder",
+  "runtimeDir": "/Users/pz/.roder/python/webwright",
+  "python": "/Users/pz/.roder/python/webwright/venv/bin/python",
+  "browser": "firefox",
+  "dryRun": false,
+  "installed": true,
+  "steps": [
+    {
+      "label": "install Playwright browser",
+      "command": [
+        "/Users/pz/.roder/python/webwright/venv/bin/python",
+        "-m",
+        "playwright",
+        "install",
+        "firefox"
+      ],
+      "status": "completed",
+      "stdoutTail": "",
+      "stderrTail": ""
+    }
+  ],
+  "message": "Webwright runtime installed"
+}
+```
+
+Behavior:
+
+- `webwright/setup` creates `~/.roder/python/webwright/venv` by default,
+  installs the Playwright Python package, installs the selected browser
+  (`firefox`, `chromium`, or `webkit`), and writes
+  `~/.roder/python/webwright/setup.json`. If `RODER_CONFIG_DIR` or
+  `RODER_DATA_DIR` is set, Roder uses that directory instead of `~/.roder`.
+  Pass `dryRun: true` to return the exact setup command plan without executing
+  processes. Pass `python` to choose the base Python used for `-m venv`.
+- `webwright/prepare` writes `webwright.json`, `plan.md`, and
+  `final_script.py` under a scoped `.roder/webwright/<task-id>/` workspace.
+- `webwright/submit` submits executor `webwright.browser_task` and returns a
+  normal task handle. Its dependency preflight uses `RODER_WEBWRIGHT_PYTHON`
+  first, then the managed setup runtime, then system Python.
+- `webwright/rerun` copies the root `final_script.py` into the next
+  `final_runs/run_<n>/` directory and submits executor `process` with that run
+  directory as cwd. If `python` is omitted, it uses the same managed runtime
+  lookup as `webwright/submit`.
+- `webwright/export` copies only shareable Webwright artifacts into a scoped
+  export directory, redacts text-file secret lines, writes
+  `webwright-export.json`, and excludes browser state, cookies, raw headers, and
+  unrelated workspace files by default.
+- `webwright/visualJudge` is disabled unless `enabled: true` is passed or
+  `RODER_WEBWRIGHT_VISUAL_JUDGE=1` is set. It only calls the active inference
+  provider when `providers/list` reports `capabilities.imageInput: true`;
+  otherwise it writes a skipped record under `visual_judge/`.
+- Visual judge prompts and provider responses are redacted and stored under the
+  task workspace as `visual_judge/run_<n>.json`; they are not written to global
+  logs.
+- Artifact, latest-run, report, and verification methods return structured JSON
+  derived from the workspace parser; clients should render these fields instead
+  of parsing terminal output. `webwright/report` also includes `renderedText`,
+  a redacted plain-text rendering of Task2UI sections for clients without a
+  custom report renderer.
+- All workspace paths are scoped to `workspaceRoot`, the runtime workspace, or
+  the process cwd. Parent-component escapes are rejected.
+- Setup rejects unsupported browsers and reports failed `venv`, `pip`, or
+  Playwright install commands as JSON-RPC invalid-params errors with captured
+  stderr tail in the error message.
 
 ### `processes/list`, `processes/get`, `processes/stop`, `processes/stopAll`, `processes/subscribe`
 
