@@ -1330,6 +1330,9 @@ impl AppServer {
                 enabled: roder_search::search_index_enabled(),
             },
             shell: shell_settings(&cfg.command_shell),
+            default_provider: cfg.default_provider.clone(),
+            default_model: cfg.default_model.clone(),
+            default_reasoning: Runtime::effective_reasoning_for_config(&cfg),
             default_mode: cfg.policy_mode,
             file_backed_dynamic_context: cfg.file_backed_dynamic_context,
         })
@@ -1993,7 +1996,7 @@ impl AppServer {
             return Ok(serde_json::to_value(TurnStartResult { turn_id }).unwrap());
         }
 
-        let (provider_override, model_override, reasoning_override) = self
+        let (thread_provider, thread_model, thread_reasoning) = self
             .protocol_thread_model(&params.thread_id)
             .await
             .map(|selection| {
@@ -2004,6 +2007,9 @@ impl AppServer {
                 )
             })
             .unwrap_or((None, None, None));
+        let provider_override = params.model_provider.or(thread_provider);
+        let model_override = params.model.or(thread_model);
+        let reasoning_override = params.reasoning.or(thread_reasoning);
         let snapshot = self
             .runtime
             .load_thread(&params.thread_id)
@@ -2022,6 +2028,15 @@ impl AppServer {
                 .map(|thread| thread.cwd.clone())
                 .ok_or_else(|| not_found(format!("thread not found: {}", params.thread_id)))?
         };
+        if let Some(policy_mode) = params.policy_mode {
+            self.runtime
+                .set_policy_mode(
+                    policy_mode,
+                    Some("turn/start selected policy mode".to_string()),
+                )
+                .await
+                .map_err(internal_error)?;
+        }
         let turn_id = self
             .runtime
             .start_turn(StartTurnRequest {

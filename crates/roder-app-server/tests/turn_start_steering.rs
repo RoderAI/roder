@@ -174,6 +174,10 @@ async fn turn_start_during_active_tool_call_steers_same_turn_after_tool_result()
                 thread_id: thread.thread.id.clone(),
                 input: text_input("run the tool"),
                 prompt: None,
+                model_provider: None,
+                model: None,
+                reasoning: None,
+                policy_mode: None,
                 task_ledger_required: false,
             })
             .unwrap(),
@@ -191,6 +195,10 @@ async fn turn_start_during_active_tool_call_steers_same_turn_after_tool_result()
                 thread_id: thread.thread.id.clone(),
                 input: text_input("use this extra constraint"),
                 prompt: None,
+                model_provider: None,
+                model: None,
+                reasoning: None,
+                policy_mode: None,
                 task_ledger_required: false,
             })
             .unwrap(),

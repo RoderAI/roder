@@ -1111,6 +1111,77 @@ async fn model_switch_with_thread_id_preserves_effective_reasoning_for_turn() {
 }
 
 #[tokio::test]
+async fn settings_get_exposes_model_reasoning_and_policy_defaults() {
+    let mut builder = ExtensionRegistryBuilder::new();
+    builder.inference_engine(Arc::new(FakeInferenceEngine));
+    let runtime = Arc::new(
+        Runtime::new(
+            builder.build().unwrap(),
+            RuntimeConfig {
+                default_provider: PROVIDER_MOCK.to_string(),
+                default_model: "gpt-5.5".to_string(),
+                reasoning: Some(REASONING_HIGH.to_string()),
+                policy_mode: PolicyMode::AcceptAll,
+                ..Default::default()
+            },
+        )
+        .unwrap(),
+    );
+    let server = Arc::new(AppServer::new(runtime));
+    let client = LocalAppClient::new(server);
+
+    let settings: SettingsGetResult = request(&client, "settings/get", None).await;
+
+    assert_eq!(settings.default_provider, PROVIDER_MOCK);
+    assert_eq!(settings.default_model, "gpt-5.5");
+    assert_eq!(settings.default_reasoning, REASONING_HIGH);
+    assert_eq!(settings.default_mode, PolicyMode::AcceptAll);
+}
+
+#[tokio::test]
+async fn turn_start_selected_controls_override_defaults_for_next_turn() {
+    let engine = Arc::new(TaskCallingEngine::new(false));
+    let mut builder = ExtensionRegistryBuilder::new();
+    builder.inference_engine(engine.clone());
+    let runtime = Arc::new(
+        Runtime::new(
+            builder.build().unwrap(),
+            RuntimeConfig {
+                default_provider: PROVIDER_MOCK.to_string(),
+                default_model: "mock".to_string(),
+                reasoning: Some(REASONING_MEDIUM.to_string()),
+                ..Default::default()
+            },
+        )
+        .unwrap(),
+    );
+    let server = Arc::new(AppServer::new(runtime.clone()));
+    let client = LocalAppClient::new(server);
+
+    let started = start_thread(&client).await;
+
+    let _: TurnStartResult = request(
+        &client,
+        "turn/start",
+        Some(serde_json::json!({
+            "threadId": started.thread.id,
+            "input": [{ "type": "text", "text": "hello" }],
+            "modelProvider": PROVIDER_MOCK,
+            "model": "gpt-5.5",
+            "reasoning": REASONING_HIGH,
+            "policyMode": "plan"
+        })),
+    )
+    .await;
+
+    let request = wait_for_recorded_request(&engine).await;
+    assert_eq!(request.model.provider, PROVIDER_MOCK);
+    assert_eq!(request.model.model, "gpt-5.5");
+    assert_eq!(request.reasoning.level.as_deref(), Some(REASONING_HIGH));
+    assert_eq!(runtime.status().await.policy_mode, PolicyMode::Plan);
+}
+
+#[tokio::test]
 async fn roadmap_methods_update_documents_threads_and_notifications() {
     let root =
         std::env::temp_dir().join(format!("roder-roadmap-app-server-{}", uuid::Uuid::new_v4()));
@@ -6766,6 +6837,10 @@ async fn start_turn(client: &LocalAppClient, thread_id: &str, text: &str) -> Tur
                 thread_id: thread_id.to_string(),
                 input: text_input(text),
                 prompt: None,
+                model_provider: None,
+                model: None,
+                reasoning: None,
+                policy_mode: None,
                 task_ledger_required: false,
             })
             .unwrap(),
