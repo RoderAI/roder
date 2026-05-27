@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import importlib.util
+import os
 import sys
 import types
 import unittest
@@ -89,6 +90,25 @@ class RoderHarborAgentConfigTests(unittest.TestCase):
             "provider_retry_backoff_factor = 1.5",
             module.reliability_config_toml(agent._reliability),
         )
+
+    def test_gemini_api_key_is_forwarded_to_roder_exec_env(self) -> None:
+        module = load_module()
+        previous = os.environ.get("GEMINI_API_KEY")
+        os.environ["GEMINI_API_KEY"] = "test-gemini-key"
+        try:
+            agent = module.RoderCli(model_name="gemini/gemini-3.5-flash")
+
+            commands = agent.create_run_agent_commands("solve it")
+        finally:
+            if previous is None:
+                os.environ.pop("GEMINI_API_KEY", None)
+            else:
+                os.environ["GEMINI_API_KEY"] = previous
+
+        self.assertEqual("test-gemini-key", commands[0].env.get("GEMINI_API_KEY"))
+        self.assertEqual("test-gemini-key", commands[1].env.get("GEMINI_API_KEY"))
+        self.assertNotIn("test-gemini-key", commands[0].command)
+        self.assertNotIn("test-gemini-key", commands[1].command)
 
 
 if __name__ == "__main__":

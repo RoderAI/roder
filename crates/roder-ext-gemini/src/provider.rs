@@ -11,7 +11,11 @@ use roder_api::reliability::{
     provider_retry_status_cause,
 };
 use serde_json::{Value, json};
+use std::collections::{HashMap, HashSet};
 use std::time::Duration;
+
+use crate::media::gemini_user_message_parts;
+use crate::schema::gemini_schema;
 
 pub struct GeminiEngine {
     api_key: String,
@@ -22,9 +26,9 @@ impl GeminiEngine {
         Self { api_key }
     }
 
-    fn map_request(request: &AgentInferenceRequest) -> Value {
+    fn map_request(request: &AgentInferenceRequest) -> anyhow::Result<Value> {
         let mut body = json!({
-            "contents": gemini_contents(request),
+            "contents": gemini_contents(request)?,
         });
         let mut system_parts = Vec::new();
         if let Some(text) = request.instructions.system.as_deref() {
@@ -53,14 +57,14 @@ impl GeminiEngine {
                         json!({
                             "name": tool.name,
                             "description": tool.description,
-                            "parameters": tool.parameters,
+                            "parameters": gemini_schema(tool.parameters),
                         })
                     })
                     .collect::<Vec<_>>()
             }]);
             body["toolConfig"] = gemini_tool_config(&request.tool_choice);
         }
-        body
+        Ok(body)
     }
 }
 
@@ -77,7 +81,7 @@ impl InferenceEngine for GeminiEngine {
             parallel_tool_calls: false,
             reasoning_summaries: false,
             structured_output: true,
-            image_input: false,
+            image_input: true,
             prompt_cache: false,
             provider_metadata: true,
         }
@@ -107,7 +111,7 @@ impl InferenceEngine for GeminiEngine {
         _ctx: InferenceTurnContext<'_>,
         request: AgentInferenceRequest,
     ) -> anyhow::Result<InferenceEventStream> {
-        let body = Self::map_request(&request);
+        let body = Self::map_request(&request)?;
         let url = format!(
             "https://generativelanguage.googleapis.com/v1beta/models/{}:generateContent?key={}",
             request.model.model, self.api_key
@@ -216,42 +220,133 @@ async fn retry_sleep(policy: &ReliabilityRequestPolicy, attempt: u32) {
     }
 }
 
-fn gemini_contents(request: &AgentInferenceRequest) -> Vec<Value> {
-    request
-        .transcript
-        .iter()
-        .filter_map(|item| match item {
-            roder_api::transcript::TranscriptItem::UserMessage(message) => Some(json!({
-                "role": "user",
-                "parts": [{ "text": message.text }]
-            })),
-            roder_api::transcript::TranscriptItem::AssistantMessage(message) => Some(json!({
-                "role": "model",
-                "parts": [{ "text": message.text }]
-            })),
-            roder_api::transcript::TranscriptItem::ToolCall(call) => Some(json!({
-                "role": "model",
-                "parts": [{
-                    "functionCall": {
-                        "id": call.id,
-                        "name": call.name,
-                        "args": parse_json_object(&call.arguments)
-                    }
-                }]
-            })),
-            roder_api::transcript::TranscriptItem::ToolResult(result) => Some(json!({
-                "role": "user",
-                "parts": [{
-                    "functionResponse": {
-                        "id": result.id,
-                        "name": result.name.clone().unwrap_or_default(),
-                        "response": { "result": result.result, "is_error": result.is_error }
-                    }
-                }]
-            })),
-            _ => None,
-        })
-        .collect()
+fn gemini_contents(request: &AgentInferenceRequest) -> anyhow::Result<Vec<Value>> {
+    let mut contents = Vec::new();
+    let mut replay = GeminiProviderReplay::default();
+    for item in &request.transcript {
+        match item {
+            roder_api::transcript::TranscriptItem::UserMessage(message) => {
+                contents.push(json!({
+                    "role": "user",
+                    "parts": gemini_user_message_parts(message)?
+                }));
+            }
+            roder_api::transcript::TranscriptItem::AssistantMessage(message) => {
+                contents.push(json!({
+                    "role": "model",
+                    "parts": [{ "text": message.text }]
+                }));
+            }
+            roder_api::transcript::TranscriptItem::ToolCall(call) => {
+                if replay.should_skip_tool_call(call) {
+                    continue;
+                }
+                contents.push(json!({
+                    "role": "model",
+                    "parts": [{
+                        "functionCall": {
+                            "id": call.id,
+                            "name": call.name,
+                            "args": parse_json_object(&call.arguments)
+                        }
+                    }]
+                }));
+            }
+            roder_api::transcript::TranscriptItem::ToolResult(result) => {
+                contents.push(json!({
+                    "role": "user",
+                    "parts": [{
+                        "functionResponse": {
+                            "id": result.id,
+                            "name": result.name.clone().unwrap_or_default(),
+                            "response": { "result": result.result, "is_error": result.is_error }
+                        }
+                    }]
+                }));
+            }
+            roder_api::transcript::TranscriptItem::ProviderMetadata(metadata) => {
+                append_provider_function_call_content(metadata, &mut contents, &mut replay);
+            }
+            _ => {}
+        }
+    }
+    Ok(contents)
+}
+
+#[derive(Default)]
+struct GeminiProviderReplay {
+    call_ids: HashSet<String>,
+    call_keys: HashMap<(String, String), usize>,
+}
+
+impl GeminiProviderReplay {
+    fn record_part(&mut self, part: &Value) {
+        let Some(call) = part.get("functionCall") else {
+            return;
+        };
+        if let Some(id) = call.get("id").and_then(Value::as_str)
+            && !id.is_empty()
+        {
+            self.call_ids.insert(id.to_string());
+        }
+        if let Some(name) = call.get("name").and_then(Value::as_str) {
+            let args = call.get("args").cloned().unwrap_or_else(|| json!({}));
+            *self
+                .call_keys
+                .entry((name.to_string(), canonical_json(&args)))
+                .or_default() += 1;
+        }
+    }
+
+    fn should_skip_tool_call(&mut self, call: &roder_api::transcript::ToolCallRecord) -> bool {
+        if !call.id.is_empty() && self.call_ids.remove(&call.id) {
+            return true;
+        }
+        let key = (call.name.clone(), canonical_tool_arguments(&call.arguments));
+        let Some(count) = self.call_keys.get_mut(&key) else {
+            return false;
+        };
+        *count = count.saturating_sub(1);
+        if *count == 0 {
+            self.call_keys.remove(&key);
+        }
+        true
+    }
+}
+
+fn append_provider_function_call_content(
+    metadata: &Value,
+    contents: &mut Vec<Value>,
+    replay: &mut GeminiProviderReplay,
+) {
+    let Some(content) = metadata.pointer("/candidates/0/content") else {
+        return;
+    };
+    let Some(parts) = content.get("parts").and_then(Value::as_array) else {
+        return;
+    };
+    if !parts.iter().any(|part| part.get("functionCall").is_some()) {
+        return;
+    }
+    for part in parts {
+        replay.record_part(part);
+    }
+    let mut content = content.clone();
+    if content.get("role").is_none() {
+        content["role"] = json!("model");
+    }
+    contents.push(content);
+}
+
+fn canonical_tool_arguments(raw: &str) -> String {
+    serde_json::from_str::<Value>(raw)
+        .ok()
+        .unwrap_or_else(|| json!({}))
+        .to_string()
+}
+
+fn canonical_json(value: &Value) -> String {
+    value.to_string()
 }
 
 fn gemini_tool_config(choice: &roder_api::tools::ToolChoice) -> Value {
@@ -299,11 +394,11 @@ fn gemini_generation_config(request: &AgentInferenceRequest) -> Value {
 
 fn gemini_thinking_config(level: Option<&str>) -> Option<Value> {
     match level {
-        Some("none") => Some(json!({ "thinkingBudget": 0 })),
         Some("minimal") => Some(json!({ "thinkingLevel": "MINIMAL" })),
         Some("low") => Some(json!({ "thinkingLevel": "LOW" })),
         Some("medium") => Some(json!({ "thinkingLevel": "MEDIUM" })),
-        Some("high") | Some("xhigh") | None => Some(json!({ "thinkingLevel": "HIGH" })),
+        Some("high") => Some(json!({ "thinkingLevel": "HIGH" })),
+        None => None,
         Some(_) => None,
     }
 }
@@ -365,11 +460,16 @@ fn extract_tool_calls(value: &Value) -> Vec<ToolCallCompleted> {
 
 fn extract_usage(value: &Value) -> Option<TokenUsage> {
     let usage = value.get("usageMetadata")?;
-    Some(TokenUsage {
-        prompt_tokens: number_to_u32(usage.get("promptTokenCount")).unwrap_or_default(),
-        completion_tokens: number_to_u32(usage.get("candidatesTokenCount")).unwrap_or_default(),
-        total_tokens: number_to_u32(usage.get("totalTokenCount")).unwrap_or_default(),
-    })
+    Some(
+        TokenUsage::new(
+            number_to_u32(usage.get("promptTokenCount")).unwrap_or_default(),
+            number_to_u32(usage.get("candidatesTokenCount")).unwrap_or_default(),
+            number_to_u32(usage.get("totalTokenCount")).unwrap_or_default(),
+        )
+        .with_cached_prompt_tokens(
+            number_to_u32(usage.get("cachedContentTokenCount")).unwrap_or_default(),
+        ),
+    )
 }
 
 fn number_to_u32(value: Option<&Value>) -> Option<u32> {
@@ -385,7 +485,7 @@ mod tests {
     use roder_api::reliability::ReliabilityRequestPolicy;
     use roder_api::tools::{ToolChoice, ToolSpec};
     use roder_api::transcript::{
-        AssistantMessage, ToolCallRecord, ToolResultRecord, TranscriptItem, UserMessage,
+        AssistantMessage, InputImage, ToolCallRecord, ToolResultRecord, TranscriptItem, UserMessage,
     };
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     use tokio::net::TcpListener;
@@ -449,7 +549,7 @@ mod tests {
 
     #[test]
     fn maps_gemini_request() {
-        let body = GeminiEngine::map_request(&request());
+        let body = GeminiEngine::map_request(&request()).unwrap();
         assert_eq!(body["systemInstruction"]["parts"][0]["text"], "system");
         assert_eq!(body["systemInstruction"]["parts"][1]["text"], "developer");
         assert_eq!(body["contents"][0]["role"], "user");
@@ -478,6 +578,35 @@ mod tests {
         assert_eq!(
             body["toolConfig"]["functionCallingConfig"]["allowedFunctionNames"][0],
             "shell"
+        );
+    }
+
+    #[test]
+    fn maps_user_images_to_gemini_inline_data_parts() {
+        let mut request = request();
+        request.transcript = vec![TranscriptItem::UserMessage(UserMessage::with_images(
+            "what is shown?",
+            vec![InputImage {
+                image_url: "data:image/png;base64,YWJj".to_string(),
+            }],
+        ))];
+
+        let body = GeminiEngine::map_request(&request).unwrap();
+
+        assert_eq!(body["contents"][0]["role"], "user");
+        assert_eq!(body["contents"][0]["parts"][0]["text"], "what is shown?");
+        assert_eq!(
+            body["contents"][0]["parts"][1]["inline_data"]["mime_type"],
+            "image/png"
+        );
+        assert_eq!(
+            body["contents"][0]["parts"][1]["inline_data"]["data"],
+            "YWJj"
+        );
+        assert!(
+            GeminiEngine::new("key".to_string())
+                .capabilities()
+                .image_input
         );
     }
 
@@ -514,7 +643,7 @@ mod tests {
             }
         });
 
-        let body = GeminiEngine::map_request(&request);
+        let body = GeminiEngine::map_request(&request).unwrap();
 
         assert_eq!(
             body["systemInstruction"]["parts"][1]["text"],
@@ -546,7 +675,7 @@ mod tests {
             }),
         }];
 
-        let body = GeminiEngine::map_request(&request);
+        let body = GeminiEngine::map_request(&request).unwrap();
         let schema =
             serde_json::to_string(&body["tools"][0]["functionDeclarations"][0]["parameters"])
                 .unwrap();
@@ -555,6 +684,66 @@ mod tests {
             schema.starts_with(r#"{"type":"object","required":["command"],"properties":"#),
             "{schema}"
         );
+    }
+
+    #[test]
+    fn replays_gemini_function_call_content_with_thought_signature() {
+        let mut request = request();
+        request.transcript = vec![
+            TranscriptItem::UserMessage(UserMessage::text("List files")),
+            TranscriptItem::ProviderMetadata(json!({
+                "candidates": [{
+                    "content": {
+                        "role": "model",
+                        "parts": [{
+                            "functionCall": {
+                                "name": "shell",
+                                "args": { "cmd": "ls" }
+                            },
+                            "thoughtSignature": "signed-thought"
+                        }]
+                    }
+                }]
+            })),
+            TranscriptItem::ToolCall(ToolCallRecord {
+                id: "call_1".to_string(),
+                name: "shell".to_string(),
+                arguments: r#"{"cmd":"ls"}"#.to_string(),
+            }),
+            TranscriptItem::ToolResult(ToolResultRecord {
+                id: "call_1".to_string(),
+                name: Some("shell".to_string()),
+                result: "Cargo.toml".to_string(),
+                display_payload: None,
+                is_error: false,
+            }),
+        ];
+
+        let body = GeminiEngine::map_request(&request).unwrap();
+        let contents = body["contents"].as_array().unwrap();
+        let function_call_count = contents
+            .iter()
+            .filter(|content| {
+                content
+                    .pointer("/parts/0/functionCall/name")
+                    .and_then(Value::as_str)
+                    == Some("shell")
+            })
+            .count();
+
+        assert_eq!(function_call_count, 1);
+        assert_eq!(
+            contents[1]["parts"][0]["thoughtSignature"],
+            "signed-thought"
+        );
+        assert_eq!(contents[2]["parts"][0]["functionResponse"]["name"], "shell");
+    }
+
+    #[test]
+    fn rejects_unsupported_gemini_thinking_levels() {
+        assert_eq!(gemini_thinking_config(Some("xhigh")), None);
+        assert_eq!(gemini_thinking_config(Some("none")), None);
+        assert_eq!(gemini_thinking_config(None), None);
     }
 
     #[test]
@@ -570,9 +759,10 @@ mod tests {
                 ] }
             }],
             "usageMetadata": {
-                "promptTokenCount": 2,
+                "promptTokenCount": 10,
                 "candidatesTokenCount": 3,
-                "totalTokenCount": 5
+                "totalTokenCount": 13,
+                "cachedContentTokenCount": 9
             }
         });
         assert_eq!(extract_candidate_text(&value), "hello world");
@@ -586,11 +776,7 @@ mod tests {
         );
         assert_eq!(
             extract_usage(&value),
-            Some(TokenUsage {
-                prompt_tokens: 2,
-                completion_tokens: 3,
-                total_tokens: 5,
-            })
+            Some(TokenUsage::new(10, 3, 13).with_cached_prompt_tokens(9))
         );
     }
 

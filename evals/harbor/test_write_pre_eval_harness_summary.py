@@ -40,13 +40,72 @@ class PreEvalHarnessSummaryTests(unittest.TestCase):
         self.assertEqual(2, before["files"])
         self.assertNotEqual(before["combinedSha256"], after["combinedSha256"])
 
-    def test_default_harness_files_include_launch_plan_dependency_validator(self) -> None:
+    def test_default_harness_files_include_launch_plan_validators(self) -> None:
         paths = {path.as_posix() for path in self.module.DEFAULT_HARNESS_FILES}
 
+        self.assertIn(
+            "evals/harbor/launch_plan_campaign_summary_validation.py",
+            paths,
+        )
         self.assertIn(
             "evals/harbor/launch_plan_dependency_validation.py",
             paths,
         )
+
+    def test_default_harness_files_include_all_launch_plan_validator_tests(self) -> None:
+        paths = {path.as_posix() for path in self.module.DEFAULT_HARNESS_FILES}
+        launch_plan_tests = sorted(
+            path.relative_to(ROOT).as_posix()
+            for path in (ROOT / "evals/harbor").glob(
+                "test_validate_tbench_launch_plan*.py"
+            )
+        )
+
+        missing = [path for path in launch_plan_tests if path not in paths]
+
+        self.assertEqual([], missing)
+
+    def test_default_harness_files_include_all_pre_eval_summary_validator_tests(self) -> None:
+        paths = {path.as_posix() for path in self.module.DEFAULT_HARNESS_FILES}
+        pre_eval_summary_tests = sorted(
+            path.relative_to(ROOT).as_posix()
+            for path in (ROOT / "evals/harbor").glob(
+                "test_validate_pre_eval_summary*.py"
+            )
+        )
+
+        missing = [path for path in pre_eval_summary_tests if path not in paths]
+
+        self.assertEqual([], missing)
+
+    def test_default_harness_files_include_campaign_and_wrapper_tests(self) -> None:
+        paths = {path.as_posix() for path in self.module.DEFAULT_HARNESS_FILES}
+        patterns = (
+            "test_generate_tbench_campaign.py",
+            "test_run_roder_tbench_full*.py",
+            "test_run_roder_tbench_smoke*.py",
+            "test_validate_tbench_campaign*.py",
+        )
+        expected = sorted(
+            path.relative_to(ROOT).as_posix()
+            for pattern in patterns
+            for path in (ROOT / "evals/harbor").glob(pattern)
+        )
+
+        missing = [path for path in expected if path not in paths]
+
+        self.assertEqual([], missing)
+
+    def test_default_harness_files_include_all_harbor_python_tests(self) -> None:
+        paths = {path.as_posix() for path in self.module.DEFAULT_HARNESS_FILES}
+        tests = sorted(
+            path.relative_to(ROOT).as_posix()
+            for path in (ROOT / "evals/harbor").glob("test_*.py")
+        )
+
+        missing = [path for path in tests if path not in paths]
+
+        self.assertEqual([], missing)
 
     def test_default_harness_files_include_full_run_scripts(self) -> None:
         paths = {path.as_posix() for path in self.module.DEFAULT_HARNESS_FILES}
@@ -77,6 +136,8 @@ class PreEvalHarnessSummaryTests(unittest.TestCase):
 
         self.assertIn("evals/harbor/tbench_campaign_run_script.py", paths)
         self.assertIn("evals/harbor/tbench_campaign_script_commands.py", paths)
+        self.assertIn("evals/harbor/tbench_campaign_run_script_writer.py", paths)
+        self.assertIn("evals/harbor/tbench_campaign_launch_plans.py", paths)
 
     def test_default_harness_files_include_split_agent_config_helpers(self) -> None:
         paths = {path.as_posix() for path in self.module.DEFAULT_HARNESS_FILES}
@@ -86,11 +147,16 @@ class PreEvalHarnessSummaryTests(unittest.TestCase):
     def test_default_harness_files_include_shared_validation_helpers(self) -> None:
         paths = {path.as_posix() for path in self.module.DEFAULT_HARNESS_FILES}
 
+        self.assertIn("evals/harbor/launch_plan_summary_copies.py", paths)
+        self.assertIn("evals/harbor/pre_eval_campaign_summary.py", paths)
+        self.assertIn("evals/harbor/pre_eval_campaign_summary_validation.py", paths)
         self.assertIn("evals/harbor/pre_eval_image_preflight_validation.py", paths)
         self.assertIn("evals/harbor/pre_eval_run_summary.py", paths)
         self.assertIn("evals/harbor/pre_eval_summary_tbench_validation.py", paths)
         self.assertIn("evals/harbor/tbench_analysis_constants.py", paths)
+        self.assertIn("evals/harbor/tbench_campaign_route_readiness.py", paths)
         self.assertIn("evals/harbor/tbench_campaign_image_preflight.py", paths)
+        self.assertIn("evals/harbor/tbench_deadline_policy.py", paths)
 
     def test_default_harness_files_include_harbor_python_guard_tests(self) -> None:
         paths = {path.as_posix() for path in self.module.DEFAULT_HARNESS_FILES}
@@ -98,7 +164,41 @@ class PreEvalHarnessSummaryTests(unittest.TestCase):
         self.assertIn("evals/harbor/test_run_roder_pre_eval_diagnostics_args.py", paths)
         self.assertIn("evals/harbor/test_suggest_tbench_campaign.py", paths)
         self.assertIn("evals/harbor/test_summarize_tbench_campaigns.py", paths)
+        self.assertIn(
+            "evals/harbor/test_summarize_tbench_campaigns_validation.py",
+            paths,
+        )
+        self.assertIn("evals/harbor/test_write_pre_eval_campaign_summary.py", paths)
+        self.assertIn(
+            "evals/harbor/test_validate_pre_eval_summary_campaign.py",
+            paths,
+        )
+        self.assertIn(
+            "evals/harbor/test_run_roder_pre_eval_campaign_summary_args.py",
+            paths,
+        )
+        self.assertIn(
+            "evals/harbor/test_run_roder_tbench_full_campaign_summary.py",
+            paths,
+        )
+        self.assertIn(
+            "evals/harbor/test_validate_tbench_launch_plan_campaign_summary.py",
+            paths,
+        )
+        self.assertIn(
+            "evals/harbor/test_validate_tbench_launch_plan_campaign_summary_copies.py",
+            paths,
+        )
+        self.assertIn(
+            "evals/harbor/test_write_pre_eval_campaign_manifest_coverage.py",
+            paths,
+        )
+        self.assertIn("evals/harbor/test_tbench_deadline_policy.py", paths)
         self.assertIn("evals/harbor/test_validate_tbench_campaign_run_script.py", paths)
+        self.assertIn(
+            "evals/harbor/test_validate_tbench_campaign_run_script_campaign_summary.py",
+            paths,
+        )
         self.assertIn(
             "evals/harbor/test_validate_tbench_campaign_run_script_guards.py",
             paths,
@@ -123,6 +223,11 @@ class PreEvalHarnessSummaryTests(unittest.TestCase):
             "evals/harbor/test_validate_tbench_launch_plan_summary_copies.py",
             paths,
         )
+        self.assertIn(
+            "evals/harbor/test_validate_tbench_campaign_launch_plans.py",
+            paths,
+        )
+        self.assertIn("evals/harbor/test_write_tbench_launch_plan.py", paths)
 
 
 if __name__ == "__main__":

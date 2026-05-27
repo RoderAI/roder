@@ -181,6 +181,158 @@ class ValidateTbenchCampaignRunScriptTests(unittest.TestCase):
             result.stderr,
         )
 
+    def test_rejects_generated_run_script_with_wrong_route_launch_plan(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            output_dir = Path(temp) / "campaign"
+            manifest = generate_campaign(output_dir)
+            data = json.loads(manifest.read_text())
+            route = data["routes"][0]
+            run_script = Path(data["runScript"])
+            script = run_script.read_text()
+            expected = f"--output {route['launchPlan']}"
+            self.assertIn(expected, script)
+            run_script.write_text(
+                script.replace(expected, "--output stale-launch-plan.json", 1)
+                + f"\necho {route['launchPlan']}\n"
+            )
+
+            result = validate_campaign(manifest)
+
+        self.assertNotEqual(0, result.returncode)
+        self.assertIn(
+            "runScript launch plan commands mismatch",
+            result.stderr,
+        )
+
+    def test_rejects_generated_run_script_missing_launch_plan_pre_eval_summary(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            output_dir = Path(temp) / "campaign"
+            manifest = generate_campaign(output_dir)
+            data = json.loads(manifest.read_text())
+            run_script = Path(data["runScript"])
+            script = run_script.read_text()
+            expected = '--pre-eval-summary "$pre_eval_summary" '
+            self.assertIn(expected, script)
+            run_script.write_text(script.replace(expected, "", 1))
+
+            result = validate_campaign(manifest)
+
+        self.assertNotEqual(0, result.returncode)
+        self.assertIn(
+            "runScript launch plan commands mismatch",
+            result.stderr,
+        )
+
+    def test_rejects_generated_run_script_with_stale_launch_plan_pre_eval_summary(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            output_dir = Path(temp) / "campaign"
+            manifest = generate_campaign(output_dir)
+            data = json.loads(manifest.read_text())
+            run_script = Path(data["runScript"])
+            script = run_script.read_text()
+            expected = '--pre-eval-summary "$pre_eval_summary"'
+            self.assertIn(expected, script)
+            run_script.write_text(
+                script.replace(expected, "--pre-eval-summary stale-summary.json", 1)
+            )
+
+            result = validate_campaign(manifest)
+
+        self.assertNotEqual(0, result.returncode)
+        self.assertIn(
+            "runScript launch plan commands mismatch",
+            result.stderr,
+        )
+
+    def test_rejects_generated_run_script_missing_launch_plan_run_context(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            output_dir = Path(temp) / "campaign"
+            manifest = generate_campaign(output_dir)
+            data = json.loads(manifest.read_text())
+            run_script = Path(data["runScript"])
+            script = run_script.read_text()
+            expected = ' ${launch_plan_run_context_args[@]+"${launch_plan_run_context_args[@]}"}'
+            self.assertIn(expected, script)
+            run_script.write_text(script.replace(expected, "", 1))
+
+            result = validate_campaign(manifest)
+
+        self.assertNotEqual(0, result.returncode)
+        self.assertIn(
+            "runScript launch plan commands mismatch",
+            result.stderr,
+        )
+
+    def test_rejects_generated_run_script_missing_ready_launch_plan_validation(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            output_dir = Path(temp) / "campaign"
+            manifest = generate_campaign(output_dir)
+            data = json.loads(manifest.read_text())
+            route = data["routes"][0]
+            run_script = Path(data["runScript"])
+            script = run_script.read_text()
+            expected = (
+                f"python3 evals/harbor/validate_tbench_launch_plan.py {route['launchPlan']} "
+                "--require-ready "
+            )
+            self.assertIn(expected, script)
+            run_script.write_text(
+                script.replace(expected, f"# {expected}", 1)
+                + f"\necho {route['launchPlan']}\n"
+            )
+
+            result = validate_campaign(manifest)
+
+        self.assertNotEqual(0, result.returncode)
+        self.assertIn(
+            "runScript launch plan validation commands mismatch",
+            result.stderr,
+        )
+
+    def test_rejects_generated_run_script_missing_launch_plan_summary_verification(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            output_dir = Path(temp) / "campaign"
+            manifest = generate_campaign(output_dir)
+            data = json.loads(manifest.read_text())
+            run_script = Path(data["runScript"])
+            script = run_script.read_text()
+            expected = " --verify-pre-eval-summary "
+            self.assertIn(expected, script)
+            run_script.write_text(
+                script.replace(expected, " ", 1)
+            )
+
+            result = validate_campaign(manifest)
+
+        self.assertNotEqual(0, result.returncode)
+        self.assertIn(
+            "runScript launch plan validation commands mismatch",
+            result.stderr,
+        )
+
+    def test_rejects_generated_run_script_missing_launch_plan_image_manifest(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            output_dir = Path(temp) / "campaign"
+            manifest = generate_campaign(output_dir)
+            data = json.loads(manifest.read_text())
+            route = data["routes"][0]
+            run_script = Path(data["runScript"])
+            script = run_script.read_text()
+            expected = f"--image-preflight-manifest {route['imageManifest']}"
+            self.assertIn(expected, script)
+            run_script.write_text(
+                script.replace(expected, "--image-preflight-manifest stale-images.json", 1)
+                + f"\necho {route['imageManifest']}\n"
+            )
+
+            result = validate_campaign(manifest)
+
+        self.assertNotEqual(0, result.returncode)
+        self.assertIn(
+            "runScript launch plan commands mismatch",
+            result.stderr,
+        )
+
     def test_rejects_generated_run_script_that_bypasses_preflight_args(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
             output_dir = Path(temp) / "campaign"
@@ -388,7 +540,8 @@ class ValidateTbenchCampaignRunScriptTests(unittest.TestCase):
             script = run_script.read_text()
             expected = (
                 'python3 evals/harbor/validate_tbench_campaign.py "$MANIFEST" '
-                '--require-image-preflight --require-analysis --preflight-dir "$PREFLIGHT_DIR"'
+                '--require-image-preflight --require-analysis --require-launch-plans '
+                '--preflight-dir "$PREFLIGHT_DIR"'
             )
             self.assertIn(expected, script)
             run_script.write_text(
@@ -417,7 +570,8 @@ class ValidateTbenchCampaignRunScriptTests(unittest.TestCase):
             script = run_script.read_text()
             final_validation = (
                 'python3 evals/harbor/validate_tbench_campaign.py "$MANIFEST" '
-                '--require-image-preflight --require-analysis --preflight-dir "$PREFLIGHT_DIR"'
+                '--require-image-preflight --require-analysis --require-launch-plans '
+                '--preflight-dir "$PREFLIGHT_DIR"'
             )
             harbor = f"harbor run --config {route['config']}"
             self.assertIn(final_validation, script)

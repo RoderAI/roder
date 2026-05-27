@@ -97,6 +97,40 @@ class ValidatePreEvalSummaryTests(unittest.TestCase):
         self.assertFalse(result.ok)
         self.assertIn("image preflight config does not match requested config", result.issues)
 
+    def test_required_image_preflight_blocks_offline_mode_mismatch(self) -> None:
+        summary = clean_summary()
+        summary["options"]["offlineImages"] = True
+
+        result = self.module.validate_summary(
+            summary,
+            require_image_preflight=True,
+        )
+
+        self.assertFalse(result.ok)
+        self.assertIn("image preflight did not run in offline mode", result.issues)
+
+    def test_rejects_contradictory_image_preflight_options(self) -> None:
+        summary = clean_summary()
+        summary["options"]["offlineImages"] = True
+        summary["options"]["pullImages"] = True
+
+        result = self.module.validate_summary(summary)
+
+        self.assertFalse(result.ok)
+        self.assertIn(
+            "offlineImages cannot be combined with pullImages",
+            result.issues,
+        )
+
+    def test_rejects_missing_pre_eval_options_check(self) -> None:
+        summary = clean_summary()
+        summary["checks"].pop("preEvalOptions", None)
+
+        result = self.module.validate_summary(summary)
+
+        self.assertFalse(result.ok)
+        self.assertIn("preEvalOptions check missing", result.issues)
+
     def test_required_image_preflight_rejects_nonclean_details(self) -> None:
         summary = clean_summary()
         summary["checks"]["imagePreflight"]["missing"] = 1
@@ -216,6 +250,31 @@ class ValidatePreEvalSummaryTests(unittest.TestCase):
 
         self.assertFalse(result.ok)
         self.assertIn("Harbor config SHA-256 mismatch", result.issues)
+
+    def test_harbor_configs_requires_deadline_policy(self) -> None:
+        summary = clean_summary()
+        summary["checks"]["harborConfigs"].pop("deadlinePolicy")
+
+        result = self.module.validate_summary(summary)
+
+        self.assertFalse(result.ok)
+        self.assertIn("harborConfigs deadlinePolicy is missing", result.issues)
+
+    def test_harbor_configs_blocks_deadline_policy_mismatch(self) -> None:
+        summary = clean_summary()
+        summary["checks"]["harborConfigs"]["deadlinePolicy"] = {
+            "overrideTimeoutSec": 900,
+            "softTimeoutSec": 890,
+            "evalDeadlineSeconds": 870,
+        }
+
+        result = self.module.validate_summary(summary)
+
+        self.assertFalse(result.ok)
+        text = "\n".join(result.issues)
+        self.assertIn("harborConfigs deadlinePolicy overrideTimeoutSec", text)
+        self.assertIn("harborConfigs deadlinePolicy softTimeoutSec", text)
+        self.assertIn("harborConfigs deadlinePolicy evalDeadlineSeconds", text)
 
     def test_verify_harbor_configs_blocks_missing_required_file_set(self) -> None:
         config = ROOT / "evals/harbor/tbench-full-gpt55-medium.json"

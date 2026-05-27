@@ -114,11 +114,21 @@ class GenerateTbenchCampaignTests(unittest.TestCase):
             routes["medium-validated"]["imageManifest"],
         )
         self.assertEqual(
+            str(output_dir / "medium-validated-launch-plan.json"),
+            routes["medium-validated"]["launchPlan"],
+        )
+        self.assertEqual(
             str(output_dir / "xhigh-plan-first-images.json"),
             routes["xhigh-plan-first"]["imageManifest"],
         )
+        self.assertEqual(
+            str(output_dir / "xhigh-plan-first-launch-plan.json"),
+            routes["xhigh-plan-first"]["launchPlan"],
+        )
         self.assertIn(routes["medium-validated"]["imageManifest"], script)
         self.assertIn(routes["xhigh-plan-first"]["imageManifest"], script)
+        self.assertIn(routes["medium-validated"]["launchPlan"], script)
+        self.assertIn(routes["xhigh-plan-first"]["launchPlan"], script)
 
         self.assertEqual(4, medium["datasets"][0]["n_tasks"])
         self.assertEqual("medium", medium["agents"][0]["kwargs"]["reasoning"])
@@ -165,9 +175,23 @@ class GenerateTbenchCampaignTests(unittest.TestCase):
         self.assertIn("preflight_tbench_images.py", script)
         self.assertIn("run-roder-pre-eval-diagnostics.sh", script)
         self.assertIn("validate_pre_eval_summary.py", script)
+        self.assertIn("write_tbench_launch_plan.py", script)
+        self.assertIn("validate_tbench_launch_plan.py", script)
         self.assertIn("RODER_HARBOR_PRE_EVAL_SUMMARY", script)
         self.assertIn("--require-prebuilt", script)
         self.assertIn("--require-auth", script)
+        self.assertIn("--pre-eval-summary", script)
+        self.assertIn("--verify-pre-eval-summary", script)
+        self.assertIn("--image-preflight-manifest", script)
+        self.assertIn("--require-image-preflight", script)
+        self.assertIn("--verify-image-manifest", script)
+        self.assertIn("--require-launch-plans", script)
+        self.assertIn("--allow-dry-run-launch-plans", script)
+        self.assertIn("--allow-dry-run", script)
+        self.assertIn("--require-ready", script)
+        self.assertIn("pre_eval_ran_here=0", script)
+        self.assertIn("pre_eval_ran_here=1", script)
+        self.assertIn("launch_plan_run_context_args=(--pre-eval-ran-here)", script)
         self.assertIn("pre_eval_args+=(--config", script)
         self.assertIn("--verify-prebuilt-binary", script)
         self.assertIn("--verify-auth-file", script)
@@ -250,6 +274,8 @@ class GenerateTbenchCampaignTests(unittest.TestCase):
         self.assertNotIn("harbor", run_result.stderr.lower())
         self.assertIn("validate_pre_eval_summary.py", stub_text)
         self.assertIn("preflight_tbench_images.py", stub_text)
+        self.assertIn("write_tbench_launch_plan.py", stub_text)
+        self.assertIn("validate_tbench_launch_plan.py", stub_text)
 
     def test_run_script_blocks_existing_route_job_dir_without_replace(self) -> None:
         with tempfile.TemporaryDirectory() as temp:

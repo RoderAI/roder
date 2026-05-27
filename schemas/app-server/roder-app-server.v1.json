@@ -753,6 +753,15 @@
       ]
     },
     {
+      "method": "providers/clear",
+      "paramsType": "ProvidersClearParams",
+      "resultType": "ProvidersClearResult",
+      "stability": "stable",
+      "featureGroup": "providers",
+      "idempotency": "nonIdempotent",
+      "sideEffect": "localState"
+    },
+    {
       "method": "providers/configure",
       "paramsType": "ProvidersConfigureParams",
       "resultType": "ProvidersConfigureResult",
@@ -1066,6 +1075,42 @@
       "featureGroup": "skills",
       "idempotency": "nonIdempotent",
       "sideEffect": "localState"
+    },
+    {
+      "method": "speech/providers/list",
+      "paramsType": "SpeechProvidersListParams",
+      "resultType": "SpeechProvidersListResult",
+      "stability": "stable",
+      "featureGroup": "speech",
+      "idempotency": "idempotent",
+      "sideEffect": "readOnly"
+    },
+    {
+      "method": "speech/synthesis/providers/list",
+      "paramsType": "SpeechSynthesisProvidersListParams",
+      "resultType": "SpeechSynthesisProvidersListResult",
+      "stability": "stable",
+      "featureGroup": "speech",
+      "idempotency": "idempotent",
+      "sideEffect": "readOnly"
+    },
+    {
+      "method": "speech/synthesize",
+      "paramsType": "SpeechSynthesizeParams",
+      "resultType": "SpeechSynthesizeResult",
+      "stability": "stable",
+      "featureGroup": "speech",
+      "idempotency": "nonIdempotent",
+      "sideEffect": "externalProcess"
+    },
+    {
+      "method": "speech/transcribe",
+      "paramsType": "SpeechTranscribeParams",
+      "resultType": "SpeechTranscribeResult",
+      "stability": "stable",
+      "featureGroup": "speech",
+      "idempotency": "nonIdempotent",
+      "sideEffect": "externalProcess"
     },
     {
       "method": "tasks/cancel",

@@ -279,6 +279,7 @@ async fn auto_cancel_on_session_end_cancels_running_thread_tasks() {
             event: RoderEvent::TurnCompleted(roder_api::events::TurnCompleted {
                 thread_id: "thread-a".to_string(),
                 turn_id: "turn-a".to_string(),
+                usage: None,
                 timestamp: OffsetDateTime::now_utc(),
             }),
         })

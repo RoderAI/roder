@@ -712,7 +712,9 @@ mod tests {
                 started_at: None,
                 completed_at: None,
                 duration_ms: None,
+                usage: None,
             }]),
+            usage: None,
         }
     }
 

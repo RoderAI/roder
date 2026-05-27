@@ -111,9 +111,31 @@ impl AppServer {
             "initialize" => self.handle_initialize().await,
             "extensions/list" => self.handle_extensions_list().await,
             "providers/list" => self.handle_providers_list().await,
+            "speech/providers/list" => self.handle_speech_providers_list().await,
+            "speech/synthesis/providers/list" => {
+                self.handle_speech_synthesis_providers_list().await
+            }
+            "speech/synthesize" => {
+                self.decode_and(req.params, |p| async move {
+                    self.handle_speech_synthesize(p).await
+                })
+                .await
+            }
+            "speech/transcribe" => {
+                self.decode_and(req.params, |p| async move {
+                    self.handle_speech_transcribe(p).await
+                })
+                .await
+            }
             "providers/configure" => {
                 self.decode_and(req.params, |p| async move {
                     self.handle_provider_configure(p).await
+                })
+                .await
+            }
+            "providers/clear" => {
+                self.decode_and(req.params, |p| async move {
+                    self.handle_provider_clear(p).await
                 })
                 .await
             }
@@ -1259,6 +1281,23 @@ impl AppServer {
             authenticated: true,
         })
         .unwrap())
+    }
+
+    async fn handle_provider_clear(
+        &self,
+        params: ProviderClearParams,
+    ) -> Result<serde_json::Value, JsonRpcError> {
+        let provider = roder_api::catalog::normalize_provider_id(params.provider.trim());
+        if provider.is_empty() {
+            return Err(invalid_params("provider is required"));
+        }
+        if !self.persist_user_config {
+            return Err(internal_error(
+                "provider API key persistence is disabled for this app-server",
+            ));
+        }
+        roder_config::delete_provider_api_key(&provider).map_err(internal_error)?;
+        Ok(serde_json::to_value(ProviderClearResult { provider }).unwrap())
     }
 
     async fn handle_settings_get(&self) -> Result<serde_json::Value, JsonRpcError> {
@@ -3786,10 +3825,21 @@ async fn provider_auth_status(
 ) -> (bool, Option<String>) {
     match metadata.auth_type {
         ProviderAuthType::None => (true, None),
-        ProviderAuthType::ApiKey => (
-            metadata.auth_configured.unwrap_or(true),
-            metadata.auth_label.clone(),
-        ),
+        ProviderAuthType::ApiKey => {
+            let configured = if let Ok(cfg) = roder_config::load_config() {
+                if let Some(p) = cfg.providers.get(provider_id) {
+                    p.api_key.is_some()
+                        || p.api_key_env
+                            .as_ref()
+                            .is_some_and(|var| std::env::var(var).is_ok())
+                } else {
+                    metadata.auth_configured.unwrap_or(true)
+                }
+            } else {
+                metadata.auth_configured.unwrap_or(true)
+            };
+            (configured, metadata.auth_label.clone())
+        }
         ProviderAuthType::OAuth if provider_id == roder_api::catalog::PROVIDER_CODEX => {
             match roder_codex_auth::status().await {
                 Ok(Some(tokens)) if !tokens.account_id.is_empty() => {

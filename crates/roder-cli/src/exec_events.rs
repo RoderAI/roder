@@ -1,13 +1,16 @@
+use roder_api::inference::TokenUsage;
 use roder_protocol::Item;
 use serde::Serialize;
 
-#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, PartialEq)]
 #[serde(rename_all = "snake_case")]
 pub(crate) struct ExecUsage {
     pub input_tokens: u64,
     pub cached_input_tokens: u64,
     pub output_tokens: u64,
     pub reasoning_output_tokens: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cache_hit_rate: Option<f64>,
 }
 
 impl Default for ExecUsage {
@@ -17,6 +20,22 @@ impl Default for ExecUsage {
             cached_input_tokens: 0,
             output_tokens: 0,
             reasoning_output_tokens: 0,
+            cache_hit_rate: None,
+        }
+    }
+}
+
+impl From<Option<TokenUsage>> for ExecUsage {
+    fn from(usage: Option<TokenUsage>) -> Self {
+        let Some(usage) = usage else {
+            return Self::default();
+        };
+        Self {
+            input_tokens: u64::from(usage.prompt_tokens),
+            cached_input_tokens: u64::from(usage.cached_prompt_tokens),
+            output_tokens: u64::from(usage.completion_tokens),
+            reasoning_output_tokens: 0,
+            cache_hit_rate: usage.cache_hit_rate,
         }
     }
 }
@@ -100,5 +119,17 @@ mod tests {
         assert_eq!(value["item"]["id"], "item_1");
         assert_eq!(value["item"]["type"], "command_execution");
         assert_eq!(value["item"]["tool_name"], "shell");
+    }
+
+    #[test]
+    fn exec_usage_preserves_cache_metrics() {
+        let usage = ExecUsage::from(Some(
+            TokenUsage::new(100, 10, 110).with_cached_prompt_tokens(92),
+        ));
+
+        let value = serde_json::to_value(usage).unwrap();
+        assert_eq!(value["input_tokens"], 100);
+        assert_eq!(value["cached_input_tokens"], 92);
+        assert!((value["cache_hit_rate"].as_f64().unwrap() - 0.92).abs() < f64::EPSILON);
     }
 }

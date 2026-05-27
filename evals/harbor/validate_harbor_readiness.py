@@ -10,10 +10,13 @@ import sys
 from pathlib import Path
 from typing import Any
 
+from tbench_deadline_policy import TBENCH_DEADLINE_POLICY
+
 
 DEFAULT_CONFIGS = (
     Path("evals/harbor/tbench-full-gpt55-medium.json"),
     Path("evals/harbor/tbench-smoke.json"),
+    Path("evals/harbor/tbench-gemini35-flash-validation.json"),
 )
 REQUIRED_GITIGNORE_ENTRIES = (
     "evals/harbor/artifacts/",
@@ -51,21 +54,21 @@ def validate_config(path: Path, config: dict[str, Any]) -> list[str]:
         path,
         "agents[0].override_timeout_sec",
         agent.get("override_timeout_sec"),
-        1800,
+        TBENCH_DEADLINE_POLICY.override_timeout_sec,
     )
     expect_equal(
         issues,
         path,
         "agents[0].kwargs.soft_timeout_sec",
         kwargs.get("soft_timeout_sec"),
-        1780,
+        TBENCH_DEADLINE_POLICY.soft_timeout_sec,
     )
     expect_equal(
         issues,
         path,
         "agents[0].kwargs.speed_policy_eval_deadline_seconds",
         kwargs.get("speed_policy_eval_deadline_seconds"),
-        1740,
+        TBENCH_DEADLINE_POLICY.eval_deadline_seconds,
     )
     expect_equal(
         issues,

@@ -1773,6 +1773,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "mime"
+version = "0.3.17"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6877bb514081ee2a7ff5ef9de3281f14a4dd4bceac4c09388074a6b5df8a139a"
+
+[[package]]
+name = "mime_guess"
+version = "2.0.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f7c44f8e672c00fe5308fa235f821cb4198414e1c77935c1ab6948d3fd78550e"
+dependencies = [
+ "mime",
+ "unicase",
+]
+
+[[package]]
 name = "minimal-lexical"
 version = "0.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2488,6 +2504,7 @@ dependencies = [
  "hyper-util",
  "js-sys",
  "log",
+ "mime_guess",
  "percent-encoding",
  "pin-project-lite",
  "quinn",
@@ -2614,6 +2631,7 @@ name = "roder-cli"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "base64",
  "crossterm",
  "ratatui",
  "roder-api",
@@ -2789,6 +2807,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "roder-ext-cursor"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-stream",
+ "async-trait",
+ "bytes",
+ "futures",
+ "reqwest",
+ "roder-api",
+ "semver",
+ "serde",
+ "serde_json",
+ "tokio",
+ "uuid",
+]
+
+[[package]]
 name = "roder-ext-disk-context"
 version = "0.1.0"
 dependencies = [
@@ -2821,6 +2857,21 @@ dependencies = [
  "anyhow",
  "async-trait",
  "futures",
+ "reqwest",
+ "roder-api",
+ "semver",
+ "serde",
+ "serde_json",
+ "tokio",
+]
+
+[[package]]
+name = "roder-ext-google-speech"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "base64",
  "reqwest",
  "roder-api",
  "semver",
@@ -2893,6 +2944,7 @@ name = "roder-ext-openai-chat-completions"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "async-stream",
  "async-trait",
  "futures",
  "reqwest",
@@ -2926,6 +2978,20 @@ dependencies = [
  "async-trait",
  "dirs",
  "futures",
+ "reqwest",
+ "roder-api",
+ "semver",
+ "serde",
+ "serde_json",
+ "tokio",
+]
+
+[[package]]
+name = "roder-ext-openai-speech"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
  "reqwest",
  "roder-api",
  "semver",
@@ -3247,6 +3313,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "roder-ext-xiaomi-mimo"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "base64",
+ "futures",
+ "reqwest",
+ "roder-api",
+ "roder-config",
+ "roder-ext-openai-chat-completions",
+ "semver",
+ "serde",
+ "serde_json",
+ "tokio",
+]
+
+[[package]]
 name = "roder-extension-host"
 version = "0.1.0"
 dependencies = [
@@ -3261,14 +3345,17 @@ dependencies = [
  "roder-config",
  "roder-context",
  "roder-ext-anthropic",
+ "roder-ext-cursor",
  "roder-ext-firecrawl-search",
  "roder-ext-gemini",
+ "roder-ext-google-speech",
  "roder-ext-jsonl-thread-store",
  "roder-ext-memory",
  "roder-ext-notify-desktop",
  "roder-ext-notify-terminal",
  "roder-ext-openai-embeddings",
  "roder-ext-openai-responses",
+ "roder-ext-openai-speech",
  "roder-ext-opencode",
  "roder-ext-parallel-search",
  "roder-ext-perplexity-search",
@@ -3290,6 +3377,7 @@ dependencies = [
  "roder-ext-verification",
  "roder-ext-web-search",
  "roder-ext-xai",
+ "roder-ext-xiaomi-mimo",
  "roder-tools",
  "roder-web-search",
  "semver",
@@ -3362,6 +3450,7 @@ dependencies = [
 name = "roder-search"
 version = "0.1.0"
 dependencies = [
+ "ignore",
  "regex",
  "serde",
  "serde_json",
@@ -3435,6 +3524,7 @@ dependencies = [
  "async-trait",
  "base64",
  "dirs",
+ "ignore",
  "regex",
  "roder-api",
  "roder-ext-runner-unix-local",
@@ -4447,6 +4537,12 @@ dependencies = [
  "tempfile",
  "windows-sys 0.61.2",
 ]
+
+[[package]]
+name = "unicase"
+version = "2.9.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "dbc4bc3a9f746d862c45cb89d705aa10f187bb96c76001afab07a0d35ce60142"
 
 [[package]]
 name = "unicode-ident"

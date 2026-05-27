@@ -1655,11 +1655,16 @@ fn extract_usage(value: &Value) -> Option<TokenUsage> {
     let completion_tokens = number_to_u32(usage.get("output_tokens"));
     let total_tokens = number_to_u32(usage.get("total_tokens"))
         .or_else(|| Some(prompt_tokens? + completion_tokens?));
-    Some(TokenUsage {
-        prompt_tokens: prompt_tokens.unwrap_or_default(),
-        completion_tokens: completion_tokens.unwrap_or_default(),
-        total_tokens: total_tokens.unwrap_or_default(),
-    })
+    let cached_prompt_tokens =
+        number_to_u32(usage.pointer("/input_tokens_details/cached_tokens")).unwrap_or_default();
+    Some(
+        TokenUsage::new(
+            prompt_tokens.unwrap_or_default(),
+            completion_tokens.unwrap_or_default(),
+            total_tokens.unwrap_or_default(),
+        )
+        .with_cached_prompt_tokens(cached_prompt_tokens),
+    )
 }
 
 fn number_to_u32(value: Option<&Value>) -> Option<u32> {
@@ -2444,14 +2449,16 @@ mod tests {
 
     #[test]
     fn extracts_responses_usage() {
-        let value = json!({ "usage": { "input_tokens": 3, "output_tokens": 4 } });
+        let value = json!({
+            "usage": {
+                "input_tokens": 10,
+                "output_tokens": 4,
+                "input_tokens_details": { "cached_tokens": 9 }
+            }
+        });
         assert_eq!(
             extract_usage(&value),
-            Some(TokenUsage {
-                prompt_tokens: 3,
-                completion_tokens: 4,
-                total_tokens: 7,
-            })
+            Some(TokenUsage::new(10, 4, 14).with_cached_prompt_tokens(9))
         );
     }
 
@@ -2571,11 +2578,8 @@ mod tests {
         assert!(events.iter().any(|event| {
             matches!(
                 event,
-                InferenceEvent::Usage(TokenUsage {
-                    prompt_tokens: 3,
-                    completion_tokens: 4,
-                    total_tokens: 7,
-                })
+                InferenceEvent::Usage(usage)
+                    if *usage == TokenUsage::new(3, 4, 7).with_cached_prompt_tokens(0)
             )
         }));
         assert!(events.iter().any(|event| {

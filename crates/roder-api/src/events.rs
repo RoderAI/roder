@@ -18,7 +18,7 @@ use crate::discovery::{
 };
 use crate::extension::{ExtensionId, InferenceEngineId};
 use crate::goals::{ThreadGoalCleared, ThreadGoalUpdated};
-use crate::inference::{InferenceEvent, RuntimeProfile, SpeedPolicyDecision};
+use crate::inference::{InferenceEvent, RuntimeProfile, SpeedPolicyDecision, TokenUsage};
 use crate::media::{MediaArtifact, MediaArtifactId, MediaPreview};
 use crate::memory::{MemoryCitation, MemoryId, MemoryProviderSelection, MemoryRecord, MemoryScope};
 use crate::plan_review::{
@@ -755,6 +755,8 @@ pub struct TranscriptItemAppended {
 pub struct TurnCompleted {
     pub thread_id: ThreadId,
     pub turn_id: TurnId,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub usage: Option<TokenUsage>,
     #[serde(with = "time::serde::rfc3339")]
     pub timestamp: OffsetDateTime,
 }
@@ -766,6 +768,8 @@ pub struct TurnFailed {
     pub error: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub error_kind: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub usage: Option<TokenUsage>,
     #[serde(with = "time::serde::rfc3339")]
     pub timestamp: OffsetDateTime,
 }

@@ -77,6 +77,7 @@ def write_image_manifest(
     path: Path,
     *,
     clean: bool,
+    offline: bool = False,
     tasks: int = 1,
     present: int = 1,
     missing: int = 0,
@@ -85,6 +86,7 @@ def write_image_manifest(
         json.dumps(
             {
                 "clean": clean,
+                "offline": offline,
                 "summary": {
                     "tasks": tasks,
                     "unique_images": tasks,
@@ -112,6 +114,7 @@ def build_summary(
     include_speed: bool = False,
     require_prebuilt: bool = False,
     preflight_images: bool = False,
+    offline_images: bool = False,
     pull_images: bool = False,
     image_config: str = "",
     require_auth: bool = False,
@@ -122,6 +125,7 @@ def build_summary(
     roder_evals_status: str | None = None,
     failure_step: str = "",
     failure_exit_code: int | None = None,
+    campaign_summary: Path | None = None,
 ) -> dict:
     tbench_dir = root / "tbench-diagnostics"
     tbench_dir.mkdir(exist_ok=True)
@@ -147,6 +151,7 @@ def build_summary(
         include_speed=include_speed,
         require_prebuilt=require_prebuilt,
         preflight_images=preflight_images,
+        offline_images=offline_images,
         pull_images=pull_images,
         image_config=image_config,
         analysis_target=analysis_target,
@@ -160,4 +165,5 @@ def build_summary(
         roder_evals_status=roder_evals_status,
         failure_step=failure_step,
         failure_exit_code=failure_exit_code,
+        campaign_summary=campaign_summary,
     )

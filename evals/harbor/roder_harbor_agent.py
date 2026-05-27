@@ -29,6 +29,17 @@ from roder_plan_first import (
 from roder_run_summary_fragment import run_summary_shell_fragment
 
 
+PROVIDER_ENV_KEYS = {
+    "gemini": (
+        "GEMINI_API_TOKEN",
+        "GEMINI_API_KEY",
+        "GOOGLE_API_KEY",
+        "GOOGLE_GENAI_API_KEY",
+        "GOOGLE_AI_API_KEY",
+    ),
+}
+
+
 class RoderCli(BaseInstalledAgent):
     @staticmethod
     def name() -> str:
@@ -187,6 +198,13 @@ class RoderCli(BaseInstalledAgent):
             provider = self._provider or "codex"
             model = model_name
         return self._provider or provider, model
+
+    def _provider_env(self, provider: str) -> dict[str, str]:
+        return {
+            key: value
+            for key in PROVIDER_ENV_KEYS.get(provider, ())
+            if (value := os.environ.get(key))
+        }
 
     def _prompt_for_instruction(self, instruction: str) -> str:
         if not self._benchmark_guidance_enabled:
@@ -407,6 +425,7 @@ class RoderCli(BaseInstalledAgent):
             "RODER_CONFIG_DIR": config_dir,
             "RODER_DATA_DIR": config_dir,
         }
+        env.update(self._provider_env(provider))
         env.update(self._plan_first_env(instruction))
         return [
             ExecInput(command=setup, env=env),

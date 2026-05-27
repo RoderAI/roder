@@ -108,6 +108,7 @@ pub enum ProviderFamily {
     Xai,
     Opencode,
     Poolside,
+    Cursor,
 }
 
 #[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
@@ -312,11 +313,60 @@ pub struct HostedToolCallCompleted {
     pub arguments: String,
 }
 
-#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 pub struct TokenUsage {
     pub prompt_tokens: u32,
     pub completion_tokens: u32,
     pub total_tokens: u32,
+    #[serde(default)]
+    pub cached_prompt_tokens: u32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cache_hit_rate: Option<f64>,
+}
+
+impl TokenUsage {
+    pub fn new(prompt_tokens: u32, completion_tokens: u32, total_tokens: u32) -> Self {
+        Self {
+            prompt_tokens,
+            completion_tokens,
+            total_tokens,
+            cached_prompt_tokens: 0,
+            cache_hit_rate: cache_hit_rate(prompt_tokens, 0),
+        }
+    }
+
+    pub fn with_cached_prompt_tokens(mut self, cached_prompt_tokens: u32) -> Self {
+        self.cached_prompt_tokens = cached_prompt_tokens.min(self.prompt_tokens);
+        self.cache_hit_rate = cache_hit_rate(self.prompt_tokens, self.cached_prompt_tokens);
+        self
+    }
+
+    pub fn add_assign(&mut self, usage: &TokenUsage) {
+        self.prompt_tokens = self.prompt_tokens.saturating_add(usage.prompt_tokens);
+        self.completion_tokens = self
+            .completion_tokens
+            .saturating_add(usage.completion_tokens);
+        self.total_tokens = self.total_tokens.saturating_add(usage.total_tokens);
+        self.cached_prompt_tokens = self
+            .cached_prompt_tokens
+            .saturating_add(usage.cached_prompt_tokens);
+        self.cache_hit_rate = cache_hit_rate(self.prompt_tokens, self.cached_prompt_tokens);
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.prompt_tokens == 0
+            && self.completion_tokens == 0
+            && self.total_tokens == 0
+            && self.cached_prompt_tokens == 0
+    }
+}
+
+pub fn cache_hit_rate(prompt_tokens: u32, cached_prompt_tokens: u32) -> Option<f64> {
+    if prompt_tokens == 0 {
+        None
+    } else {
+        Some(f64::from(cached_prompt_tokens.min(prompt_tokens)) / f64::from(prompt_tokens))
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

@@ -61,6 +61,22 @@ class ValidateTbenchLaunchPlanTests(unittest.TestCase):
         self.assertTrue(result.ok)
         self.assertEqual([], result.issues)
 
+    def test_dry_run_plan_requires_dry_run_execution_flags(self) -> None:
+        plan = ready_plan()
+        plan.update(
+            {
+                "launchStatus": "dry_run",
+                "dryRun": False,
+                "wouldRunHarbor": True,
+            }
+        )
+
+        result = self.module.validate_plan(plan, allow_dry_run=True)
+
+        self.assertFalse(result.ok)
+        self.assertIn("dry_run launch plan dryRun is not true", result.issues)
+        self.assertIn("dry_run launch plan would run Harbor", result.issues)
+
     def test_blocked_plan_reports_blocked_reasons(self) -> None:
         plan = ready_plan()
         plan.update(
@@ -87,6 +103,31 @@ class ValidateTbenchLaunchPlanTests(unittest.TestCase):
 
         self.assertFalse(result.ok)
         self.assertIn("ready launch plan would not run Harbor", result.issues)
+
+    def test_ready_plan_requires_deadline_policy(self) -> None:
+        plan = ready_plan()
+        plan.pop("deadlinePolicy")
+
+        result = self.module.validate_plan(plan, require_ready=True)
+
+        self.assertFalse(result.ok)
+        self.assertIn("deadlinePolicy is missing", result.issues)
+
+    def test_ready_plan_rejects_deadline_policy_drift(self) -> None:
+        plan = ready_plan()
+        plan["deadlinePolicy"] = {
+            "overrideTimeoutSec": 900,
+            "softTimeoutSec": 890,
+            "evalDeadlineSeconds": 870,
+        }
+
+        result = self.module.validate_plan(plan, require_ready=True)
+
+        self.assertFalse(result.ok)
+        text = "\n".join(result.issues)
+        self.assertIn("deadlinePolicy overrideTimeoutSec", text)
+        self.assertIn("deadlinePolicy softTimeoutSec", text)
+        self.assertIn("deadlinePolicy evalDeadlineSeconds", text)
 
     def test_ready_plan_passes_image_preflight_requirement(self) -> None:
         result = self.module.validate_plan(
@@ -127,6 +168,33 @@ class ValidateTbenchLaunchPlanTests(unittest.TestCase):
             "image preflight config does not match Harbor config",
             result.issues,
         )
+
+    def test_ready_plan_rejects_unknown_image_preflight_source(self) -> None:
+        plan = ready_plan()
+        plan["imagePreflightSource"] = "stale_manifest"
+
+        result = self.module.validate_plan(
+            plan,
+            require_ready=True,
+            require_image_preflight=True,
+        )
+
+        self.assertFalse(result.ok)
+        self.assertIn("imagePreflightSource is stale_manifest", result.issues)
+
+    def test_ready_plan_rejects_embedded_image_preflight_source_mismatch(self) -> None:
+        plan = ready_plan()
+        plan["imagePreflightSource"] = "route_manifest"
+        plan["imagePreflight"]["source"] = "pre_eval_summary"
+
+        result = self.module.validate_plan(
+            plan,
+            require_ready=True,
+            require_image_preflight=True,
+        )
+
+        self.assertFalse(result.ok)
+        self.assertIn("imagePreflight.source mismatch", result.issues)
 
     def test_ready_plan_rejects_nonclean_image_preflight_details(self) -> None:
         plan = ready_plan()
@@ -273,6 +341,86 @@ class ValidateTbenchLaunchPlanTests(unittest.TestCase):
                 plan,
                 require_ready=True,
                 verify_pre_eval_summary=True,
+            )
+
+        self.assertTrue(result.ok)
+        self.assertEqual([], result.issues)
+
+    def test_route_manifest_image_preflight_does_not_require_summary_image_preflight(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            temp_path = Path(temp)
+            summary = write_clean_summary_fixture(temp_path, image_preflight=False)
+            summary_data = json.loads(summary.read_text())
+            config = temp_path / "tbench.json"
+            manifest = temp_path / "route-images.json"
+            manifest.write_text(
+                json.dumps(
+                    {
+                        "clean": True,
+                        "config": str(config),
+                        "offline": True,
+                        "pull": False,
+                        "summary": {
+                            "tasks": 1,
+                            "unique_images": 1,
+                            "present": 1,
+                            "missing": 0,
+                            "unresolved": 0,
+                            "pull_failed": 0,
+                        },
+                        "tasks": [
+                            {
+                                "task_name": "route-task",
+                                "image": "terminalbench/route-task:latest",
+                                "status": "present",
+                                "image_source": "task",
+                            }
+                        ],
+                        "images": [
+                            {
+                                "image": "terminalbench/route-task:latest",
+                                "tasks": ["route-task"],
+                            }
+                        ],
+                    }
+                )
+                + "\n"
+            )
+            image_preflight = {
+                "status": "passed",
+                "source": "route_manifest",
+                "config": str(config),
+                "manifest": str(manifest),
+                "tasks": 1,
+                "uniqueImages": 1,
+                "present": 1,
+                "missing": 0,
+                "unresolved": 0,
+                "pullFailed": 0,
+                "offline": True,
+                "selectionErrors": [],
+                "blockedTasks": [],
+            }
+            plan = ready_plan()
+            config_sha = sha256(config.read_bytes()).hexdigest()
+            plan["harborConfig"] = str(config)
+            plan["harborConfigSha256"] = config_sha
+            plan["preEvalHarborConfigSha256"] = config_sha
+            plan["preEvalSummary"] = str(summary)
+            plan["preEvalSummarySha256"] = sha256(summary.read_bytes()).hexdigest()
+            plan["prebuiltBinary"] = summary_data["prebuiltBinary"]
+            plan["authFile"] = summary_data["authFile"]
+            plan["harborHarness"] = summary_data["checks"]["harborHarness"]
+            plan["requireImagePreflight"] = True
+            plan["imagePreflightSource"] = "route_manifest"
+            plan["imagePreflight"] = image_preflight
+
+            result = self.module.validate_plan(
+                plan,
+                require_ready=True,
+                require_image_preflight=True,
+                verify_pre_eval_summary=True,
+                verify_image_manifest=True,
             )
 
         self.assertTrue(result.ok)
