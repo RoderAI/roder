@@ -1,0 +1,19 @@
+{
+  "sources": [
+    {
+      "name": "Fixture page",
+      "url": "http://127.0.0.1:8000/index.html",
+      "note": "local offline fixture"
+    }
+  ],
+  "result": {
+    "headline": "Fixture result",
+    "sections": [
+      {
+        "type": "summary",
+        "title": "Final datum",
+        "body": "Fixture Heading"
+      }
+    ]
+  }
+}

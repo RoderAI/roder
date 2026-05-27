@@ -37,6 +37,7 @@ use roder_ext_runner_modal::ModalRunnerExtension;
 use roder_ext_runner_runloop::RunloopRunnerExtension;
 use roder_ext_runner_unix_local::UnixLocalRunnerExtension;
 use roder_ext_runner_vercel::VercelRunnerExtension;
+use roder_ext_webwright::WebwrightExtension;
 use roder_ext_xai::XaiExtension;
 use roder_ext_xiaomi_mimo::{XiaomiMimoConfig, XiaomiMimoExtension};
 use semver::Version;
@@ -246,6 +247,7 @@ pub fn build_default_registry(config: DefaultRegistryConfig) -> anyhow::Result<E
     builder.install(RunloopRunnerExtension)?;
     builder.install(VercelRunnerExtension)?;
     builder.install(roder_ext_task_process::ProcessTaskExtension)?;
+    builder.install(WebwrightExtension)?;
     if config.notifications.enabled && config.notifications.terminal {
         builder.install(roder_ext_notify_terminal::TerminalNotifyExtension::new(
             config.notifications.enabled_kinds.clone(),
@@ -690,6 +692,24 @@ mod tests {
 
         assert!(registry.speech_transcriber("openai-speech").is_some());
         assert!(registry.speech_transcriber("google-speech").is_some());
+    }
+
+    #[test]
+    fn default_registry_installs_webwright_task_and_tools() {
+        let registry = build_default_registry(DefaultRegistryConfig::default()).unwrap();
+
+        assert!(
+            registry
+                .provided_services()
+                .contains(&ProvidedService::TaskExecutor(
+                    "webwright.browser_task".to_string()
+                ))
+        );
+        assert!(
+            registry
+                .provided_services()
+                .contains(&ProvidedService::ToolProvider("webwright".to_string()))
+        );
     }
 
     #[test]

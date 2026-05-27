@@ -1,0 +1,11 @@
+{
+  "task_id": "fixture-basic-success",
+  "short_id": "basic_success",
+  "title": "Fixture heading extraction",
+  "theme": "Local browser fixture",
+  "cadence": "manual",
+  "level": "easy",
+  "website": "http://127.0.0.1:8000/index.html",
+  "task_prompt": "Open the fixture page and report the visible heading.",
+  "num_steps": 2
+}

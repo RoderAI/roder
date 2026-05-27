@@ -11,7 +11,7 @@ The configurator binary is `roder-configure`.
 - `anthropic-only`: Anthropic Messages, JSONL thread storage, plan mode, terminal notifications, CLI, TUI, and app server.
 - `research-headless`: no TUI; app server, OpenAI Responses, disk context, memory, subagents, process tasks, plan mode, and terminal notifications.
 - `tavily`: OpenAI Responses plus the web-search router and Tavily-backed search enabled through `TAVILY_API_KEY`.
-- `full`: all first-party extension metadata currently declared in the workspace.
+- `full`: all first-party extension metadata currently declared in the workspace, including the Webwright browser-agent extension documented in `docs/roder-webwright-browser-agent.md`.
 
 List profiles:
 
