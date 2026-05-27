@@ -16,6 +16,7 @@ mod skills;
 mod speech;
 #[cfg(test)]
 mod tui_config;
+mod webwright;
 
 use automations::run_automations_cli;
 use evals::run_eval_cli;
@@ -95,6 +96,9 @@ async fn main() -> anyhow::Result<()> {
     }
     if matches!(args.first().map(String::as_str), Some("tasks")) {
         return run_tasks_cli(&args[1..]).await;
+    }
+    if matches!(args.first().map(String::as_str), Some("webwright")) {
+        return webwright::run_webwright_cli(&args[1..]).await;
     }
     if matches!(args.first().map(String::as_str), Some("ps")) {
         return run_ps_cli(&args[1..]).await;

@@ -1,0 +1,18 @@
+{
+  "sources": [
+    {
+      "name": "Fixture page",
+      "url": "http://127.0.0.1:8000/index.html"
+    }
+  ],
+  "result": {
+    "headline": "Craft fixture result",
+    "sections": [
+      {
+        "type": "summary",
+        "title": "CLI result",
+        "body": "Fixture Heading"
+      }
+    ]
+  }
+}

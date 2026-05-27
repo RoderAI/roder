@@ -25,6 +25,7 @@ extensions = [
   "task-process",
   "task-subagent",
   "tavily-search",
+  "webwright",
   "web-search",
 ]
 default_provider = "openai-responses"

@@ -1,0 +1,37 @@
+[package]
+name = "roder-ext-webwright"
+version.workspace = true
+edition.workspace = true
+
+[package.metadata.roder.distribution]
+id = "webwright"
+category = "tool-provider"
+display_name = "Webwright Browser Agent"
+description = "Browser automation task executor and helpers for Webwright-style Playwright workspaces."
+default_in_profiles = ["full"]
+required_env = []
+optional_env = [
+    "RODER_WEBWRIGHT_LIVE",
+    "RODER_WEBWRIGHT_START_URL",
+    "RODER_WEBWRIGHT_BROWSER_MODE",
+    "RODER_WEBWRIGHT_VISUAL_JUDGE",
+    "RODER_WEBWRIGHT_PYTHON",
+]
+conflicts_with = []
+required_capabilities = ["fs.read.workspace", "fs.write.workspace", "fs.readwrite.roder-home", "process.spawn.shell", "network.web"]
+extension_path = "::WebwrightExtension"
+docs_url = "https://github.com/microsoft/Webwright"
+
+[dependencies]
+anyhow.workspace = true
+async-trait.workspace = true
+roder-api.workspace = true
+roder-config.workspace = true
+semver.workspace = true
+serde = { workspace = true, features = ["derive"] }
+serde_json.workspace = true
+time.workspace = true
+tokio.workspace = true
+
+[dev-dependencies]
+uuid = { workspace = true, features = ["v4"] }

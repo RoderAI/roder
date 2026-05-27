@@ -1,0 +1,11 @@
+{
+  "task_id": "fixture-craft-success",
+  "short_id": "craft_success",
+  "title": "Fixture reusable CLI",
+  "theme": "Local browser fixture",
+  "cadence": "manual",
+  "level": "easy",
+  "website": "http://127.0.0.1:8000/index.html",
+  "task_prompt": "Create a reusable CLI that reports the visible heading.",
+  "num_steps": 2
+}

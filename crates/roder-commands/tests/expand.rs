@@ -285,6 +285,76 @@ fn required_builtin_commit_skill_refuses_when_disabled() {
     assert!(err.contains("disabled"), "{err}");
 }
 
+#[test]
+fn builtin_webwright_run_expansion_includes_direct_only_skill_and_task_text() {
+    let dir = tempdir("builtin_webwright_run_expansion_includes_direct_only_skill_and_task_text");
+    let spec = built_in_commands()
+        .into_iter()
+        .find(|spec| spec.name == "webwright:run")
+        .expect("webwright run command");
+    let registry = SkillRegistry::load(SkillRegistryOptions::new(&dir));
+
+    let result = expand_command(CommandExpansionRequest {
+        spec: &spec,
+        arguments: "Find the cheapest fixture item --start-url http://127.0.0.1:9 --task-id fixture-task --output-dir .roder/webwright/fixture-task $(not-a-shell)",
+        workspace_root: &dir,
+        options: CommandExpansionOptions::default(),
+        shell_runner: None,
+        url_fetcher: None,
+        skill_registry: Some(&registry),
+    })
+    .unwrap();
+
+    assert_eq!(result.command_name, "webwright:run");
+    assert!(result.message.contains("Mode: run"));
+    assert!(result.message.contains("startUrl"));
+    assert!(result.message.contains("taskId"));
+    assert!(result.message.contains("outputDir"));
+    assert!(result
+        .message
+        .contains("Find the cheapest fixture item --start-url http://127.0.0.1:9 --task-id fixture-task --output-dir .roder/webwright/fixture-task $(not-a-shell)"));
+    assert!(result.context_blocks.iter().any(|block| {
+        block.text.starts_with("<skill name=\"webwright\"")
+            && block.text.contains("webwright.prepare_workspace")
+    }));
+}
+
+#[test]
+fn required_builtin_webwright_skill_refuses_when_disabled() {
+    let dir = tempdir("required_builtin_webwright_skill_refuses_when_disabled");
+    let spec = built_in_commands()
+        .into_iter()
+        .find(|spec| spec.name == "webwright:craft")
+        .expect("webwright craft command");
+    let registry = SkillRegistry::load(SkillRegistryOptions {
+        workspace: dir.clone(),
+        include_builtins: true,
+        roots: Vec::new(),
+        workflow_imports: Vec::new(),
+        config_rules: vec![SkillConfigRule {
+            name: Some("webwright".to_string()),
+            path: None,
+            enabled: Some(false),
+            exposure: Some(SkillExposure::DirectOnly),
+        }],
+    });
+
+    let err = expand_command(CommandExpansionRequest {
+        spec: &spec,
+        arguments: "",
+        workspace_root: &dir,
+        options: CommandExpansionOptions::default(),
+        shell_runner: None,
+        url_fetcher: None,
+        skill_registry: Some(&registry),
+    })
+    .unwrap_err()
+    .to_string();
+
+    assert!(err.contains("required skill webwright"), "{err}");
+    assert!(err.contains("disabled"), "{err}");
+}
+
 fn expand(
     spec: &CommandSpec,
     arguments: &str,

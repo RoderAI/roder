@@ -31,6 +31,9 @@ pub(super) fn built_in_command_catalog() -> Vec<CommandDescriptor> {
         ("remote", "Open the remote app-server pairing panel."),
         ("voice", "Toggle voice dictation into the composer."),
         ("roadmap", "Open document-first roadmapping mode."),
+        ("webwright", "Inspect Webwright workspace progress."),
+        ("webwright:run", "Run a one-shot Webwright browser task."),
+        ("webwright:craft", "Craft a reusable Webwright CLI script."),
     ]
     .into_iter()
     .map(|(name, description)| {
@@ -46,6 +49,11 @@ pub(super) fn built_in_command_catalog() -> Vec<CommandDescriptor> {
             "ps" => Some("all|stop <id>|stop-all --confirm|<id>".to_string()),
             "voice" => Some("[hold|tap|off|status]".to_string()),
             "roadmap" => Some("[plan]".to_string()),
+            "webwright" => Some("[inspect|tail] <workspace>".to_string()),
+            "webwright:run" => Some("<natural-language web task>".to_string()),
+            "webwright:craft" => {
+                Some("<natural-language web task with concrete values>".to_string())
+            }
             _ => None,
         };
         CommandDescriptor {
@@ -60,6 +68,19 @@ pub(super) fn built_in_command_catalog() -> Vec<CommandDescriptor> {
         }
     })
     .collect()
+}
+
+pub(super) fn with_local_commands(mut commands: Vec<CommandDescriptor>) -> Vec<CommandDescriptor> {
+    for command in built_in_command_catalog() {
+        if !commands
+            .iter()
+            .any(|existing| existing.name == command.name)
+        {
+            commands.push(command);
+        }
+    }
+    commands.sort_by(|a, b| a.name.cmp(&b.name));
+    commands
 }
 
 pub(super) fn slash_query(input: &str) -> Option<&str> {
@@ -146,6 +167,10 @@ pub(super) fn help_text(commands: &[CommandDescriptor]) -> String {
         "/marketplace <command> - Manage plugin marketplaces.".to_string(),
         "/plugin <command> - Manage marketplace plugin installs.".to_string(),
         "/voice [hold|tap|off|status] - Toggle voice dictation into the composer.".to_string(),
+        "/webwright [inspect|tail] <workspace> - Inspect Webwright progress and artifacts."
+            .to_string(),
+        "/webwright:run <task> - Run a one-shot Webwright browser task.".to_string(),
+        "/webwright:craft <task> - Craft a reusable Webwright CLI script.".to_string(),
     ];
     for command in commands {
         if matches!(
@@ -161,6 +186,9 @@ pub(super) fn help_text(commands: &[CommandDescriptor]) -> String {
                 | "plugin"
                 | "commit"
                 | "voice"
+                | "webwright"
+                | "webwright:run"
+                | "webwright:craft"
         ) {
             continue;
         }
@@ -269,7 +297,10 @@ mod tests {
                 "plugin",
                 "remote",
                 "voice",
-                "roadmap"
+                "roadmap",
+                "webwright",
+                "webwright:run",
+                "webwright:craft"
             ]
         );
         assert_eq!(
@@ -320,6 +351,43 @@ mod tests {
                 .find(|command| command.name == "roadmap")
                 .and_then(|command| command.argument_hint.as_deref()),
             Some("[plan]")
+        );
+        assert_eq!(
+            commands
+                .iter()
+                .find(|command| command.name == "webwright")
+                .and_then(|command| command.argument_hint.as_deref()),
+            Some("[inspect|tail] <workspace>")
+        );
+        assert_eq!(
+            commands
+                .iter()
+                .find(|command| command.name == "webwright:run")
+                .and_then(|command| command.argument_hint.as_deref()),
+            Some("<natural-language web task>")
+        );
+    }
+
+    #[test]
+    fn local_commands_are_merged_into_server_catalog() {
+        let merged = with_local_commands(vec![CommandDescriptor {
+            name: "webwright:run".to_string(),
+            description: None,
+            argument_hint: None,
+            source: "server".to_string(),
+            model: None,
+            agent: None,
+            has_shell_includes: false,
+            has_url_includes: false,
+        }]);
+
+        assert!(merged.iter().any(|command| command.name == "webwright"));
+        assert_eq!(
+            merged
+                .iter()
+                .filter(|command| command.name == "webwright:run")
+                .count(),
+            1
         );
     }
 
