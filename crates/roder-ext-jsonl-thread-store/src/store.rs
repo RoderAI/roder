@@ -131,6 +131,9 @@ impl ThreadStore for JsonlThreadStore {
             })?;
             if file_type.is_dir() {
                 let thread_id = entry.file_name().to_string_lossy().to_string();
+                if thread_id == "discovery-state" {
+                    continue;
+                }
                 if is_runtime_event_directory_without_metadata(&thread_id, &entry.path()) {
                     continue;
                 }

@@ -28,11 +28,11 @@ const STREAM_GRADIENT_TRAIL_CHARS: usize = 14;
 pub(super) struct AnimatedText {
     visible: String,
     pending: String,
-    gradient_len: usize,
+    pub(super) gradient_len: usize,
 }
 
 impl AnimatedText {
-    fn new(visible: String, pending: String, gradient_len: usize) -> Self {
+    pub(super) fn new(visible: String, pending: String, gradient_len: usize) -> Self {
         Self {
             visible,
             pending,

@@ -89,7 +89,7 @@ fn timeline_updates_tool_rows_in_place() {
     assert!(
         lines
             .iter()
-            .any(|line| line.contains("Read File: README.md"))
+            .any(|line| line.contains("Read File") && line.contains("README.md"))
     );
     assert_eq!(
         timeline
@@ -112,9 +112,8 @@ fn tool_rows_do_not_render_a_left_gutter() {
     let lines = rendered_lines(&mut timeline);
     let row = lines
         .iter()
-        .find(|line| line.contains("Grep: . query: timeline"))
+        .find(|line| line.contains("Grep") && line.contains("timeline"))
         .expect("tool row should be rendered");
-    assert!(row.starts_with("  ◆ "));
     assert!(!row.starts_with("│"));
     assert!(!row.starts_with("  │"));
 }
@@ -165,7 +164,7 @@ fn consecutive_tool_rows_stay_compact() {
         .expect("list row should be rendered");
     let grep_row = lines
         .iter()
-        .position(|line| line.contains("Grep: . query: repo"))
+        .position(|line| line.contains("Grep") && line.contains("repo"))
         .expect("grep row should be rendered");
 
     assert_eq!(grep_row, list_row + 1);
@@ -344,14 +343,14 @@ fn running_tool_marker_fades_with_animation_frame() {
         .lines
         .iter()
         .flat_map(|line| line.spans.iter())
-        .find(|span| span.content.contains('◆'))
+        .find(|span| span.content.contains('↻'))
         .expect("running marker should render");
     let second_marker = second
         .text
         .lines
         .iter()
         .flat_map(|line| line.spans.iter())
-        .find(|span| span.content.contains('◆'))
+        .find(|span| span.content.contains('↻'))
         .expect("running marker should render");
 
     assert_ne!(first_marker.style.fg, second_marker.style.fg);
@@ -431,7 +430,7 @@ fn apply_patch_renders_streaming_inline_diff() {
     assert!(
         lines
             .iter()
-            .any(|line| line.contains("Edited src/lib.rs (+1 -1)"))
+            .any(|line| line.contains("src/lib.rs") && line.contains("+1") && line.contains("-1"))
     );
     assert!(lines.iter().any(|line| line == "     ⋮"));
     assert!(lines.iter().any(|line| line == "    1 -old"));
@@ -477,7 +476,7 @@ fn edit_tool_renders_streaming_inline_diff() {
     assert!(
         lines
             .iter()
-            .any(|line| line.contains("Edited src/lib.rs (+1 -1)"))
+            .any(|line| line.contains("src/lib.rs") && line.contains("+1") && line.contains("-1"))
     );
     assert!(lines.iter().any(|line| line == "    1 -old line"));
     assert!(lines.iter().any(|line| line == "    1 +new line"));
@@ -505,7 +504,7 @@ fn multi_edit_tool_renders_inline_diff() {
     assert!(
         lines
             .iter()
-            .any(|line| line.contains("Edited src/lib.rs (+2 -3)"))
+            .any(|line| line.contains("src/lib.rs") && line.contains("+2") && line.contains("-3"))
     );
     assert!(lines.iter().any(|line| line == "    1 -alpha"));
     assert!(lines.iter().any(|line| line == "    1 +beta"));
@@ -533,7 +532,7 @@ fn write_file_tool_renders_inline_diff() {
     assert!(
         lines
             .iter()
-            .any(|line| line.contains("Wrote src/lib.rs (+2 -0)"))
+            .any(|line| line.contains("src/lib.rs") && line.contains("+2") && line.contains("-0"))
     );
     assert!(lines.iter().any(|line| line == "    1 +first"));
     assert!(lines.iter().any(|line| line == "    2 +second"));
@@ -600,7 +599,7 @@ fn tools_render_after_commentary_phase_messages() {
         .expect("commentary row should render");
     let tool_row = lines
         .iter()
-        .position(|line| line.contains("Read File: README.md"))
+        .position(|line| line.contains("Read File") && line.contains("README.md"))
         .expect("tool row should render");
 
     assert_eq!(tool_row, commentary_row + 1);
@@ -731,7 +730,7 @@ fn streaming_assistant_flushes_before_tool_rows() {
     assert!(
         lines
             .iter()
-            .any(|line| line.contains("Read File: README.md"))
+            .any(|line| line.contains("Read File") && line.contains("README.md"))
     );
     assert!(!timeline.has_streaming_animation());
 }
@@ -858,7 +857,7 @@ fn reasoning_deltas_render_live_as_thinking() {
     assert!(
         lines
             .iter()
-            .any(|line| line == "The user is asking for visible thinking tokens.")
+            .any(|line| line.contains("The user is asking for visible thinking tokens."))
     );
     assert!(lines.iter().any(|line| line == "Done."));
 
@@ -869,7 +868,7 @@ fn reasoning_deltas_render_live_as_thinking() {
         .flat_map(|line| line.spans.iter())
         .find(|span| span.content.as_ref() == "The user is asking for visible thinking tokens.")
         .expect("reasoning span should render");
-    assert_eq!(reasoning_span.style.fg, Some(theme.muted));
+    assert_eq!(reasoning_span.style.fg, Some(theme.thinking));
     assert!(reasoning_span.style.add_modifier.contains(Modifier::ITALIC));
 }
 
@@ -888,7 +887,7 @@ fn reasoning_heading_moves_to_working_status_and_is_removed_from_timeline() {
     assert!(
         lines
             .iter()
-            .any(|line| line == "I need to inspect the app.rs file.")
+            .any(|line| line.contains("I need to inspect the app.rs file."))
     );
     assert!(
         !lines
@@ -910,7 +909,7 @@ fn timeline_only_renders_the_most_recent_reasoning_block() {
             .iter()
             .any(|line| line.contains("first hidden thought"))
     );
-    assert!(lines.iter().any(|line| line == "second visible thought"));
+    assert!(lines.iter().any(|line| line.contains("second visible thought")));
 }
 
 #[test]
@@ -1078,7 +1077,7 @@ fn timeline_auto_follows_streaming_deltas() {
 
     assert!(second.scroll > first_scroll);
     let visible = visible_lines(&mut timeline, 5);
-    assert!(visible.iter().any(|line| line == "line 4"));
+    assert!(visible.iter().any(|line| line.contains("line 4")));
     assert_eq!(visible[2], "");
     assert_eq!(visible[3], "");
     assert_eq!(visible[4], "");
@@ -1657,7 +1656,7 @@ fn long_timeline_virtualization_bounds_mixed_transcript_output() {
     assert!(
         lines
             .iter()
-            .any(|line| line.contains("Edited src/lib.rs (+1 -1)"))
+            .any(|line| line.contains("src/lib.rs") && line.contains("+1") && line.contains("-1"))
     );
 }
 

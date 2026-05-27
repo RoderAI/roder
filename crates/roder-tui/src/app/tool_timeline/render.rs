@@ -3,6 +3,7 @@ use ratatui::{
     style::{Modifier, Style},
     text::{Line, Span},
 };
+use time::OffsetDateTime;
 
 use super::super::Theme;
 use super::super::stream_animation::{
@@ -11,6 +12,7 @@ use super::super::stream_animation::{
 use super::is_shell_like_tool;
 use super::markdown::markdown_lines;
 use super::patch_preview::{tool_diff_preview, tool_diff_preview_lines};
+use super::preview::tool_title;
 use super::{
     MESSAGE_FOLD_LINE_LIMIT, RUNNING_SHELL_TAIL_ROWS, TimelineItem, TimelineItemKind,
     ToolTimelineStatus, ToolTimelineTool, reasoning_visible_body,
@@ -26,6 +28,7 @@ impl TimelineItem {
         width: u16,
         animation_frame: u64,
         message_folding: bool,
+        prev_timestamp: Option<OffsetDateTime>,
         lines: &mut Vec<Line<'static>>,
     ) {
         match &self.kind {
@@ -85,35 +88,48 @@ impl TimelineItem {
                 let body = reasoning_visible_body(text);
                 if !body.trim().is_empty() {
                     let folded = fold_message_body(&body, expanded || !message_folding);
+                    let max_text_width = (width as usize).saturating_sub(4);
+                    let wrapped_body = wrap_text(&folded.body, max_text_width).join("\n");
                     let body_style = item_style(
-                        theme.muted().add_modifier(Modifier::ITALIC),
+                        theme.thinking().add_modifier(Modifier::ITALIC),
                         selected,
                         theme,
                     );
                     if rendered.is_animating() {
-                        let animated = message.animator.rendered_text();
-                        let animated = if folded.body.len() == animated.as_str().len() {
-                            animated
+                        let vis_body = reasoning_visible_body(rendered.as_str());
+                        let folded_vis_body = fold_message_body(&vis_body, expanded || !message_folding);
+                        let wrapped_vis_body = wrap_text(&folded_vis_body.body, max_text_width).join("\n");
+
+                        let full_body = reasoning_visible_body(&message.text);
+                        let folded_full_body = fold_message_body(&full_body, expanded || !message_folding);
+                        let wrapped_full_body = wrap_text(&folded_full_body.body, max_text_width).join("\n");
+
+                        let pending_body = if wrapped_full_body.starts_with(&wrapped_vis_body) {
+                            wrapped_full_body[wrapped_vis_body.len()..].to_string()
                         } else {
-                            AnimatedText::from_visible(folded.body.clone())
+                            String::new()
                         };
-                        push_rendered_body_lines(
+
+                        let animated = AnimatedText::new(
+                            wrapped_vis_body,
+                            pending_body,
+                            rendered.gradient_len,
+                        );
+                        push_reasoning_rendered_lines(
                             lines,
-                            "",
                             animated_plain_lines(
                                 &animated,
                                 body_style,
                                 theme,
                                 StreamFadePalette::Neutral,
                             ),
-                            theme.subtle().add_modifier(Modifier::ITALIC),
+                            theme.thinking(),
                         );
                     } else {
-                        push_body_lines(
+                        push_reasoning_body_lines(
                             lines,
-                            "",
-                            &folded.body,
-                            theme.accent_soft().add_modifier(Modifier::ITALIC),
+                            &wrapped_body,
+                            theme.thinking(),
                             body_style,
                         );
                     }
@@ -180,7 +196,7 @@ impl TimelineItem {
                 push_fold_notice(lines, folded.hidden_lines, theme, message_folding);
             }
             TimelineItemKind::Tool(tool) => {
-                tool.render(selected, expanded, theme, animation_frame, lines);
+                tool.render(selected, expanded, theme, width, animation_frame, prev_timestamp, lines);
             }
             TimelineItemKind::SubagentTrace(trace) => {
                 trace.render(selected, expanded, theme, animation_frame, lines);
@@ -239,54 +255,154 @@ fn push_fold_notice(
 }
 
 impl ToolTimelineTool {
+    #[allow(clippy::too_many_arguments)]
     fn render(
         &self,
         selected: bool,
         expanded: bool,
         theme: Theme,
+        width: u16,
         animation_frame: u64,
+        prev_timestamp: Option<OffsetDateTime>,
         lines: &mut Vec<Line<'static>>,
     ) {
-        let marker_style = match self.status {
-            ToolTimelineStatus::Running => running_tool_marker_style(animation_frame),
-            ToolTimelineStatus::Completed => theme.tool(),
-            ToolTimelineStatus::Failed => theme.error(),
+        // 1. Calculate symbol and style
+        let (symbol, symbol_style) = tool_status_symbol_and_style(&self.entry.name, self.status, animation_frame, theme);
+        
+        // 2. Format tool title
+        let t_title = tool_title(&self.entry.name);
+        let tool_title_style = if self.status == ToolTimelineStatus::Failed {
+            theme.error()
+        } else if self.status == ToolTimelineStatus::Running {
+            theme.text()
+        } else if is_read_search_tool(&self.entry.name) {
+            Style::default().fg(theme.diff_added)
+        } else {
+            Style::default().fg(theme.mode_plan)
         };
-        let body_style = match self.status {
-            ToolTimelineStatus::Failed => theme.error(),
-            ToolTimelineStatus::Running => theme.text(),
-            ToolTimelineStatus::Completed => theme.muted(),
+
+        // 3. Format arguments
+        let formatted_args = format_tool_arguments(&self.entry.arguments);
+
+        // 4. Calculate timing
+        let time_str = format!("{:02}:{:02}:{:02}", self.started_at.hour(), self.started_at.minute(), self.started_at.second());
+        let rel_str = if let Some(prev) = prev_timestamp {
+            let diff = self.started_at - prev;
+            format!("+{:02}s", diff.whole_seconds().abs())
+        } else {
+            "+00s".to_string()
         };
+
+        // 5. Layout calculation
+        let right_width = 8 + 2 + rel_str.chars().count(); // HH:MM:SS  +XXs
+        
+        // Left width excluding args:
+        // - Cursor (2)
+        // - Status symbol + space (2)
+        // - Expand affordance + space (2)
+        // - Tool title length
+        // - Double space before args (2)
+        let left_width_excluding_args = 2 + 2 + 2 + t_title.chars().count() + 2;
+
+        let mut args_str = formatted_args;
+        if left_width_excluding_args + args_str.chars().count() + right_width >= width as usize {
+            let allowed_width = (width as usize)
+                .saturating_sub(left_width_excluding_args + right_width)
+                .saturating_sub(4); // room for "..." and a space
+            if allowed_width > 0 {
+                let truncated: String = args_str.chars().take(allowed_width).collect();
+                args_str = format!("{}...", truncated);
+            } else {
+                args_str = String::new();
+            }
+        }
+
+        let left_len = left_width_excluding_args + args_str.chars().count();
+        let pad_len = (width as usize).saturating_sub(left_len + right_width);
+
+        // 6. Assemble spans
+        let mut spans = Vec::new();
+
+        // Selection Background modifier
+        let bg_style = if selected {
+            Style::default().bg(theme.selection_bg)
+        } else {
+            Style::default()
+        };
+
+        // Cursor / prefix spaces
+        if selected {
+            spans.push(Span::styled("▶ ", bg_style.fg(theme.mode_plan).add_modifier(Modifier::BOLD)));
+        } else {
+            spans.push(Span::styled("  ", bg_style));
+        }
+
+        // Status Symbol
+        spans.push(Span::styled(format!("{} ", symbol), symbol_style.patch(bg_style)));
+
+        // Expand affordance
         let affordance = if self
             .output
             .as_ref()
             .is_some_and(|output| !output.trim().is_empty())
         {
-            if expanded { "▾" } else { "▸" }
+            if expanded { "▼" } else { "▶" }
         } else {
             " "
         };
-        let diff_preview = tool_diff_preview(&self.entry);
-        let label = diff_preview
-            .as_ref()
-            .map(|preview| preview.title())
-            .unwrap_or_else(|| self.entry.label());
-        let status = match self.status {
-            ToolTimelineStatus::Running => " running",
-            ToolTimelineStatus::Completed => "",
-            ToolTimelineStatus::Failed => " failed",
+        let affordance_style = if selected {
+            bg_style.fg(theme.selection_fg)
+        } else {
+            theme.subtle()
         };
-        lines.push(Line::from(vec![
-            Span::styled("  ◆ ", marker_style),
-            Span::styled(affordance.to_string(), theme.subtle()),
-            Span::styled(
-                format!(" {label}{status}"),
-                item_style(body_style, selected, theme),
-            ),
-        ]));
+        spans.push(Span::styled(format!("{} ", affordance), affordance_style.patch(bg_style)));
 
+        // Tool Title
+        let title_style = if selected {
+            bg_style.fg(theme.selection_fg).add_modifier(Modifier::BOLD)
+        } else {
+            tool_title_style.add_modifier(Modifier::BOLD)
+        };
+        spans.push(Span::styled(t_title, title_style));
+
+        // Spacing before args
+        spans.push(Span::styled("  ", bg_style));
+
+        // Arguments
+        let args_span_style = if selected {
+            bg_style.fg(theme.selection_fg)
+        } else {
+            theme.muted()
+        };
+        spans.push(Span::styled(args_str, args_span_style));
+
+        // Padding
+        spans.push(Span::styled(" ".repeat(pad_len), bg_style));
+
+        // Timestamp
+        let ts_span_style = if selected {
+            bg_style.fg(theme.selection_fg)
+        } else {
+            theme.muted()
+        };
+        spans.push(Span::styled(time_str, ts_span_style));
+
+        // Spacing before rel
+        spans.push(Span::styled("  ", bg_style));
+
+        // Relative time
+        let rel_span_style = if selected {
+            bg_style.fg(theme.selection_fg)
+        } else {
+            theme.muted()
+        };
+        spans.push(Span::styled(rel_str, rel_span_style));
+
+        lines.push(Line::from(spans));
+
+        let diff_preview = tool_diff_preview(&self.entry);
         if let Some(preview) = diff_preview.as_ref() {
-            lines.extend(tool_diff_preview_lines(preview, theme));
+            lines.extend(tool_diff_preview_lines(preview, theme, width));
         }
 
         let live_tail =
@@ -461,6 +577,36 @@ fn push_rendered_body_lines(
     }
 }
 
+fn push_reasoning_body_lines(
+    lines: &mut Vec<Line<'static>>,
+    body: &str,
+    marker_style: Style,
+    body_style: Style,
+) {
+    for line in body.split('\n') {
+        lines.push(Line::from(vec![
+            Span::styled("  ┃ ", marker_style),
+            Span::styled(line.to_string(), body_style),
+        ]));
+    }
+}
+
+fn push_reasoning_rendered_lines(
+    lines: &mut Vec<Line<'static>>,
+    body_lines: Vec<Line<'static>>,
+    marker_style: Style,
+) {
+    for body_line in body_lines {
+        let mut spans = Vec::with_capacity(body_line.spans.len() + 1);
+        spans.push(Span::styled("  ┃ ", marker_style));
+        spans.extend(body_line.spans);
+        let mut line = Line::from(spans);
+        line.style = body_line.style;
+        line.alignment = body_line.alignment;
+        lines.push(line);
+    }
+}
+
 fn pad_to_width(text: &str, width: u16) -> String {
     let width = usize::from(width);
     let used = text.chars().count();
@@ -554,4 +700,109 @@ pub(super) fn visible_hit_rows(
 
 pub(super) fn max_scroll(total_lines: usize, height: u16) -> usize {
     total_lines.saturating_sub(usize::from(height))
+}
+
+fn is_read_search_tool(name: &str) -> bool {
+    let n = name.to_lowercase();
+    n.contains("read") || n.contains("search") || n.contains("grep") || n.contains("glob") || n.contains("list") || n.contains("view") || n.contains("find")
+}
+
+fn tool_status_symbol_and_style(name: &str, status: ToolTimelineStatus, animation_frame: u64, theme: Theme) -> (&'static str, Style) {
+    match status {
+        ToolTimelineStatus::Running => {
+            ("↻", running_tool_marker_style(animation_frame))
+        }
+        ToolTimelineStatus::Failed => {
+            ("✘", theme.error())
+        }
+        ToolTimelineStatus::Completed => {
+            if is_read_search_tool(name) {
+                ("✔", Style::default().fg(theme.diff_added))
+            } else if name.to_lowercase().contains("patch") || name.to_lowercase().contains("edit") || name.to_lowercase().contains("write") {
+                ("◆", Style::default().fg(theme.mode_plan))
+            } else {
+                ("●", Style::default().fg(theme.mode_plan))
+            }
+        }
+    }
+}
+
+fn format_tool_arguments(arguments_json: &str) -> String {
+    let trimmed = arguments_json.trim();
+    if trimmed.is_empty() || trimmed == "{}" {
+        return String::new();
+    }
+    let Ok(val) = serde_json::from_str::<serde_json::Value>(trimmed) else {
+        return trimmed.to_string();
+    };
+    let serde_json::Value::Object(map) = val else {
+        return trimmed.to_string();
+    };
+    
+    let mut parts = Vec::new();
+    let main_keys = ["path", "query", "pattern", "command", "cmd", "url"];
+    let mut handled = std::collections::HashSet::new();
+    for key in main_keys {
+        if let Some(v) = map.get(key) {
+            let s = match v {
+                serde_json::Value::String(text) => text.clone(),
+                other => other.to_string(),
+            };
+            if !s.is_empty() {
+                parts.push(s);
+            }
+            handled.insert(key.to_string());
+        }
+    }
+    
+    let mut keys: Vec<&String> = map.keys().collect();
+    keys.sort();
+    for key in keys {
+        if handled.contains(key) {
+            continue;
+        }
+        let v = map.get(key).unwrap();
+        if v.is_null() {
+            continue;
+        }
+        if let serde_json::Value::String(s) = v
+            && s.is_empty()
+        {
+            continue;
+        }
+        let val_str = match v {
+            serde_json::Value::String(s) => s.clone(),
+            other => other.to_string(),
+        };
+        parts.push(format!("{}={}", key, val_str));
+    }
+    
+    parts.join("  ")
+}
+
+fn wrap_text(text: &str, max_width: usize) -> Vec<String> {
+    let max_width = max_width.max(1);
+    let mut lines = Vec::new();
+    for paragraph in text.split('\n') {
+        if paragraph.is_empty() {
+            lines.push(String::new());
+            continue;
+        }
+        let mut current_line = String::new();
+        for word in paragraph.split_whitespace() {
+            if current_line.is_empty() {
+                current_line = word.to_string();
+            } else if current_line.chars().count() + 1 + word.chars().count() <= max_width {
+                current_line.push(' ');
+                current_line.push_str(word);
+            } else {
+                lines.push(current_line);
+                current_line = word.to_string();
+            }
+        }
+        if !current_line.is_empty() {
+            lines.push(current_line);
+        }
+    }
+    lines
 }

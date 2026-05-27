@@ -3,8 +3,8 @@ use roder_api::extension::InferenceEngineId;
 use roder_api::inference::{
     AgentInferenceRequest, CompletionMetadata, InferenceCapabilities, InferenceEngine,
     InferenceEvent, InferenceEventStream, InferenceProviderContext, InferenceProviderMetadata,
-    InferenceTurnContext, MessageDelta, ModelDescriptor, ProviderAuthType, TokenUsage,
-    ToolCallCompleted,
+    InferenceTurnContext, MessageDelta, ModelDescriptor, ProviderAuthType, ReasoningDelta,
+    TokenUsage, ToolCallCompleted,
 };
 use roder_api::reliability::{
     ReliabilityRequestPolicy, provider_retry_delay_ms, provider_retry_metadata,
@@ -119,7 +119,13 @@ impl InferenceEngine for GeminiEngine {
         let (value, retry_events) =
             send_gemini_request(&url, &body, request.runtime.reliability.as_ref()).await?;
         let text = extract_candidate_text(&value);
+        let reasoning = extract_candidate_thinking(&value);
         let mut events = Vec::new();
+        if !reasoning.is_empty() {
+            events.push(Ok(InferenceEvent::ReasoningDelta(ReasoningDelta {
+                text: reasoning,
+            })));
+        }
         if !text.is_empty() {
             events.push(Ok(InferenceEvent::MessageDelta(MessageDelta {
                 text,
@@ -421,7 +427,40 @@ fn extract_candidate_text(value: &Value) -> String {
         .map(|parts| {
             parts
                 .iter()
+                // Skip parts that are marked as thought/reasoning
+                .filter(|part| {
+                    let is_thought = part.get("thought").and_then(|v| v.as_bool()).unwrap_or(false);
+                    !is_thought && part.get("thought").and_then(|v| v.as_str()).is_none()
+                })
                 .filter_map(|part| part.get("text").and_then(|v| v.as_str()))
+                .collect::<Vec<_>>()
+                .join("")
+        })
+        .unwrap_or_default()
+}
+
+fn extract_candidate_thinking(value: &Value) -> String {
+    value
+        .get("candidates")
+        .and_then(|v| v.as_array())
+        .and_then(|items| items.first())
+        .and_then(|candidate| candidate.get("content"))
+        .and_then(|content| content.get("parts"))
+        .and_then(|parts| parts.as_array())
+        .map(|parts| {
+            parts
+                .iter()
+                .filter_map(|part| {
+                    if let Some(thought_val) = part.get("thought") {
+                        if thought_val.as_bool().unwrap_or(false) {
+                            return part.get("text").and_then(|v| v.as_str());
+                        }
+                        if let Some(thought_str) = thought_val.as_str() {
+                            return Some(thought_str);
+                        }
+                    }
+                    None
+                })
                 .collect::<Vec<_>>()
                 .join("")
         })
@@ -803,6 +842,33 @@ mod tests {
 
         assert_eq!(extract_candidate_text(&value), "ok");
         assert_eq!(retry_events[0]["kind"], "reliability_retry_attempt");
+    }
+
+    #[test]
+    fn extracts_gemini_thinking_blocks_separately_from_text() {
+        // Test Case A: Part containing a "thought" string directly (some Gemini API versions)
+        let val_a = json!({
+            "candidates": [{
+                "content": { "parts": [
+                    { "thought": "I should search for files." },
+                    { "text": "I will search now." }
+                ] }
+            }]
+        });
+        assert_eq!(extract_candidate_text(&val_a), "I will search now.");
+        assert_eq!(extract_candidate_thinking(&val_a), "I should search for files.");
+
+        // Test Case B: Part containing "text" with "thought": true (other Gemini API versions/schemas)
+        let val_b = json!({
+            "candidates": [{
+                "content": { "parts": [
+                    { "text": "Analyzing repo structure...", "thought": true },
+                    { "text": "Let's use the glob tool." }
+                ] }
+            }]
+        });
+        assert_eq!(extract_candidate_text(&val_b), "Let's use the glob tool.");
+        assert_eq!(extract_candidate_thinking(&val_b), "Analyzing repo structure...");
     }
 
     async fn spawn_retry_server(responses: Vec<(u16, &'static str)>) -> String {

@@ -211,6 +211,7 @@ struct ToolTimelineTool {
     entry: ToolTimelineEntry,
     status: ToolTimelineStatus,
     output: Option<String>,
+    started_at: time::OffsetDateTime,
 }
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
@@ -262,6 +263,7 @@ pub(super) struct TimelineState {
     requested_detail: Option<ToolDetail>,
     scroll_accel: ScrollAccelState,
     settings: TimelineSettings,
+    turn_started_at: Option<time::OffsetDateTime>,
 }
 
 impl TimelineState {
@@ -300,6 +302,8 @@ impl TimelineState {
     }
 
     pub fn push_user(&mut self, text: impl Into<String>) {
+        self.auto_follow = true;
+        self.selected = None;
         self.push_item(TimelineItemKind::User(text.into()));
     }
 
@@ -443,6 +447,8 @@ impl TimelineState {
                 entry,
                 status: ToolTimelineStatus::Running,
                 output: None,
+                started_at: time::OffsetDateTime::now_local()
+                    .unwrap_or_else(|_| time::OffsetDateTime::now_utc()),
             }),
         });
         self.tool_indices.insert(tool_id, index);
@@ -941,6 +947,9 @@ impl TimelineState {
         self.last_viewport_height = area.height;
         self.last_area = Some(area);
         let max_scroll = max_scroll(visual_height, area.height);
+        if !self.auto_follow && self.scroll_offset >= max_scroll {
+            self.auto_follow = true;
+        }
         let scroll = self.scroll_for(area.height, &row_items, max_scroll);
         self.hit_rows = visible_hit_rows(area, scroll, area.height, &row_items);
         self.scroll_offset = usize::from(scroll);
@@ -959,6 +968,9 @@ impl TimelineState {
     }
 
     fn push_item(&mut self, kind: TimelineItemKind) {
+        if let TimelineItemKind::User(_) = &kind {
+            self.turn_started_at = Some(time::OffsetDateTime::now_local().unwrap_or_else(|_| time::OffsetDateTime::now_utc()));
+        }
         self.items.push(TimelineItem { kind });
         self.follow_live_updates_from_composer();
     }
@@ -1243,6 +1255,7 @@ impl TimelineState {
         let hidden_tool_count = self.hidden_tool_count();
         let overflow_insert_index = visible_tools.first().copied();
         let latest_reasoning_index = self.latest_reasoning_index();
+        let mut last_timestamp = self.turn_started_at;
         for (index, item) in self.items.iter().enumerate() {
             if Some(index) == overflow_insert_index && hidden_tool_count > 0 {
                 let line_start = lines.len();
@@ -1289,8 +1302,12 @@ impl TimelineState {
                 width,
                 animation_frame,
                 self.settings.message_folding,
+                last_timestamp,
                 &mut lines,
             );
+            if let TimelineItemKind::Tool(tool) = &item.kind {
+                last_timestamp = Some(tool.started_at);
+            }
             visual_row =
                 map_rendered_lines(&lines, line_start, visual_row, width, index, &mut row_items);
             if self.should_separate_visible_item(
