@@ -2073,23 +2073,23 @@ impl AppServer {
         let provider_override = params.model_provider.or(thread_provider);
         let model_override = params.model.or(thread_model);
         let reasoning_override = params.reasoning.or(thread_reasoning);
+        let protocol_thread_workspace = self
+            .protocol_threads
+            .read()
+            .await
+            .get(&params.thread_id)
+            .map(|thread| thread.cwd.clone());
         let snapshot = self
             .runtime
             .load_thread(&params.thread_id)
             .await
             .map_err(internal_error)?;
-        let workspace = if let Some(snapshot) = snapshot {
-            let metadata = snapshot.metadata.ok_or_else(|| {
-                internal_error(format!("thread metadata missing for {}", params.thread_id))
-            })?;
+        let workspace = if let Some(metadata) = snapshot.and_then(|snapshot| snapshot.metadata) {
             metadata.workspace
+        } else if let Some(workspace) = protocol_thread_workspace {
+            workspace
         } else {
-            self.protocol_threads
-                .read()
-                .await
-                .get(&params.thread_id)
-                .map(|thread| thread.cwd.clone())
-                .ok_or_else(|| not_found(format!("thread not found: {}", params.thread_id)))?
+            return Err(not_found(format!("thread not found: {}", params.thread_id)));
         };
         if let Some(policy_mode) = params.policy_mode {
             self.runtime

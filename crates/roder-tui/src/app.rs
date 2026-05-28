@@ -1636,21 +1636,6 @@ where
                                         }
                                     }
                                 }
-                                KeyCode::Backspace
-                                    if self.provider_popup_screen
-                                        == ProviderPopupScreen::Providers
-                                        && self.provider_menu_filter.is_empty() =>
-                                {
-                                    if let Some(selected) = self.provider_state.selected() {
-                                        if let Some(ProviderMenuItem::Provider(provider)) = self
-                                            .filtered_provider_menu_items()
-                                            .get(selected)
-                                            .cloned()
-                                        {
-                                            self.clear_or_logout_provider(provider).await;
-                                        }
-                                    }
-                                }
                                 _ if is_dialog_menu_previous_key(key) => {
                                     self.select_previous_provider_menu_item();
                                 }
@@ -3842,7 +3827,7 @@ where
 
                 if self.provider_menu_filter.is_empty() {
                     format!(
-                        " Providers (Enter select, Backspace {}, Esc back) ",
+                        " Providers (Enter select, Delete {}, Esc back) ",
                         reset_action
                     )
                 } else {
@@ -7700,7 +7685,7 @@ mod tests {
         app.provider_menu_items = vec![ProviderMenuItem::Provider(unauth_provider)];
         app.provider_state.select(Some(0));
         let title = app.provider_popup_title();
-        assert!(title.contains("Backspace reset"));
+        assert!(title.contains("Delete reset"));
 
         // 2. Authenticated API key provider selected -> clear
         let api_key_provider = ProviderChoice {
@@ -7716,7 +7701,7 @@ mod tests {
         app.provider_menu_items = vec![ProviderMenuItem::Provider(api_key_provider)];
         app.provider_state.select(Some(0));
         let title = app.provider_popup_title();
-        assert!(title.contains("Backspace clear"));
+        assert!(title.contains("Delete clear"));
 
         // 3. Authenticated OAuth provider selected -> sign out
         let oauth_provider = ProviderChoice {
@@ -7732,7 +7717,7 @@ mod tests {
         app.provider_menu_items = vec![ProviderMenuItem::Provider(oauth_provider)];
         app.provider_state.select(Some(0));
         let title = app.provider_popup_title();
-        assert!(title.contains("Backspace sign out"));
+        assert!(title.contains("Delete sign out"));
     }
 
     #[test]

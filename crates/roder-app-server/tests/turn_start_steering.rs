@@ -1,14 +1,17 @@
+use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
 
 use futures::stream;
 use roder_api::catalog::PROVIDER_MOCK;
+use roder_api::events::{EventEnvelope, ThreadId};
 use roder_api::extension::{ExtensionRegistryBuilder, InferenceEngineId, ToolProviderId};
 use roder_api::inference::{
     AgentInferenceRequest, CompletionMetadata, InferenceCapabilities, InferenceEngine,
     InferenceEvent, InferenceEventStream, InferenceProviderContext, InferenceTurnContext,
     MessageDelta, ModelDescriptor, ToolCallCompleted,
 };
+use roder_api::thread::{ThreadMetadata, ThreadSnapshot, ThreadStore, ThreadStoreFactory};
 use roder_api::tools::{
     ToolCall, ToolContributor, ToolExecutionContext, ToolExecutor, ToolRegistry, ToolResult,
     ToolSpec,
@@ -82,6 +85,67 @@ impl InferenceEngine for ToolThenFinalEngine {
     }
 }
 
+#[derive(Default)]
+struct MetadataDroppingThreadStoreFactory {
+    snapshots: Arc<Mutex<HashMap<String, ThreadSnapshot>>>,
+}
+
+struct MetadataDroppingThreadStore {
+    snapshots: Arc<Mutex<HashMap<String, ThreadSnapshot>>>,
+}
+
+impl ThreadStoreFactory for MetadataDroppingThreadStoreFactory {
+    fn id(&self) -> roder_api::thread::ThreadStoreId {
+        "metadata-dropping".to_string()
+    }
+
+    fn create(&self) -> Arc<dyn ThreadStore> {
+        Arc::new(MetadataDroppingThreadStore {
+            snapshots: Arc::clone(&self.snapshots),
+        })
+    }
+}
+
+#[async_trait::async_trait]
+impl ThreadStore for MetadataDroppingThreadStore {
+    fn id(&self) -> roder_api::thread::ThreadStoreId {
+        "metadata-dropping".to_string()
+    }
+
+    async fn create_thread(&self, metadata: ThreadMetadata) -> anyhow::Result<ThreadMetadata> {
+        self.snapshots.lock().await.insert(
+            metadata.thread_id.clone(),
+            ThreadSnapshot {
+                metadata: None,
+                events: Vec::new(),
+                turns: Vec::new(),
+                item_events: Vec::new(),
+                extension_states: Vec::new(),
+            },
+        );
+        Ok(metadata)
+    }
+
+    async fn list_threads(&self) -> anyhow::Result<Vec<ThreadMetadata>> {
+        Ok(Vec::new())
+    }
+
+    async fn load_thread(&self, thread_id: &ThreadId) -> anyhow::Result<Option<ThreadSnapshot>> {
+        Ok(self.snapshots.lock().await.get(thread_id).cloned())
+    }
+
+    async fn append_event(
+        &self,
+        thread_id: &ThreadId,
+        envelope: &EventEnvelope,
+    ) -> anyhow::Result<()> {
+        if let Some(snapshot) = self.snapshots.lock().await.get_mut(thread_id) {
+            snapshot.events.push(envelope.clone());
+        }
+        Ok(())
+    }
+}
+
 struct BlockingEchoContributor {
     release: Arc<Notify>,
 }
@@ -132,6 +196,57 @@ impl ToolExecutor for BlockingEcho {
             is_error: false,
         })
     }
+}
+
+#[tokio::test]
+async fn turn_start_uses_protocol_thread_workspace_when_snapshot_metadata_missing() {
+    let engine = Arc::new(ToolThenFinalEngine {
+        requests: Mutex::new(Vec::new()),
+    });
+    let mut builder = ExtensionRegistryBuilder::new();
+    builder.inference_engine(engine.clone());
+    builder.thread_store_factory(Arc::new(MetadataDroppingThreadStoreFactory::default()));
+    let runtime =
+        Arc::new(Runtime::new(builder.build().unwrap(), RuntimeConfig::default()).unwrap());
+    let server = Arc::new(AppServer::new(runtime));
+    let client = LocalAppClient::new(server);
+
+    let started: ThreadStartResult = request(
+        &client,
+        "thread/start",
+        Some(
+            serde_json::to_value(ThreadStartParams {
+                model: Some("mock".to_string()),
+                model_provider: Some(PROVIDER_MOCK.to_string()),
+                reasoning: None,
+                cwd: "/tmp".to_string(),
+                ephemeral: false,
+            })
+            .unwrap(),
+        ),
+    )
+    .await;
+
+    let turn: TurnStartResult = request(
+        &client,
+        "turn/start",
+        Some(
+            serde_json::to_value(TurnStartParams {
+                thread_id: started.thread.id,
+                input: text_input("hello"),
+                prompt: None,
+                model_provider: None,
+                model: None,
+                reasoning: None,
+                policy_mode: None,
+                task_ledger_required: false,
+            })
+            .unwrap(),
+        ),
+    )
+    .await;
+
+    assert!(!turn.turn_id.is_empty());
 }
 
 #[tokio::test]

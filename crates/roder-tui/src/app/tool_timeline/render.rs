@@ -306,13 +306,13 @@ impl ToolTimelineTool {
         );
         let rel_str = if let Some(prev) = prev_timestamp {
             let diff = self.started_at - prev;
-            format!("+{:02}s", diff.whole_seconds().abs())
+            format_relative_seconds(diff.whole_seconds().unsigned_abs())
         } else {
-            "+00s".to_string()
+            "0s".to_string()
         };
 
         // 5. Layout calculation
-        let right_width = 8 + 2 + rel_str.chars().count(); // HH:MM:SS  +XXs
+        let right_width = 8 + 2 + rel_str.chars().count(); // HH:MM:SS  relative time
 
         // Left width excluding args:
         // - Cursor (2)
@@ -465,6 +465,18 @@ impl ToolTimelineTool {
                 ]));
             }
         }
+    }
+}
+
+fn format_relative_seconds(total_seconds: u64) -> String {
+    let minutes = total_seconds / 60;
+    let seconds = total_seconds % 60;
+    if minutes == 0 {
+        format!("{seconds}s")
+    } else if seconds == 0 {
+        format!("{minutes}m")
+    } else {
+        format!("{minutes}m {seconds}s")
     }
 }
 
