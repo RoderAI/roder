@@ -97,12 +97,16 @@ impl TimelineItem {
                     );
                     if rendered.is_animating() {
                         let vis_body = reasoning_visible_body(rendered.as_str());
-                        let folded_vis_body = fold_message_body(&vis_body, expanded || !message_folding);
-                        let wrapped_vis_body = wrap_text(&folded_vis_body.body, max_text_width).join("\n");
+                        let folded_vis_body =
+                            fold_message_body(&vis_body, expanded || !message_folding);
+                        let wrapped_vis_body =
+                            wrap_text(&folded_vis_body.body, max_text_width).join("\n");
 
                         let full_body = reasoning_visible_body(&message.text);
-                        let folded_full_body = fold_message_body(&full_body, expanded || !message_folding);
-                        let wrapped_full_body = wrap_text(&folded_full_body.body, max_text_width).join("\n");
+                        let folded_full_body =
+                            fold_message_body(&full_body, expanded || !message_folding);
+                        let wrapped_full_body =
+                            wrap_text(&folded_full_body.body, max_text_width).join("\n");
 
                         let pending_body = if wrapped_full_body.starts_with(&wrapped_vis_body) {
                             wrapped_full_body[wrapped_vis_body.len()..].to_string()
@@ -196,7 +200,15 @@ impl TimelineItem {
                 push_fold_notice(lines, folded.hidden_lines, theme, message_folding);
             }
             TimelineItemKind::Tool(tool) => {
-                tool.render(selected, expanded, theme, width, animation_frame, prev_timestamp, lines);
+                tool.render(
+                    selected,
+                    expanded,
+                    theme,
+                    width,
+                    animation_frame,
+                    prev_timestamp,
+                    lines,
+                );
             }
             TimelineItemKind::SubagentTrace(trace) => {
                 trace.render(selected, expanded, theme, animation_frame, lines);
@@ -267,8 +279,9 @@ impl ToolTimelineTool {
         lines: &mut Vec<Line<'static>>,
     ) {
         // 1. Calculate symbol and style
-        let (symbol, symbol_style) = tool_status_symbol_and_style(&self.entry.name, self.status, animation_frame, theme);
-        
+        let (symbol, symbol_style) =
+            tool_status_symbol_and_style(&self.entry.name, self.status, animation_frame, theme);
+
         // 2. Format tool title
         let t_title = tool_title(&self.entry.name);
         let tool_title_style = if self.status == ToolTimelineStatus::Failed {
@@ -285,7 +298,12 @@ impl ToolTimelineTool {
         let formatted_args = format_tool_arguments(&self.entry.arguments);
 
         // 4. Calculate timing
-        let time_str = format!("{:02}:{:02}:{:02}", self.started_at.hour(), self.started_at.minute(), self.started_at.second());
+        let time_str = format!(
+            "{:02}:{:02}:{:02}",
+            self.started_at.hour(),
+            self.started_at.minute(),
+            self.started_at.second()
+        );
         let rel_str = if let Some(prev) = prev_timestamp {
             let diff = self.started_at - prev;
             format!("+{:02}s", diff.whole_seconds().abs())
@@ -295,7 +313,7 @@ impl ToolTimelineTool {
 
         // 5. Layout calculation
         let right_width = 8 + 2 + rel_str.chars().count(); // HH:MM:SS  +XXs
-        
+
         // Left width excluding args:
         // - Cursor (2)
         // - Status symbol + space (2)
@@ -332,13 +350,19 @@ impl ToolTimelineTool {
 
         // Cursor / prefix spaces
         if selected {
-            spans.push(Span::styled("▶ ", bg_style.fg(theme.mode_plan).add_modifier(Modifier::BOLD)));
+            spans.push(Span::styled(
+                "▶ ",
+                bg_style.fg(theme.mode_plan).add_modifier(Modifier::BOLD),
+            ));
         } else {
             spans.push(Span::styled("  ", bg_style));
         }
 
         // Status Symbol
-        spans.push(Span::styled(format!("{} ", symbol), symbol_style.patch(bg_style)));
+        spans.push(Span::styled(
+            format!("{} ", symbol),
+            symbol_style.patch(bg_style),
+        ));
 
         // Expand affordance
         let affordance = if self
@@ -355,7 +379,10 @@ impl ToolTimelineTool {
         } else {
             theme.subtle()
         };
-        spans.push(Span::styled(format!("{} ", affordance), affordance_style.patch(bg_style)));
+        spans.push(Span::styled(
+            format!("{} ", affordance),
+            affordance_style.patch(bg_style),
+        ));
 
         // Tool Title
         let title_style = if selected {
@@ -704,21 +731,31 @@ pub(super) fn max_scroll(total_lines: usize, height: u16) -> usize {
 
 fn is_read_search_tool(name: &str) -> bool {
     let n = name.to_lowercase();
-    n.contains("read") || n.contains("search") || n.contains("grep") || n.contains("glob") || n.contains("list") || n.contains("view") || n.contains("find")
+    n.contains("read")
+        || n.contains("search")
+        || n.contains("grep")
+        || n.contains("glob")
+        || n.contains("list")
+        || n.contains("view")
+        || n.contains("find")
 }
 
-fn tool_status_symbol_and_style(name: &str, status: ToolTimelineStatus, animation_frame: u64, theme: Theme) -> (&'static str, Style) {
+fn tool_status_symbol_and_style(
+    name: &str,
+    status: ToolTimelineStatus,
+    animation_frame: u64,
+    theme: Theme,
+) -> (&'static str, Style) {
     match status {
-        ToolTimelineStatus::Running => {
-            ("↻", running_tool_marker_style(animation_frame))
-        }
-        ToolTimelineStatus::Failed => {
-            ("✘", theme.error())
-        }
+        ToolTimelineStatus::Running => ("↻", running_tool_marker_style(animation_frame)),
+        ToolTimelineStatus::Failed => ("✘", theme.error()),
         ToolTimelineStatus::Completed => {
             if is_read_search_tool(name) {
                 ("✔", Style::default().fg(theme.diff_added))
-            } else if name.to_lowercase().contains("patch") || name.to_lowercase().contains("edit") || name.to_lowercase().contains("write") {
+            } else if name.to_lowercase().contains("patch")
+                || name.to_lowercase().contains("edit")
+                || name.to_lowercase().contains("write")
+            {
                 ("◆", Style::default().fg(theme.mode_plan))
             } else {
                 ("●", Style::default().fg(theme.mode_plan))
@@ -738,7 +775,7 @@ fn format_tool_arguments(arguments_json: &str) -> String {
     let serde_json::Value::Object(map) = val else {
         return trimmed.to_string();
     };
-    
+
     let mut parts = Vec::new();
     let main_keys = ["path", "query", "pattern", "command", "cmd", "url"];
     let mut handled = std::collections::HashSet::new();
@@ -754,7 +791,7 @@ fn format_tool_arguments(arguments_json: &str) -> String {
             handled.insert(key.to_string());
         }
     }
-    
+
     let mut keys: Vec<&String> = map.keys().collect();
     keys.sort();
     for key in keys {
@@ -776,7 +813,7 @@ fn format_tool_arguments(arguments_json: &str) -> String {
         };
         parts.push(format!("{}={}", key, val_str));
     }
-    
+
     parts.join("  ")
 }
 

@@ -969,7 +969,10 @@ impl TimelineState {
 
     fn push_item(&mut self, kind: TimelineItemKind) {
         if let TimelineItemKind::User(_) = &kind {
-            self.turn_started_at = Some(time::OffsetDateTime::now_local().unwrap_or_else(|_| time::OffsetDateTime::now_utc()));
+            self.turn_started_at = Some(
+                time::OffsetDateTime::now_local()
+                    .unwrap_or_else(|_| time::OffsetDateTime::now_utc()),
+            );
         }
         self.items.push(TimelineItem { kind });
         self.follow_live_updates_from_composer();

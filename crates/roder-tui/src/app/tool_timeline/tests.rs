@@ -873,6 +873,51 @@ fn reasoning_deltas_render_live_as_thinking() {
 }
 
 #[test]
+fn reasoning_blocks_are_separated_by_blank_line_when_resumed() {
+    let mut timeline = TimelineState::default();
+    timeline.push_reasoning_delta("First thought.\n\nSecond thought.");
+
+    let lines = rendered_lines(&mut timeline);
+    let first_index = lines
+        .iter()
+        .position(|line| line.contains("First thought."))
+        .expect("first reasoning block should render");
+    let second_index = lines
+        .iter()
+        .position(|line| line.contains("Second thought."))
+        .expect("second reasoning block should render");
+
+    assert!(
+        lines[first_index + 1]
+            .trim()
+            .trim_start_matches('┃')
+            .trim()
+            .is_empty()
+    );
+    assert_eq!(second_index, first_index + 2);
+}
+
+#[test]
+fn reasoning_deltas_within_same_block_remain_adjacent() {
+    let mut timeline = TimelineState::default();
+    timeline.push_reasoning_delta("First chunk. ");
+    timeline.push_reasoning_delta("Continued chunk.");
+
+    let lines = rendered_lines(&mut timeline);
+    let thought_index = lines
+        .iter()
+        .position(|line| line.contains("First chunk. Continued chunk."))
+        .expect("single reasoning block should render on one line");
+    assert!(
+        !lines.iter().take(thought_index + 1).any(|line| line
+            .trim()
+            .trim_start_matches('┃')
+            .trim()
+            .is_empty())
+    );
+}
+
+#[test]
 fn reasoning_heading_moves_to_working_status_and_is_removed_from_timeline() {
     let mut timeline = TimelineState::default();
     timeline.push_reasoning_delta(
@@ -909,7 +954,11 @@ fn timeline_only_renders_the_most_recent_reasoning_block() {
             .iter()
             .any(|line| line.contains("first hidden thought"))
     );
-    assert!(lines.iter().any(|line| line.contains("second visible thought")));
+    assert!(
+        lines
+            .iter()
+            .any(|line| line.contains("second visible thought"))
+    );
 }
 
 #[test]
