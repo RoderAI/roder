@@ -155,24 +155,279 @@ pub struct Turn {
     pub usage: Option<TokenUsage>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
-pub struct Item {
-    pub id: String,
-    #[serde(rename = "type")]
-    pub kind: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub text: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub status: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub phase: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub tool_name: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub tool_call_id: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub payload: Option<serde_json::Value>,
+pub enum ThreadItemStatus {
+    InProgress,
+    Completed,
+    Failed,
+}
+
+impl From<roder_api::thread::ThreadItemStatus> for ThreadItemStatus {
+    fn from(value: roder_api::thread::ThreadItemStatus) -> Self {
+        match value {
+            roder_api::thread::ThreadItemStatus::InProgress => Self::InProgress,
+            roder_api::thread::ThreadItemStatus::Completed => Self::Completed,
+            roder_api::thread::ThreadItemStatus::Failed => Self::Failed,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(tag = "type", rename_all = "camelCase")]
+pub enum Item {
+    UserMessage {
+        id: String,
+        text: String,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        images: Vec<InputImage>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        status: Option<ThreadItemStatus>,
+    },
+    AgentMessage {
+        id: String,
+        text: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        phase: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        status: Option<ThreadItemStatus>,
+    },
+    Reasoning {
+        id: String,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        summary: Vec<String>,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        content: Vec<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        status: Option<ThreadItemStatus>,
+    },
+    ToolExecution {
+        id: String,
+        #[serde(rename = "toolCallId")]
+        tool_call_id: String,
+        #[serde(rename = "toolName")]
+        tool_name: String,
+        status: ThreadItemStatus,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        input: Option<serde_json::Value>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        output: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        error: Option<String>,
+    },
+    Compaction {
+        id: String,
+        summary: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        status: Option<ThreadItemStatus>,
+    },
+    Error {
+        id: String,
+        message: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        status: Option<ThreadItemStatus>,
+    },
+    Raw {
+        id: String,
+        payload: serde_json::Value,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        status: Option<ThreadItemStatus>,
+    },
+}
+
+impl From<roder_api::thread::ThreadItem> for Item {
+    fn from(value: roder_api::thread::ThreadItem) -> Self {
+        match value {
+            roder_api::thread::ThreadItem::UserMessage {
+                id,
+                text,
+                images,
+                status,
+            } => Self::UserMessage {
+                id,
+                text,
+                images,
+                status: status.map(Into::into),
+            },
+            roder_api::thread::ThreadItem::AgentMessage {
+                id,
+                text,
+                phase,
+                status,
+            } => Self::AgentMessage {
+                id,
+                text,
+                phase,
+                status: status.map(Into::into),
+            },
+            roder_api::thread::ThreadItem::Reasoning {
+                id,
+                summary,
+                content,
+                status,
+            } => Self::Reasoning {
+                id,
+                summary,
+                content,
+                status: status.map(Into::into),
+            },
+            roder_api::thread::ThreadItem::ToolExecution {
+                id,
+                tool_call_id,
+                tool_name,
+                status,
+                input,
+                output,
+                error,
+            } => Self::ToolExecution {
+                id,
+                tool_call_id,
+                tool_name,
+                status: status.into(),
+                input,
+                output,
+                error,
+            },
+            roder_api::thread::ThreadItem::Compaction {
+                id,
+                summary,
+                status,
+            } => Self::Compaction {
+                id,
+                summary,
+                status: status.map(Into::into),
+            },
+            roder_api::thread::ThreadItem::Error {
+                id,
+                message,
+                status,
+            } => Self::Error {
+                id,
+                message,
+                status: status.map(Into::into),
+            },
+            roder_api::thread::ThreadItem::Raw {
+                id,
+                payload,
+                status,
+            } => Self::Raw {
+                id,
+                payload,
+                status: status.map(Into::into),
+            },
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(tag = "type", rename_all = "camelCase")]
+pub enum ThreadItemDelta {
+    AgentMessageText {
+        delta: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        phase: Option<String>,
+    },
+    ReasoningText {
+        delta: String,
+        #[serde(rename = "contentIndex")]
+        content_index: usize,
+    },
+    ReasoningSummaryPartAdded {
+        #[serde(rename = "summaryIndex")]
+        summary_index: usize,
+    },
+    ReasoningSummaryText {
+        delta: String,
+        #[serde(rename = "summaryIndex")]
+        summary_index: usize,
+    },
+}
+
+impl From<roder_api::thread::ThreadItemDelta> for ThreadItemDelta {
+    fn from(value: roder_api::thread::ThreadItemDelta) -> Self {
+        match value {
+            roder_api::thread::ThreadItemDelta::AgentMessageText { delta, phase } => {
+                Self::AgentMessageText { delta, phase }
+            }
+            roder_api::thread::ThreadItemDelta::ReasoningText {
+                delta,
+                content_index,
+            } => Self::ReasoningText {
+                delta,
+                content_index,
+            },
+            roder_api::thread::ThreadItemDelta::ReasoningSummaryPartAdded { summary_index } => {
+                Self::ReasoningSummaryPartAdded { summary_index }
+            }
+            roder_api::thread::ThreadItemDelta::ReasoningSummaryText {
+                delta,
+                summary_index,
+            } => Self::ReasoningSummaryText {
+                delta,
+                summary_index,
+            },
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(tag = "type", rename_all = "camelCase")]
+pub enum ThreadItemEventKind {
+    ItemStarted {
+        item: Item,
+    },
+    ItemDelta {
+        #[serde(rename = "itemId")]
+        item_id: String,
+        delta: ThreadItemDelta,
+    },
+    ItemCompleted {
+        item: Item,
+    },
+}
+
+impl From<roder_api::thread::ThreadItemEventKind> for ThreadItemEventKind {
+    fn from(value: roder_api::thread::ThreadItemEventKind) -> Self {
+        match value {
+            roder_api::thread::ThreadItemEventKind::ItemStarted { item } => {
+                Self::ItemStarted { item: item.into() }
+            }
+            roder_api::thread::ThreadItemEventKind::ItemDelta { item_id, delta } => {
+                Self::ItemDelta {
+                    item_id,
+                    delta: delta.into(),
+                }
+            }
+            roder_api::thread::ThreadItemEventKind::ItemCompleted { item } => {
+                Self::ItemCompleted { item: item.into() }
+            }
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct ThreadItemEvent {
+    pub seq: u64,
+    pub event_id: String,
+    pub thread_id: ThreadId,
+    pub turn_id: TurnId,
+    #[serde(with = "time::serde::rfc3339")]
+    pub timestamp: OffsetDateTime,
+    pub event: ThreadItemEventKind,
+}
+
+impl From<roder_api::thread::ThreadItemEvent> for ThreadItemEvent {
+    fn from(value: roder_api::thread::ThreadItemEvent) -> Self {
+        Self {
+            seq: value.seq,
+            event_id: value.event_id,
+            thread_id: value.thread_id,
+            turn_id: value.turn_id,
+            timestamp: value.timestamp,
+            event: value.event.into(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -546,33 +801,6 @@ pub struct TurnPartialResultNotification {
     pub thread_id: ThreadId,
     pub turn_id: TurnId,
     pub summary: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ItemStartedNotification {
-    pub thread_id: ThreadId,
-    pub turn_id: TurnId,
-    pub item: Item,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ItemCompletedNotification {
-    pub thread_id: ThreadId,
-    pub turn_id: TurnId,
-    pub item: Item,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct AgentMessageDeltaNotification {
-    pub thread_id: ThreadId,
-    pub turn_id: TurnId,
-    pub item_id: String,
-    pub delta: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub phase: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -2815,6 +3043,7 @@ pub struct AgentDescriptor {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use time::OffsetDateTime;
 
     #[test]
     fn protocol_turn_start_params_accept_input_shape() {
@@ -2871,12 +3100,19 @@ mod tests {
         let notification = JsonRpcNotification {
             jsonrpc: "2.0".to_string(),
             method: "item/agentMessage/delta".to_string(),
-            params: serde_json::to_value(AgentMessageDeltaNotification {
+            params: serde_json::to_value(ThreadItemEvent {
+                seq: 1,
+                event_id: "event-1".to_string(),
                 thread_id: "thread-1".to_string(),
                 turn_id: "turn-1".to_string(),
-                item_id: "turn-1-assistant".to_string(),
-                delta: "hello".to_string(),
-                phase: Some("final_answer".to_string()),
+                timestamp: OffsetDateTime::UNIX_EPOCH,
+                event: ThreadItemEventKind::ItemDelta {
+                    item_id: "turn-1-assistant".to_string(),
+                    delta: ThreadItemDelta::AgentMessageText {
+                        delta: "hello".to_string(),
+                        phase: Some("final_answer".to_string()),
+                    },
+                },
             })
             .unwrap(),
         };
@@ -2884,11 +3120,71 @@ mod tests {
         let value = serde_json::to_value(notification).unwrap();
         assert_eq!(value["jsonrpc"], "2.0");
         assert_eq!(value["method"], "item/agentMessage/delta");
+        assert_eq!(value["params"]["seq"], 1);
+        assert_eq!(value["params"]["eventId"], "event-1");
         assert_eq!(value["params"]["threadId"], "thread-1");
         assert_eq!(value["params"]["turnId"], "turn-1");
-        assert_eq!(value["params"]["itemId"], "turn-1-assistant");
-        assert_eq!(value["params"]["delta"], "hello");
-        assert_eq!(value["params"]["phase"], "final_answer");
+        assert_eq!(value["params"]["event"]["type"], "itemDelta");
+        assert_eq!(value["params"]["event"]["itemId"], "turn-1-assistant");
+        assert_eq!(
+            value["params"]["event"]["delta"]["type"],
+            "agentMessageText"
+        );
+        assert_eq!(value["params"]["event"]["delta"]["delta"], "hello");
+        assert_eq!(value["params"]["event"]["delta"]["phase"], "final_answer");
+    }
+
+    #[test]
+    fn thread_item_reasoning_serializes_as_typed_public_item() {
+        let value = serde_json::to_value(Item::Reasoning {
+            id: "turn-1-agent-reasoning".to_string(),
+            summary: vec!["Inspecting project".to_string()],
+            content: vec!["I need to inspect files.".to_string()],
+            status: Some(ThreadItemStatus::Completed),
+        })
+        .unwrap();
+
+        assert_eq!(
+            value,
+            serde_json::json!({
+                "type": "reasoning",
+                "id": "turn-1-agent-reasoning",
+                "summary": ["Inspecting project"],
+                "content": ["I need to inspect files."],
+                "status": "completed"
+            })
+        );
+    }
+
+    #[test]
+    fn reasoning_text_delta_notification_targets_reasoning_content_index() {
+        let notification = JsonRpcNotification {
+            jsonrpc: "2.0".to_string(),
+            method: "item/reasoning/textDelta".to_string(),
+            params: serde_json::to_value(ThreadItemEvent {
+                seq: 1,
+                event_id: "event-1".to_string(),
+                thread_id: "thread-1".to_string(),
+                turn_id: "turn-1".to_string(),
+                timestamp: OffsetDateTime::UNIX_EPOCH,
+                event: ThreadItemEventKind::ItemDelta {
+                    item_id: "turn-1-agent-reasoning".to_string(),
+                    delta: ThreadItemDelta::ReasoningText {
+                        delta: "thinking".to_string(),
+                        content_index: 0,
+                    },
+                },
+            })
+            .unwrap(),
+        };
+
+        let value = serde_json::to_value(notification).unwrap();
+        assert_eq!(value["method"], "item/reasoning/textDelta");
+        assert_eq!(value["params"]["threadId"], "thread-1");
+        assert_eq!(value["params"]["turnId"], "turn-1");
+        assert_eq!(value["params"]["event"]["itemId"], "turn-1-agent-reasoning");
+        assert_eq!(value["params"]["event"]["delta"]["delta"], "thinking");
+        assert_eq!(value["params"]["event"]["delta"]["contentIndex"], 0);
     }
 
     #[test]

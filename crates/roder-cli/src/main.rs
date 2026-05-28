@@ -53,7 +53,7 @@ use roder_extension_host::{
     build_default_registry,
 };
 use roder_protocol::{
-    JsonRpcError, JsonRpcRequest, JsonRpcResponse, MemoryDeleteParams, MemoryDeleteResult,
+    Item, JsonRpcError, JsonRpcRequest, JsonRpcResponse, MemoryDeleteParams, MemoryDeleteResult,
     MemoryListParams, MemoryListResult, MemoryProviderListResult, MemoryProviderSetParams,
     MemoryQueryParams, MemoryQueryResult, MemoryReadParams, MemoryReadResult, MemorySaveParams,
     MemorySaveResult, MemoryUpdateParams, ProcessesGetParams, ProcessesGetResult,
@@ -491,13 +491,7 @@ fn thread_has_user_message(thread: &Thread) -> bool {
         .unwrap_or_default()
         .iter()
         .flat_map(|turn| turn.items.iter())
-        .any(|item| {
-            item.kind == "userMessage"
-                && item
-                    .text
-                    .as_deref()
-                    .is_some_and(|text| !text.trim().is_empty())
-        })
+        .any(|item| matches!(item, Item::UserMessage { text, .. } if !text.trim().is_empty()))
 }
 
 async fn run_tasks_cli(args: &[String]) -> anyhow::Result<()> {

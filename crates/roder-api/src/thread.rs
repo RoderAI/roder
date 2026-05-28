@@ -9,7 +9,10 @@ pub use crate::extension::{CheckpointStoreId, ThreadStoreId};
 use crate::extension_state::ExtensionStateRecord;
 use crate::inference::{TokenUsage, cache_hit_rate};
 use crate::remote_runner::{RunnerDestination, RunnerSessionState};
-use crate::transcript::TranscriptItem;
+use crate::transcript::{InputImage, TranscriptItem};
+
+mod projection;
+pub use projection::{project_thread_item_events, project_turns_from_events};
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 pub struct ThreadUsageMetadata {
@@ -111,12 +114,162 @@ pub struct TurnRecord {
     pub usage: Option<TokenUsage>,
 }
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub enum ThreadItemStatus {
+    InProgress,
+    Completed,
+    Failed,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(tag = "type", rename_all = "camelCase")]
+pub enum ThreadItem {
+    UserMessage {
+        id: String,
+        text: String,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        images: Vec<InputImage>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        status: Option<ThreadItemStatus>,
+    },
+    AgentMessage {
+        id: String,
+        text: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        phase: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        status: Option<ThreadItemStatus>,
+    },
+    Reasoning {
+        id: String,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        summary: Vec<String>,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        content: Vec<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        status: Option<ThreadItemStatus>,
+    },
+    ToolExecution {
+        id: String,
+        #[serde(rename = "toolCallId")]
+        tool_call_id: String,
+        #[serde(rename = "toolName")]
+        tool_name: String,
+        status: ThreadItemStatus,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        input: Option<serde_json::Value>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        output: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        error: Option<String>,
+    },
+    Compaction {
+        id: String,
+        summary: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        status: Option<ThreadItemStatus>,
+    },
+    Error {
+        id: String,
+        message: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        status: Option<ThreadItemStatus>,
+    },
+    Raw {
+        id: String,
+        payload: serde_json::Value,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        status: Option<ThreadItemStatus>,
+    },
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct ThreadItemTurnRecord {
+    pub thread_id: ThreadId,
+    pub turn_id: TurnId,
+    #[serde(with = "time::serde::rfc3339")]
+    pub created_at: OffsetDateTime,
+    pub items: Vec<ThreadItem>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(tag = "type", rename_all = "camelCase")]
+pub enum ThreadItemDelta {
+    AgentMessageText {
+        delta: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        phase: Option<String>,
+    },
+    ReasoningText {
+        delta: String,
+        #[serde(rename = "contentIndex")]
+        content_index: usize,
+    },
+    ReasoningSummaryPartAdded {
+        #[serde(rename = "summaryIndex")]
+        summary_index: usize,
+    },
+    ReasoningSummaryText {
+        delta: String,
+        #[serde(rename = "summaryIndex")]
+        summary_index: usize,
+    },
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(tag = "type", rename_all = "camelCase")]
+pub enum ThreadItemEventKind {
+    ItemStarted {
+        item: ThreadItem,
+    },
+    ItemDelta {
+        #[serde(rename = "itemId")]
+        item_id: String,
+        delta: ThreadItemDelta,
+    },
+    ItemCompleted {
+        item: ThreadItem,
+    },
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct ThreadItemEvent {
+    pub seq: u64,
+    #[serde(rename = "eventId")]
+    pub event_id: String,
+    #[serde(rename = "threadId")]
+    pub thread_id: ThreadId,
+    #[serde(rename = "turnId")]
+    pub turn_id: TurnId,
+    #[serde(with = "time::serde::rfc3339")]
+    pub timestamp: OffsetDateTime,
+    pub event: ThreadItemEventKind,
+}
+
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct ThreadSnapshot {
     pub metadata: Option<ThreadMetadata>,
     pub events: Vec<EventEnvelope>,
     pub turns: Vec<TurnRecord>,
+    #[serde(default)]
+    pub item_events: Vec<ThreadItemEvent>,
     pub extension_states: Vec<ExtensionStateRecord>,
+}
+
+impl ThreadItem {
+    pub fn id(&self) -> &str {
+        match self {
+            ThreadItem::UserMessage { id, .. }
+            | ThreadItem::AgentMessage { id, .. }
+            | ThreadItem::Reasoning { id, .. }
+            | ThreadItem::ToolExecution { id, .. }
+            | ThreadItem::Compaction { id, .. }
+            | ThreadItem::Error { id, .. }
+            | ThreadItem::Raw { id, .. } => id,
+        }
+    }
 }
 
 #[async_trait::async_trait]
@@ -145,12 +298,14 @@ pub trait ThreadStore: Send + Sync {
         thread_id: &ThreadId,
         envelope: &EventEnvelope,
     ) -> anyhow::Result<()>;
-    async fn append_turn_item(
+    async fn append_item_event(
         &self,
         thread_id: &ThreadId,
-        turn_id: &TurnId,
-        item: &TranscriptItem,
-    ) -> anyhow::Result<()>;
+        item_event: &ThreadItemEvent,
+    ) -> anyhow::Result<()> {
+        let _ = (thread_id, item_event);
+        Ok(())
+    }
     async fn append_extension_state(
         &self,
         thread_id: &ThreadId,
@@ -254,5 +409,92 @@ mod tests {
         assert_eq!(usage.prompt_tokens, 150);
         assert_eq!(usage.cached_prompt_tokens, 135);
         assert!((usage.cache_hit_rate.unwrap() - 0.9).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn thread_item_events_replay_reasoning_and_final_answer_into_stable_items() {
+        let timestamp = OffsetDateTime::UNIX_EPOCH;
+        let events = vec![
+            ThreadItemEvent {
+                seq: 1,
+                event_id: "event-1".to_string(),
+                thread_id: "thread-1".to_string(),
+                turn_id: "turn-1".to_string(),
+                timestamp,
+                event: ThreadItemEventKind::ItemStarted {
+                    item: ThreadItem::Reasoning {
+                        id: "turn-1-agent-reasoning".to_string(),
+                        summary: Vec::new(),
+                        content: vec![String::new()],
+                        status: Some(ThreadItemStatus::InProgress),
+                    },
+                },
+            },
+            ThreadItemEvent {
+                seq: 2,
+                event_id: "event-2".to_string(),
+                thread_id: "thread-1".to_string(),
+                turn_id: "turn-1".to_string(),
+                timestamp,
+                event: ThreadItemEventKind::ItemDelta {
+                    item_id: "turn-1-agent-reasoning".to_string(),
+                    delta: ThreadItemDelta::ReasoningText {
+                        delta: "Inspecting".to_string(),
+                        content_index: 0,
+                    },
+                },
+            },
+            ThreadItemEvent {
+                seq: 3,
+                event_id: "event-3".to_string(),
+                thread_id: "thread-1".to_string(),
+                turn_id: "turn-1".to_string(),
+                timestamp,
+                event: ThreadItemEventKind::ItemDelta {
+                    item_id: "turn-1-agent-final_answer".to_string(),
+                    delta: ThreadItemDelta::AgentMessageText {
+                        delta: "Done".to_string(),
+                        phase: Some("final_answer".to_string()),
+                    },
+                },
+            },
+            ThreadItemEvent {
+                seq: 4,
+                event_id: "event-4".to_string(),
+                thread_id: "thread-1".to_string(),
+                turn_id: "turn-1".to_string(),
+                timestamp,
+                event: ThreadItemEventKind::ItemCompleted {
+                    item: ThreadItem::AgentMessage {
+                        id: "turn-1-agent-final_answer".to_string(),
+                        text: "Done.".to_string(),
+                        phase: Some("final_answer".to_string()),
+                        status: Some(ThreadItemStatus::Completed),
+                    },
+                },
+            },
+        ];
+
+        let turns = project_thread_item_events(&events);
+
+        assert_eq!(turns.len(), 1);
+        assert_eq!(turns[0].turn_id, "turn-1");
+        assert_eq!(
+            turns[0].items,
+            vec![
+                ThreadItem::Reasoning {
+                    id: "turn-1-agent-reasoning".to_string(),
+                    summary: Vec::new(),
+                    content: vec!["Inspecting".to_string()],
+                    status: Some(ThreadItemStatus::InProgress),
+                },
+                ThreadItem::AgentMessage {
+                    id: "turn-1-agent-final_answer".to_string(),
+                    text: "Done.".to_string(),
+                    phase: Some("final_answer".to_string()),
+                    status: Some(ThreadItemStatus::Completed),
+                }
+            ]
+        );
     }
 }

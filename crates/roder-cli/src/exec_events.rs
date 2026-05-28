@@ -1,5 +1,5 @@
 use roder_api::inference::TokenUsage;
-use roder_protocol::Item;
+use roder_protocol::{Item, ThreadItemStatus};
 use serde::Serialize;
 
 #[derive(Debug, Clone, Serialize, PartialEq)]
@@ -82,17 +82,120 @@ pub(crate) struct ExecItem {
 
 impl From<Item> for ExecItem {
     fn from(item: Item) -> Self {
-        Self {
-            id: item.id,
-            kind: item.kind,
-            text: item.text,
-            status: item.status,
-            phase: item.phase,
-            tool_name: item.tool_name,
-            tool_call_id: item.tool_call_id,
-            payload: item.payload,
+        match item {
+            Item::UserMessage {
+                id, text, status, ..
+            } => Self {
+                id,
+                kind: "userMessage".to_string(),
+                text: Some(text),
+                status: status.map(exec_status),
+                phase: None,
+                tool_name: None,
+                tool_call_id: None,
+                payload: None,
+            },
+            Item::AgentMessage {
+                id,
+                text,
+                phase,
+                status,
+            } => Self {
+                id,
+                kind: "agentMessage".to_string(),
+                text: Some(text),
+                status: status.map(exec_status),
+                phase,
+                tool_name: None,
+                tool_call_id: None,
+                payload: None,
+            },
+            Item::Reasoning {
+                id,
+                content,
+                status,
+                ..
+            } => Self {
+                id,
+                kind: "reasoning".to_string(),
+                text: Some(content.join("")),
+                status: status.map(exec_status),
+                phase: Some("reasoning".to_string()),
+                tool_name: None,
+                tool_call_id: None,
+                payload: None,
+            },
+            Item::ToolExecution {
+                id,
+                tool_call_id,
+                tool_name,
+                status,
+                input,
+                output,
+                error,
+            } => Self {
+                id,
+                kind: "toolExecution".to_string(),
+                text: error.or(output),
+                status: Some(exec_status(status)),
+                phase: None,
+                tool_name: Some(tool_name),
+                tool_call_id: Some(tool_call_id),
+                payload: input,
+            },
+            Item::Compaction {
+                id,
+                summary,
+                status,
+            } => Self {
+                id,
+                kind: "compaction".to_string(),
+                text: Some(summary),
+                status: status.map(exec_status),
+                phase: None,
+                tool_name: None,
+                tool_call_id: None,
+                payload: None,
+            },
+            Item::Error {
+                id,
+                message,
+                status,
+            } => Self {
+                id,
+                kind: "error".to_string(),
+                text: Some(message),
+                status: status.map(exec_status),
+                phase: None,
+                tool_name: None,
+                tool_call_id: None,
+                payload: None,
+            },
+            Item::Raw {
+                id,
+                payload,
+                status,
+            } => Self {
+                id,
+                kind: "raw".to_string(),
+                text: None,
+                status: status.map(exec_status),
+                phase: None,
+                tool_name: None,
+                tool_call_id: None,
+                payload: Some(payload),
+            },
         }
     }
+}
+
+fn exec_status(status: ThreadItemStatus) -> String {
+    match status {
+        ThreadItemStatus::InProgress => "inProgress",
+        ThreadItemStatus::Completed => "completed",
+        ThreadItemStatus::Failed => "failed",
+    }
+    .to_string()
 }
 
 #[cfg(test)]

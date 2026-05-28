@@ -2,11 +2,11 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use anyhow::Context;
-use roder_api::events::{EventEnvelope, RoderEvent, ThreadId, TurnId};
+use roder_api::events::{EventEnvelope, RoderEvent, ThreadId};
 use roder_api::extension_state::ExtensionStateRecord;
 use roder_api::thread::{
-    ThreadMetadata, ThreadSnapshot, ThreadStore, ThreadStoreFactory, TurnRecord,
-    validate_thread_workspace,
+    ThreadItemEvent, ThreadMetadata, ThreadSnapshot, ThreadStore, ThreadStoreFactory,
+    project_turns_from_events, validate_thread_workspace,
 };
 use roder_api::transcript::TranscriptItem;
 use time::OffsetDateTime;
@@ -26,55 +26,63 @@ impl JsonlThreadStore {
         archived_threads_root(&self.base_path).join(thread_id)
     }
 
-    async fn read_turns(&self, thread_id: &ThreadId) -> anyhow::Result<Vec<TurnRecord>> {
-        let file_path = self.thread_dir(thread_id).join("transcript_items.jsonl");
+    async fn load_item_events(&self, thread_id: &ThreadId) -> anyhow::Result<Vec<ThreadItemEvent>> {
+        let file_path = self.thread_dir(thread_id).join("item_events.jsonl");
         if !file_path.exists() {
             return Ok(Vec::new());
         }
         let file = fs::File::open(&file_path)
             .await
-            .with_context(|| format!("open transcript item log {}", file_path.display()))?;
+            .with_context(|| format!("open item event log {}", file_path.display()))?;
         let reader = BufReader::new(file);
         let mut lines = reader.lines();
-        let mut turns: Vec<TurnRecord> = Vec::new();
+        let mut events = Vec::new();
         let mut line_number = 0usize;
         while let Some(line) = lines
             .next_line()
             .await
-            .with_context(|| format!("read transcript item log {}", file_path.display()))?
+            .with_context(|| format!("read item event log {}", file_path.display()))?
         {
             line_number += 1;
             if line.trim().is_empty() {
                 continue;
             }
-            let stream =
-                serde_json::Deserializer::from_str(&line).into_iter::<PersistedTranscriptItem>();
-            for persisted in stream {
-                let persisted = persisted.with_context(|| {
+            let stream = serde_json::Deserializer::from_str(&line).into_iter::<ThreadItemEvent>();
+            for event in stream {
+                events.push(event.with_context(|| {
                     format!(
-                        "parse transcript item record in {}:{}",
+                        "parse item event record in {}:{}",
                         file_path.display(),
                         line_number
                     )
-                })?;
-                if let Some(turn) = turns
-                    .iter_mut()
-                    .find(|turn| turn.turn_id == persisted.turn_id)
-                {
-                    turn.items.push(persisted.item);
-                } else {
-                    turns.push(TurnRecord {
-                        thread_id: thread_id.clone(),
-                        turn_id: persisted.turn_id,
-                        items: vec![persisted.item],
-                        created_at: persisted.timestamp,
-                        completed_at: None,
-                        usage: None,
-                    });
-                }
+                })?);
             }
         }
-        Ok(turns)
+        Ok(events)
+    }
+
+    async fn write_item_event(
+        &self,
+        thread_id: &ThreadId,
+        item_event: &ThreadItemEvent,
+    ) -> anyhow::Result<()> {
+        let dir = self.thread_dir(thread_id);
+        fs::create_dir_all(&dir)
+            .await
+            .with_context(|| format!("create thread directory {}", dir.display()))?;
+        let file_path = dir.join("item_events.jsonl");
+        let mut file = OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&file_path)
+            .await
+            .with_context(|| format!("open item event log {}", file_path.display()))?;
+        let mut line = serde_json::to_vec(item_event).context("serialize item event record")?;
+        line.push(b'\n');
+        file.write_all(&line)
+            .await
+            .with_context(|| format!("append item event record to {}", file_path.display()))?;
+        Ok(())
     }
 }
 
@@ -154,13 +162,14 @@ impl ThreadStore for JsonlThreadStore {
         }
         let metadata = Some(self.load_or_infer_metadata(&dir, thread_id).await?);
         let events = self.load_events(thread_id).await?;
-        let mut turns = self.read_turns(thread_id).await?;
+        let turns = project_turns_from_events(thread_id, &events);
+        let item_events = self.load_item_events(thread_id).await?;
         let extension_states = self.load_extension_states(thread_id).await?;
-        project_turn_completion(&mut turns, &events);
         Ok(Some(ThreadSnapshot {
             metadata,
             events,
             turns,
+            item_events,
             extension_states,
         }))
     }
@@ -213,39 +222,20 @@ impl ThreadStore for JsonlThreadStore {
         file.write_all(&line)
             .await
             .with_context(|| format!("append event record to {}", file_path.display()))?;
+        if let RoderEvent::TranscriptItemAppended(event) = &envelope.event
+            && let Some(item) = &event.item
+        {
+            self.update_metadata_for_turn_item(thread_id, item).await?;
+        }
         Ok(())
     }
 
-    async fn append_turn_item(
+    async fn append_item_event(
         &self,
         thread_id: &ThreadId,
-        turn_id: &TurnId,
-        item: &TranscriptItem,
+        item_event: &ThreadItemEvent,
     ) -> anyhow::Result<()> {
-        let dir = self.thread_dir(thread_id);
-        fs::create_dir_all(&dir)
-            .await
-            .with_context(|| format!("create thread directory {}", dir.display()))?;
-        let file_path = dir.join("transcript_items.jsonl");
-        let mut file = OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(&file_path)
-            .await
-            .with_context(|| format!("open transcript item log {}", file_path.display()))?;
-        let persisted = PersistedTranscriptItem {
-            turn_id: turn_id.clone(),
-            timestamp: OffsetDateTime::now_utc(),
-            item: item.clone(),
-        };
-        let mut line =
-            serde_json::to_vec(&persisted).context("serialize transcript item record")?;
-        line.push(b'\n');
-        file.write_all(&line)
-            .await
-            .with_context(|| format!("append transcript item record to {}", file_path.display()))?;
-        self.update_metadata_for_turn_item(thread_id, item).await?;
-        Ok(())
+        self.write_item_event(thread_id, item_event).await
     }
 
     async fn append_extension_state(
@@ -433,9 +423,10 @@ impl JsonlThreadStore {
         {
             return Ok(metadata);
         }
-        let Ok(turns) = self.read_turns(&metadata.thread_id).await else {
+        let Ok(events) = self.load_events(&metadata.thread_id).await else {
             return Ok(metadata);
         };
+        let turns = project_turns_from_events(&metadata.thread_id, &events);
         for turn in turns {
             for item in turn.items {
                 if let TranscriptItem::UserMessage(message) = item
@@ -528,31 +519,6 @@ fn is_runtime_event_directory_without_metadata(thread_id: &str, dir: &Path) -> b
     thread_id == "runtime" && !dir.join("metadata.json").exists()
 }
 
-#[derive(serde::Serialize, serde::Deserialize)]
-struct PersistedTranscriptItem {
-    turn_id: TurnId,
-    #[serde(with = "time::serde::rfc3339")]
-    timestamp: OffsetDateTime,
-    item: TranscriptItem,
-}
-
-fn project_turn_completion(turns: &mut [TurnRecord], events: &[EventEnvelope]) {
-    for envelope in events {
-        let (turn_id, timestamp, usage) = match &envelope.event {
-            RoderEvent::TurnCompleted(event) => {
-                (&event.turn_id, event.timestamp, event.usage.clone())
-            }
-            RoderEvent::TurnFailed(event) => (&event.turn_id, event.timestamp, event.usage.clone()),
-            RoderEvent::TurnInterrupted(event) => (&event.turn_id, event.timestamp, None),
-            _ => continue,
-        };
-        if let Some(turn) = turns.iter_mut().find(|turn| &turn.turn_id == turn_id) {
-            turn.completed_at = Some(timestamp);
-            turn.usage = usage;
-        }
-    }
-}
-
 pub struct JsonlThreadStoreFactory {
     pub base_path: PathBuf,
 }
@@ -573,11 +539,67 @@ impl ThreadStoreFactory for JsonlThreadStoreFactory {
 mod tests {
     use super::*;
     use roder_api::events::{EventSource, SubagentTraceCreated, TurnCompleted};
+    use roder_api::inference::InferenceEvent;
+    use roder_api::thread::{ThreadItemDelta, ThreadItemEventKind};
     use roder_api::trace::{
         ParentTurnRef, SubagentDestination, SubagentDestinationKind, SubagentTraceStatus,
         SubagentTraceSummary,
     };
     use roder_api::transcript::{AssistantMessage, TranscriptItem, UserMessage};
+
+    fn transcript_item_event(
+        seq: u64,
+        thread_id: &ThreadId,
+        turn_id: &str,
+        item: TranscriptItem,
+        timestamp: OffsetDateTime,
+    ) -> EventEnvelope {
+        let item_type = match &item {
+            TranscriptItem::UserMessage(_) => "user_message",
+            TranscriptItem::AssistantMessage(_) => "assistant_message",
+            TranscriptItem::ReasoningSummary(_) => "reasoning_summary",
+            TranscriptItem::ToolCall(_) => "tool_call",
+            TranscriptItem::ToolResult(_) => "tool_result",
+            TranscriptItem::FileChange(_) => "file_change",
+            TranscriptItem::ContextCompaction(_) => "context_compaction",
+            TranscriptItem::Error(_) => "error",
+            TranscriptItem::ProviderMetadata(_) => "provider_metadata",
+        };
+        EventEnvelope {
+            event_id: format!("transcript-event-{seq}"),
+            seq,
+            timestamp,
+            source: EventSource::Core,
+            kind: "transcript.item_appended".to_string(),
+            thread_id: Some(thread_id.clone()),
+            turn_id: Some(turn_id.to_string()),
+            event: RoderEvent::TranscriptItemAppended(roder_api::events::TranscriptItemAppended {
+                thread_id: thread_id.clone(),
+                turn_id: turn_id.to_string(),
+                item_type: item_type.to_string(),
+                item_index: Some(seq.saturating_sub(1) as usize),
+                item: Some(item),
+                timestamp,
+            }),
+        }
+    }
+
+    async fn append_test_turn_item(
+        store: &JsonlThreadStore,
+        thread_id: &ThreadId,
+        turn_id: &str,
+        seq: u64,
+        item: TranscriptItem,
+        timestamp: OffsetDateTime,
+    ) {
+        store
+            .append_event(
+                thread_id,
+                &transcript_item_event(seq, thread_id, turn_id, item, timestamp),
+            )
+            .await
+            .unwrap();
+    }
 
     #[tokio::test]
     async fn load_thread_projects_turn_items_and_completion() {
@@ -608,31 +630,33 @@ mod tests {
             })
             .await
             .unwrap();
-        store
-            .append_turn_item(
-                &thread_id,
-                &turn_id,
-                &TranscriptItem::UserMessage(UserMessage::text("hello")),
-            )
-            .await
-            .unwrap();
-        store
-            .append_turn_item(
-                &thread_id,
-                &turn_id,
-                &TranscriptItem::AssistantMessage(AssistantMessage {
-                    text: "world".to_string(),
-                    phase: None,
-                }),
-            )
-            .await
-            .unwrap();
+        append_test_turn_item(
+            &store,
+            &thread_id,
+            &turn_id,
+            1,
+            TranscriptItem::UserMessage(UserMessage::text("hello")),
+            now,
+        )
+        .await;
+        append_test_turn_item(
+            &store,
+            &thread_id,
+            &turn_id,
+            2,
+            TranscriptItem::AssistantMessage(AssistantMessage {
+                text: "world".to_string(),
+                phase: None,
+            }),
+            now,
+        )
+        .await;
         store
             .append_event(
                 &thread_id,
                 &EventEnvelope {
                     event_id: "event-a".to_string(),
-                    seq: 1,
+                    seq: 3,
                     timestamp: now,
                     source: EventSource::Core,
                     kind: "turn.completed".to_string(),
@@ -655,11 +679,113 @@ mod tests {
             snapshot.metadata.unwrap().title.as_deref(),
             Some("Resume me")
         );
-        assert_eq!(snapshot.events.len(), 1);
+        assert_eq!(snapshot.events.len(), 3);
         assert_eq!(snapshot.turns.len(), 1);
         assert_eq!(snapshot.turns[0].turn_id, turn_id);
         assert_eq!(snapshot.turns[0].items.len(), 2);
         assert_eq!(snapshot.turns[0].completed_at, Some(now));
+
+        let _ = fs::remove_dir_all(base_path).await;
+    }
+
+    #[tokio::test]
+    async fn append_event_keeps_raw_events_separate_from_public_item_events() {
+        let base_path = std::env::temp_dir().join(format!(
+            "roder-jsonl-item-event-seq-test-{}",
+            uuid::Uuid::new_v4()
+        ));
+        let store = JsonlThreadStore {
+            base_path: base_path.clone(),
+        };
+        let thread_id = "thread-item-seq".to_string();
+        let turn_id = "turn-item-seq".to_string();
+        let now = OffsetDateTime::UNIX_EPOCH;
+
+        store
+            .create_thread(ThreadMetadata {
+                thread_id: thread_id.clone(),
+                title: Some("Keep item seq".to_string()),
+                workspace: "/workspace".to_string(),
+                provider: Some("mock".to_string()),
+                model: Some("mock".to_string()),
+                runner_destination: None,
+                runner_state: None,
+                created_at: now,
+                updated_at: now,
+                message_count: 0,
+                usage: None,
+            })
+            .await
+            .unwrap();
+        store
+            .append_event(
+                &thread_id,
+                &EventEnvelope {
+                    event_id: "raw-reasoning-event".to_string(),
+                    seq: 1,
+                    timestamp: now,
+                    source: EventSource::Core,
+                    kind: "inference.event_received".to_string(),
+                    thread_id: Some(thread_id.clone()),
+                    turn_id: Some(turn_id.clone()),
+                    event: RoderEvent::InferenceEventReceived(
+                        roder_api::events::InferenceEventReceived {
+                            thread_id: thread_id.clone(),
+                            turn_id: turn_id.clone(),
+                            event: InferenceEvent::ReasoningDelta(
+                                roder_api::inference::ReasoningDelta {
+                                    text: "thinking".to_string(),
+                                },
+                            ),
+                            timestamp: now,
+                        },
+                    ),
+                },
+            )
+            .await
+            .unwrap();
+
+        let item_events = store.load_item_events(&thread_id).await.unwrap();
+        assert!(item_events.is_empty());
+
+        store
+            .append_item_event(
+                &thread_id,
+                &ThreadItemEvent {
+                    seq: 1,
+                    event_id: "item-event-1".to_string(),
+                    thread_id: thread_id.clone(),
+                    turn_id: turn_id.clone(),
+                    timestamp: now,
+                    event: ThreadItemEventKind::ItemDelta {
+                        item_id: "turn-item-seq-agent-reasoning".to_string(),
+                        delta: ThreadItemDelta::ReasoningText {
+                            delta: "thinking".to_string(),
+                            content_index: 0,
+                        },
+                    },
+                },
+            )
+            .await
+            .unwrap();
+
+        let item_events = store.load_item_events(&thread_id).await.unwrap();
+        assert_eq!(item_events.len(), 1);
+        assert_eq!(item_events[0].seq, 1);
+        assert_eq!(item_events[0].event_id, "item-event-1");
+        assert!(store.thread_dir(&thread_id).join("events.jsonl").exists());
+        assert!(
+            store
+                .thread_dir(&thread_id)
+                .join("item_events.jsonl")
+                .exists()
+        );
+        assert!(
+            !store
+                .thread_dir(&thread_id)
+                .join("transcript_items.jsonl")
+                .exists()
+        );
 
         let _ = fs::remove_dir_all(base_path).await;
     }
@@ -916,14 +1042,15 @@ mod tests {
             })
             .await
             .unwrap();
-        store
-            .append_turn_item(
-                &thread_id,
-                &turn_id,
-                &TranscriptItem::ProviderMetadata(metadata.clone()),
-            )
-            .await
-            .unwrap();
+        append_test_turn_item(
+            &store,
+            &thread_id,
+            &turn_id,
+            1,
+            TranscriptItem::ProviderMetadata(metadata.clone()),
+            now,
+        )
+        .await;
 
         let snapshot = store.load_thread(&thread_id).await.unwrap().unwrap();
 
@@ -936,7 +1063,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn append_turn_item_updates_metadata_counts_and_recency() {
+    async fn append_event_updates_metadata_counts_and_recency() {
         let base_path = std::env::temp_dir().join(format!(
             "roder-jsonl-metadata-test-{}",
             uuid::Uuid::new_v4()
@@ -964,33 +1091,36 @@ mod tests {
             })
             .await
             .unwrap();
-        store
-            .append_turn_item(
-                &thread_id,
-                &turn_id,
-                &TranscriptItem::UserMessage(UserMessage::text("hello")),
-            )
-            .await
-            .unwrap();
-        store
-            .append_turn_item(
-                &thread_id,
-                &turn_id,
-                &TranscriptItem::ProviderMetadata(serde_json::json!({"id": "resp_1"})),
-            )
-            .await
-            .unwrap();
-        store
-            .append_turn_item(
-                &thread_id,
-                &turn_id,
-                &TranscriptItem::AssistantMessage(AssistantMessage {
-                    text: "world".to_string(),
-                    phase: None,
-                }),
-            )
-            .await
-            .unwrap();
+        append_test_turn_item(
+            &store,
+            &thread_id,
+            &turn_id,
+            1,
+            TranscriptItem::UserMessage(UserMessage::text("hello")),
+            now,
+        )
+        .await;
+        append_test_turn_item(
+            &store,
+            &thread_id,
+            &turn_id,
+            2,
+            TranscriptItem::ProviderMetadata(serde_json::json!({"id": "resp_1"})),
+            now,
+        )
+        .await;
+        append_test_turn_item(
+            &store,
+            &thread_id,
+            &turn_id,
+            3,
+            TranscriptItem::AssistantMessage(AssistantMessage {
+                text: "world".to_string(),
+                phase: None,
+            }),
+            now,
+        )
+        .await;
 
         let threads = store.list_threads().await.unwrap();
 
@@ -1027,16 +1157,17 @@ mod tests {
             })
             .await
             .unwrap();
-        store
-            .append_turn_item(
-                &thread_id,
-                &turn_id,
-                &TranscriptItem::UserMessage(UserMessage::text(
-                    "please make resume threads easier to find",
-                )),
-            )
-            .await
-            .unwrap();
+        append_test_turn_item(
+            &store,
+            &thread_id,
+            &turn_id,
+            1,
+            TranscriptItem::UserMessage(UserMessage::text(
+                "please make resume threads easier to find",
+            )),
+            now,
+        )
+        .await;
 
         let threads = store.list_threads().await.unwrap();
         let snapshot = store.load_thread(&thread_id).await.unwrap().unwrap();
@@ -1082,25 +1213,27 @@ mod tests {
             })
             .await
             .unwrap();
-        store
-            .append_turn_item(
-                &thread_id,
-                &turn_id,
-                &TranscriptItem::UserMessage(UserMessage::text("recover this thread")),
-            )
-            .await
-            .unwrap();
-        store
-            .append_turn_item(
-                &thread_id,
-                &turn_id,
-                &TranscriptItem::AssistantMessage(AssistantMessage {
-                    text: "continuing".to_string(),
-                    phase: None,
-                }),
-            )
-            .await
-            .unwrap();
+        append_test_turn_item(
+            &store,
+            &thread_id,
+            &turn_id,
+            1,
+            TranscriptItem::UserMessage(UserMessage::text("recover this thread")),
+            now,
+        )
+        .await;
+        append_test_turn_item(
+            &store,
+            &thread_id,
+            &turn_id,
+            2,
+            TranscriptItem::AssistantMessage(AssistantMessage {
+                text: "continuing".to_string(),
+                phase: None,
+            }),
+            now,
+        )
+        .await;
         fs::write(
             store.thread_dir(&thread_id).join("metadata.json"),
             "{broken",
@@ -1144,14 +1277,15 @@ mod tests {
             })
             .await
             .unwrap();
-        store
-            .append_turn_item(
-                &thread_id,
-                &turn_id,
-                &TranscriptItem::UserMessage(UserMessage::text("resume despite metadata")),
-            )
-            .await
-            .unwrap();
+        append_test_turn_item(
+            &store,
+            &thread_id,
+            &turn_id,
+            1,
+            TranscriptItem::UserMessage(UserMessage::text("resume despite metadata")),
+            now,
+        )
+        .await;
         fs::write(
             store.thread_dir(&thread_id).join("metadata.json"),
             "not json",
@@ -1215,7 +1349,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn append_turn_item_rejects_malformed_metadata() {
+    async fn append_event_rejects_malformed_metadata_for_transcript_items() {
         let base_path = std::env::temp_dir().join(format!(
             "roder-jsonl-recover-append-test-{}",
             uuid::Uuid::new_v4()
@@ -1251,10 +1385,15 @@ mod tests {
         .unwrap();
 
         let error = store
-            .append_turn_item(
+            .append_event(
                 &thread_id,
-                &turn_id,
-                &TranscriptItem::UserMessage(UserMessage::text("repair me")),
+                &transcript_item_event(
+                    1,
+                    &thread_id,
+                    &turn_id,
+                    TranscriptItem::UserMessage(UserMessage::text("repair me")),
+                    now,
+                ),
             )
             .await
             .unwrap_err();
@@ -1293,25 +1432,29 @@ mod tests {
             .unwrap();
 
         let dir = store.thread_dir(&thread_id);
-        let first = PersistedTranscriptItem {
-            turn_id: turn_id.clone(),
-            timestamp: now,
-            item: TranscriptItem::UserMessage(UserMessage::text("first")),
-        };
-        let second = PersistedTranscriptItem {
-            turn_id: turn_id.clone(),
-            timestamp: now,
-            item: TranscriptItem::AssistantMessage(AssistantMessage {
+        let first = transcript_item_event(
+            1,
+            &thread_id,
+            &turn_id,
+            TranscriptItem::UserMessage(UserMessage::text("first")),
+            now,
+        );
+        let second = transcript_item_event(
+            2,
+            &thread_id,
+            &turn_id,
+            TranscriptItem::AssistantMessage(AssistantMessage {
                 text: "second".to_string(),
                 phase: None,
             }),
-        };
+            now,
+        );
         let concatenated = format!(
             "{}{}\n",
             serde_json::to_string(&first).unwrap(),
             serde_json::to_string(&second).unwrap()
         );
-        fs::write(dir.join("transcript_items.jsonl"), concatenated)
+        fs::write(dir.join("events.jsonl"), concatenated)
             .await
             .unwrap();
 
@@ -1324,7 +1467,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn malformed_turn_item_reports_file_and_line() {
+    async fn malformed_event_reports_file_and_line() {
         let base_path = std::env::temp_dir().join(format!(
             "roder-jsonl-malformed-test-{}",
             uuid::Uuid::new_v4()
@@ -1352,8 +1495,8 @@ mod tests {
             .await
             .unwrap();
         fs::write(
-            store.thread_dir(&thread_id).join("transcript_items.jsonl"),
-            "{\"turn_id\":\"broken\"\n",
+            store.thread_dir(&thread_id).join("events.jsonl"),
+            "{\"event_id\":\"broken\"\n",
         )
         .await
         .unwrap();
@@ -1361,8 +1504,8 @@ mod tests {
         let err = store.load_thread(&thread_id).await.unwrap_err();
         let rendered = format!("{err:#}");
 
-        assert!(rendered.contains("parse transcript item record in"));
-        assert!(rendered.contains("transcript_items.jsonl:1"));
+        assert!(rendered.contains("parse event record in"));
+        assert!(rendered.contains("events.jsonl:1"));
 
         let _ = fs::remove_dir_all(base_path).await;
     }

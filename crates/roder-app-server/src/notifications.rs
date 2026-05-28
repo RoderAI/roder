@@ -1,14 +1,12 @@
 use std::sync::Arc;
 
-use roder_api::events::RoderEvent;
-use roder_api::inference::InferenceEvent;
+use roder_api::events::{EventEnvelope, RoderEvent};
 use roder_api::notifications::{Notification, NotificationKind};
-use roder_api::transcript::tool_display_payload;
+use roder_api::thread::{ThreadItemDelta, ThreadItemEvent, ThreadItemEventKind};
 use roder_core::Runtime;
 use roder_protocol::{
-    AgentMessageDeltaNotification, ApprovalRequestedNotification, ApprovalResolvedNotification,
-    AutomationRunFailedNotification, AutomationRunNotification, AutomationRunSkippedNotification,
-    Item, ItemCompletedNotification, ItemStartedNotification, JsonRpcNotification,
+    ApprovalRequestedNotification, ApprovalResolvedNotification, AutomationRunFailedNotification,
+    AutomationRunNotification, AutomationRunSkippedNotification, JsonRpcNotification,
     PlanExitRequestedNotification, PlanExitResolvedNotification, TeamCleanupCompletedNotification,
     TeamMemberCompletedNotification, TeamMemberMessageDeltaNotification,
     TeamMemberStartedNotification, TeamMemberStatusChangedNotification, Thread,
@@ -38,6 +36,25 @@ pub(crate) fn spawn_protocol_notification_bridge(
     let mut events = runtime.subscribe_events();
     tokio::spawn(async move {
         while let Ok(envelope) = events.recv().await {
+            match crate::item_stream::item_stream_notifications_for_event(&runtime, &envelope).await
+            {
+                Ok(item_notifications) => {
+                    for notification in item_notifications {
+                        let _ = notifications.send(notification);
+                    }
+                }
+                Err(err) => {
+                    eprintln!(
+                        "warning: failed to record item stream event for {}: {err:#}",
+                        envelope.kind
+                    );
+                    if let Some(notification) =
+                        item_stream_persistence_failure_notification(&envelope)
+                    {
+                        let _ = notifications.send(notification);
+                    }
+                }
+            }
             for notification in protocol_notifications_for_event(&envelope.event) {
                 let _ = notifications.send(notification);
             }
@@ -78,151 +95,6 @@ pub(crate) fn protocol_notifications_for_event(event: &RoderEvent) -> Vec<JsonRp
                 ),
             ]
         }
-        RoderEvent::InferenceEventReceived(event) => match &event.event {
-            InferenceEvent::MessageDelta(delta) => vec![protocol_notification(
-                "item/agentMessage/delta",
-                AgentMessageDeltaNotification {
-                    thread_id: event.thread_id.clone(),
-                    turn_id: event.turn_id.clone(),
-                    item_id: agent_message_item_id(&event.turn_id, delta.phase.as_deref()),
-                    delta: delta.text.clone(),
-                    phase: delta.phase.clone(),
-                },
-            )],
-            InferenceEvent::ReasoningDelta(delta) => vec![protocol_notification(
-                "item/agentMessage/delta",
-                AgentMessageDeltaNotification {
-                    thread_id: event.thread_id.clone(),
-                    turn_id: event.turn_id.clone(),
-                    item_id: agent_message_item_id(&event.turn_id, Some("reasoning")),
-                    delta: delta.text.clone(),
-                    phase: Some("reasoning".to_string()),
-                },
-            )],
-            InferenceEvent::ToolCallStarted(call) => vec![protocol_notification(
-                "item/started",
-                ItemStartedNotification {
-                    thread_id: event.thread_id.clone(),
-                    turn_id: event.turn_id.clone(),
-                    item: tool_call_item(&call.id, Some(&call.name), None, "inProgress", None),
-                },
-            )],
-            InferenceEvent::HostedToolCallStarted(call) => vec![protocol_notification(
-                "item/started",
-                ItemStartedNotification {
-                    thread_id: event.thread_id.clone(),
-                    turn_id: event.turn_id.clone(),
-                    item: tool_call_item(&call.id, Some(&call.name), None, "inProgress", None),
-                },
-            )],
-            InferenceEvent::ToolCallCompleted(call) => vec![
-                protocol_notification(
-                    "item/started",
-                    ItemStartedNotification {
-                        thread_id: event.thread_id.clone(),
-                        turn_id: event.turn_id.clone(),
-                        item: tool_call_item(
-                            &call.id,
-                            Some(&call.name),
-                            parsed_tool_display_payload(&call.name, &call.arguments),
-                            "inProgress",
-                            None,
-                        ),
-                    },
-                ),
-                protocol_notification(
-                    "item/completed",
-                    ItemCompletedNotification {
-                        thread_id: event.thread_id.clone(),
-                        turn_id: event.turn_id.clone(),
-                        item: tool_call_item(
-                            &call.id,
-                            Some(&call.name),
-                            parsed_tool_display_payload(&call.name, &call.arguments),
-                            "completed",
-                            None,
-                        ),
-                    },
-                ),
-            ],
-            InferenceEvent::HostedToolCallCompleted(call) => vec![
-                protocol_notification(
-                    "item/started",
-                    ItemStartedNotification {
-                        thread_id: event.thread_id.clone(),
-                        turn_id: event.turn_id.clone(),
-                        item: tool_call_item(
-                            &call.id,
-                            Some(&call.name),
-                            parsed_tool_display_payload(&call.name, &call.arguments),
-                            "inProgress",
-                            None,
-                        ),
-                    },
-                ),
-                protocol_notification(
-                    "item/completed",
-                    ItemCompletedNotification {
-                        thread_id: event.thread_id.clone(),
-                        turn_id: event.turn_id.clone(),
-                        item: tool_call_item(
-                            &call.id,
-                            Some(&call.name),
-                            parsed_tool_display_payload(&call.name, &call.arguments),
-                            "completed",
-                            None,
-                        ),
-                    },
-                ),
-            ],
-            _ => Vec::new(),
-        },
-        RoderEvent::ToolCallRequested(event) => vec![protocol_notification(
-            "item/started",
-            ItemStartedNotification {
-                thread_id: event.thread_id.clone(),
-                turn_id: event.turn_id.clone(),
-                item: tool_call_item(
-                    &event.tool_id,
-                    Some(&event.tool_name),
-                    event.display_payload.clone(),
-                    "inProgress",
-                    None,
-                ),
-            },
-        )],
-        RoderEvent::ToolCallStarted(event) => vec![protocol_notification(
-            "item/started",
-            ItemStartedNotification {
-                thread_id: event.thread_id.clone(),
-                turn_id: event.turn_id.clone(),
-                item: tool_call_item(
-                    &event.tool_id,
-                    event.tool_name.as_deref(),
-                    event.display_payload.clone(),
-                    "inProgress",
-                    None,
-                ),
-            },
-        )],
-        RoderEvent::ToolCallCompleted(event) => vec![protocol_notification(
-            "item/completed",
-            ItemCompletedNotification {
-                thread_id: event.thread_id.clone(),
-                turn_id: event.turn_id.clone(),
-                item: tool_result_item(
-                    &event.tool_id,
-                    event.tool_name.as_deref(),
-                    event.display_payload.clone(),
-                    event.output.clone(),
-                    if event.is_error {
-                        "failed"
-                    } else {
-                        "completed"
-                    },
-                ),
-            },
-        )],
         RoderEvent::ThreadGoalUpdated(event) => vec![protocol_notification(
             "thread/goal/updated",
             ThreadGoalUpdatedNotification {
@@ -333,16 +205,7 @@ pub(crate) fn protocol_notifications_for_event(event: &RoderEvent) -> Vec<JsonRp
         RoderEvent::TurnCompleted(event) => {
             let turn = Turn {
                 id: event.turn_id.clone(),
-                items: vec![Item {
-                    id: agent_message_item_id(&event.turn_id, None),
-                    kind: "agentMessage".to_string(),
-                    text: None,
-                    status: Some("completed".to_string()),
-                    phase: None,
-                    tool_name: None,
-                    tool_call_id: None,
-                    payload: None,
-                }],
+                items: Vec::new(),
                 items_view: "default".to_string(),
                 status: "completed".to_string(),
                 error: None,
@@ -352,14 +215,6 @@ pub(crate) fn protocol_notifications_for_event(event: &RoderEvent) -> Vec<JsonRp
                 usage: event.usage.clone(),
             };
             vec![
-                protocol_notification(
-                    "item/completed",
-                    ItemCompletedNotification {
-                        thread_id: event.thread_id.clone(),
-                        turn_id: event.turn_id.clone(),
-                        item: turn.items[0].clone(),
-                    },
-                ),
                 protocol_notification(
                     "turn/completed",
                     TurnCompletedNotification {
@@ -711,6 +566,25 @@ fn protocol_notification<T: serde::Serialize>(method: &str, params: T) -> JsonRp
     }
 }
 
+pub(crate) fn thread_item_event_notification(
+    event: &ThreadItemEvent,
+) -> Option<JsonRpcNotification> {
+    let method = match &event.event {
+        ThreadItemEventKind::ItemStarted { .. } => "item/started",
+        ThreadItemEventKind::ItemCompleted { .. } => "item/completed",
+        ThreadItemEventKind::ItemDelta { delta, .. } => match delta {
+            ThreadItemDelta::AgentMessageText { .. } => "item/agentMessage/delta",
+            ThreadItemDelta::ReasoningText { .. } => "item/reasoning/textDelta",
+            ThreadItemDelta::ReasoningSummaryPartAdded { .. } => "item/reasoning/summaryPartAdded",
+            ThreadItemDelta::ReasoningSummaryText { .. } => "item/reasoning/summaryTextDelta",
+        },
+    };
+    Some(protocol_notification(
+        method,
+        roder_protocol::ThreadItemEvent::from(event.clone()),
+    ))
+}
+
 fn automation_needs_input(error: &str) -> bool {
     let error = error.to_ascii_lowercase();
     error.contains("interactive input")
@@ -745,53 +619,15 @@ fn thread_status_notification_with_flags(
     )
 }
 
-fn agent_message_item_id(turn_id: &str, phase: Option<&str>) -> String {
-    format!("{}-agent-{}", turn_id, phase.unwrap_or("final_answer"))
-}
-
-fn tool_call_item(
-    tool_id: &str,
-    tool_name: Option<&str>,
-    payload: Option<serde_json::Value>,
-    status: &str,
-    text: Option<String>,
-) -> Item {
-    Item {
-        id: tool_id.to_string(),
-        kind: tool_name
-            .map(|name| format!("tool.{name}"))
-            .unwrap_or_else(|| "toolCall".to_string()),
-        text,
-        status: Some(status.to_string()),
-        phase: None,
-        tool_name: tool_name.map(str::to_string),
-        tool_call_id: Some(tool_id.to_string()),
-        payload,
-    }
-}
-
-fn tool_result_item(
-    tool_id: &str,
-    tool_name: Option<&str>,
-    payload: Option<serde_json::Value>,
-    output: Option<String>,
-    status: &str,
-) -> Item {
-    Item {
-        id: format!("{tool_id}-result"),
-        kind: "toolMessage".to_string(),
-        text: output,
-        status: Some(status.to_string()),
-        phase: None,
-        tool_name: tool_name.map(str::to_string),
-        tool_call_id: Some(tool_id.to_string()),
-        payload,
-    }
-}
-
-fn parsed_tool_display_payload(tool_name: &str, arguments: &str) -> Option<serde_json::Value> {
-    let arguments = serde_json::from_str(arguments).ok();
-    tool_display_payload(Some(tool_name), arguments.as_ref(), None)
+fn item_stream_persistence_failure_notification(
+    envelope: &EventEnvelope,
+) -> Option<JsonRpcNotification> {
+    Some(thread_status_notification_with_flags(
+        envelope.thread_id.as_deref()?,
+        "running",
+        envelope.turn_id.clone(),
+        vec!["itemPersistenceFailed".to_string()],
+    ))
 }
 
 pub(crate) fn spawn_runtime_event_handlers(runtime: Arc<Runtime>, tasks: BackgroundRunner) {
@@ -934,9 +770,13 @@ mod tests {
         AutomationCompleted, AutomationFailed, AutomationRunState, AutomationRunSummary,
         AutomationSkipped, AutomationStarted,
     };
-    use roder_api::events::{InferenceEventReceived, ToolCallCompleted, VerificationRequired};
-    use roder_api::inference::{HostedToolCallCompleted, InferenceEvent};
+    use roder_api::events::{InferenceEventReceived, TranscriptItemAppended, VerificationRequired};
+    use roder_api::inference::{InferenceEvent, ReasoningDelta};
     use roder_api::notifications::NotificationKind;
+    use roder_api::thread::{
+        ThreadItem, ThreadItemDelta, ThreadItemEvent, ThreadItemEventKind, ThreadItemStatus,
+    };
+    use roder_api::transcript::{TranscriptItem, UserMessage};
     use serde_json::json;
 
     fn automation_run(state: AutomationRunState) -> AutomationRunSummary {
@@ -961,52 +801,108 @@ mod tests {
     }
 
     #[test]
-    fn completed_tool_notification_carries_display_payload() {
-        let notifications =
-            protocol_notifications_for_event(&RoderEvent::ToolCallCompleted(ToolCallCompleted {
-                thread_id: "thread-1".to_string(),
-                turn_id: "turn-1".to_string(),
-                tool_id: "tool-1".to_string(),
-                tool_name: Some("list_files".to_string()),
-                display_payload: Some(json!({ "path": ".", "shown": 3 })),
-                is_error: false,
-                output: Some("src\nCargo.toml".to_string()),
-                timestamp: OffsetDateTime::UNIX_EPOCH,
-            }));
+    fn recorded_tool_item_event_forwards_full_envelope() {
+        let notifications = thread_item_event_notification(&ThreadItemEvent {
+            seq: 7,
+            event_id: "item-event-7".to_string(),
+            thread_id: "thread-1".to_string(),
+            turn_id: "turn-1".to_string(),
+            timestamp: OffsetDateTime::UNIX_EPOCH,
+            event: ThreadItemEventKind::ItemCompleted {
+                item: ThreadItem::ToolExecution {
+                    id: "tool-1".to_string(),
+                    tool_call_id: "tool-1".to_string(),
+                    tool_name: "list_files".to_string(),
+                    status: ThreadItemStatus::Completed,
+                    input: Some(json!({ "path": ".", "shown": 3 })),
+                    output: Some("src\nCargo.toml".to_string()),
+                    error: None,
+                },
+            },
+        })
+        .into_iter()
+        .collect::<Vec<_>>();
 
         assert_eq!(notifications.len(), 1);
-        let item = &notifications[0].params["item"];
-        assert_eq!(item["type"], "toolMessage");
+        assert_eq!(notifications[0].method, "item/completed");
+        assert_eq!(notifications[0].params["seq"], 7);
+        assert_eq!(notifications[0].params["eventId"], "item-event-7");
+        let item = &notifications[0].params["event"]["item"];
+        assert_eq!(item["type"], "toolExecution");
         assert_eq!(item["toolName"], "list_files");
-        assert_eq!(item["payload"]["path"], ".");
-        assert_eq!(item["payload"]["shown"], 3);
-        assert!(item["payload"].get("input").is_none());
-        assert!(item["payload"].get("arguments").is_none());
+        assert_eq!(item["input"]["path"], ".");
+        assert_eq!(item["input"]["shown"], 3);
+        assert_eq!(item["output"], "src\nCargo.toml");
+        assert!(item.get("payload").is_none());
     }
 
     #[test]
-    fn hosted_tool_call_notification_completes_tool_item() {
+    fn reasoning_delta_uses_dedicated_reasoning_text_notification() {
+        let notifications = thread_item_event_notification(&ThreadItemEvent {
+            seq: 1,
+            event_id: "item-event-1".to_string(),
+            thread_id: "thread-1".to_string(),
+            turn_id: "turn-1".to_string(),
+            timestamp: OffsetDateTime::UNIX_EPOCH,
+            event: ThreadItemEventKind::ItemDelta {
+                item_id: "turn-1-agent-reasoning".to_string(),
+                delta: ThreadItemDelta::ReasoningText {
+                    delta: "Inspecting".to_string(),
+                    content_index: 0,
+                },
+            },
+        })
+        .into_iter()
+        .collect::<Vec<_>>();
+
+        assert_eq!(notifications.len(), 1);
+        assert_eq!(notifications[0].method, "item/reasoning/textDelta");
+        assert_eq!(
+            notifications[0].params["event"]["itemId"],
+            "turn-1-agent-reasoning"
+        );
+        assert_eq!(
+            notifications[0].params["event"]["delta"]["delta"],
+            "Inspecting"
+        );
+        assert_eq!(notifications[0].params["event"]["delta"]["contentIndex"], 0);
+        assert!(
+            notifications[0].params["event"]["delta"]
+                .get("phase")
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn inference_events_do_not_directly_emit_public_item_notifications() {
         let notifications = protocol_notifications_for_event(&RoderEvent::InferenceEventReceived(
             InferenceEventReceived {
                 thread_id: "thread-1".to_string(),
                 turn_id: "turn-1".to_string(),
-                event: InferenceEvent::HostedToolCallCompleted(HostedToolCallCompleted {
-                    id: "ws-1".to_string(),
-                    name: "web_search".to_string(),
-                    arguments: r#"{"action":"search","query":"pandelis zembashis"}"#.to_string(),
+                event: InferenceEvent::ReasoningDelta(ReasoningDelta {
+                    text: "Inspecting".to_string(),
                 }),
                 timestamp: OffsetDateTime::UNIX_EPOCH,
             },
         ));
 
-        assert_eq!(notifications.len(), 2);
-        assert_eq!(notifications[0].method, "item/started");
-        assert_eq!(notifications[1].method, "item/completed");
-        let item = &notifications[1].params["item"];
-        assert_eq!(item["type"], "tool.web_search");
-        assert_eq!(item["status"], "completed");
-        assert_eq!(item["toolName"], "web_search");
-        assert_eq!(item["payload"]["query"], "pandelis zembashis");
+        assert!(notifications.is_empty());
+    }
+
+    #[test]
+    fn transcript_item_appended_does_not_emit_public_item_notification() {
+        let notifications = protocol_notifications_for_event(&RoderEvent::TranscriptItemAppended(
+            TranscriptItemAppended {
+                thread_id: "thread-1".to_string(),
+                turn_id: "turn-1".to_string(),
+                item_type: "user_message".to_string(),
+                item_index: Some(0),
+                item: Some(TranscriptItem::UserMessage(UserMessage::text("hello"))),
+                timestamp: OffsetDateTime::UNIX_EPOCH,
+            },
+        ));
+
+        assert!(notifications.is_empty());
     }
 
     #[test]
