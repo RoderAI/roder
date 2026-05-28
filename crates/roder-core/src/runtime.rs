@@ -29,9 +29,7 @@ use roder_api::subagents::SubagentDefinition;
 use roder_api::teams::TeamMemberStatus;
 use roder_api::thread::{
     ThreadItemEvent, ThreadItemEventKind, ThreadMetadata, ThreadSnapshot, ThreadStore,
-    ThreadUsageMetadata, public_item_event_from_transcript_item,
-    public_item_event_kinds_from_inference_event, public_item_id_for_inference_event,
-    thread_item_event_kind_item_id, validate_thread_workspace,
+    ThreadUsageMetadata, validate_thread_workspace,
 };
 use roder_api::tools::{ToolCall, ToolChoice, ToolExecutionContext, ToolRegistry, ToolResult};
 use roder_api::transcript::{
@@ -236,8 +234,8 @@ pub struct Runtime {
     pub(crate) goals: Arc<RuntimeGoalController>,
     context_artifacts: Arc<ContextArtifactStore>,
     pub(crate) thread_store: Option<Arc<dyn ThreadStore>>,
-    public_item_event_seq: Mutex<HashMap<ThreadId, u64>>,
-    public_item_ids: Mutex<HashSet<String>>,
+    thread_item_event_seq: Mutex<HashMap<ThreadId, u64>>,
+    thread_item_ids: Mutex<HashSet<String>>,
     pub(crate) tool_registry: ToolRegistry,
     pub(crate) skills: RwLock<SkillRegistry>,
 }
@@ -302,8 +300,8 @@ impl Runtime {
             goals,
             context_artifacts,
             thread_store,
-            public_item_event_seq: Mutex::new(HashMap::new()),
-            public_item_ids: Mutex::new(HashSet::new()),
+            thread_item_event_seq: Mutex::new(HashMap::new()),
+            thread_item_ids: Mutex::new(HashSet::new()),
             tool_registry,
             skills: RwLock::new(SkillRegistry::load(SkillRegistryOptions::new(
                 PathBuf::new(),
@@ -1939,13 +1937,6 @@ impl Runtime {
                     timestamp: inference_timestamp,
                 }))
                 .await;
-                self.record_inference_public_item_events(
-                    &req.thread_id,
-                    &turn_id,
-                    &event,
-                    inference_timestamp,
-                )
-                .await?;
 
                 match event {
                     InferenceEvent::MessageDelta(delta) => {
@@ -2610,42 +2601,14 @@ impl Runtime {
         envelope
     }
 
-    async fn record_inference_public_item_events(
-        &self,
-        thread_id: &ThreadId,
-        turn_id: &TurnId,
-        event: &InferenceEvent,
-        timestamp: OffsetDateTime,
-    ) -> anyhow::Result<()> {
-        if matches!(
-            event,
-            InferenceEvent::ToolCallStarted(_)
-                | InferenceEvent::ToolCallDelta(_)
-                | InferenceEvent::ToolCallCompleted(_)
-        ) {
-            return Ok(());
-        }
-        let Some(item_id) = public_item_id_for_inference_event(turn_id, event) else {
-            return Ok(());
-        };
-        let item_exists = self
-            .public_item_exists(thread_id, turn_id, &item_id)
-            .await?;
-        for kind in public_item_event_kinds_from_inference_event(turn_id, event, item_exists) {
-            self.record_public_item_event_kind(thread_id, turn_id, timestamp, kind)
-                .await?;
-        }
-        Ok(())
-    }
-
-    async fn record_public_item_event_kind(
+    pub async fn record_thread_item_event_kind(
         &self,
         thread_id: &ThreadId,
         turn_id: &TurnId,
         timestamp: OffsetDateTime,
         kind: ThreadItemEventKind,
     ) -> anyhow::Result<ThreadItemEvent> {
-        let seq = self.next_public_item_event_seq(thread_id).await?;
+        let seq = self.next_thread_item_event_seq(thread_id).await?;
         let item_event = ThreadItemEvent {
             seq,
             event_id: format!("{turn_id}-item-event-{seq}"),
@@ -2657,22 +2620,16 @@ impl Runtime {
         if let Some(store) = &self.thread_store {
             store.append_item_event(thread_id, &item_event).await?;
         }
-        self.remember_public_item_id(
+        self.remember_thread_item_id(
             thread_id,
             turn_id,
             thread_item_event_kind_item_id(&item_event.event),
         )
         .await;
-        self.emit(RoderEvent::ThreadItemEventRecorded(
-            ThreadItemEventRecorded {
-                item_event: item_event.clone(),
-            },
-        ))
-        .await;
         Ok(item_event)
     }
 
-    async fn next_public_item_event_seq(&self, thread_id: &ThreadId) -> anyhow::Result<u64> {
+    async fn next_thread_item_event_seq(&self, thread_id: &ThreadId) -> anyhow::Result<u64> {
         if let Some(store) = &self.thread_store {
             return Ok(store
                 .load_thread(thread_id)
@@ -2681,7 +2638,7 @@ impl Runtime {
                 .unwrap_or(0)
                 .saturating_add(1));
         }
-        let mut seq_by_thread = self.public_item_event_seq.lock().await;
+        let mut seq_by_thread = self.thread_item_event_seq.lock().await;
         let next = seq_by_thread
             .entry(thread_id.clone())
             .and_modify(|seq| *seq = seq.saturating_add(1))
@@ -2689,14 +2646,14 @@ impl Runtime {
         Ok(*next)
     }
 
-    async fn public_item_exists(
+    pub async fn thread_item_exists(
         &self,
         thread_id: &ThreadId,
         turn_id: &TurnId,
         item_id: &str,
     ) -> anyhow::Result<bool> {
-        let key = public_item_key(thread_id, turn_id, item_id);
-        if self.public_item_ids.lock().await.contains(&key) {
+        let key = thread_item_key(thread_id, turn_id, item_id);
+        if self.thread_item_ids.lock().await.contains(&key) {
             return Ok(true);
         }
         if let Some(store) = &self.thread_store
@@ -2705,17 +2662,32 @@ impl Runtime {
                 event.turn_id == *turn_id && thread_item_event_kind_item_id(&event.event) == item_id
             })
         {
-            self.public_item_ids.lock().await.insert(key);
+            self.thread_item_ids.lock().await.insert(key);
             return Ok(true);
         }
         Ok(false)
     }
 
-    async fn remember_public_item_id(&self, thread_id: &ThreadId, turn_id: &TurnId, item_id: &str) {
-        self.public_item_ids
+    async fn remember_thread_item_id(&self, thread_id: &ThreadId, turn_id: &TurnId, item_id: &str) {
+        self.thread_item_ids
             .lock()
             .await
-            .insert(public_item_key(thread_id, turn_id, item_id));
+            .insert(thread_item_key(thread_id, turn_id, item_id));
+    }
+
+    pub async fn latest_transcript_item_index(
+        &self,
+        thread_id: &ThreadId,
+        turn_id: &TurnId,
+    ) -> anyhow::Result<Option<usize>> {
+        if let Some(store) = &self.thread_store
+            && let Some(snapshot) = store.load_thread(thread_id).await?
+            && let Some(turn) = snapshot.turns.iter().find(|turn| turn.turn_id == *turn_id)
+            && !turn.items.is_empty()
+        {
+            return Ok(Some(turn.items.len().saturating_sub(1)));
+        }
+        Ok(None)
     }
 
     async fn next_transcript_item_index(
@@ -2739,15 +2711,7 @@ impl Runtime {
         item: &TranscriptItem,
     ) -> anyhow::Result<()> {
         let item_index = self.next_transcript_item_index(thread_id, turn_id).await?;
-        if let Some(store) = &self.thread_store {
-            store.append_turn_item(thread_id, turn_id, item).await?;
-        }
         let timestamp = OffsetDateTime::now_utc();
-        let item_event = public_item_event_from_transcript_item(
-            thread_id, turn_id, 0, timestamp, item_index, item,
-        );
-        self.record_public_item_event_kind(thread_id, turn_id, timestamp, item_event.event)
-            .await?;
         self.emit(RoderEvent::TranscriptItemAppended(TranscriptItemAppended {
             thread_id: thread_id.clone(),
             turn_id: turn_id.clone(),
@@ -2763,6 +2727,7 @@ impl Runtime {
                 TranscriptItem::ProviderMetadata(_) => "provider_metadata",
             }
             .to_string(),
+            item_index: Some(item_index),
             item: Some(item.clone()),
             timestamp,
         }))
@@ -3154,7 +3119,15 @@ fn should_persist_thread_event(thread_id: &str) -> bool {
     thread_id != "runtime"
 }
 
-fn public_item_key(thread_id: &str, turn_id: &str, item_id: &str) -> String {
+fn thread_item_event_kind_item_id(event: &ThreadItemEventKind) -> &str {
+    match event {
+        ThreadItemEventKind::ItemStarted { item } => item.id(),
+        ThreadItemEventKind::ItemDelta { item_id, .. } => item_id,
+        ThreadItemEventKind::ItemCompleted { item } => item.id(),
+    }
+}
+
+fn thread_item_key(thread_id: &str, turn_id: &str, item_id: &str) -> String {
     format!("{thread_id}|{turn_id}|{item_id}")
 }
 

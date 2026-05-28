@@ -1,6 +1,5 @@
 use roder_api::inference::TokenUsage;
-use roder_api::thread::ThreadItemStatus;
-use roder_protocol::Item;
+use roder_protocol::{Item, ThreadItemStatus};
 use serde::Serialize;
 
 #[derive(Debug, Clone, Serialize, PartialEq)]

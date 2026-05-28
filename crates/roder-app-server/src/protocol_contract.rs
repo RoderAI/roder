@@ -1,7 +1,4 @@
-use roder_api::thread::{
-    ThreadItem, ThreadItemTurnRecord, project_thread_item_events,
-    public_thread_item_from_transcript_item,
-};
+use roder_api::thread::{ThreadItem, ThreadItemTurnRecord, project_thread_item_events};
 use roder_api::transcript::InputImage;
 use roder_protocol::{Thread, ThreadStatus, Turn, TurnInputItem};
 
@@ -56,75 +53,37 @@ pub(crate) fn thread_status_for_activity(
     }
 }
 
-pub(crate) fn protocol_turn_from_record(record: roder_api::thread::TurnRecord) -> Turn {
-    let items = record
-        .items
-        .into_iter()
-        .enumerate()
-        .map(|(index, item)| public_thread_item_from_transcript_item(&record.turn_id, index, &item))
-        .collect::<Vec<_>>();
-    let status = if record.completed_at.is_some() {
-        "completed"
-    } else {
-        "inProgress"
-    }
-    .to_string();
-    let duration_ms = record
-        .completed_at
-        .map(|completed| (completed - record.created_at).whole_milliseconds().max(0) as i64);
-    Turn {
-        id: record.turn_id,
-        items,
-        items_view: "default".to_string(),
-        status,
-        error: None,
-        started_at: Some(record.created_at.unix_timestamp()),
-        completed_at: record.completed_at.map(|time| time.unix_timestamp()),
-        duration_ms,
-        usage: record.usage,
-    }
-}
-
 pub(crate) fn protocol_turns_from_snapshot(
     snapshot: &roder_api::thread::ThreadSnapshot,
 ) -> Vec<Turn> {
-    if !snapshot.item_events.is_empty() {
-        let item_turns = project_thread_item_events(&snapshot.item_events);
-        let mut turns = snapshot
-            .turns
-            .iter()
-            .map(|record| {
-                let items = item_turns
-                    .iter()
-                    .find(|turn| turn.turn_id == record.turn_id)
-                    .map(|turn| turn.items.clone())
-                    .unwrap_or_else(|| legacy_thread_items(record));
-                protocol_turn_from_items(record, items)
-            })
-            .collect::<Vec<_>>();
-        for item_turn in item_turns.iter().filter(|item_turn| {
-            !snapshot
-                .turns
-                .iter()
-                .any(|record| record.turn_id == item_turn.turn_id)
-        }) {
-            turns.push(protocol_turn_from_item_turn(item_turn));
-        }
-        return turns;
-    }
-
-    snapshot
+    let item_turns = project_thread_item_events(&snapshot.item_events);
+    let mut turns = snapshot
         .turns
         .iter()
-        .cloned()
-        .map(protocol_turn_from_record)
-        .collect()
+        .map(|record| {
+            let items = item_turns
+                .iter()
+                .find(|turn| turn.turn_id == record.turn_id)
+                .map(|turn| turn.items.clone())
+                .unwrap_or_default();
+            protocol_turn_from_items(record, items)
+        })
+        .collect::<Vec<_>>();
+    for item_turn in item_turns.iter().filter(|item_turn| {
+        !snapshot
+            .turns
+            .iter()
+            .any(|record| record.turn_id == item_turn.turn_id)
+    }) {
+        turns.push(protocol_turn_from_item_turn(item_turn));
+    }
+    turns
 }
 
 fn protocol_turn_from_item_turn(record: &ThreadItemTurnRecord) -> Turn {
     Turn {
         id: record.turn_id.clone(),
-        items: record.items.clone(),
+        items: record.items.clone().into_iter().map(Into::into).collect(),
         items_view: "default".to_string(),
         status: "inProgress".to_string(),
         error: None,
@@ -150,7 +109,7 @@ fn protocol_turn_from_items(
         .map(|completed| (completed - record.created_at).whole_milliseconds().max(0) as i64);
     Turn {
         id: record.turn_id.clone(),
-        items,
+        items: items.into_iter().map(Into::into).collect(),
         items_view: "default".to_string(),
         status,
         error: None,
@@ -159,16 +118,6 @@ fn protocol_turn_from_items(
         duration_ms,
         usage: record.usage.clone(),
     }
-}
-
-fn legacy_thread_items(record: &roder_api::thread::TurnRecord) -> Vec<ThreadItem> {
-    record
-        .items
-        .iter()
-        .cloned()
-        .enumerate()
-        .map(|(index, item)| public_thread_item_from_transcript_item(&record.turn_id, index, &item))
-        .collect()
 }
 
 pub(crate) fn protocol_turn_message(input: &[TurnInputItem], prompt: Option<String>) -> String {
@@ -200,46 +149,10 @@ pub(crate) fn protocol_turn_images(input: &[TurnInputItem]) -> Vec<InputImage> {
 mod tests {
     use super::*;
     use roder_api::thread::{
-        ThreadItemDelta, ThreadItemEvent, ThreadItemEventKind, ThreadItemStatus, ThreadSnapshot,
-        TurnRecord,
+        ThreadItemDelta, ThreadItemEvent, ThreadItemEventKind, ThreadSnapshot,
     };
-    use roder_api::transcript::{ToolResultRecord, TranscriptItem};
-    use serde_json::json;
+    use roder_protocol::{Item, ThreadItemStatus};
     use time::OffsetDateTime;
-
-    #[test]
-    fn persisted_tool_result_rehydrates_payload_for_client() {
-        let turn = protocol_turn_from_record(TurnRecord {
-            thread_id: "thread-1".to_string(),
-            turn_id: "turn-1".to_string(),
-            items: vec![TranscriptItem::ToolResult(ToolResultRecord {
-                id: "tool-1".to_string(),
-                name: Some("list_files".to_string()),
-                result: "src\nCargo.toml".to_string(),
-                display_payload: Some(json!({ "path": ".", "shown": 2 })),
-                is_error: false,
-            })],
-            created_at: OffsetDateTime::UNIX_EPOCH,
-            completed_at: Some(OffsetDateTime::UNIX_EPOCH),
-            usage: None,
-        });
-
-        let item = turn.items.first().expect("tool item");
-        match item {
-            ThreadItem::ToolExecution {
-                tool_name,
-                input,
-                output,
-                ..
-            } => {
-                assert_eq!(tool_name, "list_files");
-                assert_eq!(input.as_ref().unwrap()["path"], ".");
-                assert_eq!(input.as_ref().unwrap()["shown"], 2);
-                assert_eq!(output.as_deref(), Some("src\nCargo.toml"));
-            }
-            other => panic!("expected tool execution item, got {other:?}"),
-        }
-    }
 
     #[test]
     fn snapshot_projection_includes_active_item_event_turns_without_legacy_rows() {
@@ -269,7 +182,7 @@ mod tests {
         assert_eq!(turns[0].id, "turn-active");
         assert_eq!(turns[0].status, "inProgress");
         match turns[0].items.first().expect("active reasoning item") {
-            ThreadItem::Reasoning {
+            Item::Reasoning {
                 id,
                 content,
                 status,

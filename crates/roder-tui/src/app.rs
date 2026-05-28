@@ -7195,12 +7195,11 @@ mod tests {
 
     use ratatui::{Terminal, backend::TestBackend};
     use roder_api::teams::{TeamMemberDescriptor, TeamMemberRole, TeamMemberStatus};
-    use roder_api::thread::ThreadItemStatus;
     use roder_app_server::AppServer;
     use roder_core::Runtime;
     use roder_protocol::{
         Item, ProviderDescriptor, ProvidersListResult, SpeechProvidersListResult, Thread,
-        ThreadStatus, Turn,
+        ThreadItemStatus, ThreadStatus, Turn,
     };
 
     fn test_app() -> TuiApp {
