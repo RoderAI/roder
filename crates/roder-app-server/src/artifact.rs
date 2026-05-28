@@ -1,4 +1,3 @@
-use roder_api::artifacts::ContextArtifactAccess;
 use roder_api::events::{ContextArtifactDeleted, RoderEvent};
 use roder_protocol::{
     ArtifactDeleteParams, ArtifactDeleteResult, ArtifactGrepParams, ArtifactGrepResult,

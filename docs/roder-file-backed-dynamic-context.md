@@ -22,14 +22,14 @@ RODER_FILE_BACKED_DYNAMIC_CONTEXT=false roder
 
 ## Storage
 
-Context artifacts live inside each JSONL thread directory:
+With the default JSONL store, context artifacts live inside each thread directory:
 
 ```text
 $RODER_DATA_DIR/threads/<thread-id>/artifacts/<turn-id>/<artifact-id>.txt
 $RODER_DATA_DIR/threads/<thread-id>/artifacts/<turn-id>/<artifact-id>.json
 ```
 
-If `RODER_DATA_DIR` is not set, the default JSONL thread store uses `~/.roder/threads/<thread-id>/artifacts/...`. Runtimes without a local thread store fall back to `~/.roder/context-artifacts`, but the normal CLI/app-server path stores artifacts beside thread metadata, events, and turn logs.
+If `RODER_DATA_DIR` is not set, the default JSONL thread store uses `~/.roder/threads/<thread-id>/artifacts/...`. When the PostgreSQL session store is selected, artifacts are stored in PostgreSQL under the same tenant/thread scope as session rows instead. Runtime session stores can provide their own artifact backend; PostgreSQL mode must not silently fall back to `~/.roder/context-artifacts`.
 
 Artifacts are addressed by id and thread. Model tools and app-server methods never require a filesystem path, and cross-thread reads are rejected.
 

@@ -1,0 +1,30 @@
+[package]
+name = "roder-ext-postgres-session"
+version.workspace = true
+edition.workspace = true
+
+[package.metadata.roder.distribution]
+id = "postgres-session"
+category = "thread-store"
+display_name = "PostgreSQL Session Store"
+description = "Tenant-scoped PostgreSQL thread and context artifact persistence."
+default_in_profiles = []
+required_env = ["RODER_POSTGRES_SESSION_URL", "RODER_POSTGRES_SESSION_TENANT"]
+optional_env = []
+conflicts_with = ["jsonl-thread-store"]
+required_capabilities = ["network.postgres"]
+extension_path = "::PostgresSessionExtension::new"
+docs_url = "docs/roder-postgresql-session-store.md"
+
+[dependencies]
+anyhow.workspace = true
+async-trait.workspace = true
+roder-api.workspace = true
+semver.workspace = true
+serde = { workspace = true, features = ["derive"] }
+serde_json.workspace = true
+sqlx-core.workspace = true
+sqlx-postgres.workspace = true
+time = { workspace = true, features = ["serde-well-known"] }
+tokio.workspace = true
+uuid = { workspace = true, features = ["v4"] }

@@ -4182,3 +4182,7 @@ When changing the app-server surface, update this document after checking:
 - E2E tests in `crates/roder-app-server/tests/e2e.rs`.
 - Auth/config persistence behavior and environment variables.
 - Removed methods and explicitly unsupported methods.
+
+## Session storage backends
+
+App-server thread and artifact methods are backend-neutral. The default local backend is JSONL; PostgreSQL can be selected by trusted process configuration (`[sessions]` or `RODER_SESSION_STORE=postgres`). Tenant id is not accepted in public thread or artifact method payloads; PostgreSQL tenant scope is injected by the configured session store.

@@ -28,6 +28,9 @@ use roder_ext_openai_responses::{OpenAiResponsesEngine, OpenAiResponsesExtension
 use roder_ext_openai_speech::OpenAiSpeechExtension;
 use roder_ext_opencode::{OpenCodeConfig, OpenCodeExtension};
 use roder_ext_poolside::{PoolsideConfig, PoolsideExtension};
+use roder_ext_postgres_session::{
+    PostgresSessionConfig, PostgresSessionExtension, redact_database_url,
+};
 use roder_ext_runner_blaxel::BlaxelRunnerExtension;
 use roder_ext_runner_cloudflare::CloudflareRunnerExtension;
 use roder_ext_runner_daytona::DaytonaRunnerExtension;
@@ -82,6 +85,7 @@ pub struct DefaultRegistryConfig {
     pub xiaomi_mimo_token_plan_base_url: Option<String>,
     pub custom_inference_providers: Vec<CustomInferenceProviderConfig>,
     pub thread_dir: Option<PathBuf>,
+    pub session_store: SessionStoreConfig,
     pub workspace: Option<PathBuf>,
     pub tool_path_scope: roder_tools::ToolPathScope,
     pub command_shell: String,
@@ -123,6 +127,7 @@ impl Default for DefaultRegistryConfig {
             xiaomi_mimo_token_plan_base_url: None,
             custom_inference_providers: Vec::new(),
             thread_dir: None,
+            session_store: SessionStoreConfig::Jsonl,
             workspace: None,
             tool_path_scope: roder_tools::ToolPathScope::default(),
             command_shell: roder_api::command_shell::default_command_shell(),
@@ -132,6 +137,18 @@ impl Default for DefaultRegistryConfig {
             notifications: DefaultNotificationsConfig::default(),
             remote_runner_destination: None,
         }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SessionStoreConfig {
+    Jsonl,
+    Postgres(PostgresSessionConfig),
+}
+
+impl Default for SessionStoreConfig {
+    fn default() -> Self {
+        Self::Jsonl
     }
 }
 
@@ -281,10 +298,23 @@ pub fn build_default_registry(config: DefaultRegistryConfig) -> anyhow::Result<E
 
     let roder_home = roder_home_dir()?;
     context::install_code_index_context_provider(&mut builder, &workspace, &roder_home)?;
-    let thread_dir = config
-        .thread_dir
-        .unwrap_or_else(|| roder_home.join("threads"));
-    builder.install(JsonlThreadStoreExtension::new(thread_dir))?;
+    match config.session_store {
+        SessionStoreConfig::Jsonl => {
+            let thread_dir = config
+                .thread_dir
+                .unwrap_or_else(|| roder_home.join("threads"));
+            builder.install(JsonlThreadStoreExtension::new(thread_dir))?;
+        }
+        SessionStoreConfig::Postgres(postgres) => {
+            postgres.validate().map_err(|err| {
+                anyhow::anyhow!(
+                    "invalid PostgreSQL session store config for {}: {err}",
+                    redact_database_url(&postgres.database_url)
+                )
+            })?;
+            builder.install(PostgresSessionExtension::new(postgres))?;
+        }
+    }
     builder.install(MemoryExtension::new(roder_home.join("memory")))?;
     builder.install(OpenAiEmbeddingsExtension::from_env())?;
 
@@ -755,6 +785,7 @@ mod tests {
             ),
             custom_inference_providers: Vec::new(),
             thread_dir: None,
+            session_store: SessionStoreConfig::Jsonl,
             workspace: None,
             tool_path_scope: roder_tools::ToolPathScope::default(),
             command_shell: "bash".to_string(),

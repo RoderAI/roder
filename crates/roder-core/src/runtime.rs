@@ -42,7 +42,9 @@ use roder_skills::{SkillRegistry, SkillRegistryOptions};
 use time::{Duration, OffsetDateTime};
 use tokio::sync::{Mutex, RwLock, oneshot};
 
-use crate::artifacts::{ContextArtifactStore, default_context_artifact_dir};
+use crate::artifacts::{
+    ContextArtifactStore as FilesystemContextArtifactStore, default_context_artifact_dir,
+};
 use crate::bus::EventBus;
 use crate::fake_provider::FakeInferenceEngine;
 use crate::goals::RuntimeGoalController;
@@ -233,7 +235,7 @@ pub struct Runtime {
     teams: TeamManager,
     pub(crate) roadmaps: Mutex<roder_roadmap::RoadmapRuntime>,
     pub(crate) goals: Arc<RuntimeGoalController>,
-    context_artifacts: Arc<ContextArtifactStore>,
+    context_artifacts: roder_api::artifacts::ContextArtifactStore,
     pub(crate) thread_store: Option<Arc<dyn ThreadStore>>,
     thread_item_cache: Mutex<ThreadItemCache>,
     pub(crate) tool_registry: ToolRegistry,
@@ -270,13 +272,18 @@ impl Runtime {
             .roadmap_data_dir
             .clone()
             .unwrap_or_else(|| workspace.join(".roder"));
-        let context_artifacts = Arc::new(
-            thread_store
-                .as_ref()
-                .and_then(|store| store.local_thread_root())
-                .map(ContextArtifactStore::new_thread_scoped)
-                .unwrap_or_else(|| ContextArtifactStore::new(default_context_artifact_dir())),
-        );
+        let context_artifacts = thread_store
+            .as_ref()
+            .and_then(|store| store.context_artifact_store())
+            .or_else(|| {
+                thread_store
+                    .as_ref()
+                    .and_then(|store| store.local_thread_root())
+                    .map(FilesystemContextArtifactStore::shared_thread_scoped)
+            })
+            .unwrap_or_else(|| {
+                FilesystemContextArtifactStore::shared_legacy(default_context_artifact_dir())
+            });
         let goals = Arc::new(RuntimeGoalController::new(
             bus.clone(),
             thread_store.clone(),
@@ -338,8 +345,8 @@ impl Runtime {
         &self.registry
     }
 
-    pub fn context_artifacts(&self) -> Arc<ContextArtifactStore> {
-        Arc::clone(&self.context_artifacts)
+    pub fn context_artifacts(&self) -> roder_api::artifacts::ContextArtifactStore {
+        self.context_artifacts.clone()
     }
 
     pub async fn execute_workflow_tool(
@@ -381,7 +388,7 @@ impl Runtime {
         let mut ctx = ToolExecutionContext::new(thread_id, turn_id, mode)
             .with_command_shell(command_shell.unwrap_or_default())
             .with_process_runner(Arc::new(LocalProcessRunner))
-            .with_context_artifacts(self.context_artifacts.clone())
+            .with_context_artifacts(self.context_artifacts.backend())
             .with_goal_controller(self.goals.clone())
             .with_subagent_trace_sink(Arc::new(RuntimeSubagentTraceSink::new(
                 self.bus.clone(),

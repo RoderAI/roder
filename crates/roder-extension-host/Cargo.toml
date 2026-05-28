@@ -26,6 +26,7 @@ roder-ext-openai-responses.workspace = true
 roder-ext-openai-speech.workspace = true
 roder-ext-google-speech.workspace = true
 roder-ext-opencode.workspace = true
+roder-ext-postgres-session.workspace = true
 roder-ext-parallel-search.workspace = true
 roder-ext-perplexity-search.workspace = true
 roder-ext-poolside.workspace = true
