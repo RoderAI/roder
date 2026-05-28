@@ -770,8 +770,13 @@ impl TimelineState {
                 self.scroll_by_wheel(ScrollDirection::Up);
                 return true;
             }
-            MouseEventKind::Down(MouseButton::Left) | MouseEventKind::Up(MouseButton::Left) => {}
-            MouseEventKind::Down(MouseButton::Right) | MouseEventKind::Up(MouseButton::Right) => {}
+            MouseEventKind::Down(MouseButton::Left) | MouseEventKind::Down(MouseButton::Right) => {}
+            // A terminal click commonly arrives as Down followed by Up. Only the
+            // Down edge should activate rows; otherwise a click on an already
+            // expanded tool collapses on Down and immediately re-expands on Up.
+            MouseEventKind::Up(MouseButton::Left) | MouseEventKind::Up(MouseButton::Right) => {
+                return self.hit_rows.iter().any(|(row, _)| *row == event.row);
+            }
             _ => return false,
         }
         let Some((_, index)) = self
@@ -788,10 +793,7 @@ impl TimelineState {
             self.auto_follow = false;
             return true;
         }
-        if matches!(
-            event.kind,
-            MouseEventKind::Down(MouseButton::Right) | MouseEventKind::Up(MouseButton::Right)
-        ) {
+        if matches!(event.kind, MouseEventKind::Down(MouseButton::Right)) {
             return self.open_context_menu(index, event.column, event.row);
         }
         if self

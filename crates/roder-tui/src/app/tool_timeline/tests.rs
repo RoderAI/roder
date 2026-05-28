@@ -1180,6 +1180,63 @@ fn mouse_click_selects_and_second_click_expands_tool() {
 }
 
 #[test]
+fn mouse_button_up_on_expanded_tool_does_not_reopen_it() {
+    let mut timeline = TimelineState::default();
+    timeline.record_tool_requested(
+        "call_1".to_string(),
+        ToolTimelineEntry::new("glob", r#"{"pattern":"**/*.rs"}"#),
+    );
+    timeline.record_tool_completed("call_1", false, Some("src/main.rs".to_string()));
+    timeline.fold_state.set_expanded("call_1", true);
+    timeline.selected = Some(0);
+    timeline.render(Theme::for_dark_background(true), Rect::new(0, 4, 100, 10));
+
+    let down = MouseEvent {
+        kind: MouseEventKind::Down(MouseButton::Left),
+        column: 2,
+        row: 4,
+        modifiers: crossterm::event::KeyModifiers::empty(),
+    };
+    let up = MouseEvent {
+        kind: MouseEventKind::Up(MouseButton::Left),
+        ..down
+    };
+
+    assert!(timeline.handle_mouse(down));
+    assert!(timeline.handle_mouse(up));
+    assert!(!timeline.fold_state.is_expanded("call_1"));
+}
+
+#[test]
+fn tool_row_relative_times_are_human_readable_without_plus_or_leading_zeroes() {
+    let mut timeline = TimelineState::default();
+    for (id, command) in [("call_1", "first"), ("call_2", "second"), ("call_3", "third")] {
+        timeline.record_tool_requested(
+            id.to_string(),
+            ToolTimelineEntry::new("read_file", format!(r#"{{"path":"{command}"}}"#)),
+        );
+    }
+
+    let base = time::OffsetDateTime::UNIX_EPOCH;
+    if let TimelineItemKind::Tool(tool) = &mut timeline.items[0].kind {
+        tool.started_at = base;
+    }
+    if let TimelineItemKind::Tool(tool) = &mut timeline.items[1].kind {
+        tool.started_at = base + time::Duration::seconds(7);
+    }
+    if let TimelineItemKind::Tool(tool) = &mut timeline.items[2].kind {
+        tool.started_at = base + time::Duration::seconds(153);
+    }
+
+    let lines = rendered_lines(&mut timeline);
+    assert!(lines[0].trim_end().ends_with("0s"));
+    assert!(lines[1].trim_end().ends_with("7s"));
+    assert!(lines[2].trim_end().ends_with("2m 26s"));
+    assert!(!lines[1].contains("+07s"));
+    assert!(!lines[2].contains("+153s"));
+}
+
+#[test]
 fn running_shell_tool_renders_live_last_twelve_output_rows() {
     let mut timeline = TimelineState::default();
     timeline.record_tool_requested(
@@ -1316,10 +1373,16 @@ fn mouse_hit_testing_accounts_for_wrapped_tool_rows() {
     );
     timeline.render(Theme::for_dark_background(true), Rect::new(0, 10, 30, 10));
 
+    let row = timeline
+        .hit_rows
+        .iter()
+        .find_map(|(row, index)| (*index == 1).then_some(*row))
+        .expect("second tool should have a visible hit row");
+
     let click = MouseEvent {
         kind: MouseEventKind::Down(MouseButton::Left),
         column: 2,
-        row: 12,
+        row,
         modifiers: crossterm::event::KeyModifiers::empty(),
     };
 
