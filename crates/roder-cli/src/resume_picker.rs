@@ -9,7 +9,7 @@ use crossterm::style::{
     Attribute, Color, Print, ResetColor, SetAttribute, SetBackgroundColor, SetForegroundColor,
 };
 use crossterm::terminal::{self, Clear, ClearType};
-use roder_protocol::Thread;
+use roder_protocol::{Item, Thread};
 use time::UtcOffset;
 
 const MAX_VISIBLE_THREADS: usize = 10;
@@ -505,7 +505,7 @@ fn thread_message_count(thread: &Thread) -> usize {
         .unwrap_or_default()
         .iter()
         .flat_map(|turn| turn.items.iter())
-        .filter(|item| matches!(item.kind.as_str(), "userMessage" | "agentMessage"))
+        .filter(|item| matches!(item, Item::UserMessage { .. } | Item::AgentMessage { .. }))
         .count()
 }
 
@@ -714,10 +714,7 @@ mod tests {
             name: title.map(str::to_string),
             turns: Some(vec![Turn {
                 id: "turn-a".to_string(),
-                items: vec![
-                    item("userMessage", Some("hi")),
-                    item("agentMessage", Some("hello")),
-                ],
+                items: vec![user_message("hi"), agent_message("hello")],
                 items_view: "default".to_string(),
                 status: "completed".to_string(),
                 error: None,
@@ -730,16 +727,21 @@ mod tests {
         }
     }
 
-    fn item(kind: &str, text: Option<&str>) -> Item {
-        Item {
-            id: format!("{kind}-id"),
-            kind: kind.to_string(),
-            text: text.map(str::to_string),
+    fn user_message(text: &str) -> Item {
+        Item::UserMessage {
+            id: "userMessage-id".to_string(),
+            text: text.to_string(),
+            images: Vec::new(),
             status: None,
+        }
+    }
+
+    fn agent_message(text: &str) -> Item {
+        Item::AgentMessage {
+            id: "agentMessage-id".to_string(),
+            text: text.to_string(),
             phase: None,
-            tool_name: None,
-            tool_call_id: None,
-            payload: None,
+            status: None,
         }
     }
 }

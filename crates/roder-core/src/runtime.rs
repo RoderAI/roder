@@ -28,7 +28,8 @@ use roder_api::remote_runner::{RemoteRunnerSession, RunnerDestination};
 use roder_api::subagents::SubagentDefinition;
 use roder_api::teams::TeamMemberStatus;
 use roder_api::thread::{
-    ThreadMetadata, ThreadSnapshot, ThreadStore, ThreadUsageMetadata, validate_thread_workspace,
+    ThreadItemEvent, ThreadItemEventKind, ThreadMetadata, ThreadSnapshot, ThreadStore,
+    ThreadUsageMetadata, validate_thread_workspace,
 };
 use roder_api::tools::{ToolCall, ToolChoice, ToolExecutionContext, ToolRegistry, ToolResult};
 use roder_api::transcript::{
@@ -57,6 +58,7 @@ pub use crate::speed_policy::RuntimeSpeedPolicyConfig;
 use crate::speed_policy::{SpeedPolicyState, reasoning_from_decision};
 use crate::subagent_traces::RuntimeSubagentTraceSink;
 use crate::teams::{TeamManager, TeamMemberStartRequest, TeamStartRequest, TeamState};
+use crate::thread_item_cache::{ThreadItemCache, ThreadItemCacheEntry};
 use crate::verification_gate::VerificationGateState;
 
 const MAX_TOOL_ROUNDS_PER_TURN: usize = 1024;
@@ -233,6 +235,7 @@ pub struct Runtime {
     pub(crate) goals: Arc<RuntimeGoalController>,
     context_artifacts: Arc<ContextArtifactStore>,
     pub(crate) thread_store: Option<Arc<dyn ThreadStore>>,
+    thread_item_cache: Mutex<ThreadItemCache>,
     pub(crate) tool_registry: ToolRegistry,
     pub(crate) skills: RwLock<SkillRegistry>,
 }
@@ -297,6 +300,7 @@ impl Runtime {
             goals,
             context_artifacts,
             thread_store,
+            thread_item_cache: Mutex::new(ThreadItemCache::default()),
             tool_registry,
             skills: RwLock::new(SkillRegistry::load(SkillRegistryOptions::new(
                 PathBuf::new(),
@@ -770,10 +774,18 @@ impl Runtime {
     }
 
     pub async fn archive_thread(&self, thread_id: &str) -> anyhow::Result<bool> {
-        if let Some(store) = &self.thread_store {
-            return store.archive_thread(&thread_id.to_string()).await;
+        let archived = if let Some(store) = &self.thread_store {
+            store.archive_thread(&thread_id.to_string()).await?
+        } else {
+            false
+        };
+        if archived {
+            self.thread_item_cache
+                .lock()
+                .await
+                .remove_thread(&thread_id.to_string());
         }
-        Ok(false)
+        Ok(archived)
     }
 
     pub async fn start_team(&self, req: TeamStartRequest) -> anyhow::Result<TeamState> {
@@ -1924,11 +1936,12 @@ impl Runtime {
                     }
                 };
 
+                let inference_timestamp = OffsetDateTime::now_utc();
                 self.emit(RoderEvent::InferenceEventReceived(InferenceEventReceived {
                     thread_id: req.thread_id.clone(),
                     turn_id: turn_id.clone(),
                     event: event.clone(),
-                    timestamp: OffsetDateTime::now_utc(),
+                    timestamp: inference_timestamp,
                 }))
                 .await;
 
@@ -2595,15 +2608,136 @@ impl Runtime {
         envelope
     }
 
+    /// Records a projected thread item event and persists it through the configured thread store.
+    ///
+    /// App-server protocol notification bridges currently call this after translating runtime
+    /// events into item events. Headless runtime consumers that subscribe to `RoderEvent` directly
+    /// must make the same call if they need the derived item event stream persisted.
+    pub async fn record_thread_item_event_kind(
+        &self,
+        thread_id: &ThreadId,
+        turn_id: &TurnId,
+        timestamp: OffsetDateTime,
+        kind: ThreadItemEventKind,
+    ) -> anyhow::Result<ThreadItemEvent> {
+        let seq = self.next_thread_item_event_seq(thread_id).await?;
+        let item_event = ThreadItemEvent {
+            seq,
+            event_id: format!("{turn_id}-item-event-{seq}"),
+            thread_id: thread_id.clone(),
+            turn_id: turn_id.clone(),
+            timestamp,
+            event: kind,
+        };
+        if let Some(store) = &self.thread_store {
+            store.append_item_event(thread_id, &item_event).await?;
+        }
+        self.remember_thread_item_event(&item_event).await?;
+        Ok(item_event)
+    }
+
+    async fn next_thread_item_event_seq(&self, thread_id: &ThreadId) -> anyhow::Result<u64> {
+        self.ensure_thread_item_cache(thread_id).await?;
+        Ok(self
+            .thread_item_cache
+            .lock()
+            .await
+            .next_item_event_seq(thread_id))
+    }
+
+    pub async fn thread_item_exists(
+        &self,
+        thread_id: &ThreadId,
+        turn_id: &TurnId,
+        item_id: &str,
+    ) -> anyhow::Result<bool> {
+        self.ensure_thread_item_cache(thread_id).await?;
+        Ok(self
+            .thread_item_cache
+            .lock()
+            .await
+            .thread_item_exists(thread_id, turn_id, item_id))
+    }
+
+    async fn remember_thread_item_event(&self, item_event: &ThreadItemEvent) -> anyhow::Result<()> {
+        self.ensure_thread_item_cache(&item_event.thread_id).await?;
+        self.thread_item_cache
+            .lock()
+            .await
+            .remember_item_event(item_event);
+        Ok(())
+    }
+
+    pub async fn latest_transcript_item_index(
+        &self,
+        thread_id: &ThreadId,
+        turn_id: &TurnId,
+    ) -> anyhow::Result<Option<usize>> {
+        self.ensure_thread_item_cache(thread_id).await?;
+        Ok(self
+            .thread_item_cache
+            .lock()
+            .await
+            .latest_transcript_item_index(thread_id, turn_id))
+    }
+
+    async fn next_transcript_item_index(
+        &self,
+        thread_id: &ThreadId,
+        turn_id: &TurnId,
+    ) -> anyhow::Result<usize> {
+        self.ensure_thread_item_cache(thread_id).await?;
+        Ok(self
+            .thread_item_cache
+            .lock()
+            .await
+            .next_transcript_item_index(thread_id, turn_id))
+    }
+
+    async fn remember_transcript_item_index(
+        &self,
+        thread_id: &ThreadId,
+        turn_id: &TurnId,
+        item_index: usize,
+    ) -> anyhow::Result<()> {
+        self.ensure_thread_item_cache(thread_id).await?;
+        self.thread_item_cache
+            .lock()
+            .await
+            .remember_transcript_item_index(thread_id, turn_id, item_index);
+        Ok(())
+    }
+
+    async fn ensure_thread_item_cache(&self, thread_id: &ThreadId) -> anyhow::Result<()> {
+        if self
+            .thread_item_cache
+            .lock()
+            .await
+            .contains_thread(thread_id)
+        {
+            return Ok(());
+        }
+
+        let snapshot = if let Some(store) = &self.thread_store {
+            store.load_thread(thread_id).await?
+        } else {
+            None
+        };
+        self.thread_item_cache.lock().await.ensure_thread(
+            thread_id,
+            ThreadItemCacheEntry::from_snapshot(snapshot.as_ref()),
+        );
+        Ok(())
+    }
+
     pub(crate) async fn persist_turn_item(
         &self,
         thread_id: &ThreadId,
         turn_id: &TurnId,
         item: &TranscriptItem,
     ) -> anyhow::Result<()> {
-        if let Some(store) = &self.thread_store {
-            store.append_turn_item(thread_id, turn_id, item).await?;
-        }
+        let item_index = self.next_transcript_item_index(thread_id, turn_id).await?;
+        let timestamp = OffsetDateTime::now_utc();
         self.emit(RoderEvent::TranscriptItemAppended(TranscriptItemAppended {
             thread_id: thread_id.clone(),
             turn_id: turn_id.clone(),
@@ -2619,9 +2753,13 @@ impl Runtime {
                 TranscriptItem::ProviderMetadata(_) => "provider_metadata",
             }
             .to_string(),
-            timestamp: OffsetDateTime::now_utc(),
+            item_index: Some(item_index),
+            item: Some(item.clone()),
+            timestamp,
         }))
         .await;
+        self.remember_transcript_item_index(thread_id, turn_id, item_index)
+            .await?;
         Ok(())
     }
 }

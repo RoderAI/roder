@@ -64,7 +64,7 @@ use roder_protocol::{
     DiscoveryPromotedClearResult, DiscoveryPromotedListParams, DiscoveryPromotedListResult,
     DiscoveryReadParams, DiscoveryReadResult, DiscoveryRefreshResult, DiscoverySearchParams,
     DiscoverySearchResult, ExtensionsListResult, HunkListParams, HunkListResult, HunkReadParams,
-    HunkReadResult, HunkRollbackParams, HunkRollbackResult, InitializeResult, JsonRpcError,
+    HunkReadResult, HunkRollbackParams, HunkRollbackResult, InitializeResult, Item, JsonRpcError,
     JsonRpcRequest, MarketplacesAddParams, MarketplacesAddResult, MarketplacesListResult,
     MarketplacesRefreshParams, MarketplacesRefreshResult, MarketplacesRemoveParams,
     MarketplacesRemoveResult, MarketplacesSearchParams, MarketplacesSearchResult,
@@ -101,8 +101,8 @@ use roder_protocol::{
     TeamReadResult, TeamStartMemberParams, TeamStartParams, TeamStartResult, ThreadArchiveParams,
     ThreadArchiveResult, ThreadExitPlanParams, ThreadExitPlanResult, ThreadGoalClearParams,
     ThreadGoalClearResult, ThreadGoalGetParams, ThreadGoalGetResult, ThreadGoalSetParams,
-    ThreadGoalSetResult, ThreadGoalStatus, ThreadListParams, ThreadListResult, ThreadReadParams,
-    ThreadReadResult, ThreadResolveApprovalParams, ThreadResolveApprovalResult,
+    ThreadGoalSetResult, ThreadGoalStatus, ThreadItemStatus, ThreadListParams, ThreadListResult,
+    ThreadReadParams, ThreadReadResult, ThreadResolveApprovalParams, ThreadResolveApprovalResult,
     ThreadResolveUserInputParams, ThreadResolveUserInputResult, ThreadSetModeParams,
     ThreadSetModeResult, ThreadStartParams, ThreadStartResult, ThreadStateResult, ToolCallParams,
     ToolCallResult, ToolsListResult, TurnInputItem, TurnInterruptParams, TurnInterruptResult,
@@ -137,6 +137,8 @@ static SKILLS_TEST_LOCK: LazyLock<Mutex<()>> = LazyLock::new(|| Mutex::new(()));
 
 struct PendingEngine;
 
+struct ReasoningThenPendingEngine;
+
 struct UsageReportingEngine;
 
 struct ImageRecordingEngine {
@@ -146,6 +148,15 @@ struct ImageRecordingEngine {
 struct FailingThreadStoreFactory;
 
 struct FailingThreadStore;
+
+#[derive(Clone, Default)]
+struct FailingItemEventThreadStoreFactory {
+    snapshots: Arc<Mutex<HashMap<String, ThreadSnapshot>>>,
+}
+
+struct FailingItemEventThreadStore {
+    snapshots: Arc<Mutex<HashMap<String, ThreadSnapshot>>>,
+}
 
 #[derive(Clone, Default)]
 struct RecordingThreadStoreFactory {
@@ -196,14 +207,74 @@ impl ThreadStore for FailingThreadStore {
     ) -> anyhow::Result<()> {
         Ok(())
     }
+}
 
-    async fn append_turn_item(
+impl ThreadStoreFactory for FailingItemEventThreadStoreFactory {
+    fn id(&self) -> roder_api::thread::ThreadStoreId {
+        "failing_item_events".to_string()
+    }
+
+    fn create(&self) -> Arc<dyn ThreadStore> {
+        Arc::new(FailingItemEventThreadStore {
+            snapshots: Arc::clone(&self.snapshots),
+        })
+    }
+}
+
+#[async_trait::async_trait]
+impl ThreadStore for FailingItemEventThreadStore {
+    fn id(&self) -> roder_api::thread::ThreadStoreId {
+        "failing_item_events".to_string()
+    }
+
+    async fn create_thread(&self, metadata: ThreadMetadata) -> anyhow::Result<ThreadMetadata> {
+        self.snapshots.lock().await.insert(
+            metadata.thread_id.clone(),
+            ThreadSnapshot {
+                metadata: Some(metadata.clone()),
+                events: Vec::new(),
+                turns: Vec::new(),
+                item_events: Vec::new(),
+                extension_states: Vec::new(),
+            },
+        );
+        Ok(metadata)
+    }
+
+    async fn list_threads(&self) -> anyhow::Result<Vec<ThreadMetadata>> {
+        Ok(self
+            .snapshots
+            .lock()
+            .await
+            .values()
+            .filter_map(|snapshot| snapshot.metadata.clone())
+            .collect())
+    }
+
+    async fn load_thread(
+        &self,
+        thread_id: &roder_api::events::ThreadId,
+    ) -> anyhow::Result<Option<ThreadSnapshot>> {
+        Ok(self.snapshots.lock().await.get(thread_id).cloned())
+    }
+
+    async fn append_event(
+        &self,
+        thread_id: &roder_api::events::ThreadId,
+        envelope: &roder_api::events::EventEnvelope,
+    ) -> anyhow::Result<()> {
+        if let Some(snapshot) = self.snapshots.lock().await.get_mut(thread_id) {
+            snapshot.events.push(envelope.clone());
+        }
+        Ok(())
+    }
+
+    async fn append_item_event(
         &self,
         _thread_id: &roder_api::events::ThreadId,
-        _turn_id: &roder_api::events::TurnId,
-        _item: &roder_api::transcript::TranscriptItem,
+        _item_event: &roder_api::thread::ThreadItemEvent,
     ) -> anyhow::Result<()> {
-        Ok(())
+        anyhow::bail!("append item event failed")
     }
 }
 
@@ -232,6 +303,7 @@ impl ThreadStore for RecordingThreadStore {
                 metadata: Some(metadata.clone()),
                 events: Vec::new(),
                 turns: Vec::new(),
+                item_events: Vec::new(),
                 extension_states: Vec::new(),
             },
         );
@@ -278,44 +350,51 @@ impl ThreadStore for RecordingThreadStore {
         envelope: &roder_api::events::EventEnvelope,
     ) -> anyhow::Result<()> {
         if let Some(snapshot) = self.snapshots.lock().await.get_mut(thread_id) {
-            if let roder_api::events::RoderEvent::TurnCompleted(event) = &envelope.event
-                && let Some(turn) = snapshot
-                    .turns
-                    .iter_mut()
-                    .find(|turn| turn.turn_id == event.turn_id)
-            {
-                turn.completed_at = Some(event.timestamp);
-                turn.usage = event.usage.clone();
+            match &envelope.event {
+                roder_api::events::RoderEvent::TurnCompleted(event) => {
+                    if let Some(turn) = snapshot
+                        .turns
+                        .iter_mut()
+                        .find(|turn| turn.turn_id == event.turn_id)
+                    {
+                        turn.completed_at = Some(event.timestamp);
+                        turn.usage = event.usage.clone();
+                    }
+                }
+                roder_api::events::RoderEvent::TranscriptItemAppended(event) => {
+                    if let Some(item) = &event.item {
+                        if let Some(turn) = snapshot
+                            .turns
+                            .iter_mut()
+                            .find(|turn| turn.turn_id == event.turn_id)
+                        {
+                            turn.items.push(item.clone());
+                        } else {
+                            snapshot.turns.push(roder_api::thread::TurnRecord {
+                                thread_id: thread_id.clone(),
+                                turn_id: event.turn_id.clone(),
+                                items: vec![item.clone()],
+                                created_at: event.timestamp,
+                                completed_at: None,
+                                usage: None,
+                            });
+                        }
+                    }
+                }
+                _ => {}
             }
             snapshot.events.push(envelope.clone());
         }
         Ok(())
     }
 
-    async fn append_turn_item(
+    async fn append_item_event(
         &self,
         thread_id: &roder_api::events::ThreadId,
-        turn_id: &roder_api::events::TurnId,
-        item: &roder_api::transcript::TranscriptItem,
+        item_event: &roder_api::thread::ThreadItemEvent,
     ) -> anyhow::Result<()> {
-        let mut snapshots = self.snapshots.lock().await;
-        if let Some(snapshot) = snapshots.get_mut(thread_id) {
-            if let Some(turn) = snapshot
-                .turns
-                .iter_mut()
-                .find(|turn| turn.turn_id == *turn_id)
-            {
-                turn.items.push(item.clone());
-            } else {
-                snapshot.turns.push(roder_api::thread::TurnRecord {
-                    thread_id: thread_id.clone(),
-                    turn_id: turn_id.clone(),
-                    items: vec![item.clone()],
-                    created_at: OffsetDateTime::now_utc(),
-                    completed_at: None,
-                    usage: None,
-                });
-            }
+        if let Some(snapshot) = self.snapshots.lock().await.get_mut(thread_id) {
+            snapshot.item_events.push(item_event.clone());
         }
         Ok(())
     }
@@ -356,6 +435,36 @@ impl InferenceEngine for PendingEngine {
         _request: AgentInferenceRequest,
     ) -> anyhow::Result<InferenceEventStream> {
         Ok(Box::pin(stream::pending()))
+    }
+}
+
+#[async_trait::async_trait]
+impl InferenceEngine for ReasoningThenPendingEngine {
+    fn id(&self) -> InferenceEngineId {
+        PROVIDER_MOCK.to_string()
+    }
+
+    fn capabilities(&self) -> InferenceCapabilities {
+        InferenceCapabilities::text_only()
+    }
+
+    async fn list_models(
+        &self,
+        _ctx: InferenceProviderContext<'_>,
+    ) -> anyhow::Result<Vec<ModelDescriptor>> {
+        Ok(Vec::new())
+    }
+
+    async fn stream_turn(
+        &self,
+        _ctx: InferenceTurnContext<'_>,
+        _request: AgentInferenceRequest,
+    ) -> anyhow::Result<InferenceEventStream> {
+        let stream = stream::iter(vec![Ok(InferenceEvent::ReasoningDelta(ReasoningDelta {
+            text: "thinking".to_string(),
+        }))])
+        .chain(stream::pending::<anyhow::Result<InferenceEvent>>());
+        Ok(Box::pin(stream))
     }
 }
 
@@ -3159,6 +3268,153 @@ async fn thread_snapshots_overlay_runtime_active_turn_status() {
 }
 
 #[tokio::test]
+async fn thread_read_includes_partial_reasoning_while_streaming() {
+    let mut builder = ExtensionRegistryBuilder::new();
+    builder.inference_engine(Arc::new(ReasoningThenPendingEngine));
+    let thread_root = std::env::temp_dir().join(format!(
+        "roder-active-reasoning-read-{}",
+        uuid::Uuid::new_v4()
+    ));
+    builder.thread_store_factory(Arc::new(JsonlThreadStoreFactory {
+        base_path: thread_root.clone(),
+    }));
+    let runtime = Arc::new(Runtime::new(builder.build().unwrap(), Default::default()).unwrap());
+    let server = Arc::new(AppServer::new(runtime));
+    let client = LocalAppClient::new(server);
+    let mut notifications = client.subscribe_notifications();
+
+    let thread_start = start_thread(&client).await;
+    let thread_id = thread_start.thread.id.clone();
+    let started = start_turn(&client, &thread_id, "show your work").await;
+    let reasoning = wait_for_notification(
+        &mut notifications,
+        "item/reasoning/textDelta",
+        Some(&thread_id),
+    )
+    .await;
+
+    assert_eq!(reasoning.params["turnId"], started.turn_id);
+    assert_eq!(reasoning.params["event"]["delta"]["delta"], "thinking");
+
+    let read: ThreadReadResult = request(
+        &client,
+        "thread/read",
+        Some(
+            serde_json::to_value(ThreadReadParams {
+                thread_id: thread_id.clone(),
+                include_turns: true,
+            })
+            .unwrap(),
+        ),
+    )
+    .await;
+    let thread = read.thread.expect("thread/read returns thread");
+    let turn = thread
+        .turns
+        .expect("thread/read returns turns")
+        .into_iter()
+        .find(|turn| turn.id == started.turn_id)
+        .expect("thread/read includes the active turn");
+
+    let reasoning_item = turn
+        .items
+        .iter()
+        .find_map(|item| match item {
+            Item::Reasoning {
+                id,
+                content,
+                status,
+                ..
+            } => Some((id, content, status)),
+            _ => None,
+        })
+        .expect("thread/read includes partial reasoning");
+
+    assert_eq!(
+        reasoning_item.0.as_str(),
+        reasoning.params["event"]["itemId"].as_str().unwrap()
+    );
+    assert_eq!(reasoning_item.1, &vec!["thinking".to_string()]);
+    assert_eq!(reasoning_item.2, &Some(ThreadItemStatus::InProgress));
+    assert!(!turn.items.iter().any(|item| matches!(
+        item,
+        Item::AgentMessage {
+            phase: Some(phase),
+            ..
+        } if phase == "reasoning"
+    )));
+
+    let _: TurnInterruptResult = request(
+        &client,
+        "turn/interrupt",
+        Some(
+            serde_json::to_value(TurnInterruptParams {
+                thread_id,
+                turn_id: Some(started.turn_id),
+            })
+            .unwrap(),
+        ),
+    )
+    .await;
+
+    let _ = std::fs::remove_dir_all(thread_root);
+}
+
+#[tokio::test]
+async fn item_stream_persistence_failures_emit_thread_status_flag() {
+    let mut builder = ExtensionRegistryBuilder::new();
+    builder.inference_engine(Arc::new(ReasoningThenPendingEngine));
+    builder.thread_store_factory(Arc::new(FailingItemEventThreadStoreFactory::default()));
+    let runtime = Arc::new(Runtime::new(builder.build().unwrap(), Default::default()).unwrap());
+    let server = Arc::new(AppServer::new(runtime));
+    let client = LocalAppClient::new(server);
+    let mut notifications = client.subscribe_notifications();
+
+    let thread_start = start_thread(&client).await;
+    let thread_id = thread_start.thread.id.clone();
+    let started = start_turn(&client, &thread_id, "show your work").await;
+
+    let flagged = tokio::time::timeout(Duration::from_secs(2), async {
+        loop {
+            let notification = notifications.recv().await.unwrap();
+            if notification.method != "thread/status/changed" {
+                continue;
+            }
+            if notification.params["threadId"] != thread_id {
+                continue;
+            }
+            let has_failure_flag = notification.params["status"]["activeFlags"]
+                .as_array()
+                .is_some_and(|flags| {
+                    flags
+                        .iter()
+                        .any(|flag| flag.as_str() == Some("itemPersistenceFailed"))
+                });
+            if has_failure_flag {
+                break notification;
+            }
+        }
+    })
+    .await
+    .expect("item stream persistence failure should emit a status notification");
+
+    assert_eq!(flagged.params["status"]["activeTurnId"], started.turn_id);
+
+    let _: TurnInterruptResult = request(
+        &client,
+        "turn/interrupt",
+        Some(
+            serde_json::to_value(TurnInterruptParams {
+                thread_id,
+                turn_id: Some(started.turn_id),
+            })
+            .unwrap(),
+        ),
+    )
+    .await;
+}
+
+#[tokio::test]
 async fn thread_archive_removes_thread_from_protocol_thread_list() {
     let mut builder = ExtensionRegistryBuilder::new();
     builder.inference_engine(Arc::new(FakeInferenceEngine));
@@ -3257,14 +3513,22 @@ async fn protocol_contract_turn_methods_and_notifications_match_protocol_contrac
             "item/agentMessage/delta" => {
                 assert_eq!(notification.params["threadId"], thread_id);
                 assert_eq!(notification.params["turnId"], turn_id);
-                assert!(notification.params["itemId"].as_str().is_some());
-                assert!(notification.params["delta"].as_str().is_some());
+                assert!(notification.params["event"]["itemId"].as_str().is_some());
+                assert!(
+                    notification.params["event"]["delta"]["delta"]
+                        .as_str()
+                        .is_some()
+                );
                 saw_delta = true;
             }
             "item/completed" => {
                 assert_eq!(notification.params["threadId"], thread_id);
                 assert_eq!(notification.params["turnId"], turn_id);
-                assert!(notification.params["item"]["type"].as_str().is_some());
+                assert!(
+                    notification.params["event"]["item"]["type"]
+                        .as_str()
+                        .is_some()
+                );
                 saw_item_completed = true;
             }
             "thread/status/changed" if notification.params["status"]["type"] == "running" => {

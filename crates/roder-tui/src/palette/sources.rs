@@ -2,7 +2,7 @@ use roder_api::inference::HostedWebSearchMode;
 use roder_api::marketplace::MarketplaceDescriptor;
 use roder_api::policy_mode::PolicyMode;
 use roder_protocol::{
-    AgentDescriptor, CommandDescriptor, ProvidersListResult, RunnersListResult,
+    AgentDescriptor, CommandDescriptor, Item, ProvidersListResult, RunnersListResult,
     SearchIndexSettings, ShellSettings, SpeechProvidersListResult, Thread, WebSearchSettings,
 };
 
@@ -541,7 +541,9 @@ pub fn thread_source(threads: &[Thread]) -> StaticPaletteSource {
                     .unwrap_or_default()
                     .iter()
                     .flat_map(|turn| turn.items.iter())
-                    .filter(|item| matches!(item.kind.as_str(), "userMessage" | "agentMessage"))
+                    .filter(|item| {
+                        matches!(item, Item::UserMessage { .. } | Item::AgentMessage { .. })
+                    })
                     .count();
                 let subtitle = Some(format!("{} - {} messages", thread.cwd, message_count));
                 (
