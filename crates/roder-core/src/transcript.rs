@@ -8,8 +8,8 @@ use roder_api::transcript::{
 };
 use time::OffsetDateTime;
 
-use crate::artifacts::CreateArtifactRequest;
 use crate::runtime::{Runtime, StartTurnRequest};
+use roder_api::artifacts::CreateArtifactRequest;
 
 impl Runtime {
     pub(crate) async fn transcript_for_turn(
@@ -309,7 +309,6 @@ mod tests {
     use std::path::{Path, PathBuf};
     use std::sync::Arc;
 
-    use roder_api::artifacts::ContextArtifactAccess;
     use roder_api::catalog::PROVIDER_MOCK;
     use roder_api::extension::ExtensionRegistryBuilder;
     use roder_api::skills::{SkillExposure, SkillSelector};

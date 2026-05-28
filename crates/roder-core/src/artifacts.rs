@@ -1,8 +1,9 @@
 use std::path::{Path, PathBuf};
 
+pub use roder_api::artifacts::CreateArtifactRequest;
 use roder_api::artifacts::{
     ArtifactGrepPage, ArtifactReadPage, ArtifactTailPage, ContextArtifact, ContextArtifactAccess,
-    ContextArtifactId, ContextArtifactKind,
+    ContextArtifactId, ContextArtifactStore as SharedContextArtifactStore,
 };
 use roder_api::events::{ThreadId, TurnId};
 use time::OffsetDateTime;
@@ -22,16 +23,6 @@ enum ArtifactStorageLayout {
     ThreadScoped,
 }
 
-#[derive(Debug, Clone)]
-pub struct CreateArtifactRequest<'a> {
-    pub kind: ContextArtifactKind,
-    pub thread_id: &'a ThreadId,
-    pub turn_id: &'a TurnId,
-    pub source_tool_id: Option<&'a str>,
-    pub label: Option<&'a str>,
-    pub bytes: &'a [u8],
-}
-
 impl ContextArtifactStore {
     pub fn new(root: impl Into<PathBuf>) -> Self {
         Self {
@@ -45,6 +36,14 @@ impl ContextArtifactStore {
             root: thread_root.into(),
             layout: ArtifactStorageLayout::ThreadScoped,
         }
+    }
+
+    pub fn shared_legacy(root: impl Into<PathBuf>) -> SharedContextArtifactStore {
+        SharedContextArtifactStore::new(std::sync::Arc::new(Self::new(root)))
+    }
+
+    pub fn shared_thread_scoped(thread_root: impl Into<PathBuf>) -> SharedContextArtifactStore {
+        SharedContextArtifactStore::new(std::sync::Arc::new(Self::new_thread_scoped(thread_root)))
     }
 
     pub fn root(&self) -> &Path {
@@ -204,6 +203,22 @@ impl ContextArtifactStore {
 }
 
 impl ContextArtifactAccess for ContextArtifactStore {
+    fn create_artifact(
+        &self,
+        request: CreateArtifactRequest<'_>,
+    ) -> anyhow::Result<ContextArtifact> {
+        self.create(request)
+    }
+
+    fn append_artifact(
+        &self,
+        thread_id: &ThreadId,
+        artifact_id: &ContextArtifactId,
+        bytes: &[u8],
+    ) -> anyhow::Result<ContextArtifact> {
+        self.append(thread_id, artifact_id, bytes)
+    }
+
     fn list_artifacts(&self, thread_id: &ThreadId) -> anyhow::Result<Vec<ContextArtifact>> {
         self.list_thread(thread_id)
     }
@@ -402,6 +417,7 @@ fn ensure_under_root(root: &Path, path: &Path) -> anyhow::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use roder_api::artifacts::ContextArtifactKind;
 
     #[test]
     fn artifact_store_writes_thread_scoped_reads_greps_tails_and_deletes_by_thread() {

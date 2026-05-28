@@ -4,6 +4,7 @@ use std::sync::Arc;
 use serde::{Deserialize, Deserializer, Serialize};
 use time::OffsetDateTime;
 
+use crate::artifacts::ContextArtifactStore;
 use crate::events::{EventEnvelope, ThreadId, TurnId};
 pub use crate::extension::{CheckpointStoreId, ThreadStoreId};
 use crate::extension_state::ExtensionStateRecord;
@@ -277,6 +278,10 @@ pub trait ThreadStore: Send + Sync {
     fn id(&self) -> ThreadStoreId;
 
     fn local_thread_root(&self) -> Option<PathBuf> {
+        None
+    }
+
+    fn context_artifact_store(&self) -> Option<ContextArtifactStore> {
         None
     }
 

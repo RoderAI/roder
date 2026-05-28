@@ -30,6 +30,8 @@ rusqlite = { version = "0.38.0", features = ["bundled"] }
 semver = "1.0.28"
 serde = "1.0.228"
 serde_json = { version = "1.0.149", features = ["preserve_order"] }
+sqlx-core = { version = "0.8.6", default-features = false, features = ["json", "time", "uuid"] }
+sqlx-postgres = { version = "0.8.6", default-features = false, features = ["json", "time", "uuid"] }
 serde_yaml = "0.9.34"
 sha2 = "0.11.0"
 similar = "3.1.0"
@@ -78,6 +80,7 @@ roder-ext-openai-embeddings = { path = "crates/roder-ext-openai-embeddings" }
 roder-ext-openai-speech = { path = "crates/roder-ext-openai-speech" }
 roder-ext-google-speech = { path = "crates/roder-ext-google-speech" }
 roder-ext-opencode = { path = "crates/roder-ext-opencode" }
+roder-ext-postgres-session = { path = "crates/roder-ext-postgres-session" }
 roder-ext-parallel-search = { path = "crates/roder-ext-parallel-search" }
 roder-ext-perplexity-search = { path = "crates/roder-ext-perplexity-search" }
 roder-ext-poolside = { path = "crates/roder-ext-poolside" }

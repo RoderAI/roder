@@ -11,7 +11,6 @@ use roder_api::transcript::{ToolResultRecord, tool_display_payload};
 use serde_json::Value;
 use time::OffsetDateTime;
 
-use crate::artifacts::CreateArtifactRequest;
 use crate::policy_gate::DefaultPolicyGate;
 use crate::runtime::{PendingPlanExit, Runtime};
 use crate::tool_output::{
@@ -21,6 +20,7 @@ use crate::tool_preview::file_change_preview;
 use crate::tool_validation::{
     emit_tool_validation_recorded, validate_tool_call_arguments, validation_error_tool_result,
 };
+use roder_api::artifacts::CreateArtifactRequest;
 
 impl Runtime {
     pub(crate) async fn route_tool_call(

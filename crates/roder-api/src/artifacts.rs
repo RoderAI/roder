@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use serde::{Deserialize, Serialize};
 use time::OffsetDateTime;
 
@@ -115,6 +117,95 @@ pub struct ArtifactReadPage {
     pub truncated: bool,
 }
 
+#[derive(Debug, Clone)]
+pub struct CreateArtifactRequest<'a> {
+    pub kind: ContextArtifactKind,
+    pub thread_id: &'a ThreadId,
+    pub turn_id: &'a TurnId,
+    pub source_tool_id: Option<&'a str>,
+    pub label: Option<&'a str>,
+    pub bytes: &'a [u8],
+}
+
+#[derive(Clone)]
+pub struct ContextArtifactStore {
+    backend: Arc<dyn ContextArtifactAccess>,
+}
+
+impl ContextArtifactStore {
+    pub fn new(backend: Arc<dyn ContextArtifactAccess>) -> Self {
+        Self { backend }
+    }
+
+    pub fn backend(&self) -> Arc<dyn ContextArtifactAccess> {
+        Arc::clone(&self.backend)
+    }
+
+    pub fn create(&self, request: CreateArtifactRequest<'_>) -> anyhow::Result<ContextArtifact> {
+        self.backend.create_artifact(request)
+    }
+
+    pub fn append(
+        &self,
+        thread_id: &ThreadId,
+        artifact_id: &ContextArtifactId,
+        bytes: &[u8],
+    ) -> anyhow::Result<ContextArtifact> {
+        self.backend.append_artifact(thread_id, artifact_id, bytes)
+    }
+
+    pub fn list_artifacts(&self, thread_id: &ThreadId) -> anyhow::Result<Vec<ContextArtifact>> {
+        self.backend.list_artifacts(thread_id)
+    }
+
+    pub fn read_artifact(
+        &self,
+        thread_id: &ThreadId,
+        artifact_id: &ContextArtifactId,
+        start_line: usize,
+        limit: usize,
+    ) -> anyhow::Result<ArtifactReadPage> {
+        self.backend
+            .read_artifact(thread_id, artifact_id, start_line, limit)
+    }
+
+    pub fn grep_artifact(
+        &self,
+        thread_id: &ThreadId,
+        artifact_id: &ContextArtifactId,
+        query: &str,
+        offset: usize,
+        limit: usize,
+    ) -> anyhow::Result<ArtifactGrepPage> {
+        self.backend
+            .grep_artifact(thread_id, artifact_id, query, offset, limit)
+    }
+
+    pub fn tail_artifact(
+        &self,
+        thread_id: &ThreadId,
+        artifact_id: &ContextArtifactId,
+        lines: usize,
+    ) -> anyhow::Result<ArtifactTailPage> {
+        self.backend.tail_artifact(thread_id, artifact_id, lines)
+    }
+
+    pub fn delete_artifact(
+        &self,
+        thread_id: &ThreadId,
+        artifact_id: &ContextArtifactId,
+    ) -> anyhow::Result<bool> {
+        self.backend.delete_artifact(thread_id, artifact_id)
+    }
+}
+
+impl std::fmt::Debug for ContextArtifactStore {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ContextArtifactStore")
+            .finish_non_exhaustive()
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct ArtifactGrepPage {
@@ -143,6 +234,16 @@ pub struct ArtifactTailPage {
 }
 
 pub trait ContextArtifactAccess: Send + Sync + 'static {
+    fn create_artifact(
+        &self,
+        request: CreateArtifactRequest<'_>,
+    ) -> anyhow::Result<ContextArtifact>;
+    fn append_artifact(
+        &self,
+        thread_id: &ThreadId,
+        artifact_id: &ContextArtifactId,
+        bytes: &[u8],
+    ) -> anyhow::Result<ContextArtifact>;
     fn list_artifacts(&self, thread_id: &ThreadId) -> anyhow::Result<Vec<ContextArtifact>>;
     fn read_artifact(
         &self,

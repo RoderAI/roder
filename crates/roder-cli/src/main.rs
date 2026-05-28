@@ -50,7 +50,7 @@ use roder_ext_subagents::{AgentLoadConfig, load_agent_definitions};
 use roder_extension_host::{
     CustomInferenceProviderConfig, DefaultNotificationsConfig, DefaultRegistryConfig,
     DefaultSubagentsConfig, DefaultWebSearchConfig, DefaultWebSearchProviderConfig,
-    build_default_registry,
+    SessionStoreConfig, build_default_registry,
 };
 use roder_protocol::{
     Item, JsonRpcError, JsonRpcRequest, JsonRpcResponse, MemoryDeleteParams, MemoryDeleteResult,
@@ -1069,6 +1069,7 @@ pub(crate) async fn build_runtime_from_config(
         resolve_model_profiles(&model_profile_overrides_from_config(&cfg.model_profiles))?;
     let notifications = resolve_notifications_config(cfg.notifications.as_ref())?;
     let remote_runner_destination = resolve_remote_runner_destination(cfg.remote_runners.as_ref())?;
+    let session_store = resolve_session_store_config(cfg.sessions.as_ref())?;
     let tool_path_scope = resolve_tool_path_scope(cfg.tools.as_ref())?;
     let command_shell = resolve_command_shell(cfg.tools.as_ref());
     let search_index_enabled = cfg
@@ -1117,6 +1118,7 @@ pub(crate) async fn build_runtime_from_config(
         xiaomi_mimo_token_plan_base_url: keys.xiaomi_mimo_token_plan_base_url,
         custom_inference_providers: custom_inference_provider_configs,
         thread_dir: None,
+        session_store,
         workspace: workspace.clone(),
         tool_path_scope,
         command_shell: command_shell.clone(),
@@ -1186,6 +1188,51 @@ fn resolve_command_shell(config: Option<&roder_config::ToolsConfig>) -> String {
         .and_then(|tools| tools.shell.as_deref())
         .and_then(normalize_command_shell)
         .unwrap_or_else(default_command_shell)
+}
+
+fn resolve_session_store_config(
+    config: Option<&roder_config::SessionsConfig>,
+) -> anyhow::Result<SessionStoreConfig> {
+    let Some(config) = config else {
+        return Ok(SessionStoreConfig::Jsonl);
+    };
+    match config.store.trim().to_ascii_lowercase().as_str() {
+        "" | "jsonl" | "jsonl-thread-store" => Ok(SessionStoreConfig::Jsonl),
+        "postgres" | "postgres-session" => {
+            let postgres = config.postgres.as_ref().ok_or_else(|| {
+                anyhow::anyhow!("[sessions.postgres] is required when sessions.store = 'postgres'")
+            })?;
+            let database_url = resolve_config_secret(
+                postgres.database_url.as_deref(),
+                postgres.database_url_env.as_deref(),
+            )
+            .ok_or_else(|| anyhow::anyhow!("PostgreSQL session database URL is required"))?;
+            let tenant_id = resolve_config_secret(
+                postgres.tenant_id.as_deref(),
+                postgres.tenant_id_env.as_deref(),
+            )
+            .ok_or_else(|| anyhow::anyhow!("PostgreSQL session tenant id is required"))?;
+            let mut resolved =
+                roder_ext_postgres_session::PostgresSessionConfig::new(database_url, tenant_id)?;
+            resolved.max_connections = postgres.max_connections;
+            Ok(SessionStoreConfig::Postgres(resolved))
+        }
+        other => {
+            anyhow::bail!("unsupported sessions.store {other:?}; expected 'jsonl' or 'postgres'")
+        }
+    }
+}
+
+fn resolve_config_secret(value: Option<&str>, env_name: Option<&str>) -> Option<String> {
+    value
+        .filter(|value| !value.trim().is_empty())
+        .map(ToOwned::to_owned)
+        .or_else(|| {
+            env_name
+                .filter(|name| !name.trim().is_empty())
+                .and_then(|name| std::env::var(name).ok())
+                .filter(|value| !value.trim().is_empty())
+        })
 }
 
 fn resolve_notifications_config(

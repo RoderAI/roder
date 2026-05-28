@@ -24,6 +24,7 @@ pub struct Config {
     pub speed_policy: Option<SpeedPolicyConfig>,
     pub web_search: Option<WebSearchConfig>,
     pub context: Option<ContextConfig>,
+    pub sessions: Option<SessionsConfig>,
     pub subagents: Option<SubagentsConfig>,
     pub policy_modes: Option<PolicyModesConfig>,
     pub commands: Option<CommandsConfig>,
@@ -82,6 +83,35 @@ impl Default for SpeedPolicyConfig {
             eval_deadline_seconds: None,
         }
     }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct SessionsConfig {
+    #[serde(default = "default_session_store")]
+    pub store: String,
+    pub postgres: Option<PostgresSessionConfig>,
+}
+
+impl Default for SessionsConfig {
+    fn default() -> Self {
+        Self {
+            store: default_session_store(),
+            postgres: None,
+        }
+    }
+}
+
+#[derive(Debug, Default, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct PostgresSessionConfig {
+    pub database_url: Option<String>,
+    pub database_url_env: Option<String>,
+    pub tenant_id: Option<String>,
+    pub tenant_id_env: Option<String>,
+    pub max_connections: Option<u32>,
+}
+
+fn default_session_store() -> String {
+    "jsonl".to_string()
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -990,6 +1020,41 @@ fn apply_env_overrides_with(config: &mut Config, mut env: impl FnMut(&str) -> Op
     {
         config.auto_compact_token_limit = Some(limit);
     }
+    if let Some(store) = env("RODER_SESSION_STORE")
+        && !store.trim().is_empty()
+    {
+        config.sessions.get_or_insert_with(Default::default).store = store;
+    }
+    if let Some(url) = env("RODER_POSTGRES_SESSION_URL")
+        && !url.trim().is_empty()
+    {
+        config
+            .sessions
+            .get_or_insert_with(Default::default)
+            .postgres
+            .get_or_insert_with(Default::default)
+            .database_url = Some(url);
+    }
+    if let Some(tenant) = env("RODER_POSTGRES_SESSION_TENANT")
+        && !tenant.trim().is_empty()
+    {
+        config
+            .sessions
+            .get_or_insert_with(Default::default)
+            .postgres
+            .get_or_insert_with(Default::default)
+            .tenant_id = Some(tenant);
+    }
+    if let Some(max) = env("RODER_POSTGRES_SESSION_MAX_CONNECTIONS")
+        && let Ok(max) = max.trim().parse::<u32>()
+    {
+        config
+            .sessions
+            .get_or_insert_with(Default::default)
+            .postgres
+            .get_or_insert_with(Default::default)
+            .max_connections = Some(max);
+    }
     if let Some(disabled) = env("RODER_DISABLE_CONTEXT_ARTIFACTS")
         && parse_bool(&disabled).unwrap_or(false)
     {
@@ -1241,6 +1306,7 @@ mod tests {
             speed_policy: None,
             web_search: None,
             context: None,
+            sessions: None,
             subagents: None,
             policy_modes: None,
             commands: None,
@@ -1272,6 +1338,28 @@ mod tests {
         assert!(encoded.contains("model = \"gpt-5.5\""));
         assert!(encoded.contains("[providers.openai]"));
         assert!(encoded.contains("api_key = \"key\""));
+    }
+
+    #[test]
+    fn sessions_env_overrides_select_postgres() {
+        let mut config = Config::default();
+        apply_env_overrides_with(&mut config, |key| match key {
+            "RODER_SESSION_STORE" => Some("postgres".to_string()),
+            "RODER_POSTGRES_SESSION_URL" => Some("postgres://user:secret@localhost/db".to_string()),
+            "RODER_POSTGRES_SESSION_TENANT" => Some("tenant-a".to_string()),
+            "RODER_POSTGRES_SESSION_MAX_CONNECTIONS" => Some("7".to_string()),
+            _ => None,
+        });
+
+        let sessions = config.sessions.unwrap();
+        assert_eq!(sessions.store, "postgres");
+        let postgres = sessions.postgres.unwrap();
+        assert_eq!(
+            postgres.database_url.as_deref(),
+            Some("postgres://user:secret@localhost/db")
+        );
+        assert_eq!(postgres.tenant_id.as_deref(), Some("tenant-a"));
+        assert_eq!(postgres.max_connections, Some(7));
     }
 
     #[test]
