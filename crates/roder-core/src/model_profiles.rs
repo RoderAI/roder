@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
 use roder_api::catalog::{
-    EDIT_TOOL_EDIT, EDIT_TOOL_PATCH, REASONING_HIGH, REASONING_LOW, REASONING_MEDIUM,
+    EDIT_TOOL_EDIT, EDIT_TOOL_PATCH, REASONING_HIGH, REASONING_LOW, REASONING_MAX, REASONING_MEDIUM,
     REASONING_MINIMAL, REASONING_NONE, REASONING_XHIGH, built_in_model_profile,
     built_in_model_profiles, lookup_model, model_supports_reasoning_effort,
 };
@@ -162,7 +162,7 @@ fn validate_edit_tool_name(value: &str) -> anyhow::Result<()> {
 fn validate_reasoning_name(value: &str) -> anyhow::Result<()> {
     match value {
         REASONING_NONE | REASONING_MINIMAL | REASONING_LOW | REASONING_MEDIUM | REASONING_HIGH
-        | REASONING_XHIGH => Ok(()),
+        | REASONING_XHIGH | REASONING_MAX => Ok(()),
         other => anyhow::bail!("unsupported model profile reasoning effort {other:?}"),
     }
 }

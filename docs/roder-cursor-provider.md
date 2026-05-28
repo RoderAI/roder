@@ -6,11 +6,20 @@ Roder exposes Cursor Composer as a first-class inference provider id:
 cursor
 ```
 
-The initial model descriptor is:
+Cursor exposes Composer alongside frontier models it proxies through AgentService. The catalog ships these descriptors:
 
 ```text
 cursor/composer-2.5
+cursor/claude-opus-4-8
+cursor/claude-sonnet-4-6
+cursor/gpt-5.5
+cursor/gemini-3.1-pro-preview
+cursor/grok-4.3
 ```
+
+Each proxied model reuses the same id as its native provider, so the model string sent to AgentService matches the underlying model.
+
+`cursor/claude-opus-4-8` advertises configurable reasoning effort (`low`, `medium`, `high`, `xhigh`, `max`; default `high`), matching the native Anthropic Opus catalog entry. Note: the AgentService protobuf encoding does not yet forward the selected effort over the wire — that requires a captured Cursor model-options fixture. The other proxied models do not expose effort options.
 
 ## API Key Setup
 
@@ -65,7 +74,7 @@ The provider keeps the older discovery-trace context path behind `RODER_CURSOR_A
 
 ## Supported Surface
 
-The first provider slice supports streaming text turns, fallback model listing for `composer-2.5`, and Cursor-native read-file tool requests. Token usage is estimated from streamed prompt/output text when Cursor does not return official usage fields through this AgentService path; streamed thinking text is counted separately in provider metadata so the TUI can render the `thinking` token summary.
+The first provider slice supports streaming text turns, model listing for the catalog's Cursor models, and Cursor-native read-file tool requests. Token usage is estimated from streamed prompt/output text when Cursor does not return official usage fields through this AgentService path; streamed thinking text is counted separately in provider metadata so the TUI can render the `thinking` token summary.
 
 Cursor AgentService is tool-capable. A traced `cursor-agent --print --model composer-2.5` run produced a Cursor-native `readToolCall`, executed the file read locally, and wrote the tool result back into the same HTTP/2 AgentService stream. Roder now decodes the observed Cursor-native `readToolCall` response shape into canonical `read_file` tool calls, routes execution through Roder's tool registry and policy system, and replays tool call/result context into the next Cursor model round.
 

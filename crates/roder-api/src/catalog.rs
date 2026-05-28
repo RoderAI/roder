@@ -40,6 +40,7 @@ pub const REASONING_LOW: &str = "low";
 pub const REASONING_MEDIUM: &str = "medium";
 pub const REASONING_HIGH: &str = "high";
 pub const REASONING_XHIGH: &str = "xhigh";
+pub const REASONING_MAX: &str = "max";
 
 pub const DEFAULT_MODEL_ID: &str = "gpt-5.5";
 pub const EDIT_TOOL_PATCH: &str = "patch";
@@ -99,6 +100,51 @@ pub const STANDARD_REASONING: &[ReasoningOption] = &[
     ReasoningOption {
         effort: REASONING_XHIGH,
         description: "Extra high reasoning depth for complex problems",
+    },
+];
+
+// Claude Opus 4.7/4.8 support the full effort range, including `xhigh` for
+// long-horizon agentic work and `max` for genuinely frontier problems.
+pub const OPUS_REASONING: &[ReasoningOption] = &[
+    ReasoningOption {
+        effort: REASONING_LOW,
+        description: "Most efficient; best for short, scoped tasks",
+    },
+    ReasoningOption {
+        effort: REASONING_MEDIUM,
+        description: "Balanced reasoning depth for cost-sensitive workflows",
+    },
+    ReasoningOption {
+        effort: REASONING_HIGH,
+        description: "High capability for complex reasoning and agentic tasks",
+    },
+    ReasoningOption {
+        effort: REASONING_XHIGH,
+        description: "Extended capability for long-horizon coding and agentic work",
+    },
+    ReasoningOption {
+        effort: REASONING_MAX,
+        description: "Absolute maximum capability with no constraints on token spending",
+    },
+];
+
+// Claude Sonnet 4.6 supports `max` but not `xhigh`.
+pub const SONNET_REASONING: &[ReasoningOption] = &[
+    ReasoningOption {
+        effort: REASONING_LOW,
+        description: "Most efficient; lowest latency and cost",
+    },
+    ReasoningOption {
+        effort: REASONING_MEDIUM,
+        description: "Balances speed, cost, and performance for most tasks",
+    },
+    ReasoningOption {
+        effort: REASONING_HIGH,
+        description: "Greater reasoning depth for complex problems",
+    },
+    ReasoningOption {
+        effort: REASONING_MAX,
+        description: "Absolute maximum capability with no constraints on token spending",
     },
 ];
 
@@ -395,13 +441,22 @@ pub const BUILT_IN_MODELS: &[ModelCatalogEntry] = &[
         hidden: true,
     },
     anthropic_model(
+        "claude-opus-4-8",
+        "Claude Opus 4.8",
+        "Anthropic's most capable model for complex reasoning, long-horizon agentic coding, and high-autonomy work.",
+        1_000_000,
+        900_000,
+        REASONING_HIGH,
+        OPUS_REASONING,
+    ),
+    anthropic_model(
         "claude-opus-4-7",
         "Claude Opus 4.7",
         "Most capable Claude model for complex reasoning and agentic coding.",
         1_000_000,
         900_000,
         REASONING_HIGH,
-        STANDARD_REASONING,
+        OPUS_REASONING,
     ),
     anthropic_model(
         "claude-sonnet-4-6",
@@ -410,7 +465,7 @@ pub const BUILT_IN_MODELS: &[ModelCatalogEntry] = &[
         1_000_000,
         900_000,
         REASONING_MEDIUM,
-        STANDARD_REASONING,
+        SONNET_REASONING,
     ),
     anthropic_model(
         "claude-haiku-4-5-20251001",
@@ -652,6 +707,51 @@ pub const BUILT_IN_MODELS: &[ModelCatalogEntry] = &[
         edit_tool: None,
         hidden: false,
     },
+    cursor_model(
+        "claude-opus-4-8",
+        "Claude Opus 4.8",
+        "Anthropic Claude Opus 4.8 routed through Cursor's AgentService.",
+        1_000_000,
+        900_000,
+        REASONING_HIGH,
+        OPUS_REASONING,
+    ),
+    cursor_model(
+        "claude-sonnet-4-6",
+        "Claude Sonnet 4.6",
+        "Anthropic Claude Sonnet 4.6 routed through Cursor's AgentService.",
+        1_000_000,
+        900_000,
+        REASONING_NONE,
+        &[],
+    ),
+    cursor_model(
+        "gpt-5.5",
+        "GPT-5.5",
+        "OpenAI GPT-5.5 routed through Cursor's AgentService.",
+        1_050_000,
+        945_000,
+        REASONING_NONE,
+        &[],
+    ),
+    cursor_model(
+        "gemini-3.1-pro-preview",
+        "Gemini 3.1 Pro",
+        "Google Gemini 3.1 Pro routed through Cursor's AgentService.",
+        1_048_576,
+        943_718,
+        REASONING_NONE,
+        &[],
+    ),
+    cursor_model(
+        "grok-4.3",
+        "Grok 4.3",
+        "xAI Grok 4.3 routed through Cursor's AgentService.",
+        1_000_000,
+        900_000,
+        REASONING_NONE,
+        &[],
+    ),
     ModelCatalogEntry {
         id: "text-embedding-3-large",
         display_name: "Text Embedding 3 Large",
@@ -850,6 +950,34 @@ const fn poolside_model(
     }
 }
 
+const fn cursor_model(
+    id: &'static str,
+    display_name: &'static str,
+    description: &'static str,
+    context_window: u32,
+    auto_compact_token_limit: u32,
+    default_reasoning: &'static str,
+    supported_reasoning: &'static [ReasoningOption],
+) -> ModelCatalogEntry {
+    ModelCatalogEntry {
+        id,
+        display_name,
+        description,
+        provider: PROVIDER_CURSOR,
+        default_reasoning,
+        supported_reasoning,
+        context_window,
+        max_context_window: context_window,
+        auto_compact_token_limit,
+        supports_compaction: true,
+        supports_images: false,
+        supports_tools: false,
+        supports_structured: false,
+        edit_tool: None,
+        hidden: false,
+    }
+}
+
 pub fn built_in_providers() -> &'static [ProviderCatalogEntry] {
     BUILT_IN_PROVIDERS
 }
@@ -881,8 +1009,36 @@ pub fn lookup_model(id: &str) -> Option<&'static ModelCatalogEntry> {
     BUILT_IN_MODELS.iter().find(|model| model.id == id)
 }
 
+/// Resolve a catalog entry preferring an exact `(provider, id)` match.
+///
+/// Several model ids are shared across providers (for example `gpt-5.5` is
+/// offered by both OpenAI and Cursor). [`lookup_model`] returns the first entry
+/// by id, which silently resolves cross-provider ids to the wrong provider's
+/// metadata. When the active provider is known, prefer this function so that,
+/// e.g., `cursor/claude-opus-4-8` resolves to the Cursor catalog entry rather
+/// than the Anthropic one. Falls back to id-only lookup so provider aliases and
+/// user-defined models keep working.
+pub fn lookup_model_for_provider(provider: &str, id: &str) -> Option<&'static ModelCatalogEntry> {
+    BUILT_IN_MODELS
+        .iter()
+        .find(|model| model.provider == provider && model.id == id)
+        .or_else(|| lookup_model(id))
+}
+
 pub fn built_in_model_profile(id: &str) -> Option<ModelHarnessProfile> {
     lookup_model(id).map(model_harness_profile_from_catalog)
+}
+
+/// Provider-aware variant of [`built_in_model_profile`].
+///
+/// Resolves the harness profile (provider family, instruction overlay, schema
+/// policy, edit tool) using the active provider so cross-provider model ids
+/// pick up the correct family instead of the first id match.
+pub fn built_in_model_profile_for_provider(
+    provider: &str,
+    id: &str,
+) -> Option<ModelHarnessProfile> {
+    lookup_model_for_provider(provider, id).map(model_harness_profile_from_catalog)
 }
 
 pub fn built_in_model_profiles() -> Vec<ModelHarnessProfile> {
@@ -1078,6 +1234,7 @@ mod tests {
                 "gpt-5.5",
                 "gpt-5.4-mini",
                 "gpt-5.3-codex-spark",
+                "claude-opus-4-8",
                 "claude-opus-4-7",
                 "claude-sonnet-4-6",
                 "claude-haiku-4-5-20251001",
@@ -1117,6 +1274,11 @@ mod tests {
                 "mimo-v2-omni",
                 "mimo-v2-flash",
                 "composer-2.5",
+                "claude-opus-4-8",
+                "claude-sonnet-4-6",
+                "gpt-5.5",
+                "gemini-3.1-pro-preview",
+                "grok-4.3",
             ]
         );
     }
@@ -1125,14 +1287,14 @@ mod tests {
     fn provider_model_lists_match_gode_catalog() {
         assert_eq!(models_for_provider(PROVIDER_OPENAI, false).len(), 2);
         assert_eq!(models_for_codex(false).len(), 3);
-        assert_eq!(models_for_provider(PROVIDER_ANTHROPIC, false).len(), 3);
+        assert_eq!(models_for_provider(PROVIDER_ANTHROPIC, false).len(), 4);
         assert_eq!(models_for_provider(PROVIDER_GEMINI, false).len(), 5);
         assert_eq!(models_for_provider(PROVIDER_XAI, false).len(), 4);
         assert_eq!(models_for_provider(PROVIDER_SUPERGROK, false).len(), 4);
         assert_eq!(models_for_provider(PROVIDER_OPENCODE, false).len(), 6);
         assert_eq!(models_for_provider(PROVIDER_OPENCODE_GO, false).len(), 4);
         assert_eq!(models_for_provider(PROVIDER_POOLSIDE, false).len(), 2);
-        assert_eq!(models_for_provider(PROVIDER_CURSOR, false).len(), 1);
+        assert_eq!(models_for_provider(PROVIDER_CURSOR, false).len(), 6);
         assert_eq!(models_for_provider(PROVIDER_XIAOMI_MIMO, false).len(), 5);
         assert_eq!(
             models_for_provider(PROVIDER_XIAOMI_MIMO_TOKEN_PLAN, false).len(),
@@ -1253,6 +1415,100 @@ mod tests {
         let profile = built_in_model_profile("composer-2.5").unwrap();
         assert_eq!(profile.provider_family, ProviderFamily::Cursor);
         assert_eq!(profile.parallel_tool_calls, Some(false));
+    }
+
+    #[test]
+    fn provider_aware_lookup_resolves_cursor_proxied_models_to_cursor_family() {
+        // Id-only lookup resolves shared ids to the first (native) entry.
+        let id_only = built_in_model_profile("claude-opus-4-8").unwrap();
+        assert_eq!(id_only.provider_family, ProviderFamily::Anthropic);
+
+        // Provider-aware lookup resolves to the Cursor catalog entry/family.
+        let cursor = built_in_model_profile_for_provider(PROVIDER_CURSOR, "claude-opus-4-8").unwrap();
+        assert_eq!(cursor.provider_family, ProviderFamily::Cursor);
+        assert_eq!(cursor.provider, PROVIDER_CURSOR);
+        assert_eq!(cursor.parallel_tool_calls, Some(false));
+
+        let anthropic =
+            built_in_model_profile_for_provider(PROVIDER_ANTHROPIC, "claude-opus-4-8").unwrap();
+        assert_eq!(anthropic.provider_family, ProviderFamily::Anthropic);
+
+        // Unknown provider falls back to id-only resolution.
+        let fallback =
+            built_in_model_profile_for_provider("does-not-exist", "claude-opus-4-8").unwrap();
+        assert_eq!(fallback.provider_family, ProviderFamily::Anthropic);
+    }
+
+    #[test]
+    fn cursor_opus_advertises_configurable_reasoning_effort() {
+        let opus = models_for_provider(PROVIDER_CURSOR, false)
+            .into_iter()
+            .find(|model| model.id == "claude-opus-4-8")
+            .expect("cursor catalog should expose claude-opus-4-8");
+
+        assert_eq!(opus.default_reasoning.as_deref(), Some(REASONING_HIGH));
+        assert_eq!(
+            opus.supported_reasoning
+                .iter()
+                .map(|option| option.effort.as_str())
+                .collect::<Vec<_>>(),
+            vec![
+                REASONING_LOW,
+                REASONING_MEDIUM,
+                REASONING_HIGH,
+                REASONING_XHIGH,
+                REASONING_MAX
+            ]
+        );
+
+        // Non-Opus Cursor models remain effort-free for now.
+        let sonnet = models_for_provider(PROVIDER_CURSOR, false)
+            .into_iter()
+            .find(|model| model.id == "claude-sonnet-4-6")
+            .expect("cursor catalog should expose claude-sonnet-4-6");
+        assert_eq!(sonnet.default_reasoning, None);
+        assert!(sonnet.supported_reasoning.is_empty());
+    }
+
+    #[test]
+    fn claude_opus_and_sonnet_advertise_max_effort() {
+        let efforts = |id: &str| {
+            lookup_model(id)
+                .unwrap()
+                .supported_reasoning
+                .iter()
+                .map(|option| option.effort)
+                .collect::<Vec<_>>()
+        };
+
+        // Opus 4.7/4.8 support both xhigh and max.
+        for id in ["claude-opus-4-8", "claude-opus-4-7"] {
+            assert_eq!(
+                efforts(id),
+                vec![
+                    REASONING_LOW,
+                    REASONING_MEDIUM,
+                    REASONING_HIGH,
+                    REASONING_XHIGH,
+                    REASONING_MAX
+                ],
+                "{id} effort levels"
+            );
+        }
+
+        // Sonnet 4.6 supports max but not xhigh.
+        assert_eq!(
+            efforts("claude-sonnet-4-6"),
+            vec![
+                REASONING_LOW,
+                REASONING_MEDIUM,
+                REASONING_HIGH,
+                REASONING_MAX
+            ]
+        );
+
+        // max stays Anthropic-specific; shared STANDARD_REASONING models do not gain it.
+        assert!(!efforts("gpt-5.5").contains(&REASONING_MAX));
     }
 
     #[test]
