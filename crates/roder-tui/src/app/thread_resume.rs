@@ -132,9 +132,9 @@ where
                 content, summary, ..
             } => {
                 let text = if content.is_empty() {
-                    summary.join("\n")
+                    reasoning_blocks_text(summary)
                 } else {
-                    content.join("")
+                    reasoning_blocks_text(content)
                 };
                 if !text.trim().is_empty() {
                     self.timeline.push_reasoning_delta(&text);
@@ -195,6 +195,15 @@ where
             resume_command: format!("roder resume {}", self.thread_id),
         }
     }
+}
+
+fn reasoning_blocks_text(blocks: &[String]) -> String {
+    blocks
+        .iter()
+        .filter(|block| !block.is_empty())
+        .cloned()
+        .collect::<Vec<_>>()
+        .join("\n\n")
 }
 
 pub(super) async fn load_thread<C>(client: &C, thread_id: &str) -> anyhow::Result<Option<Thread>>

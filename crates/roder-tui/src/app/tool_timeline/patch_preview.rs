@@ -227,17 +227,20 @@ fn file_header_line(file: &FileDiffPreview, theme: Theme, width: u16) -> Line<'s
     // Right-aligned: "+2 -1"
     let left_text = format!("  ▶ {}", file.path);
     let left_len = left_text.chars().count();
-    
+
     // Format right-aligned count
     let add_str = format!("+{}", file.additions);
     let del_str = format!("-{}", file.deletions);
     let right_len = add_str.chars().count() + 1 + del_str.chars().count(); // "+2 -1"
-    
+
     let pad_len = usize::from(width).saturating_sub(left_len + right_len);
-    
+
     Line::from(vec![
         Span::styled("  ▶ ", theme.subtle()),
-        Span::styled(file.path.clone(), Style::default().add_modifier(Modifier::BOLD)),
+        Span::styled(
+            file.path.clone(),
+            Style::default().add_modifier(Modifier::BOLD),
+        ),
         Span::styled(" ".repeat(pad_len), Style::default()),
         Span::styled(add_str, Style::default().fg(theme.diff_added)),
         Span::styled(" ", Style::default()),

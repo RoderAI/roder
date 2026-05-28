@@ -3817,14 +3817,14 @@ where
         match self.provider_popup_screen {
             ProviderPopupScreen::Main => " Menu (Enter select, Esc close) ".to_string(),
             ProviderPopupScreen::Providers => {
-                let selected_provider = self.provider_state.selected().and_then(|idx| {
-                    self.filtered_provider_menu_items().get(idx).cloned()
-                }).and_then(|item| {
-                    match item {
+                let selected_provider = self
+                    .provider_state
+                    .selected()
+                    .and_then(|idx| self.filtered_provider_menu_items().get(idx).cloned())
+                    .and_then(|item| match item {
                         ProviderMenuItem::Provider(p) => Some(p),
                         _ => None,
-                    }
-                });
+                    });
 
                 let reset_action = if let Some(provider) = selected_provider {
                     if provider.authenticated {
@@ -3841,23 +3841,43 @@ where
                 };
 
                 if self.provider_menu_filter.is_empty() {
-                    format!(" Providers (Enter select, Backspace {}, Esc back) ", reset_action)
+                    format!(
+                        " Providers (Enter select, Backspace {}, Esc back) ",
+                        reset_action
+                    )
                 } else {
-                    format!(" Providers (Enter select, Ctrl-R {}, Esc back) ", reset_action)
+                    format!(
+                        " Providers (Enter select, Ctrl-R {}, Esc back) ",
+                        reset_action
+                    )
                 }
             }
             ProviderPopupScreen::ApiKey => " Paste API key (Enter save, Esc back) ".to_string(),
-            ProviderPopupScreen::Models => " Models by provider (Enter select, Esc back) ".to_string(),
-            ProviderPopupScreen::Reasoning => " Reasoning effort (Enter select, Esc back) ".to_string(),
+            ProviderPopupScreen::Models => {
+                " Models by provider (Enter select, Esc back) ".to_string()
+            }
+            ProviderPopupScreen::Reasoning => {
+                " Reasoning effort (Enter select, Esc back) ".to_string()
+            }
             ProviderPopupScreen::Settings => " Settings (Enter select, Esc back) ".to_string(),
             ProviderPopupScreen::Runners => " Runners (Enter select, Esc back) ".to_string(),
-            ProviderPopupScreen::Spinner => " Working spinner (Enter select, Esc back) ".to_string(),
-            ProviderPopupScreen::WebSearch => " Web search provider (Enter select, Esc back) ".to_string(),
-            ProviderPopupScreen::VoiceModels => " Voice model (Enter select, Esc back) ".to_string(),
-            ProviderPopupScreen::Shell => " Shell command shell (Enter select, Esc back) ".to_string(),
+            ProviderPopupScreen::Spinner => {
+                " Working spinner (Enter select, Esc back) ".to_string()
+            }
+            ProviderPopupScreen::WebSearch => {
+                " Web search provider (Enter select, Esc back) ".to_string()
+            }
+            ProviderPopupScreen::VoiceModels => {
+                " Voice model (Enter select, Esc back) ".to_string()
+            }
+            ProviderPopupScreen::Shell => {
+                " Shell command shell (Enter select, Esc back) ".to_string()
+            }
             ProviderPopupScreen::Resume => " Resume thread (Enter select, Esc back) ".to_string(),
             ProviderPopupScreen::Themes => " Themes (Enter select, Esc back) ".to_string(),
-            ProviderPopupScreen::Marketplaces => " Plugin marketplaces (Enter select, Esc back) ".to_string(),
+            ProviderPopupScreen::Marketplaces => {
+                " Plugin marketplaces (Enter select, Esc back) ".to_string()
+            }
         }
     }
 
