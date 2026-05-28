@@ -5,8 +5,8 @@ use anyhow::Context;
 use roder_api::events::{EventEnvelope, RoderEvent, ThreadId};
 use roder_api::extension_state::ExtensionStateRecord;
 use roder_api::thread::{
-    ThreadItemEvent, ThreadMetadata, ThreadSnapshot, ThreadStore, ThreadStoreFactory, TurnRecord,
-    validate_thread_workspace,
+    ThreadItemEvent, ThreadMetadata, ThreadSnapshot, ThreadStore, ThreadStoreFactory,
+    project_turns_from_events, validate_thread_workspace,
 };
 use roder_api::transcript::TranscriptItem;
 use time::OffsetDateTime;
@@ -514,63 +514,6 @@ fn archived_threads_root(active_threads_root: &Path) -> PathBuf {
 
 fn is_runtime_event_directory_without_metadata(thread_id: &str, dir: &Path) -> bool {
     thread_id == "runtime" && !dir.join("metadata.json").exists()
-}
-
-fn project_turns_from_events(thread_id: &ThreadId, events: &[EventEnvelope]) -> Vec<TurnRecord> {
-    let mut turns = Vec::new();
-    for envelope in events {
-        match &envelope.event {
-            RoderEvent::TurnStarted(event) => {
-                ensure_turn_record(&mut turns, thread_id, &event.turn_id, event.timestamp);
-            }
-            RoderEvent::TranscriptItemAppended(event) => {
-                let turn =
-                    ensure_turn_record(&mut turns, thread_id, &event.turn_id, event.timestamp);
-                if let Some(item) = &event.item {
-                    turn.items.push(item.clone());
-                }
-            }
-            RoderEvent::TurnCompleted(event) => {
-                let turn =
-                    ensure_turn_record(&mut turns, thread_id, &event.turn_id, event.timestamp);
-                turn.completed_at = Some(event.timestamp);
-                turn.usage = event.usage.clone();
-            }
-            RoderEvent::TurnFailed(event) => {
-                let turn =
-                    ensure_turn_record(&mut turns, thread_id, &event.turn_id, event.timestamp);
-                turn.completed_at = Some(event.timestamp);
-                turn.usage = event.usage.clone();
-            }
-            RoderEvent::TurnInterrupted(event) => {
-                let turn =
-                    ensure_turn_record(&mut turns, thread_id, &event.turn_id, event.timestamp);
-                turn.completed_at = Some(event.timestamp);
-            }
-            _ => continue,
-        }
-    }
-    turns
-}
-
-fn ensure_turn_record<'a>(
-    turns: &'a mut Vec<TurnRecord>,
-    thread_id: &ThreadId,
-    turn_id: &str,
-    created_at: OffsetDateTime,
-) -> &'a mut TurnRecord {
-    if let Some(index) = turns.iter().position(|turn| turn.turn_id == turn_id) {
-        return &mut turns[index];
-    }
-    turns.push(TurnRecord {
-        thread_id: thread_id.clone(),
-        turn_id: turn_id.to_string(),
-        items: Vec::new(),
-        created_at,
-        completed_at: None,
-        usage: None,
-    });
-    turns.last_mut().expect("turn was just pushed")
 }
 
 pub struct JsonlThreadStoreFactory {
