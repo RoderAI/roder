@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use roder_api::events::RoderEvent;
+use roder_api::events::{EventEnvelope, RoderEvent};
 use roder_api::notifications::{Notification, NotificationKind};
 use roder_api::thread::{ThreadItemDelta, ThreadItemEvent, ThreadItemEventKind};
 use roder_core::Runtime;
@@ -43,7 +43,17 @@ pub(crate) fn spawn_protocol_notification_bridge(
                         let _ = notifications.send(notification);
                     }
                 }
-                Err(_err) => {}
+                Err(err) => {
+                    eprintln!(
+                        "warning: failed to record item stream event for {}: {err:#}",
+                        envelope.kind
+                    );
+                    if let Some(notification) =
+                        item_stream_persistence_failure_notification(&envelope)
+                    {
+                        let _ = notifications.send(notification);
+                    }
+                }
             }
             for notification in protocol_notifications_for_event(&envelope.event) {
                 let _ = notifications.send(notification);
@@ -607,6 +617,17 @@ fn thread_status_notification_with_flags(
             },
         },
     )
+}
+
+fn item_stream_persistence_failure_notification(
+    envelope: &EventEnvelope,
+) -> Option<JsonRpcNotification> {
+    Some(thread_status_notification_with_flags(
+        envelope.thread_id.as_deref()?,
+        "running",
+        envelope.turn_id.clone(),
+        vec!["itemPersistenceFailed".to_string()],
+    ))
 }
 
 pub(crate) fn spawn_runtime_event_handlers(runtime: Arc<Runtime>, tasks: BackgroundRunner) {

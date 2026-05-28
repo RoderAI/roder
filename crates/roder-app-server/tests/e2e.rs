@@ -146,6 +146,15 @@ struct FailingThreadStoreFactory;
 struct FailingThreadStore;
 
 #[derive(Clone, Default)]
+struct FailingItemEventThreadStoreFactory {
+    snapshots: Arc<Mutex<HashMap<String, ThreadSnapshot>>>,
+}
+
+struct FailingItemEventThreadStore {
+    snapshots: Arc<Mutex<HashMap<String, ThreadSnapshot>>>,
+}
+
+#[derive(Clone, Default)]
 struct RecordingThreadStoreFactory {
     snapshots: Arc<Mutex<HashMap<String, ThreadSnapshot>>>,
 }
@@ -193,6 +202,75 @@ impl ThreadStore for FailingThreadStore {
         _envelope: &roder_api::events::EventEnvelope,
     ) -> anyhow::Result<()> {
         Ok(())
+    }
+}
+
+impl ThreadStoreFactory for FailingItemEventThreadStoreFactory {
+    fn id(&self) -> roder_api::thread::ThreadStoreId {
+        "failing_item_events".to_string()
+    }
+
+    fn create(&self) -> Arc<dyn ThreadStore> {
+        Arc::new(FailingItemEventThreadStore {
+            snapshots: Arc::clone(&self.snapshots),
+        })
+    }
+}
+
+#[async_trait::async_trait]
+impl ThreadStore for FailingItemEventThreadStore {
+    fn id(&self) -> roder_api::thread::ThreadStoreId {
+        "failing_item_events".to_string()
+    }
+
+    async fn create_thread(&self, metadata: ThreadMetadata) -> anyhow::Result<ThreadMetadata> {
+        self.snapshots.lock().await.insert(
+            metadata.thread_id.clone(),
+            ThreadSnapshot {
+                metadata: Some(metadata.clone()),
+                events: Vec::new(),
+                turns: Vec::new(),
+                item_events: Vec::new(),
+                extension_states: Vec::new(),
+            },
+        );
+        Ok(metadata)
+    }
+
+    async fn list_threads(&self) -> anyhow::Result<Vec<ThreadMetadata>> {
+        Ok(self
+            .snapshots
+            .lock()
+            .await
+            .values()
+            .filter_map(|snapshot| snapshot.metadata.clone())
+            .collect())
+    }
+
+    async fn load_thread(
+        &self,
+        thread_id: &roder_api::events::ThreadId,
+    ) -> anyhow::Result<Option<ThreadSnapshot>> {
+        Ok(self.snapshots.lock().await.get(thread_id).cloned())
+    }
+
+    async fn append_event(
+        &self,
+        thread_id: &roder_api::events::ThreadId,
+        envelope: &roder_api::events::EventEnvelope,
+    ) -> anyhow::Result<()> {
+        if let Some(snapshot) = self.snapshots.lock().await.get_mut(thread_id) {
+            snapshot.events.push(envelope.clone());
+        }
+        Ok(())
+    }
+
+    async fn append_item_event(
+        &self,
+        _thread_id: &roder_api::events::ThreadId,
+        _item_event: &roder_api::thread::ThreadItemEvent,
+    ) -> anyhow::Result<()> {
+        anyhow::bail!("append item event failed")
     }
 }
 
@@ -3271,6 +3349,60 @@ async fn thread_read_includes_partial_reasoning_while_streaming() {
     .await;
 
     let _ = std::fs::remove_dir_all(thread_root);
+}
+
+#[tokio::test]
+async fn item_stream_persistence_failures_emit_thread_status_flag() {
+    let mut builder = ExtensionRegistryBuilder::new();
+    builder.inference_engine(Arc::new(ReasoningThenPendingEngine));
+    builder.thread_store_factory(Arc::new(FailingItemEventThreadStoreFactory::default()));
+    let runtime = Arc::new(Runtime::new(builder.build().unwrap(), Default::default()).unwrap());
+    let server = Arc::new(AppServer::new(runtime));
+    let client = LocalAppClient::new(server);
+    let mut notifications = client.subscribe_notifications();
+
+    let thread_start = start_thread(&client).await;
+    let thread_id = thread_start.thread.id.clone();
+    let started = start_turn(&client, &thread_id, "show your work").await;
+
+    let flagged = tokio::time::timeout(Duration::from_secs(2), async {
+        loop {
+            let notification = notifications.recv().await.unwrap();
+            if notification.method != "thread/status/changed" {
+                continue;
+            }
+            if notification.params["threadId"] != thread_id {
+                continue;
+            }
+            let has_failure_flag = notification.params["status"]["activeFlags"]
+                .as_array()
+                .is_some_and(|flags| {
+                    flags
+                        .iter()
+                        .any(|flag| flag.as_str() == Some("itemPersistenceFailed"))
+                });
+            if has_failure_flag {
+                break notification;
+            }
+        }
+    })
+    .await
+    .expect("item stream persistence failure should emit a status notification");
+
+    assert_eq!(flagged.params["status"]["activeTurnId"], started.turn_id);
+
+    let _: TurnInterruptResult = request(
+        &client,
+        "turn/interrupt",
+        Some(
+            serde_json::to_value(TurnInterruptParams {
+                thread_id,
+                turn_id: Some(started.turn_id),
+            })
+            .unwrap(),
+        ),
+    )
+    .await;
 }
 
 #[tokio::test]
