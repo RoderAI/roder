@@ -7,7 +7,7 @@ use futures::StreamExt;
 use futures::future::{AbortHandle, Abortable, BoxFuture, try_join_all};
 use roder_api::catalog::{
     EDIT_TOOL_EDIT, EDIT_TOOL_PATCH, PROVIDER_GEMINI, REASONING_NONE, built_in_model_profile,
-    lookup_model,
+    built_in_model_profile_for_provider, lookup_model,
 };
 use roder_api::context::PolicyGate;
 use roder_api::events::*;
@@ -1458,7 +1458,8 @@ impl Runtime {
 
     pub async fn tool_specs(&self) -> Vec<roder_api::tools::ToolSpec> {
         let cfg = self.config.read().await;
-        let model_profile = model_profile_for_model(&cfg, &cfg.default_model);
+        let model_profile =
+            model_profile_for_provider_model(&cfg, &cfg.default_provider, &cfg.default_model);
         self.filtered_tool_specs(&cfg, &cfg.default_model, model_profile.as_ref())
     }
 
@@ -1517,7 +1518,7 @@ impl Runtime {
             .unwrap_or(cfg.default_model.clone());
         let engine = self.engine_for(&provider)?;
         let capabilities = engine.capabilities();
-        let model_profile = model_profile_for_model(&cfg, &model);
+        let model_profile = model_profile_for_provider_model(&cfg, &provider, &model);
         let tools = if capabilities.tool_calls {
             self.filtered_tool_specs(&cfg, &model, model_profile.as_ref())
         } else {
@@ -3052,6 +3053,26 @@ fn model_profile_for_model(cfg: &RuntimeConfig, model: &str) -> Option<ModelHarn
         .get(model)
         .cloned()
         .or_else(|| built_in_model_profile(model))
+}
+
+/// Provider-aware profile resolution for the active turn.
+///
+/// Many model ids are shared across providers (for example Cursor proxies
+/// `claude-opus-4-8`). Resolving the harness profile by id alone picks the
+/// first catalog entry, which assigns cross-provider ids the wrong family and
+/// instruction overlay (e.g. a `cursor/claude-opus-4-8` turn would otherwise
+/// inherit the Anthropic overlay). Prefer the explicit `(provider, model)`
+/// catalog entry, keeping user-configured profile overrides as the top
+/// precedence.
+fn model_profile_for_provider_model(
+    cfg: &RuntimeConfig,
+    provider: &str,
+    model: &str,
+) -> Option<ModelHarnessProfile> {
+    cfg.model_profiles
+        .get(model)
+        .cloned()
+        .or_else(|| built_in_model_profile_for_provider(provider, model))
 }
 
 fn schema_policy_for_model(profile: Option<&ModelHarnessProfile>) -> ModelSchemaPolicy {
