@@ -750,6 +750,8 @@ pub struct TranscriptItemAppended {
     pub item_type: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub item_index: Option<usize>,
+    /// Full transcript item for runtime appends. `None` means the record carries
+    /// append metadata without an embedded transcript item.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub item: Option<TranscriptItem>,
     #[serde(with = "time::serde::rfc3339")]
