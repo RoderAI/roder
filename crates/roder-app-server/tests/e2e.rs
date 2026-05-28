@@ -30,9 +30,7 @@ use roder_api::retrieval::{
 use roder_api::skills::{SkillActivationState, SkillExposure, SkillSelector};
 use roder_api::subagents::{SubagentDefinition, SubagentPermissionMode};
 use roder_api::tasks::TaskState;
-use roder_api::thread::{
-    ThreadItemStatus, ThreadMetadata, ThreadSnapshot, ThreadStore, ThreadStoreFactory,
-};
+use roder_api::thread::{ThreadMetadata, ThreadSnapshot, ThreadStore, ThreadStoreFactory};
 use roder_app_server::remote::{
     RemoteServerOptions, RemoteToken, listen_remote_websocket, listen_remote_websocket_controller,
 };
@@ -103,8 +101,8 @@ use roder_protocol::{
     TeamReadResult, TeamStartMemberParams, TeamStartParams, TeamStartResult, ThreadArchiveParams,
     ThreadArchiveResult, ThreadExitPlanParams, ThreadExitPlanResult, ThreadGoalClearParams,
     ThreadGoalClearResult, ThreadGoalGetParams, ThreadGoalGetResult, ThreadGoalSetParams,
-    ThreadGoalSetResult, ThreadGoalStatus, ThreadListParams, ThreadListResult, ThreadReadParams,
-    ThreadReadResult, ThreadResolveApprovalParams, ThreadResolveApprovalResult,
+    ThreadGoalSetResult, ThreadGoalStatus, ThreadItemStatus, ThreadListParams, ThreadListResult,
+    ThreadReadParams, ThreadReadResult, ThreadResolveApprovalParams, ThreadResolveApprovalResult,
     ThreadResolveUserInputParams, ThreadResolveUserInputResult, ThreadSetModeParams,
     ThreadSetModeResult, ThreadStartParams, ThreadStartResult, ThreadStateResult, ToolCallParams,
     ToolCallResult, ToolsListResult, TurnInputItem, TurnInterruptParams, TurnInterruptResult,
@@ -196,15 +194,6 @@ impl ThreadStore for FailingThreadStore {
     ) -> anyhow::Result<()> {
         Ok(())
     }
-
-    async fn append_turn_item(
-        &self,
-        _thread_id: &roder_api::events::ThreadId,
-        _turn_id: &roder_api::events::TurnId,
-        _item: &roder_api::transcript::TranscriptItem,
-    ) -> anyhow::Result<()> {
-        Ok(())
-    }
 }
 
 impl ThreadStoreFactory for RecordingThreadStoreFactory {
@@ -279,44 +268,40 @@ impl ThreadStore for RecordingThreadStore {
         envelope: &roder_api::events::EventEnvelope,
     ) -> anyhow::Result<()> {
         if let Some(snapshot) = self.snapshots.lock().await.get_mut(thread_id) {
-            if let roder_api::events::RoderEvent::TurnCompleted(event) = &envelope.event
-                && let Some(turn) = snapshot
-                    .turns
-                    .iter_mut()
-                    .find(|turn| turn.turn_id == event.turn_id)
-            {
-                turn.completed_at = Some(event.timestamp);
-                turn.usage = event.usage.clone();
+            match &envelope.event {
+                roder_api::events::RoderEvent::TurnCompleted(event) => {
+                    if let Some(turn) = snapshot
+                        .turns
+                        .iter_mut()
+                        .find(|turn| turn.turn_id == event.turn_id)
+                    {
+                        turn.completed_at = Some(event.timestamp);
+                        turn.usage = event.usage.clone();
+                    }
+                }
+                roder_api::events::RoderEvent::TranscriptItemAppended(event) => {
+                    if let Some(item) = &event.item {
+                        if let Some(turn) = snapshot
+                            .turns
+                            .iter_mut()
+                            .find(|turn| turn.turn_id == event.turn_id)
+                        {
+                            turn.items.push(item.clone());
+                        } else {
+                            snapshot.turns.push(roder_api::thread::TurnRecord {
+                                thread_id: thread_id.clone(),
+                                turn_id: event.turn_id.clone(),
+                                items: vec![item.clone()],
+                                created_at: event.timestamp,
+                                completed_at: None,
+                                usage: None,
+                            });
+                        }
+                    }
+                }
+                _ => {}
             }
             snapshot.events.push(envelope.clone());
-        }
-        Ok(())
-    }
-
-    async fn append_turn_item(
-        &self,
-        thread_id: &roder_api::events::ThreadId,
-        turn_id: &roder_api::events::TurnId,
-        item: &roder_api::transcript::TranscriptItem,
-    ) -> anyhow::Result<()> {
-        let mut snapshots = self.snapshots.lock().await;
-        if let Some(snapshot) = snapshots.get_mut(thread_id) {
-            if let Some(turn) = snapshot
-                .turns
-                .iter_mut()
-                .find(|turn| turn.turn_id == *turn_id)
-            {
-                turn.items.push(item.clone());
-            } else {
-                snapshot.turns.push(roder_api::thread::TurnRecord {
-                    thread_id: thread_id.clone(),
-                    turn_id: turn_id.clone(),
-                    items: vec![item.clone()],
-                    created_at: OffsetDateTime::now_utc(),
-                    completed_at: None,
-                    usage: None,
-                });
-            }
         }
         Ok(())
     }

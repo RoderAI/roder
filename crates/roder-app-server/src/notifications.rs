@@ -36,6 +36,15 @@ pub(crate) fn spawn_protocol_notification_bridge(
     let mut events = runtime.subscribe_events();
     tokio::spawn(async move {
         while let Ok(envelope) = events.recv().await {
+            match crate::item_stream::item_stream_notifications_for_event(&runtime, &envelope).await
+            {
+                Ok(item_notifications) => {
+                    for notification in item_notifications {
+                        let _ = notifications.send(notification);
+                    }
+                }
+                Err(_err) => {}
+            }
             for notification in protocol_notifications_for_event(&envelope.event) {
                 let _ = notifications.send(notification);
             }
@@ -75,11 +84,6 @@ pub(crate) fn protocol_notifications_for_event(event: &RoderEvent) -> Vec<JsonRp
                     Some(event.turn_id.clone()),
                 ),
             ]
-        }
-        RoderEvent::ThreadItemEventRecorded(event) => {
-            thread_item_event_notification(&event.item_event)
-                .into_iter()
-                .collect()
         }
         RoderEvent::ThreadGoalUpdated(event) => vec![protocol_notification(
             "thread/goal/updated",
@@ -552,7 +556,9 @@ fn protocol_notification<T: serde::Serialize>(method: &str, params: T) -> JsonRp
     }
 }
 
-fn thread_item_event_notification(event: &ThreadItemEvent) -> Option<JsonRpcNotification> {
+pub(crate) fn thread_item_event_notification(
+    event: &ThreadItemEvent,
+) -> Option<JsonRpcNotification> {
     let method = match &event.event {
         ThreadItemEventKind::ItemStarted { .. } => "item/started",
         ThreadItemEventKind::ItemCompleted { .. } => "item/completed",
@@ -563,7 +569,10 @@ fn thread_item_event_notification(event: &ThreadItemEvent) -> Option<JsonRpcNoti
             ThreadItemDelta::ReasoningSummaryText { .. } => "item/reasoning/summaryTextDelta",
         },
     };
-    Some(protocol_notification(method, event))
+    Some(protocol_notification(
+        method,
+        roder_protocol::ThreadItemEvent::from(event.clone()),
+    ))
 }
 
 fn automation_needs_input(error: &str) -> bool {
@@ -740,9 +749,8 @@ mod tests {
         AutomationCompleted, AutomationFailed, AutomationRunState, AutomationRunSummary,
         AutomationSkipped, AutomationStarted,
     };
-    use roder_api::events::{
-        ThreadItemEventRecorded, TranscriptItemAppended, VerificationRequired,
-    };
+    use roder_api::events::{InferenceEventReceived, TranscriptItemAppended, VerificationRequired};
+    use roder_api::inference::{InferenceEvent, ReasoningDelta};
     use roder_api::notifications::NotificationKind;
     use roder_api::thread::{
         ThreadItem, ThreadItemDelta, ThreadItemEvent, ThreadItemEventKind, ThreadItemStatus,
@@ -773,28 +781,26 @@ mod tests {
 
     #[test]
     fn recorded_tool_item_event_forwards_full_envelope() {
-        let notifications = protocol_notifications_for_event(&RoderEvent::ThreadItemEventRecorded(
-            ThreadItemEventRecorded {
-                item_event: ThreadItemEvent {
-                    seq: 7,
-                    event_id: "item-event-7".to_string(),
-                    thread_id: "thread-1".to_string(),
-                    turn_id: "turn-1".to_string(),
-                    timestamp: OffsetDateTime::UNIX_EPOCH,
-                    event: ThreadItemEventKind::ItemCompleted {
-                        item: ThreadItem::ToolExecution {
-                            id: "tool-1".to_string(),
-                            tool_call_id: "tool-1".to_string(),
-                            tool_name: "list_files".to_string(),
-                            status: ThreadItemStatus::Completed,
-                            input: Some(json!({ "path": ".", "shown": 3 })),
-                            output: Some("src\nCargo.toml".to_string()),
-                            error: None,
-                        },
-                    },
+        let notifications = thread_item_event_notification(&ThreadItemEvent {
+            seq: 7,
+            event_id: "item-event-7".to_string(),
+            thread_id: "thread-1".to_string(),
+            turn_id: "turn-1".to_string(),
+            timestamp: OffsetDateTime::UNIX_EPOCH,
+            event: ThreadItemEventKind::ItemCompleted {
+                item: ThreadItem::ToolExecution {
+                    id: "tool-1".to_string(),
+                    tool_call_id: "tool-1".to_string(),
+                    tool_name: "list_files".to_string(),
+                    status: ThreadItemStatus::Completed,
+                    input: Some(json!({ "path": ".", "shown": 3 })),
+                    output: Some("src\nCargo.toml".to_string()),
+                    error: None,
                 },
             },
-        ));
+        })
+        .into_iter()
+        .collect::<Vec<_>>();
 
         assert_eq!(notifications.len(), 1);
         assert_eq!(notifications[0].method, "item/completed");
@@ -811,24 +817,22 @@ mod tests {
 
     #[test]
     fn reasoning_delta_uses_dedicated_reasoning_text_notification() {
-        let notifications = protocol_notifications_for_event(&RoderEvent::ThreadItemEventRecorded(
-            ThreadItemEventRecorded {
-                item_event: ThreadItemEvent {
-                    seq: 1,
-                    event_id: "item-event-1".to_string(),
-                    thread_id: "thread-1".to_string(),
-                    turn_id: "turn-1".to_string(),
-                    timestamp: OffsetDateTime::UNIX_EPOCH,
-                    event: ThreadItemEventKind::ItemDelta {
-                        item_id: "turn-1-agent-reasoning".to_string(),
-                        delta: ThreadItemDelta::ReasoningText {
-                            delta: "Inspecting".to_string(),
-                            content_index: 0,
-                        },
-                    },
+        let notifications = thread_item_event_notification(&ThreadItemEvent {
+            seq: 1,
+            event_id: "item-event-1".to_string(),
+            thread_id: "thread-1".to_string(),
+            turn_id: "turn-1".to_string(),
+            timestamp: OffsetDateTime::UNIX_EPOCH,
+            event: ThreadItemEventKind::ItemDelta {
+                item_id: "turn-1-agent-reasoning".to_string(),
+                delta: ThreadItemDelta::ReasoningText {
+                    delta: "Inspecting".to_string(),
+                    content_index: 0,
                 },
             },
-        ));
+        })
+        .into_iter()
+        .collect::<Vec<_>>();
 
         assert_eq!(notifications.len(), 1);
         assert_eq!(notifications[0].method, "item/reasoning/textDelta");
@@ -849,12 +853,29 @@ mod tests {
     }
 
     #[test]
+    fn inference_events_do_not_directly_emit_public_item_notifications() {
+        let notifications = protocol_notifications_for_event(&RoderEvent::InferenceEventReceived(
+            InferenceEventReceived {
+                thread_id: "thread-1".to_string(),
+                turn_id: "turn-1".to_string(),
+                event: InferenceEvent::ReasoningDelta(ReasoningDelta {
+                    text: "Inspecting".to_string(),
+                }),
+                timestamp: OffsetDateTime::UNIX_EPOCH,
+            },
+        ));
+
+        assert!(notifications.is_empty());
+    }
+
+    #[test]
     fn transcript_item_appended_does_not_emit_public_item_notification() {
         let notifications = protocol_notifications_for_event(&RoderEvent::TranscriptItemAppended(
             TranscriptItemAppended {
                 thread_id: "thread-1".to_string(),
                 turn_id: "turn-1".to_string(),
                 item_type: "user_message".to_string(),
+                item_index: Some(0),
                 item: Some(TranscriptItem::UserMessage(UserMessage::text("hello"))),
                 timestamp: OffsetDateTime::UNIX_EPOCH,
             },

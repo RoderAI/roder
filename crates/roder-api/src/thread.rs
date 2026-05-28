@@ -7,7 +7,7 @@ use time::OffsetDateTime;
 use crate::events::{EventEnvelope, ThreadId, TurnId};
 pub use crate::extension::{CheckpointStoreId, ThreadStoreId};
 use crate::extension_state::ExtensionStateRecord;
-use crate::inference::{InferenceEvent, TokenUsage, cache_hit_rate};
+use crate::inference::{TokenUsage, cache_hit_rate};
 use crate::remote_runner::{RunnerDestination, RunnerSessionState};
 use crate::transcript::{InputImage, TranscriptItem};
 
@@ -478,229 +478,6 @@ impl ThreadItem {
     }
 }
 
-pub fn agent_message_item_id(turn_id: &str, phase: Option<&str>) -> String {
-    format!("{}-agent-{}", turn_id, phase.unwrap_or("final_answer"))
-}
-
-pub fn thread_item_event_kind_item_id(event: &ThreadItemEventKind) -> &str {
-    match event {
-        ThreadItemEventKind::ItemStarted { item } => item.id(),
-        ThreadItemEventKind::ItemDelta { item_id, .. } => item_id,
-        ThreadItemEventKind::ItemCompleted { item } => item.id(),
-    }
-}
-
-pub fn public_item_id_for_inference_event(turn_id: &str, event: &InferenceEvent) -> Option<String> {
-    match event {
-        InferenceEvent::MessageDelta(delta) => {
-            Some(agent_message_item_id(turn_id, delta.phase.as_deref()))
-        }
-        InferenceEvent::ReasoningDelta(_) => {
-            Some(agent_message_item_id(turn_id, Some("reasoning")))
-        }
-        InferenceEvent::HostedToolCallStarted(call) => Some(call.id.clone()),
-        InferenceEvent::HostedToolCallCompleted(call) => Some(call.id.clone()),
-        InferenceEvent::ToolCallStarted(call) => Some(call.id.clone()),
-        InferenceEvent::ToolCallCompleted(call) => Some(call.id.clone()),
-        _ => None,
-    }
-}
-
-pub fn public_item_event_kinds_from_inference_event(
-    turn_id: &str,
-    event: &InferenceEvent,
-    item_exists: bool,
-) -> Vec<ThreadItemEventKind> {
-    match event {
-        InferenceEvent::MessageDelta(delta) => {
-            let item_id = agent_message_item_id(turn_id, delta.phase.as_deref());
-            let mut events = Vec::new();
-            if !item_exists {
-                events.push(ThreadItemEventKind::ItemStarted {
-                    item: ThreadItem::AgentMessage {
-                        id: item_id.clone(),
-                        text: String::new(),
-                        phase: delta.phase.clone(),
-                        status: Some(ThreadItemStatus::InProgress),
-                    },
-                });
-            }
-            events.push(ThreadItemEventKind::ItemDelta {
-                item_id,
-                delta: ThreadItemDelta::AgentMessageText {
-                    delta: delta.text.clone(),
-                    phase: delta.phase.clone(),
-                },
-            });
-            events
-        }
-        InferenceEvent::ReasoningDelta(delta) => {
-            let item_id = agent_message_item_id(turn_id, Some("reasoning"));
-            let mut events = Vec::new();
-            if !item_exists {
-                events.push(ThreadItemEventKind::ItemStarted {
-                    item: ThreadItem::Reasoning {
-                        id: item_id.clone(),
-                        summary: Vec::new(),
-                        content: vec![String::new()],
-                        status: Some(ThreadItemStatus::InProgress),
-                    },
-                });
-            }
-            events.push(ThreadItemEventKind::ItemDelta {
-                item_id,
-                delta: ThreadItemDelta::ReasoningText {
-                    delta: delta.text.clone(),
-                    content_index: 0,
-                },
-            });
-            events
-        }
-        InferenceEvent::HostedToolCallStarted(call) => vec![ThreadItemEventKind::ItemStarted {
-            item: ThreadItem::ToolExecution {
-                id: call.id.clone(),
-                tool_call_id: call.id.clone(),
-                tool_name: call.name.clone(),
-                status: ThreadItemStatus::InProgress,
-                input: None,
-                output: None,
-                error: None,
-            },
-        }],
-        InferenceEvent::HostedToolCallCompleted(call) => vec![ThreadItemEventKind::ItemCompleted {
-            item: ThreadItem::ToolExecution {
-                id: call.id.clone(),
-                tool_call_id: call.id.clone(),
-                tool_name: call.name.clone(),
-                status: ThreadItemStatus::Completed,
-                input: serde_json::from_str(&call.arguments).ok(),
-                output: None,
-                error: None,
-            },
-        }],
-        InferenceEvent::ToolCallStarted(call) => vec![ThreadItemEventKind::ItemStarted {
-            item: ThreadItem::ToolExecution {
-                id: call.id.clone(),
-                tool_call_id: call.id.clone(),
-                tool_name: call.name.clone(),
-                status: ThreadItemStatus::InProgress,
-                input: None,
-                output: None,
-                error: None,
-            },
-        }],
-        InferenceEvent::ToolCallCompleted(call) => vec![ThreadItemEventKind::ItemStarted {
-            item: ThreadItem::ToolExecution {
-                id: call.id.clone(),
-                tool_call_id: call.id.clone(),
-                tool_name: call.name.clone(),
-                status: ThreadItemStatus::InProgress,
-                input: serde_json::from_str(&call.arguments).ok(),
-                output: None,
-                error: None,
-            },
-        }],
-        _ => Vec::new(),
-    }
-}
-
-pub fn public_thread_item_from_transcript_item(
-    turn_id: &TurnId,
-    index: usize,
-    item: &TranscriptItem,
-) -> ThreadItem {
-    match item {
-        TranscriptItem::UserMessage(message) => ThreadItem::UserMessage {
-            id: format!("{turn_id}-user"),
-            text: message.text.clone(),
-            images: message.images.clone(),
-            status: Some(ThreadItemStatus::Completed),
-        },
-        TranscriptItem::AssistantMessage(message) => ThreadItem::AgentMessage {
-            id: agent_message_item_id(turn_id, message.phase.as_deref()),
-            text: message.text.clone(),
-            phase: message.phase.clone(),
-            status: Some(ThreadItemStatus::Completed),
-        },
-        TranscriptItem::ReasoningSummary(summary) => ThreadItem::Reasoning {
-            id: agent_message_item_id(turn_id, Some("reasoning")),
-            summary: Vec::new(),
-            content: vec![summary.text.clone()],
-            status: Some(ThreadItemStatus::Completed),
-        },
-        TranscriptItem::ToolCall(call) => ThreadItem::ToolExecution {
-            id: call.id.clone(),
-            tool_call_id: call.id.clone(),
-            tool_name: call.name.clone(),
-            status: ThreadItemStatus::InProgress,
-            input: serde_json::from_str(&call.arguments).ok(),
-            output: None,
-            error: None,
-        },
-        TranscriptItem::ToolResult(result) => ThreadItem::ToolExecution {
-            id: result.id.clone(),
-            tool_call_id: result.id.clone(),
-            tool_name: result.name.clone().unwrap_or_else(|| "tool".to_string()),
-            status: if result.is_error {
-                ThreadItemStatus::Failed
-            } else {
-                ThreadItemStatus::Completed
-            },
-            input: result.display_payload.clone(),
-            output: (!result.is_error).then(|| result.result.clone()),
-            error: result.is_error.then(|| result.result.clone()),
-        },
-        TranscriptItem::ContextCompaction(compaction) => ThreadItem::Compaction {
-            id: format!("{turn_id}-compaction-{index}"),
-            summary: compaction.summary.clone(),
-            status: Some(ThreadItemStatus::Completed),
-        },
-        TranscriptItem::Error(error) => ThreadItem::Error {
-            id: format!("{turn_id}-error-{index}"),
-            message: error.message.clone(),
-            status: Some(ThreadItemStatus::Failed),
-        },
-        other => ThreadItem::Raw {
-            id: format!("{turn_id}-item-{index}"),
-            payload: serde_json::to_value(other).unwrap_or(serde_json::Value::Null),
-            status: Some(ThreadItemStatus::Completed),
-        },
-    }
-}
-
-pub fn public_item_event_kind_from_transcript_item(
-    turn_id: &TurnId,
-    index: usize,
-    item: &TranscriptItem,
-) -> ThreadItemEventKind {
-    let item = public_thread_item_from_transcript_item(turn_id, index, item);
-    match item {
-        ThreadItem::ToolExecution {
-            status: ThreadItemStatus::InProgress,
-            ..
-        } => ThreadItemEventKind::ItemStarted { item },
-        _ => ThreadItemEventKind::ItemCompleted { item },
-    }
-}
-
-pub fn public_item_event_from_transcript_item(
-    thread_id: &ThreadId,
-    turn_id: &TurnId,
-    seq: u64,
-    timestamp: OffsetDateTime,
-    index: usize,
-    item: &TranscriptItem,
-) -> ThreadItemEvent {
-    ThreadItemEvent {
-        seq,
-        event_id: format!("{turn_id}-item-event-{seq}"),
-        thread_id: thread_id.clone(),
-        turn_id: turn_id.clone(),
-        timestamp,
-        event: public_item_event_kind_from_transcript_item(turn_id, index, item),
-    }
-}
-
 #[async_trait::async_trait]
 pub trait ThreadStore: Send + Sync {
     fn id(&self) -> ThreadStoreId;
@@ -726,12 +503,6 @@ pub trait ThreadStore: Send + Sync {
         &self,
         thread_id: &ThreadId,
         envelope: &EventEnvelope,
-    ) -> anyhow::Result<()>;
-    async fn append_turn_item(
-        &self,
-        thread_id: &ThreadId,
-        turn_id: &TurnId,
-        item: &TranscriptItem,
     ) -> anyhow::Result<()>;
     async fn append_item_event(
         &self,
@@ -774,7 +545,6 @@ pub trait CheckpointStoreFactory: Send + Sync + 'static {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::inference::{InferenceEvent, MessageDelta, ReasoningDelta};
 
     #[test]
     fn thread_metadata_timestamps_serialize_as_rfc3339_strings() {
@@ -930,68 +700,6 @@ mod tests {
                     phase: Some("final_answer".to_string()),
                     status: Some(ThreadItemStatus::Completed),
                 }
-            ]
-        );
-    }
-
-    #[test]
-    fn inference_delta_public_item_events_start_item_before_delta() {
-        let reasoning = public_item_event_kinds_from_inference_event(
-            "turn-1",
-            &InferenceEvent::ReasoningDelta(ReasoningDelta {
-                text: "thinking".to_string(),
-            }),
-            false,
-        );
-
-        assert_eq!(
-            reasoning,
-            vec![
-                ThreadItemEventKind::ItemStarted {
-                    item: ThreadItem::Reasoning {
-                        id: "turn-1-agent-reasoning".to_string(),
-                        summary: Vec::new(),
-                        content: vec![String::new()],
-                        status: Some(ThreadItemStatus::InProgress),
-                    },
-                },
-                ThreadItemEventKind::ItemDelta {
-                    item_id: "turn-1-agent-reasoning".to_string(),
-                    delta: ThreadItemDelta::ReasoningText {
-                        delta: "thinking".to_string(),
-                        content_index: 0,
-                    },
-                },
-            ]
-        );
-
-        let agent = public_item_event_kinds_from_inference_event(
-            "turn-1",
-            &InferenceEvent::MessageDelta(MessageDelta {
-                text: "hello".to_string(),
-                phase: Some("final_answer".to_string()),
-            }),
-            false,
-        );
-
-        assert_eq!(
-            agent,
-            vec![
-                ThreadItemEventKind::ItemStarted {
-                    item: ThreadItem::AgentMessage {
-                        id: "turn-1-agent-final_answer".to_string(),
-                        text: String::new(),
-                        phase: Some("final_answer".to_string()),
-                        status: Some(ThreadItemStatus::InProgress),
-                    },
-                },
-                ThreadItemEventKind::ItemDelta {
-                    item_id: "turn-1-agent-final_answer".to_string(),
-                    delta: ThreadItemDelta::AgentMessageText {
-                        delta: "hello".to_string(),
-                        phase: Some("final_answer".to_string()),
-                    },
-                },
             ]
         );
     }

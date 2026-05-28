@@ -9,6 +9,7 @@ mod discovery;
 mod evals;
 mod fs;
 mod goals;
+mod item_stream;
 mod marketplaces;
 #[cfg(test)]
 mod method_manifest;

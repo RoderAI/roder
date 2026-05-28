@@ -1,6 +1,6 @@
-use roder_api::thread::ThreadItemStatus;
 use roder_protocol::{
-    Item, Thread, ThreadListParams, ThreadListResult, ThreadReadParams, ThreadReadResult,
+    Item, Thread, ThreadItemStatus, ThreadListParams, ThreadListResult, ThreadReadParams,
+    ThreadReadResult,
 };
 
 use super::*;
