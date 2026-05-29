@@ -759,6 +759,15 @@ APP_SERVER_MANIFEST: dict[str, Any] = {
             ]
         },
         {
+            "method": "providers/clear",
+            "paramsType": "ProvidersClearParams",
+            "resultType": "ProvidersClearResult",
+            "stability": "stable",
+            "featureGroup": "providers",
+            "idempotency": "nonIdempotent",
+            "sideEffect": "localState"
+        },
+        {
             "method": "providers/configure",
             "paramsType": "ProvidersConfigureParams",
             "resultType": "ProvidersConfigureResult",
@@ -1072,6 +1081,42 @@ APP_SERVER_MANIFEST: dict[str, Any] = {
             "featureGroup": "skills",
             "idempotency": "nonIdempotent",
             "sideEffect": "localState"
+        },
+        {
+            "method": "speech/providers/list",
+            "paramsType": "SpeechProvidersListParams",
+            "resultType": "SpeechProvidersListResult",
+            "stability": "stable",
+            "featureGroup": "speech",
+            "idempotency": "idempotent",
+            "sideEffect": "readOnly"
+        },
+        {
+            "method": "speech/synthesis/providers/list",
+            "paramsType": "SpeechSynthesisProvidersListParams",
+            "resultType": "SpeechSynthesisProvidersListResult",
+            "stability": "stable",
+            "featureGroup": "speech",
+            "idempotency": "idempotent",
+            "sideEffect": "readOnly"
+        },
+        {
+            "method": "speech/synthesize",
+            "paramsType": "SpeechSynthesizeParams",
+            "resultType": "SpeechSynthesizeResult",
+            "stability": "stable",
+            "featureGroup": "speech",
+            "idempotency": "nonIdempotent",
+            "sideEffect": "externalProcess"
+        },
+        {
+            "method": "speech/transcribe",
+            "paramsType": "SpeechTranscribeParams",
+            "resultType": "SpeechTranscribeResult",
+            "stability": "stable",
+            "featureGroup": "speech",
+            "idempotency": "nonIdempotent",
+            "sideEffect": "externalProcess"
         },
         {
             "method": "tasks/cancel",
@@ -1411,6 +1456,96 @@ APP_SERVER_MANIFEST: dict[str, Any] = {
             "sideEffect": "readOnly"
         },
         {
+            "method": "webwright/artifacts",
+            "paramsType": "WebwrightArtifactsParams",
+            "resultType": "WebwrightArtifactsResult",
+            "stability": "stable",
+            "featureGroup": "webwright",
+            "idempotency": "idempotent",
+            "sideEffect": "readOnly"
+        },
+        {
+            "method": "webwright/export",
+            "paramsType": "WebwrightExportParams",
+            "resultType": "WebwrightExportResult",
+            "stability": "stable",
+            "featureGroup": "webwright",
+            "idempotency": "nonIdempotent",
+            "sideEffect": "localState"
+        },
+        {
+            "method": "webwright/latestRun",
+            "paramsType": "WebwrightLatestRunParams",
+            "resultType": "WebwrightLatestRunResult",
+            "stability": "stable",
+            "featureGroup": "webwright",
+            "idempotency": "idempotent",
+            "sideEffect": "readOnly"
+        },
+        {
+            "method": "webwright/prepare",
+            "paramsType": "WebwrightPrepareParams",
+            "resultType": "WebwrightPrepareResult",
+            "stability": "stable",
+            "featureGroup": "webwright",
+            "idempotency": "nonIdempotent",
+            "sideEffect": "localState"
+        },
+        {
+            "method": "webwright/report",
+            "paramsType": "WebwrightReportParams",
+            "resultType": "WebwrightReportResult",
+            "stability": "stable",
+            "featureGroup": "webwright",
+            "idempotency": "idempotent",
+            "sideEffect": "readOnly"
+        },
+        {
+            "method": "webwright/rerun",
+            "paramsType": "WebwrightRerunParams",
+            "resultType": "WebwrightRerunResult",
+            "stability": "stable",
+            "featureGroup": "webwright",
+            "idempotency": "nonIdempotent",
+            "sideEffect": "externalProcess"
+        },
+        {
+            "method": "webwright/setup",
+            "paramsType": "WebwrightSetupParams",
+            "resultType": "WebwrightSetupResult",
+            "stability": "stable",
+            "featureGroup": "webwright",
+            "idempotency": "nonIdempotent",
+            "sideEffect": "externalProcess"
+        },
+        {
+            "method": "webwright/submit",
+            "paramsType": "WebwrightSubmitParams",
+            "resultType": "WebwrightSubmitResult",
+            "stability": "stable",
+            "featureGroup": "webwright",
+            "idempotency": "nonIdempotent",
+            "sideEffect": "localState"
+        },
+        {
+            "method": "webwright/verify",
+            "paramsType": "WebwrightVerifyParams",
+            "resultType": "WebwrightVerifyResult",
+            "stability": "stable",
+            "featureGroup": "webwright",
+            "idempotency": "idempotent",
+            "sideEffect": "readOnly"
+        },
+        {
+            "method": "webwright/visualJudge",
+            "paramsType": "WebwrightVisualJudgeParams",
+            "resultType": "WebwrightVisualJudgeResult",
+            "stability": "stable",
+            "featureGroup": "webwright",
+            "idempotency": "nonIdempotent",
+            "sideEffect": "localState"
+        },
+        {
             "method": "workflow/enable",
             "paramsType": "WorkflowEnableParams",
             "resultType": "WorkflowEnableResult",
@@ -1463,6 +1598,139 @@ APP_SERVER_MANIFEST: dict[str, Any] = {
             "featureGroup": "workflow",
             "idempotency": "idempotent",
             "sideEffect": "readOnly"
+        },
+        {
+            "method": "workflows/approve",
+            "paramsType": "WorkflowsApproveParams",
+            "resultType": "WorkflowsApproveResult",
+            "stability": "stable",
+            "featureGroup": "workflows",
+            "idempotency": "nonIdempotent",
+            "sideEffect": "localState",
+            "notifications": [
+                "workflows/approved",
+                "workflows/denied",
+                "workflows/queued",
+                "workflows/started"
+            ]
+        },
+        {
+            "method": "workflows/get",
+            "paramsType": "WorkflowsGetParams",
+            "resultType": "WorkflowsGetResult",
+            "stability": "stable",
+            "featureGroup": "workflows",
+            "idempotency": "idempotent",
+            "sideEffect": "readOnly"
+        },
+        {
+            "method": "workflows/list",
+            "paramsType": "WorkflowsListParams",
+            "resultType": "WorkflowsListResult",
+            "stability": "stable",
+            "featureGroup": "workflows",
+            "idempotency": "idempotent",
+            "sideEffect": "readOnly"
+        },
+        {
+            "method": "workflows/pause",
+            "paramsType": "WorkflowsPauseParams",
+            "resultType": "WorkflowsPauseResult",
+            "stability": "stable",
+            "featureGroup": "workflows",
+            "idempotency": "nonIdempotent",
+            "sideEffect": "localState",
+            "notifications": [
+                "workflows/paused"
+            ]
+        },
+        {
+            "method": "workflows/plan",
+            "paramsType": "WorkflowsPlanParams",
+            "resultType": "WorkflowsPlanResult",
+            "stability": "stable",
+            "featureGroup": "workflows",
+            "idempotency": "nonIdempotent",
+            "sideEffect": "localState",
+            "notifications": [
+                "workflows/drafted",
+                "workflows/approvalRequested"
+            ]
+        },
+        {
+            "method": "workflows/restartAgent",
+            "paramsType": "WorkflowsRestartAgentParams",
+            "resultType": "WorkflowsRestartAgentResult",
+            "stability": "stable",
+            "featureGroup": "workflows",
+            "idempotency": "nonIdempotent",
+            "sideEffect": "localState",
+            "notifications": [
+                "workflows/agentQueued",
+                "workflows/agentStarted",
+                "workflows/agentCompleted",
+                "workflows/agentFailed"
+            ]
+        },
+        {
+            "method": "workflows/resume",
+            "paramsType": "WorkflowsResumeParams",
+            "resultType": "WorkflowsResumeResult",
+            "stability": "stable",
+            "featureGroup": "workflows",
+            "idempotency": "nonIdempotent",
+            "sideEffect": "localState",
+            "notifications": [
+                "workflows/resumed"
+            ]
+        },
+        {
+            "method": "workflows/save",
+            "paramsType": "WorkflowsSaveParams",
+            "resultType": "WorkflowsSaveResult",
+            "stability": "stable",
+            "featureGroup": "workflows",
+            "idempotency": "nonIdempotent",
+            "sideEffect": "localState"
+        },
+        {
+            "method": "workflows/scripts/delete",
+            "paramsType": "WorkflowsScriptsDeleteParams",
+            "resultType": "WorkflowsScriptsDeleteResult",
+            "stability": "stable",
+            "featureGroup": "workflows",
+            "idempotency": "nonIdempotent",
+            "sideEffect": "localState"
+        },
+        {
+            "method": "workflows/scripts/list",
+            "paramsType": "WorkflowsScriptsListParams",
+            "resultType": "WorkflowsScriptsListResult",
+            "stability": "stable",
+            "featureGroup": "workflows",
+            "idempotency": "idempotent",
+            "sideEffect": "readOnly"
+        },
+        {
+            "method": "workflows/scripts/read",
+            "paramsType": "WorkflowsScriptsReadParams",
+            "resultType": "WorkflowsScriptsReadResult",
+            "stability": "stable",
+            "featureGroup": "workflows",
+            "idempotency": "idempotent",
+            "sideEffect": "readOnly"
+        },
+        {
+            "method": "workflows/stop",
+            "paramsType": "WorkflowsStopParams",
+            "resultType": "WorkflowsStopResult",
+            "stability": "stable",
+            "featureGroup": "workflows",
+            "idempotency": "nonIdempotent",
+            "sideEffect": "localState",
+            "notifications": [
+                "workflows/stopped"
+            ]
         }
     ]
 }
@@ -1551,6 +1819,7 @@ APP_SERVER_METHODS: tuple[str, ...] = (
     "processes/stop",
     "processes/stopAll",
     "processes/subscribe",
+    "providers/clear",
     "providers/configure",
     "providers/list",
     "providers/select",
@@ -1586,6 +1855,10 @@ APP_SERVER_METHODS: tuple[str, ...] = (
     "skills/read",
     "skills/setEnabled",
     "skills/setExposure",
+    "speech/providers/list",
+    "speech/synthesis/providers/list",
+    "speech/synthesize",
+    "speech/transcribe",
     "tasks/cancel",
     "tasks/get",
     "tasks/list",
@@ -1622,15 +1895,37 @@ APP_SERVER_METHODS: tuple[str, ...] = (
     "turn/steer",
     "turn/subagentTrace/read",
     "turn/subagentTraces/list",
+    "webwright/artifacts",
+    "webwright/export",
+    "webwright/latestRun",
+    "webwright/prepare",
+    "webwright/report",
+    "webwright/rerun",
+    "webwright/setup",
+    "webwright/submit",
+    "webwright/verify",
+    "webwright/visualJudge",
     "workflow/enable",
     "workflow/ignore",
     "workflow/preview",
     "workflow/refresh",
     "workflow/remove",
     "workflow/scan",
+    "workflows/approve",
+    "workflows/get",
+    "workflows/list",
+    "workflows/pause",
+    "workflows/plan",
+    "workflows/restartAgent",
+    "workflows/resume",
+    "workflows/save",
+    "workflows/scripts/delete",
+    "workflows/scripts/list",
+    "workflows/scripts/read",
+    "workflows/stop",
 )
 
-AppServerMethod: TypeAlias = Literal["agents/list", "artifact/delete", "artifact/grep", "artifact/list", "artifact/read", "artifact/tail", "auth/codex/login", "auth/codex/logout", "auth/codex/status", "auth/supergrok/login", "auth/supergrok/logout", "auth/supergrok/status", "automations/cancelRun", "automations/create", "automations/delete", "automations/list", "automations/runNow", "automations/runs", "automations/status", "automations/update", "command/exec", "commands/expand", "commands/list", "commands/run", "discovery/groups", "discovery/promote", "discovery/promoted/clear", "discovery/promoted/list", "discovery/read", "discovery/refresh", "discovery/search", "eval/report/read", "eval/reports/list", "extensions/list", "fs/readDirectory", "fs/readFile", "hunk/list", "hunk/read", "hunk/rollback", "index/proofs/list", "index/readChunk", "index/rebuild", "index/search", "index/status", "initialize", "marketplaces/add", "marketplaces/install_default", "marketplaces/list", "marketplaces/plugin", "marketplaces/refresh", "marketplaces/remove", "marketplaces/search", "media/attachToTurn", "media/delete", "media/list", "media/read", "media/thumbnail", "memory/delete", "memory/list", "memory/provider/list", "memory/provider/set", "memory/query", "memory/read", "memory/recall/preview", "memory/save", "memory/update", "model/list", "plan/review/approve", "plan/review/comment", "plan/review/read", "plan/review/reject", "plan/review/rewrite", "plugins/disable", "plugins/install", "plugins/install_all_variants", "plugins/list_installed", "plugins/preview_install", "plugins/uninstall", "processes/get", "processes/list", "processes/stop", "processes/stopAll", "processes/subscribe", "providers/configure", "providers/list", "providers/select", "retrieval/metrics", "retrieval/promoted", "retrieval/recommendations", "roadmap/create", "roadmap/list", "roadmap/patch", "roadmap/read", "roadmap/task/update", "roadmap/thread/attach", "roadmap/thread/list", "roadmap/thread/spawn", "roadmap/validate", "runners/delete", "runners/list", "runners/ports", "runners/select", "runners/session", "runners/snapshot", "search_index/clear", "search_index/rebuild", "search_index/status", "search_index/warmup", "settings/get", "settings/set_default_mode", "settings/set_file_backed_dynamic_context", "settings/set_search_index", "settings/set_shell", "settings/set_web_search", "skills/list", "skills/read", "skills/setEnabled", "skills/setExposure", "tasks/cancel", "tasks/get", "tasks/list", "tasks/submit", "tasks/subscribe", "team/cleanup", "team/list", "team/member/focus", "team/member/interrupt", "team/member/message", "team/member/start", "team/pane/cleanup", "team/pane/focus", "team/read", "team/start", "thread/archive", "thread/attach", "thread/exit_plan", "thread/goal/clear", "thread/goal/get", "thread/goal/set", "thread/list", "thread/read", "thread/resolve_approval", "thread/resolve_user_input", "thread/roadmap/open", "thread/set_mode", "thread/start", "thread/state", "tools/call", "tools/list", "turn/interrupt", "turn/start", "turn/steer", "turn/subagentTrace/read", "turn/subagentTraces/list", "workflow/enable", "workflow/ignore", "workflow/preview", "workflow/refresh", "workflow/remove", "workflow/scan"]
+AppServerMethod: TypeAlias = Literal["agents/list", "artifact/delete", "artifact/grep", "artifact/list", "artifact/read", "artifact/tail", "auth/codex/login", "auth/codex/logout", "auth/codex/status", "auth/supergrok/login", "auth/supergrok/logout", "auth/supergrok/status", "automations/cancelRun", "automations/create", "automations/delete", "automations/list", "automations/runNow", "automations/runs", "automations/status", "automations/update", "command/exec", "commands/expand", "commands/list", "commands/run", "discovery/groups", "discovery/promote", "discovery/promoted/clear", "discovery/promoted/list", "discovery/read", "discovery/refresh", "discovery/search", "eval/report/read", "eval/reports/list", "extensions/list", "fs/readDirectory", "fs/readFile", "hunk/list", "hunk/read", "hunk/rollback", "index/proofs/list", "index/readChunk", "index/rebuild", "index/search", "index/status", "initialize", "marketplaces/add", "marketplaces/install_default", "marketplaces/list", "marketplaces/plugin", "marketplaces/refresh", "marketplaces/remove", "marketplaces/search", "media/attachToTurn", "media/delete", "media/list", "media/read", "media/thumbnail", "memory/delete", "memory/list", "memory/provider/list", "memory/provider/set", "memory/query", "memory/read", "memory/recall/preview", "memory/save", "memory/update", "model/list", "plan/review/approve", "plan/review/comment", "plan/review/read", "plan/review/reject", "plan/review/rewrite", "plugins/disable", "plugins/install", "plugins/install_all_variants", "plugins/list_installed", "plugins/preview_install", "plugins/uninstall", "processes/get", "processes/list", "processes/stop", "processes/stopAll", "processes/subscribe", "providers/clear", "providers/configure", "providers/list", "providers/select", "retrieval/metrics", "retrieval/promoted", "retrieval/recommendations", "roadmap/create", "roadmap/list", "roadmap/patch", "roadmap/read", "roadmap/task/update", "roadmap/thread/attach", "roadmap/thread/list", "roadmap/thread/spawn", "roadmap/validate", "runners/delete", "runners/list", "runners/ports", "runners/select", "runners/session", "runners/snapshot", "search_index/clear", "search_index/rebuild", "search_index/status", "search_index/warmup", "settings/get", "settings/set_default_mode", "settings/set_file_backed_dynamic_context", "settings/set_search_index", "settings/set_shell", "settings/set_web_search", "skills/list", "skills/read", "skills/setEnabled", "skills/setExposure", "speech/providers/list", "speech/synthesis/providers/list", "speech/synthesize", "speech/transcribe", "tasks/cancel", "tasks/get", "tasks/list", "tasks/submit", "tasks/subscribe", "team/cleanup", "team/list", "team/member/focus", "team/member/interrupt", "team/member/message", "team/member/start", "team/pane/cleanup", "team/pane/focus", "team/read", "team/start", "thread/archive", "thread/attach", "thread/exit_plan", "thread/goal/clear", "thread/goal/get", "thread/goal/set", "thread/list", "thread/read", "thread/resolve_approval", "thread/resolve_user_input", "thread/roadmap/open", "thread/set_mode", "thread/start", "thread/state", "tools/call", "tools/list", "turn/interrupt", "turn/start", "turn/steer", "turn/subagentTrace/read", "turn/subagentTraces/list", "webwright/artifacts", "webwright/export", "webwright/latestRun", "webwright/prepare", "webwright/report", "webwright/rerun", "webwright/setup", "webwright/submit", "webwright/verify", "webwright/visualJudge", "workflow/enable", "workflow/ignore", "workflow/preview", "workflow/refresh", "workflow/remove", "workflow/scan", "workflows/approve", "workflows/get", "workflows/list", "workflows/pause", "workflows/plan", "workflows/restartAgent", "workflows/resume", "workflows/save", "workflows/scripts/delete", "workflows/scripts/list", "workflows/scripts/read", "workflows/stop"]
 
 
 class JsonRpcError(TypedDict, total=False):

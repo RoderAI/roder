@@ -4,6 +4,7 @@ pub mod loader;
 pub mod registry;
 pub mod spec;
 pub mod template;
+pub mod workflows;
 
 pub use expand::{
     CommandExpansion, CommandExpansionOptions, CommandExpansionRequest, ShellRunner, UrlFetcher,
@@ -14,10 +15,17 @@ pub use registry::{
     CommandDirectory, CommandOverrideAudit, CommandsRegistry, CommandsRegistryOptions,
     ExtensionCommandDirectory,
 };
-pub use spec::{CommandInclude, CommandSource, CommandSpec, FileInclude, ShellInclude, UrlInclude};
+pub use spec::{
+    CommandInclude, CommandSource, CommandSpec, FileInclude, ShellInclude, UrlInclude,
+    WorkflowCommandSpec, structured_workflow_arguments,
+};
+pub use workflows::{
+    WorkflowCommandDirectory, WorkflowCommandSaveRequest, built_in_workflow_commands,
+    load_workflow_command_file, save_workflow_command, workflow_command_arguments,
+};
 
 pub fn built_in_commands() -> Vec<CommandSpec> {
-    [
+    let mut commands = [
         (
             "init",
             "Create or refresh project instructions for this workspace.",
@@ -138,10 +146,13 @@ pub fn built_in_commands() -> Vec<CommandSpec> {
         include: CommandInclude::default(),
         feature_skill_bindings: feature_skill_bindings(name),
         body: body.to_string(),
+        workflow: None,
         source: CommandSource::BuiltIn,
         path: None,
     })
-    .collect()
+    .collect::<Vec<_>>();
+    commands.extend(built_in_workflow_commands());
+    commands
 }
 
 fn feature_skill_bindings(name: &str) -> Vec<roder_api::skills::FeatureSkillBinding> {

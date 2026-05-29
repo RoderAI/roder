@@ -49,6 +49,7 @@ pub fn parse_command_markdown(
         include: parsed.include,
         feature_skill_bindings: Vec::new(),
         body: body.trim().to_string(),
+        workflow: None,
         source,
         path: Some(path.to_path_buf()),
     })

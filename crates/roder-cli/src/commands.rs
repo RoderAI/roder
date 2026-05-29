@@ -5,7 +5,8 @@ use std::{
 };
 
 use roder_commands::{
-    CommandSpec, CommandsRegistry, CommandsRegistryOptions, ExtensionCommandDirectory,
+    CommandDirectory, CommandSource, CommandSpec, CommandsRegistry, CommandsRegistryOptions,
+    WorkflowCommandDirectory,
 };
 
 pub(super) fn run_commands_cli(args: &[String], cfg: &roder_config::Config) -> anyhow::Result<()> {
@@ -36,19 +37,32 @@ fn load_registry(cfg: &roder_config::Config) -> anyhow::Result<CommandsRegistry>
     }
     let user_dir = resolve_user_command_dir(&command_cfg);
     let workspace_dir = resolve_workspace_command_dir(&command_cfg)?;
+    let workflow_workspace = std::env::current_dir().ok();
+    let workflow_dirs_config = roder_config::dynamic_workflows::resolve_workflow_directories(
+        cfg.dynamic_workflows.as_ref(),
+        workflow_workspace.as_deref(),
+    );
+    let user_workflows_dir = Some(workflow_dirs_config.user);
+    let workspace_workflows_dir = Some(workflow_dirs_config.workspace);
     if command_cfg.live_reload {
-        let roots = [user_dir.clone(), workspace_dir.clone()]
-            .into_iter()
-            .flatten()
-            .collect::<Vec<_>>();
+        let roots = [
+            user_dir.clone(),
+            workspace_dir.clone(),
+            user_workflows_dir.clone(),
+            workspace_workflows_dir.clone(),
+        ]
+        .into_iter()
+        .flatten()
+        .collect::<Vec<_>>();
         let mut watcher =
             CommandRegistryWatcher::new(roots, Duration::from_millis(250), SystemCommandClock)?;
         let _ = watcher.poll()?;
     }
-    CommandsRegistry::load_with_options(
-        user_dir.as_ref(),
-        workspace_dir.as_ref(),
-        std::iter::empty::<ExtensionCommandDirectory>(),
+    let command_dirs = command_directories(user_dir, workspace_dir);
+    let workflow_dirs = workflow_command_directories(user_workflows_dir, workspace_workflows_dir);
+    CommandsRegistry::from_directories_with_workflows(
+        command_dirs,
+        workflow_dirs,
         CommandsRegistryOptions {
             include_builtins: true,
             allow_builtin_override: false,
@@ -90,8 +104,53 @@ fn print_command_show(spec: &CommandSpec) {
     if let Some(path) = &spec.path {
         println!("path: {}", path.display());
     }
+    if let Some(workflow) = &spec.workflow {
+        println!("workflow: true");
+        println!("workflow-script-id: {}", workflow.script_id);
+        println!("workflow-script-hash: {}", workflow.script_hash);
+    }
     println!("---");
     println!("{}", spec.body);
+}
+
+fn command_directories(
+    user_dir: Option<PathBuf>,
+    workspace_dir: Option<PathBuf>,
+) -> Vec<CommandDirectory> {
+    let mut directories = Vec::new();
+    if let Some(root) = user_dir {
+        directories.push(CommandDirectory {
+            root,
+            source: CommandSource::User,
+        });
+    }
+    if let Some(root) = workspace_dir {
+        directories.push(CommandDirectory {
+            root,
+            source: CommandSource::Workspace,
+        });
+    }
+    directories
+}
+
+fn workflow_command_directories(
+    user_dir: Option<PathBuf>,
+    workspace_dir: Option<PathBuf>,
+) -> Vec<WorkflowCommandDirectory> {
+    let mut directories = Vec::new();
+    if let Some(root) = user_dir {
+        directories.push(WorkflowCommandDirectory {
+            root,
+            source: CommandSource::User,
+        });
+    }
+    if let Some(root) = workspace_dir {
+        directories.push(WorkflowCommandDirectory {
+            root,
+            source: CommandSource::Workspace,
+        });
+    }
+    directories
 }
 
 fn resolve_user_command_dir(cfg: &roder_config::CommandsConfig) -> Option<PathBuf> {

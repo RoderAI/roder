@@ -20,6 +20,9 @@ fn codegen_renders_openai_only_distribution_deterministically() {
     let readme = file(&first, "README.md");
     assert!(readme.contains("openai-responses"));
     assert!(readme.contains("OPENAI_API_KEY"));
+    let config = file(&first, "config.toml");
+    assert!(config.contains("[dynamic_workflows]"));
+    assert!(config.contains("workspace_workflows_dir = \".agents/workflows\""));
 }
 
 #[test]

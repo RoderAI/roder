@@ -1,0 +1,24 @@
+{
+  "results": [
+    {
+      "title": "Dynamic workflows coordinate parallel agents",
+      "url": "https://fixtures.roder.local/dynamic-workflows/parallel-agents",
+      "snippet": "Dynamic workflows break a large question into independent research lanes, run agents concurrently, checkpoint progress, and merge verified findings."
+    },
+    {
+      "title": "Workflow verification needs adversarial review",
+      "url": "https://fixtures.roder.local/dynamic-workflows/verification",
+      "snippet": "Deep research workflows should include a verifier lane that challenges stale claims, missing counterarguments, and source quality before the final report."
+    },
+    {
+      "title": "Structured workflow arguments reduce prompt ambiguity",
+      "url": "https://fixtures.roder.local/dynamic-workflows/arguments",
+      "snippet": "Saved workflow commands should pass JSON arguments such as question, queries, and seedResults instead of appending raw command text to a prompt."
+    },
+    {
+      "title": "Hosted web search should prefer primary sources",
+      "url": "https://fixtures.roder.local/research/source-quality",
+      "snippet": "Research agents that have web-search tools should prefer primary sources, preserve URLs, and explicitly label uncertainty."
+    }
+  ]
+}

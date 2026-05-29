@@ -107,8 +107,10 @@ impl AppServer {
         } else {
             None
         };
+        let workflows = crate::workflows::AppWorkflowService::new(Arc::clone(&runtime));
         Self {
             runtime,
+            workflows,
             tasks,
             persist_user_config: false,
             features: feature_config,

@@ -1,0 +1,30 @@
+{
+  "id": "dynamic-workflows-deep-research-fixture",
+  "title": "Dynamic workflow deep research fixture search",
+  "prompt": "Run the deep research workflow offline with fixture search results and produce a cited synthesis about dynamic workflow safety.",
+  "tags": ["dynamic-workflows", "deep-research", "fixture-search", "offline"],
+  "workspace": {
+    "files": [
+      {
+        "path": "fixtures/search-results.json",
+        "contents": "{ \"corpus\": \"evals/fixtures/dynamic-workflows/deep-research/corpus.json\" }\n"
+      }
+    ]
+  },
+  "timeoutMs": 10000,
+  "expected": {
+    "finalAnswerContains": ["hello from roder"],
+    "files": [
+      {
+        "path": "fixtures/search-results.json",
+        "exists": true,
+        "contains": ["corpus"]
+      }
+    ],
+    "verificationRequired": true
+  },
+  "constraints": [
+    "offline fake provider fixture",
+    "live web search remains gated by RODER_DEEP_RESEARCH_LIVE=1"
+  ]
+}

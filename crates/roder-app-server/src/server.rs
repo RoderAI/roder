@@ -20,8 +20,8 @@ use roder_api::workflow::{
     WorkflowImportState,
 };
 use roder_commands::{
-    CommandExpansionOptions, CommandExpansionRequest, CommandSpec, CommandsRegistry,
-    CommandsRegistryOptions, ExtensionCommandDirectory, expand_command,
+    CommandDirectory, CommandExpansionOptions, CommandExpansionRequest, CommandSource, CommandSpec,
+    CommandsRegistry, CommandsRegistryOptions, WorkflowCommandDirectory, expand_command,
 };
 use roder_core::{
     CreateThreadRequest, Runtime, StartTurnRequest,
@@ -90,6 +90,7 @@ struct RoadmapThreadParams {
 
 pub struct AppServer {
     pub runtime: Arc<Runtime>,
+    pub(crate) workflows: crate::workflows::AppWorkflowService,
     pub(crate) tasks: BackgroundRunner,
     pub(crate) persist_user_config: bool,
     pub(crate) features: AppServerFeatureConfig,
@@ -864,6 +865,79 @@ impl AppServer {
             "workflow/remove" => {
                 self.decode_and(req.params, |p| async move {
                     self.handle_workflow_remove(p).await
+                })
+                .await
+            }
+            "workflows/plan" => {
+                self.decode_and(req.params, |p| async move {
+                    self.handle_workflows_plan(p).await
+                })
+                .await
+            }
+            "workflows/approve" => {
+                self.decode_and(req.params, |p| async move {
+                    self.handle_workflows_approve(p).await
+                })
+                .await
+            }
+            "workflows/list" => {
+                self.decode_and(req.params, |p| async move {
+                    self.handle_workflows_list(p).await
+                })
+                .await
+            }
+            "workflows/get" => {
+                self.decode_and(
+                    req.params,
+                    |p| async move { self.handle_workflows_get(p).await },
+                )
+                .await
+            }
+            "workflows/pause" => {
+                self.decode_and(req.params, |p| async move {
+                    self.handle_workflows_pause(p).await
+                })
+                .await
+            }
+            "workflows/resume" => {
+                self.decode_and(req.params, |p| async move {
+                    self.handle_workflows_resume(p).await
+                })
+                .await
+            }
+            "workflows/stop" => {
+                self.decode_and(req.params, |p| async move {
+                    self.handle_workflows_stop(p).await
+                })
+                .await
+            }
+            "workflows/restartAgent" => {
+                self.decode_and(req.params, |p| async move {
+                    self.handle_workflows_restart_agent(p).await
+                })
+                .await
+            }
+            "workflows/save" => {
+                self.decode_and(req.params, |p| async move {
+                    self.handle_workflows_save(p).await
+                })
+                .await
+            }
+            "workflows/scripts/list" => {
+                self.decode_and(req.params, |p| async move {
+                    self.handle_workflows_scripts_list(p).await
+                })
+                .await
+            }
+            "workflows/scripts/read" => {
+                self.decode_and(req.params, |p| async move {
+                    self.handle_workflows_scripts_read(p).await
+                })
+                .await
+            }
+            "workflows/scripts/delete" => {
+                self.decode_and(req.params, |p| async move {
+                    self.handle_workflows_scripts_delete(p).await
                 })
                 .await
             }
@@ -2839,7 +2913,8 @@ impl AppServer {
     }
 
     async fn command_registry(&self) -> anyhow::Result<CommandsRegistry> {
-        let cfg = roder_config::load_config()?.commands.unwrap_or_default();
+        let config = roder_config::load_config()?;
+        let cfg = config.commands.clone().unwrap_or_default();
         if !cfg.enabled {
             anyhow::bail!("commands are disabled by configuration");
         }
@@ -2864,10 +2939,18 @@ impl AppServer {
             .as_deref()
             .map(expand_tilde)
             .or_else(|| Some(roder_config::config_dir().join("commands")));
-        CommandsRegistry::load_with_options(
-            user_dir.as_ref(),
-            workspace_dir.as_ref(),
-            std::iter::empty::<ExtensionCommandDirectory>(),
+        let workflow_dirs = roder_config::dynamic_workflows::resolve_workflow_directories(
+            config.dynamic_workflows.as_ref(),
+            workspace.as_deref(),
+        );
+        let user_workflow_dir = Some(workflow_dirs.user);
+        let workspace_workflow_dir = Some(workflow_dirs.workspace);
+        let command_dirs = command_registry_directories(user_dir, workspace_dir);
+        let workflow_dirs =
+            workflow_registry_directories(user_workflow_dir, workspace_workflow_dir);
+        CommandsRegistry::from_directories_with_workflows(
+            command_dirs,
+            workflow_dirs,
             CommandsRegistryOptions {
                 include_builtins: true,
                 allow_builtin_override: false,
@@ -3413,6 +3496,135 @@ impl AppServer {
             decision,
         })
         .unwrap())
+    }
+
+    async fn handle_workflows_plan(
+        &self,
+        params: WorkflowsPlanParams,
+    ) -> Result<serde_json::Value, JsonRpcError> {
+        self.workflows
+            .plan(params)
+            .await
+            .map(|result| serde_json::to_value(result).unwrap())
+            .map_err(internal_error)
+    }
+
+    async fn handle_workflows_approve(
+        &self,
+        params: WorkflowsApproveParams,
+    ) -> Result<serde_json::Value, JsonRpcError> {
+        self.workflows
+            .approve(params)
+            .await
+            .map(|result| serde_json::to_value(result).unwrap())
+            .map_err(internal_error)
+    }
+
+    async fn handle_workflows_list(
+        &self,
+        params: WorkflowsListParams,
+    ) -> Result<serde_json::Value, JsonRpcError> {
+        self.workflows
+            .list(params)
+            .await
+            .map(|result| serde_json::to_value(result).unwrap())
+            .map_err(internal_error)
+    }
+
+    async fn handle_workflows_get(
+        &self,
+        params: WorkflowsGetParams,
+    ) -> Result<serde_json::Value, JsonRpcError> {
+        self.workflows
+            .get(params)
+            .await
+            .map(|result| serde_json::to_value(result).unwrap())
+            .map_err(internal_error)
+    }
+
+    async fn handle_workflows_pause(
+        &self,
+        params: WorkflowsPauseParams,
+    ) -> Result<serde_json::Value, JsonRpcError> {
+        self.workflows
+            .pause(params)
+            .await
+            .map(|result| serde_json::to_value(result).unwrap())
+            .map_err(internal_error)
+    }
+
+    async fn handle_workflows_resume(
+        &self,
+        params: WorkflowsResumeParams,
+    ) -> Result<serde_json::Value, JsonRpcError> {
+        self.workflows
+            .resume(params)
+            .await
+            .map(|result| serde_json::to_value(result).unwrap())
+            .map_err(internal_error)
+    }
+
+    async fn handle_workflows_stop(
+        &self,
+        params: WorkflowsStopParams,
+    ) -> Result<serde_json::Value, JsonRpcError> {
+        self.workflows
+            .stop(params)
+            .await
+            .map(|result| serde_json::to_value(result).unwrap())
+            .map_err(internal_error)
+    }
+
+    async fn handle_workflows_restart_agent(
+        &self,
+        params: WorkflowsRestartAgentParams,
+    ) -> Result<serde_json::Value, JsonRpcError> {
+        self.workflows
+            .restart_agent(params)
+            .await
+            .map(|result| serde_json::to_value(result).unwrap())
+            .map_err(internal_error)
+    }
+
+    async fn handle_workflows_save(
+        &self,
+        params: WorkflowsSaveParams,
+    ) -> Result<serde_json::Value, JsonRpcError> {
+        self.workflows
+            .save(params)
+            .await
+            .map(|result| serde_json::to_value(result).unwrap())
+            .map_err(internal_error)
+    }
+
+    async fn handle_workflows_scripts_list(
+        &self,
+        params: WorkflowsScriptsListParams,
+    ) -> Result<serde_json::Value, JsonRpcError> {
+        self.workflows
+            .scripts_list(params)
+            .map(|result| serde_json::to_value(result).unwrap())
+            .map_err(internal_error)
+    }
+
+    async fn handle_workflows_scripts_read(
+        &self,
+        params: WorkflowsScriptsReadParams,
+    ) -> Result<serde_json::Value, JsonRpcError> {
+        self.workflows
+            .scripts_read(params)
+            .map(|result| serde_json::to_value(result).unwrap())
+            .map_err(internal_error)
+    }
+
+    async fn handle_workflows_scripts_delete(
+        &self,
+        params: WorkflowsScriptsDeleteParams,
+    ) -> Result<serde_json::Value, JsonRpcError> {
+        self.workflows
+            .scripts_delete(params)
+            .map(|result| serde_json::to_value(result).unwrap())
+            .map_err(internal_error)
     }
 
     async fn workflow_scan(
@@ -4115,6 +4327,46 @@ fn command_descriptor(spec: &CommandSpec) -> CommandDescriptor {
         has_shell_includes: !spec.include.shell.is_empty(),
         has_url_includes: !spec.include.urls.is_empty(),
     }
+}
+
+fn command_registry_directories(
+    user_dir: Option<std::path::PathBuf>,
+    workspace_dir: Option<std::path::PathBuf>,
+) -> Vec<CommandDirectory> {
+    let mut directories = Vec::new();
+    if let Some(root) = user_dir {
+        directories.push(CommandDirectory {
+            root,
+            source: CommandSource::User,
+        });
+    }
+    if let Some(root) = workspace_dir {
+        directories.push(CommandDirectory {
+            root,
+            source: CommandSource::Workspace,
+        });
+    }
+    directories
+}
+
+fn workflow_registry_directories(
+    user_dir: Option<std::path::PathBuf>,
+    workspace_dir: Option<std::path::PathBuf>,
+) -> Vec<WorkflowCommandDirectory> {
+    let mut directories = Vec::new();
+    if let Some(root) = user_dir {
+        directories.push(WorkflowCommandDirectory {
+            root,
+            source: CommandSource::User,
+        });
+    }
+    if let Some(root) = workspace_dir {
+        directories.push(WorkflowCommandDirectory {
+            root,
+            source: CommandSource::Workspace,
+        });
+    }
+    directories
 }
 
 fn expand_tilde(path: &std::path::Path) -> std::path::PathBuf {
