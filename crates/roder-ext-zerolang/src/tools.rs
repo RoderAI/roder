@@ -285,22 +285,40 @@ impl ToolExecutor for EditTool {
         ToolSpec {
             name: ZEROLANG_EDIT_TOOL.to_string(),
             description:
-                "Apply checked Zero ProgramGraph edits by generating patch text with graphHash and node/value preconditions, then validating source."
+                "Apply checked Zero ProgramGraph edits. Roder accepts structured operation objects in the operations array, builds Zero graph patch text internally, and validates the edited source. Do not pass zero_graph_patch-style args such as a single op object with id/value; for a set edit use operations: [{\"op\":\"set\",\"node\":\"#...\",\"field\":\"value\",\"expect\":\"old\",\"value\":\"new\"}]."
                     .to_string(),
             parameters: json!({
                 "type": "object",
                 "required": ["input", "graphHash", "operations"],
                 "properties": {
-                    "input": { "type": "string" },
-                    "graphHash": { "type": "string" },
+                    "input": {
+                        "type": "string",
+                        "description": "Workspace-relative or absolute path to the Zero `.0` source file to edit."
+                    },
+                    "graphHash": {
+                        "type": "string",
+                        "pattern": "^graph:[0-9a-f]{16}$",
+                        "description": "ProgramGraph hash from zerolang_graph_dump, including the graph: prefix. The edit is rejected if the file graph has changed.",
+                        "examples": ["graph:74f634ccb5b77646"]
+                    },
                     "operations": {
                         "type": "array",
+                        "description": "Checked graph edit operations. Each item is a structured Roder operation object; Roder converts it to Zero patch text.",
                         "items": operation_schema(),
                         "minItems": 1
                     },
-                    "out": { "type": "string" },
-                    "allowOutsideZero": { "type": "boolean" },
-                    "validate": { "type": "boolean" }
+                    "out": {
+                        "type": "string",
+                        "description": "Optional output path for the patched source. Defaults to editing input in place."
+                    },
+                    "allowOutsideZero": {
+                        "type": "boolean",
+                        "description": "Allow out to be outside .zero/ when writing a derived artifact path."
+                    },
+                    "validate": {
+                        "type": "boolean",
+                        "description": "Run Zero graph/source validation after applying the patch. Defaults to true."
+                    }
                 },
                 "additionalProperties": false
             }),

@@ -94,6 +94,41 @@ async fn normalized_schema_keeps_zerolang_edit_required_fields() {
         edit.parameters["properties"]["operations"]["items"]["additionalProperties"],
         false
     );
+    assert!(
+        edit.description.contains("structured operation objects"),
+        "{}",
+        edit.description
+    );
+    assert!(
+        edit.description
+            .contains("Do not pass zero_graph_patch-style args"),
+        "{}",
+        edit.description
+    );
+    assert_eq!(
+        edit.parameters["properties"]["graphHash"]["pattern"],
+        json!("^graph:[0-9a-f]{16}$")
+    );
+    assert!(
+        edit.parameters["properties"]["operations"]["description"]
+            .as_str()
+            .unwrap()
+            .contains("structured Roder operation")
+    );
+    let operation_properties = &edit.parameters["properties"]["operations"]["items"]["properties"];
+    assert!(operation_properties.get("id").is_none());
+    assert!(
+        operation_properties["node"]["description"]
+            .as_str()
+            .unwrap()
+            .contains("Do not use `id`")
+    );
+    assert!(
+        operation_properties["value"]["description"]
+            .as_str()
+            .unwrap()
+            .contains("string")
+    );
 }
 
 #[tokio::test]

@@ -97,31 +97,110 @@ pub(super) fn graph_output_spec(name: &str, description: &str) -> ToolSpec {
 pub(super) fn operation_schema() -> Value {
     json!({
         "type": "object",
+        "description": "One structured Roder graph patch operation. Use `node` for ProgramGraph node ids, not `id`; Roder converts this object to Zero patch text.",
         "required": ["op"],
         "properties": {
-            "op": { "type": "string", "enum": ["set", "rename", "insert", "insertEdge", "replace", "delete"] },
-            "node": { "type": "string" },
-            "field": { "type": "string" },
-            "expect": { "type": "string" },
-            "value": { "type": "string" },
-            "kind": { "type": "string" },
-            "parent": { "type": "string" },
-            "edge": { "type": "string" },
-            "order": { "type": "integer", "minimum": 0 },
-            "name": { "type": "string" },
-            "type": { "type": "string" },
-            "path": { "type": "string" },
-            "line": { "type": "integer", "minimum": 0 },
-            "column": { "type": "integer", "minimum": 0 },
-            "from": { "type": "string" },
-            "to": { "type": "string" },
-            "target": { "type": "string" },
-            "public": { "type": "boolean" },
-            "mutable": { "type": "boolean" },
-            "static": { "type": "boolean" },
-            "fallible": { "type": "boolean" },
-            "exportC": { "type": "boolean" }
+            "op": {
+                "type": "string",
+                "enum": ["set", "rename", "insert", "insertEdge", "replace", "delete"],
+                "description": "Operation kind. For literal/value updates use `set`."
+            },
+            "node": {
+                "type": "string",
+                "description": "ProgramGraph node id from zerolang_graph_dump, for example `#89f1bc7e`. Do not use `id`."
+            },
+            "field": {
+                "type": "string",
+                "description": "Field name to edit for set operations, for example `value`."
+            },
+            "expect": {
+                "type": "string",
+                "description": "Optional checked precondition. For set/rename this is the expected existing field value; for delete/replace it is the expected node hash."
+            },
+            "value": {
+                "type": "string",
+                "description": "New semantic value as a string. Quote numeric values, for example use `\"66\"`, not number 66.",
+                "examples": ["66"]
+            },
+            "kind": {
+                "type": "string",
+                "description": "Node kind for insert or replace operations."
+            },
+            "parent": {
+                "type": "string",
+                "description": "Parent node id for insert operations."
+            },
+            "edge": {
+                "type": "string",
+                "description": "ProgramGraph edge name for insert or insertEdge operations."
+            },
+            "order": {
+                "type": "integer",
+                "minimum": 0,
+                "description": "Zero-based edge order for insert or insertEdge operations."
+            },
+            "name": {
+                "type": "string",
+                "description": "Optional node name attribute for insert or replace operations."
+            },
+            "type": {
+                "type": "string",
+                "description": "Optional node type attribute for insert or replace operations."
+            },
+            "path": {
+                "type": "string",
+                "description": "Optional path attribute for insert or replace operations."
+            },
+            "line": {
+                "type": "integer",
+                "minimum": 0,
+                "description": "Optional zero-based line attribute for insert or replace operations."
+            },
+            "column": {
+                "type": "integer",
+                "minimum": 0,
+                "description": "Optional zero-based column attribute for insert or replace operations."
+            },
+            "from": {
+                "type": "string",
+                "description": "Source edge-owner node id for insertEdge operations."
+            },
+            "to": {
+                "type": "string",
+                "description": "Node id that receives the inserted edge for insertEdge operations."
+            },
+            "target": {
+                "type": "string",
+                "description": "Target node id for insertEdge operations."
+            },
+            "public": {
+                "type": "boolean",
+                "description": "Optional public flag for insert or replace operations."
+            },
+            "mutable": {
+                "type": "boolean",
+                "description": "Optional mutable flag for insert or replace operations."
+            },
+            "static": {
+                "type": "boolean",
+                "description": "Optional static flag for insert or replace operations."
+            },
+            "fallible": {
+                "type": "boolean",
+                "description": "Optional fallible flag for insert or replace operations."
+            },
+            "exportC": {
+                "type": "boolean",
+                "description": "Optional exportC flag for insert or replace operations."
+            }
         },
+        "examples": [{
+            "op": "set",
+            "node": "#89f1bc7e",
+            "field": "value",
+            "expect": "65",
+            "value": "66"
+        }],
         "additionalProperties": false
     })
 }

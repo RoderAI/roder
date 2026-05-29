@@ -55,10 +55,28 @@ zero graph dump --json src/main.0
 
 Then call `zerolang_edit` with the inspected `graphHash`, node IDs, and field or node-hash preconditions. Roder builds patch text internally:
 
+```json
+{
+  "input": "src/main.0",
+  "graphHash": "graph:74f634ccb5b77646",
+  "operations": [
+    {
+      "op": "set",
+      "node": "#89f1bc7e",
+      "field": "value",
+      "expect": "65",
+      "value": "66"
+    }
+  ]
+}
+```
+
+Use structured Roder operation objects in `operations`; this is not the same shape as `zero_graph_patch` raw patch arguments. Use `node`, not `id`, and quote semantic values as strings. The example above generates:
+
 ```text
 zero-program-graph-patch v1
-expect graphHash "graph:f76987e99677f1b3"
-set node="#610c78bf" field="value" expect="hello\n" value="hello graph\n"
+expect graphHash "graph:74f634ccb5b77646"
+set node="#89f1bc7e" field="value" expect="65" value="66"
 ```
 
 `zerolang_edit` runs:
