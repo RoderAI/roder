@@ -469,6 +469,7 @@ impl InProcessDispatcher {
             let ctx = InferenceTurnContext {
                 thread_id: &thread_id,
                 turn_id: &turn_id,
+                tool_executor: None,
             };
             let mut stream = engine.stream_turn(ctx, inference_request).await?;
             let mut assistant_text = String::new();

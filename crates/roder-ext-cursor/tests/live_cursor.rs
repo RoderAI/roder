@@ -46,6 +46,7 @@ async fn live_cursor_composer_25_proof_token() {
             InferenceTurnContext {
                 thread_id: "live-cursor-thread",
                 turn_id: "live-cursor-turn",
+                tool_executor: None,
             },
             request,
         )
@@ -95,6 +96,7 @@ async fn live_cursor_composer_25_short_story() {
             InferenceTurnContext {
                 thread_id: "live-cursor-thread",
                 turn_id: "live-cursor-story-turn",
+                tool_executor: None,
             },
             request,
         )

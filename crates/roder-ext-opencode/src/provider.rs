@@ -1001,6 +1001,7 @@ mod tests {
                 InferenceTurnContext {
                     thread_id: "thread-1",
                     turn_id: "turn-1",
+                    tool_executor: None,
                 },
                 request,
             )
@@ -1121,6 +1122,7 @@ mod tests {
                 InferenceTurnContext {
                     thread_id: "thread-profile",
                     turn_id: "turn-profile",
+                    tool_executor: None,
                 },
                 request,
             )

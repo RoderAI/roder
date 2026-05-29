@@ -2785,6 +2785,7 @@ impl AppServer {
                 InferenceTurnContext {
                     thread_id: &thread_id,
                     turn_id,
+                    tool_executor: None,
                 },
                 request,
             )

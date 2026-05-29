@@ -27,6 +27,7 @@ async fn ordinary_mimo_streaming_chat_completions_smoke() {
             InferenceTurnContext {
                 thread_id: "live-xiaomi",
                 turn_id: "turn-1",
+                tool_executor: None,
             },
             request(PROVIDER_XIAOMI_MIMO, "mimo-v2.5-pro"),
         )
@@ -64,6 +65,7 @@ async fn token_plan_streaming_chat_completions_smoke() {
             InferenceTurnContext {
                 thread_id: "live-xiaomi-token-plan",
                 turn_id: "turn-1",
+                tool_executor: None,
             },
             request(PROVIDER_XIAOMI_MIMO_TOKEN_PLAN, "mimo-v2.5-pro"),
         )

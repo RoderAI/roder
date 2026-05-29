@@ -115,6 +115,39 @@ impl InferenceEngine for CursorInferenceEngine {
             .clone()
             .or_else(|| std::env::current_dir().ok())
             .unwrap_or_else(|| PathBuf::from("."));
+
+        // When the runtime supplies a tool executor, drive Cursor's bidirectional
+        // agent runtime: keep the Run stream open and service exec read/write/shell
+        // requests in-stream so the model completes multi-step edits in one turn.
+        if let Some(executor) = ctx.tool_executor.clone() {
+            let (prompt, history) = cursor_request_parts(&request);
+            let conversation_id = uuid::Uuid::new_v4().to_string();
+            let message_id = uuid::Uuid::new_v4().to_string();
+            let run_request = crate::proto::encode_agent_client_message_with_history(
+                &prompt,
+                &request.model.model,
+                &conversation_id,
+                &message_id,
+                &history,
+            );
+            let context_frames = discovery_context_frames_from_env()?.unwrap_or_else(|| {
+                vec![encode_request_context_frame(
+                    &CursorContextOptions::from_workspace(workspace.clone()),
+                )]
+            });
+            return crate::bidi::run_bidi_turn(
+                self.agent_service_config(),
+                crate::bidi::BidiRequest {
+                    access_token: auth.token,
+                    run_request,
+                    context_frames,
+                    workspace,
+                    tool_executor: Some(executor),
+                },
+            )
+            .await;
+        }
+
         let context_frames = discovery_context_frames_from_env()?.unwrap_or_else(|| {
             vec![encode_request_context_frame(
                 &CursorContextOptions::from_workspace(workspace),

@@ -470,6 +470,28 @@ pub struct InferenceProviderContext<'a> {
 pub struct InferenceTurnContext<'a> {
     pub thread_id: &'a str,
     pub turn_id: &'a str,
+    /// Optional callback that executes a single tool call through Roder's tool
+    /// registry and policy, returning its result. Provided by the runtime for
+    /// providers that drive their own in-stream agent loop (e.g. the Cursor
+    /// bidi agent-runtime client, which must execute read/write/shell exec
+    /// requests mid-stream rather than ending the turn). Most providers ignore
+    /// it and surface tool calls as `ToolCallCompleted` events instead.
+    pub tool_executor: Option<std::sync::Arc<dyn TurnToolExecutor>>,
+}
+
+/// Result of executing one tool call via [`TurnToolExecutor`].
+#[derive(Debug, Clone)]
+pub struct TurnToolOutcome {
+    pub result: String,
+    pub is_error: bool,
+}
+
+/// Executes a single tool call through the runtime's registry + policy.
+/// Implemented by the runtime; used by providers that run their own in-stream
+/// agent loop.
+#[async_trait::async_trait]
+pub trait TurnToolExecutor: Send + Sync {
+    async fn execute(&self, call: ToolCallCompleted) -> anyhow::Result<TurnToolOutcome>;
 }
 
 #[async_trait::async_trait]
