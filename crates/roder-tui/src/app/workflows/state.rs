@@ -63,8 +63,8 @@ impl WorkflowUiState {
         self.approval.is_some() || !matches!(self.panel, WorkflowPanel::Hidden)
     }
 
-    pub(crate) fn progress_height(&self) -> u16 {
-        u16::from(self.active_run().is_some())
+    pub(crate) fn progress_height(&self, width: u16, frame_height: u16) -> u16 {
+        super::progress::progress_height(self, width, frame_height)
     }
 
     pub(crate) fn trigger_height(&self, composer_text: &str) -> u16 {
@@ -333,8 +333,8 @@ impl WorkflowUiState {
         };
     }
 
-    pub(crate) fn progress_line(&self, theme: Theme) -> Paragraph<'static> {
-        render::progress_line(self, theme)
+    pub(crate) fn progress_panel(&self, area: Rect, theme: Theme) -> Paragraph<'static> {
+        super::progress::progress_panel(self, area, theme)
     }
 
     pub(crate) fn trigger_line(&self, theme: Theme) -> Paragraph<'static> {

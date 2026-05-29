@@ -11,39 +11,6 @@ use super::super::{Theme, centered_rect, short_id, truncate};
 use super::detail::render_detail;
 use super::state::{WorkflowApprovalView, WorkflowPanel, WorkflowUiState};
 
-pub(super) fn progress_line(state: &WorkflowUiState, theme: Theme) -> Paragraph<'static> {
-    let Some(run) = state.active_run() else {
-        return Paragraph::new(Line::default());
-    };
-    let completed_agents = run
-        .agents
-        .iter()
-        .filter(|agent| agent.completed_at.is_some())
-        .count();
-    Paragraph::new(Line::from(vec![
-        Span::styled(" workflow ", theme.accent_soft()),
-        Span::styled(
-            format!("{} ", status_label(run.status)),
-            status_style(run.status, theme),
-        ),
-        Span::styled(run.script.name.clone(), theme.text()),
-        Span::styled(
-            format!(
-                " · phases {}/{} · agents {}/{} · {}",
-                run.phases
-                    .iter()
-                    .filter(|phase| phase.completed_at.is_some())
-                    .count(),
-                run.phases.len(),
-                completed_agents,
-                run.agents.len(),
-                short_id(&run.run_id)
-            ),
-            theme.muted(),
-        ),
-    ]))
-}
-
 pub(super) fn trigger_line(theme: Theme) -> Paragraph<'static> {
     Paragraph::new(Line::from(vec![
         Span::styled(" workflow trigger ", theme.accent_soft()),
@@ -271,7 +238,7 @@ pub(super) fn status_label(status: WorkflowRunStatus) -> &'static str {
     }
 }
 
-fn status_style(status: WorkflowRunStatus, theme: Theme) -> Style {
+pub(super) fn status_style(status: WorkflowRunStatus, theme: Theme) -> Style {
     match status {
         WorkflowRunStatus::Running | WorkflowRunStatus::Queued => theme.running(),
         WorkflowRunStatus::Completed => theme.accent_soft(),
