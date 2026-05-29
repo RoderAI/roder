@@ -9,10 +9,15 @@ fn headless_profile_list_and_show_work() {
     let list = headless::run(&args(["profile", "list"]), workspace);
     assert_eq!(list.status, 0);
     assert!(list.stdout.contains("openai-only"));
+    assert!(list.stdout.contains("zero-coder-edits"));
 
     let show = headless::run(&args(["profile", "show", "openai-only"]), workspace);
     assert_eq!(show.status, 0);
     assert!(show.stdout.contains("openai-responses"));
+
+    let show_zero = headless::run(&args(["profile", "show", "zero-coder-edits"]), workspace);
+    assert_eq!(show_zero.status, 0);
+    assert!(show_zero.stdout.contains("zerolang"));
 }
 
 #[test]

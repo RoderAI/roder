@@ -11,6 +11,7 @@ The configurator binary is `roder-configure`.
 - `anthropic-only`: Anthropic Messages, JSONL thread storage, plan mode, terminal notifications, CLI, TUI, and app server.
 - `research-headless`: no TUI; app server, OpenAI Responses, disk context, memory, subagents, process tasks, plan mode, and terminal notifications.
 - `tavily`: OpenAI Responses plus the web-search router and Tavily-backed search enabled through `TAVILY_API_KEY`.
+- `zero-coder-edits`: no TUI; app server, OpenAI Responses, JSONL sessions, disk context, process tasks, plan mode, and the Zerolang checked graph-edit tool provider. Intended for Linux AMD64 RL coding environments that run Zero tasks.
 - `full`: all first-party extension metadata currently declared in the workspace, including the Webwright browser-agent extension documented in `docs/roder-webwright-browser-agent.md` and the Zerolang checked graph-edit tool provider documented in `docs/roder-zerolang-checked-graph-edits.md`.
 
 List profiles:
@@ -122,6 +123,24 @@ cargo run -p roder-configure -- generate --profile profile.toml --out dist/resea
 ```
 
 The profile includes JSONL replay-oriented thread storage, disk context, memory, subagents, and process tasks.
+
+### Zero Coder Edits RL Build
+
+Use `zero-coder-edits` when the runtime should be headless and focused on Zero source tasks. It ships `zerolang_skills_get`, `zerolang_check`, `zerolang_graph_dump`, `zerolang_graph_view`, `zerolang_fix_plan`, `zerolang_edit`, and `zerolang_graph_roundtrip`.
+
+```sh
+cargo run -p roder-configure -- profile show zero-coder-edits > zero-coder-edits-profile.toml
+cargo run -p roder-configure -- validate zero-coder-edits-profile.toml
+cargo run -p roder-configure -- generate --profile zero-coder-edits-profile.toml --out dist/zero-coder-roder
+```
+
+For a publishable Linux AMD64 artifact from macOS with Zig installed:
+
+```sh
+./scripts/build-zero-coder-roder-linux-amd64.sh
+```
+
+Set `OPENAI_API_KEY` at runtime and either put `zero` on `PATH` or set `RODER_ZERO_BIN=/path/to/zero`.
 
 ### Tavily-Enabled Web Search Build
 

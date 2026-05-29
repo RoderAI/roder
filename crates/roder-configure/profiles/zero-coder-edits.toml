@@ -1,0 +1,26 @@
+id = "zero-coder-edits"
+description = "Headless Roder distribution for RL Zero coding tasks with checked Zerolang graph-edit tools enabled."
+
+[distribution]
+name = "zero-coder-roder"
+version = "0.1.0"
+include_tui = false
+include_app_server = true
+include_cli = true
+extensions = [
+  "openai-responses",
+  "jsonl-thread-store",
+  "disk-context",
+  "plan-mode",
+  "task-process",
+  "zerolang",
+]
+default_provider = "openai-responses"
+default_thread_store = "jsonl-thread-store"
+
+[distribution.config_overrides.speed_policy]
+enabled = true
+eval_deadline_seconds = 600
+
+[distribution.config_overrides.context]
+file_backed_dynamic_context = true
