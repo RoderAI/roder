@@ -304,9 +304,12 @@ Review, hunks, workflow imports, media, and memory:
 | `plan/review/rewrite` | Request a plan rewrite and steer the turn. |
 | `plan/review/approve` | Approve a plan review. |
 | `plan/review/reject` | Reject a plan review. |
+| `git/changes/list` | List live branch changes against the resolved base. |
+| `git/changes/read` | Read paged unified patch text for one live branch file. |
 | `hunk/list` | List recorded hunks, optionally by turn/review. |
 | `hunk/read` | Read a paged hunk diff. |
 | `hunk/rollback` | Confirm and apply a hunk reverse patch. |
+| `workspace/changes/list` | List observed git-reconciled shell/exec changes. |
 | `workflow/scan` | Scan workflow imports. |
 | `workflow/preview` | Preview workflow import items. |
 | `workflow/enable` | Enable a workflow import. |
@@ -2508,6 +2511,68 @@ Behavior:
 - Rollback requires `confirmed: true` and a recorded reverse patch.
 - A successful rollback returns `{ "rolledBack": true }`; failures return
   `{ "rolledBack": false, "error": "..." }`.
+
+### Workspace observed change methods
+
+Purpose: List file-level workspace changes observed after shell/exec tools.
+
+Examples:
+
+```json
+{
+  "method": "workspace/changes/list",
+  "params": {
+    "threadId": "thread-123",
+    "turnId": "turn-123"
+  }
+}
+```
+
+Behavior:
+
+- `workspace/changes/list` can filter by `turnId`.
+- Observed changes are git-reconciled file summaries, not exact structured
+  hunks. The review panel can read current patch text through `git/changes/read`.
+- New observed changes emit `workspace/changeObserved`.
+
+### Git change review methods
+
+Purpose: Inspect the live branch delta without mutating files.
+
+Examples:
+
+```json
+{
+  "method": "git/changes/list",
+  "params": {
+    "workspace": "/Users/pz/w/gode",
+    "limit": 500
+  }
+}
+```
+
+```json
+{
+  "method": "git/changes/read",
+  "params": {
+    "workspace": "/Users/pz/w/gode",
+    "path": "src/app.rs",
+    "offset": 0,
+    "limit": 400
+  }
+}
+```
+
+Behavior:
+
+- `git/changes/list` returns repository root, branch, base ref/sha, changed
+  files, totals, and whether the file list was truncated.
+- Branch scope compares the merge-base of the resolved base with the current
+  working tree, including committed, staged, unstaged, and untracked changes.
+- Base resolution tries upstream, origin default branch, `origin/master`,
+  `origin/main`, `master`, then `main`.
+- `git/changes/read` validates repository-relative paths and returns paged
+  unified patch text for one changed file.
 
 ### Workflow import methods
 

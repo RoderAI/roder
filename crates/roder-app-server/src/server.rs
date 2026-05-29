@@ -478,6 +478,24 @@ impl AppServer {
                 })
                 .await
             }
+            "git/changes/list" => {
+                self.decode_and(req.params, |p| async move {
+                    self.handle_git_changes_list(p).await
+                })
+                .await
+            }
+            "git/changes/read" => {
+                self.decode_and(req.params, |p| async move {
+                    self.handle_git_changes_read(p).await
+                })
+                .await
+            }
+            "workspace/changes/list" => {
+                self.decode_and(req.params, |p| async move {
+                    self.handle_workspace_changes_list(p).await
+                })
+                .await
+            }
             "command/exec" => {
                 self.decode_and(
                     req.params,
@@ -3298,6 +3316,24 @@ impl AppServer {
         Ok(serde_json::to_value(HunkReadResult { page }).unwrap())
     }
 
+    async fn handle_workspace_changes_list(
+        &self,
+        params: WorkspaceChangesListParams,
+    ) -> Result<serde_json::Value, JsonRpcError> {
+        let changes = self
+            .load_workspace_changes(&params.thread_id)
+            .await?
+            .into_iter()
+            .filter(|change| {
+                params
+                    .turn_id
+                    .as_ref()
+                    .is_none_or(|turn_id| &change.turn_id == turn_id)
+            })
+            .collect();
+        Ok(serde_json::to_value(WorkspaceChangesListResult { changes }).unwrap())
+    }
+
     async fn handle_hunk_rollback(
         &self,
         params: HunkRollbackParams,
@@ -3343,6 +3379,24 @@ impl AppServer {
             error,
         })
         .unwrap())
+    }
+
+    async fn handle_git_changes_list(
+        &self,
+        params: GitChangesListParams,
+    ) -> Result<serde_json::Value, JsonRpcError> {
+        let runtime_workspace = self.runtime.status().await.workspace;
+        let result = crate::git_changes::list_changes(runtime_workspace, params)?;
+        Ok(serde_json::to_value(result).unwrap())
+    }
+
+    async fn handle_git_changes_read(
+        &self,
+        params: GitChangesReadParams,
+    ) -> Result<serde_json::Value, JsonRpcError> {
+        let runtime_workspace = self.runtime.status().await.workspace;
+        let result = crate::git_changes::read_change(runtime_workspace, params)?;
+        Ok(serde_json::to_value(result).unwrap())
     }
 
     async fn handle_workflow_scan(
@@ -4083,6 +4137,28 @@ impl AppServer {
             .into_iter()
             .filter_map(|envelope| match envelope.event {
                 RoderEvent::HunkRecorded(event) => Some(event.hunk),
+                _ => None,
+            })
+            .collect())
+    }
+
+    async fn load_workspace_changes(
+        &self,
+        thread_id: &String,
+    ) -> Result<Vec<roder_api::workspace_changes::WorkspaceChangeObservation>, JsonRpcError> {
+        let snapshot = self
+            .runtime
+            .load_thread(thread_id)
+            .await
+            .map_err(internal_error)?;
+        let Some(snapshot) = snapshot else {
+            return Ok(Vec::new());
+        };
+        Ok(snapshot
+            .events
+            .into_iter()
+            .filter_map(|envelope| match envelope.event {
+                RoderEvent::WorkspaceChangeObserved(event) => Some(event.change),
                 _ => None,
             })
             .collect())

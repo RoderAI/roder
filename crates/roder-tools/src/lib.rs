@@ -831,6 +831,35 @@ mod tests {
     struct FakeArtifactStore;
 
     impl roder_api::artifacts::ContextArtifactAccess for FakeArtifactStore {
+        fn create_artifact(
+            &self,
+            request: roder_api::artifacts::CreateArtifactRequest<'_>,
+        ) -> anyhow::Result<roder_api::artifacts::ContextArtifact> {
+            Ok(roder_api::artifacts::ContextArtifact {
+                id: "artifact-1".to_string(),
+                kind: request.kind,
+                thread_id: request.thread_id.to_string(),
+                turn_id: request.turn_id.to_string(),
+                byte_count: request.bytes.len() as u64,
+                line_count: String::from_utf8_lossy(request.bytes).lines().count() as u64,
+                source_tool_id: request.source_tool_id.map(ToString::to_string),
+                label: request.label.map(ToString::to_string),
+                store_path: "/private/artifact-1.txt".to_string(),
+                retention_expires_at: None,
+                created_at: time::OffsetDateTime::UNIX_EPOCH,
+                roder_owned: true,
+            })
+        }
+
+        fn append_artifact(
+            &self,
+            thread_id: &roder_api::events::ThreadId,
+            _artifact_id: &roder_api::artifacts::ContextArtifactId,
+            _bytes: &[u8],
+        ) -> anyhow::Result<roder_api::artifacts::ContextArtifact> {
+            Ok(artifact(thread_id))
+        }
+
         fn list_artifacts(
             &self,
             thread_id: &roder_api::events::ThreadId,

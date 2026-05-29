@@ -57,6 +57,7 @@ use crate::trace::{
 };
 use crate::transcript::TranscriptItem;
 use crate::workflow::{WorkflowImportDecision, WorkflowImportError, WorkflowImportItem};
+use crate::workspace_changes::WorkspaceChangeObservation;
 
 pub use crate::policy_mode::{
     PolicyBypassActive, PolicyDecisionRecorded, PolicyExitPlanRequested, PolicyExitPlanResolved,
@@ -553,6 +554,14 @@ pub struct PlanReviewRejected {
 #[serde(rename_all = "camelCase")]
 pub struct HunkRecorded {
     pub hunk: HunkRecord,
+    #[serde(with = "time::serde::rfc3339")]
+    pub timestamp: OffsetDateTime,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkspaceChangeObserved {
+    pub change: WorkspaceChangeObservation,
     #[serde(with = "time::serde::rfc3339")]
     pub timestamp: OffsetDateTime,
 }
@@ -1082,6 +1091,7 @@ pub enum RoderEvent {
     PlanReviewApproved(PlanReviewApproved),
     PlanReviewRejected(PlanReviewRejected),
     HunkRecorded(HunkRecorded),
+    WorkspaceChangeObserved(WorkspaceChangeObserved),
     HunkRollbackRequested(HunkRollbackRequested),
     HunkRollbackCompleted(HunkRollbackCompleted),
     WorkflowImportsDetected(WorkflowImportsDetected),
@@ -1263,6 +1273,7 @@ impl RoderEvent {
             RoderEvent::PlanReviewApproved(_) => "plan/reviewApproved",
             RoderEvent::PlanReviewRejected(_) => "plan/reviewRejected",
             RoderEvent::HunkRecorded(_) => "hunk/recorded",
+            RoderEvent::WorkspaceChangeObserved(_) => "workspace/changeObserved",
             RoderEvent::HunkRollbackRequested(_) => "hunk/rollbackRequested",
             RoderEvent::HunkRollbackCompleted(_) => "hunk/rollbackCompleted",
             RoderEvent::WorkflowImportsDetected(_) => "workflow/importsDetected",
@@ -1410,6 +1421,7 @@ impl RoderEvent {
             | RoderEvent::PlanReviewApproved(_)
             | RoderEvent::PlanReviewRejected(_)
             | RoderEvent::HunkRecorded(_)
+            | RoderEvent::WorkspaceChangeObserved(_)
             | RoderEvent::HunkRollbackRequested(_)
             | RoderEvent::HunkRollbackCompleted(_)
             | RoderEvent::WorkflowImportsDetected(_)
@@ -1568,6 +1580,7 @@ impl RoderEvent {
             RoderEvent::PlanReviewApproved(e) => Some(&e.thread_id),
             RoderEvent::PlanReviewRejected(e) => Some(&e.thread_id),
             RoderEvent::HunkRecorded(e) => Some(&e.hunk.thread_id),
+            RoderEvent::WorkspaceChangeObserved(e) => Some(&e.change.thread_id),
             RoderEvent::HunkRollbackRequested(e) => Some(&e.thread_id),
             RoderEvent::HunkRollbackCompleted(e) => Some(&e.thread_id),
             RoderEvent::MediaArtifactCreated(e) => Some(&e.thread_id),
@@ -1743,6 +1756,7 @@ impl RoderEvent {
             RoderEvent::PlanReviewApproved(e) => Some(&e.turn_id),
             RoderEvent::PlanReviewRejected(e) => Some(&e.turn_id),
             RoderEvent::HunkRecorded(e) => Some(&e.hunk.turn_id),
+            RoderEvent::WorkspaceChangeObserved(e) => Some(&e.change.turn_id),
             RoderEvent::HunkRollbackRequested(e) => Some(&e.turn_id),
             RoderEvent::HunkRollbackCompleted(e) => Some(&e.turn_id),
             RoderEvent::MediaArtifactCreated(e) => Some(&e.turn_id),

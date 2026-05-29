@@ -549,6 +549,38 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn exec_command_does_not_snapshot_workspace_changes_as_hunks() {
+        let root = temp_workspace("roder-exec-hunks");
+        std::fs::create_dir_all(root.join("src/routes")).unwrap();
+        std::fs::write(root.join("src/routes/index.tsx"), "old title\n").unwrap();
+        let manager = Arc::new(ExecSessionManager::default());
+        let tool = ExecCommandTool {
+            workspace: Workspace::new(root.clone()).unwrap(),
+            manager,
+            command_shell: roder_api::command_shell::default_command_shell(),
+        };
+
+        let result = tool
+            .execute(
+                context(&root),
+                call(
+                    "exec_command",
+                    json!({
+                        "cmd": "node -e \"require('fs').writeFileSync('src/routes/index.tsx', 'new title\\n')\"",
+                        "yield_time_ms": 100,
+                        "login": false
+                    }),
+                ),
+            )
+            .await
+            .unwrap();
+
+        assert!(result.data.get("hunks").is_none());
+
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[tokio::test]
     async fn write_stdin_polls_running_session() {
         let root = temp_workspace("roder-exec-stdin");
         std::fs::create_dir_all(&root).unwrap();
