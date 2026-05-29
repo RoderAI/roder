@@ -8,6 +8,7 @@ mod command_process;
 mod discovery;
 mod evals;
 mod fs;
+mod git_changes;
 mod goals;
 mod item_stream;
 mod marketplaces;

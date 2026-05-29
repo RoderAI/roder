@@ -121,24 +121,20 @@ impl ToolExecutor for ShellTool {
             "failed"
         };
         let text = format_shell_output(exit_code, duration_ms, &aggregated_output);
+        let data = json!({
+            "command": command,
+            "cwd": self.workspace.display(&cwd),
+            "shell": shell,
+            "aggregated_output": aggregated_output,
+            "exit_code": exit_code,
+            "duration_ms": duration_ms,
+            "requested_timeout_seconds": requested_timeout,
+            "effective_timeout_seconds": timeout,
+            "status": status,
+            "timed_out": timed_out,
+        });
 
-        Ok(result(
-            call,
-            text,
-            json!({
-                "command": command,
-                "cwd": self.workspace.display(&cwd),
-                "shell": shell,
-                "aggregated_output": aggregated_output,
-                "exit_code": exit_code,
-                "duration_ms": duration_ms,
-                "requested_timeout_seconds": requested_timeout,
-                "effective_timeout_seconds": timeout,
-                "status": status,
-                "timed_out": timed_out,
-            }),
-            status != "completed",
-        ))
+        Ok(result(call, text, data, status != "completed"))
     }
 }
 
@@ -222,6 +218,31 @@ mod tests {
         assert_eq!(result.data["command"], "printf hi");
         assert_eq!(result.data["aggregated_output"], "hi");
         assert_eq!(result.data["status"], "completed");
+
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[tokio::test]
+    async fn shell_tool_does_not_snapshot_workspace_changes_as_hunks() {
+        let root = temp_workspace("roder-shell-hunks");
+        std::fs::create_dir_all(root.join("src/routes")).unwrap();
+        std::fs::write(root.join("src/routes/index.tsx"), "old title\n").unwrap();
+        let tool = ShellTool {
+            workspace: Workspace::new(root.clone()).unwrap(),
+            command_shell: roder_api::command_shell::default_command_shell(),
+        };
+
+        let result = tool
+            .execute(
+                context(&root),
+                call(json!({
+                    "command": "node -e \"require('fs').writeFileSync('src/routes/index.tsx', 'new title\\n')\""
+                })),
+            )
+            .await
+            .unwrap();
+
+        assert!(result.data.get("hunks").is_none());
 
         let _ = std::fs::remove_dir_all(root);
     }

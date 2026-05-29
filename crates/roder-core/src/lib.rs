@@ -25,6 +25,7 @@ mod tool_preview;
 mod tool_validation;
 mod transcript;
 mod verification_gate;
+mod workspace_changes;
 
 pub use bus::*;
 pub use dynamic_workflows::*;

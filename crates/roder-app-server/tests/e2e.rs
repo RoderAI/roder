@@ -32,6 +32,10 @@ use roder_api::skills::{SkillActivationState, SkillExposure, SkillSelector};
 use roder_api::subagents::{SubagentDefinition, SubagentPermissionMode};
 use roder_api::tasks::TaskState;
 use roder_api::thread::{ThreadMetadata, ThreadSnapshot, ThreadStore, ThreadStoreFactory};
+use roder_api::workspace_changes::{
+    WorkspaceChangeConfidence, WorkspaceChangeObservation, WorkspaceChangeSource,
+    WorkspaceChangeStatus, WorkspaceObservedFile,
+};
 use roder_app_server::remote::{
     RemoteServerOptions, RemoteToken, listen_remote_websocket, listen_remote_websocket_controller,
 };
@@ -113,7 +117,7 @@ use roder_protocol::{
     WebwrightSetupParams, WebwrightSetupResult, WebwrightVerifyResult, WebwrightVisualJudgeParams,
     WebwrightVisualJudgeResult, WebwrightWorkspaceParams, WorkflowEnableParams,
     WorkflowEnableResult, WorkflowPreviewParams, WorkflowPreviewResult, WorkflowScanParams,
-    WorkflowScanResult,
+    WorkflowScanResult, WorkspaceChangesListParams, WorkspaceChangesListResult,
 };
 use roder_protocol::{
     WorkflowsApproveParams, WorkflowsApproveResult, WorkflowsGetParams, WorkflowsGetResult,
@@ -123,6 +127,7 @@ use roder_protocol::{
     WorkflowsScriptsListResult, WorkflowsStopParams, WorkflowsStopResult,
 };
 use std::collections::HashMap;
+use std::process::Command;
 use std::sync::{Arc, LazyLock};
 use std::time::Duration;
 use time::OffsetDateTime;
@@ -4307,7 +4312,7 @@ async fn artifacts_methods_list_read_grep_tail_delete_and_command_spill() {
         .unwrap()
         .into_iter()
         .find(|artifact| artifact.id == artifact_id)
-        .unwrap()
+        .expect("stdout artifact")
         .store_path;
     assert!(
         artifact_path.starts_with(
@@ -7547,6 +7552,218 @@ async fn plan_review_and_hunk_methods_round_trip_through_thread_events() {
 }
 
 #[tokio::test]
+async fn workspace_changes_list_round_trips_observed_events() {
+    let store: Arc<dyn ThreadStoreFactory> = Arc::new(RecordingThreadStoreFactory::default());
+    let workspace =
+        std::env::temp_dir().join(format!("roder-workspace-changes-{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir_all(&workspace).unwrap();
+    let mut builder = ExtensionRegistryBuilder::new();
+    builder.inference_engine(Arc::new(FakeInferenceEngine));
+    builder.thread_store_factory(store);
+    let runtime = Arc::new(
+        Runtime::new(
+            builder.build().unwrap(),
+            RuntimeConfig {
+                workspace: Some(workspace.display().to_string()),
+                ..Default::default()
+            },
+        )
+        .unwrap(),
+    );
+    let client = LocalAppClient::new(Arc::new(AppServer::new(runtime.clone())));
+    let mut notifications = client.subscribe_notifications();
+
+    let thread_start = start_thread(&client).await;
+    let now = OffsetDateTime::now_utc();
+    runtime
+        .emit(roder_api::events::RoderEvent::WorkspaceChangeObserved(
+            roder_api::events::WorkspaceChangeObserved {
+                change: WorkspaceChangeObservation {
+                    id: "workspace-change-1".to_string(),
+                    thread_id: thread_start.thread.id.clone(),
+                    turn_id: "turn-1".to_string(),
+                    tool_call_id: "tool-1".to_string(),
+                    tool_name: "shell".to_string(),
+                    source: WorkspaceChangeSource::GitReconciled,
+                    confidence: WorkspaceChangeConfidence::ObservedAfterTool,
+                    files: vec![WorkspaceObservedFile {
+                        path: "src/index.tsx".to_string(),
+                        old_path: None,
+                        status: WorkspaceChangeStatus::Modified,
+                        additions: 3,
+                        deletions: 1,
+                        binary: false,
+                    }],
+                    created_at: now,
+                },
+                timestamp: now,
+            },
+        ))
+        .await;
+
+    let notification =
+        wait_for_notification(&mut notifications, "workspace/changeObserved", None).await;
+    assert_eq!(notification.params["change"]["toolName"], "shell");
+
+    let list: WorkspaceChangesListResult = request(
+        &client,
+        "workspace/changes/list",
+        Some(
+            serde_json::to_value(WorkspaceChangesListParams {
+                thread_id: thread_start.thread.id.clone(),
+                turn_id: None,
+            })
+            .unwrap(),
+        ),
+    )
+    .await;
+    assert_eq!(list.changes.len(), 1);
+    assert_eq!(list.changes[0].files[0].path, "src/index.tsx");
+
+    let filtered: WorkspaceChangesListResult = request(
+        &client,
+        "workspace/changes/list",
+        Some(
+            serde_json::to_value(WorkspaceChangesListParams {
+                thread_id: thread_start.thread.id,
+                turn_id: Some("turn-2".to_string()),
+            })
+            .unwrap(),
+        ),
+    )
+    .await;
+    assert!(filtered.changes.is_empty());
+
+    let _ = std::fs::remove_dir_all(workspace);
+}
+
+#[tokio::test]
+async fn git_changes_methods_report_full_branch_delta() {
+    let workspace =
+        std::env::temp_dir().join(format!("roder-git-changes-{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir_all(&workspace).unwrap();
+    run_git(&workspace, &["init", "-b", "master"]);
+    run_git(&workspace, &["config", "user.email", "roder@example.com"]);
+    run_git(&workspace, &["config", "user.name", "Roder Test"]);
+    std::fs::write(workspace.join("committed.txt"), "base\n").unwrap();
+    run_git(&workspace, &["add", "committed.txt"]);
+    run_git(&workspace, &["commit", "-m", "base"]);
+    run_git(&workspace, &["checkout", "-b", "feature"]);
+    std::fs::write(workspace.join("committed.txt"), "base\nbranch\n").unwrap();
+    run_git(&workspace, &["add", "committed.txt"]);
+    run_git(&workspace, &["commit", "-m", "branch change"]);
+    std::fs::write(workspace.join("staged.txt"), "staged\n").unwrap();
+    run_git(&workspace, &["add", "staged.txt"]);
+    std::fs::write(workspace.join("dirty.txt"), "dirty\n").unwrap();
+    std::fs::write(workspace.join("untracked.txt"), "untracked\n").unwrap();
+
+    let runtime = Arc::new(
+        Runtime::new(
+            build_default_registry(DefaultRegistryConfig::default()).unwrap(),
+            RuntimeConfig {
+                workspace: Some(workspace.display().to_string()),
+                ..RuntimeConfig::default()
+            },
+        )
+        .unwrap(),
+    );
+    let client = LocalAppClient::new(Arc::new(AppServer::new(runtime)));
+
+    let list: serde_json::Value = request(
+        &client,
+        "git/changes/list",
+        Some(serde_json::json!({ "workspace": workspace.display().to_string() })),
+    )
+    .await;
+    assert_eq!(list["branch"], "feature");
+    assert_eq!(list["baseRef"], "master");
+    let paths = list["files"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|file| file["path"].as_str().unwrap())
+        .collect::<Vec<_>>();
+    assert!(paths.contains(&"committed.txt"));
+    assert!(paths.contains(&"staged.txt"));
+    assert!(paths.contains(&"dirty.txt"));
+    assert!(paths.contains(&"untracked.txt"));
+    assert_eq!(list["totals"]["files"], 4);
+
+    let page: serde_json::Value = request(
+        &client,
+        "git/changes/read",
+        Some(serde_json::json!({
+            "workspace": workspace.display().to_string(),
+            "path": "committed.txt",
+            "offset": 0,
+            "limit": 20
+        })),
+    )
+    .await;
+    assert_eq!(page["path"], "committed.txt");
+    assert!(page["patch"].as_str().unwrap().contains("+branch"));
+    assert_eq!(page["nextOffset"], serde_json::Value::Null);
+
+    let paged: serde_json::Value = request(
+        &client,
+        "git/changes/read",
+        Some(serde_json::json!({
+            "workspace": workspace.display().to_string(),
+            "path": "committed.txt",
+            "offset": 0,
+            "limit": 2
+        })),
+    )
+    .await;
+    assert_eq!(paged["offset"], 0);
+    assert_eq!(paged["nextOffset"], 2);
+    assert!(paged["totalLines"].as_u64().unwrap() > 2);
+
+    let invalid_path = request_error(
+        &client,
+        "git/changes/read",
+        Some(serde_json::json!({
+            "workspace": workspace.display().to_string(),
+            "path": "../outside.txt"
+        })),
+    )
+    .await;
+    assert_eq!(invalid_path.code, -32602);
+    assert!(invalid_path.message.contains("inside the repository"));
+
+    let _ = std::fs::remove_dir_all(workspace);
+}
+
+#[tokio::test]
+async fn git_changes_rejects_non_git_workspace() {
+    let workspace =
+        std::env::temp_dir().join(format!("roder-git-changes-nongit-{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir_all(&workspace).unwrap();
+    let runtime = Arc::new(
+        Runtime::new(
+            build_default_registry(DefaultRegistryConfig::default()).unwrap(),
+            RuntimeConfig {
+                workspace: Some(workspace.display().to_string()),
+                ..RuntimeConfig::default()
+            },
+        )
+        .unwrap(),
+    );
+    let client = LocalAppClient::new(Arc::new(AppServer::new(runtime)));
+
+    let error = request_error(
+        &client,
+        "git/changes/list",
+        Some(serde_json::json!({ "workspace": workspace.display().to_string() })),
+    )
+    .await;
+    assert_eq!(error.code, -32000);
+    assert!(error.message.contains("git failed"));
+
+    let _ = std::fs::remove_dir_all(workspace);
+}
+
+#[tokio::test]
 async fn agents_list_returns_public_subagent_summaries() {
     let runtime = subagent_runtime();
     let server = Arc::new(AppServer::new(runtime));
@@ -7559,6 +7776,20 @@ async fn agents_list_returns_public_subagent_summaries() {
 
     let serialized = serde_json::to_string(&agents).unwrap();
     assert!(!serialized.contains("SECRET-SYSTEM-PROMPT"));
+}
+
+fn run_git(workspace: &std::path::Path, args: &[&str]) {
+    let output = Command::new("git")
+        .args(args)
+        .current_dir(workspace)
+        .output()
+        .unwrap_or_else(|err| panic!("failed to run git {args:?}: {err}"));
+    assert!(
+        output.status.success(),
+        "git {args:?} failed\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
 }
 
 #[tokio::test]
