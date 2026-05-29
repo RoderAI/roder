@@ -1,7 +1,9 @@
 use std::collections::{HashMap, HashSet, VecDeque};
 
 use roder_api::events::{ThreadId, TurnId};
-use roder_api::thread::{ThreadItemEvent, ThreadItemEventKind, ThreadSnapshot};
+use roder_api::thread::{
+    ThreadItem, ThreadItemDelta, ThreadItemEvent, ThreadItemEventKind, ThreadSnapshot,
+};
 
 const THREAD_ITEM_CACHE_MAX_THREADS: usize = 256;
 
@@ -13,6 +15,7 @@ pub(crate) struct ThreadItemCache {
 
 #[derive(Debug)]
 pub(crate) struct ThreadItemCacheEntry {
+    current_reasoning_item_ids: HashMap<TurnId, String>,
     next_item_event_seq: u64,
     item_ids: HashSet<(TurnId, String)>,
     transcript_item_counts: HashMap<TurnId, usize>,
@@ -21,6 +24,7 @@ pub(crate) struct ThreadItemCacheEntry {
 impl Default for ThreadItemCacheEntry {
     fn default() -> Self {
         Self {
+            current_reasoning_item_ids: HashMap::new(),
             next_item_event_seq: 1,
             item_ids: HashSet::new(),
             transcript_item_counts: HashMap::new(),
@@ -49,6 +53,17 @@ impl ThreadItemCacheEntry {
                 )
             })
             .collect();
+        let mut current_reasoning_item_ids = HashMap::new();
+        for event in &snapshot.item_events {
+            if thread_item_event_kind_is_reasoning(&event.event) {
+                current_reasoning_item_ids.insert(
+                    event.turn_id.clone(),
+                    thread_item_event_kind_item_id(&event.event).to_string(),
+                );
+            } else {
+                current_reasoning_item_ids.remove(&event.turn_id);
+            }
+        }
         let transcript_item_counts = snapshot
             .turns
             .iter()
@@ -56,6 +71,7 @@ impl ThreadItemCacheEntry {
             .collect();
 
         Self {
+            current_reasoning_item_ids,
             next_item_event_seq,
             item_ids,
             transcript_item_counts,
@@ -100,7 +116,26 @@ impl ThreadItemCache {
                 item_event.turn_id.clone(),
                 thread_item_event_kind_item_id(&item_event.event).to_string(),
             ));
+            if thread_item_event_kind_is_reasoning(&item_event.event) {
+                entry.current_reasoning_item_ids.insert(
+                    item_event.turn_id.clone(),
+                    thread_item_event_kind_item_id(&item_event.event).to_string(),
+                );
+            } else {
+                entry.current_reasoning_item_ids.remove(&item_event.turn_id);
+            }
         }
+    }
+
+    pub(crate) fn current_reasoning_item_id(
+        &mut self,
+        thread_id: &ThreadId,
+        turn_id: &TurnId,
+    ) -> Option<String> {
+        self.touch(thread_id);
+        self.threads
+            .get(thread_id)
+            .and_then(|entry| entry.current_reasoning_item_ids.get(turn_id).cloned())
     }
 
     pub(crate) fn thread_item_exists(
@@ -179,5 +214,19 @@ fn thread_item_event_kind_item_id(event: &ThreadItemEventKind) -> &str {
         ThreadItemEventKind::ItemStarted { item } => item.id(),
         ThreadItemEventKind::ItemDelta { item_id, .. } => item_id,
         ThreadItemEventKind::ItemCompleted { item } => item.id(),
+    }
+}
+
+fn thread_item_event_kind_is_reasoning(event: &ThreadItemEventKind) -> bool {
+    match event {
+        ThreadItemEventKind::ItemStarted { item } | ThreadItemEventKind::ItemCompleted { item } => {
+            matches!(item, ThreadItem::Reasoning { .. })
+        }
+        ThreadItemEventKind::ItemDelta { delta, .. } => matches!(
+            delta,
+            ThreadItemDelta::ReasoningText { .. }
+                | ThreadItemDelta::ReasoningSummaryPartAdded { .. }
+                | ThreadItemDelta::ReasoningSummaryText { .. }
+        ),
     }
 }
