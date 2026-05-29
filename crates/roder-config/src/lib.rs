@@ -4,9 +4,11 @@ use std::collections::HashSet;
 use std::fs;
 use std::path::{Path, PathBuf};
 
+pub mod dynamic_workflows;
 pub mod marketplaces;
 pub mod workflow_import;
 
+pub use dynamic_workflows::{DynamicWorkflowApprovalConfig, DynamicWorkflowsConfig};
 pub use marketplaces::*;
 pub use workflow_import::{WorkflowScanOptions, scan_workflow_imports};
 
@@ -23,6 +25,7 @@ pub struct Config {
     pub reliability: Option<ReliabilityConfig>,
     pub speed_policy: Option<SpeedPolicyConfig>,
     pub web_search: Option<WebSearchConfig>,
+    pub dynamic_workflows: Option<DynamicWorkflowsConfig>,
     pub context: Option<ContextConfig>,
     pub sessions: Option<SessionsConfig>,
     pub subagents: Option<SubagentsConfig>,
@@ -632,6 +635,7 @@ fn default_automation_max_due_per_tick() -> u32 {
 pub fn load_config() -> anyhow::Result<Config> {
     let mut config = load_config_file()?;
     apply_env_overrides(&mut config);
+    dynamic_workflows::validate_config(&config)?;
     Ok(config)
 }
 
@@ -1117,6 +1121,12 @@ fn apply_env_overrides_with(config: &mut Config, mut env: impl FnMut(&str) -> Op
     {
         config.web_search.get_or_insert_with(Default::default).mode = Some(mode);
     }
+    dynamic_workflows::apply_env_overrides_with(
+        config
+            .dynamic_workflows
+            .get_or_insert_with(Default::default),
+        &mut env,
+    );
     if let Some(disabled) = env("RODER_COMMANDS_DISABLED")
         && parse_bool(&disabled).unwrap_or(false)
     {
@@ -1305,6 +1315,7 @@ mod tests {
             reliability: None,
             speed_policy: None,
             web_search: None,
+            dynamic_workflows: None,
             context: None,
             sessions: None,
             subagents: None,

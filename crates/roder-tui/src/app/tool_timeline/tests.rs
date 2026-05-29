@@ -1210,7 +1210,11 @@ fn mouse_button_up_on_expanded_tool_does_not_reopen_it() {
 #[test]
 fn tool_row_relative_times_are_human_readable_without_plus_or_leading_zeroes() {
     let mut timeline = TimelineState::default();
-    for (id, command) in [("call_1", "first"), ("call_2", "second"), ("call_3", "third")] {
+    for (id, command) in [
+        ("call_1", "first"),
+        ("call_2", "second"),
+        ("call_3", "third"),
+    ] {
         timeline.record_tool_requested(
             id.to_string(),
             ToolTimelineEntry::new("read_file", format!(r#"{{"path":"{command}"}}"#)),

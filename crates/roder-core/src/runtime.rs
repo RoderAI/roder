@@ -46,6 +46,10 @@ use crate::artifacts::{
     ContextArtifactStore as FilesystemContextArtifactStore, default_context_artifact_dir,
 };
 use crate::bus::EventBus;
+use crate::dynamic_workflows::{
+    DynamicWorkflowEffortProfile, RuntimeDynamicWorkflowConfig, WorkflowTriggerDecision,
+    classify_workflow_trigger, ultracode_reasoning_level_for_model,
+};
 use crate::fake_provider::FakeInferenceEngine;
 use crate::goals::RuntimeGoalController;
 use crate::instructions::{
@@ -95,6 +99,7 @@ pub struct RuntimeConfig {
     pub policy_mode: PolicyMode,
     pub runtime_profile: RuntimeProfile,
     pub speed_policy: RuntimeSpeedPolicyConfig,
+    pub dynamic_workflows: RuntimeDynamicWorkflowConfig,
     pub reliability: RuntimeReliabilityConfig,
     pub turn_deadline_seconds: Option<u64>,
     pub remote_runner_destination: Option<RunnerDestination>,
@@ -119,6 +124,7 @@ impl Default for RuntimeConfig {
             policy_mode: PolicyMode::Default,
             runtime_profile: RuntimeProfile::Interactive,
             speed_policy: RuntimeSpeedPolicyConfig::default(),
+            dynamic_workflows: RuntimeDynamicWorkflowConfig::default(),
             reliability: RuntimeReliabilityConfig::default(),
             turn_deadline_seconds: None,
             remote_runner_destination: None,
@@ -727,6 +733,23 @@ impl Runtime {
 
     pub fn effective_reasoning_for_config(cfg: &RuntimeConfig) -> String {
         effective_reasoning_for_model(cfg, &cfg.default_model)
+    }
+
+    pub async fn set_dynamic_workflow_effort(
+        &self,
+        effort_profile: DynamicWorkflowEffortProfile,
+    ) -> RuntimeConfig {
+        let mut cfg = self.config.write().await;
+        cfg.dynamic_workflows.effort_profile = effort_profile;
+        cfg.clone()
+    }
+
+    pub async fn dynamic_workflow_trigger_decision(
+        &self,
+        message: &str,
+    ) -> WorkflowTriggerDecision {
+        let cfg = self.config.read().await;
+        classify_workflow_trigger(message, &cfg.dynamic_workflows)
     }
 
     pub async fn create_thread(&self, title: Option<String>) -> anyhow::Result<ThreadMetadata> {
@@ -2971,6 +2994,18 @@ fn parallel_tool_calls_for_model(cfg: &RuntimeConfig, model: &str) -> bool {
 }
 
 fn effective_reasoning_for_model(cfg: &RuntimeConfig, model: &str) -> String {
+    let base_reasoning = default_effective_reasoning_for_model(cfg, model);
+    if cfg.dynamic_workflows.effort_profile == DynamicWorkflowEffortProfile::Ultracode {
+        return ultracode_reasoning_level_for_model(
+            model,
+            &cfg.speed_policy.ultracode_reasoning,
+            &base_reasoning,
+        );
+    }
+    base_reasoning
+}
+
+fn default_effective_reasoning_for_model(cfg: &RuntimeConfig, model: &str) -> String {
     let Some(entry) = lookup_model(model) else {
         return cfg
             .reasoning

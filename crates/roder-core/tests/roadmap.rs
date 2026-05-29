@@ -152,6 +152,7 @@ fn runtime_for(workspace: &std::path::Path) -> Runtime {
             policy_mode: PolicyMode::Default,
             runtime_profile: roder_api::inference::RuntimeProfile::Interactive,
             speed_policy: Default::default(),
+            dynamic_workflows: Default::default(),
             reliability: Default::default(),
             turn_deadline_seconds: None,
             remote_runner_destination: None,

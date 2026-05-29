@@ -429,7 +429,10 @@ fn extract_candidate_text(value: &Value) -> String {
                 .iter()
                 // Skip parts that are marked as thought/reasoning
                 .filter(|part| {
-                    let is_thought = part.get("thought").and_then(|v| v.as_bool()).unwrap_or(false);
+                    let is_thought = part
+                        .get("thought")
+                        .and_then(|v| v.as_bool())
+                        .unwrap_or(false);
                     !is_thought && part.get("thought").and_then(|v| v.as_str()).is_none()
                 })
                 .filter_map(|part| part.get("text").and_then(|v| v.as_str()))
@@ -856,7 +859,10 @@ mod tests {
             }]
         });
         assert_eq!(extract_candidate_text(&val_a), "I will search now.");
-        assert_eq!(extract_candidate_thinking(&val_a), "I should search for files.");
+        assert_eq!(
+            extract_candidate_thinking(&val_a),
+            "I should search for files."
+        );
 
         // Test Case B: Part containing "text" with "thought": true (other Gemini API versions/schemas)
         let val_b = json!({
@@ -868,7 +874,10 @@ mod tests {
             }]
         });
         assert_eq!(extract_candidate_text(&val_b), "Let's use the glob tool.");
-        assert_eq!(extract_candidate_thinking(&val_b), "Analyzing repo structure...");
+        assert_eq!(
+            extract_candidate_thinking(&val_b),
+            "Analyzing repo structure..."
+        );
     }
 
     async fn spawn_retry_server(responses: Vec<(u16, &'static str)>) -> String {

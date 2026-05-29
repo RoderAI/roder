@@ -31,6 +31,8 @@ pub(super) fn built_in_command_catalog() -> Vec<CommandDescriptor> {
         ("remote", "Open the remote app-server pairing panel."),
         ("voice", "Toggle voice dictation into the composer."),
         ("roadmap", "Open document-first roadmapping mode."),
+        ("deep-research", "Run a multi-agent deep research workflow."),
+        ("workflows", "Open dynamic workflow runs and controls."),
         ("webwright", "Inspect Webwright workspace progress."),
         ("webwright:run", "Run a one-shot Webwright browser task."),
         ("webwright:craft", "Craft a reusable Webwright CLI script."),
@@ -49,6 +51,10 @@ pub(super) fn built_in_command_catalog() -> Vec<CommandDescriptor> {
             "ps" => Some("all|stop <id>|stop-all --confirm|<id>".to_string()),
             "voice" => Some("[hold|tap|off|status]".to_string()),
             "roadmap" => Some("[plan]".to_string()),
+            "deep-research" => Some("<question>".to_string()),
+            "workflows" => {
+                Some("[list|<run-id>|pause|resume|stop|save|restart-agent|scripts]".to_string())
+            }
             "webwright" => Some("[inspect|tail] <workspace>".to_string()),
             "webwright:run" => Some("<natural-language web task>".to_string()),
             "webwright:craft" => {
@@ -167,6 +173,8 @@ pub(super) fn help_text(commands: &[CommandDescriptor]) -> String {
         "/marketplace <command> - Manage plugin marketplaces.".to_string(),
         "/plugin <command> - Manage marketplace plugin installs.".to_string(),
         "/voice [hold|tap|off|status] - Toggle voice dictation into the composer.".to_string(),
+        "/deep-research <question> - Run a multi-agent deep research workflow.".to_string(),
+        "/workflows [list|<run-id>|pause|resume|stop|save|restart-agent|scripts] - Open workflow runs and controls.".to_string(),
         "/webwright [inspect|tail] <workspace> - Inspect Webwright progress and artifacts."
             .to_string(),
         "/webwright:run <task> - Run a one-shot Webwright browser task.".to_string(),
@@ -186,6 +194,8 @@ pub(super) fn help_text(commands: &[CommandDescriptor]) -> String {
                 | "plugin"
                 | "commit"
                 | "voice"
+                | "deep-research"
+                | "workflows"
                 | "webwright"
                 | "webwright:run"
                 | "webwright:craft"
@@ -267,6 +277,9 @@ mod tests {
                 "/voice [hold|tap|off|status] - Toggle voice dictation into the composer."
             )
         );
+        assert!(
+            help.contains("/deep-research <question> - Run a multi-agent deep research workflow.")
+        );
         assert!(help.contains("/help - Run command."));
     }
 
@@ -298,6 +311,8 @@ mod tests {
                 "remote",
                 "voice",
                 "roadmap",
+                "deep-research",
+                "workflows",
                 "webwright",
                 "webwright:run",
                 "webwright:craft"
@@ -351,6 +366,20 @@ mod tests {
                 .find(|command| command.name == "roadmap")
                 .and_then(|command| command.argument_hint.as_deref()),
             Some("[plan]")
+        );
+        assert_eq!(
+            commands
+                .iter()
+                .find(|command| command.name == "deep-research")
+                .and_then(|command| command.argument_hint.as_deref()),
+            Some("<question>")
+        );
+        assert_eq!(
+            commands
+                .iter()
+                .find(|command| command.name == "workflows")
+                .and_then(|command| command.argument_hint.as_deref()),
+            Some("[list|<run-id>|pause|resume|stop|save|restart-agent|scripts]")
         );
         assert_eq!(
             commands

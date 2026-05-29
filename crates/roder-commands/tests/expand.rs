@@ -383,6 +383,7 @@ fn command(name: &str, body: &str) -> CommandSpec {
         include: CommandInclude::default(),
         feature_skill_bindings: Vec::new(),
         body: body.to_string(),
+        workflow: None,
         source: CommandSource::Workspace,
         path: None,
     }

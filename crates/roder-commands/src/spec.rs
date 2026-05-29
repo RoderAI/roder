@@ -1,8 +1,10 @@
 use std::path::PathBuf;
 
+use anyhow::Result;
 use roder_api::skills::FeatureSkillBinding;
+use serde_json::{Map, Value};
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct CommandSpec {
     pub name: String,
     pub description: Option<String>,
@@ -13,6 +15,7 @@ pub struct CommandSpec {
     pub include: CommandInclude,
     pub feature_skill_bindings: Vec<FeatureSkillBinding>,
     pub body: String,
+    pub workflow: Option<WorkflowCommandSpec>,
     pub source: CommandSource,
     pub path: Option<PathBuf>,
 }
@@ -26,6 +29,59 @@ impl CommandSpec {
             CommandSource::Extension { extension_id } => format!("extension:{extension_id}"),
         }
     }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct WorkflowCommandSpec {
+    pub script_id: String,
+    pub script_hash: String,
+    pub host_api_version: u32,
+    pub arguments_schema: Value,
+    pub body: Option<String>,
+}
+
+impl WorkflowCommandSpec {
+    pub fn structured_arguments(&self, arguments: &str) -> Result<Value> {
+        structured_workflow_arguments(&self.arguments_schema, arguments)
+    }
+}
+
+pub fn structured_workflow_arguments(schema: &Value, arguments: &str) -> Result<Value> {
+    let arguments = arguments.trim();
+    if arguments.is_empty() {
+        return Ok(Value::Object(Map::new()));
+    }
+    if let Ok(value) = serde_json::from_str::<Value>(arguments) {
+        return Ok(value);
+    }
+
+    let mut object = Map::new();
+    let key = preferred_schema_text_field(schema).unwrap_or("arguments");
+    object.insert(key.to_string(), Value::String(arguments.to_string()));
+    Ok(Value::Object(object))
+}
+
+fn preferred_schema_text_field(schema: &Value) -> Option<&str> {
+    let properties = schema.get("properties")?.as_object()?;
+    if let Some(required) = schema.get("required").and_then(Value::as_array) {
+        for field in required {
+            let Some(field) = field.as_str() else {
+                continue;
+            };
+            if properties.contains_key(field) {
+                return Some(field);
+            }
+        }
+    }
+    if properties.len() == 1 {
+        return properties.keys().next().map(String::as_str);
+    }
+    for field in ["question", "query", "prompt", "task"] {
+        if properties.contains_key(field) {
+            return Some(field);
+        }
+    }
+    None
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

@@ -1,5 +1,6 @@
 use roder_api::catalog::{
-    REASONING_HIGH, REASONING_LOW, REASONING_MEDIUM, model_supports_reasoning_effort,
+    REASONING_HIGH, REASONING_LOW, REASONING_MEDIUM, REASONING_XHIGH,
+    model_supports_reasoning_effort,
 };
 use roder_api::inference::{
     ReasoningConfig, RuntimeProfile, SpeedPolicyDecision, SpeedPolicyPhase,
@@ -12,6 +13,7 @@ pub struct RuntimeSpeedPolicyConfig {
     pub execution_reasoning: String,
     pub verification_reasoning: String,
     pub recovery_reasoning: String,
+    pub ultracode_reasoning: String,
 }
 
 impl Default for RuntimeSpeedPolicyConfig {
@@ -22,6 +24,7 @@ impl Default for RuntimeSpeedPolicyConfig {
             execution_reasoning: REASONING_LOW.to_string(),
             verification_reasoning: REASONING_HIGH.to_string(),
             recovery_reasoning: REASONING_MEDIUM.to_string(),
+            ultracode_reasoning: REASONING_XHIGH.to_string(),
         }
     }
 }
@@ -113,6 +116,24 @@ pub(crate) fn reasoning_from_decision(
     }
 }
 
+pub(crate) fn reasoning_for_supported_effort(
+    model: &str,
+    desired_reasoning: &str,
+    fallback: ReasoningConfig,
+) -> (ReasoningConfig, bool) {
+    if model_supports_reasoning_effort(model, desired_reasoning) {
+        (
+            ReasoningConfig {
+                enabled: true,
+                level: Some(desired_reasoning.to_string()),
+            },
+            true,
+        )
+    } else {
+        (fallback, false)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -180,6 +201,24 @@ mod tests {
             reasoning_from_decision(Some(&decision), fallback.clone()),
             fallback
         );
+    }
+
+    #[test]
+    fn supported_effort_override_degrades_to_fallback_reasoning() {
+        let fallback = ReasoningConfig {
+            enabled: true,
+            level: Some(REASONING_MEDIUM.to_string()),
+        };
+
+        let (reasoning, supported) =
+            reasoning_for_supported_effort("mock", REASONING_XHIGH, fallback.clone());
+        assert!(!supported);
+        assert_eq!(reasoning, fallback);
+
+        let (reasoning, supported) =
+            reasoning_for_supported_effort("gpt-5.5", REASONING_XHIGH, fallback);
+        assert!(supported);
+        assert_eq!(reasoning.level.as_deref(), Some(REASONING_XHIGH));
     }
 
     #[test]
