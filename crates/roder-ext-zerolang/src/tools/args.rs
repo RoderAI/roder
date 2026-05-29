@@ -42,7 +42,7 @@ pub(super) struct FixPlanArgs {
 }
 
 #[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub(super) struct EditArgs {
     pub input: String,
     pub graph_hash: String,

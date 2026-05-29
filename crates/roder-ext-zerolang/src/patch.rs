@@ -2,7 +2,7 @@ use anyhow::{Context, bail};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct GraphPatchOperation {
     pub op: String,
     #[serde(default)]
@@ -41,7 +41,7 @@ pub struct GraphPatchOperation {
     pub public: Option<bool>,
     #[serde(default)]
     pub mutable: Option<bool>,
-    #[serde(default)]
+    #[serde(rename = "static", default)]
     pub static_: Option<bool>,
     #[serde(default)]
     pub fallible: Option<bool>,
@@ -276,5 +276,34 @@ mod tests {
         let err = build_patch_text("f76987e99677f1b3", &[]).unwrap_err();
 
         assert!(err.to_string().contains("graphHash must start with graph:"));
+    }
+
+    #[test]
+    fn graph_patch_operation_rejects_schema_shape_mismatches() {
+        let unknown_field = serde_json::from_value::<GraphPatchOperation>(serde_json::json!({
+            "op": "set",
+            "id": "#89f1bc7e",
+            "field": "value",
+            "value": "66"
+        }))
+        .unwrap_err();
+        assert!(unknown_field.to_string().contains("unknown field `id`"));
+
+        let numeric_value = serde_json::from_value::<GraphPatchOperation>(serde_json::json!({
+            "op": "set",
+            "node": "#89f1bc7e",
+            "field": "value",
+            "value": 66
+        }))
+        .unwrap_err();
+        assert!(numeric_value.to_string().contains("invalid type"));
+
+        let operation = serde_json::from_value::<GraphPatchOperation>(serde_json::json!({
+            "op": "replace",
+            "node": "#89f1bc7e",
+            "static": true
+        }))
+        .unwrap();
+        assert_eq!(operation.static_, Some(true));
     }
 }
