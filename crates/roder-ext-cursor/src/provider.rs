@@ -15,6 +15,7 @@ use serde_json::json;
 use crate::agentservice::{
     AgentServiceConfig, AgentServiceEvent, AgentServiceRequest, stream_agent_service,
 };
+use crate::proto::CursorHistoryMessage;
 use crate::auth::CursorAuthConfig;
 use crate::context::{
     CursorContextOptions, discovery_context_frames_from_env, encode_request_context_frame,
@@ -119,7 +120,7 @@ impl InferenceEngine for CursorInferenceEngine {
                 &CursorContextOptions::from_workspace(workspace),
             )]
         });
-        let prompt = prompt_from_request(&request);
+        let (prompt, history) = cursor_request_parts(&request);
         let estimated_prompt_tokens = estimate_prompt_tokens(&prompt);
         let service_stream = stream_agent_service(
             self.agent_service_config(),
@@ -128,6 +129,7 @@ impl InferenceEngine for CursorInferenceEngine {
                 prompt,
                 model: request.model.model.clone(),
                 context_frames,
+                history,
             },
         )
         .await?;
@@ -218,7 +220,58 @@ impl InferenceEngine for CursorInferenceEngine {
     }
 }
 
-pub fn prompt_from_request(request: &AgentInferenceRequest) -> String {
+/// Split a Roder inference request into the Cursor `user_message` text (system +
+/// developer + the latest user turn) and the native `ConversationHistory` (all
+/// prior turns, including the assistant tool calls and tool results from earlier
+/// Roder rounds). Replaying the tool calls/results natively lets Cursor's agent
+/// continue the loop instead of restarting and re-issuing the same tool call.
+pub fn cursor_request_parts(
+    request: &AgentInferenceRequest,
+) -> (String, Vec<CursorHistoryMessage>) {
+    let last_user_idx = request
+        .transcript
+        .iter()
+        .rposition(|item| matches!(item, TranscriptItem::UserMessage(_)));
+
+    let mut history = Vec::new();
+    let mut current_user_text = String::new();
+    for (idx, item) in request.transcript.iter().enumerate() {
+        match item {
+            TranscriptItem::UserMessage(message) => {
+                if Some(idx) == last_user_idx {
+                    current_user_text = message.text.clone();
+                } else {
+                    history.push(CursorHistoryMessage::User(message.text.clone()));
+                }
+            }
+            TranscriptItem::AssistantMessage(message) if !message.text.is_empty() => {
+                history.push(CursorHistoryMessage::AssistantText(message.text.clone()));
+            }
+            TranscriptItem::ToolCall(call) => {
+                history.push(CursorHistoryMessage::AssistantToolCall {
+                    id: call.id.clone(),
+                    name: call.name.clone(),
+                    args_json: call.arguments.clone(),
+                });
+            }
+            TranscriptItem::ToolResult(result) => {
+                history.push(CursorHistoryMessage::ToolResult {
+                    id: result.id.clone(),
+                    name: result.name.clone().unwrap_or_default(),
+                    content: result.result.clone(),
+                    is_error: result.is_error,
+                });
+            }
+            TranscriptItem::ContextCompaction(compaction) => {
+                history.push(CursorHistoryMessage::User(format!(
+                    "Context summary:\n{}",
+                    compaction.summary
+                )));
+            }
+            _ => {}
+        }
+    }
+
     let mut sections = Vec::new();
     if let Some(system) = &request.instructions.system {
         sections.push(format!("System:\n{system}"));
@@ -226,37 +279,25 @@ pub fn prompt_from_request(request: &AgentInferenceRequest) -> String {
     if let Some(developer) = &request.instructions.developer {
         sections.push(format!("Developer:\n{developer}"));
     }
-    for item in &request.transcript {
-        match item {
-            TranscriptItem::UserMessage(message) => {
-                sections.push(format!("User:\n{}", message.text));
-            }
-            TranscriptItem::AssistantMessage(message) if !message.text.is_empty() => {
-                sections.push(format!("Assistant:\n{}", message.text));
-            }
-            TranscriptItem::ContextCompaction(compaction) => {
-                sections.push(format!("Context summary:\n{}", compaction.summary));
-            }
-            TranscriptItem::ReasoningSummary(summary) => {
-                sections.push(format!("Reasoning summary:\n{}", summary.text));
-            }
-            TranscriptItem::ToolResult(result) => {
-                sections.push(format!("Tool result {}:\n{}", result.id, result.result));
-            }
-            TranscriptItem::ToolCall(call) => {
-                sections.push(format!(
-                    "Assistant tool call {} {}:\n{}",
-                    call.id, call.name, call.arguments
-                ));
-            }
-            TranscriptItem::FileChange(_)
-            | TranscriptItem::Error(_)
-            | TranscriptItem::ProviderMetadata(_) => {}
-            _ => {}
-        }
+    if !current_user_text.is_empty() {
+        sections.push(current_user_text);
     }
-    sections.join("\n\n")
+    // Cursor's agent is built for same-stream tool loops and otherwise restarts
+    // its read-before-act pattern on each fresh Roder round. When prior tool
+    // results are already in the conversation history, steer the model to act on
+    // them instead of re-issuing the same read-only calls.
+    let has_tool_results = history
+        .iter()
+        .any(|item| matches!(item, CursorHistoryMessage::ToolResult { .. }));
+    if has_tool_results {
+        sections.push(
+            "Continuation: the conversation history above already contains the tool calls you made and their results. Do not repeat read-only tool calls (read_file, grep, glob, ls) for information you already have. Use the results above and proceed directly to the remaining action (e.g. the edit or shell command) that completes the task. If the task is already complete, give the final answer."
+                .to_string(),
+        );
+    }
+    (sections.join("\n\n"), history)
 }
+
 
 fn validate_request(request: &AgentInferenceRequest) -> anyhow::Result<()> {
     if request.output.response_format.is_some() {
@@ -314,37 +355,50 @@ mod tests {
     }
 
     #[test]
-    fn prompt_mapping_preserves_system_and_user_text() {
-        let prompt = prompt_from_request(&request());
+    fn request_parts_keep_instructions_and_latest_user_message_in_prompt() {
+        let (prompt, history) = cursor_request_parts(&request());
         assert!(prompt.contains("System:\nbe useful"));
-        assert!(prompt.contains("User:\nhello"));
+        assert!(prompt.contains("hello"));
+        // A single fresh user turn has no prior history.
+        assert!(history.is_empty());
     }
 
     #[test]
-    fn prompt_mapping_replays_tool_call_and_result_for_next_cursor_round() {
+    fn request_parts_replay_tool_call_and_result_as_native_history() {
         let mut request = request();
         request
             .transcript
             .push(TranscriptItem::ToolCall(ToolCallRecord {
-                id: "tool_read_123".to_string(),
+                id: "toolu_read_123".to_string(),
                 name: "read_file".to_string(),
                 arguments: r#"{"path":"AGENTS.md"}"#.to_string(),
             }));
         request
             .transcript
             .push(TranscriptItem::ToolResult(ToolResultRecord {
-                id: "tool_read_123".to_string(),
+                id: "toolu_read_123".to_string(),
                 name: Some("read_file".to_string()),
                 result: "first line".to_string(),
                 display_payload: None,
                 is_error: false,
             }));
 
-        let prompt = prompt_from_request(&request);
+        let (prompt, history) = cursor_request_parts(&request);
 
-        assert!(prompt.contains("Assistant tool call tool_read_123 read_file:"));
-        assert!(prompt.contains(r#"{"path":"AGENTS.md"}"#));
-        assert!(prompt.contains("Tool result tool_read_123:\nfirst line"));
+        // The original user request stays the current prompt...
+        assert!(prompt.contains("hello"));
+        // ...and the tool call + result are replayed as native history.
+        assert_eq!(history.len(), 2);
+        assert!(matches!(
+            &history[0],
+            CursorHistoryMessage::AssistantToolCall { id, name, args_json }
+                if id == "toolu_read_123" && name == "read_file" && args_json.contains("AGENTS.md")
+        ));
+        assert!(matches!(
+            &history[1],
+            CursorHistoryMessage::ToolResult { id, content, is_error, .. }
+                if id == "toolu_read_123" && content == "first line" && !*is_error
+        ));
     }
 
     #[test]
