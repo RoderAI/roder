@@ -43,6 +43,7 @@ use roder_ext_runner_vercel::VercelRunnerExtension;
 use roder_ext_webwright::WebwrightExtension;
 use roder_ext_xai::XaiExtension;
 use roder_ext_xiaomi_mimo::{XiaomiMimoConfig, XiaomiMimoExtension};
+use roder_ext_zerolang::{ZerolangConfig, ZerolangExtension};
 use semver::Version;
 
 mod context;
@@ -91,6 +92,7 @@ pub struct DefaultRegistryConfig {
     pub command_shell: String,
     pub web_search: Option<DefaultWebSearchConfig>,
     pub subagents: Option<DefaultSubagentsConfig>,
+    pub zerolang: Option<ZerolangConfig>,
     pub policy_mode: PolicyMode,
     pub notifications: DefaultNotificationsConfig,
     pub remote_runner_destination: Option<RunnerDestination>,
@@ -133,6 +135,7 @@ impl Default for DefaultRegistryConfig {
             command_shell: roder_api::command_shell::default_command_shell(),
             web_search: None,
             subagents: None,
+            zerolang: None,
             policy_mode: PolicyMode::Default,
             notifications: DefaultNotificationsConfig::default(),
             remote_runner_destination: None,
@@ -265,6 +268,7 @@ pub fn build_default_registry(config: DefaultRegistryConfig) -> anyhow::Result<E
     builder.install(VercelRunnerExtension)?;
     builder.install(roder_ext_task_process::ProcessTaskExtension)?;
     builder.install(WebwrightExtension)?;
+    builder.install(ZerolangExtension::new(config.zerolang.unwrap_or_default()))?;
     if config.notifications.enabled && config.notifications.terminal {
         builder.install(roder_ext_notify_terminal::TerminalNotifyExtension::new(
             config.notifications.enabled_kinds.clone(),
@@ -743,6 +747,28 @@ mod tests {
     }
 
     #[test]
+    fn default_registry_installs_zerolang_tools_without_zero_binary() {
+        let registry = build_default_registry(DefaultRegistryConfig::default()).unwrap();
+
+        assert!(
+            registry
+                .provided_services()
+                .contains(&ProvidedService::ToolProvider("zerolang".to_string()))
+        );
+        let mut tool_registry = roder_api::tools::ToolRegistry::default();
+        for contributor in &registry.tools {
+            contributor.contribute(&mut tool_registry).unwrap();
+        }
+        let names = tool_registry
+            .specs()
+            .into_iter()
+            .map(|spec| spec.name)
+            .collect::<Vec<_>>();
+        assert!(names.contains(&"zerolang_edit".to_string()));
+        assert!(!names.contains(&"zeolang_edit".to_string()));
+    }
+
+    #[test]
     fn default_roder_home_dir_uses_home_roder() {
         let rendered = roder_home_dir()
             .unwrap()
@@ -791,6 +817,7 @@ mod tests {
             command_shell: "bash".to_string(),
             web_search: None,
             subagents: None,
+            zerolang: None,
             policy_mode: PolicyMode::Default,
             notifications: DefaultNotificationsConfig::default(),
             remote_runner_destination: None,

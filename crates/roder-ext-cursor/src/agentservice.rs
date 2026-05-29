@@ -67,13 +67,15 @@ pub async fn stream_agent_service(
     let request_id = Uuid::new_v4().to_string();
     let conversation_id = Uuid::new_v4().to_string();
     let message_id = Uuid::new_v4().to_string();
-    let mut frames = vec![encode_connect_frame(&encode_agent_client_message_with_history(
-        &request.prompt,
-        &request.model,
-        &conversation_id,
-        &message_id,
-        &request.history,
-    ))];
+    let mut frames = vec![encode_connect_frame(
+        &encode_agent_client_message_with_history(
+            &request.prompt,
+            &request.model,
+            &conversation_id,
+            &message_id,
+            &request.history,
+        ),
+    )];
     for frame in &request.context_frames {
         frames.push(frame.clone());
     }

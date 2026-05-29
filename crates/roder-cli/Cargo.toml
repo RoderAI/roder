@@ -29,6 +29,7 @@ roder-ext-memory.workspace = true
 roder-ext-openai-responses.workspace = true
 roder-ext-postgres-session.workspace = true
 roder-ext-subagents.workspace = true
+roder-ext-zerolang.workspace = true
 roder-extension-host.workspace = true
 roder-protocol.workspace = true
 roder-roadmap.workspace = true

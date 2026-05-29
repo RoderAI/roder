@@ -1,0 +1,30 @@
+[package]
+name = "roder-ext-zerolang"
+version.workspace = true
+edition.workspace = true
+
+[package.metadata.roder.distribution]
+id = "zerolang"
+category = "tool-provider"
+display_name = "Zerolang Checked Graph Edits"
+description = "Zero language command helpers and checked graph-edit tools."
+default_in_profiles = ["full"]
+required_env = []
+optional_env = ["RODER_ZERO_BIN", "RODER_ZERO_LIVE"]
+conflicts_with = []
+required_capabilities = ["fs.read.workspace", "fs.write.workspace", "process.spawn.shell"]
+extension_path = "::ZerolangExtension::default"
+docs_url = "https://github.com/vercel-labs/zerolang"
+
+[dependencies]
+anyhow.workspace = true
+async-trait.workspace = true
+roder-api.workspace = true
+semver.workspace = true
+serde = { workspace = true, features = ["derive"] }
+serde_json.workspace = true
+time.workspace = true
+tokio.workspace = true
+
+[dev-dependencies]
+uuid = { workspace = true, features = ["v4"] }

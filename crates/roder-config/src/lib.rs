@@ -37,6 +37,7 @@ pub struct Config {
     pub tui: Option<TuiConfig>,
     pub app_server: Option<AppServerConfig>,
     pub remote_runners: Option<RemoteRunnersConfig>,
+    pub zerolang: Option<ZerolangConfig>,
     pub media: Option<MediaConfig>,
     pub memories: Option<MemoriesConfig>,
     #[serde(default)]
@@ -475,6 +476,13 @@ pub struct RemoteRunnersConfig {
     pub default_destination: Option<String>,
     #[serde(default)]
     pub destinations: HashMap<String, RemoteRunnerDestinationConfig>,
+}
+
+#[derive(Debug, Default, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ZerolangConfig {
+    pub binary: Option<PathBuf>,
+    pub timeout_seconds: Option<u64>,
+    pub artifact_dir: Option<PathBuf>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -1327,6 +1335,7 @@ mod tests {
             tui: None,
             app_server: None,
             remote_runners: None,
+            zerolang: None,
             media: None,
             memories: None,
             embedding_providers: HashMap::new(),
@@ -2064,6 +2073,30 @@ mod tests {
                 .get("custom-claude")
                 .and_then(|model| model.parallel_tool_calls),
             Some(true)
+        );
+    }
+
+    #[test]
+    fn deserializes_zerolang_config() {
+        let config: Config = toml::from_str(
+            r#"
+            [zerolang]
+            binary = "/opt/zero/bin/zero"
+            timeout_seconds = 45
+            artifact_dir = ".zero/roder"
+            "#,
+        )
+        .unwrap();
+
+        let zerolang = config.zerolang.unwrap();
+        assert_eq!(
+            zerolang.binary.as_deref(),
+            Some(Path::new("/opt/zero/bin/zero"))
+        );
+        assert_eq!(zerolang.timeout_seconds, Some(45));
+        assert_eq!(
+            zerolang.artifact_dir.as_deref(),
+            Some(Path::new(".zero/roder"))
         );
     }
 

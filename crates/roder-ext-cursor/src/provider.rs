@@ -15,12 +15,12 @@ use serde_json::json;
 use crate::agentservice::{
     AgentServiceConfig, AgentServiceEvent, AgentServiceRequest, stream_agent_service,
 };
-use crate::proto::CursorHistoryMessage;
 use crate::auth::CursorAuthConfig;
 use crate::context::{
     CursorContextOptions, discovery_context_frames_from_env, encode_request_context_frame,
 };
 use crate::models::fallback_models;
+use crate::proto::CursorHistoryMessage;
 
 #[derive(Debug, Clone, Default)]
 pub struct CursorConfig {
@@ -330,7 +330,6 @@ pub fn cursor_request_parts(
     }
     (sections.join("\n\n"), history)
 }
-
 
 fn validate_request(request: &AgentInferenceRequest) -> anyhow::Result<()> {
     if request.output.response_format.is_some() {

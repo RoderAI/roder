@@ -1,0 +1,33 @@
+{
+  "id": "zerolang-stale-graph-hash-regression",
+  "title": "Zerolang edit surfaces stale graph hash fixture",
+  "prompt": "FAKE_VERIFICATION_COMPLETE. Confirm that stale graph hashes are reported as Zero patch failures.",
+  "tags": ["zerolang", "checked-graph-edit", "negative"],
+  "workspace": {
+    "files": [
+      {
+        "path": "src/main.0",
+        "contents": "pub fn main(world: World) -> Void raises {\n    check world.out.write(\"hello from zero\\n\")\n}\n"
+      },
+      {
+        "path": ".zero/fake-zero",
+        "contents": "#!/bin/sh\nif [ \"$1 $2 $3\" = \"graph patch --json\" ]; then\n  printf '{\"ok\":false,\"diagnostic\":{\"code\":\"GPH001\",\"message\":\"stale graph hash\"}}\\n'\n  exit 2\nfi\nprintf '{\"ok\":true}\\n'\n"
+      }
+    ],
+    "commands": ["chmod +x .zero/fake-zero"]
+  },
+  "timeoutMs": 10000,
+  "expected": {
+    "finalAnswerContains": ["hello from roder"],
+    "commandChecks": [
+      {
+        "command": "RODER_ZERO_BIN=.zero/fake-zero cargo run -q --manifest-path /Users/pz/w/gode/Cargo.toml -p roder-cli -- --config-dir .roder-test zerolang edit src/main.0 --graph-hash graph:f76987e99677f1b3 --operation-json '{\"op\":\"set\",\"node\":\"#610c78bf\",\"field\":\"value\",\"expect\":\"hello from zero\\\\n\",\"value\":\"hello graph\\\\n\"}'",
+        "expectedExitCode": 1,
+        "stdoutContains": ["GPH001", "stale graph hash"],
+        "stderrContains": ["zero command failed with status Some(2)"]
+      }
+    ],
+    "verificationRequired": true
+  },
+  "constraints": ["stale graph hashes must remain model-visible failures"]
+}
