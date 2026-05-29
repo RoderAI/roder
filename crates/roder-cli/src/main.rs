@@ -1083,6 +1083,7 @@ pub(crate) async fn build_runtime_from_config(
     let session_store = resolve_session_store_config(cfg.sessions.as_ref())?;
     let tool_path_scope = resolve_tool_path_scope(cfg.tools.as_ref())?;
     let command_shell = resolve_command_shell(cfg.tools.as_ref());
+    let tool_allowlist = resolve_tool_allowlist(cfg.tools.as_ref());
     let search_index_enabled = cfg
         .search_index
         .as_ref()
@@ -1157,6 +1158,7 @@ pub(crate) async fn build_runtime_from_config(
             model_edit_tools,
             model_parallel_tool_calls,
             model_profiles,
+            tool_allowlist,
             command_shell,
             workspace: workspace.map(|p| p.display().to_string()),
             policy_mode,
@@ -1211,6 +1213,20 @@ fn resolve_command_shell(config: Option<&roder_config::ToolsConfig>) -> String {
         .and_then(|tools| tools.shell.as_deref())
         .and_then(normalize_command_shell)
         .unwrap_or_else(default_command_shell)
+}
+
+fn resolve_tool_allowlist(config: Option<&roder_config::ToolsConfig>) -> Vec<String> {
+    config
+        .map(|tools| {
+            tools
+                .allowlist
+                .iter()
+                .map(|tool| tool.trim())
+                .filter(|tool| !tool.is_empty())
+                .map(ToString::to_string)
+                .collect()
+        })
+        .unwrap_or_default()
 }
 
 fn resolve_session_store_config(

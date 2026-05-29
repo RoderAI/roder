@@ -94,6 +94,7 @@ pub struct RuntimeConfig {
     pub model_edit_tools: HashMap<String, String>,
     pub model_parallel_tool_calls: HashMap<String, bool>,
     pub model_profiles: HashMap<String, ModelHarnessProfile>,
+    pub tool_allowlist: Vec<String>,
     pub command_shell: String,
     pub workspace: Option<String>,
     pub policy_mode: PolicyMode,
@@ -119,6 +120,7 @@ impl Default for RuntimeConfig {
             model_edit_tools: HashMap::new(),
             model_parallel_tool_calls: HashMap::new(),
             model_profiles: HashMap::new(),
+            tool_allowlist: Vec::new(),
             command_shell: roder_api::command_shell::default_command_shell(),
             workspace: None,
             policy_mode: PolicyMode::Default,
@@ -2607,10 +2609,20 @@ impl Runtime {
         model: &str,
         profile: Option<&ModelHarnessProfile>,
     ) -> Vec<roder_api::tools::ToolSpec> {
-        self.tool_registry.specs_for_edit_tool_with_schema_policy(
-            edit_tool_for_model(cfg, model),
-            schema_policy_for_model(profile),
-        )
+        self.tool_registry
+            .specs_for_edit_tool_with_schema_policy(
+                edit_tool_for_model(cfg, model),
+                schema_policy_for_model(profile),
+            )
+            .into_iter()
+            .filter(|spec| {
+                cfg.tool_allowlist.is_empty()
+                    || cfg
+                        .tool_allowlist
+                        .iter()
+                        .any(|allowed| allowed.as_str() == spec.name)
+            })
+            .collect()
     }
 
     fn task_ledger_tool_specs(
@@ -4167,6 +4179,28 @@ mod tests {
         assert_eq!(request.reasoning.level.as_deref(), Some(REASONING_HIGH));
         assert_eq!(request.runtime.parallel_tool_calls, Some(true));
         assert_eq!(request.runtime.auto_compact_token_limit, Some(999));
+    }
+
+    #[tokio::test]
+    async fn runtime_tool_allowlist_filters_advertised_tools() {
+        let request = captured_profile_request(RuntimeConfig {
+            default_provider: roder_api::catalog::PROVIDER_MOCK.to_string(),
+            default_model: "gpt-5.5".to_string(),
+            tool_allowlist: vec!["edit".to_string()],
+            model_profiles: std::collections::HashMap::from([(
+                "gpt-5.5".to_string(),
+                test_model_profile("gpt-5.5"),
+            )]),
+            ..RuntimeConfig::default()
+        })
+        .await;
+
+        let tool_names = request
+            .tools
+            .iter()
+            .map(|tool| tool.name.as_str())
+            .collect::<Vec<_>>();
+        assert_eq!(tool_names, vec!["edit"]);
     }
 
     #[tokio::test]
