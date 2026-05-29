@@ -2667,6 +2667,19 @@ impl Runtime {
             .thread_item_exists(thread_id, turn_id, item_id))
     }
 
+    pub async fn current_reasoning_item_id(
+        &self,
+        thread_id: &ThreadId,
+        turn_id: &TurnId,
+    ) -> anyhow::Result<Option<String>> {
+        self.ensure_thread_item_cache(thread_id).await?;
+        Ok(self
+            .thread_item_cache
+            .lock()
+            .await
+            .current_reasoning_item_id(thread_id, turn_id))
+    }
+
     async fn remember_thread_item_event(&self, item_event: &ThreadItemEvent) -> anyhow::Result<()> {
         self.ensure_thread_item_cache(&item_event.thread_id).await?;
         self.thread_item_cache
