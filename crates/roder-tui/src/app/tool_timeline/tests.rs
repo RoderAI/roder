@@ -1340,6 +1340,7 @@ fn clicking_shell_tool_requests_detail_modal() {
         .take_requested_detail()
         .expect("shell tool click should request detail modal");
     assert_eq!(detail.command.as_deref(), Some("make test"));
+    assert_eq!(detail.tool_id.as_deref(), Some("call_1"));
     assert!(detail.output.as_deref().unwrap().contains("Output:\nok"));
 }
 

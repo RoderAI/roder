@@ -1,7 +1,5 @@
-use std::fs;
 use std::io::{Read, Write};
 use std::net::{TcpListener, TcpStream};
-use std::path::PathBuf;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use base64::Engine;
@@ -9,6 +7,10 @@ use rand::RngExt;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
+
+mod store;
+
+pub use store::Store;
 
 const CLIENT_ID: &str = "app_EMoamEEZ73f0CkXaXp7hrann";
 const AUTHORIZE_URL: &str = "https://auth.openai.com/oauth/authorize";
@@ -67,52 +69,6 @@ struct OpenAIAuthClaim {
 #[derive(Debug, Deserialize)]
 struct OrgClaim {
     id: String,
-}
-
-pub struct Store {
-    data_dir: PathBuf,
-}
-
-impl Default for Store {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl Store {
-    pub fn new() -> Self {
-        Self {
-            data_dir: roder_data_dir(),
-        }
-    }
-
-    pub fn load(&self) -> anyhow::Result<Tokens> {
-        load_tokens_from(&self.path())
-    }
-
-    pub fn save(&self, mut tokens: Tokens) -> anyhow::Result<()> {
-        normalize(&mut tokens);
-        let path = self.path();
-        if let Some(parent) = path.parent() {
-            fs::create_dir_all(parent)?;
-        }
-        let data = serde_json::to_vec_pretty(&tokens)?;
-        fs::write(path, [data, b"\n".to_vec()].concat())?;
-        Ok(())
-    }
-
-    pub fn delete(&self) -> anyhow::Result<()> {
-        let path = self.path();
-        match fs::remove_file(path) {
-            Ok(()) => Ok(()),
-            Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(()),
-            Err(err) => Err(err.into()),
-        }
-    }
-
-    fn path(&self) -> PathBuf {
-        self.data_dir.join("auth").join("codex.json")
-    }
 }
 
 pub async fn access_token() -> anyhow::Result<Option<(String, Option<String>)>> {
@@ -179,19 +135,6 @@ pub async fn status() -> anyhow::Result<Option<Tokens>> {
 
 pub fn logout() -> anyhow::Result<()> {
     Store::new().delete()
-}
-
-fn load_tokens_from(path: &PathBuf) -> anyhow::Result<Tokens> {
-    match fs::read_to_string(path) {
-        Ok(contents) if contents.trim().is_empty() => Ok(Tokens::default()),
-        Ok(contents) => {
-            let mut tokens: Tokens = serde_json::from_str(&contents)?;
-            normalize(&mut tokens);
-            Ok(tokens)
-        }
-        Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(Tokens::default()),
-        Err(err) => Err(err.into()),
-    }
 }
 
 async fn refresh(refresh_token: &str) -> anyhow::Result<Tokens> {
@@ -435,17 +378,6 @@ fn browser_command(url: &str) -> std::process::Command {
     command
 }
 
-fn roder_data_dir() -> PathBuf {
-    std::env::var_os("RODER_DATA_DIR")
-        .or_else(|| std::env::var_os("RODER_CONFIG_DIR"))
-        .map(PathBuf::from)
-        .unwrap_or_else(|| {
-            dirs::home_dir()
-                .unwrap_or_else(|| PathBuf::from("."))
-                .join(".roder")
-        })
-}
-
 fn normalize(tokens: &mut Tokens) {
     if tokens.token_type.is_empty() {
         tokens.token_type = default_token_type();
@@ -523,75 +455,5 @@ mod tests {
         assert!(err.contains("[redacted]"));
         assert!(!err.contains("secret-access"));
         assert!(!err.contains("secret-refresh"));
-    }
-
-    #[test]
-    fn store_loads_roder_owned_tokens() {
-        let home = unique_test_home("roder-owned-store");
-        std::fs::create_dir_all(home.join(".roder").join("auth")).unwrap();
-        std::fs::write(
-            home.join(".roder").join("auth").join("codex.json"),
-            r#"{
-              "type": "oauth",
-              "access": " roder-access ",
-              "refresh": " roder-refresh ",
-              "account_id": " acct_roder ",
-              "expires": 123
-            }"#,
-        )
-        .unwrap();
-
-        let loaded = Store {
-            data_dir: home.join(".roder"),
-        }
-        .load()
-        .unwrap();
-
-        assert_eq!(loaded.access, "roder-access");
-        assert_eq!(loaded.refresh, "roder-refresh");
-        assert_eq!(loaded.account_id, "acct_roder");
-        assert_eq!(loaded.expires, 123);
-    }
-
-    #[test]
-    fn store_load_ignores_codex_cli_tokens_when_roder_store_is_missing() {
-        let home = unique_test_home("codex-cli-ignored");
-        std::fs::create_dir_all(home.join(".codex")).unwrap();
-        std::fs::write(
-            home.join(".codex").join("auth.json"),
-            r#"{
-              "auth_mode": "chatgpt",
-              "OPENAI_API_KEY": null,
-              "tokens": {
-                "access_token": " codex-access ",
-                "refresh_token": " codex-refresh ",
-                "account_id": " acct_codex "
-              },
-              "last_refresh": "2026-05-18T12:00:00Z"
-            }"#,
-        )
-        .unwrap();
-
-        let loaded = Store {
-            data_dir: home.join(".roder"),
-        }
-        .load()
-        .unwrap();
-
-        assert_eq!(loaded.access, "");
-        assert_eq!(loaded.refresh, "");
-        assert_eq!(loaded.account_id, "");
-    }
-
-    fn unique_test_home(name: &str) -> PathBuf {
-        let root = std::env::temp_dir().join(format!(
-            "roder-codex-auth-{name}-{}",
-            SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
-        ));
-        std::fs::create_dir_all(&root).unwrap();
-        root
     }
 }

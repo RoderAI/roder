@@ -5343,6 +5343,7 @@ where
                     output_delta,
                     raw_still_running,
                 );
+                self.refresh_open_tool_detail(&exec_tool_id);
                 return;
             }
             return;
@@ -5380,8 +5381,30 @@ where
             self.exec_session_tools
                 .insert(session_id, tool_id.to_string());
         }
-        self.timeline
-            .record_tool_completed(tool_id, failed, timeline_output);
+        if exec_session_is_running {
+            self.timeline
+                .record_tool_session_update(tool_id, failed, timeline_output, true);
+        } else {
+            self.timeline
+                .record_tool_completed(tool_id, failed, timeline_output);
+        }
+        self.refresh_open_tool_detail(tool_id);
+    }
+
+    fn refresh_open_tool_detail(&mut self, tool_id: &str) {
+        let should_refresh = self
+            .tool_detail_modal
+            .as_ref()
+            .and_then(ToolDetailModal::tool_id)
+            == Some(tool_id);
+        if !should_refresh {
+            return;
+        }
+        if let Some(detail) = self.timeline.detail_for_tool_id(tool_id)
+            && let Some(modal) = self.tool_detail_modal.as_mut()
+        {
+            modal.update_detail(detail);
+        }
     }
 
     fn toggle_plan_panel(&mut self) {
@@ -8354,6 +8377,48 @@ mod tests {
             ),
         );
         assert!(!app.exec_session_tools.contains_key(&7));
+    }
+
+    #[test]
+    fn open_shell_detail_updates_when_tool_output_arrives() {
+        let mut app = test_app();
+        app.record_tool_requested_with_id(
+            "call_exec".to_string(),
+            ToolTimelineEntry::new("exec_command", r#"{"cmd":"npm test"}"#),
+        );
+        app.record_tool_completed(
+            "call_exec",
+            false,
+            Some(
+                "Exit code: still running\nStatus: running\nWall time: 0.100 seconds\nSession id: 7\nOutput:\nstart"
+                    .to_string(),
+            ),
+        );
+
+        let detail = app
+            .timeline
+            .detail_for_tool_id("call_exec")
+            .expect("exec detail");
+        assert!(detail.running);
+        app.tool_detail_modal = Some(ToolDetailModal::new(detail, app.scroll_settings));
+
+        app.record_tool_requested_with_id(
+            "call_stdin".to_string(),
+            ToolTimelineEntry::new("write_stdin", r#"{"session_id":7}"#),
+        );
+        app.record_tool_completed(
+            "call_stdin",
+            false,
+            Some(
+                "Exit code: still running\nStatus: running\nWall time: 0.200 seconds\nSession id: 7\nOutput:\nlive chunk"
+                    .to_string(),
+            ),
+        );
+
+        let modal = app.tool_detail_modal.as_ref().expect("modal remains open");
+        let lines = tool_detail::detail_lines_for_test(modal, app.theme);
+        assert!(lines.iter().any(|line| line.contains("start")));
+        assert!(lines.iter().any(|line| line.contains("live chunk")));
     }
 
     #[test]
