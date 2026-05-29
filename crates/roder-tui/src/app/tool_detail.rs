@@ -28,6 +28,14 @@ impl ToolDetailModal {
         }
     }
 
+    pub(super) fn tool_id(&self) -> Option<&str> {
+        self.detail.tool_id.as_deref()
+    }
+
+    pub(super) fn update_detail(&mut self, detail: ToolDetail) {
+        self.detail = detail;
+    }
+
     pub(super) fn handle_key(&mut self, key: KeyEvent) -> ToolDetailAction {
         match key.code {
             KeyCode::Esc => ToolDetailAction::Close,
@@ -161,7 +169,13 @@ fn command_line(detail: &ToolDetail, theme: Theme) -> Paragraph<'static> {
 }
 
 fn context_line(detail: &ToolDetail, theme: Theme) -> Paragraph<'static> {
-    let status = if detail.failed { "failed" } else { "completed" };
+    let status = if detail.failed {
+        "failed"
+    } else if detail.running {
+        "running"
+    } else {
+        "completed"
+    };
     Paragraph::new(Line::from(vec![
         Span::styled(status.to_string(), theme.muted()),
         Span::styled("  ", theme.dialog_surface()),
@@ -229,17 +243,32 @@ fn key_hint(label: &'static str, theme: Theme) -> Span<'static> {
 }
 
 #[cfg(test)]
+pub(super) fn detail_lines_for_test(modal: &ToolDetailModal, theme: Theme) -> Vec<String> {
+    detail_lines(&modal.detail, theme)
+        .into_iter()
+        .map(|line| {
+            line.spans
+                .into_iter()
+                .map(|span| span.content.to_string())
+                .collect::<String>()
+        })
+        .collect()
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
     fn detail_lines_include_arguments_and_aggregated_output() {
         let detail = ToolDetail {
+            tool_id: Some("call_1".to_string()),
             title: "Shell command: echo hi".to_string(),
             command: Some("echo hi".to_string()),
             arguments: "{\"command\":\"echo hi\"}".to_string(),
             output: Some("Exit code: 0\nOutput:\nhi".to_string()),
             failed: false,
+            running: false,
         };
 
         let lines = detail_lines(&detail, Theme::for_dark_background(true))

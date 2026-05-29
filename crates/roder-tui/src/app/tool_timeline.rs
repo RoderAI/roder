@@ -237,11 +237,13 @@ pub(super) struct TimelineRender {
 
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub(super) struct ToolDetail {
+    pub tool_id: Option<String>,
     pub title: String,
     pub command: Option<String>,
     pub arguments: String,
     pub output: Option<String>,
     pub failed: bool,
+    pub running: bool,
 }
 
 #[derive(Debug, Default)]
@@ -829,6 +831,11 @@ impl TimelineState {
         self.requested_detail.take()
     }
 
+    pub fn detail_for_tool_id(&self, tool_id: &str) -> Option<ToolDetail> {
+        let index = self.tool_indices.get(tool_id).copied()?;
+        self.detail_for_index(index)
+    }
+
     #[allow(dead_code)]
     pub fn fold_state_record(
         &self,
@@ -1194,11 +1201,13 @@ impl TimelineState {
             TimelineItem {
                 kind: TimelineItemKind::Shell(command),
             } => Some(ToolDetail {
+                tool_id: None,
                 title: "Shell".to_string(),
                 command: Some(command.clone()),
                 arguments: String::new(),
                 output: self.shell_output_after(index),
                 failed: false,
+                running: false,
             }),
             _ => None,
         }
@@ -1416,11 +1425,13 @@ impl ToolTimelineTool {
 
         let (command, arguments) = command_and_arguments(&self.entry.arguments);
         Some(ToolDetail {
+            tool_id: Some(self.tool_id.clone()),
             title: self.entry.label(),
             command,
             arguments,
             output: self.output.clone().filter(|text| !text.trim().is_empty()),
             failed: self.status == ToolTimelineStatus::Failed,
+            running: self.status == ToolTimelineStatus::Running,
         })
     }
 }
