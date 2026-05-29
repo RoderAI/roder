@@ -320,6 +320,8 @@ pub struct ToolsConfig {
     #[serde(default = "default_tool_path_scope")]
     pub path_scope: String,
     pub shell: Option<String>,
+    #[serde(default)]
+    pub allowlist: Vec<String>,
 }
 
 impl Default for ToolsConfig {
@@ -327,6 +329,7 @@ impl Default for ToolsConfig {
         Self {
             path_scope: default_tool_path_scope(),
             shell: None,
+            allowlist: Vec::new(),
         }
     }
 }
@@ -1723,6 +1726,7 @@ mod tests {
             [tools]
             path_scope = "workspace"
             shell = "zsh"
+            allowlist = ["zerolang_check", "zerolang_edit"]
             "#,
         )
         .unwrap();
@@ -1730,6 +1734,7 @@ mod tests {
         let tools = config.tools.unwrap();
         assert_eq!(tools.path_scope, "workspace");
         assert_eq!(tools.shell.as_deref(), Some("zsh"));
+        assert_eq!(tools.allowlist, ["zerolang_check", "zerolang_edit"]);
 
         let mut config = Config::default();
         apply_env_overrides_with(&mut config, |key| match key {

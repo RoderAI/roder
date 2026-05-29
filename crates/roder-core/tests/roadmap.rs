@@ -147,6 +147,7 @@ fn runtime_for(workspace: &std::path::Path) -> Runtime {
             model_edit_tools: std::collections::HashMap::new(),
             model_parallel_tool_calls: std::collections::HashMap::new(),
             model_profiles: std::collections::HashMap::new(),
+            tool_allowlist: Vec::new(),
             command_shell: roder_api::command_shell::default_command_shell(),
             workspace: Some(workspace.display().to_string()),
             policy_mode: PolicyMode::Default,

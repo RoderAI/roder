@@ -24,3 +24,14 @@ eval_deadline_seconds = 600
 
 [distribution.config_overrides.context]
 file_backed_dynamic_context = true
+
+[distribution.config_overrides.tools]
+allowlist = [
+  "zerolang_skills_get",
+  "zerolang_check",
+  "zerolang_graph_dump",
+  "zerolang_graph_view",
+  "zerolang_fix_plan",
+  "zerolang_edit",
+  "zerolang_graph_roundtrip",
+]

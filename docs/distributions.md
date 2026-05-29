@@ -128,6 +128,8 @@ The profile includes JSONL replay-oriented thread storage, disk context, memory,
 
 Use `zero-coder-edits` when the runtime should be headless and focused on Zero source tasks. It ships `zerolang_skills_get`, `zerolang_check`, `zerolang_graph_dump`, `zerolang_graph_view`, `zerolang_fix_plan`, `zerolang_edit`, and `zerolang_graph_roundtrip`.
 
+The generated config allowlists only those Zerolang tools, so generic file-editing tools such as `edit`, `multi_edit`, `write_file`, and `apply_patch` are not advertised to the model.
+
 ```sh
 cargo run -p roder-configure -- profile show zero-coder-edits > zero-coder-edits-profile.toml
 cargo run -p roder-configure -- validate zero-coder-edits-profile.toml
