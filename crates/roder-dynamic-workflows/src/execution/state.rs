@@ -261,6 +261,9 @@ pub(crate) async fn mark_agent_completed(
         return;
     };
     agent.status = WorkflowAgentStatus::Completed;
+    if agent.model.is_none() {
+        agent.model = result.model.clone();
+    }
     agent.thread_id = Some(result.thread_id);
     agent.turn_id = Some(result.turn_id);
     agent.usage = result.usage;
@@ -313,6 +316,9 @@ pub(crate) async fn mark_agent_failed(
         SubagentExitReason::Cancelled => WorkflowAgentStatus::Cancelled,
         _ => WorkflowAgentStatus::Failed,
     };
+    if agent.model.is_none() {
+        agent.model = result.model.clone();
+    }
     agent.thread_id = Some(result.thread_id);
     agent.turn_id = Some(result.turn_id);
     agent.usage = result.usage;

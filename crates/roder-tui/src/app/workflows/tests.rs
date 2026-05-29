@@ -72,6 +72,38 @@ fn event_updates_active_run_progress_state() {
 }
 
 #[test]
+fn completed_workflow_remains_visible_in_progress_state() {
+    let mut state = WorkflowUiState::default();
+    let mut run = workflow_run("run-complete", WorkflowRunStatus::Running);
+    let summary = run.summary.clone().unwrap();
+    run.summary = None;
+    state.record_run(run);
+
+    state.apply_event(&roder_api::events::RoderEvent::WorkflowRunCompleted(
+        roder_api::dynamic_workflows::WorkflowRunCompleted {
+            run_id: "run-complete".to_string(),
+            thread_id: None,
+            turn_id: None,
+            summary,
+            timestamp: OffsetDateTime::UNIX_EPOCH,
+        },
+    ));
+
+    assert_eq!(state.progress_height(140, 40), 11);
+    let rendered = render_text(progress_panel_lines(
+        state.progress_run().unwrap(),
+        140,
+        11,
+        Theme::for_terminal(),
+    ));
+    assert_eq!(
+        state.cached_run("run-complete").unwrap().status,
+        WorkflowRunStatus::Completed
+    );
+    assert!(rendered.contains("1s"));
+}
+
+#[test]
 fn progress_panel_lists_phases_and_active_phase_agents() {
     let mut run = workflow_run("run-panel", WorkflowRunStatus::Running);
     run.script.name = "react-to-solid-migration".to_string();
@@ -127,6 +159,7 @@ fn progress_panel_lists_phases_and_active_phase_agents() {
     let rendered = render_text(progress_panel_lines(&run, 150, 11, Theme::for_terminal()));
 
     assert!(rendered.contains("react-to-solid-migration"));
+    assert!(rendered.contains("running"));
     assert!(rendered.contains("Infrastructure"));
     assert!(rendered.contains("3/10"));
     assert!(rendered.contains("infra:package.json"));
