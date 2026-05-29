@@ -146,10 +146,16 @@ releases after that PR merges.
 Install the standard Roder CLI locally with:
 
 ```sh
+curl -fsSL https://dl.roder.sh/latest/install.sh | sh
+```
+
+For source builds:
+
+```sh
 make install
 ```
 
-By default this writes `roder` to `~/.local/bin`. Override the install target with `BINDIR=/path/to/bin make install`.
+By default both installers write `roder` to `~/.local/bin`. Override the binary installer with `RODER_INSTALL_DIR=/path/to/bin`; override the source install target with `BINDIR=/path/to/bin make install`.
 
 Roder reads configuration and user state from `~/.roder` by default. Use the
 global `--config-dir <path>` flag before or after the subcommand to run against

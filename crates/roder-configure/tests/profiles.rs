@@ -85,6 +85,18 @@ fn profiles_builtin_profiles_validate_against_workspace_catalog() {
                 Some("tavily")
             );
         }
+        if profile.id == "zero-coder-edits" {
+            assert!(
+                profile
+                    .manifest
+                    .extensions
+                    .contains(&"zerolang".to_string())
+            );
+            assert_eq!(
+                report.required_env.get("openai-responses").unwrap(),
+                &vec!["OPENAI_API_KEY".to_string()]
+            );
+        }
     }
 }
 

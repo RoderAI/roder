@@ -133,6 +133,10 @@ pub const BUILT_IN_PROFILES: &[BuiltInProfile] = &[
         source: include_str!("../profiles/tavily.toml"),
     },
     BuiltInProfile {
+        id: "zero-coder-edits",
+        source: include_str!("../profiles/zero-coder-edits.toml"),
+    },
+    BuiltInProfile {
         id: "full",
         source: include_str!("../profiles/full.toml"),
     },

@@ -21,6 +21,10 @@ fn codegen_renders_openai_only_distribution_deterministically() {
     assert!(readme.contains("openai-responses"));
     assert!(readme.contains("OPENAI_API_KEY"));
     let config = file(&first, "config.toml");
+    toml::from_str::<toml::Value>(&config).unwrap();
+    assert!(config.contains("provider = \"openai\""));
+    assert!(config.contains("[sessions]\nstore = \"jsonl\""));
+    assert!(config.contains("# - OPENAI_API_KEY"));
     assert!(config.contains("[dynamic_workflows]"));
     assert!(config.contains("workspace_workflows_dir = \".agents/workflows\""));
 }
@@ -48,12 +52,41 @@ fn codegen_renders_tavily_enabled_distribution() {
     assert!(cargo_toml.contains("roder-ext-web-search"));
 
     let config = file(&files, "config.toml");
+    toml::from_str::<toml::Value>(&config).unwrap();
     assert!(config.contains(r#""provider": "tavily""#));
     assert!(config.contains(r#""api_key_env": "TAVILY_API_KEY""#));
+    assert!(config.contains("[web_search]"));
+    assert!(config.contains("provider = \"tavily\""));
 
     let readme = file(&files, "README.md");
     assert!(readme.contains("tavily-search"));
     assert!(readme.contains("TAVILY_API_KEY"));
+}
+
+#[test]
+fn codegen_renders_zero_coder_edits_distribution() {
+    let catalog = Catalog::from_workspace(env!("CARGO_MANIFEST_DIR")).unwrap();
+    let profile = built_in_profile("zero-coder-edits").unwrap().unwrap();
+    profile.validate(&catalog).unwrap();
+
+    let files = render(&profile.manifest, &catalog).unwrap();
+    let cargo_toml = file(&files, "Cargo.toml");
+    assert!(cargo_toml.contains("roder-ext-zerolang"));
+    assert!(cargo_toml.contains("roder-ext-task-process"));
+    assert!(cargo_toml.contains("roder-app-server"));
+    assert!(!cargo_toml.contains("roder-tui"));
+
+    let config = file(&files, "config.toml");
+    toml::from_str::<toml::Value>(&config).unwrap();
+    assert!(config.contains("provider = \"openai\""));
+    assert!(config.contains("[zerolang]"));
+    assert!(config.contains("artifact_dir = \".zero/roder\""));
+    assert!(config.contains("[speed_policy]"));
+    assert!(config.contains("# - OPENAI_API_KEY"));
+
+    let readme = file(&files, "README.md");
+    assert!(readme.contains("zerolang"));
+    assert!(readme.contains("OPENAI_API_KEY"));
 }
 
 #[test]

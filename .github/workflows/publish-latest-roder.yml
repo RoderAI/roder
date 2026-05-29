@@ -1,0 +1,226 @@
+name: Publish latest Roder CLI
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+      - master
+
+concurrency:
+  group: publish-latest-roder-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+env:
+  RUST_VERSION: "1.95.0"
+  R2_ACCOUNT_ID: "769befa385792ae6e7ca7136b7010256"
+  R2_BUCKET: "roder-downloads"
+  R2_PUBLIC_BASE_URL: "https://dl.roder.sh"
+
+jobs:
+  build:
+    name: Build ${{ matrix.target }}
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            use_zigbuild: true
+          - runner: ubuntu-latest
+            target: aarch64-unknown-linux-gnu
+            use_zigbuild: true
+          - runner: macos-14
+            target: aarch64-apple-darwin
+            use_zigbuild: false
+          - runner: macos-13
+            target: x86_64-apple-darwin
+            use_zigbuild: false
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Install Rust
+        shell: bash
+        run: |
+          rustup toolchain install "${RUST_VERSION}" --profile minimal
+          rustup default "${RUST_VERSION}"
+          rustup target add "${{ matrix.target }}"
+
+      - name: Install Linux build tools
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang cmake lld pkg-config
+
+      - name: Install cargo-zigbuild
+        if: matrix.use_zigbuild
+        shell: bash
+        run: |
+          cargo install cargo-zigbuild --locked
+
+      - name: Install Zig
+        if: matrix.use_zigbuild
+        uses: mlugg/setup-zig@v2
+
+      - name: Build Roder CLI with Zig
+        if: matrix.use_zigbuild
+        shell: bash
+        run: |
+          rustc_path="$(rustup which rustc)"
+          RUSTC="$rustc_path" cargo zigbuild --release -p roder-cli --bin roder --target "${{ matrix.target }}"
+
+      - name: Build Roder CLI
+        if: ${{ !matrix.use_zigbuild }}
+        shell: bash
+        run: |
+          cargo build --release -p roder-cli --bin roder --target "${{ matrix.target }}"
+
+      - name: Package binary
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "dist/latest"
+          source_path="target/${{ matrix.target }}/release/roder"
+          dest="dist/latest/roder-${{ matrix.target }}"
+          cp "$source_path" "$dest"
+          strip "$dest" 2>/dev/null || true
+          if command -v sha256sum >/dev/null 2>&1; then
+            (cd dist/latest && sha256sum "roder-${{ matrix.target }}" > "roder-${{ matrix.target }}.sha256")
+          else
+            (cd dist/latest && shasum -a 256 "roder-${{ matrix.target }}" > "roder-${{ matrix.target }}.sha256")
+          fi
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: roder-${{ matrix.target }}
+          path: dist/latest/*
+          if-no-files-found: error
+
+  publish:
+    name: Publish latest objects to R2
+    runs-on: ubuntu-latest
+    needs: build
+    if: ${{ github.repository_owner == 'PandelisZ' }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Download build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: dist/latest
+          merge-multiple: true
+
+      - name: Prepare latest manifest and installer
+        shell: bash
+        run: |
+          set -euo pipefail
+          cp scripts/install-roder.sh dist/latest/install.sh
+          chmod 0644 dist/latest/install.sh
+          (
+            cd dist/latest
+            : > SHA256SUMS
+            for binary in roder-*; do
+              case "$binary" in
+                *.sha256) continue ;;
+              esac
+              sha256sum "$binary" >> SHA256SUMS
+            done
+          )
+          python3 - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          root = Path("dist/latest")
+          artifacts = []
+          for path in sorted(root.glob("roder-*")):
+              if path.name.endswith(".sha256"):
+                  continue
+              digest = (root / f"{path.name}.sha256").read_text().split()[0]
+              artifacts.append({
+                  "name": path.name,
+                  "target": path.name.removeprefix("roder-"),
+                  "url": f"{os.environ['R2_PUBLIC_BASE_URL']}/latest/{path.name}",
+                  "sha256": digest,
+                  "bytes": path.stat().st_size,
+              })
+          manifest = {
+              "version": "latest",
+              "commit": os.environ["GITHUB_SHA"],
+              "artifacts": artifacts,
+              "install": f"{os.environ['R2_PUBLIC_BASE_URL']}/latest/install.sh",
+          }
+          (root / "manifest.json").write_text(json.dumps(manifest, indent=2) + "\n")
+          PY
+
+      - name: Install AWS CLI
+        shell: bash
+        run: |
+          if ! command -v aws >/dev/null 2>&1; then
+            python3 -m pip install --user awscli
+            echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+          fi
+
+      - name: Derive R2 S3 credentials
+        shell: bash
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [[ -z "${CLOUDFLARE_API_TOKEN}" ]]; then
+            echo "CLOUDFLARE_API_TOKEN secret is required" >&2
+            exit 1
+          fi
+          verify_json="$(curl -fsSL \
+            -H "Authorization: Bearer ${CLOUDFLARE_API_TOKEN}" \
+            "https://api.cloudflare.com/client/v4/accounts/${R2_ACCOUNT_ID}/tokens/verify")"
+          access_key_id="$(jq -r '.result.id // empty' <<<"$verify_json")"
+          status="$(jq -r '.result.status // empty' <<<"$verify_json")"
+          if [[ -z "$access_key_id" || "$status" != "active" ]]; then
+            echo "Cloudflare account token verification failed" >&2
+            exit 1
+          fi
+          secret_access_key="$(printf '%s' "$CLOUDFLARE_API_TOKEN" | sha256sum | awk '{print $1}')"
+          {
+            echo "AWS_ACCESS_KEY_ID=$access_key_id"
+            echo "AWS_SECRET_ACCESS_KEY=$secret_access_key"
+            echo "AWS_DEFAULT_REGION=auto"
+          } >> "$GITHUB_ENV"
+
+      - name: Upload latest objects to R2
+        shell: bash
+        run: |
+          set -euo pipefail
+          endpoint="https://${R2_ACCOUNT_ID}.r2.cloudflarestorage.com"
+          for path in dist/latest/*; do
+            name="$(basename "$path")"
+            case "$name" in
+              install.sh) content_type="text/x-shellscript; charset=utf-8" ;;
+              manifest.json) content_type="application/json; charset=utf-8" ;;
+              SHA256SUMS|*.sha256) content_type="text/plain; charset=utf-8" ;;
+              *) content_type="application/octet-stream" ;;
+            esac
+            aws s3 cp "$path" "s3://${R2_BUCKET}/latest/${name}" \
+              --endpoint-url "$endpoint" \
+              --content-type "$content_type" \
+              --cache-control "public, max-age=300" \
+              --no-progress
+          done
+
+      - name: Print URLs
+        shell: bash
+        run: |
+          echo "Install: ${R2_PUBLIC_BASE_URL}/latest/install.sh"
+          echo "Manifest: ${R2_PUBLIC_BASE_URL}/latest/manifest.json"

@@ -38,7 +38,12 @@ pub fn render(
     let cargo_dependencies = cargo_dependencies(manifest, &extensions);
     let install_extensions = install_extensions(&extensions);
     let required_env = required_env(&extensions);
+    let required_env_comments = required_env_comments(&extensions);
     let chosen_extensions = chosen_extensions(&extensions);
+    let provider_config = provider_config(manifest);
+    let session_store_config = session_store_config(manifest);
+    let config_overrides_toml = config_overrides_toml(manifest);
+    let config_overrides_json = config_overrides_json(manifest);
 
     Ok(vec![
         GeneratedFile {
@@ -64,16 +69,11 @@ pub fn render(
             contents: render_template(
                 include_str!("../templates/config.toml.hbs"),
                 &[
-                    (
-                        "default_provider",
-                        manifest.default_provider.as_deref().unwrap_or(""),
-                    ),
-                    (
-                        "default_thread_store",
-                        manifest.default_thread_store.as_deref().unwrap_or(""),
-                    ),
-                    ("config_overrides", &config_overrides(manifest)),
-                    ("required_env", required_env.as_str()),
+                    ("provider_config", provider_config.as_str()),
+                    ("session_store_config", session_store_config.as_str()),
+                    ("config_overrides_toml", config_overrides_toml.as_str()),
+                    ("config_overrides_json", config_overrides_json.as_str()),
+                    ("required_env_comments", required_env_comments.as_str()),
                 ],
             ),
         },
@@ -187,6 +187,14 @@ fn required_env(extensions: &[&crate::catalog::CatalogEntry]) -> String {
     }
 }
 
+fn required_env_comments(extensions: &[&crate::catalog::CatalogEntry]) -> String {
+    required_env(extensions)
+        .lines()
+        .map(|line| format!("# {line}"))
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
 fn chosen_extensions(extensions: &[&crate::catalog::CatalogEntry]) -> String {
     extensions
         .iter()
@@ -200,7 +208,54 @@ fn chosen_extensions(extensions: &[&crate::catalog::CatalogEntry]) -> String {
         .join("\n")
 }
 
-fn config_overrides(manifest: &DistributionManifest) -> String {
+fn provider_config(manifest: &DistributionManifest) -> String {
+    manifest
+        .default_provider
+        .as_deref()
+        .map(provider_runtime_id)
+        .map(|provider| format!("provider = {provider:?}\n"))
+        .unwrap_or_default()
+}
+
+fn provider_runtime_id(default_provider: &str) -> &str {
+    match default_provider {
+        "openai-responses" => "openai",
+        "anthropic" => "anthropic",
+        "gemini" => "gemini",
+        "xai" => "xai",
+        "opencode" => "opencode",
+        "poolside" => "poolside",
+        "cursor" => "cursor",
+        "xiaomi-mimo" => "xiaomi-mimo",
+        _ => default_provider,
+    }
+}
+
+fn session_store_config(manifest: &DistributionManifest) -> String {
+    manifest
+        .default_thread_store
+        .as_deref()
+        .map(thread_store_runtime_id)
+        .map(|store| format!("[sessions]\nstore = {store:?}\n"))
+        .unwrap_or_default()
+}
+
+fn thread_store_runtime_id(default_thread_store: &str) -> &str {
+    match default_thread_store {
+        "jsonl-thread-store" => "jsonl",
+        "postgres-session" => "postgres",
+        _ => default_thread_store,
+    }
+}
+
+fn config_overrides_toml(manifest: &DistributionManifest) -> String {
+    if manifest.config_overrides.is_null() {
+        return String::new();
+    }
+    toml::to_string_pretty(&manifest.config_overrides).unwrap_or_default()
+}
+
+fn config_overrides_json(manifest: &DistributionManifest) -> String {
     if manifest.config_overrides.is_null() {
         "{}".to_string()
     } else {

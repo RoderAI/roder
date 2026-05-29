@@ -1,9 +1,11 @@
-default_provider = "{{default_provider}}"
-default_thread_store = "{{default_thread_store}}"
+{{provider_config}}
+{{session_store_config}}
 
 [zerolang]
 timeout_seconds = 30
 artifact_dir = ".zero/roder"
+
+{{config_overrides_toml}}
 
 [dynamic_workflows]
 enabled = true
@@ -23,9 +25,9 @@ require_approval = true
 allow_always_for_script_and_workspace = true
 
 # Required environment variables:
-{{required_env}}
+{{required_env_comments}}
 
 [config_overrides]
 json = '''
-{{config_overrides}}
+{{config_overrides_json}}
 '''
