@@ -112,6 +112,7 @@ async fn runner_executes_two_phase_fanout_with_bounded_concurrency_and_report() 
         snapshot.run.summary.as_ref().unwrap().completed_agent_count,
         4
     );
+    assert_eq!(snapshot.run.agents[0].model.as_deref(), Some("fake-model"));
     assert!(executor.peak.load(Ordering::SeqCst) <= 2);
     assert!(
         snapshot
@@ -290,7 +291,7 @@ fn result_for(
         thread_id: format!("thread-{agent_id}"),
         turn_id: format!("turn-{agent_id}"),
         agent_type: role,
-        model: None,
+        model: Some("fake-model".to_string()),
         final_message: format!("actual:{prompt}"),
         usage: None,
         exit_reason,

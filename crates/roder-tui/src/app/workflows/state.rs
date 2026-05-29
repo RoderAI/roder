@@ -21,6 +21,7 @@ pub(crate) struct WorkflowUiState {
     pub(super) panel: WorkflowPanel,
     pub(super) selected: usize,
     pub(super) detail_selected: usize,
+    progress_run_id: Option<WorkflowRunId>,
     ignored_prompt: Option<String>,
 }
 
@@ -139,6 +140,7 @@ impl WorkflowUiState {
     }
 
     pub(super) fn record_run(&mut self, run: WorkflowRun) {
+        self.progress_run_id = Some(run.run_id.clone());
         self.summaries
             .insert(run.run_id.clone(), summary_from_run(&run));
         self.runs.insert(run.run_id.clone(), run);
@@ -201,12 +203,23 @@ impl WorkflowUiState {
             }
             RoderEvent::WorkflowRunCompleted(event) => {
                 self.update_status(&event.run_id, WorkflowRunStatus::Completed);
+                if let Some(run) = self.runs.get_mut(&event.run_id) {
+                    run.summary = Some(event.summary.clone());
+                    run.completed_at = Some(event.timestamp);
+                    run.updated_at = event.timestamp;
+                }
                 self.summaries
                     .insert(event.run_id.clone(), event.summary.clone());
                 Some(format!("workflow completed: {}", short_id(&event.run_id)))
             }
             RoderEvent::WorkflowRunFailed(event) => {
                 self.update_status(&event.run_id, WorkflowRunStatus::Failed);
+                if let Some(run) = self.runs.get_mut(&event.run_id) {
+                    run.error = Some(event.error.clone());
+                    run.summary = event.summary.clone();
+                    run.completed_at = Some(event.timestamp);
+                    run.updated_at = event.timestamp;
+                }
                 if let Some(summary) = &event.summary {
                     self.summaries.insert(event.run_id.clone(), summary.clone());
                 }
@@ -345,8 +358,15 @@ impl WorkflowUiState {
         render::render_overlay(self, f, area, theme);
     }
 
-    pub(super) fn active_run(&self) -> Option<&WorkflowRun> {
-        self.runs.values().find(|run| !terminal_status(run.status))
+    pub(super) fn progress_run(&self) -> Option<&WorkflowRun> {
+        self.runs
+            .values()
+            .find(|run| !terminal_status(run.status))
+            .or_else(|| {
+                self.progress_run_id
+                    .as_deref()
+                    .and_then(|run_id| self.runs.get(run_id))
+            })
     }
 
     pub(super) fn run_summaries(&self) -> Vec<WorkflowRunSummary> {
@@ -363,6 +383,7 @@ impl WorkflowUiState {
     }
 
     fn update_status(&mut self, run_id: &str, status: WorkflowRunStatus) {
+        self.progress_run_id = Some(run_id.to_string());
         if let Some(run) = self.runs.get_mut(run_id) {
             run.status = status;
             self.summaries
@@ -373,6 +394,7 @@ impl WorkflowUiState {
     }
 
     fn upsert_phase(&mut self, run_id: &str, phase: WorkflowPhase) {
+        self.progress_run_id = Some(run_id.to_string());
         if let Some(run) = self.runs.get_mut(run_id) {
             if let Some(existing) = run
                 .phases
@@ -389,6 +411,7 @@ impl WorkflowUiState {
     }
 
     fn upsert_agent(&mut self, run_id: &str, agent: WorkflowAgentRun) {
+        self.progress_run_id = Some(run_id.to_string());
         if let Some(run) = self.runs.get_mut(run_id) {
             if let Some(existing) = run
                 .agents

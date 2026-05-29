@@ -18,7 +18,7 @@ const WIDE_PROGRESS_HEIGHT: u16 = 11;
 const SHORT_PROGRESS_HEIGHT: u16 = 9;
 
 pub(super) fn progress_height(state: &WorkflowUiState, width: u16, frame_height: u16) -> u16 {
-    if state.active_run().is_none() {
+    if state.progress_run().is_none() {
         return 0;
     }
     if compact_progress_for_frame(width, frame_height) {
@@ -39,7 +39,7 @@ pub(super) fn progress_panel(
     if area.height <= 1 || area.width < WIDE_PROGRESS_MIN_WIDTH {
         return progress_line(state, theme);
     }
-    let Some(run) = state.active_run() else {
+    let Some(run) = state.progress_run() else {
         return Paragraph::new(Line::default());
     };
     let block = Block::default()
@@ -53,7 +53,7 @@ pub(super) fn progress_panel(
 }
 
 fn progress_line(state: &WorkflowUiState, theme: Theme) -> Paragraph<'static> {
-    let Some(run) = state.active_run() else {
+    let Some(run) = state.progress_run() else {
         return Paragraph::new(Line::default());
     };
     let completed_agents = run
@@ -100,6 +100,8 @@ pub(super) fn progress_panel_lines(
     let mut lines = vec![
         Line::from(vec![
             Span::styled(run.script.name.clone(), theme.accent()),
+            Span::styled("  ", theme.muted()),
+            Span::styled(status_label(run.status), status_style(run.status, theme)),
             Span::styled(
                 format!(
                     "  {} phases  {} agents  {}",

@@ -71,7 +71,7 @@ pub(crate) fn plan_agents(
                 tools: None,
                 lane: Some(lane),
                 max_concurrent: Some(execution.definition.limits.max_concurrent_agents as usize),
-                allowed_tools: Some(tool_scope.clone()),
+                allowed_tools: None,
                 parent_deadline_seconds: Some(
                     execution.definition.limits.default_run_timeout_seconds,
                 ),
@@ -170,6 +170,9 @@ pub(crate) async fn mark_restarted_agent_completed(
         .find(|agent| agent.agent_id == agent_id)
     {
         agent.status = WorkflowAgentStatus::Completed;
+        if agent.model.is_none() {
+            agent.model = result.model.clone();
+        }
         agent.thread_id = Some(result.thread_id);
         agent.turn_id = Some(result.turn_id);
         agent.usage = result.usage;

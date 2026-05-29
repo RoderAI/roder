@@ -192,8 +192,11 @@ where
                     self.timeline
                         .push_system(format!("Workflow denied: {}", short_id(&run_id)));
                 } else {
-                    self.timeline
-                        .push_system(format!("Workflow started: {}", short_id(&run_id)));
+                    self.timeline.push_system(format!(
+                        "Workflow {}: {}",
+                        render::status_label(result.run.status),
+                        short_id(&run_id)
+                    ));
                 }
                 self.push_event(format!("workflow approval: {:?}", result.approval.decision));
             }
