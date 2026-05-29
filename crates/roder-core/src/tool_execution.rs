@@ -848,6 +848,41 @@ fn json_string_array(value: Option<&Value>) -> Vec<String> {
         .unwrap_or_default()
 }
 
+/// Adapter exposing [`Runtime::route_tool_call`] as a [`TurnToolExecutor`] so a
+/// provider that drives its own in-stream agent loop (the Cursor bidi runtime
+/// client) can execute read/write/shell tool calls through Roder's registry and
+/// policy mid-stream.
+pub(crate) struct RuntimeTurnToolExecutor {
+    pub(crate) runtime: Arc<Runtime>,
+    pub(crate) thread_id: ThreadId,
+    pub(crate) turn_id: TurnId,
+    pub(crate) workspace: Option<String>,
+    pub(crate) deadline: Option<OffsetDateTime>,
+}
+
+#[async_trait::async_trait]
+impl roder_api::inference::TurnToolExecutor for RuntimeTurnToolExecutor {
+    async fn execute(
+        &self,
+        call: roder_api::inference::ToolCallCompleted,
+    ) -> anyhow::Result<roder_api::inference::TurnToolOutcome> {
+        let record = self
+            .runtime
+            .route_tool_call(
+                &self.thread_id,
+                &self.turn_id,
+                call,
+                self.workspace.as_deref(),
+                self.deadline,
+            )
+            .await?;
+        Ok(roder_api::inference::TurnToolOutcome {
+            result: record.result,
+            is_error: record.is_error,
+        })
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::is_subagent_task_tool;

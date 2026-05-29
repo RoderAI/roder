@@ -1,5 +1,6 @@
 mod agentservice;
 mod auth;
+mod bidi;
 mod context;
 mod errors;
 mod extension;

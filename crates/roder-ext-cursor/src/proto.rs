@@ -210,15 +210,25 @@ fn encode_history_message(item: &CursorHistoryMessage) -> Vec<u8> {
 }
 
 fn encode_requested_model(model_id: &str) -> Vec<u8> {
-    proto_message(vec![
-        proto_field_string(1, model_id),
+    // requested_model.f3 is a repeated {key, value} param list. cursor-agent
+    // sends thinking/context/effort/fast; effort=high in particular drives the
+    // model's full agentic thoroughness (without it the model does minimal work
+    // and stops after a single read).
+    let param = |key: &str, value: &str| {
         proto_field_bytes(
             3,
             proto_message(vec![
-                proto_field_string(1, "fast"),
-                proto_field_string(2, "false"),
+                proto_field_string(1, key),
+                proto_field_string(2, value),
             ]),
-        ),
+        )
+    };
+    proto_message(vec![
+        proto_field_string(1, model_id),
+        param("thinking", "true"),
+        param("context", "300k"),
+        param("effort", "high"),
+        param("fast", "false"),
     ])
 }
 
@@ -464,6 +474,343 @@ fn map_cursor_native_tool(payload: &[u8]) -> Option<(&'static str, Value)> {
     }
 
     None
+}
+
+// ===== Exec channel (agent.v1 AgentService bidi runtime) =====
+//
+// AgentServerMessage oneof: 1 = interaction_update, 2 = exec_server_message.
+// AgentClientMessage oneof: 1 = run_request, 2 = exec_client_message,
+//   5 = exec_client_control_message, 7 = client_heartbeat.
+// ExecServerMessage: f1 = seq; oneof request f7=READ, f3=WRITE, f14=SHELL, f10=INIT.
+// ExecClientMessage: f1 = seq; oneof result mirrors the request field number.
+
+/// A tool-execution request the server asks the client to run mid-stream.
+#[derive(Debug, Clone)]
+pub(crate) enum CursorExecRequest {
+    Read {
+        seq: u64,
+        path: String,
+        tool_call_id: String,
+    },
+    Write {
+        seq: u64,
+        path: String,
+        content: Vec<u8>,
+        tool_call_id: String,
+    },
+    Shell {
+        seq: u64,
+        command: String,
+        cwd: String,
+        tool_call_id: String,
+    },
+    /// Unified ripgrep search (exec field 5): glob (`files_with_matches`) or
+    /// grep (`content`).
+    Search {
+        seq: u64,
+        pattern: Option<String>,
+        path: String,
+        glob: Option<String>,
+        mode: String,
+        tool_call_id: String,
+    },
+    Init,
+}
+
+/// One grep match: a relative file path, a 1-based line number, and the line.
+#[derive(Debug, Clone)]
+pub(crate) struct CursorGrepMatch {
+    pub path: String,
+    pub line: u64,
+    pub text: String,
+}
+
+/// Decoded `AgentServerMessage` for the bidi runtime: model text/thinking,
+/// turn-end signal, and any exec request to service.
+#[derive(Debug, Default, Clone)]
+pub(crate) struct CursorServerFrame {
+    pub text: String,
+    pub thinking: String,
+    pub turn_ended: bool,
+    pub exec: Option<CursorExecRequest>,
+    /// Sequence of a `kv_server` PUT that must be acked with [`encode_kv_ack`].
+    pub kv_seq: Option<u64>,
+}
+
+pub(crate) fn decode_server_frame(payload: &[u8]) -> CursorServerFrame {
+    let interaction = decode_agent_server_message(payload);
+    let mut frame = CursorServerFrame {
+        text: interaction.text,
+        thinking: interaction.thinking,
+        turn_ended: interaction.turn_ended,
+        exec: None,
+        kv_seq: None,
+    };
+    // field 2 = exec_server_message
+    if let Some(exec_bytes) = submessage(payload, 2) {
+        frame.exec = decode_exec_server(&exec_bytes);
+    }
+    // field 4 = kv_server_message (PUT of conversation state); ack by seq.
+    if let Some(kv_bytes) = submessage(payload, 4) {
+        frame.kv_seq = Some(scalar_u64(&kv_bytes, 1).unwrap_or(0));
+    }
+    frame
+}
+
+/// kv_client ack: `AgentClientMessage{ 3:{ 1:seq, 3:<empty> } }`.
+pub(crate) fn encode_kv_ack(seq: u64) -> Vec<u8> {
+    proto_message(vec![proto_field_bytes(
+        3,
+        proto_message(vec![
+            proto_field_varint(1, seq),
+            proto_field_bytes(3, Vec::new()),
+        ]),
+    )])
+}
+
+fn decode_exec_server(bytes: &[u8]) -> Option<CursorExecRequest> {
+    let seq = scalar_u64(bytes, 1).unwrap_or(0);
+    if let Some(read) = submessage(bytes, 7) {
+        let path = scalar_string(&read, 1)?;
+        let tool_call_id = scalar_string(&read, 2).unwrap_or_default();
+        return Some(CursorExecRequest::Read {
+            seq,
+            path,
+            tool_call_id,
+        });
+    }
+    if let Some(write) = submessage(bytes, 3) {
+        let path = scalar_string(&write, 1)?;
+        let content = submessage(&write, 2).unwrap_or_default();
+        let tool_call_id = scalar_string(&write, 3).unwrap_or_default();
+        return Some(CursorExecRequest::Write {
+            seq,
+            path,
+            content,
+            tool_call_id,
+        });
+    }
+    if let Some(shell) = submessage(bytes, 14) {
+        let command = scalar_string(&shell, 1)?;
+        let cwd = scalar_string(&shell, 2).unwrap_or_default();
+        let tool_call_id = scalar_string(&shell, 4).unwrap_or_default();
+        return Some(CursorExecRequest::Shell {
+            seq,
+            command,
+            cwd,
+            tool_call_id,
+        });
+    }
+    if let Some(search) = submessage(bytes, 5) {
+        let pattern = scalar_string(&search, 1);
+        let path = scalar_string(&search, 2).unwrap_or_default();
+        let glob = scalar_string(&search, 3);
+        let mode = scalar_string(&search, 4).unwrap_or_default();
+        let tool_call_id = scalar_string(&search, 14).unwrap_or_default();
+        return Some(CursorExecRequest::Search {
+            seq,
+            pattern,
+            path,
+            glob,
+            mode,
+            tool_call_id,
+        });
+    }
+    if submessage(bytes, 10).is_some() {
+        return Some(CursorExecRequest::Init);
+    }
+    None
+}
+
+fn wrap_exec_client(exec: Vec<u8>) -> Vec<u8> {
+    // AgentClientMessage { 2: exec_client_message }
+    proto_message(vec![proto_field_bytes(2, exec)])
+}
+
+/// READ result: ExecClientMessage{ 1:seq, 7:{ 1:{ 1:path, 2:content, 3:total_lines, 4:file_size } } }
+pub(crate) fn encode_exec_read_result(
+    seq: u64,
+    path: &str,
+    content: &[u8],
+    total_lines: u64,
+) -> Vec<u8> {
+    let inner = proto_message(vec![
+        proto_field_string(1, path),
+        proto_field_bytes(2, content.to_vec()),
+        proto_field_varint(3, total_lines),
+        proto_field_varint(4, content.len() as u64),
+    ]);
+    let read = proto_message(vec![proto_field_bytes(1, inner)]);
+    wrap_exec_client(proto_message(vec![
+        proto_field_varint(1, seq),
+        proto_field_bytes(7, read),
+    ]))
+}
+
+/// WRITE result: ExecClientMessage{ 1:seq, 3:{ 1:{ 1:path, 2:lines, 3:size } } }
+pub(crate) fn encode_exec_write_result(
+    seq: u64,
+    path: &str,
+    lines: u64,
+    size: u64,
+) -> Vec<u8> {
+    let inner = proto_message(vec![
+        proto_field_string(1, path),
+        proto_field_varint(2, lines),
+        proto_field_varint(3, size),
+    ]);
+    let write = proto_message(vec![proto_field_bytes(1, inner)]);
+    wrap_exec_client(proto_message(vec![
+        proto_field_varint(1, seq),
+        proto_field_bytes(3, write),
+    ]))
+}
+
+/// SHELL result, streamed as three ExecClientMessages with the same seq:
+///   start:  14:{ 4:{ 1:{ 1:1 } } }
+///   stdout: 14:{ 1:{ 1:{ 7:stdout } } }
+///   exit:   14:{ 3:{ 2:cwd, 6:byte_count } }
+pub(crate) fn encode_exec_shell_results(seq: u64, cwd: &str, stdout: &str) -> Vec<Vec<u8>> {
+    let shell_msg = |inner: Vec<u8>| {
+        wrap_exec_client(proto_message(vec![
+            proto_field_varint(1, seq),
+            proto_field_bytes(14, inner),
+        ]))
+    };
+    let start = shell_msg(proto_message(vec![proto_field_bytes(
+        4,
+        proto_message(vec![proto_field_bytes(
+            1,
+            proto_message(vec![proto_field_varint(1, 1)]),
+        )]),
+    )]));
+    // stdout: 14:{ 1:{ 1:stdout } }
+    let out = shell_msg(proto_message(vec![proto_field_bytes(
+        1,
+        proto_message(vec![proto_field_string(1, stdout)]),
+    )]));
+    // exit: 14:{ 3:{ 2:cwd, 6:byte_count } }
+    let exit = shell_msg(proto_message(vec![proto_field_bytes(
+        3,
+        proto_message(vec![
+            proto_field_string(2, cwd),
+            proto_field_varint(6, stdout.len() as u64),
+        ]),
+    )]));
+    vec![start, out, exit]
+}
+
+/// Search result, `files_with_matches` (glob) mode:
+/// `2:{ 5:{ 1:{ 2:path, 3:"files_with_matches", 4:{ 1:root, 2:{ 2:{ 1:relpath*, 2:count } } } } } }`
+pub(crate) fn encode_exec_glob_result(
+    seq: u64,
+    path: &str,
+    root: &str,
+    rel_paths: &[String],
+) -> Vec<u8> {
+    let mut files: Vec<Vec<u8>> = rel_paths
+        .iter()
+        .map(|p| proto_field_string(1, p))
+        .collect();
+    files.push(proto_field_varint(2, rel_paths.len() as u64));
+    let f4 = proto_message(vec![
+        proto_field_string(1, root),
+        proto_field_bytes(2, proto_message(vec![proto_field_bytes(2, proto_message(files))])),
+    ]);
+    let inner = proto_message(vec![
+        proto_field_string(2, path),
+        proto_field_string(3, "files_with_matches"),
+        proto_field_bytes(4, f4),
+    ]);
+    let search = proto_message(vec![proto_field_bytes(1, inner)]);
+    wrap_exec_client(proto_message(vec![
+        proto_field_varint(1, seq),
+        proto_field_bytes(5, search),
+    ]))
+}
+
+/// Search result, `content` (grep) mode:
+/// `2:{ 5:{ 1:{ 1:pattern, 2:path, 3:"content", 4:{ 1:root, 2:{ 3:{ 1:{1:relpath,2:{1:line,2:text}}*, 2:count, 3:count } } } } } }`
+pub(crate) fn encode_exec_grep_result(
+    seq: u64,
+    pattern: &str,
+    path: &str,
+    root: &str,
+    matches: &[CursorGrepMatch],
+) -> Vec<u8> {
+    let mut entries: Vec<Vec<u8>> = matches
+        .iter()
+        .map(|m| {
+            proto_field_bytes(
+                1,
+                proto_message(vec![
+                    proto_field_string(1, &m.path),
+                    proto_field_bytes(
+                        2,
+                        proto_message(vec![
+                            proto_field_varint(1, m.line),
+                            proto_field_string(2, &m.text),
+                        ]),
+                    ),
+                ]),
+            )
+        })
+        .collect();
+    entries.push(proto_field_varint(2, matches.len() as u64));
+    entries.push(proto_field_varint(3, matches.len() as u64));
+    let f4 = proto_message(vec![
+        proto_field_string(1, root),
+        proto_field_bytes(2, proto_message(vec![proto_field_bytes(3, proto_message(entries))])),
+    ]);
+    let inner = proto_message(vec![
+        proto_field_string(1, pattern),
+        proto_field_string(2, path),
+        proto_field_string(3, "content"),
+        proto_field_bytes(4, f4),
+    ]);
+    let search = proto_message(vec![proto_field_bytes(1, inner)]);
+    wrap_exec_client(proto_message(vec![
+        proto_field_varint(1, seq),
+        proto_field_bytes(5, search),
+    ]))
+}
+
+/// exec_client INIT (context handshake): `AgentClientMessage{ 2:{ 10:{ 1:{ 1:{ 2:[files] } } } } }`.
+/// Each file entry is `{ 1: path, 2: content }`. An empty list establishes the
+/// exec channel without pushing workspace files (the model reads on demand).
+pub(crate) fn encode_exec_init(files: &[(String, Vec<u8>)]) -> Vec<u8> {
+    let entries: Vec<Vec<u8>> = files
+        .iter()
+        .map(|(path, content)| {
+            proto_field_bytes(
+                2,
+                proto_message(vec![
+                    proto_field_string(1, path),
+                    proto_field_bytes(2, content.clone()),
+                ]),
+            )
+        })
+        .collect();
+    let file_list = proto_message(entries);
+    let ctx = proto_message(vec![proto_field_bytes(
+        1,
+        proto_message(vec![proto_field_bytes(1, file_list)]),
+    )]);
+    wrap_exec_client(proto_message(vec![proto_field_bytes(10, ctx)]))
+}
+
+/// client_heartbeat keepalive: AgentClientMessage{ 7:<empty> }. Long turns are
+/// reset by the server without periodic heartbeats.
+pub(crate) fn encode_heartbeat() -> Vec<u8> {
+    proto_message(vec![proto_field_bytes(7, Vec::new())])
+}
+
+/// exec_client_control_message ack: AgentClientMessage{ 5:{ 1:<empty> } }
+pub(crate) fn encode_exec_control() -> Vec<u8> {
+    proto_message(vec![proto_field_bytes(
+        5,
+        proto_message(vec![proto_field_bytes(1, Vec::new())]),
+    )])
 }
 
 /// First length-delimited (sub-message / string) field with the given number.

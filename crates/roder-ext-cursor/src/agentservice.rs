@@ -230,7 +230,7 @@ fn traceparent() -> String {
 /// Roder tool execution. It has zero effect on normal runs (no var = no-op).
 pub const CAPTURE_FRAMES_ENV: &str = "RODER_CURSOR_CAPTURE_FRAMES";
 
-fn capture_cursor_frame(direction: &str, index: usize, bytes: &[u8]) {
+pub(crate) fn capture_cursor_frame(direction: &str, index: usize, bytes: &[u8]) {
     let path = match std::env::var(CAPTURE_FRAMES_ENV) {
         Ok(path) if !path.is_empty() => path,
         _ => return,

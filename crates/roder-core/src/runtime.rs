@@ -1788,6 +1788,15 @@ impl Runtime {
             let ctx = InferenceTurnContext {
                 thread_id: &req.thread_id,
                 turn_id: &turn_id,
+                tool_executor: Some(std::sync::Arc::new(
+                    crate::tool_execution::RuntimeTurnToolExecutor {
+                        runtime: Arc::clone(self),
+                        thread_id: req.thread_id.clone(),
+                        turn_id: turn_id.clone(),
+                        workspace: Some(workspace.clone()),
+                        deadline: turn_deadline,
+                    },
+                )),
             };
             let stream_future = engine.stream_turn(ctx, request);
             let mut stream = if let Some((deadline, timeout_action)) = inference_timeout_deadline(
