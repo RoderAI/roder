@@ -329,6 +329,24 @@ export const appServerManifest = {
       "sideEffect": "readOnly"
     },
     {
+      "method": "git/changes/list",
+      "paramsType": "GitChangesListParams",
+      "resultType": "GitChangesListResult",
+      "stability": "stable",
+      "featureGroup": "git",
+      "idempotency": "idempotent",
+      "sideEffect": "readOnly"
+    },
+    {
+      "method": "git/changes/read",
+      "paramsType": "GitChangesReadParams",
+      "resultType": "GitChangesReadResult",
+      "stability": "stable",
+      "featureGroup": "git",
+      "idempotency": "idempotent",
+      "sideEffect": "readOnly"
+    },
+    {
       "method": "hunk/list",
       "paramsType": "HunkListParams",
       "resultType": "HunkListResult",
@@ -354,6 +372,18 @@ export const appServerManifest = {
       "featureGroup": "plan-review",
       "idempotency": "nonIdempotent",
       "sideEffect": "localState"
+    },
+    {
+      "method": "workspace/changes/list",
+      "paramsType": "WorkspaceChangesListParams",
+      "resultType": "WorkspaceChangesListResult",
+      "stability": "stable",
+      "featureGroup": "workspace",
+      "idempotency": "idempotent",
+      "sideEffect": "readOnly",
+      "notifications": [
+        "workspace/changeObserved"
+      ]
     },
     {
       "method": "index/proofs/list",
@@ -1770,9 +1800,12 @@ export const appServerMethods = [
   "extensions/list",
   "fs/readDirectory",
   "fs/readFile",
+  "git/changes/list",
+  "git/changes/read",
   "hunk/list",
   "hunk/read",
   "hunk/rollback",
+  "workspace/changes/list",
   "index/proofs/list",
   "index/readChunk",
   "index/rebuild",

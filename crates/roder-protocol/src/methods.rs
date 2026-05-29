@@ -194,9 +194,18 @@ const METHOD_SPECS: &[AppServerMethodSpecSeed] = &[
     method_spec!("extensions/list", "extensions", ReadOnly, Idempotent),
     method_spec!("fs/readDirectory", "filesystem", ReadOnly, Idempotent),
     method_spec!("fs/readFile", "filesystem", ReadOnly, Idempotent),
+    method_spec!("git/changes/list", "git", ReadOnly, Idempotent),
+    method_spec!("git/changes/read", "git", ReadOnly, Idempotent),
     method_spec!("hunk/list", "plan-review", ReadOnly, Idempotent),
     method_spec!("hunk/read", "plan-review", ReadOnly, Idempotent),
     method_spec!("hunk/rollback", "plan-review", LocalState, NonIdempotent),
+    method_spec!(
+        "workspace/changes/list",
+        "workspace",
+        ReadOnly,
+        Idempotent,
+        ["workspace/changeObserved"]
+    ),
     method_spec!("index/proofs/list", "code-index", ReadOnly, Idempotent),
     method_spec!("index/readChunk", "code-index", ReadOnly, Idempotent),
     method_spec!("index/rebuild", "code-index", LocalState, NonIdempotent),
