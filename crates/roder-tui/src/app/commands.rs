@@ -379,7 +379,7 @@ mod tests {
                 .iter()
                 .find(|command| command.name == "workflows")
                 .and_then(|command| command.argument_hint.as_deref()),
-            Some("[list|<run-id>|pause|resume|stop|save|scripts]")
+            Some("[list|<run-id>|pause|resume|stop|save|restart-agent|scripts]")
         );
         assert_eq!(
             commands

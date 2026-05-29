@@ -3305,7 +3305,7 @@ where
         let attachment_height = image_attachment_height(self.image_attachments.len());
         let queue_height = queued_prompt_height(self.queued_prompts.len());
         let plan_height = plan_panel_height(&self.plan_panel);
-        let workflow_progress_height = self.workflows.progress_height();
+        let workflow_progress_height = self.workflows.progress_height(area.width, area.height);
         let workflow_trigger_height = self
             .workflows
             .trigger_height(&composer_text(&self.composer));
@@ -3328,9 +3328,6 @@ where
         if self.active_turn_id.is_some() {
             constraints.push(Constraint::Length(1));
         }
-        if workflow_progress_height > 0 {
-            constraints.push(Constraint::Length(workflow_progress_height));
-        }
         if plan_height > 0 {
             constraints.push(Constraint::Length(plan_height));
         }
@@ -3341,6 +3338,9 @@ where
             constraints.push(Constraint::Length(slash_preview_height));
         }
         constraints.push(Constraint::Length(composer_height));
+        if workflow_progress_height > 0 {
+            constraints.push(Constraint::Length(workflow_progress_height));
+        }
         if slash_height > 0 {
             constraints.push(Constraint::Length(slash_height));
         }
@@ -3385,13 +3385,6 @@ where
             f.render_widget(self.working_line(), chunks[composer_index]);
             composer_index += 1;
         }
-        if workflow_progress_height > 0 {
-            f.render_widget(
-                self.workflows.progress_line(self.theme),
-                chunks[composer_index],
-            );
-            composer_index += 1;
-        }
         if plan_height > 0 {
             f.render_widget(
                 render_plan_panel(&self.plan_panel, self.theme),
@@ -3418,6 +3411,14 @@ where
         self.render_voice_transcribing_helper(f, chunks[composer_index]);
         self.render_plan_counter(f, chunks[composer_index]);
         composer_index += 1;
+        if workflow_progress_height > 0 {
+            f.render_widget(
+                self.workflows
+                    .progress_panel(chunks[composer_index], self.theme),
+                chunks[composer_index],
+            );
+            composer_index += 1;
+        }
         if slash_height > 0 {
             f.render_widget(
                 self.slash_command_menu(slash_matches.as_deref()),

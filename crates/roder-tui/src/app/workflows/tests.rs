@@ -11,6 +11,7 @@ use time::OffsetDateTime;
 
 use super::{
     detail::detail_lines,
+    progress::progress_panel_lines,
     render::approval_lines,
     state::{WorkflowApprovalView, WorkflowUiAction, WorkflowUiState},
 };
@@ -62,11 +63,75 @@ fn event_updates_active_run_progress_state() {
         },
     ));
 
-    assert_eq!(state.progress_height(), 1);
+    assert_eq!(state.progress_height(80, 40), 1);
+    assert_eq!(state.progress_height(140, 40), 11);
     assert_eq!(
         state.cached_run("run-progress").unwrap().status,
         WorkflowRunStatus::Running
     );
+}
+
+#[test]
+fn progress_panel_lists_phases_and_active_phase_agents() {
+    let mut run = workflow_run("run-panel", WorkflowRunStatus::Running);
+    run.script.name = "react-to-solid-migration".to_string();
+    run.script.description =
+        Some("Non-destructive React to Solid port into solid-migration/".to_string());
+    run.phases = vec![
+        WorkflowPhase {
+            phase_id: "phase-inventory".to_string(),
+            name: "Inventory".to_string(),
+            status: WorkflowPhaseStatus::Completed,
+            description: None,
+            queued_agents: 12,
+            completed_agents: 12,
+            failed_agents: 0,
+            started_at: Some(OffsetDateTime::UNIX_EPOCH),
+            completed_at: Some(OffsetDateTime::UNIX_EPOCH),
+        },
+        WorkflowPhase {
+            phase_id: "phase-infra".to_string(),
+            name: "Infrastructure".to_string(),
+            status: WorkflowPhaseStatus::Running,
+            description: None,
+            queued_agents: 10,
+            completed_agents: 3,
+            failed_agents: 0,
+            started_at: Some(OffsetDateTime::UNIX_EPOCH),
+            completed_at: None,
+        },
+        WorkflowPhase {
+            phase_id: "phase-core".to_string(),
+            name: "Migrate Core".to_string(),
+            status: WorkflowPhaseStatus::Queued,
+            description: None,
+            queued_agents: 8,
+            completed_agents: 0,
+            failed_agents: 0,
+            started_at: None,
+            completed_at: None,
+        },
+    ];
+    let mut first = workflow_agent("agent-infra-package");
+    first.phase_id = "phase-infra".to_string();
+    first.description = "infra:package.json".to_string();
+    first.model = Some("Opus 4.8 (1M context)".to_string());
+    first.usage = Some(TokenUsage::new(30_000, 18_700, 48_700));
+    let mut second = workflow_agent("agent-infra-vite");
+    second.phase_id = "phase-infra".to_string();
+    second.description = "infra:vite.config.ts".to_string();
+    second.status = WorkflowAgentStatus::Running;
+    second.completed_at = None;
+    run.agents = vec![first, second];
+
+    let rendered = render_text(progress_panel_lines(&run, 150, 11, Theme::for_terminal()));
+
+    assert!(rendered.contains("react-to-solid-migration"));
+    assert!(rendered.contains("Infrastructure"));
+    assert!(rendered.contains("3/10"));
+    assert!(rendered.contains("infra:package.json"));
+    assert!(rendered.contains("Opus 4.8"));
+    assert!(rendered.contains("48.7k tok"));
 }
 
 #[test]

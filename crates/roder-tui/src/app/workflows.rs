@@ -13,6 +13,7 @@ use super::composer::{composer_text, composer_textarea};
 use super::{AppClient, TuiApp, decode_response, short_id};
 
 mod detail;
+mod progress;
 mod render;
 mod state;
 
