@@ -503,6 +503,69 @@ const METHOD_SPECS: &[AppServerMethodSpecSeed] = &[
     method_spec!("workflow/refresh", "workflow", LocalState, NonIdempotent),
     method_spec!("workflow/remove", "workflow", LocalState, NonIdempotent),
     method_spec!("workflow/scan", "workflow", ReadOnly, Idempotent),
+    method_spec!(
+        "workflows/approve",
+        "workflows",
+        LocalState,
+        NonIdempotent,
+        [
+            "workflows/approved",
+            "workflows/denied",
+            "workflows/queued",
+            "workflows/started",
+        ]
+    ),
+    method_spec!("workflows/get", "workflows", ReadOnly, Idempotent),
+    method_spec!("workflows/list", "workflows", ReadOnly, Idempotent),
+    method_spec!(
+        "workflows/pause",
+        "workflows",
+        LocalState,
+        NonIdempotent,
+        ["workflows/paused"]
+    ),
+    method_spec!(
+        "workflows/plan",
+        "workflows",
+        LocalState,
+        NonIdempotent,
+        ["workflows/drafted", "workflows/approvalRequested"]
+    ),
+    method_spec!(
+        "workflows/restartAgent",
+        "workflows",
+        LocalState,
+        NonIdempotent,
+        [
+            "workflows/agentQueued",
+            "workflows/agentStarted",
+            "workflows/agentCompleted",
+            "workflows/agentFailed",
+        ]
+    ),
+    method_spec!(
+        "workflows/resume",
+        "workflows",
+        LocalState,
+        NonIdempotent,
+        ["workflows/resumed"]
+    ),
+    method_spec!("workflows/save", "workflows", LocalState, NonIdempotent),
+    method_spec!(
+        "workflows/scripts/delete",
+        "workflows",
+        LocalState,
+        NonIdempotent
+    ),
+    method_spec!("workflows/scripts/list", "workflows", ReadOnly, Idempotent),
+    method_spec!("workflows/scripts/read", "workflows", ReadOnly, Idempotent),
+    method_spec!(
+        "workflows/stop",
+        "workflows",
+        LocalState,
+        NonIdempotent,
+        ["workflows/stopped"]
+    ),
 ];
 
 #[cfg(test)]
@@ -543,6 +606,7 @@ mod tests {
             "plan/review/comment",
             "hunk/rollback",
             "workflow/scan",
+            "workflows/plan",
             "marketplaces/search",
             "plugins/install",
             "media/list",
@@ -573,5 +637,16 @@ mod tests {
             .expect("tasks subscribe spec");
         assert!(tasks.notifications.contains(&"task.started"));
         assert!(tasks.notifications.contains(&"task.completed"));
+
+        let workflows_plan = methods
+            .iter()
+            .find(|spec| spec.method == "workflows/plan")
+            .expect("workflows plan spec");
+        assert!(workflows_plan.notifications.contains(&"workflows/drafted"));
+        assert!(
+            workflows_plan
+                .notifications
+                .contains(&"workflows/approvalRequested")
+        );
     }
 }

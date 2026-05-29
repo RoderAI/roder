@@ -1,0 +1,38 @@
+{
+  "id": "dynamic-workflows-migration-fanout",
+  "title": "Dynamic workflow migration fanout",
+  "prompt": "Use a dynamic workflow to migrate two independent modules to the new canonical helper and run a reviewer lane over the edits.",
+  "tags": ["dynamic-workflows", "migration", "fanout", "offline"],
+  "workspace": {
+    "files": [
+      {
+        "path": "src/payments.rs",
+        "contents": "pub fn old_helper() -> &'static str { \"payments\" }\n"
+      },
+      {
+        "path": "src/billing.rs",
+        "contents": "pub fn old_helper() -> &'static str { \"billing\" }\n"
+      },
+      {
+        "path": "src/shared.rs",
+        "contents": "pub fn canonical_helper(name: &str) -> String { format!(\"canonical:{name}\") }\n"
+      }
+    ]
+  },
+  "timeoutMs": 10000,
+  "expected": {
+    "finalAnswerContains": ["hello from roder"],
+    "files": [
+      {
+        "path": "src/shared.rs",
+        "exists": true,
+        "contains": ["canonical_helper"]
+      }
+    ],
+    "verificationRequired": true
+  },
+  "constraints": [
+    "offline fake provider fixture",
+    "workflow should keep edit agents scoped to disjoint files"
+  ]
+}

@@ -36,6 +36,7 @@ mod turn_timer;
 mod voice;
 mod webwright;
 mod workflow_import;
+mod workflows;
 
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
@@ -1048,6 +1049,7 @@ where
     command_catalog: Vec<CommandDescriptor>,
     slash_command_selection: usize,
     voice: VoiceState,
+    workflows: workflows::WorkflowUiState,
     policy_mode: PolicyMode,
     pending_plan_exit: Option<PendingPlanExitDescriptor>,
     current_goal: Option<ThreadGoal>,
@@ -1435,6 +1437,7 @@ where
             command_catalog,
             slash_command_selection: 0,
             voice: VoiceState::from_config(tui_config.voice.clone().unwrap_or_default()),
+            workflows: workflows::WorkflowUiState::default(),
             policy_mode: policy_state
                 .as_ref()
                 .map(|state| state.mode)
@@ -1539,6 +1542,10 @@ where
                                     Some(ConfirmDialogState::new(ConfirmDialog::Exit));
                             } else {
                                 self.handle_plugin_browser_key(key).await;
+                            }
+                        } else if self.workflows.overlay_visible() {
+                            if self.handle_workflow_key(key).await {
+                                continue;
                             }
                         } else if key.modifiers.contains(KeyModifiers::CONTROL)
                             && key.code == KeyCode::Char('p')
@@ -1669,6 +1676,9 @@ where
                                 self.cycle_team_focus(false);
                                 continue;
                             }
+                            if self.handle_workflow_trigger_key(key).await {
+                                continue;
+                            }
                             if self.handle_slash_command_key(key).await {
                                 continue;
                             }
@@ -1750,6 +1760,9 @@ where
             while let Ok(envelope) = rx.try_recv() {
                 self.push_event(format!("{} #{}", envelope.kind, envelope.seq));
                 self.remote_panel.apply_event(&envelope);
+                if let Some(event) = self.workflows.apply_event(&envelope.event) {
+                    self.push_event(event);
+                }
 
                 match envelope.event {
                     RoderEvent::TurnStarted(ev) => {
@@ -2277,6 +2290,10 @@ where
     }
 
     async fn submit_prompt(&mut self) {
+        if self.maybe_plan_workflow_from_composer().await {
+            return;
+        }
+
         if self.active_turn_id.is_none()
             && self.image_attachments.is_empty()
             && let Some(command) = shell_command_from_input(&composer_text(&self.composer))
@@ -2413,6 +2430,9 @@ where
             }
             "webwright" => {
                 self.run_webwright_slash_command(&args).await;
+            }
+            "workflows" => {
+                self.run_workflows_slash_command(&args).await;
             }
             _ => {
                 self.run_custom_slash_command(name, args).await;
@@ -3285,6 +3305,10 @@ where
         let attachment_height = image_attachment_height(self.image_attachments.len());
         let queue_height = queued_prompt_height(self.queued_prompts.len());
         let plan_height = plan_panel_height(&self.plan_panel);
+        let workflow_progress_height = self.workflows.progress_height(area.width, area.height);
+        let workflow_trigger_height = self
+            .workflows
+            .trigger_height(&composer_text(&self.composer));
         let slash_matches = self
             .slash_command_matches()
             .map(|matches| matches.into_iter().cloned().collect::<Vec<_>>());
@@ -3307,10 +3331,16 @@ where
         if plan_height > 0 {
             constraints.push(Constraint::Length(plan_height));
         }
+        if workflow_trigger_height > 0 {
+            constraints.push(Constraint::Length(workflow_trigger_height));
+        }
         if slash_preview_height > 0 {
             constraints.push(Constraint::Length(slash_preview_height));
         }
         constraints.push(Constraint::Length(composer_height));
+        if workflow_progress_height > 0 {
+            constraints.push(Constraint::Length(workflow_progress_height));
+        }
         if slash_height > 0 {
             constraints.push(Constraint::Length(slash_height));
         }
@@ -3362,6 +3392,13 @@ where
             );
             composer_index += 1;
         }
+        if workflow_trigger_height > 0 {
+            f.render_widget(
+                self.workflows.trigger_line(self.theme),
+                chunks[composer_index],
+            );
+            composer_index += 1;
+        }
         if slash_preview_height > 0 {
             f.render_widget(
                 self.slash_command_preview(slash_matches.as_deref()),
@@ -3374,6 +3411,14 @@ where
         self.render_voice_transcribing_helper(f, chunks[composer_index]);
         self.render_plan_counter(f, chunks[composer_index]);
         composer_index += 1;
+        if workflow_progress_height > 0 {
+            f.render_widget(
+                self.workflows
+                    .progress_panel(chunks[composer_index], self.theme),
+                chunks[composer_index],
+            );
+            composer_index += 1;
+        }
         if slash_height > 0 {
             f.render_widget(
                 self.slash_command_menu(slash_matches.as_deref()),
@@ -3390,6 +3435,7 @@ where
         if self.show_provider_popup {
             self.render_provider_popup(f, area);
         }
+        self.workflows.render_overlay(f, area, self.theme);
         if self.plugin_browser.is_some() {
             self.render_plugin_browser(f, area);
         }
@@ -7401,6 +7447,7 @@ mod tests {
             command_catalog: built_in_command_catalog(),
             slash_command_selection: 0,
             voice: VoiceState::default(),
+            workflows: workflows::WorkflowUiState::default(),
             policy_mode: PolicyMode::Default,
             pending_plan_exit: None,
             current_goal: None,

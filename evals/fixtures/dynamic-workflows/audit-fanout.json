@@ -1,0 +1,38 @@
+{
+  "id": "dynamic-workflows-audit-fanout",
+  "title": "Dynamic workflow audit fanout",
+  "prompt": "Use a dynamic workflow to fan out an audit across api, runtime, and tui surfaces, then merge only evidence-backed findings.",
+  "tags": ["dynamic-workflows", "audit", "fanout", "offline"],
+  "workspace": {
+    "files": [
+      {
+        "path": "crates/example-api/src/lib.rs",
+        "contents": "pub fn validate_input(value: &str) -> bool { !value.is_empty() }\n"
+      },
+      {
+        "path": "crates/example-runtime/src/lib.rs",
+        "contents": "pub fn run_background_task() -> &'static str { \"task-ok\" }\n"
+      },
+      {
+        "path": "crates/example-tui/src/lib.rs",
+        "contents": "pub fn render_status() -> &'static str { \"status-ok\" }\n"
+      }
+    ]
+  },
+  "timeoutMs": 10000,
+  "expected": {
+    "finalAnswerContains": ["hello from roder"],
+    "files": [
+      {
+        "path": "crates/example-runtime/src/lib.rs",
+        "exists": true,
+        "contains": ["task-ok"]
+      }
+    ],
+    "verificationRequired": true
+  },
+  "constraints": [
+    "offline fake provider fixture",
+    "workflow should split independent audit lanes before synthesis"
+  ]
+}

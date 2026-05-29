@@ -2,6 +2,7 @@ mod agent_control_tools;
 pub mod artifacts;
 pub mod bus;
 mod deadline_policy;
+pub mod dynamic_workflows;
 pub mod fake_provider;
 mod goals;
 mod instructions;
@@ -26,6 +27,7 @@ mod transcript;
 mod verification_gate;
 
 pub use bus::*;
+pub use dynamic_workflows::*;
 pub use goals::*;
 pub use instructions::*;
 pub use reliability::RuntimeReliabilityConfig;

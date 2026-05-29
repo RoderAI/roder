@@ -13,6 +13,7 @@ anyhow = "1.0.102"
 async-trait = "0.1.89"
 async-stream = "0.3.6"
 base64 = "0.22.1"
+boa_engine = { version = "0.21.1", default-features = false }
 bytes = "1.11.1"
 chrono = "0.4.42"
 chrono-tz = "0.10.4"
@@ -63,6 +64,7 @@ roder-config = { path = "crates/roder-config" }
 roder-context = { path = "crates/roder-context" }
 roder-core = { path = "crates/roder-core" }
 roder-code-index = { path = "crates/roder-code-index" }
+roder-dynamic-workflows = { path = "crates/roder-dynamic-workflows" }
 roder-roadmap = { path = "crates/roder-roadmap" }
 roder-supergrok-auth = { path = "crates/roder-supergrok-auth" }
 roder-ext-anthropic = { path = "crates/roder-ext-anthropic" }

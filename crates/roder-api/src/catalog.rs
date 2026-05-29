@@ -1424,7 +1424,8 @@ mod tests {
         assert_eq!(id_only.provider_family, ProviderFamily::Anthropic);
 
         // Provider-aware lookup resolves to the Cursor catalog entry/family.
-        let cursor = built_in_model_profile_for_provider(PROVIDER_CURSOR, "claude-opus-4-8").unwrap();
+        let cursor =
+            built_in_model_profile_for_provider(PROVIDER_CURSOR, "claude-opus-4-8").unwrap();
         assert_eq!(cursor.provider_family, ProviderFamily::Cursor);
         assert_eq!(cursor.provider, PROVIDER_CURSOR);
         assert_eq!(cursor.parallel_tool_calls, Some(false));

@@ -16,6 +16,13 @@ use crate::discovery::{
     DiscoveryItemUpdated, DiscoveryPromotionExpired, DiscoveryPromotionReused,
     DiscoveryWarmCacheHit,
 };
+use crate::dynamic_workflows::{
+    WorkflowAgentCompleted, WorkflowAgentFailed, WorkflowAgentQueued, WorkflowAgentStarted,
+    WorkflowApprovalRequested, WorkflowCheckpointRecorded, WorkflowOutputRecorded,
+    WorkflowPhaseCompleted, WorkflowPhaseStarted, WorkflowRunApproved, WorkflowRunCompleted,
+    WorkflowRunDenied, WorkflowRunDrafted, WorkflowRunFailed, WorkflowRunPaused, WorkflowRunQueued,
+    WorkflowRunResumed, WorkflowRunStarted, WorkflowRunStopped,
+};
 use crate::extension::{ExtensionId, InferenceEngineId};
 use crate::goals::{ThreadGoalCleared, ThreadGoalUpdated};
 use crate::inference::{InferenceEvent, RuntimeProfile, SpeedPolicyDecision, TokenUsage};
@@ -1083,6 +1090,25 @@ pub enum RoderEvent {
     WorkflowImportDisabled(WorkflowImportDisabled),
     WorkflowImportStale(WorkflowImportStale),
     WorkflowImportFailed(WorkflowImportFailed),
+    WorkflowRunDrafted(WorkflowRunDrafted),
+    WorkflowApprovalRequested(WorkflowApprovalRequested),
+    WorkflowRunApproved(WorkflowRunApproved),
+    WorkflowRunDenied(WorkflowRunDenied),
+    WorkflowRunQueued(WorkflowRunQueued),
+    WorkflowRunStarted(WorkflowRunStarted),
+    WorkflowPhaseStarted(WorkflowPhaseStarted),
+    WorkflowPhaseCompleted(WorkflowPhaseCompleted),
+    WorkflowAgentQueued(WorkflowAgentQueued),
+    WorkflowAgentStarted(WorkflowAgentStarted),
+    WorkflowAgentCompleted(WorkflowAgentCompleted),
+    WorkflowAgentFailed(WorkflowAgentFailed),
+    WorkflowOutputRecorded(WorkflowOutputRecorded),
+    WorkflowCheckpointRecorded(WorkflowCheckpointRecorded),
+    WorkflowRunPaused(WorkflowRunPaused),
+    WorkflowRunResumed(WorkflowRunResumed),
+    WorkflowRunStopped(WorkflowRunStopped),
+    WorkflowRunCompleted(WorkflowRunCompleted),
+    WorkflowRunFailed(WorkflowRunFailed),
     MediaArtifactCreated(MediaArtifactCreated),
     MediaArtifactUpdated(MediaArtifactUpdated),
     MediaArtifactDeleted(MediaArtifactDeleted),
@@ -1245,6 +1271,25 @@ impl RoderEvent {
             RoderEvent::WorkflowImportDisabled(_) => "workflow/importDisabled",
             RoderEvent::WorkflowImportStale(_) => "workflow/importStale",
             RoderEvent::WorkflowImportFailed(_) => "workflow/importFailed",
+            RoderEvent::WorkflowRunDrafted(_) => "workflows/drafted",
+            RoderEvent::WorkflowApprovalRequested(_) => "workflows/approvalRequested",
+            RoderEvent::WorkflowRunApproved(_) => "workflows/approved",
+            RoderEvent::WorkflowRunDenied(_) => "workflows/denied",
+            RoderEvent::WorkflowRunQueued(_) => "workflows/queued",
+            RoderEvent::WorkflowRunStarted(_) => "workflows/started",
+            RoderEvent::WorkflowPhaseStarted(_) => "workflows/phaseStarted",
+            RoderEvent::WorkflowPhaseCompleted(_) => "workflows/phaseCompleted",
+            RoderEvent::WorkflowAgentQueued(_) => "workflows/agentQueued",
+            RoderEvent::WorkflowAgentStarted(_) => "workflows/agentStarted",
+            RoderEvent::WorkflowAgentCompleted(_) => "workflows/agentCompleted",
+            RoderEvent::WorkflowAgentFailed(_) => "workflows/agentFailed",
+            RoderEvent::WorkflowOutputRecorded(_) => "workflows/outputRecorded",
+            RoderEvent::WorkflowCheckpointRecorded(_) => "workflows/checkpointRecorded",
+            RoderEvent::WorkflowRunPaused(_) => "workflows/paused",
+            RoderEvent::WorkflowRunResumed(_) => "workflows/resumed",
+            RoderEvent::WorkflowRunStopped(_) => "workflows/stopped",
+            RoderEvent::WorkflowRunCompleted(_) => "workflows/completed",
+            RoderEvent::WorkflowRunFailed(_) => "workflows/failed",
             RoderEvent::MediaArtifactCreated(_) => "media/artifactCreated",
             RoderEvent::MediaArtifactUpdated(_) => "media/artifactUpdated",
             RoderEvent::MediaArtifactDeleted(_) => "media/artifactDeleted",
@@ -1620,6 +1665,25 @@ impl RoderEvent {
             RoderEvent::AutomationStarted(e) => e.run.thread_id.as_ref(),
             RoderEvent::AutomationCompleted(e) => e.run.thread_id.as_ref(),
             RoderEvent::AutomationFailed(e) => e.run.thread_id.as_ref(),
+            RoderEvent::WorkflowRunDrafted(e) => e.thread_id.as_ref(),
+            RoderEvent::WorkflowApprovalRequested(e) => e.thread_id.as_ref(),
+            RoderEvent::WorkflowRunApproved(e) => e.thread_id.as_ref(),
+            RoderEvent::WorkflowRunDenied(e) => e.thread_id.as_ref(),
+            RoderEvent::WorkflowRunQueued(e) => e.thread_id.as_ref(),
+            RoderEvent::WorkflowRunStarted(e) => e.thread_id.as_ref(),
+            RoderEvent::WorkflowPhaseStarted(e) => e.thread_id.as_ref(),
+            RoderEvent::WorkflowPhaseCompleted(e) => e.thread_id.as_ref(),
+            RoderEvent::WorkflowAgentQueued(e) => e.thread_id.as_ref(),
+            RoderEvent::WorkflowAgentStarted(e) => e.thread_id.as_ref(),
+            RoderEvent::WorkflowAgentCompleted(e) => e.thread_id.as_ref(),
+            RoderEvent::WorkflowAgentFailed(e) => e.thread_id.as_ref(),
+            RoderEvent::WorkflowOutputRecorded(e) => e.thread_id.as_ref(),
+            RoderEvent::WorkflowCheckpointRecorded(e) => e.thread_id.as_ref(),
+            RoderEvent::WorkflowRunPaused(e) => e.thread_id.as_ref(),
+            RoderEvent::WorkflowRunResumed(e) => e.thread_id.as_ref(),
+            RoderEvent::WorkflowRunStopped(e) => e.thread_id.as_ref(),
+            RoderEvent::WorkflowRunCompleted(e) => e.thread_id.as_ref(),
+            RoderEvent::WorkflowRunFailed(e) => e.thread_id.as_ref(),
         }
     }
 
@@ -1778,6 +1842,25 @@ impl RoderEvent {
             RoderEvent::AutomationStarted(e) => e.run.turn_id.as_ref(),
             RoderEvent::AutomationCompleted(e) => e.run.turn_id.as_ref(),
             RoderEvent::AutomationFailed(e) => e.run.turn_id.as_ref(),
+            RoderEvent::WorkflowRunDrafted(e) => e.turn_id.as_ref(),
+            RoderEvent::WorkflowApprovalRequested(e) => e.turn_id.as_ref(),
+            RoderEvent::WorkflowRunApproved(e) => e.turn_id.as_ref(),
+            RoderEvent::WorkflowRunDenied(e) => e.turn_id.as_ref(),
+            RoderEvent::WorkflowRunQueued(e) => e.turn_id.as_ref(),
+            RoderEvent::WorkflowRunStarted(e) => e.turn_id.as_ref(),
+            RoderEvent::WorkflowPhaseStarted(e) => e.turn_id.as_ref(),
+            RoderEvent::WorkflowPhaseCompleted(e) => e.turn_id.as_ref(),
+            RoderEvent::WorkflowAgentQueued(e) => e.turn_id.as_ref(),
+            RoderEvent::WorkflowAgentStarted(e) => e.turn_id.as_ref(),
+            RoderEvent::WorkflowAgentCompleted(e) => e.turn_id.as_ref(),
+            RoderEvent::WorkflowAgentFailed(e) => e.turn_id.as_ref(),
+            RoderEvent::WorkflowOutputRecorded(e) => e.turn_id.as_ref(),
+            RoderEvent::WorkflowCheckpointRecorded(e) => e.turn_id.as_ref(),
+            RoderEvent::WorkflowRunPaused(e) => e.turn_id.as_ref(),
+            RoderEvent::WorkflowRunResumed(e) => e.turn_id.as_ref(),
+            RoderEvent::WorkflowRunStopped(e) => e.turn_id.as_ref(),
+            RoderEvent::WorkflowRunCompleted(e) => e.turn_id.as_ref(),
+            RoderEvent::WorkflowRunFailed(e) => e.turn_id.as_ref(),
         }
     }
 }
@@ -1938,6 +2021,45 @@ mod tests {
         assert_eq!(event.thread_id().map(String::as_str), Some("thread-1"));
         assert_eq!(event.turn_id().map(String::as_str), Some("turn-1"));
         assert_eq!(event.source(), EventSource::Core);
+    }
+
+    #[test]
+    fn workflow_event_kind_scope_and_agent_metadata_are_visible() {
+        let agent = crate::dynamic_workflows::WorkflowAgentRun {
+            agent_id: "agent-1".to_string(),
+            phase_id: "phase-1".to_string(),
+            description: "Review findings".to_string(),
+            status: crate::dynamic_workflows::WorkflowAgentStatus::Completed,
+            lane: Some(crate::subagents::SubagentLane::Reviewer),
+            model: Some("mock-model".to_string()),
+            thread_id: Some("child-thread".to_string()),
+            turn_id: Some("child-turn".to_string()),
+            usage: Some(crate::inference::TokenUsage::new(10, 5, 15)),
+            exit_reason: None,
+            error: None,
+            started_at: Some(OffsetDateTime::UNIX_EPOCH),
+            completed_at: Some(OffsetDateTime::UNIX_EPOCH),
+        };
+        let event = RoderEvent::WorkflowAgentCompleted(WorkflowAgentCompleted {
+            run_id: "run-1".to_string(),
+            thread_id: Some("thread-1".to_string()),
+            turn_id: Some("turn-1".to_string()),
+            agent,
+            timestamp: OffsetDateTime::UNIX_EPOCH,
+        });
+
+        assert_eq!(event.kind(), "workflows/agentCompleted");
+        assert_eq!(event.source(), EventSource::Core);
+        assert_eq!(event.thread_id().map(String::as_str), Some("thread-1"));
+        assert_eq!(event.turn_id().map(String::as_str), Some("turn-1"));
+
+        let value = serde_json::to_value(&event).unwrap();
+        let event_value = &value["WorkflowAgentCompleted"];
+        assert_eq!(event_value["runId"], "run-1");
+        assert_eq!(event_value["agent"]["phaseId"], "phase-1");
+        assert_eq!(event_value["agent"]["agentId"], "agent-1");
+        assert_eq!(event_value["agent"]["status"], "completed");
+        assert_eq!(event_value["agent"]["usage"]["total_tokens"], 15);
     }
 
     #[test]

@@ -496,6 +496,90 @@ pub(crate) fn protocol_notifications_for_event(event: &RoderEvent) -> Vec<JsonRp
                 event.clone(),
             )]
         }
+        RoderEvent::WorkflowRunDrafted(event) => {
+            vec![protocol_notification("workflows/drafted", event.clone())]
+        }
+        RoderEvent::WorkflowApprovalRequested(event) => {
+            vec![protocol_notification(
+                "workflows/approvalRequested",
+                event.clone(),
+            )]
+        }
+        RoderEvent::WorkflowRunApproved(event) => {
+            vec![protocol_notification("workflows/approved", event.clone())]
+        }
+        RoderEvent::WorkflowRunDenied(event) => {
+            vec![protocol_notification("workflows/denied", event.clone())]
+        }
+        RoderEvent::WorkflowRunQueued(event) => {
+            vec![protocol_notification("workflows/queued", event.clone())]
+        }
+        RoderEvent::WorkflowRunStarted(event) => {
+            vec![protocol_notification("workflows/started", event.clone())]
+        }
+        RoderEvent::WorkflowPhaseStarted(event) => {
+            vec![protocol_notification(
+                "workflows/phaseStarted",
+                event.clone(),
+            )]
+        }
+        RoderEvent::WorkflowPhaseCompleted(event) => {
+            vec![protocol_notification(
+                "workflows/phaseCompleted",
+                event.clone(),
+            )]
+        }
+        RoderEvent::WorkflowAgentQueued(event) => {
+            vec![protocol_notification(
+                "workflows/agentQueued",
+                event.clone(),
+            )]
+        }
+        RoderEvent::WorkflowAgentStarted(event) => {
+            vec![protocol_notification(
+                "workflows/agentStarted",
+                event.clone(),
+            )]
+        }
+        RoderEvent::WorkflowAgentCompleted(event) => {
+            vec![protocol_notification(
+                "workflows/agentCompleted",
+                event.clone(),
+            )]
+        }
+        RoderEvent::WorkflowAgentFailed(event) => {
+            vec![protocol_notification(
+                "workflows/agentFailed",
+                event.clone(),
+            )]
+        }
+        RoderEvent::WorkflowOutputRecorded(event) => {
+            vec![protocol_notification(
+                "workflows/outputRecorded",
+                event.clone(),
+            )]
+        }
+        RoderEvent::WorkflowCheckpointRecorded(event) => {
+            vec![protocol_notification(
+                "workflows/checkpointRecorded",
+                event.clone(),
+            )]
+        }
+        RoderEvent::WorkflowRunPaused(event) => {
+            vec![protocol_notification("workflows/paused", event.clone())]
+        }
+        RoderEvent::WorkflowRunResumed(event) => {
+            vec![protocol_notification("workflows/resumed", event.clone())]
+        }
+        RoderEvent::WorkflowRunStopped(event) => {
+            vec![protocol_notification("workflows/stopped", event.clone())]
+        }
+        RoderEvent::WorkflowRunCompleted(event) => {
+            vec![protocol_notification("workflows/completed", event.clone())]
+        }
+        RoderEvent::WorkflowRunFailed(event) => {
+            vec![protocol_notification("workflows/failed", event.clone())]
+        }
         RoderEvent::RoadmapChanged(event) => {
             vec![
                 protocol_notification("roadmap/changed", event.clone()),
