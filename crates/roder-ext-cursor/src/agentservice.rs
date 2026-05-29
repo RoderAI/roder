@@ -6,8 +6,9 @@ use tokio::time::Instant;
 use uuid::Uuid;
 
 use crate::proto::{
-    ConnectFrame, CursorToolCall, decode_agent_server_message, encode_agent_client_message,
-    encode_cli_stream_control_frames, encode_connect_frame, take_connect_frame,
+    ConnectFrame, CursorHistoryMessage, CursorToolCall, decode_agent_server_message,
+    encode_agent_client_message_with_history, encode_cli_stream_control_frames,
+    encode_connect_frame, take_connect_frame,
 };
 
 pub const DEFAULT_AGENT_SERVICE_URL: &str = "https://agentn.global.api5.cursor.sh";
@@ -41,6 +42,7 @@ pub struct AgentServiceRequest {
     pub prompt: String,
     pub model: String,
     pub context_frames: Vec<Vec<u8>>,
+    pub history: Vec<CursorHistoryMessage>,
 }
 
 #[derive(Debug, Clone)]
@@ -65,17 +67,21 @@ pub async fn stream_agent_service(
     let request_id = Uuid::new_v4().to_string();
     let conversation_id = Uuid::new_v4().to_string();
     let message_id = Uuid::new_v4().to_string();
-    let mut frames = vec![encode_connect_frame(&encode_agent_client_message(
+    let mut frames = vec![encode_connect_frame(&encode_agent_client_message_with_history(
         &request.prompt,
         &request.model,
         &conversation_id,
         &message_id,
+        &request.history,
     ))];
     for frame in &request.context_frames {
         frames.push(frame.clone());
     }
     for frame in encode_cli_stream_control_frames() {
         frames.push(frame);
+    }
+    for (index, frame) in frames.iter().enumerate() {
+        capture_cursor_frame("send", index, frame);
     }
     let request_body = reqwest::Body::wrap_stream(async_stream::stream! {
         for frame in frames {
@@ -161,6 +167,7 @@ pub async fn stream_agent_service(
                         };
                         match frame {
                             ConnectFrame::Payload(payload) => {
+                                capture_cursor_frame("recv", 0, &payload);
                                 let decoded = decode_agent_server_message(&payload);
                                 if !decoded.text.is_empty() {
                                     idle_armed = true;
@@ -216,6 +223,40 @@ fn traceparent() -> String {
     format!("00-{trace_id}-{span_id}-01")
 }
 
+/// Env var pointing at a JSONL file. When set, every raw Cursor AgentService
+/// wire frame (outbound request frames and inbound response payloads) is
+/// appended as hex. This is a diagnostic used to reverse-engineer Cursor-native
+/// tool-call frames (e.g. `edit`/`shell`) so they can be mapped into canonical
+/// Roder tool execution. It has zero effect on normal runs (no var = no-op).
+pub const CAPTURE_FRAMES_ENV: &str = "RODER_CURSOR_CAPTURE_FRAMES";
+
+fn capture_cursor_frame(direction: &str, index: usize, bytes: &[u8]) {
+    let path = match std::env::var(CAPTURE_FRAMES_ENV) {
+        Ok(path) if !path.is_empty() => path,
+        _ => return,
+    };
+    use std::io::Write as _;
+    let mut hex = String::with_capacity(bytes.len() * 2);
+    for byte in bytes {
+        let _ = std::fmt::Write::write_fmt(&mut hex, format_args!("{byte:02x}"));
+    }
+    let ts = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis())
+        .unwrap_or(0);
+    let line = format!(
+        "{{\"ts_ms\":{ts},\"dir\":\"{direction}\",\"index\":{index},\"len\":{},\"hex\":\"{hex}\"}}\n",
+        bytes.len()
+    );
+    if let Ok(mut file) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&path)
+    {
+        let _ = file.write_all(line.as_bytes());
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -225,5 +266,30 @@ mod tests {
         let config = AgentServiceConfig::default();
         assert_eq!(config.endpoint, DEFAULT_AGENT_SERVICE_URL);
         assert_eq!(config.path, DEFAULT_AGENT_SERVICE_PATH);
+    }
+
+    #[test]
+    fn capture_frame_is_noop_without_env_and_writes_jsonl_when_set() {
+        // No env var set: capture must do nothing (and must not panic).
+        unsafe { std::env::remove_var(CAPTURE_FRAMES_ENV) };
+        capture_cursor_frame("recv", 0, &[0xde, 0xad]);
+
+        // With the env var set, frames are appended as hex JSONL lines.
+        let mut path = std::env::temp_dir();
+        path.push(format!("roder-cursor-capture-{}.jsonl", Uuid::new_v4()));
+        unsafe { std::env::set_var(CAPTURE_FRAMES_ENV, &path) };
+        capture_cursor_frame("send", 3, &[0x00, 0x01, 0xff]);
+        capture_cursor_frame("recv", 0, &[0xab]);
+        unsafe { std::env::remove_var(CAPTURE_FRAMES_ENV) };
+
+        let contents = std::fs::read_to_string(&path).unwrap();
+        let _ = std::fs::remove_file(&path);
+        let lines: Vec<&str> = contents.lines().collect();
+        assert_eq!(lines.len(), 2);
+        assert!(lines[0].contains("\"dir\":\"send\""));
+        assert!(lines[0].contains("\"index\":3"));
+        assert!(lines[0].contains("\"len\":3"));
+        assert!(lines[0].contains("\"hex\":\"0001ff\""));
+        assert!(lines[1].contains("\"hex\":\"ab\""));
     }
 }

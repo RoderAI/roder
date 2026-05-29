@@ -1,6 +1,6 @@
 use std::collections::BTreeMap;
 
-use serde_json::json;
+use serde_json::{Value, json};
 
 const CONNECT_COMPRESSED_FLAG: u8 = 1;
 const CONNECT_END_STREAM_FLAG: u8 = 2;
@@ -40,15 +40,22 @@ struct ProtoField {
     value: ProtoValue,
 }
 
-pub fn encode_agent_client_message(
+/// Encode an `agent.v1` client message, carrying prior turns (including
+/// assistant tool calls and tool results) as native `agent.v1.ConversationHistory`.
+/// This lets Cursor continue an agentic loop across Roder rounds: the model
+/// sees the tool calls it already made and their results, so it progresses
+/// (e.g. read -> edit) instead of re-issuing the same call. Pass an empty
+/// `history` for a fresh turn.
+pub fn encode_agent_client_message_with_history(
     prompt: &str,
     model_id: &str,
     conversation_id: &str,
     message_id: &str,
+    history: &[CursorHistoryMessage],
 ) -> Vec<u8> {
     proto_message(vec![proto_field_bytes(
         1,
-        encode_agent_run_request(prompt, model_id, conversation_id, message_id),
+        encode_agent_run_request(prompt, model_id, conversation_id, message_id, history),
     )])
 }
 
@@ -57,10 +64,11 @@ fn encode_agent_run_request(
     model_id: &str,
     conversation_id: &str,
     message_id: &str,
+    history: &[CursorHistoryMessage],
 ) -> Vec<u8> {
     proto_message(vec![
         proto_field_bytes(1, Vec::new()),
-        proto_field_bytes(2, encode_conversation_action(prompt, message_id)),
+        proto_field_bytes(2, encode_conversation_action(prompt, message_id, history)),
         proto_field_bytes(4, Vec::new()),
         proto_field_string(5, conversation_id),
         proto_field_bytes(9, encode_requested_model(model_id)),
@@ -69,19 +77,136 @@ fn encode_agent_run_request(
     ])
 }
 
-fn encode_conversation_action(prompt: &str, message_id: &str) -> Vec<u8> {
+/// `agent.v1.AgentMode` enum value enabling Cursor's full agentic tool loop.
+/// (UNSPECIFIED=0, AGENT=1, ASK=2, PLAN=3, ...). Sourced from the Cursor app
+/// bundle's `agent.v1` protobuf schema.
+const AGENT_MODE_AGENT: u64 = 1;
+
+/// One prior conversation turn, mapped to `agent.v1.ConversationHistoryMessage`.
+#[derive(Debug, Clone)]
+pub enum CursorHistoryMessage {
+    User(String),
+    AssistantText(String),
+    AssistantToolCall {
+        id: String,
+        name: String,
+        args_json: String,
+    },
+    ToolResult {
+        id: String,
+        name: String,
+        content: String,
+        is_error: bool,
+    },
+}
+
+fn encode_conversation_action(
+    prompt: &str,
+    message_id: &str,
+    history: &[CursorHistoryMessage],
+) -> Vec<u8> {
+    // agent.v1.UserMessage { text 1, message_id 2, mode 4 }
+    let user_message = proto_message(vec![
+        proto_field_string(1, prompt),
+        proto_field_string(2, message_id),
+        proto_field_bytes(3, Vec::new()),
+        // agent.v1.UserMessage.mode (field 4) = agent.v1.AgentMode enum.
+        // AGENT_MODE_AGENT = 1 enables Cursor's agentic tool loop (file edits,
+        // shell, search). The previous value 2 = AGENT_MODE_ASK ran the model
+        // read-only, so it refused edits ("Ask mode").
+        proto_field_varint(4, AGENT_MODE_AGENT),
+    ]);
+    // agent.v1.UserMessageAction { user_message 1, conversation_history 7 }
+    let mut user_message_action = vec![proto_field_bytes(1, user_message)];
+    if !history.is_empty() {
+        user_message_action.push(proto_field_bytes(7, encode_conversation_history(history)));
+    }
+    // agent.v1.ConversationAction { user_message_action 1 }
     proto_message(vec![proto_field_bytes(
         1,
-        proto_message(vec![proto_field_bytes(
-            1,
-            proto_message(vec![
-                proto_field_string(1, prompt),
-                proto_field_string(2, message_id),
-                proto_field_bytes(3, Vec::new()),
-                proto_field_varint(4, 2),
-            ]),
-        )]),
+        proto_message(user_message_action),
     )])
+}
+
+/// Encode `agent.v1.ConversationHistory { messages 1: repeated ConversationHistoryMessage }`.
+fn encode_conversation_history(history: &[CursorHistoryMessage]) -> Vec<u8> {
+    // Group a leading assistant text with its following tool calls into a single
+    // assistant message where natural; here we emit one ConversationHistoryMessage
+    // per item, which Cursor accepts (assistant text and tool calls are separate
+    // content entries but separate messages are tolerated).
+    let mut messages = Vec::new();
+    for item in history {
+        messages.push(proto_field_bytes(1, encode_history_message(item)));
+    }
+    proto_message(messages)
+}
+
+// `agent.v1.ConversationHistoryTextContent { text 1 }`
+fn history_text_content(text: &str) -> Vec<u8> {
+    proto_message(vec![proto_field_string(1, text)])
+}
+
+fn encode_history_message(item: &CursorHistoryMessage) -> Vec<u8> {
+    match item {
+        // ConversationHistoryMessage { user 1: ConversationHistoryUserMessage }
+        // ConversationHistoryUserMessage { content 1: [ConversationHistoryUserContent{ text 1 }] }
+        CursorHistoryMessage::User(text) => proto_message(vec![proto_field_bytes(
+            1,
+            proto_message(vec![proto_field_bytes(
+                1,
+                proto_message(vec![proto_field_bytes(1, history_text_content(text))]),
+            )]),
+        )]),
+        // ConversationHistoryMessage { assistant 2: ConversationHistoryAssistantMessage }
+        // assistant content { text 1 }
+        CursorHistoryMessage::AssistantText(text) => proto_message(vec![proto_field_bytes(
+            2,
+            proto_message(vec![proto_field_bytes(
+                1,
+                proto_message(vec![proto_field_bytes(1, history_text_content(text))]),
+            )]),
+        )]),
+        // assistant content { tool_call 4: ConversationHistoryToolCall{ id 1, name 2, args_json 3 } }
+        CursorHistoryMessage::AssistantToolCall {
+            id,
+            name,
+            args_json,
+        } => proto_message(vec![proto_field_bytes(
+            2,
+            proto_message(vec![proto_field_bytes(
+                1,
+                proto_message(vec![proto_field_bytes(
+                    4,
+                    proto_message(vec![
+                        proto_field_string(1, id),
+                        proto_field_string(2, name),
+                        proto_field_string(3, args_json),
+                    ]),
+                )]),
+            )]),
+        )]),
+        // ConversationHistoryMessage { tool 3: ConversationHistoryToolMessage }
+        // { tool_call_id 1, tool_name 2, content 3: [ToolResultContent{ text 1 }], is_error 4 }
+        CursorHistoryMessage::ToolResult {
+            id,
+            name,
+            content,
+            is_error,
+        } => {
+            let mut tool_message = vec![
+                proto_field_string(1, id),
+                proto_field_string(2, name),
+                proto_field_bytes(
+                    3,
+                    proto_message(vec![proto_field_bytes(1, history_text_content(content))]),
+                ),
+            ];
+            if *is_error {
+                tool_message.push(proto_field_varint(4, 1));
+            }
+            proto_message(vec![proto_field_bytes(3, proto_message(tool_message))])
+        }
+    }
 }
 
 fn encode_requested_model(model_id: &str) -> Vec<u8> {
@@ -224,24 +349,36 @@ fn merge_interaction_update(result: &mut DecodedAgentMessage, bytes: &[u8]) {
     }
 }
 
+// Cursor `agent.v1.ClientSideToolV2` `tool` oneof field numbers. Sourced from
+// the Cursor app bundle's compiled protobuf schema
+// (`agent-cli-worker` / `agent.v1`), not guessed. Each tool message is
+// `{ 1: args, 2: result }`; the inner `*Args` field numbers are encoded in the
+// mapping functions below.
+const TOOL_SHELL: u32 = 1;
+const TOOL_GLOB: u32 = 4;
+const TOOL_GREP: u32 = 5;
+const TOOL_READ: u32 = 8;
+const TOOL_EDIT: u32 = 12;
+
 fn decode_cursor_tool_call(bytes: &[u8]) -> Option<CursorToolCall> {
     let fields = decode_fields_safe(bytes);
+    // Cursor tool-call ids are Anthropic-style `toolu_...` on the live
+    // AgentService path (older traces used `tool_...`). Accept both.
     let id = fields
         .iter()
         .find_map(|field| bytes_field_as_string(field, 1))
-        .filter(|value| value.starts_with("tool_"))?;
+        .filter(|value| value.starts_with("tool"))?;
     let payload = fields
         .iter()
         .find_map(|field| bytes_field(field, 2))
         .cloned()
         .unwrap_or_default();
-    if let Some(path) =
-        nested_string(&payload, &[8, 1, 1]).or_else(|| path_candidate_from_strings(&payload))
-    {
+
+    if let Some((name, arguments)) = map_cursor_native_tool(&payload) {
         return Some(CursorToolCall {
             id,
-            name: "read_file".to_string(),
-            arguments: json!({ "path": path }).to_string(),
+            name: name.to_string(),
+            arguments: arguments.to_string(),
         });
     }
 
@@ -257,6 +394,105 @@ fn decode_cursor_tool_call(bytes: &[u8]) -> Option<CursorToolCall> {
             "strings": strings,
         })
         .to_string(),
+    })
+}
+
+/// Map a decoded Cursor `ClientSideToolV2` payload to a canonical Roder tool
+/// call (name + arguments JSON). Returns `None` when the Cursor-native tool has
+/// no Roder equivalent yet, so the caller can surface `cursor_unsupported_tool`.
+fn map_cursor_native_tool(payload: &[u8]) -> Option<(&'static str, Value)> {
+    // read -> read_file { path, offset?, limit? }
+    if let Some(args) = tool_args(payload, TOOL_READ) {
+        let path = scalar_string(&args, 1).or_else(|| path_candidate_from_strings(payload))?;
+        let mut obj = serde_json::Map::new();
+        obj.insert("path".to_string(), json!(path));
+        if let Some(offset) = scalar_u64(&args, 2) {
+            obj.insert("offset".to_string(), json!(offset));
+        }
+        if let Some(limit) = scalar_u64(&args, 3) {
+            obj.insert("limit".to_string(), json!(limit));
+        }
+        return Some(("read_file", Value::Object(obj)));
+    }
+
+    // edit -> write_file { path, content }. Cursor's edit streams the full new
+    // file content in `stream_content` (EditArgs field 6), which matches
+    // Roder's full-file write semantics rather than the old/new replace `edit`.
+    if let Some(args) = tool_args(payload, TOOL_EDIT) {
+        let path = scalar_string(&args, 1)?;
+        let content = scalar_string(&args, 6).unwrap_or_default();
+        return Some((
+            "write_file",
+            json!({ "path": path, "content": content }),
+        ));
+    }
+
+    // shell -> shell { command, workdir? }
+    if let Some(args) = tool_args(payload, TOOL_SHELL) {
+        let command = scalar_string(&args, 1)?;
+        let mut obj = serde_json::Map::new();
+        obj.insert("command".to_string(), json!(command));
+        if let Some(workdir) = scalar_string(&args, 2).filter(|value| !value.is_empty()) {
+            obj.insert("workdir".to_string(), json!(workdir));
+        }
+        return Some(("shell", Value::Object(obj)));
+    }
+
+    // grep -> grep { query, path? }
+    if let Some(args) = tool_args(payload, TOOL_GREP) {
+        let query = scalar_string(&args, 1)?;
+        let mut obj = serde_json::Map::new();
+        obj.insert("query".to_string(), json!(query));
+        if let Some(path) = scalar_string(&args, 2).filter(|value| !value.is_empty()) {
+            obj.insert("path".to_string(), json!(path));
+        }
+        return Some(("grep", Value::Object(obj)));
+    }
+
+    // glob -> glob { pattern } (Cursor GlobToolArgs.glob_pattern is field 2)
+    if let Some(args) = tool_args(payload, TOOL_GLOB) {
+        let pattern = scalar_string(&args, 2)?;
+        return Some(("glob", json!({ "pattern": pattern })));
+    }
+
+    // Legacy resilience: heuristic read-path detection if the structured args
+    // were not present in the expected shape.
+    if let Some(path) =
+        nested_string(payload, &[TOOL_READ, 1, 1]).or_else(|| path_candidate_from_strings(payload))
+    {
+        return Some(("read_file", json!({ "path": path })));
+    }
+
+    None
+}
+
+/// First length-delimited (sub-message / string) field with the given number.
+fn submessage(bytes: &[u8], no: u32) -> Option<Vec<u8>> {
+    decode_fields_safe(bytes)
+        .iter()
+        .find_map(|field| bytes_field(field, no).cloned())
+}
+
+/// Extract a tool's `args` sub-message: `payload.<tool_no>.1` where
+/// `<tool_no>` is the `*ToolCall` message and field `1` is its `*Args`.
+fn tool_args(payload: &[u8], tool_no: u32) -> Option<Vec<u8>> {
+    submessage(&submessage(payload, tool_no)?, 1)
+}
+
+/// Decode a scalar `string`/`bytes` field as UTF-8 (lossy). Unlike
+/// [`bytes_field_as_string`] this does not apply the printable-text heuristic,
+/// because file contents and commands are read from known scalar field numbers.
+fn scalar_string(bytes: &[u8], no: u32) -> Option<String> {
+    decode_fields_safe(bytes)
+        .iter()
+        .find_map(|field| bytes_field(field, no).map(|value| String::from_utf8_lossy(value).into_owned()))
+}
+
+/// Decode a scalar varint field.
+fn scalar_u64(bytes: &[u8], no: u32) -> Option<u64> {
+    decode_fields_safe(bytes).iter().find_map(|field| match &field.value {
+        ProtoValue::Varint(value) if field.no == no => Some(*value),
+        _ => None,
     })
 }
 
@@ -484,7 +720,13 @@ mod tests {
 
     #[test]
     fn agent_client_message_contains_prompt_and_model() {
-        let bytes = encode_agent_client_message("hello cursor", "composer-2.5", "conv", "msg");
+        let bytes = encode_agent_client_message_with_history(
+            "hello cursor",
+            "composer-2.5",
+            "conv",
+            "msg",
+            &[],
+        );
         let strings = collect_utf8_strings(&bytes, 0);
         assert!(strings.iter().any(|value| value.contains("hello cursor")));
         assert!(strings.iter().any(|value| value.contains("composer-2.5")));
@@ -548,5 +790,157 @@ mod tests {
                 .arguments
                 .contains("unsupported_cursor_native_tool")
         );
+    }
+
+    /// Build a server message carrying one Cursor `ClientSideToolV2` tool call,
+    /// matching the on-wire shape: interaction-update(1) -> tool-call(2) ->
+    /// { id(1), ClientSideToolV2(2) }.
+    fn tool_update(id: &str, client_side_tool_v2: Vec<u8>) -> Vec<u8> {
+        proto_message(vec![proto_field_bytes(
+            1,
+            proto_message(vec![proto_field_bytes(
+                2,
+                proto_message(vec![
+                    proto_field_string(1, id),
+                    proto_field_bytes(2, client_side_tool_v2),
+                    proto_field_string(3, "model-call-0"),
+                ]),
+            )]),
+        )])
+    }
+
+    /// `<tool_no>: { 1: { <args> } }` — the `*ToolCall { args, result }` wrapper.
+    fn tool_with_args(tool_no: u32, args: Vec<u8>) -> Vec<u8> {
+        proto_message(vec![proto_field_bytes(
+            tool_no,
+            proto_message(vec![proto_field_bytes(1, args)]),
+        )])
+    }
+
+    fn decode_one(payload: &[u8]) -> CursorToolCall {
+        let decoded = decode_agent_server_message(payload);
+        assert_eq!(decoded.tool_calls.len(), 1, "expected exactly one tool call");
+        decoded.tool_calls.into_iter().next().unwrap()
+    }
+
+    #[test]
+    fn user_message_requests_agent_mode_not_ask() {
+        // Regression: roder must send UserMessage.mode = AGENT_MODE_AGENT (1).
+        // Sending 2 (AGENT_MODE_ASK) made Cursor run the model read-only.
+        let bytes =
+            encode_agent_client_message_with_history("hi", "claude-opus-4-8", "conv", "msg", &[]);
+        let run = submessage(&bytes, 1).expect("agent run request");
+        let action = submessage(&run, 2).expect("conversation action");
+        let user_message_action = submessage(&action, 1).expect("user message action");
+        let user_message = submessage(&user_message_action, 1).expect("user message");
+        assert_eq!(scalar_u64(&user_message, 4), Some(AGENT_MODE_AGENT));
+    }
+
+    #[test]
+    fn decodes_tool_call_with_anthropic_style_toolu_id() {
+        // Regression: live Cursor tool ids are `toolu_...`; the decoder must not
+        // reject them (the old `tool_` prefix filter dropped every real call).
+        let args = proto_message(vec![proto_field_string(1, "AGENTS.md")]);
+        let call = decode_one(&tool_update(
+            "toolu_015B6aNmUMzPiezhHL6Zbtey",
+            tool_with_args(TOOL_READ, args),
+        ));
+        assert_eq!(call.id, "toolu_015B6aNmUMzPiezhHL6Zbtey");
+        assert_eq!(call.name, "read_file");
+        let value: Value = serde_json::from_str(&call.arguments).unwrap();
+        assert_eq!(value["path"], "AGENTS.md");
+    }
+
+    #[test]
+    fn conversation_history_encodes_user_assistant_toolcall_and_result() {
+        let history = vec![
+            CursorHistoryMessage::AssistantToolCall {
+                id: "toolu_1".to_string(),
+                name: "read_file".to_string(),
+                args_json: r#"{"path":"AGENTS.md"}"#.to_string(),
+            },
+            CursorHistoryMessage::ToolResult {
+                id: "toolu_1".to_string(),
+                name: "read_file".to_string(),
+                content: "file body".to_string(),
+                is_error: false,
+            },
+        ];
+        let bytes = encode_agent_client_message_with_history("edit it", "m", "c", "mid", &history);
+        // ConversationHistory lives at AgentRunRequest(1).action(2).user_message_action(1).conversation_history(7).
+        let run = submessage(&bytes, 1).unwrap();
+        let action = submessage(&run, 2).unwrap();
+        let uma = submessage(&action, 1).unwrap();
+        let conv_history = submessage(&uma, 7).expect("conversation_history present");
+        // messages(1) repeated; assert the encoded bytes carry the tool-call id, args, and result text.
+        let text = String::from_utf8_lossy(&conv_history);
+        assert!(text.contains("toolu_1"));
+        assert!(text.contains("AGENTS.md"));
+        assert!(text.contains("file body"));
+    }
+
+    #[test]
+    fn maps_cursor_edit_tool_call_to_write_file() {
+        // EditToolCall(12) -> EditArgs { path(1), stream_content(6) }
+        let args = proto_message(vec![
+            proto_field_string(1, "src/lib.rs"),
+            proto_field_string(6, "fn added() {}\n"),
+        ]);
+        let call = decode_one(&tool_update("tool_edit_1", tool_with_args(TOOL_EDIT, args)));
+        assert_eq!(call.name, "write_file");
+        let value: Value = serde_json::from_str(&call.arguments).unwrap();
+        assert_eq!(value["path"], "src/lib.rs");
+        assert_eq!(value["content"], "fn added() {}\n");
+    }
+
+    #[test]
+    fn maps_cursor_shell_tool_call_to_shell() {
+        // ShellToolCall(1) -> ShellArgs { command(1), working_directory(2) }
+        let args = proto_message(vec![
+            proto_field_string(1, "cargo test -p roder-ext-cursor"),
+            proto_field_string(2, "/repo"),
+        ]);
+        let call = decode_one(&tool_update("tool_shell_1", tool_with_args(TOOL_SHELL, args)));
+        assert_eq!(call.name, "shell");
+        let value: Value = serde_json::from_str(&call.arguments).unwrap();
+        assert_eq!(value["command"], "cargo test -p roder-ext-cursor");
+        assert_eq!(value["workdir"], "/repo");
+    }
+
+    #[test]
+    fn maps_cursor_read_tool_call_with_offset_and_limit() {
+        // ReadToolCall(8) -> ReadToolArgs { path(1), offset(2), limit(3) }
+        let args = proto_message(vec![
+            proto_field_string(1, "README.md"),
+            proto_field_varint(2, 10),
+            proto_field_varint(3, 50),
+        ]);
+        let call = decode_one(&tool_update("tool_read_2", tool_with_args(TOOL_READ, args)));
+        assert_eq!(call.name, "read_file");
+        let value: Value = serde_json::from_str(&call.arguments).unwrap();
+        assert_eq!(value["path"], "README.md");
+        assert_eq!(value["offset"], 10);
+        assert_eq!(value["limit"], 50);
+    }
+
+    #[test]
+    fn maps_cursor_grep_and_glob_tool_calls() {
+        // GrepToolCall(5) -> GrepArgs { pattern(1), path(2) }
+        let grep_args = proto_message(vec![
+            proto_field_string(1, "TODO"),
+            proto_field_string(2, "crates"),
+        ]);
+        let grep = decode_one(&tool_update("tool_grep_1", tool_with_args(TOOL_GREP, grep_args)));
+        assert_eq!(grep.name, "grep");
+        let grep_value: Value = serde_json::from_str(&grep.arguments).unwrap();
+        assert_eq!(grep_value["query"], "TODO");
+        assert_eq!(grep_value["path"], "crates");
+
+        // GlobToolCall(4) -> GlobToolArgs { glob_pattern(2) }
+        let glob_args = proto_message(vec![proto_field_string(2, "**/*.rs")]);
+        let glob = decode_one(&tool_update("tool_glob_1", tool_with_args(TOOL_GLOB, glob_args)));
+        assert_eq!(glob.name, "glob");
+        let glob_value: Value = serde_json::from_str(&glob.arguments).unwrap();
+        assert_eq!(glob_value["pattern"], "**/*.rs");
     }
 }

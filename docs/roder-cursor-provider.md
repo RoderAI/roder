@@ -88,7 +88,37 @@ logprobs
 n > 1
 ```
 
-Additional Cursor-native tool variants such as search, shell, edits, and MCP require dedicated protobuf fixtures before they are mapped.
+### Cursor-native tool mapping
+
+Roder decodes Cursor's `agent.v1.ClientSideToolV2` tool-call frames and maps them to canonical Roder tools (field numbers from the Cursor app bundle's `agent.v1` protobuf schema):
+
+| Cursor `tool` oneof | Cursor args | Roder tool | Roder args |
+|---|---|---|---|
+| `read_tool_call` (8) | `ReadToolArgs { path 1, offset 2, limit 3 }` | `read_file` | `{ path, offset?, limit? }` |
+| `edit_tool_call` (12) | `EditArgs { path 1, stream_content 6 }` | `write_file` | `{ path, content }` |
+| `shell_tool_call` (1) | `ShellArgs { command 1, working_directory 2 }` | `shell` | `{ command, workdir? }` |
+| `grep_tool_call` (5) | `GrepArgs { pattern 1, path 2 }` | `grep` | `{ query, path? }` |
+| `glob_tool_call` (4) | `GlobToolArgs { glob_pattern 2 }` | `glob` | `{ pattern }` |
+
+Two request requirements were discovered as prerequisites for the agentic tool loop:
+
+- **Agent mode.** `UserMessage.mode` (field 4) must be `agent.v1.AgentMode.AGENT_MODE_AGENT` (1). Sending `AGENT_MODE_ASK` (2) runs the model read-only, so it injects `<system_reminder>Ask mode is active</system_reminder>` and refuses edits.
+- **Tool-call ids.** Live Cursor tool ids are Anthropic-style `toolu_...`; the decoder accepts both `tool_` and `toolu_` prefixes.
+
+Any unmapped Cursor-native tool is surfaced as a `cursor_unsupported_tool` call so the frame can be captured (see below) and decoded.
+
+> **Known limitation (in progress):** tool *results* are currently replayed as flattened prompt text in the next round, and each round opens a fresh Cursor conversation. Cursor's agent does not treat that as a native tool result, so multi-step tool loops (e.g. read-then-edit) can re-issue the same tool call. Completing the loop requires sending results via `ConversationAction.resume_action` / `UserMessageAction.conversation_history` against a stable `conversation_id`.
+
+## Capturing Cursor-native tool frames
+
+Mapping new Cursor-native tool calls (`edit`, `shell`, `search`, MCP) requires the real on-the-wire protobuf bytes. Set `RODER_CURSOR_CAPTURE_FRAMES` to a writable file path and every raw AgentService frame — outbound request frames (`"dir":"send"`) and inbound response payloads (`"dir":"recv"`) — is appended as hex JSONL. This is a diagnostic; with the variable unset there is zero overhead and no behavior change.
+
+```sh
+RODER_CURSOR_CAPTURE_FRAMES=/tmp/cursor-frames.jsonl \
+  ./bin/roder
+```
+
+Then, with `cursor/claude-opus-4-8` (or any Cursor model) active, give a direct imperative edit instruction (for example, "Edit AGENTS.md and append a line that says hello"). Cursor's native agent attempts its native edit tool; the raw frame is recorded even though Roder currently decodes it as `cursor_unsupported_tool`. Each captured `"dir":"recv"` line that carries a tool-call payload is the fixture used to extend `decode_cursor_tool_call` in `crates/roder-ext-cursor/src/proto.rs`.
 
 ## Optional Overrides
 
