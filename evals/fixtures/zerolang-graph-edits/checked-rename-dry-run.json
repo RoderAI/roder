@@ -1,0 +1,43 @@
+{
+  "id": "zerolang-checked-set-tool-flow",
+  "title": "Zerolang checked set tool-flow fixture",
+  "prompt": "FAKE_ZEROLANG_GRAPH_EDIT. Use the Zerolang checked graph edit workflow for a string literal update and report verification.",
+  "tags": ["zerolang", "checked-graph-edit"],
+  "workspace": {
+    "files": [
+      {
+        "path": "src/main.0",
+        "contents": "pub fn main(world: World) -> Void raises {\n    check world.out.write(\"hello from zero\\n\")\n}\n"
+      },
+      {
+        "path": ".zero/fake-zero",
+        "contents": "#!/bin/sh\nif [ \"$1 $2 $3\" = \"graph dump --json\" ]; then\n  cat <<'JSON'\n{\"ok\":true,\"graphHash\":\"graph:f76987e99677f1b3\",\"moduleIdentity\":\"module:main\",\"nodes\":[{\"id\":\"#610c78bf\",\"kind\":\"Literal\",\"type\":\"String\",\"value\":\"hello from zero\\n\"}],\"edges\":[]}\nJSON\n  exit 0\nfi\nif [ \"$1 $2 $3\" = \"graph patch --json\" ]; then\n  perl -0pi -e 's/hello from zero/hello from roder/g' src/main.0\n  cat <<'JSON'\n{\"ok\":true,\"originalGraphHash\":\"graph:f76987e99677f1b3\",\"patchedGraphHash\":\"graph:aaaaaaaaaaaaaaaa\",\"operationCount\":1,\"operations\":[{\"ok\":true,\"op\":\"set\",\"node\":\"#610c78bf\",\"field\":\"value\",\"actual\":\"hello from zero\\n\",\"value\":\"hello from roder\\n\"}],\"saved\":{\"path\":\"src/main.0\"}}\nJSON\n  exit 0\nfi\nif [ \"$1 $2 $3\" = \"graph check --json\" ]; then\n  printf '{\"ok\":true,\"graphHash\":\"graph:aaaaaaaaaaaaaaaa\"}\\n'\n  exit 0\nfi\nif [ \"$1 $2\" = \"check --json\" ]; then\n  printf '{\"ok\":true}\\n'\n  exit 0\nfi\nprintf '{\"ok\":true}\\n'\n"
+      }
+    ],
+    "commands": ["chmod +x .zero/fake-zero"]
+  },
+  "timeoutMs": 10000,
+  "expected": {
+    "finalAnswerContains": ["hello from roder"],
+    "files": [
+      {
+        "path": "src/main.0",
+        "exists": true,
+        "contains": ["hello from roder"]
+      }
+    ],
+    "commandChecks": [
+      {
+        "command": "cargo run -q --manifest-path /Users/pz/w/gode/Cargo.toml -p roder-cli -- --config-dir .roder-test zerolang edit src/main.0 --graph-hash graph:f76987e99677f1b3 --operation-json '{\"op\":\"rename\",\"node\":\"#ea5ea1ca\",\"expect\":\"main\",\"value\":\"start\"}' --dry-run",
+        "expectedExitCode": 0,
+        "stdoutContains": [
+          "zero-program-graph-patch v1",
+          "expect graphHash \"graph:f76987e99677f1b3\"",
+          "rename node=\"#ea5ea1ca\" expect=\"main\" value=\"start\""
+        ]
+      }
+    ],
+    "verificationRequired": true
+  },
+  "constraints": ["must use graphHash-backed zerolang_edit semantics instead of raw source replacement"]
+}

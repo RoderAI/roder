@@ -24,9 +24,10 @@ use serde_json::json;
 use crate::agentservice::AgentServiceConfig;
 use crate::proto::{
     ConnectFrame, CursorExecRequest, CursorGrepMatch, decode_server_frame,
-    encode_cli_stream_control_frames, encode_connect_frame, encode_exec_control, encode_exec_glob_result,
-    encode_exec_grep_result, encode_exec_init, encode_exec_read_result, encode_exec_shell_results,
-    encode_exec_write_result, encode_heartbeat, encode_kv_ack, take_connect_frame,
+    encode_cli_stream_control_frames, encode_connect_frame, encode_exec_control,
+    encode_exec_glob_result, encode_exec_grep_result, encode_exec_init, encode_exec_read_result,
+    encode_exec_shell_results, encode_exec_write_result, encode_heartbeat, encode_kv_ack,
+    take_connect_frame,
 };
 
 pub struct BidiRequest {
@@ -233,7 +234,12 @@ async fn service_exec(
             }
             let content = tokio::fs::read(&path).await.unwrap_or_default();
             let total_lines = content.iter().filter(|&&b| b == b'\n').count() as u64 + 1;
-            Some(vec![encode_exec_read_result(seq, &path, &content, total_lines)])
+            Some(vec![encode_exec_read_result(
+                seq,
+                &path,
+                &content,
+                total_lines,
+            )])
         }
         CursorExecRequest::Write {
             seq,
@@ -291,13 +297,48 @@ async fn service_exec(
             path,
             glob,
             mode,
-            ..
+            tool_call_id,
         } => {
+            if let Some(exec) = executor {
+                let (name, arguments) = if mode == "files_with_matches" {
+                    (
+                        "glob",
+                        json!({
+                            "pattern": glob.as_ref().or(pattern.as_ref()).map(String::as_str).unwrap_or("**/*"),
+                        }),
+                    )
+                } else {
+                    (
+                        "grep",
+                        json!({
+                            "query": pattern.as_deref().unwrap_or_default(),
+                            "path": if path.is_empty() { "." } else { path.as_str() },
+                            "regex": false,
+                            "case_sensitive": true,
+                            "word_boundary": false,
+                            "mode": "auto",
+                        }),
+                    )
+                };
+                let _ = exec
+                    .execute(ToolCallCompleted {
+                        id: tool_call_id,
+                        name: name.to_string(),
+                        arguments: arguments.to_string(),
+                    })
+                    .await;
+            }
             let root = workspace.to_string_lossy().to_string();
-            let search_dir = if path.is_empty() { root.clone() } else { path.clone() };
+            let search_dir = if path.is_empty() {
+                root.clone()
+            } else {
+                path.clone()
+            };
             if mode == "files_with_matches" {
                 // glob: list files under search_dir matching the glob pattern.
-                let glob_pat = glob.or_else(|| pattern.clone()).unwrap_or_else(|| "**/*".to_string());
+                let glob_pat = glob
+                    .or_else(|| pattern.clone())
+                    .unwrap_or_else(|| "**/*".to_string());
                 let rel = tokio::task::spawn_blocking(move || {
                     glob_files(&search_dir, &root, &glob_pat, 500)
                 })
@@ -334,7 +375,9 @@ fn glob_files(dir: &str, root: &str, glob: &str, limit: usize) -> Vec<String> {
     let mut out = Vec::new();
     let mut stack = vec![std::path::PathBuf::from(dir)];
     while let Some(d) = stack.pop() {
-        let Ok(entries) = std::fs::read_dir(&d) else { continue };
+        let Ok(entries) = std::fs::read_dir(&d) else {
+            continue;
+        };
         for entry in entries.flatten() {
             let p = entry.path();
             let name = entry.file_name().to_string_lossy().to_string();
@@ -374,7 +417,9 @@ fn grep_files(
     let mut out = Vec::new();
     let mut stack = vec![std::path::PathBuf::from(dir)];
     while let Some(d) = stack.pop() {
-        let Ok(entries) = std::fs::read_dir(&d) else { continue };
+        let Ok(entries) = std::fs::read_dir(&d) else {
+            continue;
+        };
         for entry in entries.flatten() {
             let p = entry.path();
             let name = entry.file_name().to_string_lossy().to_string();
@@ -385,14 +430,18 @@ fn grep_files(
                 stack.push(p);
                 continue;
             }
-            let Ok(rel) = p.strip_prefix(root_path) else { continue };
+            let Ok(rel) = p.strip_prefix(root_path) else {
+                continue;
+            };
             let rel = rel.to_string_lossy().replace('\\', "/");
             if let Some(g) = glob {
                 if !glob_match(&rel, g) {
                     continue;
                 }
             }
-            let Ok(content) = std::fs::read_to_string(&p) else { continue };
+            let Ok(content) = std::fs::read_to_string(&p) else {
+                continue;
+            };
             for (i, line) in content.lines().enumerate() {
                 if line.contains(needle) {
                     out.push(CursorGrepMatch {
@@ -466,7 +515,11 @@ fn glob_match(path: &str, pat: &str) -> bool {
 }
 
 async fn run_shell(command: &str, cwd: &str, workspace: &PathBuf) -> String {
-    let dir = if cwd.is_empty() { workspace.clone() } else { PathBuf::from(cwd) };
+    let dir = if cwd.is_empty() {
+        workspace.clone()
+    } else {
+        PathBuf::from(cwd)
+    };
     match tokio::process::Command::new("sh")
         .arg("-c")
         .arg(command)

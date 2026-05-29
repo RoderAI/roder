@@ -1,0 +1,27 @@
+{
+  "id": "zerolang-missing-graph-hash-regression",
+  "title": "Zerolang edit rejects missing graph hash fixture",
+  "prompt": "FAKE_VERIFICATION_COMPLETE. Confirm that checked Zerolang graph edits require a graph hash.",
+  "tags": ["zerolang", "checked-graph-edit", "negative"],
+  "workspace": {
+    "files": [
+      {
+        "path": "src/main.0",
+        "contents": "pub fn main(world: World) -> Void raises {\n    check world.out.write(\"hello from zero\\n\")\n}\n"
+      }
+    ]
+  },
+  "timeoutMs": 10000,
+  "expected": {
+    "finalAnswerContains": ["hello from roder"],
+    "commandChecks": [
+      {
+        "command": "cargo run -q --manifest-path /Users/pz/w/gode/Cargo.toml -p roder-cli -- --config-dir .roder-test zerolang edit src/main.0 --operation-json '{\"op\":\"set\",\"node\":\"#610c78bf\",\"field\":\"value\",\"expect\":\"hello from zero\\\\n\",\"value\":\"hello graph\\\\n\"}' --dry-run",
+        "expectedExitCode": 1,
+        "stderrContains": ["requires --graph-hash"]
+      }
+    ],
+    "verificationRequired": true
+  },
+  "constraints": ["zerolang_edit must not apply graph patches without graphHash preconditions"]
+}

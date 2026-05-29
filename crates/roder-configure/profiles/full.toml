@@ -27,6 +27,7 @@ extensions = [
   "tavily-search",
   "webwright",
   "web-search",
+  "zerolang",
 ]
 default_provider = "openai-responses"
 default_thread_store = "jsonl-thread-store"

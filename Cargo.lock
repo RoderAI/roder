@@ -3196,6 +3196,7 @@ dependencies = [
  "roder-ext-openai-responses",
  "roder-ext-postgres-session",
  "roder-ext-subagents",
+ "roder-ext-zerolang",
  "roder-extension-host",
  "roder-protocol",
  "roder-roadmap",
@@ -3348,6 +3349,7 @@ dependencies = [
  "roder-core",
  "roder-ext-task-ledger",
  "roder-ext-verification",
+ "roder-ext-zerolang",
  "roder-tools",
  "serde",
  "serde_json",
@@ -3929,6 +3931,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "roder-ext-zerolang"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "roder-api",
+ "semver",
+ "serde",
+ "serde_json",
+ "time",
+ "tokio",
+ "uuid",
+]
+
+[[package]]
 name = "roder-extension-host"
 version = "0.1.0"
 dependencies = [
@@ -3978,6 +3995,7 @@ dependencies = [
  "roder-ext-webwright",
  "roder-ext-xai",
  "roder-ext-xiaomi-mimo",
+ "roder-ext-zerolang",
  "roder-tools",
  "roder-web-search",
  "semver",

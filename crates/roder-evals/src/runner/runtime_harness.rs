@@ -32,6 +32,15 @@ pub(super) fn build_fake_runtime(
     builder.tool_contributor(Arc::new(
         roder_ext_verification::VerificationToolContributor,
     ));
+    if fixture.tags.iter().any(|tag| tag == "zerolang") {
+        builder.tool_contributor(Arc::new(roder_ext_zerolang::ZerolangToolContributor::new(
+            roder_ext_zerolang::ZerolangConfig {
+                binary: Some(workspace.join(".zero/fake-zero")),
+                timeout_seconds: Some(5),
+                artifact_dir: Some(Path::new(".zero/roder").to_path_buf()),
+            },
+        )));
+    }
     if !fixture.tags.iter().any(|tag| tag == "router:off") {
         builder.context_planner(Arc::new(roder_context::RetrievalRouterPlanner));
     }

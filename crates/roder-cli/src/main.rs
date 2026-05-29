@@ -18,6 +18,7 @@ mod speech;
 mod tui_config;
 mod webwright;
 mod workflows;
+mod zerolang;
 
 use automations::run_automations_cli;
 use evals::run_eval_cli;
@@ -101,6 +102,9 @@ async fn main() -> anyhow::Result<()> {
     }
     if matches!(args.first().map(String::as_str), Some("webwright")) {
         return webwright::run_webwright_cli(&args[1..]).await;
+    }
+    if matches!(args.first().map(String::as_str), Some("zerolang")) {
+        return zerolang::run_zerolang_cli(&args[1..]).await;
     }
     if matches!(args.first().map(String::as_str), Some("ps")) {
         return run_ps_cli(&args[1..]).await;
@@ -1027,6 +1031,7 @@ pub(crate) async fn build_runtime_from_config(
     let config_dir = roder_config::config_dir();
     let keys = provider_keys(&cfg);
     let web_search = resolve_web_search_config(cfg.web_search.as_ref())?;
+    let zerolang = resolve_zerolang_config(cfg.zerolang.as_ref());
     let policy_mode = resolve_policy_mode(&options, &cfg)?;
     let runtime_profile = resolve_runtime_profile(&options, &cfg)?;
     let speed_policy = resolve_speed_policy_config(cfg.speed_policy.as_ref());
@@ -1130,6 +1135,7 @@ pub(crate) async fn build_runtime_from_config(
         command_shell: command_shell.clone(),
         web_search: web_search.external,
         subagents,
+        zerolang,
         policy_mode,
         notifications,
         remote_runner_destination: remote_runner_destination.clone(),
@@ -1174,6 +1180,16 @@ pub(crate) async fn build_runtime_from_config(
     runtime.set_skills(skills_registry).await;
 
     Ok((runtime, default_model))
+}
+
+fn resolve_zerolang_config(
+    cfg: Option<&roder_config::ZerolangConfig>,
+) -> Option<roder_ext_zerolang::ZerolangConfig> {
+    cfg.map(|cfg| roder_ext_zerolang::ZerolangConfig {
+        binary: cfg.binary.clone(),
+        timeout_seconds: cfg.timeout_seconds,
+        artifact_dir: cfg.artifact_dir.clone(),
+    })
 }
 
 fn resolve_tool_path_scope(

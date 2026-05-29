@@ -96,6 +96,41 @@ impl InferenceEngine for FakeInferenceEngine {
             ))]);
             return Ok(Box::pin(stream));
         }
+        if should_zerolang_graph_dump(&request) {
+            let stream = stream::iter(vec![Ok(InferenceEvent::ToolCallCompleted(
+                ToolCallCompleted {
+                    id: "fake-zerolang-graph-dump".to_string(),
+                    name: "zerolang_graph_dump".to_string(),
+                    arguments: serde_json::json!({
+                        "input": "src/main.0"
+                    })
+                    .to_string(),
+                },
+            ))]);
+            return Ok(Box::pin(stream));
+        }
+        if should_zerolang_edit(&request) {
+            let stream = stream::iter(vec![Ok(InferenceEvent::ToolCallCompleted(
+                ToolCallCompleted {
+                    id: "fake-zerolang-edit".to_string(),
+                    name: "zerolang_edit".to_string(),
+                    arguments: serde_json::json!({
+                        "input": "src/main.0",
+                        "graphHash": "graph:f76987e99677f1b3",
+                        "operations": [{
+                            "op": "set",
+                            "node": "#610c78bf",
+                            "field": "value",
+                            "expect": "hello from zero\n",
+                            "value": "hello from roder\n"
+                        }],
+                        "validate": true
+                    })
+                    .to_string(),
+                },
+            ))]);
+            return Ok(Box::pin(stream));
+        }
         if should_discovery_read(&request) {
             let stream = stream::iter(vec![Ok(InferenceEvent::ToolCallCompleted(
                 ToolCallCompleted {
@@ -290,6 +325,17 @@ fn should_grep(request: &AgentInferenceRequest) -> bool {
                 TranscriptItem::ToolResult(result) if result.name.as_deref() == Some("grep")
             )
         })
+}
+
+fn should_zerolang_graph_dump(request: &AgentInferenceRequest) -> bool {
+    prompt_contains(request, "FAKE_ZEROLANG_GRAPH_EDIT")
+        && !has_tool_result(request, "zerolang_graph_dump")
+}
+
+fn should_zerolang_edit(request: &AgentInferenceRequest) -> bool {
+    prompt_contains(request, "FAKE_ZEROLANG_GRAPH_EDIT")
+        && has_tool_result(request, "zerolang_graph_dump")
+        && !has_tool_result(request, "zerolang_edit")
 }
 
 fn should_discovery_search(request: &AgentInferenceRequest) -> bool {

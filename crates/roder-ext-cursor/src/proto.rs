@@ -431,10 +431,7 @@ fn map_cursor_native_tool(payload: &[u8]) -> Option<(&'static str, Value)> {
     if let Some(args) = tool_args(payload, TOOL_EDIT) {
         let path = scalar_string(&args, 1)?;
         let content = scalar_string(&args, 6).unwrap_or_default();
-        return Some((
-            "write_file",
-            json!({ "path": path, "content": content }),
-        ));
+        return Some(("write_file", json!({ "path": path, "content": content })));
     }
 
     // shell -> shell { command, workdir? }
@@ -648,12 +645,7 @@ pub(crate) fn encode_exec_read_result(
 }
 
 /// WRITE result: ExecClientMessage{ 1:seq, 3:{ 1:{ 1:path, 2:lines, 3:size } } }
-pub(crate) fn encode_exec_write_result(
-    seq: u64,
-    path: &str,
-    lines: u64,
-    size: u64,
-) -> Vec<u8> {
+pub(crate) fn encode_exec_write_result(seq: u64, path: &str, lines: u64, size: u64) -> Vec<u8> {
     let inner = proto_message(vec![
         proto_field_string(1, path),
         proto_field_varint(2, lines),
@@ -708,14 +700,14 @@ pub(crate) fn encode_exec_glob_result(
     root: &str,
     rel_paths: &[String],
 ) -> Vec<u8> {
-    let mut files: Vec<Vec<u8>> = rel_paths
-        .iter()
-        .map(|p| proto_field_string(1, p))
-        .collect();
+    let mut files: Vec<Vec<u8>> = rel_paths.iter().map(|p| proto_field_string(1, p)).collect();
     files.push(proto_field_varint(2, rel_paths.len() as u64));
     let f4 = proto_message(vec![
         proto_field_string(1, root),
-        proto_field_bytes(2, proto_message(vec![proto_field_bytes(2, proto_message(files))])),
+        proto_field_bytes(
+            2,
+            proto_message(vec![proto_field_bytes(2, proto_message(files))]),
+        ),
     ]);
     let inner = proto_message(vec![
         proto_field_string(2, path),
@@ -760,7 +752,10 @@ pub(crate) fn encode_exec_grep_result(
     entries.push(proto_field_varint(3, matches.len() as u64));
     let f4 = proto_message(vec![
         proto_field_string(1, root),
-        proto_field_bytes(2, proto_message(vec![proto_field_bytes(3, proto_message(entries))])),
+        proto_field_bytes(
+            2,
+            proto_message(vec![proto_field_bytes(3, proto_message(entries))]),
+        ),
     ]);
     let inner = proto_message(vec![
         proto_field_string(1, pattern),
@@ -830,17 +825,19 @@ fn tool_args(payload: &[u8], tool_no: u32) -> Option<Vec<u8>> {
 /// [`bytes_field_as_string`] this does not apply the printable-text heuristic,
 /// because file contents and commands are read from known scalar field numbers.
 fn scalar_string(bytes: &[u8], no: u32) -> Option<String> {
-    decode_fields_safe(bytes)
-        .iter()
-        .find_map(|field| bytes_field(field, no).map(|value| String::from_utf8_lossy(value).into_owned()))
+    decode_fields_safe(bytes).iter().find_map(|field| {
+        bytes_field(field, no).map(|value| String::from_utf8_lossy(value).into_owned())
+    })
 }
 
 /// Decode a scalar varint field.
 fn scalar_u64(bytes: &[u8], no: u32) -> Option<u64> {
-    decode_fields_safe(bytes).iter().find_map(|field| match &field.value {
-        ProtoValue::Varint(value) if field.no == no => Some(*value),
-        _ => None,
-    })
+    decode_fields_safe(bytes)
+        .iter()
+        .find_map(|field| match &field.value {
+            ProtoValue::Varint(value) if field.no == no => Some(*value),
+            _ => None,
+        })
 }
 
 fn bytes_field<'a>(field: &'a ProtoField, no: u32) -> Option<&'a Vec<u8>> {
@@ -1166,7 +1163,11 @@ mod tests {
 
     fn decode_one(payload: &[u8]) -> CursorToolCall {
         let decoded = decode_agent_server_message(payload);
-        assert_eq!(decoded.tool_calls.len(), 1, "expected exactly one tool call");
+        assert_eq!(
+            decoded.tool_calls.len(),
+            1,
+            "expected exactly one tool call"
+        );
         decoded.tool_calls.into_iter().next().unwrap()
     }
 
@@ -1247,7 +1248,10 @@ mod tests {
             proto_field_string(1, "cargo test -p roder-ext-cursor"),
             proto_field_string(2, "/repo"),
         ]);
-        let call = decode_one(&tool_update("tool_shell_1", tool_with_args(TOOL_SHELL, args)));
+        let call = decode_one(&tool_update(
+            "tool_shell_1",
+            tool_with_args(TOOL_SHELL, args),
+        ));
         assert_eq!(call.name, "shell");
         let value: Value = serde_json::from_str(&call.arguments).unwrap();
         assert_eq!(value["command"], "cargo test -p roder-ext-cursor");
@@ -1277,7 +1281,10 @@ mod tests {
             proto_field_string(1, "TODO"),
             proto_field_string(2, "crates"),
         ]);
-        let grep = decode_one(&tool_update("tool_grep_1", tool_with_args(TOOL_GREP, grep_args)));
+        let grep = decode_one(&tool_update(
+            "tool_grep_1",
+            tool_with_args(TOOL_GREP, grep_args),
+        ));
         assert_eq!(grep.name, "grep");
         let grep_value: Value = serde_json::from_str(&grep.arguments).unwrap();
         assert_eq!(grep_value["query"], "TODO");
@@ -1285,7 +1292,10 @@ mod tests {
 
         // GlobToolCall(4) -> GlobToolArgs { glob_pattern(2) }
         let glob_args = proto_message(vec![proto_field_string(2, "**/*.rs")]);
-        let glob = decode_one(&tool_update("tool_glob_1", tool_with_args(TOOL_GLOB, glob_args)));
+        let glob = decode_one(&tool_update(
+            "tool_glob_1",
+            tool_with_args(TOOL_GLOB, glob_args),
+        ));
         assert_eq!(glob.name, "glob");
         let glob_value: Value = serde_json::from_str(&glob.arguments).unwrap();
         assert_eq!(glob_value["pattern"], "**/*.rs");
