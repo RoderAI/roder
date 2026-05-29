@@ -10,6 +10,7 @@ use crate::{
     built_in_commands,
     loader::load_command_file,
     spec::{CommandSource, CommandSpec},
+    workflows::{WorkflowCommandDirectory, scan_workflow_directory},
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -47,7 +48,7 @@ pub struct CommandOverrideAudit {
     pub replacement_path: Option<PathBuf>,
 }
 
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq)]
 pub struct CommandsRegistry {
     commands: BTreeMap<String, CommandSpec>,
     override_audits: Vec<CommandOverrideAudit>,
@@ -108,6 +109,14 @@ impl CommandsRegistry {
         directories: impl IntoIterator<Item = CommandDirectory>,
         options: CommandsRegistryOptions,
     ) -> Result<Self> {
+        Self::from_directories_with_workflows(directories, std::iter::empty(), options)
+    }
+
+    pub fn from_directories_with_workflows(
+        directories: impl IntoIterator<Item = CommandDirectory>,
+        workflow_directories: impl IntoIterator<Item = WorkflowCommandDirectory>,
+        options: CommandsRegistryOptions,
+    ) -> Result<Self> {
         let mut registry = CommandsRegistry {
             commands: BTreeMap::new(),
             override_audits: Vec::new(),
@@ -120,6 +129,12 @@ impl CommandsRegistry {
         }
         for directory in directories {
             let commands = scan_directory(&directory.root, directory.source)?;
+            for command in commands {
+                registry.insert(command)?;
+            }
+        }
+        for directory in workflow_directories {
+            let commands = scan_workflow_directory(&directory.root, directory.source)?;
             for command in commands {
                 registry.insert(command)?;
             }
@@ -275,6 +290,7 @@ mod tests {
             "remote",
             "voice",
             "roadmap",
+            "deep-research",
         ] {
             let spec = registry
                 .get(name)
@@ -311,6 +327,12 @@ mod tests {
                 .get("roadmap")
                 .and_then(|spec| spec.argument_hint.as_deref()),
             Some("[plan]")
+        );
+        assert_eq!(
+            registry
+                .get("deep-research")
+                .and_then(|spec| spec.argument_hint.as_deref()),
+            Some("<question>")
         );
     }
 

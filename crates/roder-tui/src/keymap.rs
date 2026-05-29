@@ -19,6 +19,13 @@ pub enum Action {
     ScrollPalette,
     ScrollDiff,
     ScrollMonitor,
+    OpenWorkflows,
+    ApproveWorkflow,
+    DenyWorkflow,
+    PauseWorkflow,
+    StopWorkflow,
+    SaveWorkflow,
+    RestartWorkflowAgent,
 }
 
 impl Action {
@@ -41,6 +48,13 @@ impl Action {
             Self::ScrollPalette => "scroll/palette",
             Self::ScrollDiff => "scroll/diff",
             Self::ScrollMonitor => "scroll/monitor",
+            Self::OpenWorkflows => "workflow/open",
+            Self::ApproveWorkflow => "workflow/approve",
+            Self::DenyWorkflow => "workflow/deny",
+            Self::PauseWorkflow => "workflow/pause",
+            Self::StopWorkflow => "workflow/stop",
+            Self::SaveWorkflow => "workflow/save",
+            Self::RestartWorkflowAgent => "workflow/restart_agent",
         }
     }
 
@@ -63,6 +77,13 @@ impl Action {
             Self::ScrollPalette,
             Self::ScrollDiff,
             Self::ScrollMonitor,
+            Self::OpenWorkflows,
+            Self::ApproveWorkflow,
+            Self::DenyWorkflow,
+            Self::PauseWorkflow,
+            Self::StopWorkflow,
+            Self::SaveWorkflow,
+            Self::RestartWorkflowAgent,
         ]
     }
 
@@ -136,6 +157,13 @@ impl Keymap {
             (Action::ScrollPalette, &["wheel"][..]),
             (Action::ScrollDiff, &["wheel"][..]),
             (Action::ScrollMonitor, &["wheel"][..]),
+            (Action::OpenWorkflows, &["/workflows"][..]),
+            (Action::ApproveWorkflow, &["enter", "y"][..]),
+            (Action::DenyWorkflow, &["esc", "n"][..]),
+            (Action::PauseWorkflow, &["p"][..]),
+            (Action::StopWorkflow, &["s"][..]),
+            (Action::SaveWorkflow, &["v"][..]),
+            (Action::RestartWorkflowAgent, &["x"][..]),
         ] {
             bindings.insert(
                 action,
@@ -195,6 +223,10 @@ mod tests {
             "mode/cycle",
             "region/focus_next",
             "region/focus_previous",
+            "workflow/open",
+            "workflow/approve",
+            "workflow/deny",
+            "workflow/restart_agent",
         ] {
             assert!(ids.contains(required), "missing action id {required}");
         }

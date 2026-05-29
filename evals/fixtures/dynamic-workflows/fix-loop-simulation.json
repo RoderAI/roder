@@ -1,0 +1,34 @@
+{
+  "id": "dynamic-workflows-fix-loop-simulation",
+  "title": "Dynamic workflow fix-loop simulation",
+  "prompt": "Use a dynamic workflow to run test, diagnose failure, apply a scoped fix, and rerun verification without filling the lead conversation context.",
+  "tags": ["dynamic-workflows", "fix-loop", "verification", "offline"],
+  "workspace": {
+    "files": [
+      {
+        "path": "src/lib.rs",
+        "contents": "pub fn answer() -> i32 { 41 }\n"
+      },
+      {
+        "path": "tests/answer.rs",
+        "contents": "#[test]\nfn answer_is_42() { assert_eq!(fixture::answer(), 42); }\n"
+      }
+    ]
+  },
+  "timeoutMs": 10000,
+  "expected": {
+    "finalAnswerContains": ["hello from roder"],
+    "files": [
+      {
+        "path": "tests/answer.rs",
+        "exists": true,
+        "contains": ["answer_is_42"]
+      }
+    ],
+    "verificationRequired": true
+  },
+  "constraints": [
+    "offline fake provider fixture",
+    "workflow should preserve test output as checkpointed state"
+  ]
+}

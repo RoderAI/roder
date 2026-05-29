@@ -206,7 +206,19 @@
               "workflow/preview",
               "workflow/refresh",
               "workflow/remove",
-              "workflow/scan"
+              "workflow/scan",
+              "workflows/approve",
+              "workflows/get",
+              "workflows/list",
+              "workflows/pause",
+              "workflows/plan",
+              "workflows/restartAgent",
+              "workflows/resume",
+              "workflows/save",
+              "workflows/scripts/delete",
+              "workflows/scripts/list",
+              "workflows/scripts/read",
+              "workflows/stop"
             ]
           },
           "paramsType": {

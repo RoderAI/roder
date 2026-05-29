@@ -1,6 +1,23 @@
 default_provider = "{{default_provider}}"
 default_thread_store = "{{default_thread_store}}"
 
+[dynamic_workflows]
+enabled = true
+trigger_word_enabled = true
+auto_with_ultracode = true
+max_concurrent_agents = 16
+max_agents_per_run = 1000
+default_agent_timeout_seconds = 180
+default_run_timeout_seconds = 14400
+default_checkpoint_bytes = 1048576
+max_report_bytes = 65536
+workspace_workflows_dir = ".agents/workflows"
+user_workflows_dir = "~/.roder/workflows"
+
+[dynamic_workflows.approval]
+require_approval = true
+allow_always_for_script_and_workspace = true
+
 # Required environment variables:
 {{required_env}}
 

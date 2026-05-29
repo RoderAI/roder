@@ -224,6 +224,18 @@ Tools, commands, files, agents, and tasks:
 | `tasks/get` | Read task handle plus logs. |
 | `tasks/cancel` | Cancel a task. |
 | `tasks/subscribe` | Return supported task event kinds. |
+| `workflows/plan` | Draft and validate a dynamic workflow run without starting child agents. |
+| `workflows/approve` | Approve or deny a planned workflow run. |
+| `workflows/list` | List dynamic workflow run summaries. |
+| `workflows/get` | Read one workflow run, optionally including script body and agents. |
+| `workflows/pause` | Pause a workflow and optionally cancel running child agents. |
+| `workflows/resume` | Resume a paused workflow. |
+| `workflows/stop` | Stop a workflow run. |
+| `workflows/restartAgent` | Restart one child agent in a workflow run. |
+| `workflows/save` | Save a workflow run script as a reusable command. |
+| `workflows/scripts/list` | List saved and built-in workflow command scripts. |
+| `workflows/scripts/read` | Read one workflow command script. |
+| `workflows/scripts/delete` | Delete a saved workflow command script. |
 | `webwright/prepare` | Create a Webwright workspace with starter artifacts. |
 | `webwright/submit` | Submit a Webwright browser task. |
 | `webwright/artifacts` | Read a structured Webwright workspace summary. |
@@ -347,6 +359,224 @@ Review, hunks, workflow imports, media, and memory:
 | `memory/recall/preview` | Preview recall citations/results for a turn. |
 
 ## Detailed Method Reference
+
+### `workflows/plan`
+
+Purpose: Draft a dynamic workflow script, validate it, and return an
+approval-gated run without launching child agents.
+
+Request:
+
+```json
+{
+  "threadId": "thread-123",
+  "turnId": "turn-123",
+  "prompt": "use a workflow to audit auth flows",
+  "workspace": "/Users/example/project",
+  "arguments": { "scope": "auth" }
+}
+```
+
+Response:
+
+```json
+{
+  "run": {
+    "runId": "workflow-123",
+    "status": "awaitingApproval",
+    "script": {
+      "name": "planned-workflow",
+      "source": { "kind": "generated" },
+      "hostApiVersion": 1
+    },
+    "phases": [{ "phaseId": "run", "name": "run", "status": "queued" }]
+  },
+  "approvalRequired": true
+}
+```
+
+Behavior:
+
+- Emits `workflows/drafted` and `workflows/approvalRequested`.
+- `script` may be provided by clients that already have a workflow script;
+  otherwise the app-server generates a constrained script from `prompt`.
+- The script is validated before approval. The workflow runtime may coordinate
+  child agents only through host APIs; scripts cannot directly run shell,
+  access files, read secrets, use network, or call MCP.
+- `arguments` are stored with the draft and passed to the runner only after
+  approval.
+
+Errors:
+
+- Invalid JavaScript, unsupported host API versions, or denied ambient APIs
+  return JSON-RPC error code `-32000` with details.
+
+### `workflows/approve`
+
+Purpose: Resolve the approval gate for a planned workflow run.
+
+Request:
+
+```json
+{
+  "runId": "workflow-123",
+  "decision": "runOnce",
+  "reason": "approved from desktop"
+}
+```
+
+Response:
+
+```json
+{
+  "approval": {
+    "runId": "workflow-123",
+    "decision": "runOnce",
+    "approvedCapabilities": ["childAgents"]
+  },
+  "run": { "runId": "workflow-123", "status": "running" }
+}
+```
+
+Behavior:
+
+- `decision` is one of `runOnce`, `alwaysForScriptAndWorkspace`, or `deny`.
+- Approving emits `workflows/approved`, `workflows/queued`, then runner
+  lifecycle notifications such as `workflows/started`,
+  `workflows/phaseStarted`, `workflows/agentStarted`, and terminal
+  completion/failure events.
+- Denying emits `workflows/denied` and returns a terminal failed run without
+  launching child agents.
+
+Errors:
+
+- Unknown run ids or runs that are no longer awaiting approval return
+  JSON-RPC error code `-32000`.
+
+### `workflows/list` and `workflows/get`
+
+Purpose: Render live or historical workflow progress.
+
+Request:
+
+```json
+{ "threadId": "thread-123", "includeTerminal": true }
+```
+
+Response:
+
+```json
+{
+  "runs": [
+    {
+      "runId": "workflow-123",
+      "status": "completed",
+      "title": "planned-workflow",
+      "phaseCount": 2,
+      "completedPhaseCount": 2,
+      "agentCount": 12,
+      "completedAgentCount": 11,
+      "failedAgentCount": 1,
+      "concurrencyPeak": 4,
+      "elapsedMs": 12000
+    }
+  ]
+}
+```
+
+`workflows/get` uses:
+
+```json
+{
+  "runId": "workflow-123",
+  "includeScriptBody": true,
+  "includeAgents": true
+}
+```
+
+Behavior:
+
+- Summaries include phase counts, agent counts, failure counts, concurrency
+  peak, elapsed time, report preview, and token usage when child agents report
+  usage.
+- `includeScriptBody` controls whether the returned `WorkflowScript` includes
+  the script source body. `includeAgents` controls whether child agent rows are
+  included.
+
+### Workflow control methods
+
+Purpose: Control an active or retained workflow run.
+
+Requests:
+
+```json
+{ "runId": "workflow-123", "cancelRunningAgents": false, "reason": "user pause" }
+```
+
+```json
+{ "runId": "workflow-123" }
+```
+
+```json
+{ "runId": "workflow-123", "reason": "user stop" }
+```
+
+```json
+{ "runId": "workflow-123", "agentId": "agent-1" }
+```
+
+Methods:
+
+- `workflows/pause` pauses new child-agent launches and can request running
+  child cancellation with `cancelRunningAgents`.
+- `workflows/resume` resumes a paused run and reuses retained child results.
+- `workflows/stop` emits a terminal stopped run.
+- `workflows/restartAgent` invalidates and reruns one child agent when the run
+  is still active.
+
+Errors:
+
+- Unknown run ids and invalid status transitions return JSON-RPC error code
+  `-32000`.
+
+### Workflow script methods
+
+Purpose: Save, list, read, and delete reusable workflow command scripts.
+
+Requests:
+
+```json
+{
+  "runId": "workflow-123",
+  "name": "audit-workflow",
+  "scope": "workspace",
+  "overwrite": false
+}
+```
+
+```json
+{ "workspace": "/Users/example/project", "includeUser": true, "includeBuiltin": true }
+```
+
+```json
+{ "name": "deep-research", "source": "builtIn", "includeBody": true }
+```
+
+Behavior:
+
+- `workflows/save` writes `.workflow.js` scripts either to the workspace
+  workflow directory or the user workflow directory. Existing scripts are not
+  replaced unless `overwrite` is true.
+- `workflows/scripts/list` returns built-in scripts, user scripts, and
+  workspace scripts according to the include flags.
+- `workflows/scripts/delete` can remove a saved script record and, when
+  requested, the backing file. Built-in scripts are read-only.
+
+Notes:
+
+- Dynamic workflow methods use the plural `workflows/*` namespace. Singular
+  `workflow/*` methods remain reserved for workflow-import scanning and enable
+  decisions.
 
 ### `initialize`
 
@@ -4021,6 +4251,17 @@ notifications:
 - Workflow imports: `workflow/importsDetected`, `workflow/importPreviewed`,
   `workflow/importEnabled`, `workflow/importDisabled`,
   `workflow/importStale`, `workflow/importFailed`.
+- Dynamic workflows: `workflows/drafted`, `workflows/approvalRequested`,
+  `workflows/approved`, `workflows/denied`, `workflows/queued`,
+  `workflows/started`, `workflows/phaseStarted`,
+  `workflows/phaseCompleted`, `workflows/agentQueued`,
+  `workflows/agentStarted`, `workflows/agentCompleted`,
+  `workflows/agentFailed`, `workflows/outputRecorded`,
+  `workflows/checkpointRecorded`, `workflows/paused`,
+  `workflows/resumed`, `workflows/stopped`, `workflows/completed`, and
+  `workflows/failed`. Payloads mirror the corresponding
+  `roder_api::dynamic_workflows` event structs and always include `runId`;
+  child-agent and phase notifications include `agent` or `phase` snapshots.
 - Discovery: `discovery/catalogBuilt`, `discovery/itemUpdated`,
   `discovery/authRequired`, `discovery/itemRead`,
   `discovery/itemPromoted`, `discovery/promotionReused`,

@@ -17,6 +17,7 @@ mod speech;
 #[cfg(test)]
 mod tui_config;
 mod webwright;
+mod workflows;
 
 use automations::run_automations_cli;
 use evals::run_eval_cli;
@@ -44,7 +45,8 @@ use roder_core::model_profiles::{
     resolve_model_profiles,
 };
 use roder_core::{
-    Runtime, RuntimeConfig, RuntimeReliabilityConfig, RuntimeSpeedPolicyConfig, validate_edit_tool,
+    Runtime, RuntimeConfig, RuntimeDynamicWorkflowConfig, RuntimeReliabilityConfig,
+    RuntimeSpeedPolicyConfig, validate_edit_tool,
 };
 use roder_ext_subagents::{AgentLoadConfig, load_agent_definitions};
 use roder_extension_host::{
@@ -114,6 +116,9 @@ async fn main() -> anyhow::Result<()> {
     }
     if matches!(args.first().map(String::as_str), Some("workflow")) {
         return run_workflow_cli(&args[1..]).await;
+    }
+    if matches!(args.first().map(String::as_str), Some("workflows")) {
+        return workflows::run_workflows_cli(&args[1..]).await;
     }
     if matches!(args.first().map(String::as_str), Some("roadmap")) {
         if roadmap_entrypoint_opens_tui(&args[1..]) {
@@ -1025,6 +1030,7 @@ pub(crate) async fn build_runtime_from_config(
     let policy_mode = resolve_policy_mode(&options, &cfg)?;
     let runtime_profile = resolve_runtime_profile(&options, &cfg)?;
     let speed_policy = resolve_speed_policy_config(cfg.speed_policy.as_ref());
+    let dynamic_workflows = resolve_dynamic_workflows_config(cfg.dynamic_workflows.as_ref());
     let reliability = resolve_reliability_config(cfg.reliability.as_ref());
     let custom_inference_provider_configs = custom_inference_providers(&cfg);
     let skills_config = cfg.skills.clone();
@@ -1150,6 +1156,7 @@ pub(crate) async fn build_runtime_from_config(
             policy_mode,
             runtime_profile,
             speed_policy,
+            dynamic_workflows,
             reliability,
             turn_deadline_seconds: cfg
                 .speed_policy
@@ -1907,6 +1914,19 @@ fn resolve_reliability_config(
         }
     }
     reliability
+}
+
+fn resolve_dynamic_workflows_config(
+    cfg: Option<&roder_config::DynamicWorkflowsConfig>,
+) -> RuntimeDynamicWorkflowConfig {
+    let mut dynamic = RuntimeDynamicWorkflowConfig::default();
+    if let Some(cfg) = cfg {
+        dynamic.enabled = cfg.enabled;
+        dynamic.trigger_word_enabled = cfg.trigger_word_enabled;
+        dynamic.auto_with_ultracode = cfg.auto_with_ultracode;
+        dynamic.limits = cfg.limits();
+    }
+    dynamic
 }
 
 fn model_profile_overrides_from_config(

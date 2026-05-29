@@ -12,6 +12,7 @@ use roder_api::catalog::{
 };
 use roder_api::code_index::CodeIndexStatus;
 use roder_api::discovery::DiscoverySourceKind;
+use roder_api::dynamic_workflows::WorkflowApprovalDecision;
 use roder_api::extension::{ExtensionRegistryBuilder, InferenceEngineId};
 use roder_api::inference::*;
 use roder_api::marketplace::MarketplaceInstallState;
@@ -113,6 +114,13 @@ use roder_protocol::{
     WebwrightVisualJudgeResult, WebwrightWorkspaceParams, WorkflowEnableParams,
     WorkflowEnableResult, WorkflowPreviewParams, WorkflowPreviewResult, WorkflowScanParams,
     WorkflowScanResult,
+};
+use roder_protocol::{
+    WorkflowsApproveParams, WorkflowsApproveResult, WorkflowsGetParams, WorkflowsGetResult,
+    WorkflowsListParams, WorkflowsListResult, WorkflowsPauseParams, WorkflowsPauseResult,
+    WorkflowsPlanParams, WorkflowsPlanResult, WorkflowsResumeParams, WorkflowsResumeResult,
+    WorkflowsSaveParams, WorkflowsSaveResult, WorkflowsSaveScope, WorkflowsScriptsListParams,
+    WorkflowsScriptsListResult, WorkflowsStopParams, WorkflowsStopResult,
 };
 use std::collections::HashMap;
 use std::sync::{Arc, LazyLock};
@@ -1696,6 +1704,302 @@ async fn workflow_import_methods_scan_preview_and_enable_passive_items() {
     .await;
     assert_eq!(enabled.item.id, guidance.id);
     assert!(state_path.exists());
+}
+
+#[tokio::test]
+async fn workflows_methods_plan_approve_control_save_and_deny() {
+    let repo = std::env::temp_dir().join(format!(
+        "roder-workflows-app-server-{}",
+        uuid::Uuid::new_v4()
+    ));
+    std::fs::create_dir_all(&repo).unwrap();
+    let registry = build_default_registry(DefaultRegistryConfig {
+        workspace: Some(repo.clone()),
+        ..DefaultRegistryConfig::default()
+    })
+    .unwrap();
+    let runtime = Arc::new(
+        Runtime::new(
+            registry,
+            RuntimeConfig {
+                workspace: Some(repo.display().to_string()),
+                ..RuntimeConfig::default()
+            },
+        )
+        .unwrap(),
+    );
+    let client = LocalAppClient::new(Arc::new(AppServer::new(runtime)));
+    let mut notifications = client.subscribe_notifications();
+    let plan: WorkflowsPlanResult = request(
+        &client,
+        "workflows/plan",
+        Some(
+            serde_json::to_value(WorkflowsPlanParams {
+                thread_id: Some("thread-workflow".to_string()),
+                turn_id: Some("turn-workflow".to_string()),
+                prompt: "run fixture workflow".to_string(),
+                workspace: Some(repo.display().to_string()),
+                arguments: serde_json::json!({ "topic": "Task 6 argument propagation" }),
+                script: Some(workflow_script_fixture("e2e-workflow")),
+            })
+            .unwrap(),
+        ),
+    )
+    .await;
+    assert!(plan.approval_required);
+    assert_eq!(
+        plan.run.status,
+        roder_api::dynamic_workflows::WorkflowRunStatus::AwaitingApproval
+    );
+    let approved: WorkflowsApproveResult = request(
+        &client,
+        "workflows/approve",
+        Some(
+            serde_json::to_value(WorkflowsApproveParams {
+                run_id: plan.run.run_id.clone(),
+                decision: WorkflowApprovalDecision::RunOnce,
+                reason: Some("test approval".to_string()),
+            })
+            .unwrap(),
+        ),
+    )
+    .await;
+    assert_eq!(
+        approved.approval.decision,
+        WorkflowApprovalDecision::RunOnce
+    );
+    let paused: WorkflowsPauseResult = request(
+        &client,
+        "workflows/pause",
+        Some(
+            serde_json::to_value(WorkflowsPauseParams {
+                run_id: plan.run.run_id.clone(),
+                cancel_running_agents: false,
+                reason: Some("test pause".to_string()),
+            })
+            .unwrap(),
+        ),
+    )
+    .await;
+    assert_eq!(
+        paused.run.status,
+        roder_api::dynamic_workflows::WorkflowRunStatus::Paused
+    );
+    let resumed: WorkflowsResumeResult = request(
+        &client,
+        "workflows/resume",
+        Some(
+            serde_json::to_value(WorkflowsResumeParams {
+                run_id: plan.run.run_id.clone(),
+            })
+            .unwrap(),
+        ),
+    )
+    .await;
+    assert_eq!(
+        resumed.run.status,
+        roder_api::dynamic_workflows::WorkflowRunStatus::Running
+    );
+    let completed = wait_for_workflow_status(
+        &client,
+        &plan.run.run_id,
+        roder_api::dynamic_workflows::WorkflowRunStatus::Completed,
+    )
+    .await;
+    assert_eq!(completed.agents.len(), 1);
+    assert!(
+        completed.agents[0]
+            .description
+            .contains("Task 6 argument propagation")
+    );
+    let listed: WorkflowsListResult = request(
+        &client,
+        "workflows/list",
+        Some(
+            serde_json::to_value(WorkflowsListParams {
+                thread_id: None,
+                include_terminal: true,
+            })
+            .unwrap(),
+        ),
+    )
+    .await;
+    assert!(listed.runs.iter().any(|run| run.run_id == plan.run.run_id));
+    let saved: WorkflowsSaveResult = request(
+        &client,
+        "workflows/save",
+        Some(
+            serde_json::to_value(WorkflowsSaveParams {
+                run_id: plan.run.run_id.clone(),
+                name: "e2e-workflow".to_string(),
+                scope: WorkflowsSaveScope::Workspace,
+                overwrite: true,
+            })
+            .unwrap(),
+        ),
+    )
+    .await;
+    assert!(
+        saved
+            .script
+            .source
+            .path
+            .as_deref()
+            .unwrap()
+            .ends_with(".workflow.js")
+    );
+    let scripts: WorkflowsScriptsListResult = request(
+        &client,
+        "workflows/scripts/list",
+        Some(
+            serde_json::to_value(WorkflowsScriptsListParams {
+                workspace: Some(repo.display().to_string()),
+                include_user: false,
+                include_builtin: false,
+            })
+            .unwrap(),
+        ),
+    )
+    .await;
+    assert!(
+        scripts
+            .scripts
+            .iter()
+            .any(|script| script.name == "e2e-workflow")
+    );
+    let stop_plan: WorkflowsPlanResult = request(
+        &client,
+        "workflows/plan",
+        Some(
+            serde_json::to_value(WorkflowsPlanParams {
+                thread_id: None,
+                turn_id: None,
+                prompt: "stop fixture workflow".to_string(),
+                workspace: Some(repo.display().to_string()),
+                arguments: serde_json::json!({}),
+                script: Some(workflow_script_fixture("stoppable-workflow")),
+            })
+            .unwrap(),
+        ),
+    )
+    .await;
+    let _: WorkflowsApproveResult = request(
+        &client,
+        "workflows/approve",
+        Some(
+            serde_json::to_value(WorkflowsApproveParams {
+                run_id: stop_plan.run.run_id.clone(),
+                decision: WorkflowApprovalDecision::RunOnce,
+                reason: None,
+            })
+            .unwrap(),
+        ),
+    )
+    .await;
+    let stopped: WorkflowsStopResult = request(
+        &client,
+        "workflows/stop",
+        Some(
+            serde_json::to_value(WorkflowsStopParams {
+                run_id: stop_plan.run.run_id,
+                reason: Some("test stop".to_string()),
+            })
+            .unwrap(),
+        ),
+    )
+    .await;
+    assert_eq!(
+        stopped.run.status,
+        roder_api::dynamic_workflows::WorkflowRunStatus::Stopped
+    );
+    let deny_plan: WorkflowsPlanResult = request(
+        &client,
+        "workflows/plan",
+        Some(
+            serde_json::to_value(WorkflowsPlanParams {
+                thread_id: None,
+                turn_id: None,
+                prompt: "deny fixture workflow".to_string(),
+                workspace: Some(repo.display().to_string()),
+                arguments: serde_json::json!({}),
+                script: Some(workflow_script_fixture("denied-workflow")),
+            })
+            .unwrap(),
+        ),
+    )
+    .await;
+    let denied: WorkflowsApproveResult = request(
+        &client,
+        "workflows/approve",
+        Some(
+            serde_json::to_value(WorkflowsApproveParams {
+                run_id: deny_plan.run.run_id,
+                decision: WorkflowApprovalDecision::Deny,
+                reason: Some("not now".to_string()),
+            })
+            .unwrap(),
+        ),
+    )
+    .await;
+    assert_eq!(denied.approval.decision, WorkflowApprovalDecision::Deny);
+    assert_eq!(
+        denied.run.status,
+        roder_api::dynamic_workflows::WorkflowRunStatus::Failed
+    );
+    let notification_methods = wait_for_workflow_notification_methods(
+        &mut notifications,
+        &[
+            "workflows/approvalRequested",
+            "workflows/started",
+            "workflows/agentCompleted",
+            "workflows/completed",
+            "workflows/paused",
+            "workflows/resumed",
+            "workflows/stopped",
+            "workflows/denied",
+        ],
+    )
+    .await;
+    assert!(
+        notification_methods
+            .iter()
+            .any(|method| method == "workflows/approvalRequested")
+    );
+    assert!(
+        notification_methods
+            .iter()
+            .any(|method| method == "workflows/started")
+    );
+    assert!(
+        notification_methods
+            .iter()
+            .any(|method| method == "workflows/agentCompleted")
+    );
+    assert!(
+        notification_methods
+            .iter()
+            .any(|method| method == "workflows/completed")
+    );
+    assert!(
+        notification_methods
+            .iter()
+            .any(|method| method == "workflows/paused")
+    );
+    assert!(
+        notification_methods
+            .iter()
+            .any(|method| method == "workflows/resumed")
+    );
+    assert!(
+        notification_methods
+            .iter()
+            .any(|method| method == "workflows/stopped")
+    );
+    assert!(
+        notification_methods
+            .iter()
+            .any(|method| method == "workflows/denied")
+    );
 }
 
 #[tokio::test]
@@ -3999,7 +4303,10 @@ async fn artifacts_methods_list_read_grep_tail_delete_and_command_spill() {
     assert_eq!(command["stdoutArtifact"]["kind"], "command_stdout");
     let artifact_path = runtime
         .context_artifacts()
-        .get(&artifact_id)
+        .list_artifacts(&"app-server".to_string())
+        .unwrap()
+        .into_iter()
+        .find(|artifact| artifact.id == artifact_id)
         .unwrap()
         .store_path;
     assert!(
@@ -7366,6 +7673,80 @@ async fn request<T: serde::de::DeserializeOwned>(
         res.error
     );
     serde_json::from_value(res.result.unwrap()).unwrap()
+}
+
+async fn wait_for_workflow_status(
+    client: &LocalAppClient,
+    run_id: &str,
+    status: roder_api::dynamic_workflows::WorkflowRunStatus,
+) -> roder_api::dynamic_workflows::WorkflowRun {
+    for _ in 0..100 {
+        let result: WorkflowsGetResult = request(
+            client,
+            "workflows/get",
+            Some(
+                serde_json::to_value(WorkflowsGetParams {
+                    run_id: run_id.to_string(),
+                    include_script_body: false,
+                    include_agents: true,
+                })
+                .unwrap(),
+            ),
+        )
+        .await;
+        if result.run.status == status {
+            return result.run;
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    panic!("workflow {run_id} did not reach {status:?}");
+}
+
+fn workflow_script_fixture(name: &str) -> String {
+    format!(
+        r#"
+workflow.define({{
+  name: "{name}",
+  description: "E2E workflow fixture",
+  hostApiVersion: 1,
+  argumentsSchema: {{ type: "object" }},
+  phases: ["run"],
+  limits: {{ maxConcurrentAgents: 1, maxAgentsPerRun: 1 }}
+}}, async (ctx) => {{
+  ctx.phase.start("run");
+  const topic = ctx.run.arguments.topic || "fixture child";
+  const result = await ctx.agents.run("worker", {{
+    lane: "scout",
+    description: "run " + topic,
+    prompt: "Run " + topic,
+    output: "fixture-output:" + topic
+  }});
+  return ctx.report.markdown(result.output);
+}});
+"#
+    )
+}
+
+async fn wait_for_workflow_notification_methods(
+    notifications: &mut tokio::sync::broadcast::Receiver<roder_protocol::JsonRpcNotification>,
+    expected: &[&str],
+) -> Vec<String> {
+    let mut methods = Vec::new();
+    for _ in 0..100 {
+        while let Ok(notification) = notifications.try_recv() {
+            if notification.method.starts_with("workflows/") {
+                methods.push(notification.method);
+            }
+        }
+        if expected
+            .iter()
+            .all(|expected| methods.iter().any(|method| method == expected))
+        {
+            return methods;
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    methods
 }
 
 async fn wait_for_automation_run(

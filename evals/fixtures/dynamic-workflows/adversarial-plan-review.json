@@ -1,0 +1,30 @@
+{
+  "id": "dynamic-workflows-adversarial-plan-review",
+  "title": "Dynamic workflow adversarial plan review",
+  "prompt": "Use a dynamic workflow where two planning agents propose approaches and an adversarial reviewer rejects weak assumptions before final synthesis.",
+  "tags": ["dynamic-workflows", "plan-review", "adversarial", "offline"],
+  "workspace": {
+    "files": [
+      {
+        "path": "docs/problem.md",
+        "contents": "The design must preserve approval gates, avoid hidden writes, and keep app-server clients observable.\n"
+      }
+    ]
+  },
+  "timeoutMs": 10000,
+  "expected": {
+    "finalAnswerContains": ["hello from roder"],
+    "files": [
+      {
+        "path": "docs/problem.md",
+        "exists": true,
+        "contains": ["approval gates"]
+      }
+    ],
+    "verificationRequired": true
+  },
+  "constraints": [
+    "offline fake provider fixture",
+    "workflow should include an explicit critic lane"
+  ]
+}

@@ -1592,6 +1592,139 @@
       "featureGroup": "workflow",
       "idempotency": "idempotent",
       "sideEffect": "readOnly"
+    },
+    {
+      "method": "workflows/approve",
+      "paramsType": "WorkflowsApproveParams",
+      "resultType": "WorkflowsApproveResult",
+      "stability": "stable",
+      "featureGroup": "workflows",
+      "idempotency": "nonIdempotent",
+      "sideEffect": "localState",
+      "notifications": [
+        "workflows/approved",
+        "workflows/denied",
+        "workflows/queued",
+        "workflows/started"
+      ]
+    },
+    {
+      "method": "workflows/get",
+      "paramsType": "WorkflowsGetParams",
+      "resultType": "WorkflowsGetResult",
+      "stability": "stable",
+      "featureGroup": "workflows",
+      "idempotency": "idempotent",
+      "sideEffect": "readOnly"
+    },
+    {
+      "method": "workflows/list",
+      "paramsType": "WorkflowsListParams",
+      "resultType": "WorkflowsListResult",
+      "stability": "stable",
+      "featureGroup": "workflows",
+      "idempotency": "idempotent",
+      "sideEffect": "readOnly"
+    },
+    {
+      "method": "workflows/pause",
+      "paramsType": "WorkflowsPauseParams",
+      "resultType": "WorkflowsPauseResult",
+      "stability": "stable",
+      "featureGroup": "workflows",
+      "idempotency": "nonIdempotent",
+      "sideEffect": "localState",
+      "notifications": [
+        "workflows/paused"
+      ]
+    },
+    {
+      "method": "workflows/plan",
+      "paramsType": "WorkflowsPlanParams",
+      "resultType": "WorkflowsPlanResult",
+      "stability": "stable",
+      "featureGroup": "workflows",
+      "idempotency": "nonIdempotent",
+      "sideEffect": "localState",
+      "notifications": [
+        "workflows/drafted",
+        "workflows/approvalRequested"
+      ]
+    },
+    {
+      "method": "workflows/restartAgent",
+      "paramsType": "WorkflowsRestartAgentParams",
+      "resultType": "WorkflowsRestartAgentResult",
+      "stability": "stable",
+      "featureGroup": "workflows",
+      "idempotency": "nonIdempotent",
+      "sideEffect": "localState",
+      "notifications": [
+        "workflows/agentQueued",
+        "workflows/agentStarted",
+        "workflows/agentCompleted",
+        "workflows/agentFailed"
+      ]
+    },
+    {
+      "method": "workflows/resume",
+      "paramsType": "WorkflowsResumeParams",
+      "resultType": "WorkflowsResumeResult",
+      "stability": "stable",
+      "featureGroup": "workflows",
+      "idempotency": "nonIdempotent",
+      "sideEffect": "localState",
+      "notifications": [
+        "workflows/resumed"
+      ]
+    },
+    {
+      "method": "workflows/save",
+      "paramsType": "WorkflowsSaveParams",
+      "resultType": "WorkflowsSaveResult",
+      "stability": "stable",
+      "featureGroup": "workflows",
+      "idempotency": "nonIdempotent",
+      "sideEffect": "localState"
+    },
+    {
+      "method": "workflows/scripts/delete",
+      "paramsType": "WorkflowsScriptsDeleteParams",
+      "resultType": "WorkflowsScriptsDeleteResult",
+      "stability": "stable",
+      "featureGroup": "workflows",
+      "idempotency": "nonIdempotent",
+      "sideEffect": "localState"
+    },
+    {
+      "method": "workflows/scripts/list",
+      "paramsType": "WorkflowsScriptsListParams",
+      "resultType": "WorkflowsScriptsListResult",
+      "stability": "stable",
+      "featureGroup": "workflows",
+      "idempotency": "idempotent",
+      "sideEffect": "readOnly"
+    },
+    {
+      "method": "workflows/scripts/read",
+      "paramsType": "WorkflowsScriptsReadParams",
+      "resultType": "WorkflowsScriptsReadResult",
+      "stability": "stable",
+      "featureGroup": "workflows",
+      "idempotency": "idempotent",
+      "sideEffect": "readOnly"
+    },
+    {
+      "method": "workflows/stop",
+      "paramsType": "WorkflowsStopParams",
+      "resultType": "WorkflowsStopResult",
+      "stability": "stable",
+      "featureGroup": "workflows",
+      "idempotency": "nonIdempotent",
+      "sideEffect": "localState",
+      "notifications": [
+        "workflows/stopped"
+      ]
     }
   ]
 }

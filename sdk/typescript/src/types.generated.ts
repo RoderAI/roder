@@ -755,6 +755,15 @@ export const appServerManifest = {
       ]
     },
     {
+      "method": "providers/clear",
+      "paramsType": "ProvidersClearParams",
+      "resultType": "ProvidersClearResult",
+      "stability": "stable",
+      "featureGroup": "providers",
+      "idempotency": "nonIdempotent",
+      "sideEffect": "localState"
+    },
+    {
       "method": "providers/configure",
       "paramsType": "ProvidersConfigureParams",
       "resultType": "ProvidersConfigureResult",
@@ -1068,6 +1077,42 @@ export const appServerManifest = {
       "featureGroup": "skills",
       "idempotency": "nonIdempotent",
       "sideEffect": "localState"
+    },
+    {
+      "method": "speech/providers/list",
+      "paramsType": "SpeechProvidersListParams",
+      "resultType": "SpeechProvidersListResult",
+      "stability": "stable",
+      "featureGroup": "speech",
+      "idempotency": "idempotent",
+      "sideEffect": "readOnly"
+    },
+    {
+      "method": "speech/synthesis/providers/list",
+      "paramsType": "SpeechSynthesisProvidersListParams",
+      "resultType": "SpeechSynthesisProvidersListResult",
+      "stability": "stable",
+      "featureGroup": "speech",
+      "idempotency": "idempotent",
+      "sideEffect": "readOnly"
+    },
+    {
+      "method": "speech/synthesize",
+      "paramsType": "SpeechSynthesizeParams",
+      "resultType": "SpeechSynthesizeResult",
+      "stability": "stable",
+      "featureGroup": "speech",
+      "idempotency": "nonIdempotent",
+      "sideEffect": "externalProcess"
+    },
+    {
+      "method": "speech/transcribe",
+      "paramsType": "SpeechTranscribeParams",
+      "resultType": "SpeechTranscribeResult",
+      "stability": "stable",
+      "featureGroup": "speech",
+      "idempotency": "nonIdempotent",
+      "sideEffect": "externalProcess"
     },
     {
       "method": "tasks/cancel",
@@ -1407,6 +1452,96 @@ export const appServerManifest = {
       "sideEffect": "readOnly"
     },
     {
+      "method": "webwright/artifacts",
+      "paramsType": "WebwrightArtifactsParams",
+      "resultType": "WebwrightArtifactsResult",
+      "stability": "stable",
+      "featureGroup": "webwright",
+      "idempotency": "idempotent",
+      "sideEffect": "readOnly"
+    },
+    {
+      "method": "webwright/export",
+      "paramsType": "WebwrightExportParams",
+      "resultType": "WebwrightExportResult",
+      "stability": "stable",
+      "featureGroup": "webwright",
+      "idempotency": "nonIdempotent",
+      "sideEffect": "localState"
+    },
+    {
+      "method": "webwright/latestRun",
+      "paramsType": "WebwrightLatestRunParams",
+      "resultType": "WebwrightLatestRunResult",
+      "stability": "stable",
+      "featureGroup": "webwright",
+      "idempotency": "idempotent",
+      "sideEffect": "readOnly"
+    },
+    {
+      "method": "webwright/prepare",
+      "paramsType": "WebwrightPrepareParams",
+      "resultType": "WebwrightPrepareResult",
+      "stability": "stable",
+      "featureGroup": "webwright",
+      "idempotency": "nonIdempotent",
+      "sideEffect": "localState"
+    },
+    {
+      "method": "webwright/report",
+      "paramsType": "WebwrightReportParams",
+      "resultType": "WebwrightReportResult",
+      "stability": "stable",
+      "featureGroup": "webwright",
+      "idempotency": "idempotent",
+      "sideEffect": "readOnly"
+    },
+    {
+      "method": "webwright/rerun",
+      "paramsType": "WebwrightRerunParams",
+      "resultType": "WebwrightRerunResult",
+      "stability": "stable",
+      "featureGroup": "webwright",
+      "idempotency": "nonIdempotent",
+      "sideEffect": "externalProcess"
+    },
+    {
+      "method": "webwright/setup",
+      "paramsType": "WebwrightSetupParams",
+      "resultType": "WebwrightSetupResult",
+      "stability": "stable",
+      "featureGroup": "webwright",
+      "idempotency": "nonIdempotent",
+      "sideEffect": "externalProcess"
+    },
+    {
+      "method": "webwright/submit",
+      "paramsType": "WebwrightSubmitParams",
+      "resultType": "WebwrightSubmitResult",
+      "stability": "stable",
+      "featureGroup": "webwright",
+      "idempotency": "nonIdempotent",
+      "sideEffect": "localState"
+    },
+    {
+      "method": "webwright/verify",
+      "paramsType": "WebwrightVerifyParams",
+      "resultType": "WebwrightVerifyResult",
+      "stability": "stable",
+      "featureGroup": "webwright",
+      "idempotency": "idempotent",
+      "sideEffect": "readOnly"
+    },
+    {
+      "method": "webwright/visualJudge",
+      "paramsType": "WebwrightVisualJudgeParams",
+      "resultType": "WebwrightVisualJudgeResult",
+      "stability": "stable",
+      "featureGroup": "webwright",
+      "idempotency": "nonIdempotent",
+      "sideEffect": "localState"
+    },
+    {
       "method": "workflow/enable",
       "paramsType": "WorkflowEnableParams",
       "resultType": "WorkflowEnableResult",
@@ -1459,6 +1594,139 @@ export const appServerManifest = {
       "featureGroup": "workflow",
       "idempotency": "idempotent",
       "sideEffect": "readOnly"
+    },
+    {
+      "method": "workflows/approve",
+      "paramsType": "WorkflowsApproveParams",
+      "resultType": "WorkflowsApproveResult",
+      "stability": "stable",
+      "featureGroup": "workflows",
+      "idempotency": "nonIdempotent",
+      "sideEffect": "localState",
+      "notifications": [
+        "workflows/approved",
+        "workflows/denied",
+        "workflows/queued",
+        "workflows/started"
+      ]
+    },
+    {
+      "method": "workflows/get",
+      "paramsType": "WorkflowsGetParams",
+      "resultType": "WorkflowsGetResult",
+      "stability": "stable",
+      "featureGroup": "workflows",
+      "idempotency": "idempotent",
+      "sideEffect": "readOnly"
+    },
+    {
+      "method": "workflows/list",
+      "paramsType": "WorkflowsListParams",
+      "resultType": "WorkflowsListResult",
+      "stability": "stable",
+      "featureGroup": "workflows",
+      "idempotency": "idempotent",
+      "sideEffect": "readOnly"
+    },
+    {
+      "method": "workflows/pause",
+      "paramsType": "WorkflowsPauseParams",
+      "resultType": "WorkflowsPauseResult",
+      "stability": "stable",
+      "featureGroup": "workflows",
+      "idempotency": "nonIdempotent",
+      "sideEffect": "localState",
+      "notifications": [
+        "workflows/paused"
+      ]
+    },
+    {
+      "method": "workflows/plan",
+      "paramsType": "WorkflowsPlanParams",
+      "resultType": "WorkflowsPlanResult",
+      "stability": "stable",
+      "featureGroup": "workflows",
+      "idempotency": "nonIdempotent",
+      "sideEffect": "localState",
+      "notifications": [
+        "workflows/drafted",
+        "workflows/approvalRequested"
+      ]
+    },
+    {
+      "method": "workflows/restartAgent",
+      "paramsType": "WorkflowsRestartAgentParams",
+      "resultType": "WorkflowsRestartAgentResult",
+      "stability": "stable",
+      "featureGroup": "workflows",
+      "idempotency": "nonIdempotent",
+      "sideEffect": "localState",
+      "notifications": [
+        "workflows/agentQueued",
+        "workflows/agentStarted",
+        "workflows/agentCompleted",
+        "workflows/agentFailed"
+      ]
+    },
+    {
+      "method": "workflows/resume",
+      "paramsType": "WorkflowsResumeParams",
+      "resultType": "WorkflowsResumeResult",
+      "stability": "stable",
+      "featureGroup": "workflows",
+      "idempotency": "nonIdempotent",
+      "sideEffect": "localState",
+      "notifications": [
+        "workflows/resumed"
+      ]
+    },
+    {
+      "method": "workflows/save",
+      "paramsType": "WorkflowsSaveParams",
+      "resultType": "WorkflowsSaveResult",
+      "stability": "stable",
+      "featureGroup": "workflows",
+      "idempotency": "nonIdempotent",
+      "sideEffect": "localState"
+    },
+    {
+      "method": "workflows/scripts/delete",
+      "paramsType": "WorkflowsScriptsDeleteParams",
+      "resultType": "WorkflowsScriptsDeleteResult",
+      "stability": "stable",
+      "featureGroup": "workflows",
+      "idempotency": "nonIdempotent",
+      "sideEffect": "localState"
+    },
+    {
+      "method": "workflows/scripts/list",
+      "paramsType": "WorkflowsScriptsListParams",
+      "resultType": "WorkflowsScriptsListResult",
+      "stability": "stable",
+      "featureGroup": "workflows",
+      "idempotency": "idempotent",
+      "sideEffect": "readOnly"
+    },
+    {
+      "method": "workflows/scripts/read",
+      "paramsType": "WorkflowsScriptsReadParams",
+      "resultType": "WorkflowsScriptsReadResult",
+      "stability": "stable",
+      "featureGroup": "workflows",
+      "idempotency": "idempotent",
+      "sideEffect": "readOnly"
+    },
+    {
+      "method": "workflows/stop",
+      "paramsType": "WorkflowsStopParams",
+      "resultType": "WorkflowsStopResult",
+      "stability": "stable",
+      "featureGroup": "workflows",
+      "idempotency": "nonIdempotent",
+      "sideEffect": "localState",
+      "notifications": [
+        "workflows/stopped"
+      ]
     }
   ]
 } as const;
@@ -1549,6 +1817,7 @@ export const appServerMethods = [
   "processes/stop",
   "processes/stopAll",
   "processes/subscribe",
+  "providers/clear",
   "providers/configure",
   "providers/list",
   "providers/select",
@@ -1584,6 +1853,10 @@ export const appServerMethods = [
   "skills/read",
   "skills/setEnabled",
   "skills/setExposure",
+  "speech/providers/list",
+  "speech/synthesis/providers/list",
+  "speech/synthesize",
+  "speech/transcribe",
   "tasks/cancel",
   "tasks/get",
   "tasks/list",
@@ -1620,12 +1893,34 @@ export const appServerMethods = [
   "turn/steer",
   "turn/subagentTrace/read",
   "turn/subagentTraces/list",
+  "webwright/artifacts",
+  "webwright/export",
+  "webwright/latestRun",
+  "webwright/prepare",
+  "webwright/report",
+  "webwright/rerun",
+  "webwright/setup",
+  "webwright/submit",
+  "webwright/verify",
+  "webwright/visualJudge",
   "workflow/enable",
   "workflow/ignore",
   "workflow/preview",
   "workflow/refresh",
   "workflow/remove",
-  "workflow/scan"
+  "workflow/scan",
+  "workflows/approve",
+  "workflows/get",
+  "workflows/list",
+  "workflows/pause",
+  "workflows/plan",
+  "workflows/restartAgent",
+  "workflows/resume",
+  "workflows/save",
+  "workflows/scripts/delete",
+  "workflows/scripts/list",
+  "workflows/scripts/read",
+  "workflows/stop"
 ] as const;
 
 export type JsonRpcId = string | number | null;
