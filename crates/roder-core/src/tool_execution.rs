@@ -319,6 +319,12 @@ impl Runtime {
             return Ok(item);
         }
         ctx.effective_mode = self.effective_policy_mode_for_thread(thread_id).await;
+        let workspace_change_baseline =
+            crate::workspace_changes::WorkspaceChangeBaseline::capture_for_tool(
+                &tool_call,
+                workspace.or(runtime_config.workspace.as_deref()),
+            )
+            .await;
 
         self.emit(RoderEvent::ToolCallStarted(ToolCallStarted {
             thread_id: thread_id.clone(),
@@ -361,6 +367,14 @@ impl Runtime {
         self.emit_policy_exit_plan_request(thread_id, turn_id, &result)
             .await;
         self.emit_hunk_records(&result).await;
+        self.emit_workspace_change_observed(
+            thread_id,
+            turn_id,
+            &tool_call,
+            &result,
+            workspace_change_baseline,
+        )
+        .await;
         self.emit_media_artifacts(thread_id, turn_id, &result).await;
         self.emit_task_ledger_update(thread_id, turn_id, &result)
             .await;
@@ -496,6 +510,32 @@ impl Runtime {
             }))
             .await;
         }
+    }
+
+    async fn emit_workspace_change_observed(
+        &self,
+        thread_id: &ThreadId,
+        turn_id: &TurnId,
+        call: &ToolCall,
+        result: &ToolResult,
+        baseline: Option<crate::workspace_changes::WorkspaceChangeBaseline>,
+    ) {
+        if result.data.get("hunks").is_some() {
+            return;
+        }
+        let Some(baseline) = baseline else {
+            return;
+        };
+        let Some(change) = baseline.observed_after(thread_id, turn_id, call).await else {
+            return;
+        };
+        self.emit(RoderEvent::WorkspaceChangeObserved(
+            WorkspaceChangeObserved {
+                change,
+                timestamp: OffsetDateTime::now_utc(),
+            },
+        ))
+        .await;
     }
 
     async fn emit_media_artifacts(

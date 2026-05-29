@@ -451,6 +451,12 @@ pub(crate) fn protocol_notifications_for_event(event: &RoderEvent) -> Vec<JsonRp
         RoderEvent::HunkRecorded(event) => {
             vec![protocol_notification("hunk/recorded", event.clone())]
         }
+        RoderEvent::WorkspaceChangeObserved(event) => {
+            vec![protocol_notification(
+                "workspace/changeObserved",
+                event.clone(),
+            )]
+        }
         RoderEvent::HunkRollbackRequested(event) => {
             vec![protocol_notification(
                 "hunk/rollbackRequested",

@@ -38,6 +38,7 @@ pub mod trace;
 pub mod transcript;
 pub mod tui_status;
 pub mod workflow;
+pub mod workspace_changes;
 
 pub use artifacts::*;
 pub use automations::*;
@@ -78,3 +79,4 @@ pub use trace::*;
 pub use transcript::*;
 pub use tui_status::*;
 pub use workflow::*;
+pub use workspace_changes::*;
