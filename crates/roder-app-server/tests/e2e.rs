@@ -7713,6 +7713,7 @@ async fn git_changes_methods_report_full_branch_delta() {
     run_git(&workspace, &["add", "staged.txt"]);
     std::fs::write(workspace.join("dirty.txt"), "dirty\n").unwrap();
     std::fs::write(workspace.join("untracked.txt"), "untracked\n").unwrap();
+    std::fs::write(workspace.join("untracked.jpg"), [0xff, 0xd8, 0xff, 0x00]).unwrap();
 
     let runtime = Arc::new(
         Runtime::new(
@@ -7744,7 +7745,16 @@ async fn git_changes_methods_report_full_branch_delta() {
     assert!(paths.contains(&"staged.txt"));
     assert!(paths.contains(&"dirty.txt"));
     assert!(paths.contains(&"untracked.txt"));
-    assert_eq!(list["totals"]["files"], 4);
+    assert!(paths.contains(&"untracked.jpg"));
+    assert_eq!(list["totals"]["files"], 5);
+    let binary_file = list["files"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|file| file["path"] == "untracked.jpg")
+        .unwrap();
+    assert_eq!(binary_file["binary"], true);
+    assert_eq!(binary_file["additions"], 0);
 
     let page: serde_json::Value = request(
         &client,
@@ -7775,6 +7785,25 @@ async fn git_changes_methods_report_full_branch_delta() {
     assert_eq!(paged["offset"], 0);
     assert_eq!(paged["nextOffset"], 2);
     assert!(paged["totalLines"].as_u64().unwrap() > 2);
+
+    let binary_page: serde_json::Value = request(
+        &client,
+        "git/changes/read",
+        Some(serde_json::json!({
+            "workspace": workspace.display().to_string(),
+            "path": "untracked.jpg",
+            "offset": 0,
+            "limit": 20
+        })),
+    )
+    .await;
+    assert!(
+        binary_page["patch"]
+            .as_str()
+            .unwrap()
+            .contains("Binary files /dev/null and b/untracked.jpg differ")
+    );
+    assert_eq!(binary_page["nextOffset"], serde_json::Value::Null);
 
     let invalid_path = request_error(
         &client,

@@ -206,15 +206,30 @@ fn apply_untracked_counts(
         .filter(|file| matches!(file.status, GitChangeStatus::Untracked))
     {
         let path = repo.root.join(&file.path);
-        let text = std::fs::read_to_string(&path).unwrap_or_default();
-        file.additions = text.lines().count() as u32;
+        match untracked_file_text(&path) {
+            Ok(Some(text)) => {
+                file.binary = false;
+                file.additions = text.lines().count() as u32;
+            }
+            Ok(None) => {
+                file.binary = true;
+                file.additions = 0;
+            }
+            Err(_) => {
+                file.additions = 0;
+            }
+        }
     }
     Ok(())
 }
 
 fn untracked_patch(repo: &GitRepo, path: &str) -> Result<String, JsonRpcError> {
     let full_path = repo.root.join(path);
-    let text = std::fs::read_to_string(&full_path).map_err(internal_error)?;
+    let Some(text) = untracked_file_text(&full_path).map_err(internal_error)? else {
+        return Ok(format!(
+            "diff --git a/{path} b/{path}\nnew file mode 100644\nBinary files /dev/null and b/{path} differ\n"
+        ));
+    };
     let mut patch = format!(
         "diff --git a/{path} b/{path}\nnew file mode 100644\n--- /dev/null\n+++ b/{path}\n"
     );
@@ -225,6 +240,11 @@ fn untracked_patch(repo: &GitRepo, path: &str) -> Result<String, JsonRpcError> {
         patch.push('\n');
     }
     Ok(patch)
+}
+
+fn untracked_file_text(path: &Path) -> std::io::Result<Option<String>> {
+    let bytes = std::fs::read(path)?;
+    Ok(String::from_utf8(bytes).ok())
 }
 
 struct GitRepo {
