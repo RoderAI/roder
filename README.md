@@ -257,6 +257,8 @@ OpenAI hosted web search is enabled by default. External web search provider set
 
 xAI Grok and SuperGrok provider setup is documented in [`docs/roder-xai-grok-providers.md`](./docs/roder-xai-grok-providers.md). Use `xai/grok-4.3` with `XAI_API_KEY` for direct xAI API-key auth, or select `supergrok/grok-4.3` in the TUI to start SuperGrok OAuth.
 
+OpenRouter provider setup is documented in [`docs/roder-openrouter-provider.md`](./docs/roder-openrouter-provider.md). Use `openrouter/x-ai/grok-build-0.1` with `OPENROUTER_API_KEY`; direct xAI uses `grok-build-0.1`, while OpenRouter uses the `x-ai/grok-build-0.1` slug.
+
 OpenCode provider setup is documented in [`docs/roder-opencode-providers.md`](./docs/roder-opencode-providers.md). Use `opencode/<model>` for OpenCode Zen models or `opencode-go/<model>` for OpenCode Go models, with API keys from [`https://opencode.ai/auth`](https://opencode.ai/auth).
 
 Poolside provider setup is documented in [`docs/roder-poolside-providers.md`](./docs/roder-poolside-providers.md). Use `poolside/laguna-m.1` or `poolside/laguna-xs.2` with `POOLSIDE_API_KEY` or a key stored from the provider menu; API keys are managed at [`https://platform.poolside.ai/api-keys`](https://platform.poolside.ai/api-keys).

@@ -1092,25 +1092,46 @@ mod tests {
             active_provider: "mock".to_string(),
             active_model: "mock-small".to_string(),
             active_reasoning: "medium".to_string(),
-            providers: vec![ProviderDescriptor {
-                id: "mock".to_string(),
-                name: "Mock".to_string(),
-                description: Some("Local".to_string()),
-                auth_type: ProviderAuthType::None,
-                auth_label: None,
-                authenticated: true,
-                auth_detail: None,
-                recommended: false,
-                sort_order: 0,
-                capabilities: InferenceCapabilities::text_only(),
-                models: vec![ModelDescriptor {
-                    id: "mock-small".to_string(),
-                    name: "Mock Small".to_string(),
-                    context_window: None,
-                    default_reasoning: Some("medium".to_string()),
-                    supported_reasoning: Vec::new(),
-                }],
-            }],
+            providers: vec![
+                ProviderDescriptor {
+                    id: "mock".to_string(),
+                    name: "Mock".to_string(),
+                    description: Some("Local".to_string()),
+                    auth_type: ProviderAuthType::None,
+                    auth_label: None,
+                    authenticated: true,
+                    auth_detail: None,
+                    recommended: false,
+                    sort_order: 0,
+                    capabilities: InferenceCapabilities::text_only(),
+                    models: vec![ModelDescriptor {
+                        id: "mock-small".to_string(),
+                        name: "Mock Small".to_string(),
+                        context_window: None,
+                        default_reasoning: Some("medium".to_string()),
+                        supported_reasoning: Vec::new(),
+                    }],
+                },
+                ProviderDescriptor {
+                    id: "openrouter".to_string(),
+                    name: "OpenRouter".to_string(),
+                    description: Some("Router".to_string()),
+                    auth_type: ProviderAuthType::ApiKey,
+                    auth_label: Some("OPENROUTER_API_KEY".to_string()),
+                    authenticated: false,
+                    auth_detail: None,
+                    recommended: true,
+                    sort_order: 18,
+                    capabilities: InferenceCapabilities::text_only(),
+                    models: vec![ModelDescriptor {
+                        id: "x-ai/grok-build-0.1".to_string(),
+                        name: "Grok Build 0.1".to_string(),
+                        context_window: Some(256_000),
+                        default_reasoning: Some("low".to_string()),
+                        supported_reasoning: Vec::new(),
+                    }],
+                },
+            ],
         });
 
         assert_eq!(
@@ -1119,6 +1140,16 @@ mod tests {
                 provider: "mock".to_string(),
                 model: "mock-small".to_string()
             }
+        );
+        assert!(
+            source.entries().iter().any(|entry| {
+                entry.action
+                    == PaletteAction::SwitchModel {
+                        provider: "openrouter".to_string(),
+                        model: "x-ai/grok-build-0.1".to_string(),
+                    }
+            }),
+            "slash-bearing OpenRouter model id should stay in the model field"
         );
     }
 

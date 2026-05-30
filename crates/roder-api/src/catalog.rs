@@ -18,6 +18,7 @@ pub const PROVIDER_XAI: &str = "xai";
 pub const PROVIDER_SUPERGROK: &str = "supergrok";
 pub const PROVIDER_OPENCODE: &str = "opencode";
 pub const PROVIDER_OPENCODE_GO: &str = "opencode-go";
+pub const PROVIDER_OPENROUTER: &str = "openrouter";
 pub const PROVIDER_POOLSIDE: &str = "poolside";
 pub const PROVIDER_CURSOR: &str = "cursor";
 pub const PROVIDER_XIAOMI_MIMO: &str = "xiaomi-mimo";
@@ -30,6 +31,7 @@ pub const PROVIDER_KIND_ANTHROPIC: &str = "anthropic";
 pub const PROVIDER_KIND_GEMINI: &str = "gemini";
 pub const PROVIDER_KIND_XAI: &str = "xai";
 pub const PROVIDER_KIND_OPENCODE: &str = "opencode";
+pub const PROVIDER_KIND_OPENROUTER: &str = "openrouter";
 pub const PROVIDER_KIND_POOLSIDE: &str = "poolside";
 pub const PROVIDER_KIND_CURSOR: &str = "cursor";
 pub const PROVIDER_KIND_XIAOMI_MIMO: &str = PROVIDER_KIND_CHAT_COMPLETIONS;
@@ -261,6 +263,25 @@ pub const XAI_NO_REASONING: &[ReasoningOption] = &[ReasoningOption {
     description: "No xAI reasoning effort",
 }];
 
+pub const OPENROUTER_REASONING: &[ReasoningOption] = &[
+    ReasoningOption {
+        effort: REASONING_NONE,
+        description: "Disable OpenRouter reasoning controls",
+    },
+    ReasoningOption {
+        effort: REASONING_LOW,
+        description: "Low OpenRouter reasoning effort",
+    },
+    ReasoningOption {
+        effort: REASONING_MEDIUM,
+        description: "Medium OpenRouter reasoning effort",
+    },
+    ReasoningOption {
+        effort: REASONING_HIGH,
+        description: "High OpenRouter reasoning effort",
+    },
+];
+
 pub const BUILT_IN_PROVIDERS: &[ProviderCatalogEntry] = &[
     ProviderCatalogEntry {
         id: PROVIDER_MOCK,
@@ -358,6 +379,17 @@ pub const BUILT_IN_PROVIDERS: &[ProviderCatalogEntry] = &[
         base_url: Some("https://opencode.ai/zen/go/v1"),
         env_key: Some("OPENCODE_GO_API_KEY"),
         env_aliases: &["RODER_OPENCODE_GO_API_KEY", "OPENCODE_API_KEY"],
+        requires_auth: true,
+        supports_websockets: false,
+    },
+    ProviderCatalogEntry {
+        id: PROVIDER_OPENROUTER,
+        name: "OpenRouter",
+        kind: PROVIDER_KIND_OPENROUTER,
+        default_model: "x-ai/grok-build-0.1",
+        base_url: Some("https://openrouter.ai/api/v1"),
+        env_key: Some("OPENROUTER_API_KEY"),
+        env_aliases: &["RODER_OPENROUTER_API_KEY"],
         requires_auth: true,
         supports_websockets: false,
     },
@@ -668,6 +700,23 @@ pub const BUILT_IN_MODELS: &[ModelCatalogEntry] = &[
         REASONING_NONE,
         &[],
     ),
+    ModelCatalogEntry {
+        id: "x-ai/grok-build-0.1",
+        display_name: "Grok Build 0.1",
+        description: "OpenRouter route for xAI's fast coding model for agentic software engineering workflows.",
+        provider: PROVIDER_OPENROUTER,
+        default_reasoning: REASONING_LOW,
+        supported_reasoning: OPENROUTER_REASONING,
+        context_window: 256_000,
+        max_context_window: 256_000,
+        auto_compact_token_limit: 230_400,
+        supports_compaction: true,
+        supports_images: true,
+        supports_tools: true,
+        supports_structured: true,
+        edit_tool: Some(EDIT_TOOL_PATCH),
+        hidden: false,
+    },
     poolside_model(
         "poolside/laguna-m.1",
         "Laguna M.1",
@@ -1079,6 +1128,7 @@ pub fn provider_family_for_provider(provider: &str) -> ProviderFamily {
         PROVIDER_GEMINI => ProviderFamily::Gemini,
         PROVIDER_XAI | PROVIDER_SUPERGROK => ProviderFamily::Xai,
         PROVIDER_OPENCODE | PROVIDER_OPENCODE_GO => ProviderFamily::Opencode,
+        PROVIDER_OPENROUTER => ProviderFamily::OpenAi,
         PROVIDER_POOLSIDE => ProviderFamily::Poolside,
         PROVIDER_CURSOR => ProviderFamily::Cursor,
         PROVIDER_XIAOMI_MIMO | PROVIDER_XIAOMI_MIMO_TOKEN_PLAN => ProviderFamily::OpenAi,
@@ -1134,6 +1184,7 @@ pub fn normalize_provider_id(provider: &str) -> String {
         }
         "opencode" => PROVIDER_OPENCODE.to_string(),
         "go" | "opencode_go" | "opencode-go" => PROVIDER_OPENCODE_GO.to_string(),
+        "openrouter" => PROVIDER_OPENROUTER.to_string(),
         "laguna" | "poolside" => PROVIDER_POOLSIDE.to_string(),
         "composer" | "cursor-composer" => PROVIDER_CURSOR.to_string(),
         provider => provider.to_string(),
@@ -1183,6 +1234,7 @@ mod tests {
                 "supergrok",
                 "opencode",
                 "opencode-go",
+                "openrouter",
                 "poolside",
                 "cursor",
                 "xiaomi-mimo",
@@ -1261,6 +1313,7 @@ mod tests {
                 "qwen3.6-plus",
                 "glm-5.1",
                 "deepseek-v4-flash",
+                "x-ai/grok-build-0.1",
                 "poolside/laguna-m.1",
                 "poolside/laguna-xs.2",
                 "mimo-v2.5-pro",
@@ -1293,6 +1346,7 @@ mod tests {
         assert_eq!(models_for_provider(PROVIDER_SUPERGROK, false).len(), 4);
         assert_eq!(models_for_provider(PROVIDER_OPENCODE, false).len(), 6);
         assert_eq!(models_for_provider(PROVIDER_OPENCODE_GO, false).len(), 4);
+        assert_eq!(models_for_provider(PROVIDER_OPENROUTER, false).len(), 1);
         assert_eq!(models_for_provider(PROVIDER_POOLSIDE, false).len(), 2);
         assert_eq!(models_for_provider(PROVIDER_CURSOR, false).len(), 6);
         assert_eq!(models_for_provider(PROVIDER_XIAOMI_MIMO, false).len(), 5);
