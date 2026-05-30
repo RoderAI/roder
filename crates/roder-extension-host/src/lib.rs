@@ -5,9 +5,9 @@ use futures::stream;
 use roder_api::capabilities::CapabilityRequest;
 use roder_api::catalog::{
     PROVIDER_ANTHROPIC, PROVIDER_CODEX, PROVIDER_CURSOR, PROVIDER_GEMINI, PROVIDER_MOCK,
-    PROVIDER_OPENAI, PROVIDER_OPENCODE, PROVIDER_OPENCODE_GO, PROVIDER_POOLSIDE,
-    PROVIDER_SUPERGROK, PROVIDER_XAI, PROVIDER_XIAOMI_MIMO, PROVIDER_XIAOMI_MIMO_TOKEN_PLAN,
-    models_for_codex, models_for_provider,
+    PROVIDER_OPENAI, PROVIDER_OPENCODE, PROVIDER_OPENCODE_GO, PROVIDER_OPENROUTER,
+    PROVIDER_POOLSIDE, PROVIDER_SUPERGROK, PROVIDER_XAI, PROVIDER_XIAOMI_MIMO,
+    PROVIDER_XIAOMI_MIMO_TOKEN_PLAN, models_for_codex, models_for_provider,
 };
 use roder_api::extension::{
     ExtensionManifest, ExtensionRegistry, ExtensionRegistryBuilder, ProvidedService, RoderExtension,
@@ -27,6 +27,7 @@ use roder_ext_openai_embeddings::OpenAiEmbeddingsExtension;
 use roder_ext_openai_responses::{OpenAiResponsesEngine, OpenAiResponsesExtension};
 use roder_ext_openai_speech::OpenAiSpeechExtension;
 use roder_ext_opencode::{OpenCodeConfig, OpenCodeExtension};
+use roder_ext_openrouter::{OpenRouterConfig, OpenRouterExtension};
 use roder_ext_poolside::{PoolsideConfig, PoolsideExtension};
 use roder_ext_postgres_session::{
     PostgresSessionConfig, PostgresSessionExtension, redact_database_url,
@@ -74,6 +75,10 @@ pub struct DefaultRegistryConfig {
     pub opencode_go_api_key: Option<String>,
     pub opencode_go_base_url: Option<String>,
     pub opencode_go_project_id: Option<String>,
+    pub openrouter_api_key: Option<String>,
+    pub openrouter_base_url: Option<String>,
+    pub openrouter_http_referer: Option<String>,
+    pub openrouter_app_title: Option<String>,
     pub poolside_api_key: Option<String>,
     pub poolside_base_url: Option<String>,
     pub cursor_api_key: Option<String>,
@@ -117,6 +122,10 @@ impl Default for DefaultRegistryConfig {
             opencode_go_api_key: None,
             opencode_go_base_url: None,
             opencode_go_project_id: None,
+            openrouter_api_key: None,
+            openrouter_base_url: None,
+            openrouter_http_referer: None,
+            openrouter_app_title: None,
             poolside_api_key: None,
             poolside_base_url: None,
             cursor_api_key: None,
@@ -223,6 +232,12 @@ pub fn build_default_registry(config: DefaultRegistryConfig) -> anyhow::Result<E
             project_id: config.opencode_go_project_id,
         },
     ))?;
+    builder.install(OpenRouterExtension::new(OpenRouterConfig {
+        api_key: config.openrouter_api_key,
+        base_url: config.openrouter_base_url,
+        http_referer: config.openrouter_http_referer,
+        app_title: config.openrouter_app_title,
+    }))?;
     builder.install(PoolsideExtension::new(PoolsideConfig {
         api_key: config.poolside_api_key,
         base_url: config.poolside_base_url,
@@ -345,6 +360,7 @@ fn known_provider_id(id: &str) -> bool {
             | PROVIDER_SUPERGROK
             | PROVIDER_OPENCODE
             | PROVIDER_OPENCODE_GO
+            | PROVIDER_OPENROUTER
             | PROVIDER_POOLSIDE
             | PROVIDER_CURSOR
             | PROVIDER_XIAOMI_MIMO
@@ -797,6 +813,10 @@ mod tests {
             opencode_go_api_key: Some("opencode-go".to_string()),
             opencode_go_base_url: None,
             opencode_go_project_id: None,
+            openrouter_api_key: Some("openrouter".to_string()),
+            openrouter_base_url: None,
+            openrouter_http_referer: None,
+            openrouter_app_title: None,
             poolside_api_key: Some("poolside".to_string()),
             poolside_base_url: None,
             cursor_api_key: Some("cursor".to_string()),
@@ -833,6 +853,7 @@ mod tests {
             PROVIDER_XAI,
             PROVIDER_OPENCODE,
             PROVIDER_OPENCODE_GO,
+            PROVIDER_OPENROUTER,
             PROVIDER_POOLSIDE,
             PROVIDER_CURSOR,
             PROVIDER_XIAOMI_MIMO,

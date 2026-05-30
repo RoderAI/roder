@@ -139,6 +139,8 @@ pub struct ProviderConfig {
     pub base_url: Option<String>,
     pub project_id: Option<String>,
     pub project_id_env: Option<String>,
+    pub http_referer: Option<String>,
+    pub app_title: Option<String>,
 }
 
 #[derive(Debug, Default, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -1361,6 +1363,37 @@ mod tests {
         assert!(encoded.contains("model = \"gpt-5.5\""));
         assert!(encoded.contains("[providers.openai]"));
         assert!(encoded.contains("api_key = \"key\""));
+    }
+
+    #[test]
+    fn deserializes_openrouter_provider_attribution_config() {
+        let config: Config = toml::from_str(
+            r#"
+            provider = "openrouter"
+            model = "x-ai/grok-build-0.1"
+
+            [providers.openrouter]
+            api_key_env = "OPENROUTER_API_KEY"
+            base_url = "https://openrouter.ai/api/v1"
+            http_referer = "https://example.com"
+            app_title = "Roder"
+            "#,
+        )
+        .unwrap();
+
+        let provider = config.providers.get("openrouter").unwrap();
+        assert_eq!(config.provider.as_deref(), Some("openrouter"));
+        assert_eq!(config.model.as_deref(), Some("x-ai/grok-build-0.1"));
+        assert_eq!(provider.api_key_env.as_deref(), Some("OPENROUTER_API_KEY"));
+        assert_eq!(
+            provider.base_url.as_deref(),
+            Some("https://openrouter.ai/api/v1")
+        );
+        assert_eq!(
+            provider.http_referer.as_deref(),
+            Some("https://example.com")
+        );
+        assert_eq!(provider.app_title.as_deref(), Some("Roder"));
     }
 
     #[test]

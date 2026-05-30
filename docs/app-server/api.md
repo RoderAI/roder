@@ -649,6 +649,9 @@ Behavior:
 
 - Providers are sorted by `sortOrder`, then name.
 - OAuth providers report `authenticated` by checking the relevant token store.
+- OpenRouter is exposed as provider `openrouter`; its built-in fallback model
+  id is `x-ai/grok-build-0.1`, so clients should keep provider and model fields
+  separate instead of splitting model ids on every slash.
 - Model listing failures for an individual provider are treated as an empty
   model list.
 
@@ -677,6 +680,8 @@ Response:
 Behavior:
 
 - Requires the provider to be registered in the runtime inference registry.
+- OpenRouter API keys are configured with provider `openrouter`; optional
+  attribution headers are read from config or environment, not from this method.
 - Writes the key to the user config only when the app-server was created with
   user-config persistence enabled.
 

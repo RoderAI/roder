@@ -80,6 +80,7 @@ roder-ext-openai-responses = { path = "crates/roder-ext-openai-responses" }
 roder-ext-openai-chat-completions = { path = "crates/roder-ext-openai-chat-completions" }
 roder-ext-openai-embeddings = { path = "crates/roder-ext-openai-embeddings" }
 roder-ext-openai-speech = { path = "crates/roder-ext-openai-speech" }
+roder-ext-openrouter = { path = "crates/roder-ext-openrouter" }
 roder-ext-google-speech = { path = "crates/roder-ext-google-speech" }
 roder-ext-opencode = { path = "crates/roder-ext-opencode" }
 roder-ext-postgres-session = { path = "crates/roder-ext-postgres-session" }

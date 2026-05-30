@@ -1,0 +1,29 @@
+[package]
+name = "roder-ext-openrouter"
+version.workspace = true
+edition.workspace = true
+
+[package.metadata.roder.distribution]
+id = "openrouter"
+category = "inference-engine"
+display_name = "OpenRouter"
+description = "OpenRouter API-key inference provider."
+default_in_profiles = ["full", "research-headless"]
+required_env = []
+optional_env = ["OPENROUTER_API_KEY", "RODER_OPENROUTER_API_KEY", "OPENROUTER_BASE_URL", "RODER_OPENROUTER_BASE_URL", "OPENROUTER_HTTP_REFERER", "RODER_OPENROUTER_HTTP_REFERER", "OPENROUTER_APP_TITLE", "RODER_OPENROUTER_APP_TITLE", "RODER_MODELS_CACHE_PATH", "RODER_MODELS_CACHE_TTL_SECONDS", "RODER_MODELS_REFRESH"]
+conflicts_with = []
+required_capabilities = ["network.openrouter.ai"]
+extension_path = "::OpenRouterExtension::new"
+docs_url = "https://openrouter.ai/docs/quickstart"
+
+[dependencies]
+anyhow.workspace = true
+async-trait.workspace = true
+roder-api.workspace = true
+roder-ext-openai-responses.workspace = true
+semver.workspace = true
+
+[dev-dependencies]
+reqwest = { workspace = true, features = ["json"] }
+serde_json.workspace = true
+tokio.workspace = true

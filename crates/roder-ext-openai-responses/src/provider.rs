@@ -1,4 +1,6 @@
-use roder_api::catalog::{PROVIDER_OPENAI, PROVIDER_SUPERGROK, PROVIDER_XAI, models_for_provider};
+use roder_api::catalog::{
+    PROVIDER_OPENAI, PROVIDER_OPENROUTER, PROVIDER_SUPERGROK, PROVIDER_XAI, models_for_provider,
+};
 use roder_api::extension::InferenceEngineId;
 use roder_api::inference::CompactionProgress;
 use roder_api::inference::{
@@ -32,9 +34,16 @@ pub struct OpenAiResponsesEngine {
     display_name: String,
     base_url: String,
     headers: Vec<(String, String)>,
-    xai_mode: bool,
+    profile: ResponsesProviderProfile,
     discover_models: bool,
     refresh_in_flight: Arc<AtomicBool>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ResponsesProviderProfile {
+    OpenAi,
+    Xai,
+    OpenRouter,
 }
 
 impl OpenAiResponsesEngine {
@@ -58,9 +67,14 @@ impl OpenAiResponsesEngine {
         headers: Vec<(String, String)>,
     ) -> Self {
         let provider_id = provider_id.into();
-        let xai_mode = provider_id == PROVIDER_XAI || provider_id == PROVIDER_SUPERGROK;
+        let profile = match provider_id.as_str() {
+            PROVIDER_XAI | PROVIDER_SUPERGROK => ResponsesProviderProfile::Xai,
+            PROVIDER_OPENROUTER => ResponsesProviderProfile::OpenRouter,
+            _ => ResponsesProviderProfile::OpenAi,
+        };
         let display_name = match provider_id.as_str() {
             PROVIDER_XAI => "xAI".to_string(),
+            PROVIDER_OPENROUTER => "OpenRouter".to_string(),
             _ => "OpenAI".to_string(),
         };
         Self {
@@ -69,8 +83,25 @@ impl OpenAiResponsesEngine {
             display_name,
             base_url: base_url.into().trim_end_matches('/').to_string(),
             headers,
-            xai_mode,
+            profile,
             discover_models: false,
+            refresh_in_flight: Arc::new(AtomicBool::new(false)),
+        }
+    }
+
+    pub fn new_openrouter_provider(
+        api_key: Option<String>,
+        base_url: impl Into<String>,
+        headers: Vec<(String, String)>,
+    ) -> Self {
+        Self {
+            api_key,
+            provider_id: PROVIDER_OPENROUTER.to_string(),
+            display_name: "OpenRouter".to_string(),
+            base_url: base_url.into().trim_end_matches('/').to_string(),
+            headers,
+            profile: ResponsesProviderProfile::OpenRouter,
+            discover_models: true,
             refresh_in_flight: Arc::new(AtomicBool::new(false)),
         }
     }
@@ -87,7 +118,7 @@ impl OpenAiResponsesEngine {
             display_name: display_name.into(),
             base_url: base_url.into().trim_end_matches('/').to_string(),
             headers: Vec::new(),
-            xai_mode: false,
+            profile: ResponsesProviderProfile::OpenAi,
             discover_models: true,
             refresh_in_flight: Arc::new(AtomicBool::new(false)),
         }
@@ -124,19 +155,22 @@ impl OpenAiResponsesEngine {
         options: RequestMappingOptions<'_>,
     ) -> (Value, ResponsesToolNameMap) {
         let (tools, tool_name_map) = responses_tools(request);
+        let input = response_input_items_with_options(request, &tool_name_map, options.profile);
         let mut body = json!({
             "model": request.model.model,
-            "input": response_input_items(request, &tool_name_map),
+            "input": input,
             "store": false,
             "stream": true,
         });
-        if let Some(system) = request
-            .instructions
-            .system
-            .as_deref()
-            .filter(|s| !s.is_empty())
-        {
-            body["instructions"] = json!(system);
+        if options.profile != ResponsesProviderProfile::OpenRouter {
+            if let Some(system) = request
+                .instructions
+                .system
+                .as_deref()
+                .filter(|s| !s.is_empty())
+            {
+                body["instructions"] = json!(system);
+            }
         }
         if let Some(max_tokens) = request.output.max_tokens {
             body["max_output_tokens"] = json!(max_tokens);
@@ -150,24 +184,36 @@ impl OpenAiResponsesEngine {
         if let Some(format) = request.output.response_format.as_ref() {
             body["text"] = json!({ "format": format });
         }
-        if request.reasoning.enabled
-            && (!options.xai_mode || xai_supports_reasoning(&request.model.model))
-        {
-            if options.xai_mode {
-                if let Some(level) = request
-                    .reasoning
-                    .level
-                    .as_deref()
-                    .filter(|level| *level != "none")
-                {
-                    body["reasoning"] = json!({ "effort": level });
+        if request.reasoning.enabled {
+            match options.profile {
+                ResponsesProviderProfile::Xai if xai_supports_reasoning(&request.model.model) => {
+                    if let Some(level) = request
+                        .reasoning
+                        .level
+                        .as_deref()
+                        .filter(|level| *level != "none")
+                    {
+                        body["reasoning"] = json!({ "effort": level });
+                    }
                 }
-            } else {
-                body["reasoning"] = match request.reasoning.level.as_deref() {
-                    Some(level) => json!({ "effort": level, "summary": "auto" }),
-                    None => json!({ "summary": "auto" }),
-                };
-                body["include"] = json!(["reasoning.encrypted_content"]);
+                ResponsesProviderProfile::OpenRouter => {
+                    if let Some(level) = request
+                        .reasoning
+                        .level
+                        .as_deref()
+                        .filter(|level| *level != "none")
+                    {
+                        body["reasoning"] = json!({ "effort": level });
+                    }
+                }
+                ResponsesProviderProfile::OpenAi => {
+                    body["reasoning"] = match request.reasoning.level.as_deref() {
+                        Some(level) => json!({ "effort": level, "summary": "auto" }),
+                        None => json!({ "summary": "auto" }),
+                    };
+                    body["include"] = json!(["reasoning.encrypted_content"]);
+                }
+                ResponsesProviderProfile::Xai => {}
             }
         }
         if !tools.is_empty() {
@@ -193,7 +239,7 @@ impl OpenAiResponsesEngine {
                     json!(request.runtime.parallel_tool_calls.unwrap_or(true));
             }
         }
-        let prompt_cache_key = if options.xai_mode {
+        let prompt_cache_key = if options.profile == ResponsesProviderProfile::Xai {
             options.thread_id.filter(|thread_id| !thread_id.is_empty())
         } else {
             request.runtime.prompt_cache_key.as_deref()
@@ -213,10 +259,19 @@ impl OpenAiResponsesEngine {
     }
 }
 
-#[derive(Debug, Clone, Copy, Default)]
+#[derive(Debug, Clone, Copy)]
 struct RequestMappingOptions<'a> {
-    xai_mode: bool,
+    profile: ResponsesProviderProfile,
     thread_id: Option<&'a str>,
+}
+
+impl Default for RequestMappingOptions<'_> {
+    fn default() -> Self {
+        Self {
+            profile: ResponsesProviderProfile::OpenAi,
+            thread_id: None,
+        }
+    }
 }
 
 #[derive(Debug, Default)]
@@ -264,6 +319,8 @@ struct ModelEntry {
     id: String,
     #[serde(default)]
     name: Option<String>,
+    #[serde(default)]
+    context_length: Option<u32>,
 }
 
 #[derive(Debug, Default, Serialize, Deserialize)]
@@ -339,7 +396,7 @@ fn models_from_response(body: ModelsResponse) -> Vec<ModelDescriptor> {
             (!id.is_empty()).then(|| ModelDescriptor {
                 id: id.to_string(),
                 name: model.name.unwrap_or_else(|| id.to_string()),
-                context_window: None,
+                context_window: model.context_length,
                 default_reasoning: None,
                 supported_reasoning: Vec::new(),
             })
@@ -527,6 +584,15 @@ impl InferenceEngine for OpenAiResponsesEngine {
                 recommended: false,
                 sort_order: 50,
             },
+            PROVIDER_OPENROUTER => InferenceProviderMetadata {
+                name: "OpenRouter".to_string(),
+                description: Some("OpenRouter API key provider for routed models".to_string()),
+                auth_type: ProviderAuthType::ApiKey,
+                auth_label: Some("OPENROUTER_API_KEY".to_string()),
+                auth_configured: Some(self.api_key.is_some()),
+                recommended: true,
+                sort_order: 18,
+            },
             _ => InferenceProviderMetadata {
                 name: self.display_name.clone(),
                 description: Some(format!("{} OpenAI-compatible provider", self.display_name)),
@@ -576,7 +642,7 @@ impl InferenceEngine for OpenAiResponsesEngine {
         let (body, tool_name_map) = Self::map_request_with_options(
             &request,
             RequestMappingOptions {
-                xai_mode: self.xai_mode,
+                profile: self.profile,
                 thread_id: Some(_ctx.thread_id),
             },
         );
@@ -584,17 +650,17 @@ impl InferenceEngine for OpenAiResponsesEngine {
             &self.base_url,
             api_key,
             &self.headers,
-            self.xai_mode.then_some(_ctx.thread_id),
+            (self.profile == ResponsesProviderProfile::Xai).then_some(_ctx.thread_id),
             &body,
             request.runtime.reliability.as_ref(),
         )
         .await
-        .map_err(|err| {
-            if self.xai_mode {
-                anyhow::anyhow!("xAI Responses error: {err}")
-            } else {
-                err
+        .map_err(|err| match self.profile {
+            ResponsesProviderProfile::Xai => anyhow::anyhow!("xAI Responses error: {err}"),
+            ResponsesProviderProfile::OpenRouter => {
+                anyhow::anyhow!("{}", openrouter_error_message(&err.to_string()))
             }
+            ResponsesProviderProfile::OpenAi => err,
         })?;
         Ok(stream_responses_sse(
             response.response,
@@ -735,6 +801,50 @@ fn responses_stream_idle_timeout() -> Duration {
         .filter(|millis| *millis > 0)
         .map(Duration::from_millis)
         .unwrap_or(DEFAULT_RESPONSES_STREAM_IDLE_TIMEOUT)
+}
+
+fn openrouter_error_message(error: &str) -> String {
+    let lower = error.to_ascii_lowercase();
+    let detail = error_body_excerpt(error);
+    if lower.contains("401") || lower.contains("unauthorized") {
+        return format!(
+            "OpenRouter auth failed: {detail}. Check OPENROUTER_API_KEY or configure the provider API key."
+        );
+    }
+    if lower.contains("402")
+        || lower.contains("insufficient")
+        || lower.contains("credit")
+        || lower.contains("balance")
+    {
+        return format!("OpenRouter credits or quota check failed: {detail}.");
+    }
+    if lower.contains("429") || lower.contains("rate limit") {
+        return format!("OpenRouter rate limit reached: {detail}.");
+    }
+    if lower.contains("context") && (lower.contains("length") || lower.contains("limit")) {
+        return format!("OpenRouter context length exceeded: {detail}.");
+    }
+    if lower.contains("unsupported")
+        || lower.contains("invalid parameter")
+        || lower.contains("invalid_request")
+        || lower.contains("400")
+    {
+        return format!("OpenRouter rejected a request parameter: {detail}.");
+    }
+    if (lower.contains("404") || lower.contains("not found") || lower.contains("unavailable"))
+        && lower.contains("model")
+    {
+        return format!("OpenRouter model unavailable: {detail}.");
+    }
+    if lower.contains("upstream")
+        || lower.contains("temporarily unavailable")
+        || lower.contains("502")
+        || lower.contains("503")
+        || lower.contains("504")
+    {
+        return format!("OpenRouter upstream provider unavailable: {detail}.");
+    }
+    format!("OpenRouter Responses error: {detail}")
 }
 
 fn push_retry_event(
@@ -1448,6 +1558,48 @@ fn response_input_items(
     items
 }
 
+fn response_input_items_with_options(
+    request: &AgentInferenceRequest,
+    tool_name_map: &ResponsesToolNameMap,
+    profile: ResponsesProviderProfile,
+) -> Vec<Value> {
+    let mut items = response_input_items(request, tool_name_map);
+    if profile == ResponsesProviderProfile::OpenRouter {
+        let mut instruction_items = Vec::new();
+        if let Some(system) = request
+            .instructions
+            .system
+            .as_deref()
+            .filter(|value| !value.is_empty())
+        {
+            instruction_items.push(system_input_message(system));
+        }
+        if let Some(developer) = request
+            .instructions
+            .developer
+            .as_deref()
+            .filter(|value| !value.is_empty())
+        {
+            instruction_items.push(system_input_message(&format!(
+                "Developer instructions:\n{developer}"
+            )));
+        }
+        if !instruction_items.is_empty() {
+            instruction_items.extend(items);
+            items = instruction_items;
+        }
+    }
+    items
+}
+
+fn system_input_message(text: &str) -> Value {
+    json!({
+        "type": "message",
+        "role": "system",
+        "content": [{ "type": "input_text", "text": text }]
+    })
+}
+
 fn user_message_content(message: &roder_api::transcript::UserMessage) -> Vec<Value> {
     let mut content = Vec::new();
     if !message.text.is_empty() {
@@ -1767,6 +1919,23 @@ mod tests {
 
         assert_eq!(models.len(), 1);
         assert_eq!(models[0].id, "custom-v1");
+    }
+
+    #[tokio::test]
+    async fn model_discovery_preserves_openrouter_slash_ids_and_context_length() {
+        let base_url = spawn_models_server(vec![(
+            "/models",
+            200,
+            r#"{"data":[{"id":"x-ai/grok-build-0.1","name":"Grok Build 0.1","context_length":256000}]}"#,
+        )])
+        .await;
+
+        let models = discover_models(&base_url, Some("secret")).await.unwrap();
+
+        assert_eq!(models.len(), 1);
+        assert_eq!(models[0].id, "x-ai/grok-build-0.1");
+        assert_eq!(models[0].name, "Grok Build 0.1");
+        assert_eq!(models[0].context_window, Some(256_000));
     }
 
     #[tokio::test]
@@ -2286,7 +2455,7 @@ mod tests {
         let (body, _) = OpenAiResponsesEngine::map_request_with_options(
             &request,
             RequestMappingOptions {
-                xai_mode: true,
+                profile: ResponsesProviderProfile::Xai,
                 thread_id: Some("thread-123"),
             },
         );
@@ -2305,12 +2474,36 @@ mod tests {
         let (body, _) = OpenAiResponsesEngine::map_request_with_options(
             &request,
             RequestMappingOptions {
-                xai_mode: true,
+                profile: ResponsesProviderProfile::Xai,
                 thread_id: Some("thread-123"),
             },
         );
 
         assert!(body.get("reasoning").is_none());
+        assert!(body.get("include").is_none());
+    }
+
+    #[test]
+    fn profile_openrouter_preserves_slash_model_and_omits_openai_encrypted_reasoning() {
+        let mut request = request();
+        request.model.provider = PROVIDER_OPENROUTER.to_string();
+        request.model.model = "x-ai/grok-build-0.1".to_string();
+        request.runtime.prompt_cache_key = Some("cache-key".to_string());
+
+        let (body, _) = OpenAiResponsesEngine::map_request_with_options(
+            &request,
+            RequestMappingOptions {
+                profile: ResponsesProviderProfile::OpenRouter,
+                thread_id: Some("thread-123"),
+            },
+        );
+
+        assert_eq!(body["model"], "x-ai/grok-build-0.1");
+        assert_eq!(body["reasoning"], json!({ "effort": "medium" }));
+        assert_eq!(body["prompt_cache_key"], "cache-key");
+        assert!(body.get("instructions").is_none());
+        assert_eq!(body["input"][0]["role"], "system");
+        assert_eq!(body["input"][0]["content"][0]["text"], "be helpful");
         assert!(body.get("include").is_none());
     }
 
@@ -2324,6 +2517,26 @@ mod tests {
         assert!(forbidden.contains("entitlement or quota"));
         assert!(forbidden.contains("X Premium+ may not include"));
         assert!(forbidden.contains("subscription missing"));
+    }
+
+    #[test]
+    fn openrouter_errors_explain_common_provider_boundaries() {
+        let unauthorized =
+            openrouter_error_message("OpenAI Responses error 401 Unauthorized: invalid key");
+        assert!(unauthorized.contains("OpenRouter auth failed"));
+        assert!(unauthorized.contains("OPENROUTER_API_KEY"));
+
+        let credits = openrouter_error_message("OpenAI Responses error 402: insufficient credits");
+        assert!(credits.contains("credits or quota"));
+
+        let unsupported = openrouter_error_message(
+            "OpenAI Responses error 400: unsupported parameter reasoning.encrypted_content",
+        );
+        assert!(unsupported.contains("rejected a request parameter"));
+
+        let context =
+            openrouter_error_message("OpenAI Responses error 400: context length limit exceeded");
+        assert!(context.contains("context length exceeded"));
     }
 
     #[test]

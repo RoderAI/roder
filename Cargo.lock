@@ -3586,6 +3586,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "roder-ext-openrouter"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "reqwest",
+ "roder-api",
+ "roder-ext-openai-responses",
+ "semver",
+ "serde_json",
+ "tokio",
+]
+
+[[package]]
 name = "roder-ext-parallel-search"
 version = "0.1.0"
 dependencies = [
@@ -3972,6 +3986,7 @@ dependencies = [
  "roder-ext-openai-responses",
  "roder-ext-openai-speech",
  "roder-ext-opencode",
+ "roder-ext-openrouter",
  "roder-ext-parallel-search",
  "roder-ext-perplexity-search",
  "roder-ext-plan-mode",
