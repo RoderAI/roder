@@ -527,7 +527,12 @@ mod tests {
         let tool = ExecCommandTool {
             workspace: Workspace::new(root.clone()).unwrap(),
             manager,
-            command_shell: roder_api::command_shell::default_command_shell(),
+            command_shell: test_command_shell(),
+        };
+        let cmd = if cfg!(windows) {
+            "[Console]::Out.Write('hi')"
+        } else {
+            "printf hi"
         };
 
         let result = tool
@@ -535,7 +540,7 @@ mod tests {
                 context(&root),
                 call(
                     "exec_command",
-                    json!({ "cmd": "printf hi", "yield_time_ms": 50, "login": false }),
+                    json!({ "cmd": cmd, "yield_time_ms": 250, "login": false }),
                 ),
             )
             .await
@@ -580,6 +585,7 @@ mod tests {
         let _ = std::fs::remove_dir_all(root);
     }
 
+    #[cfg(unix)]
     #[tokio::test]
     async fn write_stdin_polls_running_session() {
         let root = temp_workspace("roder-exec-stdin");
@@ -588,9 +594,14 @@ mod tests {
         let exec = ExecCommandTool {
             workspace: Workspace::new(root.clone()).unwrap(),
             manager: manager.clone(),
-            command_shell: roder_api::command_shell::default_command_shell(),
+            command_shell: test_command_shell(),
         };
         let stdin = WriteStdinTool { manager };
+        let cmd = if cfg!(windows) {
+            "[Console]::Out.Write('got:' + [Console]::In.ReadLine())"
+        } else {
+            "read line; printf got:$line"
+        };
 
         let started = exec
             .execute(
@@ -598,7 +609,7 @@ mod tests {
                 call(
                     "exec_command",
                     json!({
-                        "cmd": "read line; printf got:$line",
+                        "cmd": cmd,
                         "yield_time_ms": 10
                     }),
                 ),
@@ -628,6 +639,14 @@ mod tests {
         assert_eq!(polled.data["aggregated_output"], "got:hello");
 
         let _ = std::fs::remove_dir_all(root);
+    }
+
+    fn test_command_shell() -> String {
+        if cfg!(windows) {
+            "powershell".to_string()
+        } else {
+            roder_api::command_shell::default_command_shell()
+        }
     }
 
     #[cfg(unix)]

@@ -3294,10 +3294,11 @@ mod tests {
     #[tokio::test]
     async fn automations_can_create_project_thread_with_model_overrides() {
         let runtime = Runtime::fake().unwrap();
+        let workspace = std::env::temp_dir().join("project");
         let metadata = runtime
             .create_thread_with(CreateThreadRequest {
                 title: Some("Automation: nightly status".to_string()),
-                workspace: "/tmp/project".to_string(),
+                workspace: workspace.display().to_string(),
                 provider: Some("mock".to_string()),
                 model: Some("mock".to_string()),
             })
@@ -3308,7 +3309,7 @@ mod tests {
             metadata.title.as_deref(),
             Some("Automation: nightly status")
         );
-        assert_eq!(metadata.workspace, "/tmp/project");
+        assert_eq!(metadata.workspace, workspace.display().to_string());
         assert_eq!(metadata.provider.as_deref(), Some("mock"));
         assert_eq!(metadata.model.as_deref(), Some("mock"));
     }

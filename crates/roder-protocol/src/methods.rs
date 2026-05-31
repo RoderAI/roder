@@ -199,13 +199,6 @@ const METHOD_SPECS: &[AppServerMethodSpecSeed] = &[
     method_spec!("hunk/list", "plan-review", ReadOnly, Idempotent),
     method_spec!("hunk/read", "plan-review", ReadOnly, Idempotent),
     method_spec!("hunk/rollback", "plan-review", LocalState, NonIdempotent),
-    method_spec!(
-        "workspace/changes/list",
-        "workspace",
-        ReadOnly,
-        Idempotent,
-        ["workspace/changeObserved"]
-    ),
     method_spec!("index/proofs/list", "code-index", ReadOnly, Idempotent),
     method_spec!("index/readChunk", "code-index", ReadOnly, Idempotent),
     method_spec!("index/rebuild", "code-index", LocalState, NonIdempotent),
@@ -574,6 +567,13 @@ const METHOD_SPECS: &[AppServerMethodSpecSeed] = &[
         LocalState,
         NonIdempotent,
         ["workflows/stopped"]
+    ),
+    method_spec!(
+        "workspace/changes/list",
+        "workspace",
+        ReadOnly,
+        Idempotent,
+        ["workspace/changeObserved"]
     ),
 ];
 

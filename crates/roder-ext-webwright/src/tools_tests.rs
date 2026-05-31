@@ -1,5 +1,7 @@
 use std::path::PathBuf;
-use std::sync::{Arc, OnceLock};
+use std::sync::Arc;
+#[cfg(unix)]
+use std::sync::OnceLock;
 
 use roder_api::policy_mode::PolicyMode;
 use roder_api::tools::{
@@ -147,7 +149,7 @@ async fn helper_tools_run_script_and_read_log_tail() {
         .unwrap();
     std::fs::write(
         root.join(".roder/webwright/fixture/final_script.py"),
-        "mkdir -p screenshots\nprintf 'token=abc123\\n'\nprintf png > screenshots/final_execution_001_ok.png\nprintf 'Authorization: Bearer abc123\\nstep 1 action: ok\\nfinal datum: Fixture Heading\\n' > final_script_log.txt\n",
+        run_script_fixture(),
     )
     .unwrap();
     std::fs::write(
@@ -182,7 +184,7 @@ async fn helper_tools_run_script_and_read_log_tail() {
                 WEBWRIGHT_RUN_SCRIPT_TOOL,
                 json!({
                     "workspace": ".roder/webwright/fixture",
-                    "python": "sh",
+                    "python": run_script_fixture_command(&root),
                     "timeoutSeconds": 5
                 }),
             ),
@@ -245,6 +247,41 @@ async fn helper_tools_run_script_and_read_log_tail() {
         .await
         .unwrap();
     assert!(!summary.is_error);
+}
+
+#[cfg(unix)]
+fn run_script_fixture() -> &'static str {
+    "mkdir -p screenshots\nprintf 'token=abc123\\n'\nprintf png > screenshots/final_execution_001_ok.png\nprintf 'Authorization: Bearer abc123\\nstep 1 action: ok\\nfinal datum: Fixture Heading\\n' > final_script_log.txt\n"
+}
+
+#[cfg(unix)]
+fn run_script_fixture_command(_root: &std::path::Path) -> String {
+    "sh".to_string()
+}
+
+#[cfg(windows)]
+fn run_script_fixture() -> &'static str {
+    r#"from pathlib import Path
+
+Path("screenshots").mkdir(exist_ok=True)
+print("token=abc123")
+Path("screenshots/final_execution_001_ok.png").write_bytes(b"png")
+Path("final_script_log.txt").write_text(
+    "Authorization: Bearer abc123\nstep 1 action: ok\nfinal datum: Fixture Heading\n",
+    encoding="utf-8",
+)
+"#
+}
+
+#[cfg(windows)]
+fn run_script_fixture_command(root: &std::path::Path) -> String {
+    let runner = root.join("webwright-test-runner.cmd");
+    std::fs::write(
+        &runner,
+        "@echo off\r\nmkdir screenshots 2>nul\r\necho token=abc123\r\n<nul set /p dummy=png > screenshots\\final_execution_001_ok.png\r\n(\r\n  echo Authorization: Bearer abc123\r\n  echo step 1 action: ok\r\n  echo final datum: Fixture Heading\r\n) > final_script_log.txt\r\n",
+    )
+    .unwrap();
+    runner.display().to_string()
 }
 
 #[cfg(unix)]

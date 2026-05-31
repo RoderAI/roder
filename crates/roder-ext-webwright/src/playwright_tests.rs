@@ -1,11 +1,11 @@
 use std::fs;
+#[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
 
-use crate::{
-    DependencyCheckMode, WebwrightSetupOptions, preflight_local_dependencies_in_roder_home,
-    setup_webwright_runtime_in_roder_home,
-};
+#[cfg(unix)]
+use crate::{DependencyCheckMode, preflight_local_dependencies_in_roder_home};
+use crate::{WebwrightSetupOptions, setup_webwright_runtime_in_roder_home};
 
 #[test]
 fn setup_dry_run_plans_selected_browser_without_writing_runtime() {
@@ -25,19 +25,13 @@ fn setup_dry_run_plans_selected_browser_without_writing_runtime() {
     assert_eq!(report.roder_home, roder_home.display().to_string());
     assert_eq!(
         report.python,
-        roder_home
-            .join("python/webwright/venv/bin/python")
-            .display()
-            .to_string()
+        expected_venv_python(&roder_home).display().to_string()
     );
     assert!(report.dry_run);
     assert!(!report.installed);
     assert!(report.steps.iter().any(|step| step.command
         == vec![
-            roder_home
-                .join("python/webwright/venv/bin/python")
-                .display()
-                .to_string(),
+            expected_venv_python(&roder_home).display().to_string(),
             "-m".to_string(),
             "playwright".to_string(),
             "install".to_string(),
@@ -46,6 +40,7 @@ fn setup_dry_run_plans_selected_browser_without_writing_runtime() {
     assert!(!roder_home.join("python/webwright/setup.json").exists());
 }
 
+#[cfg(unix)]
 #[test]
 fn setup_installs_with_fake_python_and_preflight_uses_managed_runtime() {
     let roder_home = tempdir("setup-fake-python");
@@ -106,6 +101,16 @@ fn tempdir(name: &str) -> std::path::PathBuf {
     path
 }
 
+fn expected_venv_python(roder_home: &Path) -> std::path::PathBuf {
+    let venv_dir = roder_home.join("python/webwright").join("venv");
+    if cfg!(windows) {
+        venv_dir.join("Scripts").join("python.exe")
+    } else {
+        venv_dir.join("bin").join("python")
+    }
+}
+
+#[cfg(unix)]
 fn write_fake_python(path: &Path, log: &Path) {
     let log = log.display().to_string();
     let script = format!(

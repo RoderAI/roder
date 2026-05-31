@@ -115,10 +115,12 @@ impl Default for ZeroCommandRunner {
 #[cfg(test)]
 mod tests {
     use std::fs;
+    #[cfg(unix)]
     use std::os::unix::fs::PermissionsExt;
 
     use super::*;
 
+    #[cfg(unix)]
     fn fake_zero(name: &str, body: &str) -> PathBuf {
         let dir = std::env::temp_dir().join(format!(
             "roder-zero-command-{name}-{}-{}",
@@ -131,6 +133,28 @@ mod tests {
         let mut permissions = fs::metadata(&path).unwrap().permissions();
         permissions.set_mode(0o755);
         fs::set_permissions(&path, permissions).unwrap();
+        path
+    }
+
+    #[cfg(windows)]
+    fn fake_zero(name: &str, body: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!(
+            "roder-zero-command-{name}-{}-{}",
+            std::process::id(),
+            uuid::Uuid::new_v4()
+        ));
+        fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("zero.cmd");
+        let script = if body.contains("bad input") {
+            "@echo off\r\necho bad input 1>&2\r\nexit /b 7\r\n".to_string()
+        } else if body.contains("not-json") {
+            "@echo off\r\necho not-json\r\n".to_string()
+        } else if body.contains("sleep") {
+            "@echo off\r\nping -n 3 127.0.0.1 > nul\r\n".to_string()
+        } else {
+            "@echo off\r\necho {\"ok\":true,\"argv\":\"%*\"}\r\n".to_string()
+        };
+        fs::write(&path, script).unwrap();
         path
     }
 
@@ -168,7 +192,7 @@ mod tests {
             .unwrap();
 
         assert_eq!(result.status, Some(7));
-        assert_eq!(result.stderr, "bad input\n");
+        assert_eq!(normalize_newlines(&result.stderr).trim_end(), "bad input");
     }
 
     #[tokio::test]
@@ -186,7 +210,7 @@ mod tests {
             .unwrap();
 
         assert_eq!(result.status, Some(0));
-        assert_eq!(result.stdout, "not-json\n");
+        assert_eq!(normalize_newlines(&result.stdout), "not-json\n");
         assert_eq!(result.json, None);
     }
 
@@ -221,5 +245,9 @@ mod tests {
             .unwrap_err();
 
         assert!(err.to_string().contains("timed out"));
+    }
+
+    fn normalize_newlines(value: &str) -> String {
+        value.replace("\r\n", "\n")
     }
 }

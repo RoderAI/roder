@@ -67,7 +67,10 @@ async fn runner_creates_report_files_from_fake_provider_fixture() {
                 json_array_fields: Vec::new(),
             }],
             command_checks: vec![EvalExpectedCommand {
-                command: "test -f README.md && printf checked".to_string(),
+                command: command_check(
+                    "test -f README.md && printf checked",
+                    "if exist README.md (echo checked) else (exit /b 1)",
+                ),
                 expected_exit_code: 0,
                 stdout_contains: vec!["checked".to_string()],
                 stderr_contains: Vec::new(),
@@ -99,6 +102,14 @@ async fn runner_creates_report_files_from_fake_provider_fixture() {
     assert!(output_dir.join("eval-run.json").exists());
     assert!(output_dir.join("eval-report.md").exists());
     let _ = std::fs::remove_dir_all(root);
+}
+
+fn command_check(unix: &str, windows: &str) -> String {
+    if cfg!(windows) {
+        windows.to_string()
+    } else {
+        unix.to_string()
+    }
 }
 
 #[tokio::test]

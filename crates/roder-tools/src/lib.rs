@@ -194,9 +194,13 @@ pub fn builtin_coding_tools_contributor_with_path_scope_and_shell(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(unix)]
     use crate::backend::RunnerWorkspaceBackend;
+    #[cfg(unix)]
     use roder_api::remote_runner::{RemoteRunnerProvider, RunnerDestination, RunnerManifest};
+    #[cfg(unix)]
     use roder_ext_runner_unix_local::UnixLocalRunnerProvider;
+    #[cfg(not(windows))]
     use std::sync::{Mutex, OnceLock};
 
     #[test]
@@ -379,6 +383,7 @@ mod tests {
         let _ = std::fs::remove_dir_all(root);
     }
 
+    #[cfg(unix)]
     #[tokio::test]
     async fn builtin_coding_tools_match_direct_local_and_unix_local_runner_backends() {
         let direct_root = test_workspace("coding-tools-direct");
@@ -637,7 +642,10 @@ mod tests {
             json!({ "path": outside_file.display().to_string(), "content": "yes" }),
         )
         .await;
-        assert_eq!(write.text, format!("wrote {}", outside_file.display()));
+        assert_eq!(
+            write.text.replace('/', "\\"),
+            format!("wrote {}", outside_file.display())
+        );
 
         let list = run_tool(
             &registry,
@@ -652,11 +660,13 @@ mod tests {
         let _ = std::fs::remove_dir_all(outside);
     }
 
+    #[cfg(not(windows))]
     #[tokio::test]
     #[allow(clippy::await_holding_lock)]
     async fn builtin_coding_tools_list_files_expands_home_directory() {
         let _guard = env_lock().lock().unwrap();
         let previous_home = std::env::var_os("HOME");
+        let previous_userprofile = std::env::var_os("USERPROFILE");
         let root = test_workspace("home-root");
         let home = test_workspace("home-dir");
         std::fs::write(home.join("home-file.txt"), "yes").unwrap();
@@ -669,9 +679,11 @@ mod tests {
         // SAFETY: this test holds a process-wide mutex while mutating HOME.
         unsafe {
             std::env::set_var("HOME", &home);
+            std::env::set_var("USERPROFILE", &home);
         }
         let list = run_tool(&registry, &root, "list_files", json!({ "path": "~/" })).await;
         restore_home(previous_home);
+        restore_userprofile(previous_userprofile);
 
         assert_eq!(list.text, "home-file.txt");
 
@@ -812,11 +824,13 @@ mod tests {
         path
     }
 
+    #[cfg(not(windows))]
     fn env_lock() -> &'static Mutex<()> {
         static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
         LOCK.get_or_init(|| Mutex::new(()))
     }
 
+    #[cfg(not(windows))]
     fn restore_home(previous_home: Option<std::ffi::OsString>) {
         // SAFETY: callers hold env_lock while restoring HOME.
         unsafe {
@@ -824,6 +838,18 @@ mod tests {
                 std::env::set_var("HOME", previous_home);
             } else {
                 std::env::remove_var("HOME");
+            }
+        }
+    }
+
+    #[cfg(not(windows))]
+    fn restore_userprofile(previous_userprofile: Option<std::ffi::OsString>) {
+        // SAFETY: callers hold env_lock while restoring USERPROFILE.
+        unsafe {
+            if let Some(previous_userprofile) = previous_userprofile {
+                std::env::set_var("USERPROFILE", previous_userprofile);
+            } else {
+                std::env::remove_var("USERPROFILE");
             }
         }
     }

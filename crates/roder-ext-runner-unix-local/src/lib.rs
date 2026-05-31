@@ -286,8 +286,11 @@ fn canonical_root(root: PathBuf) -> anyhow::Result<PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use roder_api::remote_runner::{RunnerFileReadRequest, RunnerFileWriteRequest, RunnerManifest};
+    #[cfg(unix)]
+    use roder_api::remote_runner::RunnerFileReadRequest;
+    use roder_api::remote_runner::{RunnerFileWriteRequest, RunnerManifest};
 
+    #[cfg(unix)]
     #[tokio::test]
     async fn unix_local_runner_reads_writes_and_runs_commands_inside_workspace() {
         let root = test_workspace("unix-local-basic");

@@ -372,18 +372,6 @@
       "sideEffect": "localState"
     },
     {
-      "method": "workspace/changes/list",
-      "paramsType": "WorkspaceChangesListParams",
-      "resultType": "WorkspaceChangesListResult",
-      "stability": "stable",
-      "featureGroup": "workspace",
-      "idempotency": "idempotent",
-      "sideEffect": "readOnly",
-      "notifications": [
-        "workspace/changeObserved"
-      ]
-    },
-    {
       "method": "index/proofs/list",
       "paramsType": "IndexProofsListParams",
       "resultType": "IndexProofsListResult",
@@ -1754,6 +1742,18 @@
       "sideEffect": "localState",
       "notifications": [
         "workflows/stopped"
+      ]
+    },
+    {
+      "method": "workspace/changes/list",
+      "paramsType": "WorkspaceChangesListParams",
+      "resultType": "WorkspaceChangesListResult",
+      "stability": "stable",
+      "featureGroup": "workspace",
+      "idempotency": "idempotent",
+      "sideEffect": "readOnly",
+      "notifications": [
+        "workspace/changeObserved"
       ]
     }
   ]

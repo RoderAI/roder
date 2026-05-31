@@ -73,7 +73,6 @@
               "hunk/list",
               "hunk/read",
               "hunk/rollback",
-              "workspace/changes/list",
               "index/proofs/list",
               "index/readChunk",
               "index/rebuild",
@@ -221,7 +220,8 @@
               "workflows/scripts/delete",
               "workflows/scripts/list",
               "workflows/scripts/read",
-              "workflows/stop"
+              "workflows/stop",
+              "workspace/changes/list"
             ]
           },
           "paramsType": {
