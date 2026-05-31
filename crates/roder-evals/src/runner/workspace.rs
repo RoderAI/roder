@@ -162,9 +162,20 @@ pub(super) fn failure_class_for_fixture(fixture: &EvalFixture) -> EvalFailureCla
 }
 
 fn run_shell_command(command: &str, cwd: &Path) -> anyhow::Result<std::process::Output> {
-    Command::new("sh")
-        .arg("-c")
-        .arg(command)
+    #[cfg(windows)]
+    let mut shell = {
+        let mut command_process = Command::new("cmd");
+        command_process.arg("/C").arg(command);
+        command_process
+    };
+    #[cfg(not(windows))]
+    let mut shell = {
+        let mut command_process = Command::new("sh");
+        command_process.arg("-c").arg(command);
+        command_process
+    };
+
+    shell
         .current_dir(cwd)
         .output()
         .with_context(|| format!("failed to run `{command}`"))

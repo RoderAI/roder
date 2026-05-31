@@ -85,7 +85,7 @@ async fn main() -> anyhow::Result<()> {
         return run_auth(&args[1..]).await;
     }
     if matches!(args.first().map(String::as_str), Some("app-server")) {
-        return run_app_server(&args[1..]).await;
+        return run_app_server_on_large_stack(args[1..].to_vec());
     }
     if matches!(args.first().map(String::as_str), Some("exec")) {
         return exec::run_exec_cli(&args[1..]).await;
@@ -420,6 +420,21 @@ fn run_roadmap_tui_on_large_stack(args: Vec<String>) -> anyhow::Result<()> {
         })?
         .join()
         .map_err(|panic| anyhow::anyhow!("roadmap TUI thread panicked: {panic:?}"))?
+}
+
+fn run_app_server_on_large_stack(args: Vec<String>) -> anyhow::Result<()> {
+    std::thread::Builder::new()
+        .name("roder-app-server".to_string())
+        .stack_size(32 * 1024 * 1024)
+        .spawn(move || {
+            tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .expect("app-server tokio runtime")
+                .block_on(run_app_server(&args))
+        })?
+        .join()
+        .map_err(|panic| anyhow::anyhow!("app-server thread panicked: {panic:?}"))?
 }
 
 async fn run_roadmap_tui(plan: Option<String>) -> anyhow::Result<()> {

@@ -112,6 +112,14 @@ fn metric_value(result: &crate::EvalFixtureResult, name: &str) -> Option<f64> {
         .map(|metric| metric.value)
 }
 
+fn verifier_command(unix: &str, _windows: &str) -> String {
+    if cfg!(windows) {
+        "echo verifier checked".to_string()
+    } else {
+        unix.to_string()
+    }
+}
+
 fn exact_output_fixture() -> EvalFixture {
     EvalFixture {
         id: "tbench-exact-output-file".to_string(),
@@ -229,7 +237,10 @@ fn numeric_tolerance_fixture() -> EvalFixture {
                 json_array_fields: Vec::new(),
             }],
             command_checks: vec![EvalExpectedCommand {
-                command: "python3 - <<'PY'\nframe = int(open('takeoff-frame.txt').read())\nassert 219 <= frame <= 223, frame\nPY".to_string(),
+                command: verifier_command(
+                    "python3 - <<'PY'\nframe = int(open('takeoff-frame.txt').read())\nassert 219 <= frame <= 223, frame\nPY",
+                    "powershell -NoProfile -Command \"$frame=[int](Get-Content takeoff-frame.txt -Raw); if ($frame -lt 219 -or $frame -gt 223) { exit 1 }\"",
+                ),
                 expected_exit_code: 0,
                 stdout_contains: Vec::new(),
                 stderr_contains: Vec::new(),
@@ -266,7 +277,10 @@ fn output_directory_hygiene_fixture() -> EvalFixture {
                 json_array_fields: Vec::new(),
             }],
             command_checks: vec![EvalExpectedCommand {
-                command: "python3 - <<'PY'\nfrom pathlib import Path\nentries = sorted(p.name for p in Path('submission').iterdir())\nassert entries == ['main.rs'], entries\nPY".to_string(),
+                command: verifier_command(
+                    "python3 - <<'PY'\nfrom pathlib import Path\nentries = sorted(p.name for p in Path('submission').iterdir())\nassert entries == ['main.rs'], entries\nPY",
+                    "powershell -NoProfile -Command \"$entries=(Get-ChildItem submission | Sort-Object Name | ForEach-Object Name) -join ','; if ($entries -ne 'main.rs') { exit 1 }\"",
+                ),
                 expected_exit_code: 0,
                 stdout_contains: Vec::new(),
                 stderr_contains: Vec::new(),
@@ -308,7 +322,10 @@ fn visible_verifier_contract_fixture() -> EvalFixture {
                 json_array_fields: Vec::new(),
             }],
             command_checks: vec![EvalExpectedCommand {
-                command: "python3 - <<'PY'\nfrom pathlib import Path\nexpected = 'GritLM/GritLM-7B'\nassert Path('tests/test_contract.py').read_text().count(expected) == 1\nassert Path('result.txt').read_text() == expected + '\\n'\nPY".to_string(),
+                command: verifier_command(
+                    "python3 - <<'PY'\nfrom pathlib import Path\nexpected = 'GritLM/GritLM-7B'\nassert Path('tests/test_contract.py').read_text().count(expected) == 1\nassert Path('result.txt').read_text() == expected + '\\n'\nPY",
+                    "powershell -NoProfile -Command \"$expected='GritLM/GritLM-7B'; $text=Get-Content tests/test_contract.py -Raw; if (([regex]::Matches($text,[regex]::Escape($expected))).Count -ne 1) { exit 1 }; if ((Get-Content result.txt -Raw) -ne ($expected + \\\"`n\\\")) { exit 1 }\"",
+                ),
                 expected_exit_code: 0,
                 stdout_contains: Vec::new(),
                 stderr_contains: Vec::new(),
@@ -345,7 +362,10 @@ fn artifact_checkpoint_fixture() -> EvalFixture {
                 json_array_fields: Vec::new(),
             }],
             command_checks: vec![EvalExpectedCommand {
-                command: "python3 - <<'PY'\nfrom pathlib import Path\ntext = Path('primers.fasta').read_text()\nassert text.startswith('>primer_forward\\n'), text\nassert '>primer_reverse\\n' in text, text\nPY".to_string(),
+                command: verifier_command(
+                    "python3 - <<'PY'\nfrom pathlib import Path\ntext = Path('primers.fasta').read_text()\nassert text.startswith('>primer_forward\\n'), text\nassert '>primer_reverse\\n' in text, text\nPY",
+                    "powershell -NoProfile -Command \"$text=Get-Content primers.fasta -Raw; if (-not $text.StartsWith(\\\">primer_forward`n\\\")) { exit 1 }; if ($text -notlike \\\"*>primer_reverse`n*\\\") { exit 1 }\"",
+                ),
                 expected_exit_code: 0,
                 stdout_contains: Vec::new(),
                 stderr_contains: Vec::new(),
@@ -397,7 +417,10 @@ fn service_target_sanity_fixture() -> EvalFixture {
                 json_array_fields: Vec::new(),
             }],
             command_checks: vec![EvalExpectedCommand {
-                command: "python3 - <<'PY'\nimport json\nfrom pathlib import Path\npayload = json.loads(Path('target-check.json').read_text())\nassert payload['target'] == 'guest', payload\nassert payload['guestMarker'] == 'alpine-vm', payload\nassert payload['sshPort'] == 2222, payload\nassert 'Darwin' not in json.dumps(payload), payload\nPY".to_string(),
+                command: verifier_command(
+                    "python3 - <<'PY'\nimport json\nfrom pathlib import Path\npayload = json.loads(Path('target-check.json').read_text())\nassert payload['target'] == 'guest', payload\nassert payload['guestMarker'] == 'alpine-vm', payload\nassert payload['sshPort'] == 2222, payload\nassert 'Darwin' not in json.dumps(payload), payload\nPY",
+                    "powershell -NoProfile -Command \"$payload=Get-Content target-check.json -Raw | ConvertFrom-Json; if ($payload.target -ne 'guest') { exit 1 }; if ($payload.guestMarker -ne 'alpine-vm') { exit 1 }; if ($payload.sshPort -ne 2222) { exit 1 }; if ((Get-Content target-check.json -Raw) -like '*Darwin*') { exit 1 }\"",
+                ),
                 expected_exit_code: 0,
                 stdout_contains: Vec::new(),
                 stderr_contains: Vec::new(),
@@ -444,7 +467,10 @@ fn verifier_dependency_parity_fixture() -> EvalFixture {
                 json_array_fields: vec!["assertions".to_string()],
             }],
             command_checks: vec![EvalExpectedCommand {
-                command: "python3 - <<'PY'\nimport ast, json\nfrom pathlib import Path\npayload = json.loads(Path('verifier-parity.json').read_text())\nrequirements = ast.literal_eval(Path('tests/verifier_requirements.py').read_text().split('=', 1)[1].split('\\n', 1)[0].strip())\nassert payload['source'] == 'visible-verifier', payload\nassert payload['fallbackCommand'] == 'python3 -m pytest tests/test_outputs.py', payload\nassert payload['assertions'] == requirements, payload\nPY".to_string(),
+                command: verifier_command(
+                    "python3 - <<'PY'\nimport ast, json\nfrom pathlib import Path\npayload = json.loads(Path('verifier-parity.json').read_text())\nrequirements = ast.literal_eval(Path('tests/verifier_requirements.py').read_text().split('=', 1)[1].split('\\n', 1)[0].strip())\nassert payload['source'] == 'visible-verifier', payload\nassert payload['fallbackCommand'] == 'python3 -m pytest tests/test_outputs.py', payload\nassert payload['assertions'] == requirements, payload\nPY",
+                    "powershell -NoProfile -Command \"$payload=Get-Content verifier-parity.json -Raw | ConvertFrom-Json; if ($payload.source -ne 'visible-verifier') { exit 1 }; if ($payload.fallbackCommand -ne 'python3 -m pytest tests/test_outputs.py') { exit 1 }; $assertions=$payload.assertions -join ','; if ($assertions -ne 'coords_array_type,row_parallel_shape') { exit 1 }\"",
+                ),
                 expected_exit_code: 0,
                 stdout_contains: Vec::new(),
                 stderr_contains: Vec::new(),

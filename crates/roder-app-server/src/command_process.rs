@@ -228,10 +228,20 @@ mod tests {
         let server = Arc::new(AppServer::new(runtime));
         let process_registry = server.tasks.processes();
         let request_server = Arc::clone(&server);
+        let command = if cfg!(windows) {
+            vec![
+                "powershell".to_string(),
+                "-NoProfile".to_string(),
+                "-Command".to_string(),
+                "Start-Sleep -Seconds 5".to_string(),
+            ]
+        } else {
+            vec!["sh".to_string(), "-c".to_string(), "sleep 5".to_string()]
+        };
         let request = tokio::spawn(async move {
             request_server
                 .handle_command_exec(CommandExecParams {
-                    command: vec!["sh".to_string(), "-c".to_string(), "sleep 5".to_string()],
+                    command,
                     process_id: Some("command-process-test".to_string()),
                     tty: false,
                     stream_stdin: false,
@@ -269,7 +279,7 @@ mod tests {
         assert!(stopped.stopped);
 
         let response = request.await.unwrap().unwrap();
-        assert_eq!(response["exitCode"], -1);
+        assert_eq!(response["exitCode"], if cfg!(windows) { 1 } else { -1 });
         let process = process_registry.get("command-process-test").await.unwrap();
         assert!(matches!(process.state, ProcessState::Stopped));
     }

@@ -547,6 +547,10 @@ mod tests {
     };
     use roder_api::transcript::{AssistantMessage, TranscriptItem, UserMessage};
 
+    fn test_workspace(name: &str) -> String {
+        std::env::temp_dir().join(name).display().to_string()
+    }
+
     fn transcript_item_event(
         seq: u64,
         thread_id: &ThreadId,
@@ -618,7 +622,7 @@ mod tests {
             .create_thread(ThreadMetadata {
                 thread_id: thread_id.clone(),
                 title: Some("Resume me".to_string()),
-                workspace: "/workspace".to_string(),
+                workspace: test_workspace("workspace"),
                 provider: Some("mock".to_string()),
                 model: Some("mock".to_string()),
                 runner_destination: None,
@@ -705,7 +709,7 @@ mod tests {
             .create_thread(ThreadMetadata {
                 thread_id: thread_id.clone(),
                 title: Some("Keep item seq".to_string()),
-                workspace: "/workspace".to_string(),
+                workspace: test_workspace("workspace"),
                 provider: Some("mock".to_string()),
                 model: Some("mock".to_string()),
                 runner_destination: None,
@@ -804,7 +808,7 @@ mod tests {
             .create_thread(ThreadMetadata {
                 thread_id: thread_id.clone(),
                 title: Some("Archive me".to_string()),
-                workspace: "/workspace".to_string(),
+                workspace: test_workspace("workspace"),
                 provider: Some("mock".to_string()),
                 model: Some("mock".to_string()),
                 runner_destination: None,
@@ -870,7 +874,7 @@ mod tests {
             .create_thread(ThreadMetadata {
                 thread_id: thread_id.clone(),
                 title: None,
-                workspace: "/workspace".to_string(),
+                workspace: test_workspace("workspace"),
                 provider: None,
                 model: None,
                 runner_destination: None,
@@ -924,7 +928,7 @@ mod tests {
             .create_thread(ThreadMetadata {
                 thread_id: thread_id.clone(),
                 title: Some("Trace me".to_string()),
-                workspace: "/workspace".to_string(),
+                workspace: test_workspace("workspace"),
                 provider: Some("mock".to_string()),
                 model: Some("mock".to_string()),
                 runner_destination: None,
@@ -1030,7 +1034,7 @@ mod tests {
             .create_thread(ThreadMetadata {
                 thread_id: thread_id.clone(),
                 title: Some("Resume encrypted reasoning".to_string()),
-                workspace: "/workspace".to_string(),
+                workspace: test_workspace("workspace"),
                 provider: Some("openai".to_string()),
                 model: Some("gpt-5.5".to_string()),
                 runner_destination: None,
@@ -1079,7 +1083,7 @@ mod tests {
             .create_thread(ThreadMetadata {
                 thread_id: thread_id.clone(),
                 title: Some("Metadata".to_string()),
-                workspace: "/workspace".to_string(),
+                workspace: test_workspace("workspace"),
                 provider: Some("mock".to_string()),
                 model: Some("mock".to_string()),
                 runner_destination: None,
@@ -1145,7 +1149,7 @@ mod tests {
             .create_thread(ThreadMetadata {
                 thread_id: thread_id.clone(),
                 title: None,
-                workspace: "/workspace/gode".to_string(),
+                workspace: test_workspace("workspace-gode"),
                 provider: Some("mock".to_string()),
                 model: Some("mock".to_string()),
                 runner_destination: None,
@@ -1201,7 +1205,7 @@ mod tests {
             .create_thread(ThreadMetadata {
                 thread_id: thread_id.clone(),
                 title: Some("Will be corrupted".to_string()),
-                workspace: "/workspace".to_string(),
+                workspace: test_workspace("workspace"),
                 provider: Some("mock".to_string()),
                 model: Some("mock".to_string()),
                 runner_destination: None,
@@ -1265,7 +1269,7 @@ mod tests {
             .create_thread(ThreadMetadata {
                 thread_id: thread_id.clone(),
                 title: None,
-                workspace: "/workspace".to_string(),
+                workspace: test_workspace("workspace"),
                 provider: Some("mock".to_string()),
                 model: Some("mock".to_string()),
                 runner_destination: None,
@@ -1315,7 +1319,7 @@ mod tests {
         let metadata = ThreadMetadata {
             thread_id: thread_id.clone(),
             title: Some("Recover trailing metadata".to_string()),
-            workspace: "/workspace".to_string(),
+            workspace: test_workspace("workspace"),
             provider: Some("codex".to_string()),
             model: Some("gpt-5.5".to_string()),
             runner_destination: None,
@@ -1365,7 +1369,7 @@ mod tests {
             .create_thread(ThreadMetadata {
                 thread_id: thread_id.clone(),
                 title: None,
-                workspace: "/workspace".to_string(),
+                workspace: test_workspace("workspace"),
                 provider: None,
                 model: None,
                 runner_destination: None,
@@ -1418,7 +1422,7 @@ mod tests {
             .create_thread(ThreadMetadata {
                 thread_id: thread_id.clone(),
                 title: Some("Concatenated jsonl".to_string()),
-                workspace: "/workspace".to_string(),
+                workspace: test_workspace("workspace"),
                 provider: Some("mock".to_string()),
                 model: Some("mock".to_string()),
                 runner_destination: None,
@@ -1482,7 +1486,7 @@ mod tests {
             .create_thread(ThreadMetadata {
                 thread_id: thread_id.clone(),
                 title: Some("Malformed jsonl".to_string()),
-                workspace: "/workspace".to_string(),
+                workspace: test_workspace("workspace"),
                 provider: Some("mock".to_string()),
                 model: Some("mock".to_string()),
                 runner_destination: None,

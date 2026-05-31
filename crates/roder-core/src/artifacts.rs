@@ -440,10 +440,13 @@ mod tests {
                 .store_path
                 .starts_with(root.to_string_lossy().as_ref())
         );
+        let store_path = Path::new(&artifact.store_path);
+        assert!(store_path.starts_with(root.join("thread-a").join("artifacts").join("turn-a")));
         assert!(
-            artifact
-                .store_path
-                .contains("thread-a/artifacts/turn-a/artifact-")
+            store_path
+                .file_name()
+                .and_then(|name| name.to_str())
+                .is_some_and(|name| name.starts_with("artifact-"))
         );
         assert_eq!(artifact.line_count, 3);
         assert_eq!(

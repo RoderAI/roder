@@ -81,7 +81,7 @@ mod tests {
     fn rejects_absolute_manifest_paths_and_escapes() {
         let absolute = RunnerManifest {
             entries: vec![RunnerManifestEntry {
-                source: "/tmp/src".into(),
+                source: std::env::temp_dir().join("src"),
                 target: "workspace/src".into(),
                 writable: true,
             }],
