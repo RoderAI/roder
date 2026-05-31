@@ -4,6 +4,7 @@ pub fn default_command_shell() -> String {
     default_command_shell_for(
         std::env::var("SHELL").ok().as_deref(),
         cfg!(target_os = "macos"),
+        cfg!(target_os = "windows"),
     )
 }
 
@@ -28,7 +29,11 @@ fn push_unique_shell(shells: &mut Vec<String>, shell: &str) {
     }
 }
 
-fn default_command_shell_for(login_shell: Option<&str>, is_macos: bool) -> String {
+fn default_command_shell_for(login_shell: Option<&str>, is_macos: bool, is_windows: bool) -> String {
+    if is_windows {
+        return "powershell".to_string();
+    }
+
     if let Some(login_shell) = login_shell.and_then(normalize_command_shell)
         && shell_name(&login_shell) == Some("zsh")
     {
@@ -56,7 +61,7 @@ mod tests {
     #[test]
     fn default_prefers_zsh_login_shell() {
         assert_eq!(
-            default_command_shell_for(Some("/usr/local/bin/zsh"), false),
+            default_command_shell_for(Some("/usr/local/bin/zsh"), false, false),
             "/usr/local/bin/zsh"
         );
     }
@@ -64,7 +69,7 @@ mod tests {
     #[test]
     fn default_uses_macos_zsh_when_login_shell_is_not_zsh() {
         assert_eq!(
-            default_command_shell_for(Some("/usr/local/bin/fish"), true),
+            default_command_shell_for(Some("/usr/local/bin/fish"), true, false),
             "/bin/zsh"
         );
     }
@@ -72,8 +77,16 @@ mod tests {
     #[test]
     fn default_uses_bash_off_macos_when_login_shell_is_not_zsh() {
         assert_eq!(
-            default_command_shell_for(Some("/usr/local/bin/fish"), false),
+            default_command_shell_for(Some("/usr/local/bin/fish"), false, false),
             "bash"
+        );
+    }
+
+    #[test]
+    fn default_uses_powershell_on_windows() {
+        assert_eq!(
+            default_command_shell_for(Some("/usr/local/bin/zsh"), false, true),
+            "powershell"
         );
     }
 
