@@ -45,11 +45,23 @@ Roder is inspired by OpenAI Codex and the original Gode agent harness. Within th
 - Avoid dumping large files or logs into the response; summarize and reference paths where useful."#;
 
 pub fn default_instructions() -> InstructionBundle {
+    let mut system = RODER_INSTRUCTIONS.to_string();
+    if cfg!(target_os = "windows") {
+        system.push_str(WINDOWS_SYSTEM_INSTRUCTIONS);
+    }
     InstructionBundle {
-        system: Some(RODER_INSTRUCTIONS.to_string()),
+        system: Some(system),
         developer: None,
     }
 }
+
+const WINDOWS_SYSTEM_INSTRUCTIONS: &str = r#"
+
+## Windows Runtime
+
+- You are running on Windows.
+- Prefer PowerShell commands and PowerShell syntax for shell operations.
+- Use Windows paths and commands when referring to files, processes, environment variables, and filesystem operations."#;
 
 const NON_INTERACTIVE_INSTRUCTIONS: &str = r#"## Runtime Profile
 
@@ -125,5 +137,13 @@ mod tests {
         assert!(system.contains("discovery.search"));
         assert!(system.contains("discovery.read"));
         assert!(system.contains("promotes its detailed schema"));
+    }
+
+    #[test]
+    fn windows_instructions_match_host_platform() {
+        let instructions = default_instructions();
+        let system = instructions.system.expect("system instructions");
+        assert_eq!(system.contains("You are running on Windows."), cfg!(target_os = "windows"));
+        assert_eq!(system.contains("Prefer PowerShell commands"), cfg!(target_os = "windows"));
     }
 }
