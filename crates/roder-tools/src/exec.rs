@@ -13,7 +13,7 @@ use tokio::io::{AsyncRead, AsyncReadExt, AsyncWriteExt};
 use tokio::process::{ChildStdin, Command};
 use tokio::sync::{Mutex, Notify};
 
-use crate::command_shell::shell_for_context;
+use crate::command_shell::{command_args_for_shell, shell_for_context};
 use crate::exec_output::{format_exec_output, trim_output_buffer_to_max_bytes, truncate_output};
 use crate::files::{parse, require_nonempty, result};
 use crate::workspace::Workspace;
@@ -394,21 +394,14 @@ impl ExecSession {
 fn build_command(shell: &str, command: &str, login: bool, tty: bool) -> Command {
     if tty && cfg!(target_os = "macos") {
         let mut cmd = Command::new("script");
-        cmd.arg("-q")
-            .arg("/dev/null")
-            .arg(shell)
-            .arg(shell_arg(login))
-            .arg(command);
+        cmd.arg("-q").arg("/dev/null").arg(shell);
+        cmd.args(command_args_for_shell(shell, command, login));
         return cmd;
     }
 
     let mut cmd = Command::new(shell);
-    cmd.arg(shell_arg(login)).arg(command);
+    cmd.args(command_args_for_shell(shell, command, login));
     cmd
-}
-
-fn shell_arg(login: bool) -> &'static str {
-    if login { "-lc" } else { "-c" }
 }
 
 fn spawn_output_reader<R>(mut reader: R, session: Arc<ExecSession>)
@@ -540,7 +533,7 @@ mod tests {
                 context(&root),
                 call(
                     "exec_command",
-                    json!({ "cmd": cmd, "yield_time_ms": 250, "login": false }),
+                    json!({ "cmd": cmd, "yield_time_ms": 1000, "login": false }),
                 ),
             )
             .await
@@ -721,7 +714,7 @@ mod tests {
                 context(&root).with_deadline_remaining_seconds(1),
                 call(
                     "exec_command",
-                    json!({ "cmd": "sleep 2", "yield_time_ms": 1200, "login": false }),
+                    json!({ "cmd": sleep_command(2), "yield_time_ms": 1200, "login": false }),
                 ),
             )
             .await
@@ -762,5 +755,13 @@ mod tests {
             .unwrap()
             .as_nanos();
         std::env::temp_dir().join(format!("{prefix}-{nanos}"))
+    }
+
+    fn sleep_command(seconds: u64) -> String {
+        if cfg!(windows) {
+            format!("Start-Sleep -Seconds {seconds}")
+        } else {
+            format!("sleep {seconds}")
+        }
     }
 }

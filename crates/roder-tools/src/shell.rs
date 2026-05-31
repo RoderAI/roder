@@ -8,7 +8,7 @@ use serde::Deserialize;
 use serde_json::json;
 use tokio::process::Command;
 
-use crate::command_shell::shell_for_context;
+use crate::command_shell::{command_args_for_shell, shell_for_context};
 use crate::files::{parse, require_nonempty, result};
 use crate::workspace::Workspace;
 
@@ -88,11 +88,8 @@ impl ToolExecutor for ShellTool {
         let shell = shell_for_context(&ctx, &self.command_shell);
         let started = Instant::now();
         let mut process = Command::new(&shell);
-        process
-            .arg("-lc")
-            .arg(&command)
-            .current_dir(&cwd)
-            .kill_on_drop(true);
+        process.args(command_args_for_shell(&shell, &command, true));
+        process.current_dir(&cwd).kill_on_drop(true);
         let output =
             tokio::time::timeout(std::time::Duration::from_secs(timeout), process.output()).await;
 
@@ -207,15 +204,16 @@ mod tests {
             command_shell: roder_api::command_shell::default_command_shell(),
         };
 
+        let command = success_command("hi");
         let result = tool
-            .execute(context(&root), call(json!({ "command": "printf hi" })))
+            .execute(context(&root), call(json!({ "command": command })))
             .await
             .unwrap();
 
         assert!(!result.is_error);
         assert!(result.text.contains("Exit code: 0"));
         assert!(result.text.contains("Output:\nhi"));
-        assert_eq!(result.data["command"], "printf hi");
+        assert_eq!(result.data["command"], command);
         assert_eq!(result.data["aggregated_output"], "hi");
         assert_eq!(result.data["status"], "completed");
 
@@ -259,7 +257,7 @@ mod tests {
         let result = tool
             .execute(
                 context(&root),
-                call(json!({ "command": "echo nope >&2; exit 7" })),
+                call(json!({ "command": failure_command("nope", 7) })),
             )
             .await
             .unwrap();
@@ -286,7 +284,7 @@ mod tests {
             let result = tool
                 .execute(
                     context(&root),
-                    call(json!({ "command": "printf ok", "workdir": workdir })),
+                    call(json!({ "command": success_command("ok"), "workdir": workdir })),
                 )
                 .await
                 .unwrap();
@@ -357,7 +355,7 @@ mod tests {
         let result = tool
             .execute(
                 context(&root).with_deadline_remaining_seconds(1),
-                call(json!({ "command": "sleep 2" })),
+                call(json!({ "command": sleep_command(2) })),
             )
             .await
             .unwrap();
@@ -397,5 +395,29 @@ mod tests {
             .unwrap()
             .as_nanos();
         std::env::temp_dir().join(format!("{prefix}-{nanos}"))
+    }
+
+    fn success_command(output: &str) -> String {
+        if cfg!(windows) {
+            format!("[Console]::Out.Write('{output}')")
+        } else {
+            format!("printf {output}")
+        }
+    }
+
+    fn failure_command(output: &str, exit_code: i32) -> String {
+        if cfg!(windows) {
+            format!("[Console]::Error.Write('{output}'); exit {exit_code}")
+        } else {
+            format!("echo {output} >&2; exit {exit_code}")
+        }
+    }
+
+    fn sleep_command(seconds: u64) -> String {
+        if cfg!(windows) {
+            format!("Start-Sleep -Seconds {seconds}")
+        } else {
+            format!("sleep {seconds}")
+        }
     }
 }
