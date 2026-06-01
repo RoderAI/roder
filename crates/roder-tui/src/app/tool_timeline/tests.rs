@@ -469,13 +469,9 @@ fn apply_patch_renders_streaming_inline_diff() {
         .iter()
         .find(|line| line.spans.iter().any(|span| span.content.as_ref() == "new"))
         .expect("added diff line should be rendered");
-    assert!(
-        added.spans.iter().any(
-            |span| span.content.as_ref() == "new"
-                && span.style.fg == Some(theme.text)
-                && span.style.bg == Some(theme.diff_added_bg)
-        )
-    );
+    assert!(added.spans.iter().any(|span| span.content.as_ref() == "new"
+        && span.style.fg == Some(theme.text)
+        && span.style.bg == Some(theme.diff_added_bg)));
     assert!(added.spans.iter().any(|span| {
         span.content.as_ref() == "let"
             && span.style.fg == Some(theme.accent)
