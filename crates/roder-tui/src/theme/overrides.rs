@@ -27,6 +27,8 @@ pub const KNOWN_VARS: &[&str] = &[
     "accent",
     "accent-soft",
     "tool",
+    "working",
+    "working-sheen",
     "diff-added",
     "diff-added-bg",
     "diff-removed",

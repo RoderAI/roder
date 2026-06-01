@@ -20,6 +20,8 @@
     --accent: ansi(212);
     --accent-soft: ansi(183);
     --tool: ansi(244);
+    --working: ansi(15);
+    --working-sheen: ansi(231);
     --diff-added: ansi(114);
     --diff-added-bg: ansi(22);
     --diff-removed: ansi(210);

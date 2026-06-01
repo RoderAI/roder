@@ -139,6 +139,8 @@ fn default_theme_keeps_baseline() {
     // It sets every conventional variable.
     assert!(theme.color("accent").is_some());
     assert!(theme.color("error").is_some());
+    assert_eq!(theme.color("working"), Some(Color::Indexed(15)));
+    assert_eq!(theme.color("working-sheen"), Some(Color::Indexed(231)));
 }
 
 #[test]

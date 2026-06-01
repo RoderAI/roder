@@ -123,6 +123,9 @@ use turn_timer::TurnTimer;
 use voice::{VoiceConfig, VoiceMode, VoiceState};
 
 const TOP_STATUS_ANIMATION_FPS: u64 = 6;
+const WORKING_SHEEN_LOOP_FRAMES: u64 = TOP_STATUS_ANIMATION_FPS * 2;
+const WORKING_SHEEN_ACTIVE_FRAMES: u64 = (TOP_STATUS_ANIMATION_FPS * 4 + 2) / 3;
+const WORKING_SHEEN_WIDTH: usize = 3;
 const MAX_VISIBLE_SLASH_COMMANDS: usize = 16;
 const COPIED_HELPER_LABEL: &str = "Copied to clipboard";
 const COPIED_HELPER_DURATION: Duration = Duration::from_secs(2);
@@ -186,6 +189,8 @@ struct Theme {
     accent_soft: Color,
     tool: Color,
     tool_running: Color,
+    working: Color,
+    working_sheen: Color,
     diff_added: Color,
     diff_added_bg: Color,
     diff_removed: Color,
@@ -242,6 +247,8 @@ impl Theme {
                 accent_soft: Color::Indexed(183),
                 tool: Color::Indexed(244),
                 tool_running: Color::Indexed(244),
+                working: Color::Indexed(15),
+                working_sheen: Color::Indexed(183),
                 diff_added: Color::Indexed(114),
                 diff_added_bg: Color::Indexed(22),
                 diff_removed: Color::Indexed(210),
@@ -278,6 +285,8 @@ impl Theme {
             accent_soft: Color::Indexed(96),
             tool: Color::Indexed(240),
             tool_running: Color::Indexed(240),
+            working: Color::Indexed(16),
+            working_sheen: Color::Indexed(96),
             diff_added: Color::Indexed(28),
             diff_added_bg: Color::Indexed(194),
             diff_removed: Color::Indexed(160),
@@ -326,6 +335,8 @@ impl Theme {
         set!(accent_soft, "accent-soft");
         set!(tool, "tool");
         set!(tool_running, "tool");
+        set!(working, "working");
+        set!(working_sheen, "working-sheen");
         set!(diff_added, "diff-added");
         set!(diff_added_bg, "diff-added-bg");
         set!(diff_removed, "diff-removed");
@@ -459,6 +470,16 @@ impl Theme {
     fn running(self) -> Style {
         Style::default()
             .fg(self.tool_running)
+            .add_modifier(Modifier::BOLD)
+    }
+
+    fn working(self) -> Style {
+        Style::default().fg(self.working)
+    }
+
+    fn working_sheen(self) -> Style {
+        Style::default()
+            .fg(self.working_sheen)
             .add_modifier(Modifier::BOLD)
     }
 
@@ -991,6 +1012,7 @@ where
     thread_message_count: usize,
     active_turn_id: Option<String>,
     active_turn_timer: TurnTimer,
+    working_status_override: Option<String>,
     current_turn_input_tokens: u32,
     current_turn_output_tokens: u32,
     current_turn_reasoning_tokens: Option<u32>,
@@ -1372,6 +1394,7 @@ where
             thread_message_count,
             active_turn_id: None,
             active_turn_timer: TurnTimer::default(),
+            working_status_override: None,
             current_turn_input_tokens: 0,
             current_turn_output_tokens: 0,
             current_turn_reasoning_tokens: None,
@@ -1776,6 +1799,7 @@ where
                         self.current_turn_total_tokens = 0;
                         self.context_breakdown.begin_turn();
                         self.compaction_active = false;
+                        self.working_status_override = None;
                     }
                     RoderEvent::TurnCompleted(ev)
                         if self.active_turn_id.as_deref() == Some(&ev.turn_id) =>
@@ -1795,6 +1819,7 @@ where
                         self.current_turn_reasoning_tokens = None;
                         self.current_turn_total_tokens = 0;
                         self.compaction_active = false;
+                        self.working_status_override = None;
                         self.submit_next_queued_prompt().await;
                     }
                     RoderEvent::TurnInterrupted(ev)
@@ -1808,6 +1833,7 @@ where
                         self.current_turn_reasoning_tokens = None;
                         self.current_turn_total_tokens = 0;
                         self.compaction_active = false;
+                        self.working_status_override = None;
                     }
                     RoderEvent::ContextAssemblyStarted(ev) => {
                         self.context_breakdown.start_context_turn(ev.turn_id);
@@ -1841,6 +1867,7 @@ where
                                 {
                                     timeline.push_reasoning_delta_streaming(&delta.text);
                                 } else {
+                                    self.update_working_status_from_reasoning(&delta.text);
                                     self.timeline.push_reasoning_delta_streaming(&delta.text);
                                 }
                             }
@@ -1895,6 +1922,7 @@ where
                             self.current_turn_reasoning_tokens = None;
                             self.current_turn_total_tokens = 0;
                             self.compaction_active = false;
+                            self.working_status_override = None;
                         }
                         self.timeline.push_error(ev.error);
                     }
@@ -2161,6 +2189,12 @@ where
             changed |= timeline.tick_streaming_animation(now, width);
         }
         changed
+    }
+
+    fn update_working_status_from_reasoning(&mut self, delta: &str) {
+        if let Some(heading) = reasoning_heading_from_delta(delta) {
+            self.working_status_override = Some(heading);
+        }
     }
 
     fn has_streaming_animation(&self) -> bool {
@@ -3508,25 +3542,26 @@ where
     fn working_line(&self) -> Paragraph<'static> {
         let elapsed = self.active_turn_timer.elapsed(Instant::now());
         let status = self
-            .timeline
-            .latest_reasoning_heading()
-            .unwrap_or_else(|| working_status_label(self.compaction_active).to_string());
-        Paragraph::new(Line::from(vec![
-            Span::styled(
-                format!(
-                    " {} ",
-                    padded_spinner_frame(self.working_spinner, self.animation_frame)
-                ),
-                self.theme.running(),
+            .working_status_override
+            .as_deref()
+            .unwrap_or_else(|| working_status_label(self.compaction_active));
+        let mut spans = vec![Span::styled(
+            format!(
+                " {} ",
+                padded_spinner_frame(self.working_spinner, self.animation_frame)
             ),
-            Span::styled(
-                format!(
-                    "{status} ({} - esc to interrupt)",
-                    format_working_elapsed(elapsed)
-                ),
-                self.theme.muted(),
-            ),
-        ]))
+            self.theme.running(),
+        )];
+        spans.extend(working_status_spans(
+            status,
+            self.animation_frame,
+            self.theme,
+        ));
+        spans.push(Span::styled(
+            format!(" ({} - esc to interrupt)", format_working_elapsed(elapsed)),
+            self.theme.muted(),
+        ));
+        Paragraph::new(Line::from(spans))
     }
 
     fn header(&self, width: u16) -> Paragraph<'static> {
@@ -5239,17 +5274,21 @@ where
     }
 
     async fn select_provider_model_params(&mut self, params: ProviderSelectParams) {
-        let res = self
-            .client
-            .send_request(JsonRpcRequest {
-                jsonrpc: "2.0".to_string(),
-                id: Some(serde_json::json!("providers/select")),
-                method: "providers/select".to_string(),
-                params: Some(serde_json::to_value(params).unwrap()),
-            })
+        let persist_as_default = params.model.is_some();
+        let mut params = params;
+        let focused_thread_id = persist_as_default
+            .then(|| params.thread_id.take())
+            .flatten();
+        self.apply_provider_model_selection(params, focused_thread_id)
             .await;
+    }
 
-        match decode_response::<ProviderSelectResult>(res) {
+    async fn apply_provider_model_selection(
+        &mut self,
+        params: ProviderSelectParams,
+        focused_thread_id: Option<String>,
+    ) {
+        match self.send_provider_select(params).await {
             Ok(selected) => {
                 self.provider = selected.provider;
                 self.model = selected.model;
@@ -5257,6 +5296,21 @@ where
                 self.model_context_window =
                     context_window_from_options(&self.model_options, &self.provider, &self.model)
                         .or_else(|| context_window_for_model(&self.model));
+                if let Some(thread_id) = focused_thread_id {
+                    if let Err(err) = self
+                        .send_provider_select(ProviderSelectParams {
+                            provider: self.provider.clone(),
+                            model: Some(self.model.clone()),
+                            reasoning: Some(self.reasoning_effort.clone()),
+                            thread_id: Some(thread_id),
+                        })
+                        .await
+                    {
+                        self.record_error(format!("providers/select thread update failed: {err}"));
+                        self.show_provider_popup = false;
+                        return;
+                    }
+                }
                 self.timeline.push_system(format!(
                     "switched provider/model to {}/{} with reasoning {}.",
                     self.provider, self.model, self.reasoning_effort
@@ -5273,6 +5327,22 @@ where
                 self.show_provider_popup = false;
             }
         }
+    }
+
+    async fn send_provider_select(
+        &self,
+        params: ProviderSelectParams,
+    ) -> anyhow::Result<ProviderSelectResult> {
+        decode_response(
+            self.client
+                .send_request(JsonRpcRequest {
+                    jsonrpc: "2.0".to_string(),
+                    id: Some(serde_json::json!("providers/select")),
+                    method: "providers/select".to_string(),
+                    params: Some(serde_json::to_value(params).unwrap()),
+                })
+                .await,
+        )
     }
 
     async fn run_provider_auth(&mut self, flow: ProviderAuthFlow) -> bool {
@@ -5918,6 +5988,19 @@ fn toml_value_literal(value: toml::Value) -> anyhow::Result<String> {
     }
 }
 
+fn reasoning_heading_from_delta(delta: &str) -> Option<String> {
+    delta
+        .lines()
+        .find(|line| !line.trim().is_empty())
+        .and_then(parse_bold_heading_line)
+}
+
+fn parse_bold_heading_line(line: &str) -> Option<String> {
+    let trimmed = line.trim();
+    let inner = trimmed.strip_prefix("**")?.strip_suffix("**")?.trim();
+    (!inner.is_empty()).then(|| inner.to_string())
+}
+
 fn tui_config_path() -> PathBuf {
     std::env::var_os("RODER_CONFIG_DIR")
         .or_else(|| std::env::var_os("RODER_DATA_DIR"))
@@ -5948,6 +6031,59 @@ fn working_status_label(compaction_active: bool) -> &'static str {
     } else {
         "Working"
     }
+}
+
+fn working_status_spans(status: &str, frame: u64, theme: Theme) -> Vec<Span<'static>> {
+    let Some(sheen_index) = working_sheen_index(status, frame) else {
+        return vec![Span::styled(status.to_string(), theme.working())];
+    };
+    split_text_with_sheen(status, sheen_index, theme.working(), theme.working_sheen())
+}
+
+fn working_sheen_index(status: &str, frame: u64) -> Option<usize> {
+    let len = status.chars().count();
+    if len == 0 || WORKING_SHEEN_ACTIVE_FRAMES == 0 {
+        return None;
+    }
+    let loop_frame = frame % WORKING_SHEEN_LOOP_FRAMES;
+    if loop_frame >= WORKING_SHEEN_ACTIVE_FRAMES {
+        return None;
+    }
+    Some(((loop_frame * len as u64) / WORKING_SHEEN_ACTIVE_FRAMES).min(len as u64 - 1) as usize)
+}
+
+fn split_text_with_sheen(
+    text: &str,
+    sheen_center: usize,
+    base_style: Style,
+    highlight_style: Style,
+) -> Vec<Span<'static>> {
+    let mut spans: Vec<Span<'static>> = Vec::new();
+    let mut current = String::new();
+    let mut current_style = base_style;
+
+    for (index, ch) in text.chars().enumerate() {
+        let distance = index.abs_diff(sheen_center);
+        let style = if distance < WORKING_SHEEN_WIDTH {
+            highlight_style
+        } else {
+            base_style
+        };
+        if style == current_style {
+            current.push(ch);
+        } else {
+            if !current.is_empty() {
+                spans.push(Span::styled(std::mem::take(&mut current), current_style));
+            }
+            current_style = style;
+            current.push(ch);
+        }
+    }
+
+    if !current.is_empty() {
+        spans.push(Span::styled(current, current_style));
+    }
+    spans
 }
 
 fn reasoning_tokens_from_provider_metadata(metadata: &serde_json::Value) -> Option<u32> {
@@ -7800,6 +7936,7 @@ mod tests {
             thread_message_count: 0,
             active_turn_id: None,
             active_turn_timer: TurnTimer::default(),
+            working_status_override: None,
             current_turn_input_tokens: 0,
             current_turn_output_tokens: 0,
             current_turn_reasoning_tokens: None,
@@ -8536,6 +8673,8 @@ mod tests {
                 theme.accent_soft,
                 theme.tool,
                 theme.tool_running,
+                theme.working,
+                theme.working_sheen,
                 theme.diff_added,
                 theme.diff_added_bg,
                 theme.diff_removed,
@@ -8990,6 +9129,79 @@ mod tests {
     fn working_status_label_reflects_server_side_compaction() {
         assert_eq!(working_status_label(false), "Working");
         assert_eq!(working_status_label(true), "Compacting context");
+    }
+
+    #[test]
+    fn working_status_sheen_highlights_one_character_then_loops() {
+        let theme = Theme::for_dark_background(true);
+        assert_eq!(WORKING_SHEEN_LOOP_FRAMES, TOP_STATUS_ANIMATION_FPS * 2);
+        assert!(WORKING_SHEEN_ACTIVE_FRAMES > TOP_STATUS_ANIMATION_FPS);
+        assert_ne!(theme.working_sheen, Color::Indexed(231));
+        let spans = working_status_spans("Working", 0, theme);
+        assert_eq!(spans_text(&spans), "Working");
+        assert!(
+            spans
+                .iter()
+                .any(|span| span.style.fg == Some(theme.working_sheen))
+        );
+        assert!(
+            spans
+                .iter()
+                .any(|span| span.style.fg == Some(theme.working))
+        );
+
+        let resting = working_status_spans("Working", WORKING_SHEEN_ACTIVE_FRAMES, theme);
+        assert_eq!(spans_text(&resting), "Working");
+        assert!(
+            resting
+                .iter()
+                .all(|span| span.style.fg == Some(theme.working))
+        );
+
+        let looped = working_status_spans("Working", WORKING_SHEEN_LOOP_FRAMES, theme);
+        assert_eq!(looped, spans);
+    }
+
+    #[test]
+    fn reasoning_heading_parses_for_working_status_override() {
+        assert_eq!(
+            reasoning_heading_from_delta("\n**Analyzing potential app-server issues**\n\nBody")
+                .as_deref(),
+            Some("Analyzing potential app-server issues")
+        );
+        assert_eq!(reasoning_heading_from_delta("regular thinking"), None);
+    }
+
+    #[test]
+    fn working_line_uses_override_until_turn_reset() {
+        let mut app = test_app();
+        app.active_turn_id = Some("turn-test".to_string());
+        app.update_working_status_from_reasoning("**Inspect recent changes**\n\nChecking files.");
+
+        let mut buffer = Buffer::empty(Rect::new(0, 0, 100, 1));
+        app.working_line().render(buffer.area, &mut buffer);
+        let line = buffer_row_cells(&buffer, 0)
+            .iter()
+            .map(|cell| cell.symbol.as_str())
+            .collect::<String>();
+        assert!(line.contains("Inspect recent changes"));
+
+        app.working_status_override = None;
+        let mut buffer = Buffer::empty(Rect::new(0, 0, 100, 1));
+        app.working_line().render(buffer.area, &mut buffer);
+        let line = buffer_row_cells(&buffer, 0)
+            .iter()
+            .map(|cell| cell.symbol.as_str())
+            .collect::<String>();
+        assert!(line.contains("Working"));
+        assert!(!line.contains("Inspect recent changes"));
+    }
+
+    fn spans_text(spans: &[Span<'_>]) -> String {
+        spans
+            .iter()
+            .map(|span| span.content.as_ref())
+            .collect::<String>()
     }
 
     #[test]
@@ -9797,6 +10009,72 @@ mod tests {
             items.get(9),
             Some(ProviderMenuItem::MarketplacesSettings)
         ));
+    }
+
+    #[tokio::test]
+    async fn model_picker_selection_updates_global_default_and_current_thread() {
+        let server = Arc::new(AppServer::new(Arc::new(
+            Runtime::fake().expect("fake runtime"),
+        )));
+        let client = LocalAppClient::new(server.clone());
+        let started: roder_protocol::ThreadStartResult = decode_response(
+            client
+                .send_request(JsonRpcRequest {
+                    jsonrpc: "2.0".to_string(),
+                    id: Some(serde_json::json!("thread/start")),
+                    method: "thread/start".to_string(),
+                    params: Some(serde_json::json!({
+                        "model": "mock",
+                        "modelProvider": "mock",
+                        "cwd": "/tmp",
+                        "ephemeral": false
+                    })),
+                })
+                .await,
+        )
+        .unwrap();
+        let mut app = test_app();
+        app.client = client.clone();
+        app.thread_id = started.thread.id.clone();
+
+        app.select_provider_model_params(ProviderSelectParams {
+            provider: "mock".to_string(),
+            model: Some("alternate-mock-model".to_string()),
+            reasoning: Some("none".to_string()),
+            thread_id: Some(app.focused_thread_id().to_string()),
+        })
+        .await;
+
+        let initialized: roder_protocol::InitializeResult = decode_response(
+            client
+                .send_request(JsonRpcRequest {
+                    jsonrpc: "2.0".to_string(),
+                    id: Some(serde_json::json!("initialize")),
+                    method: "initialize".to_string(),
+                    params: None,
+                })
+                .await,
+        )
+        .unwrap();
+        assert_eq!(initialized.provider, "mock");
+        assert_eq!(initialized.model, "alternate-mock-model");
+
+        let next_thread: roder_protocol::ThreadStartResult = decode_response(
+            client
+                .send_request(JsonRpcRequest {
+                    jsonrpc: "2.0".to_string(),
+                    id: Some(serde_json::json!("thread/start-next")),
+                    method: "thread/start".to_string(),
+                    params: Some(serde_json::json!({
+                        "cwd": "/tmp",
+                        "ephemeral": false
+                    })),
+                })
+                .await,
+        )
+        .unwrap();
+        assert_eq!(next_thread.model_provider, "mock");
+        assert_eq!(next_thread.model, "alternate-mock-model");
     }
 
     #[test]
