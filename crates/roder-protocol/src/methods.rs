@@ -81,6 +81,9 @@ struct AppServerMethodSpecSeed {
 }
 
 fn method_type_name(method: &str, suffix: &str) -> String {
+    if let Some(name) = explicit_method_type_name(method, suffix) {
+        return name.to_string();
+    }
     let mut name = String::new();
     let mut capitalize_next = true;
     for ch in method.chars() {
@@ -97,6 +100,23 @@ fn method_type_name(method: &str, suffix: &str) -> String {
     }
     name.push_str(suffix);
     name
+}
+
+fn explicit_method_type_name(method: &str, suffix: &str) -> Option<&'static str> {
+    match (method, suffix) {
+        ("vcs/status", "Params") | ("vcs/lines/list", "Params") => Some("VcsWorkspaceParams"),
+        ("vcs/status", "Result") => Some("VcsStatus"),
+        ("vcs/changes/read", "Result") => Some("VcsChangedContentPage"),
+        ("vcs/lines/list", "Result") => Some("Vec<VcsLineOfWork>"),
+        ("vcs/lines/switch", "Params") => Some("VcsLineSwitchParams"),
+        ("vcs/lines/switch", "Result")
+        | ("vcs/restore", "Result")
+        | ("vcs/select", "Result")
+        | ("vcs/sync", "Result") => Some("VcsOperationResult"),
+        ("vcs/select", "Params") => Some("VcsSelectionParams"),
+        ("vcs/snapshot/create", "Result") => Some("VcsSnapshot"),
+        _ => None,
+    }
 }
 
 macro_rules! method_spec {
@@ -194,8 +214,6 @@ const METHOD_SPECS: &[AppServerMethodSpecSeed] = &[
     method_spec!("extensions/list", "extensions", ReadOnly, Idempotent),
     method_spec!("fs/readDirectory", "filesystem", ReadOnly, Idempotent),
     method_spec!("fs/readFile", "filesystem", ReadOnly, Idempotent),
-    method_spec!("git/changes/list", "git", ReadOnly, Idempotent),
-    method_spec!("git/changes/read", "git", ReadOnly, Idempotent),
     method_spec!("hunk/list", "plan-review", ReadOnly, Idempotent),
     method_spec!("hunk/read", "plan-review", ReadOnly, Idempotent),
     method_spec!("hunk/rollback", "plan-review", LocalState, NonIdempotent),
@@ -474,6 +492,15 @@ const METHOD_SPECS: &[AppServerMethodSpecSeed] = &[
     method_spec!("turn/steer", "turns", LocalState, NonIdempotent),
     method_spec!("turn/subagentTrace/read", "turns", ReadOnly, Idempotent),
     method_spec!("turn/subagentTraces/list", "turns", ReadOnly, Idempotent),
+    method_spec!("vcs/changes/list", "vcs", ReadOnly, Idempotent),
+    method_spec!("vcs/changes/read", "vcs", ReadOnly, Idempotent),
+    method_spec!("vcs/lines/list", "vcs", ReadOnly, Idempotent),
+    method_spec!("vcs/lines/switch", "vcs", LocalState, NonIdempotent),
+    method_spec!("vcs/restore", "vcs", LocalState, NonIdempotent),
+    method_spec!("vcs/select", "vcs", LocalState, NonIdempotent),
+    method_spec!("vcs/snapshot/create", "vcs", LocalState, NonIdempotent),
+    method_spec!("vcs/status", "vcs", ReadOnly, Idempotent),
+    method_spec!("vcs/sync", "vcs", ExternalProcess, NonIdempotent),
     method_spec!("webwright/artifacts", "webwright", ReadOnly, Idempotent),
     method_spec!("webwright/export", "webwright", LocalState, NonIdempotent),
     method_spec!("webwright/latestRun", "webwright", ReadOnly, Idempotent),
@@ -626,9 +653,32 @@ mod tests {
             "speech/synthesis/providers/list",
             "speech/synthesize",
             "speech/transcribe",
+            "vcs/status",
+            "vcs/select",
         ] {
             assert!(methods.contains(required), "missing {required}");
         }
+        assert!(!methods.contains("vcs/extras/list"));
+    }
+
+    #[test]
+    fn method_manifest_uses_canonical_vcs_type_names() {
+        let manifest = app_server_method_manifest();
+        let status = manifest
+            .methods
+            .iter()
+            .find(|method| method.method == "vcs/status")
+            .expect("vcs/status method");
+        assert_eq!(status.params_type, "VcsWorkspaceParams");
+        assert_eq!(status.result_type, "VcsStatus");
+
+        let select = manifest
+            .methods
+            .iter()
+            .find(|method| method.method == "vcs/select")
+            .expect("vcs/select method");
+        assert_eq!(select.params_type, "VcsSelectionParams");
+        assert_eq!(select.result_type, "VcsOperationResult");
     }
 
     #[test]

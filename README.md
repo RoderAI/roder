@@ -64,6 +64,7 @@ crates/
   roder-ext-jsonl-thread-store/       JSONL thread/checkpoint storage.
   roder-ext-disk-context/             On-disk context persistence.
   roder-ext-memory/                   Local memory extension.
+  roder-ext-git/                      Bundled git implementation of the VCS provider API.
 ```
 
 The dependency direction is strict, per whitepaper §7:
@@ -76,6 +77,10 @@ roder-cli   -> core + selected extensions
 ```
 
 Extensions never depend on `roder-core`; the core never depends on any extension. Distribution binaries compose the core with whichever extensions they choose to install.
+
+Version control is also an extension-provider surface. The default distribution
+ships git as the bundled `VcsProvider`, while other VCS systems can implement
+the same provider contract without forking core runtime code.
 
 ---
 

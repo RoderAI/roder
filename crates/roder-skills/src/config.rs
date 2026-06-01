@@ -137,9 +137,9 @@ mod tests {
 
     fn descriptor() -> SkillDescriptor {
         SkillDescriptor {
-            id: "builtin:roder-builtin://commit/SKILL.md".to_string(),
-            name: "commit".to_string(),
-            canonical_path: "roder-builtin://commit/SKILL.md".to_string(),
+            id: "builtin:roder-builtin://vcs-snapshot/SKILL.md".to_string(),
+            name: "vcs-snapshot".to_string(),
+            canonical_path: "roder-builtin://vcs-snapshot/SKILL.md".to_string(),
             source: SkillSource::BuiltIn,
             exposure: SkillExposure::DirectOnly,
             activation: SkillActivationState::Enabled,
@@ -155,14 +155,14 @@ mod tests {
     fn config_applies_name_and_path_rules() {
         let rules = vec![
             SkillConfigRule {
-                name: Some("commit".to_string()),
+                name: Some("vcs-snapshot".to_string()),
                 path: None,
                 enabled: Some(false),
                 exposure: None,
             },
             SkillConfigRule {
                 name: None,
-                path: Some("roder-builtin://commit/SKILL.md".to_string()),
+                path: Some("roder-builtin://vcs-snapshot/SKILL.md".to_string()),
                 enabled: Some(true),
                 exposure: Some(SkillExposure::Global),
             },
@@ -178,12 +178,12 @@ mod tests {
         let config: SkillsConfig = toml::from_str(
             r#"
 [[config]]
-name = "commit"
+name = "vcs-snapshot"
 enabled = true
 exposure = "direct_only"
 
 [[config]]
-path = "roder-builtin://commit/SKILL.md"
+path = "roder-builtin://vcs-snapshot/SKILL.md"
 enabled = false
 "#,
         )
@@ -193,7 +193,7 @@ enabled = false
         assert_eq!(
             config.config[0].selector(),
             Some(SkillSelector::Name {
-                name: "commit".to_string()
+                name: "vcs-snapshot".to_string()
             })
         );
     }
@@ -203,13 +203,13 @@ enabled = false
         let mut config = SkillsConfig::default();
         config.upsert_rule(
             SkillSelector::Name {
-                name: "commit".to_string(),
+                name: "vcs-snapshot".to_string(),
             },
             |rule| rule.set_enabled(false),
         );
         config.upsert_rule(
             SkillSelector::Name {
-                name: "commit".to_string(),
+                name: "vcs-snapshot".to_string(),
             },
             |rule| rule.set_exposure(SkillExposure::Global),
         );

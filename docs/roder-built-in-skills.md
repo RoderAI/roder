@@ -7,7 +7,7 @@ Roder treats built-in skills as ordinary skills with a first-party source. They 
 Built-ins are loaded from repo-authored assets and receive canonical paths shaped like:
 
 ```text
-roder-builtin://commit/SKILL.md
+roder-builtin://vcs-snapshot/SKILL.md
 ```
 
 Installed and workspace skills can share a name with a built-in. Name selectors are accepted only when the name resolves to one skill; use the canonical path when a name is ambiguous.
@@ -16,7 +16,7 @@ Installed and workspace skills can share a name with a built-in. Name selectors 
 
 `global` skills appear in the compact global skill index when enabled. Use this for small, generally useful guidance that should be visible before any explicit invocation.
 
-`direct-only` skills stay out of the global index. They are injected only when the user invokes them directly with `$skill-name` or `${skill-name}`, or when a feature binding activates them. The built-in `commit` skill defaults to direct-only so `/commit` can use it without increasing every turn's prompt.
+`direct-only` skills stay out of the global index. They are injected only when the user invokes them directly with `$skill-name` or `${skill-name}`, or when a feature binding activates them. The built-in `vcs-snapshot` skill defaults to direct-only so `/snapshot` can use it without increasing every turn's prompt.
 
 ## Configuration
 
@@ -24,7 +24,7 @@ Skill config uses the same rule list for built-in and installed skills:
 
 ```toml
 [[skills.config]]
-path = "roder-builtin://commit/SKILL.md"
+path = "roder-builtin://vcs-snapshot/SKILL.md"
 enabled = false
 exposure = "global"
 ```
@@ -44,17 +44,17 @@ The CLI mirrors those controls:
 
 ```sh
 roder skills list
-roder skills enable commit
-roder skills disable commit
-roder skills exposure commit global
-roder skills exposure roder-builtin://commit/SKILL.md direct-only
+roder skills enable vcs-snapshot
+roder skills disable vcs-snapshot
+roder skills exposure vcs-snapshot global
+roder skills exposure roder-builtin://vcs-snapshot/SKILL.md direct-only
 ```
 
 The Ctrl+K palette includes a Skills section with rows for reading a skill, toggling enabled state, and switching exposure. The Settings section also includes a Skills manager row that opens the filtered Skills section. Rows show source, activation, exposure, canonical path, and description.
 
 ## Feature Bindings
 
-Built-in features should bind to skills instead of embedding large prompt bodies in command or TUI code. `/commit` is the reference pattern:
+Built-in features should bind to skills instead of embedding large prompt bodies in command or TUI code. `/snapshot` is the reference pattern:
 
 - command metadata declares a required `FeatureSkillBinding`
 - expansion resolves the skill through the runtime registry

@@ -284,7 +284,7 @@ mod tests {
             "tasks",
             "ps",
             "memory",
-            "commit",
+            "snapshot",
             "marketplace",
             "plugin",
             "remote",

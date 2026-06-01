@@ -32,11 +32,11 @@ fn model_loads_workspace_and_builtin_skill_metadata() {
         vec!["git"]
     );
 
-    let builtin_path = fixture("builtin-commit/SKILL.md");
+    let builtin_path = fixture("builtin-vcs-snapshot/SKILL.md");
     let builtin = load_skill_from_paths(
         &builtin_path,
         SkillSource::BuiltIn,
-        "roder-builtin://commit/SKILL.md".to_string(),
+        "roder-builtin://vcs-snapshot/SKILL.md".to_string(),
         SkillExposure::DirectOnly,
     )
     .unwrap();
@@ -72,15 +72,15 @@ fn model_serializes_all_skill_sources() {
 
 #[test]
 fn model_config_can_disable_builtin_and_change_exposure() {
-    let mut descriptor = descriptor("commit", SkillSource::BuiltIn);
-    descriptor.name = "commit".to_string();
-    descriptor.canonical_path = "roder-builtin://commit/SKILL.md".to_string();
+    let mut descriptor = descriptor("vcs-snapshot", SkillSource::BuiltIn);
+    descriptor.name = "vcs-snapshot".to_string();
+    descriptor.canonical_path = "roder-builtin://vcs-snapshot/SKILL.md".to_string();
     descriptor.exposure = SkillExposure::DirectOnly;
 
     let applied = apply_skill_config(
         &descriptor,
         &[SkillConfigRule {
-            name: Some("commit".to_string()),
+            name: Some("vcs-snapshot".to_string()),
             path: None,
             enabled: Some(false),
             exposure: Some(SkillExposure::Global),

@@ -323,6 +323,7 @@ impl Runtime {
             crate::workspace_changes::WorkspaceChangeBaseline::capture_for_tool(
                 &tool_call,
                 workspace.or(runtime_config.workspace.as_deref()),
+                self.registry.version_control_resolver(),
             )
             .await;
 

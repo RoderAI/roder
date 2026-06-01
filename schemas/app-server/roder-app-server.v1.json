@@ -327,24 +327,6 @@
       "sideEffect": "readOnly"
     },
     {
-      "method": "git/changes/list",
-      "paramsType": "GitChangesListParams",
-      "resultType": "GitChangesListResult",
-      "stability": "stable",
-      "featureGroup": "git",
-      "idempotency": "idempotent",
-      "sideEffect": "readOnly"
-    },
-    {
-      "method": "git/changes/read",
-      "paramsType": "GitChangesReadParams",
-      "resultType": "GitChangesReadResult",
-      "stability": "stable",
-      "featureGroup": "git",
-      "idempotency": "idempotent",
-      "sideEffect": "readOnly"
-    },
-    {
       "method": "hunk/list",
       "paramsType": "HunkListParams",
       "resultType": "HunkListResult",
@@ -1466,6 +1448,87 @@
       "featureGroup": "turns",
       "idempotency": "idempotent",
       "sideEffect": "readOnly"
+    },
+    {
+      "method": "vcs/changes/list",
+      "paramsType": "VcsChangesListParams",
+      "resultType": "VcsChangesListResult",
+      "stability": "stable",
+      "featureGroup": "vcs",
+      "idempotency": "idempotent",
+      "sideEffect": "readOnly"
+    },
+    {
+      "method": "vcs/changes/read",
+      "paramsType": "VcsChangesReadParams",
+      "resultType": "VcsChangedContentPage",
+      "stability": "stable",
+      "featureGroup": "vcs",
+      "idempotency": "idempotent",
+      "sideEffect": "readOnly"
+    },
+    {
+      "method": "vcs/lines/list",
+      "paramsType": "VcsWorkspaceParams",
+      "resultType": "Vec<VcsLineOfWork>",
+      "stability": "stable",
+      "featureGroup": "vcs",
+      "idempotency": "idempotent",
+      "sideEffect": "readOnly"
+    },
+    {
+      "method": "vcs/lines/switch",
+      "paramsType": "VcsLineSwitchParams",
+      "resultType": "VcsOperationResult",
+      "stability": "stable",
+      "featureGroup": "vcs",
+      "idempotency": "nonIdempotent",
+      "sideEffect": "localState"
+    },
+    {
+      "method": "vcs/restore",
+      "paramsType": "VcsRestoreParams",
+      "resultType": "VcsOperationResult",
+      "stability": "stable",
+      "featureGroup": "vcs",
+      "idempotency": "nonIdempotent",
+      "sideEffect": "localState"
+    },
+    {
+      "method": "vcs/select",
+      "paramsType": "VcsSelectionParams",
+      "resultType": "VcsOperationResult",
+      "stability": "stable",
+      "featureGroup": "vcs",
+      "idempotency": "nonIdempotent",
+      "sideEffect": "localState"
+    },
+    {
+      "method": "vcs/snapshot/create",
+      "paramsType": "VcsSnapshotCreateParams",
+      "resultType": "VcsSnapshot",
+      "stability": "stable",
+      "featureGroup": "vcs",
+      "idempotency": "nonIdempotent",
+      "sideEffect": "localState"
+    },
+    {
+      "method": "vcs/status",
+      "paramsType": "VcsWorkspaceParams",
+      "resultType": "VcsStatus",
+      "stability": "stable",
+      "featureGroup": "vcs",
+      "idempotency": "idempotent",
+      "sideEffect": "readOnly"
+    },
+    {
+      "method": "vcs/sync",
+      "paramsType": "VcsSyncParams",
+      "resultType": "VcsOperationResult",
+      "stability": "stable",
+      "featureGroup": "vcs",
+      "idempotency": "nonIdempotent",
+      "sideEffect": "externalProcess"
     },
     {
       "method": "webwright/artifacts",
