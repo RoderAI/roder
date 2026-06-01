@@ -52,7 +52,7 @@ use crossterm::event::{
 use ratatui::{
     Frame,
     buffer::Buffer,
-    layout::{Constraint, Direction, Layout, Rect},
+    layout::{Alignment, Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span, Text},
     widgets::{
@@ -997,6 +997,7 @@ where
     current_turn_total_tokens: u32,
     thread_tokens: u64,
     context_window_tokens: u64,
+    context_breakdown: ContextWindowBreakdown,
     provider: String,
     model: String,
     model_context_window: Option<u32>,
@@ -1377,6 +1378,7 @@ where
             current_turn_total_tokens: 0,
             thread_tokens: 0,
             context_window_tokens: 0,
+            context_breakdown: ContextWindowBreakdown::default(),
             provider,
             model: selected_model,
             model_context_window,
@@ -1772,6 +1774,7 @@ where
                         self.current_turn_output_tokens = 0;
                         self.current_turn_reasoning_tokens = None;
                         self.current_turn_total_tokens = 0;
+                        self.context_breakdown.begin_turn();
                         self.compaction_active = false;
                     }
                     RoderEvent::TurnCompleted(ev)
@@ -1805,6 +1808,18 @@ where
                         self.current_turn_reasoning_tokens = None;
                         self.current_turn_total_tokens = 0;
                         self.compaction_active = false;
+                    }
+                    RoderEvent::ContextAssemblyStarted(ev) => {
+                        self.context_breakdown.start_context_turn(ev.turn_id);
+                    }
+                    RoderEvent::ContextBlockAdded(ev) => {
+                        self.context_breakdown.record_context_block(&ev);
+                    }
+                    RoderEvent::ContextAssemblyCompleted(ev) => {
+                        self.context_breakdown.record_context_completed(&ev);
+                    }
+                    RoderEvent::SkillIndexRendered(ev) => {
+                        self.context_breakdown.record_skill_index(&ev);
                     }
                     RoderEvent::InferenceEventReceived(ev) => {
                         self.team_ui.record_thread_activity(&ev.thread_id);
@@ -3447,6 +3462,11 @@ where
         }
         if let Some(modal) = &self.tool_detail_modal {
             render_tool_detail_modal(f, area, modal, self.theme);
+        }
+        if self.context_counter_hovered {
+            if let Some(counter) = self.context_window_counter() {
+                render_context_window_popup(f, area, counter, self.context_breakdown, self.theme);
+            }
         }
     }
 
@@ -5451,6 +5471,7 @@ where
     }
 
     fn record_usage(&mut self, usage: TokenUsage) {
+        self.context_breakdown.record_usage(&usage);
         record_usage_counters(
             &mut self.current_turn_input_tokens,
             &mut self.current_turn_output_tokens,
@@ -7226,6 +7247,377 @@ struct ContextWindowCounter {
     hovered: bool,
 }
 
+#[derive(Debug, Clone, Copy, Default, Eq, PartialEq)]
+struct ContextWindowBreakdown {
+    active_context_turn: Option<u64>,
+    system_tokens: u64,
+    skills_tokens: u64,
+    retrieved_tokens: u64,
+    other_context_tokens: u64,
+    context_total_tokens: u64,
+    prompt_tokens: u64,
+    cached_prompt_tokens: u64,
+    output_tokens: u64,
+}
+
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+enum ContextBreakdownCategory {
+    System,
+    Skills,
+    Retrieved,
+    OtherContext,
+}
+
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+struct ContextBreakdownSegment {
+    label: &'static str,
+    tokens: u64,
+    color: Color,
+}
+
+impl ContextWindowBreakdown {
+    fn begin_turn(&mut self) {
+        self.prompt_tokens = 0;
+        self.cached_prompt_tokens = 0;
+        self.output_tokens = 0;
+    }
+
+    fn start_context_turn(&mut self, turn_id: String) {
+        self.active_context_turn = Some(stable_context_turn_key(&turn_id));
+        self.system_tokens = 0;
+        self.skills_tokens = 0;
+        self.retrieved_tokens = 0;
+        self.other_context_tokens = 0;
+        self.context_total_tokens = 0;
+    }
+
+    fn record_context_block(&mut self, block: &roder_api::events::ContextBlockAdded) {
+        let key = stable_context_turn_key(&block.turn_id);
+        if self.active_context_turn != Some(key) {
+            self.start_context_turn(block.turn_id.clone());
+        }
+        let tokens = u64::from(block.estimated_tokens);
+        match context_block_category(&block.block_type) {
+            ContextBreakdownCategory::System => {
+                self.system_tokens = self.system_tokens.saturating_add(tokens)
+            }
+            ContextBreakdownCategory::Skills => {
+                self.skills_tokens = self.skills_tokens.saturating_add(tokens)
+            }
+            ContextBreakdownCategory::Retrieved => {
+                self.retrieved_tokens = self.retrieved_tokens.saturating_add(tokens)
+            }
+            ContextBreakdownCategory::OtherContext => {
+                self.other_context_tokens = self.other_context_tokens.saturating_add(tokens)
+            }
+        }
+        self.context_total_tokens = self.context_total_tokens.saturating_add(tokens);
+    }
+
+    fn record_context_completed(
+        &mut self,
+        completed: &roder_api::events::ContextAssemblyCompleted,
+    ) {
+        let key = stable_context_turn_key(&completed.turn_id);
+        if self.active_context_turn != Some(key) {
+            self.start_context_turn(completed.turn_id.clone());
+        }
+        self.context_total_tokens = u64::from(completed.estimated_tokens);
+    }
+
+    fn record_skill_index(&mut self, rendered: &roder_api::skills::SkillIndexRendered) {
+        let key = stable_context_turn_key(&rendered.turn_id);
+        if self.active_context_turn != Some(key) {
+            self.start_context_turn(rendered.turn_id.clone());
+        }
+        let tokens = u64::from(rendered.estimated_tokens);
+        self.skills_tokens = self.skills_tokens.saturating_add(tokens);
+        self.context_total_tokens = self.context_total_tokens.saturating_add(tokens);
+    }
+
+    fn record_usage(&mut self, usage: &TokenUsage) {
+        self.prompt_tokens = self.prompt_tokens.max(u64::from(usage.prompt_tokens));
+        self.cached_prompt_tokens = self
+            .cached_prompt_tokens
+            .max(u64::from(usage.cached_prompt_tokens));
+        self.output_tokens = self.output_tokens.max(u64::from(usage.completion_tokens));
+    }
+
+    fn conversation_tokens(self, counter: ContextWindowCounter) -> u64 {
+        let context = self.context_total_tokens.max(
+            self.system_tokens
+                .saturating_add(self.skills_tokens)
+                .saturating_add(self.retrieved_tokens)
+                .saturating_add(self.other_context_tokens),
+        );
+        let used_without_output = counter.used_tokens.saturating_sub(self.output_tokens);
+        let prompt = if self.prompt_tokens > 0 {
+            self.prompt_tokens
+        } else {
+            used_without_output
+        };
+        prompt.saturating_sub(context)
+    }
+
+    fn segments(self, counter: ContextWindowCounter, theme: Theme) -> Vec<ContextBreakdownSegment> {
+        let mut segments = Vec::new();
+        push_context_segment(
+            &mut segments,
+            "System / context",
+            self.system_tokens,
+            theme.subtle,
+        );
+        push_context_segment(
+            &mut segments,
+            "Skills",
+            self.skills_tokens,
+            theme.accent_soft,
+        );
+        push_context_segment(
+            &mut segments,
+            "Retrieved context",
+            self.retrieved_tokens,
+            theme.tool,
+        );
+        push_context_segment(
+            &mut segments,
+            "Other context",
+            self.other_context_tokens,
+            theme.commentary,
+        );
+        push_context_segment(
+            &mut segments,
+            "Conversation",
+            self.conversation_tokens(counter),
+            theme.diff_removed,
+        );
+        push_context_segment(
+            &mut segments,
+            "Output",
+            self.output_tokens,
+            theme.diff_added,
+        );
+        if segments.is_empty() && counter.used_tokens > 0 {
+            push_context_segment(
+                &mut segments,
+                "Conversation",
+                counter.used_tokens,
+                theme.diff_removed,
+            );
+        }
+        segments
+    }
+}
+
+fn push_context_segment(
+    segments: &mut Vec<ContextBreakdownSegment>,
+    label: &'static str,
+    tokens: u64,
+    color: Color,
+) {
+    if tokens > 0 {
+        segments.push(ContextBreakdownSegment {
+            label,
+            tokens,
+            color,
+        });
+    }
+}
+
+fn context_block_category(block_type: &str) -> ContextBreakdownCategory {
+    match block_type {
+        "Instruction" | "SafetyPolicy" | "TaskMetadata" | "PriorSummary" | "EntrypointHint" => {
+            ContextBreakdownCategory::System
+        }
+        "Memory" | "RepositoryFact" | "RetrievedDocument" | "RetrievalHint" => {
+            ContextBreakdownCategory::Retrieved
+        }
+        other if other.to_ascii_lowercase().contains("skill") => ContextBreakdownCategory::Skills,
+        _ => ContextBreakdownCategory::OtherContext,
+    }
+}
+
+fn stable_context_turn_key(turn_id: &str) -> u64 {
+    turn_id.bytes().fold(0xcbf29ce484222325, |hash, byte| {
+        hash.wrapping_mul(0x100000001b3) ^ u64::from(byte)
+    })
+}
+
+fn render_context_window_popup(
+    f: &mut Frame<'_>,
+    area: Rect,
+    counter: ContextWindowCounter,
+    breakdown: ContextWindowBreakdown,
+    theme: Theme,
+) {
+    let Some(popup_area) = context_window_popup_area(area) else {
+        return;
+    };
+    let segments = breakdown.segments(counter, theme);
+    let borders = if theme.borders_visible {
+        Borders::ALL
+    } else {
+        Borders::NONE
+    };
+    let block = Block::default()
+        .borders(borders)
+        .border_type(theme.border_type)
+        .style(theme.dialog_surface())
+        .border_style(theme.dialog())
+        .title(Span::styled(" Context ", theme.accent()));
+    let inner = block.inner(popup_area);
+    f.render_widget(Clear, popup_area);
+    f.render_widget(block, popup_area);
+    if inner.width == 0 || inner.height == 0 {
+        return;
+    }
+
+    let mut lines = Vec::new();
+    let percent_label = format!("{:.0}% Full", counter.percent().min(999.0));
+    let token_label = format!(
+        "{} / {} tokens",
+        compact_token_count(counter.used_tokens),
+        compact_token_count(counter.max_tokens)
+    );
+    lines.push(Line::from(vec![
+        Span::styled(percent_label.clone(), theme.strong()),
+        Span::styled(
+            right_pad_for_popup(&percent_label, &token_label, inner.width),
+            theme.text(),
+        ),
+        Span::styled(token_label, theme.muted()),
+    ]));
+    lines.push(context_usage_bar_line(
+        &segments,
+        counter,
+        inner.width,
+        theme,
+    ));
+    lines.push(Line::from(""));
+    for segment in &segments {
+        lines.push(context_popup_row(
+            segment.label,
+            segment.tokens,
+            segment.color,
+            inner.width,
+            theme,
+        ));
+    }
+    if breakdown.cached_prompt_tokens > 0 {
+        lines.push(context_popup_row(
+            "Cached input",
+            breakdown.cached_prompt_tokens,
+            theme.subtle,
+            inner.width,
+            theme,
+        ));
+    }
+    let free_tokens = counter.max_tokens.saturating_sub(counter.used_tokens);
+    lines.push(context_popup_row(
+        "Available",
+        free_tokens,
+        theme.muted,
+        inner.width,
+        theme,
+    ));
+
+    f.render_widget(
+        Paragraph::new(Text::from(lines))
+            .style(theme.dialog_surface())
+            .alignment(Alignment::Left),
+        inner,
+    );
+}
+
+fn context_window_popup_area(area: Rect) -> Option<Rect> {
+    if area.width < 24 || area.height < 6 {
+        return None;
+    }
+    let width = area.width.clamp(24, 54);
+    let height = area.height.clamp(6, 14);
+    Some(Rect::new(
+        area.x + area.width.saturating_sub(width),
+        area.y,
+        width,
+        height,
+    ))
+}
+
+fn context_usage_bar_line(
+    segments: &[ContextBreakdownSegment],
+    counter: ContextWindowCounter,
+    width: u16,
+    theme: Theme,
+) -> Line<'static> {
+    let bar_width = usize::from(width).saturating_sub(2).max(1);
+    let filled = (counter
+        .used_tokens
+        .saturating_mul(bar_width as u64)
+        .checked_div(counter.max_tokens)
+        .unwrap_or(0) as usize)
+        .min(bar_width);
+    let mut spans = Vec::new();
+    let mut used_cells = 0usize;
+    let segment_total = segments
+        .iter()
+        .map(|segment| segment.tokens)
+        .sum::<u64>()
+        .max(1);
+    for (index, segment) in segments.iter().enumerate() {
+        let mut cells = ((segment.tokens.saturating_mul(filled as u64)) / segment_total) as usize;
+        if segment.tokens > 0 && cells == 0 && used_cells < filled {
+            cells = 1;
+        }
+        if index + 1 == segments.len() {
+            cells = filled.saturating_sub(used_cells);
+        }
+        cells = cells.min(filled.saturating_sub(used_cells));
+        if cells > 0 {
+            spans.push(Span::styled(
+                "─".repeat(cells),
+                Style::default().fg(segment.color),
+            ));
+            used_cells += cells;
+        }
+    }
+    if used_cells < filled {
+        spans.push(Span::styled(
+            "─".repeat(filled - used_cells),
+            Style::default().fg(theme.diff_removed),
+        ));
+    }
+    if filled < bar_width {
+        spans.push(Span::styled("─".repeat(bar_width - filled), theme.muted()));
+    }
+    Line::from(spans)
+}
+
+fn context_popup_row(
+    label: &'static str,
+    tokens: u64,
+    color: Color,
+    width: u16,
+    theme: Theme,
+) -> Line<'static> {
+    let value = compact_token_count(tokens);
+    Line::from(vec![
+        Span::styled("■ ", Style::default().fg(color)),
+        Span::styled(label.to_string(), theme.text()),
+        Span::styled(
+            right_pad_for_popup(label, &value, width.saturating_sub(2)),
+            theme.text(),
+        ),
+        Span::styled(value, theme.muted()),
+    ])
+}
+
+fn right_pad_for_popup(left: &str, right: &str, width: u16) -> String {
+    let left_width = left.chars().count();
+    let right_width = right.chars().count();
+    let width = usize::from(width);
+    " ".repeat(width.saturating_sub(left_width + right_width).max(1))
+}
+
 impl ContextWindowCounter {
     fn label(self) -> String {
         if self.hovered {
@@ -7414,6 +7806,7 @@ mod tests {
             current_turn_total_tokens: 0,
             thread_tokens: 0,
             context_window_tokens: 0,
+            context_breakdown: ContextWindowBreakdown::default(),
             provider: "mock".to_string(),
             model: "mock".to_string(),
             model_context_window: None,
@@ -8626,6 +9019,77 @@ mod tests {
         assert!(usage.hit_test(120, 0, 119));
         assert!(!usage.hit_test(120, 0, 100));
         assert!(!usage.hit_test(120, 1, 119));
+    }
+
+    #[test]
+    fn context_window_breakdown_segments_conversation_from_prompt_remainder() {
+        let theme = Theme::for_dark_background(true);
+        let breakdown = ContextWindowBreakdown {
+            system_tokens: 4_000,
+            skills_tokens: 1_000,
+            retrieved_tokens: 2_000,
+            context_total_tokens: 7_000,
+            prompt_tokens: 20_000,
+            output_tokens: 3_000,
+            ..Default::default()
+        };
+
+        let segments = breakdown.segments(
+            ContextWindowCounter {
+                used_tokens: 23_000,
+                max_tokens: 100_000,
+                hovered: true,
+            },
+            theme,
+        );
+        let labels = segments
+            .iter()
+            .map(|segment| (segment.label, segment.tokens))
+            .collect::<Vec<_>>();
+
+        assert_eq!(
+            labels,
+            vec![
+                ("System / context", 4_000),
+                ("Skills", 1_000),
+                ("Retrieved context", 2_000),
+                ("Conversation", 13_000),
+                ("Output", 3_000),
+            ]
+        );
+    }
+
+    #[test]
+    fn context_window_popup_area_sits_top_right_and_clamps() {
+        assert_eq!(
+            context_window_popup_area(Rect::new(0, 0, 120, 40)),
+            Some(Rect::new(66, 0, 54, 14))
+        );
+        assert_eq!(
+            context_window_popup_area(Rect::new(5, 2, 30, 8)),
+            Some(Rect::new(5, 2, 30, 8))
+        );
+        assert_eq!(context_window_popup_area(Rect::new(0, 0, 20, 8)), None);
+    }
+
+    #[test]
+    fn context_block_categories_map_cursor_like_sources() {
+        assert_eq!(
+            context_block_category("Instruction"),
+            ContextBreakdownCategory::System
+        );
+        assert_eq!(
+            context_block_category("RetrievedDocument"),
+            ContextBreakdownCategory::Retrieved
+        );
+        assert_eq!(
+            context_block_category("skill:index"),
+            ContextBreakdownCategory::Skills
+        );
+        assert_eq!(
+            context_block_category("ToolAvailability"),
+            ContextBreakdownCategory::OtherContext
+        );
     }
 
     #[test]

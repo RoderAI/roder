@@ -76,6 +76,7 @@ pub(crate) async fn validate_tool_call_arguments(
     Ok(arguments)
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(crate) async fn emit_tool_validation_recorded(
     runtime: &Runtime,
     thread_id: &ThreadId,

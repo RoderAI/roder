@@ -840,7 +840,7 @@ fn scalar_u64(bytes: &[u8], no: u32) -> Option<u64> {
         })
 }
 
-fn bytes_field<'a>(field: &'a ProtoField, no: u32) -> Option<&'a Vec<u8>> {
+fn bytes_field(field: &ProtoField, no: u32) -> Option<&Vec<u8>> {
     match &field.value {
         ProtoValue::Bytes(value) if field.no == no => Some(value),
         _ => None,
@@ -855,9 +855,7 @@ fn bytes_field_as_string(field: &ProtoField, no: u32) -> Option<String> {
 }
 
 fn nested_string(bytes: &[u8], path: &[u32]) -> Option<String> {
-    let Some((first, rest)) = path.split_first() else {
-        return None;
-    };
+    let (first, rest) = path.split_first()?;
     for field in decode_fields_safe(bytes) {
         let Some(value) = bytes_field(&field, *first) else {
             continue;
