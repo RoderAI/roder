@@ -5243,7 +5243,7 @@ async fn commands_list_expand_and_skills_are_deterministic() {
         first
             .commands
             .iter()
-            .any(|command| command.name == "commit")
+            .any(|command| command.name == "snapshot")
     );
     let webwright_run = first
         .commands
@@ -5274,12 +5274,12 @@ async fn commands_list_expand_and_skills_are_deterministic() {
     let encoded = serde_json::to_string(&expanded).unwrap();
     assert!(!encoded.contains("secret-include-content"));
 
-    let commit: CommandsExpandResult = request(
+    let snapshot: CommandsExpandResult = request(
         &client,
         "commands/expand",
         Some(
             serde_json::to_value(CommandsExpandParams {
-                name: "commit".to_string(),
+                name: "snapshot".to_string(),
                 arguments: "src/lib.rs".to_string(),
                 workspace: None,
             })
@@ -5287,10 +5287,10 @@ async fn commands_list_expand_and_skills_are_deterministic() {
         ),
     )
     .await;
-    assert_eq!(commit.command.name, "commit");
-    assert!(commit.message.contains("bound commit skill"));
-    assert!(commit.context_blocks.iter().any(|block| {
-        block.text.starts_with("<skill name=\"commit\"") && block.text.contains("git status")
+    assert_eq!(snapshot.command.name, "snapshot");
+    assert!(snapshot.message.contains("bound VCS snapshot skill"));
+    assert!(snapshot.context_blocks.iter().any(|block| {
+        block.text.starts_with("<skill name=\"vcs-snapshot\"") && block.text.contains("VCS status")
     }));
 
     let webwright: CommandsExpandResult = request(
@@ -5358,12 +5358,12 @@ async fn skills_manager_can_disable_commit_and_update_exposure() {
     let client = LocalAppClient::new(server);
 
     let listed: SkillsListResult = request(&client, "skills/list", None).await;
-    let commit = listed
+    let snapshot = listed
         .skills
         .iter()
-        .find(|skill| skill.name == "commit")
-        .expect("missing built-in commit skill");
-    assert_eq!(commit.exposure, SkillExposure::DirectOnly);
+        .find(|skill| skill.name == "vcs-snapshot")
+        .expect("missing built-in VCS snapshot skill");
+    assert_eq!(snapshot.exposure, SkillExposure::DirectOnly);
 
     let updated: SkillsUpdateResult = request(
         &client,
@@ -5371,7 +5371,7 @@ async fn skills_manager_can_disable_commit_and_update_exposure() {
         Some(
             serde_json::to_value(SkillsSetExposureParams {
                 selector: SkillSelector::Name {
-                    name: "commit".to_string(),
+                    name: "vcs-snapshot".to_string(),
                 },
                 exposure: SkillExposure::Global,
             })
@@ -5383,7 +5383,7 @@ async fn skills_manager_can_disable_commit_and_update_exposure() {
         updated
             .skills
             .iter()
-            .find(|skill| skill.name == "commit")
+            .find(|skill| skill.name == "vcs-snapshot")
             .unwrap()
             .exposure,
         SkillExposure::Global
@@ -5395,7 +5395,7 @@ async fn skills_manager_can_disable_commit_and_update_exposure() {
         Some(
             serde_json::to_value(SkillsSetEnabledParams {
                 selector: SkillSelector::Name {
-                    name: "commit".to_string(),
+                    name: "vcs-snapshot".to_string(),
                 },
                 enabled: false,
             })
@@ -5407,7 +5407,7 @@ async fn skills_manager_can_disable_commit_and_update_exposure() {
         updated
             .skills
             .iter()
-            .find(|skill| skill.name == "commit")
+            .find(|skill| skill.name == "vcs-snapshot")
             .unwrap()
             .activation,
         SkillActivationState::Disabled
@@ -5418,7 +5418,7 @@ async fn skills_manager_can_disable_commit_and_update_exposure() {
         "commands/expand",
         Some(
             serde_json::to_value(CommandsExpandParams {
-                name: "commit".to_string(),
+                name: "snapshot".to_string(),
                 arguments: String::new(),
                 workspace: Some(workspace.display().to_string()),
             })
@@ -5740,14 +5740,14 @@ async fn discovery_catalog_includes_runtime_skills() {
         .iter()
         .find(|group| group.id == "skills:registry")
         .expect("skills discovery group");
-    let commit = skills_group
+    let snapshot = skills_group
         .items
         .iter()
-        .find(|item| item.name == "commit")
-        .expect("commit discovery item");
-    assert_eq!(commit.source.kind, DiscoverySourceKind::Skills);
-    assert!(commit.tags.contains(&"built-in".to_string()));
-    assert!(commit.tags.contains(&"direct-only".to_string()));
+        .find(|item| item.name == "vcs-snapshot")
+        .expect("snapshot discovery item");
+    assert_eq!(snapshot.source.kind, DiscoverySourceKind::Skills);
+    assert!(snapshot.tags.contains(&"built-in".to_string()));
+    assert!(snapshot.tags.contains(&"direct-only".to_string()));
 
     unsafe {
         if let Some(value) = previous_catalog {
@@ -7641,7 +7641,8 @@ async fn workspace_changes_list_round_trips_observed_events() {
                     turn_id: "turn-1".to_string(),
                     tool_call_id: "tool-1".to_string(),
                     tool_name: "shell".to_string(),
-                    source: WorkspaceChangeSource::GitReconciled,
+                    source: WorkspaceChangeSource::VersionControlReconciled,
+                    provider_id: Some("git".to_string()),
                     confidence: WorkspaceChangeConfidence::ObservedAfterTool,
                     files: vec![WorkspaceObservedFile {
                         path: "src/index.tsx".to_string(),
@@ -7695,7 +7696,7 @@ async fn workspace_changes_list_round_trips_observed_events() {
 }
 
 #[tokio::test]
-async fn git_changes_methods_report_full_branch_delta() {
+async fn vcs_changes_methods_report_full_branch_delta() {
     let workspace =
         std::env::temp_dir().join(format!("roder-git-changes-{}", uuid::Uuid::new_v4()));
     std::fs::create_dir_all(&workspace).unwrap();
@@ -7729,12 +7730,13 @@ async fn git_changes_methods_report_full_branch_delta() {
 
     let list: serde_json::Value = request(
         &client,
-        "git/changes/list",
+        "vcs/changes/list",
         Some(serde_json::json!({ "workspace": workspace.display().to_string() })),
     )
     .await;
-    assert_eq!(list["branch"], "feature");
-    assert_eq!(list["baseRef"], "master");
+    assert_eq!(list["status"]["provider"]["id"], "git");
+    assert_eq!(list["status"]["activeLine"]["name"], "feature");
+    assert_eq!(list["status"]["base"]["refName"], "master");
     let paths = list["files"]
         .as_array()
         .unwrap()
@@ -7758,7 +7760,7 @@ async fn git_changes_methods_report_full_branch_delta() {
 
     let page: serde_json::Value = request(
         &client,
-        "git/changes/read",
+        "vcs/changes/read",
         Some(serde_json::json!({
             "workspace": workspace.display().to_string(),
             "path": "committed.txt",
@@ -7768,12 +7770,12 @@ async fn git_changes_methods_report_full_branch_delta() {
     )
     .await;
     assert_eq!(page["path"], "committed.txt");
-    assert!(page["patch"].as_str().unwrap().contains("+branch"));
+    assert!(page["content"].as_str().unwrap().contains("+branch"));
     assert_eq!(page["nextOffset"], serde_json::Value::Null);
 
     let paged: serde_json::Value = request(
         &client,
-        "git/changes/read",
+        "vcs/changes/read",
         Some(serde_json::json!({
             "workspace": workspace.display().to_string(),
             "path": "committed.txt",
@@ -7788,7 +7790,7 @@ async fn git_changes_methods_report_full_branch_delta() {
 
     let binary_page: serde_json::Value = request(
         &client,
-        "git/changes/read",
+        "vcs/changes/read",
         Some(serde_json::json!({
             "workspace": workspace.display().to_string(),
             "path": "untracked.jpg",
@@ -7798,7 +7800,7 @@ async fn git_changes_methods_report_full_branch_delta() {
     )
     .await;
     assert!(
-        binary_page["patch"]
+        binary_page["content"]
             .as_str()
             .unwrap()
             .contains("Binary files /dev/null and b/untracked.jpg differ")
@@ -7807,7 +7809,7 @@ async fn git_changes_methods_report_full_branch_delta() {
 
     let invalid_path = request_error(
         &client,
-        "git/changes/read",
+        "vcs/changes/read",
         Some(serde_json::json!({
             "workspace": workspace.display().to_string(),
             "path": "../outside.txt"
@@ -7821,7 +7823,138 @@ async fn git_changes_methods_report_full_branch_delta() {
 }
 
 #[tokio::test]
-async fn git_changes_rejects_non_git_workspace() {
+async fn vcs_mutations_require_policy_approval() {
+    let workspace = std::env::temp_dir().join(format!("roder-vcs-policy-{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir_all(&workspace).unwrap();
+    run_git(&workspace, &["init", "-b", "master"]);
+    run_git(&workspace, &["config", "user.email", "roder@example.com"]);
+    run_git(&workspace, &["config", "user.name", "Roder Test"]);
+    std::fs::write(workspace.join("file.txt"), "base\n").unwrap();
+    run_git(&workspace, &["add", "file.txt"]);
+    run_git(&workspace, &["commit", "-m", "base"]);
+    std::fs::write(workspace.join("file.txt"), "base\nchanged\n").unwrap();
+
+    let runtime = Arc::new(
+        Runtime::new(
+            build_default_registry(DefaultRegistryConfig::default()).unwrap(),
+            RuntimeConfig {
+                workspace: Some(workspace.display().to_string()),
+                ..RuntimeConfig::default()
+            },
+        )
+        .unwrap(),
+    );
+    let client = LocalAppClient::new(Arc::new(AppServer::new(runtime.clone())));
+    let select_params = serde_json::to_value(roder_protocol::VcsSelectionParams {
+        workspace: Some(workspace.display().to_string()),
+        provider_id: None,
+        paths: vec!["file.txt".to_string()],
+        granularity: roder_api::version_control::VcsSelectionGranularity::Path,
+    })
+    .unwrap();
+
+    let mut notifications = client.subscribe_notifications();
+    let pending_client = client.clone();
+    let pending_params = select_params.clone();
+    let pending_select = tokio::spawn(async move {
+        request::<serde_json::Value>(&pending_client, "vcs/select", Some(pending_params)).await
+    });
+
+    let approval = wait_for_notification(
+        &mut notifications,
+        "thread/approvalRequested",
+        Some("app-server"),
+    )
+    .await;
+    assert_eq!(approval.params["toolName"], "vcs/select");
+    assert!(git_output(&workspace, &["diff", "--cached", "--name-only"]).is_empty());
+
+    let resolved: ThreadResolveApprovalResult = request(
+        &client,
+        "thread/resolve_approval",
+        Some(
+            serde_json::to_value(ThreadResolveApprovalParams {
+                approval_id: approval.params["approvalId"].as_str().unwrap().to_string(),
+                approved: true,
+            })
+            .unwrap(),
+        ),
+    )
+    .await;
+    assert!(resolved.resolved);
+
+    let selected = pending_select.await.unwrap();
+    assert_eq!(selected["providerId"], "git");
+    assert_eq!(
+        git_output(&workspace, &["diff", "--cached", "--name-only"]).trim(),
+        "file.txt"
+    );
+
+    run_git(&workspace, &["restore", "--staged", "file.txt"]);
+
+    runtime
+        .set_policy_mode(PolicyMode::AcceptAll, Some("test vcs mutation".to_string()))
+        .await
+        .unwrap();
+
+    let selected: serde_json::Value = request(&client, "vcs/select", Some(select_params)).await;
+    assert_eq!(selected["providerId"], "git");
+    assert_eq!(
+        git_output(&workspace, &["diff", "--cached", "--name-only"]).trim(),
+        "file.txt"
+    );
+
+    let _ = std::fs::remove_dir_all(workspace);
+}
+
+#[tokio::test]
+async fn vcs_methods_reject_workspaces_outside_runtime_scope() {
+    let root = std::env::temp_dir().join(format!("roder-vcs-scope-{}", uuid::Uuid::new_v4()));
+    let workspace = root.join("workspace");
+    let sibling = root.join("sibling");
+    std::fs::create_dir_all(&workspace).unwrap();
+    std::fs::create_dir_all(&sibling).unwrap();
+    run_git(&workspace, &["init", "-b", "master"]);
+    run_git(&workspace, &["config", "user.email", "roder@example.com"]);
+    run_git(&workspace, &["config", "user.name", "Roder Test"]);
+    std::fs::write(workspace.join("file.txt"), "base\n").unwrap();
+    run_git(&workspace, &["add", "file.txt"]);
+    run_git(&workspace, &["commit", "-m", "base"]);
+
+    let runtime = Arc::new(
+        Runtime::new(
+            build_default_registry(DefaultRegistryConfig::default()).unwrap(),
+            RuntimeConfig {
+                workspace: Some(workspace.display().to_string()),
+                ..RuntimeConfig::default()
+            },
+        )
+        .unwrap(),
+    );
+    let client = LocalAppClient::new(Arc::new(AppServer::new(runtime)));
+
+    let status: serde_json::Value =
+        request(&client, "vcs/status", Some(serde_json::json!({}))).await;
+    assert_eq!(status["provider"]["id"], "git");
+
+    let error = request_error(
+        &client,
+        "vcs/changes/list",
+        Some(serde_json::json!({ "workspace": sibling.display().to_string() })),
+    )
+    .await;
+    assert_eq!(error.code, -32602);
+    assert!(
+        error
+            .message
+            .contains("configured runtime workspace or a child path")
+    );
+
+    let _ = std::fs::remove_dir_all(root);
+}
+
+#[tokio::test]
+async fn vcs_changes_rejects_non_vcs_workspace() {
     let workspace =
         std::env::temp_dir().join(format!("roder-git-changes-nongit-{}", uuid::Uuid::new_v4()));
     std::fs::create_dir_all(&workspace).unwrap();
@@ -7839,12 +7972,12 @@ async fn git_changes_rejects_non_git_workspace() {
 
     let error = request_error(
         &client,
-        "git/changes/list",
+        "vcs/changes/list",
         Some(serde_json::json!({ "workspace": workspace.display().to_string() })),
     )
     .await;
     assert_eq!(error.code, -32000);
-    assert!(error.message.contains("git failed"));
+    assert!(error.message.contains("no version-control provider"));
 
     let _ = std::fs::remove_dir_all(workspace);
 }
@@ -7876,6 +8009,21 @@ fn run_git(workspace: &std::path::Path, args: &[&str]) {
         String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr)
     );
+}
+
+fn git_output(workspace: &std::path::Path, args: &[&str]) -> String {
+    let output = Command::new("git")
+        .args(args)
+        .current_dir(workspace)
+        .output()
+        .unwrap_or_else(|err| panic!("failed to run git {args:?}: {err}"));
+    assert!(
+        output.status.success(),
+        "git {args:?} failed\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    String::from_utf8_lossy(&output.stdout).to_string()
 }
 
 #[tokio::test]

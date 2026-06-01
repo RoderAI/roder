@@ -304,12 +304,18 @@ Review, hunks, workflow imports, media, and memory:
 | `plan/review/rewrite` | Request a plan rewrite and steer the turn. |
 | `plan/review/approve` | Approve a plan review. |
 | `plan/review/reject` | Reject a plan review. |
-| `git/changes/list` | List live branch changes against the resolved base. |
-| `git/changes/read` | Read paged unified patch text for one live branch file. |
+| `vcs/status` | Read active version-control provider status and capabilities. |
+| `vcs/changes/list` | List live provider changes against the resolved base. |
+| `vcs/changes/read` | Read paged changed content for one provider-relative file. |
+| `vcs/snapshot/create` | Create a provider history snapshot for selected paths. |
+| `vcs/restore` | Restore selected paths where the provider supports it. |
+| `vcs/lines/list` | List provider lines of work such as git branches. |
+| `vcs/lines/switch` | Switch provider line of work when safe. |
+| `vcs/sync` | Run provider sync operations such as fetch, pull, or push. |
 | `hunk/list` | List recorded hunks, optionally by turn/review. |
 | `hunk/read` | Read a paged hunk diff. |
 | `hunk/rollback` | Confirm and apply a hunk reverse patch. |
-| `workspace/changes/list` | List observed git-reconciled shell/exec changes. |
+| `workspace/changes/list` | List observed VCS-reconciled shell/exec changes. |
 | `workflow/scan` | Scan workflow imports. |
 | `workflow/preview` | Preview workflow import items. |
 | `workflow/enable` | Enable a workflow import. |
@@ -1802,13 +1808,13 @@ List:
 {
   "skills": [
     {
-      "id": "builtin:commit",
-      "name": "commit",
-      "canonicalPath": "builtin://skills/commit/SKILL.md",
+      "id": "builtin:vcs-snapshot",
+      "name": "vcs-snapshot",
+      "canonicalPath": "roder-builtin://vcs-snapshot/SKILL.md",
       "source": "builtIn",
       "exposure": "direct_only",
       "activation": "enabled",
-      "description": "Create a scoped git commit.",
+      "description": "Create scoped VCS snapshots from the current workspace state.",
       "experimental": false
     }
   ],
@@ -1822,7 +1828,7 @@ Read:
 {
   "method": "skills/read",
   "params": {
-    "selector": { "path": "builtin://skills/commit/SKILL.md" }
+    "selector": { "path": "roder-builtin://vcs-snapshot/SKILL.md" }
   }
 }
 ```
@@ -1833,7 +1839,7 @@ Mutate:
 {
   "method": "skills/setEnabled",
   "params": {
-    "selector": { "name": "commit" },
+    "selector": { "name": "vcs-snapshot" },
     "enabled": false
   }
 }
@@ -1843,7 +1849,7 @@ Mutate:
 {
   "method": "skills/setExposure",
   "params": {
-    "selector": { "path": "builtin://skills/commit/SKILL.md" },
+    "selector": { "path": "roder-builtin://vcs-snapshot/SKILL.md" },
     "exposure": "global"
   }
 }
@@ -1880,7 +1886,7 @@ Notifications:
 
 Purpose: List available slash commands.
 
-Built-in commands include workflow commands such as `commit`, `roadmap`,
+Built-in commands include workflow commands such as `snapshot`, `roadmap`,
 `webwright:run`, and `webwright:craft`. The Webwright commands bind the
 built-in `webwright` skill during expansion, so clients should preserve returned
 context blocks rather than trying to reimplement the browser-agent prompt.
@@ -2536,19 +2542,19 @@ Examples:
 Behavior:
 
 - `workspace/changes/list` can filter by `turnId`.
-- Observed changes are git-reconciled file summaries, not exact structured
-  hunks. The review panel can read current patch text through `git/changes/read`.
+- Observed changes are VCS-reconciled file summaries, not exact structured
+  hunks. The review panel can read current changed content through `vcs/changes/read`.
 - New observed changes emit `workspace/changeObserved`.
 
-### Git change review methods
+### VCS change review methods
 
-Purpose: Inspect the live branch delta without mutating files.
+Purpose: Inspect the active version-control provider without mutating files.
 
 Examples:
 
 ```json
 {
-  "method": "git/changes/list",
+  "method": "vcs/changes/list",
   "params": {
     "workspace": "/Users/pz/w/gode",
     "limit": 500
@@ -2558,7 +2564,7 @@ Examples:
 
 ```json
 {
-  "method": "git/changes/read",
+  "method": "vcs/changes/read",
   "params": {
     "workspace": "/Users/pz/w/gode",
     "path": "src/app.rs",
@@ -2570,14 +2576,24 @@ Examples:
 
 Behavior:
 
-- `git/changes/list` returns repository root, branch, base ref/sha, changed
-  files, totals, and whether the file list was truncated.
-- Branch scope compares the merge-base of the resolved base with the current
-  working tree, including committed, staged, unstaged, and untracked changes.
-- Base resolution tries upstream, origin default branch, `origin/master`,
-  `origin/main`, `master`, then `main`.
-- `git/changes/read` validates repository-relative paths and returns paged
-  unified patch text for one changed file.
+- `vcs/status` returns provider identity, workspace root, active line of work,
+  base information when known, and capability metadata.
+- `vcs/changes/list` returns provider status, changed files, totals, and whether
+  the file list was truncated.
+- The bundled git provider compares the merge-base of the resolved base with the
+  current working tree, including committed, staged, unstaged, and untracked
+  changes.
+- `vcs/changes/read` validates provider-relative paths and returns paged changed
+  content for one changed file.
+- Mutating calls such as `vcs/snapshot/create`, `vcs/restore`,
+  `vcs/select`, `vcs/lines/switch`, and `vcs/sync` are checked by the
+  app-server policy gate before execution. If approval is required, the request
+  waits for the normal `thread/approvalRequested` / `thread/resolve_approval`
+  flow and continues only when approved.
+- Mutating calls should also be gated by capability data before invocation.
+  Unsupported operations return provider-aware JSON-RPC errors. Provider-native
+  extras are represented in capability metadata rather than a separate
+  discovery endpoint.
 
 ### Workflow import methods
 

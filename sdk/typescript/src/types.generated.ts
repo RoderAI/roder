@@ -329,24 +329,6 @@ export const appServerManifest = {
       "sideEffect": "readOnly"
     },
     {
-      "method": "git/changes/list",
-      "paramsType": "GitChangesListParams",
-      "resultType": "GitChangesListResult",
-      "stability": "stable",
-      "featureGroup": "git",
-      "idempotency": "idempotent",
-      "sideEffect": "readOnly"
-    },
-    {
-      "method": "git/changes/read",
-      "paramsType": "GitChangesReadParams",
-      "resultType": "GitChangesReadResult",
-      "stability": "stable",
-      "featureGroup": "git",
-      "idempotency": "idempotent",
-      "sideEffect": "readOnly"
-    },
-    {
       "method": "hunk/list",
       "paramsType": "HunkListParams",
       "resultType": "HunkListResult",
@@ -372,18 +354,6 @@ export const appServerManifest = {
       "featureGroup": "plan-review",
       "idempotency": "nonIdempotent",
       "sideEffect": "localState"
-    },
-    {
-      "method": "workspace/changes/list",
-      "paramsType": "WorkspaceChangesListParams",
-      "resultType": "WorkspaceChangesListResult",
-      "stability": "stable",
-      "featureGroup": "workspace",
-      "idempotency": "idempotent",
-      "sideEffect": "readOnly",
-      "notifications": [
-        "workspace/changeObserved"
-      ]
     },
     {
       "method": "index/proofs/list",
@@ -1482,6 +1452,87 @@ export const appServerManifest = {
       "sideEffect": "readOnly"
     },
     {
+      "method": "vcs/changes/list",
+      "paramsType": "VcsChangesListParams",
+      "resultType": "VcsChangesListResult",
+      "stability": "stable",
+      "featureGroup": "vcs",
+      "idempotency": "idempotent",
+      "sideEffect": "readOnly"
+    },
+    {
+      "method": "vcs/changes/read",
+      "paramsType": "VcsChangesReadParams",
+      "resultType": "VcsChangedContentPage",
+      "stability": "stable",
+      "featureGroup": "vcs",
+      "idempotency": "idempotent",
+      "sideEffect": "readOnly"
+    },
+    {
+      "method": "vcs/lines/list",
+      "paramsType": "VcsWorkspaceParams",
+      "resultType": "Vec<VcsLineOfWork>",
+      "stability": "stable",
+      "featureGroup": "vcs",
+      "idempotency": "idempotent",
+      "sideEffect": "readOnly"
+    },
+    {
+      "method": "vcs/lines/switch",
+      "paramsType": "VcsLineSwitchParams",
+      "resultType": "VcsOperationResult",
+      "stability": "stable",
+      "featureGroup": "vcs",
+      "idempotency": "nonIdempotent",
+      "sideEffect": "localState"
+    },
+    {
+      "method": "vcs/restore",
+      "paramsType": "VcsRestoreParams",
+      "resultType": "VcsOperationResult",
+      "stability": "stable",
+      "featureGroup": "vcs",
+      "idempotency": "nonIdempotent",
+      "sideEffect": "localState"
+    },
+    {
+      "method": "vcs/select",
+      "paramsType": "VcsSelectionParams",
+      "resultType": "VcsOperationResult",
+      "stability": "stable",
+      "featureGroup": "vcs",
+      "idempotency": "nonIdempotent",
+      "sideEffect": "localState"
+    },
+    {
+      "method": "vcs/snapshot/create",
+      "paramsType": "VcsSnapshotCreateParams",
+      "resultType": "VcsSnapshot",
+      "stability": "stable",
+      "featureGroup": "vcs",
+      "idempotency": "nonIdempotent",
+      "sideEffect": "localState"
+    },
+    {
+      "method": "vcs/status",
+      "paramsType": "VcsWorkspaceParams",
+      "resultType": "VcsStatus",
+      "stability": "stable",
+      "featureGroup": "vcs",
+      "idempotency": "idempotent",
+      "sideEffect": "readOnly"
+    },
+    {
+      "method": "vcs/sync",
+      "paramsType": "VcsSyncParams",
+      "resultType": "VcsOperationResult",
+      "stability": "stable",
+      "featureGroup": "vcs",
+      "idempotency": "nonIdempotent",
+      "sideEffect": "externalProcess"
+    },
+    {
       "method": "webwright/artifacts",
       "paramsType": "WebwrightArtifactsParams",
       "resultType": "WebwrightArtifactsResult",
@@ -1757,6 +1808,18 @@ export const appServerManifest = {
       "notifications": [
         "workflows/stopped"
       ]
+    },
+    {
+      "method": "workspace/changes/list",
+      "paramsType": "WorkspaceChangesListParams",
+      "resultType": "WorkspaceChangesListResult",
+      "stability": "stable",
+      "featureGroup": "workspace",
+      "idempotency": "idempotent",
+      "sideEffect": "readOnly",
+      "notifications": [
+        "workspace/changeObserved"
+      ]
     }
   ]
 } as const;
@@ -1800,12 +1863,9 @@ export const appServerMethods = [
   "extensions/list",
   "fs/readDirectory",
   "fs/readFile",
-  "git/changes/list",
-  "git/changes/read",
   "hunk/list",
   "hunk/read",
   "hunk/rollback",
-  "workspace/changes/list",
   "index/proofs/list",
   "index/readChunk",
   "index/rebuild",
@@ -1926,6 +1986,15 @@ export const appServerMethods = [
   "turn/steer",
   "turn/subagentTrace/read",
   "turn/subagentTraces/list",
+  "vcs/changes/list",
+  "vcs/changes/read",
+  "vcs/lines/list",
+  "vcs/lines/switch",
+  "vcs/restore",
+  "vcs/select",
+  "vcs/snapshot/create",
+  "vcs/status",
+  "vcs/sync",
   "webwright/artifacts",
   "webwright/export",
   "webwright/latestRun",
@@ -1953,7 +2022,8 @@ export const appServerMethods = [
   "workflows/scripts/delete",
   "workflows/scripts/list",
   "workflows/scripts/read",
-  "workflows/stop"
+  "workflows/stop",
+  "workspace/changes/list"
 ] as const;
 
 export type JsonRpcId = string | number | null;

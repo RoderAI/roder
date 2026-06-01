@@ -1,9 +1,14 @@
 use std::collections::BTreeMap;
-use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::path::PathBuf;
+use std::sync::Arc;
 
 use roder_api::events::{ThreadId, TurnId};
 use roder_api::tools::ToolCall;
+use roder_api::version_control::{
+    RegistryVcsProviderResolver, VcsBase, VcsChangedFile, VcsChangedFileStatus, VcsError,
+    VcsListChangesRequest, VcsProvider, VcsProviderResolution, VcsProviderResolver,
+    VcsResolveRequest,
+};
 use roder_api::workspace_changes::{
     WorkspaceChangeConfidence, WorkspaceChangeObservation, WorkspaceChangeSource,
     WorkspaceChangeStatus, WorkspaceObservedFile,
@@ -12,6 +17,9 @@ use time::OffsetDateTime;
 
 pub(crate) struct WorkspaceChangeBaseline {
     root: PathBuf,
+    provider: Arc<dyn VcsProvider>,
+    provider_id: String,
+    base: Option<VcsBase>,
     files: BTreeMap<String, FileFingerprint>,
 }
 
@@ -22,26 +30,43 @@ struct FileFingerprint {
     additions: u32,
     deletions: u32,
     binary: bool,
-    size: Option<u64>,
 }
 
 impl WorkspaceChangeBaseline {
-    pub(crate) async fn capture_for_tool(call: &ToolCall, workspace: Option<&str>) -> Option<Self> {
+    pub(crate) async fn capture_for_tool(
+        call: &ToolCall,
+        workspace: Option<&str>,
+        resolver: RegistryVcsProviderResolver,
+    ) -> Option<Self> {
         if !should_reconcile_tool(&call.name) {
             return None;
         }
-        let workspace = workspace?.to_string();
-        tokio::task::spawn_blocking(move || Self::capture_blocking(&workspace))
+        let workspace = PathBuf::from(workspace?);
+        let resolution = resolver
+            .resolve_provider(VcsResolveRequest {
+                workspace_root: workspace,
+                preferred_provider_id: None,
+            })
             .await
-            .ok()
-            .flatten()
-    }
-
-    fn capture_blocking(workspace: &str) -> Option<Self> {
-        let root = git_at(Path::new(workspace), &["rev-parse", "--show-toplevel"]).ok()?;
-        let root = PathBuf::from(root.trim());
-        let files = current_files(&root).ok()?;
-        Some(Self { root, files })
+            .ok()?;
+        let VcsProviderResolution::Available { provider, claim } = resolution else {
+            return None;
+        };
+        let change_set = provider
+            .status_with_changes(VcsListChangesRequest {
+                workspace_root: claim.workspace.root.clone(),
+            })
+            .await
+            .ok()?;
+        let base = change_set.status.base.clone();
+        let files = fingerprints(change_set.files);
+        Some(Self {
+            root: claim.workspace.root,
+            provider_id: provider.id(),
+            provider,
+            base,
+            files,
+        })
     }
 
     pub(crate) async fn observed_after(
@@ -50,26 +75,9 @@ impl WorkspaceChangeBaseline {
         turn_id: &TurnId,
         call: &ToolCall,
     ) -> Option<WorkspaceChangeObservation> {
-        let thread_id = thread_id.clone();
-        let turn_id = turn_id.clone();
-        let tool_call_id = call.id.clone();
-        let tool_name = call.name.clone();
-        tokio::task::spawn_blocking(move || {
-            self.observed_after_blocking(&thread_id, &turn_id, &tool_call_id, &tool_name)
-        })
-        .await
-        .ok()
-        .flatten()
-    }
-
-    fn observed_after_blocking(
-        &self,
-        thread_id: &ThreadId,
-        turn_id: &TurnId,
-        tool_call_id: &str,
-        tool_name: &str,
-    ) -> Option<WorkspaceChangeObservation> {
-        let after = current_files(&self.root).ok()?;
+        let after = current_files(&self.provider, &self.root, self.base)
+            .await
+            .ok()?;
         let mut files = after
             .into_iter()
             .filter(|(path, fingerprint)| self.files.get(path) != Some(fingerprint))
@@ -80,12 +88,13 @@ impl WorkspaceChangeBaseline {
         }
         files.sort_by(|left, right| left.path.cmp(&right.path));
         Some(WorkspaceChangeObservation {
-            id: format!("{tool_call_id}-workspace-observed"),
+            id: format!("{}-workspace-observed", call.id),
             thread_id: thread_id.clone(),
             turn_id: turn_id.clone(),
-            tool_call_id: tool_call_id.to_string(),
-            tool_name: tool_name.to_string(),
-            source: WorkspaceChangeSource::GitReconciled,
+            tool_call_id: call.id.clone(),
+            tool_name: call.name.clone(),
+            source: WorkspaceChangeSource::VersionControlReconciled,
+            provider_id: Some(self.provider_id),
             confidence: WorkspaceChangeConfidence::ObservedAfterTool,
             files,
             created_at: OffsetDateTime::now_utc(),
@@ -97,100 +106,45 @@ fn should_reconcile_tool(name: &str) -> bool {
     matches!(name, "shell" | "exec_command")
 }
 
-fn current_files(root: &Path) -> anyhow::Result<BTreeMap<String, FileFingerprint>> {
-    let mut files = tracked_files(root)?;
-    for path in untracked_files(root)? {
-        files.entry(path.clone()).or_insert_with(|| {
-            let full_path = root.join(&path);
-            let (additions, binary) = untracked_counts(&full_path);
-            let size = std::fs::metadata(&full_path)
-                .ok()
-                .map(|metadata| metadata.len());
-            FileFingerprint {
-                old_path: None,
-                status: WorkspaceChangeStatus::Untracked,
-                additions,
-                deletions: 0,
-                binary,
-                size,
-            }
-        });
-    }
-    apply_numstat(root, &mut files)?;
-    Ok(files)
-}
-
-fn tracked_files(root: &Path) -> anyhow::Result<BTreeMap<String, FileFingerprint>> {
-    let output = git_at(root, &["diff", "--name-status", "HEAD", "--"])?;
-    let mut files = BTreeMap::new();
-    for line in output.lines().filter(|line| !line.trim().is_empty()) {
-        let columns = line.split('\t').collect::<Vec<_>>();
-        let status_text = columns.first().copied().unwrap_or_default();
-        let status = match status_text.chars().next().unwrap_or('M') {
-            'A' => WorkspaceChangeStatus::Added,
-            'D' => WorkspaceChangeStatus::Deleted,
-            'R' => WorkspaceChangeStatus::Renamed,
-            _ => WorkspaceChangeStatus::Modified,
-        };
-        let (old_path, path) =
-            if matches!(status, WorkspaceChangeStatus::Renamed) && columns.len() >= 3 {
-                (Some(columns[1].to_string()), columns[2].to_string())
-            } else {
-                (
-                    None,
-                    columns.get(1).copied().unwrap_or_default().to_string(),
-                )
-            };
-        if path.is_empty() {
-            continue;
-        }
-        files.insert(
-            path,
-            FileFingerprint {
-                old_path,
-                status,
-                additions: 0,
-                deletions: 0,
-                binary: false,
-                size: None,
+async fn current_files(
+    provider: &Arc<dyn VcsProvider>,
+    root: &PathBuf,
+    base: Option<VcsBase>,
+) -> Result<BTreeMap<String, FileFingerprint>, VcsError> {
+    let files = provider
+        .list_changes_against_base(
+            VcsListChangesRequest {
+                workspace_root: root.clone(),
             },
-        );
-    }
-    Ok(files)
+            base,
+        )
+        .await?;
+    Ok(fingerprints(files))
 }
 
-fn apply_numstat(root: &Path, files: &mut BTreeMap<String, FileFingerprint>) -> anyhow::Result<()> {
-    let output = git_at(root, &["diff", "--numstat", "HEAD", "--"])?;
-    for line in output.lines().filter(|line| !line.trim().is_empty()) {
-        let columns = line.split('\t').collect::<Vec<_>>();
-        if columns.len() < 3 {
-            continue;
-        }
-        let path = columns[2].to_string();
-        let Some(file) = files.get_mut(&path) else {
-            continue;
-        };
-        file.binary = columns[0] == "-" || columns[1] == "-";
-        file.additions = columns[0].parse().unwrap_or(0);
-        file.deletions = columns[1].parse().unwrap_or(0);
-    }
-    Ok(())
+fn fingerprints(files: Vec<VcsChangedFile>) -> BTreeMap<String, FileFingerprint> {
+    files.into_iter().map(fingerprint).collect()
 }
 
-fn untracked_files(root: &Path) -> anyhow::Result<Vec<String>> {
-    let output = git_at(root, &["ls-files", "--others", "--exclude-standard"])?;
-    Ok(output
-        .lines()
-        .filter(|line| !line.trim().is_empty())
-        .map(ToOwned::to_owned)
-        .collect())
-}
-
-fn untracked_counts(path: &Path) -> (u32, bool) {
-    match std::fs::read_to_string(path) {
-        Ok(text) => (text.lines().count() as u32, false),
-        Err(_) => (0, true),
-    }
+fn fingerprint(file: VcsChangedFile) -> (String, FileFingerprint) {
+    (
+        file.path.display().to_string(),
+        FileFingerprint {
+            old_path: file.old_path.map(|path| path.display().to_string()),
+            status: match file.status {
+                VcsChangedFileStatus::Modified | VcsChangedFileStatus::ProviderNative => {
+                    WorkspaceChangeStatus::Modified
+                }
+                VcsChangedFileStatus::Added => WorkspaceChangeStatus::Added,
+                VcsChangedFileStatus::Deleted => WorkspaceChangeStatus::Deleted,
+                VcsChangedFileStatus::Renamed => WorkspaceChangeStatus::Renamed,
+                VcsChangedFileStatus::Untracked => WorkspaceChangeStatus::Untracked,
+            },
+            additions: file.additions,
+            deletions: file.deletions,
+            binary: file.binary,
+        },
+    )
 }
 
 fn observed_file(path: String, fingerprint: FileFingerprint) -> WorkspaceObservedFile {
@@ -204,60 +158,45 @@ fn observed_file(path: String, fingerprint: FileFingerprint) -> WorkspaceObserve
     }
 }
 
-fn git_at(cwd: &Path, args: &[&str]) -> anyhow::Result<String> {
-    let output = Command::new("git").args(args).current_dir(cwd).output()?;
-    if output.status.success() {
-        return Ok(String::from_utf8_lossy(&output.stdout).into_owned());
-    }
-    anyhow::bail!(
-        "git {:?} failed: {}",
-        args,
-        String::from_utf8_lossy(&output.stderr).trim()
-    )
-}
-
 #[cfg(test)]
 mod tests {
-    use std::process::Command;
+    use std::sync::Mutex;
 
     use roder_api::tools::ToolCall;
+    use roder_api::version_control::{
+        VcsCapabilities, VcsChangedContentPage, VcsDetectionClaim, VcsProviderId,
+        VcsReadChangedContentRequest, VcsStatus, VcsStatusRequest, VcsWorkspace,
+    };
     use roder_api::workspace_changes::{WorkspaceChangeConfidence, WorkspaceChangeStatus};
 
-    use super::WorkspaceChangeBaseline;
+    use super::*;
 
     #[tokio::test]
-    async fn shell_reconciliation_reports_only_changes_observed_after_baseline() {
-        let workspace =
-            std::env::temp_dir().join(format!("roder-workspace-change-{}", uuid::Uuid::new_v4()));
-        std::fs::create_dir_all(&workspace).unwrap();
-        run_git(&workspace, &["init", "-b", "master"]);
-        run_git(&workspace, &["config", "user.email", "roder@example.com"]);
-        run_git(&workspace, &["config", "user.name", "Roder Test"]);
-        std::fs::write(workspace.join("tracked.txt"), "base\n").unwrap();
-        run_git(&workspace, &["add", "tracked.txt"]);
-        run_git(&workspace, &["commit", "-m", "base"]);
-        std::fs::write(workspace.join("preexisting.txt"), "already dirty\n").unwrap();
+    async fn shell_reconciliation_reports_provider_neutral_changes_after_baseline() {
+        let workspace = PathBuf::from("/workspace");
+        let provider = Arc::new(FakeVcsProvider::new(workspace.clone()));
+        provider.set_files(vec![
+            changed_file("preexisting.txt", VcsChangedFileStatus::Untracked, 1),
+            changed_file("tracked.txt", VcsChangedFileStatus::Modified, 0),
+        ]);
+        let resolver = RegistryVcsProviderResolver::new(vec![provider.clone()]);
 
-        let baseline =
-            WorkspaceChangeBaseline::capture_blocking(workspace.to_str().unwrap()).unwrap();
+        let baseline = WorkspaceChangeBaseline::capture_for_tool(
+            &tool_call(),
+            Some("/workspace"),
+            resolver.clone(),
+        )
+        .await
+        .unwrap();
 
-        std::fs::write(workspace.join("tracked.txt"), "base\nchanged\n").unwrap();
-        std::fs::write(workspace.join("new.txt"), "new\nfile\n").unwrap();
-        std::fs::write(workspace.join("preexisting.txt"), "already dirty\n").unwrap();
+        provider.set_files(vec![
+            changed_file("new.txt", VcsChangedFileStatus::Untracked, 2),
+            changed_file("preexisting.txt", VcsChangedFileStatus::Untracked, 1),
+            changed_file("tracked.txt", VcsChangedFileStatus::Modified, 1),
+        ]);
 
         let change = baseline
-            .observed_after(
-                &"thread-1".to_string(),
-                &"turn-1".to_string(),
-                &ToolCall {
-                    id: "tool-1".to_string(),
-                    name: "shell".to_string(),
-                    arguments: serde_json::json!({}),
-                    raw_arguments: "{}".to_string(),
-                    thread_id: "thread-1".to_string(),
-                    turn_id: "turn-1".to_string(),
-                },
-            )
+            .observed_after(&"thread-1".to_string(), &"turn-1".to_string(), &tool_call())
             .await
             .unwrap();
 
@@ -265,6 +204,11 @@ mod tests {
             change.confidence,
             WorkspaceChangeConfidence::ObservedAfterTool
         );
+        assert_eq!(
+            change.source,
+            WorkspaceChangeSource::VersionControlReconciled
+        );
+        assert_eq!(change.provider_id.as_deref(), Some("fake-vcs"));
         assert_eq!(change.files.len(), 2);
         assert_eq!(change.files[0].path, "new.txt");
         assert_eq!(change.files[0].status, WorkspaceChangeStatus::Untracked);
@@ -272,21 +216,119 @@ mod tests {
         assert_eq!(change.files[1].path, "tracked.txt");
         assert_eq!(change.files[1].status, WorkspaceChangeStatus::Modified);
         assert_eq!(change.files[1].additions, 1);
-
-        let _ = std::fs::remove_dir_all(workspace);
     }
 
-    fn run_git(workspace: &std::path::Path, args: &[&str]) {
-        let output = Command::new("git")
-            .args(args)
-            .current_dir(workspace)
-            .output()
-            .unwrap();
-        assert!(
-            output.status.success(),
-            "git {:?} failed: {}",
-            args,
-            String::from_utf8_lossy(&output.stderr)
-        );
+    #[tokio::test]
+    async fn no_provider_workspace_skips_reconciliation() {
+        let resolver = RegistryVcsProviderResolver::new(Vec::new());
+
+        let baseline =
+            WorkspaceChangeBaseline::capture_for_tool(&tool_call(), Some("/workspace"), resolver)
+                .await;
+
+        assert!(baseline.is_none());
+    }
+
+    fn tool_call() -> ToolCall {
+        ToolCall {
+            id: "tool-1".to_string(),
+            name: "shell".to_string(),
+            arguments: serde_json::json!({}),
+            raw_arguments: "{}".to_string(),
+            thread_id: "thread-1".to_string(),
+            turn_id: "turn-1".to_string(),
+        }
+    }
+
+    fn changed_file(path: &str, status: VcsChangedFileStatus, additions: u32) -> VcsChangedFile {
+        VcsChangedFile {
+            path: PathBuf::from(path),
+            old_path: None,
+            status,
+            additions,
+            deletions: 0,
+            binary: false,
+        }
+    }
+
+    struct FakeVcsProvider {
+        root: PathBuf,
+        files: Mutex<Vec<VcsChangedFile>>,
+    }
+
+    impl FakeVcsProvider {
+        fn new(root: PathBuf) -> Self {
+            Self {
+                root,
+                files: Mutex::new(Vec::new()),
+            }
+        }
+
+        fn set_files(&self, files: Vec<VcsChangedFile>) {
+            *self.files.lock().unwrap() = files;
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl VcsProvider for FakeVcsProvider {
+        fn id(&self) -> VcsProviderId {
+            "fake-vcs".to_string()
+        }
+
+        fn display_name(&self) -> String {
+            "Fake VCS".to_string()
+        }
+
+        async fn detect(
+            &self,
+            _workspace_root: &std::path::Path,
+        ) -> Result<Option<VcsDetectionClaim>, VcsError> {
+            Ok(Some(VcsDetectionClaim {
+                workspace: VcsWorkspace {
+                    root: self.root.clone(),
+                    id: None,
+                },
+                priority: 1,
+                metadata: serde_json::Value::Null,
+            }))
+        }
+
+        async fn status(&self, request: VcsStatusRequest) -> Result<VcsStatus, VcsError> {
+            Ok(VcsStatus {
+                provider: roder_api::version_control::VcsProviderIdentity {
+                    id: self.id(),
+                    display_name: self.display_name(),
+                },
+                workspace: VcsWorkspace {
+                    root: request.workspace_root,
+                    id: None,
+                },
+                active_line: None,
+                base: None,
+                capabilities: VcsCapabilities::default(),
+                changed_file_count: self.files.lock().unwrap().len() as u32,
+            })
+        }
+
+        async fn list_changes(
+            &self,
+            _request: VcsListChangesRequest,
+        ) -> Result<Vec<VcsChangedFile>, VcsError> {
+            Ok(self.files.lock().unwrap().clone())
+        }
+
+        async fn read_changed_content(
+            &self,
+            request: VcsReadChangedContentRequest,
+        ) -> Result<VcsChangedContentPage, VcsError> {
+            Ok(VcsChangedContentPage {
+                path: request.path,
+                content: None,
+                offset: request.offset,
+                total_lines: 0,
+                next_offset: None,
+                binary: false,
+            })
+        }
     }
 }

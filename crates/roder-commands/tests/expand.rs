@@ -223,12 +223,12 @@ fn expand_fetches_url_include_when_enabled() {
 }
 
 #[test]
-fn builtin_commit_expansion_includes_direct_only_commit_skill() {
-    let dir = tempdir("builtin_commit_expansion_includes_direct_only_commit_skill");
+fn builtin_snapshot_expansion_includes_direct_only_vcs_snapshot_skill() {
+    let dir = tempdir("builtin_snapshot_expansion_includes_direct_only_vcs_snapshot_skill");
     let spec = built_in_commands()
         .into_iter()
-        .find(|spec| spec.name == "commit")
-        .expect("commit command");
+        .find(|spec| spec.name == "snapshot")
+        .expect("snapshot command");
     let registry = SkillRegistry::load(SkillRegistryOptions::new(&dir));
 
     let result = expand_command(CommandExpansionRequest {
@@ -242,27 +242,27 @@ fn builtin_commit_expansion_includes_direct_only_commit_skill() {
     })
     .unwrap();
 
-    assert_eq!(result.command_name, "commit");
-    assert!(result.message.contains("bound commit skill"));
+    assert_eq!(result.command_name, "snapshot");
+    assert!(result.message.contains("bound VCS snapshot skill"));
     assert!(result.context_blocks.iter().any(|block| {
-        block.text.starts_with("<skill name=\"commit\"") && block.text.contains("git status")
+        block.text.starts_with("<skill name=\"vcs-snapshot\"") && block.text.contains("VCS status")
     }));
 }
 
 #[test]
-fn required_builtin_commit_skill_refuses_when_disabled() {
-    let dir = tempdir("required_builtin_commit_skill_refuses_when_disabled");
+fn required_builtin_snapshot_skill_refuses_when_disabled() {
+    let dir = tempdir("required_builtin_snapshot_skill_refuses_when_disabled");
     let spec = built_in_commands()
         .into_iter()
-        .find(|spec| spec.name == "commit")
-        .expect("commit command");
+        .find(|spec| spec.name == "snapshot")
+        .expect("snapshot command");
     let registry = SkillRegistry::load(SkillRegistryOptions {
         workspace: dir.clone(),
         include_builtins: true,
         roots: Vec::new(),
         workflow_imports: Vec::new(),
         config_rules: vec![SkillConfigRule {
-            name: Some("commit".to_string()),
+            name: Some("vcs-snapshot".to_string()),
             path: None,
             enabled: Some(false),
             exposure: Some(SkillExposure::DirectOnly),
@@ -281,7 +281,7 @@ fn required_builtin_commit_skill_refuses_when_disabled() {
     .unwrap_err()
     .to_string();
 
-    assert!(err.contains("required skill commit"), "{err}");
+    assert!(err.contains("required skill vcs-snapshot"), "{err}");
     assert!(err.contains("disabled"), "{err}");
 }
 

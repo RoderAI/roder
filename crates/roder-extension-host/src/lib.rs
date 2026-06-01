@@ -20,6 +20,7 @@ use roder_api::tui_status::{PaletteSourceDescriptor, built_in_status_segments};
 use roder_ext_anthropic::AnthropicExtension;
 use roder_ext_cursor::{CursorConfig, CursorExtension};
 use roder_ext_gemini::GeminiExtension;
+use roder_ext_git::GitExtension;
 use roder_ext_google_speech::{GoogleSpeechConfig, GoogleSpeechExtension};
 use roder_ext_jsonl_thread_store::JsonlThreadStoreExtension;
 use roder_ext_memory::MemoryExtension;
@@ -193,6 +194,7 @@ pub fn build_default_registry(config: DefaultRegistryConfig) -> anyhow::Result<E
 
     builder.install(FakeProviderExtension)?;
     builder.install(CodexOAuthProviderExtension)?;
+    builder.install(GitExtension)?;
 
     builder.install(OpenAiSpeechExtension::new(
         config
@@ -742,6 +744,18 @@ mod tests {
 
         assert!(registry.speech_transcriber("openai-speech").is_some());
         assert!(registry.speech_transcriber("google-speech").is_some());
+    }
+
+    #[test]
+    fn default_registry_installs_git_vcs_provider() {
+        let registry = build_default_registry(DefaultRegistryConfig::default()).unwrap();
+
+        assert!(registry.version_control_provider("git").is_some());
+        assert!(
+            registry
+                .provided_services()
+                .contains(&ProvidedService::VersionControlProvider("git".to_string()))
+        );
     }
 
     #[test]

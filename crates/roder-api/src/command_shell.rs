@@ -29,7 +29,11 @@ fn push_unique_shell(shells: &mut Vec<String>, shell: &str) {
     }
 }
 
-fn default_command_shell_for(login_shell: Option<&str>, is_macos: bool, is_windows: bool) -> String {
+fn default_command_shell_for(
+    login_shell: Option<&str>,
+    is_macos: bool,
+    is_windows: bool,
+) -> String {
     if is_windows {
         return "powershell".to_string();
     }

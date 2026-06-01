@@ -175,7 +175,7 @@ mod tests {
         assert!(text.contains(&"model:gpt-test"));
         assert!(text.contains(&"profile:gpt-test"));
         assert!(text.contains(&"thread:12345678"));
-        assert!(text.contains(&"branch:main"));
+        assert!(text.contains(&"line:main"));
         assert!(text.contains(&"tok:42"));
         assert!(text.contains(&"mcp:1"));
     }
@@ -236,6 +236,7 @@ mod tests {
             git: Some(GIT.get_or_init(|| GitSnapshot {
                 branch: Some("main".to_string()),
             })),
+            vcs: None,
             mcp: MCP.get_or_init(|| {
                 vec![McpServerStatus {
                     id: "local".to_string(),

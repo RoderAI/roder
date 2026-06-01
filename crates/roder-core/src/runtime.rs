@@ -651,6 +651,37 @@ impl Runtime {
         Ok(true)
     }
 
+    pub async fn request_app_server_tool_approval(
+        &self,
+        call: ToolCall,
+        reason: Option<String>,
+    ) -> anyhow::Result<bool> {
+        let approval_id = call.id.clone();
+        let (tx, rx) = oneshot::channel();
+        self.pending_tool_approvals.lock().await.insert(
+            approval_id.clone(),
+            PendingToolApproval {
+                thread_id: call.thread_id.clone(),
+                turn_id: call.turn_id.clone(),
+                tool_id: call.id.clone(),
+                tool_name: call.name.clone(),
+                call: call.clone(),
+                tx,
+            },
+        );
+        self.emit(RoderEvent::ApprovalRequested(ApprovalRequested {
+            thread_id: call.thread_id.clone(),
+            turn_id: call.turn_id.clone(),
+            approval_id,
+            tool_id: call.id.clone(),
+            tool_name: call.name.clone(),
+            reason,
+            timestamp: OffsetDateTime::now_utc(),
+        }))
+        .await;
+        Ok(rx.await.unwrap_or(false))
+    }
+
     pub async fn resolve_user_input(
         &self,
         request_id: &str,

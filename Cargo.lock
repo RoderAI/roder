@@ -3433,6 +3433,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "roder-ext-git"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "roder-api",
+ "semver",
+ "serde_json",
+ "tokio",
+]
+
+[[package]]
 name = "roder-ext-google-speech"
 version = "0.1.0"
 dependencies = [
@@ -3977,6 +3989,7 @@ dependencies = [
  "roder-ext-cursor",
  "roder-ext-firecrawl-search",
  "roder-ext-gemini",
+ "roder-ext-git",
  "roder-ext-google-speech",
  "roder-ext-jsonl-thread-store",
  "roder-ext-memory",

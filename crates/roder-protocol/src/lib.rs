@@ -1675,18 +1675,31 @@ pub struct HunkRollbackResult {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct GitChangesListParams {
+pub struct VcsWorkspaceParams {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub workspace: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub provider_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct VcsChangesListParams {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub workspace: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub provider_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub limit: Option<usize>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct GitChangesReadParams {
+pub struct VcsChangesReadParams {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub workspace: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub provider_id: Option<String>,
     pub path: String,
     #[serde(default)]
     pub offset: usize,
@@ -1694,32 +1707,9 @@ pub struct GitChangesReadParams {
     pub limit: Option<usize>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "camelCase")]
-pub enum GitChangeStatus {
-    Modified,
-    Added,
-    Deleted,
-    Renamed,
-    Untracked,
-}
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct GitChangedFile {
-    pub path: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub old_path: Option<String>,
-    pub status: GitChangeStatus,
-    pub additions: u32,
-    pub deletions: u32,
-    #[serde(default)]
-    pub binary: bool,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct GitChangesTotals {
+pub struct VcsChangesTotals {
     pub files: u32,
     pub additions: u32,
     pub deletions: u32,
@@ -1727,31 +1717,64 @@ pub struct GitChangesTotals {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct GitChangesListResult {
-    pub repository_root: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub branch: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub base_ref: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub base_sha: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub head_sha: Option<String>,
-    pub files: Vec<GitChangedFile>,
-    pub totals: GitChangesTotals,
+pub struct VcsChangesListResult {
+    pub status: roder_api::version_control::VcsStatus,
+    pub files: Vec<roder_api::version_control::VcsChangedFile>,
+    pub totals: VcsChangesTotals,
     pub truncated: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct GitChangesReadResult {
-    pub path: String,
-    pub patch: String,
-    pub offset: usize,
-    pub limit: usize,
-    pub total_lines: usize,
+pub struct VcsSelectionParams {
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub next_offset: Option<usize>,
+    pub workspace: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub provider_id: Option<String>,
+    pub paths: Vec<String>,
+    pub granularity: roder_api::version_control::VcsSelectionGranularity,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct VcsSnapshotCreateParams {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub workspace: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub provider_id: Option<String>,
+    pub message: String,
+    #[serde(default)]
+    pub paths: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct VcsRestoreParams {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub workspace: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub provider_id: Option<String>,
+    pub paths: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct VcsLineSwitchParams {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub workspace: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub provider_id: Option<String>,
+    pub line_id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct VcsSyncParams {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub workspace: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub provider_id: Option<String>,
+    pub operation: roder_api::version_control::VcsSyncOperation,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
