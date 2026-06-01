@@ -579,10 +579,10 @@ impl InferenceEngine for CodexOAuthInferenceEngine {
             anyhow::bail!("codex auth is missing; run `roder auth login codex`")
         };
         let mut headers = vec![
-            ("originator".to_string(), "codex_cli_rs".to_string()),
+            ("originator".to_string(), "roder".to_string()),
             (
                 "User-Agent".to_string(),
-                "codex_cli_rs/0.1.0 roder".to_string(),
+                "roder/0.1.0".to_string(),
             ),
         ];
         if let Some(account_id) = account_id {

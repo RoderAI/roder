@@ -225,7 +225,8 @@ impl ThreadStore for JsonlThreadStore {
         if let RoderEvent::TranscriptItemAppended(event) = &envelope.event
             && let Some(item) = &event.item
         {
-            self.update_metadata_for_turn_item(thread_id, item).await?;
+            self.update_metadata_for_turn_item(thread_id, item, envelope.timestamp)
+                .await?;
         }
         Ok(())
     }
@@ -342,6 +343,7 @@ impl JsonlThreadStore {
         &self,
         thread_id: &ThreadId,
         item: &TranscriptItem,
+        event_timestamp: OffsetDateTime,
     ) -> anyhow::Result<()> {
         let metadata_path = self.thread_dir(thread_id).join("metadata.json");
         let (mut metadata, count_current_item) = if metadata_path.exists() {
@@ -358,7 +360,16 @@ impl JsonlThreadStore {
                 }
             }
         } else {
-            anyhow::bail!("thread metadata missing for {}", thread_id);
+            (
+                self.infer_metadata_from_thread_dir(
+                    &self.thread_dir(thread_id),
+                    thread_id,
+                    None,
+                    event_timestamp,
+                )
+                .await?,
+                false,
+            )
         };
         metadata.updated_at = OffsetDateTime::now_utc();
         if count_current_item
@@ -405,7 +416,84 @@ impl JsonlThreadStore {
             }
         }
 
-        anyhow::bail!("thread metadata missing for {}", thread_id);
+        let metadata = self
+            .infer_metadata_from_thread_dir(dir, thread_id, None, OffsetDateTime::now_utc())
+            .await?;
+        self.repair_metadata_file(&metadata_path, &metadata).await;
+        Ok(metadata)
+    }
+
+    async fn infer_metadata_from_thread_dir(
+        &self,
+        dir: &Path,
+        thread_id: &ThreadId,
+        current_item: Option<&TranscriptItem>,
+        fallback_timestamp: OffsetDateTime,
+    ) -> anyhow::Result<ThreadMetadata> {
+        let events = self.load_events(thread_id).await.unwrap_or_default();
+        let turns = project_turns_from_events(thread_id, &events);
+        let mut first_timestamp = events
+            .first()
+            .map(|event| event.timestamp)
+            .unwrap_or(fallback_timestamp);
+        let mut last_timestamp = events
+            .last()
+            .map(|event| event.timestamp)
+            .unwrap_or(fallback_timestamp);
+        let mut message_count = 0u32;
+        let mut title = None;
+
+        for turn in &turns {
+            if turn.created_at < first_timestamp {
+                first_timestamp = turn.created_at;
+            }
+            if let Some(completed_at) = turn.completed_at
+                && completed_at > last_timestamp
+            {
+                last_timestamp = completed_at;
+            }
+            for item in &turn.items {
+                if matches!(
+                    item,
+                    TranscriptItem::UserMessage(_) | TranscriptItem::AssistantMessage(_)
+                ) {
+                    message_count = message_count.saturating_add(1);
+                }
+                if title.is_none()
+                    && let TranscriptItem::UserMessage(message) = item
+                {
+                    title = title_from_user_text(&message.text);
+                }
+            }
+        }
+
+        if let Some(item) = current_item {
+            if matches!(
+                item,
+                TranscriptItem::UserMessage(_) | TranscriptItem::AssistantMessage(_)
+            ) {
+                message_count = message_count.saturating_add(1);
+            }
+            if title.is_none()
+                && let TranscriptItem::UserMessage(message) = item
+            {
+                title = title_from_user_text(&message.text);
+            }
+        }
+
+        Ok(ThreadMetadata {
+            thread_id: thread_id.clone(),
+            title,
+            workspace: infer_workspace_for_recovered_thread(dir),
+            provider: None,
+            model: None,
+            runner_destination: None,
+            runner_state: None,
+            created_at: first_timestamp,
+            updated_at: last_timestamp,
+            message_count,
+            usage: None,
+        })
     }
 
     async fn repair_metadata_file(&self, metadata_path: &Path, metadata: &ThreadMetadata) {
@@ -519,6 +607,13 @@ fn is_runtime_event_directory_without_metadata(thread_id: &str, dir: &Path) -> b
     thread_id == "runtime" && !dir.join("metadata.json").exists()
 }
 
+fn infer_workspace_for_recovered_thread(dir: &Path) -> String {
+    std::env::current_dir()
+        .unwrap_or_else(|_| dir.to_path_buf())
+        .display()
+        .to_string()
+}
+
 pub struct JsonlThreadStoreFactory {
     pub base_path: PathBuf,
 }
@@ -605,6 +700,25 @@ mod tests {
             .unwrap();
     }
 
+    async fn write_event_without_metadata(
+        store: &JsonlThreadStore,
+        thread_id: &ThreadId,
+        envelope: &EventEnvelope,
+    ) {
+        let dir = store.thread_dir(thread_id);
+        fs::create_dir_all(&dir).await.unwrap();
+        let file_path = dir.join("events.jsonl");
+        let mut file = OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&file_path)
+            .await
+            .unwrap();
+        let mut line = serde_json::to_vec(envelope).unwrap();
+        line.push(b'\n');
+        file.write_all(&line).await.unwrap();
+    }
+
     #[tokio::test]
     async fn load_thread_projects_turn_items_and_completion() {
         let base_path = std::env::temp_dir().join(format!(
@@ -688,6 +802,97 @@ mod tests {
         assert_eq!(snapshot.turns[0].turn_id, turn_id);
         assert_eq!(snapshot.turns[0].items.len(), 2);
         assert_eq!(snapshot.turns[0].completed_at, Some(now));
+
+        let _ = fs::remove_dir_all(base_path).await;
+    }
+
+    #[tokio::test]
+    async fn load_thread_recovers_missing_metadata_from_events() {
+        let base_path = std::env::temp_dir().join(format!(
+            "roder-jsonl-missing-metadata-load-test-{}",
+            uuid::Uuid::new_v4()
+        ));
+        let store = JsonlThreadStore {
+            base_path: base_path.clone(),
+        };
+        let thread_id = "thread-missing-metadata".to_string();
+        let turn_id = "turn-a".to_string();
+        let now = OffsetDateTime::UNIX_EPOCH;
+
+        write_event_without_metadata(
+            &store,
+            &thread_id,
+            &transcript_item_event(
+                1,
+                &thread_id,
+                &turn_id,
+                TranscriptItem::UserMessage(UserMessage::text("recover my title")),
+                now,
+            ),
+        )
+        .await;
+
+        let snapshot = store.load_thread(&thread_id).await.unwrap().unwrap();
+        let metadata = snapshot.metadata.unwrap();
+
+        assert_eq!(metadata.thread_id, thread_id);
+        assert_eq!(metadata.title.as_deref(), Some("recover my title"));
+        assert_eq!(metadata.message_count, 1);
+        assert!(base_path.join(&thread_id).join("metadata.json").exists());
+        assert_eq!(snapshot.turns.len(), 1);
+
+        let _ = fs::remove_dir_all(base_path).await;
+    }
+
+    #[tokio::test]
+    async fn append_event_repairs_missing_metadata_instead_of_failing() {
+        let base_path = std::env::temp_dir().join(format!(
+            "roder-jsonl-missing-metadata-append-test-{}",
+            uuid::Uuid::new_v4()
+        ));
+        let store = JsonlThreadStore {
+            base_path: base_path.clone(),
+        };
+        let thread_id = "thread-append-recovers-metadata".to_string();
+        let turn_id = "turn-a".to_string();
+        let now = OffsetDateTime::UNIX_EPOCH;
+
+        write_event_without_metadata(
+            &store,
+            &thread_id,
+            &transcript_item_event(
+                1,
+                &thread_id,
+                &turn_id,
+                TranscriptItem::UserMessage(UserMessage::text("old event title")),
+                now,
+            ),
+        )
+        .await;
+
+        store
+            .append_event(
+                &thread_id,
+                &transcript_item_event(
+                    2,
+                    &thread_id,
+                    &turn_id,
+                    TranscriptItem::AssistantMessage(AssistantMessage {
+                        text: "second message".to_string(),
+                        phase: None,
+                    }),
+                    now,
+                ),
+            )
+            .await
+            .unwrap();
+
+        let snapshot = store.load_thread(&thread_id).await.unwrap().unwrap();
+        let metadata = snapshot.metadata.unwrap();
+
+        assert_eq!(metadata.title.as_deref(), Some("old event title"));
+        assert_eq!(metadata.message_count, 2);
+        assert_eq!(snapshot.events.len(), 2);
 
         let _ = fs::remove_dir_all(base_path).await;
     }
