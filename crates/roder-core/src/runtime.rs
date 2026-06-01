@@ -1227,11 +1227,22 @@ impl Runtime {
             let snapshot = store
                 .load_thread(thread_id)
                 .await?
-                .ok_or_else(|| anyhow::anyhow!("thread not found: {thread_id}"))?;
-            let metadata = snapshot
-                .metadata
-                .ok_or_else(|| anyhow::anyhow!("thread metadata missing for {thread_id}"))?;
-            return Ok(metadata.workspace);
+                .ok_or_else(|| anyhow::anyhow!("thread not found: {thread_id}"));
+            match snapshot {
+                Ok(snapshot) => {
+                    if let Some(metadata) = snapshot.metadata {
+                        return Ok(metadata.workspace);
+                    }
+                    eprintln!(
+                        "thread metadata missing while resolving workspace for {thread_id}; falling back to runtime workspace"
+                    );
+                }
+                Err(err) => {
+                    eprintln!(
+                        "thread missing while resolving workspace for {thread_id}: {err}; falling back to runtime workspace"
+                    );
+                }
+            }
         }
         Ok(self.workspace.display().to_string())
     }
@@ -3258,12 +3269,60 @@ mod tests {
         InferenceProviderContext, InferenceTurnContext, MessageDelta, ModelInstructionOverlay,
         ModelProfileReasoning, ModelSchemaPolicy, ProviderFamily,
     };
+    use roder_api::thread::ThreadStoreFactory;
     use roder_api::tools::{ToolContributor, ToolExecutor, ToolSpec};
     use roder_ext_jsonl_thread_store::store::JsonlThreadStoreFactory;
     use std::sync::Mutex as StdMutex;
 
     fn test_workspace() -> String {
         std::env::current_dir().unwrap().display().to_string()
+    }
+
+    struct MetadataMissingStore;
+
+    #[async_trait::async_trait]
+    impl ThreadStore for MetadataMissingStore {
+        fn id(&self) -> roder_api::thread::ThreadStoreId {
+            "metadata-missing-store".to_string()
+        }
+
+        async fn create_thread(&self, metadata: ThreadMetadata) -> anyhow::Result<ThreadMetadata> {
+            Ok(metadata)
+        }
+
+        async fn list_threads(&self) -> anyhow::Result<Vec<ThreadMetadata>> {
+            Ok(Vec::new())
+        }
+
+        async fn load_thread(
+            &self,
+            _thread_id: &ThreadId,
+        ) -> anyhow::Result<Option<ThreadSnapshot>> {
+            Ok(Some(ThreadSnapshot {
+                metadata: None,
+                ..ThreadSnapshot::default()
+            }))
+        }
+
+        async fn append_event(
+            &self,
+            _thread_id: &ThreadId,
+            _envelope: &EventEnvelope,
+        ) -> anyhow::Result<()> {
+            Ok(())
+        }
+    }
+
+    struct MetadataMissingStoreFactory;
+
+    impl ThreadStoreFactory for MetadataMissingStoreFactory {
+        fn id(&self) -> roder_api::thread::ThreadStoreId {
+            "metadata-missing-store".to_string()
+        }
+
+        fn create(&self) -> Arc<dyn ThreadStore> {
+            Arc::new(MetadataMissingStore)
+        }
     }
 
     #[test]
@@ -3289,6 +3348,29 @@ mod tests {
             server_side_compaction_threshold(&cfg, "gpt-5.5"),
             Some(123_456)
         );
+    }
+
+    #[tokio::test]
+    async fn workspace_for_thread_falls_back_when_metadata_is_missing() {
+        let workspace = test_workspace();
+        let mut builder = ExtensionRegistryBuilder::new();
+        builder.inference_engine(Arc::new(FakeInferenceEngine));
+        builder.thread_store_factory(Arc::new(MetadataMissingStoreFactory));
+        let runtime = Runtime::new(
+            builder.build().unwrap(),
+            RuntimeConfig {
+                workspace: Some(workspace.clone()),
+                ..RuntimeConfig::default()
+            },
+        )
+        .unwrap();
+
+        let resolved = runtime
+            .workspace_for_thread(&ThreadId::from("thread-workflow"))
+            .await
+            .unwrap();
+
+        assert_eq!(resolved, workspace);
     }
 
     #[tokio::test]

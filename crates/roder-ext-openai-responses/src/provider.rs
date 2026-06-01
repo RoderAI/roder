@@ -162,15 +162,14 @@ impl OpenAiResponsesEngine {
             "store": false,
             "stream": true,
         });
-        if options.profile != ResponsesProviderProfile::OpenRouter {
-            if let Some(system) = request
+        if options.profile != ResponsesProviderProfile::OpenRouter
+            && let Some(system) = request
                 .instructions
                 .system
                 .as_deref()
                 .filter(|s| !s.is_empty())
-            {
-                body["instructions"] = json!(system);
-            }
+        {
+            body["instructions"] = json!(system);
         }
         if let Some(max_tokens) = request.output.max_tokens {
             body["max_output_tokens"] = json!(max_tokens);

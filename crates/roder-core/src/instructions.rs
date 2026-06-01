@@ -144,10 +144,18 @@ mod tests {
     fn windows_instructions_match_host_platform() {
         let instructions = default_instructions();
         let system = instructions.system.expect("system instructions");
-        assert_eq!(system.contains("You are running on Windows."), cfg!(target_os = "windows"));
-        assert_eq!(system.contains("Prefer PowerShell commands"), cfg!(target_os = "windows"));
         assert_eq!(
-            system.contains("does not supersede the instruction to prefer dedicated file-editing tools"),
+            system.contains("You are running on Windows."),
+            cfg!(target_os = "windows")
+        );
+        assert_eq!(
+            system.contains("Prefer PowerShell commands"),
+            cfg!(target_os = "windows")
+        );
+        assert_eq!(
+            system.contains(
+                "does not supersede the instruction to prefer dedicated file-editing tools"
+            ),
             cfg!(target_os = "windows")
         );
     }

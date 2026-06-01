@@ -156,7 +156,7 @@ impl TaskExecutor for WebwrightTaskExecutor {
                 &workspace_root,
                 &task_id,
                 PreparedProcessRunner::Remote {
-                    state,
+                    state: Box::new(state),
                     exit_code: result.exit_code,
                 },
             )
@@ -260,7 +260,7 @@ async fn register_prepared_process(
 enum PreparedProcessRunner {
     Local,
     Remote {
-        state: RunnerSessionState,
+        state: Box<RunnerSessionState>,
         exit_code: Option<i32>,
     },
 }

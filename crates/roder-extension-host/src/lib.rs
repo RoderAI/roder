@@ -152,16 +152,11 @@ impl Default for DefaultRegistryConfig {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub enum SessionStoreConfig {
+    #[default]
     Jsonl,
     Postgres(PostgresSessionConfig),
-}
-
-impl Default for SessionStoreConfig {
-    fn default() -> Self {
-        Self::Jsonl
-    }
 }
 
 #[derive(Debug, Clone)]

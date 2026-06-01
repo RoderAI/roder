@@ -205,10 +205,10 @@ fn observed_discovery_counts(events: &[RoderEvent]) -> ObservedDiscoveryCounts {
                     counts.calls_before_promotion += 1;
                 }
             }
-            RoderEvent::ToolCallCompleted(completed) => {
-                if completed.is_error && completed.tool_name.as_deref() == Some("unknown") {
-                    counts.unknown_tool_calls += 1;
-                }
+            RoderEvent::ToolCallCompleted(completed)
+                if completed.is_error && completed.tool_name.as_deref() == Some("unknown") =>
+            {
+                counts.unknown_tool_calls += 1;
             }
             _ => {}
         }

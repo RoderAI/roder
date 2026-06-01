@@ -9,7 +9,7 @@
 //! model's text as Roder `MessageDelta`s. See
 //! `docs/roder-cursor-agent-runtime-protocol.md`.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -210,7 +210,7 @@ pub async fn run_bidi_turn(
 /// frame(s) to send back (shell streams three).
 async fn service_exec(
     exec: CursorExecRequest,
-    workspace: &PathBuf,
+    workspace: &Path,
     executor: Option<&dyn TurnToolExecutor>,
 ) -> Option<Vec<Vec<u8>>> {
     match exec {
@@ -434,10 +434,10 @@ fn grep_files(
                 continue;
             };
             let rel = rel.to_string_lossy().replace('\\', "/");
-            if let Some(g) = glob {
-                if !glob_match(&rel, g) {
-                    continue;
-                }
+            if let Some(g) = glob
+                && !glob_match(&rel, g)
+            {
+                continue;
             }
             let Ok(content) = std::fs::read_to_string(&p) else {
                 continue;
@@ -514,9 +514,9 @@ fn glob_match(path: &str, pat: &str) -> bool {
     m(&p, &g)
 }
 
-async fn run_shell(command: &str, cwd: &str, workspace: &PathBuf) -> String {
+async fn run_shell(command: &str, cwd: &str, workspace: &Path) -> String {
     let dir = if cwd.is_empty() {
-        workspace.clone()
+        workspace.to_path_buf()
     } else {
         PathBuf::from(cwd)
     };
