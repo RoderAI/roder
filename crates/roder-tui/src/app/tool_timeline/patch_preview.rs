@@ -268,12 +268,13 @@ fn diff_line_row(
             let number = *before_line;
             *before_line += 1;
             *after_line += 1;
+            let style = theme.text();
             diff_content_line(
                 number,
                 " ",
                 &line.text,
-                theme.diff_line_number(),
-                theme.text(),
+                Style::default().fg(theme.diff_line_number),
+                style,
                 theme,
                 language,
             )
@@ -281,14 +282,36 @@ fn diff_line_row(
         DiffPreviewLineKind::Added => {
             let number = *after_line;
             *after_line += 1;
-            let style = theme.diff_added();
-            diff_content_line(number, "+", &line.text, style, style, theme, language)
+            let style = Style::default().fg(theme.text).bg(theme.diff_added_bg);
+            let gutter_style = Style::default()
+                .fg(theme.diff_line_number)
+                .bg(theme.diff_added_bg);
+            diff_content_line(
+                number,
+                "+",
+                &line.text,
+                gutter_style,
+                style,
+                theme,
+                language,
+            )
         }
         DiffPreviewLineKind::Removed => {
             let number = *before_line;
             *before_line += 1;
-            let style = theme.diff_removed();
-            diff_content_line(number, "-", &line.text, style, style, theme, language)
+            let style = Style::default().fg(theme.text).bg(theme.diff_removed_bg);
+            let gutter_style = Style::default()
+                .fg(theme.diff_line_number)
+                .bg(theme.diff_removed_bg);
+            diff_content_line(
+                number,
+                "-",
+                &line.text,
+                gutter_style,
+                style,
+                theme,
+                language,
+            )
         }
     }
 }
