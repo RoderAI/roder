@@ -37,9 +37,6 @@ jobs:
           - runner: macos-14
             target: aarch64-apple-darwin
             use_zigbuild: false
-          - runner: macos-13
-            target: x86_64-apple-darwin
-            use_zigbuild: false
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4

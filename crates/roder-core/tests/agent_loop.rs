@@ -721,8 +721,9 @@ async fn run_turn_continues_after_tool_result() {
             .instructions
             .system
             .as_deref()
-            .is_some_and(|text| text.contains("You are Roder")),
-        "first request should include the Roder system prompt"
+            .is_some_and(|text| text.contains("You are Roder")
+                && text.contains("send a brief preamble message")),
+        "first request should include the Roder system prompt with intermediary message guidance"
     );
     assert!(
         requests[1]

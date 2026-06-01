@@ -1494,6 +1494,7 @@ fn response_input_items(
 ) -> Vec<Value> {
     let mut items = Vec::new();
     let mut provider_output_call_ids = HashSet::new();
+    let completed_tool_call_ids = completed_tool_call_ids(&request.transcript);
 
     for conversation_item in &request.transcript {
         let mapped = match conversation_item {
@@ -1513,7 +1514,9 @@ fn response_input_items(
                 "summary": [{ "type": "summary_text", "text": summary.text }]
             })),
             roder_api::transcript::TranscriptItem::ToolCall(call) => {
-                if provider_output_call_ids.contains(&call.id) {
+                if provider_output_call_ids.contains(&call.id)
+                    || !completed_tool_call_ids.contains(&call.id)
+                {
                     None
                 } else {
                     let item_id = fallback_function_call_item_id(&call.id);
@@ -1543,6 +1546,7 @@ fn response_input_items(
                     metadata,
                     &mut items,
                     &mut provider_output_call_ids,
+                    &completed_tool_call_ids,
                     tool_name_map,
                 );
                 None
@@ -1555,6 +1559,18 @@ fn response_input_items(
     }
 
     items
+}
+
+fn completed_tool_call_ids(
+    transcript: &[roder_api::transcript::TranscriptItem],
+) -> HashSet<String> {
+    transcript
+        .iter()
+        .filter_map(|item| match item {
+            roder_api::transcript::TranscriptItem::ToolResult(result) => Some(result.id.clone()),
+            _ => None,
+        })
+        .collect()
 }
 
 fn response_input_items_with_options(
@@ -1630,6 +1646,7 @@ fn append_provider_output_items(
     metadata: &Value,
     items: &mut Vec<Value>,
     provider_output_call_ids: &mut HashSet<String>,
+    completed_tool_call_ids: &HashSet<String>,
     tool_name_map: &ResponsesToolNameMap,
 ) {
     let Some(output) = metadata.get("output").and_then(Value::as_array) else {
@@ -1638,9 +1655,14 @@ fn append_provider_output_items(
     for item in output {
         match item.get("type").and_then(Value::as_str) {
             Some("function_call") => {
-                if let Some(call_id) = item.get("call_id").and_then(Value::as_str) {
-                    provider_output_call_ids.insert(call_id.to_string());
+                let call_id = item.get("call_id").and_then(Value::as_str);
+                let Some(call_id) = call_id else {
+                    continue;
+                };
+                if !completed_tool_call_ids.contains(call_id) {
+                    continue;
                 }
+                provider_output_call_ids.insert(call_id.to_string());
                 let mut item = item.clone();
                 if let Some(name) = item.get("name").and_then(Value::as_str) {
                     item["name"] = json!(tool_name_map.replay_api_name(name));
@@ -2375,6 +2397,72 @@ mod tests {
         assert_eq!(body["input"][1]["type"], "function_call");
         assert_eq!(body["input"][1]["name"], "tool_discovery_list");
         assert_eq!(body["input"][2]["type"], "function_call_output");
+    }
+
+    #[test]
+    fn skips_tool_calls_without_matching_outputs() {
+        let mut request = request();
+        request.transcript = vec![
+            TranscriptItem::UserMessage(UserMessage::text("Run a tool")),
+            TranscriptItem::ToolCall(ToolCallRecord {
+                id: "call_orphan".to_string(),
+                name: "echo".to_string(),
+                arguments: "{}".to_string(),
+            }),
+            TranscriptItem::UserMessage(UserMessage::text("continue")),
+        ];
+
+        let body = OpenAiResponsesEngine::map_request(&request);
+        let input = body["input"].as_array().unwrap();
+
+        assert_eq!(
+            input
+                .iter()
+                .filter(|item| item["type"] == "function_call")
+                .count(),
+            0
+        );
+        assert_eq!(input.len(), 2);
+        assert_eq!(input[1]["role"], "user");
+    }
+
+    #[test]
+    fn skips_provider_function_calls_without_matching_outputs() {
+        let mut request = request();
+        request.transcript = vec![
+            TranscriptItem::UserMessage(UserMessage::text("Run a tool")),
+            TranscriptItem::ProviderMetadata(json!({
+                "output": [
+                    {
+                        "id": "fc_orphan",
+                        "type": "function_call",
+                        "status": "completed",
+                        "call_id": "call_orphan",
+                        "name": "echo",
+                        "arguments": "{}"
+                    }
+                ]
+            })),
+            TranscriptItem::ToolCall(ToolCallRecord {
+                id: "call_orphan".to_string(),
+                name: "echo".to_string(),
+                arguments: "{}".to_string(),
+            }),
+            TranscriptItem::UserMessage(UserMessage::text("continue")),
+        ];
+
+        let body = OpenAiResponsesEngine::map_request(&request);
+        let input = body["input"].as_array().unwrap();
+
+        assert_eq!(
+            input
+                .iter()
+                .filter(|item| item["type"] == "function_call")
+                .count(),
+            0
+        );
+        assert_eq!(input.len(), 2);
+        assert_eq!(input[1]["role"], "user");
     }
 
     #[test]

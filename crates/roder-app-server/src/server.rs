@@ -1595,6 +1595,11 @@ impl AppServer {
     }
 
     async fn handle_codex_auth_login(&self) -> Result<serde_json::Value, JsonRpcError> {
+        if !self.persist_user_config {
+            return Err(internal_error(
+                "codex auth persistence is disabled for this app-server",
+            ));
+        }
         let tokens = roder_codex_auth::login().await.map_err(internal_error)?;
         Ok(serde_json::to_value(ProviderAuthResult {
             signed_in: true,
@@ -1613,6 +1618,11 @@ impl AppServer {
     }
 
     async fn handle_codex_auth_logout(&self) -> Result<serde_json::Value, JsonRpcError> {
+        if !self.persist_user_config {
+            return Err(internal_error(
+                "codex auth persistence is disabled for this app-server",
+            ));
+        }
         roder_codex_auth::logout().map_err(internal_error)?;
         Ok(serde_json::to_value(ProviderAuthResult {
             signed_in: false,
@@ -1622,6 +1632,11 @@ impl AppServer {
     }
 
     async fn handle_supergrok_auth_login(&self) -> Result<serde_json::Value, JsonRpcError> {
+        if !self.persist_user_config {
+            return Err(internal_error(
+                "supergrok auth persistence is disabled for this app-server",
+            ));
+        }
         let tokens = roder_supergrok_auth::login()
             .await
             .map_err(internal_error)?;
@@ -1644,6 +1659,11 @@ impl AppServer {
     }
 
     async fn handle_supergrok_auth_logout(&self) -> Result<serde_json::Value, JsonRpcError> {
+        if !self.persist_user_config {
+            return Err(internal_error(
+                "supergrok auth persistence is disabled for this app-server",
+            ));
+        }
         roder_supergrok_auth::logout().map_err(internal_error)?;
         Ok(serde_json::to_value(ProviderAuthResult {
             signed_in: false,

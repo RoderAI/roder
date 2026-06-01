@@ -6,6 +6,7 @@ use ratatui::{
 
 use crate::diff::compute::{DiffLineKind, Hunk, HunkStatus};
 use crate::diff::{DiffViewMode, DiffViewerState};
+use crate::syntax::{SyntaxTheme, highlight_code, language_for_path, padded_highlighted_code};
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
 pub struct DiffTheme {
@@ -89,9 +90,10 @@ pub fn render_lines(state: &DiffViewerState, theme: DiffTheme) -> Vec<Line<'stat
 
     for (index, hunk) in file.hunks.iter().enumerate() {
         lines.push(hunk_header(index, hunk, index == state.hunk_index, theme));
+        let language = language_for_path(&file.path);
         match state.mode {
-            DiffViewMode::Unified => lines.extend(unified_lines(hunk, theme)),
-            DiffViewMode::SideBySide => lines.extend(side_by_side_lines(hunk, theme)),
+            DiffViewMode::Unified => lines.extend(unified_lines(hunk, theme, language)),
+            DiffViewMode::SideBySide => lines.extend(side_by_side_lines(hunk, theme, language)),
         }
     }
     lines
@@ -126,7 +128,11 @@ fn hunk_header(index: usize, hunk: &Hunk, selected: bool, theme: DiffTheme) -> L
     ])
 }
 
-fn unified_lines(hunk: &Hunk, theme: DiffTheme) -> Vec<Line<'static>> {
+fn unified_lines(
+    hunk: &Hunk,
+    theme: DiffTheme,
+    language: Option<crate::syntax::SyntaxLanguage>,
+) -> Vec<Line<'static>> {
     hunk.lines
         .iter()
         .map(|line| {
@@ -136,21 +142,30 @@ fn unified_lines(hunk: &Hunk, theme: DiffTheme) -> Vec<Line<'static>> {
                 DiffLineKind::Removed => ("-", theme.removed),
                 DiffLineKind::Binary => ("!", theme.warning),
             };
-            Line::from(Span::styled(
-                format!("{prefix}{}", line.text.trim_end_matches('\n')),
-                Style::default().fg(color),
-            ))
+            let mut spans = vec![Span::styled(prefix.to_string(), Style::default().fg(color))];
+            spans.extend(highlight_code(
+                line.text.trim_end_matches('\n'),
+                language,
+                syntax_theme(color, theme),
+            ));
+            Line::from(spans)
         })
         .collect()
 }
 
-fn side_by_side_lines(hunk: &Hunk, theme: DiffTheme) -> Vec<Line<'static>> {
+fn side_by_side_lines(
+    hunk: &Hunk,
+    theme: DiffTheme,
+    language: Option<crate::syntax::SyntaxLanguage>,
+) -> Vec<Line<'static>> {
     let mut lines = Vec::new();
     for line in &hunk.lines {
         match line.kind {
-            DiffLineKind::Context => lines.push(side_by_side_line(&line.text, &line.text, theme)),
-            DiffLineKind::Removed => lines.push(side_by_side_line(&line.text, "", theme)),
-            DiffLineKind::Added => lines.push(side_by_side_line("", &line.text, theme)),
+            DiffLineKind::Context => {
+                lines.push(side_by_side_line(&line.text, &line.text, theme, language))
+            }
+            DiffLineKind::Removed => lines.push(side_by_side_line(&line.text, "", theme, language)),
+            DiffLineKind::Added => lines.push(side_by_side_line("", &line.text, theme, language)),
             DiffLineKind::Binary => lines.push(Line::from(Span::styled(
                 line.text.clone(),
                 Style::default().fg(theme.warning),
@@ -160,26 +175,52 @@ fn side_by_side_lines(hunk: &Hunk, theme: DiffTheme) -> Vec<Line<'static>> {
     lines
 }
 
-fn side_by_side_line(before: &str, after: &str, theme: DiffTheme) -> Line<'static> {
-    Line::from(vec![
-        Span::styled(
-            format!("{:<38}", truncate(before.trim_end_matches('\n'), 38)),
-            Style::default().fg(if before.is_empty() {
-                theme.muted
-            } else {
-                theme.removed
-            }),
-        ),
-        Span::styled(" | ", Style::default().fg(theme.muted)),
-        Span::styled(
-            truncate(after.trim_end_matches('\n'), 38),
-            Style::default().fg(if after.is_empty() {
-                theme.muted
-            } else {
-                theme.added
-            }),
-        ),
-    ])
+fn side_by_side_line(
+    before: &str,
+    after: &str,
+    theme: DiffTheme,
+    language: Option<crate::syntax::SyntaxLanguage>,
+) -> Line<'static> {
+    let before_text = truncate(before.trim_end_matches('\n'), 38);
+    let after_text = truncate(after.trim_end_matches('\n'), 38);
+    let before_color = if before.is_empty() {
+        theme.muted
+    } else {
+        theme.removed
+    };
+    let after_color = if after.is_empty() {
+        theme.muted
+    } else {
+        theme.added
+    };
+    let mut spans = Vec::new();
+    spans.extend(padded_highlighted_code(
+        &before_text,
+        38,
+        language,
+        syntax_theme(before_color, theme),
+    ));
+    spans.push(Span::styled(" | ", Style::default().fg(theme.muted)));
+    spans.extend(highlight_code(
+        &after_text,
+        language,
+        syntax_theme(after_color, theme),
+    ));
+    Line::from(spans)
+}
+
+fn syntax_theme(base: Color, theme: DiffTheme) -> SyntaxTheme {
+    SyntaxTheme {
+        base,
+        keyword: theme.accent,
+        string: theme.warning,
+        number: theme.warning,
+        comment: theme.muted,
+        ty: theme.accent,
+        function: theme.text,
+        mac: theme.warning,
+        bg: None,
+    }
 }
 
 fn truncate(value: &str, max_chars: usize) -> String {
@@ -223,6 +264,38 @@ mod tests {
         assert!(text.contains("side-by-side"));
         assert!(text.contains("accepted"));
         assert!(text.contains(" | "));
+    }
+
+    #[test]
+    fn diff_view_highlights_syntax_inside_diff_lines() {
+        let state = DiffViewerState::new(PendingDiff {
+            call_id: "call-a".to_string(),
+            tool: "edit".to_string(),
+            files: vec![FileDiff {
+                path: "src/lib.rs".into(),
+                change_type: "modify".to_string(),
+                before: Some("let value = old();\n".to_string()),
+                after: "let value = format!(\"new\");\n".to_string(),
+                supports_partial: true,
+                hunks: compute_diff(
+                    Some("let value = old();\n"),
+                    "let value = format!(\"new\");\n",
+                ),
+            }],
+        });
+        let theme = theme();
+        let lines = render_lines(&state, theme);
+
+        assert!(lines.iter().any(|line| {
+            line.spans
+                .iter()
+                .any(|span| span.content.as_ref() == "let" && span.style.fg == Some(theme.accent))
+        }));
+        assert!(lines.iter().any(|line| {
+            line.spans.iter().any(|span| {
+                span.content.as_ref() == r#""new""# && span.style.fg == Some(theme.warning)
+            })
+        }));
     }
 
     fn render_text(state: &DiffViewerState) -> String {

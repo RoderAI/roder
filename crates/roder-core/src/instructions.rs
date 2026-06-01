@@ -41,6 +41,10 @@ Roder is inspired by OpenAI Codex and the original Gode agent harness. Within th
 
 ## Communication
 
+- Before making tool calls, send a brief preamble message to the user explaining what you are about to do.
+- Group related tool calls under one concise preamble instead of narrating every trivial read separately.
+- Keep preambles to 1-2 sentences focused on immediate, tangible next steps; for quick updates, aim for 8-12 words.
+- Build on prior context in later preambles so the user can follow progress and understand the next action.
 - Explain what changed and why in plain engineering language.
 - If an operation fails, surface the key error and the likely next debugging step.
 - Avoid dumping large files or logs into the response; summarize and reference paths where useful."#;
@@ -166,5 +170,15 @@ mod tests {
         let system = instructions.system.expect("system instructions");
         assert!(system.contains("Prefer dedicated file-editing tools"));
         assert!(system.contains("apply_patch"));
+    }
+
+    #[test]
+    fn base_instructions_include_intermediary_message_guidance() {
+        let instructions = default_instructions();
+        let system = instructions.system.expect("system instructions");
+        assert!(system.starts_with("You are Roder"));
+        assert!(system.contains("Before making tool calls, send a brief preamble message"));
+        assert!(system.contains("Group related tool calls under one concise preamble"));
+        assert!(system.contains("Build on prior context in later preambles"));
     }
 }
