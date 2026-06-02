@@ -153,6 +153,8 @@ pub struct StartTurnRequest {
 pub struct CreateThreadRequest {
     pub title: Option<String>,
     pub workspace: String,
+    pub workspace_id: Option<String>,
+    pub root_id: Option<String>,
     pub provider: Option<String>,
     pub model: Option<String>,
 }
@@ -789,6 +791,8 @@ impl Runtime {
         self.create_thread_with(CreateThreadRequest {
             title,
             workspace: self.workspace.display().to_string(),
+            workspace_id: None,
+            root_id: None,
             provider: None,
             model: None,
         })
@@ -806,6 +810,8 @@ impl Runtime {
             thread_id: uuid::Uuid::new_v4().to_string(),
             title: req.title,
             workspace,
+            workspace_id: req.workspace_id,
+            root_id: req.root_id,
             provider: Some(req.provider.unwrap_or(cfg.default_provider)),
             model: Some(req.model.unwrap_or(cfg.default_model)),
             runner_destination: cfg.remote_runner_destination.clone(),
@@ -860,6 +866,8 @@ impl Runtime {
                 self.create_thread_with(CreateThreadRequest {
                     title: Some("Team lead".to_string()),
                     workspace: workspace.clone(),
+                    workspace_id: None,
+                    root_id: None,
                     provider: None,
                     model: None,
                 })
@@ -880,6 +888,8 @@ impl Runtime {
                 .create_thread_with(CreateThreadRequest {
                     title: Some(member.name.clone()),
                     workspace: workspace.clone(),
+                    workspace_id: None,
+                    root_id: None,
                     provider: member.model_provider.clone(),
                     model: member.model.clone(),
                 })
@@ -947,6 +957,8 @@ impl Runtime {
             .create_thread_with(CreateThreadRequest {
                 title: Some(req.name.clone()),
                 workspace: self.workspace.display().to_string(),
+                workspace_id: None,
+                root_id: None,
                 provider: req.model_provider.clone(),
                 model: req.model.clone(),
             })
@@ -3272,7 +3284,7 @@ pub fn validate_edit_tool(value: &str) -> anyhow::Result<()> {
 }
 
 fn should_persist_thread_event(thread_id: &str) -> bool {
-    thread_id != "runtime"
+    !matches!(thread_id, "app-server" | "runtime")
 }
 
 #[cfg(test)]
@@ -3295,6 +3307,13 @@ mod tests {
 
     fn test_workspace() -> String {
         std::env::current_dir().unwrap().display().to_string()
+    }
+
+    #[test]
+    fn synthetic_app_server_events_are_not_thread_events() {
+        assert!(!should_persist_thread_event("app-server"));
+        assert!(!should_persist_thread_event("runtime"));
+        assert!(should_persist_thread_event("thread-1"));
     }
 
     #[test]
@@ -3330,6 +3349,8 @@ mod tests {
             .create_thread_with(CreateThreadRequest {
                 title: Some("Automation: nightly status".to_string()),
                 workspace: workspace.display().to_string(),
+                workspace_id: None,
+                root_id: None,
                 provider: Some("mock".to_string()),
                 model: Some("mock".to_string()),
             })
@@ -4272,6 +4293,8 @@ mod tests {
             .create_thread_with(CreateThreadRequest {
                 title: Some("Model switch".to_string()),
                 workspace: test_workspace(),
+                workspace_id: None,
+                root_id: None,
                 provider: None,
                 model: None,
             })

@@ -139,6 +139,8 @@ fn counting_thread_snapshot(thread_id: &str) -> ThreadSnapshot {
             thread_id: thread_id.to_string(),
             title: Some(format!("Thread {thread_id}")),
             workspace: std::env::current_dir().unwrap().display().to_string(),
+            workspace_id: None,
+            root_id: None,
             provider: Some(PROVIDER_MOCK.to_string()),
             model: Some("mock".to_string()),
             runner_destination: None,

@@ -1077,6 +1077,7 @@ async fn model_switch_providers_select_updates_protocol_thread_model_for_next_tu
     let runtime = Arc::new(Runtime::new(builder.build().unwrap(), Default::default()).unwrap());
     let server = Arc::new(AppServer::new(runtime));
     let client = LocalAppClient::new(server);
+    let workspace = create_workspace_for_path(&client, std::path::Path::new("/tmp")).await;
 
     let started: ThreadStartResult = request(
         &client,
@@ -1084,7 +1085,8 @@ async fn model_switch_providers_select_updates_protocol_thread_model_for_next_tu
         Some(serde_json::json!({
             "model": "mock",
             "modelProvider": PROVIDER_MOCK,
-            "cwd": "/tmp",
+            "workspaceId": workspace.workspace_id,
+            "rootId": workspace.root_id,
             "ephemeral": false
         })),
     )
@@ -1147,6 +1149,7 @@ async fn model_switch_with_thread_id_does_not_change_global_default_model() {
     let runtime = Arc::new(Runtime::new(builder.build().unwrap(), Default::default()).unwrap());
     let server = Arc::new(AppServer::new(runtime));
     let client = LocalAppClient::new(server);
+    let workspace = create_workspace_for_path(&client, std::path::Path::new("/tmp")).await;
 
     let started: ThreadStartResult = request(
         &client,
@@ -1154,7 +1157,8 @@ async fn model_switch_with_thread_id_does_not_change_global_default_model() {
         Some(serde_json::json!({
             "model": "mock",
             "modelProvider": PROVIDER_MOCK,
-            "cwd": "/tmp",
+            "workspaceId": workspace.workspace_id,
+            "rootId": workspace.root_id,
             "ephemeral": false
         })),
     )
@@ -1533,6 +1537,7 @@ async fn protocol_turn_uses_thread_cwd_for_workspace_tools() {
     let server = Arc::new(AppServer::new(runtime));
     let client = LocalAppClient::new(server);
     let mut events = client.subscribe_events();
+    let workspace = create_workspace_for_path(&client, &thread_workspace).await;
 
     let started: ThreadStartResult = request(
         &client,
@@ -1540,6 +1545,8 @@ async fn protocol_turn_uses_thread_cwd_for_workspace_tools() {
         Some(serde_json::json!({
             "model": "mock",
             "modelProvider": PROVIDER_MOCK,
+            "workspaceId": workspace.workspace_id,
+            "rootId": workspace.root_id,
             "cwd": thread_workspace.display().to_string(),
             "ephemeral": false
         })),
@@ -2738,6 +2745,15 @@ async fn remote_websocket_requires_auth_and_serves_thread_turn_flow() {
             .and_then(serde_json::Value::as_bool),
         Some(true)
     );
+    let remote_workspace: serde_json::Value = remote_request(
+        &mut websocket,
+        "workspace-create",
+        "workspace/create",
+        Some(serde_json::json!({
+            "roots": [{ "path": "/tmp" }]
+        })),
+    )
+    .await;
 
     let started: ThreadStartResult = remote_request(
         &mut websocket,
@@ -2746,7 +2762,8 @@ async fn remote_websocket_requires_auth_and_serves_thread_turn_flow() {
         Some(serde_json::json!({
             "model": "mock",
             "modelProvider": PROVIDER_MOCK,
-            "cwd": "/tmp",
+            "workspaceId": remote_workspace["workspace"]["id"],
+            "rootId": remote_workspace["workspace"]["defaultRootId"],
             "ephemeral": false
         })),
     )
@@ -3409,6 +3426,7 @@ async fn protocol_contract_methods_support_protocol_startup_contract() {
     let runtime = Arc::new(Runtime::fake().unwrap());
     let server = Arc::new(AppServer::new(runtime));
     let client = LocalAppClient::new(server);
+    let workspace = create_workspace_for_path(&client, std::path::Path::new("/tmp")).await;
 
     let initialize: serde_json::Value =
         request(&client, "initialize", Some(serde_json::json!({}))).await;
@@ -3436,7 +3454,8 @@ async fn protocol_contract_methods_support_protocol_startup_contract() {
         Some(serde_json::json!({
             "model": "mock",
             "modelProvider": PROVIDER_MOCK,
-            "cwd": "/tmp",
+            "workspaceId": workspace.workspace_id,
+            "rootId": workspace.root_id,
             "ephemeral": false
         })),
     )
@@ -3459,29 +3478,32 @@ async fn protocol_contract_methods_support_protocol_startup_contract() {
 }
 
 #[tokio::test]
-async fn thread_start_rejects_missing_or_blank_cwd() {
+async fn thread_start_rejects_missing_workspace_or_escaping_cwd() {
     let runtime = Arc::new(Runtime::fake().unwrap());
     let server = Arc::new(AppServer::new(runtime));
     let client = LocalAppClient::new(server);
+    let workspace = create_workspace_for_path(&client, std::path::Path::new("/tmp")).await;
 
-    for params in [
-        serde_json::json!({
-            "model": "mock",
-            "modelProvider": PROVIDER_MOCK,
-            "ephemeral": false,
-        }),
-        serde_json::json!({
-            "model": "mock",
-            "modelProvider": PROVIDER_MOCK,
-            "cwd": "",
-            "ephemeral": false,
-        }),
-        serde_json::json!({
-            "model": "mock",
-            "modelProvider": PROVIDER_MOCK,
-            "cwd": ".",
-            "ephemeral": false,
-        }),
+    for (params, expected) in [
+        (
+            serde_json::json!({
+                "model": "mock",
+                "modelProvider": PROVIDER_MOCK,
+                "ephemeral": false,
+            }),
+            "workspaceId",
+        ),
+        (
+            serde_json::json!({
+                "model": "mock",
+                "modelProvider": PROVIDER_MOCK,
+                "workspaceId": workspace.workspace_id,
+                "rootId": workspace.root_id,
+                "cwd": "/",
+                "ephemeral": false,
+            }),
+            "cwd",
+        ),
     ] {
         let response = client
             .send_request(JsonRpcRequest {
@@ -3492,13 +3514,168 @@ async fn thread_start_rejects_missing_or_blank_cwd() {
             })
             .await;
 
-        let error = response.error.expect("thread/start should reject cwd");
+        let error = response.error.expect("thread/start should reject params");
         assert_eq!(error.code, -32602);
         assert!(
-            error.message.contains("cwd"),
+            error.message.contains(expected),
             "unexpected error message: {}",
             error.message
         );
+    }
+}
+
+#[tokio::test]
+async fn workspace_create_list_and_thread_start_defaults_cwd_to_root() {
+    let root = std::env::temp_dir().join(format!("roder-workspace-one-{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir_all(&root).unwrap();
+    let runtime = Arc::new(Runtime::fake().unwrap());
+    let server = Arc::new(AppServer::new(runtime));
+    let client = LocalAppClient::new(server);
+
+    let created: roder_protocol::WorkspaceCreateResult = request(
+        &client,
+        "workspace/create",
+        Some(serde_json::json!({
+            "name": "One Root",
+            "roots": [{ "path": root.display().to_string(), "name": "api" }]
+        })),
+    )
+    .await;
+    assert_eq!(created.workspace.name, "One Root");
+    assert_eq!(created.workspace.roots.len(), 1);
+    assert_eq!(created.workspace.roots[0].name, "api");
+
+    let listed: roder_protocol::WorkspaceListResult =
+        request(&client, "workspace/list", Some(serde_json::json!({}))).await;
+    assert!(
+        listed
+            .workspaces
+            .iter()
+            .any(|workspace| workspace.id == created.workspace.id)
+    );
+
+    let started: ThreadStartResult = request(
+        &client,
+        "thread/start",
+        Some(serde_json::json!({
+            "model": "mock",
+            "modelProvider": PROVIDER_MOCK,
+            "workspaceId": created.workspace.id,
+            "rootId": created.workspace.default_root_id,
+            "ephemeral": false
+        })),
+    )
+    .await;
+    assert_eq!(
+        started.cwd,
+        root.canonicalize().unwrap().display().to_string()
+    );
+    assert_eq!(started.workspace_id, created.workspace.id);
+    assert_eq!(started.root_id, created.workspace.default_root_id);
+    assert_eq!(
+        started.thread.workspace_id.as_deref(),
+        Some(started.workspace_id.as_str())
+    );
+    assert_eq!(
+        started.thread.root_id.as_deref(),
+        Some(started.root_id.as_str())
+    );
+
+    let _ = std::fs::remove_dir_all(root);
+}
+
+#[tokio::test]
+async fn multi_root_workspace_threads_round_trip_root_selection() {
+    let root = std::env::temp_dir().join(format!("roder-workspace-many-{}", uuid::Uuid::new_v4()));
+    let frontend = root.join("frontend");
+    let backend = root.join("backend");
+    std::fs::create_dir_all(&frontend).unwrap();
+    std::fs::create_dir_all(&backend).unwrap();
+    let runtime = Arc::new(Runtime::fake().unwrap());
+    let server = Arc::new(AppServer::new(runtime));
+    let client = LocalAppClient::new(server);
+
+    let created: roder_protocol::WorkspaceCreateResult = request(
+        &client,
+        "workspace/create",
+        Some(serde_json::json!({
+            "name": "Full Stack",
+            "roots": [
+                { "path": frontend.display().to_string(), "name": "frontend" },
+                { "path": backend.display().to_string(), "name": "backend" }
+            ],
+            "defaultRootPath": frontend.display().to_string()
+        })),
+    )
+    .await;
+    let backend_root = created
+        .workspace
+        .roots
+        .iter()
+        .find(|root| root.name == "backend")
+        .unwrap();
+
+    let started: ThreadStartResult = request(
+        &client,
+        "thread/start",
+        Some(serde_json::json!({
+            "model": "mock",
+            "modelProvider": PROVIDER_MOCK,
+            "workspaceId": created.workspace.id,
+            "rootId": backend_root.id,
+            "ephemeral": false
+        })),
+    )
+    .await;
+    let read: ThreadReadResult = request(
+        &client,
+        "thread/read",
+        Some(serde_json::json!({
+            "threadId": started.thread.id,
+            "includeTurns": false
+        })),
+    )
+    .await;
+    let thread = read.thread.unwrap();
+    assert_eq!(
+        thread.workspace_id.as_deref(),
+        Some(created.workspace.id.as_str())
+    );
+    assert_eq!(thread.root_id.as_deref(), Some(backend_root.id.as_str()));
+    assert_eq!(
+        thread.cwd,
+        backend.canonicalize().unwrap().display().to_string()
+    );
+
+    let _ = std::fs::remove_dir_all(root);
+}
+
+#[tokio::test]
+async fn workspace_create_rejects_relative_and_missing_roots() {
+    let runtime = Arc::new(Runtime::fake().unwrap());
+    let server = Arc::new(AppServer::new(runtime));
+    let client = LocalAppClient::new(server);
+
+    for (path, expected) in [
+        ("relative/project".to_string(), "absolute"),
+        (
+            std::env::temp_dir()
+                .join(format!("missing-{}", uuid::Uuid::new_v4()))
+                .display()
+                .to_string(),
+            "not accessible",
+        ),
+    ] {
+        let error = request_error(
+            &client,
+            "workspace/create",
+            Some(serde_json::json!({
+                "roots": [{ "path": path }]
+            })),
+        )
+        .await;
+        assert_eq!(error.code, -32602);
+        assert!(error.message.contains(expected), "{:?}", error.message);
     }
 }
 
@@ -3825,6 +4002,7 @@ async fn protocol_contract_turn_methods_and_notifications_match_protocol_contrac
     let server = Arc::new(AppServer::new(runtime));
     let client = LocalAppClient::new(server);
     let mut notifications = client.subscribe_notifications();
+    let workspace = create_workspace_for_path(&client, std::path::Path::new("/tmp")).await;
 
     let started: serde_json::Value = request(
         &client,
@@ -3832,7 +4010,8 @@ async fn protocol_contract_turn_methods_and_notifications_match_protocol_contrac
         Some(serde_json::json!({
             "model": "mock",
             "modelProvider": PROVIDER_MOCK,
-            "cwd": "/tmp",
+            "workspaceId": workspace.workspace_id,
+            "rootId": workspace.root_id,
             "ephemeral": false
         })),
     )
@@ -3940,6 +4119,8 @@ async fn protocol_contract_turn_interrupt_without_turn_id_uses_runtime_active_tu
         .create_thread_with(CreateThreadRequest {
             title: None,
             workspace: "/tmp".to_string(),
+            workspace_id: None,
+            root_id: None,
             provider: Some(PROVIDER_MOCK.to_string()),
             model: Some("mock".to_string()),
         })
@@ -4041,6 +4222,7 @@ async fn protocol_contract_turn_interrupt_uses_active_turn_when_turn_id_is_omitt
     let runtime = Arc::new(Runtime::new(builder.build().unwrap(), Default::default()).unwrap());
     let server = Arc::new(AppServer::new(runtime));
     let client = LocalAppClient::new(server);
+    let workspace = create_workspace_for_path(&client, std::path::Path::new("/tmp")).await;
 
     let started: serde_json::Value = request(
         &client,
@@ -4048,7 +4230,8 @@ async fn protocol_contract_turn_interrupt_uses_active_turn_when_turn_id_is_omitt
         Some(serde_json::json!({
             "model": "mock",
             "modelProvider": PROVIDER_MOCK,
-            "cwd": "/tmp",
+            "workspaceId": workspace.workspace_id,
+            "rootId": workspace.root_id,
             "ephemeral": false
         })),
     )
@@ -4380,6 +4563,15 @@ async fn artifacts_methods_list_read_grep_tail_delete_and_command_spill() {
                 .to_string_lossy()
                 .as_ref()
         )
+    );
+
+    let threads_after_command_artifact: ThreadListResult =
+        request(&client, "thread/list", Some(serde_json::json!({}))).await;
+    assert!(
+        threads_after_command_artifact
+            .data
+            .iter()
+            .all(|thread| thread.id != "app-server")
     );
 
     let listed: ArtifactListResult = request(
@@ -5472,6 +5664,7 @@ async fn automations_create_run_now_status_and_runs() {
                 store_path: store_path.clone(),
                 ..roder_automations::AutomationSupervisorConfig::default()
             },
+            ..AppServerFeatureConfig::default()
         },
     ));
     let client = LocalAppClient::new(server);
@@ -5573,6 +5766,7 @@ async fn automations_create_due_tick_run_and_persisted_thread_read() {
                 run_missed_on_startup: false,
                 ..roder_automations::AutomationSupervisorConfig::default()
             },
+            ..AppServerFeatureConfig::default()
         },
     ));
     let client = LocalAppClient::new(server);
@@ -5668,6 +5862,7 @@ async fn automations_live_wall_clock_tick_smoke() {
                 run_missed_on_startup: false,
                 ..roder_automations::AutomationSupervisorConfig::default()
             },
+            ..AppServerFeatureConfig::default()
         },
     ));
     let client = LocalAppClient::new(server);
@@ -7727,11 +7922,15 @@ async fn vcs_changes_methods_report_full_branch_delta() {
         .unwrap(),
     );
     let client = LocalAppClient::new(Arc::new(AppServer::new(runtime)));
+    let workspace_ref = create_workspace_for_path(&client, &workspace).await;
 
     let list: serde_json::Value = request(
         &client,
         "vcs/changes/list",
-        Some(serde_json::json!({ "workspace": workspace.display().to_string() })),
+        Some(serde_json::json!({
+            "workspaceId": workspace_ref.workspace_id,
+            "rootId": workspace_ref.root_id
+        })),
     )
     .await;
     assert_eq!(list["status"]["provider"]["id"], "git");
@@ -7762,7 +7961,8 @@ async fn vcs_changes_methods_report_full_branch_delta() {
         &client,
         "vcs/changes/read",
         Some(serde_json::json!({
-            "workspace": workspace.display().to_string(),
+            "workspaceId": workspace_ref.workspace_id,
+            "rootId": workspace_ref.root_id,
             "path": "committed.txt",
             "offset": 0,
             "limit": 20
@@ -7777,7 +7977,8 @@ async fn vcs_changes_methods_report_full_branch_delta() {
         &client,
         "vcs/changes/read",
         Some(serde_json::json!({
-            "workspace": workspace.display().to_string(),
+            "workspaceId": workspace_ref.workspace_id,
+            "rootId": workspace_ref.root_id,
             "path": "committed.txt",
             "offset": 0,
             "limit": 2
@@ -7792,7 +7993,8 @@ async fn vcs_changes_methods_report_full_branch_delta() {
         &client,
         "vcs/changes/read",
         Some(serde_json::json!({
-            "workspace": workspace.display().to_string(),
+            "workspaceId": workspace_ref.workspace_id,
+            "rootId": workspace_ref.root_id,
             "path": "untracked.jpg",
             "offset": 0,
             "limit": 20
@@ -7811,7 +8013,8 @@ async fn vcs_changes_methods_report_full_branch_delta() {
         &client,
         "vcs/changes/read",
         Some(serde_json::json!({
-            "workspace": workspace.display().to_string(),
+            "workspaceId": workspace_ref.workspace_id,
+            "rootId": workspace_ref.root_id,
             "path": "../outside.txt"
         })),
     )
@@ -7845,8 +8048,10 @@ async fn vcs_mutations_require_policy_approval() {
         .unwrap(),
     );
     let client = LocalAppClient::new(Arc::new(AppServer::new(runtime.clone())));
+    let workspace_ref = create_workspace_for_path(&client, &workspace).await;
     let select_params = serde_json::to_value(roder_protocol::VcsSelectionParams {
-        workspace: Some(workspace.display().to_string()),
+        workspace_id: workspace_ref.workspace_id,
+        root_id: Some(workspace_ref.root_id),
         provider_id: None,
         paths: vec!["file.txt".to_string()],
         granularity: roder_api::version_control::VcsSelectionGranularity::Path,
@@ -7908,7 +8113,7 @@ async fn vcs_mutations_require_policy_approval() {
 }
 
 #[tokio::test]
-async fn vcs_methods_reject_workspaces_outside_runtime_scope() {
+async fn vcs_methods_reject_unregistered_workspace_roots() {
     let root = std::env::temp_dir().join(format!("roder-vcs-scope-{}", uuid::Uuid::new_v4()));
     let workspace = root.join("workspace");
     let sibling = root.join("sibling");
@@ -7932,23 +8137,30 @@ async fn vcs_methods_reject_workspaces_outside_runtime_scope() {
         .unwrap(),
     );
     let client = LocalAppClient::new(Arc::new(AppServer::new(runtime)));
+    let workspace_ref = create_workspace_for_path(&client, &workspace).await;
 
-    let status: serde_json::Value =
-        request(&client, "vcs/status", Some(serde_json::json!({}))).await;
+    let status: serde_json::Value = request(
+        &client,
+        "vcs/status",
+        Some(serde_json::json!({
+            "workspaceId": workspace_ref.workspace_id,
+            "rootId": workspace_ref.root_id
+        })),
+    )
+    .await;
     assert_eq!(status["provider"]["id"], "git");
 
     let error = request_error(
         &client,
         "vcs/changes/list",
-        Some(serde_json::json!({ "workspace": sibling.display().to_string() })),
+        Some(serde_json::json!({
+            "workspaceId": workspace_ref.workspace_id,
+            "rootId": "root_unknown"
+        })),
     )
     .await;
     assert_eq!(error.code, -32602);
-    assert!(
-        error
-            .message
-            .contains("configured runtime workspace or a child path")
-    );
+    assert!(error.message.contains("unknown rootId"));
 
     let _ = std::fs::remove_dir_all(root);
 }
@@ -7969,11 +8181,15 @@ async fn vcs_changes_rejects_non_vcs_workspace() {
         .unwrap(),
     );
     let client = LocalAppClient::new(Arc::new(AppServer::new(runtime)));
+    let workspace_ref = create_workspace_for_path(&client, &workspace).await;
 
     let error = request_error(
         &client,
         "vcs/changes/list",
-        Some(serde_json::json!({ "workspace": workspace.display().to_string() })),
+        Some(serde_json::json!({
+            "workspaceId": workspace_ref.workspace_id,
+            "rootId": workspace_ref.root_id
+        })),
     )
     .await;
     assert_eq!(error.code, -32000);
@@ -8361,6 +8577,8 @@ impl Drop for EnvVarGuard {
 }
 
 async fn start_thread(client: &LocalAppClient) -> ThreadStartResult {
+    let cwd = test_cwd();
+    let workspace = create_workspace_for_path(client, std::path::Path::new(&cwd)).await;
     request(
         client,
         "thread/start",
@@ -8369,7 +8587,9 @@ async fn start_thread(client: &LocalAppClient) -> ThreadStartResult {
                 model: None,
                 model_provider: None,
                 reasoning: None,
-                cwd: test_cwd(),
+                workspace_id: workspace.workspace_id,
+                root_id: Some(workspace.root_id),
+                cwd: Some(cwd),
                 ephemeral: false,
             })
             .unwrap(),
@@ -8484,5 +8704,28 @@ async fn wait_for_notification(
             }
         }
         return notification;
+    }
+}
+
+struct TestWorkspaceRef {
+    workspace_id: String,
+    root_id: String,
+}
+
+async fn create_workspace_for_path(
+    client: &LocalAppClient,
+    path: &std::path::Path,
+) -> TestWorkspaceRef {
+    let result: roder_protocol::WorkspaceCreateResult = request(
+        client,
+        "workspace/create",
+        Some(serde_json::json!({
+            "roots": [{ "path": path.display().to_string() }]
+        })),
+    )
+    .await;
+    TestWorkspaceRef {
+        workspace_id: result.workspace.id,
+        root_id: result.workspace.default_root_id,
     }
 }

@@ -1820,6 +1820,42 @@ export const appServerManifest = {
       "notifications": [
         "workspace/changeObserved"
       ]
+    },
+    {
+      "method": "workspace/create",
+      "paramsType": "WorkspaceCreateParams",
+      "resultType": "WorkspaceCreateResult",
+      "stability": "stable",
+      "featureGroup": "workspace",
+      "idempotency": "nonIdempotent",
+      "sideEffect": "localState"
+    },
+    {
+      "method": "workspace/forget",
+      "paramsType": "WorkspaceForgetParams",
+      "resultType": "WorkspaceForgetResult",
+      "stability": "stable",
+      "featureGroup": "workspace",
+      "idempotency": "nonIdempotent",
+      "sideEffect": "localState"
+    },
+    {
+      "method": "workspace/list",
+      "paramsType": "WorkspaceListParams",
+      "resultType": "WorkspaceListResult",
+      "stability": "stable",
+      "featureGroup": "workspace",
+      "idempotency": "idempotent",
+      "sideEffect": "readOnly"
+    },
+    {
+      "method": "workspace/update",
+      "paramsType": "WorkspaceUpdateParams",
+      "resultType": "WorkspaceUpdateResult",
+      "stability": "stable",
+      "featureGroup": "workspace",
+      "idempotency": "nonIdempotent",
+      "sideEffect": "localState"
     }
   ]
 } as const;
@@ -2023,7 +2059,11 @@ export const appServerMethods = [
   "workflows/scripts/list",
   "workflows/scripts/read",
   "workflows/stop",
-  "workspace/changes/list"
+  "workspace/changes/list",
+  "workspace/create",
+  "workspace/forget",
+  "workspace/list",
+  "workspace/update"
 ] as const;
 
 export type JsonRpcId = string | number | null;

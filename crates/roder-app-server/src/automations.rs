@@ -30,6 +30,7 @@ use crate::server::internal_error;
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct AppServerFeatureConfig {
     pub automations: AutomationSupervisorConfig,
+    pub workspace_registry_path: Option<PathBuf>,
 }
 
 impl AppServerFeatureConfig {
@@ -38,6 +39,7 @@ impl AppServerFeatureConfig {
             return Self::default();
         };
         Self {
+            workspace_registry_path: None,
             automations: AutomationSupervisorConfig {
                 enabled: config.automations.enabled,
                 server_id: config.automations.server_id.clone(),
@@ -70,6 +72,11 @@ impl AppServerFeatureConfig {
 
     pub fn with_automation_store_path(mut self, store_path: impl Into<PathBuf>) -> Self {
         self.automations.store_path = store_path.into();
+        self
+    }
+
+    pub fn with_workspace_registry_path(mut self, path: impl Into<PathBuf>) -> Self {
+        self.workspace_registry_path = Some(path.into());
         self
     }
 }
@@ -108,6 +115,10 @@ impl AppServer {
             None
         };
         let workflows = crate::workflows::AppWorkflowService::new(Arc::clone(&runtime));
+        let workspace_registry_path = feature_config
+            .workspace_registry_path
+            .clone()
+            .unwrap_or_else(|| roder_config::config_dir().join("workspaces.json"));
         Self {
             runtime,
             workflows,
@@ -118,6 +129,7 @@ impl AppServer {
             protocol_threads: RwLock::new(std::collections::HashMap::new()),
             protocol_thread_models: RwLock::new(std::collections::HashMap::new()),
             protocol_notifications,
+            workspaces: crate::workspaces::WorkspaceRegistry::new(workspace_registry_path),
         }
     }
 
@@ -125,7 +137,13 @@ impl AppServer {
         runtime: Arc<Runtime>,
         automations: AutomationSupervisorConfig,
     ) -> Self {
-        Self::with_feature_config(runtime, AppServerFeatureConfig { automations })
+        Self::with_feature_config(
+            runtime,
+            AppServerFeatureConfig {
+                automations,
+                ..AppServerFeatureConfig::default()
+            },
+        )
     }
 
     pub fn automation_status(&self) -> AutomationsStatusResult {
