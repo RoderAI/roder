@@ -17,7 +17,7 @@ const AUTHORIZE_URL: &str = "https://auth.openai.com/oauth/authorize";
 const TOKEN_ENDPOINT: &str = "https://auth.openai.com/oauth/token";
 const CALLBACK_PORT: u16 = 1455;
 const CALLBACK_PATH: &str = "/auth/callback";
-const ORIGINATOR: &str = "codex_cli_rs";
+const ORIGINATOR: &str = "roder";
 const REFRESH_EXPIRY_SKEW_MILLIS: i64 = 3 * 60 * 1000;
 
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]
@@ -424,7 +424,7 @@ mod tests {
         let url = authorize_url("http://localhost:1455/auth/callback", "challenge", "state");
         assert!(url.contains("client_id=app_EMoamEEZ73f0CkXaXp7hrann"));
         assert!(url.contains("redirect_uri=http%3A%2F%2Flocalhost%3A1455%2Fauth%2Fcallback"));
-        assert!(url.contains("originator=codex_cli_rs"));
+        assert!(url.contains("originator=roder"));
         assert!(url.contains("api.connectors.read"));
         assert!(url.contains("codex_cli_simplified_flow=true"));
         assert!(url.contains("code_challenge_method=S256"));

@@ -129,16 +129,15 @@ fn score_file(
         reasons.push("entrypoint-like filename".to_string());
     }
 
-    if let Ok(metadata) = std::fs::metadata(path) {
-        if metadata.len() <= MAX_CONTENT_BYTES {
-            if let Ok(text) = std::fs::read_to_string(path) {
-                let text = text.to_ascii_lowercase();
-                for token in tokens {
-                    if text.contains(token) {
-                        score += 3;
-                        reasons.push(format!("bounded content matches `{token}`"));
-                    }
-                }
+    if let Ok(metadata) = std::fs::metadata(path)
+        && metadata.len() <= MAX_CONTENT_BYTES
+        && let Ok(text) = std::fs::read_to_string(path)
+    {
+        let text = text.to_ascii_lowercase();
+        for token in tokens {
+            if text.contains(token) {
+                score += 3;
+                reasons.push(format!("bounded content matches `{token}`"));
             }
         }
     }

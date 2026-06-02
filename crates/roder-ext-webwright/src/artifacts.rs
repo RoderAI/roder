@@ -175,10 +175,8 @@ fn parse_critical_point(line: &str) -> Option<WebwrightCriticalPoint> {
         Some((true, rest))
     } else if let Some(rest) = trimmed.strip_prefix("- [X]") {
         Some((true, rest))
-    } else if let Some(rest) = trimmed.strip_prefix("- [ ]") {
-        Some((false, rest))
     } else {
-        None
+        trimmed.strip_prefix("- [ ]").map(|rest| (false, rest))
     }?;
     Some(WebwrightCriticalPoint {
         checked: checked.0,

@@ -10,6 +10,7 @@ pub mod roadmap;
 pub mod runtime_io;
 pub mod selection;
 pub mod status_line;
+mod syntax;
 pub mod theme;
 pub mod transcript;
 

@@ -28,6 +28,7 @@ Roder is inspired by OpenAI Codex and the original Gode agent harness. Within th
 
 - Default to ASCII when editing or creating files. Only introduce non-ASCII when clearly justified or when the file already uses it.
 - Add succinct comments only when they clarify non-obvious logic.
+- Prefer dedicated file-editing tools (`apply_patch`, `edit`, `multi_edit`, or `write_file`) for source changes when they are available. Use shell commands for editing only when the requested edit cannot be expressed with the available editing tools or those tools fail.
 - Do not revert changes you did not make unless the user explicitly asks.
 - You may be in a dirty git worktree. Ignore unrelated work from other agents or the user.
 - Do not use destructive operations such as hard resets or deleting user work unless explicitly requested.
@@ -40,6 +41,10 @@ Roder is inspired by OpenAI Codex and the original Gode agent harness. Within th
 
 ## Communication
 
+- Before making tool calls, send a brief preamble message to the user explaining what you are about to do.
+- Group related tool calls under one concise preamble instead of narrating every trivial read separately.
+- Keep preambles to 1-2 sentences focused on immediate, tangible next steps; for quick updates, aim for 8-12 words.
+- Build on prior context in later preambles so the user can follow progress and understand the next action.
 - Explain what changed and why in plain engineering language.
 - If an operation fails, surface the key error and the likely next debugging step.
 - Avoid dumping large files or logs into the response; summarize and reference paths where useful."#;
@@ -60,7 +65,7 @@ const WINDOWS_SYSTEM_INSTRUCTIONS: &str = r#"
 ## Windows Runtime
 
 - You are running on Windows.
-- Prefer PowerShell commands and PowerShell syntax for shell operations.
+- Prefer PowerShell commands and PowerShell syntax for shell operations. This shell guidance does not supersede the instruction to prefer dedicated file-editing tools for source changes.
 - Use Windows paths and commands when referring to files, processes, environment variables, and filesystem operations."#;
 
 const NON_INTERACTIVE_INSTRUCTIONS: &str = r#"## Runtime Profile
@@ -151,5 +156,29 @@ mod tests {
             system.contains("Prefer PowerShell commands"),
             cfg!(target_os = "windows")
         );
+        assert_eq!(
+            system.contains(
+                "does not supersede the instruction to prefer dedicated file-editing tools"
+            ),
+            cfg!(target_os = "windows")
+        );
+    }
+
+    #[test]
+    fn base_instructions_prefer_edit_tools_for_source_changes() {
+        let instructions = default_instructions();
+        let system = instructions.system.expect("system instructions");
+        assert!(system.contains("Prefer dedicated file-editing tools"));
+        assert!(system.contains("apply_patch"));
+    }
+
+    #[test]
+    fn base_instructions_include_intermediary_message_guidance() {
+        let instructions = default_instructions();
+        let system = instructions.system.expect("system instructions");
+        assert!(system.starts_with("You are Roder"));
+        assert!(system.contains("Before making tool calls, send a brief preamble message"));
+        assert!(system.contains("Group related tool calls under one concise preamble"));
+        assert!(system.contains("Build on prior context in later preambles"));
     }
 }

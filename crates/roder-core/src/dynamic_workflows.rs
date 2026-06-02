@@ -347,7 +347,6 @@ fn word_count(input: &str) -> usize {
 
 fn normalize_sentence(input: &str) -> String {
     input
-        .trim()
         .split_whitespace()
         .collect::<Vec<_>>()
         .join(" ")

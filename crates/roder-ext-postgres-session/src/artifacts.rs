@@ -151,10 +151,8 @@ impl ContextArtifactAccess for PostgresArtifactStore {
         let matches = String::from_utf8_lossy(&body)
             .lines()
             .enumerate()
-            .filter_map(|(index, line)| {
-                line.contains(query)
-                    .then(|| format!("{}: {}", index + 1, line))
-            })
+            .filter(|(_, line)| line.contains(query))
+            .map(|(index, line)| format!("{}: {}", index + 1, line))
             .collect::<Vec<_>>();
         let limit = clamp_limit(Some(limit));
         let page = page_lines(&matches, offset, limit);

@@ -215,14 +215,14 @@ struct PythonSelection {
 }
 
 fn select_python(roder_home: &Path) -> Option<PythonSelection> {
-    if let Ok(python) = std::env::var("RODER_WEBWRIGHT_PYTHON") {
-        if !python.trim().is_empty() {
-            return Some(PythonSelection {
-                python,
-                runtime_dir: None,
-                setup_record_found: false,
-            });
-        }
+    if let Ok(python) = std::env::var("RODER_WEBWRIGHT_PYTHON")
+        && !python.trim().is_empty()
+    {
+        return Some(PythonSelection {
+            python,
+            runtime_dir: None,
+            setup_record_found: false,
+        });
     }
     if let Some(record) = read_setup_record(roder_home) {
         return Some(PythonSelection {
