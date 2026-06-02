@@ -35,7 +35,7 @@ use roder_protocol::*;
 use roder_roadmap::{ListOptions, list_documents, parse_document, validate_document};
 use roder_tasks::BackgroundRunner;
 use time::OffsetDateTime;
-use tokio::sync::{RwLock, broadcast};
+use tokio::sync::{OnceCell, RwLock, broadcast};
 
 use crate::automations::AppServerFeatureConfig;
 use crate::notifications;
@@ -102,6 +102,7 @@ pub struct AppServer {
         RwLock<std::collections::HashMap<String, ProtocolThreadModelSelection>>,
     pub(crate) protocol_notifications: broadcast::Sender<JsonRpcNotification>,
     pub(crate) workspaces: crate::workspaces::WorkspaceRegistry,
+    pub(crate) command_registry: OnceCell<CommandsRegistry>,
 }
 
 #[derive(Clone, Debug)]
@@ -3016,6 +3017,14 @@ impl AppServer {
     }
 
     async fn command_registry(&self) -> anyhow::Result<CommandsRegistry> {
+        Ok(self
+            .command_registry
+            .get_or_try_init(|| async { self.build_command_registry().await })
+            .await?
+            .clone())
+    }
+
+    async fn build_command_registry(&self) -> anyhow::Result<CommandsRegistry> {
         let config = roder_config::load_config()?;
         let cfg = config.commands.clone().unwrap_or_default();
         if !cfg.enabled {
