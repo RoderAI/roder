@@ -101,6 +101,7 @@ pub struct AppServer {
     pub(crate) protocol_thread_models:
         RwLock<std::collections::HashMap<String, ProtocolThreadModelSelection>>,
     pub(crate) protocol_notifications: broadcast::Sender<JsonRpcNotification>,
+    pub(crate) workspaces: crate::workspaces::WorkspaceRegistry,
 }
 
 #[derive(Clone, Debug)]
@@ -538,6 +539,30 @@ impl AppServer {
             "workspace/changes/list" => {
                 self.decode_and(req.params, |p| async move {
                     self.handle_workspace_changes_list(p).await
+                })
+                .await
+            }
+            "workspace/list" => {
+                self.decode_and(req.params, |p| async move {
+                    self.handle_workspace_list(p).await
+                })
+                .await
+            }
+            "workspace/create" => {
+                self.decode_and(req.params, |p| async move {
+                    self.handle_workspace_create(p).await
+                })
+                .await
+            }
+            "workspace/update" => {
+                self.decode_and(req.params, |p| async move {
+                    self.handle_workspace_update(p).await
+                })
+                .await
+            }
+            "workspace/forget" => {
+                self.decode_and(req.params, |p| async move {
+                    self.handle_workspace_forget(p).await
                 })
                 .await
             }
@@ -1766,12 +1791,22 @@ impl AppServer {
             .model_provider
             .clone()
             .unwrap_or_else(|| cfg.default_provider.clone());
-        let cwd = required_thread_start_cwd(&params.cwd)?;
+        let resolved = self
+            .workspaces
+            .resolve_root(
+                cfg.workspace.clone(),
+                &params.workspace_id,
+                params.root_id.as_deref(),
+            )
+            .await?;
+        let cwd = crate::workspaces::validate_cwd(&resolved.root, params.cwd.clone())?;
         let metadata = self
             .runtime
             .create_thread_with(roder_core::CreateThreadRequest {
                 title: None,
                 workspace: cwd.clone(),
+                workspace_id: Some(resolved.workspace.id.clone()),
+                root_id: Some(resolved.root.id.clone()),
                 provider: params.model_provider.clone(),
                 model: params.model.clone(),
             })
@@ -1803,6 +1838,8 @@ impl AppServer {
             model_provider,
             reasoning,
             cwd,
+            workspace_id: resolved.workspace.id,
+            root_id: resolved.root.id,
         })
         .unwrap())
     }
@@ -2017,6 +2054,8 @@ impl AppServer {
             .create_thread_with(CreateThreadRequest {
                 title: Some(format!("Roadmap worker: {task_id}")),
                 workspace: self.roadmap_workspace()?.display().to_string(),
+                workspace_id: None,
+                root_id: None,
                 provider: Some(cfg.default_provider.clone()),
                 model: Some(cfg.default_model.clone()),
             })
@@ -3379,6 +3418,42 @@ impl AppServer {
         Ok(serde_json::to_value(WorkspaceChangesListResult { changes }).unwrap())
     }
 
+    async fn handle_workspace_list(
+        &self,
+        _params: WorkspaceListParams,
+    ) -> Result<serde_json::Value, JsonRpcError> {
+        let runtime_workspace = self.runtime.status().await.workspace;
+        let result = self.workspaces.list(runtime_workspace).await?;
+        Ok(serde_json::to_value(result).unwrap())
+    }
+
+    async fn handle_workspace_create(
+        &self,
+        params: WorkspaceCreateParams,
+    ) -> Result<serde_json::Value, JsonRpcError> {
+        let runtime_workspace = self.runtime.status().await.workspace;
+        let result = self.workspaces.create(runtime_workspace, params).await?;
+        Ok(serde_json::to_value(result).unwrap())
+    }
+
+    async fn handle_workspace_update(
+        &self,
+        params: WorkspaceUpdateParams,
+    ) -> Result<serde_json::Value, JsonRpcError> {
+        let runtime_workspace = self.runtime.status().await.workspace;
+        let result = self.workspaces.update(runtime_workspace, params).await?;
+        Ok(serde_json::to_value(result).unwrap())
+    }
+
+    async fn handle_workspace_forget(
+        &self,
+        params: WorkspaceForgetParams,
+    ) -> Result<serde_json::Value, JsonRpcError> {
+        let runtime_workspace = self.runtime.status().await.workspace;
+        let result = self.workspaces.forget(runtime_workspace, params).await?;
+        Ok(serde_json::to_value(result).unwrap())
+    }
+
     async fn handle_hunk_rollback(
         &self,
         params: HunkRollbackParams,
@@ -3430,10 +3505,12 @@ impl AppServer {
         &self,
         params: VcsWorkspaceParams,
     ) -> Result<serde_json::Value, JsonRpcError> {
-        let runtime_workspace = self.runtime.status().await.workspace;
+        let root = self
+            .vcs_workspace_root(&params.workspace_id, params.root_id.as_deref())
+            .await?;
         let result = crate::vcs::status(
             self.runtime.registry().version_control_resolver(),
-            runtime_workspace,
+            root.root.path,
             params,
         )
         .await?;
@@ -3444,10 +3521,12 @@ impl AppServer {
         &self,
         params: VcsChangesListParams,
     ) -> Result<serde_json::Value, JsonRpcError> {
-        let runtime_workspace = self.runtime.status().await.workspace;
+        let root = self
+            .vcs_workspace_root(&params.workspace_id, params.root_id.as_deref())
+            .await?;
         let result = crate::vcs::list_changes(
             self.runtime.registry().version_control_resolver(),
-            runtime_workspace,
+            root.root.path,
             params,
         )
         .await?;
@@ -3458,10 +3537,12 @@ impl AppServer {
         &self,
         params: VcsChangesReadParams,
     ) -> Result<serde_json::Value, JsonRpcError> {
-        let runtime_workspace = self.runtime.status().await.workspace;
+        let root = self
+            .vcs_workspace_root(&params.workspace_id, params.root_id.as_deref())
+            .await?;
         let result = crate::vcs::read_change(
             self.runtime.registry().version_control_resolver(),
-            runtime_workspace,
+            root.root.path,
             params,
         )
         .await?;
@@ -3474,10 +3555,12 @@ impl AppServer {
     ) -> Result<serde_json::Value, JsonRpcError> {
         self.enforce_vcs_mutation_policy("vcs/select", &params)
             .await?;
-        let runtime_workspace = self.runtime.status().await.workspace;
+        let root = self
+            .vcs_workspace_root(&params.workspace_id, params.root_id.as_deref())
+            .await?;
         let result = crate::vcs::select(
             self.runtime.registry().version_control_resolver(),
-            runtime_workspace,
+            root.root.path,
             params,
         )
         .await?;
@@ -3490,10 +3573,12 @@ impl AppServer {
     ) -> Result<serde_json::Value, JsonRpcError> {
         self.enforce_vcs_mutation_policy("vcs/snapshot/create", &params)
             .await?;
-        let runtime_workspace = self.runtime.status().await.workspace;
+        let root = self
+            .vcs_workspace_root(&params.workspace_id, params.root_id.as_deref())
+            .await?;
         let result = crate::vcs::create_snapshot(
             self.runtime.registry().version_control_resolver(),
-            runtime_workspace,
+            root.root.path,
             params,
         )
         .await?;
@@ -3506,10 +3591,12 @@ impl AppServer {
     ) -> Result<serde_json::Value, JsonRpcError> {
         self.enforce_vcs_mutation_policy("vcs/restore", &params)
             .await?;
-        let runtime_workspace = self.runtime.status().await.workspace;
+        let root = self
+            .vcs_workspace_root(&params.workspace_id, params.root_id.as_deref())
+            .await?;
         let result = crate::vcs::restore(
             self.runtime.registry().version_control_resolver(),
-            runtime_workspace,
+            root.root.path,
             params,
         )
         .await?;
@@ -3520,10 +3607,12 @@ impl AppServer {
         &self,
         params: VcsWorkspaceParams,
     ) -> Result<serde_json::Value, JsonRpcError> {
-        let runtime_workspace = self.runtime.status().await.workspace;
+        let root = self
+            .vcs_workspace_root(&params.workspace_id, params.root_id.as_deref())
+            .await?;
         let result = crate::vcs::list_lines(
             self.runtime.registry().version_control_resolver(),
-            runtime_workspace,
+            root.root.path,
             params,
         )
         .await?;
@@ -3536,10 +3625,12 @@ impl AppServer {
     ) -> Result<serde_json::Value, JsonRpcError> {
         self.enforce_vcs_mutation_policy("vcs/lines/switch", &params)
             .await?;
-        let runtime_workspace = self.runtime.status().await.workspace;
+        let root = self
+            .vcs_workspace_root(&params.workspace_id, params.root_id.as_deref())
+            .await?;
         let result = crate::vcs::switch_line(
             self.runtime.registry().version_control_resolver(),
-            runtime_workspace,
+            root.root.path,
             params,
         )
         .await?;
@@ -3552,14 +3643,27 @@ impl AppServer {
     ) -> Result<serde_json::Value, JsonRpcError> {
         self.enforce_vcs_mutation_policy("vcs/sync", &params)
             .await?;
-        let runtime_workspace = self.runtime.status().await.workspace;
+        let root = self
+            .vcs_workspace_root(&params.workspace_id, params.root_id.as_deref())
+            .await?;
         let result = crate::vcs::sync(
             self.runtime.registry().version_control_resolver(),
-            runtime_workspace,
+            root.root.path,
             params,
         )
         .await?;
         Ok(serde_json::to_value(result).unwrap())
+    }
+
+    async fn vcs_workspace_root(
+        &self,
+        workspace_id: &str,
+        root_id: Option<&str>,
+    ) -> Result<crate::workspaces::ResolvedWorkspaceRoot, JsonRpcError> {
+        let runtime_workspace = self.runtime.status().await.workspace;
+        self.workspaces
+            .resolve_root(runtime_workspace, workspace_id, root_id)
+            .await
     }
 
     async fn enforce_vcs_mutation_policy<T: serde::Serialize>(
@@ -4436,17 +4540,6 @@ fn invalid_params(err: impl std::fmt::Display) -> JsonRpcError {
         message: format!("Invalid params: {err}"),
         data: None,
     }
-}
-
-fn required_thread_start_cwd(cwd: &str) -> Result<String, JsonRpcError> {
-    let cwd = cwd.trim();
-    if cwd.is_empty() {
-        return Err(invalid_params("thread/start requires cwd"));
-    }
-    if !std::path::Path::new(cwd).is_absolute() {
-        return Err(invalid_params("thread/start cwd must be an absolute path"));
-    }
-    Ok(cwd.to_string())
 }
 
 fn shell_settings(shell: &str) -> ShellSettings {

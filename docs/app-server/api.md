@@ -117,11 +117,37 @@ thread object. It is shaped as:
   "createdAt": 1770000000,
   "updatedAt": 1770000100,
   "status": { "type": "idle", "activeFlags": [] },
+  "workspaceId": "ws_abc123",
+  "rootId": "root_abc123",
   "cwd": "/Users/pz/w/gode",
   "name": "optional title",
   "turns": []
 }
 ```
+
+`workspace` is a named project container owned by the app-server. A workspace
+has one or more admitted filesystem roots:
+
+```json
+{
+  "id": "ws_abc123",
+  "name": "gode",
+  "roots": [
+    { "id": "root_abc123", "path": "/Users/pz/w/gode", "name": "gode" }
+  ],
+  "defaultRootId": "root_abc123",
+  "updatedAt": 1770000100
+}
+```
+
+`root` is an absolute existing directory registered in a workspace. The server
+canonicalizes roots, collapses duplicate root paths within a workspace, and
+generates stable ids from canonical paths. Roots are plain `{ id, path, name }`;
+capabilities such as VCS provider or package manager are discovered separately.
+
+`cwd` is the execution directory for a thread. `thread/start` derives it from
+the selected root by default. If a client supplies an explicit `cwd`, it must be
+the selected root or a child path of that root.
 
 `turn` is one model interaction within a thread:
 
@@ -312,6 +338,10 @@ Review, hunks, workflow imports, media, and memory:
 | `vcs/lines/list` | List provider lines of work such as git branches. |
 | `vcs/lines/switch` | Switch provider line of work when safe. |
 | `vcs/sync` | Run provider sync operations such as fetch, pull, or push. |
+| `workspace/list` | List registered workspaces and roots. |
+| `workspace/create` | Create or replace a workspace from one or more roots. |
+| `workspace/update` | Rename a workspace, replace roots, or change its default root. |
+| `workspace/forget` | Remove a workspace registry entry. |
 | `hunk/list` | List recorded hunks, optionally by turn/review. |
 | `hunk/read` | Read a paged hunk diff. |
 | `hunk/rollback` | Confirm and apply a hunk reverse patch. |
@@ -1031,6 +1061,55 @@ Errors:
 
 - Token-store or login-flow errors return code `-32000` with `data.details`.
 
+### Workspace registry methods
+
+Purpose: Register project containers and their admitted filesystem roots.
+
+Examples:
+
+```json
+{
+  "method": "workspace/create",
+  "params": {
+    "name": "gode",
+    "roots": [
+      { "path": "/Users/pz/w/gode", "name": "backend" },
+      { "path": "/Users/pz/w/gode-desktop", "name": "desktop" }
+    ],
+    "defaultRootPath": "/Users/pz/w/gode"
+  }
+}
+```
+
+```json
+{
+  "method": "workspace/update",
+  "params": {
+    "workspaceId": "ws_abc123",
+    "name": "gode platform",
+    "defaultRootId": "root_desktop"
+  }
+}
+```
+
+Behavior:
+
+- `workspace/list` returns persisted workspaces. When the runtime has a
+  workspace path, the registry seeds an initial single-root workspace for it.
+- `workspace/create` accepts one or more root inputs and returns the resulting
+  `Workspace`. Root paths must be absolute existing directories. Duplicate
+  canonical paths collapse to one root.
+- `workspace/update` can rename the workspace, replace the root set, and set
+  `defaultRootId`. Replacing roots regenerates root ids from canonical paths and
+  preserves id stability for roots that remain in the workspace.
+- `workspace/forget` removes the registry entry. It does not delete files or
+  thread history.
+
+Errors:
+
+- Relative paths, missing directories, empty root sets, unknown workspace ids,
+  and unknown default/root ids return JSON-RPC error code `-32602`.
+
 ### `thread/start`
 
 Purpose: Create a thread.
@@ -1039,10 +1118,11 @@ Request:
 
 ```json
 {
+  "workspaceId": "ws_abc123",
+  "rootId": "root_abc123",
   "model": "gpt-5.5",
   "modelProvider": "openai",
   "reasoning": "high",
-  "cwd": "/Users/pz/w/gode",
   "ephemeral": false
 }
 ```
@@ -1063,19 +1143,27 @@ Response:
       "activeTurnId": null,
       "activeFlags": []
     },
+    "workspaceId": "ws_abc123",
+    "rootId": "root_abc123",
     "cwd": "/Users/pz/w/gode"
   },
   "model": "gpt-5.5",
   "modelProvider": "openai",
   "reasoning": "high",
+  "workspaceId": "ws_abc123",
+  "rootId": "root_abc123",
   "cwd": "/Users/pz/w/gode"
 }
 ```
 
 Behavior:
 
-- Creates a persisted runtime thread with optional provider/model and required absolute workspace `cwd`.
-- Rejects missing, empty, or relative `cwd`; thread snapshots do not fall back to the app-server process cwd.
+- Creates a persisted runtime thread in a registered workspace/root with
+  optional provider/model.
+- `workspaceId` is required. `rootId` is optional and defaults to the
+  workspace's `defaultRootId`.
+- `cwd` is optional. When omitted, it defaults to the selected root path. When
+  supplied, it must be the selected root or a child path of that root.
 - Stores the selected provider/model/reasoning for later `turn/start` overrides.
 - If `reasoning` is omitted, returns and stores the effective reasoning effort for the selected model.
 - Emits `thread/started`.
@@ -1105,6 +1193,8 @@ Response:
       "createdAt": 1770000000,
       "updatedAt": 1770000100,
       "status": { "type": "idle", "activeTurnId": null, "activeFlags": [] },
+      "workspaceId": "ws_abc123",
+      "rootId": "root_abc123",
       "cwd": "/Users/pz/w/gode",
       "name": "Fix tests"
     }
@@ -1119,8 +1209,8 @@ Behavior:
 - Lists persisted runtime threads sorted by newest `updatedAt` first.
 - Applies `limit` when supplied.
 - Merges in protocol threads that are in memory but not yet persisted.
-- Persisted thread metadata must include an absolute workspace; invalid metadata
-  is rejected instead of projected with a fallback cwd.
+- Threads include `workspaceId`, `rootId`, and `cwd` when persisted metadata has
+  workspace registry data.
 - Cursor fields are currently always null.
 
 ### `thread/read`
@@ -1147,6 +1237,8 @@ Response:
     "createdAt": 1770000000,
     "updatedAt": 1770000100,
     "status": { "type": "idle", "activeTurnId": null, "activeFlags": [] },
+    "workspaceId": "ws_abc123",
+    "rootId": "root_abc123",
     "cwd": "/Users/pz/w/gode",
     "usage": {
       "prompt_tokens": 100,
@@ -1177,10 +1269,7 @@ Response:
 Behavior:
 
 - Reads a persisted thread snapshot first.
-- Falls back to persisted thread metadata and then in-memory protocol threads,
-  but never to the app-server process cwd.
-- Persisted thread metadata must include an absolute workspace; invalid metadata
-  is rejected instead of projected with a fallback cwd.
+- Falls back to persisted thread metadata and then in-memory protocol threads.
 - Includes aggregate thread `usage` and per-turn `usage` when provider usage
   was reported; `cache_hit_rate` is `cached_prompt_tokens / prompt_tokens`.
 - Returns `{"thread": null}` when the thread is unknown.
@@ -2556,7 +2645,8 @@ Examples:
 {
   "method": "vcs/changes/list",
   "params": {
-    "workspace": "/Users/pz/w/gode",
+    "workspaceId": "ws_abc123",
+    "rootId": "root_abc123",
     "limit": 500
   }
 }
@@ -2566,7 +2656,8 @@ Examples:
 {
   "method": "vcs/changes/read",
   "params": {
-    "workspace": "/Users/pz/w/gode",
+    "workspaceId": "ws_abc123",
+    "rootId": "root_abc123",
     "path": "src/app.rs",
     "offset": 0,
     "limit": 400
@@ -2578,6 +2669,11 @@ Behavior:
 
 - `vcs/status` returns provider identity, workspace root, active line of work,
   base information when known, and capability metadata.
+- VCS methods operate on a registered workspace root. `workspaceId` is required;
+  `rootId` is optional and defaults to the workspace default root. Raw absolute
+  `workspace` paths are not canonical VCS inputs.
+- Provider resolution uses the selected root path, so multi-root projects review
+  one root at a time.
 - `vcs/changes/list` returns provider status, changed files, totals, and whether
   the file list was truncated.
 - The bundled git provider compares the merge-base of the resolved base with the

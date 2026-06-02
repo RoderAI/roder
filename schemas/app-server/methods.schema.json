@@ -228,7 +228,11 @@
               "workflows/scripts/list",
               "workflows/scripts/read",
               "workflows/stop",
-              "workspace/changes/list"
+              "workspace/changes/list",
+              "workspace/create",
+              "workspace/forget",
+              "workspace/list",
+              "workspace/update"
             ]
           },
           "paramsType": {

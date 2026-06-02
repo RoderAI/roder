@@ -602,6 +602,10 @@ const METHOD_SPECS: &[AppServerMethodSpecSeed] = &[
         Idempotent,
         ["workspace/changeObserved"]
     ),
+    method_spec!("workspace/create", "workspace", LocalState, NonIdempotent),
+    method_spec!("workspace/forget", "workspace", LocalState, NonIdempotent),
+    method_spec!("workspace/list", "workspace", ReadOnly, Idempotent),
+    method_spec!("workspace/update", "workspace", LocalState, NonIdempotent),
 ];
 
 #[cfg(test)]
