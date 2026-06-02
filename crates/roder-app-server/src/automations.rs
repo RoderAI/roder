@@ -130,6 +130,7 @@ impl AppServer {
             protocol_thread_models: RwLock::new(std::collections::HashMap::new()),
             protocol_notifications,
             workspaces: crate::workspaces::WorkspaceRegistry::new(workspace_registry_path),
+            command_registry: tokio::sync::OnceCell::new(),
         }
     }
 

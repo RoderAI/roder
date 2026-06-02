@@ -147,6 +147,8 @@ struct TaskCallingEngine {
 
 static SEARCH_INDEX_TEST_LOCK: LazyLock<Mutex<()>> = LazyLock::new(|| Mutex::new(()));
 static DISCOVERY_TEST_LOCK: LazyLock<Mutex<()>> = LazyLock::new(|| Mutex::new(()));
+static MARKETPLACE_TEST_LOCK: LazyLock<Mutex<()>> = LazyLock::new(|| Mutex::new(()));
+static PROVIDER_TEST_LOCK: LazyLock<Mutex<()>> = LazyLock::new(|| Mutex::new(()));
 static SKILLS_TEST_LOCK: LazyLock<Mutex<()>> = LazyLock::new(|| Mutex::new(()));
 
 struct PendingEngine;
@@ -818,7 +820,7 @@ async fn test_app_server_e2e() {
     builder.inference_engine(engine);
     builder.tool_contributor(roder_tools::echo_tool_contributor());
     let runtime = Arc::new(Runtime::new(builder.build().unwrap(), Default::default()).unwrap());
-    let server = Arc::new(AppServer::new(runtime));
+    let server = Arc::new(app_server(runtime));
     let client = LocalAppClient::new(server);
     let mut events = client.subscribe_events();
 
@@ -944,7 +946,7 @@ async fn thread_goal_methods_share_state_with_goal_tools() {
     builder.inference_engine(Arc::new(FakeInferenceEngine));
     builder.tool_contributor(roder_tools::builtin_coding_tools_contributor(workspace).unwrap());
     let runtime = Arc::new(Runtime::new(builder.build().unwrap(), Default::default()).unwrap());
-    let server = Arc::new(AppServer::new(runtime));
+    let server = Arc::new(app_server(runtime));
     let client = LocalAppClient::new(server);
     let mut notifications = client.subscribe_notifications();
     let thread = start_thread(&client).await.thread;
@@ -1075,7 +1077,7 @@ async fn model_switch_providers_select_updates_protocol_thread_model_for_next_tu
     let mut builder = ExtensionRegistryBuilder::new();
     builder.inference_engine(engine.clone());
     let runtime = Arc::new(Runtime::new(builder.build().unwrap(), Default::default()).unwrap());
-    let server = Arc::new(AppServer::new(runtime));
+    let server = Arc::new(app_server(runtime));
     let client = LocalAppClient::new(server);
     let workspace = create_workspace_for_path(&client, std::path::Path::new("/tmp")).await;
 
@@ -1147,7 +1149,7 @@ async fn model_switch_with_thread_id_does_not_change_global_default_model() {
     let mut builder = ExtensionRegistryBuilder::new();
     builder.inference_engine(engine);
     let runtime = Arc::new(Runtime::new(builder.build().unwrap(), Default::default()).unwrap());
-    let server = Arc::new(AppServer::new(runtime));
+    let server = Arc::new(app_server(runtime));
     let client = LocalAppClient::new(server);
     let workspace = create_workspace_for_path(&client, std::path::Path::new("/tmp")).await;
 
@@ -1194,7 +1196,7 @@ async fn model_switch_with_thread_id_preserves_effective_reasoning_for_turn() {
     let mut builder = ExtensionRegistryBuilder::new();
     builder.inference_engine(engine.clone());
     let runtime = Arc::new(Runtime::new(builder.build().unwrap(), Default::default()).unwrap());
-    let server = Arc::new(AppServer::new(runtime));
+    let server = Arc::new(app_server(runtime));
     let client = LocalAppClient::new(server);
 
     let started = start_thread(&client).await;
@@ -1263,7 +1265,7 @@ async fn settings_get_exposes_model_reasoning_and_policy_defaults() {
         )
         .unwrap(),
     );
-    let server = Arc::new(AppServer::new(runtime));
+    let server = Arc::new(app_server(runtime));
     let client = LocalAppClient::new(server);
 
     let settings: SettingsGetResult = request(&client, "settings/get", None).await;
@@ -1291,7 +1293,7 @@ async fn turn_start_selected_controls_override_defaults_for_next_turn() {
         )
         .unwrap(),
     );
-    let server = Arc::new(AppServer::new(runtime.clone()));
+    let server = Arc::new(app_server(runtime.clone()));
     let client = LocalAppClient::new(server);
 
     let started = start_thread(&client).await;
@@ -1340,7 +1342,7 @@ async fn roadmap_methods_update_documents_threads_and_notifications() {
         )
         .unwrap(),
     );
-    let server = Arc::new(AppServer::new(runtime));
+    let server = Arc::new(app_server(runtime));
     let client = LocalAppClient::new(server.clone());
     let mut notifications = client.subscribe_notifications();
 
@@ -1534,7 +1536,7 @@ async fn protocol_turn_uses_thread_cwd_for_workspace_tools() {
         )
         .unwrap(),
     );
-    let server = Arc::new(AppServer::new(runtime));
+    let server = Arc::new(app_server(runtime));
     let client = LocalAppClient::new(server);
     let mut events = client.subscribe_events();
     let workspace = create_workspace_for_path(&client, &thread_workspace).await;
@@ -1606,7 +1608,7 @@ async fn turn_start_passes_image_input_to_model_request() {
     let mut builder = ExtensionRegistryBuilder::new();
     builder.inference_engine(engine.clone());
     let runtime = Arc::new(Runtime::new(builder.build().unwrap(), Default::default()).unwrap());
-    let server = Arc::new(AppServer::new(runtime));
+    let server = Arc::new(app_server(runtime));
     let client = LocalAppClient::new(server);
 
     let started = start_thread(&client).await;
@@ -1665,7 +1667,7 @@ async fn workflow_import_methods_scan_preview_and_enable_passive_items() {
     })
     .unwrap();
     let runtime = Arc::new(Runtime::new(registry, Default::default()).unwrap());
-    let client = LocalAppClient::new(Arc::new(AppServer::new(runtime)));
+    let client = LocalAppClient::new(Arc::new(app_server(runtime)));
 
     let scan: WorkflowScanResult = request(
         &client,
@@ -1741,7 +1743,7 @@ async fn workflows_methods_plan_approve_control_save_and_deny() {
         )
         .unwrap(),
     );
-    let client = LocalAppClient::new(Arc::new(AppServer::new(runtime)));
+    let client = LocalAppClient::new(Arc::new(app_server(runtime)));
     let mut notifications = client.subscribe_notifications();
     let plan: WorkflowsPlanResult = request(
         &client,
@@ -2017,6 +2019,7 @@ async fn workflows_methods_plan_approve_control_save_and_deny() {
 
 #[tokio::test]
 async fn marketplace_methods_add_refresh_search_preview_and_install_plugins() {
+    let _guard = MARKETPLACE_TEST_LOCK.lock().await;
     let root = std::env::temp_dir().join(format!(
         "roder-marketplace-app-server-{}",
         uuid::Uuid::new_v4()
@@ -2067,15 +2070,13 @@ async fn marketplace_methods_add_refresh_search_preview_and_install_plugins() {
         .to_string(),
     )
     .unwrap();
-    unsafe {
-        std::env::set_var("RODER_MARKETPLACES_PATH", &store_path);
-        std::env::set_var("RODER_MARKETPLACE_CACHE_DIR", &cache_dir);
-    }
+    let _marketplaces_path = EnvVarGuard::set("RODER_MARKETPLACES_PATH", &store_path);
+    let _cache_dir = EnvVarGuard::set("RODER_MARKETPLACE_CACHE_DIR", &cache_dir);
 
     let mut builder = ExtensionRegistryBuilder::new();
     builder.inference_engine(Arc::new(FakeInferenceEngine));
     let runtime = Arc::new(Runtime::new(builder.build().unwrap(), Default::default()).unwrap());
-    let client = LocalAppClient::new(Arc::new(AppServer::new(runtime)));
+    let client = LocalAppClient::new(Arc::new(app_server(runtime)));
 
     let added: MarketplacesAddResult = request(
         &client,
@@ -2306,6 +2307,7 @@ async fn marketplace_methods_add_refresh_search_preview_and_install_plugins() {
 
 #[tokio::test]
 async fn marketplace_methods_reject_invalid_sources_and_duplicate_plugins() {
+    let _guard = MARKETPLACE_TEST_LOCK.lock().await;
     let root = std::env::temp_dir().join(format!(
         "roder-marketplace-validation-e2e-{}",
         uuid::Uuid::new_v4()
@@ -2337,15 +2339,13 @@ async fn marketplace_methods_reject_invalid_sources_and_duplicate_plugins() {
         .to_string(),
     )
     .unwrap();
-    unsafe {
-        std::env::set_var("RODER_MARKETPLACES_PATH", &store_path);
-        std::env::set_var("RODER_MARKETPLACE_CACHE_DIR", &cache_dir);
-    }
+    let _marketplaces_path = EnvVarGuard::set("RODER_MARKETPLACES_PATH", &store_path);
+    let _cache_dir = EnvVarGuard::set("RODER_MARKETPLACE_CACHE_DIR", &cache_dir);
 
     let mut builder = ExtensionRegistryBuilder::new();
     builder.inference_engine(Arc::new(FakeInferenceEngine));
     let runtime = Arc::new(Runtime::new(builder.build().unwrap(), Default::default()).unwrap());
-    let client = LocalAppClient::new(Arc::new(AppServer::new(runtime)));
+    let client = LocalAppClient::new(Arc::new(app_server(runtime)));
 
     let invalid = request_error(
         &client,
@@ -2456,7 +2456,7 @@ async fn media_methods_read_thumbnail_attach_and_delete_artifacts() {
         )
         .unwrap(),
     );
-    let client = LocalAppClient::new(Arc::new(AppServer::new(runtime)));
+    let client = LocalAppClient::new(Arc::new(app_server(runtime)));
 
     let listed: MediaListResult = request(
         &client,
@@ -2540,7 +2540,7 @@ async fn memory_methods_save_query_read_update_delete_and_preview() {
         .install(OpenAiEmbeddingsExtension::with_api_key("test-key"))
         .unwrap();
     let runtime = Arc::new(Runtime::new(builder.build().unwrap(), Default::default()).unwrap());
-    let client = LocalAppClient::new(Arc::new(AppServer::new(runtime)));
+    let client = LocalAppClient::new(Arc::new(app_server(runtime)));
 
     let saved: MemorySaveResult = request(
         &client,
@@ -2664,7 +2664,7 @@ async fn remote_websocket_requires_auth_and_serves_thread_turn_flow() {
     builder.inference_engine(Arc::new(FakeInferenceEngine));
     let runtime = Arc::new(Runtime::new(builder.build().unwrap(), Default::default()).unwrap());
     let mut events = runtime.subscribe_events();
-    let app_server = Arc::new(AppServer::new(runtime));
+    let app_server = Arc::new(app_server(runtime));
     let token = RemoteToken::new("remote-secret-token".to_string()).unwrap();
     let handle = listen_remote_websocket(
         app_server,
@@ -2820,7 +2820,7 @@ async fn remote_server_controller_stop_emits_stopped_event() {
     builder.inference_engine(Arc::new(FakeInferenceEngine));
     let runtime = Arc::new(Runtime::new(builder.build().unwrap(), Default::default()).unwrap());
     let mut events = runtime.subscribe_events();
-    let app_server = Arc::new(AppServer::new(runtime));
+    let app_server = Arc::new(app_server(runtime));
     let token = RemoteToken::new("remote-secret-token".to_string()).unwrap();
 
     let controller = listen_remote_websocket_controller(
@@ -2857,7 +2857,7 @@ async fn remote_health_endpoints_do_not_require_auth() {
     let mut builder = ExtensionRegistryBuilder::new();
     builder.inference_engine(Arc::new(FakeInferenceEngine));
     let runtime = Arc::new(Runtime::new(builder.build().unwrap(), Default::default()).unwrap());
-    let app_server = Arc::new(AppServer::new(runtime));
+    let app_server = Arc::new(app_server(runtime));
     let token = RemoteToken::new("remote-secret-token".to_string()).unwrap();
 
     let controller = listen_remote_websocket_controller(
@@ -2898,13 +2898,14 @@ async fn remote_health_endpoints_do_not_require_auth() {
 
 #[tokio::test]
 async fn providers_list_exposes_xai_and_supergrok_auth_metadata() {
+    let _guard = PROVIDER_TEST_LOCK.lock().await;
     let registry = build_default_registry(DefaultRegistryConfig {
         xai_api_key: Some("secret-xai-key".to_string()),
         ..DefaultRegistryConfig::default()
     })
     .unwrap();
     let runtime = Arc::new(Runtime::new(registry, Default::default()).unwrap());
-    let server = Arc::new(AppServer::new(runtime));
+    let server = Arc::new(app_server(runtime));
     let client = LocalAppClient::new(server);
 
     let providers: ProvidersListResult = request(&client, "providers/list", None).await;
@@ -2933,6 +2934,7 @@ async fn providers_list_exposes_xai_and_supergrok_auth_metadata() {
 
 #[tokio::test]
 async fn providers_select_opencode_non_reasoning_model_preserves_reasoning_preference() {
+    let _guard = PROVIDER_TEST_LOCK.lock().await;
     let registry = build_default_registry(DefaultRegistryConfig {
         opencode_api_key: Some("secret-opencode-key".to_string()),
         ..DefaultRegistryConfig::default()
@@ -2948,7 +2950,7 @@ async fn providers_select_opencode_non_reasoning_model_preserves_reasoning_prefe
         )
         .unwrap(),
     );
-    let server = Arc::new(AppServer::new(runtime));
+    let server = Arc::new(app_server(runtime));
     let client = LocalAppClient::new(server);
 
     let selected: ProviderSelectResult = request(
@@ -2990,12 +2992,12 @@ async fn providers_select_opencode_non_reasoning_model_preserves_reasoning_prefe
 
 #[tokio::test]
 async fn providers_list_separates_opencode_zen_and_go_models() {
+    let _guard = PROVIDER_TEST_LOCK.lock().await;
     let cache_path = std::env::temp_dir().join(format!(
         "roder-opencode-provider-list-e2e-{}.json",
         uuid::Uuid::new_v4()
     ));
     let _models_cache = EnvVarGuard::set("RODER_MODELS_CACHE_PATH", &cache_path);
-
     let registry = build_default_registry(DefaultRegistryConfig {
         opencode_api_key: Some("secret-opencode-key".to_string()),
         opencode_go_api_key: Some("secret-opencode-go-key".to_string()),
@@ -3003,7 +3005,7 @@ async fn providers_list_separates_opencode_zen_and_go_models() {
     })
     .unwrap();
     let runtime = Arc::new(Runtime::new(registry, Default::default()).unwrap());
-    let server = Arc::new(AppServer::new(runtime));
+    let server = Arc::new(app_server(runtime));
     let client = LocalAppClient::new(server);
 
     let providers: ProvidersListResult = request(&client, "providers/list", None).await;
@@ -3026,13 +3028,14 @@ async fn providers_list_separates_opencode_zen_and_go_models() {
 
 #[tokio::test]
 async fn providers_list_exposes_poolside_api_key_models() {
+    let _guard = PROVIDER_TEST_LOCK.lock().await;
     let registry = build_default_registry(DefaultRegistryConfig {
         poolside_api_key: Some("secret-poolside-key".to_string()),
         ..DefaultRegistryConfig::default()
     })
     .unwrap();
     let runtime = Arc::new(Runtime::new(registry, Default::default()).unwrap());
-    let server = Arc::new(AppServer::new(runtime));
+    let server = Arc::new(app_server(runtime));
     let client = LocalAppClient::new(server);
 
     let providers: ProvidersListResult = request(&client, "providers/list", None).await;
@@ -3053,15 +3056,15 @@ async fn providers_list_exposes_poolside_api_key_models() {
 
 #[tokio::test]
 async fn providers_list_exposes_openrouter_grok_build_model_without_auth() {
+    let _guard = PROVIDER_TEST_LOCK.lock().await;
     let cache_path = std::env::temp_dir().join(format!(
         "roder-openrouter-provider-list-e2e-{}.json",
         uuid::Uuid::new_v4()
     ));
     let _models_cache = EnvVarGuard::set("RODER_MODELS_CACHE_PATH", &cache_path);
-
     let registry = build_default_registry(DefaultRegistryConfig::default()).unwrap();
     let runtime = Arc::new(Runtime::new(registry, Default::default()).unwrap());
-    let server = Arc::new(AppServer::new(runtime));
+    let server = Arc::new(app_server(runtime));
     let client = LocalAppClient::new(server);
 
     let providers: ProvidersListResult = request(&client, "providers/list", None).await;
@@ -3082,9 +3085,10 @@ async fn providers_list_exposes_openrouter_grok_build_model_without_auth() {
 
 #[tokio::test]
 async fn providers_select_preserves_openrouter_slash_bearing_model_id() {
+    let _guard = PROVIDER_TEST_LOCK.lock().await;
     let registry = build_default_registry(DefaultRegistryConfig::default()).unwrap();
     let runtime = Arc::new(Runtime::new(registry, Default::default()).unwrap());
-    let server = Arc::new(AppServer::new(runtime));
+    let server = Arc::new(app_server(runtime));
     let client = LocalAppClient::new(server);
 
     let selected: ProviderSelectResult = request(
@@ -3109,13 +3113,14 @@ async fn providers_select_preserves_openrouter_slash_bearing_model_id() {
 
 #[tokio::test]
 async fn providers_list_exposes_cursor_api_key_models() {
+    let _guard = PROVIDER_TEST_LOCK.lock().await;
     let registry = build_default_registry(DefaultRegistryConfig {
         cursor_api_key: Some("secret-cursor-key".to_string()),
         ..DefaultRegistryConfig::default()
     })
     .unwrap();
     let runtime = Arc::new(Runtime::new(registry, Default::default()).unwrap());
-    let server = Arc::new(AppServer::new(runtime));
+    let server = Arc::new(app_server(runtime));
     let client = LocalAppClient::new(server);
 
     let providers: ProvidersListResult = request(&client, "providers/list", None).await;
@@ -3133,15 +3138,14 @@ async fn providers_list_exposes_cursor_api_key_models() {
 
 #[tokio::test]
 async fn providers_clear_removes_api_key() {
+    let _guard = PROVIDER_TEST_LOCK.lock().await;
     let temp_dir = std::env::temp_dir().join(format!("roder-test-{}", uuid::Uuid::new_v4()));
     std::fs::create_dir_all(&temp_dir).unwrap();
-    unsafe {
-        std::env::set_var("RODER_CONFIG_DIR", &temp_dir);
-    }
+    let _config_dir = EnvVarGuard::set("RODER_CONFIG_DIR", &temp_dir);
 
     let registry = build_default_registry(DefaultRegistryConfig::default()).unwrap();
     let runtime = Arc::new(Runtime::new(registry, Default::default()).unwrap());
-    let server = AppServer::new(runtime).with_user_config_persistence();
+    let server = app_server(runtime).with_user_config_persistence();
     let client = LocalAppClient::new(Arc::new(server));
 
     // Initially cursor is not authenticated
@@ -3203,7 +3207,7 @@ async fn providers_clear_removes_api_key() {
 #[tokio::test]
 async fn supergrok_auth_status_is_exposed_through_app_server() {
     let runtime = Arc::new(Runtime::fake().unwrap());
-    let server = Arc::new(AppServer::new(runtime));
+    let server = Arc::new(app_server(runtime));
     let client = LocalAppClient::new(server);
 
     let status: ProviderAuthResult = request(&client, "auth/supergrok/status", None).await;
@@ -3216,7 +3220,7 @@ async fn supergrok_auth_status_is_exposed_through_app_server() {
 async fn runners_methods_list_select_status_and_delete_destination() {
     let registry = build_default_registry(DefaultRegistryConfig::default()).unwrap();
     let runtime = Arc::new(Runtime::new(registry, Default::default()).unwrap());
-    let server = Arc::new(AppServer::new(runtime));
+    let server = Arc::new(app_server(runtime));
     let client = LocalAppClient::new(server);
     let mut events = client.subscribe_events();
 
@@ -3320,7 +3324,7 @@ async fn internal_errors_include_structured_details() {
     builder.inference_engine(engine);
     builder.thread_store_factory(Arc::new(FailingThreadStoreFactory));
     let runtime = Arc::new(Runtime::new(builder.build().unwrap(), Default::default()).unwrap());
-    let server = Arc::new(AppServer::new(runtime));
+    let server = Arc::new(app_server(runtime));
     let client = LocalAppClient::new(server);
 
     let response = client
@@ -3349,7 +3353,7 @@ async fn internal_errors_include_structured_details() {
 #[tokio::test]
 async fn turn_steer_requires_active_turn() {
     let runtime = Arc::new(Runtime::fake().unwrap());
-    let server = Arc::new(AppServer::new(runtime));
+    let server = Arc::new(app_server(runtime));
     let client = LocalAppClient::new(server);
 
     let response = client
@@ -3380,7 +3384,7 @@ async fn turn_steer_accepts_active_turn() {
     let mut builder = ExtensionRegistryBuilder::new();
     builder.inference_engine(Arc::new(PendingEngine));
     let runtime = Arc::new(Runtime::new(builder.build().unwrap(), Default::default()).unwrap());
-    let server = Arc::new(AppServer::new(runtime));
+    let server = Arc::new(app_server(runtime));
     let client = LocalAppClient::new(server);
     let mut events = client.subscribe_events();
 
@@ -3424,7 +3428,7 @@ async fn turn_steer_accepts_active_turn() {
 #[tokio::test]
 async fn protocol_contract_methods_support_protocol_startup_contract() {
     let runtime = Arc::new(Runtime::fake().unwrap());
-    let server = Arc::new(AppServer::new(runtime));
+    let server = Arc::new(app_server(runtime));
     let client = LocalAppClient::new(server);
     let workspace = create_workspace_for_path(&client, std::path::Path::new("/tmp")).await;
 
@@ -3480,7 +3484,7 @@ async fn protocol_contract_methods_support_protocol_startup_contract() {
 #[tokio::test]
 async fn thread_start_rejects_missing_workspace_or_escaping_cwd() {
     let runtime = Arc::new(Runtime::fake().unwrap());
-    let server = Arc::new(AppServer::new(runtime));
+    let server = Arc::new(app_server(runtime));
     let client = LocalAppClient::new(server);
     let workspace = create_workspace_for_path(&client, std::path::Path::new("/tmp")).await;
 
@@ -3529,7 +3533,7 @@ async fn workspace_create_list_and_thread_start_defaults_cwd_to_root() {
     let root = std::env::temp_dir().join(format!("roder-workspace-one-{}", uuid::Uuid::new_v4()));
     std::fs::create_dir_all(&root).unwrap();
     let runtime = Arc::new(Runtime::fake().unwrap());
-    let server = Arc::new(AppServer::new(runtime));
+    let server = Arc::new(app_server(runtime));
     let client = LocalAppClient::new(server);
 
     let created: roder_protocol::WorkspaceCreateResult = request(
@@ -3592,7 +3596,7 @@ async fn multi_root_workspace_threads_round_trip_root_selection() {
     std::fs::create_dir_all(&frontend).unwrap();
     std::fs::create_dir_all(&backend).unwrap();
     let runtime = Arc::new(Runtime::fake().unwrap());
-    let server = Arc::new(AppServer::new(runtime));
+    let server = Arc::new(app_server(runtime));
     let client = LocalAppClient::new(server);
 
     let created: roder_protocol::WorkspaceCreateResult = request(
@@ -3653,7 +3657,7 @@ async fn multi_root_workspace_threads_round_trip_root_selection() {
 #[tokio::test]
 async fn workspace_create_rejects_relative_and_missing_roots() {
     let runtime = Arc::new(Runtime::fake().unwrap());
-    let server = Arc::new(AppServer::new(runtime));
+    let server = Arc::new(app_server(runtime));
     let client = LocalAppClient::new(server);
 
     for (path, expected) in [
@@ -3716,7 +3720,7 @@ async fn thread_snapshots_reject_metadata_without_workspace() {
         .to_string(),
     )
     .unwrap();
-    let server = Arc::new(AppServer::new(runtime));
+    let server = Arc::new(app_server(runtime));
     let client = LocalAppClient::new(server);
 
     let response = client
@@ -3763,7 +3767,7 @@ async fn thread_snapshots_overlay_runtime_active_turn_status() {
     let mut builder = ExtensionRegistryBuilder::new();
     builder.inference_engine(Arc::new(PendingEngine));
     let runtime = Arc::new(Runtime::new(builder.build().unwrap(), Default::default()).unwrap());
-    let server = Arc::new(AppServer::new(runtime));
+    let server = Arc::new(app_server(runtime));
     let client = LocalAppClient::new(server);
     let mut events = client.subscribe_events();
 
@@ -3822,7 +3826,7 @@ async fn thread_read_includes_partial_reasoning_while_streaming() {
         base_path: thread_root.clone(),
     }));
     let runtime = Arc::new(Runtime::new(builder.build().unwrap(), Default::default()).unwrap());
-    let server = Arc::new(AppServer::new(runtime));
+    let server = Arc::new(app_server(runtime));
     let client = LocalAppClient::new(server);
     let mut notifications = client.subscribe_notifications();
 
@@ -3909,7 +3913,7 @@ async fn item_stream_persistence_failures_emit_thread_status_flag() {
     builder.inference_engine(Arc::new(ReasoningThenPendingEngine));
     builder.thread_store_factory(Arc::new(FailingItemEventThreadStoreFactory::default()));
     let runtime = Arc::new(Runtime::new(builder.build().unwrap(), Default::default()).unwrap());
-    let server = Arc::new(AppServer::new(runtime));
+    let server = Arc::new(app_server(runtime));
     let client = LocalAppClient::new(server);
     let mut notifications = client.subscribe_notifications();
 
@@ -3963,7 +3967,7 @@ async fn thread_archive_removes_thread_from_protocol_thread_list() {
     builder.inference_engine(Arc::new(FakeInferenceEngine));
     builder.thread_store_factory(Arc::new(RecordingThreadStoreFactory::default()));
     let runtime = Arc::new(Runtime::new(builder.build().unwrap(), Default::default()).unwrap());
-    let server = Arc::new(AppServer::new(runtime));
+    let server = Arc::new(app_server(runtime));
     let client = LocalAppClient::new(server);
     let started = start_thread(&client).await;
 
@@ -3999,7 +4003,7 @@ async fn thread_archive_removes_thread_from_protocol_thread_list() {
 #[tokio::test]
 async fn protocol_contract_turn_methods_and_notifications_match_protocol_contract() {
     let runtime = Arc::new(Runtime::fake().unwrap());
-    let server = Arc::new(AppServer::new(runtime));
+    let server = Arc::new(app_server(runtime));
     let client = LocalAppClient::new(server);
     let mut notifications = client.subscribe_notifications();
     let workspace = create_workspace_for_path(&client, std::path::Path::new("/tmp")).await;
@@ -4112,7 +4116,7 @@ async fn protocol_contract_turn_interrupt_without_turn_id_uses_runtime_active_tu
     let mut builder = ExtensionRegistryBuilder::new();
     builder.inference_engine(Arc::new(PendingEngine));
     let runtime = Arc::new(Runtime::new(builder.build().unwrap(), Default::default()).unwrap());
-    let server = Arc::new(AppServer::new(Arc::clone(&runtime)));
+    let server = Arc::new(app_server(Arc::clone(&runtime)));
     let client = LocalAppClient::new(server);
 
     let metadata = runtime
@@ -4163,7 +4167,7 @@ async fn turn_usage_cache_metrics_are_exposed_on_notifications_and_thread_metada
     builder.inference_engine(Arc::new(UsageReportingEngine));
     builder.thread_store_factory(Arc::new(RecordingThreadStoreFactory::default()));
     let runtime = Arc::new(Runtime::new(builder.build().unwrap(), Default::default()).unwrap());
-    let server = Arc::new(AppServer::new(runtime));
+    let server = Arc::new(app_server(runtime));
     let client = LocalAppClient::new(server);
     let mut notifications = client.subscribe_notifications();
     let thread = start_thread(&client).await;
@@ -4220,7 +4224,7 @@ async fn protocol_contract_turn_interrupt_uses_active_turn_when_turn_id_is_omitt
     let mut builder = ExtensionRegistryBuilder::new();
     builder.inference_engine(Arc::new(PendingEngine));
     let runtime = Arc::new(Runtime::new(builder.build().unwrap(), Default::default()).unwrap());
-    let server = Arc::new(AppServer::new(runtime));
+    let server = Arc::new(app_server(runtime));
     let client = LocalAppClient::new(server);
     let workspace = create_workspace_for_path(&client, std::path::Path::new("/tmp")).await;
 
@@ -4286,7 +4290,7 @@ async fn protocol_notifications_surface_tool_approval_requests_and_resolution() 
     }));
     builder.tool_contributor(roder_tools::builtin_coding_tools_contributor(".").unwrap());
     let runtime = Arc::new(Runtime::new(builder.build().unwrap(), Default::default()).unwrap());
-    let server = Arc::new(AppServer::new(runtime));
+    let server = Arc::new(app_server(runtime));
     let client = LocalAppClient::new(server);
     let mut notifications = client.subscribe_notifications();
 
@@ -4383,7 +4387,7 @@ async fn protocol_notifications_surface_tool_approval_requests_and_resolution() 
 #[tokio::test]
 async fn protocol_contract_fs_and_command_methods_match_protocol_contract() {
     let runtime = Arc::new(Runtime::fake().unwrap());
-    let server = Arc::new(AppServer::new(runtime.clone()));
+    let server = Arc::new(app_server(runtime.clone()));
     let client = LocalAppClient::new(server);
     let mut notifications = client.subscribe_notifications();
 
@@ -4517,7 +4521,7 @@ async fn artifacts_methods_list_read_grep_tail_delete_and_command_spill() {
         .set_policy_mode(PolicyMode::AcceptAll, Some("test artifacts".to_string()))
         .await
         .unwrap();
-    let server = Arc::new(AppServer::new(runtime.clone()));
+    let server = Arc::new(app_server(runtime.clone()));
     let client = LocalAppClient::new(server);
 
     let dir = std::env::temp_dir().join(format!("roder-command-artifact-{}", uuid::Uuid::new_v4()));
@@ -4711,7 +4715,7 @@ async fn artifacts_methods_list_read_grep_tail_delete_and_command_spill() {
 #[tokio::test]
 async fn team_methods_start_list_read_message_and_cleanup() {
     let runtime = Arc::new(Runtime::fake().unwrap());
-    let server = Arc::new(AppServer::new(runtime));
+    let server = Arc::new(app_server(runtime));
     let client = LocalAppClient::new(server);
     let mut notifications = client.subscribe_notifications();
 
@@ -4824,7 +4828,7 @@ async fn team_member_interrupt_targets_only_requested_member() {
     let mut builder = ExtensionRegistryBuilder::new();
     builder.inference_engine(Arc::new(PendingEngine));
     let runtime = Arc::new(Runtime::new(builder.build().unwrap(), Default::default()).unwrap());
-    let server = Arc::new(AppServer::new(runtime));
+    let server = Arc::new(app_server(runtime));
     let client = LocalAppClient::new(server);
 
     let started: TeamStartResult = request(
@@ -4942,7 +4946,7 @@ async fn team_member_interrupt_targets_only_requested_member() {
 #[tokio::test]
 async fn team_split_pane_only_methods_return_precise_headless_error() {
     let runtime = Arc::new(Runtime::fake().unwrap());
-    let server = Arc::new(AppServer::new(runtime));
+    let server = Arc::new(app_server(runtime));
     let client = LocalAppClient::new(server);
 
     let res = client
@@ -4979,7 +4983,7 @@ async fn tools_list_discovers_configured_web_search_without_secret_material() {
     })
     .unwrap();
     let runtime = Arc::new(Runtime::new(registry, Default::default()).unwrap());
-    let server = Arc::new(AppServer::new(runtime));
+    let server = Arc::new(app_server(runtime));
     let client = LocalAppClient::new(server);
 
     let tools: ToolsListResult = request(&client, "tools/list", None).await;
@@ -5013,10 +5017,8 @@ async fn discovery_methods_refresh_search_read_promote_list_and_clear() {
         r#"{"mcpServers":{"mcp-local":{"command":"node","env":{"API_KEY":"secret"}}}}"#,
     )
     .unwrap();
-    unsafe {
-        std::env::set_var("RODER_DISCOVERY_CATALOG_DIR", &catalog_dir);
-        std::env::set_var("RODER_DISCOVERY_STATE_DIR", &state_dir);
-    }
+    let _catalog_dir = EnvVarGuard::set("RODER_DISCOVERY_CATALOG_DIR", &catalog_dir);
+    let _state_dir = EnvVarGuard::set("RODER_DISCOVERY_STATE_DIR", &state_dir);
 
     let registry = build_default_registry(DefaultRegistryConfig {
         workspace: Some(workspace.clone()),
@@ -5033,7 +5035,7 @@ async fn discovery_methods_refresh_search_read_promote_list_and_clear() {
         )
         .unwrap(),
     );
-    let client = LocalAppClient::new(Arc::new(AppServer::new(runtime)));
+    let client = LocalAppClient::new(Arc::new(app_server(runtime)));
 
     let refresh: DiscoveryRefreshResult = request(&client, "discovery/refresh", None).await;
     assert!(refresh.catalog_root.ends_with("catalog"));
@@ -5171,10 +5173,6 @@ async fn discovery_methods_refresh_search_read_promote_list_and_clear() {
     .await;
     assert_eq!(cleared.cleared, 1);
 
-    unsafe {
-        std::env::remove_var("RODER_DISCOVERY_CATALOG_DIR");
-        std::env::remove_var("RODER_DISCOVERY_STATE_DIR");
-    }
     let _ = std::fs::remove_dir_all(root);
 }
 
@@ -5185,7 +5183,7 @@ async fn retrieval_methods_read_recommendations_metrics_and_promotions() {
     builder.inference_engine(Arc::new(FakeInferenceEngine));
     builder.thread_store_factory(store);
     let runtime = Arc::new(Runtime::new(builder.build().unwrap(), Default::default()).unwrap());
-    let client = LocalAppClient::new(Arc::new(AppServer::new(runtime.clone())));
+    let client = LocalAppClient::new(Arc::new(app_server(runtime.clone())));
 
     let thread_start = start_thread(&client).await;
     let thread_id = thread_start.thread.id.clone();
@@ -5312,7 +5310,7 @@ async fn retrieval_methods_read_recommendations_metrics_and_promotions() {
 async fn tools_list_exposes_default_coding_tools() {
     let registry = build_default_registry(DefaultRegistryConfig::default()).unwrap();
     let runtime = Arc::new(Runtime::new(registry, Default::default()).unwrap());
-    let server = Arc::new(AppServer::new(runtime));
+    let server = Arc::new(app_server(runtime));
     let client = LocalAppClient::new(server);
 
     let tools: ToolsListResult = request(&client, "tools/list", None).await;
@@ -5370,7 +5368,7 @@ async fn tools_list_exposes_default_coding_tools() {
 async fn extensions_list_exposes_capability_statuses() {
     let registry = build_default_registry(DefaultRegistryConfig::default()).unwrap();
     let runtime = Arc::new(Runtime::new(registry, Default::default()).unwrap());
-    let server = Arc::new(AppServer::new(runtime));
+    let server = Arc::new(app_server(runtime));
     let client = LocalAppClient::new(server);
 
     let extensions: ExtensionsListResult = request(&client, "extensions/list", None).await;
@@ -5390,7 +5388,7 @@ async fn extensions_list_exposes_capability_statuses() {
 #[tokio::test]
 async fn commands_list_expand_and_skills_are_deterministic() {
     let runtime = Arc::new(Runtime::fake().unwrap());
-    let server = Arc::new(AppServer::new(runtime));
+    let server = Arc::new(app_server(runtime));
     let client = LocalAppClient::new(server);
 
     let first: CommandsListResult = request(&client, "commands/list", None).await;
@@ -5529,24 +5527,19 @@ async fn commands_list_expand_and_skills_are_deterministic() {
 #[tokio::test]
 async fn skills_manager_can_disable_commit_and_update_exposure() {
     let _guard = SKILLS_TEST_LOCK.lock().await;
+    let _marketplace_guard = MARKETPLACE_TEST_LOCK.lock().await;
     let root =
         std::env::temp_dir().join(format!("roder-skills-manager-e2e-{}", uuid::Uuid::new_v4()));
-    let home = root.join("home");
     let workspace = root.join("workspace");
-    std::fs::create_dir_all(&home).unwrap();
     std::fs::create_dir_all(&workspace).unwrap();
-    let previous_home = std::env::var_os("HOME");
-    let previous_marketplaces_path = std::env::var_os("RODER_MARKETPLACES_PATH");
-    unsafe {
-        std::env::set_var("HOME", &home);
-        std::env::set_var("RODER_MARKETPLACES_PATH", root.join("marketplaces.json"));
-    }
+    let _marketplaces_path =
+        EnvVarGuard::set("RODER_MARKETPLACES_PATH", root.join("marketplaces.json"));
 
     let runtime = Arc::new(Runtime::fake().unwrap());
     runtime
         .set_skills(roder_config::build_skills_registry(&workspace, None))
         .await;
-    let server = Arc::new(AppServer::new(runtime));
+    let server = Arc::new(app_server(runtime));
     let client = LocalAppClient::new(server);
 
     let listed: SkillsListResult = request(&client, "skills/list", None).await;
@@ -5619,18 +5612,6 @@ async fn skills_manager_can_disable_commit_and_update_exposure() {
     )
     .await;
     assert!(error.message.contains("disabled"));
-    unsafe {
-        if let Some(value) = previous_home {
-            std::env::set_var("HOME", value);
-        } else {
-            std::env::remove_var("HOME");
-        }
-        if let Some(value) = previous_marketplaces_path {
-            std::env::set_var("RODER_MARKETPLACES_PATH", value);
-        } else {
-            std::env::remove_var("RODER_MARKETPLACES_PATH");
-        }
-    }
     let _ = std::fs::remove_dir_all(root);
 }
 
@@ -5656,7 +5637,7 @@ async fn automations_create_run_now_status_and_runs() {
         )
         .unwrap(),
     );
-    let server = Arc::new(AppServer::with_feature_config(
+    let server = Arc::new(app_server_with_feature_config(
         runtime,
         AppServerFeatureConfig {
             automations: roder_automations::AutomationSupervisorConfig {
@@ -5754,7 +5735,7 @@ async fn automations_create_due_tick_run_and_persisted_thread_read() {
         )
         .unwrap(),
     );
-    let server = Arc::new(AppServer::with_feature_config(
+    let server = Arc::new(app_server_with_feature_config(
         runtime,
         AppServerFeatureConfig {
             automations: roder_automations::AutomationSupervisorConfig {
@@ -5850,7 +5831,7 @@ async fn automations_live_wall_clock_tick_smoke() {
     let store_path = root.join("automations.sqlite3");
     std::fs::create_dir_all(&project).unwrap();
     let runtime = Arc::new(Runtime::fake().unwrap());
-    let server = Arc::new(AppServer::with_feature_config(
+    let server = Arc::new(app_server_with_feature_config(
         runtime,
         AppServerFeatureConfig {
             automations: roder_automations::AutomationSupervisorConfig {
@@ -5906,24 +5887,21 @@ async fn automations_live_wall_clock_tick_smoke() {
 #[tokio::test]
 async fn discovery_catalog_includes_runtime_skills() {
     let _guard = SKILLS_TEST_LOCK.lock().await;
+    let _discovery_guard = DISCOVERY_TEST_LOCK.lock().await;
     let root = std::env::temp_dir().join(format!(
         "roder-skills-discovery-e2e-{}",
         uuid::Uuid::new_v4()
     ));
     let workspace = root.join("workspace");
     std::fs::create_dir_all(&workspace).unwrap();
-    let previous_catalog = std::env::var_os("RODER_DISCOVERY_CATALOG_DIR");
-    let previous_state = std::env::var_os("RODER_DISCOVERY_STATE_DIR");
-    unsafe {
-        std::env::set_var("RODER_DISCOVERY_CATALOG_DIR", root.join("catalog"));
-        std::env::set_var("RODER_DISCOVERY_STATE_DIR", root.join("state"));
-    }
+    let _catalog_dir = EnvVarGuard::set("RODER_DISCOVERY_CATALOG_DIR", root.join("catalog"));
+    let _state_dir = EnvVarGuard::set("RODER_DISCOVERY_STATE_DIR", root.join("state"));
 
     let runtime = Arc::new(Runtime::fake().unwrap());
     runtime
         .set_skills(roder_config::build_skills_registry(&workspace, None))
         .await;
-    let client = LocalAppClient::new(Arc::new(AppServer::new(runtime)));
+    let client = LocalAppClient::new(Arc::new(app_server(runtime)));
     let groups: DiscoveryGroupsResult = request(
         &client,
         "discovery/groups",
@@ -5944,25 +5922,13 @@ async fn discovery_catalog_includes_runtime_skills() {
     assert!(snapshot.tags.contains(&"built-in".to_string()));
     assert!(snapshot.tags.contains(&"direct-only".to_string()));
 
-    unsafe {
-        if let Some(value) = previous_catalog {
-            std::env::set_var("RODER_DISCOVERY_CATALOG_DIR", value);
-        } else {
-            std::env::remove_var("RODER_DISCOVERY_CATALOG_DIR");
-        }
-        if let Some(value) = previous_state {
-            std::env::set_var("RODER_DISCOVERY_STATE_DIR", value);
-        } else {
-            std::env::remove_var("RODER_DISCOVERY_STATE_DIR");
-        }
-    }
     let _ = std::fs::remove_dir_all(root);
 }
 
 #[tokio::test]
 async fn commands_run_expands_and_starts_turn() {
     let runtime = Arc::new(Runtime::fake().unwrap());
-    let server = Arc::new(AppServer::new(runtime));
+    let server = Arc::new(app_server(runtime));
     let client = LocalAppClient::new(server);
     let mut events = client.subscribe_events();
 
@@ -5992,13 +5958,14 @@ async fn webwright_setup_dry_run_exposes_selected_browser_install_plan() {
     let workspace =
         std::env::temp_dir().join(format!("roder-webwright-setup-{}", uuid::Uuid::new_v4()));
     std::fs::create_dir_all(&workspace).unwrap();
+    let _config_dir = EnvVarGuard::set("RODER_CONFIG_DIR", workspace.join(".roder"));
     let registry = build_default_registry(DefaultRegistryConfig {
         workspace: Some(workspace.clone()),
         ..DefaultRegistryConfig::default()
     })
     .unwrap();
     let runtime = Arc::new(Runtime::new(registry, Default::default()).unwrap());
-    let server = Arc::new(AppServer::new(runtime));
+    let server = Arc::new(app_server(runtime));
     let client = LocalAppClient::new(server);
 
     let setup: WebwrightSetupResult = request(
@@ -6052,7 +6019,7 @@ async fn webwright_methods_prepare_inspect_verify_report_and_rerun() {
     })
     .unwrap();
     let runtime = Arc::new(Runtime::new(registry, Default::default()).unwrap());
-    let server = Arc::new(AppServer::new(runtime));
+    let server = Arc::new(app_server(runtime));
     let client = LocalAppClient::new(server);
 
     let prepared: WebwrightPrepareResult = request(
@@ -6259,7 +6226,7 @@ async fn webwright_visual_judge_uses_image_provider_and_stores_record() {
         )
         .unwrap(),
     );
-    let server = Arc::new(AppServer::new(runtime));
+    let server = Arc::new(app_server(runtime));
     let client = LocalAppClient::new(server);
 
     let judged: WebwrightVisualJudgeResult = request(
@@ -6315,7 +6282,7 @@ async fn webwright_visual_judge_skips_without_image_input_provider() {
     write_webwright_visual_fixture(&webwright_workspace);
 
     let runtime = Arc::new(Runtime::fake().unwrap());
-    let server = Arc::new(AppServer::new(runtime));
+    let server = Arc::new(app_server(runtime));
     let client = LocalAppClient::new(server);
 
     let judged: WebwrightVisualJudgeResult = request(
@@ -6384,7 +6351,7 @@ async fn tasks_submit_list_get_and_events_observe_process_task() {
     })
     .unwrap();
     let runtime = Arc::new(Runtime::new(registry, Default::default()).unwrap());
-    let server = Arc::new(AppServer::new(runtime));
+    let server = Arc::new(app_server(runtime));
     let client = LocalAppClient::new(server);
     let mut events = client.subscribe_events();
 
@@ -6464,7 +6431,7 @@ async fn processes_list_get_stop_and_subscribe_for_process_task() {
     })
     .unwrap();
     let runtime = Arc::new(Runtime::new(registry, Default::default()).unwrap());
-    let server = Arc::new(AppServer::new(runtime));
+    let server = Arc::new(app_server(runtime));
     let client = LocalAppClient::new(server);
 
     let subscribed: roder_protocol::ProcessesSubscribeResult =
@@ -6597,7 +6564,7 @@ async fn processes_stop_all_stops_multiple_running_processes() {
     })
     .unwrap();
     let runtime = Arc::new(Runtime::new(registry, Default::default()).unwrap());
-    let server = Arc::new(AppServer::new(runtime));
+    let server = Arc::new(app_server(runtime));
     let client = LocalAppClient::new(server);
 
     let first: TasksSubmitResult = request(
@@ -6698,7 +6665,7 @@ async fn wait_for_process_by_task(
 async fn tools_call_can_create_and_get_goal() {
     let registry = build_default_registry(DefaultRegistryConfig::default()).unwrap();
     let runtime = Arc::new(Runtime::new(registry, Default::default()).unwrap());
-    let server = Arc::new(AppServer::new(runtime));
+    let server = Arc::new(app_server(runtime));
     let client = LocalAppClient::new(server);
 
     let thread_start = start_thread(&client).await;
@@ -6777,7 +6744,7 @@ async fn request_user_input_tool_waits_for_app_server_resolution() {
     builder.inference_engine(engine);
     builder.tool_contributor(roder_tools::builtin_coding_tools_contributor(".").unwrap());
     let runtime = Arc::new(Runtime::new(builder.build().unwrap(), Default::default()).unwrap());
-    let server = Arc::new(AppServer::new(runtime));
+    let server = Arc::new(app_server(runtime));
     let client = LocalAppClient::new(server);
     let mut events = client.subscribe_events();
     let mut notifications = client.subscribe_notifications();
@@ -6866,7 +6833,7 @@ async fn request_user_input_tool_waits_for_app_server_resolution() {
 #[tokio::test]
 async fn web_search_setting_can_be_set_and_observed() {
     let runtime = Arc::new(Runtime::fake().unwrap());
-    let server = Arc::new(AppServer::new(runtime.clone()));
+    let server = Arc::new(app_server(runtime.clone()));
     let client = LocalAppClient::new(server);
 
     let settings: SettingsGetResult = request(&client, "settings/get", None).await;
@@ -6900,7 +6867,7 @@ async fn search_index_setting_can_be_set_and_observed() {
     let _guard = SEARCH_INDEX_TEST_LOCK.lock().await;
     roder_search::set_search_index_enabled(true);
     let runtime = Arc::new(Runtime::fake().unwrap());
-    let server = Arc::new(AppServer::new(runtime));
+    let server = Arc::new(app_server(runtime));
     let client = LocalAppClient::new(server);
 
     let settings: SettingsGetResult = request(&client, "settings/get", None).await;
@@ -6923,7 +6890,7 @@ async fn search_index_setting_can_be_set_and_observed() {
 #[tokio::test]
 async fn shell_setting_can_be_set_and_observed() {
     let runtime = Arc::new(Runtime::fake().unwrap());
-    let server = Arc::new(AppServer::new(runtime.clone()));
+    let server = Arc::new(app_server(runtime.clone()));
     let client = LocalAppClient::new(server);
 
     let settings: SettingsGetResult = request(&client, "settings/get", None).await;
@@ -6971,7 +6938,7 @@ async fn search_index_methods_manage_status_warmup_rebuild_and_clear() {
     }
 
     let runtime = Arc::new(Runtime::fake().unwrap());
-    let server = Arc::new(AppServer::new(runtime));
+    let server = Arc::new(app_server(runtime));
     let client = LocalAppClient::new(server);
     let mut notifications = client.subscribe_notifications();
     let workspace_param = workspace.display().to_string();
@@ -7112,7 +7079,7 @@ async fn code_index_methods_rebuild_search_read_chunks_and_list_proofs() {
     }
 
     let runtime = Arc::new(Runtime::fake().unwrap());
-    let server = Arc::new(AppServer::new(runtime));
+    let server = Arc::new(app_server(runtime));
     let client = LocalAppClient::new(server);
     let mut notifications = client.subscribe_notifications();
     let workspace_param = workspace.display().to_string();
@@ -7245,7 +7212,7 @@ async fn code_index_methods_rebuild_search_read_chunks_and_list_proofs() {
 #[tokio::test]
 async fn settings_file_backed_dynamic_context_can_be_set_and_observed() {
     let runtime = Arc::new(Runtime::fake().unwrap());
-    let server = Arc::new(AppServer::new(runtime.clone()));
+    let server = Arc::new(app_server(runtime.clone()));
     let client = LocalAppClient::new(server);
 
     let changed: SettingsSetFileBackedDynamicContextResult = request(
@@ -7267,7 +7234,7 @@ async fn settings_file_backed_dynamic_context_can_be_set_and_observed() {
 #[tokio::test]
 async fn settings_default_mode_can_be_set_and_observed() {
     let runtime = Arc::new(Runtime::fake().unwrap());
-    let server = Arc::new(AppServer::new(runtime.clone()));
+    let server = Arc::new(app_server(runtime.clone()));
     let client = LocalAppClient::new(server);
     let mut events = client.subscribe_events();
 
@@ -7305,7 +7272,7 @@ async fn settings_default_mode_can_be_set_and_observed() {
 #[tokio::test]
 async fn thread_policy_mode_can_be_set_and_observed() {
     let runtime = Arc::new(Runtime::fake().unwrap());
-    let server = Arc::new(AppServer::new(runtime));
+    let server = Arc::new(app_server(runtime));
     let client = LocalAppClient::new(server);
     let mut events = client.subscribe_events();
 
@@ -7350,7 +7317,7 @@ async fn thread_exit_plan_resolves_pending_request() {
         .set_policy_mode(PolicyMode::Plan, Some("test setup".to_string()))
         .await
         .unwrap();
-    let server = Arc::new(AppServer::new(runtime.clone()));
+    let server = Arc::new(app_server(runtime.clone()));
     let client = LocalAppClient::new(server);
     let mut events = client.subscribe_events();
     let mut notifications = client.subscribe_notifications();
@@ -7448,7 +7415,7 @@ async fn thread_exit_plan_timeout_rejects_late_approval() {
             expires_at: Some(OffsetDateTime::now_utc() - time::Duration::seconds(1)),
         })
         .await;
-    let server = Arc::new(AppServer::new(runtime));
+    let server = Arc::new(app_server(runtime));
     let client = LocalAppClient::new(server);
     let mut events = client.subscribe_events();
 
@@ -7488,7 +7455,7 @@ async fn thread_exit_plan_timeout_rejects_late_approval() {
 #[tokio::test]
 async fn task_tool_emits_subagent_events_before_tool_completion() {
     let runtime = subagent_runtime();
-    let server = Arc::new(AppServer::new(runtime));
+    let server = Arc::new(app_server(runtime));
     let client = LocalAppClient::new(server);
     let mut events = client.subscribe_events();
 
@@ -7559,7 +7526,7 @@ async fn subagent_trace_methods_list_read_and_stream_notifications() {
         false,
         Some(store),
     );
-    let server = Arc::new(AppServer::new(runtime));
+    let server = Arc::new(app_server(runtime));
     let client = LocalAppClient::new(server);
     let mut events = client.subscribe_events();
     let mut notifications = client.subscribe_notifications();
@@ -7634,7 +7601,7 @@ async fn plan_review_and_hunk_methods_round_trip_through_thread_events() {
         )
         .unwrap(),
     );
-    let server = Arc::new(AppServer::new(runtime.clone()));
+    let server = Arc::new(app_server(runtime.clone()));
     let client = LocalAppClient::new(server);
     let mut notifications = client.subscribe_notifications();
 
@@ -7822,7 +7789,7 @@ async fn workspace_changes_list_round_trips_observed_events() {
         )
         .unwrap(),
     );
-    let client = LocalAppClient::new(Arc::new(AppServer::new(runtime.clone())));
+    let client = LocalAppClient::new(Arc::new(app_server(runtime.clone())));
     let mut notifications = client.subscribe_notifications();
 
     let thread_start = start_thread(&client).await;
@@ -7921,7 +7888,7 @@ async fn vcs_changes_methods_report_full_branch_delta() {
         )
         .unwrap(),
     );
-    let client = LocalAppClient::new(Arc::new(AppServer::new(runtime)));
+    let client = LocalAppClient::new(Arc::new(app_server(runtime)));
     let workspace_ref = create_workspace_for_path(&client, &workspace).await;
 
     let list: serde_json::Value = request(
@@ -8047,7 +8014,7 @@ async fn vcs_mutations_require_policy_approval() {
         )
         .unwrap(),
     );
-    let client = LocalAppClient::new(Arc::new(AppServer::new(runtime.clone())));
+    let client = LocalAppClient::new(Arc::new(app_server(runtime.clone())));
     let workspace_ref = create_workspace_for_path(&client, &workspace).await;
     let select_params = serde_json::to_value(roder_protocol::VcsSelectionParams {
         workspace_id: workspace_ref.workspace_id,
@@ -8136,7 +8103,7 @@ async fn vcs_methods_reject_unregistered_workspace_roots() {
         )
         .unwrap(),
     );
-    let client = LocalAppClient::new(Arc::new(AppServer::new(runtime)));
+    let client = LocalAppClient::new(Arc::new(app_server(runtime)));
     let workspace_ref = create_workspace_for_path(&client, &workspace).await;
 
     let status: serde_json::Value = request(
@@ -8180,7 +8147,7 @@ async fn vcs_changes_rejects_non_vcs_workspace() {
         )
         .unwrap(),
     );
-    let client = LocalAppClient::new(Arc::new(AppServer::new(runtime)));
+    let client = LocalAppClient::new(Arc::new(app_server(runtime)));
     let workspace_ref = create_workspace_for_path(&client, &workspace).await;
 
     let error = request_error(
@@ -8201,7 +8168,7 @@ async fn vcs_changes_rejects_non_vcs_workspace() {
 #[tokio::test]
 async fn agents_list_returns_public_subagent_summaries() {
     let runtime = subagent_runtime();
-    let server = Arc::new(AppServer::new(runtime));
+    let server = Arc::new(app_server(runtime));
     let client = LocalAppClient::new(server);
 
     let agents: AgentsListResult = request(&client, "agents/list", None).await;
@@ -8245,7 +8212,7 @@ fn git_output(workspace: &std::path::Path, args: &[&str]) -> String {
 #[tokio::test]
 async fn subagent_failed_events_redact_private_agent_material() {
     let runtime = subagent_runtime_with_options(1, true);
-    let server = Arc::new(AppServer::new(runtime));
+    let server = Arc::new(app_server(runtime));
     let client = LocalAppClient::new(server);
     let mut events = client.subscribe_events();
 
@@ -8705,6 +8672,29 @@ async fn wait_for_notification(
         }
         return notification;
     }
+}
+
+fn app_server(runtime: Arc<Runtime>) -> AppServer {
+    app_server_with_feature_config(runtime, AppServerFeatureConfig::default())
+}
+
+fn app_server_with_feature_config(
+    runtime: Arc<Runtime>,
+    feature_config: AppServerFeatureConfig,
+) -> AppServer {
+    let feature_config = if feature_config.workspace_registry_path.is_some() {
+        feature_config
+    } else {
+        feature_config.with_workspace_registry_path(isolated_workspace_registry_path())
+    };
+    AppServer::with_feature_config(runtime, feature_config)
+}
+
+fn isolated_workspace_registry_path() -> std::path::PathBuf {
+    std::env::temp_dir().join(format!(
+        "roder-app-server-e2e-workspaces-{}.json",
+        uuid::Uuid::new_v4()
+    ))
 }
 
 struct TestWorkspaceRef {
