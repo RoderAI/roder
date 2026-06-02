@@ -69,6 +69,10 @@ pub struct ThreadMetadata {
     pub title: Option<String>,
     #[serde(deserialize_with = "deserialize_thread_workspace")]
     pub workspace: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub workspace_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub root_id: Option<String>,
     pub provider: Option<String>,
     pub model: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -351,6 +355,8 @@ mod tests {
             thread_id: "thread-a".to_string(),
             title: None,
             workspace: "/workspace".to_string(),
+            workspace_id: None,
+            root_id: None,
             provider: None,
             model: None,
             runner_destination: None,

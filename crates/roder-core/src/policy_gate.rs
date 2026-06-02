@@ -119,7 +119,13 @@ fn looks_like_side_effect(call: &ToolCall) -> bool {
 fn looks_like_write(call: &ToolCall) -> bool {
     if matches!(
         call.name.as_str(),
-        "roadmap_create" | "roadmap_set_task_state" | "roadmap_thread_attach"
+        "roadmap_create"
+            | "roadmap_set_task_state"
+            | "roadmap_thread_attach"
+            | "vcs/select"
+            | "vcs/snapshot/create"
+            | "vcs/restore"
+            | "vcs/lines/switch"
     ) {
         return true;
     }
@@ -132,6 +138,9 @@ fn looks_like_write(call: &ToolCall) -> bool {
 }
 
 fn looks_like_process(call: &ToolCall) -> bool {
+    if matches!(call.name.as_str(), "vcs/sync") {
+        return true;
+    }
     tool_name_contains_any(
         call,
         &[

@@ -327,24 +327,6 @@
       "sideEffect": "readOnly"
     },
     {
-      "method": "git/changes/list",
-      "paramsType": "GitChangesListParams",
-      "resultType": "GitChangesListResult",
-      "stability": "stable",
-      "featureGroup": "git",
-      "idempotency": "idempotent",
-      "sideEffect": "readOnly"
-    },
-    {
-      "method": "git/changes/read",
-      "paramsType": "GitChangesReadParams",
-      "resultType": "GitChangesReadResult",
-      "stability": "stable",
-      "featureGroup": "git",
-      "idempotency": "idempotent",
-      "sideEffect": "readOnly"
-    },
-    {
       "method": "hunk/list",
       "paramsType": "HunkListParams",
       "resultType": "HunkListResult",
@@ -1468,6 +1450,87 @@
       "sideEffect": "readOnly"
     },
     {
+      "method": "vcs/changes/list",
+      "paramsType": "VcsChangesListParams",
+      "resultType": "VcsChangesListResult",
+      "stability": "stable",
+      "featureGroup": "vcs",
+      "idempotency": "idempotent",
+      "sideEffect": "readOnly"
+    },
+    {
+      "method": "vcs/changes/read",
+      "paramsType": "VcsChangesReadParams",
+      "resultType": "VcsChangedContentPage",
+      "stability": "stable",
+      "featureGroup": "vcs",
+      "idempotency": "idempotent",
+      "sideEffect": "readOnly"
+    },
+    {
+      "method": "vcs/lines/list",
+      "paramsType": "VcsWorkspaceParams",
+      "resultType": "Vec<VcsLineOfWork>",
+      "stability": "stable",
+      "featureGroup": "vcs",
+      "idempotency": "idempotent",
+      "sideEffect": "readOnly"
+    },
+    {
+      "method": "vcs/lines/switch",
+      "paramsType": "VcsLineSwitchParams",
+      "resultType": "VcsOperationResult",
+      "stability": "stable",
+      "featureGroup": "vcs",
+      "idempotency": "nonIdempotent",
+      "sideEffect": "localState"
+    },
+    {
+      "method": "vcs/restore",
+      "paramsType": "VcsRestoreParams",
+      "resultType": "VcsOperationResult",
+      "stability": "stable",
+      "featureGroup": "vcs",
+      "idempotency": "nonIdempotent",
+      "sideEffect": "localState"
+    },
+    {
+      "method": "vcs/select",
+      "paramsType": "VcsSelectionParams",
+      "resultType": "VcsOperationResult",
+      "stability": "stable",
+      "featureGroup": "vcs",
+      "idempotency": "nonIdempotent",
+      "sideEffect": "localState"
+    },
+    {
+      "method": "vcs/snapshot/create",
+      "paramsType": "VcsSnapshotCreateParams",
+      "resultType": "VcsSnapshot",
+      "stability": "stable",
+      "featureGroup": "vcs",
+      "idempotency": "nonIdempotent",
+      "sideEffect": "localState"
+    },
+    {
+      "method": "vcs/status",
+      "paramsType": "VcsWorkspaceParams",
+      "resultType": "VcsStatus",
+      "stability": "stable",
+      "featureGroup": "vcs",
+      "idempotency": "idempotent",
+      "sideEffect": "readOnly"
+    },
+    {
+      "method": "vcs/sync",
+      "paramsType": "VcsSyncParams",
+      "resultType": "VcsOperationResult",
+      "stability": "stable",
+      "featureGroup": "vcs",
+      "idempotency": "nonIdempotent",
+      "sideEffect": "externalProcess"
+    },
+    {
       "method": "webwright/artifacts",
       "paramsType": "WebwrightArtifactsParams",
       "resultType": "WebwrightArtifactsResult",
@@ -1755,6 +1818,42 @@
       "notifications": [
         "workspace/changeObserved"
       ]
+    },
+    {
+      "method": "workspace/create",
+      "paramsType": "WorkspaceCreateParams",
+      "resultType": "WorkspaceCreateResult",
+      "stability": "stable",
+      "featureGroup": "workspace",
+      "idempotency": "nonIdempotent",
+      "sideEffect": "localState"
+    },
+    {
+      "method": "workspace/forget",
+      "paramsType": "WorkspaceForgetParams",
+      "resultType": "WorkspaceForgetResult",
+      "stability": "stable",
+      "featureGroup": "workspace",
+      "idempotency": "nonIdempotent",
+      "sideEffect": "localState"
+    },
+    {
+      "method": "workspace/list",
+      "paramsType": "WorkspaceListParams",
+      "resultType": "WorkspaceListResult",
+      "stability": "stable",
+      "featureGroup": "workspace",
+      "idempotency": "idempotent",
+      "sideEffect": "readOnly"
+    },
+    {
+      "method": "workspace/update",
+      "paramsType": "WorkspaceUpdateParams",
+      "resultType": "WorkspaceUpdateResult",
+      "stability": "stable",
+      "featureGroup": "workspace",
+      "idempotency": "nonIdempotent",
+      "sideEffect": "localState"
     }
   ]
 }

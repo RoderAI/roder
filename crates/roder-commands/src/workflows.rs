@@ -1,6 +1,8 @@
 use std::{
-    fs,
+    fs, panic,
     path::{Path, PathBuf},
+    sync::OnceLock,
+    thread,
 };
 
 use anyhow::{Context, Result, bail};
@@ -17,6 +19,10 @@ use crate::spec::{
     CommandInclude, CommandSource, CommandSpec, WorkflowCommandSpec, structured_workflow_arguments,
 };
 
+const BUILT_IN_WORKFLOW_PARSE_STACK_BYTES: usize = 32 * 1024 * 1024;
+
+static BUILT_IN_WORKFLOW_COMMANDS: OnceLock<Vec<CommandSpec>> = OnceLock::new();
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WorkflowCommandDirectory {
     pub root: PathBuf,
@@ -31,14 +37,30 @@ pub struct WorkflowCommandSaveRequest {
 }
 
 pub fn built_in_workflow_commands() -> Vec<CommandSpec> {
-    vec![
-        workflow_command_from_source(
-            deep_research_workflow_source(),
-            CommandSource::BuiltIn,
-            None,
-        )
-        .expect("built-in deep research workflow is valid"),
-    ]
+    BUILT_IN_WORKFLOW_COMMANDS
+        .get_or_init(build_built_in_workflow_commands)
+        .clone()
+}
+
+fn build_built_in_workflow_commands() -> Vec<CommandSpec> {
+    let handle = thread::Builder::new()
+        .name("roder-built-in-workflow-commands".to_string())
+        .stack_size(BUILT_IN_WORKFLOW_PARSE_STACK_BYTES)
+        .spawn(|| {
+            vec![
+                workflow_command_from_source(
+                    deep_research_workflow_source(),
+                    CommandSource::BuiltIn,
+                    None,
+                )
+                .expect("built-in deep research workflow is valid"),
+            ]
+        })
+        .expect("spawn built-in workflow parser thread");
+    match handle.join() {
+        Ok(commands) => commands,
+        Err(payload) => panic::resume_unwind(payload),
+    }
 }
 
 pub fn load_workflow_command_file(

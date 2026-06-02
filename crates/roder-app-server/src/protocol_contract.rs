@@ -21,6 +21,8 @@ pub(crate) fn protocol_thread_from_metadata(
         updated_at: metadata.updated_at.unix_timestamp(),
         status,
         cwd: metadata.workspace,
+        workspace_id: metadata.workspace_id,
+        root_id: metadata.root_id,
         name: metadata.title,
         turns,
         usage: metadata.usage,

@@ -14,6 +14,7 @@ __pycache__/
 target/
 .target-roadmap-local/
 .claude/
+docs/blog/roder-architecture-series/
 
 # Eval and Harbor run outputs
 evals/harbor/artifacts/

@@ -37,6 +37,7 @@ pub mod tools;
 pub mod trace;
 pub mod transcript;
 pub mod tui_status;
+pub mod version_control;
 pub mod workflow;
 pub mod workspace_changes;
 
@@ -78,5 +79,6 @@ pub use tools::*;
 pub use trace::*;
 pub use transcript::*;
 pub use tui_status::*;
+pub use version_control::*;
 pub use workflow::*;
 pub use workspace_changes::*;

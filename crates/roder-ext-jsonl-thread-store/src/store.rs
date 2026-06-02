@@ -142,7 +142,7 @@ impl ThreadStore for JsonlThreadStore {
                 if thread_id == "discovery-state" {
                     continue;
                 }
-                if is_runtime_event_directory_without_metadata(&thread_id, &entry.path()) {
+                if is_reserved_thread_directory_without_metadata(&thread_id, &entry.path()) {
                     continue;
                 }
                 let metadata = self
@@ -158,6 +158,9 @@ impl ThreadStore for JsonlThreadStore {
     async fn load_thread(&self, thread_id: &ThreadId) -> anyhow::Result<Option<ThreadSnapshot>> {
         let dir = self.thread_dir(thread_id);
         if !dir.exists() {
+            return Ok(None);
+        }
+        if is_reserved_thread_directory_without_metadata(thread_id, &dir) {
             return Ok(None);
         }
         let metadata = Some(self.load_or_infer_metadata(&dir, thread_id).await?);
@@ -485,6 +488,8 @@ impl JsonlThreadStore {
             thread_id: thread_id.clone(),
             title,
             workspace: infer_workspace_for_recovered_thread(dir),
+            workspace_id: None,
+            root_id: None,
             provider: None,
             model: None,
             runner_destination: None,
@@ -603,8 +608,8 @@ fn archived_threads_root(active_threads_root: &Path) -> PathBuf {
         .unwrap_or_else(|| active_threads_root.with_file_name("archived_threads"))
 }
 
-fn is_runtime_event_directory_without_metadata(thread_id: &str, dir: &Path) -> bool {
-    thread_id == "runtime" && !dir.join("metadata.json").exists()
+fn is_reserved_thread_directory_without_metadata(thread_id: &str, dir: &Path) -> bool {
+    matches!(thread_id, "app-server" | "runtime") && !dir.join("metadata.json").exists()
 }
 
 fn infer_workspace_for_recovered_thread(dir: &Path) -> String {
@@ -737,6 +742,8 @@ mod tests {
                 thread_id: thread_id.clone(),
                 title: Some("Resume me".to_string()),
                 workspace: test_workspace("workspace"),
+                workspace_id: None,
+                root_id: None,
                 provider: Some("mock".to_string()),
                 model: Some("mock".to_string()),
                 runner_destination: None,
@@ -915,6 +922,8 @@ mod tests {
                 thread_id: thread_id.clone(),
                 title: Some("Keep item seq".to_string()),
                 workspace: test_workspace("workspace"),
+                workspace_id: None,
+                root_id: None,
                 provider: Some("mock".to_string()),
                 model: Some("mock".to_string()),
                 runner_destination: None,
@@ -1014,6 +1023,8 @@ mod tests {
                 thread_id: thread_id.clone(),
                 title: Some("Archive me".to_string()),
                 workspace: test_workspace("workspace"),
+                workspace_id: None,
+                root_id: None,
                 provider: Some("mock".to_string()),
                 model: Some("mock".to_string()),
                 runner_destination: None,
@@ -1064,6 +1075,35 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn app_server_artifact_directory_without_metadata_is_not_a_thread() {
+        let base_path = std::env::temp_dir().join(format!(
+            "roder-jsonl-app-server-sentinel-test-{}",
+            uuid::Uuid::new_v4()
+        ));
+        let store = JsonlThreadStore {
+            base_path: base_path.clone(),
+        };
+        let app_server_dir = store.thread_dir(&"app-server".to_string());
+        fs::create_dir_all(app_server_dir.join("artifacts").join("command-1"))
+            .await
+            .unwrap();
+        fs::write(app_server_dir.join("events.jsonl"), "{}\n")
+            .await
+            .unwrap();
+
+        assert!(store.list_threads().await.unwrap().is_empty());
+        assert!(
+            store
+                .load_thread(&"app-server".to_string())
+                .await
+                .unwrap()
+                .is_none()
+        );
+
+        let _ = fs::remove_dir_all(base_path).await;
+    }
+
+    #[tokio::test]
     async fn extension_state_round_trips_through_thread_snapshot() {
         let base_path = std::env::temp_dir().join(format!(
             "roder-jsonl-extension-state-{}",
@@ -1080,6 +1120,8 @@ mod tests {
                 thread_id: thread_id.clone(),
                 title: None,
                 workspace: test_workspace("workspace"),
+                workspace_id: None,
+                root_id: None,
                 provider: None,
                 model: None,
                 runner_destination: None,
@@ -1134,6 +1176,8 @@ mod tests {
                 thread_id: thread_id.clone(),
                 title: Some("Trace me".to_string()),
                 workspace: test_workspace("workspace"),
+                workspace_id: None,
+                root_id: None,
                 provider: Some("mock".to_string()),
                 model: Some("mock".to_string()),
                 runner_destination: None,
@@ -1240,6 +1284,8 @@ mod tests {
                 thread_id: thread_id.clone(),
                 title: Some("Resume encrypted reasoning".to_string()),
                 workspace: test_workspace("workspace"),
+                workspace_id: None,
+                root_id: None,
                 provider: Some("openai".to_string()),
                 model: Some("gpt-5.5".to_string()),
                 runner_destination: None,
@@ -1289,6 +1335,8 @@ mod tests {
                 thread_id: thread_id.clone(),
                 title: Some("Metadata".to_string()),
                 workspace: test_workspace("workspace"),
+                workspace_id: None,
+                root_id: None,
                 provider: Some("mock".to_string()),
                 model: Some("mock".to_string()),
                 runner_destination: None,
@@ -1355,6 +1403,8 @@ mod tests {
                 thread_id: thread_id.clone(),
                 title: None,
                 workspace: test_workspace("workspace-gode"),
+                workspace_id: None,
+                root_id: None,
                 provider: Some("mock".to_string()),
                 model: Some("mock".to_string()),
                 runner_destination: None,
@@ -1411,6 +1461,8 @@ mod tests {
                 thread_id: thread_id.clone(),
                 title: Some("Will be corrupted".to_string()),
                 workspace: test_workspace("workspace"),
+                workspace_id: None,
+                root_id: None,
                 provider: Some("mock".to_string()),
                 model: Some("mock".to_string()),
                 runner_destination: None,
@@ -1475,6 +1527,8 @@ mod tests {
                 thread_id: thread_id.clone(),
                 title: None,
                 workspace: test_workspace("workspace"),
+                workspace_id: None,
+                root_id: None,
                 provider: Some("mock".to_string()),
                 model: Some("mock".to_string()),
                 runner_destination: None,
@@ -1525,6 +1579,8 @@ mod tests {
             thread_id: thread_id.clone(),
             title: Some("Recover trailing metadata".to_string()),
             workspace: test_workspace("workspace"),
+            workspace_id: None,
+            root_id: None,
             provider: Some("codex".to_string()),
             model: Some("gpt-5.5".to_string()),
             runner_destination: None,
@@ -1575,6 +1631,8 @@ mod tests {
                 thread_id: thread_id.clone(),
                 title: None,
                 workspace: test_workspace("workspace"),
+                workspace_id: None,
+                root_id: None,
                 provider: None,
                 model: None,
                 runner_destination: None,
@@ -1628,6 +1686,8 @@ mod tests {
                 thread_id: thread_id.clone(),
                 title: Some("Concatenated jsonl".to_string()),
                 workspace: test_workspace("workspace"),
+                workspace_id: None,
+                root_id: None,
                 provider: Some("mock".to_string()),
                 model: Some("mock".to_string()),
                 runner_destination: None,
@@ -1692,6 +1752,8 @@ mod tests {
                 thread_id: thread_id.clone(),
                 title: Some("Malformed jsonl".to_string()),
                 workspace: test_workspace("workspace"),
+                workspace_id: None,
+                root_id: None,
                 provider: Some("mock".to_string()),
                 model: Some("mock".to_string()),
                 runner_destination: None,

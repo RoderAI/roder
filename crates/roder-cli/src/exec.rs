@@ -6,7 +6,7 @@ use roder_app_server::{AppServer, LocalAppClient};
 use roder_protocol::{
     JsonRpcRequest, ThreadListParams, ThreadListResult, ThreadReadParams, ThreadReadResult,
     ThreadStartParams, ThreadStartResult, TurnInputItem, TurnInterruptParams, TurnStartParams,
-    TurnStartResult,
+    TurnStartResult, WorkspaceCreateParams, WorkspaceCreateResult, WorkspaceRootInput,
 };
 use tokio::sync::broadcast;
 
@@ -53,16 +53,19 @@ pub(crate) async fn run_exec_cli(args: &[String]) -> anyhow::Result<()> {
 
     let thread_id = match &options.resume {
         ExecResume::New => {
+            let workspace = create_single_root_workspace(&client, &cwd).await?;
             let res = client
                 .send_request(JsonRpcRequest {
                     jsonrpc: "2.0".to_string(),
                     id: Some(serde_json::json!("exec-thread-start")),
                     method: "thread/start".to_string(),
                     params: Some(serde_json::to_value(ThreadStartParams {
+                        workspace_id: workspace.0,
+                        root_id: Some(workspace.1),
                         model: Some(default_model),
                         model_provider: None,
                         reasoning: None,
-                        cwd,
+                        cwd: None,
                         ephemeral: options.ephemeral,
                     })?),
                 })
@@ -118,6 +121,30 @@ pub(crate) async fn run_exec_cli(args: &[String]) -> anyhow::Result<()> {
         anyhow::bail!("{error}");
     }
     Ok(())
+}
+
+async fn create_single_root_workspace(
+    client: &LocalAppClient,
+    cwd: &str,
+) -> anyhow::Result<(String, String)> {
+    let res = client
+        .send_request(JsonRpcRequest {
+            jsonrpc: "2.0".to_string(),
+            id: Some(serde_json::json!("exec-workspace-create")),
+            method: "workspace/create".to_string(),
+            params: Some(serde_json::to_value(WorkspaceCreateParams {
+                name: None,
+                roots: vec![WorkspaceRootInput {
+                    path: cwd.to_string(),
+                    name: None,
+                }],
+                default_root_path: Some(cwd.to_string()),
+            })?),
+        })
+        .await;
+    let result = decode_response::<WorkspaceCreateResult>(res)?;
+    let root_id = result.workspace.default_root_id.clone();
+    Ok((result.workspace.id, root_id))
 }
 
 fn print_exec_help() {

@@ -16,6 +16,7 @@ roder-context.workspace = true
 roder-ext-anthropic.workspace = true
 roder-ext-cursor.workspace = true
 roder-ext-firecrawl-search.workspace = true
+roder-ext-git.workspace = true
 roder-ext-gemini.workspace = true
 roder-ext-jsonl-thread-store.workspace = true
 roder-ext-memory.workspace = true

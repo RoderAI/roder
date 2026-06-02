@@ -333,24 +333,6 @@ APP_SERVER_MANIFEST: dict[str, Any] = {
             "sideEffect": "readOnly"
         },
         {
-            "method": "git/changes/list",
-            "paramsType": "GitChangesListParams",
-            "resultType": "GitChangesListResult",
-            "stability": "stable",
-            "featureGroup": "git",
-            "idempotency": "idempotent",
-            "sideEffect": "readOnly"
-        },
-        {
-            "method": "git/changes/read",
-            "paramsType": "GitChangesReadParams",
-            "resultType": "GitChangesReadResult",
-            "stability": "stable",
-            "featureGroup": "git",
-            "idempotency": "idempotent",
-            "sideEffect": "readOnly"
-        },
-        {
             "method": "hunk/list",
             "paramsType": "HunkListParams",
             "resultType": "HunkListResult",
@@ -376,18 +358,6 @@ APP_SERVER_MANIFEST: dict[str, Any] = {
             "featureGroup": "plan-review",
             "idempotency": "nonIdempotent",
             "sideEffect": "localState"
-        },
-        {
-            "method": "workspace/changes/list",
-            "paramsType": "WorkspaceChangesListParams",
-            "resultType": "WorkspaceChangesListResult",
-            "stability": "stable",
-            "featureGroup": "workspace",
-            "idempotency": "idempotent",
-            "sideEffect": "readOnly",
-            "notifications": [
-                "workspace/changeObserved"
-            ]
         },
         {
             "method": "index/proofs/list",
@@ -1486,6 +1456,87 @@ APP_SERVER_MANIFEST: dict[str, Any] = {
             "sideEffect": "readOnly"
         },
         {
+            "method": "vcs/changes/list",
+            "paramsType": "VcsChangesListParams",
+            "resultType": "VcsChangesListResult",
+            "stability": "stable",
+            "featureGroup": "vcs",
+            "idempotency": "idempotent",
+            "sideEffect": "readOnly"
+        },
+        {
+            "method": "vcs/changes/read",
+            "paramsType": "VcsChangesReadParams",
+            "resultType": "VcsChangedContentPage",
+            "stability": "stable",
+            "featureGroup": "vcs",
+            "idempotency": "idempotent",
+            "sideEffect": "readOnly"
+        },
+        {
+            "method": "vcs/lines/list",
+            "paramsType": "VcsWorkspaceParams",
+            "resultType": "Vec<VcsLineOfWork>",
+            "stability": "stable",
+            "featureGroup": "vcs",
+            "idempotency": "idempotent",
+            "sideEffect": "readOnly"
+        },
+        {
+            "method": "vcs/lines/switch",
+            "paramsType": "VcsLineSwitchParams",
+            "resultType": "VcsOperationResult",
+            "stability": "stable",
+            "featureGroup": "vcs",
+            "idempotency": "nonIdempotent",
+            "sideEffect": "localState"
+        },
+        {
+            "method": "vcs/restore",
+            "paramsType": "VcsRestoreParams",
+            "resultType": "VcsOperationResult",
+            "stability": "stable",
+            "featureGroup": "vcs",
+            "idempotency": "nonIdempotent",
+            "sideEffect": "localState"
+        },
+        {
+            "method": "vcs/select",
+            "paramsType": "VcsSelectionParams",
+            "resultType": "VcsOperationResult",
+            "stability": "stable",
+            "featureGroup": "vcs",
+            "idempotency": "nonIdempotent",
+            "sideEffect": "localState"
+        },
+        {
+            "method": "vcs/snapshot/create",
+            "paramsType": "VcsSnapshotCreateParams",
+            "resultType": "VcsSnapshot",
+            "stability": "stable",
+            "featureGroup": "vcs",
+            "idempotency": "nonIdempotent",
+            "sideEffect": "localState"
+        },
+        {
+            "method": "vcs/status",
+            "paramsType": "VcsWorkspaceParams",
+            "resultType": "VcsStatus",
+            "stability": "stable",
+            "featureGroup": "vcs",
+            "idempotency": "idempotent",
+            "sideEffect": "readOnly"
+        },
+        {
+            "method": "vcs/sync",
+            "paramsType": "VcsSyncParams",
+            "resultType": "VcsOperationResult",
+            "stability": "stable",
+            "featureGroup": "vcs",
+            "idempotency": "nonIdempotent",
+            "sideEffect": "externalProcess"
+        },
+        {
             "method": "webwright/artifacts",
             "paramsType": "WebwrightArtifactsParams",
             "resultType": "WebwrightArtifactsResult",
@@ -1761,6 +1812,54 @@ APP_SERVER_MANIFEST: dict[str, Any] = {
             "notifications": [
                 "workflows/stopped"
             ]
+        },
+        {
+            "method": "workspace/changes/list",
+            "paramsType": "WorkspaceChangesListParams",
+            "resultType": "WorkspaceChangesListResult",
+            "stability": "stable",
+            "featureGroup": "workspace",
+            "idempotency": "idempotent",
+            "sideEffect": "readOnly",
+            "notifications": [
+                "workspace/changeObserved"
+            ]
+        },
+        {
+            "method": "workspace/create",
+            "paramsType": "WorkspaceCreateParams",
+            "resultType": "WorkspaceCreateResult",
+            "stability": "stable",
+            "featureGroup": "workspace",
+            "idempotency": "nonIdempotent",
+            "sideEffect": "localState"
+        },
+        {
+            "method": "workspace/forget",
+            "paramsType": "WorkspaceForgetParams",
+            "resultType": "WorkspaceForgetResult",
+            "stability": "stable",
+            "featureGroup": "workspace",
+            "idempotency": "nonIdempotent",
+            "sideEffect": "localState"
+        },
+        {
+            "method": "workspace/list",
+            "paramsType": "WorkspaceListParams",
+            "resultType": "WorkspaceListResult",
+            "stability": "stable",
+            "featureGroup": "workspace",
+            "idempotency": "idempotent",
+            "sideEffect": "readOnly"
+        },
+        {
+            "method": "workspace/update",
+            "paramsType": "WorkspaceUpdateParams",
+            "resultType": "WorkspaceUpdateResult",
+            "stability": "stable",
+            "featureGroup": "workspace",
+            "idempotency": "nonIdempotent",
+            "sideEffect": "localState"
         }
     ]
 }
@@ -1802,12 +1901,9 @@ APP_SERVER_METHODS: tuple[str, ...] = (
     "extensions/list",
     "fs/readDirectory",
     "fs/readFile",
-    "git/changes/list",
-    "git/changes/read",
     "hunk/list",
     "hunk/read",
     "hunk/rollback",
-    "workspace/changes/list",
     "index/proofs/list",
     "index/readChunk",
     "index/rebuild",
@@ -1928,6 +2024,15 @@ APP_SERVER_METHODS: tuple[str, ...] = (
     "turn/steer",
     "turn/subagentTrace/read",
     "turn/subagentTraces/list",
+    "vcs/changes/list",
+    "vcs/changes/read",
+    "vcs/lines/list",
+    "vcs/lines/switch",
+    "vcs/restore",
+    "vcs/select",
+    "vcs/snapshot/create",
+    "vcs/status",
+    "vcs/sync",
     "webwright/artifacts",
     "webwright/export",
     "webwright/latestRun",
@@ -1956,9 +2061,14 @@ APP_SERVER_METHODS: tuple[str, ...] = (
     "workflows/scripts/list",
     "workflows/scripts/read",
     "workflows/stop",
+    "workspace/changes/list",
+    "workspace/create",
+    "workspace/forget",
+    "workspace/list",
+    "workspace/update",
 )
 
-AppServerMethod: TypeAlias = Literal["agents/list", "artifact/delete", "artifact/grep", "artifact/list", "artifact/read", "artifact/tail", "auth/codex/login", "auth/codex/logout", "auth/codex/status", "auth/supergrok/login", "auth/supergrok/logout", "auth/supergrok/status", "automations/cancelRun", "automations/create", "automations/delete", "automations/list", "automations/runNow", "automations/runs", "automations/status", "automations/update", "command/exec", "commands/expand", "commands/list", "commands/run", "discovery/groups", "discovery/promote", "discovery/promoted/clear", "discovery/promoted/list", "discovery/read", "discovery/refresh", "discovery/search", "eval/report/read", "eval/reports/list", "extensions/list", "fs/readDirectory", "fs/readFile", "git/changes/list", "git/changes/read", "hunk/list", "hunk/read", "hunk/rollback", "workspace/changes/list", "index/proofs/list", "index/readChunk", "index/rebuild", "index/search", "index/status", "initialize", "marketplaces/add", "marketplaces/install_default", "marketplaces/list", "marketplaces/plugin", "marketplaces/refresh", "marketplaces/remove", "marketplaces/search", "media/attachToTurn", "media/delete", "media/list", "media/read", "media/thumbnail", "memory/delete", "memory/list", "memory/provider/list", "memory/provider/set", "memory/query", "memory/read", "memory/recall/preview", "memory/save", "memory/update", "model/list", "plan/review/approve", "plan/review/comment", "plan/review/read", "plan/review/reject", "plan/review/rewrite", "plugins/disable", "plugins/install", "plugins/install_all_variants", "plugins/list_installed", "plugins/preview_install", "plugins/uninstall", "processes/get", "processes/list", "processes/stop", "processes/stopAll", "processes/subscribe", "providers/clear", "providers/configure", "providers/list", "providers/select", "retrieval/metrics", "retrieval/promoted", "retrieval/recommendations", "roadmap/create", "roadmap/list", "roadmap/patch", "roadmap/read", "roadmap/task/update", "roadmap/thread/attach", "roadmap/thread/list", "roadmap/thread/spawn", "roadmap/validate", "runners/delete", "runners/list", "runners/ports", "runners/select", "runners/session", "runners/snapshot", "search_index/clear", "search_index/rebuild", "search_index/status", "search_index/warmup", "settings/get", "settings/set_default_mode", "settings/set_file_backed_dynamic_context", "settings/set_search_index", "settings/set_shell", "settings/set_web_search", "skills/list", "skills/read", "skills/setEnabled", "skills/setExposure", "speech/providers/list", "speech/synthesis/providers/list", "speech/synthesize", "speech/transcribe", "tasks/cancel", "tasks/get", "tasks/list", "tasks/submit", "tasks/subscribe", "team/cleanup", "team/list", "team/member/focus", "team/member/interrupt", "team/member/message", "team/member/start", "team/pane/cleanup", "team/pane/focus", "team/read", "team/start", "thread/archive", "thread/attach", "thread/exit_plan", "thread/goal/clear", "thread/goal/get", "thread/goal/set", "thread/list", "thread/read", "thread/resolve_approval", "thread/resolve_user_input", "thread/roadmap/open", "thread/set_mode", "thread/start", "thread/state", "tools/call", "tools/list", "turn/interrupt", "turn/start", "turn/steer", "turn/subagentTrace/read", "turn/subagentTraces/list", "webwright/artifacts", "webwright/export", "webwright/latestRun", "webwright/prepare", "webwright/report", "webwright/rerun", "webwright/setup", "webwright/submit", "webwright/verify", "webwright/visualJudge", "workflow/enable", "workflow/ignore", "workflow/preview", "workflow/refresh", "workflow/remove", "workflow/scan", "workflows/approve", "workflows/get", "workflows/list", "workflows/pause", "workflows/plan", "workflows/restartAgent", "workflows/resume", "workflows/save", "workflows/scripts/delete", "workflows/scripts/list", "workflows/scripts/read", "workflows/stop"]
+AppServerMethod: TypeAlias = Literal["agents/list", "artifact/delete", "artifact/grep", "artifact/list", "artifact/read", "artifact/tail", "auth/codex/login", "auth/codex/logout", "auth/codex/status", "auth/supergrok/login", "auth/supergrok/logout", "auth/supergrok/status", "automations/cancelRun", "automations/create", "automations/delete", "automations/list", "automations/runNow", "automations/runs", "automations/status", "automations/update", "command/exec", "commands/expand", "commands/list", "commands/run", "discovery/groups", "discovery/promote", "discovery/promoted/clear", "discovery/promoted/list", "discovery/read", "discovery/refresh", "discovery/search", "eval/report/read", "eval/reports/list", "extensions/list", "fs/readDirectory", "fs/readFile", "hunk/list", "hunk/read", "hunk/rollback", "index/proofs/list", "index/readChunk", "index/rebuild", "index/search", "index/status", "initialize", "marketplaces/add", "marketplaces/install_default", "marketplaces/list", "marketplaces/plugin", "marketplaces/refresh", "marketplaces/remove", "marketplaces/search", "media/attachToTurn", "media/delete", "media/list", "media/read", "media/thumbnail", "memory/delete", "memory/list", "memory/provider/list", "memory/provider/set", "memory/query", "memory/read", "memory/recall/preview", "memory/save", "memory/update", "model/list", "plan/review/approve", "plan/review/comment", "plan/review/read", "plan/review/reject", "plan/review/rewrite", "plugins/disable", "plugins/install", "plugins/install_all_variants", "plugins/list_installed", "plugins/preview_install", "plugins/uninstall", "processes/get", "processes/list", "processes/stop", "processes/stopAll", "processes/subscribe", "providers/clear", "providers/configure", "providers/list", "providers/select", "retrieval/metrics", "retrieval/promoted", "retrieval/recommendations", "roadmap/create", "roadmap/list", "roadmap/patch", "roadmap/read", "roadmap/task/update", "roadmap/thread/attach", "roadmap/thread/list", "roadmap/thread/spawn", "roadmap/validate", "runners/delete", "runners/list", "runners/ports", "runners/select", "runners/session", "runners/snapshot", "search_index/clear", "search_index/rebuild", "search_index/status", "search_index/warmup", "settings/get", "settings/set_default_mode", "settings/set_file_backed_dynamic_context", "settings/set_search_index", "settings/set_shell", "settings/set_web_search", "skills/list", "skills/read", "skills/setEnabled", "skills/setExposure", "speech/providers/list", "speech/synthesis/providers/list", "speech/synthesize", "speech/transcribe", "tasks/cancel", "tasks/get", "tasks/list", "tasks/submit", "tasks/subscribe", "team/cleanup", "team/list", "team/member/focus", "team/member/interrupt", "team/member/message", "team/member/start", "team/pane/cleanup", "team/pane/focus", "team/read", "team/start", "thread/archive", "thread/attach", "thread/exit_plan", "thread/goal/clear", "thread/goal/get", "thread/goal/set", "thread/list", "thread/read", "thread/resolve_approval", "thread/resolve_user_input", "thread/roadmap/open", "thread/set_mode", "thread/start", "thread/state", "tools/call", "tools/list", "turn/interrupt", "turn/start", "turn/steer", "turn/subagentTrace/read", "turn/subagentTraces/list", "vcs/changes/list", "vcs/changes/read", "vcs/lines/list", "vcs/lines/switch", "vcs/restore", "vcs/select", "vcs/snapshot/create", "vcs/status", "vcs/sync", "webwright/artifacts", "webwright/export", "webwright/latestRun", "webwright/prepare", "webwright/report", "webwright/rerun", "webwright/setup", "webwright/submit", "webwright/verify", "webwright/visualJudge", "workflow/enable", "workflow/ignore", "workflow/preview", "workflow/refresh", "workflow/remove", "workflow/scan", "workflows/approve", "workflows/get", "workflows/list", "workflows/pause", "workflows/plan", "workflows/restartAgent", "workflows/resume", "workflows/save", "workflows/scripts/delete", "workflows/scripts/list", "workflows/scripts/read", "workflows/stop", "workspace/changes/list", "workspace/create", "workspace/forget", "workspace/list", "workspace/update"]
 
 
 class JsonRpcError(TypedDict, total=False):

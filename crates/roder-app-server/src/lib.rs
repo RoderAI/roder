@@ -8,7 +8,6 @@ mod command_process;
 mod discovery;
 mod evals;
 mod fs;
-mod git_changes;
 mod goals;
 mod item_stream;
 mod marketplaces;
@@ -24,8 +23,10 @@ pub mod server;
 mod skills;
 mod speech;
 pub mod transcript;
+mod vcs;
 mod webwright;
 mod workflows;
+mod workspaces;
 
 pub use automations::AppServerFeatureConfig;
 pub use client::*;

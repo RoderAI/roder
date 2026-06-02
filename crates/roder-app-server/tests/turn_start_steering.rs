@@ -21,7 +21,7 @@ use roder_app_server::{AppServer, LocalAppClient};
 use roder_core::{Runtime, RuntimeConfig};
 use roder_protocol::{
     JsonRpcRequest, ThreadStartParams, ThreadStartResult, TurnInputItem, TurnStartParams,
-    TurnStartResult,
+    TurnStartResult, WorkspaceCreateParams, WorkspaceCreateResult, WorkspaceRootInput,
 };
 use serde_json::json;
 use tokio::sync::{Mutex, Notify, broadcast};
@@ -210,16 +210,19 @@ async fn turn_start_uses_protocol_thread_workspace_when_snapshot_metadata_missin
         Arc::new(Runtime::new(builder.build().unwrap(), RuntimeConfig::default()).unwrap());
     let server = Arc::new(AppServer::new(runtime));
     let client = LocalAppClient::new(server);
+    let workspace_ref = create_workspace_for_current_dir(&client).await;
 
     let started: ThreadStartResult = request(
         &client,
         "thread/start",
         Some(
             serde_json::to_value(ThreadStartParams {
+                workspace_id: workspace_ref.workspace_id,
+                root_id: Some(workspace_ref.root_id),
                 model: Some("mock".to_string()),
                 model_provider: Some(PROVIDER_MOCK.to_string()),
                 reasoning: None,
-                cwd: "/tmp".to_string(),
+                cwd: None,
                 ephemeral: false,
             })
             .unwrap(),
@@ -265,16 +268,19 @@ async fn turn_start_during_active_tool_call_steers_same_turn_after_tool_result()
     let server = Arc::new(AppServer::new(runtime));
     let client = LocalAppClient::new(server);
     let mut events = client.subscribe_events();
+    let workspace_ref = create_workspace_for_current_dir(&client).await;
 
     let thread: ThreadStartResult = request(
         &client,
         "thread/start",
         Some(
             serde_json::to_value(ThreadStartParams {
+                workspace_id: workspace_ref.workspace_id,
+                root_id: Some(workspace_ref.root_id),
                 model: None,
                 model_provider: None,
                 reasoning: None,
-                cwd: std::env::current_dir().unwrap().display().to_string(),
+                cwd: None,
                 ephemeral: false,
             })
             .unwrap(),
@@ -362,6 +368,35 @@ async fn turn_start_during_active_tool_call_steers_same_turn_after_tool_result()
         "steer message must be inserted after the tool result: {:?}",
         requests[1].transcript
     );
+}
+
+struct TestWorkspaceRef {
+    workspace_id: String,
+    root_id: String,
+}
+
+async fn create_workspace_for_current_dir(client: &LocalAppClient) -> TestWorkspaceRef {
+    let cwd = std::env::current_dir().unwrap().display().to_string();
+    let result: WorkspaceCreateResult = request(
+        client,
+        "workspace/create",
+        Some(
+            serde_json::to_value(WorkspaceCreateParams {
+                name: None,
+                roots: vec![WorkspaceRootInput {
+                    path: cwd.clone(),
+                    name: None,
+                }],
+                default_root_path: Some(cwd),
+            })
+            .unwrap(),
+        ),
+    )
+    .await;
+    TestWorkspaceRef {
+        workspace_id: result.workspace.id,
+        root_id: result.workspace.default_root_id,
+    }
 }
 
 async fn request<T: serde::de::DeserializeOwned>(

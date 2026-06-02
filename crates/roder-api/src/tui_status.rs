@@ -42,6 +42,13 @@ pub struct GitSnapshot {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct VcsStatusSnapshot {
+    pub provider_id: String,
+    pub provider_name: String,
+    pub line_of_work: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct McpServerStatus {
     pub id: String,
     pub state: String,
@@ -62,6 +69,7 @@ pub struct StatusContext<'a> {
     pub model_switch_summary: Option<&'a str>,
     pub usage: Option<&'a ThreadUsage>,
     pub git: Option<&'a GitSnapshot>,
+    pub vcs: Option<&'a VcsStatusSnapshot>,
     pub mcp: &'a [McpServerStatus],
     pub runner: Option<&'a RunnerSummary>,
 }
@@ -144,12 +152,16 @@ pub fn built_in_status_segments() -> Vec<StatusSegment> {
         }),
         StatusSegment::new("branch", 70, 8, |ctx| StatusCell {
             text: ctx
-                .git
-                .and_then(|git| git.branch.as_deref())
-                .map(|branch| format!("branch:{branch}"))
-                .unwrap_or_else(|| "branch:-".to_string()),
+                .vcs
+                .and_then(|vcs| vcs.line_of_work.as_deref())
+                .or_else(|| ctx.git.and_then(|git| git.branch.as_deref()))
+                .map(|line| format!("line:{line}"))
+                .unwrap_or_else(|| "line:-".to_string()),
             style: StatusStyle::Muted,
-            tooltip: Some("Best-effort git branch".to_string()),
+            tooltip: ctx
+                .vcs
+                .map(|vcs| format!("{} provider", vcs.provider_name))
+                .or_else(|| Some("Best-effort git branch".to_string())),
         }),
         StatusSegment::new("usage", 60, 8, |ctx| StatusCell {
             text: ctx
@@ -195,5 +207,25 @@ fn policy_mode_label(mode: PolicyMode) -> &'static str {
         PolicyMode::AcceptAll => "accept_all",
         PolicyMode::Plan => "plan",
         PolicyMode::Bypass => "bypass",
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn vcs_status_snapshot_round_trips_provider_and_line_of_work() {
+        let snapshot = VcsStatusSnapshot {
+            provider_id: "git".to_string(),
+            provider_name: "Git".to_string(),
+            line_of_work: Some("main".to_string()),
+        };
+
+        let encoded = serde_json::to_value(&snapshot).expect("serialize vcs status snapshot");
+        let decoded =
+            serde_json::from_value::<VcsStatusSnapshot>(encoded).expect("deserialize snapshot");
+
+        assert_eq!(decoded, snapshot);
     }
 }
