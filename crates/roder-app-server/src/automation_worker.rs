@@ -108,6 +108,8 @@ pub async fn execute_automation_task(
         .create_thread_with(CreateThreadRequest {
             title: Some(format!("Automation: {}", input.definition.name)),
             workspace: input.definition.project.cwd.clone(),
+            workspace_id: None,
+            root_id: None,
             provider: input.definition.model_provider.clone(),
             model: input.definition.model.clone(),
         })
@@ -333,6 +335,7 @@ mod tests {
                     store_path: store_path.clone(),
                     ..AutomationSupervisorConfig::default()
                 },
+                ..AppServerFeatureConfig::default()
             },
         );
 
@@ -380,6 +383,7 @@ mod tests {
                     store_path: store_path.clone(),
                     ..AutomationSupervisorConfig::default()
                 },
+                ..AppServerFeatureConfig::default()
             },
         );
 
@@ -420,6 +424,7 @@ mod tests {
                     store_path: store_path.clone(),
                     ..AutomationSupervisorConfig::default()
                 },
+                ..AppServerFeatureConfig::default()
             },
         );
         let store = AutomationStore::open(&store_path).unwrap();

@@ -357,7 +357,8 @@ mod tests {
 
         assert!(registry.diagnostics().is_empty());
         assert!(registry.skills().iter().any(|skill| {
-            skill.descriptor.source == SkillSource::BuiltIn && skill.descriptor.name == "commit"
+            skill.descriptor.source == SkillSource::BuiltIn
+                && skill.descriptor.name == "vcs-snapshot"
         }));
         assert!(registry.skills().iter().any(|skill| {
             skill.descriptor.source == SkillSource::Workspace && skill.descriptor.name == "review"
@@ -436,7 +437,7 @@ mod tests {
             )],
             workflow_imports: Vec::new(),
             config_rules: vec![SkillConfigRule {
-                name: Some("commit".to_string()),
+                name: Some("vcs-snapshot".to_string()),
                 path: None,
                 enabled: Some(false),
                 exposure: Some(SkillExposure::Global),
@@ -445,7 +446,7 @@ mod tests {
 
         let commit = registry
             .resolve(&SkillSelector::Path {
-                path: "roder-builtin://commit/SKILL.md".to_string(),
+                path: "roder-builtin://vcs-snapshot/SKILL.md".to_string(),
             })
             .unwrap_err();
         assert!(matches!(commit, SkillResolutionError::Disabled(_)));
@@ -466,21 +467,24 @@ mod tests {
             roots: Vec::new(),
             workflow_imports: Vec::new(),
             config_rules: vec![SkillConfigRule {
-                name: Some("commit".to_string()),
+                name: Some("vcs-snapshot".to_string()),
                 path: None,
                 enabled: Some(true),
                 exposure: Some(SkillExposure::Global),
             }],
         });
 
-        let commit = registry
+        let snapshot = registry
             .skills()
             .iter()
-            .find(|skill| skill.descriptor.name == "commit")
-            .expect("commit skill");
-        assert_eq!(commit.descriptor.source, SkillSource::BuiltIn);
-        assert_eq!(commit.descriptor.exposure, SkillExposure::Global);
-        assert_eq!(commit.descriptor.activation, SkillActivationState::Enabled);
+            .find(|skill| skill.descriptor.name == "vcs-snapshot")
+            .expect("vcs snapshot skill");
+        assert_eq!(snapshot.descriptor.source, SkillSource::BuiltIn);
+        assert_eq!(snapshot.descriptor.exposure, SkillExposure::Global);
+        assert_eq!(
+            snapshot.descriptor.activation,
+            SkillActivationState::Enabled
+        );
     }
 
     #[test]

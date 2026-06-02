@@ -134,14 +134,14 @@ mod tests {
 
     fn descriptor() -> SkillDescriptor {
         SkillDescriptor {
-            id: "builtin:commit".to_string(),
-            name: "commit".to_string(),
-            canonical_path: "roder-builtin://commit/SKILL.md".to_string(),
+            id: "builtin:vcs-snapshot".to_string(),
+            name: "vcs-snapshot".to_string(),
+            canonical_path: "roder-builtin://vcs-snapshot/SKILL.md".to_string(),
             source: SkillSource::BuiltIn,
             exposure: SkillExposure::DirectOnly,
             activation: SkillActivationState::Enabled,
-            description: "Commit staged changes safely.".to_string(),
-            short_description: Some("Commit safely".to_string()),
+            description: "Create scoped VCS snapshots safely.".to_string(),
+            short_description: Some("Snapshot safely".to_string()),
             experimental: false,
             diagnostics: Vec::new(),
             agent_metadata: None,

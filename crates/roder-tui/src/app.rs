@@ -84,7 +84,8 @@ use roder_protocol::{
     TeamReadResult, Thread, ThreadExitPlanParams, ThreadExitPlanResult, ThreadGoal,
     ThreadResolveApprovalParams, ThreadResolveApprovalResult, ThreadSetModeParams,
     ThreadSetModeResult, ThreadStartParams, ThreadStartResult, ThreadStateResult, TurnInputItem,
-    TurnInterruptParams, TurnStartParams, TurnSteerParams,
+    TurnInterruptParams, TurnStartParams, TurnSteerParams, WorkspaceCreateParams,
+    WorkspaceCreateResult, WorkspaceRootInput,
 };
 use tokio::io::AsyncWriteExt;
 use tokio::process::Command;
@@ -1268,16 +1269,20 @@ where
             return Ok(app);
         }
 
+        let cwd = std::env::current_dir()?.display().to_string();
+        let (workspace_id, root_id) = create_single_root_workspace(&client, &cwd).await?;
         let req = JsonRpcRequest {
             jsonrpc: "2.0".to_string(),
             id: Some(serde_json::json!(1)),
             method: "thread/start".to_string(),
             params: Some(
                 serde_json::to_value(ThreadStartParams {
+                    workspace_id,
+                    root_id: Some(root_id),
                     model: (!model.trim().is_empty()).then(|| model.clone()),
                     model_provider: None,
                     reasoning: None,
-                    cwd: std::env::current_dir()?.display().to_string(),
+                    cwd: None,
                     ephemeral: false,
                 })
                 .unwrap(),
@@ -7162,6 +7167,33 @@ fn decode_response<T: serde::de::DeserializeOwned>(res: JsonRpcResponse) -> anyh
     Ok(serde_json::from_value(result)?)
 }
 
+async fn create_single_root_workspace<C>(client: &C, cwd: &str) -> anyhow::Result<(String, String)>
+where
+    C: AppClient,
+{
+    let res = client
+        .send_request(JsonRpcRequest {
+            jsonrpc: "2.0".to_string(),
+            id: Some(serde_json::json!("workspace/create")),
+            method: "workspace/create".to_string(),
+            params: Some(
+                serde_json::to_value(WorkspaceCreateParams {
+                    name: None,
+                    roots: vec![WorkspaceRootInput {
+                        path: cwd.to_string(),
+                        name: None,
+                    }],
+                    default_root_path: Some(cwd.to_string()),
+                })
+                .unwrap(),
+            ),
+        })
+        .await;
+    let result: WorkspaceCreateResult = decode_response(res)?;
+    let root_id = result.workspace.default_root_id.clone();
+    Ok((result.workspace.id, root_id))
+}
+
 async fn thread_state<C>(client: &C) -> anyhow::Result<ThreadStateResult>
 where
     C: AppClient,
@@ -8573,6 +8605,10 @@ mod tests {
     }
 
     async fn start_test_thread(app: &TuiApp) -> ThreadStartResult {
+        let cwd = std::env::current_dir().unwrap().display().to_string();
+        let (workspace_id, root_id) = create_single_root_workspace(&app.client, &cwd)
+            .await
+            .unwrap();
         let res = app
             .client
             .send_request(JsonRpcRequest {
@@ -8581,10 +8617,12 @@ mod tests {
                 method: "thread/start".to_string(),
                 params: Some(
                     serde_json::to_value(ThreadStartParams {
+                        workspace_id,
+                        root_id: Some(root_id),
                         model: Some("mock".to_string()),
                         model_provider: Some("mock".to_string()),
                         reasoning: None,
-                        cwd: std::env::current_dir().unwrap().display().to_string(),
+                        cwd: None,
                         ephemeral: false,
                     })
                     .unwrap(),

@@ -13,7 +13,8 @@ use roder_api::inference::{
 use roder_api::media::{MediaArtifact, MediaAttachment, data_url};
 use roder_api::memory::{MemoryProviderSelection, MemoryQuery, MemoryRecord};
 use roder_api::plan_review::{HunkRecord, PlanComment, PlanReview, PlanReviewStatus, PlanRewrite};
-use roder_api::tools::ToolChoice;
+use roder_api::policy_mode::PolicyDecision;
+use roder_api::tools::{ToolCall, ToolChoice, ToolExecutionContext};
 use roder_api::transcript::{InputImage, TranscriptItem, UserMessage};
 use roder_api::workflow::{
     WorkflowImportDecision, WorkflowImportDecisionKind, WorkflowImportItem, WorkflowImportScan,
@@ -28,12 +29,13 @@ use roder_core::{
     TeamMemberStartRequest as RuntimeTeamMemberStartRequest,
     TeamStartRequest as RuntimeTeamStartRequest, TeamState, default_instructions,
     media_artifacts::{MediaArtifactStore, default_media_artifact_dir},
+    policy_gate::DefaultPolicyGate,
 };
 use roder_protocol::*;
 use roder_roadmap::{ListOptions, list_documents, parse_document, validate_document};
 use roder_tasks::BackgroundRunner;
 use time::OffsetDateTime;
-use tokio::sync::{RwLock, broadcast};
+use tokio::sync::{OnceCell, RwLock, broadcast};
 
 use crate::automations::AppServerFeatureConfig;
 use crate::notifications;
@@ -99,6 +101,8 @@ pub struct AppServer {
     pub(crate) protocol_thread_models:
         RwLock<std::collections::HashMap<String, ProtocolThreadModelSelection>>,
     pub(crate) protocol_notifications: broadcast::Sender<JsonRpcNotification>,
+    pub(crate) workspaces: crate::workspaces::WorkspaceRegistry,
+    pub(crate) command_registry: OnceCell<CommandsRegistry>,
 }
 
 #[derive(Clone, Debug)]
@@ -478,21 +482,88 @@ impl AppServer {
                 })
                 .await
             }
-            "git/changes/list" => {
+            "vcs/status" => {
+                self.decode_and(
+                    req.params,
+                    |p| async move { self.handle_vcs_status(p).await },
+                )
+                .await
+            }
+            "vcs/changes/list" => {
                 self.decode_and(req.params, |p| async move {
-                    self.handle_git_changes_list(p).await
+                    self.handle_vcs_changes_list(p).await
                 })
                 .await
             }
-            "git/changes/read" => {
+            "vcs/changes/read" => {
                 self.decode_and(req.params, |p| async move {
-                    self.handle_git_changes_read(p).await
+                    self.handle_vcs_changes_read(p).await
                 })
                 .await
+            }
+            "vcs/select" => {
+                self.decode_and(
+                    req.params,
+                    |p| async move { self.handle_vcs_select(p).await },
+                )
+                .await
+            }
+            "vcs/snapshot/create" => {
+                self.decode_and(req.params, |p| async move {
+                    self.handle_vcs_snapshot_create(p).await
+                })
+                .await
+            }
+            "vcs/restore" => {
+                self.decode_and(
+                    req.params,
+                    |p| async move { self.handle_vcs_restore(p).await },
+                )
+                .await
+            }
+            "vcs/lines/list" => {
+                self.decode_and(req.params, |p| async move {
+                    self.handle_vcs_lines_list(p).await
+                })
+                .await
+            }
+            "vcs/lines/switch" => {
+                self.decode_and(req.params, |p| async move {
+                    self.handle_vcs_lines_switch(p).await
+                })
+                .await
+            }
+            "vcs/sync" => {
+                self.decode_and(req.params, |p| async move { self.handle_vcs_sync(p).await })
+                    .await
             }
             "workspace/changes/list" => {
                 self.decode_and(req.params, |p| async move {
                     self.handle_workspace_changes_list(p).await
+                })
+                .await
+            }
+            "workspace/list" => {
+                self.decode_and(req.params, |p| async move {
+                    self.handle_workspace_list(p).await
+                })
+                .await
+            }
+            "workspace/create" => {
+                self.decode_and(req.params, |p| async move {
+                    self.handle_workspace_create(p).await
+                })
+                .await
+            }
+            "workspace/update" => {
+                self.decode_and(req.params, |p| async move {
+                    self.handle_workspace_update(p).await
+                })
+                .await
+            }
+            "workspace/forget" => {
+                self.decode_and(req.params, |p| async move {
+                    self.handle_workspace_forget(p).await
                 })
                 .await
             }
@@ -1741,12 +1812,22 @@ impl AppServer {
             .model_provider
             .clone()
             .unwrap_or_else(|| cfg.default_provider.clone());
-        let cwd = required_thread_start_cwd(&params.cwd)?;
+        let resolved = self
+            .workspaces
+            .resolve_root(
+                cfg.workspace.clone(),
+                &params.workspace_id,
+                params.root_id.as_deref(),
+            )
+            .await?;
+        let cwd = crate::workspaces::validate_cwd(&resolved.root, params.cwd.clone())?;
         let metadata = self
             .runtime
             .create_thread_with(roder_core::CreateThreadRequest {
                 title: None,
                 workspace: cwd.clone(),
+                workspace_id: Some(resolved.workspace.id.clone()),
+                root_id: Some(resolved.root.id.clone()),
                 provider: params.model_provider.clone(),
                 model: params.model.clone(),
             })
@@ -1778,6 +1859,8 @@ impl AppServer {
             model_provider,
             reasoning,
             cwd,
+            workspace_id: resolved.workspace.id,
+            root_id: resolved.root.id,
         })
         .unwrap())
     }
@@ -1992,6 +2075,8 @@ impl AppServer {
             .create_thread_with(CreateThreadRequest {
                 title: Some(format!("Roadmap worker: {task_id}")),
                 workspace: self.roadmap_workspace()?.display().to_string(),
+                workspace_id: None,
+                root_id: None,
                 provider: Some(cfg.default_provider.clone()),
                 model: Some(cfg.default_model.clone()),
             })
@@ -2952,6 +3037,14 @@ impl AppServer {
     }
 
     async fn command_registry(&self) -> anyhow::Result<CommandsRegistry> {
+        Ok(self
+            .command_registry
+            .get_or_try_init(|| async { self.build_command_registry().await })
+            .await?
+            .clone())
+    }
+
+    async fn build_command_registry(&self) -> anyhow::Result<CommandsRegistry> {
         let config = roder_config::load_config()?;
         let cfg = config.commands.clone().unwrap_or_default();
         if !cfg.enabled {
@@ -3354,6 +3447,42 @@ impl AppServer {
         Ok(serde_json::to_value(WorkspaceChangesListResult { changes }).unwrap())
     }
 
+    async fn handle_workspace_list(
+        &self,
+        _params: WorkspaceListParams,
+    ) -> Result<serde_json::Value, JsonRpcError> {
+        let runtime_workspace = self.runtime.status().await.workspace;
+        let result = self.workspaces.list(runtime_workspace).await?;
+        Ok(serde_json::to_value(result).unwrap())
+    }
+
+    async fn handle_workspace_create(
+        &self,
+        params: WorkspaceCreateParams,
+    ) -> Result<serde_json::Value, JsonRpcError> {
+        let runtime_workspace = self.runtime.status().await.workspace;
+        let result = self.workspaces.create(runtime_workspace, params).await?;
+        Ok(serde_json::to_value(result).unwrap())
+    }
+
+    async fn handle_workspace_update(
+        &self,
+        params: WorkspaceUpdateParams,
+    ) -> Result<serde_json::Value, JsonRpcError> {
+        let runtime_workspace = self.runtime.status().await.workspace;
+        let result = self.workspaces.update(runtime_workspace, params).await?;
+        Ok(serde_json::to_value(result).unwrap())
+    }
+
+    async fn handle_workspace_forget(
+        &self,
+        params: WorkspaceForgetParams,
+    ) -> Result<serde_json::Value, JsonRpcError> {
+        let runtime_workspace = self.runtime.status().await.workspace;
+        let result = self.workspaces.forget(runtime_workspace, params).await?;
+        Ok(serde_json::to_value(result).unwrap())
+    }
+
     async fn handle_hunk_rollback(
         &self,
         params: HunkRollbackParams,
@@ -3401,22 +3530,220 @@ impl AppServer {
         .unwrap())
     }
 
-    async fn handle_git_changes_list(
+    async fn handle_vcs_status(
         &self,
-        params: GitChangesListParams,
+        params: VcsWorkspaceParams,
     ) -> Result<serde_json::Value, JsonRpcError> {
-        let runtime_workspace = self.runtime.status().await.workspace;
-        let result = crate::git_changes::list_changes(runtime_workspace, params)?;
+        let root = self
+            .vcs_workspace_root(&params.workspace_id, params.root_id.as_deref())
+            .await?;
+        let result = crate::vcs::status(
+            self.runtime.registry().version_control_resolver(),
+            root.root.path,
+            params,
+        )
+        .await?;
         Ok(serde_json::to_value(result).unwrap())
     }
 
-    async fn handle_git_changes_read(
+    async fn handle_vcs_changes_list(
         &self,
-        params: GitChangesReadParams,
+        params: VcsChangesListParams,
     ) -> Result<serde_json::Value, JsonRpcError> {
-        let runtime_workspace = self.runtime.status().await.workspace;
-        let result = crate::git_changes::read_change(runtime_workspace, params)?;
+        let root = self
+            .vcs_workspace_root(&params.workspace_id, params.root_id.as_deref())
+            .await?;
+        let result = crate::vcs::list_changes(
+            self.runtime.registry().version_control_resolver(),
+            root.root.path,
+            params,
+        )
+        .await?;
         Ok(serde_json::to_value(result).unwrap())
+    }
+
+    async fn handle_vcs_changes_read(
+        &self,
+        params: VcsChangesReadParams,
+    ) -> Result<serde_json::Value, JsonRpcError> {
+        let root = self
+            .vcs_workspace_root(&params.workspace_id, params.root_id.as_deref())
+            .await?;
+        let result = crate::vcs::read_change(
+            self.runtime.registry().version_control_resolver(),
+            root.root.path,
+            params,
+        )
+        .await?;
+        Ok(serde_json::to_value(result).unwrap())
+    }
+
+    async fn handle_vcs_select(
+        &self,
+        params: VcsSelectionParams,
+    ) -> Result<serde_json::Value, JsonRpcError> {
+        self.enforce_vcs_mutation_policy("vcs/select", &params)
+            .await?;
+        let root = self
+            .vcs_workspace_root(&params.workspace_id, params.root_id.as_deref())
+            .await?;
+        let result = crate::vcs::select(
+            self.runtime.registry().version_control_resolver(),
+            root.root.path,
+            params,
+        )
+        .await?;
+        Ok(serde_json::to_value(result).unwrap())
+    }
+
+    async fn handle_vcs_snapshot_create(
+        &self,
+        params: VcsSnapshotCreateParams,
+    ) -> Result<serde_json::Value, JsonRpcError> {
+        self.enforce_vcs_mutation_policy("vcs/snapshot/create", &params)
+            .await?;
+        let root = self
+            .vcs_workspace_root(&params.workspace_id, params.root_id.as_deref())
+            .await?;
+        let result = crate::vcs::create_snapshot(
+            self.runtime.registry().version_control_resolver(),
+            root.root.path,
+            params,
+        )
+        .await?;
+        Ok(serde_json::to_value(result).unwrap())
+    }
+
+    async fn handle_vcs_restore(
+        &self,
+        params: VcsRestoreParams,
+    ) -> Result<serde_json::Value, JsonRpcError> {
+        self.enforce_vcs_mutation_policy("vcs/restore", &params)
+            .await?;
+        let root = self
+            .vcs_workspace_root(&params.workspace_id, params.root_id.as_deref())
+            .await?;
+        let result = crate::vcs::restore(
+            self.runtime.registry().version_control_resolver(),
+            root.root.path,
+            params,
+        )
+        .await?;
+        Ok(serde_json::to_value(result).unwrap())
+    }
+
+    async fn handle_vcs_lines_list(
+        &self,
+        params: VcsWorkspaceParams,
+    ) -> Result<serde_json::Value, JsonRpcError> {
+        let root = self
+            .vcs_workspace_root(&params.workspace_id, params.root_id.as_deref())
+            .await?;
+        let result = crate::vcs::list_lines(
+            self.runtime.registry().version_control_resolver(),
+            root.root.path,
+            params,
+        )
+        .await?;
+        Ok(serde_json::to_value(result).unwrap())
+    }
+
+    async fn handle_vcs_lines_switch(
+        &self,
+        params: VcsLineSwitchParams,
+    ) -> Result<serde_json::Value, JsonRpcError> {
+        self.enforce_vcs_mutation_policy("vcs/lines/switch", &params)
+            .await?;
+        let root = self
+            .vcs_workspace_root(&params.workspace_id, params.root_id.as_deref())
+            .await?;
+        let result = crate::vcs::switch_line(
+            self.runtime.registry().version_control_resolver(),
+            root.root.path,
+            params,
+        )
+        .await?;
+        Ok(serde_json::to_value(result).unwrap())
+    }
+
+    async fn handle_vcs_sync(
+        &self,
+        params: VcsSyncParams,
+    ) -> Result<serde_json::Value, JsonRpcError> {
+        self.enforce_vcs_mutation_policy("vcs/sync", &params)
+            .await?;
+        let root = self
+            .vcs_workspace_root(&params.workspace_id, params.root_id.as_deref())
+            .await?;
+        let result = crate::vcs::sync(
+            self.runtime.registry().version_control_resolver(),
+            root.root.path,
+            params,
+        )
+        .await?;
+        Ok(serde_json::to_value(result).unwrap())
+    }
+
+    async fn vcs_workspace_root(
+        &self,
+        workspace_id: &str,
+        root_id: Option<&str>,
+    ) -> Result<crate::workspaces::ResolvedWorkspaceRoot, JsonRpcError> {
+        let runtime_workspace = self.runtime.status().await.workspace;
+        self.workspaces
+            .resolve_root(runtime_workspace, workspace_id, root_id)
+            .await
+    }
+
+    async fn enforce_vcs_mutation_policy<T: serde::Serialize>(
+        &self,
+        method: &str,
+        params: &T,
+    ) -> Result<(), JsonRpcError> {
+        let mode = self.runtime.status().await.policy_mode;
+        let tool_call = ToolCall {
+            id: format!("{method}-{}", uuid::Uuid::new_v4()),
+            name: method.to_string(),
+            arguments: serde_json::to_value(params).unwrap_or(serde_json::Value::Null),
+            raw_arguments: serde_json::to_string(params).unwrap_or_default(),
+            thread_id: "app-server".to_string(),
+            turn_id: method.to_string(),
+        };
+        let ctx =
+            ToolExecutionContext::new(tool_call.thread_id.clone(), tool_call.turn_id.clone(), mode);
+        let decision = DefaultPolicyGate::new()
+            .decide_with_contributors(
+                &tool_call,
+                mode,
+                &ctx,
+                &self.runtime.registry().policy_contributors,
+            )
+            .await
+            .map_err(internal_error)?;
+        match decision {
+            PolicyDecision::Allowed | PolicyDecision::AutoApproved { .. } => Ok(()),
+            PolicyDecision::Denied { reason } => Err(JsonRpcError {
+                code: -32004,
+                message: format!("{method} denied by policy: {reason}"),
+                data: Some(serde_json::json!({ "kind": "policy_denied" })),
+            }),
+            PolicyDecision::RequiresApproval { reason } => {
+                let approved = self
+                    .runtime
+                    .request_app_server_tool_approval(tool_call, reason)
+                    .await
+                    .map_err(internal_error)?;
+                if approved {
+                    Ok(())
+                } else {
+                    Err(JsonRpcError {
+                        code: -32004,
+                        message: format!("{method} approval denied"),
+                        data: Some(serde_json::json!({ "kind": "approval_denied" })),
+                    })
+                }
+            }
+        }
     }
 
     async fn handle_workflow_scan(
@@ -4242,17 +4569,6 @@ fn invalid_params(err: impl std::fmt::Display) -> JsonRpcError {
         message: format!("Invalid params: {err}"),
         data: None,
     }
-}
-
-fn required_thread_start_cwd(cwd: &str) -> Result<String, JsonRpcError> {
-    let cwd = cwd.trim();
-    if cwd.is_empty() {
-        return Err(invalid_params("thread/start requires cwd"));
-    }
-    if !std::path::Path::new(cwd).is_absolute() {
-        return Err(invalid_params("thread/start cwd must be an absolute path"));
-    }
-    Ok(cwd.to_string())
 }
 
 fn shell_settings(shell: &str) -> ShellSettings {

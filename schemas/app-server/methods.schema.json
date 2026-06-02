@@ -68,8 +68,6 @@
               "extensions/list",
               "fs/readDirectory",
               "fs/readFile",
-              "git/changes/list",
-              "git/changes/read",
               "hunk/list",
               "hunk/read",
               "hunk/rollback",
@@ -193,6 +191,15 @@
               "turn/steer",
               "turn/subagentTrace/read",
               "turn/subagentTraces/list",
+              "vcs/changes/list",
+              "vcs/changes/read",
+              "vcs/lines/list",
+              "vcs/lines/switch",
+              "vcs/restore",
+              "vcs/select",
+              "vcs/snapshot/create",
+              "vcs/status",
+              "vcs/sync",
               "webwright/artifacts",
               "webwright/export",
               "webwright/latestRun",
@@ -221,7 +228,11 @@
               "workflows/scripts/list",
               "workflows/scripts/read",
               "workflows/stop",
-              "workspace/changes/list"
+              "workspace/changes/list",
+              "workspace/create",
+              "workspace/forget",
+              "workspace/list",
+              "workspace/update"
             ]
           },
           "paramsType": {

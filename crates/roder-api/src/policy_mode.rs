@@ -47,6 +47,11 @@ impl AutoApproveSet {
                 "shell".to_string(),
                 "exec_command".to_string(),
                 "write_stdin".to_string(),
+                "vcs/select".to_string(),
+                "vcs/snapshot/create".to_string(),
+                "vcs/restore".to_string(),
+                "vcs/lines/switch".to_string(),
+                "vcs/sync".to_string(),
             ],
         }
     }

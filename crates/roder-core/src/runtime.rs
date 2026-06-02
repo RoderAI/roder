@@ -153,6 +153,8 @@ pub struct StartTurnRequest {
 pub struct CreateThreadRequest {
     pub title: Option<String>,
     pub workspace: String,
+    pub workspace_id: Option<String>,
+    pub root_id: Option<String>,
     pub provider: Option<String>,
     pub model: Option<String>,
 }
@@ -651,6 +653,37 @@ impl Runtime {
         Ok(true)
     }
 
+    pub async fn request_app_server_tool_approval(
+        &self,
+        call: ToolCall,
+        reason: Option<String>,
+    ) -> anyhow::Result<bool> {
+        let approval_id = call.id.clone();
+        let (tx, rx) = oneshot::channel();
+        self.pending_tool_approvals.lock().await.insert(
+            approval_id.clone(),
+            PendingToolApproval {
+                thread_id: call.thread_id.clone(),
+                turn_id: call.turn_id.clone(),
+                tool_id: call.id.clone(),
+                tool_name: call.name.clone(),
+                call: call.clone(),
+                tx,
+            },
+        );
+        self.emit(RoderEvent::ApprovalRequested(ApprovalRequested {
+            thread_id: call.thread_id.clone(),
+            turn_id: call.turn_id.clone(),
+            approval_id,
+            tool_id: call.id.clone(),
+            tool_name: call.name.clone(),
+            reason,
+            timestamp: OffsetDateTime::now_utc(),
+        }))
+        .await;
+        Ok(rx.await.unwrap_or(false))
+    }
+
     pub async fn resolve_user_input(
         &self,
         request_id: &str,
@@ -758,6 +791,8 @@ impl Runtime {
         self.create_thread_with(CreateThreadRequest {
             title,
             workspace: self.workspace.display().to_string(),
+            workspace_id: None,
+            root_id: None,
             provider: None,
             model: None,
         })
@@ -775,6 +810,8 @@ impl Runtime {
             thread_id: uuid::Uuid::new_v4().to_string(),
             title: req.title,
             workspace,
+            workspace_id: req.workspace_id,
+            root_id: req.root_id,
             provider: Some(req.provider.unwrap_or(cfg.default_provider)),
             model: Some(req.model.unwrap_or(cfg.default_model)),
             runner_destination: cfg.remote_runner_destination.clone(),
@@ -829,6 +866,8 @@ impl Runtime {
                 self.create_thread_with(CreateThreadRequest {
                     title: Some("Team lead".to_string()),
                     workspace: workspace.clone(),
+                    workspace_id: None,
+                    root_id: None,
                     provider: None,
                     model: None,
                 })
@@ -849,6 +888,8 @@ impl Runtime {
                 .create_thread_with(CreateThreadRequest {
                     title: Some(member.name.clone()),
                     workspace: workspace.clone(),
+                    workspace_id: None,
+                    root_id: None,
                     provider: member.model_provider.clone(),
                     model: member.model.clone(),
                 })
@@ -916,6 +957,8 @@ impl Runtime {
             .create_thread_with(CreateThreadRequest {
                 title: Some(req.name.clone()),
                 workspace: self.workspace.display().to_string(),
+                workspace_id: None,
+                root_id: None,
                 provider: req.model_provider.clone(),
                 model: req.model.clone(),
             })
@@ -3252,7 +3295,7 @@ pub fn validate_edit_tool(value: &str) -> anyhow::Result<()> {
 }
 
 fn should_persist_thread_event(thread_id: &str) -> bool {
-    thread_id != "runtime"
+    !matches!(thread_id, "app-server" | "runtime")
 }
 
 #[cfg(test)]
@@ -3326,6 +3369,13 @@ mod tests {
     }
 
     #[test]
+    fn synthetic_app_server_events_are_not_thread_events() {
+        assert!(!should_persist_thread_event("app-server"));
+        assert!(!should_persist_thread_event("runtime"));
+        assert!(should_persist_thread_event("thread-1"));
+    }
+
+    #[test]
     fn server_side_compaction_uses_catalog_ninety_percent_default() {
         assert_eq!(
             server_side_compaction_threshold(&RuntimeConfig::default(), "gpt-5.5"),
@@ -3381,6 +3431,8 @@ mod tests {
             .create_thread_with(CreateThreadRequest {
                 title: Some("Automation: nightly status".to_string()),
                 workspace: workspace.display().to_string(),
+                workspace_id: None,
+                root_id: None,
                 provider: Some("mock".to_string()),
                 model: Some("mock".to_string()),
             })
@@ -4323,6 +4375,8 @@ mod tests {
             .create_thread_with(CreateThreadRequest {
                 title: Some("Model switch".to_string()),
                 workspace: test_workspace(),
+                workspace_id: None,
+                root_id: None,
                 provider: None,
                 model: None,
             })

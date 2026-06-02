@@ -82,9 +82,9 @@ pub fn built_in_commands() -> Vec<CommandSpec> {
             "Surface relevant memory for the current workspace and task.",
         ),
         (
-            "commit",
-            "Create a scoped git commit.",
-            "Create a scoped git commit using the bound commit skill. Inspect the current git state, include only requested changes, and report the commit outcome.",
+            "snapshot",
+            "Create a scoped VCS snapshot.",
+            "Create a scoped provider history snapshot using the bound VCS snapshot skill. Inspect the current VCS state, include only requested changes, and report the snapshot outcome.",
         ),
         (
             "marketplace",
@@ -157,10 +157,10 @@ pub fn built_in_commands() -> Vec<CommandSpec> {
 
 fn feature_skill_bindings(name: &str) -> Vec<roder_api::skills::FeatureSkillBinding> {
     match name {
-        "commit" => vec![roder_api::skills::FeatureSkillBinding {
-            feature_id: "command:commit".to_string(),
+        "snapshot" => vec![roder_api::skills::FeatureSkillBinding {
+            feature_id: "command:snapshot".to_string(),
             skill_selector: roder_api::skills::SkillSelector::Name {
-                name: "commit".to_string(),
+                name: "vcs-snapshot".to_string(),
             },
             required: true,
             activation_reason: roder_api::skills::SkillActivationReason::FeatureBinding,

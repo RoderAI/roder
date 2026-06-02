@@ -349,7 +349,7 @@ mod tests {
 
         let transcript = runtime
             .transcript_for_turn(
-                &turn_request("thread-skills", "please use ${commit}"),
+                &turn_request("thread-skills", "please use ${vcs-snapshot}"),
                 &"turn-skills".to_string(),
                 "mock",
             )
@@ -362,9 +362,9 @@ mod tests {
             .expect("global skill index");
 
         assert!(index.contains("review"));
-        assert!(!index.contains("commit"));
+        assert!(!index.contains("vcs-snapshot"));
         assert!(texts.iter().any(|text| {
-            text.starts_with("<skill name=\"commit\"") && text.contains("Stage only files")
+            text.starts_with("<skill name=\"vcs-snapshot\"") && text.contains("VCS status")
         }));
         let emitted = drain_events(&mut events);
         assert!(emitted.iter().any(|event| {
@@ -378,7 +378,7 @@ mod tests {
             matches!(
                 event,
                 RoderEvent::SkillInvoked(invoked)
-                    if invoked.descriptor.name == "commit"
+                    if invoked.descriptor.name == "vcs-snapshot"
             )
         }));
     }
@@ -391,7 +391,7 @@ mod tests {
             roots: Vec::new(),
             workflow_imports: Vec::new(),
             config_rules: vec![SkillConfigRule {
-                name: Some("commit".to_string()),
+                name: Some("vcs-snapshot".to_string()),
                 path: None,
                 enabled: Some(false),
                 exposure: None,
@@ -402,7 +402,7 @@ mod tests {
 
         let transcript = runtime
             .transcript_for_turn(
-                &turn_request("thread-disabled", "please use ${commit}"),
+                &turn_request("thread-disabled", "please use ${vcs-snapshot}"),
                 &"turn-disabled".to_string(),
                 "mock",
             )
@@ -411,14 +411,14 @@ mod tests {
         let texts = transcript_texts(&transcript);
 
         assert!(!texts.iter().any(|text| {
-            text.starts_with("<skill name=\"commit\"") && text.contains("Stage only files")
+            text.starts_with("<skill name=\"vcs-snapshot\"") && text.contains("VCS status")
         }));
         let emitted = drain_events(&mut events);
         assert!(emitted.iter().any(|event| {
             matches!(
                 event,
                 RoderEvent::SkillSkipped(skipped)
-                    if skipped.selector == (SkillSelector::Name { name: "commit".to_string() })
+                    if skipped.selector == (SkillSelector::Name { name: "vcs-snapshot".to_string() })
                         && skipped.reason.contains("disabled")
             )
         }));

@@ -24,6 +24,7 @@ pub type NotificationSinkId = String;
 pub type InteractiveRegionHandlerId = String;
 pub type SpeechTranscriberId = String;
 pub type SpeechSynthesizerId = String;
+pub type VersionControlProviderId = crate::version_control::VcsProviderId;
 
 pub const SUPPORTED_EXTENSION_API_VERSION: &str = "0.1.0";
 
@@ -45,6 +46,7 @@ pub enum ProvidedService {
     InteractiveRegionHandler(InteractiveRegionHandlerId),
     SpeechTranscriber(SpeechTranscriberId),
     SpeechSynthesizer(SpeechSynthesizerId),
+    VersionControlProvider(VersionControlProviderId),
     RemoteRunnerProvider(crate::remote_runner::RemoteRunnerProviderId),
     StatusSegment(crate::tui_status::StatusSegmentId),
     PaletteSource(crate::tui_status::PaletteSourceId),
@@ -88,6 +90,7 @@ pub struct ExtensionRegistry {
     pub interactive_region_handlers: Vec<Arc<dyn crate::interactive::InteractiveRegionHandler>>,
     pub speech_transcribers: Vec<Arc<dyn crate::speech::SpeechTranscriber>>,
     pub speech_synthesizers: Vec<Arc<dyn crate::speech::SpeechSynthesizer>>,
+    pub version_control_providers: Vec<Arc<dyn crate::version_control::VcsProvider>>,
     pub remote_runner_providers: Vec<Arc<dyn crate::remote_runner::RemoteRunnerProvider>>,
     pub status_segments: Vec<crate::tui_status::StatusSegment>,
     pub palette_sources: Vec<crate::tui_status::PaletteSourceDescriptor>,
@@ -149,6 +152,22 @@ impl ExtensionRegistry {
             .find(|dispatcher| dispatcher.id() == id)
             .cloned()
     }
+
+    pub fn version_control_provider(
+        &self,
+        id: &str,
+    ) -> Option<Arc<dyn crate::version_control::VcsProvider>> {
+        self.version_control_providers
+            .iter()
+            .find(|provider| provider.id() == id)
+            .cloned()
+    }
+
+    pub fn version_control_resolver(&self) -> crate::version_control::RegistryVcsProviderResolver {
+        crate::version_control::RegistryVcsProviderResolver::new(
+            self.version_control_providers.clone(),
+        )
+    }
 }
 
 pub struct ExtensionRegistryBuilder {
@@ -171,6 +190,7 @@ pub struct ExtensionRegistryBuilder {
     pub interactive_region_handlers: Vec<Arc<dyn crate::interactive::InteractiveRegionHandler>>,
     pub speech_transcribers: Vec<Arc<dyn crate::speech::SpeechTranscriber>>,
     pub speech_synthesizers: Vec<Arc<dyn crate::speech::SpeechSynthesizer>>,
+    pub version_control_providers: Vec<Arc<dyn crate::version_control::VcsProvider>>,
     pub remote_runner_providers: Vec<Arc<dyn crate::remote_runner::RemoteRunnerProvider>>,
     pub status_segments: Vec<crate::tui_status::StatusSegment>,
     pub palette_sources: Vec<crate::tui_status::PaletteSourceDescriptor>,
@@ -205,6 +225,7 @@ impl ExtensionRegistryBuilder {
             interactive_region_handlers: Vec::new(),
             speech_transcribers: Vec::new(),
             speech_synthesizers: Vec::new(),
+            version_control_providers: Vec::new(),
             remote_runner_providers: Vec::new(),
             status_segments: Vec::new(),
             palette_sources: Vec::new(),
@@ -247,6 +268,7 @@ impl ExtensionRegistryBuilder {
             interactive_region_handlers: self.interactive_region_handlers,
             speech_transcribers: self.speech_transcribers,
             speech_synthesizers: self.speech_synthesizers,
+            version_control_providers: self.version_control_providers,
             remote_runner_providers: self.remote_runner_providers,
             status_segments: self.status_segments,
             palette_sources: self.palette_sources,
@@ -343,6 +365,13 @@ impl ExtensionRegistryBuilder {
 
     pub fn speech_synthesizer(&mut self, synthesizer: Arc<dyn crate::speech::SpeechSynthesizer>) {
         self.speech_synthesizers.push(synthesizer);
+    }
+
+    pub fn version_control_provider(
+        &mut self,
+        provider: Arc<dyn crate::version_control::VcsProvider>,
+    ) {
+        self.version_control_providers.push(provider);
     }
 
     pub fn remote_runner_provider(
@@ -568,6 +597,12 @@ fn actual_services(builder: &ExtensionRegistryBuilder) -> anyhow::Result<Vec<Pro
     );
     services.extend(
         builder
+            .version_control_providers
+            .iter()
+            .map(|service| ProvidedService::VersionControlProvider(service.id())),
+    );
+    services.extend(
+        builder
             .remote_runner_providers
             .iter()
             .map(|service| ProvidedService::RemoteRunnerProvider(service.id())),
@@ -670,6 +705,9 @@ fn service_label(service: &ProvidedService) -> String {
         }
         ProvidedService::SpeechTranscriber(id) => format!("SpeechTranscriber({id})"),
         ProvidedService::SpeechSynthesizer(id) => format!("SpeechSynthesizer({id})"),
+        ProvidedService::VersionControlProvider(id) => {
+            format!("VersionControlProvider({id})")
+        }
         ProvidedService::RemoteRunnerProvider(id) => format!("RemoteRunnerProvider({id})"),
         ProvidedService::StatusSegment(id) => format!("StatusSegment({id})"),
         ProvidedService::PaletteSource(id) => format!("PaletteSource({id})"),
@@ -679,7 +717,15 @@ fn service_label(service: &ProvidedService) -> String {
 
 #[cfg(test)]
 mod tests {
+    use std::path::{Path, PathBuf};
+    use std::sync::Arc;
+
     use crate::tui_status::{PaletteSourceDescriptor, StatusCell, StatusSegment, StatusStyle};
+    use crate::version_control::{
+        VcsCapabilities, VcsChangedContentPage, VcsChangedFile, VcsDetectionClaim, VcsError,
+        VcsListChangesRequest, VcsProvider, VcsReadChangedContentRequest, VcsStatus,
+        VcsStatusRequest, VcsWorkspace,
+    };
 
     use super::*;
 
@@ -776,6 +822,21 @@ mod tests {
     }
 
     #[test]
+    fn provided_service_version_control_provider_round_trips_json() {
+        let service = ProvidedService::VersionControlProvider("git".to_string());
+        let encoded =
+            serde_json::to_value(&service).expect("serialize version control provider service");
+        assert_eq!(
+            encoded,
+            serde_json::json!({ "VersionControlProvider": "git" })
+        );
+
+        let decoded = serde_json::from_value::<ProvidedService>(encoded)
+            .expect("deserialize version control provider service");
+        assert_eq!(decoded, service);
+    }
+
+    #[test]
     fn registry_builder_records_status_segments() {
         let mut builder = ExtensionRegistryBuilder::new();
         builder.status_segment(StatusSegment::new("custom", 42, 6, |_| StatusCell {
@@ -805,5 +866,142 @@ mod tests {
         assert_eq!(registry.palette_sources[0].id, "commands");
         assert_eq!(registry.palette_sources[0].label, "Commands");
         assert_eq!(registry.palette_sources[0].priority, 100);
+    }
+
+    #[test]
+    fn registering_vcs_provider_advertises_service_and_builds_registry() {
+        let mut builder = ExtensionRegistryBuilder::new();
+        builder
+            .install(FakeVcsExtension::new("git"))
+            .expect("install vcs extension");
+
+        let registry = builder.build().expect("build registry");
+
+        assert!(
+            registry
+                .provided_services()
+                .contains(&ProvidedService::VersionControlProvider("git".to_string()))
+        );
+        assert!(registry.version_control_provider("git").is_some());
+    }
+
+    #[test]
+    fn duplicate_vcs_provider_ids_fail_registry_validation() {
+        let mut builder = ExtensionRegistryBuilder::new();
+        builder.version_control_provider(Arc::new(FakeVcsProvider::new("git")));
+        builder.version_control_provider(Arc::new(FakeVcsProvider::new("git")));
+
+        let error = match builder.build() {
+            Ok(_) => panic!("duplicate provider should fail"),
+            Err(error) => error,
+        };
+
+        assert!(
+            error
+                .to_string()
+                .contains("duplicate installed service VersionControlProvider(git)")
+        );
+    }
+
+    struct FakeVcsExtension {
+        id: String,
+    }
+
+    impl FakeVcsExtension {
+        fn new(id: impl Into<String>) -> Self {
+            Self { id: id.into() }
+        }
+    }
+
+    impl RoderExtension for FakeVcsExtension {
+        fn manifest(&self) -> ExtensionManifest {
+            ExtensionManifest {
+                id: format!("{}-extension", self.id),
+                name: "Fake VCS".to_string(),
+                version: Version::new(0, 1, 0),
+                api_version: SUPPORTED_EXTENSION_API_VERSION.to_string(),
+                description: None,
+                provides: vec![ProvidedService::VersionControlProvider(self.id.clone())],
+                required_capabilities: Vec::new(),
+            }
+        }
+
+        fn install(&self, registry: &mut ExtensionRegistryBuilder) -> anyhow::Result<()> {
+            registry.version_control_provider(Arc::new(FakeVcsProvider::new(self.id.clone())));
+            Ok(())
+        }
+    }
+
+    struct FakeVcsProvider {
+        id: String,
+    }
+
+    impl FakeVcsProvider {
+        fn new(id: impl Into<String>) -> Self {
+            Self { id: id.into() }
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl VcsProvider for FakeVcsProvider {
+        fn id(&self) -> crate::version_control::VcsProviderId {
+            self.id.clone()
+        }
+
+        fn display_name(&self) -> String {
+            self.id.clone()
+        }
+
+        async fn detect(
+            &self,
+            workspace_root: &Path,
+        ) -> Result<Option<VcsDetectionClaim>, VcsError> {
+            Ok(Some(VcsDetectionClaim {
+                workspace: VcsWorkspace {
+                    root: workspace_root.to_path_buf(),
+                    id: None,
+                },
+                priority: 0,
+                metadata: serde_json::Value::Null,
+            }))
+        }
+
+        async fn status(&self, request: VcsStatusRequest) -> Result<VcsStatus, VcsError> {
+            Ok(VcsStatus {
+                provider: crate::version_control::VcsProviderIdentity {
+                    id: self.id.clone(),
+                    display_name: self.id.clone(),
+                },
+                workspace: VcsWorkspace {
+                    root: request.workspace_root,
+                    id: None,
+                },
+                active_line: None,
+                base: None,
+                capabilities: VcsCapabilities::default(),
+                changed_file_count: 0,
+            })
+        }
+
+        async fn list_changes(
+            &self,
+            _request: VcsListChangesRequest,
+        ) -> Result<Vec<VcsChangedFile>, VcsError> {
+            Ok(Vec::new())
+        }
+
+        async fn read_changed_content(
+            &self,
+            request: VcsReadChangedContentRequest,
+        ) -> Result<VcsChangedContentPage, VcsError> {
+            Ok(VcsChangedContentPage {
+                path: PathBuf::from(request.path),
+                content: Some(String::new()),
+                offset: request.offset,
+                total_lines: 0,
+                next_offset: None,
+                binary: false,
+            })
+        }
     }
 }

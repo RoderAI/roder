@@ -22,7 +22,7 @@ pub(super) fn built_in_command_catalog() -> Vec<CommandDescriptor> {
         ("tasks", "Open the background task monitor."),
         ("ps", "Open the Roder-owned process monitor."),
         ("memory", "Inspect relevant project and user memory."),
-        ("commit", "Create a scoped git commit."),
+        ("snapshot", "Create a scoped VCS snapshot."),
         ("marketplace", "Manage plugin marketplaces."),
         (
             "plugin",
@@ -41,7 +41,7 @@ pub(super) fn built_in_command_catalog() -> Vec<CommandDescriptor> {
     .map(|(name, description)| {
         let argument_hint = match name {
             "goal" => Some("[pause|resume|edit|clear|<objective>]".to_string()),
-            "commit" => Some("[path-or-message]".to_string()),
+            "snapshot" => Some("[path-or-message]".to_string()),
             "marketplace" => {
                 Some("list|install-default|add|remove|refresh|search|show [args]".to_string())
             }
@@ -169,7 +169,7 @@ pub(super) fn help_text(commands: &[CommandDescriptor]) -> String {
         "/tasks - Open the background task monitor.".to_string(),
         "/ps [all|stop <id>|stop-all --confirm] - Inspect and stop Roder-owned processes."
             .to_string(),
-        "/commit [path-or-message] - Create a scoped git commit.".to_string(),
+        "/snapshot [path-or-message] - Create a scoped VCS snapshot.".to_string(),
         "/marketplace <command> - Manage plugin marketplaces.".to_string(),
         "/plugin <command> - Manage marketplace plugin installs.".to_string(),
         "/voice [hold|tap|off|status] - Toggle voice dictation into the composer.".to_string(),
@@ -192,7 +192,7 @@ pub(super) fn help_text(commands: &[CommandDescriptor]) -> String {
                 | "ps"
                 | "marketplace"
                 | "plugin"
-                | "commit"
+                | "snapshot"
                 | "voice"
                 | "deep-research"
                 | "workflows"
@@ -269,7 +269,7 @@ mod tests {
             help.contains("/goal [pause|resume|edit|clear|<objective>] - Manage the thread goal.")
         );
         assert!(help.contains("/retry - Resubmit the last user message."));
-        assert!(help.contains("/commit [path-or-message] - Create a scoped git commit."));
+        assert!(help.contains("/snapshot [path-or-message] - Create a scoped VCS snapshot."));
         assert!(help.contains("/marketplace <command> - Manage plugin marketplaces."));
         assert!(help.contains("/plugin <command> - Manage marketplace plugin installs."));
         assert!(
@@ -305,7 +305,7 @@ mod tests {
                 "tasks",
                 "ps",
                 "memory",
-                "commit",
+                "snapshot",
                 "marketplace",
                 "plugin",
                 "remote",
@@ -328,7 +328,7 @@ mod tests {
         assert_eq!(
             commands
                 .iter()
-                .find(|command| command.name == "commit")
+                .find(|command| command.name == "snapshot")
                 .and_then(|command| command.argument_hint.as_deref()),
             Some("[path-or-message]")
         );
