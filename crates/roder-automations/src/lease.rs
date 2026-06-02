@@ -8,6 +8,7 @@ use time::OffsetDateTime;
 use crate::store::{AutomationStore, delete_expired_lease, delete_lease, insert_lease};
 
 impl AutomationStore {
+    #[allow(clippy::too_many_arguments)]
     pub fn acquire_lease(
         &self,
         run_id: AutomationRunId,

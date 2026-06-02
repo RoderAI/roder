@@ -116,7 +116,7 @@ pub struct EvalLazyDiscoveryCatalogShape {
     pub plugins: u64,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct EvalLazyDiscoveryExpectedMetrics {
     pub baseline_schema_tokens: u64,
@@ -131,20 +131,6 @@ pub struct EvalLazyDiscoveryExpectedMetrics {
     pub max_unknown_tool_calls: u64,
     #[serde(default)]
     pub max_calls_before_promotion: u64,
-}
-
-impl Default for EvalLazyDiscoveryExpectedMetrics {
-    fn default() -> Self {
-        Self {
-            baseline_schema_tokens: 0,
-            deferred_prompt_tokens: 0,
-            expected_promotion_count: 0,
-            expected_warm_cache_hits: 0,
-            max_wrong_tool_calls: 0,
-            max_unknown_tool_calls: 0,
-            max_calls_before_promotion: 0,
-        }
-    }
 }
 
 fn default_true() -> bool {

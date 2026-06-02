@@ -150,6 +150,7 @@ static DISCOVERY_TEST_LOCK: LazyLock<Mutex<()>> = LazyLock::new(|| Mutex::new(()
 static MARKETPLACE_TEST_LOCK: LazyLock<Mutex<()>> = LazyLock::new(|| Mutex::new(()));
 static PROVIDER_TEST_LOCK: LazyLock<Mutex<()>> = LazyLock::new(|| Mutex::new(()));
 static SKILLS_TEST_LOCK: LazyLock<Mutex<()>> = LazyLock::new(|| Mutex::new(()));
+static RODER_CONFIG_DIR_TEST_LOCK: LazyLock<Mutex<()>> = LazyLock::new(|| Mutex::new(()));
 
 struct PendingEngine;
 
@@ -3138,7 +3139,8 @@ async fn providers_list_exposes_cursor_api_key_models() {
 
 #[tokio::test]
 async fn providers_clear_removes_api_key() {
-    let _guard = PROVIDER_TEST_LOCK.lock().await;
+    let _provider_guard = PROVIDER_TEST_LOCK.lock().await;
+    let _config_guard = RODER_CONFIG_DIR_TEST_LOCK.lock().await;
     let temp_dir = std::env::temp_dir().join(format!("roder-test-{}", uuid::Uuid::new_v4()));
     std::fs::create_dir_all(&temp_dir).unwrap();
     let _config_dir = EnvVarGuard::set("RODER_CONFIG_DIR", &temp_dir);
@@ -3201,6 +3203,50 @@ async fn providers_clear_removes_api_key() {
     assert!(!cursor.authenticated);
 
     // Clean up temp dir
+    let _ = std::fs::remove_dir_all(&temp_dir);
+}
+
+#[tokio::test]
+async fn auth_mutations_are_rejected_when_user_config_persistence_is_disabled() {
+    let _guard = RODER_CONFIG_DIR_TEST_LOCK.lock().await;
+    let temp_dir = std::env::temp_dir().join(format!("roder-test-{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir_all(temp_dir.join("auth")).unwrap();
+    let token_path = temp_dir.join("auth").join("codex.json");
+    let token_contents = r#"{
+      "type": "bearer",
+      "refresh": "test-refresh",
+      "access": "test-access",
+      "expires": 9999999999999,
+      "account_id": "acct_test"
+    }"#;
+    std::fs::write(&token_path, token_contents).unwrap();
+    let _config_dir = EnvVarGuard::set("RODER_CONFIG_DIR", &temp_dir);
+
+    let runtime = Arc::new(Runtime::fake().unwrap());
+    let server = Arc::new(AppServer::new(runtime));
+    let client = LocalAppClient::new(server);
+
+    let logout_error = request_error(&client, "auth/codex/logout", None).await;
+    assert!(
+        logout_error
+            .message
+            .contains("auth persistence is disabled")
+    );
+    assert_eq!(
+        std::fs::read_to_string(&token_path).unwrap(),
+        token_contents
+    );
+
+    let login_error = request_error(&client, "auth/codex/login", None).await;
+    assert!(login_error.message.contains("auth persistence is disabled"));
+
+    let supergrok_logout_error = request_error(&client, "auth/supergrok/logout", None).await;
+    assert!(
+        supergrok_logout_error
+            .message
+            .contains("auth persistence is disabled")
+    );
+
     let _ = std::fs::remove_dir_all(&temp_dir);
 }
 

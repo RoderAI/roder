@@ -90,7 +90,7 @@ fn normalize_value(value: &Value) -> Value {
                     )
                 })
                 .collect::<Vec<_>>();
-            rest.sort_by(|(left, _), (right, _)| left.cmp(right));
+            rest.sort_by_key(|(key, _)| *key);
             for (key, value) in rest {
                 normalized.insert(key.clone(), normalize_value(value));
             }
@@ -107,7 +107,7 @@ fn normalize_properties(value: &Value) -> Value {
     };
     let mut normalized = Map::new();
     let mut entries = properties.iter().collect::<Vec<_>>();
-    entries.sort_by(|(left, _), (right, _)| left.cmp(right));
+    entries.sort_by_key(|(key, _)| *key);
     for (key, value) in entries {
         normalized.insert(key.clone(), normalize_value(value));
     }
@@ -142,7 +142,7 @@ fn lint_value(
             policy,
         );
     }
-    if pointer != "" && object.get("required").is_some_and(Value::is_array) {
+    if !pointer.is_empty() && object.get("required").is_some_and(Value::is_array) {
         push_lint(
             lints,
             tool_name,

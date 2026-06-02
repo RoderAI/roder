@@ -30,13 +30,14 @@ pub enum DiscoveryItemStatus {
     Error,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub enum DiscoveryAuthState {
     NotRequired,
     Available,
     Required,
     Expired,
+    #[default]
     Unknown,
 }
 
@@ -140,12 +141,6 @@ pub struct DiscoveryCatalogSource {
     pub auth_state: DiscoveryAuthState,
     #[serde(default)]
     pub redaction: DiscoveryRedaction,
-}
-
-impl Default for DiscoveryAuthState {
-    fn default() -> Self {
-        Self::Unknown
-    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

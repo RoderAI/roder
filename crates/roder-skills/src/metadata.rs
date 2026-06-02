@@ -172,7 +172,7 @@ fn parse_skill_markdown_with_fallback(
             fallback_description(fallback_name)
         }
     };
-    let exposure = raw.exposure.or_else(|| match raw.always_apply {
+    let exposure = raw.exposure.or(match raw.always_apply {
         Some(true) => Some(SkillExposure::Global),
         Some(false) => Some(SkillExposure::DirectOnly),
         None => None,

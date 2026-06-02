@@ -52,7 +52,7 @@ use crossterm::event::{
 use ratatui::{
     Frame,
     buffer::Buffer,
-    layout::{Constraint, Direction, Layout, Rect},
+    layout::{Alignment, Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span, Text},
     widgets::{
@@ -124,6 +124,9 @@ use turn_timer::TurnTimer;
 use voice::{VoiceConfig, VoiceMode, VoiceState};
 
 const TOP_STATUS_ANIMATION_FPS: u64 = 6;
+const WORKING_SHEEN_LOOP_FRAMES: u64 = TOP_STATUS_ANIMATION_FPS * 2;
+const WORKING_SHEEN_ACTIVE_FRAMES: u64 = (TOP_STATUS_ANIMATION_FPS * 4 + 2) / 3;
+const WORKING_SHEEN_WIDTH: usize = 3;
 const MAX_VISIBLE_SLASH_COMMANDS: usize = 16;
 const COPIED_HELPER_LABEL: &str = "Copied to clipboard";
 const COPIED_HELPER_DURATION: Duration = Duration::from_secs(2);
@@ -187,6 +190,8 @@ struct Theme {
     accent_soft: Color,
     tool: Color,
     tool_running: Color,
+    working: Color,
+    working_sheen: Color,
     diff_added: Color,
     diff_added_bg: Color,
     diff_removed: Color,
@@ -243,6 +248,8 @@ impl Theme {
                 accent_soft: Color::Indexed(183),
                 tool: Color::Indexed(244),
                 tool_running: Color::Indexed(244),
+                working: Color::Indexed(15),
+                working_sheen: Color::Indexed(183),
                 diff_added: Color::Indexed(114),
                 diff_added_bg: Color::Indexed(22),
                 diff_removed: Color::Indexed(210),
@@ -279,6 +286,8 @@ impl Theme {
             accent_soft: Color::Indexed(96),
             tool: Color::Indexed(240),
             tool_running: Color::Indexed(240),
+            working: Color::Indexed(16),
+            working_sheen: Color::Indexed(96),
             diff_added: Color::Indexed(28),
             diff_added_bg: Color::Indexed(194),
             diff_removed: Color::Indexed(160),
@@ -327,6 +336,8 @@ impl Theme {
         set!(accent_soft, "accent-soft");
         set!(tool, "tool");
         set!(tool_running, "tool");
+        set!(working, "working");
+        set!(working_sheen, "working-sheen");
         set!(diff_added, "diff-added");
         set!(diff_added_bg, "diff-added-bg");
         set!(diff_removed, "diff-removed");
@@ -460,6 +471,16 @@ impl Theme {
     fn running(self) -> Style {
         Style::default()
             .fg(self.tool_running)
+            .add_modifier(Modifier::BOLD)
+    }
+
+    fn working(self) -> Style {
+        Style::default().fg(self.working)
+    }
+
+    fn working_sheen(self) -> Style {
+        Style::default()
+            .fg(self.working_sheen)
             .add_modifier(Modifier::BOLD)
     }
 
@@ -992,12 +1013,14 @@ where
     thread_message_count: usize,
     active_turn_id: Option<String>,
     active_turn_timer: TurnTimer,
+    working_status_override: Option<String>,
     current_turn_input_tokens: u32,
     current_turn_output_tokens: u32,
     current_turn_reasoning_tokens: Option<u32>,
     current_turn_total_tokens: u32,
     thread_tokens: u64,
     context_window_tokens: u64,
+    context_breakdown: ContextWindowBreakdown,
     provider: String,
     model: String,
     model_context_window: Option<u32>,
@@ -1376,12 +1399,14 @@ where
             thread_message_count,
             active_turn_id: None,
             active_turn_timer: TurnTimer::default(),
+            working_status_override: None,
             current_turn_input_tokens: 0,
             current_turn_output_tokens: 0,
             current_turn_reasoning_tokens: None,
             current_turn_total_tokens: 0,
             thread_tokens: 0,
             context_window_tokens: 0,
+            context_breakdown: ContextWindowBreakdown::default(),
             provider,
             model: selected_model,
             model_context_window,
@@ -1777,7 +1802,9 @@ where
                         self.current_turn_output_tokens = 0;
                         self.current_turn_reasoning_tokens = None;
                         self.current_turn_total_tokens = 0;
+                        self.context_breakdown.begin_turn();
                         self.compaction_active = false;
+                        self.working_status_override = None;
                     }
                     RoderEvent::TurnCompleted(ev)
                         if self.active_turn_id.as_deref() == Some(&ev.turn_id) =>
@@ -1797,6 +1824,7 @@ where
                         self.current_turn_reasoning_tokens = None;
                         self.current_turn_total_tokens = 0;
                         self.compaction_active = false;
+                        self.working_status_override = None;
                         self.submit_next_queued_prompt().await;
                     }
                     RoderEvent::TurnInterrupted(ev)
@@ -1810,6 +1838,19 @@ where
                         self.current_turn_reasoning_tokens = None;
                         self.current_turn_total_tokens = 0;
                         self.compaction_active = false;
+                        self.working_status_override = None;
+                    }
+                    RoderEvent::ContextAssemblyStarted(ev) => {
+                        self.context_breakdown.start_context_turn(ev.turn_id);
+                    }
+                    RoderEvent::ContextBlockAdded(ev) => {
+                        self.context_breakdown.record_context_block(&ev);
+                    }
+                    RoderEvent::ContextAssemblyCompleted(ev) => {
+                        self.context_breakdown.record_context_completed(&ev);
+                    }
+                    RoderEvent::SkillIndexRendered(ev) => {
+                        self.context_breakdown.record_skill_index(&ev);
                     }
                     RoderEvent::InferenceEventReceived(ev) => {
                         self.team_ui.record_thread_activity(&ev.thread_id);
@@ -1831,6 +1872,7 @@ where
                                 {
                                     timeline.push_reasoning_delta_streaming(&delta.text);
                                 } else {
+                                    self.update_working_status_from_reasoning(&delta.text);
                                     self.timeline.push_reasoning_delta_streaming(&delta.text);
                                 }
                             }
@@ -1885,6 +1927,7 @@ where
                             self.current_turn_reasoning_tokens = None;
                             self.current_turn_total_tokens = 0;
                             self.compaction_active = false;
+                            self.working_status_override = None;
                         }
                         self.timeline.push_error(ev.error);
                     }
@@ -2151,6 +2194,12 @@ where
             changed |= timeline.tick_streaming_animation(now, width);
         }
         changed
+    }
+
+    fn update_working_status_from_reasoning(&mut self, delta: &str) {
+        if let Some(heading) = reasoning_heading_from_delta(delta) {
+            self.working_status_override = Some(heading);
+        }
     }
 
     fn has_streaming_animation(&self) -> bool {
@@ -3453,6 +3502,11 @@ where
         if let Some(modal) = &self.tool_detail_modal {
             render_tool_detail_modal(f, area, modal, self.theme);
         }
+        if self.context_counter_hovered {
+            if let Some(counter) = self.context_window_counter() {
+                render_context_window_popup(f, area, counter, self.context_breakdown, self.theme);
+            }
+        }
     }
 
     fn render_copied_helper(&mut self, f: &mut Frame<'_>, composer_area: Rect, now: Instant) {
@@ -3493,25 +3547,26 @@ where
     fn working_line(&self) -> Paragraph<'static> {
         let elapsed = self.active_turn_timer.elapsed(Instant::now());
         let status = self
-            .timeline
-            .latest_reasoning_heading()
-            .unwrap_or_else(|| working_status_label(self.compaction_active).to_string());
-        Paragraph::new(Line::from(vec![
-            Span::styled(
-                format!(
-                    " {} ",
-                    padded_spinner_frame(self.working_spinner, self.animation_frame)
-                ),
-                self.theme.running(),
+            .working_status_override
+            .as_deref()
+            .unwrap_or_else(|| working_status_label(self.compaction_active));
+        let mut spans = vec![Span::styled(
+            format!(
+                " {} ",
+                padded_spinner_frame(self.working_spinner, self.animation_frame)
             ),
-            Span::styled(
-                format!(
-                    "{status} ({} - esc to interrupt)",
-                    format_working_elapsed(elapsed)
-                ),
-                self.theme.muted(),
-            ),
-        ]))
+            self.theme.running(),
+        )];
+        spans.extend(working_status_spans(
+            status,
+            self.animation_frame,
+            self.theme,
+        ));
+        spans.push(Span::styled(
+            format!(" ({} - esc to interrupt)", format_working_elapsed(elapsed)),
+            self.theme.muted(),
+        ));
+        Paragraph::new(Line::from(spans))
     }
 
     fn header(&self, width: u16) -> Paragraph<'static> {
@@ -5224,17 +5279,21 @@ where
     }
 
     async fn select_provider_model_params(&mut self, params: ProviderSelectParams) {
-        let res = self
-            .client
-            .send_request(JsonRpcRequest {
-                jsonrpc: "2.0".to_string(),
-                id: Some(serde_json::json!("providers/select")),
-                method: "providers/select".to_string(),
-                params: Some(serde_json::to_value(params).unwrap()),
-            })
+        let persist_as_default = params.model.is_some();
+        let mut params = params;
+        let focused_thread_id = persist_as_default
+            .then(|| params.thread_id.take())
+            .flatten();
+        self.apply_provider_model_selection(params, focused_thread_id)
             .await;
+    }
 
-        match decode_response::<ProviderSelectResult>(res) {
+    async fn apply_provider_model_selection(
+        &mut self,
+        params: ProviderSelectParams,
+        focused_thread_id: Option<String>,
+    ) {
+        match self.send_provider_select(params).await {
             Ok(selected) => {
                 self.provider = selected.provider;
                 self.model = selected.model;
@@ -5242,6 +5301,21 @@ where
                 self.model_context_window =
                     context_window_from_options(&self.model_options, &self.provider, &self.model)
                         .or_else(|| context_window_for_model(&self.model));
+                if let Some(thread_id) = focused_thread_id {
+                    if let Err(err) = self
+                        .send_provider_select(ProviderSelectParams {
+                            provider: self.provider.clone(),
+                            model: Some(self.model.clone()),
+                            reasoning: Some(self.reasoning_effort.clone()),
+                            thread_id: Some(thread_id),
+                        })
+                        .await
+                    {
+                        self.record_error(format!("providers/select thread update failed: {err}"));
+                        self.show_provider_popup = false;
+                        return;
+                    }
+                }
                 self.timeline.push_system(format!(
                     "switched provider/model to {}/{} with reasoning {}.",
                     self.provider, self.model, self.reasoning_effort
@@ -5258,6 +5332,22 @@ where
                 self.show_provider_popup = false;
             }
         }
+    }
+
+    async fn send_provider_select(
+        &self,
+        params: ProviderSelectParams,
+    ) -> anyhow::Result<ProviderSelectResult> {
+        decode_response(
+            self.client
+                .send_request(JsonRpcRequest {
+                    jsonrpc: "2.0".to_string(),
+                    id: Some(serde_json::json!("providers/select")),
+                    method: "providers/select".to_string(),
+                    params: Some(serde_json::to_value(params).unwrap()),
+                })
+                .await,
+        )
     }
 
     async fn run_provider_auth(&mut self, flow: ProviderAuthFlow) -> bool {
@@ -5456,6 +5546,7 @@ where
     }
 
     fn record_usage(&mut self, usage: TokenUsage) {
+        self.context_breakdown.record_usage(&usage);
         record_usage_counters(
             &mut self.current_turn_input_tokens,
             &mut self.current_turn_output_tokens,
@@ -5902,6 +5993,19 @@ fn toml_value_literal(value: toml::Value) -> anyhow::Result<String> {
     }
 }
 
+fn reasoning_heading_from_delta(delta: &str) -> Option<String> {
+    delta
+        .lines()
+        .find(|line| !line.trim().is_empty())
+        .and_then(parse_bold_heading_line)
+}
+
+fn parse_bold_heading_line(line: &str) -> Option<String> {
+    let trimmed = line.trim();
+    let inner = trimmed.strip_prefix("**")?.strip_suffix("**")?.trim();
+    (!inner.is_empty()).then(|| inner.to_string())
+}
+
 fn tui_config_path() -> PathBuf {
     std::env::var_os("RODER_CONFIG_DIR")
         .or_else(|| std::env::var_os("RODER_DATA_DIR"))
@@ -5932,6 +6036,59 @@ fn working_status_label(compaction_active: bool) -> &'static str {
     } else {
         "Working"
     }
+}
+
+fn working_status_spans(status: &str, frame: u64, theme: Theme) -> Vec<Span<'static>> {
+    let Some(sheen_index) = working_sheen_index(status, frame) else {
+        return vec![Span::styled(status.to_string(), theme.working())];
+    };
+    split_text_with_sheen(status, sheen_index, theme.working(), theme.working_sheen())
+}
+
+fn working_sheen_index(status: &str, frame: u64) -> Option<usize> {
+    let len = status.chars().count();
+    if len == 0 || WORKING_SHEEN_ACTIVE_FRAMES == 0 {
+        return None;
+    }
+    let loop_frame = frame % WORKING_SHEEN_LOOP_FRAMES;
+    if loop_frame >= WORKING_SHEEN_ACTIVE_FRAMES {
+        return None;
+    }
+    Some(((loop_frame * len as u64) / WORKING_SHEEN_ACTIVE_FRAMES).min(len as u64 - 1) as usize)
+}
+
+fn split_text_with_sheen(
+    text: &str,
+    sheen_center: usize,
+    base_style: Style,
+    highlight_style: Style,
+) -> Vec<Span<'static>> {
+    let mut spans: Vec<Span<'static>> = Vec::new();
+    let mut current = String::new();
+    let mut current_style = base_style;
+
+    for (index, ch) in text.chars().enumerate() {
+        let distance = index.abs_diff(sheen_center);
+        let style = if distance < WORKING_SHEEN_WIDTH {
+            highlight_style
+        } else {
+            base_style
+        };
+        if style == current_style {
+            current.push(ch);
+        } else {
+            if !current.is_empty() {
+                spans.push(Span::styled(std::mem::take(&mut current), current_style));
+            }
+            current_style = style;
+            current.push(ch);
+        }
+    }
+
+    if !current.is_empty() {
+        spans.push(Span::styled(current, current_style));
+    }
+    spans
 }
 
 fn reasoning_tokens_from_provider_metadata(metadata: &serde_json::Value) -> Option<u32> {
@@ -7258,6 +7415,377 @@ struct ContextWindowCounter {
     hovered: bool,
 }
 
+#[derive(Debug, Clone, Copy, Default, Eq, PartialEq)]
+struct ContextWindowBreakdown {
+    active_context_turn: Option<u64>,
+    system_tokens: u64,
+    skills_tokens: u64,
+    retrieved_tokens: u64,
+    other_context_tokens: u64,
+    context_total_tokens: u64,
+    prompt_tokens: u64,
+    cached_prompt_tokens: u64,
+    output_tokens: u64,
+}
+
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+enum ContextBreakdownCategory {
+    System,
+    Skills,
+    Retrieved,
+    OtherContext,
+}
+
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+struct ContextBreakdownSegment {
+    label: &'static str,
+    tokens: u64,
+    color: Color,
+}
+
+impl ContextWindowBreakdown {
+    fn begin_turn(&mut self) {
+        self.prompt_tokens = 0;
+        self.cached_prompt_tokens = 0;
+        self.output_tokens = 0;
+    }
+
+    fn start_context_turn(&mut self, turn_id: String) {
+        self.active_context_turn = Some(stable_context_turn_key(&turn_id));
+        self.system_tokens = 0;
+        self.skills_tokens = 0;
+        self.retrieved_tokens = 0;
+        self.other_context_tokens = 0;
+        self.context_total_tokens = 0;
+    }
+
+    fn record_context_block(&mut self, block: &roder_api::events::ContextBlockAdded) {
+        let key = stable_context_turn_key(&block.turn_id);
+        if self.active_context_turn != Some(key) {
+            self.start_context_turn(block.turn_id.clone());
+        }
+        let tokens = u64::from(block.estimated_tokens);
+        match context_block_category(&block.block_type) {
+            ContextBreakdownCategory::System => {
+                self.system_tokens = self.system_tokens.saturating_add(tokens)
+            }
+            ContextBreakdownCategory::Skills => {
+                self.skills_tokens = self.skills_tokens.saturating_add(tokens)
+            }
+            ContextBreakdownCategory::Retrieved => {
+                self.retrieved_tokens = self.retrieved_tokens.saturating_add(tokens)
+            }
+            ContextBreakdownCategory::OtherContext => {
+                self.other_context_tokens = self.other_context_tokens.saturating_add(tokens)
+            }
+        }
+        self.context_total_tokens = self.context_total_tokens.saturating_add(tokens);
+    }
+
+    fn record_context_completed(
+        &mut self,
+        completed: &roder_api::events::ContextAssemblyCompleted,
+    ) {
+        let key = stable_context_turn_key(&completed.turn_id);
+        if self.active_context_turn != Some(key) {
+            self.start_context_turn(completed.turn_id.clone());
+        }
+        self.context_total_tokens = u64::from(completed.estimated_tokens);
+    }
+
+    fn record_skill_index(&mut self, rendered: &roder_api::skills::SkillIndexRendered) {
+        let key = stable_context_turn_key(&rendered.turn_id);
+        if self.active_context_turn != Some(key) {
+            self.start_context_turn(rendered.turn_id.clone());
+        }
+        let tokens = u64::from(rendered.estimated_tokens);
+        self.skills_tokens = self.skills_tokens.saturating_add(tokens);
+        self.context_total_tokens = self.context_total_tokens.saturating_add(tokens);
+    }
+
+    fn record_usage(&mut self, usage: &TokenUsage) {
+        self.prompt_tokens = self.prompt_tokens.max(u64::from(usage.prompt_tokens));
+        self.cached_prompt_tokens = self
+            .cached_prompt_tokens
+            .max(u64::from(usage.cached_prompt_tokens));
+        self.output_tokens = self.output_tokens.max(u64::from(usage.completion_tokens));
+    }
+
+    fn conversation_tokens(self, counter: ContextWindowCounter) -> u64 {
+        let context = self.context_total_tokens.max(
+            self.system_tokens
+                .saturating_add(self.skills_tokens)
+                .saturating_add(self.retrieved_tokens)
+                .saturating_add(self.other_context_tokens),
+        );
+        let used_without_output = counter.used_tokens.saturating_sub(self.output_tokens);
+        let prompt = if self.prompt_tokens > 0 {
+            self.prompt_tokens
+        } else {
+            used_without_output
+        };
+        prompt.saturating_sub(context)
+    }
+
+    fn segments(self, counter: ContextWindowCounter, theme: Theme) -> Vec<ContextBreakdownSegment> {
+        let mut segments = Vec::new();
+        push_context_segment(
+            &mut segments,
+            "System / context",
+            self.system_tokens,
+            theme.subtle,
+        );
+        push_context_segment(
+            &mut segments,
+            "Skills",
+            self.skills_tokens,
+            theme.accent_soft,
+        );
+        push_context_segment(
+            &mut segments,
+            "Retrieved context",
+            self.retrieved_tokens,
+            theme.tool,
+        );
+        push_context_segment(
+            &mut segments,
+            "Other context",
+            self.other_context_tokens,
+            theme.commentary,
+        );
+        push_context_segment(
+            &mut segments,
+            "Conversation",
+            self.conversation_tokens(counter),
+            theme.diff_removed,
+        );
+        push_context_segment(
+            &mut segments,
+            "Output",
+            self.output_tokens,
+            theme.diff_added,
+        );
+        if segments.is_empty() && counter.used_tokens > 0 {
+            push_context_segment(
+                &mut segments,
+                "Conversation",
+                counter.used_tokens,
+                theme.diff_removed,
+            );
+        }
+        segments
+    }
+}
+
+fn push_context_segment(
+    segments: &mut Vec<ContextBreakdownSegment>,
+    label: &'static str,
+    tokens: u64,
+    color: Color,
+) {
+    if tokens > 0 {
+        segments.push(ContextBreakdownSegment {
+            label,
+            tokens,
+            color,
+        });
+    }
+}
+
+fn context_block_category(block_type: &str) -> ContextBreakdownCategory {
+    match block_type {
+        "Instruction" | "SafetyPolicy" | "TaskMetadata" | "PriorSummary" | "EntrypointHint" => {
+            ContextBreakdownCategory::System
+        }
+        "Memory" | "RepositoryFact" | "RetrievedDocument" | "RetrievalHint" => {
+            ContextBreakdownCategory::Retrieved
+        }
+        other if other.to_ascii_lowercase().contains("skill") => ContextBreakdownCategory::Skills,
+        _ => ContextBreakdownCategory::OtherContext,
+    }
+}
+
+fn stable_context_turn_key(turn_id: &str) -> u64 {
+    turn_id.bytes().fold(0xcbf29ce484222325, |hash, byte| {
+        hash.wrapping_mul(0x100000001b3) ^ u64::from(byte)
+    })
+}
+
+fn render_context_window_popup(
+    f: &mut Frame<'_>,
+    area: Rect,
+    counter: ContextWindowCounter,
+    breakdown: ContextWindowBreakdown,
+    theme: Theme,
+) {
+    let Some(popup_area) = context_window_popup_area(area) else {
+        return;
+    };
+    let segments = breakdown.segments(counter, theme);
+    let borders = if theme.borders_visible {
+        Borders::ALL
+    } else {
+        Borders::NONE
+    };
+    let block = Block::default()
+        .borders(borders)
+        .border_type(theme.border_type)
+        .style(theme.dialog_surface())
+        .border_style(theme.dialog())
+        .title(Span::styled(" Context ", theme.accent()));
+    let inner = block.inner(popup_area);
+    f.render_widget(Clear, popup_area);
+    f.render_widget(block, popup_area);
+    if inner.width == 0 || inner.height == 0 {
+        return;
+    }
+
+    let mut lines = Vec::new();
+    let percent_label = format!("{:.0}% Full", counter.percent().min(999.0));
+    let token_label = format!(
+        "{} / {} tokens",
+        compact_token_count(counter.used_tokens),
+        compact_token_count(counter.max_tokens)
+    );
+    lines.push(Line::from(vec![
+        Span::styled(percent_label.clone(), theme.strong()),
+        Span::styled(
+            right_pad_for_popup(&percent_label, &token_label, inner.width),
+            theme.text(),
+        ),
+        Span::styled(token_label, theme.muted()),
+    ]));
+    lines.push(context_usage_bar_line(
+        &segments,
+        counter,
+        inner.width,
+        theme,
+    ));
+    lines.push(Line::from(""));
+    for segment in &segments {
+        lines.push(context_popup_row(
+            segment.label,
+            segment.tokens,
+            segment.color,
+            inner.width,
+            theme,
+        ));
+    }
+    if breakdown.cached_prompt_tokens > 0 {
+        lines.push(context_popup_row(
+            "Cached input",
+            breakdown.cached_prompt_tokens,
+            theme.subtle,
+            inner.width,
+            theme,
+        ));
+    }
+    let free_tokens = counter.max_tokens.saturating_sub(counter.used_tokens);
+    lines.push(context_popup_row(
+        "Available",
+        free_tokens,
+        theme.muted,
+        inner.width,
+        theme,
+    ));
+
+    f.render_widget(
+        Paragraph::new(Text::from(lines))
+            .style(theme.dialog_surface())
+            .alignment(Alignment::Left),
+        inner,
+    );
+}
+
+fn context_window_popup_area(area: Rect) -> Option<Rect> {
+    if area.width < 24 || area.height < 6 {
+        return None;
+    }
+    let width = area.width.clamp(24, 54);
+    let height = area.height.clamp(6, 14);
+    Some(Rect::new(
+        area.x + area.width.saturating_sub(width),
+        area.y,
+        width,
+        height,
+    ))
+}
+
+fn context_usage_bar_line(
+    segments: &[ContextBreakdownSegment],
+    counter: ContextWindowCounter,
+    width: u16,
+    theme: Theme,
+) -> Line<'static> {
+    let bar_width = usize::from(width).saturating_sub(2).max(1);
+    let filled = (counter
+        .used_tokens
+        .saturating_mul(bar_width as u64)
+        .checked_div(counter.max_tokens)
+        .unwrap_or(0) as usize)
+        .min(bar_width);
+    let mut spans = Vec::new();
+    let mut used_cells = 0usize;
+    let segment_total = segments
+        .iter()
+        .map(|segment| segment.tokens)
+        .sum::<u64>()
+        .max(1);
+    for (index, segment) in segments.iter().enumerate() {
+        let mut cells = ((segment.tokens.saturating_mul(filled as u64)) / segment_total) as usize;
+        if segment.tokens > 0 && cells == 0 && used_cells < filled {
+            cells = 1;
+        }
+        if index + 1 == segments.len() {
+            cells = filled.saturating_sub(used_cells);
+        }
+        cells = cells.min(filled.saturating_sub(used_cells));
+        if cells > 0 {
+            spans.push(Span::styled(
+                "─".repeat(cells),
+                Style::default().fg(segment.color),
+            ));
+            used_cells += cells;
+        }
+    }
+    if used_cells < filled {
+        spans.push(Span::styled(
+            "─".repeat(filled - used_cells),
+            Style::default().fg(theme.diff_removed),
+        ));
+    }
+    if filled < bar_width {
+        spans.push(Span::styled("─".repeat(bar_width - filled), theme.muted()));
+    }
+    Line::from(spans)
+}
+
+fn context_popup_row(
+    label: &'static str,
+    tokens: u64,
+    color: Color,
+    width: u16,
+    theme: Theme,
+) -> Line<'static> {
+    let value = compact_token_count(tokens);
+    Line::from(vec![
+        Span::styled("■ ", Style::default().fg(color)),
+        Span::styled(label.to_string(), theme.text()),
+        Span::styled(
+            right_pad_for_popup(label, &value, width.saturating_sub(2)),
+            theme.text(),
+        ),
+        Span::styled(value, theme.muted()),
+    ])
+}
+
+fn right_pad_for_popup(left: &str, right: &str, width: u16) -> String {
+    let left_width = left.chars().count();
+    let right_width = right.chars().count();
+    let width = usize::from(width);
+    " ".repeat(width.saturating_sub(left_width + right_width).max(1))
+}
+
 impl ContextWindowCounter {
     fn label(self) -> String {
         if self.hovered {
@@ -7440,12 +7968,14 @@ mod tests {
             thread_message_count: 0,
             active_turn_id: None,
             active_turn_timer: TurnTimer::default(),
+            working_status_override: None,
             current_turn_input_tokens: 0,
             current_turn_output_tokens: 0,
             current_turn_reasoning_tokens: None,
             current_turn_total_tokens: 0,
             thread_tokens: 0,
             context_window_tokens: 0,
+            context_breakdown: ContextWindowBreakdown::default(),
             provider: "mock".to_string(),
             model: "mock".to_string(),
             model_context_window: None,
@@ -8181,6 +8711,8 @@ mod tests {
                 theme.accent_soft,
                 theme.tool,
                 theme.tool_running,
+                theme.working,
+                theme.working_sheen,
                 theme.diff_added,
                 theme.diff_added_bg,
                 theme.diff_removed,
@@ -8638,6 +9170,79 @@ mod tests {
     }
 
     #[test]
+    fn working_status_sheen_highlights_one_character_then_loops() {
+        let theme = Theme::for_dark_background(true);
+        assert_eq!(WORKING_SHEEN_LOOP_FRAMES, TOP_STATUS_ANIMATION_FPS * 2);
+        assert!(WORKING_SHEEN_ACTIVE_FRAMES > TOP_STATUS_ANIMATION_FPS);
+        assert_ne!(theme.working_sheen, Color::Indexed(231));
+        let spans = working_status_spans("Working", 0, theme);
+        assert_eq!(spans_text(&spans), "Working");
+        assert!(
+            spans
+                .iter()
+                .any(|span| span.style.fg == Some(theme.working_sheen))
+        );
+        assert!(
+            spans
+                .iter()
+                .any(|span| span.style.fg == Some(theme.working))
+        );
+
+        let resting = working_status_spans("Working", WORKING_SHEEN_ACTIVE_FRAMES, theme);
+        assert_eq!(spans_text(&resting), "Working");
+        assert!(
+            resting
+                .iter()
+                .all(|span| span.style.fg == Some(theme.working))
+        );
+
+        let looped = working_status_spans("Working", WORKING_SHEEN_LOOP_FRAMES, theme);
+        assert_eq!(looped, spans);
+    }
+
+    #[test]
+    fn reasoning_heading_parses_for_working_status_override() {
+        assert_eq!(
+            reasoning_heading_from_delta("\n**Analyzing potential app-server issues**\n\nBody")
+                .as_deref(),
+            Some("Analyzing potential app-server issues")
+        );
+        assert_eq!(reasoning_heading_from_delta("regular thinking"), None);
+    }
+
+    #[test]
+    fn working_line_uses_override_until_turn_reset() {
+        let mut app = test_app();
+        app.active_turn_id = Some("turn-test".to_string());
+        app.update_working_status_from_reasoning("**Inspect recent changes**\n\nChecking files.");
+
+        let mut buffer = Buffer::empty(Rect::new(0, 0, 100, 1));
+        app.working_line().render(buffer.area, &mut buffer);
+        let line = buffer_row_cells(&buffer, 0)
+            .iter()
+            .map(|cell| cell.symbol.as_str())
+            .collect::<String>();
+        assert!(line.contains("Inspect recent changes"));
+
+        app.working_status_override = None;
+        let mut buffer = Buffer::empty(Rect::new(0, 0, 100, 1));
+        app.working_line().render(buffer.area, &mut buffer);
+        let line = buffer_row_cells(&buffer, 0)
+            .iter()
+            .map(|cell| cell.symbol.as_str())
+            .collect::<String>();
+        assert!(line.contains("Working"));
+        assert!(!line.contains("Inspect recent changes"));
+    }
+
+    fn spans_text(spans: &[Span<'_>]) -> String {
+        spans
+            .iter()
+            .map(|span| span.content.as_ref())
+            .collect::<String>()
+    }
+
+    #[test]
     fn reasoning_token_count_is_extracted_from_provider_metadata() {
         let metadata = serde_json::json!({
             "usage": {
@@ -8664,6 +9269,77 @@ mod tests {
         assert!(usage.hit_test(120, 0, 119));
         assert!(!usage.hit_test(120, 0, 100));
         assert!(!usage.hit_test(120, 1, 119));
+    }
+
+    #[test]
+    fn context_window_breakdown_segments_conversation_from_prompt_remainder() {
+        let theme = Theme::for_dark_background(true);
+        let breakdown = ContextWindowBreakdown {
+            system_tokens: 4_000,
+            skills_tokens: 1_000,
+            retrieved_tokens: 2_000,
+            context_total_tokens: 7_000,
+            prompt_tokens: 20_000,
+            output_tokens: 3_000,
+            ..Default::default()
+        };
+
+        let segments = breakdown.segments(
+            ContextWindowCounter {
+                used_tokens: 23_000,
+                max_tokens: 100_000,
+                hovered: true,
+            },
+            theme,
+        );
+        let labels = segments
+            .iter()
+            .map(|segment| (segment.label, segment.tokens))
+            .collect::<Vec<_>>();
+
+        assert_eq!(
+            labels,
+            vec![
+                ("System / context", 4_000),
+                ("Skills", 1_000),
+                ("Retrieved context", 2_000),
+                ("Conversation", 13_000),
+                ("Output", 3_000),
+            ]
+        );
+    }
+
+    #[test]
+    fn context_window_popup_area_sits_top_right_and_clamps() {
+        assert_eq!(
+            context_window_popup_area(Rect::new(0, 0, 120, 40)),
+            Some(Rect::new(66, 0, 54, 14))
+        );
+        assert_eq!(
+            context_window_popup_area(Rect::new(5, 2, 30, 8)),
+            Some(Rect::new(5, 2, 30, 8))
+        );
+        assert_eq!(context_window_popup_area(Rect::new(0, 0, 20, 8)), None);
+    }
+
+    #[test]
+    fn context_block_categories_map_cursor_like_sources() {
+        assert_eq!(
+            context_block_category("Instruction"),
+            ContextBreakdownCategory::System
+        );
+        assert_eq!(
+            context_block_category("RetrievedDocument"),
+            ContextBreakdownCategory::Retrieved
+        );
+        assert_eq!(
+            context_block_category("skill:index"),
+            ContextBreakdownCategory::Skills
+        );
+        assert_eq!(
+            context_block_category("ToolAvailability"),
+            ContextBreakdownCategory::OtherContext
+        );
     }
 
     #[test]
@@ -9371,6 +10047,72 @@ mod tests {
             items.get(9),
             Some(ProviderMenuItem::MarketplacesSettings)
         ));
+    }
+
+    #[tokio::test]
+    async fn model_picker_selection_updates_global_default_and_current_thread() {
+        let server = Arc::new(AppServer::new(Arc::new(
+            Runtime::fake().expect("fake runtime"),
+        )));
+        let client = LocalAppClient::new(server.clone());
+        let started: roder_protocol::ThreadStartResult = decode_response(
+            client
+                .send_request(JsonRpcRequest {
+                    jsonrpc: "2.0".to_string(),
+                    id: Some(serde_json::json!("thread/start")),
+                    method: "thread/start".to_string(),
+                    params: Some(serde_json::json!({
+                        "model": "mock",
+                        "modelProvider": "mock",
+                        "cwd": "/tmp",
+                        "ephemeral": false
+                    })),
+                })
+                .await,
+        )
+        .unwrap();
+        let mut app = test_app();
+        app.client = client.clone();
+        app.thread_id = started.thread.id.clone();
+
+        app.select_provider_model_params(ProviderSelectParams {
+            provider: "mock".to_string(),
+            model: Some("alternate-mock-model".to_string()),
+            reasoning: Some("none".to_string()),
+            thread_id: Some(app.focused_thread_id().to_string()),
+        })
+        .await;
+
+        let initialized: roder_protocol::InitializeResult = decode_response(
+            client
+                .send_request(JsonRpcRequest {
+                    jsonrpc: "2.0".to_string(),
+                    id: Some(serde_json::json!("initialize")),
+                    method: "initialize".to_string(),
+                    params: None,
+                })
+                .await,
+        )
+        .unwrap();
+        assert_eq!(initialized.provider, "mock");
+        assert_eq!(initialized.model, "alternate-mock-model");
+
+        let next_thread: roder_protocol::ThreadStartResult = decode_response(
+            client
+                .send_request(JsonRpcRequest {
+                    jsonrpc: "2.0".to_string(),
+                    id: Some(serde_json::json!("thread/start-next")),
+                    method: "thread/start".to_string(),
+                    params: Some(serde_json::json!({
+                        "cwd": "/tmp",
+                        "ephemeral": false
+                    })),
+                })
+                .await,
+        )
+        .unwrap();
+        assert_eq!(next_thread.model_provider, "mock");
+        assert_eq!(next_thread.model, "alternate-mock-model");
     }
 
     #[test]

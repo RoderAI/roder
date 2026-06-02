@@ -35,17 +35,12 @@ pub enum Freshness {
     Year,
 }
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum ResponseFormat {
+    #[default]
     Concise,
     Detailed,
-}
-
-impl Default for ResponseFormat {
-    fn default() -> Self {
-        Self::Concise
-    }
 }
 
 impl ResponseFormat {

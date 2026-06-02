@@ -3,17 +3,12 @@ use serde_json::{Value, json};
 
 const CONCISE_LINE_CHARS: usize = 240;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum ResponseFormat {
+    #[default]
     Concise,
     Detailed,
-}
-
-impl Default for ResponseFormat {
-    fn default() -> Self {
-        Self::Concise
-    }
 }
 
 impl ResponseFormat {

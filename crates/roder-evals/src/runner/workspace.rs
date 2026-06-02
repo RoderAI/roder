@@ -77,7 +77,7 @@ pub(super) fn grade_expected_evidence(
                 );
             }
             if let Some(max_bytes) = expected.max_bytes {
-                let actual = contents.as_bytes().len() as u64;
+                let actual = contents.len() as u64;
                 if actual > max_bytes {
                     anyhow::bail!(
                         "{} was {actual} bytes, exceeding maxBytes {max_bytes}",

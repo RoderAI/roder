@@ -1,3 +1,4 @@
+use std::cmp::Reverse;
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
@@ -79,7 +80,7 @@ pub fn write_eval_report_files(report: &EvalSuiteReport, output_dir: &Path) -> a
 pub fn list_eval_reports(output_dir: &Path) -> anyhow::Result<Vec<EvalReportSummary>> {
     let mut reports = Vec::new();
     collect_eval_reports(output_dir, output_dir, &mut reports)?;
-    reports.sort_by(|left, right| right.generated_at.cmp(&left.generated_at));
+    reports.sort_by_key(|report| Reverse(report.generated_at));
     Ok(reports)
 }
 
@@ -148,7 +149,7 @@ pub(super) fn eval_metrics(
             RoderEvent::InferenceStarted(started) => started.deadline_remaining_seconds,
             _ => None,
         })
-        .last()
+        .next_back()
         .unwrap_or(0);
     let total_tokens = events
         .iter()
@@ -216,7 +217,7 @@ pub(super) fn eval_metrics(
             RoderEvent::TaskLedgerUpdated(updated) => Some(updated.tasks.len() as u64),
             _ => None,
         })
-        .last()
+        .next_back()
         .unwrap_or(0);
     let task_ledger_completed = events
         .iter()
@@ -224,7 +225,7 @@ pub(super) fn eval_metrics(
             RoderEvent::TaskLedgerUpdated(updated) => Some(updated.completed_count),
             _ => None,
         })
-        .last()
+        .next_back()
         .unwrap_or(0);
     let verification_required = events
         .iter()
@@ -259,7 +260,7 @@ pub(super) fn eval_metrics(
             RoderEvent::VerificationRequired(required) => Some(required.open_gaps.len() as u64),
             _ => None,
         })
-        .last()
+        .next_back()
         .unwrap_or(0);
     let mut metrics = vec![
         EvalMetric {

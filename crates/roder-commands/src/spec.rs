@@ -76,12 +76,9 @@ fn preferred_schema_text_field(schema: &Value) -> Option<&str> {
     if properties.len() == 1 {
         return properties.keys().next().map(String::as_str);
     }
-    for field in ["question", "query", "prompt", "task"] {
-        if properties.contains_key(field) {
-            return Some(field);
-        }
-    }
-    None
+    ["question", "query", "prompt", "task"]
+        .into_iter()
+        .find(|field| properties.contains_key(*field))
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

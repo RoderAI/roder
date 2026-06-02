@@ -411,7 +411,7 @@ fn apply_patch_renders_streaming_inline_diff() {
     );
     timeline.record_tool_delta(
         "call_1",
-        "{\"patch\":\"*** Begin Patch\\n*** Update File: src/lib.rs\\n@@\\n-old\\n+new",
+        "{\"patch\":\"*** Begin Patch\\n*** Update File: src/lib.rs\\n@@\\n-let old = call();\\n+let new = format!(\\\\\\\"value\\\\\\\");",
     );
 
     let render = timeline.render(Theme::for_dark_background(true), Rect::new(0, 0, 100, 20));
@@ -433,8 +433,12 @@ fn apply_patch_renders_streaming_inline_diff() {
             .any(|line| line.contains("src/lib.rs") && line.contains("+1") && line.contains("-1"))
     );
     assert!(lines.iter().any(|line| line == "     ⋮"));
-    assert!(lines.iter().any(|line| line == "    1 -old"));
-    assert!(lines.iter().any(|line| line == "    1 +new"));
+    assert!(lines.iter().any(|line| line == "    1 -let old = call();"));
+    assert!(
+        lines
+            .iter()
+            .any(|line| line.contains("+let new = format!") && line.contains("value"))
+    );
 
     let theme = Theme::for_dark_background(true);
     let removed = render
@@ -448,6 +452,15 @@ fn apply_patch_renders_streaming_inline_diff() {
             .spans
             .iter()
             .any(|span| span.content.as_ref() == "old"
+                && span.style.fg == Some(theme.text)
+                && span.style.bg == Some(theme.diff_removed_bg))
+    );
+    assert!(
+        removed
+            .spans
+            .iter()
+            .any(|span| span.content.as_ref() == "let"
+                && span.style.fg == Some(theme.accent)
                 && span.style.bg == Some(theme.diff_removed_bg))
     );
     let added = render
@@ -456,11 +469,14 @@ fn apply_patch_renders_streaming_inline_diff() {
         .iter()
         .find(|line| line.spans.iter().any(|span| span.content.as_ref() == "new"))
         .expect("added diff line should be rendered");
-    assert!(
-        added.spans.iter().any(
-            |span| span.content.as_ref() == "new" && span.style.bg == Some(theme.diff_added_bg)
-        )
-    );
+    assert!(added.spans.iter().any(|span| span.content.as_ref() == "new"
+        && span.style.fg == Some(theme.text)
+        && span.style.bg == Some(theme.diff_added_bg)));
+    assert!(added.spans.iter().any(|span| {
+        span.content.as_ref() == "let"
+            && span.style.fg == Some(theme.accent)
+            && span.style.bg == Some(theme.diff_added_bg)
+    }));
 }
 
 #[test]

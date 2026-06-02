@@ -21,9 +21,10 @@ pub const FINAL_RUNS_DIR: &str = "final_runs";
 pub const FINAL_LOG_FILE: &str = "final_script_log.txt";
 pub const SELF_REFLECT_FILE: &str = "self_reflect_result.json";
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum WebwrightMode {
+    #[default]
     Run,
     Craft,
 }
@@ -42,12 +43,6 @@ impl WebwrightMode {
             "craft" | "cli" | "tool" => Ok(Self::Craft),
             other => bail!("unsupported Webwright mode {other:?}; expected run or craft"),
         }
-    }
-}
-
-impl Default for WebwrightMode {
-    fn default() -> Self {
-        Self::Run
     }
 }
 

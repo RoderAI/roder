@@ -235,14 +235,14 @@ fn summarize_events(events: &[RoderEvent], outcome: &EvalOutcome) -> Reliability
                     summary.unknown_errors += 1;
                 }
             }
-            RoderEvent::InferenceEventReceived(received) => {
-                if provider_metadata_is_retry(&received.event) {
-                    summary.retry_attempts += 1;
-                    *summary
-                        .error_class_counts
-                        .entry(error_class_key(ReliabilityErrorClass::ProviderError))
-                        .or_insert(0) += 1;
-                }
+            RoderEvent::InferenceEventReceived(received)
+                if provider_metadata_is_retry(&received.event) =>
+            {
+                summary.retry_attempts += 1;
+                *summary
+                    .error_class_counts
+                    .entry(error_class_key(ReliabilityErrorClass::ProviderError))
+                    .or_insert(0) += 1;
             }
             _ => {}
         }

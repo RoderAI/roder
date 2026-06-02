@@ -7,6 +7,7 @@ use serde_json::Value;
 
 use super::super::Theme;
 use super::ToolTimelineEntry;
+use crate::syntax::{SyntaxTheme, highlight_code, language_for_path};
 
 const MAX_PATCH_PREVIEW_LINES: usize = 80;
 const LINE_NUMBER_WIDTH: usize = 4;
@@ -184,6 +185,7 @@ fn render_diff_lines(preview: &ToolDiffPreview, theme: Theme, width: u16) -> Vec
         }
         lines.push(file_header_line(file, theme, width));
         rendered += 1;
+        let language = language_for_path(std::path::Path::new(&file.path));
 
         let mut before_line = 1usize;
         let mut after_line = 1usize;
@@ -196,6 +198,7 @@ fn render_diff_lines(preview: &ToolDiffPreview, theme: Theme, width: u16) -> Vec
                 &mut before_line,
                 &mut after_line,
                 theme,
+                language,
             ));
             rendered += 1;
         }
@@ -253,6 +256,7 @@ fn diff_line_row(
     before_line: &mut usize,
     after_line: &mut usize,
     theme: Theme,
+    language: Option<crate::syntax::SyntaxLanguage>,
 ) -> Line<'static> {
     match line.kind {
         DiffPreviewLineKind::Hunk => Line::from(vec![
@@ -264,25 +268,50 @@ fn diff_line_row(
             let number = *before_line;
             *before_line += 1;
             *after_line += 1;
+            let style = theme.text();
             diff_content_line(
                 number,
                 " ",
                 &line.text,
-                theme.diff_line_number(),
-                theme.text(),
+                Style::default().fg(theme.diff_line_number),
+                style,
+                theme,
+                language,
             )
         }
         DiffPreviewLineKind::Added => {
             let number = *after_line;
             *after_line += 1;
-            let style = theme.diff_added();
-            diff_content_line(number, "+", &line.text, style, style)
+            let style = Style::default().fg(theme.text).bg(theme.diff_added_bg);
+            let gutter_style = Style::default()
+                .fg(theme.diff_line_number)
+                .bg(theme.diff_added_bg);
+            diff_content_line(
+                number,
+                "+",
+                &line.text,
+                gutter_style,
+                style,
+                theme,
+                language,
+            )
         }
         DiffPreviewLineKind::Removed => {
             let number = *before_line;
             *before_line += 1;
-            let style = theme.diff_removed();
-            diff_content_line(number, "-", &line.text, style, style)
+            let style = Style::default().fg(theme.text).bg(theme.diff_removed_bg);
+            let gutter_style = Style::default()
+                .fg(theme.diff_line_number)
+                .bg(theme.diff_removed_bg);
+            diff_content_line(
+                number,
+                "-",
+                &line.text,
+                gutter_style,
+                style,
+                theme,
+                language,
+            )
         }
     }
 }
@@ -293,15 +322,37 @@ fn diff_content_line(
     text: &str,
     gutter_style: Style,
     body_style: Style,
+    theme: Theme,
+    language: Option<crate::syntax::SyntaxLanguage>,
 ) -> Line<'static> {
-    Line::from(vec![
+    let mut spans = vec![
         Span::styled(
             format!(" {:>width$} ", number, width = LINE_NUMBER_WIDTH),
             gutter_style,
         ),
         Span::styled(marker.to_string(), body_style),
-        Span::styled(text.to_string(), body_style),
-    ])
+    ];
+    spans.extend(highlight_code(
+        text,
+        language,
+        syntax_theme_from_style(body_style, theme),
+    ));
+    Line::from(spans)
+}
+
+fn syntax_theme_from_style(style: Style, theme: Theme) -> SyntaxTheme {
+    let base = theme.text;
+    SyntaxTheme {
+        base,
+        keyword: theme.accent,
+        string: theme.commentary,
+        number: theme.commentary,
+        comment: theme.muted,
+        ty: theme.accent_soft,
+        function: base,
+        mac: theme.commentary,
+        bg: style.bg,
+    }
 }
 
 fn hunk_text(text: &str) -> String {

@@ -261,15 +261,18 @@ fn validate_policy_mode(mode: PolicyMode, request: &SubagentRequest) -> anyhow::
         .iter()
         .flatten()
         .chain(request.allowed_tools.iter().flatten());
-    if tool_names.into_iter().any(is_state_changing_tool) {
+    if tool_names
+        .into_iter()
+        .any(|tool| is_state_changing_tool(tool))
+    {
         bail!("plan mode blocks editor, runner, write, and process subagent tools");
     }
     Ok(())
 }
 
-fn is_state_changing_tool(tool: &String) -> bool {
+fn is_state_changing_tool(tool: &str) -> bool {
     matches!(
-        tool.as_str(),
+        tool,
         "Shell"
             | "shell"
             | "exec_command"

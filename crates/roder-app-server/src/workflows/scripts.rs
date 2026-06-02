@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use roder_api::dynamic_workflows::{WorkflowScript, WorkflowScriptSourceKind};
 use roder_commands::{
@@ -108,7 +108,7 @@ fn find_script(
         .ok_or_else(|| anyhow::anyhow!("unknown workflow script"))
 }
 
-fn scan_root(root: &PathBuf, source: CommandSource) -> anyhow::Result<Vec<WorkflowScript>> {
+fn scan_root(root: &Path, source: CommandSource) -> anyhow::Result<Vec<WorkflowScript>> {
     scan_workflow_directory(root, source)?
         .into_iter()
         .map(script_from_command)

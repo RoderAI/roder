@@ -153,16 +153,11 @@ impl Default for DefaultRegistryConfig {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub enum SessionStoreConfig {
+    #[default]
     Jsonl,
     Postgres(PostgresSessionConfig),
-}
-
-impl Default for SessionStoreConfig {
-    fn default() -> Self {
-        Self::Jsonl
-    }
 }
 
 #[derive(Debug, Clone)]
@@ -586,11 +581,8 @@ impl InferenceEngine for CodexOAuthInferenceEngine {
             anyhow::bail!("codex auth is missing; run `roder auth login codex`")
         };
         let mut headers = vec![
-            ("originator".to_string(), "codex_cli_rs".to_string()),
-            (
-                "User-Agent".to_string(),
-                "codex_cli_rs/0.1.0 roder".to_string(),
-            ),
+            ("originator".to_string(), "roder".to_string()),
+            ("User-Agent".to_string(), "roder/0.1.0".to_string()),
         ];
         if let Some(account_id) = account_id {
             headers.push(("ChatGPT-Account-Id".to_string(), account_id));
