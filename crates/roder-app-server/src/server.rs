@@ -804,7 +804,13 @@ impl AppServer {
             }
             "automations/status" => self.handle_automations_status().await,
             "commands/list" => self.handle_commands_list().await,
-            "skills/list" => self.handle_skills_list().await,
+            "skills/list" => {
+                self.decode_and(
+                    req.params,
+                    |p| async move { self.handle_skills_list(p).await },
+                )
+                .await
+            }
             "skills/read" => {
                 self.decode_and(
                     req.params,

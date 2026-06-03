@@ -1,5 +1,7 @@
-use roder_api::thread::{ThreadItem, ThreadItemTurnRecord, project_thread_item_events};
-use roder_api::transcript::InputImage;
+use roder_api::thread::{
+    project_thread_item_events, ThreadItem, ThreadItemStatus, ThreadItemTurnRecord,
+};
+use roder_api::transcript::{InputImage, TranscriptItem};
 use roder_protocol::{Thread, ThreadStatus, Turn, TurnInputItem};
 
 pub(crate) fn protocol_thread_from_metadata(
@@ -63,11 +65,17 @@ pub(crate) fn protocol_turns_from_snapshot(
         .turns
         .iter()
         .map(|record| {
-            let items = item_turns
+            let projected_items = item_turns
                 .iter()
                 .find(|turn| turn.turn_id == record.turn_id)
-                .map(|turn| turn.items.clone())
-                .unwrap_or_default();
+                .map(|turn| turn.items.clone());
+            let items = if record.completed_at.is_some() {
+                thread_items_from_transcript_items(&record.turn_id, &record.items)
+            } else {
+                projected_items.unwrap_or_else(|| {
+                    thread_items_from_transcript_items(&record.turn_id, &record.items)
+                })
+            };
             protocol_turn_from_items(record, items)
         })
         .collect::<Vec<_>>();
@@ -80,6 +88,81 @@ pub(crate) fn protocol_turns_from_snapshot(
         turns.push(protocol_turn_from_item_turn(item_turn));
     }
     turns
+}
+
+fn thread_items_from_transcript_items(turn_id: &str, items: &[TranscriptItem]) -> Vec<ThreadItem> {
+    items
+        .iter()
+        .enumerate()
+        .map(|(index, item)| thread_item_from_transcript_item(turn_id, index, item))
+        .collect()
+}
+
+fn thread_item_from_transcript_item(
+    turn_id: &str,
+    index: usize,
+    item: &TranscriptItem,
+) -> ThreadItem {
+    match item {
+        TranscriptItem::UserMessage(message) => ThreadItem::UserMessage {
+            id: format!("{turn_id}-user-{index}"),
+            text: message.text.clone(),
+            images: message.images.clone(),
+            status: Some(ThreadItemStatus::Completed),
+        },
+        TranscriptItem::AssistantMessage(message) => ThreadItem::AgentMessage {
+            id: format!(
+                "{turn_id}-agent-{}-{index}",
+                message.phase.as_deref().unwrap_or("final_answer")
+            ),
+            text: message.text.clone(),
+            phase: message.phase.clone(),
+            status: Some(ThreadItemStatus::Completed),
+        },
+        TranscriptItem::ReasoningSummary(summary) => ThreadItem::Reasoning {
+            id: format!("{turn_id}-reasoning-{index}"),
+            summary: Vec::new(),
+            content: vec![summary.text.clone()],
+            status: Some(ThreadItemStatus::Completed),
+        },
+        TranscriptItem::ToolCall(call) => ThreadItem::ToolExecution {
+            id: call.id.clone(),
+            tool_call_id: call.id.clone(),
+            tool_name: call.name.clone(),
+            status: ThreadItemStatus::InProgress,
+            input: serde_json::from_str(&call.arguments).ok(),
+            output: None,
+            error: None,
+        },
+        TranscriptItem::ToolResult(result) => ThreadItem::ToolExecution {
+            id: result.id.clone(),
+            tool_call_id: result.id.clone(),
+            tool_name: result.name.clone().unwrap_or_else(|| "tool".to_string()),
+            status: if result.is_error {
+                ThreadItemStatus::Failed
+            } else {
+                ThreadItemStatus::Completed
+            },
+            input: result.display_payload.clone(),
+            output: (!result.is_error).then(|| result.result.clone()),
+            error: result.is_error.then(|| result.result.clone()),
+        },
+        TranscriptItem::ContextCompaction(compaction) => ThreadItem::Compaction {
+            id: format!("{turn_id}-compaction-{index}"),
+            summary: compaction.summary.clone(),
+            status: Some(ThreadItemStatus::Completed),
+        },
+        TranscriptItem::Error(error) => ThreadItem::Error {
+            id: format!("{turn_id}-error-{index}"),
+            message: error.message.clone(),
+            status: Some(ThreadItemStatus::Failed),
+        },
+        other => ThreadItem::Raw {
+            id: format!("{turn_id}-item-{index}"),
+            payload: serde_json::to_value(other).unwrap_or(serde_json::Value::Null),
+            status: Some(ThreadItemStatus::Completed),
+        },
+    }
 }
 
 fn protocol_turn_from_item_turn(record: &ThreadItemTurnRecord) -> Turn {
@@ -151,8 +234,9 @@ pub(crate) fn protocol_turn_images(input: &[TurnInputItem]) -> Vec<InputImage> {
 mod tests {
     use super::*;
     use roder_api::thread::{
-        ThreadItemDelta, ThreadItemEvent, ThreadItemEventKind, ThreadSnapshot,
+        ThreadItemDelta, ThreadItemEvent, ThreadItemEventKind, ThreadSnapshot, TurnRecord,
     };
+    use roder_api::transcript::{AssistantMessage, ToolCallRecord, UserMessage};
     use roder_protocol::{Item, ThreadItemStatus};
     use time::OffsetDateTime;
 
@@ -196,5 +280,84 @@ mod tests {
             }
             other => panic!("expected active reasoning item, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn completed_snapshot_uses_transcript_rows_to_preserve_intermediary_commentary() {
+        let timestamp = OffsetDateTime::UNIX_EPOCH;
+        let turns = protocol_turns_from_snapshot(&ThreadSnapshot {
+            metadata: None,
+            events: Vec::new(),
+            turns: vec![TurnRecord {
+                thread_id: "thread-1".to_string(),
+                turn_id: "turn-1".to_string(),
+                items: vec![
+                    TranscriptItem::UserMessage(UserMessage::text("inspect")),
+                    TranscriptItem::AssistantMessage(AssistantMessage {
+                        text: "First commentary.".to_string(),
+                        phase: Some("commentary".to_string()),
+                    }),
+                    TranscriptItem::ToolCall(ToolCallRecord {
+                        id: "tool-1".to_string(),
+                        name: "read_file".to_string(),
+                        arguments: r#"{"path":"README.md"}"#.to_string(),
+                    }),
+                    TranscriptItem::AssistantMessage(AssistantMessage {
+                        text: "Second commentary.".to_string(),
+                        phase: Some("commentary".to_string()),
+                    }),
+                ],
+                created_at: timestamp,
+                completed_at: Some(timestamp),
+                usage: None,
+            }],
+            item_events: vec![
+                ThreadItemEvent {
+                    seq: 1,
+                    event_id: "item-event-1".to_string(),
+                    thread_id: "thread-1".to_string(),
+                    turn_id: "turn-1".to_string(),
+                    timestamp,
+                    event: ThreadItemEventKind::ItemDelta {
+                        item_id: "turn-1-agent-commentary".to_string(),
+                        delta: ThreadItemDelta::AgentMessageText {
+                            delta: "First commentary.".to_string(),
+                            phase: Some("commentary".to_string()),
+                        },
+                    },
+                },
+                ThreadItemEvent {
+                    seq: 2,
+                    event_id: "item-event-2".to_string(),
+                    thread_id: "thread-1".to_string(),
+                    turn_id: "turn-1".to_string(),
+                    timestamp,
+                    event: ThreadItemEventKind::ItemDelta {
+                        item_id: "turn-1-agent-commentary".to_string(),
+                        delta: ThreadItemDelta::AgentMessageText {
+                            delta: "Second commentary.".to_string(),
+                            phase: Some("commentary".to_string()),
+                        },
+                    },
+                },
+            ],
+            extension_states: Vec::new(),
+        });
+
+        assert_eq!(turns.len(), 1);
+        let commentary = turns[0]
+            .items
+            .iter()
+            .filter_map(|item| match item {
+                Item::AgentMessage { text, phase, .. }
+                    if phase.as_deref() == Some("commentary") =>
+                {
+                    Some(text.as_str())
+                }
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+
+        assert_eq!(commentary, vec!["First commentary.", "Second commentary."]);
     }
 }

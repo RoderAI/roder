@@ -1265,16 +1265,16 @@ impl TimelineState {
         let mut lines = Vec::new();
         let mut row_items = Vec::new();
         let mut visual_row = 0;
-        let visible_tools = self.visible_tool_indices();
-        let hidden_tool_count = self.hidden_tool_count();
-        let overflow_insert_index = visible_tools.first().copied();
+        let tool_visibility = self.tool_visibility();
+        let visible_tools = &tool_visibility.visible;
+        let mut overflow_insertions = tool_visibility.overflow_insertions.iter().peekable();
         let latest_reasoning_index = self.latest_reasoning_index();
         let mut last_timestamp = self.turn_started_at;
         for (index, item) in self.items.iter().enumerate() {
-            if Some(index) == overflow_insert_index && hidden_tool_count > 0 {
+            while let Some(overflow) = overflow_insertions.next_if(|overflow| overflow.0 == index) {
                 let line_start = lines.len();
                 render::push_tool_overflow_line(
-                    hidden_tool_count,
+                    overflow.1,
                     self.focus == TimelineFocus::Timeline
                         && self.selected == Some(TOOL_OVERFLOW_INDEX),
                     theme,
@@ -1326,7 +1326,7 @@ impl TimelineState {
                 map_rendered_lines(&lines, line_start, visual_row, width, index, &mut row_items);
             if self.should_separate_visible_item(
                 index,
-                &visible_tools,
+                visible_tools,
                 latest_reasoning_index,
                 theme.hide_thinking,
             ) {
@@ -1341,30 +1341,47 @@ impl TimelineState {
         (lines, row_items, visual_row)
     }
 
-    fn visible_tool_indices(&self) -> Vec<usize> {
-        let tools = self
-            .items
-            .iter()
-            .enumerate()
-            .filter_map(|(index, item)| {
-                matches!(item.kind, TimelineItemKind::Tool(_)).then_some(index)
-            })
-            .collect::<Vec<_>>();
-        if self.show_all_tools || tools.len() <= TOOL_COLLAPSE_LIMIT {
-            return tools;
+    fn tool_visibility(&self) -> ToolVisibility {
+        if self.show_all_tools {
+            let visible = self
+                .items
+                .iter()
+                .enumerate()
+                .filter_map(|(index, item)| {
+                    matches!(item.kind, TimelineItemKind::Tool(_)).then_some(index)
+                })
+                .collect();
+            return ToolVisibility {
+                visible,
+                overflow_insertions: Vec::new(),
+            };
         }
-        tools[tools.len() - TOOL_COLLAPSE_LIMIT..].to_vec()
+
+        let mut visibility = ToolVisibility::default();
+        let mut group = Vec::new();
+        for (index, item) in self.items.iter().enumerate() {
+            if matches!(item.kind, TimelineItemKind::Assistant(_)) {
+                push_collapsed_tool_group(&mut visibility, &group);
+                group.clear();
+            }
+            if matches!(item.kind, TimelineItemKind::Tool(_)) {
+                group.push(index);
+            }
+        }
+        push_collapsed_tool_group(&mut visibility, &group);
+        visibility
+    }
+
+    fn visible_tool_indices(&self) -> Vec<usize> {
+        self.tool_visibility().visible
     }
 
     fn hidden_tool_count(&self) -> usize {
-        if self.show_all_tools {
-            return 0;
-        }
-        self.items
+        self.tool_visibility()
+            .overflow_insertions
             .iter()
-            .filter(|item| matches!(item.kind, TimelineItemKind::Tool(_)))
-            .count()
-            .saturating_sub(TOOL_COLLAPSE_LIMIT)
+            .map(|(_, hidden_count)| hidden_count)
+            .sum()
     }
 
     fn latest_reasoning_index(&self) -> Option<usize> {
@@ -1415,6 +1432,27 @@ impl TimelineState {
                 Some(candidate)
             })
     }
+}
+
+#[derive(Debug, Default, Clone, Eq, PartialEq)]
+struct ToolVisibility {
+    visible: Vec<usize>,
+    overflow_insertions: Vec<(usize, usize)>,
+}
+
+fn push_collapsed_tool_group(visibility: &mut ToolVisibility, group: &[usize]) {
+    if group.len() <= TOOL_COLLAPSE_LIMIT {
+        visibility.visible.extend_from_slice(group);
+        return;
+    }
+
+    let visible_start = group.len() - TOOL_COLLAPSE_LIMIT;
+    visibility
+        .overflow_insertions
+        .push((group[visible_start], visible_start));
+    visibility
+        .visible
+        .extend_from_slice(&group[visible_start..]);
 }
 
 impl ToolTimelineTool {

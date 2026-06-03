@@ -190,6 +190,51 @@ fn timeline_collapses_older_tools_behind_more_tools_row() {
 }
 
 #[test]
+fn timeline_collapses_tools_between_assistant_message_groups() {
+    let mut timeline = TimelineState::default();
+    timeline.push_assistant_delta("First commentary.", Some("commentary".to_string()));
+    for index in 0..8 {
+        timeline.record_tool_requested(
+            format!("first_call_{index}"),
+            ToolTimelineEntry::new("read_file", format!(r#"{{"path":"first-{index}.rs"}}"#)),
+        );
+    }
+    timeline.push_assistant_delta("Second commentary.", Some("commentary".to_string()));
+    for index in 0..8 {
+        timeline.record_tool_requested(
+            format!("second_call_{index}"),
+            ToolTimelineEntry::new("read_file", format!(r#"{{"path":"second-{index}.rs"}}"#)),
+        );
+    }
+
+    let lines = rendered_lines(&mut timeline);
+    let first_commentary_row = lines
+        .iter()
+        .position(|line| line == "First commentary.")
+        .expect("first commentary should render");
+    let second_commentary_row = lines
+        .iter()
+        .position(|line| line == "Second commentary.")
+        .expect("second commentary should render");
+    let more_rows = lines
+        .iter()
+        .enumerate()
+        .filter_map(|(index, line)| line.contains("› 2 more").then_some(index))
+        .collect::<Vec<_>>();
+
+    assert_eq!(more_rows.len(), 2);
+    assert!(more_rows[0] > first_commentary_row);
+    assert!(more_rows[0] < second_commentary_row);
+    assert!(more_rows[1] > second_commentary_row);
+    assert!(!lines.iter().any(|line| line.contains("first-0.rs")));
+    assert!(!lines.iter().any(|line| line.contains("first-1.rs")));
+    assert!(lines.iter().any(|line| line.contains("first-2.rs")));
+    assert!(!lines.iter().any(|line| line.contains("second-0.rs")));
+    assert!(!lines.iter().any(|line| line.contains("second-1.rs")));
+    assert!(lines.iter().any(|line| line.contains("second-2.rs")));
+}
+
+#[test]
 fn clicking_more_tools_row_reveals_all_tools() {
     let mut timeline = TimelineState::default();
     for index in 0..8 {

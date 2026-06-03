@@ -1,15 +1,38 @@
 use roder_api::skills::{Skill, SkillDescriptor, SkillSelector};
 use roder_protocol::{
-    JsonRpcError, SkillsListResult, SkillsReadParams, SkillsReadResult, SkillsSetEnabledParams,
-    SkillsSetExposureParams, SkillsUpdateResult,
+    JsonRpcError, SkillsListParams, SkillsListResult, SkillsReadParams, SkillsReadResult,
+    SkillsSetEnabledParams, SkillsSetExposureParams, SkillsUpdateResult,
 };
 use roder_skills::SkillConfigRule;
 
 use crate::server::AppServer;
 
 impl AppServer {
-    pub(crate) async fn handle_skills_list(&self) -> Result<serde_json::Value, JsonRpcError> {
-        let registry = self.runtime.skills_snapshot().await;
+    pub(crate) async fn handle_skills_list(
+        &self,
+        params: SkillsListParams,
+    ) -> Result<serde_json::Value, JsonRpcError> {
+        let registry = if let Some(workspace_id) = params.workspace_id.as_deref() {
+            let runtime_cfg = self.runtime.status().await;
+            let resolved = self
+                .workspaces
+                .resolve_root(
+                    runtime_cfg.workspace.clone(),
+                    workspace_id,
+                    params.root_id.as_deref(),
+                )
+                .await?;
+            let cwd = crate::workspaces::validate_cwd(&resolved.root, params.cwd.clone())?;
+            let skills_cfg = roder_config::load_config()
+                .map_err(internal_error)?
+                .skills
+                .unwrap_or_default();
+            let registry = roder_config::build_skills_registry(cwd, Some(&skills_cfg));
+            self.runtime.set_skills(registry.clone()).await;
+            registry
+        } else {
+            self.runtime.skills_snapshot().await
+        };
         json_result(SkillsListResult {
             skills: registry
                 .skills()

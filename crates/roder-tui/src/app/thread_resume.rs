@@ -280,6 +280,8 @@ mod tests {
                 active_flags: Vec::new(),
             },
             cwd: "/tmp".to_string(),
+            workspace_id: None,
+            root_id: None,
             name: None,
             usage: None,
             turns: Some(vec![Turn {
