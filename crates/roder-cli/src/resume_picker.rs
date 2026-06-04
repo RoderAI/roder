@@ -711,6 +711,8 @@ mod tests {
                 active_flags: Vec::new(),
             },
             cwd: workspace.unwrap_or("/tmp").to_string(),
+            workspace_id: None,
+            root_id: None,
             name: title.map(str::to_string),
             turns: Some(vec![Turn {
                 id: "turn-a".to_string(),

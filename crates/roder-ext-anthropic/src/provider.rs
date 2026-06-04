@@ -4,7 +4,7 @@ use roder_api::inference::{
     AgentInferenceRequest, CompletionMetadata, InferenceCapabilities, InferenceEngine,
     InferenceEvent, InferenceEventStream, InferenceProviderContext, InferenceProviderMetadata,
     InferenceTurnContext, MessageDelta, ModelDescriptor, ProviderAuthType, TokenUsage,
-    ToolCallCompleted,
+    ToolCallCompleted, ToolSearchProviderVariant,
 };
 use roder_api::reliability::{
     ReliabilityRequestPolicy, provider_retry_delay_ms, provider_retry_metadata,
@@ -53,21 +53,7 @@ impl AnthropicEngine {
             body["output_config"] = json!({ "effort": anthropic_effort(level) });
         }
         if !request.tools.is_empty() {
-            body["tools"] = json!(
-                request
-                    .tools
-                    .iter()
-                    .map(|tool| {
-                        let tool =
-                            tool.normalized_for_model(roder_api::ToolSchemaPolicy::warning());
-                        json!({
-                            "name": tool.name,
-                            "description": tool.description,
-                            "input_schema": tool.parameters,
-                        })
-                    })
-                    .collect::<Vec<_>>()
-            );
+            body["tools"] = json!(anthropic_tools(request));
             body["tool_choice"] = anthropic_tool_choice(&request.tool_choice);
         }
         body
@@ -90,6 +76,7 @@ impl InferenceEngine for AnthropicEngine {
             image_input: false,
             prompt_cache: true,
             provider_metadata: true,
+            tool_search: true,
         }
     }
 
@@ -278,6 +265,51 @@ fn anthropic_tool_choice(choice: &roder_api::tools::ToolChoice) -> Value {
     }
 }
 
+fn anthropic_tools(request: &AgentInferenceRequest) -> Vec<Value> {
+    let mut tools = Vec::new();
+    if anthropic_provider_native_tool_search(request) {
+        tools.push(json!({
+            "type": anthropic_tool_search_type(request.runtime.tool_search.provider_variant),
+            "name": "tool_search"
+        }));
+    }
+    tools.extend(request.tools.iter().map(|tool| {
+        let tool = tool.normalized_for_model(roder_api::ToolSchemaPolicy::warning());
+        let mut value = json!({
+            "name": tool.name,
+            "description": tool.description,
+            "input_schema": tool.parameters,
+        });
+        if anthropic_provider_native_tool_search(request) {
+            value["defer_loading"] = json!(true);
+        }
+        value
+    }));
+    tools
+}
+
+fn anthropic_provider_native_tool_search(request: &AgentInferenceRequest) -> bool {
+    request.runtime.tool_search.is_provider_native_requested()
+        && request.model.provider == PROVIDER_ANTHROPIC
+        && anthropic_model_supports_tool_search(&request.model.model)
+}
+
+fn anthropic_model_supports_tool_search(model: &str) -> bool {
+    model.starts_with("claude-sonnet-4-6")
+        || model.starts_with("claude-opus-4-8")
+        || model.starts_with("claude-4")
+        || model.starts_with("claude-5")
+}
+
+fn anthropic_tool_search_type(variant: ToolSearchProviderVariant) -> &'static str {
+    match variant {
+        ToolSearchProviderVariant::Default | ToolSearchProviderVariant::Regex => {
+            "tool_search_tool_regex_20251119"
+        }
+        ToolSearchProviderVariant::Bm25 => "tool_search_tool_bm25_20251119",
+    }
+}
+
 fn anthropic_effort(level: &str) -> &str {
     match level {
         "minimal" => "low",
@@ -449,6 +481,32 @@ mod tests {
         assert_eq!(body["tools"][0]["input_schema"]["type"], "object");
         assert_eq!(body["tool_choice"]["type"], "auto");
         assert_eq!(body["output_config"]["effort"], "medium");
+    }
+
+    #[test]
+    fn maps_anthropic_provider_native_tool_search_body() {
+        let mut request = request();
+        request.runtime.tool_search = roder_api::inference::ToolSearchConfig::provider_native();
+        request.runtime.tool_search.provider_variant =
+            roder_api::inference::ToolSearchProviderVariant::Bm25;
+
+        let body = AnthropicEngine::map_request(&request);
+
+        assert_eq!(body["tools"][0]["type"], "tool_search_tool_bm25_20251119");
+        assert_eq!(body["tools"][0]["name"], "tool_search");
+        assert!(body["tools"][0].get("defer_loading").is_none());
+        assert_eq!(body["tools"][1]["name"], "shell");
+        assert_eq!(body["tools"][1]["defer_loading"], true);
+        assert_eq!(body["tool_choice"]["type"], "auto");
+    }
+
+    #[test]
+    fn keeps_explicit_anthropic_tools_when_tool_search_is_default() {
+        let body = AnthropicEngine::map_request(&request());
+
+        assert_eq!(body["tools"].as_array().unwrap().len(), 1);
+        assert_eq!(body["tools"][0]["name"], "shell");
+        assert!(body["tools"][0].get("defer_loading").is_none());
     }
 
     #[test]

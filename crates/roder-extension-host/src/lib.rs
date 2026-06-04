@@ -563,6 +563,7 @@ impl InferenceEngine for CodexOAuthInferenceEngine {
             image_input: true,
             prompt_cache: true,
             provider_metadata: true,
+            tool_search: false,
         }
     }
 

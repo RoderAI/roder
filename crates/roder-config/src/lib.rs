@@ -25,6 +25,7 @@ pub struct Config {
     pub reliability: Option<ReliabilityConfig>,
     pub speed_policy: Option<SpeedPolicyConfig>,
     pub web_search: Option<WebSearchConfig>,
+    pub tool_search: Option<ToolSearchConfig>,
     pub dynamic_workflows: Option<DynamicWorkflowsConfig>,
     pub context: Option<ContextConfig>,
     pub sessions: Option<SessionsConfig>,
@@ -144,12 +145,24 @@ pub struct ProviderConfig {
     pub cli_path: Option<String>,
     pub permission_mode: Option<String>,
     pub setting_sources: Option<Vec<String>>,
+    pub tool_search: Option<ToolSearchConfig>,
 }
 
 #[derive(Debug, Default, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ModelConfig {
     pub edit_tool: Option<String>,
     pub parallel_tool_calls: Option<bool>,
+    pub tool_search: Option<ToolSearchConfig>,
+}
+
+#[derive(Debug, Default, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ToolSearchConfig {
+    pub mode: Option<String>,
+    pub max_catalog_items: Option<u32>,
+    pub include_mcp: Option<bool>,
+    pub include_skills: Option<bool>,
+    pub fallback_to_explicit_tools: Option<bool>,
+    pub provider_variant: Option<String>,
 }
 
 #[derive(Debug, Default, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -1137,6 +1150,11 @@ fn apply_env_overrides_with(config: &mut Config, mut env: impl FnMut(&str) -> Op
     {
         config.web_search.get_or_insert_with(Default::default).mode = Some(mode);
     }
+    if let Some(mode) = env("RODER_TOOL_SEARCH_MODE")
+        && !mode.trim().is_empty()
+    {
+        config.tool_search.get_or_insert_with(Default::default).mode = Some(mode);
+    }
     dynamic_workflows::apply_env_overrides_with(
         config
             .dynamic_workflows
@@ -1331,6 +1349,7 @@ mod tests {
             reliability: None,
             speed_policy: None,
             web_search: None,
+            tool_search: None,
             dynamic_workflows: None,
             context: None,
             sessions: None,
@@ -2096,6 +2115,65 @@ mod tests {
         });
 
         assert_eq!(config.web_search.unwrap().mode.as_deref(), Some("live"));
+    }
+    #[test]
+    fn tool_search_mode_env_override_applies_without_mutating_process_env() {
+        let mut config = Config::default();
+
+        apply_env_overrides_with(&mut config, |key| match key {
+            "RODER_TOOL_SEARCH_MODE" => Some("provider_native".to_string()),
+            _ => None,
+        });
+
+        assert_eq!(
+            config.tool_search.unwrap().mode.as_deref(),
+            Some("provider_native")
+        );
+    }
+
+    #[test]
+    fn deserializes_tool_search_config() {
+        let config: Config = toml::from_str(
+            r#"
+            [tool_search]
+            mode = "provider_native"
+            max_catalog_items = 200
+            include_mcp = true
+            include_skills = false
+            fallback_to_explicit_tools = true
+            provider_variant = "bm25"
+
+            [providers.openai.tool_search]
+            mode = "provider_native"
+
+            [models."gpt-5.4".tool_search]
+            mode = "auto"
+            "#,
+        )
+        .unwrap();
+
+        let tool_search = config.tool_search.unwrap();
+        assert_eq!(tool_search.mode.as_deref(), Some("provider_native"));
+        assert_eq!(tool_search.max_catalog_items, Some(200));
+        assert_eq!(tool_search.include_mcp, Some(true));
+        assert_eq!(tool_search.include_skills, Some(false));
+        assert_eq!(tool_search.provider_variant.as_deref(), Some("bm25"));
+        assert_eq!(
+            config
+                .providers
+                .get("openai")
+                .and_then(|provider| provider.tool_search.as_ref())
+                .and_then(|tool_search| tool_search.mode.as_deref()),
+            Some("provider_native")
+        );
+        assert_eq!(
+            config
+                .models
+                .get("gpt-5.4")
+                .and_then(|model| model.tool_search.as_ref())
+                .and_then(|tool_search| tool_search.mode.as_deref()),
+            Some("auto")
+        );
     }
 
     #[test]
