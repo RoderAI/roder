@@ -1939,7 +1939,7 @@ where
                     RoderEvent::ToolCallRequested(ev) => {
                         self.record_tool_requested_with_id(
                             ev.tool_id,
-                            fallback_entry(ev.tool_name),
+                            tool_entry_from_display_payload(Some(ev.tool_name), ev.display_payload),
                         );
                     }
                     RoderEvent::PolicyDecisionRecorded(ev) => match ev.decision {
@@ -5570,6 +5570,23 @@ where
     }
 }
 
+fn tool_entry_from_display_payload(
+    tool_name: Option<String>,
+    display_payload: Option<serde_json::Value>,
+) -> ToolTimelineEntry {
+    let name = tool_name.unwrap_or_else(|| "tool".to_string());
+    let arguments = display_payload
+        .map(|payload| {
+            payload
+                .get("arguments")
+                .cloned()
+                .unwrap_or(payload)
+                .to_string()
+        })
+        .unwrap_or_default();
+    ToolTimelineEntry::new(name, arguments)
+}
+
 fn spinner_frame(spinner: WorkingSpinner, frame: u64) -> &'static str {
     let frames = spinner.frames();
     frames[(frame as usize) % frames.len()]
@@ -9142,6 +9159,17 @@ mod tests {
             context_window_for_provider_model("claude-code", "claude-sonnet-4-6"),
             Some(1_000_000)
         );
+    }
+
+    #[test]
+    fn tool_entry_from_display_payload_preserves_arguments() {
+        let entry = tool_entry_from_display_payload(
+            Some("read_file".to_string()),
+            Some(serde_json::json!({"path": "crates/roder-ext-claude-code"})),
+        );
+
+        assert_eq!(entry.name, "read_file");
+        assert!(entry.arguments.contains("roder-ext-claude-code"));
     }
 
     #[test]
