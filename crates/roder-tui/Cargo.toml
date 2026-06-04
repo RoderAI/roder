@@ -16,6 +16,7 @@ roder-api-transcript.workspace = true
 roder-app-server.workspace = true
 roder-protocol.workspace = true
 roder-roadmap.workspace = true
+roder-skills.workspace = true
 roder-theme.workspace = true
 serde = { workspace = true, features = ["derive"] }
 serde_json.workspace = true

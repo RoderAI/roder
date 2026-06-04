@@ -1250,6 +1250,84 @@ async fn model_switch_with_thread_id_preserves_effective_reasoning_for_turn() {
 }
 
 #[tokio::test]
+async fn provider_select_with_persistence_saves_selected_default_model_and_reasoning() {
+    let _config_guard = RODER_CONFIG_DIR_TEST_LOCK.lock().await;
+    let temp_dir = std::env::temp_dir().join(format!(
+        "roder-provider-select-default-{}",
+        uuid::Uuid::new_v4()
+    ));
+    std::fs::create_dir_all(&temp_dir).unwrap();
+    let _config_dir = EnvVarGuard::set("RODER_CONFIG_DIR", &temp_dir);
+
+    let runtime = Arc::new(Runtime::fake().unwrap());
+    let server = Arc::new(AppServer::new(runtime).with_user_config_persistence());
+    let client = LocalAppClient::new(server);
+
+    let selected: ProviderSelectResult = request(
+        &client,
+        "providers/select",
+        Some(
+            serde_json::to_value(ProviderSelectParams {
+                provider: PROVIDER_MOCK.to_string(),
+                model: Some("gpt-5.5".to_string()),
+                reasoning: Some(REASONING_HIGH.to_string()),
+                thread_id: None,
+            })
+            .unwrap(),
+        ),
+    )
+    .await;
+    assert_eq!(selected.provider, PROVIDER_MOCK);
+    assert_eq!(selected.model, "gpt-5.5");
+    assert_eq!(selected.reasoning, REASONING_HIGH);
+
+    let contents = std::fs::read_to_string(temp_dir.join("config.toml")).unwrap();
+    assert!(contents.contains("provider = \"mock\""));
+    assert!(contents.contains("model = \"gpt-5.5\""));
+    assert!(contents.contains("reasoning = \"high\""));
+
+    let _ = std::fs::remove_dir_all(&temp_dir);
+}
+
+#[tokio::test]
+async fn provider_select_with_persistence_saves_effective_reasoning_when_omitted() {
+    let _config_guard = RODER_CONFIG_DIR_TEST_LOCK.lock().await;
+    let temp_dir = std::env::temp_dir().join(format!(
+        "roder-provider-select-effective-reasoning-{}",
+        uuid::Uuid::new_v4()
+    ));
+    std::fs::create_dir_all(&temp_dir).unwrap();
+    let _config_dir = EnvVarGuard::set("RODER_CONFIG_DIR", &temp_dir);
+
+    let runtime = Arc::new(Runtime::fake().unwrap());
+    let server = Arc::new(AppServer::new(runtime).with_user_config_persistence());
+    let client = LocalAppClient::new(server);
+
+    let selected: ProviderSelectResult = request(
+        &client,
+        "providers/select",
+        Some(
+            serde_json::to_value(ProviderSelectParams {
+                provider: PROVIDER_MOCK.to_string(),
+                model: Some("gpt-5.5".to_string()),
+                reasoning: None,
+                thread_id: None,
+            })
+            .unwrap(),
+        ),
+    )
+    .await;
+    assert_eq!(selected.reasoning, REASONING_MEDIUM);
+
+    let contents = std::fs::read_to_string(temp_dir.join("config.toml")).unwrap();
+    assert!(contents.contains("provider = \"mock\""));
+    assert!(contents.contains("model = \"gpt-5.5\""));
+    assert!(contents.contains("reasoning = \"medium\""));
+
+    let _ = std::fs::remove_dir_all(&temp_dir);
+}
+
+#[tokio::test]
 async fn settings_get_exposes_model_reasoning_and_policy_defaults() {
     let mut builder = ExtensionRegistryBuilder::new();
     builder.inference_engine(Arc::new(FakeInferenceEngine));

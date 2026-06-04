@@ -1491,7 +1491,7 @@ impl AppServer {
             roder_config::save_default_provider_model_reasoning(
                 &cfg.default_provider,
                 &cfg.default_model,
-                cfg.reasoning.as_deref(),
+                Some(reasoning.as_str()),
             )
             .map_err(internal_error)?;
         }

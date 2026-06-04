@@ -43,6 +43,7 @@ pub fn built_in_palette_sources() -> Vec<PaletteSourceDescriptor> {
         ("commands", "Commands", 100),
         ("threads", "Threads", 90),
         ("agents", "Agents", 80),
+        ("files", "Files", 75),
         ("models", "Models", 70),
         ("modes", "Modes", 60),
         ("settings", "Settings", 50),
@@ -50,6 +51,11 @@ pub fn built_in_palette_sources() -> Vec<PaletteSourceDescriptor> {
         ("marketplaces", "Marketplaces", 43),
         ("processes", "Processes", 42),
         ("themes", "Themes", 40),
+        ("skills", "Skills", 35),
+        ("media", "Media", 34),
+        ("memories", "Memories", 33),
+        ("remote", "Remote", 32),
+        ("roadmaps", "Roadmaps", 31),
     ]
     .into_iter()
     .map(|(id, label, priority)| PaletteSourceDescriptor {
@@ -77,9 +83,12 @@ mod tests {
         assert!(ids.contains("commands"));
         assert!(ids.contains("threads"));
         assert!(ids.contains("modes"));
+        assert!(ids.contains("files"));
         assert!(ids.contains("settings"));
         assert!(ids.contains("marketplaces"));
         assert!(ids.contains("processes"));
+        assert!(ids.contains("skills"));
+        assert!(ids.contains("media"));
         assert!(!ids.contains("agents"));
         assert!(!ids.contains("models"));
     }
