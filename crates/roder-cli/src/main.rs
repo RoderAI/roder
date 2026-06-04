@@ -1116,6 +1116,9 @@ pub(crate) async fn build_runtime_from_config(
     }
 
     let workspace = std::env::current_dir().ok();
+    let tool_search = resolve_tool_search_config(cfg.tool_search.as_ref());
+    let provider_tool_search = resolve_provider_tool_search_configs(&cfg.providers);
+    let model_tool_search = resolve_model_tool_search_configs(&cfg.models);
     let registry = build_default_registry(DefaultRegistryConfig {
         openai_api_key: keys.openai,
         openai_speech_api_key: keys.openai_speech,
@@ -1167,7 +1170,7 @@ pub(crate) async fn build_runtime_from_config(
     let runtime = Arc::new(Runtime::new(
         registry,
         RuntimeConfig {
-            default_provider,
+            default_provider: default_provider.clone(),
             default_model: default_model.clone(),
             reasoning: cfg.reasoning,
             auto_compact_token_limit: cfg.auto_compact_token_limit,
@@ -1177,6 +1180,9 @@ pub(crate) async fn build_runtime_from_config(
                 .map(|context| context.file_backed_dynamic_context)
                 .unwrap_or(true),
             hosted_web_search: web_search.hosted,
+            tool_search,
+            provider_tool_search,
+            model_tool_search,
             model_edit_tools,
             model_parallel_tool_calls,
             model_profiles,
@@ -1214,6 +1220,111 @@ fn resolve_zerolang_config(
         timeout_seconds: cfg.timeout_seconds,
         artifact_dir: cfg.artifact_dir.clone(),
     })
+}
+
+fn resolve_tool_search_config(
+    config: Option<&roder_config::ToolSearchConfig>,
+) -> roder_api::inference::ToolSearchConfig {
+    use roder_api::inference::ToolSearchConfig;
+
+    let mut resolved = ToolSearchConfig::default();
+    if let Some(config) = config {
+        if let Some(mode) = config.mode.as_deref().and_then(parse_tool_search_mode) {
+            resolved.mode = mode;
+        }
+        if let Some(max_catalog_items) = config.max_catalog_items {
+            resolved.max_catalog_items = Some(max_catalog_items);
+        }
+        if let Some(include_mcp) = config.include_mcp {
+            resolved.include_mcp = include_mcp;
+        }
+        if let Some(include_skills) = config.include_skills {
+            resolved.include_skills = include_skills;
+        }
+        if let Some(fallback_to_explicit_tools) = config.fallback_to_explicit_tools {
+            resolved.fallback_to_explicit_tools = fallback_to_explicit_tools;
+        }
+        if let Some(provider_variant) = config
+            .provider_variant
+            .as_deref()
+            .and_then(parse_tool_search_provider_variant)
+        {
+            resolved.provider_variant = provider_variant;
+        }
+    }
+    resolved
+}
+
+fn resolve_provider_tool_search_configs(
+    providers: &std::collections::HashMap<String, roder_config::ProviderConfig>,
+) -> std::collections::HashMap<String, roder_api::inference::ToolSearchConfigOverlay> {
+    providers
+        .iter()
+        .filter_map(|(provider, config)| {
+            config.tool_search.as_ref().map(|tool_search| {
+                (
+                    provider.clone(),
+                    resolve_tool_search_config_overlay(Some(tool_search)),
+                )
+            })
+        })
+        .collect()
+}
+
+fn resolve_model_tool_search_configs(
+    models: &std::collections::HashMap<String, roder_config::ModelConfig>,
+) -> std::collections::HashMap<String, roder_api::inference::ToolSearchConfigOverlay> {
+    models
+        .iter()
+        .filter_map(|(model, config)| {
+            config.tool_search.as_ref().map(|tool_search| {
+                (
+                    model.clone(),
+                    resolve_tool_search_config_overlay(Some(tool_search)),
+                )
+            })
+        })
+        .collect()
+}
+
+fn resolve_tool_search_config_overlay(
+    config: Option<&roder_config::ToolSearchConfig>,
+) -> roder_api::inference::ToolSearchConfigOverlay {
+    let mut resolved = roder_api::inference::ToolSearchConfigOverlay::default();
+    if let Some(config) = config {
+        resolved.mode = config.mode.as_deref().and_then(parse_tool_search_mode);
+        resolved.max_catalog_items = config.max_catalog_items;
+        resolved.include_mcp = config.include_mcp;
+        resolved.include_skills = config.include_skills;
+        resolved.fallback_to_explicit_tools = config.fallback_to_explicit_tools;
+        resolved.provider_variant = config
+            .provider_variant
+            .as_deref()
+            .and_then(parse_tool_search_provider_variant);
+    }
+    resolved
+}
+
+fn parse_tool_search_mode(value: &str) -> Option<roder_api::inference::ToolSearchMode> {
+    use roder_api::inference::ToolSearchMode;
+    match value.trim().to_ascii_lowercase().as_str() {
+        "explicit" | "disabled" | "off" => Some(ToolSearchMode::Explicit),
+        "auto" => Some(ToolSearchMode::Auto),
+        "provider_native" | "provider-native" | "native" => Some(ToolSearchMode::ProviderNative),
+        _ => None,
+    }
+}
+
+fn parse_tool_search_provider_variant(
+    value: &str,
+) -> Option<roder_api::inference::ToolSearchProviderVariant> {
+    use roder_api::inference::ToolSearchProviderVariant;
+    match value.trim().to_ascii_lowercase().as_str() {
+        "default" | "auto" => Some(ToolSearchProviderVariant::Default),
+        "regex" => Some(ToolSearchProviderVariant::Regex),
+        "bm25" => Some(ToolSearchProviderVariant::Bm25),
+        _ => None,
+    }
 }
 
 fn resolve_tool_path_scope(
@@ -2860,6 +2971,70 @@ mod tests {
     }
 
     #[test]
+    fn tool_search_config_resolves_global_provider_and_model_overrides() {
+        let global = roder_config::ToolSearchConfig {
+            mode: Some("auto".to_string()),
+            max_catalog_items: Some(100),
+            include_mcp: Some(true),
+            include_skills: Some(true),
+            fallback_to_explicit_tools: Some(true),
+            provider_variant: Some("regex".to_string()),
+        };
+        let provider = roder_config::ToolSearchConfig {
+            include_skills: Some(false),
+            provider_variant: Some("bm25".to_string()),
+            ..Default::default()
+        };
+        let model = roder_config::ToolSearchConfig {
+            mode: Some("provider_native".to_string()),
+            max_catalog_items: Some(25),
+            ..Default::default()
+        };
+
+        let global_resolved = resolve_tool_search_config(Some(&global));
+        let providers = std::collections::HashMap::from([(
+            "openai".to_string(),
+            roder_config::ProviderConfig {
+                tool_search: Some(provider),
+                ..Default::default()
+            },
+        )]);
+        let models = std::collections::HashMap::from([(
+            "gpt-5.4".to_string(),
+            roder_config::ModelConfig {
+                tool_search: Some(model),
+                ..Default::default()
+            },
+        )]);
+        let provider_resolved = resolve_provider_tool_search_configs(&providers);
+        let model_resolved = resolve_model_tool_search_configs(&models);
+
+        assert_eq!(
+            global_resolved.mode,
+            roder_api::inference::ToolSearchMode::Auto
+        );
+        assert_eq!(global_resolved.max_catalog_items, Some(100));
+        assert!(global_resolved.include_mcp);
+        assert!(global_resolved.include_skills);
+        assert_eq!(
+            provider_resolved.get("openai").unwrap().provider_variant,
+            Some(roder_api::inference::ToolSearchProviderVariant::Bm25)
+        );
+        assert_eq!(
+            provider_resolved.get("openai").unwrap().include_skills,
+            Some(false)
+        );
+        assert_eq!(
+            model_resolved.get("gpt-5.4").unwrap().mode,
+            Some(roder_api::inference::ToolSearchMode::ProviderNative)
+        );
+        assert_eq!(
+            model_resolved.get("gpt-5.4").unwrap().max_catalog_items,
+            Some(25)
+        );
+    }
+
+    #[test]
     fn xiaomi_provider_slash_model_uses_exact_provider_ids() {
         let (provider, model) =
             resolve_provider_model(Some("xiaomi-mimo/mimo-v2.5-pro".to_string()), None);
@@ -2936,6 +3111,7 @@ mod tests {
                 roder_config::ModelConfig {
                     edit_tool: None,
                     parallel_tool_calls: Some(false),
+                    tool_search: None,
                 },
             ),
             (
@@ -2943,6 +3119,7 @@ mod tests {
                 roder_config::ModelConfig {
                     edit_tool: Some("patch".to_string()),
                     parallel_tool_calls: None,
+                    tool_search: None,
                 },
             ),
         ]);

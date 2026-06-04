@@ -47,6 +47,141 @@ impl InferenceProviderMetadata {
     }
 }
 
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ToolSearchMode {
+    #[default]
+    Explicit,
+    Auto,
+    ProviderNative,
+}
+
+impl ToolSearchMode {
+    pub fn allows_provider_native(self) -> bool {
+        matches!(self, Self::Auto | Self::ProviderNative)
+    }
+}
+
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ToolSearchProviderVariant {
+    #[default]
+    Default,
+    Regex,
+    Bm25,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ToolSearchConfig {
+    #[serde(default)]
+    pub mode: ToolSearchMode,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_catalog_items: Option<u32>,
+    #[serde(default)]
+    pub include_mcp: bool,
+    #[serde(default)]
+    pub include_skills: bool,
+    #[serde(default)]
+    pub fallback_to_explicit_tools: bool,
+    #[serde(default)]
+    pub provider_variant: ToolSearchProviderVariant,
+}
+
+impl Default for ToolSearchConfig {
+    fn default() -> Self {
+        Self {
+            mode: ToolSearchMode::Explicit,
+            max_catalog_items: None,
+            include_mcp: true,
+            include_skills: true,
+            fallback_to_explicit_tools: true,
+            provider_variant: ToolSearchProviderVariant::Default,
+        }
+    }
+}
+
+impl ToolSearchConfig {
+    pub fn explicit() -> Self {
+        Self {
+            mode: ToolSearchMode::Explicit,
+            ..Self::default()
+        }
+    }
+
+    pub fn provider_native() -> Self {
+        Self {
+            mode: ToolSearchMode::ProviderNative,
+            ..Self::default()
+        }
+    }
+
+    pub fn is_provider_native_requested(&self) -> bool {
+        self.mode.allows_provider_native()
+    }
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ToolSearchConfigOverlay {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mode: Option<ToolSearchMode>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_catalog_items: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub include_mcp: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub include_skills: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fallback_to_explicit_tools: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub provider_variant: Option<ToolSearchProviderVariant>,
+}
+
+impl ToolSearchConfigOverlay {
+    pub fn overlay(&mut self, other: &Self) {
+        if other.mode.is_some() {
+            self.mode = other.mode;
+        }
+        if other.max_catalog_items.is_some() {
+            self.max_catalog_items = other.max_catalog_items;
+        }
+        if other.include_mcp.is_some() {
+            self.include_mcp = other.include_mcp;
+        }
+        if other.include_skills.is_some() {
+            self.include_skills = other.include_skills;
+        }
+        if other.fallback_to_explicit_tools.is_some() {
+            self.fallback_to_explicit_tools = other.fallback_to_explicit_tools;
+        }
+        if other.provider_variant.is_some() {
+            self.provider_variant = other.provider_variant;
+        }
+    }
+
+    pub fn apply_to(&self, config: &mut ToolSearchConfig) {
+        if let Some(mode) = self.mode {
+            config.mode = mode;
+        }
+        if let Some(max_catalog_items) = self.max_catalog_items {
+            config.max_catalog_items = Some(max_catalog_items);
+        }
+        if let Some(include_mcp) = self.include_mcp {
+            config.include_mcp = include_mcp;
+        }
+        if let Some(include_skills) = self.include_skills {
+            config.include_skills = include_skills;
+        }
+        if let Some(fallback_to_explicit_tools) = self.fallback_to_explicit_tools {
+            config.fallback_to_explicit_tools = fallback_to_explicit_tools;
+        }
+        if let Some(provider_variant) = self.provider_variant {
+            config.provider_variant = provider_variant;
+        }
+    }
+}
+
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
 pub struct InstructionBundle {
     pub system: Option<String>,
@@ -248,6 +383,8 @@ pub struct RuntimeHints {
     pub parallel_tool_calls: Option<bool>,
     #[serde(default)]
     pub hosted_web_search: HostedWebSearchConfig,
+    #[serde(default)]
+    pub tool_search: ToolSearchConfig,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub speed_policy: Option<SpeedPolicyDecision>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -416,6 +553,7 @@ pub struct InferenceCapabilities {
     pub image_input: bool,
     pub prompt_cache: bool,
     pub provider_metadata: bool,
+    pub tool_search: bool,
 }
 
 impl InferenceCapabilities {
@@ -429,6 +567,7 @@ impl InferenceCapabilities {
             image_input: false,
             prompt_cache: false,
             provider_metadata: false,
+            tool_search: false,
         }
     }
 
@@ -442,6 +581,7 @@ impl InferenceCapabilities {
             image_input: false,
             prompt_cache: false,
             provider_metadata: true,
+            tool_search: false,
         }
     }
 }
@@ -573,5 +713,35 @@ mod tests {
                 .and_then(serde_json::Value::as_bool),
             Some(true)
         );
+    }
+
+    #[test]
+    fn tool_search_config_serializes_provider_native_request() {
+        let config = ToolSearchConfig {
+            mode: ToolSearchMode::ProviderNative,
+            max_catalog_items: Some(200),
+            include_mcp: true,
+            include_skills: false,
+            fallback_to_explicit_tools: true,
+            provider_variant: ToolSearchProviderVariant::Bm25,
+        };
+
+        let value = serde_json::to_value(&config).unwrap();
+
+        assert_eq!(value["mode"], "provider_native");
+        assert_eq!(value["maxCatalogItems"], 200);
+        assert_eq!(value["includeMcp"], true);
+        assert_eq!(value["includeSkills"], false);
+        assert_eq!(value["providerVariant"], "bm25");
+        assert!(config.is_provider_native_requested());
+    }
+
+    #[test]
+    fn explicit_tool_search_config_preserves_current_default() {
+        let config = ToolSearchConfig::default();
+
+        assert_eq!(config.mode, ToolSearchMode::Explicit);
+        assert!(!config.is_provider_native_requested());
+        assert!(config.fallback_to_explicit_tools);
     }
 }

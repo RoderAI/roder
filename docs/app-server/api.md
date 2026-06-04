@@ -674,7 +674,12 @@ Response:
       "auth_detail": null,
       "recommended": true,
       "sort_order": 0,
-      "capabilities": {},
+      "capabilities": {
+        "streaming": true,
+        "tool_calls": true,
+        "tool_search": true,
+        "image_input": true
+      },
       "models": []
     }
   ]
@@ -685,6 +690,9 @@ Behavior:
 
 - Providers are sorted by `sortOrder`, then name.
 - OAuth providers report `authenticated` by checking the relevant token store.
+- `capabilities.tool_search` means the provider can map Roder's canonical
+  provider-native tool-search hint into its native request body. It does not
+  bypass Roder tool permissions, hooks, policy modes, or transcript events.
 - OpenRouter is exposed as provider `openrouter`; its built-in fallback model
   id is `x-ai/grok-build-0.1`, so clients should keep provider and model fields
   separate instead of splitting model ids on every slash.
