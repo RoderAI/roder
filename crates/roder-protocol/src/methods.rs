@@ -193,6 +193,36 @@ const METHOD_SPECS: &[AppServerMethodSpecSeed] = &[
         LocalState,
         NonIdempotent
     ),
+    method_spec!("chrome/browsers/list", "chrome", ReadOnly, Idempotent),
+    method_spec!("chrome/debug/console", "chrome", ReadOnly, Idempotent),
+    method_spec!("chrome/debug/network", "chrome", ReadOnly, Idempotent),
+    method_spec!("chrome/disable", "chrome", LocalState, NonIdempotent),
+    method_spec!("chrome/enable", "chrome", LocalState, NonIdempotent),
+    method_spec!("chrome/page/action", "chrome", ExternalProcess, NonIdempotent),
+    method_spec!("chrome/page/snapshot", "chrome", ReadOnly, Idempotent),
+    method_spec!("chrome/permissions/list", "chrome", ReadOnly, Idempotent),
+    method_spec!(
+        "chrome/permissions/update",
+        "chrome",
+        LocalState,
+        NonIdempotent
+    ),
+    method_spec!("chrome/reconnect", "chrome", ReadOnly, Idempotent),
+    method_spec!("chrome/setMode", "chrome", LocalState, NonIdempotent),
+    method_spec!("chrome/status", "chrome", ReadOnly, Idempotent),
+    method_spec!(
+        "chrome/tabs/activate",
+        "chrome",
+        ExternalProcess,
+        NonIdempotent
+    ),
+    method_spec!("chrome/tabs/list", "chrome", ReadOnly, Idempotent),
+    method_spec!(
+        "chrome/tabs/navigate",
+        "chrome",
+        ExternalProcess,
+        NonIdempotent
+    ),
     method_spec!("command/exec", "commands", ExternalProcess, NonIdempotent),
     method_spec!("commands/expand", "commands", ReadOnly, Idempotent),
     method_spec!("commands/list", "commands", ReadOnly, Idempotent),

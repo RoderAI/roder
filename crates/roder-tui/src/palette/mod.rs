@@ -48,6 +48,8 @@ pub enum PaletteAction {
     },
     InsertComposerText(String),
     OpenPluginBrowser,
+    OpenChromePanel,
+    ChromePair,
     OpenSkillsManager,
     OpenRoadmapMode,
     ShowAutomationsStatus,

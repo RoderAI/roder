@@ -1,0 +1,61 @@
+{
+  "type": "command/result",
+  "id": "fixture-network-1",
+  "ok": true,
+  "result": {
+    "entries": [
+      {
+        "requestId": "req-1001",
+        "method": "GET",
+        "url": "https://app.acme.example/dashboard",
+        "status": 200,
+        "resourceType": "Document",
+        "requestSize": 412,
+        "responseSize": 18432,
+        "startedAt": 1733356780000,
+        "finishedAt": 1733356780180,
+        "durationMs": 180,
+        "failed": false,
+        "untrusted": true
+      },
+      {
+        "requestId": "req-1002",
+        "method": "GET",
+        "url": "https://app.acme.example/api/invoices",
+        "status": 500,
+        "resourceType": "XHR",
+        "requestSize": 96,
+        "responseSize": 256,
+        "startedAt": 1733356781000,
+        "finishedAt": 1733356781920,
+        "durationMs": 920,
+        "failed": false,
+        "untrusted": true
+      },
+      {
+        "requestId": "req-1003",
+        "method": "GET",
+        "url": "https://cdn.acme.example/static/app.js",
+        "status": 200,
+        "resourceType": "Script",
+        "requestSize": 88,
+        "responseSize": 240128,
+        "startedAt": 1733356781100,
+        "finishedAt": 1733356781410,
+        "durationMs": 310,
+        "failed": false,
+        "untrusted": true
+      },
+      {
+        "requestId": "req-1004",
+        "method": "POST",
+        "url": "https://app.acme.example/api/track",
+        "resourceType": "XHR",
+        "startedAt": 1733356782000,
+        "failed": true,
+        "errorText": "net::ERR_CONNECTION_TIMED_OUT",
+        "untrusted": true
+      }
+    ]
+  }
+}

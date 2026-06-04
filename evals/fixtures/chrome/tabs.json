@@ -1,0 +1,35 @@
+{
+  "type": "command/result",
+  "id": "fixture-tabs-1",
+  "ok": true,
+  "result": {
+    "tabs": [
+      {
+        "id": 101,
+        "windowId": 1,
+        "title": "Acme Dashboard",
+        "url": "https://app.acme.example/dashboard",
+        "favIconUrl": "https://app.acme.example/favicon.ico",
+        "active": true,
+        "groupId": -1
+      },
+      {
+        "id": 102,
+        "windowId": 1,
+        "title": "Acme Docs — API Reference",
+        "url": "https://docs.acme.example/api",
+        "favIconUrl": "https://docs.acme.example/favicon.ico",
+        "active": false,
+        "groupId": -1
+      },
+      {
+        "id": 103,
+        "windowId": 2,
+        "title": "New Tab",
+        "url": "chrome://newtab/",
+        "active": false,
+        "groupId": -1
+      }
+    ]
+  }
+}

@@ -333,6 +333,22 @@ A more complete quick-start (configuration, providers, thread resume, app-server
 
 ---
 
+## Chrome browser integration
+
+Roder can drive a user's real, logged-in Chrome session through a Manifest V3
+browser extension: inspect live pages, read console/network activity, interact
+with the DOM, and record action traces — without copying credentials out of the
+browser. The MV3 extension pairs over the remote WebSocket app-server and is
+exposed to the model as policy-gated `chrome_*` tools, plus a `/chrome` TUI
+panel and `roder --chrome` / `roder chrome status|enable|disable|reconnect` CLI
+commands.
+
+See [`docs/roder-chrome-browser-extension.md`](docs/roder-chrome-browser-extension.md)
+for install, pairing, the parity matrix, the permission/security model, the
+privacy checklist, and troubleshooting.
+
+---
+
 ## Extension authoring sketch
 
 The basic shape of a native extension, per whitepaper §8:

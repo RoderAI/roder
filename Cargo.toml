@@ -71,6 +71,7 @@ roder-edit-core = { path = "crates/roder-edit-core" }
 roder-roadmap = { path = "crates/roder-roadmap" }
 roder-supergrok-auth = { path = "crates/roder-supergrok-auth" }
 roder-ext-anthropic = { path = "crates/roder-ext-anthropic" }
+roder-ext-chrome = { path = "crates/roder-ext-chrome" }
 roder-ext-claude-code = { path = "crates/roder-ext-claude-code" }
 roder-ext-cursor = { path = "crates/roder-ext-cursor" }
 roder-ext-disk-context = { path = "crates/roder-ext-disk-context" }

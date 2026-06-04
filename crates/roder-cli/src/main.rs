@@ -2,6 +2,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 mod automations;
+mod chrome;
 mod commands;
 mod evals;
 mod exec;
@@ -151,6 +152,9 @@ async fn main() -> anyhow::Result<()> {
     if matches!(args.first().map(String::as_str), Some("team")) {
         return run_team_cli(&args[1..]).await;
     }
+    if matches!(args.first().map(String::as_str), Some("chrome")) {
+        return chrome::run_chrome_cli(&args[1..]).await;
+    }
     if matches!(args.first().map(String::as_str), Some("replay")) {
         return replay::run_replay_cli(&args[1..]).await;
     }
@@ -159,9 +163,23 @@ async fn main() -> anyhow::Result<()> {
     let mut startup = cli_options.startup.clone();
     let record_api_transcript = cli_options.record_api_transcript.clone();
     let record_ui_frames = cli_options.record_ui_frames;
+    let enable_chrome = args.iter().any(|arg| arg == "--chrome");
     let (runtime, default_model) = build_runtime_from_config(cli_options).await?;
     let app_server = Arc::new(AppServer::new(runtime).with_user_config_persistence());
     let client = LocalAppClient::new(app_server.clone());
+
+    if enable_chrome {
+        // `--chrome` enables Chrome tools for the session; the browser extension
+        // pairs over the remote WebSocket. Failure to enable is non-fatal.
+        match chrome::enable_chrome_for_session(&client).await {
+            Ok(status) => println!(
+                "chrome tools enabled (mode {}, connected {})",
+                status.mode.as_str(),
+                status.connected
+            ),
+            Err(err) => eprintln!("could not enable chrome tools: {err}"),
+        }
+    }
 
     if matches!(startup, TuiStartup::ResumeMenu) {
         let threads = list_threads(&client).await?;
@@ -3634,6 +3652,7 @@ Report findings.
             connect_urls: vec!["ws://127.0.0.1:49152".to_string()],
             token_preview: "secr...oken".to_string(),
             pairing_url: "roder://connect?payload=test".to_string(),
+            pair_url: "http://127.0.0.1:49152/pair#roder-pair=test".to_string(),
         };
 
         let rendered = render_remote_app_server_start(&handle, true, |handle| {

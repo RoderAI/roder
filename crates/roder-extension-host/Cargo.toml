@@ -14,6 +14,7 @@ roder-code-index.workspace = true
 roder-config.workspace = true
 roder-context.workspace = true
 roder-ext-anthropic.workspace = true
+roder-ext-chrome.workspace = true
 roder-ext-claude-code.workspace = true
 roder-ext-cursor.workspace = true
 roder-ext-firecrawl-search.workspace = true

@@ -7,7 +7,7 @@ use crate::palette::{
     render::palette_list,
     skills::skill_source,
     sources::{
-        agent_source, command_source, file_source, marketplace_source, media_source,
+        agent_source, chrome_source, command_source, file_source, marketplace_source, media_source,
         memories_source, mode_source, model_source, remote_source, roadmap_source, runner_source,
         settings_source, theme_source, thread_source, workflow_import_source,
     },
@@ -184,6 +184,9 @@ where
         }
         if self.palette_source_enabled("remote") {
             sources.push(remote_source());
+        }
+        if self.palette_source_enabled("chrome") {
+            sources.push(chrome_source());
         }
         if self.palette_source_enabled("roadmaps") {
             sources.push(roadmap_source());
@@ -362,6 +365,12 @@ where
             }
             PaletteAction::OpenPluginBrowser => {
                 self.open_plugin_browser().await;
+            }
+            PaletteAction::OpenChromePanel => {
+                self.open_chrome_panel().await;
+            }
+            PaletteAction::ChromePair => {
+                self.chrome_pair_oneclick().await;
             }
             PaletteAction::OpenSkillsManager => {
                 self.palette_query.clear();

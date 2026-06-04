@@ -1,0 +1,40 @@
+{
+  "activity": {
+    "id": "act-eval-9931",
+    "kind": "page/eval",
+    "label": "Evaluate script",
+    "tabId": 101,
+    "createdAt": 1733356820000,
+    "status": "pending"
+  },
+  "requestedCommand": {
+    "type": "page/eval",
+    "id": "fixture-eval-1",
+    "tabId": 101,
+    "expression": "document.querySelectorAll('.invoice-row').length"
+  },
+  "origin": "https://app.acme.example",
+  "currentPermissions": {
+    "origin": "https://app.acme.example",
+    "perms": {
+      "inspect": true,
+      "interact": true,
+      "eval": false,
+      "debugger": true,
+      "download": false,
+      "upload": false,
+      "recording": true,
+      "schedule": false,
+      "alwaysAllow": false
+    },
+    "updatedAt": 1733356700000
+  },
+  "controlMode": "control",
+  "reason": "Protected action 'page/eval' requires control mode plus the per-origin 'eval' permission, which is not granted.",
+  "denyResult": {
+    "type": "command/result",
+    "id": "fixture-eval-1",
+    "ok": false,
+    "error": "Evaluate script is not permitted for this site."
+  }
+}

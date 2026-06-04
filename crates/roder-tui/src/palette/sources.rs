@@ -488,6 +488,54 @@ pub fn remote_source() -> StaticPaletteSource {
     )
 }
 
+pub fn chrome_source() -> StaticPaletteSource {
+    StaticPaletteSource::new(
+        "chrome",
+        "Chrome",
+        vec![
+            (
+                PaletteItem {
+                    id: "chrome-pair".to_string(),
+                    title: "Chrome: pair browser (1-click)".to_string(),
+                    subtitle: Some(
+                        "Start pairing and open the auto-connect URL in your browser".to_string(),
+                    ),
+                    keywords: vec![
+                        "chrome".to_string(),
+                        "pair".to_string(),
+                        "connect".to_string(),
+                        "browser".to_string(),
+                        "extension".to_string(),
+                        "setup".to_string(),
+                    ],
+                    icon: Some('C'),
+                },
+                PaletteAction::ChromePair,
+            ),
+            (
+                PaletteItem {
+                    id: "chrome-panel".to_string(),
+                    title: "Chrome browser plugin".to_string(),
+                    subtitle: Some(
+                        "Connect, set up, and control the Roder Chrome extension".to_string(),
+                    ),
+                    keywords: vec![
+                        "chrome".to_string(),
+                        "browser".to_string(),
+                        "extension".to_string(),
+                        "plugin".to_string(),
+                        "pair".to_string(),
+                        "debug".to_string(),
+                        "status".to_string(),
+                    ],
+                    icon: Some('C'),
+                },
+                PaletteAction::OpenChromePanel,
+            ),
+        ],
+    )
+}
+
 pub fn roadmap_source() -> StaticPaletteSource {
     StaticPaletteSource::new(
         "roadmaps",

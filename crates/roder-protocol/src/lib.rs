@@ -1,3 +1,4 @@
+pub mod chrome;
 pub mod methods;
 pub mod schema;
 pub mod speech;
@@ -62,6 +63,7 @@ use std::collections::BTreeMap;
 use std::collections::HashMap;
 use time::OffsetDateTime;
 
+pub use chrome::*;
 pub use speech::*;
 pub use workflows::*;
 

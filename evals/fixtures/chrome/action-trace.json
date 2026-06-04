@@ -1,0 +1,39 @@
+{
+  "type": "command/result",
+  "id": "fixture-recording-stop-1",
+  "ok": true,
+  "result": {
+    "id": "rec-7f3a91",
+    "tabId": 101,
+    "startedAt": 1733356800000,
+    "stoppedAt": 1733356812000,
+    "note": "Search an invoice and open it",
+    "actions": [
+      {
+        "at": 1733356801000,
+        "kind": "click",
+        "detail": { "selector": "#invoice-search", "ref": "c1" }
+      },
+      {
+        "at": 1733356803000,
+        "kind": "type",
+        "detail": { "selector": "#invoice-search", "ref": "c1", "text": "INV-2024-0042", "submit": false }
+      },
+      {
+        "at": 1733356805000,
+        "kind": "click",
+        "detail": { "selector": "#do-search", "ref": "c2", "text": "Search" }
+      },
+      {
+        "at": 1733356808000,
+        "kind": "navigate",
+        "detail": { "url": "https://app.acme.example/invoices/search" }
+      },
+      {
+        "at": 1733356811000,
+        "kind": "click",
+        "detail": { "text": "View all invoices", "ref": "c3" }
+      }
+    ]
+  }
+}
