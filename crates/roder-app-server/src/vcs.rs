@@ -93,6 +93,8 @@ pub(crate) async fn read_change(
                 .unwrap_or(DEFAULT_PATCH_LIMIT)
                 .max(1)
                 .min(u32::MAX as usize) as u32,
+            area: params.area,
+            ignore_whitespace: params.ignore_whitespace,
         })
         .await
         .map_err(vcs_error)

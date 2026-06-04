@@ -1663,7 +1663,7 @@ async fn workflow_import_methods_scan_preview_and_enable_passive_items() {
 
     let registry = build_default_registry(DefaultRegistryConfig {
         workspace: Some(repo.clone()),
-        ..DefaultRegistryConfig::default()
+        ..isolated_default_registry_config()
     })
     .unwrap();
     let runtime = Arc::new(Runtime::new(registry, Default::default()).unwrap());
@@ -1730,7 +1730,7 @@ async fn workflows_methods_plan_approve_control_save_and_deny() {
     std::fs::create_dir_all(&repo).unwrap();
     let registry = build_default_registry(DefaultRegistryConfig {
         workspace: Some(repo.clone()),
-        ..DefaultRegistryConfig::default()
+        ..isolated_default_registry_config()
     })
     .unwrap();
     let runtime = Arc::new(
@@ -2451,7 +2451,7 @@ async fn media_methods_read_thumbnail_attach_and_delete_artifacts() {
 
     let runtime = Arc::new(
         Runtime::new(
-            build_default_registry(DefaultRegistryConfig::default()).unwrap(),
+            build_default_registry(isolated_default_registry_config()).unwrap(),
             Default::default(),
         )
         .unwrap(),
@@ -2901,7 +2901,7 @@ async fn providers_list_exposes_xai_and_supergrok_auth_metadata() {
     let _guard = PROVIDER_TEST_LOCK.lock().await;
     let registry = build_default_registry(DefaultRegistryConfig {
         xai_api_key: Some("secret-xai-key".to_string()),
-        ..DefaultRegistryConfig::default()
+        ..isolated_default_registry_config()
     })
     .unwrap();
     let runtime = Arc::new(Runtime::new(registry, Default::default()).unwrap());
@@ -2937,7 +2937,7 @@ async fn providers_select_opencode_non_reasoning_model_preserves_reasoning_prefe
     let _guard = PROVIDER_TEST_LOCK.lock().await;
     let registry = build_default_registry(DefaultRegistryConfig {
         opencode_api_key: Some("secret-opencode-key".to_string()),
-        ..DefaultRegistryConfig::default()
+        ..isolated_default_registry_config()
     })
     .unwrap();
     let runtime = Arc::new(
@@ -3001,7 +3001,7 @@ async fn providers_list_separates_opencode_zen_and_go_models() {
     let registry = build_default_registry(DefaultRegistryConfig {
         opencode_api_key: Some("secret-opencode-key".to_string()),
         opencode_go_api_key: Some("secret-opencode-go-key".to_string()),
-        ..DefaultRegistryConfig::default()
+        ..isolated_default_registry_config()
     })
     .unwrap();
     let runtime = Arc::new(Runtime::new(registry, Default::default()).unwrap());
@@ -3031,7 +3031,7 @@ async fn providers_list_exposes_poolside_api_key_models() {
     let _guard = PROVIDER_TEST_LOCK.lock().await;
     let registry = build_default_registry(DefaultRegistryConfig {
         poolside_api_key: Some("secret-poolside-key".to_string()),
-        ..DefaultRegistryConfig::default()
+        ..isolated_default_registry_config()
     })
     .unwrap();
     let runtime = Arc::new(Runtime::new(registry, Default::default()).unwrap());
@@ -3062,7 +3062,7 @@ async fn providers_list_exposes_openrouter_grok_build_model_without_auth() {
         uuid::Uuid::new_v4()
     ));
     let _models_cache = EnvVarGuard::set("RODER_MODELS_CACHE_PATH", &cache_path);
-    let registry = build_default_registry(DefaultRegistryConfig::default()).unwrap();
+    let registry = build_default_registry(isolated_default_registry_config()).unwrap();
     let runtime = Arc::new(Runtime::new(registry, Default::default()).unwrap());
     let server = Arc::new(app_server(runtime));
     let client = LocalAppClient::new(server);
@@ -3086,7 +3086,7 @@ async fn providers_list_exposes_openrouter_grok_build_model_without_auth() {
 #[tokio::test]
 async fn providers_select_preserves_openrouter_slash_bearing_model_id() {
     let _guard = PROVIDER_TEST_LOCK.lock().await;
-    let registry = build_default_registry(DefaultRegistryConfig::default()).unwrap();
+    let registry = build_default_registry(isolated_default_registry_config()).unwrap();
     let runtime = Arc::new(Runtime::new(registry, Default::default()).unwrap());
     let server = Arc::new(app_server(runtime));
     let client = LocalAppClient::new(server);
@@ -3116,7 +3116,7 @@ async fn providers_list_exposes_cursor_api_key_models() {
     let _guard = PROVIDER_TEST_LOCK.lock().await;
     let registry = build_default_registry(DefaultRegistryConfig {
         cursor_api_key: Some("secret-cursor-key".to_string()),
-        ..DefaultRegistryConfig::default()
+        ..isolated_default_registry_config()
     })
     .unwrap();
     let runtime = Arc::new(Runtime::new(registry, Default::default()).unwrap());
@@ -3143,7 +3143,7 @@ async fn providers_clear_removes_api_key() {
     std::fs::create_dir_all(&temp_dir).unwrap();
     let _config_dir = EnvVarGuard::set("RODER_CONFIG_DIR", &temp_dir);
 
-    let registry = build_default_registry(DefaultRegistryConfig::default()).unwrap();
+    let registry = build_default_registry(isolated_default_registry_config()).unwrap();
     let runtime = Arc::new(Runtime::new(registry, Default::default()).unwrap());
     let server = app_server(runtime).with_user_config_persistence();
     let client = LocalAppClient::new(Arc::new(server));
@@ -3218,7 +3218,7 @@ async fn supergrok_auth_status_is_exposed_through_app_server() {
 
 #[tokio::test]
 async fn runners_methods_list_select_status_and_delete_destination() {
-    let registry = build_default_registry(DefaultRegistryConfig::default()).unwrap();
+    let registry = build_default_registry(isolated_default_registry_config()).unwrap();
     let runtime = Arc::new(Runtime::new(registry, Default::default()).unwrap());
     let server = Arc::new(app_server(runtime));
     let client = LocalAppClient::new(server);
@@ -4979,7 +4979,7 @@ async fn tools_list_discovers_configured_web_search_without_secret_material() {
             },
             ..DefaultWebSearchConfig::default()
         }),
-        ..DefaultRegistryConfig::default()
+        ..isolated_default_registry_config()
     })
     .unwrap();
     let runtime = Arc::new(Runtime::new(registry, Default::default()).unwrap());
@@ -5308,7 +5308,7 @@ async fn retrieval_methods_read_recommendations_metrics_and_promotions() {
 
 #[tokio::test]
 async fn tools_list_exposes_default_coding_tools() {
-    let registry = build_default_registry(DefaultRegistryConfig::default()).unwrap();
+    let registry = build_default_registry(isolated_default_registry_config()).unwrap();
     let runtime = Arc::new(Runtime::new(registry, Default::default()).unwrap());
     let server = Arc::new(app_server(runtime));
     let client = LocalAppClient::new(server);
@@ -5366,7 +5366,7 @@ async fn tools_list_exposes_default_coding_tools() {
 
 #[tokio::test]
 async fn extensions_list_exposes_capability_statuses() {
-    let registry = build_default_registry(DefaultRegistryConfig::default()).unwrap();
+    let registry = build_default_registry(isolated_default_registry_config()).unwrap();
     let runtime = Arc::new(Runtime::new(registry, Default::default()).unwrap());
     let server = Arc::new(app_server(runtime));
     let client = LocalAppClient::new(server);
@@ -5961,7 +5961,7 @@ async fn webwright_setup_dry_run_exposes_selected_browser_install_plan() {
     let _config_dir = EnvVarGuard::set("RODER_CONFIG_DIR", workspace.join(".roder"));
     let registry = build_default_registry(DefaultRegistryConfig {
         workspace: Some(workspace.clone()),
-        ..DefaultRegistryConfig::default()
+        ..isolated_default_registry_config()
     })
     .unwrap();
     let runtime = Arc::new(Runtime::new(registry, Default::default()).unwrap());
@@ -6015,7 +6015,7 @@ async fn webwright_methods_prepare_inspect_verify_report_and_rerun() {
     std::fs::create_dir_all(&workspace).unwrap();
     let registry = build_default_registry(DefaultRegistryConfig {
         workspace: Some(workspace.clone()),
-        ..DefaultRegistryConfig::default()
+        ..isolated_default_registry_config()
     })
     .unwrap();
     let runtime = Arc::new(Runtime::new(registry, Default::default()).unwrap());
@@ -6347,7 +6347,7 @@ async fn tasks_submit_list_get_and_events_observe_process_task() {
     std::fs::create_dir_all(&workspace).unwrap();
     let registry = build_default_registry(DefaultRegistryConfig {
         workspace: Some(workspace.clone()),
-        ..DefaultRegistryConfig::default()
+        ..isolated_default_registry_config()
     })
     .unwrap();
     let runtime = Arc::new(Runtime::new(registry, Default::default()).unwrap());
@@ -6427,7 +6427,7 @@ async fn processes_list_get_stop_and_subscribe_for_process_task() {
     std::fs::create_dir_all(&workspace).unwrap();
     let registry = build_default_registry(DefaultRegistryConfig {
         workspace: Some(workspace.clone()),
-        ..DefaultRegistryConfig::default()
+        ..isolated_default_registry_config()
     })
     .unwrap();
     let runtime = Arc::new(Runtime::new(registry, Default::default()).unwrap());
@@ -6560,7 +6560,7 @@ async fn processes_stop_all_stops_multiple_running_processes() {
     std::fs::create_dir_all(&workspace).unwrap();
     let registry = build_default_registry(DefaultRegistryConfig {
         workspace: Some(workspace.clone()),
-        ..DefaultRegistryConfig::default()
+        ..isolated_default_registry_config()
     })
     .unwrap();
     let runtime = Arc::new(Runtime::new(registry, Default::default()).unwrap());
@@ -6663,7 +6663,7 @@ async fn wait_for_process_by_task(
 
 #[tokio::test]
 async fn tools_call_can_create_and_get_goal() {
-    let registry = build_default_registry(DefaultRegistryConfig::default()).unwrap();
+    let registry = build_default_registry(isolated_default_registry_config()).unwrap();
     let runtime = Arc::new(Runtime::new(registry, Default::default()).unwrap());
     let server = Arc::new(app_server(runtime));
     let client = LocalAppClient::new(server);
@@ -7866,7 +7866,11 @@ async fn vcs_changes_methods_report_full_branch_delta() {
     run_git(&workspace, &["config", "user.email", "roder@example.com"]);
     run_git(&workspace, &["config", "user.name", "Roder Test"]);
     std::fs::write(workspace.join("committed.txt"), "base\n").unwrap();
+    std::fs::write(workspace.join("dirty.txt"), "base\n").unwrap();
+    std::fs::write(workspace.join("both.txt"), "base\n").unwrap();
     run_git(&workspace, &["add", "committed.txt"]);
+    run_git(&workspace, &["add", "dirty.txt"]);
+    run_git(&workspace, &["add", "both.txt"]);
     run_git(&workspace, &["commit", "-m", "base"]);
     run_git(&workspace, &["checkout", "-b", "feature"]);
     std::fs::write(workspace.join("committed.txt"), "base\nbranch\n").unwrap();
@@ -7874,13 +7878,16 @@ async fn vcs_changes_methods_report_full_branch_delta() {
     run_git(&workspace, &["commit", "-m", "branch change"]);
     std::fs::write(workspace.join("staged.txt"), "staged\n").unwrap();
     run_git(&workspace, &["add", "staged.txt"]);
-    std::fs::write(workspace.join("dirty.txt"), "dirty\n").unwrap();
+    std::fs::write(workspace.join("both.txt"), "base\nstaged\n").unwrap();
+    run_git(&workspace, &["add", "both.txt"]);
+    std::fs::write(workspace.join("both.txt"), "base\nstaged\nunstaged\n").unwrap();
+    std::fs::write(workspace.join("dirty.txt"), "base\ndirty\n").unwrap();
     std::fs::write(workspace.join("untracked.txt"), "untracked\n").unwrap();
     std::fs::write(workspace.join("untracked.jpg"), [0xff, 0xd8, 0xff, 0x00]).unwrap();
 
     let runtime = Arc::new(
         Runtime::new(
-            build_default_registry(DefaultRegistryConfig::default()).unwrap(),
+            build_default_registry(isolated_default_registry_config()).unwrap(),
             RuntimeConfig {
                 workspace: Some(workspace.display().to_string()),
                 ..RuntimeConfig::default()
@@ -7910,11 +7917,12 @@ async fn vcs_changes_methods_report_full_branch_delta() {
         .map(|file| file["path"].as_str().unwrap())
         .collect::<Vec<_>>();
     assert!(paths.contains(&"committed.txt"));
+    assert!(paths.contains(&"both.txt"));
     assert!(paths.contains(&"staged.txt"));
     assert!(paths.contains(&"dirty.txt"));
     assert!(paths.contains(&"untracked.txt"));
     assert!(paths.contains(&"untracked.jpg"));
-    assert_eq!(list["totals"]["files"], 5);
+    assert_eq!(list["totals"]["files"], 6);
     let binary_file = list["files"]
         .as_array()
         .unwrap()
@@ -7922,7 +7930,33 @@ async fn vcs_changes_methods_report_full_branch_delta() {
         .find(|file| file["path"] == "untracked.jpg")
         .unwrap();
     assert_eq!(binary_file["binary"], true);
+    assert_eq!(binary_file["areas"], serde_json::json!(["untracked"]));
     assert_eq!(binary_file["additions"], 0);
+
+    let staged_file = list["files"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|file| file["path"] == "staged.txt")
+        .unwrap();
+    assert_eq!(staged_file["areas"], serde_json::json!(["staged"]));
+    let dirty_file = list["files"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|file| file["path"] == "dirty.txt")
+        .unwrap();
+    assert_eq!(dirty_file["areas"], serde_json::json!(["unstaged"]));
+    let both_file = list["files"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|file| file["path"] == "both.txt")
+        .unwrap();
+    assert_eq!(
+        both_file["areas"],
+        serde_json::json!(["staged", "unstaged"])
+    );
 
     let page: serde_json::Value = request(
         &client,
@@ -7939,6 +7973,39 @@ async fn vcs_changes_methods_report_full_branch_delta() {
     assert_eq!(page["path"], "committed.txt");
     assert!(page["content"].as_str().unwrap().contains("+branch"));
     assert_eq!(page["nextOffset"], serde_json::Value::Null);
+
+    let staged_page: serde_json::Value = request(
+        &client,
+        "vcs/changes/read",
+        Some(serde_json::json!({
+            "workspaceId": workspace_ref.workspace_id,
+            "rootId": workspace_ref.root_id,
+            "path": "both.txt",
+            "area": "staged",
+            "offset": 0,
+            "limit": 20
+        })),
+    )
+    .await;
+    let unstaged_page: serde_json::Value = request(
+        &client,
+        "vcs/changes/read",
+        Some(serde_json::json!({
+            "workspaceId": workspace_ref.workspace_id,
+            "rootId": workspace_ref.root_id,
+            "path": "both.txt",
+            "area": "unstaged",
+            "offset": 0,
+            "limit": 20
+        })),
+    )
+    .await;
+    let staged_content = staged_page["content"].as_str().unwrap();
+    let unstaged_content = unstaged_page["content"].as_str().unwrap();
+    assert!(staged_content.contains("+staged"));
+    assert!(!staged_content.contains("+unstaged"));
+    assert!(unstaged_content.contains("+unstaged"));
+    assert!(!unstaged_content.contains("+staged"));
 
     let paged: serde_json::Value = request(
         &client,
@@ -8006,7 +8073,7 @@ async fn vcs_mutations_require_policy_approval() {
 
     let runtime = Arc::new(
         Runtime::new(
-            build_default_registry(DefaultRegistryConfig::default()).unwrap(),
+            build_default_registry(isolated_default_registry_config()).unwrap(),
             RuntimeConfig {
                 workspace: Some(workspace.display().to_string()),
                 ..RuntimeConfig::default()
@@ -8095,7 +8162,7 @@ async fn vcs_methods_reject_unregistered_workspace_roots() {
 
     let runtime = Arc::new(
         Runtime::new(
-            build_default_registry(DefaultRegistryConfig::default()).unwrap(),
+            build_default_registry(isolated_default_registry_config()).unwrap(),
             RuntimeConfig {
                 workspace: Some(workspace.display().to_string()),
                 ..RuntimeConfig::default()
@@ -8139,7 +8206,7 @@ async fn vcs_changes_rejects_non_vcs_workspace() {
     std::fs::create_dir_all(&workspace).unwrap();
     let runtime = Arc::new(
         Runtime::new(
-            build_default_registry(DefaultRegistryConfig::default()).unwrap(),
+            build_default_registry(isolated_default_registry_config()).unwrap(),
             RuntimeConfig {
                 workspace: Some(workspace.display().to_string()),
                 ..RuntimeConfig::default()
@@ -8321,6 +8388,16 @@ async fn request<T: serde::de::DeserializeOwned>(
         res.error
     );
     serde_json::from_value(res.result.unwrap()).unwrap()
+}
+
+fn isolated_default_registry_config() -> DefaultRegistryConfig {
+    DefaultRegistryConfig {
+        thread_dir: Some(std::env::temp_dir().join(format!(
+            "roder-app-server-e2e-threads-{}",
+            uuid::Uuid::new_v4()
+        ))),
+        ..DefaultRegistryConfig::default()
+    }
 }
 
 async fn wait_for_workflow_status(
