@@ -2659,6 +2659,8 @@ Examples:
     "workspaceId": "ws_abc123",
     "rootId": "root_abc123",
     "path": "src/app.rs",
+    "area": "unstaged",
+    "ignoreWhitespace": true,
     "offset": 0,
     "limit": 400
   }
@@ -2680,7 +2682,11 @@ Behavior:
   current working tree, including committed, staged, unstaged, and untracked
   changes.
 - `vcs/changes/read` validates provider-relative paths and returns paged changed
-  content for one changed file.
+  content for one changed file. When `area` is omitted, it returns the full
+  branch delta. When `area` is provided, providers may return just that file's
+  `committed`, `staged`, `unstaged`, or `untracked` content.
+- `ignoreWhitespace` defaults to `false`; when set, providers may suppress
+  whitespace-only changes in the returned diff.
 - Mutating calls such as `vcs/snapshot/create`, `vcs/restore`,
   `vcs/select`, `vcs/lines/switch`, and `vcs/sync` are checked by the
   app-server policy gate before execution. If approval is required, the request
