@@ -4,8 +4,8 @@ use std::process::Command;
 use std::time::{Duration, Instant};
 
 use roder_api::version_control::{
-    VcsBase, VcsCapabilities, VcsCapabilityState, VcsChangedContentPage, VcsChangedFile,
-    VcsChangedFileStatus, VcsError, VcsLineKind, VcsLineOfWork, VcsOperation,
+    VcsBase, VcsCapabilities, VcsCapabilityState, VcsChangeArea, VcsChangedContentPage,
+    VcsChangedFile, VcsChangedFileStatus, VcsError, VcsLineKind, VcsLineOfWork, VcsOperation,
     VcsOperationCapability, VcsOperationResult, VcsProviderId, VcsProviderIdentity,
     VcsReadChangedContentRequest, VcsRestoreRequest, VcsSelectionGranularity, VcsSelectionRequest,
     VcsSnapshot, VcsSnapshotCreateRequest, VcsStatus, VcsSyncOperation, VcsSyncRequest,
@@ -97,11 +97,13 @@ impl GitRepo {
                 path: PathBuf::from(path),
                 old_path: None,
                 status: VcsChangedFileStatus::Untracked,
+                areas: vec![VcsChangeArea::Untracked],
                 additions: 0,
                 deletions: 0,
                 binary: false,
             });
         }
+        self.apply_change_areas(merge_base, &mut files)?;
         self.apply_numstat(merge_base, &mut files)?;
         self.apply_untracked_counts(&mut files);
 
@@ -129,24 +131,26 @@ impl GitRepo {
         let path = normalized_relative_path(&self.provider_id, &request.path)?;
         let base = self.base()?;
         let untracked = self.untracked_files()?.contains(&path);
-        let (content, binary) = if untracked {
-            self.untracked_patch(&path)?
-        } else {
-            (
-                self.git(
-                    &[
-                        "--literal-pathspecs",
-                        "diff",
-                        "--no-ext-diff",
-                        "--unified=80",
+        let (content, binary) = match request.area {
+            Some(VcsChangeArea::Untracked) => {
+                if untracked {
+                    self.untracked_patch(&path)?
+                } else {
+                    (String::new(), false)
+                }
+            }
+            area => {
+                if area.is_none() && untracked {
+                    self.untracked_patch(&path)?
+                } else {
+                    self.tracked_changed_content(
                         &base.merge_base,
-                        "--",
                         &path,
-                    ],
-                    VcsOperation::ChangesRead,
-                )?,
-                self.tracked_path_is_binary(&base.merge_base, &path)?,
-            )
+                        area,
+                        request.ignore_whitespace,
+                    )?
+                }
+            }
         };
         let lines = content.lines().collect::<Vec<_>>();
         let offset = request.offset.min(lines.len() as u32) as usize;
@@ -399,6 +403,7 @@ impl GitRepo {
                     path: PathBuf::from(path),
                     old_path,
                     status,
+                    areas: Vec::new(),
                     additions: 0,
                     deletions: 0,
                     binary: false,
@@ -406,6 +411,36 @@ impl GitRepo {
             );
         }
         Ok(files)
+    }
+
+    fn apply_change_areas(
+        &self,
+        merge_base: &str,
+        files: &mut BTreeMap<String, VcsChangedFile>,
+    ) -> Result<(), VcsError> {
+        for path in self.changed_paths(&["diff", "--name-only", merge_base, "HEAD", "--"])? {
+            add_change_area(files, &path, VcsChangeArea::Committed);
+        }
+        for path in self.changed_paths(&["diff", "--cached", "--name-only", "HEAD", "--"])? {
+            add_change_area(files, &path, VcsChangeArea::Staged);
+        }
+        for path in self.changed_paths(&["diff", "--name-only", "--"])? {
+            add_change_area(files, &path, VcsChangeArea::Unstaged);
+        }
+        for file in files.values_mut() {
+            file.areas.sort();
+            file.areas.dedup();
+        }
+        Ok(())
+    }
+
+    fn changed_paths(&self, args: &[&str]) -> Result<Vec<String>, VcsError> {
+        let output = self.git(args, VcsOperation::ChangesList)?;
+        Ok(output
+            .lines()
+            .filter(|line| !line.trim().is_empty())
+            .map(ToOwned::to_owned)
+            .collect())
     }
 
     fn apply_numstat(
@@ -586,18 +621,41 @@ impl GitRepo {
             .unwrap_or(false)
     }
 
-    fn tracked_path_is_binary(&self, merge_base: &str, path: &str) -> Result<bool, VcsError> {
-        let output = self.git(
-            &[
-                "--literal-pathspecs",
-                "diff",
-                "--numstat",
-                merge_base,
-                "--",
-                path,
-            ],
-            VcsOperation::ChangesRead,
-        )?;
+    fn tracked_changed_content(
+        &self,
+        merge_base: &str,
+        path: &str,
+        area: Option<VcsChangeArea>,
+        ignore_whitespace: bool,
+    ) -> Result<(String, bool), VcsError> {
+        let mut args = vec![
+            "--literal-pathspecs",
+            "diff",
+            "--no-ext-diff",
+            "--unified=80",
+        ];
+        if ignore_whitespace {
+            args.push("-w");
+        }
+        append_diff_area_args(&mut args, merge_base, area);
+        args.extend(["--", path]);
+
+        Ok((
+            self.git(&args, VcsOperation::ChangesRead)?,
+            self.tracked_path_is_binary_for_area(merge_base, path, area)?,
+        ))
+    }
+
+    fn tracked_path_is_binary_for_area(
+        &self,
+        merge_base: &str,
+        path: &str,
+        area: Option<VcsChangeArea>,
+    ) -> Result<bool, VcsError> {
+        let mut args = vec!["--literal-pathspecs", "diff", "--numstat"];
+        append_diff_area_args(&mut args, merge_base, area);
+        args.extend(["--", path]);
+        let output = self.git(&args, VcsOperation::ChangesRead)?;
         Ok(output.lines().any(|line| {
             let columns = line.split('\t').collect::<Vec<_>>();
             columns.len() >= 2 && columns[0] == "-" && columns[1] == "-"
@@ -616,6 +674,20 @@ impl GitRepo {
             }) => Ok(true),
             Err(error) => Err(error),
         }
+    }
+}
+
+fn append_diff_area_args<'a>(
+    args: &mut Vec<&'a str>,
+    merge_base: &'a str,
+    area: Option<VcsChangeArea>,
+) {
+    match area {
+        Some(VcsChangeArea::Committed) => args.extend([merge_base, "HEAD"]),
+        Some(VcsChangeArea::Staged) => args.extend(["--cached", "HEAD"]),
+        Some(VcsChangeArea::Unstaged) => {}
+        Some(VcsChangeArea::Untracked) => {}
+        None => args.push(merge_base),
     }
 }
 
@@ -707,6 +779,12 @@ fn is_untracked_path(untracked: &BTreeSet<String>, path: &str) -> bool {
         || untracked
             .iter()
             .any(|candidate| candidate.starts_with(&format!("{path}/")))
+}
+
+fn add_change_area(files: &mut BTreeMap<String, VcsChangedFile>, path: &str, area: VcsChangeArea) {
+    if let Some(file) = files.get_mut(path) {
+        file.areas.push(area);
+    }
 }
 
 fn git_at(

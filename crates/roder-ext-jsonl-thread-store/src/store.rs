@@ -142,7 +142,7 @@ impl ThreadStore for JsonlThreadStore {
                 if thread_id == "discovery-state" {
                     continue;
                 }
-                if is_reserved_thread_directory_without_metadata(&thread_id, &entry.path()) {
+                if is_thread_directory_without_metadata(&entry.path()) {
                     continue;
                 }
                 let metadata = self
@@ -160,7 +160,7 @@ impl ThreadStore for JsonlThreadStore {
         if !dir.exists() {
             return Ok(None);
         }
-        if is_reserved_thread_directory_without_metadata(thread_id, &dir) {
+        if is_thread_directory_without_metadata(&dir) {
             return Ok(None);
         }
         let metadata = Some(self.load_or_infer_metadata(&dir, thread_id).await?);
@@ -518,8 +518,8 @@ fn archived_threads_root(active_threads_root: &Path) -> PathBuf {
         .unwrap_or_else(|| active_threads_root.with_file_name("archived_threads"))
 }
 
-fn is_reserved_thread_directory_without_metadata(thread_id: &str, dir: &Path) -> bool {
-    matches!(thread_id, "app-server" | "runtime") && !dir.join("metadata.json").exists()
+fn is_thread_directory_without_metadata(dir: &Path) -> bool {
+    !dir.join("metadata.json").exists()
 }
 
 pub struct JsonlThreadStoreFactory {
@@ -891,6 +891,102 @@ mod tests {
                 .await
                 .unwrap()
                 .is_none()
+        );
+
+        let _ = fs::remove_dir_all(base_path).await;
+    }
+
+    #[tokio::test]
+    async fn workflow_event_directory_without_metadata_is_not_a_thread() {
+        let base_path = std::env::temp_dir().join(format!(
+            "roder-jsonl-workflow-sentinel-test-{}",
+            uuid::Uuid::new_v4()
+        ));
+        let store = JsonlThreadStore {
+            base_path: base_path.clone(),
+        };
+        let synthetic_dir = store.thread_dir(&"thread-workflow".to_string());
+        fs::create_dir_all(&synthetic_dir).await.unwrap();
+        fs::write(synthetic_dir.join("events.jsonl"), "{}\n")
+            .await
+            .unwrap();
+
+        assert!(store.list_threads().await.unwrap().is_empty());
+        assert!(
+            store
+                .load_thread(&"thread-workflow".to_string())
+                .await
+                .unwrap()
+                .is_none()
+        );
+
+        let _ = fs::remove_dir_all(base_path).await;
+    }
+
+    #[tokio::test]
+    async fn caller_named_event_directory_without_metadata_is_not_a_thread() {
+        let base_path = std::env::temp_dir().join(format!(
+            "roder-jsonl-caller-named-event-dir-test-{}",
+            uuid::Uuid::new_v4()
+        ));
+        let store = JsonlThreadStore {
+            base_path: base_path.clone(),
+        };
+        let event_dir = store.thread_dir(&"thread-discovery".to_string());
+        fs::create_dir_all(&event_dir).await.unwrap();
+        fs::write(event_dir.join("events.jsonl"), "{}\n")
+            .await
+            .unwrap();
+
+        assert!(store.list_threads().await.unwrap().is_empty());
+        assert!(
+            store
+                .load_thread(&"thread-discovery".to_string())
+                .await
+                .unwrap()
+                .is_none()
+        );
+
+        let _ = fs::remove_dir_all(base_path).await;
+    }
+
+    #[tokio::test]
+    async fn caller_named_thread_with_metadata_is_a_thread() {
+        let base_path = std::env::temp_dir().join(format!(
+            "roder-jsonl-caller-named-thread-test-{}",
+            uuid::Uuid::new_v4()
+        ));
+        let store = JsonlThreadStore {
+            base_path: base_path.clone(),
+        };
+        let thread_id = "thread-discovery".to_string();
+        let now = OffsetDateTime::UNIX_EPOCH;
+        store
+            .create_thread(ThreadMetadata {
+                thread_id: thread_id.clone(),
+                title: Some("Discovery".to_string()),
+                workspace: test_workspace("workspace"),
+                workspace_id: None,
+                root_id: None,
+                provider: Some("mock".to_string()),
+                model: Some("mock".to_string()),
+                runner_destination: None,
+                runner_state: None,
+                created_at: now,
+                updated_at: now,
+                message_count: 0,
+                usage: None,
+            })
+            .await
+            .unwrap();
+
+        assert_eq!(store.list_threads().await.unwrap()[0].thread_id, thread_id);
+        assert!(
+            store
+                .load_thread(&"thread-discovery".to_string())
+                .await
+                .unwrap()
+                .is_some()
         );
 
         let _ = fs::remove_dir_all(base_path).await;

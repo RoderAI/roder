@@ -29,7 +29,7 @@ use roder_api::subagents::SubagentDefinition;
 use roder_api::teams::TeamMemberStatus;
 use roder_api::thread::{
     ThreadItemEvent, ThreadItemEventKind, ThreadMetadata, ThreadSnapshot, ThreadStore,
-    ThreadUsageMetadata, validate_thread_workspace,
+    ThreadUsageMetadata, is_synthetic_event_thread_id, validate_thread_workspace,
 };
 use roder_api::tools::{ToolCall, ToolChoice, ToolExecutionContext, ToolRegistry, ToolResult};
 use roder_api::transcript::{
@@ -3284,7 +3284,7 @@ pub fn validate_edit_tool(value: &str) -> anyhow::Result<()> {
 }
 
 fn should_persist_thread_event(thread_id: &str) -> bool {
-    !matches!(thread_id, "app-server" | "runtime")
+    !is_synthetic_event_thread_id(thread_id)
 }
 
 #[cfg(test)]
@@ -3311,8 +3311,12 @@ mod tests {
 
     #[test]
     fn synthetic_app_server_events_are_not_thread_events() {
-        assert!(!should_persist_thread_event("app-server"));
-        assert!(!should_persist_thread_event("runtime"));
+        for thread_id in ["app-server", "runtime", "thread-workflow"] {
+            assert!(!should_persist_thread_event(thread_id));
+        }
+        assert!(should_persist_thread_event("thread-discovery"));
+        assert!(should_persist_thread_event("thread-plan"));
+        assert!(should_persist_thread_event("thread-process"));
         assert!(should_persist_thread_event("thread-1"));
     }
 

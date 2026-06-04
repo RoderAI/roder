@@ -52,6 +52,7 @@ use roder_api::thread::ThreadUsageMetadata;
 use roder_api::tools::ToolSpec;
 use roder_api::trace::{SubagentTraceDelta, SubagentTraceId, SubagentTraceSummary};
 use roder_api::transcript::InputImage;
+use roder_api::version_control::VcsChangeArea;
 use roder_api::workflow::{
     WorkflowImportDecision, WorkflowImportItem, WorkflowImportScan, WorkflowImportState,
 };
@@ -1801,6 +1802,10 @@ pub struct VcsChangesReadParams {
     pub offset: usize,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub limit: Option<usize>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub area: Option<VcsChangeArea>,
+    #[serde(default)]
+    pub ignore_whitespace: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

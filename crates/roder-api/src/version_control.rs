@@ -167,10 +167,21 @@ pub struct VcsChangedFile {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub old_path: Option<PathBuf>,
     pub status: VcsChangedFileStatus,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub areas: Vec<VcsChangeArea>,
     pub additions: u32,
     pub deletions: u32,
     #[serde(default)]
     pub binary: bool,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
+#[serde(rename_all = "snake_case")]
+pub enum VcsChangeArea {
+    Committed,
+    Staged,
+    Unstaged,
+    Untracked,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -245,6 +256,10 @@ pub struct VcsReadChangedContentRequest {
     pub path: PathBuf,
     pub offset: u32,
     pub limit: u32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub area: Option<VcsChangeArea>,
+    #[serde(default)]
+    pub ignore_whitespace: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

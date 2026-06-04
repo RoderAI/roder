@@ -245,6 +245,7 @@ mod tests {
             path: PathBuf::from(path),
             old_path: None,
             status,
+            areas: Vec::new(),
             additions,
             deletions: 0,
             binary: false,
