@@ -1,0 +1,32 @@
+[package]
+name = "roder-ext-claude-code"
+version.workspace = true
+edition.workspace = true
+
+[package.metadata.roder.distribution]
+id = "claude-code"
+category = "inference-engine"
+display_name = "Claude Code"
+description = "Claude Code CLI harness inference provider backed by claude-agent-sdk."
+default_in_profiles = ["full", "anthropic-only"]
+required_env = []
+optional_env = ["CLAUDE_CODE_CLI_PATH", "RODER_CLAUDE_CODE_CLI_PATH", "CLAUDE_CODE_PERMISSION_MODE", "RODER_CLAUDE_CODE_PERMISSION_MODE"]
+conflicts_with = []
+required_capabilities = ["process.claude"]
+extension_path = "::ClaudeCodeExtension::new"
+docs_url = "docs/roder-claude-code-provider.md"
+
+[dependencies]
+anyhow.workspace = true
+async-stream.workspace = true
+async-trait.workspace = true
+claude-agent-sdk = { path = "../../../claude-agent-sdk-rust" }
+futures.workspace = true
+roder-api.workspace = true
+semver.workspace = true
+serde_json.workspace = true
+tokio.workspace = true
+which.workspace = true
+
+[dev-dependencies]
+serde_json.workspace = true

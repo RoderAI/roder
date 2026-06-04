@@ -18,6 +18,7 @@ use roder_api::policy_mode::PolicyMode;
 use roder_api::remote_runner::RunnerDestination;
 use roder_api::tui_status::{PaletteSourceDescriptor, built_in_status_segments};
 use roder_ext_anthropic::AnthropicExtension;
+use roder_ext_claude_code::{ClaudeCodeConfig, ClaudeCodeExtension};
 use roder_ext_cursor::{CursorConfig, CursorExtension};
 use roder_ext_gemini::GeminiExtension;
 use roder_ext_git::GitExtension;
@@ -67,6 +68,9 @@ pub struct DefaultRegistryConfig {
     pub google_speech_project_id: Option<String>,
     pub google_speech_location: Option<String>,
     pub anthropic_api_key: Option<String>,
+    pub claude_code_cli_path: Option<String>,
+    pub claude_code_permission_mode: Option<String>,
+    pub claude_code_setting_sources: Option<Vec<String>>,
     pub gemini_api_key: Option<String>,
     pub xai_api_key: Option<String>,
     pub xai_base_url: Option<String>,
@@ -114,6 +118,9 @@ impl Default for DefaultRegistryConfig {
             google_speech_project_id: None,
             google_speech_location: None,
             anthropic_api_key: None,
+            claude_code_cli_path: None,
+            claude_code_permission_mode: None,
+            claude_code_setting_sources: None,
             gemini_api_key: None,
             xai_api_key: None,
             xai_base_url: None,
@@ -213,6 +220,12 @@ pub fn build_default_registry(config: DefaultRegistryConfig) -> anyhow::Result<E
     if let Some(anthropic_key) = config.anthropic_api_key {
         builder.install(AnthropicExtension::new(anthropic_key))?;
     }
+    builder.install(ClaudeCodeExtension::new(ClaudeCodeConfig {
+        cli_path: config.claude_code_cli_path,
+        permission_mode: config.claude_code_permission_mode,
+        setting_sources: config.claude_code_setting_sources,
+        workspace: config.workspace.clone(),
+    }))?;
     if let Some(gemini_key) = config.gemini_api_key {
         builder.install(GeminiExtension::new(gemini_key))?;
     }
@@ -810,6 +823,9 @@ mod tests {
             google_speech_project_id: None,
             google_speech_location: None,
             anthropic_api_key: Some("anthropic".to_string()),
+            claude_code_cli_path: None,
+            claude_code_permission_mode: None,
+            claude_code_setting_sources: None,
             gemini_api_key: Some("gemini".to_string()),
             xai_api_key: Some("xai".to_string()),
             xai_base_url: None,
@@ -853,6 +869,7 @@ mod tests {
             PROVIDER_MOCK,
             PROVIDER_OPENAI,
             PROVIDER_CODEX,
+            roder_api::catalog::PROVIDER_CLAUDE_CODE,
             PROVIDER_ANTHROPIC,
             PROVIDER_GEMINI,
             PROVIDER_SUPERGROK,

@@ -59,7 +59,7 @@ use ratatui::{
         Block, BorderType, Borders, Clear, List, ListItem, ListState, Paragraph, Widget, Wrap,
     },
 };
-use roder_api::catalog::lookup_model;
+use roder_api::catalog::{lookup_model, lookup_model_for_provider};
 use roder_api::events::RoderEvent;
 use roder_api::inference::{
     HostedWebSearchMode, ProviderAuthType, ReasoningEffortDescriptor, TokenUsage,
@@ -1379,7 +1379,7 @@ where
         } else {
             requested_model
         };
-        let model_context_window = context_window_for_model(&selected_model);
+        let model_context_window = context_window_for_provider_model(&provider, &selected_model);
 
         let command_catalog = thread_resume::commands_list(&client)
             .await
@@ -1848,6 +1848,11 @@ where
                     }
                     RoderEvent::ContextAssemblyCompleted(ev) => {
                         self.context_breakdown.record_context_completed(&ev);
+                        let prompt_tokens = ev.prompt_estimated_tokens.max(ev.estimated_tokens);
+                        if prompt_tokens > 0 {
+                            self.context_window_tokens =
+                                self.context_window_tokens.max(u64::from(prompt_tokens));
+                        }
                     }
                     RoderEvent::SkillIndexRendered(ev) => {
                         self.context_breakdown.record_skill_index(&ev);
@@ -4096,7 +4101,7 @@ where
                 self.model_options = provider_options_from_list(&list);
                 self.model_context_window =
                     context_window_from_options(&self.model_options, &self.provider, &self.model)
-                        .or_else(|| context_window_for_model(&self.model));
+                        .or_else(|| context_window_for_provider_model(&self.provider, &self.model));
                 self.pending_reasoning_model = None;
                 self.pending_api_key_provider = None;
                 self.provider_menu_items = main_provider_menu_items(&self.provider_choices);
@@ -4138,7 +4143,7 @@ where
         self.model_options = provider_options_from_list(&list);
         self.model_context_window =
             context_window_from_options(&self.model_options, &self.provider, &self.model)
-                .or_else(|| context_window_for_model(&self.model));
+                .or_else(|| context_window_for_provider_model(&self.provider, &self.model));
         Ok(())
     }
 
@@ -5300,7 +5305,7 @@ where
                 self.reasoning_effort = selected.reasoning;
                 self.model_context_window =
                     context_window_from_options(&self.model_options, &self.provider, &self.model)
-                        .or_else(|| context_window_for_model(&self.model));
+                        .or_else(|| context_window_for_provider_model(&self.provider, &self.model));
                 if let Some(thread_id) = focused_thread_id {
                     if let Err(err) = self
                         .send_provider_select(ProviderSelectParams {
@@ -6795,7 +6800,7 @@ fn provider_options_from_list(list: &ProvidersListResult) -> Vec<ProviderOption>
                 provider_id: provider.id.clone(),
                 model_id: list.active_model.clone(),
                 label: provider_model_label(&provider.id, &list.active_model),
-                context_window: context_window_for_model(&list.active_model),
+                context_window: context_window_for_provider_model(&provider.id, &list.active_model),
                 default_reasoning: Some(list.active_reasoning.clone()),
                 reasoning_options: Vec::new(),
             });
@@ -6813,7 +6818,7 @@ fn provider_options_from_list(list: &ProvidersListResult) -> Vec<ProviderOption>
                 label: provider_model_label(&provider.id, &model_name),
                 context_window: model
                     .context_window
-                    .or_else(|| context_window_for_model(&model.id)),
+                    .or_else(|| context_window_for_provider_model(&provider.id, &model.id)),
                 default_reasoning: model.default_reasoning.clone(),
                 reasoning_options: model.supported_reasoning.clone(),
             });
@@ -7845,6 +7850,11 @@ fn compact_token_count(tokens: u64) -> String {
 
 fn context_window_for_model(model: &str) -> Option<u32> {
     lookup_model(model).and_then(|entry| (entry.context_window > 0).then_some(entry.context_window))
+}
+
+fn context_window_for_provider_model(provider: &str, model: &str) -> Option<u32> {
+    lookup_model_for_provider(provider, model)
+        .and_then(|entry| (entry.context_window > 0).then_some(entry.context_window))
 }
 
 fn context_window_from_options(
@@ -9120,6 +9130,18 @@ mod tests {
             ..usage
         };
         assert_eq!(hovered.label(), "│ 15K / 1.0M │");
+    }
+
+    #[test]
+    fn context_window_lookup_prefers_active_provider_metadata() {
+        assert_eq!(
+            context_window_for_provider_model("anthropic", "claude-sonnet-4-6"),
+            Some(1_000_000)
+        );
+        assert_eq!(
+            context_window_for_provider_model("claude-code", "claude-sonnet-4-6"),
+            Some(1_000_000)
+        );
     }
 
     #[test]

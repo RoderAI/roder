@@ -141,6 +141,9 @@ pub struct ProviderConfig {
     pub project_id_env: Option<String>,
     pub http_referer: Option<String>,
     pub app_title: Option<String>,
+    pub cli_path: Option<String>,
+    pub permission_mode: Option<String>,
+    pub setting_sources: Option<Vec<String>>,
 }
 
 #[derive(Debug, Default, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -1394,6 +1397,32 @@ mod tests {
             Some("https://example.com")
         );
         assert_eq!(provider.app_title.as_deref(), Some("Roder"));
+    }
+
+    #[test]
+    fn deserializes_claude_code_provider_cli_config() {
+        let config: Config = toml::from_str(
+            r#"
+            provider = "claude-code"
+            model = "sonnet"
+
+            [providers.claude-code]
+            cli_path = "/usr/local/bin/claude"
+            permission_mode = "default"
+            setting_sources = ["user", "project"]
+            "#,
+        )
+        .unwrap();
+
+        let provider = config.providers.get("claude-code").unwrap();
+        assert_eq!(config.provider.as_deref(), Some("claude-code"));
+        assert_eq!(config.model.as_deref(), Some("sonnet"));
+        assert_eq!(provider.cli_path.as_deref(), Some("/usr/local/bin/claude"));
+        assert_eq!(provider.permission_mode.as_deref(), Some("default"));
+        assert_eq!(
+            provider.setting_sources.as_deref(),
+            Some(&["user".to_string(), "project".to_string()][..])
+        );
     }
 
     #[test]
