@@ -15,6 +15,14 @@ use crate::transcript::{InputImage, TranscriptItem};
 mod projection;
 pub use projection::{project_thread_item_events, project_turns_from_events};
 
+/// Thread IDs reserved for system event streams that are not user-visible conversations.
+pub const SYNTHETIC_EVENT_THREAD_IDS: &[&str] = &["app-server", "runtime", "thread-workflow"];
+
+/// Returns true for production-emitted synthetic event streams.
+pub fn is_synthetic_event_thread_id(thread_id: &str) -> bool {
+    SYNTHETIC_EVENT_THREAD_IDS.contains(&thread_id)
+}
+
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 pub struct ThreadUsageMetadata {
     #[serde(default)]
@@ -348,6 +356,18 @@ pub trait CheckpointStoreFactory: Send + Sync + 'static {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn synthetic_event_thread_ids_are_reserved_production_ids() {
+        assert!(is_synthetic_event_thread_id("app-server"));
+        assert!(is_synthetic_event_thread_id("runtime"));
+        assert!(is_synthetic_event_thread_id("thread-workflow"));
+
+        assert!(!is_synthetic_event_thread_id("thread-discovery"));
+        assert!(!is_synthetic_event_thread_id("thread-plan"));
+        assert!(!is_synthetic_event_thread_id("thread-process"));
+        assert!(!is_synthetic_event_thread_id("thread-1"));
+    }
 
     #[test]
     fn thread_metadata_timestamps_serialize_as_rfc3339_strings() {
