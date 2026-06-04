@@ -13,6 +13,7 @@ pub const PROVIDER_MOCK: &str = "mock";
 pub const PROVIDER_OPENAI: &str = "openai";
 pub const PROVIDER_CODEX: &str = "codex";
 pub const PROVIDER_ANTHROPIC: &str = "anthropic";
+pub const PROVIDER_CLAUDE_CODE: &str = "claude-code";
 pub const PROVIDER_GEMINI: &str = "gemini";
 pub const PROVIDER_XAI: &str = "xai";
 pub const PROVIDER_SUPERGROK: &str = "supergrok";
@@ -28,6 +29,7 @@ pub const PROVIDER_KIND_MOCK: &str = "mock";
 pub const PROVIDER_KIND_OPENAI: &str = "openai";
 pub const PROVIDER_KIND_CHAT_COMPLETIONS: &str = "chat_completions";
 pub const PROVIDER_KIND_ANTHROPIC: &str = "anthropic";
+pub const PROVIDER_KIND_CLAUDE_CODE: &str = "claude_code";
 pub const PROVIDER_KIND_GEMINI: &str = "gemini";
 pub const PROVIDER_KIND_XAI: &str = "xai";
 pub const PROVIDER_KIND_OPENCODE: &str = "opencode";
@@ -328,6 +330,17 @@ pub const BUILT_IN_PROVIDERS: &[ProviderCatalogEntry] = &[
         supports_websockets: false,
     },
     ProviderCatalogEntry {
+        id: PROVIDER_CLAUDE_CODE,
+        name: "Claude Code",
+        kind: PROVIDER_KIND_CLAUDE_CODE,
+        default_model: "sonnet",
+        base_url: None,
+        env_key: None,
+        env_aliases: &["CLAUDE_CODE_CLI_PATH", "RODER_CLAUDE_CODE_CLI_PATH"],
+        requires_auth: false,
+        supports_websockets: false,
+    },
+    ProviderCatalogEntry {
         id: PROVIDER_GEMINI,
         name: "Gemini",
         kind: PROVIDER_KIND_GEMINI,
@@ -507,6 +520,51 @@ pub const BUILT_IN_MODELS: &[ModelCatalogEntry] = &[
         180_000,
         REASONING_NONE,
         &[],
+    ),
+    claude_code_model(
+        "sonnet",
+        "Claude Code Sonnet",
+        "Claude Code harness Sonnet alias for coding and tool workflows.",
+        1_000_000,
+        900_000,
+        REASONING_MEDIUM,
+        SONNET_REASONING,
+    ),
+    claude_code_model(
+        "opus",
+        "Claude Code Opus",
+        "Claude Code harness Opus alias for complex long-horizon agentic work.",
+        1_000_000,
+        900_000,
+        REASONING_HIGH,
+        OPUS_REASONING,
+    ),
+    claude_code_model(
+        "haiku",
+        "Claude Code Haiku",
+        "Claude Code harness Haiku alias for fast lower-latency coding turns.",
+        200_000,
+        180_000,
+        REASONING_NONE,
+        &[],
+    ),
+    claude_code_model(
+        "claude-sonnet-4-6",
+        "Claude Code Sonnet 4.6",
+        "Claude Sonnet 4.6 through the local Claude Code harness.",
+        1_000_000,
+        900_000,
+        REASONING_MEDIUM,
+        SONNET_REASONING,
+    ),
+    claude_code_model(
+        "claude-opus-4-8",
+        "Claude Code Opus 4.8",
+        "Claude Opus 4.8 through the local Claude Code harness.",
+        1_000_000,
+        900_000,
+        REASONING_HIGH,
+        OPUS_REASONING,
     ),
     gemini_model(
         "gemini-3.5-flash",
@@ -893,6 +951,34 @@ const fn anthropic_model(
     }
 }
 
+const fn claude_code_model(
+    id: &'static str,
+    display_name: &'static str,
+    description: &'static str,
+    context_window: u32,
+    auto_compact_token_limit: u32,
+    default_reasoning: &'static str,
+    supported_reasoning: &'static [ReasoningOption],
+) -> ModelCatalogEntry {
+    ModelCatalogEntry {
+        id,
+        display_name,
+        description,
+        provider: PROVIDER_CLAUDE_CODE,
+        default_reasoning,
+        supported_reasoning,
+        context_window,
+        max_context_window: context_window,
+        auto_compact_token_limit,
+        supports_compaction: true,
+        supports_images: false,
+        supports_tools: true,
+        supports_structured: false,
+        edit_tool: Some(EDIT_TOOL_EDIT),
+        hidden: false,
+    }
+}
+
 const fn gemini_model(
     id: &'static str,
     display_name: &'static str,
@@ -1124,7 +1210,7 @@ fn model_harness_profile_from_catalog(model: &ModelCatalogEntry) -> ModelHarness
 pub fn provider_family_for_provider(provider: &str) -> ProviderFamily {
     match provider {
         PROVIDER_OPENAI | PROVIDER_CODEX => ProviderFamily::OpenAi,
-        PROVIDER_ANTHROPIC => ProviderFamily::Anthropic,
+        PROVIDER_ANTHROPIC | PROVIDER_CLAUDE_CODE => ProviderFamily::Anthropic,
         PROVIDER_GEMINI => ProviderFamily::Gemini,
         PROVIDER_XAI | PROVIDER_SUPERGROK => ProviderFamily::Xai,
         PROVIDER_OPENCODE | PROVIDER_OPENCODE_GO => ProviderFamily::Opencode,
@@ -1187,6 +1273,7 @@ pub fn normalize_provider_id(provider: &str) -> String {
         "openrouter" => PROVIDER_OPENROUTER.to_string(),
         "laguna" | "poolside" => PROVIDER_POOLSIDE.to_string(),
         "composer" | "cursor-composer" => PROVIDER_CURSOR.to_string(),
+        "claude_code" | "claudecode" => PROVIDER_CLAUDE_CODE.to_string(),
         provider => provider.to_string(),
     }
 }
@@ -1229,6 +1316,7 @@ mod tests {
                 "openai",
                 "codex",
                 "anthropic",
+                "claude-code",
                 "gemini",
                 "xai",
                 "supergrok",
@@ -1290,6 +1378,11 @@ mod tests {
                 "claude-opus-4-7",
                 "claude-sonnet-4-6",
                 "claude-haiku-4-5-20251001",
+                "sonnet",
+                "opus",
+                "haiku",
+                "claude-sonnet-4-6",
+                "claude-opus-4-8",
                 "gemini-3.5-flash",
                 "gemini-3.1-pro-preview",
                 "gemini-3.1-pro-preview-customtools",
@@ -1341,6 +1434,7 @@ mod tests {
         assert_eq!(models_for_provider(PROVIDER_OPENAI, false).len(), 2);
         assert_eq!(models_for_codex(false).len(), 3);
         assert_eq!(models_for_provider(PROVIDER_ANTHROPIC, false).len(), 4);
+        assert_eq!(models_for_provider(PROVIDER_CLAUDE_CODE, false).len(), 5);
         assert_eq!(models_for_provider(PROVIDER_GEMINI, false).len(), 5);
         assert_eq!(models_for_provider(PROVIDER_XAI, false).len(), 4);
         assert_eq!(models_for_provider(PROVIDER_SUPERGROK, false).len(), 4);
@@ -1355,6 +1449,17 @@ mod tests {
             5
         );
         assert_eq!(models_for_provider(PROVIDER_MOCK, true).len(), 1);
+    }
+
+    #[test]
+    fn claude_code_catalog_uses_long_context_windows() {
+        let direct = lookup_model_for_provider(PROVIDER_ANTHROPIC, "claude-sonnet-4-6").unwrap();
+        let claude_code =
+            lookup_model_for_provider(PROVIDER_CLAUDE_CODE, "claude-sonnet-4-6").unwrap();
+
+        assert_eq!(direct.context_window, 1_000_000);
+        assert_eq!(claude_code.context_window, 1_000_000);
+        assert_eq!(claude_code.auto_compact_token_limit, 900_000);
     }
 
     #[test]

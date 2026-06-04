@@ -18,7 +18,7 @@ impl Runtime {
         turn_id: &TurnId,
         model: &str,
     ) -> anyhow::Result<Vec<TranscriptItem>> {
-        let context_plan = self.assemble_context(req, turn_id).await?;
+        let context_plan = self.start_context_assembly(req, turn_id).await?;
         let mut transcript = Vec::new();
         for block in context_plan.blocks {
             if matches!(
@@ -41,11 +41,15 @@ impl Runtime {
             text: req.message.clone(),
             images: req.images.clone(),
         }));
-        self.compact_transcript_if_needed(&req.thread_id, turn_id, model, transcript)
-            .await
+        let transcript = self
+            .compact_transcript_if_needed(&req.thread_id, turn_id, model, transcript)
+            .await?;
+        self.complete_context_assembly(req, turn_id, &transcript)
+            .await;
+        Ok(transcript)
     }
 
-    async fn assemble_context(
+    async fn start_context_assembly(
         &self,
         req: &StartTurnRequest,
         turn_id: &TurnId,
@@ -89,13 +93,6 @@ impl Runtime {
             }
             plan
         };
-        let block_count = plan.blocks.len() as u64;
-        let total_byte_count = plan
-            .blocks
-            .iter()
-            .map(|block| block.text.len() as u64)
-            .sum::<u64>();
-        let estimated_tokens = estimate_context_tokens(&plan);
         for block in plan
             .blocks
             .iter()
@@ -131,19 +128,35 @@ impl Runtime {
                 .await;
             }
         }
+        Ok(plan)
+    }
+
+    async fn complete_context_assembly(
+        &self,
+        req: &StartTurnRequest,
+        turn_id: &TurnId,
+        transcript: &[TranscriptItem],
+    ) {
+        let block_count = transcript.len() as u64;
+        let total_byte_count = transcript
+            .iter()
+            .map(item_text_len)
+            .map(|len| len as u64)
+            .sum::<u64>();
+        let prompt_estimated_tokens = estimate_tokens(transcript);
         self.emit(RoderEvent::ContextAssemblyCompleted(
             ContextAssemblyCompleted {
                 thread_id: req.thread_id.clone(),
                 turn_id: turn_id.clone(),
                 block_count,
                 total_byte_count,
-                estimated_tokens,
-                token_budget: query.token_budget,
+                estimated_tokens: prompt_estimated_tokens,
+                prompt_estimated_tokens,
+                token_budget: None,
                 timestamp: OffsetDateTime::now_utc(),
             },
         ))
         .await;
-        Ok(plan)
     }
 
     async fn prior_transcript(
@@ -234,11 +247,6 @@ impl Runtime {
         .await;
         Ok(compacted)
     }
-}
-
-fn estimate_context_tokens(plan: &ContextPlan) -> u32 {
-    let chars: usize = plan.blocks.iter().map(|block| block.text.len()).sum();
-    chars_to_tokens(chars)
 }
 
 fn estimate_tokens(items: &[TranscriptItem]) -> u32 {
@@ -379,6 +387,14 @@ mod tests {
                 event,
                 RoderEvent::SkillInvoked(invoked)
                     if invoked.descriptor.name == "vcs-snapshot"
+            )
+        }));
+        assert!(emitted.iter().any(|event| {
+            matches!(
+                event,
+                RoderEvent::ContextAssemblyCompleted(completed)
+                    if completed.prompt_estimated_tokens > 0
+                        && completed.prompt_estimated_tokens == completed.estimated_tokens
             )
         }));
     }

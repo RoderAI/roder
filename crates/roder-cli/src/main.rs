@@ -24,9 +24,9 @@ use automations::run_automations_cli;
 use evals::run_eval_cli;
 use marketplace::{run_marketplace_cli, run_plugin_cli, run_setup_cli};
 use roder_api::catalog::{
-    DEFAULT_MODEL_ID, PROVIDER_ANTHROPIC, PROVIDER_CODEX, PROVIDER_CURSOR, PROVIDER_GEMINI,
-    PROVIDER_MOCK, PROVIDER_OPENAI, PROVIDER_OPENCODE, PROVIDER_OPENCODE_GO, PROVIDER_OPENROUTER,
-    PROVIDER_POOLSIDE, PROVIDER_SUPERGROK, PROVIDER_XAI, PROVIDER_XIAOMI_MIMO,
+    DEFAULT_MODEL_ID, PROVIDER_ANTHROPIC, PROVIDER_CLAUDE_CODE, PROVIDER_CODEX, PROVIDER_CURSOR,
+    PROVIDER_GEMINI, PROVIDER_MOCK, PROVIDER_OPENAI, PROVIDER_OPENCODE, PROVIDER_OPENCODE_GO,
+    PROVIDER_OPENROUTER, PROVIDER_POOLSIDE, PROVIDER_SUPERGROK, PROVIDER_XAI, PROVIDER_XIAOMI_MIMO,
     PROVIDER_XIAOMI_MIMO_TOKEN_PLAN, normalize_provider_id,
 };
 use roder_api::command_shell::{default_command_shell, normalize_command_shell};
@@ -1124,6 +1124,9 @@ pub(crate) async fn build_runtime_from_config(
         google_speech_project_id: keys.google_speech_project_id,
         google_speech_location: keys.google_speech_location,
         anthropic_api_key: keys.anthropic,
+        claude_code_cli_path: keys.claude_code_cli_path,
+        claude_code_permission_mode: keys.claude_code_permission_mode,
+        claude_code_setting_sources: keys.claude_code_setting_sources,
         gemini_api_key: keys.gemini,
         xai_api_key: keys.xai,
         xai_base_url: keys.xai_base_url,
@@ -2095,6 +2098,9 @@ struct ProviderKeys {
     google_speech_project_id: Option<String>,
     google_speech_location: Option<String>,
     anthropic: Option<String>,
+    claude_code_cli_path: Option<String>,
+    claude_code_permission_mode: Option<String>,
+    claude_code_setting_sources: Option<Vec<String>>,
     gemini: Option<String>,
     xai: Option<String>,
     xai_base_url: Option<String>,
@@ -2181,6 +2187,22 @@ fn provider_keys(cfg: &roder_config::Config) -> ProviderKeys {
                 .get("anthropic")
                 .and_then(|p| p.api_key.clone())
         }),
+        claude_code_cli_path: cfg
+            .providers
+            .get(PROVIDER_CLAUDE_CODE)
+            .and_then(|p| p.cli_path.clone())
+            .or_else(|| std::env::var("RODER_CLAUDE_CODE_CLI_PATH").ok())
+            .or_else(|| std::env::var("CLAUDE_CODE_CLI_PATH").ok()),
+        claude_code_permission_mode: cfg
+            .providers
+            .get(PROVIDER_CLAUDE_CODE)
+            .and_then(|p| p.permission_mode.clone())
+            .or_else(|| std::env::var("RODER_CLAUDE_CODE_PERMISSION_MODE").ok())
+            .or_else(|| std::env::var("CLAUDE_CODE_PERMISSION_MODE").ok()),
+        claude_code_setting_sources: cfg
+            .providers
+            .get(PROVIDER_CLAUDE_CODE)
+            .and_then(|p| p.setting_sources.clone()),
         gemini: std::env::var("GEMINI_API_TOKEN")
             .ok()
             .or_else(|| std::env::var("GEMINI_API_KEY").ok())
@@ -2408,6 +2430,7 @@ fn is_builtin_provider_id(id: &str) -> bool {
             | "openai-speech"
             | "google-speech"
             | "codex"
+            | "claude-code"
             | "anthropic"
             | "gemini"
             | "xai"
@@ -2731,6 +2754,7 @@ fn provider_can_be_registered(
     match provider {
         PROVIDER_MOCK
         | PROVIDER_CODEX
+        | PROVIDER_CLAUDE_CODE
         | PROVIDER_SUPERGROK
         | PROVIDER_OPENCODE
         | PROVIDER_OPENCODE_GO
@@ -2760,6 +2784,9 @@ mod tests {
             google_speech_project_id: None,
             google_speech_location: None,
             anthropic: None,
+            claude_code_cli_path: None,
+            claude_code_permission_mode: None,
+            claude_code_setting_sources: None,
             gemini: None,
             xai: None,
             xai_base_url: None,
@@ -2885,6 +2912,17 @@ mod tests {
                 api_key: None,
                 base_url: "http://localhost:11434/v1".to_string(),
             }],
+        );
+
+        assert_eq!(repair, None);
+    }
+
+    #[test]
+    fn startup_accepts_claude_code_without_api_key() {
+        let repair = repair_unregistered_default_provider(
+            PROVIDER_CLAUDE_CODE,
+            &provider_keys_for_test(),
+            &[],
         );
 
         assert_eq!(repair, None);
