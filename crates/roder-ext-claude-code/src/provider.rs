@@ -9,7 +9,7 @@ use roder_api::inference::{
     AgentInferenceRequest, CompletionMetadata, InferenceCapabilities, InferenceEngine,
     InferenceEvent, InferenceEventStream, InferenceFailure, InferenceProviderContext,
     InferenceProviderMetadata, InferenceTurnContext, MessageDelta, ModelDescriptor,
-    ProviderAuthType, ReasoningDelta, TokenUsage, ToolCallDelta, ToolCallStarted,
+    ProviderAuthType, ReasoningDelta, TokenUsage, ToolCallCompleted, ToolCallDelta,
 };
 use serde_json::json;
 use tokio::sync::mpsc;
@@ -188,8 +188,14 @@ fn map_stream_events(mut events: mpsc::UnboundedReceiver<StreamEvent>) -> Infere
                 StreamEvent::ThinkingChunk { thinking, .. } => {
                     yield InferenceEvent::ReasoningDelta(ReasoningDelta { text: thinking });
                 }
-                StreamEvent::ToolUseStart { id, name, .. } => {
-                    yield InferenceEvent::ToolCallStarted(ToolCallStarted { id, name });
+                StreamEvent::ToolUseStart { id, name, input } => {
+                    if !input.is_empty() {
+                        yield InferenceEvent::ToolCallCompleted(ToolCallCompleted {
+                            id,
+                            name,
+                            arguments: serde_json::Value::Object(input).to_string(),
+                        });
+                    }
                 }
                 StreamEvent::ToolUseDelta { id, partial_input } => {
                     yield InferenceEvent::ToolCallDelta(ToolCallDelta { id, arguments_delta: partial_input });
@@ -243,15 +249,33 @@ fn usage_from_response(response: &MessageResponse) -> Option<TokenUsage> {
         usage,
         &[
             "input_tokens",
+            "inputTokens",
             "prompt_tokens",
+            "promptTokens",
             "cache_creation_input_tokens",
+            "cacheCreationInputTokens",
             "cache_read_input_tokens",
+            "cacheReadInputTokens",
         ],
-    )?;
-    let cached_prompt_tokens = number_from_usage(usage, &["cache_read_input_tokens"]);
-    let completion_tokens = number_from_usage(usage, &["output_tokens", "completion_tokens"])?;
-    let total_tokens = number_from_usage(usage, &["total_tokens"])
+    )
+    .unwrap_or(0);
+    let cached_prompt_tokens =
+        number_from_usage(usage, &["cache_read_input_tokens", "cacheReadInputTokens"]);
+    let completion_tokens = number_from_usage(
+        usage,
+        &[
+            "output_tokens",
+            "outputTokens",
+            "completion_tokens",
+            "completionTokens",
+        ],
+    )
+    .unwrap_or(0);
+    let total_tokens = number_from_usage(usage, &["total_tokens", "totalTokens"])
         .unwrap_or_else(|| prompt_tokens.saturating_add(completion_tokens));
+    if prompt_tokens == 0 && completion_tokens == 0 && total_tokens == 0 {
+        return None;
+    }
     Some(
         TokenUsage::new(prompt_tokens, completion_tokens, total_tokens)
             .with_cached_prompt_tokens(cached_prompt_tokens.unwrap_or(0)),
@@ -262,12 +286,27 @@ fn number_from_usage(
     usage: &std::collections::HashMap<String, serde_json::Value>,
     keys: &[&str],
 ) -> Option<u32> {
-    let total = keys
-        .iter()
-        .filter_map(|key| usage.get(*key))
-        .filter_map(json_u32)
-        .fold(0u32, u32::saturating_add);
+    let total = usage.iter().fold(0u32, |total, (key, value)| {
+        total.saturating_add(number_from_usage_value(key, value, keys))
+    });
     (total > 0).then_some(total)
+}
+
+fn number_from_usage_value(key: &str, value: &serde_json::Value, keys: &[&str]) -> u32 {
+    let direct = if keys.iter().any(|candidate| candidate == &key) {
+        json_u32(value).unwrap_or(0)
+    } else {
+        0
+    };
+    let nested = value
+        .as_object()
+        .map(|object| {
+            object.iter().fold(0u32, |total, (key, value)| {
+                total.saturating_add(number_from_usage_value(key, value, keys))
+            })
+        })
+        .unwrap_or(0);
+    direct.saturating_add(nested)
 }
 
 fn json_u32(value: &serde_json::Value) -> Option<u32> {
@@ -275,6 +314,13 @@ fn json_u32(value: &serde_json::Value) -> Option<u32> {
         .as_u64()
         .and_then(|value| u32::try_from(value).ok())
         .or_else(|| value.as_i64().and_then(|value| u32::try_from(value).ok()))
+        .or_else(|| {
+            value
+                .as_f64()
+                .filter(|value| value.is_finite() && *value >= 0.0)
+                .and_then(|value| u32::try_from(value as u64).ok())
+        })
+        .or_else(|| value.as_str().and_then(|value| value.parse::<u32>().ok()))
 }
 
 fn redact_error(message: &str) -> String {
@@ -519,7 +565,10 @@ mod tests {
                     StreamEvent::ToolUseStart {
                         id: "toolu_1".to_string(),
                         name: "Read".to_string(),
-                        input: serde_json::Map::new(),
+                        input: serde_json::Map::from_iter([(
+                            "path".to_string(),
+                            json!("crates/roder-ext-claude-code"),
+                        )]),
                     },
                     StreamEvent::ToolUseDelta {
                         id: "toolu_1".to_string(),
@@ -544,7 +593,9 @@ mod tests {
             .into_iter()
             .collect::<Result<Vec<_>, _>>()
             .unwrap();
-        assert!(matches!(events[0], InferenceEvent::ToolCallStarted(_)));
+        assert!(
+            matches!(&events[0], InferenceEvent::ToolCallCompleted(call) if call.arguments.contains("roder-ext-claude-code"))
+        );
         assert!(matches!(events[1], InferenceEvent::ToolCallDelta(_)));
     }
 
@@ -593,5 +644,50 @@ mod tests {
         assert_eq!(usage.cached_prompt_tokens, 11);
         assert_eq!(usage.completion_tokens, 13);
         assert_eq!(usage.total_tokens, 31);
+    }
+
+    #[test]
+    fn usage_parser_accepts_output_only_delta_usage() {
+        let response = MessageResponse {
+            content: String::new(),
+            blocks: Vec::new(),
+            model: "sonnet".to_string(),
+            stop_reason: Some("end_turn".to_string()),
+            session_id: "session".to_string(),
+            usage: Some(std::collections::HashMap::from([(
+                "output_tokens".to_string(),
+                json!(42),
+            )])),
+        };
+
+        let usage = usage_from_response(&response).unwrap();
+        assert_eq!(usage.prompt_tokens, 0);
+        assert_eq!(usage.completion_tokens, 42);
+        assert_eq!(usage.total_tokens, 42);
+    }
+
+    #[test]
+    fn usage_parser_accepts_nested_camel_case_model_usage() {
+        let response = MessageResponse {
+            content: String::new(),
+            blocks: Vec::new(),
+            model: "sonnet".to_string(),
+            stop_reason: Some("end_turn".to_string()),
+            session_id: "session".to_string(),
+            usage: Some(std::collections::HashMap::from([(
+                "modelUsage".to_string(),
+                json!({
+                    "inputTokens": "100",
+                    "cacheReadInputTokens": 25.0,
+                    "outputTokens": 7,
+                }),
+            )])),
+        };
+
+        let usage = usage_from_response(&response).unwrap();
+        assert_eq!(usage.prompt_tokens, 125);
+        assert_eq!(usage.cached_prompt_tokens, 25);
+        assert_eq!(usage.completion_tokens, 7);
+        assert_eq!(usage.total_tokens, 132);
     }
 }

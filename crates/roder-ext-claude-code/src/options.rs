@@ -45,7 +45,7 @@ pub fn build_options(
         let budget = i32::try_from(max_tokens).unwrap_or(i32::MAX);
         builder = builder.max_thinking_tokens(budget);
     }
-    let roder_tool_names = roder_tool_names(request);
+    let allowed_tool_names = allowed_claude_tool_names(request);
     if !request.tools.is_empty() && !matches!(request.tool_choice, ToolChoice::None) {
         let executor = tool_executor.ok_or_else(|| {
             anyhow::anyhow!("Claude Code provider requires a Roder tool executor")
@@ -53,21 +53,24 @@ pub fn build_options(
         let server = roder_sdk_mcp_server(request, executor);
         builder = builder.sdk_mcp_server("roder", server);
         builder = builder.allowed_tools(
-            roder_tool_names
+            allowed_tool_names
                 .iter()
                 .map(|name| format!("mcp__roder__{name}"))
                 .collect(),
         );
     }
     builder = builder.can_use_tool(move |tool_name, _input, _context| {
-        let roder_tool_names = roder_tool_names.clone();
+        let allowed_tool_names = allowed_tool_names.clone();
         async move {
-            let Some(roder_tool_name) = tool_name.strip_prefix("mcp__roder__") else {
+            let Some(claude_tool_name) = tool_name.strip_prefix("mcp__roder__") else {
                 return Ok(PermissionResult::deny(format!(
                     "Claude Code tool {tool_name} is not managed by Roder"
                 )));
             };
-            if roder_tool_names.iter().any(|name| name == roder_tool_name) {
+            if allowed_tool_names
+                .iter()
+                .any(|name| name == claude_tool_name)
+            {
                 Ok(PermissionResult::allow())
             } else {
                 Ok(PermissionResult::deny(format!(
@@ -79,8 +82,16 @@ pub fn build_options(
     Ok(builder.build())
 }
 
-fn roder_tool_names(request: &AgentInferenceRequest) -> Vec<String> {
-    request.tools.iter().map(|tool| tool.name.clone()).collect()
+fn allowed_claude_tool_names(request: &AgentInferenceRequest) -> Vec<String> {
+    request
+        .tools
+        .iter()
+        .flat_map(|tool| {
+            let mut names = vec![tool.name.clone()];
+            names.extend(claude_aliases_for_roder_tool(&tool.name).map(str::to_string));
+            names
+        })
+        .collect()
 }
 
 fn roder_sdk_mcp_server(
@@ -90,35 +101,180 @@ fn roder_sdk_mcp_server(
     let tools = request
         .tools
         .iter()
-        .map(|spec| {
-            let name = spec.name.clone();
-            let description = spec.description.clone();
-            let schema = spec.parameters.clone();
-            let executor = Arc::clone(&executor);
-            SdkMcpTool::new(name.clone(), description, schema, None, move |input| {
-                let call = ToolCallCompleted {
-                    id: format!("claude-code-{name}"),
-                    name: name.clone(),
-                    arguments: input.to_string(),
-                };
-                let handle = tokio::runtime::Handle::current();
-                let outcome =
-                    tokio::task::block_in_place(|| handle.block_on(executor.execute(call)));
-                match outcome {
-                    Ok(outcome) => {
-                        let text = if outcome.is_error {
-                            format!("Tool returned an error:\n{}", outcome.result)
-                        } else {
-                            outcome.result
-                        };
-                        Ok(vec![MCPContent::Text { text }])
-                    }
-                    Err(err) => Err(err.to_string()),
-                }
+        .flat_map(|spec| {
+            let mut names = vec![spec.name.clone()];
+            names.extend(claude_aliases_for_roder_tool(&spec.name).map(str::to_string));
+            names.into_iter().map(|claude_name| {
+                sdk_tool_for_spec(
+                    claude_name,
+                    spec.name.clone(),
+                    spec.description.clone(),
+                    spec.parameters.clone(),
+                    Arc::clone(&executor),
+                )
             })
         })
         .collect();
     claude_agent_sdk::mcp::create_sdk_mcp_server("roder", tools)
+}
+
+fn sdk_tool_for_spec(
+    claude_name: String,
+    roder_name: String,
+    description: String,
+    schema: serde_json::Value,
+    executor: Arc<dyn TurnToolExecutor>,
+) -> SdkMcpTool {
+    let call_schema = schema.clone();
+    SdkMcpTool::new(
+        claude_name.clone(),
+        description,
+        schema,
+        None,
+        move |input| {
+            let input =
+                repair_sdk_mcp_input_for_tool(input, &call_schema, &claude_name, &roder_name);
+            let call = ToolCallCompleted {
+                id: format!("claude-code-{claude_name}"),
+                name: roder_name.clone(),
+                arguments: input.to_string(),
+            };
+            let handle = tokio::runtime::Handle::current();
+            let outcome = tokio::task::block_in_place(|| handle.block_on(executor.execute(call)));
+            match outcome {
+                Ok(outcome) => {
+                    let text = if outcome.is_error {
+                        format!("Tool returned an error:\n{}", outcome.result)
+                    } else {
+                        outcome.result
+                    };
+                    Ok(vec![MCPContent::Text { text }])
+                }
+                Err(err) => Err(err.to_string()),
+            }
+        },
+    )
+}
+
+fn claude_aliases_for_roder_tool(name: &str) -> impl Iterator<Item = &'static str> {
+    match name {
+        "shell" => ["Bash"].as_slice().iter().copied(),
+        "read_file" => ["Read"].as_slice().iter().copied(),
+        "list_files" => ["LS"].as_slice().iter().copied(),
+        "grep" => ["Grep"].as_slice().iter().copied(),
+        "glob" => ["Glob"].as_slice().iter().copied(),
+        "write_file" => ["Write"].as_slice().iter().copied(),
+        "edit" => ["Edit"].as_slice().iter().copied(),
+        "multi_edit" => ["MultiEdit"].as_slice().iter().copied(),
+        _ => [].as_slice().iter().copied(),
+    }
+}
+
+fn retain_schema_properties(
+    object: &mut serde_json::Map<String, serde_json::Value>,
+    schema: &serde_json::Value,
+) {
+    let Some(properties) = schema
+        .get("properties")
+        .and_then(serde_json::Value::as_object)
+    else {
+        return;
+    };
+    object.retain(|key, _| properties.contains_key(key));
+}
+
+fn repair_sdk_mcp_input_for_tool(
+    input: serde_json::Value,
+    schema: &serde_json::Value,
+    claude_name: &str,
+    roder_name: &str,
+) -> serde_json::Value {
+    if let Some(mut object) = input.as_object().cloned() {
+        normalize_claude_tool_input_aliases(&mut object, claude_name, roder_name);
+        normalize_sdk_mcp_aliases(&mut object, schema);
+        retain_schema_properties(&mut object, schema);
+        return serde_json::Value::Object(object);
+    }
+    let Some(required) = schema.get("required").and_then(serde_json::Value::as_array) else {
+        return input;
+    };
+    let [only_required] = required.as_slice() else {
+        return input;
+    };
+    let Some(property) = only_required.as_str() else {
+        return input;
+    };
+    let value = if property == "command" {
+        command_value_from_sdk_mcp_input(input)
+    } else {
+        input
+    };
+    serde_json::json!({ property: value })
+}
+
+fn normalize_claude_tool_input_aliases(
+    object: &mut serde_json::Map<String, serde_json::Value>,
+    claude_name: &str,
+    roder_name: &str,
+) {
+    match (claude_name, roder_name) {
+        ("Bash", "shell") => move_key_if_missing(object, "command", "command"),
+        ("Read", "read_file") => move_key_if_missing(object, "file_path", "path"),
+        ("LS", "list_files") => move_key_if_missing(object, "path", "path"),
+        ("Grep", "grep") => {
+            move_key_if_missing(object, "pattern", "query");
+            move_key_if_missing(object, "path", "path");
+            move_key_if_missing(object, "glob", "glob");
+        }
+        ("Glob", "glob") => move_key_if_missing(object, "pattern", "pattern"),
+        ("Write", "write_file") => move_key_if_missing(object, "file_path", "path"),
+        ("Edit", "edit") | ("MultiEdit", "multi_edit") => {
+            move_key_if_missing(object, "file_path", "path")
+        }
+        _ => {}
+    }
+}
+
+fn move_key_if_missing(
+    object: &mut serde_json::Map<String, serde_json::Value>,
+    from: &str,
+    to: &str,
+) {
+    if !object.contains_key(to)
+        && let Some(value) = object.remove(from)
+    {
+        object.insert(to.to_string(), value);
+    }
+}
+
+fn command_value_from_sdk_mcp_input(input: serde_json::Value) -> serde_json::Value {
+    let Some(items) = input.as_array() else {
+        return input;
+    };
+    let command = items
+        .iter()
+        .map(|item| match item {
+            serde_json::Value::String(text) => text.clone(),
+            other => other.to_string(),
+        })
+        .collect::<Vec<_>>()
+        .join(" ");
+    serde_json::Value::String(command)
+}
+
+fn normalize_sdk_mcp_aliases(
+    object: &mut serde_json::Map<String, serde_json::Value>,
+    schema: &serde_json::Value,
+) {
+    if schema
+        .get("properties")
+        .and_then(serde_json::Value::as_object)
+        .is_some_and(|properties| properties.contains_key("path"))
+        && !object.contains_key("path")
+        && let Some(value) = object.remove("file_path")
+    {
+        object.insert("path".to_string(), value);
+    }
 }
 
 fn merged_system_prompt(request: &AgentInferenceRequest) -> Option<String> {
@@ -256,7 +412,12 @@ mod tests {
             tools: vec![ToolSpec {
                 name: "grep".to_string(),
                 description: "Search text".to_string(),
-                parameters: serde_json::json!({"type": "object"}),
+                parameters: serde_json::json!({
+                    "type": "object",
+                    "properties": {"query": {"type": "string"}},
+                    "required": ["query"],
+                    "additionalProperties": false
+                }),
             }],
             tool_choice: ToolChoice::Auto,
             reasoning: ReasoningConfig::default(),
@@ -277,13 +438,117 @@ mod tests {
         .unwrap();
 
         assert!(options.mcp_servers.contains_key("roder"));
-        assert_eq!(options.allowed_tools, vec!["mcp__roder__grep"]);
+        assert_eq!(
+            options.allowed_tools,
+            vec!["mcp__roder__grep", "mcp__roder__Grep"]
+        );
         let server = options.sdk_mcp_servers.get("roder").unwrap();
-        assert_eq!(server.list_tools()[0].name, "grep");
+        let mut names = server
+            .list_tools()
+            .into_iter()
+            .map(|tool| tool.name.clone())
+            .collect::<Vec<_>>();
+        names.sort();
+        assert_eq!(names, vec!["Grep", "grep"]);
 
         request.tool_choice = ToolChoice::None;
         let options = build_options(&ClaudeCodeConfig::default(), &request, None, None).unwrap();
         assert!(options.sdk_mcp_servers.is_empty());
         assert!(options.allowed_tools.is_empty());
+    }
+
+    #[test]
+    fn repairs_raw_string_sdk_mcp_input_for_single_required_property() {
+        let schema = serde_json::json!({
+            "type": "object",
+            "properties": {
+                "path": { "type": "string" }
+            },
+            "required": ["path"],
+            "additionalProperties": false
+        });
+
+        assert_eq!(
+            repair_sdk_mcp_input_for_tool(
+                serde_json::json!("crates/roder-ext-claude-code"),
+                &schema,
+                "",
+                "",
+            ),
+            serde_json::json!({"path": "crates/roder-ext-claude-code"})
+        );
+        assert_eq!(
+            repair_sdk_mcp_input_for_tool(
+                serde_json::json!({"path": "Cargo.toml"}),
+                &schema,
+                "",
+                "",
+            ),
+            serde_json::json!({"path": "Cargo.toml"})
+        );
+        assert_eq!(
+            repair_sdk_mcp_input_for_tool(
+                serde_json::json!({"file_path": "README.md"}),
+                &schema,
+                "",
+                "",
+            ),
+            serde_json::json!({"path": "README.md"})
+        );
+    }
+
+    #[test]
+    fn repairs_array_sdk_mcp_input_for_command_property() {
+        let schema = serde_json::json!({
+            "type": "object",
+            "properties": {
+                "command": { "type": "string" }
+            },
+            "required": ["command"],
+            "additionalProperties": false
+        });
+
+        assert_eq!(
+            repair_sdk_mcp_input_for_tool(serde_json::json!(["ls", "-la"]), &schema, "", ""),
+            serde_json::json!({"command": "ls -la"})
+        );
+    }
+
+    #[test]
+    fn maps_claude_native_alias_inputs_to_roder_arguments() {
+        let grep_schema = serde_json::json!({
+            "type": "object",
+            "properties": {
+                "query": { "type": "string" },
+                "path": { "type": "string" }
+            },
+            "required": ["query"],
+            "additionalProperties": false
+        });
+        assert_eq!(
+            repair_sdk_mcp_input_for_tool(
+                serde_json::json!({"pattern": "TokenUsage", "path": "crates", "include": "*.rs"}),
+                &grep_schema,
+                "Grep",
+                "grep",
+            ),
+            serde_json::json!({"query": "TokenUsage", "path": "crates"})
+        );
+
+        let read_schema = serde_json::json!({
+            "type": "object",
+            "properties": {"path": {"type": "string"}},
+            "required": ["path"],
+            "additionalProperties": false
+        });
+        assert_eq!(
+            repair_sdk_mcp_input_for_tool(
+                serde_json::json!({"file_path": "README.md"}),
+                &read_schema,
+                "Read",
+                "read_file",
+            ),
+            serde_json::json!({"path": "README.md"})
+        );
     }
 }
