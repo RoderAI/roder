@@ -1,5 +1,6 @@
 #![allow(dead_code, clippy::collapsible_if, clippy::too_many_arguments)]
 mod automations;
+mod chrome;
 mod commands;
 mod composer;
 mod dialog;
@@ -1113,6 +1114,7 @@ where
     confirm_dialog: Option<ConfirmDialogState>,
     tool_detail_modal: Option<ToolDetailModal>,
     plugin_browser: Option<PluginBrowserState>,
+    chrome_panel: Option<chrome::ChromePanelState>,
     remote_panel: RemotePanelController,
     roadmap_mode: Option<RoadmapModeState>,
     image_attachments: Vec<ImageAttachment>,
@@ -1527,6 +1529,7 @@ where
             confirm_dialog: None,
             tool_detail_modal: None,
             plugin_browser: None,
+            chrome_panel: None,
             remote_panel,
             roadmap_mode: None,
             image_attachments: Vec::new(),
@@ -1644,6 +1647,16 @@ where
                                     Some(ConfirmDialogState::new(ConfirmDialog::Exit));
                             } else {
                                 self.handle_plugin_browser_key(key).await;
+                            }
+                        } else if self.chrome_panel.is_some() {
+                            if key.modifiers.contains(KeyModifiers::CONTROL)
+                                && key.code == KeyCode::Char('c')
+                            {
+                                self.chrome_panel = None;
+                                self.confirm_dialog =
+                                    Some(ConfirmDialogState::new(ConfirmDialog::Exit));
+                            } else {
+                                self.handle_chrome_panel_key(key).await;
                             }
                         } else if self.workflows.overlay_visible() {
                             if self.handle_workflow_key(key).await {
@@ -2630,6 +2643,9 @@ where
             }
             "remote" => {
                 self.run_remote_slash_command(&args).await;
+            }
+            "chrome" => {
+                self.run_chrome_slash_command(&args).await;
             }
             "roadmap" => {
                 self.run_roadmap_slash_command(&args);
@@ -3662,6 +3678,9 @@ where
         self.workflows.render_overlay(f, area, self.theme);
         if self.plugin_browser.is_some() {
             self.render_plugin_browser(f, area);
+        }
+        if self.chrome_panel.is_some() {
+            self.render_chrome_panel(f, area);
         }
         if let Some(dialog) = self.confirm_dialog.clone() {
             self.render_confirm_dialog(f, area, dialog);
@@ -8548,6 +8567,7 @@ mod tests {
             confirm_dialog: None,
             tool_detail_modal: None,
             plugin_browser: None,
+            chrome_panel: None,
             remote_panel: RemotePanelController::with_listen(
                 server,
                 "ws://127.0.0.1:0".to_string(),

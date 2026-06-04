@@ -3453,6 +3453,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "roder-ext-chrome"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "roder-api",
+ "semver",
+ "serde",
+ "serde_json",
+ "time",
+ "tokio",
+ "uuid",
+]
+
+[[package]]
 name = "roder-ext-claude-code"
 version = "0.1.0"
 dependencies = [
@@ -4081,6 +4096,7 @@ dependencies = [
  "roder-config",
  "roder-context",
  "roder-ext-anthropic",
+ "roder-ext-chrome",
  "roder-ext-claude-code",
  "roder-ext-cursor",
  "roder-ext-firecrawl-search",

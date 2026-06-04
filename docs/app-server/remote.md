@@ -30,6 +30,10 @@ Sec-WebSocket-Protocol: roder.remote.v1, bearer.<token>
 
 Tokens are not accepted in WebSocket query parameters. The pairing payload includes the token inside the encoded `roder://connect?payload=...` value, but logs, app-server events, and TUI summaries use the token preview only.
 
+## Browser extension bridge
+
+The Roder browser extension pairs over this same remote WebSocket listener and authenticates with the subprotocol bearer flow (`Sec-WebSocket-Protocol: roder.remote.v1, bearer.<token>`), since extensions cannot set custom WebSocket headers. Once connected, the extension sends a `hello` browser-bridge frame (a `{ "type": ... }` envelope, not JSON-RPC). The transport registers it with the process-global Chrome bridge (`roder_api::chrome`) and forwards its command stream. The `chrome/*` app-server methods (see `api.md`) then bridge JSON-RPC requests to the connected extension by pushing `{ type, id, ...params }` command frames and awaiting the matching `{ type: "command/result", id, ok, result, error }` reply. Browser page content, console output, and network metadata returned through the bridge are untrusted and are passed through verbatim; only the bearer-token preview (never the full token) and connection metadata are logged.
+
 ## Security Model
 
 Remote mode is intended for a trusted LAN or Tailscale network. Raw `ws://` over a LAN IP is not TLS-protected; use Tailscale or another trusted private tunnel when possible. Do not expose the remote app-server directly to the public internet.

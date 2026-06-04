@@ -183,6 +183,141 @@
       "sideEffect": "localState"
     },
     {
+      "method": "chrome/browsers/list",
+      "paramsType": "ChromeBrowsersListParams",
+      "resultType": "ChromeBrowsersListResult",
+      "stability": "stable",
+      "featureGroup": "chrome",
+      "idempotency": "idempotent",
+      "sideEffect": "readOnly"
+    },
+    {
+      "method": "chrome/debug/console",
+      "paramsType": "ChromeDebugConsoleParams",
+      "resultType": "ChromeDebugConsoleResult",
+      "stability": "stable",
+      "featureGroup": "chrome",
+      "idempotency": "idempotent",
+      "sideEffect": "readOnly"
+    },
+    {
+      "method": "chrome/debug/network",
+      "paramsType": "ChromeDebugNetworkParams",
+      "resultType": "ChromeDebugNetworkResult",
+      "stability": "stable",
+      "featureGroup": "chrome",
+      "idempotency": "idempotent",
+      "sideEffect": "readOnly"
+    },
+    {
+      "method": "chrome/disable",
+      "paramsType": "ChromeDisableParams",
+      "resultType": "ChromeDisableResult",
+      "stability": "stable",
+      "featureGroup": "chrome",
+      "idempotency": "nonIdempotent",
+      "sideEffect": "localState"
+    },
+    {
+      "method": "chrome/enable",
+      "paramsType": "ChromeEnableParams",
+      "resultType": "ChromeEnableResult",
+      "stability": "stable",
+      "featureGroup": "chrome",
+      "idempotency": "nonIdempotent",
+      "sideEffect": "localState"
+    },
+    {
+      "method": "chrome/page/action",
+      "paramsType": "ChromePageActionParams",
+      "resultType": "ChromePageActionResult",
+      "stability": "stable",
+      "featureGroup": "chrome",
+      "idempotency": "nonIdempotent",
+      "sideEffect": "externalProcess"
+    },
+    {
+      "method": "chrome/page/snapshot",
+      "paramsType": "ChromePageSnapshotParams",
+      "resultType": "ChromePageSnapshotResult",
+      "stability": "stable",
+      "featureGroup": "chrome",
+      "idempotency": "idempotent",
+      "sideEffect": "readOnly"
+    },
+    {
+      "method": "chrome/permissions/list",
+      "paramsType": "ChromePermissionsListParams",
+      "resultType": "ChromePermissionsListResult",
+      "stability": "stable",
+      "featureGroup": "chrome",
+      "idempotency": "idempotent",
+      "sideEffect": "readOnly"
+    },
+    {
+      "method": "chrome/permissions/update",
+      "paramsType": "ChromePermissionsUpdateParams",
+      "resultType": "ChromePermissionsUpdateResult",
+      "stability": "stable",
+      "featureGroup": "chrome",
+      "idempotency": "nonIdempotent",
+      "sideEffect": "localState"
+    },
+    {
+      "method": "chrome/reconnect",
+      "paramsType": "ChromeReconnectParams",
+      "resultType": "ChromeReconnectResult",
+      "stability": "stable",
+      "featureGroup": "chrome",
+      "idempotency": "idempotent",
+      "sideEffect": "readOnly"
+    },
+    {
+      "method": "chrome/setMode",
+      "paramsType": "ChromeSetModeParams",
+      "resultType": "ChromeSetModeResult",
+      "stability": "stable",
+      "featureGroup": "chrome",
+      "idempotency": "nonIdempotent",
+      "sideEffect": "localState"
+    },
+    {
+      "method": "chrome/status",
+      "paramsType": "ChromeStatusParams",
+      "resultType": "ChromeStatusResult",
+      "stability": "stable",
+      "featureGroup": "chrome",
+      "idempotency": "idempotent",
+      "sideEffect": "readOnly"
+    },
+    {
+      "method": "chrome/tabs/activate",
+      "paramsType": "ChromeTabsActivateParams",
+      "resultType": "ChromeTabsActivateResult",
+      "stability": "stable",
+      "featureGroup": "chrome",
+      "idempotency": "nonIdempotent",
+      "sideEffect": "externalProcess"
+    },
+    {
+      "method": "chrome/tabs/list",
+      "paramsType": "ChromeTabsListParams",
+      "resultType": "ChromeTabsListResult",
+      "stability": "stable",
+      "featureGroup": "chrome",
+      "idempotency": "idempotent",
+      "sideEffect": "readOnly"
+    },
+    {
+      "method": "chrome/tabs/navigate",
+      "paramsType": "ChromeTabsNavigateParams",
+      "resultType": "ChromeTabsNavigateResult",
+      "stability": "stable",
+      "featureGroup": "chrome",
+      "idempotency": "nonIdempotent",
+      "sideEffect": "externalProcess"
+    },
+    {
       "method": "command/exec",
       "paramsType": "CommandExecParams",
       "resultType": "CommandExecResult",
