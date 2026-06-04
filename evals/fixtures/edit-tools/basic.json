@@ -1,0 +1,28 @@
+{
+  "fixtures": [
+    {
+      "name": "single-line-replacement",
+      "initial": "export const value = true;\n",
+      "operation": { "kind": "edit", "old_string": "export const value = true;", "new_string": "export const value = false;" },
+      "expected": "export const value = false;\n"
+    },
+    {
+      "name": "ordered-multi-edit",
+      "initial": "foo\nbaz\n",
+      "operation": { "kind": "multi_edit", "edits": [{ "old_string": "foo", "new_string": "bar" }, { "old_string": "baz", "new_string": "qux" }] },
+      "expected": "bar\nqux\n"
+    },
+    {
+      "name": "codex-patch-update",
+      "initial": "old\n",
+      "operation": { "kind": "patch", "patch": "*** Begin Patch\n*** Update File: fixture.txt\n@@\n-old\n+new\n*** End Patch\n" },
+      "expected": "new\n"
+    },
+    {
+      "name": "ambiguous-exact-refuses",
+      "initial": "same\nsame\n",
+      "operation": { "kind": "edit", "old_string": "same", "new_string": "different" },
+      "expect_error": "old_string_ambiguous"
+    }
+  ]
+}
