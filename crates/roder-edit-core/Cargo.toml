@@ -1,0 +1,10 @@
+[package]
+name = "roder-edit-core"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+serde = { workspace = true, features = ["derive"] }
+serde_json.workspace = true
+similar.workspace = true

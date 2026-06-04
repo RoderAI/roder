@@ -3398,6 +3398,27 @@ dependencies = [
 ]
 
 [[package]]
+name = "roder-edit-core"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "serde",
+ "serde_json",
+ "similar",
+]
+
+[[package]]
+name = "roder-edit-wasm"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "roder-edit-core",
+ "serde",
+ "serde_json",
+ "wasm-bindgen",
+]
+
+[[package]]
 name = "roder-evals"
 version = "0.1.0"
 dependencies = [
@@ -4248,6 +4269,7 @@ dependencies = [
  "ignore",
  "regex",
  "roder-api",
+ "roder-edit-core",
  "roder-ext-runner-unix-local",
  "roder-search",
  "serde",

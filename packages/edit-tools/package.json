@@ -1,0 +1,31 @@
+{
+  "name": "@roderai/edit-tools",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Roder-grade edit tools for JavaScript agent runtimes",
+  "type": "module",
+  "packageManager": "pnpm@10.33.2",
+  "license": "UNLICENSED",
+  "exports": {
+    ".": {
+      "types": "./dist/src/index.d.ts",
+      "default": "./dist/src/index.js"
+    }
+  },
+  "files": [
+    "dist/src",
+    "README.md",
+    "CHANGELOG.md",
+    "LICENSE-NOTICE.md"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "pnpm run build && node --test dist/test/*.test.js",
+    "prepack": "pnpm run typecheck && pnpm test"
+  },
+  "devDependencies": {
+    "@types/node": "^25.9.1",
+    "typescript": "^6.0.3"
+  }
+}
