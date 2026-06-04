@@ -4273,6 +4273,7 @@ dependencies = [
  "roder-core",
  "roder-protocol",
  "roder-roadmap",
+ "roder-skills",
  "roder-theme",
  "serde",
  "serde_json",

@@ -52,6 +52,13 @@ pub fn build_options(
         })?;
         let server = roder_sdk_mcp_server(request, executor);
         builder = builder.sdk_mcp_server("roder", server);
+        // Disable every built-in Claude Code tool (Read/Bash/Edit/Glob/...).
+        // Roder mediates all tool access through its own executor, so the
+        // model must use the `mcp__roder__*` tools we advertise. Leaving the
+        // built-ins enabled lets the model call e.g. bare `Read`, which our
+        // `can_use_tool` callback then denies -- burning retries until the
+        // turn trips the consecutive-tool-failure reliability limit.
+        builder = builder.tools(Vec::new());
         builder = builder.allowed_tools(
             allowed_tool_names
                 .iter()
@@ -451,10 +458,17 @@ mod tests {
         names.sort();
         assert_eq!(names, vec!["Grep", "grep"]);
 
+        // Built-in Claude Code tools must be disabled so the model uses the
+        // Roder MCP tools instead of bare built-ins (which would be denied).
+        assert!(options.tools_set);
+        assert!(options.tools.is_empty());
+
         request.tool_choice = ToolChoice::None;
         let options = build_options(&ClaudeCodeConfig::default(), &request, None, None).unwrap();
         assert!(options.sdk_mcp_servers.is_empty());
         assert!(options.allowed_tools.is_empty());
+        // With no Roder tools advertised we leave the built-in tool set alone.
+        assert!(!options.tools_set);
     }
 
     #[test]
