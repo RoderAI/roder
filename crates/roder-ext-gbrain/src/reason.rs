@@ -16,12 +16,30 @@ use std::time::Duration;
 
 use serde_json::Value;
 
+/// A completion plus its token usage (for cost telemetry).
+#[derive(Debug, Clone, Default)]
+pub struct Completion {
+    pub text: String,
+    pub input_tokens: u32,
+    pub output_tokens: u32,
+}
+
+impl Completion {
+    pub fn text(text: impl Into<String>) -> Self {
+        Self {
+            text: text.into(),
+            ..Default::default()
+        }
+    }
+}
+
 /// Minimal LLM completion seam the decision loop is generic over.
 #[async_trait::async_trait]
 pub trait Reasoner: Send + Sync {
     /// Single-turn completion. Returns the concatenated text (thinking blocks
-    /// excluded). Implementations should be resilient to transient errors.
-    async fn complete(&self, system: &str, user: &str) -> anyhow::Result<String>;
+    /// excluded) + token usage. Implementations should be resilient to transient
+    /// errors.
+    async fn complete(&self, system: &str, user: &str) -> anyhow::Result<Completion>;
 
     /// Label for traces / provenance (e.g. the model id).
     fn label(&self) -> String {
@@ -115,9 +133,10 @@ impl AnthropicReasoner {
             "system": system,
             "messages": [{ "role": "user", "content": user }],
         });
-        // Opus 4.x uses adaptive thinking + output_config.effort; others use the
-        // enabled+budget form (temperature must be 1 with enabled thinking).
-        if self.model.contains("opus-4-8") || self.model.contains("opus-4.8") {
+        // Opus 4.6+ uses adaptive thinking + output_config.effort (and rejects
+        // temperature + enabled/budget_tokens); Sonnet 4.6 and older keep the
+        // enabled+budget form (proven across the eval runs).
+        if uses_adaptive_thinking(&self.model) {
             body["thinking"] = serde_json::json!({ "type": "adaptive" });
             body["output_config"] = serde_json::json!({ "effort": "high" });
         } else if self.thinking_budget > 0 {
@@ -135,7 +154,7 @@ impl Reasoner for AnthropicReasoner {
         self.model.clone()
     }
 
-    async fn complete(&self, system: &str, user: &str) -> anyhow::Result<String> {
+    async fn complete(&self, system: &str, user: &str) -> anyhow::Result<Completion> {
         let body = self.body(system, user);
         let mut attempt = 0;
         loop {
@@ -164,7 +183,18 @@ impl Reasoner for AnthropicReasoner {
                                 .join("")
                         })
                         .unwrap_or_default();
-                    return Ok(text);
+                    let usage = json.get("usage");
+                    let tok = |k: &str| {
+                        usage
+                            .and_then(|u| u.get(k))
+                            .and_then(Value::as_u64)
+                            .unwrap_or(0) as u32
+                    };
+                    return Ok(Completion {
+                        text,
+                        input_tokens: tok("input_tokens"),
+                        output_tokens: tok("output_tokens"),
+                    });
                 }
                 Ok(r) => {
                     let status = r.status();
@@ -186,6 +216,14 @@ impl Reasoner for AnthropicReasoner {
             }
         }
     }
+}
+
+/// Opus 4.6+ requires the adaptive-thinking request shape (no temperature, no
+/// `budget_tokens`). Sonnet 4.6 and earlier models keep the legacy enabled form.
+fn uses_adaptive_thinking(model: &str) -> bool {
+    ["opus-4-8", "opus-4.8", "opus-4-7", "opus-4.7", "opus-4-6", "opus-4.6"]
+        .iter()
+        .any(|m| model.contains(m))
 }
 
 async fn backoff(attempt: u32) {

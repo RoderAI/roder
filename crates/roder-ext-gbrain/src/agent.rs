@@ -20,13 +20,14 @@
 //! dispatch, scratchpad persistence).
 
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU32, Ordering};
 
 use roder_api::memory::MemoryScope;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use time::OffsetDateTime;
 
-use crate::model::AsOf;
+use crate::model::{AsOf, TemporalFact};
 use crate::reason::{Reasoner, extract_json};
 use crate::store::{GbrainStore, RecallParams};
 
@@ -68,6 +69,9 @@ pub struct EvidenceItem {
     pub date: String,
     pub source: String,
     pub status: String,
+    /// Temporal note for as-of questions (e.g. "recorded after the as-of date").
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub note: String,
     pub text: String,
 }
 
@@ -101,6 +105,8 @@ pub struct WorkingContext {
     pub dropped: Vec<String>,
     pub contradictions: Vec<String>,
     pub llm_calls: usize,
+    pub input_tokens: u32,
+    pub output_tokens: u32,
 }
 
 /// Final grounded answer + provenance + trace.
@@ -119,6 +125,8 @@ pub struct DecisionAgent<R: Reasoner> {
     budget: AgentBudget,
     progress: Box<dyn ProgressSink>,
     scope: Option<MemoryScope>,
+    tokens_in: AtomicU32,
+    tokens_out: AtomicU32,
 }
 
 impl<R: Reasoner> DecisionAgent<R> {
@@ -129,6 +137,8 @@ impl<R: Reasoner> DecisionAgent<R> {
             budget: AgentBudget::default(),
             progress: Box::new(SilentProgress),
             scope: None,
+            tokens_in: AtomicU32::new(0),
+            tokens_out: AtomicU32::new(0),
         }
     }
 
@@ -149,6 +159,8 @@ impl<R: Reasoner> DecisionAgent<R> {
 
     /// Run the full decision loop for one question.
     pub async fn answer(&self, question: &str, as_of: Option<OffsetDateTime>) -> anyhow::Result<AgentAnswer> {
+        self.tokens_in.store(0, Ordering::Relaxed);
+        self.tokens_out.store(0, Ordering::Relaxed);
         let mut calls = 0usize;
         let as_of_label = as_of.map(|d| d.date().to_string());
 
@@ -158,9 +170,10 @@ impl<R: Reasoner> DecisionAgent<R> {
         calls += 1;
         subqueries.truncate(self.budget.max_subqueries);
 
-        // 2. Multi-pass retrieval -> deduped evidence pool.
+        // 2. Multi-pass retrieval -> deduped evidence pool (+ as-of-correct
+        //    contradictions, and a current-state pass for as-of questions).
         self.progress.step("retrieve", &format!("{} sub-queries", subqueries.len()));
-        let evidence = self.gather_evidence(question, &subqueries, as_of).await?;
+        let (evidence, contradictions) = self.gather_evidence(question, &subqueries, as_of).await?;
 
         // 3. Draft atomic, cited claims.
         self.progress.step("draft", &format!("{} evidence records", evidence.len()));
@@ -173,10 +186,7 @@ impl<R: Reasoner> DecisionAgent<R> {
         let (verified, dropped) = self.verify(question, &claims, &evidence).await?;
         calls += 1;
 
-        // 5. Temporal checks (contradiction / supersession) when relevant.
-        let contradictions = self.temporal_checks(&evidence).await;
-
-        // 6. Synthesize the final answer from verified claims only.
+        // 5. Synthesize the final answer from verified claims only.
         self.progress.step("finalize", &format!("{} verified claims", verified.len()));
         let answer = self
             .finalize(question, &verified, &contradictions, as_of_label.as_deref())
@@ -194,6 +204,8 @@ impl<R: Reasoner> DecisionAgent<R> {
             dropped,
             contradictions,
             llm_calls: calls,
+            input_tokens: self.tokens_in.load(Ordering::Relaxed),
+            output_tokens: self.tokens_out.load(Ordering::Relaxed),
         };
         Ok(AgentAnswer {
             answer,
@@ -206,14 +218,16 @@ impl<R: Reasoner> DecisionAgent<R> {
 
     /// One reasoner call, with optional raw-output tracing (`GBRAIN_AGENT_DEBUG`).
     async fn call(&self, stage: &str, system: &str, user: &str) -> anyhow::Result<String> {
-        let out = self.reasoner.complete(system, user).await?;
+        let completion = self.reasoner.complete(system, user).await?;
+        self.tokens_in.fetch_add(completion.input_tokens, Ordering::Relaxed);
+        self.tokens_out.fetch_add(completion.output_tokens, Ordering::Relaxed);
         if std::env::var("GBRAIN_AGENT_DEBUG").is_ok() {
             eprintln!(
                 "── agent[{stage}] ──\n{}\n",
-                out.chars().take(2000).collect::<String>()
+                completion.text.chars().take(2000).collect::<String>()
             );
         }
-        Ok(out)
+        Ok(completion.text)
     }
 
     async fn decompose(&self, question: &str) -> anyhow::Result<Vec<String>> {
@@ -243,10 +257,42 @@ impl<R: Reasoner> DecisionAgent<R> {
         question: &str,
         subqueries: &[String],
         as_of: Option<OffsetDateTime>,
-    ) -> anyhow::Result<Vec<EvidenceItem>> {
-        let as_of = as_of.map(AsOf::at).unwrap_or_else(AsOf::now);
-        let mut seen = std::collections::HashSet::new();
+    ) -> anyhow::Result<(Vec<EvidenceItem>, Vec<String>)> {
+        // Event-cluster expansion only for evidence-enumeration / provenance /
+        // contradiction questions; focused retrieval for "what is X now" questions
+        // (over-broad evidence dilutes those and the answer enumerates noise).
+        let expand = is_evidence_question(question);
         let mut pool: Vec<EvidenceItem> = Vec::new();
+        let mut seen = std::collections::HashSet::new();
+        let mut contradictions = std::collections::BTreeSet::new();
+
+        // Primary pass: the as-of snapshot (or current).
+        let primary = as_of.map(AsOf::at).unwrap_or_else(AsOf::now);
+        self.retrieve_into(question, subqueries, primary, expand, "", &mut pool, &mut seen, &mut contradictions)
+            .await?;
+
+        // As-of questions also need the CURRENT state to answer "what has SINCE
+        // changed" (C4 audit replay). Records only present now are flagged.
+        if let Some(d) = as_of {
+            let note = format!("NOT on record as of {} — recorded later / current state", d.date());
+            self.retrieve_into(question, subqueries, AsOf::now(), expand, &note, &mut pool, &mut seen, &mut contradictions)
+                .await?;
+        }
+        Ok((pool, contradictions.into_iter().collect()))
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    async fn retrieve_into(
+        &self,
+        question: &str,
+        subqueries: &[String],
+        as_of: AsOf,
+        expand: bool,
+        note: &str,
+        pool: &mut Vec<EvidenceItem>,
+        seen: &mut std::collections::HashSet<String>,
+        contradictions: &mut std::collections::BTreeSet<String>,
+    ) -> anyhow::Result<()> {
         let queries = std::iter::once(question.to_string()).chain(subqueries.iter().cloned());
         for q in queries {
             if pool.len() >= self.budget.evidence_pool_cap {
@@ -260,50 +306,37 @@ impl<R: Reasoner> DecisionAgent<R> {
                     scope: self.scope.clone(),
                     include_global: true,
                     limit: self.budget.retrieval_limit,
-                    expand: true, // evidence gathering wants the full cluster
+                    expand,
                 })
                 .await?;
             let now = result.now;
+            // Reuse the recall's as-of-correct contradiction set (not wall-clock).
+            for pair in &result.contradictions {
+                contradictions.insert(format!(
+                    "\"{}\" conflicts with \"{}\"",
+                    pair.a.text.trim(),
+                    pair.b.text.trim()
+                ));
+            }
             for hit in result.hits {
-                let id = hit.fact.id.clone();
-                if !seen.insert(id) {
+                if !seen.insert(hit.fact.id.clone()) {
                     continue;
                 }
                 if pool.len() >= self.budget.evidence_pool_cap {
                     break;
                 }
-                let slug = hit.fact.provenance.first().cloned().unwrap_or_else(|| hit.fact.id.clone());
-                let source = hit
-                    .fact
-                    .metadata
-                    .get("source_type")
-                    .and_then(Value::as_str)
-                    .map(str::to_string)
-                    .unwrap_or_default();
-                let author = hit
-                    .fact
-                    .metadata
-                    .get("author")
-                    .and_then(Value::as_str)
-                    .unwrap_or("");
-                let source = if author.is_empty() {
-                    source
-                } else if source.is_empty() {
-                    author.to_string()
-                } else {
-                    format!("{source} / {author}")
-                };
                 pool.push(EvidenceItem {
                     index: pool.len() + 1,
-                    slug,
+                    slug: hit.fact.provenance.first().cloned().unwrap_or_else(|| hit.fact.id.clone()),
                     date: hit.fact.valid_at.date().to_string(),
-                    source,
+                    source: source_label(&hit.fact),
                     status: crate::store::status_label(&hit.fact, now).to_string(),
+                    note: note.to_string(),
                     text: hit.fact.text.clone(),
                 });
             }
         }
-        Ok(pool)
+        Ok(())
     }
 
     async fn draft(&self, question: &str, evidence: &[EvidenceItem]) -> anyhow::Result<Vec<Claim>> {
@@ -371,26 +404,6 @@ impl<R: Reasoner> DecisionAgent<R> {
         Ok((kept, dropped))
     }
 
-    async fn temporal_checks(&self, evidence: &[EvidenceItem]) -> Vec<String> {
-        // Surface store-detected contradictions among the retrieved subjects so
-        // the synthesizer can report conflicts faithfully (C6) rather than
-        // silently picking one side.
-        let scope = self.scope.clone();
-        let Ok(pairs) = self.store.contradictions(scope, None, 8).await else {
-            return Vec::new();
-        };
-        let slugs: std::collections::HashSet<&str> =
-            evidence.iter().map(|e| e.slug.as_str()).collect();
-        pairs
-            .into_iter()
-            .filter(|p| {
-                let a = p.a.provenance.first().map(String::as_str).unwrap_or("");
-                let b = p.b.provenance.first().map(String::as_str).unwrap_or("");
-                slugs.contains(a) || slugs.contains(b)
-            })
-            .map(|p| format!("\"{}\" conflicts with \"{}\"", p.a.text.trim(), p.b.text.trim()))
-            .collect()
-    }
 
     async fn finalize(
         &self,
@@ -421,30 +434,44 @@ evidence needed to answer it faithfully (who decided, when, what was decided, wh
 changed, which documents support it). Output ONLY a JSON array of 2-4 short search sub-queries (strings). \
 No prose.";
 
-const DRAFT_SYS: &str = "You answer ONLY from the numbered evidence records provided. Output a JSON array \
-of atomic claims. Each claim is an object {\"text\": <one factual statement>, \"support\": [<record numbers>]}. \
-HARD RULES: every claim MUST cite at least one record number that actually states it; never include a \
-name, date, number, or causal link that is not present in a cited record; if you are unsure, omit the claim. \
-Prefer fewer, well-supported claims over many speculative ones. Output ONLY the JSON array.";
+const DRAFT_SYS: &str = "You answer ONLY from the numbered evidence records. Output a JSON array of atomic \
+claims {\"text\": <one factual statement>, \"support\": [<record numbers>]}. HARD RULES: every claim MUST \
+cite >=1 record that actually states it; never include a name/date/number/causal link not present in a \
+cited record; if unsure, omit it. Answer the SPECIFIC question asked — do NOT summarize every record. For \
+'walk me through the evidence' questions, include a record ONLY if it directly establishes the specific \
+conclusion the question is about; ignore tangential records from the same event. But DO cover every part \
+the question asks (who / when / what was decided / what alternatives / why / what changed / current status) \
+whenever a record supports it — completeness on the asked facets matters. Output ONLY the JSON array.";
 
-const VERIFY_SYS: &str = "You are a strict grounding verifier. For each claim you are given its full cited \
-record text. Decide if those records DIRECTLY state the claim. Output a JSON array of \
+const VERIFY_SYS: &str = "You are a strict grounding verifier. For each claim you get its cited record text \
+(with each record's source type). Decide if the records DIRECTLY state the claim. Output a JSON array of \
 {\"id\": <claim number>, \"supported\": <true|false>, \"classification\": <\"direct\"|\"inferred\">, \
-\"reason\": <short>}. Mark supported=false if the specific detail (exact date, name, figure, or causal \
-link) is not explicitly in the cited records — plausibility is NOT support. \"direct\" = the cited record \
-is first-hand testimony/the document itself; \"inferred\" = the claim is deduced from indirect evidence.";
+\"reason\": <short>}. supported=false if the specific detail (exact date, name, figure, or causal link) is \
+not explicitly in the cited records — plausibility is NOT support. CLASSIFICATION (important): \"direct\" = \
+the cited record is a FIRST-HAND account by the actor themselves — a Slack/chat message or email WRITTEN BY \
+the person who decided or witnessed it. \"inferred\" = the claim is derived from a SECONDARY record — meeting \
+notes, an incident report, a post-mortem, a summary, a document, or a third party's mention — NOT the actor's \
+own words. Meeting notes and reports are \"inferred\", not direct.";
 
-const FINALIZE_SYS: &str = "You write the final answer using ONLY the verified claims provided (each with its \
-provenance). Add NOTHING beyond them — no extra dates, names, events, or figures. Be specific and complete. \
-If the question asks to walk through or justify with evidence, enumerate each piece and label it direct vs \
-inferred. If contradictions are listed, report both sides rather than choosing one. Cite provenance ids \
-inline where natural.";
+const FINALIZE_SYS: &str = "Write the final answer using ONLY the verified claims (each with provenance and \
+any classification). Add NOTHING beyond them — no extra dates, names, events, or figures. Be specific and \
+COMPLETE: address EVERY part the question asks (e.g. who, when, what, alternatives, rationale, current \
+status). If the question asks to walk through or justify the evidence, enumerate each evidence item with its \
+provenance id and label it direct vs inferred using the provided classification. If the question is 'as of \
+<date>', state what was known THEN and, for records marked 'recorded later / current state', say for each \
+whether it is still current or has SINCE changed/been replaced. If contradictions are listed, report both \
+sides. Do not pad with tangential records. Cite provenance ids inline.";
 
 fn draft_prompt(question: &str, evidence: &[EvidenceItem]) -> String {
     let mut s = format!("Question: {question}\n\nEvidence records:\n");
     for e in evidence {
+        let note = if e.note.is_empty() {
+            String::new()
+        } else {
+            format!(", {}", e.note)
+        };
         s.push_str(&format!(
-            "[{}] ({}, {}, status={}) {}\n",
+            "[{}] ({}, {}, status={}{note}) {}\n",
             e.index,
             e.date,
             if e.source.is_empty() { "source?" } else { &e.source },
@@ -454,6 +481,56 @@ fn draft_prompt(question: &str, evidence: &[EvidenceItem]) -> String {
     }
     s.push_str("\nReturn the JSON array of cited claims.");
     s
+}
+
+/// `source_type / author` label from a fact's metadata, for attribution +
+/// direct-vs-inferred classification.
+fn source_label(fact: &TemporalFact) -> String {
+    let source = fact
+        .metadata
+        .get("source_type")
+        .and_then(Value::as_str)
+        .unwrap_or("");
+    let author = fact
+        .metadata
+        .get("author")
+        .and_then(Value::as_str)
+        .unwrap_or("");
+    match (source.is_empty(), author.is_empty()) {
+        (false, false) => format!("{source} / {author}"),
+        (false, true) => source.to_string(),
+        (true, false) => author.to_string(),
+        (true, true) => String::new(),
+    }
+}
+
+/// Whether a question wants the full evidence cluster (justification / provenance
+/// / contradiction / audit) vs a focused current-fact answer.
+fn is_evidence_question(question: &str) -> bool {
+    let q = question.to_lowercase();
+    const MARKERS: &[&str] = &[
+        "walk me through",
+        "conversation turns",
+        "evidence",
+        "justif",
+        "supporting",
+        "supports",
+        "which document",
+        "which record",
+        "which message",
+        "step by step",
+        "enumerate",
+        "both sides",
+        "contradict",
+        "conflict",
+        "who decided",
+        "who chose",
+        "alternatives",
+        "what changed",
+        "since changed",
+        "as of",
+    ];
+    MARKERS.iter().any(|m| q.contains(m))
 }
 
 fn verify_prompt(question: &str, claims: &[Claim], evidence: &[EvidenceItem]) -> String {
@@ -509,6 +586,7 @@ fn truncate(s: &str, max: usize) -> String {
 mod tests {
     use super::*;
     use crate::Embedder;
+    use crate::reason::Completion;
     use crate::store::CaptureInput;
     use roder_api::memory::MemoryScope;
 
@@ -518,7 +596,7 @@ mod tests {
 
     #[async_trait::async_trait]
     impl Reasoner for MockReasoner {
-        async fn complete(&self, system: &str, _user: &str) -> anyhow::Result<String> {
+        async fn complete(&self, system: &str, _user: &str) -> anyhow::Result<Completion> {
             let out: &str = if system == DECOMPOSE_SYS {
                 "[\"who owns acme\", \"acme owner history\"]"
             } else if system == DRAFT_SYS {
@@ -529,7 +607,7 @@ mod tests {
             } else {
                 "Maya owns the Acme account (direct)."
             };
-            Ok(out.to_string())
+            Ok(Completion::text(out))
         }
     }
 
@@ -561,8 +639,8 @@ mod tests {
         struct NoClaims;
         #[async_trait::async_trait]
         impl Reasoner for NoClaims {
-            async fn complete(&self, system: &str, _u: &str) -> anyhow::Result<String> {
-                Ok(if system == DECOMPOSE_SYS { "[]" } else { "[]" }.to_string())
+            async fn complete(&self, system: &str, _u: &str) -> anyhow::Result<Completion> {
+                Ok(Completion::text(if system == DECOMPOSE_SYS { "[]" } else { "[]" }))
             }
         }
         let agent = DecisionAgent::new(store, NoClaims);
