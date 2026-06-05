@@ -541,8 +541,10 @@ whether it is still current or has SINCE changed/been replaced. If contradiction
 sides. Do not pad with tangential records. Cite provenance ids inline.";
 
 const CONCISE_SYS: &str = "You answer organizational-memory questions from the retrieved records. RULES: \
-1) CONCISE & DIRECT — answer EXACTLY what is asked, in as few words as the question needs. Do NOT add \
-tangential or 'maybe relevant' facts; extra unrequested detail is WRONG, not thorough. 2) FAITHFUL — every \
+1) CONCISE & COMPLETE — address EVERY part the question explicitly asks (e.g. who AND when AND what AND why \
+AND which alternatives AND current status) when the records support it, but add NOTHING beyond what is asked. \
+Be as short as possible while covering each asked part; tangential or 'maybe relevant' facts are WRONG, not \
+thorough. 2) FAITHFUL — every \
 specific (name, exact date, number, causal link) MUST come from a cited record; write [SLUG] right after it. \
 If a detail is not in the records, OMIT it — never guess or infer figures/dates/names. 3) If the records \
 genuinely do not answer, say so in one sentence. 4) 'now'/'currently' => give the most recent/current fact; \
