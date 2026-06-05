@@ -199,6 +199,14 @@ fn parse_codex_patch_hunk(lines: &[&str], mut i: usize) -> anyhow::Result<(Codex
 }
 
 pub fn apply_codex_patch_to_workspace(root: &Path, patch: &str) -> anyhow::Result<String> {
+    apply_codex_patch_to_workspace_with_external_paths(root, patch, false)
+}
+
+pub fn apply_codex_patch_to_workspace_with_external_paths(
+    root: &Path,
+    patch: &str,
+    allow_external_paths: bool,
+) -> anyhow::Result<String> {
     let root = root
         .canonicalize()
         .with_context(|| format!("workspace root does not exist: {}", root.display()))?;
@@ -208,17 +216,25 @@ pub fn apply_codex_patch_to_workspace(root: &Path, patch: &str) -> anyhow::Resul
     }
     let mut summaries = Vec::new();
     for change in changes {
-        summaries.push(apply_codex_patch_change(&root, change)?);
+        summaries.push(apply_codex_patch_change(
+            &root,
+            change,
+            allow_external_paths,
+        )?);
     }
     Ok(format!("Success. {}", summaries.join("\n")))
 }
 
-fn apply_codex_patch_change(root: &Path, change: CodexPatchChange) -> anyhow::Result<String> {
-    let path = resolve_for_write(root, &change.path)?;
+fn apply_codex_patch_change(
+    root: &Path,
+    change: CodexPatchChange,
+    allow_external_paths: bool,
+) -> anyhow::Result<String> {
+    let path = resolve_for_write(root, &change.path, allow_external_paths)?;
     match change.op {
         CodexPatchOp::Add => add_file(root, &path, &change),
         CodexPatchOp::Delete => delete_file(root, &path),
-        CodexPatchOp::Update => update_file(root, &path, &change),
+        CodexPatchOp::Update => update_file(root, &path, &change, allow_external_paths),
     }
 }
 
@@ -238,7 +254,12 @@ fn delete_file(root: &Path, path: &Path) -> anyhow::Result<String> {
     Ok(format!("Deleted {}", display(root, path)))
 }
 
-fn update_file(root: &Path, path: &PathBuf, change: &CodexPatchChange) -> anyhow::Result<String> {
+fn update_file(
+    root: &Path,
+    path: &PathBuf,
+    change: &CodexPatchChange,
+    allow_external_paths: bool,
+) -> anyhow::Result<String> {
     let mut text = std::fs::read_to_string(path)?;
     for hunk in &change.hunks {
         let old_text = hunk.old_lines.join("\n");
@@ -254,7 +275,7 @@ fn update_file(root: &Path, path: &PathBuf, change: &CodexPatchChange) -> anyhow
     }
 
     let target_path = if let Some(move_to) = &change.move_to {
-        resolve_for_write(root, move_to)?
+        resolve_for_write(root, move_to, allow_external_paths)?
     } else {
         path.clone()
     };
@@ -282,7 +303,11 @@ fn join_patch_lines(lines: &[String]) -> String {
     }
 }
 
-fn resolve_for_write(root: &Path, input: &str) -> anyhow::Result<PathBuf> {
+fn resolve_for_write(
+    root: &Path,
+    input: &str,
+    allow_external_paths: bool,
+) -> anyhow::Result<PathBuf> {
     let candidate = if Path::new(input).is_absolute() {
         PathBuf::from(input)
     } else {
@@ -303,7 +328,7 @@ fn resolve_for_write(root: &Path, input: &str) -> anyhow::Result<PathBuf> {
     } else {
         normalized.clone()
     };
-    if !normalized_for_check.starts_with(&root) {
+    if !allow_external_paths && !normalized_for_check.starts_with(&root) {
         bail!(
             "path {} is outside workspace {}",
             normalized_for_check.display(),
@@ -371,6 +396,29 @@ mod tests {
         .unwrap_err();
         assert!(err.to_string().contains("outside workspace"));
         let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn can_allow_paths_outside_workspace() {
+        let root = temp_dir("roder-edit-core-allow-root");
+        let outside = temp_dir("roder-edit-core-allow-outside");
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::create_dir_all(&outside).unwrap();
+        let target = outside.join("x.txt");
+        let output = apply_codex_patch_to_workspace_with_external_paths(
+            &root,
+            &format!(
+                "*** Begin Patch\n*** Add File: {}\n+yes\n*** End Patch\n",
+                target.display()
+            ),
+            true,
+        )
+        .unwrap();
+
+        assert!(output.contains("Success. Added"));
+        assert_eq!(std::fs::read_to_string(&target).unwrap(), "yes\n");
+        let _ = std::fs::remove_dir_all(root);
+        let _ = std::fs::remove_dir_all(outside);
     }
 
     fn temp_dir(prefix: &str) -> PathBuf {

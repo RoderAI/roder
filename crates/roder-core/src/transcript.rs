@@ -188,18 +188,36 @@ impl Runtime {
         transcript: Vec<TranscriptItem>,
     ) -> anyhow::Result<Vec<TranscriptItem>> {
         let cfg = self.status().await;
-        if lookup_model(model).is_some_and(|entry| entry.supports_compaction) {
-            return Ok(transcript);
-        }
+        let model_entry = lookup_model(model);
+        let estimated_tokens = estimate_tokens(&transcript);
+        let emergency_limit = model_entry
+            .and_then(|entry| (entry.context_window > 0).then_some(entry.context_window));
         let threshold = cfg
             .auto_compact_token_limit
-            .or_else(|| lookup_model(model).map(|entry| entry.auto_compact_token_limit))
+            .or_else(|| model_entry.map(|entry| entry.auto_compact_token_limit))
             .unwrap_or(0);
-        if threshold == 0 || estimate_tokens(&transcript) < threshold {
+        let should_compact = if transcript_contains_context_limit_failure(&transcript) {
+            true
+        } else if model_entry.is_some_and(|entry| entry.supports_compaction) {
+            emergency_limit.is_some_and(|limit| estimated_tokens >= limit)
+        } else {
+            threshold > 0 && estimated_tokens >= threshold
+        };
+        if !should_compact {
             return Ok(transcript);
         }
         let original_item_count = transcript.len() as u64;
-        let original_estimated_tokens = estimate_tokens(&transcript);
+        let original_estimated_tokens = estimated_tokens;
+        self.emit(RoderEvent::ContextCompactionStarted(
+            ContextCompactionStarted {
+                thread_id: thread_id.clone(),
+                turn_id: turn_id.clone(),
+                original_item_count,
+                original_estimated_tokens,
+                timestamp: OffsetDateTime::now_utc(),
+            },
+        ))
+        .await;
         let suffix = transcript
             .last()
             .cloned()
@@ -276,6 +294,18 @@ fn item_text_len(item: &TranscriptItem) -> usize {
     }
 }
 
+fn transcript_contains_context_limit_failure(items: &[TranscriptItem]) -> bool {
+    items.iter().any(|item| {
+        let TranscriptItem::Error(error) = item else {
+            return false;
+        };
+        let message = error.message.to_ascii_lowercase();
+        message.contains("context window")
+            || message.contains("input exceeds")
+            || message.contains("response.incomplete")
+    })
+}
+
 fn summarize_transcript(items: &[TranscriptItem]) -> String {
     let mut lines = vec!["Previous transcript was compacted. Key retained facts:".to_string()];
     for item in items.iter().take(items.len().saturating_sub(1)) {
@@ -320,7 +350,7 @@ mod tests {
     use roder_api::catalog::PROVIDER_MOCK;
     use roder_api::extension::ExtensionRegistryBuilder;
     use roder_api::skills::{SkillExposure, SkillSelector};
-    use roder_api::transcript::{AssistantMessage, UserMessage};
+    use roder_api::transcript::{AssistantMessage, ErrorRecord, UserMessage};
     use roder_ext_jsonl_thread_store::store::JsonlThreadStoreFactory;
     use roder_skills::{SkillConfigRule, SkillRegistry, SkillRegistryOptions, SkillRoot};
 
@@ -618,6 +648,65 @@ mod tests {
             .unwrap();
 
         assert_eq!(compacted, transcript);
+    }
+
+    #[tokio::test]
+    async fn context_window_failure_forces_local_compaction_on_server_side_models() {
+        let mut builder = ExtensionRegistryBuilder::new();
+        builder.inference_engine(Arc::new(FakeInferenceEngine));
+        let thread_root = std::env::temp_dir().join(format!(
+            "roder-context-failure-compaction-{}",
+            uuid::Uuid::new_v4()
+        ));
+        builder.thread_store_factory(Arc::new(JsonlThreadStoreFactory {
+            base_path: thread_root.clone(),
+        }));
+        let runtime = Runtime::new(
+            builder.build().unwrap(),
+            RuntimeConfig {
+                default_provider: PROVIDER_MOCK.to_string(),
+                default_model: "mock".to_string(),
+                reasoning: None,
+                file_backed_dynamic_context: true,
+                ..RuntimeConfig::default()
+            },
+        )
+        .unwrap();
+        let thread_id = runtime
+            .create_thread(Some("Context failure compaction".to_string()))
+            .await
+            .unwrap()
+            .thread_id;
+        let transcript = vec![
+            TranscriptItem::UserMessage(UserMessage {
+                text: "work already done ".repeat(20),
+                images: Vec::new(),
+            }),
+            TranscriptItem::Error(ErrorRecord {
+                message: "Your input exceeds the context window of this model. Please adjust your input and try again."
+                    .to_string(),
+            }),
+            TranscriptItem::UserMessage(UserMessage {
+                text: "continue".to_string(),
+                images: Vec::new(),
+            }),
+        ];
+
+        let compacted = runtime
+            .compact_transcript_if_needed(&thread_id, &"turn".to_string(), "gpt-5.5", transcript)
+            .await
+            .unwrap();
+
+        assert!(matches!(
+            &compacted[0],
+            TranscriptItem::ContextCompaction(summary)
+                if summary.summary.contains("Previous transcript was compacted")
+        ));
+        assert!(matches!(
+            &compacted[1],
+            TranscriptItem::UserMessage(message) if message.text == "continue"
+        ));
+        let _ = std::fs::remove_dir_all(thread_root);
     }
 
     #[tokio::test]

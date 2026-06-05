@@ -482,6 +482,56 @@ impl AppServer {
                 })
                 .await
             }
+            "design/get_editor_state" => {
+                self.decode_and(req.params, |p| async move {
+                    self.handle_design_get_editor_state(p).await
+                })
+                .await
+            }
+            "design/read" => {
+                self.decode_and(
+                    req.params,
+                    |p| async move { self.handle_design_read(p).await },
+                )
+                .await
+            }
+            "design/batch_get" => {
+                self.decode_and(req.params, |p| async move {
+                    self.handle_design_batch_get(p).await
+                })
+                .await
+            }
+            "design/get_variables" => {
+                self.decode_and(req.params, |p| async move {
+                    self.handle_design_get_variables(p).await
+                })
+                .await
+            }
+            "design/snapshot_layout" => {
+                self.decode_and(req.params, |p| async move {
+                    self.handle_design_snapshot_layout(p).await
+                })
+                .await
+            }
+            "design/get_guidelines" => {
+                self.decode_and(req.params, |p| async move {
+                    self.handle_design_get_guidelines(p).await
+                })
+                .await
+            }
+            "design/export_nodes" => {
+                self.decode_and(req.params, |p| async move {
+                    self.handle_design_export_nodes(p).await
+                })
+                .await
+            }
+            "design/patch" => {
+                self.decode_and(
+                    req.params,
+                    |p| async move { self.handle_design_patch(p).await },
+                )
+                .await
+            }
             "vcs/status" => {
                 self.decode_and(
                     req.params,
@@ -1228,9 +1278,10 @@ impl AppServer {
             }
             "chrome/status" => self.handle_chrome_status().await,
             "chrome/enable" => {
-                self.decode_and(req.params, |p| async move {
-                    self.handle_chrome_enable(p).await
-                })
+                self.decode_and(
+                    req.params,
+                    |p| async move { self.handle_chrome_enable(p).await },
+                )
                 .await
             }
             "chrome/disable" => self.handle_chrome_disable().await,

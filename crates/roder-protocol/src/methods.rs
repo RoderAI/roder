@@ -198,7 +198,12 @@ const METHOD_SPECS: &[AppServerMethodSpecSeed] = &[
     method_spec!("chrome/debug/network", "chrome", ReadOnly, Idempotent),
     method_spec!("chrome/disable", "chrome", LocalState, NonIdempotent),
     method_spec!("chrome/enable", "chrome", LocalState, NonIdempotent),
-    method_spec!("chrome/page/action", "chrome", ExternalProcess, NonIdempotent),
+    method_spec!(
+        "chrome/page/action",
+        "chrome",
+        ExternalProcess,
+        NonIdempotent
+    ),
     method_spec!("chrome/page/snapshot", "chrome", ReadOnly, Idempotent),
     method_spec!("chrome/permissions/list", "chrome", ReadOnly, Idempotent),
     method_spec!(
@@ -227,6 +232,20 @@ const METHOD_SPECS: &[AppServerMethodSpecSeed] = &[
     method_spec!("commands/expand", "commands", ReadOnly, Idempotent),
     method_spec!("commands/list", "commands", ReadOnly, Idempotent),
     method_spec!("commands/run", "commands", LocalState, NonIdempotent),
+    method_spec!("design/batch_get", "design", ReadOnly, Idempotent),
+    method_spec!("design/export_nodes", "design", LocalState, NonIdempotent),
+    method_spec!("design/get_editor_state", "design", ReadOnly, Idempotent),
+    method_spec!("design/get_guidelines", "design", ReadOnly, Idempotent),
+    method_spec!("design/get_variables", "design", ReadOnly, Idempotent),
+    method_spec!(
+        "design/patch",
+        "design",
+        LocalState,
+        NonIdempotent,
+        ["design/documentChanged"]
+    ),
+    method_spec!("design/read", "design", ReadOnly, Idempotent),
+    method_spec!("design/snapshot_layout", "design", ReadOnly, Idempotent),
     method_spec!("discovery/groups", "discovery", ReadOnly, Idempotent),
     method_spec!("discovery/promote", "discovery", LocalState, NonIdempotent),
     method_spec!(

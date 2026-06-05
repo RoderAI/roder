@@ -271,9 +271,7 @@ mod tests {
         assert_eq!(status["enabled"], serde_json::json!(true));
 
         // Leave the global bridge disabled for any sibling tests in this process.
-        let _ = server
-            .handle_request(request("chrome/disable", None))
-            .await;
+        let _ = server.handle_request(request("chrome/disable", None)).await;
     }
 
     #[tokio::test]

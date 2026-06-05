@@ -681,6 +681,7 @@ async fn run_turn_continues_after_tool_result() {
                 remote_runner_destination: None,
                 team_data_dir: None,
                 roadmap_data_dir: None,
+                ..RuntimeConfig::default()
             },
         )
         .unwrap(),
@@ -771,6 +772,7 @@ async fn run_turn_executes_parallel_tool_call_batch_concurrently() {
                 remote_runner_destination: None,
                 team_data_dir: None,
                 roadmap_data_dir: None,
+                ..RuntimeConfig::default()
             },
         )
         .unwrap(),
@@ -903,6 +905,7 @@ async fn commentary_phase_messages_are_preserved_for_next_provider_request() {
                 remote_runner_destination: None,
                 team_data_dir: None,
                 roadmap_data_dir: None,
+                ..RuntimeConfig::default()
             },
         )
         .unwrap(),
@@ -1032,6 +1035,7 @@ async fn runtime_advertises_apply_patch_only_for_patch_models() {
                 remote_runner_destination: None,
                 team_data_dir: None,
                 roadmap_data_dir: None,
+                ..RuntimeConfig::default()
             },
         )
         .unwrap(),
@@ -1102,6 +1106,7 @@ async fn runtime_uses_custom_model_edit_tool_override() {
                 remote_runner_destination: None,
                 team_data_dir: None,
                 roadmap_data_dir: None,
+                ..RuntimeConfig::default()
             },
         )
         .unwrap(),
@@ -1228,6 +1233,7 @@ async fn tool_execution_errors_are_returned_to_model() {
                 remote_runner_destination: None,
                 team_data_dir: None,
                 roadmap_data_dir: None,
+                ..RuntimeConfig::default()
             },
         )
         .unwrap(),
@@ -1301,6 +1307,7 @@ async fn run_turn_allows_more_than_eight_tool_rounds() {
                 remote_runner_destination: None,
                 team_data_dir: None,
                 roadmap_data_dir: None,
+                ..RuntimeConfig::default()
             },
         )
         .unwrap(),
@@ -1371,6 +1378,7 @@ async fn unknown_tool_completion_is_marked_as_error() {
                 remote_runner_destination: None,
                 team_data_dir: None,
                 roadmap_data_dir: None,
+                ..RuntimeConfig::default()
             },
         )
         .unwrap(),

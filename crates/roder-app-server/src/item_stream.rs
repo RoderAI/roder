@@ -77,6 +77,21 @@ async fn item_event_kinds_for_event(
                 )],
             )))
         }
+        RoderEvent::ContextCompactionStarted(event) => Ok(Some((
+            event.thread_id.clone(),
+            event.turn_id.clone(),
+            event.timestamp,
+            vec![ThreadItemEventKind::ItemStarted {
+                item: ThreadItem::Compaction {
+                    id: compaction_item_id(&event.turn_id),
+                    summary: format!(
+                        "Compacting {} prior items (~{} tokens)...",
+                        event.original_item_count, event.original_estimated_tokens
+                    ),
+                    status: Some(ThreadItemStatus::InProgress),
+                },
+            }],
+        ))),
         _ => Ok(None),
     }
 }
@@ -270,7 +285,7 @@ fn thread_item_from_transcript_item(
             error: result.is_error.then(|| result.result.clone()),
         },
         TranscriptItem::ContextCompaction(compaction) => ThreadItem::Compaction {
-            id: format!("{turn_id}-compaction-{index}"),
+            id: compaction_item_id(turn_id),
             summary: compaction.summary.clone(),
             status: Some(ThreadItemStatus::Completed),
         },
@@ -291,18 +306,101 @@ fn agent_message_item_id(turn_id: &str, phase: Option<&str>) -> String {
     format!("{}-agent-{}", turn_id, phase.unwrap_or("final_answer"))
 }
 
+fn compaction_item_id(turn_id: &str) -> String {
+    format!("{turn_id}-compaction")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use roder_api::events::{EventSource, InferenceEventReceived};
+    use roder_api::events::{ContextCompactionStarted, EventSource, InferenceEventReceived};
     use roder_api::extension::ExtensionRegistryBuilder;
     use roder_api::inference::{
         HostedToolCallStarted, MessageDelta, ReasoningDelta, ToolCallCompleted,
     };
-    use roder_api::transcript::{ToolCallRecord, ToolResultRecord};
+    use roder_api::transcript::{ContextCompactionRecord, ToolCallRecord, ToolResultRecord};
     use roder_core::{RuntimeConfig, fake_provider::FakeInferenceEngine};
     use serde_json::json;
     use std::sync::Arc;
+
+    #[tokio::test]
+    async fn context_compaction_started_projects_in_progress_item() {
+        let mut builder = ExtensionRegistryBuilder::new();
+        builder.inference_engine(Arc::new(FakeInferenceEngine));
+        let runtime = Runtime::new(builder.build().unwrap(), RuntimeConfig::default()).unwrap();
+        let timestamp = OffsetDateTime::UNIX_EPOCH;
+        let event = EventEnvelope {
+            event_id: "event-1".to_string(),
+            seq: 1,
+            timestamp,
+            source: EventSource::Core,
+            kind: "context.compaction_started".to_string(),
+            thread_id: Some("thread-1".to_string()),
+            turn_id: Some("turn-1".to_string()),
+            event: RoderEvent::ContextCompactionStarted(ContextCompactionStarted {
+                thread_id: "thread-1".to_string(),
+                turn_id: "turn-1".to_string(),
+                original_item_count: 42,
+                original_estimated_tokens: 1234,
+                timestamp,
+            }),
+        };
+
+        let (_, _, _, events) = item_event_kinds_for_event(&runtime, &event)
+            .await
+            .unwrap()
+            .expect("compaction start projects to item event");
+
+        assert_eq!(events.len(), 1);
+        match &events[0] {
+            ThreadItemEventKind::ItemStarted {
+                item:
+                    ThreadItem::Compaction {
+                        id,
+                        summary,
+                        status,
+                    },
+            } => {
+                assert_eq!(id, "turn-1-compaction");
+                assert!(summary.contains("Compacting 42 prior items"));
+                assert_eq!(status, &Some(ThreadItemStatus::InProgress));
+            }
+            other => panic!("expected in-progress compaction item, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn context_compaction_transcript_item_completes_same_item() {
+        let event = TranscriptItemAppended {
+            thread_id: "thread-1".to_string(),
+            turn_id: "turn-1".to_string(),
+            item_type: "context_compaction".to_string(),
+            item_index: Some(7),
+            item: Some(TranscriptItem::ContextCompaction(ContextCompactionRecord {
+                summary: "Previous transcript was compacted.".to_string(),
+            })),
+            timestamp: OffsetDateTime::UNIX_EPOCH,
+        };
+        let item = event.item.as_ref().unwrap();
+
+        let projected = item_event_kind_from_transcript_item(&event, 7, item);
+
+        match projected {
+            ThreadItemEventKind::ItemCompleted {
+                item:
+                    ThreadItem::Compaction {
+                        id,
+                        summary,
+                        status,
+                    },
+            } => {
+                assert_eq!(id, "turn-1-compaction");
+                assert_eq!(summary, "Previous transcript was compacted.");
+                assert_eq!(status, Some(ThreadItemStatus::Completed));
+            }
+            other => panic!("expected completed compaction item, got {other:?}"),
+        }
+    }
 
     #[test]
     fn reasoning_delta_starts_reasoning_item_before_delta() {

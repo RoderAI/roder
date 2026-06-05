@@ -171,6 +171,16 @@ pub struct ContextEntrypointCandidatesInjected {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ContextCompactionStarted {
+    pub thread_id: ThreadId,
+    pub turn_id: TurnId,
+    pub original_item_count: u64,
+    pub original_estimated_tokens: u32,
+    #[serde(with = "time::serde::rfc3339")]
+    pub timestamp: OffsetDateTime,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ContextCompactionRecorded {
     pub thread_id: ThreadId,
     pub turn_id: TurnId,
@@ -1044,6 +1054,7 @@ pub enum RoderEvent {
     ContextBlockAdded(ContextBlockAdded),
     ContextAssemblyCompleted(ContextAssemblyCompleted),
     ContextEntrypointCandidatesInjected(ContextEntrypointCandidatesInjected),
+    ContextCompactionStarted(ContextCompactionStarted),
     ContextCompactionRecorded(ContextCompactionRecorded),
     InferenceStarted(InferenceStarted),
     InferenceEventReceived(InferenceEventReceived),
@@ -1224,6 +1235,7 @@ impl RoderEvent {
             RoderEvent::ContextEntrypointCandidatesInjected(_) => {
                 "context.entrypoint_candidates_injected"
             }
+            RoderEvent::ContextCompactionStarted(_) => "context.compaction_started",
             RoderEvent::ContextCompactionRecorded(_) => "context.compaction_recorded",
             RoderEvent::InferenceStarted(_) => "inference.started",
             RoderEvent::InferenceEventReceived(_) => "inference.event_received",
@@ -1533,6 +1545,7 @@ impl RoderEvent {
             RoderEvent::ContextBlockAdded(e) => Some(&e.thread_id),
             RoderEvent::ContextAssemblyCompleted(e) => Some(&e.thread_id),
             RoderEvent::ContextEntrypointCandidatesInjected(e) => Some(&e.thread_id),
+            RoderEvent::ContextCompactionStarted(e) => Some(&e.thread_id),
             RoderEvent::ContextCompactionRecorded(e) => Some(&e.thread_id),
             RoderEvent::InferenceStarted(e) => Some(&e.thread_id),
             RoderEvent::InferenceEventReceived(e) => Some(&e.thread_id),
@@ -1709,6 +1722,7 @@ impl RoderEvent {
             RoderEvent::ContextBlockAdded(e) => Some(&e.turn_id),
             RoderEvent::ContextAssemblyCompleted(e) => Some(&e.turn_id),
             RoderEvent::ContextEntrypointCandidatesInjected(e) => Some(&e.turn_id),
+            RoderEvent::ContextCompactionStarted(e) => Some(&e.turn_id),
             RoderEvent::ContextCompactionRecorded(e) => Some(&e.turn_id),
             RoderEvent::InferenceStarted(e) => Some(&e.turn_id),
             RoderEvent::InferenceEventReceived(e) => Some(&e.turn_id),

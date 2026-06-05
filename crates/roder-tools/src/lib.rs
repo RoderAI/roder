@@ -1,6 +1,7 @@
 mod artifacts;
 mod backend;
 mod command_shell;
+mod design;
 mod discovery;
 mod edit;
 mod exec;
@@ -151,6 +152,7 @@ impl ToolContributor for BuiltinCodingToolsContributor {
             backend: self.backend.clone(),
         }))?;
         edit::register(registry, self.workspace.clone(), self.backend.clone())?;
+        design::register(registry, self.workspace.clone())?;
         workflow::register(registry)?;
         media::register(registry)?;
         artifacts::register(registry)?;
@@ -317,6 +319,44 @@ mod tests {
         assert!(relative_read.text.contains("1: patched"));
 
         let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[tokio::test]
+    async fn builtin_apply_patch_respects_path_scope() {
+        let root = test_workspace("apply-patch-root");
+        let outside = test_workspace("apply-patch-outside");
+        let target = outside.join("patched.txt");
+
+        let patch = format!(
+            "*** Begin Patch\n*** Add File: {}\n+yes\n*** End Patch\n",
+            target.display()
+        );
+
+        let mut global_registry = ToolRegistry::default();
+        BuiltinCodingToolsContributor::new(root.clone())
+            .unwrap()
+            .contribute(&mut global_registry)
+            .unwrap();
+        let result = run_tool(
+            &global_registry,
+            &root,
+            "apply_patch",
+            json!({ "patch": patch }),
+        )
+        .await;
+        assert!(result.text.contains("Success. Added"));
+        assert_eq!(std::fs::read_to_string(&target).unwrap(), "yes\n");
+
+        let mut workspace_registry = ToolRegistry::default();
+        BuiltinCodingToolsContributor::new_with_path_scope(root.clone(), ToolPathScope::Workspace)
+            .unwrap()
+            .contribute(&mut workspace_registry)
+            .unwrap();
+        let err = registry_apply_patch_error(&workspace_registry, &root, &target).await;
+        assert!(err.contains("outside workspace"));
+
+        let _ = std::fs::remove_dir_all(root);
+        let _ = std::fs::remove_dir_all(outside);
     }
 
     #[test]
@@ -643,8 +683,8 @@ mod tests {
         )
         .await;
         assert_eq!(
-            write.text.replace('/', "\\"),
-            format!("wrote {}", outside_file.display())
+            write.text,
+            format!("wrote {}", outside_file.display()).replace('\\', "/")
         );
 
         let list = run_tool(
@@ -782,6 +822,32 @@ mod tests {
             .execute(context_with_workspace(workspace), call(name, arguments))
             .await
             .unwrap()
+    }
+
+    async fn registry_apply_patch_error(
+        registry: &ToolRegistry,
+        workspace: &std::path::Path,
+        target: &std::path::Path,
+    ) -> String {
+        let result = registry
+            .get("apply_patch")
+            .unwrap()
+            .execute(
+                context_with_workspace(workspace),
+                call(
+                    "apply_patch",
+                    json!({
+                        "patch": format!(
+                            "*** Begin Patch\n*** Add File: {}\n+no\n*** End Patch\n",
+                            target.display()
+                        )
+                    }),
+                ),
+            )
+            .await
+            .unwrap();
+        assert!(result.is_error);
+        result.text
     }
 
     fn context() -> ToolExecutionContext {

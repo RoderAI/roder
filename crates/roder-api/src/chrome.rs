@@ -358,7 +358,10 @@ impl ChromeBridge {
                 if let Some(sender) = sender {
                     let ok = frame.get("ok").and_then(|v| v.as_bool()).unwrap_or(false);
                     let payload = if ok {
-                        Ok(frame.get("result").cloned().unwrap_or(serde_json::Value::Null))
+                        Ok(frame
+                            .get("result")
+                            .cloned()
+                            .unwrap_or(serde_json::Value::Null))
                     } else {
                         Err(frame
                             .get("error")

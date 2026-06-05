@@ -232,7 +232,11 @@ fn strip_diff_prefix(path: &str) -> &str {
 }
 
 async fn apply_codex_patch(workspace: &Workspace, patch: &str) -> anyhow::Result<String> {
-    roder_edit_core::patch::apply_codex_patch_to_workspace(workspace.root(), patch)
+    roder_edit_core::patch::apply_codex_patch_to_workspace_with_external_paths(
+        workspace.root(),
+        patch,
+        workspace.path_scope().allows_external_paths(),
+    )
 }
 
 #[cfg(test)]

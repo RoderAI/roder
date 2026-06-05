@@ -348,7 +348,8 @@ async fn spawn_remote_websocket(
                 // extension. A writer task owns the sink; everything else enqueues
                 // onto `outbound_tx`.
                 let (mut ws_write, mut ws_read) = websocket.split();
-                let (outbound_tx, mut outbound_rx) = tokio::sync::mpsc::unbounded_channel::<Message>();
+                let (outbound_tx, mut outbound_rx) =
+                    tokio::sync::mpsc::unbounded_channel::<Message>();
                 let writer = tokio::spawn(async move {
                     while let Some(message) = outbound_rx.recv().await {
                         if ws_write.send(message).await.is_err() {
@@ -375,8 +376,8 @@ async fn spawn_remote_websocket(
                     {
                         let kind = value.get("type").and_then(|v| v.as_str()).unwrap_or("");
                         if kind == "hello" && chrome_client.is_none() {
-                            let registration = chrome_bridge
-                                .register_client(Some(remote_addr.clone()), &value);
+                            let registration =
+                                chrome_bridge.register_client(Some(remote_addr.clone()), &value);
                             chrome_client = Some(registration.client_id);
                             let command_tx = outbound_tx.clone();
                             let mut commands = registration.commands;
@@ -523,7 +524,11 @@ pub fn pairing_web_url(listen_addr: SocketAddr, token: &str) -> String {
         "endpoint": endpoint,
         "token": token,
     });
-    let encoded = base64_url_no_pad(serde_json::to_string(&payload).unwrap_or_default().as_bytes());
+    let encoded = base64_url_no_pad(
+        serde_json::to_string(&payload)
+            .unwrap_or_default()
+            .as_bytes(),
+    );
     format!("http://127.0.0.1:{port}/pair#roder-pair={encoded}")
 }
 
