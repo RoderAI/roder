@@ -472,6 +472,15 @@ fn render_node_svg(
             escape_xml(&fill),
             escape_xml(&stroke)
         )),
+        "line" => out.push_str(&format!(
+            r#"<line x1="{}" y1="{}" x2="{}" y2="{}" stroke="{}" stroke-width="{}" stroke-linecap="round"/>"#,
+            x,
+            y,
+            x + node.width,
+            y + node.height,
+            escape_xml(&stroke),
+            stroke_width(node.stroke.as_ref())
+        )),
         "image" => {
             if let Some(src) = node.extra.get("src").and_then(serde_json::Value::as_str) {
                 if !src.is_empty() {
@@ -535,6 +544,14 @@ fn paint_color(value: Option<&serde_json::Value>) -> Option<String> {
             .map(str::to_string),
         _ => None,
     }
+}
+
+fn stroke_width(value: Option<&serde_json::Value>) -> f64 {
+    value
+        .and_then(serde_json::Value::as_object)
+        .and_then(|map| map.get("width"))
+        .and_then(serde_json::Value::as_f64)
+        .unwrap_or(2.0)
 }
 
 fn sanitize_file_name(input: &str) -> String {
@@ -781,6 +798,41 @@ mod tests {
         assert!(svg.contains("<image "));
         assert!(svg.contains(r#"href="https://example.com/cat.png""#));
         assert!(svg.contains(r#"preserveAspectRatio="xMidYMid slice""#));
+    }
+
+    #[test]
+    fn line_nodes_export_svg_line() {
+        let mut doc = new_design_document(
+            "Test".to_string(),
+            "ws".to_string(),
+            "root".to_string(),
+            "/tmp/ws".to_string(),
+        );
+        let line = RoderDesignNode {
+            id: "line-1".to_string(),
+            node_type: "line".to_string(),
+            name: "Divider".to_string(),
+            parent_id: None,
+            child_ids: Vec::new(),
+            x: 10.0,
+            y: 20.0,
+            width: 100.0,
+            height: 50.0,
+            rotation: None,
+            opacity: None,
+            visible: Some(true),
+            locked: None,
+            fill: None,
+            stroke: Some(serde_json::json!({ "kind": "color", "value": "#111827", "width": 3 })),
+            extra: BTreeMap::new(),
+        };
+        doc.nodes.insert(line.id.clone(), line);
+        let svg = node_to_svg(&doc, doc.nodes.get("line-1").unwrap());
+        assert!(svg.contains("<line "));
+        assert!(svg.contains(r#"x1="0""#));
+        assert!(svg.contains(r#"x2="100""#));
+        assert!(svg.contains(r##"stroke="#111827""##));
+        assert!(svg.contains(r#"stroke-width="3""#));
     }
 
     #[test]

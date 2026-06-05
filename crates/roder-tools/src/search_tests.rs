@@ -11,6 +11,15 @@ fn wildcard_match_supports_star_and_question_mark() {
     assert!(!wildcard_match("src/*.rs", "README.md"));
 }
 
+#[test]
+fn relative_glob_patterns_normalize_parent_segments() {
+    assert_eq!(
+        normalize_relative_pattern("crates/roder-tools/../roder-app-server/src/*.rs"),
+        "crates/roder-app-server/src/*.rs"
+    );
+    assert_eq!(normalize_relative_pattern("./../crates/*"), "crates/*");
+}
+
 #[tokio::test]
 async fn grep_paging_result_includes_continuation_text_and_data() {
     let root = test_workspace("grep-paging");
@@ -72,6 +81,35 @@ async fn glob_paging_result_includes_continuation_text_and_data() {
     assert_eq!(result.data["continuation_tool"], "glob");
     assert_eq!(result.data["continuation_args"]["pattern"], "src/*.rs");
     assert_eq!(result.data["continuation_args"]["offset"], 1);
+
+    let _ = std::fs::remove_dir_all(root);
+}
+
+#[tokio::test]
+async fn glob_accepts_relative_parent_segments() {
+    let root = test_workspace("glob-relative-parent");
+    std::fs::create_dir_all(root.join("crates/roder-tools/src")).unwrap();
+    std::fs::create_dir_all(root.join("crates/roder-app-server/src")).unwrap();
+    std::fs::write(root.join("crates/roder-tools/src/lib.rs"), "").unwrap();
+    std::fs::write(root.join("crates/roder-app-server/src/lib.rs"), "").unwrap();
+    let workspace = Workspace::new(root.clone()).unwrap();
+    let tool = GlobTool {
+        workspace: workspace.clone(),
+        backend: Arc::new(LocalWorkspaceBackend::new(workspace)),
+    };
+
+    let result = tool
+        .execute(
+            context(&root),
+            call(
+                "glob",
+                json!({"pattern": "crates/roder-tools/../roder-app-server/src/*.rs"}),
+            ),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(result.text, "crates/roder-app-server/src/lib.rs");
 
     let _ = std::fs::remove_dir_all(root);
 }

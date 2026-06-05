@@ -365,6 +365,25 @@ pub(crate) fn wildcard_match(pattern: &str, text: &str) -> bool {
     p == pattern.len()
 }
 
+pub(crate) fn normalize_relative_pattern(pattern: &str) -> String {
+    let mut parts = Vec::new();
+    let pattern = pattern.replace('\\', "/");
+    for part in pattern.split('/') {
+        match part {
+            "" | "." => {}
+            ".." => {
+                parts.pop();
+            }
+            _ => parts.push(part),
+        }
+    }
+    if parts.is_empty() {
+        "*".to_string()
+    } else {
+        parts.join("/")
+    }
+}
+
 #[cfg(test)]
 #[path = "search_tests.rs"]
 mod tests;

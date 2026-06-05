@@ -53,6 +53,41 @@ fn literal_search_formats_lines() {
 }
 
 #[test]
+fn relative_parent_segments_are_allowed_when_normalized_inside_workspace() {
+    let workspace = TempWorkspace::new();
+    workspace.write("crates/roder-tools/src/lib.rs", "needle kept\n");
+    workspace.write("crates/roder-app-server/src/lib.rs", "needle kept too\n");
+
+    let options = SearchOptions::new("needle")
+        .with_path("crates/roder-tools/../roder-app-server/src")
+        .with_mode(SearchMode::Scan);
+    let results = search_workspace(&workspace.root, &options).unwrap();
+
+    assert_eq!(
+        results.lines,
+        vec!["crates/roder-app-server/src/lib.rs:1:needle kept too"]
+    );
+}
+
+#[test]
+fn relative_parent_segments_still_cannot_escape_workspace() {
+    let workspace = TempWorkspace::new();
+
+    let error = search_workspace(
+        &workspace.root,
+        &SearchOptions::new("needle")
+            .with_path("../outside")
+            .with_mode(SearchMode::Scan),
+    )
+    .unwrap_err();
+
+    assert_eq!(
+        error.to_string(),
+        "search path must stay inside the workspace"
+    );
+}
+
+#[test]
 fn regex_search_verifies_final_matches() {
     let workspace = TempWorkspace::new();
     workspace.write("a.txt", "alpha\nalpza\nalpa\n");

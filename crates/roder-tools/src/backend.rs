@@ -242,6 +242,7 @@ impl WorkspaceBackend for LocalWorkspaceBackend {
         let workspace = self.workspace.clone();
         let pattern = pattern.to_string();
         tokio::task::spawn_blocking(move || {
+            let pattern = crate::search::normalize_relative_pattern(&pattern);
             let mut matches = Vec::new();
             crate::search::visit_files(workspace.root(), &mut |path| {
                 let rel = workspace.display(path);
@@ -408,6 +409,7 @@ impl WorkspaceBackend for RunnerWorkspaceBackend {
     }
 
     async fn glob(&self, pattern: &str) -> anyhow::Result<Vec<String>> {
+        let pattern = crate::search::normalize_relative_pattern(pattern);
         let output = self
             .run_shell(
                 "find . -type f ! -path './.git/*' ! -path './target/*' | sed 's#^./##'"
@@ -416,7 +418,7 @@ impl WorkspaceBackend for RunnerWorkspaceBackend {
             .await?;
         let mut matches = output
             .lines()
-            .filter(|rel| crate::search::wildcard_match(pattern, rel))
+            .filter(|rel| crate::search::wildcard_match(&pattern, rel))
             .map(ToString::to_string)
             .collect::<Vec<_>>();
         matches.sort();
