@@ -125,9 +125,7 @@ mod tests {
 
     #[tokio::test]
     async fn chrome_install_host_reports_stub() {
-        run_chrome_cli(&["install-host".to_string()])
-            .await
-            .unwrap();
+        run_chrome_cli(&["install-host".to_string()]).await.unwrap();
     }
 
     #[tokio::test]

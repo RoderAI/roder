@@ -148,7 +148,7 @@ fn thread_item_from_transcript_item(
             error: result.is_error.then(|| result.result.clone()),
         },
         TranscriptItem::ContextCompaction(compaction) => ThreadItem::Compaction {
-            id: format!("{turn_id}-compaction-{index}"),
+            id: format!("{turn_id}-compaction"),
             summary: compaction.summary.clone(),
             status: Some(ThreadItemStatus::Completed),
         },

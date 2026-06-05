@@ -519,6 +519,7 @@ async fn mock_runner_e2e_tools_command_port_snapshot_resume_and_continue() {
                 }),
                 team_data_dir: None,
                 roadmap_data_dir: None,
+                ..RuntimeConfig::default()
             },
         )
         .unwrap(),
@@ -624,6 +625,7 @@ async fn runtime(session_dir: PathBuf, workspace: PathBuf) -> Arc<Runtime> {
                 }),
                 team_data_dir: None,
                 roadmap_data_dir: None,
+                ..RuntimeConfig::default()
             },
         )
         .unwrap(),

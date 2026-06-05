@@ -167,6 +167,12 @@ impl EvalTrajectoryEvent {
                 &e.turn_id,
                 e.timestamp,
             )),
+            RoderEvent::ContextCompactionStarted(e) => Some(Self::basic(
+                "context_compaction_started",
+                &e.thread_id,
+                &e.turn_id,
+                e.timestamp,
+            )),
             RoderEvent::ContextCompactionRecorded(e) => Some(Self::basic(
                 "context_compaction_recorded",
                 &e.thread_id,

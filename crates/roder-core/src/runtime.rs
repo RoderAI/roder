@@ -1728,6 +1728,9 @@ impl Runtime {
                 .await?;
                 return Ok(TurnRunOutcome::Stopped);
             }
+            transcript = self
+                .compact_transcript_if_needed(&req.thread_id, &turn_id, &model, transcript)
+                .await?;
 
             let speed_policy_decision =
                 speed_policy.decision(runtime_profile, &model, &cfg.speed_policy);
@@ -3325,8 +3328,8 @@ mod tests {
     use super::*;
     use futures::stream;
     use roder_api::catalog::{
-        REASONING_HIGH, REASONING_LOW, REASONING_MEDIUM, REASONING_MINIMAL, REASONING_NONE,
-        REASONING_XHIGH,
+        PROVIDER_MOCK, REASONING_HIGH, REASONING_LOW, REASONING_MEDIUM, REASONING_MINIMAL,
+        REASONING_NONE, REASONING_XHIGH,
     };
     use roder_api::extension::ExtensionRegistryBuilder;
     use roder_api::inference::{
@@ -3424,6 +3427,197 @@ mod tests {
             server_side_compaction_threshold(&cfg, "gpt-5.5"),
             Some(123_456)
         );
+    }
+
+    #[tokio::test]
+    async fn pre_request_compaction_runs_when_server_side_model_is_at_context_window() {
+        let captured = Arc::new(StdMutex::new(None));
+        let mut builder = ExtensionRegistryBuilder::new();
+        builder.inference_engine(Arc::new(CapturingEngine {
+            request: captured.clone(),
+        }));
+        let thread_root = std::env::temp_dir().join(format!(
+            "roder-pre-request-compaction-{}",
+            uuid::Uuid::new_v4()
+        ));
+        builder.thread_store_factory(Arc::new(JsonlThreadStoreFactory {
+            base_path: thread_root.clone(),
+        }));
+        let runtime = Arc::new(
+            Runtime::new(
+                builder.build().unwrap(),
+                RuntimeConfig {
+                    default_provider: PROVIDER_MOCK.to_string(),
+                    default_model: "gpt-5.5".to_string(),
+                    file_backed_dynamic_context: true,
+                    ..RuntimeConfig::default()
+                },
+            )
+            .unwrap(),
+        );
+        let thread_id = runtime
+            .create_thread(Some("Pre-request compaction".to_string()))
+            .await
+            .unwrap()
+            .thread_id;
+        let old_turn = "old-turn".to_string();
+        runtime
+            .persist_turn_item(
+                &thread_id,
+                &old_turn,
+                &TranscriptItem::UserMessage(UserMessage::text("old context ".repeat(4_300_000))),
+            )
+            .await
+            .unwrap();
+
+        let mut events = runtime.subscribe_events();
+        runtime
+            .start_turn(StartTurnRequest {
+                thread_id: thread_id.clone(),
+                message: "continue".to_string(),
+                images: Vec::new(),
+                provider_override: None,
+                model_override: None,
+                reasoning_override: None,
+                workspace: test_workspace(),
+                instructions: InstructionBundle::default(),
+                task_ledger_required: false,
+            })
+            .await
+            .unwrap();
+        loop {
+            let envelope = tokio::time::timeout(std::time::Duration::from_secs(5), events.recv())
+                .await
+                .unwrap()
+                .unwrap();
+            if envelope.thread_id.as_deref() == Some(&thread_id)
+                && matches!(envelope.event, RoderEvent::TurnCompleted(_))
+            {
+                break;
+            }
+        }
+
+        let request = captured.lock().unwrap().clone().unwrap();
+        assert!(
+            matches!(
+                request.transcript.first(),
+                Some(TranscriptItem::ContextCompaction(_))
+            ),
+            "provider request should start with a local emergency compaction item"
+        );
+        assert!(
+            request.transcript.len() < 4,
+            "provider request should not replay the full oversized prior transcript: {:?}",
+            request.transcript
+        );
+
+        let _ = std::fs::remove_dir_all(thread_root);
+    }
+
+    #[tokio::test]
+    async fn continue_after_context_window_failure_compacts_before_provider_request() {
+        let captured = Arc::new(StdMutex::new(None));
+        let mut builder = ExtensionRegistryBuilder::new();
+        builder.inference_engine(Arc::new(CapturingEngine {
+            request: captured.clone(),
+        }));
+        let thread_root = std::env::temp_dir().join(format!(
+            "roder-context-failure-continue-{}",
+            uuid::Uuid::new_v4()
+        ));
+        builder.thread_store_factory(Arc::new(JsonlThreadStoreFactory {
+            base_path: thread_root.clone(),
+        }));
+        let runtime = Arc::new(
+            Runtime::new(
+                builder.build().unwrap(),
+                RuntimeConfig {
+                    default_provider: PROVIDER_MOCK.to_string(),
+                    default_model: "gpt-5.5".to_string(),
+                    file_backed_dynamic_context: true,
+                    ..RuntimeConfig::default()
+                },
+            )
+            .unwrap(),
+        );
+        let thread_id = runtime
+            .create_thread(Some("Context failure continue".to_string()))
+            .await
+            .unwrap()
+            .thread_id;
+        let failed_turn = "failed-turn".to_string();
+        runtime
+            .persist_turn_item(
+                &thread_id,
+                &failed_turn,
+                &TranscriptItem::UserMessage(UserMessage::text("old work ".repeat(10_000))),
+            )
+            .await
+            .unwrap();
+        runtime
+            .persist_turn_item(
+                &thread_id,
+                &failed_turn,
+                &TranscriptItem::Error(ErrorRecord {
+                    message: "Your input exceeds the context window of this model. Please adjust your input and try again."
+                        .to_string(),
+                }),
+            )
+            .await
+            .unwrap();
+
+        let mut events = runtime.subscribe_events();
+        runtime
+            .start_turn(StartTurnRequest {
+                thread_id: thread_id.clone(),
+                message: "continue".to_string(),
+                images: Vec::new(),
+                provider_override: None,
+                model_override: None,
+                reasoning_override: None,
+                workspace: test_workspace(),
+                instructions: InstructionBundle::default(),
+                task_ledger_required: false,
+            })
+            .await
+            .unwrap();
+        loop {
+            let envelope = tokio::time::timeout(std::time::Duration::from_secs(5), events.recv())
+                .await
+                .unwrap()
+                .unwrap();
+            if envelope.thread_id.as_deref() == Some(&thread_id)
+                && matches!(envelope.event, RoderEvent::TurnCompleted(_))
+            {
+                break;
+            }
+        }
+
+        let request = captured.lock().unwrap().clone().unwrap();
+        assert!(
+            matches!(
+                request.transcript.first(),
+                Some(TranscriptItem::ContextCompaction(_))
+            ),
+            "provider request after context-window failure should start with local compaction"
+        );
+        assert!(
+            request
+                .transcript
+                .iter()
+                .any(|item| matches!(item, TranscriptItem::UserMessage(message) if message.text == "continue")),
+            "current continue prompt must be preserved: {:?}",
+            request.transcript
+        );
+        assert!(
+            !request.transcript.iter().any(
+                |item| matches!(item, TranscriptItem::Error(error) if error.message.contains("context window"))
+            ),
+            "raw prior context-window error should be summarized, not replayed: {:?}",
+            request.transcript
+        );
+
+        let _ = std::fs::remove_dir_all(thread_root);
     }
 
     #[tokio::test]

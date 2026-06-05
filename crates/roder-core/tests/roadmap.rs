@@ -159,6 +159,7 @@ fn runtime_for(workspace: &std::path::Path) -> Runtime {
             remote_runner_destination: None,
             team_data_dir: Some(workspace.join(".teams")),
             roadmap_data_dir: Some(workspace.join(".data")),
+            ..RuntimeConfig::default()
         },
     )
     .unwrap()

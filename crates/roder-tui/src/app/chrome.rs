@@ -123,17 +123,15 @@ where
             KeyCode::Char('t') => {
                 self.chrome_list_tabs().await;
             }
-            KeyCode::Char('o') => {
-                match self.remote_panel.snapshot().pair_url {
-                    Some(url) => {
-                        open_url_in_browser(&url);
-                        self.set_chrome_error(None);
-                    }
-                    None => self.set_chrome_error(Some(
-                        "no pair URL yet — press p to start pairing first".to_string(),
-                    )),
+            KeyCode::Char('o') => match self.remote_panel.snapshot().pair_url {
+                Some(url) => {
+                    open_url_in_browser(&url);
+                    self.set_chrome_error(None);
                 }
-            }
+                None => self.set_chrome_error(Some(
+                    "no pair URL yet — press p to start pairing first".to_string(),
+                )),
+            },
             _ => {}
         }
     }
@@ -165,12 +163,7 @@ where
             .await;
         match decode_response::<ChromeTabsResult>(res) {
             Ok(result) => {
-                let titles = result
-                    .tabs
-                    .iter()
-                    .map(chrome_tab_label)
-                    .take(12)
-                    .collect();
+                let titles = result.tabs.iter().map(chrome_tab_label).take(12).collect();
                 if let Some(panel) = self.chrome_panel.as_mut() {
                     panel.tabs = Some(ChromeTabsView {
                         count: result.tabs.len(),
@@ -263,24 +256,20 @@ where
                     Err(err) => self.record_error(format!("chrome enable failed: {err}")),
                 }
             }
-            "disable" => {
-                match self.chrome_request("chrome/disable", None).await {
-                    Ok(status) => {
-                        self.timeline.push_system(chrome_status_summary(&status));
-                        self.push_event("slash command: /chrome disable".to_string());
-                    }
-                    Err(err) => self.record_error(format!("chrome disable failed: {err}")),
+            "disable" => match self.chrome_request("chrome/disable", None).await {
+                Ok(status) => {
+                    self.timeline.push_system(chrome_status_summary(&status));
+                    self.push_event("slash command: /chrome disable".to_string());
                 }
-            }
-            "reconnect" => {
-                match self.chrome_request("chrome/reconnect", None).await {
-                    Ok(status) => {
-                        self.timeline.push_system(chrome_status_summary(&status));
-                        self.push_event("slash command: /chrome reconnect".to_string());
-                    }
-                    Err(err) => self.record_error(format!("chrome reconnect failed: {err}")),
+                Err(err) => self.record_error(format!("chrome disable failed: {err}")),
+            },
+            "reconnect" => match self.chrome_request("chrome/reconnect", None).await {
+                Ok(status) => {
+                    self.timeline.push_system(chrome_status_summary(&status));
+                    self.push_event("slash command: /chrome reconnect".to_string());
                 }
-            }
+                Err(err) => self.record_error(format!("chrome reconnect failed: {err}")),
+            },
             "pair" => match self.remote_panel.start().await {
                 Ok(()) => {
                     let snapshot = self.remote_panel.snapshot();
@@ -439,7 +428,11 @@ fn chrome_panel_lines<'a>(
                 lines.push(kv("Remote addr", addr, theme));
             }
             if let Some(browser) = status.browser.as_ref() {
-                lines.push(kv("Browser", &format!("{} ({})", browser.name, browser.kind), theme));
+                lines.push(kv(
+                    "Browser",
+                    &format!("{} ({})", browser.name, browser.kind),
+                    theme,
+                ));
             }
             lines.push(kv(
                 "Enabled",

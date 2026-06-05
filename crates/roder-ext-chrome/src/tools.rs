@@ -45,30 +45,36 @@ fn tool_defs() -> Vec<ChromeToolDef> {
             name: "chrome_tab_open",
             description: "Open a new tab at an http(s) URL.",
             kind: "tab/open",
-            parameters: || json!({
-                "type": "object",
-                "required": ["url"],
-                "properties": { "url": { "type": "string" }, "active": { "type": "boolean" } },
-                "additionalProperties": false
-            }),
+            parameters: || {
+                json!({
+                    "type": "object",
+                    "required": ["url"],
+                    "properties": { "url": { "type": "string" }, "active": { "type": "boolean" } },
+                    "additionalProperties": false
+                })
+            },
         },
         ChromeToolDef {
             name: "chrome_tab_activate",
             description: "Bring a tab to the foreground.",
             kind: "tab/activate",
-            parameters: || json!({
-                "type": "object", "required": ["tabId"],
-                "properties": { "tabId": { "type": "integer" } }, "additionalProperties": false
-            }),
+            parameters: || {
+                json!({
+                    "type": "object", "required": ["tabId"],
+                    "properties": { "tabId": { "type": "integer" } }, "additionalProperties": false
+                })
+            },
         },
         ChromeToolDef {
             name: "chrome_tab_close",
             description: "Close a tab by id.",
             kind: "tab/close",
-            parameters: || json!({
-                "type": "object", "required": ["tabId"],
-                "properties": { "tabId": { "type": "integer" } }, "additionalProperties": false
-            }),
+            parameters: || {
+                json!({
+                    "type": "object", "required": ["tabId"],
+                    "properties": { "tabId": { "type": "integer" } }, "additionalProperties": false
+                })
+            },
         },
         ChromeToolDef {
             name: "chrome_navigate",
@@ -183,10 +189,12 @@ fn tool_defs() -> Vec<ChromeToolDef> {
             name: "chrome_recording_stop",
             description: "Stop a recording and return its action trace.",
             kind: "recording/stop",
-            parameters: || json!({
-                "type": "object", "required": ["recordingId"],
-                "properties": { "recordingId": { "type": "string" } }, "additionalProperties": false
-            }),
+            parameters: || {
+                json!({
+                    "type": "object", "required": ["recordingId"],
+                    "properties": { "recordingId": { "type": "string" } }, "additionalProperties": false
+                })
+            },
         },
     ]
 }
@@ -343,7 +351,11 @@ mod tests {
     }
 
     fn ctx() -> ToolExecutionContext {
-        ToolExecutionContext::new("thread", "turn", roder_api::policy_mode::PolicyMode::Default)
+        ToolExecutionContext::new(
+            "thread",
+            "turn",
+            roder_api::policy_mode::PolicyMode::Default,
+        )
     }
 
     #[test]
@@ -364,7 +376,10 @@ mod tests {
             .contribute(&mut registry)
             .unwrap();
         let tool = find_tool(&registry, "chrome_tabs_list");
-        let result = tool.execute(ctx(), call("chrome_tabs_list", json!({}))).await.unwrap();
+        let result = tool
+            .execute(ctx(), call("chrome_tabs_list", json!({})))
+            .await
+            .unwrap();
         assert!(result.is_error);
         assert!(result.text.contains("not enabled"));
     }

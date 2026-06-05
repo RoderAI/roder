@@ -6,6 +6,7 @@ pub mod client;
 mod code_index;
 mod command;
 mod command_process;
+mod design;
 mod discovery;
 mod evals;
 mod fs;

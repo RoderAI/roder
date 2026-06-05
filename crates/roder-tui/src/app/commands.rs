@@ -53,9 +53,7 @@ pub(super) fn built_in_command_catalog() -> Vec<CommandDescriptor> {
                 Some("preview|install|install-all|list|disable|uninstall [args]".to_string())
             }
             "ps" => Some("all|stop <id>|stop-all --confirm|<id>".to_string()),
-            "chrome" => {
-                Some("[status|enable|disable|reconnect|pair|panel]".to_string())
-            }
+            "chrome" => Some("[status|enable|disable|reconnect|pair|panel]".to_string()),
             "voice" => Some("[hold|tap|off|status]".to_string()),
             "roadmap" => Some("[plan]".to_string()),
             "deep-research" => Some("<question>".to_string()),
