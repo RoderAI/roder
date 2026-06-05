@@ -90,6 +90,9 @@ pub struct VerifiedClaim {
     pub provenance: Vec<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub classification: Option<String>,
+    /// Verbatim span from a cited record that proves the claim (forces grounding).
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub quote: String,
 }
 
 /// The working scratchpad (serializable — persistence hook across passes).
@@ -381,7 +384,15 @@ impl<R: Reasoner> DecisionAgent<R> {
                 .and_then(Value::as_bool)
                 // No verdict for a claim => conservatively drop it.
                 .unwrap_or(false);
-            if supported {
+            let quote = verdict
+                .and_then(|v| v.get("quote"))
+                .and_then(Value::as_str)
+                .unwrap_or("")
+                .trim()
+                .to_string();
+            // A claim survives ONLY if the verifier marked it supported AND
+            // produced a verbatim proving quote — forcing real grounding.
+            if supported && !quote.is_empty() {
                 let provenance = dedup_strings(
                     claim
                         .support
@@ -396,6 +407,7 @@ impl<R: Reasoner> DecisionAgent<R> {
                     text: claim.text.clone(),
                     provenance,
                     classification,
+                    quote,
                 });
             } else {
                 dropped.push(claim.text.clone());
@@ -443,15 +455,17 @@ conclusion the question is about; ignore tangential records from the same event.
 the question asks (who / when / what was decided / what alternatives / why / what changed / current status) \
 whenever a record supports it — completeness on the asked facets matters. Output ONLY the JSON array.";
 
-const VERIFY_SYS: &str = "You are a strict grounding verifier. For each claim you get its cited record text \
-(with each record's source type). Decide if the records DIRECTLY state the claim. Output a JSON array of \
-{\"id\": <claim number>, \"supported\": <true|false>, \"classification\": <\"direct\"|\"inferred\">, \
-\"reason\": <short>}. supported=false if the specific detail (exact date, name, figure, or causal link) is \
-not explicitly in the cited records — plausibility is NOT support. CLASSIFICATION (important): \"direct\" = \
-the cited record is a FIRST-HAND account by the actor themselves — a Slack/chat message or email WRITTEN BY \
-the person who decided or witnessed it. \"inferred\" = the claim is derived from a SECONDARY record — meeting \
-notes, an incident report, a post-mortem, a summary, a document, or a third party's mention — NOT the actor's \
-own words. Meeting notes and reports are \"inferred\", not direct.";
+const VERIFY_SYS: &str = "You are an ADVERSARIAL fact-checker. Assume each claim is UNSUPPORTED until proven. \
+For each claim you get its cited record text (with source type). Output a JSON array of {\"id\": <claim \
+number>, \"supported\": <true|false>, \"quote\": <a short VERBATIM span from a cited record that proves the \
+claim, or \"\">, \"classification\": <\"direct\"|\"inferred\">, \"reason\": <short>}. RULE: supported=true \
+ONLY if EVERY specific in the claim — each name, exact date, number, quoted phrase, and causal link — appears \
+EXPLICITLY in a cited record (paste it in \"quote\"). If the record is vague, only implies it, or any single \
+specific (a date, a number, a name, a 'because') is missing or different, supported=false. Plausibility, \
+inference, and 'close enough' are NOT support. CLASSIFICATION: \"direct\" = the cited record is a FIRST-HAND \
+account by the actor themselves (a Slack/chat message or email WRITTEN BY the person who decided/witnessed \
+it). \"inferred\" = derived from a SECONDARY record — meeting notes, incident report, post-mortem, summary, \
+document, or third-party mention. Meeting notes and reports are \"inferred\", not direct.";
 
 const FINALIZE_SYS: &str = "Write the final answer using ONLY the verified claims (each with provenance and \
 any classification). Add NOTHING beyond them — no extra dates, names, events, or figures. Be specific and \
@@ -603,7 +617,7 @@ mod tests {
                 // claim 1 cited+true; claim 2 cited but the verifier will reject it.
                 "[{\"text\":\"Maya owns Acme\",\"support\":[1]},{\"text\":\"Acme revenue was $70M\",\"support\":[1]}]"
             } else if system == VERIFY_SYS {
-                "[{\"id\":1,\"supported\":true,\"classification\":\"direct\"},{\"id\":2,\"supported\":false,\"reason\":\"figure not in record\"}]"
+                "[{\"id\":1,\"supported\":true,\"quote\":\"owner is Maya Patel\",\"classification\":\"direct\"},{\"id\":2,\"supported\":false,\"quote\":\"\",\"reason\":\"figure not in record\"}]"
             } else {
                 "Maya owns the Acme account (direct)."
             };
