@@ -18,6 +18,7 @@ roder-ext-chrome.workspace = true
 roder-ext-claude-code.workspace = true
 roder-ext-cursor.workspace = true
 roder-ext-firecrawl-search.workspace = true
+roder-ext-gbrain.workspace = true
 roder-ext-git.workspace = true
 roder-ext-gemini.workspace = true
 roder-ext-jsonl-thread-store.workspace = true

@@ -20,7 +20,7 @@ docs_url = "docs/roder-claude-code-provider.md"
 anyhow.workspace = true
 async-stream.workspace = true
 async-trait.workspace = true
-claude-agent-sdk = { path = "../../../claude-agent-sdk-rust" }
+claude-code-sdk-rust = "0.1"
 futures.workspace = true
 roder-api.workspace = true
 semver.workspace = true

@@ -9,6 +9,7 @@ mod input_queue;
 mod media;
 #[allow(dead_code)]
 mod memories;
+mod mention;
 mod palette_ui;
 #[cfg(test)]
 mod plan_hunk_tests;
@@ -31,6 +32,7 @@ mod subagent_trace_tests;
 #[allow(dead_code)]
 mod team_panes;
 mod team_ui;
+mod progress;
 mod thread_resume;
 mod tool_detail;
 mod tool_timeline;
@@ -124,6 +126,7 @@ use tool_timeline::{
     TimelineFocus, TimelineSettings, TimelineState, ToolTimelineEntry, TurnCompletedSummary,
     fallback_entry,
 };
+use progress::{ProgressReporter, TerminalProgress};
 use turn_timer::TurnTimer;
 use voice::{VoiceConfig, VoiceMode, VoiceState};
 
@@ -1055,10 +1058,17 @@ where
 {
     client: C,
     thread_id: String,
+    /// Workspace/root the TUI created at startup. Sent with `skills/list` so the
+    /// server resolves the full workspace skill registry (not just the global
+    /// snapshot, which only holds built-ins until a turn runs).
+    workspace_id: Option<String>,
+    root_id: Option<String>,
     thread_title: Option<String>,
     thread_message_count: usize,
     active_turn_id: Option<String>,
     active_turn_timer: TurnTimer,
+    /// Drives the terminal's native OSC 9;4 progress indicator from turn state.
+    progress: ProgressReporter,
     working_status_override: Option<String>,
     current_turn_input_tokens: u32,
     current_turn_output_tokens: u32,
@@ -1129,6 +1139,7 @@ where
     file_completion_cache: Vec<FileCompletionItem>,
     skill_completion_cache: Vec<SkillDescriptor>,
     inline_completion_selection: usize,
+    mention: mention::MentionState,
     voice: VoiceState,
     workflows: workflows::WorkflowUiState,
     policy_mode: PolicyMode,
@@ -1341,6 +1352,8 @@ where
 
         let cwd = std::env::current_dir()?.display().to_string();
         let (workspace_id, root_id) = create_single_root_workspace(&client, &cwd).await?;
+        let skills_workspace_id = workspace_id.clone();
+        let skills_root_id = root_id.clone();
         let req = JsonRpcRequest {
             jsonrpc: "2.0".to_string(),
             id: Some(serde_json::json!(1)),
@@ -1387,6 +1400,8 @@ where
             },
         )
         .await?;
+        app.workspace_id = Some(skills_workspace_id);
+        app.root_id = Some(skills_root_id);
 
         match startup {
             TuiStartup::NewThread => {}
@@ -1476,10 +1491,13 @@ where
         Ok(Self {
             client,
             thread_id,
+            workspace_id: None,
+            root_id: None,
             thread_title,
             thread_message_count,
             active_turn_id: None,
             active_turn_timer: TurnTimer::default(),
+            progress: ProgressReporter::default(),
             working_status_override: None,
             current_turn_input_tokens: 0,
             current_turn_output_tokens: 0,
@@ -1558,6 +1576,7 @@ where
             file_completion_cache,
             skill_completion_cache,
             inline_completion_selection: 0,
+            mention: mention::MentionState::default(),
             voice: VoiceState::from_config(tui_config.voice.clone().unwrap_or_default()),
             workflows: workflows::WorkflowUiState::default(),
             policy_mode: policy_state
@@ -1612,6 +1631,9 @@ where
             self.tick_streaming_animations(now, session.terminal_mut().size()?.width);
             self.stop_idle_voice_recording(now).await;
             self.finish_voice_transcription_if_ready().await;
+            // Reflect the latest turn state onto the terminal's native progress
+            // indicator (OSC 9;4). No-op when the state is unchanged.
+            let _ = self.progress.flush(session.terminal_mut().backend_mut());
             session.terminal_mut().draw(|f| {
                 self.render(f);
                 if options.record_ui_frames
@@ -1818,6 +1840,9 @@ where
                             if self.handle_inline_completion_key(key).await {
                                 continue;
                             }
+                            if self.handle_mention_key(key).await {
+                                continue;
+                            }
                             if self.handle_slash_command_key(key).await {
                                 continue;
                             }
@@ -1891,9 +1916,11 @@ where
                                     ComposerKeyAction::Edited => {
                                         self.slash_command_selection = 0;
                                         self.timeline.focus_composer();
+                                        self.update_mention_popup().await;
                                     }
                                     ComposerKeyAction::Ignored => {
                                         self.timeline.focus_composer();
+                                        self.update_mention_popup().await;
                                     }
                                 },
                             }
@@ -1916,6 +1943,7 @@ where
                     RoderEvent::TurnStarted(ev) => {
                         self.active_turn_id = Some(ev.turn_id);
                         self.active_turn_timer.start(clock.now());
+                        self.progress.set(TerminalProgress::Working);
                         self.current_turn_input_tokens = 0;
                         self.current_turn_output_tokens = 0;
                         self.current_turn_reasoning_tokens = None;
@@ -1930,6 +1958,7 @@ where
                         self.flush_streaming_animation_for_thread(&ev.thread_id);
                         let elapsed = self.active_turn_timer.finish(clock.now());
                         self.active_turn_id = None;
+                        self.progress.set(TerminalProgress::Idle);
                         self.timeline.push_turn_completed(TurnCompletedSummary {
                             elapsed,
                             input_tokens: self.current_turn_input_tokens,
@@ -1951,6 +1980,7 @@ where
                         self.flush_streaming_animation_for_thread(&ev.thread_id);
                         self.active_turn_id = None;
                         self.active_turn_timer.reset();
+                        self.progress.set(TerminalProgress::Idle);
                         self.current_turn_input_tokens = 0;
                         self.current_turn_output_tokens = 0;
                         self.current_turn_reasoning_tokens = None;
@@ -2045,6 +2075,7 @@ where
                         if self.active_turn_id.as_deref() == Some(&ev.turn_id) {
                             self.active_turn_id = None;
                             self.active_turn_timer.reset();
+                            self.progress.set(TerminalProgress::Error);
                             self.current_turn_input_tokens = 0;
                             self.current_turn_output_tokens = 0;
                             self.current_turn_reasoning_tokens = None;
@@ -2076,6 +2107,7 @@ where
                     RoderEvent::ApprovalRequested(ev) => {
                         if self.active_turn_id.as_deref() == Some(&ev.turn_id) {
                             self.active_turn_timer.pause(clock.now());
+                            self.progress.set(TerminalProgress::Paused);
                         }
                         self.record_tool_requested_with_id(
                             ev.tool_id,
@@ -2092,6 +2124,7 @@ where
                         self.clear_tool_approval_dialog(&ev.approval_id);
                         if self.active_turn_id.as_deref() == Some(&ev.turn_id) {
                             self.active_turn_timer.resume(clock.now());
+                            self.progress.set(TerminalProgress::Working);
                         }
                         if !ev.approved {
                             self.record_tool_completed(&ev.tool_id, true, None);
@@ -2194,6 +2227,9 @@ where
             }
         }
 
+        // Clear the progress indicator before we tear down the terminal so we
+        // never leave a stale loader in the tab bar / Dock after exit.
+        let _ = self.progress.clear(session.terminal_mut().backend_mut());
         session.restore()?;
 
         Ok(())
@@ -3205,6 +3241,7 @@ where
         let attachments = std::mem::take(&mut self.image_attachments);
         self.composer = composer_textarea(self.theme);
         self.slash_command_selection = 0;
+        self.mention.popup = None;
         let display = transcript_message_with_image_attachments(&text, &attachments);
         let message = self
             .roadmap_mode
@@ -3570,6 +3607,11 @@ where
             .map(|matches| matches.into_iter().cloned().collect::<Vec<_>>());
         let slash_height = slash_command_menu_height(slash_matches.as_deref());
         let slash_preview_height = slash_command_preview_height(slash_matches.as_deref());
+        let mention_render = self.mention_matches();
+        let mention_height = mention_render
+            .as_ref()
+            .map(|(_, matches, _)| mention::mention_menu_height(Some(matches)))
+            .unwrap_or(0);
         let composer_height = self.composer.measure(area.width).preferred_rows;
         let mut constraints = top_layout_constraints().to_vec();
         if event_height > 0 {
@@ -3602,6 +3644,9 @@ where
         }
         if slash_height > 0 {
             constraints.push(Constraint::Length(slash_height));
+        }
+        if mention_height > 0 {
+            constraints.push(Constraint::Length(mention_height));
         }
         constraints.push(Constraint::Length(1));
 
@@ -3690,6 +3735,15 @@ where
                 self.slash_command_menu(slash_matches.as_deref()),
                 chunks[composer_index],
             );
+            composer_index += 1;
+        }
+        if mention_height > 0 {
+            if let Some((kind, matches, selection)) = &mention_render {
+                f.render_widget(
+                    mention::mention_menu(*kind, matches, *selection, self.theme),
+                    chunks[composer_index],
+                );
+            }
             composer_index += 1;
         }
         f.render_widget(self.footer(area.width), chunks[composer_index]);
@@ -8535,10 +8589,13 @@ mod tests {
         TuiApp {
             client: LocalAppClient::new(server.clone()),
             thread_id: "thread-test".to_string(),
+            workspace_id: None,
+            root_id: None,
             thread_title: None,
             thread_message_count: 0,
             active_turn_id: None,
             active_turn_timer: TurnTimer::default(),
+            progress: ProgressReporter::default(),
             working_status_override: None,
             current_turn_input_tokens: 0,
             current_turn_output_tokens: 0,
@@ -8613,6 +8670,7 @@ mod tests {
             file_completion_cache: Vec::new(),
             skill_completion_cache: Vec::new(),
             inline_completion_selection: 0,
+            mention: mention::MentionState::default(),
             voice: VoiceState::default(),
             workflows: workflows::WorkflowUiState::default(),
             policy_mode: PolicyMode::Default,
@@ -8674,6 +8732,37 @@ mod tests {
             phase: None,
             status: None,
         }
+    }
+
+    #[tokio::test]
+    async fn dollar_opens_skill_mention_popup() {
+        let mut app = test_app();
+        app.composer.insert_str("$");
+        app.update_mention_popup().await;
+        assert!(
+            app.mention.popup.is_some(),
+            "typing $ should open a mention popup"
+        );
+        let skills = app.skills_list().await.map(|r| r.skills.len()).unwrap_or(0);
+        let matches = app.mention_matches();
+        assert!(
+            matches.is_some(),
+            "expected skill matches after $ (skills/list returned {skills} skills)"
+        );
+        let (kind, items, _) = matches.unwrap();
+        assert_eq!(kind, mention::MentionKind::Skill);
+        assert!(!items.is_empty(), "skill popup should list skills");
+    }
+
+    #[tokio::test]
+    async fn at_opens_file_mention_popup() {
+        let mut app = test_app();
+        app.composer.insert_str("@");
+        app.update_mention_popup().await;
+        assert!(
+            app.mention.popup.is_some(),
+            "typing @ should open a file mention popup"
+        );
     }
 
     #[tokio::test]
@@ -9606,6 +9695,9 @@ mod tests {
         assert!(
             keyboard_enhancement_flags()
                 .contains(KeyboardEnhancementFlags::REPORT_ALL_KEYS_AS_ESCAPE_CODES)
+        );
+        assert!(
+            keyboard_enhancement_flags().contains(KeyboardEnhancementFlags::REPORT_ALTERNATE_KEYS)
         );
     }
 

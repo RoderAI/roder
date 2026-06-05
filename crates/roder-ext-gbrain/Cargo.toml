@@ -1,0 +1,39 @@
+[package]
+name = "roder-ext-gbrain"
+version.workspace = true
+edition.workspace = true
+
+[package.metadata.roder.distribution]
+id = "gbrain"
+category = "memory-store"
+display_name = "Bi-temporal gbrain Memory"
+description = "Bi-temporal, hybrid-retrieval organizational memory store (valid/transaction time, supersession, as-of date-travel)."
+default_in_profiles = ["full", "research-headless"]
+required_env = []
+optional_env = ["OPENAI_API_KEY"]
+conflicts_with = []
+required_capabilities = ["fs.readwrite.roder-home"]
+extension_path = "::GbrainExtension"
+docs_url = ""
+
+[lib]
+name = "roder_ext_gbrain"
+path = "src/lib.rs"
+
+[[bin]]
+name = "roder-gbrain"
+path = "src/bin/roder-gbrain.rs"
+
+[dependencies]
+anyhow.workspace = true
+async-trait.workspace = true
+roder-api.workspace = true
+roder-ext-openai-embeddings.workspace = true
+rusqlite.workspace = true
+semver.workspace = true
+serde = { workspace = true, features = ["derive"] }
+serde_json.workspace = true
+sha2.workspace = true
+time = { workspace = true, features = ["serde", "serde-well-known", "formatting", "parsing"] }
+tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
+uuid = { workspace = true, features = ["v4"] }

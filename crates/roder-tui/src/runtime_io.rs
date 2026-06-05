@@ -262,6 +262,12 @@ impl TerminalSession {
 pub(crate) fn keyboard_enhancement_flags() -> KeyboardEnhancementFlags {
     KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES
         | KeyboardEnhancementFlags::REPORT_ALL_KEYS_AS_ESCAPE_CODES
+        // Without REPORT_ALTERNATE_KEYS, terminals that fully implement the Kitty
+        // keyboard protocol (e.g. Ghostty) report shifted keys as the base key plus a
+        // SHIFT modifier and omit the shifted codepoint. crossterm can only recover the
+        // actual character (uppercase letters, shifted symbols like `$`) when the
+        // alternate/shifted keycode is present, so request it here.
+        | KeyboardEnhancementFlags::REPORT_ALTERNATE_KEYS
 }
 
 #[cfg(not(windows))]
@@ -312,6 +318,12 @@ mod tests {
         assert!(
             keyboard_enhancement_flags()
                 .contains(KeyboardEnhancementFlags::REPORT_ALL_KEYS_AS_ESCAPE_CODES)
+        );
+        // Required so terminals that fully implement the Kitty protocol (Ghostty) send
+        // the shifted codepoint, letting crossterm emit uppercase/shifted symbols.
+        assert!(
+            keyboard_enhancement_flags()
+                .contains(KeyboardEnhancementFlags::REPORT_ALTERNATE_KEYS)
         );
     }
 

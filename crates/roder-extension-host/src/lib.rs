@@ -25,8 +25,9 @@ use roder_ext_gemini::GeminiExtension;
 use roder_ext_git::GitExtension;
 use roder_ext_google_speech::{GoogleSpeechConfig, GoogleSpeechExtension};
 use roder_ext_jsonl_thread_store::JsonlThreadStoreExtension;
+use roder_ext_gbrain::GbrainExtension;
 use roder_ext_memory::MemoryExtension;
-use roder_ext_openai_embeddings::OpenAiEmbeddingsExtension;
+use roder_ext_openai_embeddings::{OpenAiEmbeddingProvider, OpenAiEmbeddingsExtension};
 use roder_ext_openai_responses::{OpenAiResponsesEngine, OpenAiResponsesExtension};
 use roder_ext_openai_speech::OpenAiSpeechExtension;
 use roder_ext_opencode::{OpenCodeConfig, OpenCodeExtension};
@@ -347,6 +348,20 @@ pub fn build_default_registry(config: DefaultRegistryConfig) -> anyhow::Result<E
         }
     }
     builder.install(MemoryExtension::new(roder_home.join("memory")))?;
+    // Bi-temporal gbrain memory: registered AFTER MemoryExtension so the default
+    // sqlite-memory store stays primary (`memory_stores.first()`). Uses real
+    // OpenAI embeddings when a key is present, deterministic local otherwise.
+    let gbrain_embedder = std::env::var("OPENAI_API_KEY")
+        .ok()
+        .filter(|key| !key.trim().is_empty())
+        .map(|key| {
+            Arc::new(OpenAiEmbeddingProvider::new(Some(key)))
+                as Arc<dyn roder_api::embeddings::EmbeddingProvider>
+        });
+    builder.install(GbrainExtension::new(
+        roder_home.join("gbrain"),
+        gbrain_embedder,
+    ))?;
     builder.install(OpenAiEmbeddingsExtension::from_env())?;
 
     builder.build()

@@ -581,8 +581,10 @@ dependencies = [
 ]
 
 [[package]]
-name = "claude-agent-sdk"
-version = "0.1.0"
+name = "claude-code-sdk-rust"
+version = "0.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "cb70efad3cd1e6500dfd904593bea28841b4dee24314131690103034e96d59f0"
 dependencies = [
  "async-trait",
  "bytes",
@@ -3475,7 +3477,7 @@ dependencies = [
  "anyhow",
  "async-stream",
  "async-trait",
- "claude-agent-sdk",
+ "claude-code-sdk-rust",
  "futures",
  "roder-api",
  "semver",
@@ -3526,6 +3528,24 @@ dependencies = [
  "serde",
  "serde_json",
  "tokio",
+]
+
+[[package]]
+name = "roder-ext-gbrain"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "roder-api",
+ "roder-ext-openai-embeddings",
+ "rusqlite",
+ "semver",
+ "serde",
+ "serde_json",
+ "sha2 0.11.0",
+ "time",
+ "tokio",
+ "uuid",
 ]
 
 [[package]]
@@ -4101,6 +4121,7 @@ dependencies = [
  "roder-ext-claude-code",
  "roder-ext-cursor",
  "roder-ext-firecrawl-search",
+ "roder-ext-gbrain",
  "roder-ext-gemini",
  "roder-ext-git",
  "roder-ext-google-speech",
@@ -4305,6 +4326,7 @@ dependencies = [
  "crossterm",
  "dirs 6.0.0",
  "futures",
+ "ignore",
  "ratatui",
  "roder-api",
  "roder-api-transcript",
