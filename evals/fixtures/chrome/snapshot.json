@@ -1,0 +1,76 @@
+{
+  "type": "command/result",
+  "id": "fixture-snapshot-1",
+  "ok": true,
+  "result": {
+    "title": "Acme Dashboard",
+    "url": "https://app.acme.example/dashboard",
+    "text": "Welcome back. You have 3 open invoices. Search invoices below.",
+    "controls": [
+      {
+        "ref": "c1",
+        "tag": "input",
+        "text": "",
+        "role": "searchbox",
+        "ariaLabel": "Search invoices",
+        "name": "q",
+        "id": "invoice-search",
+        "type": "search",
+        "placeholder": "Search invoices",
+        "value": "",
+        "disabled": false,
+        "selector": "#invoice-search",
+        "box": { "x": 240, "y": 120, "width": 320, "height": 36 }
+      },
+      {
+        "ref": "c2",
+        "tag": "button",
+        "text": "Search",
+        "role": "button",
+        "ariaName": "Search",
+        "id": "do-search",
+        "disabled": false,
+        "selector": "#do-search",
+        "box": { "x": 572, "y": 120, "width": 88, "height": 36 }
+      },
+      {
+        "ref": "c3",
+        "tag": "a",
+        "text": "View all invoices",
+        "role": "link",
+        "href": "https://app.acme.example/invoices",
+        "selector": "a[href='/invoices']",
+        "box": { "x": 240, "y": 200, "width": 140, "height": 20 }
+      }
+    ],
+    "forms": [
+      {
+        "ref": "f1",
+        "name": "invoiceSearch",
+        "id": "invoice-search-form",
+        "action": "https://app.acme.example/invoices/search",
+        "method": "get",
+        "fields": [
+          { "ref": "c1", "name": "q", "type": "search", "required": false, "label": "Search invoices" }
+        ]
+      }
+    ],
+    "iframes": [
+      {
+        "index": 0,
+        "src": "https://widgets.acme.example/support",
+        "box": { "x": 900, "y": 600, "width": 320, "height": 480 },
+        "crossOrigin": true
+      }
+    ],
+    "viewport": {
+      "width": 1280,
+      "height": 1800,
+      "scrollX": 0,
+      "scrollY": 0,
+      "devicePixelRatio": 2
+    },
+    "capturedAt": 1733356800000,
+    "untrusted": true
+  }
+}

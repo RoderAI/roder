@@ -29,6 +29,10 @@ pub(super) fn built_in_command_catalog() -> Vec<CommandDescriptor> {
             "Preview, install, list, disable, or uninstall marketplace plugins.",
         ),
         ("remote", "Open the remote app-server pairing panel."),
+        (
+            "chrome",
+            "Set up and control the Roder Chrome browser extension.",
+        ),
         ("voice", "Toggle voice dictation into the composer."),
         ("roadmap", "Open document-first roadmapping mode."),
         ("deep-research", "Run a multi-agent deep research workflow."),
@@ -49,6 +53,9 @@ pub(super) fn built_in_command_catalog() -> Vec<CommandDescriptor> {
                 Some("preview|install|install-all|list|disable|uninstall [args]".to_string())
             }
             "ps" => Some("all|stop <id>|stop-all --confirm|<id>".to_string()),
+            "chrome" => {
+                Some("[status|enable|disable|reconnect|pair|panel]".to_string())
+            }
             "voice" => Some("[hold|tap|off|status]".to_string()),
             "roadmap" => Some("[plan]".to_string()),
             "deep-research" => Some("<question>".to_string()),
@@ -309,6 +316,7 @@ mod tests {
                 "marketplace",
                 "plugin",
                 "remote",
+                "chrome",
                 "voice",
                 "roadmap",
                 "deep-research",

@@ -1,4 +1,4 @@
-use super::thread_resume::{agents_list, commands_list, threads_list};
+use super::thread_resume::{commands_list, threads_list};
 use super::*;
 use crate::palette::{
     PaletteAction, collect_entries, cycle_source_filter,
@@ -7,9 +7,9 @@ use crate::palette::{
     render::palette_list,
     skills::skill_source,
     sources::{
-        agent_source, command_source, marketplace_source, media_source, memories_source,
-        mode_source, model_source, remote_source, roadmap_source, runner_source, settings_source,
-        theme_source, thread_source, workflow_import_source,
+        agent_source, chrome_source, command_source, file_source, marketplace_source, media_source,
+        memories_source, mode_source, model_source, remote_source, roadmap_source, runner_source,
+        settings_source, theme_source, thread_source, workflow_import_source,
     },
 };
 use crate::theme::{discover_themes, discovery::default_directories};
@@ -41,7 +41,7 @@ where
         self.populate_palette().await;
     }
 
-    async fn populate_palette(&mut self) {
+    pub(super) async fn populate_palette(&mut self) {
         if let Ok(commands) = commands_list(&self.client).await {
             self.command_catalog = commands;
         }
@@ -53,11 +53,11 @@ where
                 Vec::new()
             }
         };
-        let agents = match agents_list(&self.client).await {
+        let agents = match self.agents_list().await {
             Ok(agents) => agents,
             Err(err) => {
                 self.push_event(format!("agents/list unavailable: {err}"));
-                Vec::new()
+                AgentsListResult { agents: Vec::new() }
             }
         };
         let providers = match self.providers_list().await {
@@ -78,7 +78,7 @@ where
         } else {
             None
         };
-        let settings = match self.settings_get().await {
+        let settings = match settings_get(&self.client).await {
             Ok(settings) => Some(settings),
             Err(err) => {
                 self.push_event(format!("settings/get unavailable: {err}"));
@@ -122,7 +122,12 @@ where
             sources.push(thread_source(&threads));
         }
         if self.palette_source_enabled("agents") {
-            sources.push(agent_source(&agents));
+            sources.push(agent_source(&agents.agents));
+        }
+        if self.palette_source_enabled("files")
+            && let Ok(root) = std::env::current_dir()
+        {
+            sources.push(file_source(&root));
         }
         if self.palette_source_enabled("modes") {
             sources.push(mode_source(self.policy_mode));
@@ -179,6 +184,9 @@ where
         }
         if self.palette_source_enabled("remote") {
             sources.push(remote_source());
+        }
+        if self.palette_source_enabled("chrome") {
+            sources.push(chrome_source());
         }
         if self.palette_source_enabled("roadmaps") {
             sources.push(roadmap_source());
@@ -300,7 +308,11 @@ where
         match action {
             PaletteAction::SendCommand(command) => {
                 let invocation = format!("/{command}");
-                if !self.try_run_slash_command(&invocation).await {
+                if let Some((name, args)) =
+                    commands::command_invocation(&invocation, &self.command_catalog)
+                {
+                    self.run_slash_command_invocation(name, args).await;
+                } else {
                     self.composer = composer_textarea(self.theme);
                     self.composer.insert_str(format!("/{command} "));
                 }
@@ -353,6 +365,12 @@ where
             }
             PaletteAction::OpenPluginBrowser => {
                 self.open_plugin_browser().await;
+            }
+            PaletteAction::OpenChromePanel => {
+                self.open_chrome_panel().await;
+            }
+            PaletteAction::ChromePair => {
+                self.chrome_pair_oneclick().await;
             }
             PaletteAction::OpenSkillsManager => {
                 self.palette_query.clear();

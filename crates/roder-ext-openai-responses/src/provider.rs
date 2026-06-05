@@ -504,14 +504,31 @@ fn responses_tools(request: &AgentInferenceRequest) -> (Vec<Value>, ResponsesToo
         let tool = tool.normalized_for_model(roder_api::ToolSchemaPolicy::warning());
         let api_name = responses_tool_name(&tool.name, &mut used_tool_names);
         tool_name_map.register(&tool.name, &api_name);
-        tools.push(json!({
+        let mut entry = json!({
             "type": "function",
             "name": api_name,
             "description": tool.description,
             "parameters": tool.parameters,
-        }));
+        });
+        if openai_provider_native_tool_search(request) {
+            entry["defer_loading"] = json!(true);
+        }
+        tools.push(entry);
+    }
+    if openai_provider_native_tool_search(request) && !request.tools.is_empty() {
+        tools.push(json!({ "type": "tool_search" }));
     }
     (tools, tool_name_map)
+}
+
+fn openai_provider_native_tool_search(request: &AgentInferenceRequest) -> bool {
+    request.runtime.tool_search.is_provider_native_requested()
+        && request.model.provider == PROVIDER_OPENAI
+        && openai_model_supports_tool_search(&request.model.model)
+}
+
+fn openai_model_supports_tool_search(model: &str) -> bool {
+    model.starts_with("gpt-5.4") || model.starts_with("gpt-5.5") || model.starts_with("gpt-5.6")
 }
 
 fn responses_tool_name(tool_name: &str, used_tool_names: &mut HashSet<String>) -> String {
@@ -569,6 +586,7 @@ impl InferenceEngine for OpenAiResponsesEngine {
             image_input: true,
             prompt_cache: true,
             provider_metadata: true,
+            tool_search: true,
         }
     }
 
@@ -1906,6 +1924,33 @@ mod tests {
     fn input_items(request: &AgentInferenceRequest) -> Vec<Value> {
         let (_, tool_name_map) = responses_tools(request);
         response_input_items(request, &tool_name_map)
+    }
+
+    #[test]
+    fn maps_openai_provider_native_tool_search_body() {
+        let mut request = request();
+        request.model.model = "gpt-5.4".to_string();
+        request.runtime.tool_search = roder_api::inference::ToolSearchConfig::provider_native();
+
+        let body = OpenAiResponsesEngine::map_request(&request);
+
+        assert_eq!(body["tools"][0]["type"], "function");
+        assert_eq!(body["tools"][0]["name"], "echo");
+        assert_eq!(body["tools"][0]["defer_loading"], true);
+        assert_eq!(body["tools"][1], json!({ "type": "tool_search" }));
+        assert_eq!(body["tool_choice"], "auto");
+    }
+
+    #[test]
+    fn keeps_explicit_openai_tools_for_unsupported_tool_search_model() {
+        let mut request = request();
+        request.model.model = "gpt-5.3".to_string();
+        request.runtime.tool_search = roder_api::inference::ToolSearchConfig::provider_native();
+
+        let body = OpenAiResponsesEngine::map_request(&request);
+
+        assert_eq!(body["tools"].as_array().unwrap().len(), 1);
+        assert!(body["tools"][0].get("defer_loading").is_none());
     }
 
     #[tokio::test]

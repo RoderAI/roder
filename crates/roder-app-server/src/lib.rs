@@ -1,6 +1,7 @@
 mod artifact;
 mod automation_worker;
 mod automations;
+mod chrome;
 pub mod client;
 mod code_index;
 mod command;

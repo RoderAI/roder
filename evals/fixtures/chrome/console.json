@@ -1,0 +1,33 @@
+{
+  "type": "command/result",
+  "id": "fixture-console-1",
+  "ok": true,
+  "result": {
+    "entries": [
+      {
+        "level": "warning",
+        "text": "[Deprecation] 'webkitStorageInfo' is deprecated and will be removed.",
+        "url": "https://app.acme.example/dashboard",
+        "line": 1,
+        "at": 1733356790000,
+        "untrusted": true
+      },
+      {
+        "level": "error",
+        "text": "Uncaught TypeError: Cannot read properties of undefined (reading 'total') at renderInvoices (app.js:842)",
+        "url": "https://app.acme.example/static/app.js",
+        "line": 842,
+        "at": 1733356795000,
+        "untrusted": true
+      },
+      {
+        "level": "info",
+        "text": "Invoice list rendered (3 items) in 142ms",
+        "url": "https://app.acme.example/static/app.js",
+        "line": 901,
+        "at": 1733356796000,
+        "untrusted": true
+      }
+    ]
+  }
+}

@@ -679,7 +679,12 @@ Response:
       "auth_detail": null,
       "recommended": true,
       "sort_order": 0,
-      "capabilities": {},
+      "capabilities": {
+        "streaming": true,
+        "tool_calls": true,
+        "tool_search": true,
+        "image_input": true
+      },
       "models": []
     }
   ]
@@ -690,6 +695,9 @@ Behavior:
 
 - Providers are sorted by `sortOrder`, then name.
 - OAuth providers report `authenticated` by checking the relevant token store.
+- `capabilities.tool_search` means the provider can map Roder's canonical
+  provider-native tool-search hint into its native request body. It does not
+  bypass Roder tool permissions, hooks, policy modes, or transcript events.
 - OpenRouter is exposed as provider `openrouter`; its built-in fallback model
   id is `x-ai/grok-build-0.1`, so clients should keep provider and model fields
   separate instead of splitting model ids on every slash.
@@ -2911,6 +2919,8 @@ Examples:
     "workspaceId": "ws_abc123",
     "rootId": "root_abc123",
     "path": "src/app.rs",
+    "area": "unstaged",
+    "ignoreWhitespace": true,
     "offset": 0,
     "limit": 400
   }
@@ -2932,7 +2942,11 @@ Behavior:
   current working tree, including committed, staged, unstaged, and untracked
   changes.
 - `vcs/changes/read` validates provider-relative paths and returns paged changed
-  content for one changed file.
+  content for one changed file. When `area` is omitted, it returns the full
+  branch delta. When `area` is provided, providers may return just that file's
+  `committed`, `staged`, `unstaged`, or `untracked` content.
+- `ignoreWhitespace` defaults to `false`; when set, providers may suppress
+  whitespace-only changes in the returned diff.
 - Mutating calls such as `vcs/snapshot/create`, `vcs/restore`,
   `vcs/select`, `vcs/lines/switch`, and `vcs/sync` are checked by the
   app-server policy gate before execution. If approval is required, the request
@@ -4434,6 +4448,51 @@ Behavior:
   provider/model from config, defaulting to OpenAI
   `text-embedding-3-large`.
 - `memory/provider/set` writes config and emits `memory/providerChanged`.
+
+## Chrome browser methods
+
+Purpose: bridge JSON-RPC clients to a connected Manifest V3 browser extension.
+The extension pairs over the same remote WebSocket as native clients (see
+`remote.md`); these methods call the process-global browser bridge
+(`roder_api::chrome`). Session-control methods (`status`, `enable`, `disable`,
+`setMode`, `reconnect`) return a `ChromeStatus` (`connected`, `clientCount`,
+`enabled`, `capabilities`, `mode`, `activeTab`, `browser`, `lastError`,
+`remoteAddr`). The remaining methods forward a command frame to the extension
+and await its `command/result`.
+
+> Untrusted input: page snapshots, console output, network metadata, and
+> permission records returned by the dispatching methods originate from the
+> browser and are returned verbatim as opaque JSON. Clients must not treat that
+> content as user or system instructions.
+
+| Method | Params | Result |
+| --- | --- | --- |
+| `chrome/status` | — | `ChromeStatus` |
+| `chrome/enable` | `{ mode?: "observe"\|"assist"\|"control" }` | `ChromeStatus` |
+| `chrome/disable` | — | `ChromeStatus` |
+| `chrome/setMode` | `{ mode }` | `ChromeStatus` |
+| `chrome/reconnect` | — | `ChromeStatus` |
+| `chrome/browsers/list` | — | `{ browsers: [] }` when disconnected, else bridge result |
+| `chrome/tabs/list` | — | bridge result (`tabs/list`) |
+| `chrome/tabs/activate` | `{ tabId }` | bridge result (`tab/activate`) |
+| `chrome/tabs/navigate` | `{ tabId?, url }` | bridge result (`tab/navigate`) |
+| `chrome/page/snapshot` | `{ tabId?, include? }` | bridge result (`page/snapshot`) |
+| `chrome/page/action` | `{ action, ... }` | bridge result (`page/<action>`) |
+| `chrome/debug/console` | `{ tabId?, limit? }` | bridge result (`debug/console/read`) |
+| `chrome/debug/network` | `{ tabId?, limit? }` | bridge result (`debug/network/read`) |
+| `chrome/permissions/list` | `{ origin? }` | bridge result (`permissions/get`) |
+| `chrome/permissions/update` | `{ origin, perms }` | bridge result (`permissions/set`) |
+
+Behavior:
+
+- `chrome/enable` sets the session enabled flag and, when `mode` is supplied,
+  the permission mode; an unknown mode returns `-32602`.
+- `chrome/page/action` maps `action` (`click`, `type`, `keypress`, `scroll`,
+  `select`, `screenshot`, `highlight`, `eval`) to the wire kind `page/<action>`
+  and forwards the remaining params; unknown actions return `-32602`.
+- Bridge failures map to JSON-RPC errors in the reserved `-32010..=-32015` band:
+  not connected (`-32010`), disabled (`-32011`), rejected (`-32012`), timeout
+  (`-32013`), disconnected (`-32014`), remote error (`-32015`).
 
 ## Streaming and Notifications
 

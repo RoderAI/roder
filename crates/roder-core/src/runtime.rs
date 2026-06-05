@@ -16,7 +16,7 @@ use roder_api::inference::{
     AgentInferenceRequest, HostedWebSearchConfig, HostedWebSearchMode, InferenceEngine,
     InferenceEvent, InferenceTurnContext, InstructionBundle, ModelHarnessProfile,
     ModelSchemaPolicy, ModelSelection, OutputConfig, ReasoningConfig, RuntimeHints, RuntimeProfile,
-    TokenUsage, ToolCallCompleted,
+    TokenUsage, ToolCallCompleted, ToolSearchConfig, ToolSearchConfigOverlay,
 };
 use roder_api::policy_mode::{PolicyDecision, PolicyMode};
 use roder_api::reliability::{
@@ -29,7 +29,7 @@ use roder_api::subagents::SubagentDefinition;
 use roder_api::teams::TeamMemberStatus;
 use roder_api::thread::{
     ThreadItemEvent, ThreadItemEventKind, ThreadMetadata, ThreadSnapshot, ThreadStore,
-    ThreadUsageMetadata, validate_thread_workspace,
+    ThreadUsageMetadata, is_synthetic_event_thread_id, validate_thread_workspace,
 };
 use roder_api::tools::{ToolCall, ToolChoice, ToolExecutionContext, ToolRegistry, ToolResult};
 use roder_api::transcript::{
@@ -91,6 +91,9 @@ pub struct RuntimeConfig {
     pub auto_compact_token_limit: Option<u32>,
     pub file_backed_dynamic_context: bool,
     pub hosted_web_search: HostedWebSearchConfig,
+    pub tool_search: ToolSearchConfig,
+    pub provider_tool_search: HashMap<String, ToolSearchConfigOverlay>,
+    pub model_tool_search: HashMap<String, ToolSearchConfigOverlay>,
     pub model_edit_tools: HashMap<String, String>,
     pub model_parallel_tool_calls: HashMap<String, bool>,
     pub model_profiles: HashMap<String, ModelHarnessProfile>,
@@ -117,6 +120,9 @@ impl Default for RuntimeConfig {
             auto_compact_token_limit: None,
             file_backed_dynamic_context: true,
             hosted_web_search: HostedWebSearchConfig::cached(),
+            tool_search: ToolSearchConfig::default(),
+            provider_tool_search: HashMap::new(),
+            model_tool_search: HashMap::new(),
             model_edit_tools: HashMap::new(),
             model_parallel_tool_calls: HashMap::new(),
             model_profiles: HashMap::new(),
@@ -1833,6 +1839,7 @@ impl Runtime {
                     profile: runtime_profile,
                     parallel_tool_calls: Some(parallel_tool_calls),
                     hosted_web_search: cfg.hosted_web_search.clone(),
+                    tool_search: tool_search_for_provider_model(&cfg, &provider, &model),
                     speed_policy: speed_policy_decision,
                     reliability: Some(cfg.reliability.clone().into()),
                     deadline_remaining_seconds: deadline_remaining_seconds(turn_deadline),
@@ -3058,6 +3065,21 @@ fn server_side_compaction_threshold(cfg: &RuntimeConfig, model: &str) -> Option<
         .filter(|threshold| *threshold > 0)
 }
 
+fn tool_search_for_provider_model(
+    cfg: &RuntimeConfig,
+    provider: &str,
+    model: &str,
+) -> ToolSearchConfig {
+    let mut resolved = cfg.tool_search.clone();
+    if let Some(provider_config) = cfg.provider_tool_search.get(provider) {
+        provider_config.apply_to(&mut resolved);
+    }
+    if let Some(model_config) = cfg.model_tool_search.get(model) {
+        model_config.apply_to(&mut resolved);
+    }
+    resolved
+}
+
 fn parallel_tool_calls_for_model(cfg: &RuntimeConfig, model: &str) -> bool {
     cfg.model_parallel_tool_calls
         .get(model)
@@ -3295,7 +3317,7 @@ pub fn validate_edit_tool(value: &str) -> anyhow::Result<()> {
 }
 
 fn should_persist_thread_event(thread_id: &str) -> bool {
-    !matches!(thread_id, "app-server" | "runtime")
+    !is_synthetic_event_thread_id(thread_id)
 }
 
 #[cfg(test)]
@@ -3370,8 +3392,12 @@ mod tests {
 
     #[test]
     fn synthetic_app_server_events_are_not_thread_events() {
-        assert!(!should_persist_thread_event("app-server"));
-        assert!(!should_persist_thread_event("runtime"));
+        for thread_id in ["app-server", "runtime", "thread-workflow"] {
+            assert!(!should_persist_thread_event(thread_id));
+        }
+        assert!(should_persist_thread_event("thread-discovery"));
+        assert!(should_persist_thread_event("thread-plan"));
+        assert!(should_persist_thread_event("thread-process"));
         assert!(should_persist_thread_event("thread-1"));
     }
 
@@ -4185,6 +4211,48 @@ mod tests {
                 .pointer("/modelProfile/schemaPolicy")
                 .and_then(serde_json::Value::as_str),
             Some("standard_required_first")
+        );
+    }
+
+    #[tokio::test]
+    async fn tool_search_overrides_route_to_next_inference_request() {
+        let request = captured_profile_request(RuntimeConfig {
+            default_provider: roder_api::catalog::PROVIDER_MOCK.to_string(),
+            default_model: "gpt-5.4".to_string(),
+            tool_search: ToolSearchConfig {
+                mode: roder_api::inference::ToolSearchMode::Auto,
+                max_catalog_items: Some(100),
+                ..ToolSearchConfig::default()
+            },
+            provider_tool_search: std::collections::HashMap::from([(
+                roder_api::catalog::PROVIDER_MOCK.to_string(),
+                roder_api::inference::ToolSearchConfigOverlay {
+                    include_skills: Some(false),
+                    provider_variant: Some(roder_api::inference::ToolSearchProviderVariant::Regex),
+                    ..Default::default()
+                },
+            )]),
+            model_tool_search: std::collections::HashMap::from([(
+                "gpt-5.4".to_string(),
+                roder_api::inference::ToolSearchConfigOverlay {
+                    mode: Some(roder_api::inference::ToolSearchMode::ProviderNative),
+                    max_catalog_items: Some(25),
+                    provider_variant: Some(roder_api::inference::ToolSearchProviderVariant::Bm25),
+                    ..Default::default()
+                },
+            )]),
+            ..RuntimeConfig::default()
+        })
+        .await;
+
+        assert_eq!(
+            request.runtime.tool_search.mode,
+            roder_api::inference::ToolSearchMode::ProviderNative
+        );
+        assert_eq!(request.runtime.tool_search.max_catalog_items, Some(25));
+        assert_eq!(
+            request.runtime.tool_search.provider_variant,
+            roder_api::inference::ToolSearchProviderVariant::Bm25
         );
     }
 

@@ -156,8 +156,8 @@ mod tests {
             .iter()
             .map(|entry| entry.item.title.as_str())
             .collect::<Vec<_>>();
-        assert!(titles.contains(&"Skill: commit"));
-        assert!(titles.contains(&"Disable skill: commit"));
-        assert!(titles.contains(&"Set commit skill exposure: global"));
+        assert!(titles.contains(&"Skill: vcs-snapshot"));
+        assert!(titles.contains(&"Disable skill: vcs-snapshot"));
+        assert!(titles.contains(&"Set vcs-snapshot skill exposure: global"));
     }
 }

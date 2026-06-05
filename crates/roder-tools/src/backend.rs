@@ -157,16 +157,25 @@ impl WorkspaceBackend for LocalWorkspaceBackend {
     ) -> anyhow::Result<Option<EditOutcome>> {
         let path = self.workspace.resolve_existing(path)?;
         let text = std::fs::read_to_string(&path)?;
-        let Some(index) = text.find(old_string) else {
-            return Ok(None);
+        let rel = self.workspace.display(&path);
+        let (updated, outcome) = match roder_edit_core::apply_edit(
+            rel.clone(),
+            &text,
+            old_string,
+            new_string,
+            roder_edit_core::EditOptions {
+                fuzzy: roder_edit_core::EditMatchMode::Off,
+                strip_line_numbers: false,
+            },
+        ) {
+            Ok(result) => result,
+            Err(_) => return Ok(None),
         };
-        let mut updated = text;
-        updated.replace_range(index..index + old_string.len(), new_string);
         std::fs::write(&path, updated)?;
         self.invalidate_search_index()?;
         Ok(Some(EditOutcome {
-            path: self.workspace.display(&path),
-            replacements: 1,
+            path: outcome.path,
+            replacements: outcome.replacements,
         }))
     }
 
@@ -176,18 +185,37 @@ impl WorkspaceBackend for LocalWorkspaceBackend {
         edits: Vec<TextEdit>,
     ) -> anyhow::Result<Result<EditOutcome, usize>> {
         let path = self.workspace.resolve_existing(path)?;
-        let mut text = std::fs::read_to_string(&path)?;
-        for (index, edit) in edits.iter().enumerate() {
-            let Some(position) = text.find(&edit.old_string) else {
-                return Ok(Err(index));
-            };
-            text.replace_range(position..position + edit.old_string.len(), &edit.new_string);
-        }
-        std::fs::write(&path, text)?;
+        let text = std::fs::read_to_string(&path)?;
+        let rel = self.workspace.display(&path);
+        let core_edits = edits
+            .iter()
+            .map(|edit| roder_edit_core::TextEdit {
+                old_string: edit.old_string.clone(),
+                new_string: edit.new_string.clone(),
+            })
+            .collect::<Vec<_>>();
+        let (updated, outcome) = match roder_edit_core::apply_multi_edit(
+            rel.clone(),
+            &text,
+            &core_edits,
+            roder_edit_core::EditOptions {
+                fuzzy: roder_edit_core::EditMatchMode::Off,
+                strip_line_numbers: false,
+            },
+        ) {
+            Ok(result) => result,
+            Err(roder_edit_core::EditApplyError::OldStringNotFound { edit, .. }) => {
+                return Ok(Err(edit.unwrap_or(0)));
+            }
+            Err(roder_edit_core::EditApplyError::OldStringAmbiguous { edit, .. }) => {
+                return Ok(Err(edit.unwrap_or(0)));
+            }
+        };
+        std::fs::write(&path, updated)?;
         self.invalidate_search_index()?;
         Ok(Ok(EditOutcome {
-            path: self.workspace.display(&path),
-            replacements: edits.len(),
+            path: outcome.path,
+            replacements: outcome.replacements,
         }))
     }
 

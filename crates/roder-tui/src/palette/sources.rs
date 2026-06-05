@@ -1,3 +1,5 @@
+use std::path::{Path, PathBuf};
+
 use roder_api::inference::HostedWebSearchMode;
 use roder_api::marketplace::MarketplaceDescriptor;
 use roder_api::policy_mode::PolicyMode;
@@ -8,6 +10,8 @@ use roder_protocol::{
 
 use super::{PaletteAction, PaletteItem, StaticPaletteSource};
 use crate::theme::{ThemeEntry, ThemeOverrides};
+
+const MAX_FILE_SOURCE_ENTRIES: usize = 500;
 
 pub fn command_source(commands: &[CommandDescriptor]) -> StaticPaletteSource {
     StaticPaletteSource::new(
@@ -484,6 +488,54 @@ pub fn remote_source() -> StaticPaletteSource {
     )
 }
 
+pub fn chrome_source() -> StaticPaletteSource {
+    StaticPaletteSource::new(
+        "chrome",
+        "Chrome",
+        vec![
+            (
+                PaletteItem {
+                    id: "chrome-pair".to_string(),
+                    title: "Chrome: pair browser (1-click)".to_string(),
+                    subtitle: Some(
+                        "Start pairing and open the auto-connect URL in your browser".to_string(),
+                    ),
+                    keywords: vec![
+                        "chrome".to_string(),
+                        "pair".to_string(),
+                        "connect".to_string(),
+                        "browser".to_string(),
+                        "extension".to_string(),
+                        "setup".to_string(),
+                    ],
+                    icon: Some('C'),
+                },
+                PaletteAction::ChromePair,
+            ),
+            (
+                PaletteItem {
+                    id: "chrome-panel".to_string(),
+                    title: "Chrome browser plugin".to_string(),
+                    subtitle: Some(
+                        "Connect, set up, and control the Roder Chrome extension".to_string(),
+                    ),
+                    keywords: vec![
+                        "chrome".to_string(),
+                        "browser".to_string(),
+                        "extension".to_string(),
+                        "plugin".to_string(),
+                        "pair".to_string(),
+                        "debug".to_string(),
+                        "status".to_string(),
+                    ],
+                    icon: Some('C'),
+                },
+                PaletteAction::OpenChromePanel,
+            ),
+        ],
+    )
+}
+
 pub fn roadmap_source() -> StaticPaletteSource {
     StaticPaletteSource::new(
         "roadmaps",
@@ -594,6 +646,107 @@ pub fn agent_source(agents: &[AgentDescriptor]) -> StaticPaletteSource {
             })
             .collect(),
     )
+}
+
+pub fn file_source(root: &Path) -> StaticPaletteSource {
+    StaticPaletteSource::new(
+        "files",
+        "Files",
+        workspace_file_paths(root)
+            .into_iter()
+            .map(|path| {
+                let title = path.clone();
+                (
+                    PaletteItem {
+                        id: format!("file:{path}"),
+                        title,
+                        subtitle: Some("Insert file mention".to_string()),
+                        keywords: vec![path.clone(), file_name_keyword(&path)],
+                        icon: Some('@'),
+                    },
+                    PaletteAction::InsertComposerText(format!("@{path} ")),
+                )
+            })
+            .collect(),
+    )
+}
+
+fn workspace_file_paths(root: &Path) -> Vec<String> {
+    let mut paths = git_tracked_files(root).unwrap_or_else(|| walked_files(root));
+    paths.sort();
+    paths.dedup();
+    paths.truncate(MAX_FILE_SOURCE_ENTRIES);
+    paths
+}
+
+fn git_tracked_files(root: &Path) -> Option<Vec<String>> {
+    let output = std::process::Command::new("git")
+        .args(["ls-files", "--cached", "--others", "--exclude-standard"])
+        .current_dir(root)
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let files = String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .filter(|line| !line.trim().is_empty())
+        .take(MAX_FILE_SOURCE_ENTRIES)
+        .map(str::to_string)
+        .collect::<Vec<_>>();
+    (!files.is_empty()).then_some(files)
+}
+
+fn walked_files(root: &Path) -> Vec<String> {
+    let mut files = Vec::new();
+    let mut stack = vec![root.to_path_buf()];
+    while let Some(dir) = stack.pop() {
+        if files.len() >= MAX_FILE_SOURCE_ENTRIES {
+            break;
+        }
+        let Ok(entries) = std::fs::read_dir(&dir) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            let name = entry.file_name();
+            let name = name.to_string_lossy();
+            if should_skip_file_source_path(&name) {
+                continue;
+            }
+            if path.is_dir() {
+                stack.push(path);
+            } else if path.is_file() {
+                files.push(relative_file_source_path(root, &path));
+                if files.len() >= MAX_FILE_SOURCE_ENTRIES {
+                    break;
+                }
+            }
+        }
+    }
+    files
+}
+
+fn should_skip_file_source_path(name: &str) -> bool {
+    matches!(
+        name,
+        ".git" | "target" | "node_modules" | ".DS_Store" | ".roder"
+    )
+}
+
+fn relative_file_source_path(root: &Path, path: &Path) -> String {
+    path.strip_prefix(root)
+        .unwrap_or(path)
+        .to_string_lossy()
+        .replace('\\', "/")
+}
+
+fn file_name_keyword(path: &str) -> String {
+    PathBuf::from(path)
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or(path)
+        .to_string()
 }
 
 pub fn model_source(providers: &ProvidersListResult) -> StaticPaletteSource {
@@ -1084,6 +1237,29 @@ mod tests {
             source.entries()[0].action,
             PaletteAction::SendCommand("review".to_string())
         );
+    }
+
+    #[test]
+    fn file_source_inserts_at_file_mentions() {
+        let root =
+            std::env::temp_dir().join(format!("roder-tui-file-source-{}", std::process::id()));
+        let nested = root.join("src");
+        std::fs::create_dir_all(&nested).unwrap();
+        std::fs::write(nested.join("lib.rs"), "fn main() {}").unwrap();
+
+        let source = file_source(&root);
+        let entries = source.entries();
+        let entry = entries
+            .iter()
+            .find(|entry| entry.item.title == "src/lib.rs")
+            .expect("file entry");
+        assert_eq!(entry.source_id, "files");
+        assert_eq!(
+            entry.action,
+            PaletteAction::InsertComposerText("@src/lib.rs ".to_string())
+        );
+
+        let _ = std::fs::remove_dir_all(root);
     }
 
     #[test]

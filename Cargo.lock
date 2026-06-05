@@ -3399,6 +3399,27 @@ dependencies = [
 ]
 
 [[package]]
+name = "roder-edit-core"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "serde",
+ "serde_json",
+ "similar",
+]
+
+[[package]]
+name = "roder-edit-wasm"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "roder-edit-core",
+ "serde",
+ "serde_json",
+ "wasm-bindgen",
+]
+
+[[package]]
 name = "roder-evals"
 version = "0.1.0"
 dependencies = [
@@ -3430,6 +3451,21 @@ dependencies = [
  "serde",
  "serde_json",
  "tokio",
+]
+
+[[package]]
+name = "roder-ext-chrome"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "roder-api",
+ "semver",
+ "serde",
+ "serde_json",
+ "time",
+ "tokio",
+ "uuid",
 ]
 
 [[package]]
@@ -4061,6 +4097,7 @@ dependencies = [
  "roder-config",
  "roder-context",
  "roder-ext-anthropic",
+ "roder-ext-chrome",
  "roder-ext-claude-code",
  "roder-ext-cursor",
  "roder-ext-firecrawl-search",
@@ -4249,6 +4286,7 @@ dependencies = [
  "ignore",
  "regex",
  "roder-api",
+ "roder-edit-core",
  "roder-ext-runner-unix-local",
  "roder-search",
  "serde",
@@ -4274,6 +4312,7 @@ dependencies = [
  "roder-core",
  "roder-protocol",
  "roder-roadmap",
+ "roder-skills",
  "roder-theme",
  "serde",
  "serde_json",

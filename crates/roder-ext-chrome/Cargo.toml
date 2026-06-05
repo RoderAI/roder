@@ -1,0 +1,33 @@
+[package]
+name = "roder-ext-chrome"
+version.workspace = true
+edition.workspace = true
+
+[package.metadata.roder.distribution]
+id = "chrome"
+category = "tool-provider"
+display_name = "Chrome Browser Control"
+description = "Inspect, control, debug, and record the user's live Chrome session through the Roder browser extension bridge."
+default_in_profiles = ["full"]
+required_env = []
+optional_env = [
+    "RODER_CHROME_LIVE",
+    "RODER_CHROME_PROFILE_DIR",
+]
+conflicts_with = []
+required_capabilities = ["network.web", "fs.readwrite.roder-home"]
+extension_path = "::ChromeExtension"
+docs_url = "https://code.claude.com/docs/en/chrome"
+
+[dependencies]
+anyhow.workspace = true
+async-trait.workspace = true
+roder-api.workspace = true
+semver.workspace = true
+serde = { workspace = true, features = ["derive"] }
+serde_json.workspace = true
+time.workspace = true
+tokio.workspace = true
+
+[dev-dependencies]
+uuid = { workspace = true, features = ["v4"] }

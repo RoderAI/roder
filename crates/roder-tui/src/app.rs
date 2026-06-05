@@ -1,5 +1,6 @@
 #![allow(dead_code, clippy::collapsible_if, clippy::too_many_arguments)]
 mod automations;
+mod chrome;
 mod commands;
 mod composer;
 mod dialog;
@@ -8,6 +9,7 @@ mod input_queue;
 mod media;
 #[allow(dead_code)]
 mod memories;
+mod palette_ui;
 #[cfg(test)]
 mod plan_hunk_tests;
 mod plan_panel;
@@ -65,6 +67,7 @@ use roder_api::inference::{
     HostedWebSearchMode, ProviderAuthType, ReasoningEffortDescriptor, TokenUsage,
 };
 use roder_api::policy_mode::{PolicyDecision, PolicyMode};
+use roder_api::skills::{SkillActivationState, SkillDescriptor};
 use roder_api::transcript::InputImage;
 use roder_api_transcript::ApiTranscriptRecord;
 use roder_app_server::{
@@ -93,6 +96,7 @@ use tui_textarea::TextArea;
 
 use self::commands::built_in_command_catalog;
 use crate::frame_snapshot;
+use crate::palette::{PaletteEntry, render::PaletteTheme};
 use crate::roadmap::RoadmapModeState;
 #[cfg(test)]
 use crate::runtime_io::keyboard_enhancement_flags;
@@ -123,11 +127,39 @@ use tool_timeline::{
 use turn_timer::TurnTimer;
 use voice::{VoiceConfig, VoiceMode, VoiceState};
 
+#[derive(Debug, Clone, Eq, PartialEq)]
+struct FileCompletionItem {
+    path: String,
+}
+
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+enum InlineCompletionKind {
+    File,
+    Skill,
+}
+
+#[derive(Debug, Clone, Eq, PartialEq)]
+enum InlineCompletionItem {
+    File(FileCompletionItem),
+    Skill(SkillDescriptor),
+}
+
+impl InlineCompletionItem {
+    fn insertion_text(&self) -> String {
+        match self {
+            Self::File(item) => format!("@{} ", item.path),
+            Self::Skill(skill) => format!("${} ", skill.name),
+        }
+    }
+}
+
 const TOP_STATUS_ANIMATION_FPS: u64 = 6;
-const WORKING_SHEEN_LOOP_FRAMES: u64 = TOP_STATUS_ANIMATION_FPS * 2;
-const WORKING_SHEEN_ACTIVE_FRAMES: u64 = (TOP_STATUS_ANIMATION_FPS * 4 + 2) / 3;
+const WORKING_SHEEN_LOOP_FRAMES: u64 = TOP_STATUS_ANIMATION_FPS;
+const WORKING_SHEEN_ACTIVE_FRAMES: u64 = (TOP_STATUS_ANIMATION_FPS * 2 + 2) / 3;
 const WORKING_SHEEN_WIDTH: usize = 3;
 const MAX_VISIBLE_SLASH_COMMANDS: usize = 16;
+const MAX_VISIBLE_INLINE_COMPLETIONS: usize = 12;
+const MAX_FILE_COMPLETION_CACHE: usize = 1_000;
 const COPIED_HELPER_LABEL: &str = "Copied to clipboard";
 const COPIED_HELPER_DURATION: Duration = Duration::from_secs(2);
 
@@ -550,6 +582,18 @@ impl Theme {
 
     fn selected(self) -> Style {
         Style::default().fg(self.selection_fg).bg(self.selection_bg)
+    }
+
+    fn palette(self) -> PaletteTheme {
+        PaletteTheme {
+            text: self.text,
+            muted: self.muted,
+            accent: self.accent,
+            border: self.dialog,
+            selection_fg: self.selection_fg,
+            selection_bg: self.selection_bg,
+            surface_bg: self.body_background.unwrap_or(Color::Reset),
+        }
     }
 }
 
@@ -1043,6 +1087,12 @@ where
     events: Vec<String>,
     animation_frame: u64,
     show_event_log: bool,
+    show_palette: bool,
+    palette_entries: Vec<PaletteEntry>,
+    palette_query: String,
+    palette_source_filter: Option<String>,
+    palette_state: ListState,
+    enabled_palette_sources: HashSet<String>,
     show_provider_popup: bool,
     show_shortcuts_dialog: bool,
     provider_popup_screen: ProviderPopupScreen,
@@ -1064,6 +1114,7 @@ where
     confirm_dialog: Option<ConfirmDialogState>,
     tool_detail_modal: Option<ToolDetailModal>,
     plugin_browser: Option<PluginBrowserState>,
+    chrome_panel: Option<chrome::ChromePanelState>,
     remote_panel: RemotePanelController,
     roadmap_mode: Option<RoadmapModeState>,
     image_attachments: Vec<ImageAttachment>,
@@ -1072,6 +1123,9 @@ where
     last_user_prompt: Option<PendingPrompt>,
     command_catalog: Vec<CommandDescriptor>,
     slash_command_selection: usize,
+    file_completion_cache: Vec<FileCompletionItem>,
+    skill_completion_cache: Vec<SkillDescriptor>,
+    inline_completion_selection: usize,
     voice: VoiceState,
     workflows: workflows::WorkflowUiState,
     policy_mode: PolicyMode,
@@ -1385,6 +1439,17 @@ where
             .await
             .map(commands::with_local_commands)
             .unwrap_or_else(|_| built_in_command_catalog());
+        let file_completion_cache = std::env::current_dir()
+            .ok()
+            .map(|root| workspace_file_completion_items(&root))
+            .unwrap_or_default();
+        let skill_completion_cache = skills_list_for_composer(&client)
+            .await
+            .ok()
+            .filter(|skills| !skills.is_empty())
+            .unwrap_or_else(|| {
+                local_skill_completion_items(std::env::current_dir().ok().as_deref())
+            });
         let current_goal = goals::thread_goal_get(&client, &thread_id)
             .await
             .ok()
@@ -1429,6 +1494,12 @@ where
             events: Vec::new(),
             animation_frame: 0,
             show_event_log: false,
+            show_palette: false,
+            palette_entries: Vec::new(),
+            palette_query: String::new(),
+            palette_source_filter: None,
+            palette_state: ListState::default(),
+            enabled_palette_sources: tui_config.enabled_palette_source_ids(),
             show_provider_popup: false,
             show_shortcuts_dialog: false,
             provider_popup_screen: ProviderPopupScreen::Main,
@@ -1458,6 +1529,7 @@ where
             confirm_dialog: None,
             tool_detail_modal: None,
             plugin_browser: None,
+            chrome_panel: None,
             remote_panel,
             roadmap_mode: None,
             image_attachments: Vec::new(),
@@ -1466,6 +1538,9 @@ where
             last_user_prompt: None,
             command_catalog,
             slash_command_selection: 0,
+            file_completion_cache,
+            skill_completion_cache,
+            inline_completion_selection: 0,
             voice: VoiceState::from_config(tui_config.voice.clone().unwrap_or_default()),
             workflows: workflows::WorkflowUiState::default(),
             policy_mode: policy_state
@@ -1573,10 +1648,24 @@ where
                             } else {
                                 self.handle_plugin_browser_key(key).await;
                             }
+                        } else if self.chrome_panel.is_some() {
+                            if key.modifiers.contains(KeyModifiers::CONTROL)
+                                && key.code == KeyCode::Char('c')
+                            {
+                                self.chrome_panel = None;
+                                self.confirm_dialog =
+                                    Some(ConfirmDialogState::new(ConfirmDialog::Exit));
+                            } else {
+                                self.handle_chrome_panel_key(key).await;
+                            }
                         } else if self.workflows.overlay_visible() {
                             if self.handle_workflow_key(key).await {
                                 continue;
                             }
+                        } else if self.show_palette {
+                            self.handle_palette_key(key).await;
+                        } else if palette_ui::is_palette_open_key(key) {
+                            self.open_palette().await;
                         } else if key.modifiers.contains(KeyModifiers::CONTROL)
                             && key.code == KeyCode::Char('p')
                         {
@@ -1707,6 +1796,9 @@ where
                                 continue;
                             }
                             if self.handle_workflow_trigger_key(key).await {
+                                continue;
+                            }
+                            if self.handle_inline_completion_key(key).await {
                                 continue;
                             }
                             if self.handle_slash_command_key(key).await {
@@ -2288,9 +2380,13 @@ where
 
     async fn cycle_policy_mode(&mut self) {
         let next = next_policy_mode(self.policy_mode);
+        self.set_policy_mode(next, "tui mode switcher").await;
+    }
+
+    async fn set_policy_mode(&mut self, mode: PolicyMode, reason: &str) {
         let params = ThreadSetModeParams {
-            mode: next,
-            reason: Some("tui mode switcher".to_string()),
+            mode,
+            reason: Some(reason.to_string()),
         };
         let res = self
             .client
@@ -2446,6 +2542,73 @@ where
             (self.slash_command_selection as isize + delta).rem_euclid(count as isize) as usize;
     }
 
+    async fn handle_inline_completion_key(&mut self, key: KeyEvent) -> bool {
+        if key.modifiers != KeyModifiers::NONE {
+            return false;
+        }
+        let Some(matches) = self.inline_completion_matches() else {
+            return false;
+        };
+        if matches.is_empty() {
+            return false;
+        }
+        self.inline_completion_selection = self.inline_completion_selection.min(
+            matches
+                .len()
+                .min(MAX_VISIBLE_INLINE_COMPLETIONS)
+                .saturating_sub(1),
+        );
+        match key.code {
+            KeyCode::Up => {
+                self.move_inline_completion_selection(-1);
+                true
+            }
+            KeyCode::Down => {
+                self.move_inline_completion_selection(1);
+                true
+            }
+            KeyCode::Tab | KeyCode::Enter => {
+                if let Some(item) = matches.get(self.inline_completion_selection).cloned() {
+                    self.accept_inline_completion(item);
+                }
+                true
+            }
+            _ => false,
+        }
+    }
+
+    fn move_inline_completion_selection(&mut self, delta: isize) {
+        let count = self
+            .inline_completion_matches()
+            .map(|matches| matches.len().min(MAX_VISIBLE_INLINE_COMPLETIONS))
+            .unwrap_or_default();
+        if count == 0 {
+            self.inline_completion_selection = 0;
+            return;
+        }
+        self.inline_completion_selection =
+            (self.inline_completion_selection as isize + delta).rem_euclid(count as isize) as usize;
+    }
+
+    fn accept_inline_completion(&mut self, item: InlineCompletionItem) {
+        self.composer = composer_textarea(self.theme);
+        self.composer.insert_str(item.insertion_text());
+        self.inline_completion_selection = 0;
+    }
+
+    fn inline_completion_matches(&self) -> Option<Vec<InlineCompletionItem>> {
+        let input = composer_text(&self.composer);
+        let query = inline_completion_query(&input)?;
+        Some(match query.kind {
+            InlineCompletionKind::File => {
+                matching_file_completions(&self.file_completion_cache, query.term)
+            }
+            InlineCompletionKind::Skill => {
+                matching_skill_completions(&self.skill_completion_cache, query.term)
+            }
+        })
+    }
+
     async fn run_slash_command_invocation(&mut self, name: String, args: String) {
         self.composer = composer_textarea(self.theme);
         self.slash_command_selection = 0;
@@ -2480,6 +2643,9 @@ where
             }
             "remote" => {
                 self.run_remote_slash_command(&args).await;
+            }
+            "chrome" => {
+                self.run_chrome_slash_command(&args).await;
             }
             "roadmap" => {
                 self.run_roadmap_slash_command(&args);
@@ -3368,6 +3534,8 @@ where
         let workflow_trigger_height = self
             .workflows
             .trigger_height(&composer_text(&self.composer));
+        let inline_matches = self.inline_completion_matches();
+        let inline_height = inline_completion_menu_height(inline_matches.as_deref());
         let slash_matches = self
             .slash_command_matches()
             .map(|matches| matches.into_iter().cloned().collect::<Vec<_>>());
@@ -3392,6 +3560,9 @@ where
         }
         if workflow_trigger_height > 0 {
             constraints.push(Constraint::Length(workflow_trigger_height));
+        }
+        if inline_height > 0 {
+            constraints.push(Constraint::Length(inline_height));
         }
         if slash_preview_height > 0 {
             constraints.push(Constraint::Length(slash_preview_height));
@@ -3458,6 +3629,13 @@ where
             );
             composer_index += 1;
         }
+        if inline_height > 0 {
+            f.render_widget(
+                self.inline_completion_menu(inline_matches.as_deref()),
+                chunks[composer_index],
+            );
+            composer_index += 1;
+        }
         if slash_preview_height > 0 {
             f.render_widget(
                 self.slash_command_preview(slash_matches.as_deref()),
@@ -3491,12 +3669,18 @@ where
     }
 
     fn render_overlays(&mut self, f: &mut Frame<'_>, area: Rect) {
+        if self.show_palette {
+            self.render_palette_popup(f, area);
+        }
         if self.show_provider_popup {
             self.render_provider_popup(f, area);
         }
         self.workflows.render_overlay(f, area, self.theme);
         if self.plugin_browser.is_some() {
             self.render_plugin_browser(f, area);
+        }
+        if self.chrome_panel.is_some() {
+            self.render_chrome_panel(f, area);
         }
         if let Some(dialog) = self.confirm_dialog.clone() {
             self.render_confirm_dialog(f, area, dialog);
@@ -3812,6 +3996,67 @@ where
         ]));
         lines.extend(visible);
 
+        Paragraph::new(Text::from(lines)).style(self.theme.text())
+    }
+
+    fn inline_completion_menu(
+        &self,
+        matches: Option<&[InlineCompletionItem]>,
+    ) -> Paragraph<'static> {
+        let Some(matches) = matches else {
+            return Paragraph::new(Text::default());
+        };
+        let input = composer_text(&self.composer);
+        let Some(query) = inline_completion_query(&input) else {
+            return Paragraph::new(Text::default());
+        };
+        let selected_index = self.inline_completion_selection.min(
+            matches
+                .len()
+                .min(MAX_VISIBLE_INLINE_COMPLETIONS)
+                .saturating_sub(1),
+        );
+        let title = match query.kind {
+            InlineCompletionKind::File => " File mentions",
+            InlineCompletionKind::Skill => " Skills",
+        };
+        let hint = match query.kind {
+            InlineCompletionKind::File => "  tab/enter insert @file  up/down select",
+            InlineCompletionKind::Skill => "  tab/enter insert $skill  up/down select",
+        };
+        let mut lines = vec![Line::from(vec![
+            Span::styled(title, self.theme.strong()),
+            Span::styled(hint, self.theme.subtle()),
+        ])];
+        lines.extend(
+            matches
+                .iter()
+                .take(MAX_VISIBLE_INLINE_COMPLETIONS)
+                .enumerate()
+                .map(|(index, item)| {
+                    let selected = index == selected_index;
+                    let marker = if selected { ">" } else { " " };
+                    let style = if selected {
+                        self.theme.selected()
+                    } else {
+                        self.theme.text()
+                    };
+                    let mut spans = vec![Span::styled(format!(" {marker} "), self.theme.subtle())];
+                    match item {
+                        InlineCompletionItem::File(file) => {
+                            spans.push(Span::styled(format!("@{}", file.path), style));
+                        }
+                        InlineCompletionItem::Skill(skill) => {
+                            spans.push(Span::styled(format!("${}", skill.name), style));
+                            spans.push(Span::styled(
+                                format!(" - {}", truncate(&skill.description, 72)),
+                                self.theme.muted(),
+                            ));
+                        }
+                    }
+                    Line::from(spans)
+                }),
+        );
         Paragraph::new(Text::from(lines)).style(self.theme.text())
     }
 
@@ -5664,6 +5909,13 @@ impl TuiUserConfig {
                 .unwrap_or(false),
         }
     }
+
+    fn enabled_palette_source_ids(&self) -> HashSet<String> {
+        crate::config::TuiAppConfig::default()
+            .enabled_palette_source_ids()
+            .into_iter()
+            .collect()
+    }
 }
 
 fn load_tui_config() -> anyhow::Result<TuiUserConfig> {
@@ -6443,6 +6695,269 @@ fn slash_command_menu_height<T>(matches: Option<&[T]>) -> u16 {
     } else {
         1 + matches.len().min(MAX_VISIBLE_SLASH_COMMANDS) as u16
     }
+}
+
+fn inline_completion_menu_height<T>(matches: Option<&[T]>) -> u16 {
+    let Some(matches) = matches else {
+        return 0;
+    };
+    if matches.is_empty() {
+        0
+    } else {
+        1 + matches.len().min(MAX_VISIBLE_INLINE_COMPLETIONS) as u16
+    }
+}
+
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+struct InlineCompletionQuery<'a> {
+    kind: InlineCompletionKind,
+    term: &'a str,
+}
+
+fn inline_completion_query(input: &str) -> Option<InlineCompletionQuery<'_>> {
+    let trimmed = input.trim_start();
+    if let Some(rest) = trimmed.strip_prefix('@') {
+        if rest.contains(char::is_whitespace) {
+            return None;
+        }
+        return Some(InlineCompletionQuery {
+            kind: InlineCompletionKind::File,
+            term: rest,
+        });
+    }
+    if let Some(rest) = trimmed.strip_prefix('$') {
+        if rest.contains(char::is_whitespace) {
+            return None;
+        }
+        return Some(InlineCompletionQuery {
+            kind: InlineCompletionKind::Skill,
+            term: rest,
+        });
+    }
+    None
+}
+
+fn matching_file_completions(
+    files: &[FileCompletionItem],
+    term: &str,
+) -> Vec<InlineCompletionItem> {
+    let term = term.to_ascii_lowercase();
+    files
+        .iter()
+        .filter(|file| term.is_empty() || file.path.to_ascii_lowercase().contains(&term))
+        .take(MAX_VISIBLE_INLINE_COMPLETIONS)
+        .cloned()
+        .map(InlineCompletionItem::File)
+        .collect()
+}
+
+fn matching_skill_completions(skills: &[SkillDescriptor], term: &str) -> Vec<InlineCompletionItem> {
+    let term = term.to_ascii_lowercase();
+    skills
+        .iter()
+        .filter(|skill| skill.activation != SkillActivationState::Disabled)
+        .filter(|skill| {
+            term.is_empty()
+                || skill.name.to_ascii_lowercase().contains(&term)
+                || skill.description.to_ascii_lowercase().contains(&term)
+        })
+        .take(MAX_VISIBLE_INLINE_COMPLETIONS)
+        .cloned()
+        .map(InlineCompletionItem::Skill)
+        .collect()
+}
+
+async fn skills_list_for_composer<C>(client: &C) -> anyhow::Result<Vec<SkillDescriptor>>
+where
+    C: AppClient,
+{
+    let res = client
+        .send_request(JsonRpcRequest {
+            jsonrpc: "2.0".to_string(),
+            id: Some(serde_json::json!("skills/list")),
+            method: "skills/list".to_string(),
+            params: None,
+        })
+        .await;
+    let mut skills = decode_response::<roder_protocol::SkillsListResult>(res)?.skills;
+    skills.sort_by(|a, b| a.name.cmp(&b.name));
+    Ok(skills)
+}
+
+fn local_skill_completion_items(workspace: Option<&Path>) -> Vec<SkillDescriptor> {
+    let workspace = workspace.unwrap_or_else(|| Path::new("."));
+    let mut options = roder_skills::SkillRegistryOptions::new(workspace);
+    let agents = workspace.join(".agents/skills");
+    if agents.is_dir() {
+        options.roots.push(roder_skills::SkillRoot::workspace(
+            agents,
+            "workspace://.agents/skills",
+        ));
+    }
+    let claude = workspace.join(".claude/skills");
+    if claude.is_dir() {
+        options.roots.push(roder_skills::SkillRoot::workspace(
+            claude,
+            "workspace://.claude/skills",
+        ));
+    }
+    let registry = roder_skills::SkillRegistry::load(options);
+    registry
+        .skills()
+        .iter()
+        .map(|skill| skill.descriptor.clone())
+        .chain(direct_workspace_skill_descriptors(workspace))
+        .fold(Vec::new(), |mut skills, skill| {
+            if !skills
+                .iter()
+                .any(|existing: &SkillDescriptor| existing.name == skill.name)
+            {
+                skills.push(skill);
+            }
+            skills
+        })
+}
+
+fn direct_workspace_skill_descriptors(workspace: &Path) -> Vec<SkillDescriptor> {
+    let workspace = workspace
+        .canonicalize()
+        .unwrap_or_else(|_| workspace.to_path_buf());
+    workspace
+        .ancestors()
+        .flat_map(|root| {
+            [
+                (root.join(".agents/skills"), "workspace://.agents/skills"),
+                (root.join(".claude/skills"), "workspace://.claude/skills"),
+            ]
+        })
+        .flat_map(|(root, canonical_prefix)| direct_skill_descriptors(&root, canonical_prefix))
+        .collect()
+}
+
+fn direct_skill_descriptors(root: &Path, canonical_prefix: &str) -> Vec<SkillDescriptor> {
+    let Ok(entries) = std::fs::read_dir(root) else {
+        return Vec::new();
+    };
+    entries
+        .flatten()
+        .filter_map(|entry| {
+            let path = entry.path().join("SKILL.md");
+            if !path.is_file() {
+                return None;
+            }
+            direct_skill_descriptor_from_path(&path, canonical_prefix)
+        })
+        .collect()
+}
+
+fn direct_skill_descriptor_from_path(
+    path: &Path,
+    canonical_prefix: &str,
+) -> Option<SkillDescriptor> {
+    let text = std::fs::read_to_string(path).ok()?;
+    let frontmatter = text.strip_prefix("---\n")?.split_once("\n---")?.0;
+    let name = yaml_scalar(frontmatter, "name").or_else(|| {
+        path.parent()
+            .and_then(|parent| parent.file_name())
+            .and_then(|name| name.to_str())
+            .map(str::to_string)
+    })?;
+    let description = yaml_scalar(frontmatter, "description").unwrap_or_else(|| name.clone());
+    Some(SkillDescriptor {
+        id: format!("workspace:{name}"),
+        name: name.clone(),
+        canonical_path: format!("{canonical_prefix}/{name}/SKILL.md"),
+        source: roder_api::skills::SkillSource::Workspace,
+        exposure: roder_api::skills::SkillExposure::DirectOnly,
+        activation: SkillActivationState::Enabled,
+        description,
+        short_description: None,
+        experimental: false,
+        diagnostics: Vec::new(),
+        agent_metadata: None,
+    })
+}
+
+fn yaml_scalar(frontmatter: &str, key: &str) -> Option<String> {
+    let prefix = format!("{key}:");
+    frontmatter.lines().find_map(|line| {
+        let value = line.trim().strip_prefix(&prefix)?.trim();
+        (!value.is_empty()).then(|| value.trim_matches('"').trim_matches('\'').to_string())
+    })
+}
+
+fn workspace_file_completion_items(root: &Path) -> Vec<FileCompletionItem> {
+    let mut paths =
+        git_file_completion_paths(root).unwrap_or_else(|| walked_file_completion_paths(root));
+    paths.sort();
+    paths.dedup();
+    paths.truncate(MAX_FILE_COMPLETION_CACHE);
+    paths
+        .into_iter()
+        .map(|path| FileCompletionItem { path })
+        .collect()
+}
+
+fn git_file_completion_paths(root: &Path) -> Option<Vec<String>> {
+    let output = std::process::Command::new("git")
+        .args(["ls-files", "--cached", "--others", "--exclude-standard"])
+        .current_dir(root)
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let files = String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .filter(|line| !line.trim().is_empty())
+        .take(MAX_FILE_COMPLETION_CACHE)
+        .map(str::to_string)
+        .collect::<Vec<_>>();
+    (!files.is_empty()).then_some(files)
+}
+
+fn walked_file_completion_paths(root: &Path) -> Vec<String> {
+    let mut files = Vec::new();
+    let mut stack = vec![root.to_path_buf()];
+    while let Some(dir) = stack.pop() {
+        if files.len() >= MAX_FILE_COMPLETION_CACHE {
+            break;
+        }
+        let Ok(entries) = std::fs::read_dir(&dir) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            let name = entry.file_name();
+            let name = name.to_string_lossy();
+            if should_skip_file_completion_path(&name) {
+                continue;
+            }
+            if path.is_dir() {
+                stack.push(path);
+            } else if path.is_file() {
+                files.push(relative_file_completion_path(root, &path));
+                if files.len() >= MAX_FILE_COMPLETION_CACHE {
+                    break;
+                }
+            }
+        }
+    }
+    files
+}
+
+fn should_skip_file_completion_path(name: &str) -> bool {
+    matches!(
+        name,
+        ".git" | "target" | "node_modules" | ".DS_Store" | ".roder"
+    )
+}
+
+fn relative_file_completion_path(root: &Path, path: &Path) -> String {
+    path.strip_prefix(root)
+        .unwrap_or(path)
+        .to_string_lossy()
+        .replace('\\', "/")
 }
 
 fn slash_command_preview_height<T>(matches: Option<&[T]>) -> u16 {
@@ -8025,6 +8540,12 @@ mod tests {
             events: Vec::new(),
             animation_frame: 0,
             show_event_log: false,
+            show_palette: false,
+            palette_entries: Vec::new(),
+            palette_query: String::new(),
+            palette_source_filter: None,
+            palette_state: ListState::default(),
+            enabled_palette_sources: HashSet::new(),
             show_provider_popup: false,
             show_shortcuts_dialog: false,
             provider_popup_screen: ProviderPopupScreen::Main,
@@ -8046,6 +8567,7 @@ mod tests {
             confirm_dialog: None,
             tool_detail_modal: None,
             plugin_browser: None,
+            chrome_panel: None,
             remote_panel: RemotePanelController::with_listen(
                 server,
                 "ws://127.0.0.1:0".to_string(),
@@ -8058,6 +8580,9 @@ mod tests {
             last_user_prompt: None,
             command_catalog: built_in_command_catalog(),
             slash_command_selection: 0,
+            file_completion_cache: Vec::new(),
+            skill_completion_cache: Vec::new(),
+            inline_completion_selection: 0,
             voice: VoiceState::default(),
             workflows: workflows::WorkflowUiState::default(),
             policy_mode: PolicyMode::Default,
@@ -9228,8 +9753,8 @@ mod tests {
     #[test]
     fn working_status_sheen_highlights_one_character_then_loops() {
         let theme = Theme::for_dark_background(true);
-        assert_eq!(WORKING_SHEEN_LOOP_FRAMES, TOP_STATUS_ANIMATION_FPS * 2);
-        assert!(WORKING_SHEEN_ACTIVE_FRAMES > TOP_STATUS_ANIMATION_FPS);
+        assert_eq!(WORKING_SHEEN_LOOP_FRAMES, TOP_STATUS_ANIMATION_FPS);
+        assert!(WORKING_SHEEN_ACTIVE_FRAMES < TOP_STATUS_ANIMATION_FPS);
         assert_ne!(theme.working_sheen, Color::Indexed(231));
         let spans = working_status_spans("Working", 0, theme);
         assert_eq!(spans_text(&spans), "Working");
@@ -9927,6 +10452,87 @@ mod tests {
             slash_command_menu_height(Some(&matches)),
             1 + MAX_VISIBLE_SLASH_COMMANDS as u16
         );
+    }
+
+    #[test]
+    fn inline_completion_query_parses_only_leading_at_or_dollar_tokens() {
+        assert_eq!(
+            inline_completion_query("@src/li").unwrap(),
+            InlineCompletionQuery {
+                kind: InlineCompletionKind::File,
+                term: "src/li"
+            }
+        );
+        assert_eq!(
+            inline_completion_query("$rust").unwrap(),
+            InlineCompletionQuery {
+                kind: InlineCompletionKind::Skill,
+                term: "rust"
+            }
+        );
+        assert!(inline_completion_query("look @src/lib.rs").is_none());
+        assert!(inline_completion_query("@src/lib.rs extra").is_none());
+    }
+
+    #[test]
+    fn inline_file_completion_matches_and_inserts_mentions() {
+        let mut app = test_app();
+        app.file_completion_cache = vec![
+            FileCompletionItem {
+                path: "src/lib.rs".to_string(),
+            },
+            FileCompletionItem {
+                path: "README.md".to_string(),
+            },
+        ];
+        app.composer.insert_str("@lib");
+
+        let matches = app.inline_completion_matches().unwrap();
+        assert_eq!(matches.len(), 1);
+        assert_eq!(matches[0].insertion_text(), "@src/lib.rs ");
+        app.accept_inline_completion(matches[0].clone());
+        assert_eq!(composer_text(&app.composer), "@src/lib.rs ");
+    }
+
+    #[test]
+    fn inline_skill_completion_ignores_disabled_skills() {
+        let enabled = skill_descriptor("rust-workspace");
+        let mut disabled = skill_descriptor("rust-clippy");
+        disabled.activation = SkillActivationState::Disabled;
+        let mut app = test_app();
+        app.skill_completion_cache = vec![disabled, enabled.clone()];
+        app.composer.insert_str("$rust");
+
+        let matches = app.inline_completion_matches().unwrap();
+        assert_eq!(matches.len(), 1);
+        assert_eq!(matches[0].insertion_text(), "$rust-workspace ");
+        assert!(matches[0].insertion_text().contains(&enabled.name));
+    }
+
+    #[test]
+    fn local_skill_completion_fallback_reads_workspace_skills() {
+        let skills = local_skill_completion_items(Some(Path::new(".")));
+
+        assert!(
+            skills.iter().any(|skill| skill.name == "roder-tmux"),
+            "expected workspace skill fallback to include roder-tmux"
+        );
+    }
+
+    fn skill_descriptor(name: &str) -> SkillDescriptor {
+        SkillDescriptor {
+            id: format!("workspace:{name}"),
+            name: name.to_string(),
+            canonical_path: format!("workspace://.agents/skills/{name}/SKILL.md"),
+            source: roder_api::skills::SkillSource::Workspace,
+            exposure: roder_api::skills::SkillExposure::DirectOnly,
+            activation: SkillActivationState::Enabled,
+            description: format!("{name} helper"),
+            short_description: None,
+            experimental: false,
+            diagnostics: Vec::new(),
+            agent_metadata: None,
+        }
     }
 
     #[test]
