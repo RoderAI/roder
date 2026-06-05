@@ -5,7 +5,7 @@
 //! `as_of`, `supersede`, `history`, `contradictions`, `consolidate`) used by the
 //! `gbrain_*` tools and the `roder-gbrain` CLI.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
@@ -29,6 +29,12 @@ use crate::schema;
 
 const SUPERSEDES: &str = "supersedes";
 const CONTRADICTS: &str = "contradicts";
+
+/// Event-cluster expansion: how many top hits seed the thread set, and the cap
+/// on sibling facts pulled in. A justification/provenance question's evidence is
+/// the cluster of artifacts sharing a thread/event, so we surface that cluster.
+const EXPANSION_SEED_HITS: usize = 3;
+const EXPANSION_CAP: usize = 12;
 
 /// Parameters for capturing a new fact.
 #[derive(Debug, Clone)]
@@ -70,6 +76,10 @@ pub struct RecallParams {
     pub scope: Option<MemoryScope>,
     pub include_global: bool,
     pub limit: usize,
+    /// Pull in the top hits' event/thread cluster (the full evidence chain).
+    /// Helps evidence-enumeration questions (C5/C2/C4) but dilutes focused-fact
+    /// questions (C1/C3), so it's opt-in — the caller decides per question.
+    pub expand: bool,
 }
 
 /// A detected contradiction between two coexisting facts about the same subject.
@@ -204,6 +214,7 @@ impl GbrainStore {
             scope,
             include_global: true,
             limit,
+            expand: false,
         })
         .await
     }
@@ -396,6 +407,7 @@ impl MemoryStore for GbrainStore {
                 scope: query.scope,
                 include_global: query.include_global,
                 limit: query.limit,
+                expand: false,
             })
             .await?;
         Ok(result
@@ -441,6 +453,7 @@ impl MemoryStore for GbrainStore {
                 scope,
                 include_global: false,
                 limit,
+                expand: false,
             })
             .await?;
         Ok(result
@@ -579,7 +592,7 @@ fn recall_blocking(
     facts.retain(|fact| params.as_of.visible(fact, now));
 
     let limit = params.limit.max(1);
-    let hits: Vec<Scored> = if params.query.trim().is_empty() {
+    let mut hits: Vec<Scored> = if params.query.trim().is_empty() {
         // List mode: most-recently-valid first.
         let mut listed: Vec<Scored> = facts
             .iter()
@@ -623,6 +636,43 @@ fn recall_blocking(
         scored.truncate(limit);
         scored
     };
+
+    // Event-cluster expansion: pull in sibling facts sharing the top hits'
+    // thread/event so the full evidence chain is surfaced (the main C5/C2
+    // retrieval-miss), bounded by EXPANSION_CAP to keep context tight.
+    if params.expand && !params.query.trim().is_empty() {
+        let thread_of = |f: &TemporalFact| {
+            f.metadata
+                .get("thread_id")
+                .and_then(|v| v.as_str())
+                .map(str::to_string)
+        };
+        let top_threads: HashSet<String> = hits
+            .iter()
+            .take(EXPANSION_SEED_HITS)
+            .filter_map(|s| thread_of(&s.fact))
+            .collect();
+        if !top_threads.is_empty() {
+            let present: HashSet<String> = hits.iter().map(|s| s.fact.id.clone()).collect();
+            let mut siblings: Vec<TemporalFact> = facts
+                .iter()
+                .filter(|f| !present.contains(&f.id))
+                .filter(|f| thread_of(f).is_some_and(|t| top_threads.contains(&t)))
+                .cloned()
+                .collect();
+            // Chronological so the cluster reads as the event unfolded.
+            siblings.sort_by(|a, b| a.valid_at.cmp(&b.valid_at).then(a.id.cmp(&b.id)));
+            siblings.truncate(EXPANSION_CAP);
+            for fact in siblings {
+                hits.push(Scored {
+                    fact,
+                    score: 0.0,
+                    vector_score: 0.0,
+                    lexical_score: 0.0,
+                });
+            }
+        }
+    }
 
     // Contradictions relevant to the returned hits.
     let hit_subjects: Vec<String> = hits

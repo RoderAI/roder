@@ -168,6 +168,7 @@ impl GbrainTool {
                 scope: args.scope.as_deref().map(parse_scope),
                 include_global: args.include_global.unwrap_or(true),
                 limit: args.limit.unwrap_or(10),
+                expand: false,
             })
             .await?;
         Ok(render_result(&result, args.response_format))

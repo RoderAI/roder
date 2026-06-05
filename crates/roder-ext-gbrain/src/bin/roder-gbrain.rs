@@ -167,6 +167,9 @@ async fn recall(store: &GbrainStore, flags: &HashMap<String, String>) -> anyhow:
         Some(date) => AsOf::at(parse_flexible(date)?),
         None => AsOf::now(),
     };
+    // --expand pulls in the top hits' event cluster (for evidence-enumeration
+    // questions); the caller (e.g. the OrgMemBench adapter) decides per question.
+    let expand = flags.contains_key("expand");
 
     let result = store
         .recall(RecallParams {
@@ -175,6 +178,7 @@ async fn recall(store: &GbrainStore, flags: &HashMap<String, String>) -> anyhow:
             scope,
             include_global: true,
             limit,
+            expand,
         })
         .await?;
 

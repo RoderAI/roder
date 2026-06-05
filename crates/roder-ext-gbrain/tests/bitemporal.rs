@@ -63,6 +63,7 @@ async fn as_of_supersession_and_history() {
             scope: Some(scope.clone()),
             include_global: false,
             limit: 5,
+            expand: false,
         })
         .await
         .unwrap();

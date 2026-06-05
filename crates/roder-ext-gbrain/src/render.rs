@@ -12,13 +12,34 @@ fn date_short(dt: OffsetDateTime) -> String {
     dt.date().to_string()
 }
 
+/// Source-type + author attribution pulled from a fact's metadata. Surfacing
+/// these grounds provenance (C2) and lets the answerer classify direct
+/// testimony vs inference (C5) — e.g. an email/transcript from the decider is
+/// direct, a third-party mention is inferred.
+fn attribution(fact: &TemporalFact) -> String {
+    let meta = &fact.metadata;
+    let source_type = meta.get("source_type").and_then(|v| v.as_str());
+    let author = meta.get("author").and_then(|v| v.as_str());
+    match (source_type, author) {
+        (Some(s), Some(a)) => format!(" ⟨{s} · {a}⟩"),
+        (Some(s), None) => format!(" ⟨{s}⟩"),
+        (None, Some(a)) => format!(" ⟨{a}⟩"),
+        (None, None) => String::new(),
+    }
+}
+
 fn fact_line(fact: &TemporalFact, now: OffsetDateTime) -> String {
     let status = fact.status(now);
     let mut window = format!("valid from {}", date_short(fact.valid_at));
     if let Some(invalid) = fact.invalid_at {
         window.push_str(&format!(" until {}", date_short(invalid)));
     }
-    let mut line = format!("- [{}] {} ({window}", status.as_str(), fact.text.trim());
+    let mut line = format!(
+        "- [{}]{} {} ({window}",
+        status.as_str(),
+        attribution(fact),
+        fact.text.trim()
+    );
     if status == FactStatus::Retracted
         && let Some(expired) = fact.expired_at {
             line.push_str(&format!("; record retracted {}", date_short(expired)));

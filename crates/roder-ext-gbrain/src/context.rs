@@ -37,6 +37,7 @@ impl ContextProvider for GbrainContextProvider {
                 scope: Some(MemoryScope::Workspace(query.thread_id.clone())),
                 include_global: true,
                 limit: 5,
+                expand: false,
             })
             .await?;
         Ok(result
