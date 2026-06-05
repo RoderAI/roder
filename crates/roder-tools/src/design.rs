@@ -648,6 +648,15 @@ fn render_node_svg(
             escape_xml(&fill),
             escape_xml(&stroke)
         )),
+        "line" => out.push_str(&format!(
+            r#"<line x1="{}" y1="{}" x2="{}" y2="{}" stroke="{}" stroke-width="{}" stroke-linecap="round"/>"#,
+            x,
+            y,
+            x + width,
+            y + height,
+            escape_xml(&stroke),
+            stroke_width(node.get("stroke"))
+        )),
         "image" => {
             if let Some(src) = node.get("src").and_then(Value::as_str) {
                 if !src.is_empty() {
@@ -733,6 +742,14 @@ fn sanitize_file_name(input: &str) -> String {
     } else {
         trimmed
     }
+}
+
+fn stroke_width(value: Option<&Value>) -> f64 {
+    value
+        .and_then(Value::as_object)
+        .and_then(|map| map.get("width"))
+        .and_then(Value::as_f64)
+        .unwrap_or(2.0)
 }
 
 fn escape_xml(input: &str) -> String {
@@ -1004,5 +1021,39 @@ mod tests {
         assert!(svg.contains("<image "));
         assert!(svg.contains(r#"href="https://example.com/cat.png""#));
         assert!(svg.contains(r#"preserveAspectRatio="xMidYMid slice""#));
+    }
+
+    #[test]
+    fn line_nodes_export_svg_line() {
+        let document = DesignDocument {
+            version: "0.1".to_string(),
+            document_id: "doc".to_string(),
+            title: "Test".to_string(),
+            created_at: "2026-01-01T00:00:00Z".to_string(),
+            updated_at: "2026-01-01T00:00:00Z".to_string(),
+            nodes: BTreeMap::from([(
+                "line-1".to_string(),
+                json!({
+                    "id": "line-1",
+                    "type": "line",
+                    "name": "Divider",
+                    "x": 10,
+                    "y": 20,
+                    "width": 100,
+                    "height": 50,
+                    "stroke": { "kind": "color", "value": "#111827", "width": 3 }
+                }),
+            )]),
+            root_ids: vec!["line-1".to_string()],
+            variables: BTreeMap::new(),
+            assets: BTreeMap::new(),
+            metadata: BTreeMap::new(),
+        };
+        let svg = node_to_svg(&document, document.nodes.get("line-1").unwrap());
+        assert!(svg.contains("<line "));
+        assert!(svg.contains(r#"x1="0""#));
+        assert!(svg.contains(r#"x2="100""#));
+        assert!(svg.contains(r##"stroke="#111827""##));
+        assert!(svg.contains(r#"stroke-width="3""#));
     }
 }

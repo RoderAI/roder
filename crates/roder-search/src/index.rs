@@ -173,12 +173,19 @@ pub(crate) fn scoped_path(root: &Path, subpath: &Path) -> Result<PathBuf, Search
         ));
     }
 
-    let mut normalized = PathBuf::new();
+    let mut normalized = root.to_path_buf();
     for component in subpath.components() {
         match component {
             Component::CurDir => {}
             Component::Normal(part) => normalized.push(part),
-            Component::ParentDir | Component::RootDir | Component::Prefix(_) => {
+            Component::ParentDir => {
+                if !normalized.pop() || !normalized.starts_with(root) {
+                    return Err(SearchError::InvalidPath(
+                        "search path must stay inside the workspace".to_string(),
+                    ));
+                }
+            }
+            Component::RootDir | Component::Prefix(_) => {
                 return Err(SearchError::InvalidPath(
                     "search path must stay inside the workspace".to_string(),
                 ));
@@ -186,7 +193,7 @@ pub(crate) fn scoped_path(root: &Path, subpath: &Path) -> Result<PathBuf, Search
         }
     }
 
-    Ok(root.join(normalized))
+    Ok(normalized)
 }
 
 pub(crate) fn collect_text_files(
