@@ -3666,6 +3666,224 @@ async fn workspace_create_list_and_thread_start_defaults_cwd_to_root() {
 }
 
 #[tokio::test]
+async fn workspace_files_rebuild_children_query_and_read_flow() {
+    let root = workspace_files_temp_root("flow");
+    std::fs::create_dir_all(root.join("roadmap")).unwrap();
+    std::fs::create_dir_all(root.join("src")).unwrap();
+    std::fs::create_dir_all(root.join("empty-dir")).unwrap();
+    std::fs::create_dir_all(root.join("assets")).unwrap();
+    std::fs::create_dir_all(root.join("node_modules/pkg")).unwrap();
+    std::fs::write(
+        root.join("roadmap/001-desktop-custom-user-extensions.md"),
+        "# Desktop Custom User Extensions\n\nbody\n",
+    )
+    .unwrap();
+    std::fs::write(root.join("roadmap/STATUS.md"), "# Status\n").unwrap();
+    std::fs::write(root.join("src/lib.rs"), "pub fn lib() {}\n").unwrap();
+    std::fs::write(root.join("assets/logo.png"), [0_u8, 1, 2, 3]).unwrap();
+    std::fs::write(root.join("node_modules/pkg/index.js"), "ignored").unwrap();
+
+    let mut fixture = workspace_files_fixture(root, "Files Flow").await;
+    let workspace_id = fixture.workspace_id.clone();
+    let root_id = fixture.root_id.clone();
+
+    let missing: serde_json::Value = request(
+        &fixture.client,
+        "workspace/files/status",
+        Some(serde_json::json!({ "workspaceId": workspace_id.as_str() })),
+    )
+    .await;
+    assert_eq!(missing["status"]["state"], "missing");
+
+    let workspace_children: serde_json::Value = request(
+        &fixture.client,
+        "workspace/files/children",
+        Some(serde_json::json!({ "workspaceId": workspace_id.as_str() })),
+    )
+    .await;
+    assert_eq!(workspace_children["entries"][0]["name"], "repo");
+    assert_eq!(workspace_children["entries"][0]["kind"], "directory");
+
+    let rebuild: serde_json::Value = request(
+        &fixture.client,
+        "workspace/files/rebuild",
+        Some(serde_json::json!({ "workspaceId": workspace_id.as_str() })),
+    )
+    .await;
+    assert_eq!(rebuild["status"]["state"], "ready");
+    assert_eq!(rebuild["status"]["fileCount"], 4);
+
+    let building = wait_for_notification(
+        &mut fixture.notifications,
+        "workspace/files/statusChanged",
+        None,
+    )
+    .await;
+    assert_eq!(building.params["status"]["state"], "building");
+    let ready = wait_for_notification(
+        &mut fixture.notifications,
+        "workspace/files/statusChanged",
+        None,
+    )
+    .await;
+    assert_eq!(ready.params["status"]["state"], "ready");
+    assert_eq!(ready.params["status"]["fileCount"], 4);
+
+    let root_children: serde_json::Value = request(
+        &fixture.client,
+        "workspace/files/children",
+        Some(serde_json::json!({
+            "workspaceId": workspace_id.as_str(),
+            "rootId": root_id.as_str()
+        })),
+    )
+    .await;
+    let root_names = root_children["entries"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|entry| entry["name"].as_str().unwrap())
+        .collect::<Vec<_>>();
+    assert!(root_names.contains(&"roadmap"));
+    assert!(root_names.contains(&"src"));
+    assert!(root_names.contains(&"empty-dir"));
+    assert!(!root_names.contains(&"node_modules"));
+
+    let roadmap_children: serde_json::Value = request(
+        &fixture.client,
+        "workspace/files/children",
+        Some(serde_json::json!({
+            "workspaceId": workspace_id.as_str(),
+            "rootId": root_id.as_str(),
+            "path": "roadmap"
+        })),
+    )
+    .await;
+    assert_eq!(roadmap_children["entries"].as_array().unwrap().len(), 2);
+    assert!(
+        roadmap_children["entries"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|entry| entry["path"].as_str().unwrap().starts_with("roadmap/"))
+    );
+
+    let query: serde_json::Value = request(
+        &fixture.client,
+        "workspace/files/query",
+        Some(serde_json::json!({
+            "workspaceId": workspace_id.as_str(),
+            "query": "desktop custom",
+            "limit": 5
+        })),
+    )
+    .await;
+    assert_eq!(
+        query["matches"][0]["entry"]["path"],
+        "roadmap/001-desktop-custom-user-extensions.md"
+    );
+    assert_eq!(query["indexedFileCount"], 4);
+
+    let read: serde_json::Value = request(
+        &fixture.client,
+        "workspace/files/read",
+        Some(serde_json::json!({
+            "workspaceId": workspace_id.as_str(),
+            "rootId": root_id.as_str(),
+            "path": "roadmap/001-desktop-custom-user-extensions.md",
+            "limit": 17
+        })),
+    )
+    .await;
+    assert_eq!(read["encoding"], "utf8");
+    assert_eq!(read["text"], "# Desktop Custom ");
+    assert_eq!(read["entry"]["kind"], "file");
+    assert_eq!(read["hasMore"], true);
+
+    // Second page: reading from a byte offset returns the next window, not a
+    // re-read from the start.
+    let next_page: serde_json::Value = request(
+        &fixture.client,
+        "workspace/files/read",
+        Some(serde_json::json!({
+            "workspaceId": workspace_id.as_str(),
+            "rootId": root_id.as_str(),
+            "path": "roadmap/001-desktop-custom-user-extensions.md",
+            "offset": 17,
+            "limit": 16
+        })),
+    )
+    .await;
+    assert_eq!(next_page["offset"], 17);
+    assert_eq!(next_page["text"], "User Extensions\n");
+    assert_eq!(next_page["hasMore"], true);
+
+    let binary: serde_json::Value = request(
+        &fixture.client,
+        "workspace/files/read",
+        Some(serde_json::json!({
+            "workspaceId": workspace_id.as_str(),
+            "rootId": root_id.as_str(),
+            "path": "assets/logo.png"
+        })),
+    )
+    .await;
+    assert_eq!(binary["encoding"], "binary");
+    assert!(binary["text"].is_null());
+
+    let invalid = request_error(
+        &fixture.client,
+        "workspace/files/read",
+        Some(serde_json::json!({
+            "workspaceId": workspace_id.as_str(),
+            "rootId": root_id.as_str(),
+            "path": "../secret.txt"
+        })),
+    )
+    .await;
+    assert_eq!(invalid.code, -32602);
+}
+
+#[tokio::test]
+async fn workspace_files_query_emits_implicit_build_notification() {
+    let root = workspace_files_temp_root("implicit");
+    std::fs::create_dir_all(root.join("src")).unwrap();
+    std::fs::write(root.join("src/lib.rs"), "pub fn lib() {}\n").unwrap();
+
+    let mut fixture = workspace_files_fixture(root, "Implicit Build").await;
+    let workspace_id = fixture.workspace_id.clone();
+
+    // No explicit rebuild: querying a never-built index must build it on demand
+    // and still emit building -> ready status notifications.
+    let query: serde_json::Value = request(
+        &fixture.client,
+        "workspace/files/query",
+        Some(serde_json::json!({
+            "workspaceId": workspace_id.as_str(),
+            "query": "lib"
+        })),
+    )
+    .await;
+    assert_eq!(query["status"]["state"], "ready");
+    assert_eq!(query["matches"][0]["entry"]["path"], "src/lib.rs");
+
+    let building = wait_for_notification(
+        &mut fixture.notifications,
+        "workspace/files/statusChanged",
+        None,
+    )
+    .await;
+    assert_eq!(building.params["status"]["state"], "building");
+    let ready = wait_for_notification(
+        &mut fixture.notifications,
+        "workspace/files/statusChanged",
+        None,
+    )
+    .await;
+    assert_eq!(ready.params["status"]["state"], "ready");
+}
+
+#[tokio::test]
 async fn multi_root_workspace_threads_round_trip_root_selection() {
     let root = std::env::temp_dir().join(format!("roder-workspace-many-{}", uuid::Uuid::new_v4()));
     let frontend = root.join("frontend");
@@ -8777,6 +8995,51 @@ fn isolated_workspace_registry_path() -> std::path::PathBuf {
 struct TestWorkspaceRef {
     workspace_id: String,
     root_id: String,
+}
+
+struct WorkspaceFilesFixture {
+    root: std::path::PathBuf,
+    client: LocalAppClient,
+    notifications: tokio::sync::broadcast::Receiver<roder_protocol::JsonRpcNotification>,
+    workspace_id: String,
+    root_id: String,
+}
+
+impl Drop for WorkspaceFilesFixture {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.root);
+    }
+}
+
+fn workspace_files_temp_root(prefix: &str) -> std::path::PathBuf {
+    std::env::temp_dir().join(format!(
+        "roder-workspace-files-{prefix}-{}",
+        uuid::Uuid::new_v4()
+    ))
+}
+
+async fn workspace_files_fixture(root: std::path::PathBuf, name: &str) -> WorkspaceFilesFixture {
+    let runtime = Arc::new(Runtime::fake().unwrap());
+    let server = Arc::new(app_server(runtime));
+    let client = LocalAppClient::new(server);
+    let notifications = client.subscribe_notifications();
+    let created: roder_protocol::WorkspaceCreateResult = request(
+        &client,
+        "workspace/create",
+        Some(serde_json::json!({
+            "name": name,
+            "roots": [{ "path": root.display().to_string(), "name": "repo" }]
+        })),
+    )
+    .await;
+
+    WorkspaceFilesFixture {
+        root,
+        client,
+        notifications,
+        workspace_id: created.workspace.id,
+        root_id: created.workspace.default_root_id,
+    }
 }
 
 async fn create_workspace_for_path(

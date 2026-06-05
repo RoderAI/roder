@@ -25,6 +25,7 @@ base64.workspace = true
 dirs.workspace = true
 futures.workspace = true
 if-addrs.workspace = true
+ignore.workspace = true
 rand.workspace = true
 qrcode.workspace = true
 roder-api.workspace = true

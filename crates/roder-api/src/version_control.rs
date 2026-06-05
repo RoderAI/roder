@@ -139,6 +139,7 @@ pub enum VcsCapabilityState {
 #[serde(rename_all = "snake_case")]
 pub enum VcsOperation {
     Status,
+    FileList,
     ChangesList,
     ChangesRead,
     Selection,
@@ -236,6 +237,24 @@ pub struct VcsStatusRequest {
 #[serde(rename_all = "camelCase")]
 pub struct VcsListChangesRequest {
     pub workspace_root: PathBuf,
+}
+
+/// Request to enumerate every file the provider considers part of the
+/// workspace, scoped to `workspace_root`. Used by the app-server file index
+/// to build a complete, ignore-aware file list without hard-coding any one VCS.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct VcsListFilesRequest {
+    pub workspace_root: PathBuf,
+}
+
+/// Result of [`VcsProvider::list_files`]: absolute paths to every file the
+/// provider tracks or considers non-ignored under the requested root.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct VcsFileListing {
+    pub provider_id: VcsProviderId,
+    pub files: Vec<PathBuf>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -385,6 +404,19 @@ pub trait VcsProvider: Send + Sync + 'static {
         &self,
         request: VcsListChangesRequest,
     ) -> Result<Vec<VcsChangedFile>, VcsError>;
+    /// Enumerate every file under `workspace_root` that the provider tracks or
+    /// treats as non-ignored. Providers that cannot enumerate the workspace
+    /// return [`VcsError::UnsupportedOperation`] so callers can fall back to a
+    /// plain filesystem walk. The default implementation is unsupported.
+    async fn list_files(&self, request: VcsListFilesRequest) -> Result<VcsFileListing, VcsError> {
+        let _ = request;
+        Err(VcsError::UnsupportedOperation {
+            provider_id: self.id(),
+            operation: VcsOperation::FileList,
+            capability: None,
+            message: "file listing is not supported by this provider".to_string(),
+        })
+    }
     async fn status_with_changes(
         &self,
         request: VcsListChangesRequest,

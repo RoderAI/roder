@@ -184,6 +184,19 @@ impl WorkspaceRegistry {
         Ok(ResolvedWorkspaceRoot { workspace, root })
     }
 
+    pub(crate) async fn resolve_workspace(
+        &self,
+        runtime_workspace: Option<String>,
+        workspace_id: &str,
+    ) -> Result<Workspace, JsonRpcError> {
+        let state = self.load(runtime_workspace).await?;
+        state
+            .workspaces
+            .into_iter()
+            .find(|workspace| workspace.id == workspace_id)
+            .ok_or_else(|| invalid_params("unknown workspaceId"))
+    }
+
     async fn load(
         &self,
         runtime_workspace: Option<String>,

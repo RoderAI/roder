@@ -109,6 +109,55 @@ async def test_python_sdk_replays_command_output_and_interrupt_fixture() -> None
     assert events == ["command.output_delta", "turn.completed"]
 
 
+@pytest.mark.anyio
+async def test_python_sdk_replays_workspace_files_fixture() -> None:
+    fixture = load_fixture("workspace-files-flow.jsonl")
+    transport = fixture_transport(fixture)
+    client = RoderRpcClient(transport)
+
+    status = await client.call("workspace/files/status", {"workspaceId": "ws_files"})
+    assert status["status"]["state"] == "missing"
+
+    rebuild = await client.call("workspace/files/rebuild", {"workspaceId": "ws_files"})
+    assert rebuild["status"]["state"] == "ready"
+    assert rebuild["status"]["fileCount"] == 3
+
+    root_children = await client.call(
+        "workspace/files/children",
+        {"workspaceId": "ws_files", "rootId": "root_repo"},
+    )
+    assert [entry["name"] for entry in root_children["entries"]] == ["roadmap", "src"]
+
+    roadmap_children = await client.call(
+        "workspace/files/children",
+        {"workspaceId": "ws_files", "rootId": "root_repo", "path": "roadmap"},
+    )
+    assert roadmap_children["entries"][0]["kind"] == "file"
+
+    query = await client.call(
+        "workspace/files/query",
+        {"workspaceId": "ws_files", "query": "desktop custom", "limit": 5},
+    )
+    assert query["matches"][0]["entry"]["path"] == "roadmap/001-desktop-custom-user-extensions.md"
+
+    read = await client.call(
+        "workspace/files/read",
+        {
+            "workspaceId": "ws_files",
+            "rootId": "root_repo",
+            "path": "roadmap/001-desktop-custom-user-extensions.md",
+            "limit": 17,
+        },
+    )
+    assert read["encoding"] == "utf8"
+    assert read["text"] == "# Desktop Custom "
+
+    assert [notification["method"] for notification in fixture["notifications"]] == [
+        "workspace/files/statusChanged",
+        "workspace/files/statusChanged",
+    ]
+
+
 class FixtureTransport(InMemoryTransport):
     def __init__(self, fixture: dict[str, list[dict[str, Any]]]) -> None:
         self.requests = list(fixture["requests"])

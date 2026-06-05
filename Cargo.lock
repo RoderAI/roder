@@ -3179,6 +3179,7 @@ dependencies = [
  "dirs 6.0.0",
  "futures",
  "if-addrs",
+ "ignore",
  "qrcode",
  "rand 0.10.1",
  "roder-api",

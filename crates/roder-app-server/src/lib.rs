@@ -26,6 +26,7 @@ pub mod transcript;
 mod vcs;
 mod webwright;
 mod workflows;
+mod workspace_files;
 mod workspaces;
 
 pub use automations::AppServerFeatureConfig;
