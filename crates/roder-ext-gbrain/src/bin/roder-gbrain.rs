@@ -93,7 +93,13 @@ async fn answer_cmd(
     let agent = DecisionAgent::new(store, reasoner)
         .with_scope(scope)
         .with_budget(budget);
-    let result = agent.answer(&query, as_of).await?;
+    // Default: token-light concise single-call synthesis. `--thorough` runs the
+    // full decompose/draft/verify/finalize loop (more tokens, opt-in).
+    let result = if flags.contains_key("thorough") {
+        agent.answer(&query, as_of).await?
+    } else {
+        agent.answer_concise(&query, as_of).await?
+    };
     println!(
         "{}",
         json!({

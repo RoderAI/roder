@@ -217,6 +217,68 @@ impl<R: Reasoner> DecisionAgent<R> {
         })
     }
 
+    /// Token-LIGHT path: retrieve (no LLM) then a SINGLE concise+faithful
+    /// synthesis call. Same call count as a plain answerer, but we own the
+    /// prompt — so the answer is focused and grounded instead of an info-dump.
+    /// This is the default; the multi-pass [`answer`] loop is opt-in.
+    pub async fn answer_concise(
+        &self,
+        question: &str,
+        as_of: Option<OffsetDateTime>,
+    ) -> anyhow::Result<AgentAnswer> {
+        self.tokens_in.store(0, Ordering::Relaxed);
+        self.tokens_out.store(0, Ordering::Relaxed);
+        let as_of_label = as_of.map(|d| d.date().to_string());
+
+        // Retrieval only (no decompose call — keep it cheap).
+        self.progress.step("retrieve", question);
+        let (evidence, contradictions) = self.gather_evidence(question, &[], as_of).await?;
+
+        self.progress.step("synthesize", &format!("{} records", evidence.len()));
+        let answer = if evidence.is_empty() {
+            "The available records do not contain enough evidence to answer this.".to_string()
+        } else {
+            self.call(
+                "synthesize",
+                CONCISE_SYS,
+                &concise_prompt(question, &evidence, &contradictions, as_of_label.as_deref()),
+            )
+            .await?
+        };
+
+        // Provenance = the cited records that actually appear in the answer.
+        let provenance: Vec<String> = evidence
+            .iter()
+            .filter(|e| answer.contains(&e.slug))
+            .map(|e| e.slug.clone())
+            .collect();
+        let provenance = if provenance.is_empty() {
+            // No inline cites surfaced — fall back to the retrieved set (capped).
+            evidence.iter().take(6).map(|e| e.slug.clone()).collect()
+        } else {
+            dedup_strings(provenance)
+        };
+
+        let context = WorkingContext {
+            question: question.to_string(),
+            as_of: as_of_label,
+            subqueries: Vec::new(),
+            evidence,
+            drafted: 0,
+            verified: Vec::new(),
+            dropped: Vec::new(),
+            contradictions,
+            llm_calls: 1,
+            input_tokens: self.tokens_in.load(Ordering::Relaxed),
+            output_tokens: self.tokens_out.load(Ordering::Relaxed),
+        };
+        Ok(AgentAnswer {
+            answer,
+            provenance,
+            context,
+        })
+    }
+
     // ---- stages -------------------------------------------------------------
 
     /// One reasoner call, with optional raw-output tracing (`GBRAIN_AGENT_DEBUG`).
@@ -390,9 +452,11 @@ impl<R: Reasoner> DecisionAgent<R> {
                 .unwrap_or("")
                 .trim()
                 .to_string();
-            // A claim survives ONLY if the verifier marked it supported AND
-            // produced a verbatim proving quote — forcing real grounding.
-            if supported && !quote.is_empty() {
+            // Keep a claim if the adversarial verifier marked it supported. The
+            // quote is captured for telemetry/grounding but is NOT a hard gate —
+            // requiring a verbatim quote over-pruned true paraphrased facts and
+            // caused false abstention (C2/C3 regressions).
+            if supported {
                 let provenance = dedup_strings(
                     claim
                         .support
@@ -475,6 +539,53 @@ provenance id and label it direct vs inferred using the provided classification.
 <date>', state what was known THEN and, for records marked 'recorded later / current state', say for each \
 whether it is still current or has SINCE changed/been replaced. If contradictions are listed, report both \
 sides. Do not pad with tangential records. Cite provenance ids inline.";
+
+const CONCISE_SYS: &str = "You answer organizational-memory questions from the retrieved records. RULES: \
+1) CONCISE & DIRECT — answer EXACTLY what is asked, in as few words as the question needs. Do NOT add \
+tangential or 'maybe relevant' facts; extra unrequested detail is WRONG, not thorough. 2) FAITHFUL — every \
+specific (name, exact date, number, causal link) MUST come from a cited record; write [SLUG] right after it. \
+If a detail is not in the records, OMIT it — never guess or infer figures/dates/names. 3) If the records \
+genuinely do not answer, say so in one sentence. 4) 'now'/'currently' => give the most recent/current fact; \
+'as of <date>' => state what was known THEN, then note what has SINCE changed using records marked as later/ \
+current. 5) ONLY when explicitly asked to 'walk through' or 'justify with evidence', list each supporting \
+record with its [SLUG], labeled direct (a first-hand message/email by the actor) or inferred (meeting notes, \
+report, summary, or third-party mention). Otherwise do NOT enumerate records.";
+
+fn concise_prompt(
+    question: &str,
+    evidence: &[EvidenceItem],
+    contradictions: &[String],
+    as_of: Option<&str>,
+) -> String {
+    let mut s = String::new();
+    if let Some(d) = as_of {
+        s.push_str(&format!("This question is about knowledge AS OF {d}.\n"));
+    }
+    s.push_str(&format!("Question: {question}\n\nRecords:\n"));
+    for e in evidence {
+        let note = if e.note.is_empty() {
+            String::new()
+        } else {
+            format!(", {}", e.note)
+        };
+        s.push_str(&format!(
+            "[{}] ({}, {}, status={}{note}) {}\n",
+            e.slug,
+            e.date,
+            if e.source.is_empty() { "source?" } else { &e.source },
+            e.status,
+            truncate(&e.text, 1000),
+        ));
+    }
+    if !contradictions.is_empty() {
+        s.push_str("\nConflicting records to report if relevant:\n");
+        for c in contradictions {
+            s.push_str(&format!("  - {c}\n"));
+        }
+    }
+    s.push_str("\nWrite the concise, faithful, directly-responsive answer.");
+    s
+}
 
 fn draft_prompt(question: &str, evidence: &[EvidenceItem]) -> String {
     let mut s = format!("Question: {question}\n\nEvidence records:\n");
