@@ -93,6 +93,56 @@ test("typescript sdk replays command output and interrupt fixture", async () => 
   assert.deepEqual(await events, ["command.output_delta", "turn.completed"]);
 });
 
+test("typescript sdk replays workspace files fixture", async () => {
+  const fixture = loadFixture("workspace-files-flow.jsonl");
+  const transport = fixtureTransport(fixture);
+  const client = new RoderRpcClient(transport);
+
+  const status = (await client.call("workspace/files/status", { workspaceId: "ws_files" })) as any;
+  assert.equal(status.status.state, "missing");
+
+  const rebuild = (await client.call("workspace/files/rebuild", { workspaceId: "ws_files" })) as any;
+  assert.equal(rebuild.status.state, "ready");
+  assert.equal(rebuild.status.fileCount, 3);
+
+  const rootChildren = (await client.call("workspace/files/children", {
+    workspaceId: "ws_files",
+    rootId: "root_repo",
+  })) as any;
+  assert.deepEqual(
+    rootChildren.entries.map((entry: any) => entry.name),
+    ["roadmap", "src"],
+  );
+
+  const roadmapChildren = (await client.call("workspace/files/children", {
+    workspaceId: "ws_files",
+    rootId: "root_repo",
+    path: "roadmap",
+  })) as any;
+  assert.equal(roadmapChildren.entries[0].kind, "file");
+
+  const query = (await client.call("workspace/files/query", {
+    workspaceId: "ws_files",
+    query: "desktop custom",
+    limit: 5,
+  })) as any;
+  assert.equal(query.matches[0].entry.path, "roadmap/001-desktop-custom-user-extensions.md");
+
+  const read = (await client.call("workspace/files/read", {
+    workspaceId: "ws_files",
+    rootId: "root_repo",
+    path: "roadmap/001-desktop-custom-user-extensions.md",
+    limit: 17,
+  })) as any;
+  assert.equal(read.encoding, "utf8");
+  assert.equal(read.text, "# Desktop Custom ");
+
+  assert.deepEqual(
+    fixture.notifications.map((notification) => notification.method),
+    ["workspace/files/statusChanged", "workspace/files/statusChanged"],
+  );
+});
+
 type Fixture = {
   requests: JsonRpcRequest[];
   responses: JsonRpcResponse[];

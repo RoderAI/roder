@@ -3,9 +3,9 @@ use std::process::Command;
 
 use roder_api::version_control::{
     VcsCapabilityState, VcsChangedFileStatus, VcsError, VcsLineSwitchRequest,
-    VcsListChangesRequest, VcsOperation, VcsProvider, VcsReadChangedContentRequest,
-    VcsRestoreRequest, VcsSelectionGranularity, VcsSelectionRequest, VcsSnapshotCreateRequest,
-    VcsStatusRequest, VcsSyncOperation,
+    VcsListChangesRequest, VcsListFilesRequest, VcsOperation, VcsProvider,
+    VcsReadChangedContentRequest, VcsRestoreRequest, VcsSelectionGranularity, VcsSelectionRequest,
+    VcsSnapshotCreateRequest, VcsStatusRequest, VcsSyncOperation,
 };
 use roder_ext_git::{GIT_VCS_PROVIDER_ID, GitProvider};
 
@@ -504,6 +504,66 @@ async fn git_provider_sync_rejects_missing_remote_with_capability_error() {
         .expect_err("missing remote should be unsupported");
 
     assert!(matches!(error, VcsError::UnsupportedOperation { .. }));
+
+    let _ = std::fs::remove_dir_all(workspace);
+}
+
+#[tokio::test]
+async fn git_provider_list_files_returns_tracked_untracked_and_scoped_paths() {
+    let workspace = temp_workspace("roder-git-provider-list-files");
+    init_repo(&workspace);
+    std::fs::create_dir_all(workspace.join("src")).unwrap();
+    std::fs::write(workspace.join(".gitignore"), "ignored.txt\n").unwrap();
+    std::fs::write(workspace.join("tracked.txt"), "tracked\n").unwrap();
+    std::fs::write(workspace.join("src/lib.rs"), "pub fn lib() {}\n").unwrap();
+    std::fs::write(workspace.join("untracked.txt"), "untracked\n").unwrap();
+    std::fs::write(workspace.join("ignored.txt"), "ignored\n").unwrap();
+    run_git(
+        &workspace,
+        &["add", ".gitignore", "tracked.txt", "src/lib.rs"],
+    );
+
+    let provider = GitProvider;
+    let listing = provider
+        .list_files(VcsListFilesRequest {
+            workspace_root: workspace.clone(),
+        })
+        .await
+        .expect("list files");
+
+    assert_eq!(listing.provider_id, GIT_VCS_PROVIDER_ID);
+    let canonical = workspace.canonicalize().unwrap();
+    let names = listing
+        .files
+        .iter()
+        .map(|path| {
+            assert!(path.is_absolute(), "expected absolute path, got {path:?}");
+            path.strip_prefix(&canonical)
+                .expect("file under workspace root")
+                .to_string_lossy()
+                .replace('\\', "/")
+        })
+        .collect::<std::collections::BTreeSet<_>>();
+    assert!(names.contains(".gitignore"));
+    assert!(names.contains("tracked.txt"));
+    assert!(names.contains("src/lib.rs"));
+    assert!(names.contains("untracked.txt"));
+    assert!(!names.contains("ignored.txt"));
+
+    // A subdirectory root only enumerates its own files (R4: subdir roots).
+    let scoped = provider
+        .list_files(VcsListFilesRequest {
+            workspace_root: workspace.join("src"),
+        })
+        .await
+        .expect("list files in subdir");
+    let scoped_names = scoped
+        .files
+        .iter()
+        .filter_map(|path| path.file_name())
+        .map(|name| name.to_string_lossy().to_string())
+        .collect::<Vec<_>>();
+    assert_eq!(scoped_names, vec!["lib.rs".to_string()]);
 
     let _ = std::fs::remove_dir_all(workspace);
 }

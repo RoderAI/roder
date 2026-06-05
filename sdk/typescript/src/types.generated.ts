@@ -1831,6 +1831,54 @@ export const appServerManifest = {
       "sideEffect": "localState"
     },
     {
+      "method": "workspace/files/children",
+      "paramsType": "WorkspaceFilesChildrenParams",
+      "resultType": "WorkspaceFilesChildrenResult",
+      "stability": "stable",
+      "featureGroup": "workspace-files",
+      "idempotency": "idempotent",
+      "sideEffect": "readOnly"
+    },
+    {
+      "method": "workspace/files/query",
+      "paramsType": "WorkspaceFilesQueryParams",
+      "resultType": "WorkspaceFilesQueryResult",
+      "stability": "stable",
+      "featureGroup": "workspace-files",
+      "idempotency": "idempotent",
+      "sideEffect": "readOnly"
+    },
+    {
+      "method": "workspace/files/read",
+      "paramsType": "WorkspaceFilesReadParams",
+      "resultType": "WorkspaceFilesReadResult",
+      "stability": "stable",
+      "featureGroup": "workspace-files",
+      "idempotency": "idempotent",
+      "sideEffect": "readOnly"
+    },
+    {
+      "method": "workspace/files/rebuild",
+      "paramsType": "WorkspaceFilesRebuildParams",
+      "resultType": "WorkspaceFilesRebuildResult",
+      "stability": "stable",
+      "featureGroup": "workspace-files",
+      "idempotency": "nonIdempotent",
+      "sideEffect": "localState",
+      "notifications": [
+        "workspace/files/statusChanged"
+      ]
+    },
+    {
+      "method": "workspace/files/status",
+      "paramsType": "WorkspaceFilesStatusParams",
+      "resultType": "WorkspaceFilesStatusResult",
+      "stability": "stable",
+      "featureGroup": "workspace-files",
+      "idempotency": "idempotent",
+      "sideEffect": "readOnly"
+    },
+    {
       "method": "workspace/forget",
       "paramsType": "WorkspaceForgetParams",
       "resultType": "WorkspaceForgetResult",
@@ -2061,6 +2109,11 @@ export const appServerMethods = [
   "workflows/stop",
   "workspace/changes/list",
   "workspace/create",
+  "workspace/files/children",
+  "workspace/files/query",
+  "workspace/files/read",
+  "workspace/files/rebuild",
+  "workspace/files/status",
   "workspace/forget",
   "workspace/list",
   "workspace/update"

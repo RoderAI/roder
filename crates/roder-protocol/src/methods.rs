@@ -603,6 +603,37 @@ const METHOD_SPECS: &[AppServerMethodSpecSeed] = &[
         ["workspace/changeObserved"]
     ),
     method_spec!("workspace/create", "workspace", LocalState, NonIdempotent),
+    method_spec!(
+        "workspace/files/children",
+        "workspace-files",
+        ReadOnly,
+        Idempotent
+    ),
+    method_spec!(
+        "workspace/files/query",
+        "workspace-files",
+        ReadOnly,
+        Idempotent
+    ),
+    method_spec!(
+        "workspace/files/read",
+        "workspace-files",
+        ReadOnly,
+        Idempotent
+    ),
+    method_spec!(
+        "workspace/files/rebuild",
+        "workspace-files",
+        LocalState,
+        NonIdempotent,
+        ["workspace/files/statusChanged"]
+    ),
+    method_spec!(
+        "workspace/files/status",
+        "workspace-files",
+        ReadOnly,
+        Idempotent
+    ),
     method_spec!("workspace/forget", "workspace", LocalState, NonIdempotent),
     method_spec!("workspace/list", "workspace", ReadOnly, Idempotent),
     method_spec!("workspace/update", "workspace", LocalState, NonIdempotent),
@@ -659,6 +690,11 @@ mod tests {
             "speech/transcribe",
             "vcs/status",
             "vcs/select",
+            "workspace/files/children",
+            "workspace/files/query",
+            "workspace/files/read",
+            "workspace/files/rebuild",
+            "workspace/files/status",
         ] {
             assert!(methods.contains(required), "missing {required}");
         }
@@ -710,6 +746,15 @@ mod tests {
             workflows_plan
                 .notifications
                 .contains(&"workflows/approvalRequested")
+        );
+
+        let workspace_files_rebuild = methods
+            .iter()
+            .find(|spec| spec.method == "workspace/files/rebuild")
+            .expect("workspace files rebuild spec");
+        assert_eq!(
+            workspace_files_rebuild.notifications,
+            ["workspace/files/statusChanged"]
         );
     }
 }
