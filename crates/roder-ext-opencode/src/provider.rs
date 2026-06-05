@@ -168,6 +168,7 @@ impl InferenceEngine for OpenCodeInferenceEngine {
             image_input: false,
             prompt_cache: false,
             provider_metadata: true,
+            tool_search: false,
         }
     }
 

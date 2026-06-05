@@ -146,6 +146,53 @@ fn user_prompts_render_without_background() {
 }
 
 #[test]
+fn entrypoint_hints_render_as_compact_timeline_rows() {
+    let mut timeline = TimelineState::default();
+    timeline.push_system(
+        "Likely entry points:\n\
+1. docs/roder-plan-review-hunk-tracker.md - path matches `view`\n\
+2. crates/roder-tui/src/app/tool_timeline/preview.rs - path matches `timeline`\n\
+3. crates/roder-core/src/plan_review.rs - path matches `view`",
+    );
+
+    let lines = rendered_lines(&mut timeline);
+
+    assert!(
+        lines
+            .iter()
+            .any(|line| line.contains("Likely entry points (3)"))
+    );
+    assert!(lines.iter().any(|line| {
+        line.contains("1.")
+            && line.contains("docs/roder-plan-review-hunk-tracker.md")
+            && line.contains("path matches `view`")
+    }));
+    assert!(
+        !lines
+            .iter()
+            .any(|line| line.contains("Likely entry points:"))
+    );
+}
+
+#[test]
+fn entrypoint_hints_in_user_blocks_skip_prompt_prefix() {
+    let mut timeline = TimelineState::default();
+    timeline.push_user(
+        "Likely entry points:\n\
+1. crates/roder-tui/src/app/tool_timeline/preview.rs - path matches `timeline`",
+    );
+
+    let lines = rendered_lines(&mut timeline);
+    let header = lines
+        .iter()
+        .find(|line| line.contains("Likely entry points"))
+        .expect("entrypoint header should render");
+
+    assert!(header.contains("⌖"));
+    assert!(!header.contains("❯"));
+}
+
+#[test]
 fn consecutive_tool_rows_stay_compact() {
     let mut timeline = TimelineState::default();
     timeline.record_tool_requested(

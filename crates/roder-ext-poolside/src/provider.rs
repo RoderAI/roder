@@ -89,6 +89,7 @@ impl InferenceEngine for PoolsideInferenceEngine {
             image_input: false,
             prompt_cache: false,
             provider_metadata: true,
+            tool_search: false,
         }
     }
 

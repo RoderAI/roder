@@ -86,6 +86,7 @@ impl InferenceEngine for ClaudeCodeEngine {
             image_input: false,
             prompt_cache: false,
             provider_metadata: true,
+            tool_search: false,
         }
     }
 
@@ -167,6 +168,15 @@ fn map_stream_events(mut events: mpsc::UnboundedReceiver<StreamEvent>) -> Infere
         // the end of the message.
         let mut echo_match_pos = 0usize;
         let mut completed = false;
+        // Tool-use ids for `mcp__roder__*` tools. Those tools are executed
+        // in-process by the SDK MCP handler, which routes through Roder's
+        // TurnToolExecutor and emits the canonical tool-call lifecycle events.
+        // The provider must NOT also surface them from the CLI stream: doing so
+        // makes the runtime try to execute a tool literally named
+        // `mcp__roder__read_file` (which is not registered, so it fails) and
+        // produces duplicate, failing rows that trip the reliability limit.
+        let mut mcp_tool_ids: std::collections::HashSet<String> =
+            std::collections::HashSet::new();
         while let Some(event) = events.recv().await {
             match event {
                 StreamEvent::ContentChunk(text) => {
@@ -189,6 +199,12 @@ fn map_stream_events(mut events: mpsc::UnboundedReceiver<StreamEvent>) -> Infere
                     yield InferenceEvent::ReasoningDelta(ReasoningDelta { text: thinking });
                 }
                 StreamEvent::ToolUseStart { id, name, input } => {
+                    if name.starts_with("mcp__") {
+                        // Executed in-process via the MCP handler; the executor
+                        // owns the canonical tool-call events. Skip emission.
+                        mcp_tool_ids.insert(id);
+                        continue;
+                    }
                     if !input.is_empty() {
                         yield InferenceEvent::ToolCallCompleted(ToolCallCompleted {
                             id,
@@ -198,6 +214,9 @@ fn map_stream_events(mut events: mpsc::UnboundedReceiver<StreamEvent>) -> Infere
                     }
                 }
                 StreamEvent::ToolUseDelta { id, partial_input } => {
+                    if mcp_tool_ids.contains(&id) {
+                        continue;
+                    }
                     yield InferenceEvent::ToolCallDelta(ToolCallDelta { id, arguments_delta: partial_input });
                 }
                 StreamEvent::ToolResult { tool_use_id, content, is_error } => {
@@ -597,6 +616,65 @@ mod tests {
             matches!(&events[0], InferenceEvent::ToolCallCompleted(call) if call.arguments.contains("roder-ext-claude-code"))
         );
         assert!(matches!(events[1], InferenceEvent::ToolCallDelta(_)));
+    }
+
+    /// `mcp__roder__*` tools are executed in-process by the SDK MCP handler,
+    /// which routes through Roder's executor and emits the canonical tool-call
+    /// events. The provider must NOT re-surface those tool calls from the CLI
+    /// stream, or the runtime would try to execute an unregistered tool named
+    /// `mcp__roder__read_file` and record a spurious failure.
+    #[tokio::test]
+    async fn provider_suppresses_mcp_tool_lifecycle_events() {
+        let engine = ClaudeCodeEngine::new_with_runner(
+            ClaudeCodeConfig::default(),
+            Arc::new(FakeRunner {
+                events: vec![
+                    StreamEvent::ToolUseStart {
+                        id: "toolu_mcp".to_string(),
+                        name: "mcp__roder__read_file".to_string(),
+                        input: serde_json::Map::from_iter([(
+                            "path".to_string(),
+                            json!("README.md"),
+                        )]),
+                    },
+                    StreamEvent::ToolUseDelta {
+                        id: "toolu_mcp".to_string(),
+                        partial_input: "{\"path\"".to_string(),
+                    },
+                    StreamEvent::Complete(MessageResponse {
+                        content: "done".to_string(),
+                        blocks: Vec::new(),
+                        model: "sonnet".to_string(),
+                        stop_reason: Some("end_turn".to_string()),
+                        session_id: "session".to_string(),
+                        usage: None,
+                    }),
+                ],
+            }),
+        );
+        let events = engine
+            .stream_turn(
+                InferenceTurnContext {
+                    thread_id: "thread",
+                    turn_id: "turn",
+                    tool_executor: None,
+                },
+                request(),
+            )
+            .await
+            .unwrap()
+            .collect::<Vec<_>>()
+            .await
+            .into_iter()
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
+        assert!(
+            !events.iter().any(|event| matches!(
+                event,
+                InferenceEvent::ToolCallCompleted(_) | InferenceEvent::ToolCallDelta(_)
+            )),
+            "mcp__ tool lifecycle events must not be surfaced from the CLI stream"
+        );
     }
 
     #[test]

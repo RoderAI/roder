@@ -13,6 +13,7 @@ pub struct RemotePanelSnapshot {
     pub connect_urls: Vec<String>,
     pub token_preview: Option<String>,
     pub pairing_url: Option<String>,
+    pub pair_url: Option<String>,
     pub pairing_qr: Option<String>,
     pub connected_clients: usize,
     pub tls_warning: Option<String>,
@@ -128,6 +129,7 @@ impl RemotePanelSnapshot {
             connect_urls: Vec::new(),
             token_preview: None,
             pairing_url: None,
+            pair_url: None,
             pairing_qr: None,
             connected_clients: 0,
             tls_warning: None,
@@ -142,6 +144,7 @@ impl RemotePanelSnapshot {
             connect_urls,
             token_preview: Some(handle.token_preview.clone()),
             pairing_url: Some(handle.pairing_url.clone()),
+            pair_url: Some(handle.pair_url.clone()),
             pairing_qr: render_pairing_qr(&handle.pairing_url).ok(),
             connected_clients,
             tls_warning: handle
@@ -179,6 +182,9 @@ pub fn render_remote_panel_lines(snapshot: &RemotePanelSnapshot) -> Vec<String> 
     );
     if let Some(pairing_url) = snapshot.pairing_url.as_ref() {
         lines.push(format!("Pairing: {pairing_url}"));
+    }
+    if let Some(pair_url) = snapshot.pair_url.as_ref() {
+        lines.push(format!("pair: {pair_url}"));
     }
     if let Some(pairing_qr) = snapshot.pairing_qr.as_ref() {
         lines.push("QR:".to_string());
@@ -228,6 +234,7 @@ mod tests {
             connect_urls: vec!["ws://192.168.1.20:4545".to_string()],
             token_preview: "secr...oken".to_string(),
             pairing_url: "gode://connect?payload=redacted-fixture".to_string(),
+            pair_url: "http://127.0.0.1:4545/pair#roder-pair=redacted".to_string(),
         };
         let snapshot = RemotePanelSnapshot::from_handle(&handle, 2);
         let rendered = render_remote_panel_lines(&snapshot).join("\n");
@@ -257,6 +264,7 @@ mod tests {
             ],
             token_preview: "secr...oken".to_string(),
             pairing_url: "gode://connect?payload=redacted-fixture".to_string(),
+            pair_url: "http://127.0.0.1:4545/pair#roder-pair=redacted".to_string(),
         };
         let snapshot = RemotePanelSnapshot::from_handle(&handle, 0);
 

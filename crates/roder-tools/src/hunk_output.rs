@@ -60,6 +60,52 @@ pub(crate) fn record(
     }
 }
 
+pub(crate) fn from_core(
+    ctx: &ToolExecutionContext,
+    call: &ToolCall,
+    index: usize,
+    hunk: roder_edit_core::EditHunk,
+) -> HunkRecord {
+    let mut diff = hunk
+        .diff
+        .into_iter()
+        .map(|line| HunkDiffLine {
+            kind: match line.kind {
+                roder_edit_core::HunkDiffLineKind::Context => HunkDiffLineKind::Context,
+                roder_edit_core::HunkDiffLineKind::Added => HunkDiffLineKind::Added,
+                roder_edit_core::HunkDiffLineKind::Removed => HunkDiffLineKind::Removed,
+            },
+            text: line.text,
+            old_line: line.old_line,
+            new_line: line.new_line,
+        })
+        .collect::<Vec<_>>();
+    if diff.len() > MAX_HUNK_DIFF_LINES {
+        diff.truncate(MAX_HUNK_DIFF_LINES);
+    }
+
+    HunkRecord {
+        id: hunk_id(call, index),
+        thread_id: ctx.thread_id.clone(),
+        turn_id: ctx.turn_id.clone(),
+        path: hunk.path,
+        old_start: hunk.old_start,
+        old_lines: hunk.old_lines,
+        new_start: hunk.new_start,
+        new_lines: hunk.new_lines,
+        diff,
+        tool_call_id: call.id.clone(),
+        tool_name: call.name.clone(),
+        plan_review_id: None,
+        plan_step_id: None,
+        timeline_event_id: None,
+        checkpoint_id: None,
+        rollback: HunkRollbackState::Available,
+        reverse_patch: hunk.reverse_patch,
+        created_at: OffsetDateTime::UNIX_EPOCH,
+    }
+}
+
 fn reverse_codex_patch(path: &str, old_lines: &[String], new_lines: &[String]) -> String {
     let mut patch = String::from("*** Begin Patch\n");
     patch.push_str(&format!("*** Update File: {path}\n@@\n"));

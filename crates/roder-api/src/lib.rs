@@ -2,6 +2,7 @@ pub mod artifacts;
 pub mod automations;
 pub mod capabilities;
 pub mod catalog;
+pub mod chrome;
 pub mod code_index;
 pub mod command_shell;
 pub mod context;

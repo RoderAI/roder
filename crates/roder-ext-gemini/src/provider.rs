@@ -84,6 +84,7 @@ impl InferenceEngine for GeminiEngine {
             image_input: true,
             prompt_cache: false,
             provider_metadata: true,
+            tool_search: false,
         }
     }
 

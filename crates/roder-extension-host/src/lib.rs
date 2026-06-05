@@ -43,6 +43,7 @@ use roder_ext_runner_modal::ModalRunnerExtension;
 use roder_ext_runner_runloop::RunloopRunnerExtension;
 use roder_ext_runner_unix_local::UnixLocalRunnerExtension;
 use roder_ext_runner_vercel::VercelRunnerExtension;
+use roder_ext_chrome::ChromeExtension;
 use roder_ext_webwright::WebwrightExtension;
 use roder_ext_xai::XaiExtension;
 use roder_ext_xiaomi_mimo::{XiaomiMimoConfig, XiaomiMimoExtension};
@@ -293,6 +294,7 @@ pub fn build_default_registry(config: DefaultRegistryConfig) -> anyhow::Result<E
     builder.install(VercelRunnerExtension)?;
     builder.install(roder_ext_task_process::ProcessTaskExtension)?;
     builder.install(WebwrightExtension)?;
+    builder.install(ChromeExtension::new())?;
     builder.install(ZerolangExtension::new(config.zerolang.unwrap_or_default()))?;
     if config.notifications.enabled && config.notifications.terminal {
         builder.install(roder_ext_notify_terminal::TerminalNotifyExtension::new(
@@ -563,6 +565,7 @@ impl InferenceEngine for CodexOAuthInferenceEngine {
             image_input: true,
             prompt_cache: true,
             provider_metadata: true,
+            tool_search: false,
         }
     }
 

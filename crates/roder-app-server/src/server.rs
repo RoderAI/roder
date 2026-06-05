@@ -1257,6 +1257,72 @@ impl AppServer {
                 })
                 .await
             }
+            "chrome/status" => self.handle_chrome_status().await,
+            "chrome/enable" => {
+                self.decode_and(
+                    req.params,
+                    |p| async move { self.handle_chrome_enable(p).await },
+                )
+                .await
+            }
+            "chrome/disable" => self.handle_chrome_disable().await,
+            "chrome/setMode" => {
+                self.decode_and(req.params, |p| async move {
+                    self.handle_chrome_set_mode(p).await
+                })
+                .await
+            }
+            "chrome/reconnect" => self.handle_chrome_reconnect().await,
+            "chrome/browsers/list" => self.handle_chrome_browsers_list().await,
+            "chrome/tabs/list" => self.handle_chrome_tabs_list().await,
+            "chrome/tabs/activate" => {
+                self.decode_and(req.params, |p| async move {
+                    self.handle_chrome_tabs_activate(p).await
+                })
+                .await
+            }
+            "chrome/tabs/navigate" => {
+                self.decode_and(req.params, |p| async move {
+                    self.handle_chrome_tabs_navigate(p).await
+                })
+                .await
+            }
+            "chrome/page/snapshot" => {
+                self.decode_and(req.params, |p| async move {
+                    self.handle_chrome_page_snapshot(p).await
+                })
+                .await
+            }
+            "chrome/page/action" => {
+                self.decode_and(req.params, |p| async move {
+                    self.handle_chrome_page_action(p).await
+                })
+                .await
+            }
+            "chrome/debug/console" => {
+                self.decode_and(req.params, |p| async move {
+                    self.handle_chrome_debug_console(p).await
+                })
+                .await
+            }
+            "chrome/debug/network" => {
+                self.decode_and(req.params, |p| async move {
+                    self.handle_chrome_debug_network(p).await
+                })
+                .await
+            }
+            "chrome/permissions/list" => {
+                self.decode_and(req.params, |p| async move {
+                    self.handle_chrome_permissions_list(p).await
+                })
+                .await
+            }
+            "chrome/permissions/update" => {
+                self.decode_and(req.params, |p| async move {
+                    self.handle_chrome_permissions_update(p).await
+                })
+                .await
+            }
             _ => Err(JsonRpcError {
                 code: -32601,
                 message: "Method not found".to_string(),
@@ -1522,7 +1588,7 @@ impl AppServer {
             roder_config::save_default_provider_model_reasoning(
                 &cfg.default_provider,
                 &cfg.default_model,
-                cfg.reasoning.as_deref(),
+                Some(reasoning.as_str()),
             )
             .map_err(internal_error)?;
         }

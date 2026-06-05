@@ -142,13 +142,15 @@ impl TimelineItem {
             }
             TimelineItemKind::System(text) => {
                 let folded = fold_message_body(text, expanded || !message_folding);
-                push_body_lines(
-                    lines,
-                    "    ",
-                    &folded.body,
-                    theme.subtle(),
-                    item_style(theme.muted(), selected, theme),
-                );
+                if !push_entrypoint_hint_lines(lines, &folded.body, selected, theme, width) {
+                    push_body_lines(
+                        lines,
+                        "    ",
+                        &folded.body,
+                        theme.subtle(),
+                        item_style(theme.muted(), selected, theme),
+                    );
+                }
                 push_fold_notice(lines, folded.hidden_lines, theme, message_folding);
             }
             TimelineItemKind::TurnCompleted(summary) => {
@@ -539,6 +541,10 @@ fn push_user_block_lines(
     theme: Theme,
     width: u16,
 ) {
+    if push_entrypoint_hint_lines(lines, body, selected, theme, width) {
+        return;
+    }
+
     let style = item_style(theme.user_surface(), selected, theme);
     for (line_index, line) in body.split('\n').enumerate() {
         let prefix = if line_index == 0 { "  ❯ " } else { "    " };
@@ -566,6 +572,136 @@ fn push_body_lines(
             Span::styled(line.to_string(), body_style),
         ]));
     }
+}
+
+#[derive(Debug, Clone, Eq, PartialEq)]
+struct EntrypointHintRow {
+    index: String,
+    path: String,
+    reason: String,
+}
+
+fn push_entrypoint_hint_lines(
+    lines: &mut Vec<Line<'static>>,
+    body: &str,
+    selected: bool,
+    theme: Theme,
+    width: u16,
+) -> bool {
+    let Some(rows) = parse_entrypoint_hint_rows(body) else {
+        return false;
+    };
+
+    let base_style = item_style(theme.muted(), selected, theme);
+    let strong_style = item_style(theme.strong(), selected, theme);
+    let path_style = item_style(theme.text(), selected, theme).add_modifier(Modifier::BOLD);
+    let accent_style = item_style(theme.accent_soft(), selected, theme);
+    let row_count = rows.len();
+
+    lines.push(Line::from(vec![
+        Span::styled("  ⌖ ", accent_style),
+        Span::styled("Likely entry points", strong_style),
+        Span::styled(format!(" ({row_count})"), base_style),
+    ]));
+
+    let path_width = rows
+        .iter()
+        .map(|row| row.path.chars().count())
+        .max()
+        .unwrap_or(0)
+        .min(48);
+    for row in rows {
+        let index = format!("{:>2}. ", row.index);
+        let path = truncate_middle(&row.path, path_width.max(12));
+        let path_padding = " ".repeat(path_width.saturating_sub(path.chars().count()));
+        let reason = truncate_end(&row.reason, reason_width(width, path_width));
+        lines.push(Line::from(vec![
+            Span::styled("    ", base_style),
+            Span::styled(index, accent_style),
+            Span::styled(path, path_style),
+            Span::styled(path_padding, base_style),
+            Span::styled("  ", base_style),
+            Span::styled(reason, base_style),
+        ]));
+    }
+
+    true
+}
+
+fn parse_entrypoint_hint_rows(body: &str) -> Option<Vec<EntrypointHintRow>> {
+    let mut lines = body.lines();
+    let header = lines.next()?.trim();
+    if header != "Likely entry points:" {
+        return None;
+    }
+
+    let rows = lines
+        .filter_map(parse_entrypoint_hint_row)
+        .collect::<Vec<_>>();
+    (!rows.is_empty()).then_some(rows)
+}
+
+fn parse_entrypoint_hint_row(line: &str) -> Option<EntrypointHintRow> {
+    let (index, rest) = line.trim().split_once(". ")?;
+    if index.is_empty() || !index.chars().all(|ch| ch.is_ascii_digit()) {
+        return None;
+    }
+    let (path, reason) = rest
+        .split_once(" - ")
+        .unwrap_or((rest, "workspace evidence"));
+    let path = path.trim();
+    if path.is_empty() {
+        return None;
+    }
+
+    Some(EntrypointHintRow {
+        index: index.to_string(),
+        path: path.to_string(),
+        reason: reason.trim().to_string(),
+    })
+}
+
+fn reason_width(width: u16, path_width: usize) -> usize {
+    usize::from(width)
+        .saturating_sub(4) // row indent
+        .saturating_sub(4) // numeric index
+        .saturating_sub(path_width)
+        .saturating_sub(2) // gap before reason
+        .max(16)
+}
+
+fn truncate_middle(value: &str, max_chars: usize) -> String {
+    if value.chars().count() <= max_chars {
+        return value.to_string();
+    }
+    if max_chars <= 3 {
+        return "...".chars().take(max_chars).collect();
+    }
+
+    let head = (max_chars - 3) / 2;
+    let tail = max_chars - 3 - head;
+    let start = value.chars().take(head).collect::<String>();
+    let end = value
+        .chars()
+        .rev()
+        .take(tail)
+        .collect::<Vec<_>>()
+        .into_iter()
+        .rev()
+        .collect::<String>();
+    format!("{start}...{end}")
+}
+
+fn truncate_end(value: &str, max_chars: usize) -> String {
+    if value.chars().count() <= max_chars {
+        return value.to_string();
+    }
+    if max_chars <= 3 {
+        return "...".chars().take(max_chars).collect();
+    }
+    let mut out = value.chars().take(max_chars - 3).collect::<String>();
+    out.push_str("...");
+    out
 }
 
 fn push_markdown_body_lines(

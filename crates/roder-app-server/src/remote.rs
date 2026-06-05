@@ -164,6 +164,7 @@ pub struct RemoteServerHandle {
     pub connect_urls: Vec<String>,
     pub token_preview: String,
     pub pairing_url: String,
+    pub pair_url: String,
 }
 
 #[derive(Debug)]
@@ -244,11 +245,13 @@ async fn spawn_remote_websocket(
         "workspace": options.workspace.clone(),
     });
     let pairing_url = pairing_deep_link(&payload)?;
+    let pair_url = pairing_web_url(listen_addr, options.token.secret());
     let handle = RemoteServerHandle {
         listen_addr,
         connect_urls,
         token_preview: options.token.preview().to_string(),
         pairing_url,
+        pair_url,
     };
     app_server
         .runtime
@@ -328,7 +331,7 @@ async fn spawn_remote_websocket(
                         Err(response)
                     }
                 };
-                let Ok(mut websocket) = tokio_tungstenite::accept_hdr_async(stream, callback).await
+                let Ok(websocket) = tokio_tungstenite::accept_hdr_async(stream, callback).await
                 else {
                     return;
                 };
@@ -339,10 +342,60 @@ async fn spawn_remote_websocket(
                         remote_addr: Some(remote_addr.clone()),
                         timestamp: OffsetDateTime::now_utc(),
                     }));
-                while let Some(message) = websocket.next().await {
+
+                // Split the socket so the connection can both answer JSON-RPC
+                // requests AND push browser-bridge commands to a connected Chrome
+                // extension. A writer task owns the sink; everything else enqueues
+                // onto `outbound_tx`.
+                let (mut ws_write, mut ws_read) = websocket.split();
+                let (outbound_tx, mut outbound_rx) =
+                    tokio::sync::mpsc::unbounded_channel::<Message>();
+                let writer = tokio::spawn(async move {
+                    while let Some(message) = outbound_rx.recv().await {
+                        if ws_write.send(message).await.is_err() {
+                            break;
+                        }
+                    }
+                });
+
+                let chrome_bridge = roder_api::chrome::bridge();
+                let mut chrome_client: Option<u64> = None;
+
+                while let Some(message) = ws_read.next().await {
                     let Ok(Message::Text(text)) = message else {
                         continue;
                     };
+
+                    // Browser-bridge frames are tagged `{ "type": ... }` and are
+                    // not JSON-RPC. Route them to the Chrome bridge; on the first
+                    // `hello`, register the client and forward its command stream.
+                    if let Ok(value) = serde_json::from_str::<serde_json::Value>(&text)
+                        && value.get("type").is_some()
+                        && value.get("method").is_none()
+                        && value.get("jsonrpc").is_none()
+                    {
+                        let kind = value.get("type").and_then(|v| v.as_str()).unwrap_or("");
+                        if kind == "hello" && chrome_client.is_none() {
+                            let registration =
+                                chrome_bridge.register_client(Some(remote_addr.clone()), &value);
+                            chrome_client = Some(registration.client_id);
+                            let command_tx = outbound_tx.clone();
+                            let mut commands = registration.commands;
+                            tokio::spawn(async move {
+                                while let Some(frame) = commands.recv().await {
+                                    let Ok(text) = serde_json::to_string(&frame) else {
+                                        continue;
+                                    };
+                                    if command_tx.send(Message::Text(text.into())).is_err() {
+                                        break;
+                                    }
+                                }
+                            });
+                        }
+                        chrome_bridge.ingest_frame(chrome_client, value);
+                        continue;
+                    }
+
                     let response = match serde_json::from_str::<JsonRpcRequest>(&text) {
                         Ok(request) => {
                             let is_initialize = request.method == "initialize";
@@ -370,9 +423,15 @@ async fn spawn_remote_websocket(
                         },
                     };
                     if let Ok(text) = serde_json::to_string(&response) {
-                        let _ = websocket.send(Message::Text(text.into())).await;
+                        let _ = outbound_tx.send(Message::Text(text.into()));
                     }
                 }
+
+                if let Some(client_id) = chrome_client {
+                    chrome_bridge.unregister_client(client_id);
+                }
+                drop(outbound_tx);
+                let _ = writer.await;
                 app_server
                     .runtime
                     .bus
@@ -395,11 +454,22 @@ async fn spawn_remote_websocket(
     Ok((handle, task))
 }
 
+const PAIR_PAGE_HTML: &str = "<!doctype html><meta charset=utf8><title>Roder pairing</title><body style=\"font-family:system-ui;padding:2rem\"><h2 id=\"roder-pair-status\">Pairing with Roder…</h2><p>You can close this tab once it connects.</p></body>";
+
 async fn respond_to_health_probe(stream: &mut TcpStream) -> bool {
     let mut buffer = [0_u8; 512];
     let Ok(bytes_read) = stream.peek(&mut buffer).await else {
         return false;
     };
+    if is_pair_request(&buffer[..bytes_read]) {
+        let response = format!(
+            "HTTP/1.1 200 OK\r\ncontent-type: text/html\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{}",
+            PAIR_PAGE_HTML.len(),
+            PAIR_PAGE_HTML
+        );
+        let _ = stream.write_all(response.as_bytes()).await;
+        return true;
+    }
     if !is_health_probe(&buffer[..bytes_read]) {
         return false;
     }
@@ -413,6 +483,10 @@ fn is_health_probe(buffer: &[u8]) -> bool {
         || buffer.starts_with(b"GET /readyz HTTP/1.0\r\n")
         || buffer.starts_with(b"GET /healthz HTTP/1.1\r\n")
         || buffer.starts_with(b"GET /healthz HTTP/1.0\r\n")
+}
+
+fn is_pair_request(buffer: &[u8]) -> bool {
+    buffer.starts_with(b"GET /pair")
 }
 
 pub fn pairing_payload(
@@ -438,6 +512,24 @@ pub fn pairing_deep_link(payload: &RemotePairingPayload) -> anyhow::Result<Strin
         "roder://connect?payload={}",
         base64_url_no_pad(&json)
     ))
+}
+
+/// Build the 1-click pairing web URL served by this app-server. The token lives
+/// only in the URL fragment (after `#`), so the server itself never receives it;
+/// the loaded Chrome extension reads `location.hash` and auto-configures.
+pub fn pairing_web_url(listen_addr: SocketAddr, token: &str) -> String {
+    let port = listen_addr.port();
+    let endpoint = format!("ws://127.0.0.1:{port}");
+    let payload = serde_json::json!({
+        "endpoint": endpoint,
+        "token": token,
+    });
+    let encoded = base64_url_no_pad(
+        serde_json::to_string(&payload)
+            .unwrap_or_default()
+            .as_bytes(),
+    );
+    format!("http://127.0.0.1:{port}/pair#roder-pair={encoded}")
 }
 
 pub fn render_terminal_pairing(handle: &RemoteServerHandle) -> String {
@@ -518,6 +610,13 @@ fn origin_allowed(request: &Request, allowed_origins: &[String]) -> bool {
     else {
         return true;
     };
+    // Browser-extension clients (the Roder Chrome/Edge bridge) send an
+    // `Origin: chrome-extension://<id>` / `moz-extension://<id>` header. They are
+    // the intended remote clients and are authenticated by the bearer token, so
+    // accept extension origins without requiring an explicit allowlist entry.
+    if origin.starts_with("chrome-extension://") || origin.starts_with("moz-extension://") {
+        return true;
+    }
     allowed_origins.iter().any(|allowed| allowed == origin)
 }
 
@@ -662,6 +761,24 @@ mod tests {
     }
 
     #[test]
+    fn remote_origin_allows_browser_extension_without_allowlist() {
+        for origin in [
+            "chrome-extension://pnmbiignpnagfaihmkaclkpddlbejapo",
+            "moz-extension://1b2c3d4e-5f60-7081-9a0b-c1d2e3f40516",
+        ] {
+            let request = Request::builder()
+                .uri("ws://127.0.0.1")
+                .header("Origin", origin)
+                .body(())
+                .unwrap();
+            assert!(
+                origin_allowed(&request, &[]),
+                "extension origin {origin} should be allowed without an allowlist entry"
+            );
+        }
+    }
+
+    #[test]
     fn pairing_link_does_not_put_token_in_websocket_query() {
         let payload = pairing_payload("ws://127.0.0.1:1234".to_string(), "secret-token", None);
         assert_eq!(payload.url, "ws://127.0.0.1:1234");
@@ -674,12 +791,32 @@ mod tests {
     }
 
     #[test]
+    fn pairing_web_url_carries_decodable_endpoint_and_token_in_fragment() {
+        use base64::Engine;
+
+        let addr: SocketAddr = "127.0.0.1:4545".parse().unwrap();
+        let url = pairing_web_url(addr, "secret-token");
+
+        let prefix = "http://127.0.0.1:4545/pair#roder-pair=";
+        assert!(url.starts_with(prefix), "unexpected url: {url}");
+
+        let encoded = url.strip_prefix(prefix).unwrap();
+        let decoded = base64::engine::general_purpose::URL_SAFE_NO_PAD
+            .decode(encoded)
+            .expect("base64url payload");
+        let value: serde_json::Value = serde_json::from_slice(&decoded).expect("json payload");
+        assert_eq!(value["endpoint"], "ws://127.0.0.1:4545");
+        assert_eq!(value["token"], "secret-token");
+    }
+
+    #[test]
     fn terminal_pairing_renders_qr_and_roder_link() {
         let handle = RemoteServerHandle {
             listen_addr: "127.0.0.1:1234".parse().unwrap(),
             connect_urls: vec!["ws://127.0.0.1:1234".to_string()],
             token_preview: "secr...oken".to_string(),
             pairing_url: "roder://connect?payload=test".to_string(),
+            pair_url: "http://127.0.0.1:1234/pair#roder-pair=test".to_string(),
         };
         let rendered = render_terminal_pairing(&handle);
         assert!(rendered.contains("Remote app-server listening"));

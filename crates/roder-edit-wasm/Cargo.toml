@@ -1,0 +1,14 @@
+[package]
+name = "roder-edit-wasm"
+version.workspace = true
+edition.workspace = true
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+anyhow.workspace = true
+roder-edit-core.workspace = true
+serde = { workspace = true, features = ["derive"] }
+serde_json.workspace = true
+wasm-bindgen.workspace = true

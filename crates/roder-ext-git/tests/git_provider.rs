@@ -2,7 +2,7 @@ use std::path::Path;
 use std::process::Command;
 
 use roder_api::version_control::{
-    VcsCapabilityState, VcsChangedFileStatus, VcsError, VcsLineSwitchRequest,
+    VcsCapabilityState, VcsChangeArea, VcsChangedFileStatus, VcsError, VcsLineSwitchRequest,
     VcsListChangesRequest, VcsListFilesRequest, VcsOperation, VcsProvider,
     VcsReadChangedContentRequest, VcsRestoreRequest, VcsSelectionGranularity, VcsSelectionRequest,
     VcsSnapshotCreateRequest, VcsStatusRequest, VcsSyncOperation,
@@ -14,7 +14,9 @@ async fn git_provider_reports_full_branch_delta() {
     let workspace = temp_workspace("roder-git-provider");
     init_repo(&workspace);
     std::fs::write(workspace.join("committed.txt"), "base\n").unwrap();
+    std::fs::write(workspace.join("dirty.txt"), "base\n").unwrap();
     run_git(&workspace, &["add", "committed.txt"]);
+    run_git(&workspace, &["add", "dirty.txt"]);
     run_git(&workspace, &["commit", "-m", "base"]);
     run_git(&workspace, &["checkout", "-b", "feature"]);
     std::fs::write(workspace.join("committed.txt"), "base\nbranch\n").unwrap();
@@ -22,7 +24,7 @@ async fn git_provider_reports_full_branch_delta() {
     run_git(&workspace, &["commit", "-m", "branch change"]);
     std::fs::write(workspace.join("staged.txt"), "staged\n").unwrap();
     run_git(&workspace, &["add", "staged.txt"]);
-    std::fs::write(workspace.join("dirty.txt"), "dirty\n").unwrap();
+    std::fs::write(workspace.join("dirty.txt"), "base\ndirty\n").unwrap();
     std::fs::write(workspace.join("untracked.txt"), "untracked\n").unwrap();
     std::fs::write(workspace.join("untracked.jpg"), [0xff, 0xd8, 0xff, 0x00]).unwrap();
 
@@ -55,13 +57,110 @@ async fn git_provider_reports_full_branch_delta() {
     assert!(paths.contains(&"untracked.txt".to_string()));
     assert!(paths.contains(&"untracked.jpg".to_string()));
 
+    let staged = files
+        .iter()
+        .find(|file| file.path == Path::new("staged.txt"))
+        .unwrap();
+    assert_eq!(staged.areas, vec![VcsChangeArea::Staged]);
+    let dirty = files
+        .iter()
+        .find(|file| file.path == Path::new("dirty.txt"))
+        .unwrap();
+    assert_eq!(dirty.areas, vec![VcsChangeArea::Unstaged]);
+
     let binary = files
         .iter()
         .find(|file| file.path == Path::new("untracked.jpg"))
         .unwrap();
     assert_eq!(binary.status, VcsChangedFileStatus::Untracked);
+    assert_eq!(binary.areas, vec![VcsChangeArea::Untracked]);
     assert!(binary.binary);
     assert_eq!(binary.additions, 0);
+
+    let _ = std::fs::remove_dir_all(workspace);
+}
+
+#[tokio::test]
+async fn git_provider_can_ignore_whitespace_when_reading_changed_content() {
+    let workspace = temp_workspace("roder-git-provider-ignore-whitespace");
+    init_repo(&workspace);
+    std::fs::write(workspace.join("file.txt"), "first\nsecond\n").unwrap();
+    run_git(&workspace, &["add", "file.txt"]);
+    run_git(&workspace, &["commit", "-m", "base"]);
+    std::fs::write(workspace.join("file.txt"), "first\n  second\n").unwrap();
+
+    let provider = GitProvider;
+    let normal_page = provider
+        .read_changed_content(VcsReadChangedContentRequest {
+            workspace_root: workspace.clone(),
+            path: "file.txt".into(),
+            offset: 0,
+            limit: 20,
+            area: None,
+            ignore_whitespace: false,
+        })
+        .await
+        .expect("read content");
+    let ignored_page = provider
+        .read_changed_content(VcsReadChangedContentRequest {
+            workspace_root: workspace.clone(),
+            path: "file.txt".into(),
+            offset: 0,
+            limit: 20,
+            area: None,
+            ignore_whitespace: true,
+        })
+        .await
+        .expect("read content ignoring whitespace");
+
+    assert!(normal_page.content.unwrap().contains("+  second"));
+    assert_eq!(ignored_page.content, Some(String::new()));
+    assert_eq!(ignored_page.total_lines, 0);
+
+    let _ = std::fs::remove_dir_all(workspace);
+}
+
+#[tokio::test]
+async fn git_provider_reads_staged_and_unstaged_changed_content_by_area() {
+    let workspace = temp_workspace("roder-git-provider-read-areas");
+    init_repo(&workspace);
+    std::fs::write(workspace.join("file.txt"), "base\n").unwrap();
+    run_git(&workspace, &["add", "file.txt"]);
+    run_git(&workspace, &["commit", "-m", "base"]);
+    std::fs::write(workspace.join("file.txt"), "base\nstaged\n").unwrap();
+    run_git(&workspace, &["add", "file.txt"]);
+    std::fs::write(workspace.join("file.txt"), "base\nstaged\nunstaged\n").unwrap();
+
+    let provider = GitProvider;
+    let staged_page = provider
+        .read_changed_content(VcsReadChangedContentRequest {
+            workspace_root: workspace.clone(),
+            path: "file.txt".into(),
+            offset: 0,
+            limit: 20,
+            area: Some(VcsChangeArea::Staged),
+            ignore_whitespace: false,
+        })
+        .await
+        .expect("read staged content");
+    let unstaged_page = provider
+        .read_changed_content(VcsReadChangedContentRequest {
+            workspace_root: workspace.clone(),
+            path: "file.txt".into(),
+            offset: 0,
+            limit: 20,
+            area: Some(VcsChangeArea::Unstaged),
+            ignore_whitespace: false,
+        })
+        .await
+        .expect("read unstaged content");
+
+    let staged_content = staged_page.content.unwrap();
+    let unstaged_content = unstaged_page.content.unwrap();
+    assert!(staged_content.contains("+staged"));
+    assert!(!staged_content.contains("+unstaged"));
+    assert!(unstaged_content.contains("+unstaged"));
+    assert!(!unstaged_content.contains("+staged"));
 
     let _ = std::fs::remove_dir_all(workspace);
 }
@@ -83,6 +182,8 @@ async fn git_provider_reads_paged_changed_content_and_validates_paths() {
             path: "file.txt".into(),
             offset: 0,
             limit: 2,
+            area: None,
+            ignore_whitespace: false,
         })
         .await
         .expect("read content");
@@ -97,6 +198,8 @@ async fn git_provider_reads_paged_changed_content_and_validates_paths() {
             path: "untracked.jpg".into(),
             offset: 0,
             limit: 20,
+            area: None,
+            ignore_whitespace: false,
         })
         .await
         .expect("read binary content");
@@ -114,6 +217,8 @@ async fn git_provider_reads_paged_changed_content_and_validates_paths() {
             path: "../outside.txt".into(),
             offset: 0,
             limit: 20,
+            area: None,
+            ignore_whitespace: false,
         })
         .await
         .expect_err("invalid path should fail");
@@ -125,6 +230,8 @@ async fn git_provider_reads_paged_changed_content_and_validates_paths() {
             path: ":/".into(),
             offset: 0,
             limit: 20,
+            area: None,
+            ignore_whitespace: false,
         })
         .await
         .expect_err("git pathspec magic should fail validation");
@@ -150,6 +257,8 @@ async fn git_provider_normalizes_windows_style_relative_paths() {
             path: "src\\file.txt".into(),
             offset: 0,
             limit: 20,
+            area: None,
+            ignore_whitespace: false,
         })
         .await
         .expect("read untracked content with windows separators");
@@ -420,6 +529,8 @@ async fn git_provider_marks_tracked_binary_content_as_binary() {
             path: "image.bin".into(),
             offset: 0,
             limit: 20,
+            area: None,
+            ignore_whitespace: false,
         })
         .await
         .expect("read tracked binary content");
