@@ -25,7 +25,7 @@ use roder_ext_gbrain::model::{AsOf, parse_flexible};
 use roder_ext_gbrain::render::render_recall;
 use roder_ext_gbrain::store::{CaptureInput, GbrainStore, RecallParams};
 use roder_ext_gbrain::tools::{fact_json, parse_scope};
-use roder_ext_gbrain::Embedder;
+use roder_ext_gbrain::{AgentBudget, AnthropicReasoner, DecisionAgent, Embedder};
 use roder_ext_openai_embeddings::OpenAiEmbeddingProvider;
 use serde::Deserialize;
 use serde_json::{Value, json};
@@ -63,8 +63,46 @@ async fn run() -> anyhow::Result<()> {
         "capture" => capture(&store).await,
         "consolidate" => consolidate(&store, &flags).await,
         "recall" => recall(&store, &flags).await,
-        other => anyhow::bail!("unknown command {other:?}; expected capture|consolidate|recall|version"),
+        "answer" => answer_cmd(Arc::new(store), &flags).await,
+        other => anyhow::bail!(
+            "unknown command {other:?}; expected capture|consolidate|recall|answer|version"
+        ),
     }
+}
+
+/// Agentic decision-loop answer (decompose -> retrieve -> draft -> verify/prune
+/// -> finalize). Self-answers (grounded prose + provenance), unlike `recall`.
+async fn answer_cmd(
+    store: Arc<GbrainStore>,
+    flags: &HashMap<String, String>,
+) -> anyhow::Result<()> {
+    let query = flags.get("query").cloned().unwrap_or_default();
+    let scope = flags.get("scope").map(|s| parse_scope(s));
+    let as_of = match flags.get("as-of").or_else(|| flags.get("as_of")) {
+        Some(date) => Some(parse_flexible(date)?),
+        None => None,
+    };
+    let reasoner = AnthropicReasoner::from_env(flags.get("model").cloned())?;
+    let mut budget = AgentBudget::default();
+    if let Some(n) = flags.get("max-subqueries").and_then(|v| v.parse().ok()) {
+        budget.max_subqueries = n;
+    }
+    if let Some(n) = flags.get("limit").and_then(|v| v.parse().ok()) {
+        budget.retrieval_limit = n;
+    }
+    let agent = DecisionAgent::new(store, reasoner)
+        .with_scope(scope)
+        .with_budget(budget);
+    let result = agent.answer(&query, as_of).await?;
+    println!(
+        "{}",
+        json!({
+            "answer": result.answer,
+            "cited_artifact_ids": result.provenance,
+            "trace": result.context,
+        })
+    );
+    Ok(())
 }
 
 fn open_store(flags: &HashMap<String, String>) -> anyhow::Result<GbrainStore> {

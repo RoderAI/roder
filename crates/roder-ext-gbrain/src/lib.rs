@@ -18,9 +18,11 @@ use roder_api::extension::{
 };
 use semver::Version;
 
+pub mod agent;
 pub mod context;
 pub mod embed;
 pub mod model;
+pub mod reason;
 pub mod render;
 pub mod response_format;
 pub mod retrieval;
@@ -28,8 +30,10 @@ pub mod schema;
 pub mod store;
 pub mod tools;
 
+pub use agent::{AgentAnswer, AgentBudget, DecisionAgent, ProgressSink, WorkingContext};
 pub use context::GbrainContextProvider;
 pub use embed::Embedder;
+pub use reason::{AnthropicReasoner, Reasoner};
 pub use model::{AsOf, FactStatus, TemporalFact};
 pub use store::{
     CaptureInput, ConsolidateStats, GbrainStore, GbrainStoreFactory, RecallParams, RecallResult,
