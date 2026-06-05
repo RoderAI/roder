@@ -235,15 +235,24 @@ impl<R: Reasoner> DecisionAgent<R> {
         let (evidence, contradictions) = self.gather_evidence(question, &[], as_of).await?;
 
         self.progress.step("synthesize", &format!("{} records", evidence.len()));
-        let answer = if evidence.is_empty() {
+        let evidence_empty = evidence.is_empty();
+        let answer = if evidence_empty {
             "The available records do not contain enough evidence to answer this.".to_string()
         } else {
-            self.call(
-                "synthesize",
-                CONCISE_SYS,
-                &concise_prompt(question, &evidence, &contradictions, as_of_label.as_deref()),
-            )
-            .await?
+            let draft = self
+                .call(
+                    "synthesize",
+                    CONCISE_SYS,
+                    &concise_prompt(question, &evidence, &contradictions, as_of_label.as_deref()),
+                )
+                .await?;
+            // Free deterministic guard: drop slug-shaped cites not in the pool.
+            let draft = strip_phantom_cites(&draft, &evidence);
+            // One cheap DELETE-ONLY faithfulness audit over the same records —
+            // removes fabricated/irrelevant specifics, keeps faithful content.
+            self.progress.step("strip", "audit");
+            self.call("strip", STRIP_SYS, &strip_prompt(question, &draft, &evidence))
+                .await?
         };
 
         // Provenance = the cited records that actually appear in the answer.
@@ -268,7 +277,7 @@ impl<R: Reasoner> DecisionAgent<R> {
             verified: Vec::new(),
             dropped: Vec::new(),
             contradictions,
-            llm_calls: 1,
+            llm_calls: if evidence_empty { 0 } else { 2 },
             input_tokens: self.tokens_in.load(Ordering::Relaxed),
             output_tokens: self.tokens_out.load(Ordering::Relaxed),
         };
@@ -323,24 +332,33 @@ impl<R: Reasoner> DecisionAgent<R> {
         subqueries: &[String],
         as_of: Option<OffsetDateTime>,
     ) -> anyhow::Result<(Vec<EvidenceItem>, Vec<String>)> {
-        // Event-cluster expansion only for evidence-enumeration / provenance /
-        // contradiction questions; focused retrieval for "what is X now" questions
-        // (over-broad evidence dilutes those and the answer enumerates noise).
-        let expand = is_evidence_question(question);
+        // Event-cluster expansion for evidence-enumeration / provenance /
+        // contradiction questions; focused retrieval for "what is X now" questions.
+        let contra = is_contradiction_question(question);
+        let expand = is_evidence_question(question) || contra;
+        // For a clash/dispute, add a per-named-party sub-query so EACH side is
+        // surfaced even when the opposing statement lives on a different record
+        // than the agreement (the C6 root cause: only one side was retrieved).
+        let mut subs: Vec<String> = subqueries.to_vec();
+        if contra {
+            for name in contradiction_parties(question) {
+                subs.push(format!("{name} position statement"));
+            }
+        }
         let mut pool: Vec<EvidenceItem> = Vec::new();
         let mut seen = std::collections::HashSet::new();
         let mut contradictions = std::collections::BTreeSet::new();
 
         // Primary pass: the as-of snapshot (or current).
         let primary = as_of.map(AsOf::at).unwrap_or_else(AsOf::now);
-        self.retrieve_into(question, subqueries, primary, expand, "", &mut pool, &mut seen, &mut contradictions)
+        self.retrieve_into(question, &subs, primary, expand, "", &mut pool, &mut seen, &mut contradictions)
             .await?;
 
         // As-of questions also need the CURRENT state to answer "what has SINCE
         // changed" (C4 audit replay). Records only present now are flagged.
         if let Some(d) = as_of {
             let note = format!("NOT on record as of {} — recorded later / current state", d.date());
-            self.retrieve_into(question, subqueries, AsOf::now(), expand, &note, &mut pool, &mut seen, &mut contradictions)
+            self.retrieve_into(question, &subs, AsOf::now(), expand, &note, &mut pool, &mut seen, &mut contradictions)
                 .await?;
         }
         Ok((pool, contradictions.into_iter().collect()))
@@ -540,18 +558,45 @@ provenance id and label it direct vs inferred using the provided classification.
 whether it is still current or has SINCE changed/been replaced. If contradictions are listed, report both \
 sides. Do not pad with tangential records. Cite provenance ids inline.";
 
-const CONCISE_SYS: &str = "You answer organizational-memory questions from the retrieved records. RULES: \
-1) CONCISE & COMPLETE — address EVERY part the question explicitly asks (e.g. who AND when AND what AND why \
-AND which alternatives AND current status) when the records support it, but add NOTHING beyond what is asked. \
-Be as short as possible while covering each asked part; tangential or 'maybe relevant' facts are WRONG, not \
-thorough. 2) FAITHFUL — every \
-specific (name, exact date, number, causal link) MUST come from a cited record; write [SLUG] right after it. \
-If a detail is not in the records, OMIT it — never guess or infer figures/dates/names. 3) If the records \
+const CONCISE_SYS: &str = "You answer organizational-memory questions ONLY from the retrieved records below; \
+you have NO background knowledge of this company — if a fact is not in a listed record, it does not exist. \
+RULES: 1) RELEVANT & COMPLETE — include EVERY piece of information the question asks for (who AND when AND \
+what AND why AND which alternatives AND current/resolution status) when the records support it, and EXCLUDE \
+everything else. Tangential or 'maybe relevant' facts are WRONG, not thorough — every sentence must earn its \
+place by answering part of the question. Length should match what the question needs: don't pad, don't drop a \
+relevant part. 2) FAITHFUL — every specific (proper name, exact date, clock time, number, percentage, money/ \
+credit figure, version number, quoted phrase, causal link) MUST be copyable from a record; write [SLUG] right \
+after it. If a specific is not in the records, OMIT it — never guess or infer. Do NOT add clock timestamps \
+(HH:MM), severity labels, penalty/credit/revenue figures, or attendee names not written in a record, and \
+never carry a person or date from one record onto a fact stated by a different record. 3) If the records \
 genuinely do not answer, say so in one sentence. 4) 'now'/'currently' => give the most recent/current fact; \
-'as of <date>' => state what was known THEN, then note what has SINCE changed using records marked as later/ \
-current. 5) ONLY when explicitly asked to 'walk through' or 'justify with evidence', list each supporting \
-record with its [SLUG], labeled direct (a first-hand message/email by the actor) or inferred (meeting notes, \
-report, summary, or third-party mention). Otherwise do NOT enumerate records.";
+'as of <date>' => state what was known THEN, then note what has SINCE changed using records marked later/ \
+current. If nothing changed, say nothing changed — do not invent a supersession. 5) ONLY when explicitly \
+asked to 'walk through' or 'justify with evidence', list each supporting record with its [SLUG], labeled \
+direct (a first-hand message/email by the actor) or inferred (meeting notes, report, summary, third-party). \
+Otherwise do NOT enumerate records. 6) CONFLICT/DISPUTE questions: report EACH named party's own position \
+separately with its date and that party's [SLUG]; state whether the positions actually conflict; give \
+resolution status as exactly one of resolved / superseded / still unresolved with the resolving record's \
+[SLUG], or 'no retrieved record resolves it'. NEVER conclude 'no contradiction exists' merely because the \
+records you read first agree. If a named party's position is genuinely absent from the records, SAY it is not \
+in the retrieved records — do NOT invent it, and do NOT assume the parties agreed unless a record explicitly \
+shows agreement.";
+
+const STRIP_SYS: &str = "You are a STRICT faithfulness editor. You receive numbered RECORDS and a DRAFT \
+answer. Return a CORRECTED answer that keeps every well-supported statement VERBATIM but removes anything the \
+records do not support. RULES: 1) Check EVERY specific in the draft — each proper name, exact date, clock time \
+(HH:MM), number, percentage, money/credit figure, version number, quoted phrase, severity label, [SLUG] \
+citation, and causal link ('because'/'due to'/'driven by') — against the record text. If a specific does not \
+appear in any record, or appears there with a DIFFERENT value, DELETE that specific; if removing it leaves the \
+sentence unsupported, delete the whole sentence. Never carry a name or date from one record onto a fact stated \
+by a different record. 2) Do NOT delete a statement merely because it is paraphrased — KEEP it if every \
+specific it asserts is present in some record. Remove only CLEAR fabrications and value mismatches, not \
+faithful summaries. 3) NEVER add a fact, name, date, number, or [SLUG] not already in the draft; never \
+rephrase supported content; keep correct [SLUG] cites attached to their facts. 4) CONFLICT/DISPUTE answers: if \
+the draft claims 'no contradiction exists' or invents one party's position or a resolution the records do not \
+state, correct it — state only what the records show, and say a party's position is 'not in the retrieved \
+records' if it is genuinely absent; never invent the missing side or a resolution. 5) Keep it relevant and \
+output ONLY the corrected answer text, no preamble or notes.";
 
 fn concise_prompt(
     question: &str,
@@ -585,7 +630,20 @@ fn concise_prompt(
             s.push_str(&format!("  - {c}\n"));
         }
     }
-    s.push_str("\nWrite the concise, faithful, directly-responsive answer.");
+    if is_contradiction_question(question) {
+        let parties = contradiction_parties(question);
+        if !parties.is_empty() {
+            s.push_str(
+                "\nThis is a CONFLICT/DISPUTE question. Attribute EACH party's own position \
+                 separately (with its date + [SLUG]), say whether they actually conflict, and give \
+                 the resolution status. Parties asked about:\n",
+            );
+            for p in &parties {
+                s.push_str(&format!("  - {p}\n"));
+            }
+        }
+    }
+    s.push_str("\nWrite the relevant, faithful, directly-responsive answer.");
     s
 }
 
@@ -633,6 +691,109 @@ fn source_label(fact: &TemporalFact) -> String {
 
 /// Whether a question wants the full evidence cluster (justification / provenance
 /// / contradiction / audit) vs a focused current-fact answer.
+/// Clash/dispute question naming >=2 people — triggers conflict retrieval +
+/// scaffold. EXCLUDES supersession/audit phrasings to protect the C4 win.
+fn is_contradiction_question(question: &str) -> bool {
+    let ql = question.to_lowercase();
+    const CLASH: &[&str] = &[
+        "clash",
+        "dispute",
+        "disagree",
+        "differing position",
+        "differing positions",
+        "conflicting position",
+        "what position did",
+        "the conflict",
+        "objected",
+        "opposed",
+        "contradict",
+        " versus ",
+        " vs ",
+        "both sides",
+        "differing",
+    ];
+    CLASH.iter().any(|m| ql.contains(m)) && proper_name_phrases(question).len() >= 2
+}
+
+fn contradiction_parties(question: &str) -> Vec<String> {
+    proper_name_phrases(question)
+}
+
+/// Adjacent Capitalized tokens => a "First Last" proper-name span.
+fn proper_name_phrases(question: &str) -> Vec<String> {
+    let ws: Vec<&str> = question.split_whitespace().collect();
+    // Drop a trailing possessive ("Torres's" -> "Torres") then trim punctuation.
+    let clean = |w: &str| {
+        w.split('\'')
+            .next()
+            .unwrap_or(w)
+            .trim_matches(|c: char| !c.is_alphanumeric())
+            .to_string()
+    };
+    let cap = |w: &str| {
+        w.chars().next().is_some_and(char::is_uppercase) && w.chars().skip(1).any(|c| c.is_lowercase())
+    };
+    let mut out = Vec::new();
+    let mut i = 0usize;
+    while i + 1 < ws.len() {
+        let (a, b) = (clean(ws[i]), clean(ws[i + 1]));
+        if a.len() > 1 && b.len() > 1 && cap(&a) && cap(&b) {
+            out.push(format!("{a} {b}"));
+            i += 2;
+        } else {
+            i += 1;
+        }
+    }
+    dedup_strings(out)
+}
+
+/// Drop bracketed cites that look like an artifact slug (have '-' and a digit)
+/// but are NOT in the retrieved pool — invented ids. Zero LLM cost.
+fn strip_phantom_cites(answer: &str, evidence: &[EvidenceItem]) -> String {
+    let real: std::collections::HashSet<&str> = evidence.iter().map(|e| e.slug.as_str()).collect();
+    let mut out = String::with_capacity(answer.len());
+    let mut rest = answer;
+    while let Some(open) = rest.find('[') {
+        out.push_str(&rest[..open]);
+        if let Some(rel) = rest[open + 1..].find(']') {
+            let inner = &rest[open + 1..open + 1 + rel];
+            let slug_shaped = inner.contains('-')
+                && inner.chars().any(|c| c.is_ascii_digit())
+                && inner.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_');
+            if slug_shaped && !real.contains(inner) {
+                if out.ends_with(' ') {
+                    out.pop();
+                }
+            } else {
+                out.push_str(&rest[open..open + 1 + rel + 1]);
+            }
+            rest = &rest[open + 1 + rel + 1..];
+        } else {
+            out.push_str(&rest[open..]);
+            rest = "";
+        }
+    }
+    out.push_str(rest);
+    out
+}
+
+fn strip_prompt(question: &str, draft: &str, evidence: &[EvidenceItem]) -> String {
+    let mut s = format!("Question: {question}\n\nRecords:\n");
+    for e in evidence {
+        s.push_str(&format!(
+            "[{}] ({}, status={}) {}\n",
+            e.slug,
+            e.date,
+            e.status,
+            truncate(&e.text, 1200),
+        ));
+    }
+    s.push_str("\nDRAFT ANSWER TO AUDIT (correct it; keep supported parts verbatim):\n");
+    s.push_str(draft);
+    s.push_str("\n\nReturn ONLY the corrected answer.");
+    s
+}
+
 fn is_evidence_question(question: &str) -> bool {
     let q = question.to_lowercase();
     const MARKERS: &[&str] = &[
@@ -744,6 +905,44 @@ mod tests {
         input.provenance = vec!["ART-1".into()];
         store.capture(input).await.unwrap();
         store
+    }
+
+    #[test]
+    fn proper_names_and_contradiction_detection() {
+        assert_eq!(
+            proper_name_phrases("Please provide Miguel Torres's statement and Diego Alvarez's view"),
+            vec!["Miguel Torres".to_string(), "Diego Alvarez".to_string()]
+        );
+        // clash phrasing + 2 named parties => contradiction question
+        assert!(is_contradiction_question(
+            "Outline the differing positions of Luis Ramirez and Marco Rossi and whether resolved"
+        ));
+        // audit/supersession phrasing must NOT trigger (protects the C4 win)
+        assert!(!is_contradiction_question(
+            "What is the data retention policy now and what changed since the 180-day version?"
+        ));
+        // single party, no clash => not a contradiction question
+        assert!(!is_contradiction_question("Who decided the migration?"));
+    }
+
+    #[test]
+    fn phantom_cite_strip_drops_invented_slugs_only() {
+        let ev = vec![EvidenceItem {
+            index: 1,
+            slug: "ART-EV-2023-001".into(),
+            date: "2023".into(),
+            source: "".into(),
+            status: "current".into(),
+            note: "".into(),
+            text: "x".into(),
+        }];
+        let out = strip_phantom_cites(
+            "Maya decided it [ART-EV-2023-001] then [ART-EV-2099-999] later, see [note].",
+            &ev,
+        );
+        assert!(out.contains("[ART-EV-2023-001]")); // real cite kept
+        assert!(!out.contains("ART-EV-2099-999")); // invented slug dropped
+        assert!(out.contains("[note]")); // non-slug bracket kept
     }
 
     #[tokio::test]
