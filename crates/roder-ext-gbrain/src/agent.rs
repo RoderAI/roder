@@ -570,8 +570,11 @@ after it. If a specific is not in the records, OMIT it — never guess or infer.
 (HH:MM), severity labels, penalty/credit/revenue figures, or attendee names not written in a record, and \
 never carry a person or date from one record onto a fact stated by a different record. 3) If the records \
 genuinely do not answer, say so in one sentence. 4) 'now'/'currently' => give the most recent/current fact; \
-'as of <date>' => state what was known THEN, then note what has SINCE changed using records marked later/ \
-current. If nothing changed, say nothing changed — do not invent a supersession. 5) ONLY when explicitly \
+'as of <date>' => state what was known THEN, then note what has SINCE changed. Report a change ONLY where a \
+record EXPLICITLY states that a specific earlier fact was replaced/revised/superseded — do NOT treat every \
+later record as a change, do NOT infer or enumerate a sequence of changes the records do not state, and do \
+NOT invent dates/IDs for changes. If no record explicitly states a change to a fact, say it is unchanged / \
+still in effect. 5) ONLY when explicitly \
 asked to 'walk through' or 'justify with evidence', list each supporting record with its [SLUG], labeled \
 direct (a first-hand message/email by the actor) or inferred (meeting notes, report, summary, third-party). \
 Otherwise do NOT enumerate records. 6) CONFLICT/DISPUTE questions: report EACH named party's own position \
@@ -589,7 +592,9 @@ records do not support. RULES: 1) Check EVERY specific in the draft — each pro
 citation, and causal link ('because'/'due to'/'driven by') — against the record text. If a specific does not \
 appear in any record, or appears there with a DIFFERENT value, DELETE that specific; if removing it leaves the \
 sentence unsupported, delete the whole sentence. Never carry a name or date from one record onto a fact stated \
-by a different record. 2) Do NOT delete a statement merely because it is paraphrased — KEEP it if every \
+by a different record. Also DELETE any asserted change / 'superseding event' / replacement that no record \
+EXPLICITLY states — treating a later record as a 'change' to an earlier fact is fabrication; keep only \
+changes a record spells out. 2) Do NOT delete a statement merely because it is paraphrased — KEEP it if every \
 specific it asserts is present in some record. Remove only CLEAR fabrications and value mismatches, not \
 faithful summaries. 3) NEVER add a fact, name, date, number, or [SLUG] not already in the draft; never \
 rephrase supported content; keep correct [SLUG] cites attached to their facts. 4) CONFLICT/DISPUTE answers: if \
