@@ -1243,6 +1243,45 @@ pub type DesignGetGuidelinesParams = DesignWorkspaceParams;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct DesignSetSelectionParams {
+    pub workspace_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub root_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub selected_node_ids: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DesignSetVariablesParams {
+    pub workspace_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub root_id: Option<String>,
+    pub variables: BTreeMap<String, serde_json::Value>,
+    #[serde(default)]
+    pub replace: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DesignSpawnAgentsParams {
+    pub workspace_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub root_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub scope_node_ids: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub prompt: Option<String>,
+    #[serde(default)]
+    pub allow_patch: bool,
+    #[serde(default)]
+    pub allow_export: bool,
+    #[serde(default)]
+    pub require_review: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct DesignGetEditorStateParams {
     pub workspace_id: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -1279,6 +1318,8 @@ pub struct RoderDesignMetadata {
     pub root_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub workspace_root: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub selected_node_ids: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1328,6 +1369,8 @@ pub struct DesignDocumentResult {
 pub struct DesignEditorStateResult {
     pub path: String,
     pub document: RoderDesignDocument,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub selected_node_ids: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub schema: Option<serde_json::Value>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -1399,6 +1442,11 @@ pub enum DesignPatchOperation {
         #[serde(default)]
         recursive: bool,
     },
+    ReorderNode {
+        #[serde(alias = "nodeId")]
+        node_id: String,
+        index: usize,
+    },
     SetVariables {
         variables: BTreeMap<String, serde_json::Value>,
         #[serde(default)]
@@ -1463,6 +1511,28 @@ pub struct DesignGuidelinesResult {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct DesignSpawnedAgentScope {
+    pub scope_node_id: String,
+    pub scope_name: String,
+    #[serde(rename = "type")]
+    pub node_type: String,
+    pub child_count: usize,
+    pub prompt: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DesignSpawnAgentsResult {
+    pub path: String,
+    pub planned: Vec<DesignSpawnedAgentScope>,
+    pub allow_patch: bool,
+    pub allow_export: bool,
+    pub require_review: bool,
+    pub instructions: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct DesignExportNodesParams {
     pub workspace_id: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -1471,6 +1541,18 @@ pub struct DesignExportNodesParams {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub output_dir: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub format: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DesignGetScreenshotParams {
+    pub workspace_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub root_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub node_id: Option<String>,
+    #[serde(default)]
     pub format: Option<String>,
 }
 
@@ -1485,6 +1567,16 @@ pub struct DesignExportedNode {
 #[serde(rename_all = "camelCase")]
 pub struct DesignExportNodesResult {
     pub exported: Vec<DesignExportedNode>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DesignScreenshotResult {
+    pub path: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub node_id: Option<String>,
+    pub mime_type: String,
+    pub data_url: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

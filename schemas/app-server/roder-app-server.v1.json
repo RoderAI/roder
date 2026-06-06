@@ -354,6 +354,126 @@
       "sideEffect": "localState"
     },
     {
+      "method": "design/batch_get",
+      "paramsType": "DesignBatchGetParams",
+      "resultType": "DesignBatchGetResult",
+      "stability": "stable",
+      "featureGroup": "design",
+      "idempotency": "idempotent",
+      "sideEffect": "readOnly"
+    },
+    {
+      "method": "design/export_nodes",
+      "paramsType": "DesignExportNodesParams",
+      "resultType": "DesignExportNodesResult",
+      "stability": "stable",
+      "featureGroup": "design",
+      "idempotency": "nonIdempotent",
+      "sideEffect": "localState",
+      "notifications": [
+        "design/exportCompleted"
+      ]
+    },
+    {
+      "method": "design/get_editor_state",
+      "paramsType": "DesignGetEditorStateParams",
+      "resultType": "DesignGetEditorStateResult",
+      "stability": "stable",
+      "featureGroup": "design",
+      "idempotency": "idempotent",
+      "sideEffect": "readOnly"
+    },
+    {
+      "method": "design/get_guidelines",
+      "paramsType": "DesignGetGuidelinesParams",
+      "resultType": "DesignGetGuidelinesResult",
+      "stability": "stable",
+      "featureGroup": "design",
+      "idempotency": "idempotent",
+      "sideEffect": "readOnly"
+    },
+    {
+      "method": "design/get_screenshot",
+      "paramsType": "DesignGetScreenshotParams",
+      "resultType": "DesignGetScreenshotResult",
+      "stability": "stable",
+      "featureGroup": "design",
+      "idempotency": "idempotent",
+      "sideEffect": "readOnly"
+    },
+    {
+      "method": "design/get_variables",
+      "paramsType": "DesignGetVariablesParams",
+      "resultType": "DesignGetVariablesResult",
+      "stability": "stable",
+      "featureGroup": "design",
+      "idempotency": "idempotent",
+      "sideEffect": "readOnly"
+    },
+    {
+      "method": "design/patch",
+      "paramsType": "DesignPatchParams",
+      "resultType": "DesignPatchResult",
+      "stability": "stable",
+      "featureGroup": "design",
+      "idempotency": "nonIdempotent",
+      "sideEffect": "localState",
+      "notifications": [
+        "design/documentChanged"
+      ]
+    },
+    {
+      "method": "design/read",
+      "paramsType": "DesignReadParams",
+      "resultType": "DesignReadResult",
+      "stability": "stable",
+      "featureGroup": "design",
+      "idempotency": "idempotent",
+      "sideEffect": "readOnly"
+    },
+    {
+      "method": "design/set_selection",
+      "paramsType": "DesignSetSelectionParams",
+      "resultType": "DesignSetSelectionResult",
+      "stability": "stable",
+      "featureGroup": "design",
+      "idempotency": "nonIdempotent",
+      "sideEffect": "localState",
+      "notifications": [
+        "design/selectionChanged"
+      ]
+    },
+    {
+      "method": "design/set_variables",
+      "paramsType": "DesignSetVariablesParams",
+      "resultType": "DesignSetVariablesResult",
+      "stability": "stable",
+      "featureGroup": "design",
+      "idempotency": "nonIdempotent",
+      "sideEffect": "localState",
+      "notifications": [
+        "design/documentChanged"
+      ]
+    },
+    {
+      "method": "design/snapshot_layout",
+      "paramsType": "DesignSnapshotLayoutParams",
+      "resultType": "DesignSnapshotLayoutResult",
+      "stability": "stable",
+      "featureGroup": "design",
+      "idempotency": "idempotent",
+      "sideEffect": "readOnly"
+    },
+    {
+      "method": "design/spawn_agents",
+      "paramsType": "DesignSpawnAgentsParams",
+      "resultType": "DesignSpawnAgentsResult",
+      "stability": "stable",
+      "featureGroup": "design",
+      "idempotency": "nonIdempotent",
+      "sideEffect": "readOnly"
+    },
+    {
       "method": "discovery/groups",
       "paramsType": "DiscoveryGroupsParams",
       "resultType": "DiscoveryGroupsResult",

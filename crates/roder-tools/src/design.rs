@@ -29,7 +29,13 @@ pub(crate) fn register(registry: &mut ToolRegistry, workspace: Workspace) -> any
     registry.register(Arc::new(DesignVariablesTool {
         workspace: workspace.clone(),
     }))?;
+    registry.register(Arc::new(DesignSetVariablesTool {
+        workspace: workspace.clone(),
+    }))?;
     registry.register(Arc::new(DesignSnapshotLayoutTool {
+        workspace: workspace.clone(),
+    }))?;
+    registry.register(Arc::new(DesignSpawnAgentsTool {
         workspace: workspace.clone(),
     }))?;
     registry.register(Arc::new(DesignGuidelinesTool))?;
@@ -57,7 +63,17 @@ struct DesignVariablesTool {
 }
 
 #[derive(Debug)]
+struct DesignSetVariablesTool {
+    workspace: Workspace,
+}
+
+#[derive(Debug)]
 struct DesignSnapshotLayoutTool {
+    workspace: Workspace,
+}
+
+#[derive(Debug)]
+struct DesignSpawnAgentsTool {
     workspace: Workspace,
 }
 
@@ -111,6 +127,14 @@ struct SearchPattern {
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
+struct SetVariablesArgs {
+    variables: BTreeMap<String, Value>,
+    #[serde(default)]
+    replace: bool,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
 struct PatchArgs {
     operations: Vec<Value>,
 }
@@ -120,6 +144,16 @@ struct PatchArgs {
 struct ExportNodesArgs {
     node_ids: Vec<String>,
     output_dir: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct SpawnAgentsArgs {
+    scope_node_ids: Vec<String>,
+    prompt: Option<String>,
+    allow_patch: Option<bool>,
+    allow_export: Option<bool>,
+    require_review: Option<bool>,
 }
 
 #[async_trait::async_trait]
@@ -247,6 +281,55 @@ impl ToolExecutor for DesignVariablesTool {
 }
 
 #[async_trait::async_trait]
+impl ToolExecutor for DesignSetVariablesTool {
+    fn spec(&self) -> ToolSpec {
+        ToolSpec {
+            name: "design_set_variables".to_string(),
+            description: "Merge or replace variables/tokens in the workspace .roderdesign document. Prefer this over generic design_patch for token-only updates.".to_string(),
+            parameters: json!({
+                "type": "object",
+                "properties": {
+                    "variables": {
+                        "type": "object",
+                        "description": "Variables/tokens to merge into the design document."
+                    },
+                    "replace": {
+                        "type": "boolean",
+                        "description": "When true, clear existing variables before writing the provided variables."
+                    }
+                },
+                "required": ["variables"],
+                "additionalProperties": false
+            }),
+        }
+    }
+
+    async fn execute(
+        &self,
+        ctx: ToolExecutionContext,
+        call: ToolCall,
+    ) -> anyhow::Result<ToolResult> {
+        ctx.require_workspace()?;
+        let args = parse::<SetVariablesArgs>(&call)?;
+        let workspace = Workspace::from_context_or_fallback(&ctx, &self.workspace)?;
+        let (path, mut document) = load_or_create(&workspace)?;
+        let count = args.variables.len();
+        set_design_variables(&mut document, args.variables, args.replace);
+        document.updated_at = now_iso();
+        save(&path, &document)?;
+        Ok(result(
+            call,
+            format!(
+                "Wrote {count} design variable(s) to {}.",
+                workspace.display(&path)
+            ),
+            json!({ "path": workspace.display(&path), "document": document, "applied": 1 }),
+            false,
+        ))
+    }
+}
+
+#[async_trait::async_trait]
 impl ToolExecutor for DesignSnapshotLayoutTool {
     fn spec(&self) -> ToolSpec {
         ToolSpec {
@@ -279,6 +362,65 @@ impl ToolExecutor for DesignSnapshotLayoutTool {
                 workspace.display(&path)
             ),
             json!({ "path": workspace.display(&path), "nodes": nodes }),
+            false,
+        ))
+    }
+}
+
+#[async_trait::async_trait]
+impl ToolExecutor for DesignSpawnAgentsTool {
+    fn spec(&self) -> ToolSpec {
+        ToolSpec {
+            name: "design_spawn_agents".to_string(),
+            description: "Plan scoped Roder design subagents for container nodes. Returns validated scope metadata and permission guidance; use the plan before dispatching agent work.".to_string(),
+            parameters: json!({
+                "type": "object",
+                "properties": {
+                    "scope_node_ids": {
+                        "type": "array",
+                        "minItems": 1,
+                        "items": { "type": "string" }
+                    },
+                    "prompt": { "type": "string" },
+                    "allow_patch": { "type": "boolean" },
+                    "allow_export": { "type": "boolean" },
+                    "require_review": { "type": "boolean" }
+                },
+                "required": ["scope_node_ids"],
+                "additionalProperties": false
+            }),
+        }
+    }
+
+    async fn execute(
+        &self,
+        ctx: ToolExecutionContext,
+        call: ToolCall,
+    ) -> anyhow::Result<ToolResult> {
+        ctx.require_workspace()?;
+        let args = parse::<SpawnAgentsArgs>(&call)?;
+        let workspace = Workspace::from_context_or_fallback(&ctx, &self.workspace)?;
+        let (path, document) = load_or_create(&workspace)?;
+        let planned = design_spawn_agent_plan(&document, &args)?;
+        let allow_patch = args.allow_patch.unwrap_or(false);
+        let allow_export = args.allow_export.unwrap_or(true);
+        let require_review = args.require_review.unwrap_or(true);
+        let instructions = design_spawn_agent_instructions(&args, allow_patch, allow_export, require_review);
+        Ok(result(
+            call,
+            format!(
+                "Planned {} scoped design agent(s) for {}.",
+                planned.len(),
+                workspace.display(&path)
+            ),
+            json!({
+                "path": workspace.display(&path),
+                "planned": planned,
+                "allowPatch": allow_patch,
+                "allowExport": allow_export,
+                "requireReview": require_review,
+                "instructions": instructions
+            }),
             false,
         ))
     }
@@ -486,6 +628,17 @@ fn save(path: &PathBuf, document: &DesignDocument) -> anyhow::Result<()> {
     Ok(())
 }
 
+fn set_design_variables(
+    document: &mut DesignDocument,
+    variables: BTreeMap<String, Value>,
+    replace: bool,
+) {
+    if replace {
+        document.variables.clear();
+    }
+    document.variables.extend(variables);
+}
+
 fn batch_get(document: &DesignDocument, args: &BatchGetArgs) -> Vec<Value> {
     let mut result = Vec::new();
     let mut seen = HashSet::new();
@@ -630,6 +783,13 @@ fn render_node_svg(
         .unwrap_or(1.0)
         .max(1.0);
     let kind = node.get("type").and_then(Value::as_str).unwrap_or("frame");
+    let opacity = opacity_attr(node.get("opacity").and_then(Value::as_f64));
+    let transform = transform_attr(
+        node.get("rotation").and_then(Value::as_f64),
+        x + width / 2.0,
+        y + height / 2.0,
+    );
+    let corner_radius = corner_radius(node.get("cornerRadius"));
     let fill = paint_color(node.get("fill")).unwrap_or_else(|| {
         if kind == "text" {
             "#18181b".to_string()
@@ -638,51 +798,165 @@ fn render_node_svg(
         }
     });
     let stroke = paint_color(node.get("stroke")).unwrap_or_else(|| "#d4d4d8".to_string());
+    if kind == "component" || kind == "instance" {
+        let source_component_id = node
+            .get("sourceComponentId")
+            .and_then(Value::as_str)
+            .unwrap_or("");
+        let overrides = node
+            .get("overrides")
+            .and_then(Value::as_array)
+            .map(|values| {
+                values
+                    .iter()
+                    .filter_map(Value::as_str)
+                    .collect::<Vec<_>>()
+                    .join(",")
+            })
+            .unwrap_or_default();
+        out.push_str(&format!(
+            r#"<!-- roder-design-node type="{}" id="{}" component-id="{}" source-component-id="{}" overrides="{}" -->"#,
+            escape_xml(kind),
+            escape_xml(node.get("id").and_then(Value::as_str).unwrap_or("")),
+            escape_xml(
+                node.get("componentId")
+                    .and_then(Value::as_str)
+                    .or_else(|| node.get("id").and_then(Value::as_str))
+                    .unwrap_or("")
+            ),
+            escape_xml(source_component_id),
+            escape_xml(&overrides)
+        ));
+    }
     match kind {
         "ellipse" => out.push_str(&format!(
-            r#"<ellipse cx="{}" cy="{}" rx="{}" ry="{}" fill="{}" stroke="{}"/>"#,
+            r#"<ellipse cx="{}" cy="{}" rx="{}" ry="{}" fill="{}" stroke="{}"{}{} />"#,
             x + width / 2.0,
             y + height / 2.0,
             width / 2.0,
             height / 2.0,
             escape_xml(&fill),
-            escape_xml(&stroke)
+            escape_xml(&stroke),
+            opacity,
+            transform
         )),
         "line" => out.push_str(&format!(
-            r#"<line x1="{}" y1="{}" x2="{}" y2="{}" stroke="{}" stroke-width="{}" stroke-linecap="round"/>"#,
+            r#"<line x1="{}" y1="{}" x2="{}" y2="{}" stroke="{}" stroke-width="{}" stroke-linecap="round"{}{} />"#,
             x,
             y,
             x + width,
             y + height,
             escape_xml(&stroke),
-            stroke_width(node.get("stroke"))
+            stroke_width(node.get("stroke")),
+            opacity,
+            transform
         )),
+        "path" => {
+            let view_box = node
+                .get("viewBox")
+                .and_then(Value::as_str)
+                .map(str::to_string)
+                .unwrap_or_else(|| format!("0 0 {} {}", width, height));
+            let path_data = node
+                .get("pathData")
+                .or_else(|| node.get("d"))
+                .and_then(Value::as_str)
+                .unwrap_or("");
+            let path_fill = if fill == "transparent" { "none" } else { fill.as_str() };
+            out.push_str(&format!(
+                r#"<svg x="{}" y="{}" width="{}" height="{}" viewBox="{}"{}{}><path d="{}" fill="{}" stroke="{}" stroke-width="{}" stroke-linecap="round" stroke-linejoin="round" /></svg>"#,
+                x,
+                y,
+                width,
+                height,
+                escape_xml(&view_box),
+                opacity,
+                transform,
+                escape_xml(path_data),
+                escape_xml(path_fill),
+                escape_xml(&stroke),
+                stroke_width(node.get("stroke"))
+            ));
+        }
+        "icon" => {
+            let view_box = node.get("viewBox").and_then(Value::as_str).unwrap_or("0 0 24 24");
+            let path_data = node
+                .get("svg")
+                .or_else(|| node.get("pathData"))
+                .or_else(|| node.get("d"))
+                .and_then(Value::as_str)
+                .unwrap_or("");
+            out.push_str(&format!(
+                r#"<svg x="{}" y="{}" width="{}" height="{}" viewBox="{}"{}{}><path d="{}" fill="{}" /></svg>"#,
+                x,
+                y,
+                width,
+                height,
+                escape_xml(view_box),
+                opacity,
+                transform,
+                escape_xml(path_data),
+                escape_xml(&fill)
+            ));
+        }
         "image" => {
             if let Some(src) = node.get("src").and_then(Value::as_str) {
                 if !src.is_empty() {
                     out.push_str(&format!(
-                        r#"<image x="{}" y="{}" width="{}" height="{}" href="{}" preserveAspectRatio="xMidYMid slice"/>"#,
+                        r#"<image x="{}" y="{}" width="{}" height="{}" href="{}" preserveAspectRatio="xMidYMid slice"{}{} />"#,
                         x,
                         y,
                         width,
                         height,
-                        escape_xml(src)
+                        escape_xml(src),
+                        opacity,
+                        transform
                     ));
                 } else {
-                    render_placeholder_rect(x, y, width, height, &fill, &stroke, out);
+                    render_placeholder_rect(x, y, width, height, &fill, &stroke, corner_radius, &opacity, &transform, out);
                 }
             } else {
-                render_placeholder_rect(x, y, width, height, &fill, &stroke, out);
+                render_placeholder_rect(x, y, width, height, &fill, &stroke, corner_radius, &opacity, &transform, out);
             }
         }
-        "text" => out.push_str(&format!(
-            r#"<text x="{}" y="{}" fill="{}" font-family="system-ui, sans-serif" font-size="16">{}</text>"#,
-            x,
-            y + 18.0,
+        "prompt" => {
+            render_placeholder_rect(x, y, width, height, &fill, &stroke, corner_radius, &opacity, &transform, out);
+            out.push_str(&format!(
+                r##"<text x="{}" y="{}" fill="#92400e" font-family="system-ui, sans-serif" font-size="13" font-weight="600"{}{}>Prompt</text><text x="{}" y="{}" fill="#92400e" font-family="system-ui, sans-serif" font-size="13"{}{}>{}</text>"##,
+                x + 12.0,
+                y + 24.0,
+                opacity,
+                transform,
+                x + 12.0,
+                y + 48.0,
+                opacity,
+                transform,
+                escape_xml(node.get("prompt").or_else(|| node.get("content")).and_then(Value::as_str).unwrap_or("Describe the design change for Roder..."))
+            ));
+        }
+        "text" => {
+            let font_size = font_size(node.get("fontSize"));
+            let font_weight = font_weight(node.get("fontWeight"));
+            let anchor = text_anchor(node.get("textAlign"));
+            let text_x = match anchor {
+                "middle" => x + width / 2.0,
+                "end" => x + width,
+                _ => x,
+            };
+            out.push_str(&format!(
+            r#"<text x="{}" y="{}" fill="{}" font-family="system-ui, sans-serif" font-size="{}" font-weight="{}" text-anchor="{}"{}{}>{}</text>"#,
+            text_x,
+            y + font_size,
             escape_xml(&fill),
+            font_size,
+            font_weight,
+            anchor,
+            opacity,
+            transform,
             escape_xml(node.get("content").and_then(Value::as_str).or_else(|| node.get("name").and_then(Value::as_str)).unwrap_or("Text"))
-        )),
-        _ => render_placeholder_rect(x, y, width, height, &fill, &stroke, out),
+        ));
+        }
+        _ => render_placeholder_rect(x, y, width, height, &fill, &stroke, corner_radius, &opacity, &transform, out),
     }
     if let Some(children) = node.get("childIds").and_then(Value::as_array) {
         for child_id in children.iter().filter_map(Value::as_str) {
@@ -700,17 +974,60 @@ fn render_placeholder_rect(
     height: f64,
     fill: &str,
     stroke: &str,
+    corner_radius: f64,
+    opacity: &str,
+    transform: &str,
     out: &mut String,
 ) {
     out.push_str(&format!(
-        r#"<rect x="{}" y="{}" width="{}" height="{}" rx="8" fill="{}" stroke="{}"/>"#,
+        r#"<rect x="{}" y="{}" width="{}" height="{}" rx="{}" ry="{}" fill="{}" stroke="{}"{}{} />"#,
         x,
         y,
         width,
         height,
+        corner_radius,
+        corner_radius,
         escape_xml(fill),
-        escape_xml(stroke)
+        escape_xml(stroke),
+        opacity,
+        transform
     ));
+}
+
+fn corner_radius(value: Option<&Value>) -> f64 {
+    value
+        .and_then(Value::as_f64)
+        .filter(|value| value.is_finite())
+        .unwrap_or(8.0)
+        .max(0.0)
+}
+
+fn transform_attr(rotation: Option<f64>, cx: f64, cy: f64) -> String {
+    let Some(rotation) = rotation else {
+        return String::new();
+    };
+    if !rotation.is_finite() || rotation.rem_euclid(360.0) == 0.0 {
+        String::new()
+    } else {
+        format!(
+            r#" transform="rotate({} {} {})""#,
+            rotation.rem_euclid(360.0),
+            cx,
+            cy
+        )
+    }
+}
+
+fn opacity_attr(opacity: Option<f64>) -> String {
+    let Some(opacity) = opacity else {
+        return String::new();
+    };
+    let opacity = opacity.clamp(0.0, 1.0);
+    if opacity >= 1.0 {
+        String::new()
+    } else {
+        format!(r#" opacity="{opacity}""#)
+    }
 }
 
 fn paint_color(value: Option<&Value>) -> Option<String> {
@@ -752,6 +1069,27 @@ fn stroke_width(value: Option<&Value>) -> f64 {
         .unwrap_or(2.0)
 }
 
+fn font_size(value: Option<&Value>) -> f64 {
+    value
+        .and_then(Value::as_f64)
+        .unwrap_or(16.0)
+        .round()
+        .clamp(8.0, 144.0)
+}
+
+fn font_weight(value: Option<&Value>) -> f64 {
+    let weight = value.and_then(Value::as_f64).unwrap_or(500.0);
+    ((weight / 100.0).round() * 100.0).clamp(100.0, 900.0)
+}
+
+fn text_anchor(value: Option<&Value>) -> &'static str {
+    match value.and_then(Value::as_str) {
+        Some("center") => "middle",
+        Some("right") => "end",
+        _ => "start",
+    }
+}
+
 fn escape_xml(input: &str) -> String {
     input
         .replace('&', "&amp;")
@@ -791,6 +1129,69 @@ fn snapshot_layout(document: &DesignDocument) -> Vec<Value> {
             .cmp(&b.get("id").and_then(Value::as_str))
     });
     nodes
+}
+
+fn design_spawn_agent_plan(
+    document: &DesignDocument,
+    args: &SpawnAgentsArgs,
+) -> anyhow::Result<Vec<Value>> {
+    if args.scope_node_ids.is_empty() {
+        bail!("scope_node_ids must include at least one container node id");
+    }
+    let mut seen = HashSet::new();
+    let mut planned = Vec::new();
+    for scope_id in &args.scope_node_ids {
+        if !seen.insert(scope_id.clone()) {
+            continue;
+        }
+        let node = document
+            .nodes
+            .get(scope_id)
+            .with_context(|| format!("unknown scope node id: {scope_id}"))?;
+        let node_type = node.get("type").and_then(Value::as_str).unwrap_or("node");
+        if !can_scope_design_agent(node_type) {
+            bail!("scope node {scope_id} is type {node_type}; expected frame, group, component, or instance");
+        }
+        let name = node
+            .get("name")
+            .and_then(Value::as_str)
+            .unwrap_or(scope_id)
+            .to_string();
+        let child_count = node
+            .get("childIds")
+            .and_then(Value::as_array)
+            .map(Vec::len)
+            .unwrap_or(0);
+        let parent_id = node.get("parentId").and_then(Value::as_str).map(str::to_string);
+        planned.push(json!({
+            "scopeNodeId": scope_id,
+            "scopeName": name,
+            "scopeType": node_type,
+            "parentId": parent_id,
+            "childCount": child_count
+        }));
+    }
+    Ok(planned)
+}
+
+fn can_scope_design_agent(node_type: &str) -> bool {
+    matches!(node_type, "frame" | "group" | "component" | "instance")
+}
+
+fn design_spawn_agent_instructions(
+    args: &SpawnAgentsArgs,
+    allow_patch: bool,
+    allow_export: bool,
+    require_review: bool,
+) -> String {
+    let prompt = args
+        .prompt
+        .as_deref()
+        .filter(|prompt| !prompt.trim().is_empty())
+        .unwrap_or("Improve the scoped design container while preserving neighboring frames.");
+    format!(
+        "{prompt}\nPermissions: allow_patch={allow_patch}, allow_export={allow_export}, require_review={require_review}. Read editor state first, batch-get scoped children before edits, and keep changes inside each scope node."
+    )
 }
 
 fn design_guidelines() -> Value {
@@ -904,6 +1305,18 @@ fn apply_operation(document: &mut DesignDocument, operation: Value) -> anyhow::R
                 .unwrap_or(false);
             delete_node(document, id, recursive)?;
         }
+        "reorder_node" => {
+            let id = operation
+                .get("nodeId")
+                .or_else(|| operation.get("node_id"))
+                .and_then(Value::as_str)
+                .context("nodeId is required")?;
+            let index = operation
+                .get("index")
+                .and_then(Value::as_u64)
+                .context("index is required")? as usize;
+            reorder_node(document, id, index)?;
+        }
         "set_variables" => {
             let variables = operation
                 .get("variables")
@@ -961,6 +1374,48 @@ fn delete_node(document: &mut DesignDocument, id: &str, recursive: bool) -> anyh
     Ok(())
 }
 
+fn reorder_node(document: &mut DesignDocument, id: &str, index: usize) -> anyhow::Result<()> {
+    let parent_id = document
+        .nodes
+        .get(id)
+        .with_context(|| format!("unknown nodeId: {id}"))?
+        .get("parentId")
+        .or_else(|| document.nodes.get(id).and_then(|node| node.get("parent_id")))
+        .and_then(Value::as_str)
+        .map(ToOwned::to_owned);
+    if let Some(parent_id) = parent_id {
+        let parent = document
+            .nodes
+            .get_mut(&parent_id)
+            .with_context(|| format!("unknown parentId: {parent_id}"))?;
+        let child_ids = if parent.get("childIds").is_some() {
+            parent.get_mut("childIds")
+        } else {
+            parent.get_mut("child_ids")
+        };
+        let siblings = child_ids
+            .and_then(Value::as_array_mut)
+            .context("parent childIds must be an array")?;
+        let current_index = siblings
+            .iter()
+            .position(|value| value.as_str() == Some(id))
+            .with_context(|| format!("node is not listed in its parent order: {id}"))?;
+        let value = siblings.remove(current_index);
+        let insert_at = index.min(siblings.len());
+        siblings.insert(insert_at, value);
+    } else {
+        let current_index = document
+            .root_ids
+            .iter()
+            .position(|value| value == id)
+            .with_context(|| format!("node is not listed in root order: {id}"))?;
+        let value = document.root_ids.remove(current_index);
+        let insert_at = index.min(document.root_ids.len());
+        document.root_ids.insert(insert_at, value);
+    }
+    Ok(())
+}
+
 fn merge_json(target: &mut Value, patch: Value) {
     match (target, patch) {
         (Value::Object(target), Value::Object(patch)) => {
@@ -1009,6 +1464,8 @@ mod tests {
                     "y": 20,
                     "width": 300,
                     "height": 180,
+                    "rotation": 15,
+                    "opacity": 0.5,
                     "src": "https://example.com/cat.png"
                 }),
             )]),
@@ -1020,6 +1477,8 @@ mod tests {
         let svg = node_to_svg(&document, document.nodes.get("image-1").unwrap());
         assert!(svg.contains("<image "));
         assert!(svg.contains(r#"href="https://example.com/cat.png""#));
+        assert!(svg.contains(r#"opacity="0.5""#));
+        assert!(svg.contains(r#"transform="rotate(15 "#));
         assert!(svg.contains(r#"preserveAspectRatio="xMidYMid slice""#));
     }
 
@@ -1041,6 +1500,8 @@ mod tests {
                     "y": 20,
                     "width": 100,
                     "height": 50,
+                    "rotation": 90,
+                    "opacity": 0.25,
                     "stroke": { "kind": "color", "value": "#111827", "width": 3 }
                 }),
             )]),
@@ -1055,5 +1516,370 @@ mod tests {
         assert!(svg.contains(r#"x2="100""#));
         assert!(svg.contains(r##"stroke="#111827""##));
         assert!(svg.contains(r#"stroke-width="3""#));
+        assert!(svg.contains(r#"opacity="0.25""#));
+        assert!(svg.contains(r#"transform="rotate(90 "#));
+    }
+
+    #[test]
+    fn rectangle_nodes_export_corner_radius() {
+        let document = DesignDocument {
+            version: "0.1".to_string(),
+            document_id: "doc".to_string(),
+            title: "Test".to_string(),
+            created_at: "2026-01-01T00:00:00Z".to_string(),
+            updated_at: "2026-01-01T00:00:00Z".to_string(),
+            nodes: BTreeMap::from([(
+                "rect-1".to_string(),
+                json!({
+                    "id": "rect-1",
+                    "type": "rectangle",
+                    "name": "Card",
+                    "x": 10,
+                    "y": 20,
+                    "width": 100,
+                    "height": 50,
+                    "cornerRadius": 18,
+                    "fill": { "kind": "color", "value": "#ffffff" },
+                    "stroke": { "kind": "color", "value": "#111827" }
+                }),
+            )]),
+            root_ids: vec!["rect-1".to_string()],
+            variables: BTreeMap::new(),
+            assets: BTreeMap::new(),
+            metadata: BTreeMap::new(),
+        };
+        let svg = node_to_svg(&document, document.nodes.get("rect-1").unwrap());
+        assert!(svg.contains("<rect "));
+        assert!(svg.contains(r#"rx="18""#));
+        assert!(svg.contains(r#"ry="18""#));
+    }
+
+    #[test]
+    fn path_and_icon_nodes_export_vector_svg() {
+        let document = DesignDocument {
+            version: "0.1".to_string(),
+            document_id: "doc".to_string(),
+            title: "Test".to_string(),
+            created_at: "2026-01-01T00:00:00Z".to_string(),
+            updated_at: "2026-01-01T00:00:00Z".to_string(),
+            nodes: BTreeMap::from([
+                (
+                    "path-1".to_string(),
+                    json!({
+                        "id": "path-1",
+                        "type": "path",
+                        "name": "Curve",
+                        "x": 10,
+                        "y": 20,
+                        "width": 160,
+                        "height": 80,
+                        "pathData": "M0 80 C40 0 120 0 160 80",
+                        "viewBox": "0 0 160 80",
+                        "fill": { "kind": "color", "value": "transparent" },
+                        "stroke": { "kind": "color", "value": "#111827", "width": 3 }
+                    }),
+                ),
+                (
+                    "icon-1".to_string(),
+                    json!({
+                        "id": "icon-1",
+                        "type": "icon",
+                        "name": "Star",
+                        "x": 20,
+                        "y": 30,
+                        "width": 24,
+                        "height": 24,
+                        "svg": "M12 2l3 7h7l-5.5 4.5L18 21l-6-4-6 4 1.5-7.5L2 9h7z",
+                        "viewBox": "0 0 24 24",
+                        "fill": { "kind": "color", "value": "#f59e0b" }
+                    }),
+                ),
+            ]),
+            root_ids: vec!["path-1".to_string(), "icon-1".to_string()],
+            variables: BTreeMap::new(),
+            assets: BTreeMap::new(),
+            metadata: BTreeMap::new(),
+        };
+        let path_svg = node_to_svg(&document, document.nodes.get("path-1").unwrap());
+        let icon_svg = node_to_svg(&document, document.nodes.get("icon-1").unwrap());
+        assert!(path_svg.contains(r#"viewBox="0 0 160 80""#));
+        assert!(path_svg.contains(r#"d="M0 80 C40 0 120 0 160 80""#));
+        assert!(path_svg.contains(r#"stroke-width="3""#));
+        assert!(icon_svg.contains(r#"viewBox="0 0 24 24""#));
+        assert!(icon_svg.contains(r##"fill="#f59e0b""##));
+    }
+
+    #[test]
+    fn prompt_nodes_export_prompt_card() {
+        let document = DesignDocument {
+            version: "0.1".to_string(),
+            document_id: "doc".to_string(),
+            title: "Test".to_string(),
+            created_at: "2026-01-01T00:00:00Z".to_string(),
+            updated_at: "2026-01-01T00:00:00Z".to_string(),
+            nodes: BTreeMap::from([(
+                "prompt-1".to_string(),
+                json!({
+                    "id": "prompt-1",
+                    "type": "prompt",
+                    "name": "Prompt",
+                    "x": 10,
+                    "y": 20,
+                    "width": 220,
+                    "height": 120,
+                    "fill": { "kind": "color", "value": "#fef3c7" },
+                    "stroke": { "kind": "color", "value": "#f59e0b" },
+                    "prompt": "Make the hero card warmer & clearer"
+                }),
+            )]),
+            root_ids: vec!["prompt-1".to_string()],
+            variables: BTreeMap::new(),
+            assets: BTreeMap::new(),
+            metadata: BTreeMap::new(),
+        };
+        let svg = node_to_svg(&document, document.nodes.get("prompt-1").unwrap());
+        assert!(svg.contains("<rect "));
+        assert!(svg.contains(">Prompt</text>"));
+        assert!(svg.contains("Make the hero card warmer &amp; clearer"));
+    }
+
+    #[test]
+    fn text_nodes_export_typography() {
+        let document = DesignDocument {
+            version: "0.1".to_string(),
+            document_id: "doc".to_string(),
+            title: "Test".to_string(),
+            created_at: "2026-01-01T00:00:00Z".to_string(),
+            updated_at: "2026-01-01T00:00:00Z".to_string(),
+            nodes: BTreeMap::from([(
+                "text-1".to_string(),
+                json!({
+                    "id": "text-1",
+                    "type": "text",
+                    "name": "Headline",
+                    "x": 10,
+                    "y": 20,
+                    "width": 200,
+                    "height": 80,
+                    "content": "Hello",
+                    "fontSize": 32,
+                    "fontWeight": 700,
+                    "textAlign": "center",
+                    "fill": { "kind": "color", "value": "#111827" }
+                }),
+            )]),
+            root_ids: vec!["text-1".to_string()],
+            variables: BTreeMap::new(),
+            assets: BTreeMap::new(),
+            metadata: BTreeMap::new(),
+        };
+        let svg = node_to_svg(&document, document.nodes.get("text-1").unwrap());
+        assert!(svg.contains("<text "));
+        assert!(svg.contains(r#"font-size="32""#));
+        assert!(svg.contains(r#"font-weight="700""#));
+        assert!(svg.contains(r#"text-anchor="middle""#));
+        assert!(svg.contains(r#"x="100""#));
+        assert!(svg.contains("Hello"));
+    }
+
+    #[test]
+    fn component_nodes_export_identity_metadata() {
+        let document = DesignDocument {
+            version: "0.1".to_string(),
+            document_id: "doc".to_string(),
+            title: "Test".to_string(),
+            created_at: "2026-01-01T00:00:00Z".to_string(),
+            updated_at: "2026-01-01T00:00:00Z".to_string(),
+            nodes: BTreeMap::from([(
+                "instance-1".to_string(),
+                json!({
+                    "id": "instance-1",
+                    "type": "instance",
+                    "name": "Card Instance",
+                    "x": 10,
+                    "y": 20,
+                    "width": 200,
+                    "height": 120,
+                    "componentId": "component:card",
+                    "sourceComponentId": "component-1",
+                    "overrides": ["fill", "width"],
+                    "fill": { "kind": "color", "value": "#ffffff" }
+                }),
+            )]),
+            root_ids: vec!["instance-1".to_string()],
+            variables: BTreeMap::new(),
+            assets: BTreeMap::new(),
+            metadata: BTreeMap::new(),
+        };
+        let svg = node_to_svg(&document, document.nodes.get("instance-1").unwrap());
+        assert!(svg.contains(r#"roder-design-node type="instance" id="instance-1" component-id="component:card" source-component-id="component-1" overrides="fill,width""#));
+        assert!(svg.contains("<rect "));
+    }
+
+    #[test]
+    fn set_design_variables_merges_and_replaces_tokens() {
+        let mut document = DesignDocument {
+            version: "0.1".to_string(),
+            document_id: "doc".to_string(),
+            title: "Test".to_string(),
+            created_at: "2026-01-01T00:00:00Z".to_string(),
+            updated_at: "2026-01-01T00:00:00Z".to_string(),
+            nodes: BTreeMap::new(),
+            root_ids: Vec::new(),
+            variables: BTreeMap::new(),
+            assets: BTreeMap::new(),
+            metadata: BTreeMap::new(),
+        };
+        set_design_variables(
+            &mut document,
+            BTreeMap::from([("color.primary".to_string(), json!({ "kind": "color", "value": "#2563eb" }))]),
+            false,
+        );
+        assert!(document.variables.contains_key("color.primary"));
+
+        set_design_variables(
+            &mut document,
+            BTreeMap::from([("space.4".to_string(), json!({ "kind": "spacing", "value": 16 }))]),
+            true,
+        );
+        assert!(!document.variables.contains_key("color.primary"));
+        assert!(document.variables.contains_key("space.4"));
+    }
+
+    #[test]
+    fn reorder_node_updates_root_and_child_order() {
+        let mut document = DesignDocument {
+            version: "0.1".to_string(),
+            document_id: "doc".to_string(),
+            title: "Test".to_string(),
+            created_at: "2026-01-01T00:00:00Z".to_string(),
+            updated_at: "2026-01-01T00:00:00Z".to_string(),
+            nodes: BTreeMap::from([
+                (
+                    "frame-a".to_string(),
+                    json!({ "id": "frame-a", "type": "frame", "name": "A", "childIds": ["text-a", "text-b"] }),
+                ),
+                (
+                    "frame-b".to_string(),
+                    json!({ "id": "frame-b", "type": "frame", "name": "B", "childIds": [] }),
+                ),
+                (
+                    "text-a".to_string(),
+                    json!({ "id": "text-a", "type": "text", "name": "A", "parentId": "frame-a", "childIds": [] }),
+                ),
+                (
+                    "text-b".to_string(),
+                    json!({ "id": "text-b", "type": "text", "name": "B", "parentId": "frame-a", "childIds": [] }),
+                ),
+            ]),
+            root_ids: vec!["frame-a".to_string(), "frame-b".to_string()],
+            variables: BTreeMap::new(),
+            assets: BTreeMap::new(),
+            metadata: BTreeMap::new(),
+        };
+        reorder_node(&mut document, "frame-b", 0).unwrap();
+        assert_eq!(document.root_ids, vec!["frame-b", "frame-a"]);
+        reorder_node(&mut document, "text-a", 1).unwrap();
+        assert_eq!(
+            document.nodes["frame-a"].get("childIds").and_then(Value::as_array),
+            Some(&vec![json!("text-b"), json!("text-a")])
+        );
+    }
+
+    #[test]
+    fn spawn_agents_plans_container_scopes() {
+        let document = DesignDocument {
+            version: "0.1".to_string(),
+            document_id: "doc".to_string(),
+            title: "Test".to_string(),
+            created_at: "2026-01-01T00:00:00Z".to_string(),
+            updated_at: "2026-01-01T00:00:00Z".to_string(),
+            nodes: BTreeMap::from([
+                (
+                    "frame-1".to_string(),
+                    json!({
+                        "id": "frame-1",
+                        "type": "frame",
+                        "name": "Hero frame",
+                        "parentId": null,
+                        "childIds": ["text-1"],
+                        "x": 0,
+                        "y": 0,
+                        "width": 400,
+                        "height": 240
+                    }),
+                ),
+                (
+                    "text-1".to_string(),
+                    json!({
+                        "id": "text-1",
+                        "type": "text",
+                        "name": "Headline",
+                        "parentId": "frame-1",
+                        "childIds": [],
+                        "x": 24,
+                        "y": 24,
+                        "width": 200,
+                        "height": 48
+                    }),
+                ),
+            ]),
+            root_ids: vec!["frame-1".to_string()],
+            variables: BTreeMap::new(),
+            assets: BTreeMap::new(),
+            metadata: BTreeMap::new(),
+        };
+        let plan = design_spawn_agent_plan(
+            &document,
+            &SpawnAgentsArgs {
+                scope_node_ids: vec!["frame-1".to_string()],
+                prompt: Some("Polish hero".to_string()),
+                allow_patch: Some(true),
+                allow_export: Some(true),
+                require_review: Some(false),
+            },
+        )
+        .unwrap();
+        assert_eq!(plan.len(), 1);
+        assert_eq!(plan[0].get("scopeNodeId").and_then(Value::as_str), Some("frame-1"));
+        assert_eq!(plan[0].get("scopeName").and_then(Value::as_str), Some("Hero frame"));
+        assert_eq!(plan[0].get("childCount").and_then(Value::as_u64), Some(1));
+    }
+
+    #[test]
+    fn spawn_agents_rejects_non_container_scope() {
+        let document = DesignDocument {
+            version: "0.1".to_string(),
+            document_id: "doc".to_string(),
+            title: "Test".to_string(),
+            created_at: "2026-01-01T00:00:00Z".to_string(),
+            updated_at: "2026-01-01T00:00:00Z".to_string(),
+            nodes: BTreeMap::from([(
+                "text-1".to_string(),
+                json!({
+                    "id": "text-1",
+                    "type": "text",
+                    "name": "Headline",
+                    "childIds": []
+                }),
+            )]),
+            root_ids: vec!["text-1".to_string()],
+            variables: BTreeMap::new(),
+            assets: BTreeMap::new(),
+            metadata: BTreeMap::new(),
+        };
+        let error = design_spawn_agent_plan(
+            &document,
+            &SpawnAgentsArgs {
+                scope_node_ids: vec!["text-1".to_string()],
+                prompt: None,
+                allow_patch: None,
+                allow_export: None,
+                require_review: None,
+            },
+        )
+        .unwrap_err()
+        .to_string();
+        assert!(error.contains("expected frame, group, component, or instance"));
     }
 }
