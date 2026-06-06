@@ -508,6 +508,18 @@ impl AppServer {
                 })
                 .await
             }
+            "design/set_variables" => {
+                self.decode_and(req.params, |p| async move {
+                    self.handle_design_set_variables(p).await
+                })
+                .await
+            }
+            "design/set_selection" => {
+                self.decode_and(req.params, |p| async move {
+                    self.handle_design_set_selection(p).await
+                })
+                .await
+            }
             "design/snapshot_layout" => {
                 self.decode_and(req.params, |p| async move {
                     self.handle_design_snapshot_layout(p).await
@@ -520,9 +532,21 @@ impl AppServer {
                 })
                 .await
             }
+            "design/spawn_agents" => {
+                self.decode_and(req.params, |p| async move {
+                    self.handle_design_spawn_agents(p).await
+                })
+                .await
+            }
             "design/export_nodes" => {
                 self.decode_and(req.params, |p| async move {
                     self.handle_design_export_nodes(p).await
+                })
+                .await
+            }
+            "design/get_screenshot" => {
+                self.decode_and(req.params, |p| async move {
+                    self.handle_design_get_screenshot(p).await
                 })
                 .await
             }
