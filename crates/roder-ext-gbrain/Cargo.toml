@@ -27,9 +27,11 @@ path = "src/bin/roder-gbrain.rs"
 [dependencies]
 anyhow.workspace = true
 async-trait.workspace = true
+futures.workspace = true
 roder-api.workspace = true
+roder-ext-anthropic.workspace = true
+roder-ext-openai-responses.workspace = true
 roder-ext-openai-embeddings.workspace = true
-reqwest = { workspace = true, features = ["json"] }
 rusqlite.workspace = true
 semver.workspace = true
 serde = { workspace = true, features = ["derive"] }

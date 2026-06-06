@@ -22,6 +22,7 @@ pub mod agent;
 pub mod context;
 pub mod embed;
 pub mod ground;
+pub mod infer;
 pub mod model;
 pub mod reason;
 pub mod render;
@@ -34,7 +35,8 @@ pub mod tools;
 pub use agent::{AgentAnswer, AgentBudget, DecisionAgent, ProgressSink, WorkingContext};
 pub use context::GbrainContextProvider;
 pub use embed::Embedder;
-pub use reason::{AnthropicReasoner, Reasoner};
+pub use infer::EngineReasoner;
+pub use reason::{Reasoner, build_reasoner};
 pub use model::{AsOf, FactStatus, TemporalFact};
 pub use store::{
     CaptureInput, ConsolidateStats, GbrainStore, GbrainStoreFactory, RecallParams, RecallResult,

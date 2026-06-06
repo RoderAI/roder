@@ -270,14 +270,15 @@ impl<R: Reasoner> DecisionAgent<R> {
                 .await?;
             let stripped = strip_phantom_cites(&stripped, &evidence);
 
-            // Pass 2 (default ON; GBRAIN_FAITHFUL_VERIFY=0 -> exact v4): adversarial
-            // DELETE-ONLY concept/causal verify — the dimension the audit + strip
-            // miss. A one-way ratchet: accepted only if it preserved every grounded
-            // specific (else we keep the strip output), so overall cannot regress.
-            let verify_off = std::env::var("GBRAIN_FAITHFUL_VERIFY")
-                .map(|v| v == "0" || v.eq_ignore_ascii_case("off"))
+            // Pass 2 (opt-in via GBRAIN_FAITHFUL_VERIFY=1): adversarial DELETE-ONLY
+            // concept/causal verify. Default OFF — on the reliable medium tier it
+            // was net-negative (dropped rubric-credited content, overall 0.62 < the
+            // 0.65 bar) despite the one-way-ratchet guard; the small-tier gain was
+            // n=11 noise. Kept available for experimentation.
+            let verify_on = std::env::var("GBRAIN_FAITHFUL_VERIFY")
+                .map(|v| v == "1" || v.eq_ignore_ascii_case("on"))
                 .unwrap_or(false);
-            if verify_off {
+            if !verify_on {
                 stripped
             } else {
                 self.progress.step("verify-faithful", "adversarial");
@@ -322,12 +323,12 @@ impl<R: Reasoner> DecisionAgent<R> {
             llm_calls: if evidence_empty {
                 0
             } else if std::env::var("GBRAIN_FAITHFUL_VERIFY")
-                .map(|v| v == "0" || v.eq_ignore_ascii_case("off"))
+                .map(|v| v == "1" || v.eq_ignore_ascii_case("on"))
                 .unwrap_or(false)
             {
-                2
-            } else {
                 3
+            } else {
+                2
             },
             input_tokens: self.tokens_in.load(Ordering::Relaxed),
             output_tokens: self.tokens_out.load(Ordering::Relaxed),

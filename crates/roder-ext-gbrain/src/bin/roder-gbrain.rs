@@ -25,7 +25,7 @@ use roder_ext_gbrain::model::{AsOf, parse_flexible};
 use roder_ext_gbrain::render::render_recall;
 use roder_ext_gbrain::store::{CaptureInput, GbrainStore, RecallParams};
 use roder_ext_gbrain::tools::{fact_json, parse_scope};
-use roder_ext_gbrain::{AgentBudget, AnthropicReasoner, DecisionAgent, Embedder};
+use roder_ext_gbrain::{AgentBudget, DecisionAgent, Embedder, build_reasoner};
 use roder_ext_openai_embeddings::OpenAiEmbeddingProvider;
 use serde::Deserialize;
 use serde_json::{Value, json};
@@ -82,7 +82,7 @@ async fn answer_cmd(
         Some(date) => Some(parse_flexible(date)?),
         None => None,
     };
-    let reasoner = AnthropicReasoner::from_env(flags.get("model").cloned())?;
+    let reasoner = build_reasoner(flags.get("model").cloned())?;
     let mut budget = AgentBudget::default();
     if let Some(n) = flags.get("max-subqueries").and_then(|v| v.parse().ok()) {
         budget.max_subqueries = n;

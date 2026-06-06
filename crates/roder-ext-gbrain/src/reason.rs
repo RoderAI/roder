@@ -1,18 +1,15 @@
-//! The LLM seam for the agentic decision loop.
+//! The one-shot LLM seam for the agentic decision loop.
 //!
 //! The loop needs a simple `complete(system, user) -> text` primitive for its
-//! decompose / draft / verify / synthesize sub-calls. Roder's canonical
-//! [`InferenceEngine`](roder_api::inference::InferenceEngine) is a streaming,
-//! tool-oriented `stream_turn` API that is awkward for these structured one-shot
-//! calls — and is unavailable to the standalone `roder-gbrain` CLI / the eval
-//! harness, which have no extension registry. So the loop is generic over this
-//! small [`Reasoner`] trait.
-//!
-//! v1 ships [`AnthropicReasoner`] (used by the CLI + OrgMemBench eval). An
-//! `InferenceEngineReasoner` that wraps a registry engine is the documented
-//! runtime hook (see `agent.rs` notes) — not built in v1 to keep scope tight.
+//! synthesize / strip / verify sub-calls. Rather than re-implement provider HTTP
+//! clients, the concrete [`Reasoner`] is [`EngineReasoner`](crate::infer), which
+//! drives roder's own [`InferenceEngine`](roder_api::inference::InferenceEngine)
+//! — so gbrain inherits every provider roder ships (`roder-ext-anthropic`,
+//! `roder-ext-openai-responses`, …) plus their reasoning / retry handling. This
+//! module keeps the small [`Reasoner`] trait the loop is generic over and the
+//! model-name → engine factory.
 
-use std::time::Duration;
+use std::sync::Arc;
 
 use serde_json::Value;
 
@@ -45,6 +42,53 @@ pub trait Reasoner: Send + Sync {
     fn label(&self) -> String {
         "reasoner".to_string()
     }
+}
+
+/// Boxed dynamic dispatch so the CLI can pick a reasoner (Anthropic vs OpenAI)
+/// at runtime by model name while [`DecisionAgent`] stays generic.
+#[async_trait::async_trait]
+impl Reasoner for Box<dyn Reasoner> {
+    async fn complete(&self, system: &str, user: &str) -> anyhow::Result<Completion> {
+        (**self).complete(system, user).await
+    }
+    fn label(&self) -> String {
+        (**self).label()
+    }
+}
+
+/// Build a reasoner from a model id by selecting the matching roder inference
+/// engine: `gpt-*` / `o[1-9]*` → OpenAI **Responses** (`roder-ext-openai-responses`,
+/// `OPENAI_API_KEY`); everything else → Anthropic (`roder-ext-anthropic`,
+/// `ANTHROPIC_API_KEY`). Reasoning effort comes from `GBRAIN_REASONING_EFFORT`
+/// (default "medium"). No provider HTTP is re-implemented here — gbrain uses
+/// roder's own primitives.
+pub fn build_reasoner(model: Option<String>) -> anyhow::Result<Box<dyn Reasoner>> {
+    use roder_api::catalog::{PROVIDER_ANTHROPIC, PROVIDER_OPENAI};
+
+    let model = model.unwrap_or_else(|| "claude-sonnet-4-6".to_string());
+    let lower = model.to_ascii_lowercase();
+    let is_openai = lower.starts_with("gpt")
+        || lower.starts_with("o1")
+        || lower.starts_with("o3")
+        || lower.starts_with("o4");
+    let effort = std::env::var("GBRAIN_REASONING_EFFORT")
+        .ok()
+        .map(|e| e.trim().to_ascii_lowercase())
+        .filter(|e| ["minimal", "low", "medium", "high"].contains(&e.as_str()))
+        .unwrap_or_else(|| "medium".to_string());
+
+    let reasoner: Box<dyn Reasoner> = if is_openai {
+        let key = std::env::var("OPENAI_API_KEY")
+            .map_err(|_| anyhow::anyhow!("OPENAI_API_KEY not set (required for the GPT answerer)"))?;
+        let engine = Arc::new(roder_ext_openai_responses::OpenAiResponsesEngine::new(key));
+        Box::new(crate::infer::EngineReasoner::new(engine, PROVIDER_OPENAI, model, Some(effort)))
+    } else {
+        let key = std::env::var("ANTHROPIC_API_KEY")
+            .map_err(|_| anyhow::anyhow!("ANTHROPIC_API_KEY not set (required for agentic mode)"))?;
+        let engine = Arc::new(roder_ext_anthropic::AnthropicEngine::new(key));
+        Box::new(crate::infer::EngineReasoner::new(engine, PROVIDER_ANTHROPIC, model, Some(effort)))
+    };
+    Ok(reasoner)
 }
 
 /// Pull the first JSON value (object or array) out of a model response, tolerant
@@ -91,144 +135,6 @@ pub fn extract_json(text: &str) -> Option<Value> {
         }
     }
     None
-}
-
-/// Anthropic Messages reasoner used by the CLI + eval. Self-contained (no
-/// extension registry) so it runs in the standalone binary.
-pub struct AnthropicReasoner {
-    client: reqwest::Client,
-    api_key: String,
-    model: String,
-    max_tokens: u32,
-    thinking_budget: u32,
-    max_retries: u32,
-}
-
-impl AnthropicReasoner {
-    pub const DEFAULT_MODEL: &'static str = "claude-sonnet-4-6";
-
-    /// Construct from `ANTHROPIC_API_KEY`. `model` defaults to Sonnet 4.6.
-    pub fn from_env(model: Option<String>) -> anyhow::Result<Self> {
-        let api_key = std::env::var("ANTHROPIC_API_KEY")
-            .map_err(|_| anyhow::anyhow!("ANTHROPIC_API_KEY not set (required for agentic mode)"))?;
-        Ok(Self {
-            client: reqwest::Client::new(),
-            api_key,
-            model: model.unwrap_or_else(|| Self::DEFAULT_MODEL.to_string()),
-            max_tokens: 8000,
-            thinking_budget: 2000,
-            max_retries: 6,
-        })
-    }
-
-    pub fn with_thinking_budget(mut self, budget: u32) -> Self {
-        self.thinking_budget = budget;
-        self
-    }
-
-    fn body(&self, system: &str, user: &str) -> Value {
-        let mut body = serde_json::json!({
-            "model": self.model,
-            "max_tokens": self.max_tokens.max(self.thinking_budget + 1024),
-            "system": system,
-            "messages": [{ "role": "user", "content": user }],
-        });
-        // Opus 4.6+ uses adaptive thinking + output_config.effort (and rejects
-        // temperature + enabled/budget_tokens); Sonnet 4.6 and older keep the
-        // enabled+budget form (proven across the eval runs).
-        if uses_adaptive_thinking(&self.model) {
-            body["thinking"] = serde_json::json!({ "type": "adaptive" });
-            body["output_config"] = serde_json::json!({ "effort": "high" });
-        } else if self.thinking_budget > 0 {
-            body["temperature"] = serde_json::json!(1);
-            body["thinking"] =
-                serde_json::json!({ "type": "enabled", "budget_tokens": self.thinking_budget });
-        }
-        body
-    }
-}
-
-#[async_trait::async_trait]
-impl Reasoner for AnthropicReasoner {
-    fn label(&self) -> String {
-        self.model.clone()
-    }
-
-    async fn complete(&self, system: &str, user: &str) -> anyhow::Result<Completion> {
-        let body = self.body(system, user);
-        let mut attempt = 0;
-        loop {
-            attempt += 1;
-            let resp = self
-                .client
-                .post("https://api.anthropic.com/v1/messages")
-                .header("x-api-key", &self.api_key)
-                .header("anthropic-version", "2023-06-01")
-                .header("content-type", "application/json")
-                .json(&body)
-                .send()
-                .await;
-            match resp {
-                Ok(r) if r.status().is_success() => {
-                    let json: Value = r.json().await?;
-                    let text = json
-                        .get("content")
-                        .and_then(Value::as_array)
-                        .map(|blocks| {
-                            blocks
-                                .iter()
-                                .filter(|b| b.get("type").and_then(Value::as_str) == Some("text"))
-                                .filter_map(|b| b.get("text").and_then(Value::as_str))
-                                .collect::<Vec<_>>()
-                                .join("")
-                        })
-                        .unwrap_or_default();
-                    let usage = json.get("usage");
-                    let tok = |k: &str| {
-                        usage
-                            .and_then(|u| u.get(k))
-                            .and_then(Value::as_u64)
-                            .unwrap_or(0) as u32
-                    };
-                    return Ok(Completion {
-                        text,
-                        input_tokens: tok("input_tokens"),
-                        output_tokens: tok("output_tokens"),
-                    });
-                }
-                Ok(r) => {
-                    let status = r.status();
-                    // Retry transient overloads/server errors/rate limits.
-                    let retryable = status.as_u16() == 429 || status.is_server_error();
-                    if retryable && attempt <= self.max_retries {
-                        backoff(attempt).await;
-                        continue;
-                    }
-                    let detail = r.text().await.unwrap_or_default();
-                    anyhow::bail!("anthropic {status}: {}", detail.chars().take(300).collect::<String>());
-                }
-                Err(err) if attempt <= self.max_retries => {
-                    let _ = err;
-                    backoff(attempt).await;
-                    continue;
-                }
-                Err(err) => return Err(err.into()),
-            }
-        }
-    }
-}
-
-/// Opus 4.6+ requires the adaptive-thinking request shape (no temperature, no
-/// `budget_tokens`). Sonnet 4.6 and earlier models keep the legacy enabled form.
-fn uses_adaptive_thinking(model: &str) -> bool {
-    ["opus-4-8", "opus-4.8", "opus-4-7", "opus-4.7", "opus-4-6", "opus-4.6"]
-        .iter()
-        .any(|m| model.contains(m))
-}
-
-async fn backoff(attempt: u32) {
-    let secs = (2u64.pow(attempt.min(5))).min(30);
-    tokio::time::sleep(Duration::from_secs(secs)).await;
 }
 
 #[cfg(test)]

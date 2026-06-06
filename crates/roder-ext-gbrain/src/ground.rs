@@ -377,7 +377,7 @@ pub fn safe_specifics(question: &str, answer: &str, idx: &GroundIndex, walk: boo
         .map(|f| f.span.to_lowercase())
         .collect();
     let mut out: Vec<String> = Vec::new();
-    let mut keep = |span: String, in_pool: bool, out: &mut Vec<String>| {
+    let keep = |span: String, in_pool: bool, out: &mut Vec<String>| {
         if in_pool && !flagged.contains(&span.to_lowercase()) {
             out.push(span);
         }
