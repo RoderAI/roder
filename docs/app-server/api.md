@@ -241,8 +241,13 @@ Tools, commands, files, agents, and tasks:
 | `commands/list` | List configured slash commands. |
 | `commands/expand` | Expand a command to a model prompt and context blocks. |
 | `commands/run` | Expand a command and start a turn. |
-| `fs/readFile` | Read an absolute host file as base64. |
-| `fs/readDirectory` | List direct children of an absolute host directory. |
+| `workspace/files/status` | Read workspace file-index state for registered roots. |
+| `workspace/files/rebuild` | Build or refresh the app-server-owned workspace file index. |
+| `workspace/files/children` | List workspace root or directory children for lazy file trees. |
+| `workspace/files/query` | Ranked fuzzy query over indexed workspace files. |
+| `workspace/files/read` | Read a bounded text preview or binary metadata for an indexed workspace file. |
+| `fs/readFile` | Low-level absolute host file read as base64. |
+| `fs/readDirectory` | Low-level direct child listing for an absolute host directory. |
 | `command/exec` | Run a non-PTY command subject to policy checks. |
 | `agents/list` | List subagent definitions visible to the runtime. |
 | `tasks/submit` | Submit a background task. |
@@ -1643,9 +1648,254 @@ Response:
 }
 ```
 
+### `workspace/files/status`
+
+Purpose: Read app-server-owned workspace file index state. This is the
+canonical status method for file trees, quick-open, and mention pickers.
+
+Request:
+
+```json
+{
+  "workspaceId": "ws_abc123",
+  "rootId": "root_abc123"
+}
+```
+
+`rootId` is optional. When omitted, status aggregates all registered roots in
+the workspace.
+
+Response:
+
+```json
+{
+  "status": {
+    "workspaceId": "ws_abc123",
+    "state": "ready",
+    "stale": false,
+    "fileCount": 12874,
+    "directoryCount": 932,
+    "roots": [
+      {
+        "rootId": "root_abc123",
+        "rootName": "gode",
+        "state": "ready",
+        "stale": false,
+        "fileCount": 12874,
+        "directoryCount": 932,
+        "buildTimeMs": 47,
+        "indexedAtMs": 1770000100
+      }
+    ]
+  }
+}
+```
+
+States are `missing`, `building`, `ready`, `stale`, and `failed`.
+
+### `workspace/files/rebuild`
+
+Purpose: Build or refresh the workspace file index in the app-server.
+
+Request:
+
+```json
+{
+  "workspaceId": "ws_abc123",
+  "rootId": "root_abc123"
+}
+```
+
+`rootId` is optional. When omitted, all roots are rebuilt.
+
+Response:
+
+```json
+{
+  "status": {
+    "workspaceId": "ws_abc123",
+    "state": "ready",
+    "stale": false,
+    "fileCount": 12874,
+    "directoryCount": 932,
+    "roots": []
+  }
+}
+```
+
+Behavior:
+
+- Emits `workspace/files/statusChanged` with `building`, then emits a terminal
+  `ready` or `failed` status.
+- Caches indexes per canonical root path. Switching A to B and back to A
+  reuses the root cache when the root path is unchanged.
+- Selecting a different root or reordering roots does not invalidate identical
+  root indexes.
+- Git repositories use an ignore-respecting tracked plus untracked file
+  enumerator. Non-git roots use an ignore-aware filesystem walk.
+- The index is complete; response limits are applied only to query results.
+
+### `workspace/files/children`
+
+Purpose: Return direct children for lazy file trees.
+
+Request workspace roots:
+
+```json
+{
+  "workspaceId": "ws_abc123"
+}
+```
+
+Request children inside one root:
+
+```json
+{
+  "workspaceId": "ws_abc123",
+  "rootId": "root_abc123",
+  "path": "roadmap"
+}
+```
+
+Response:
+
+```json
+{
+  "status": {
+    "workspaceId": "ws_abc123",
+    "state": "ready",
+    "stale": false,
+    "roots": [],
+    "fileCount": 12874,
+    "directoryCount": 932
+  },
+  "entries": [
+    {
+      "rootId": "root_abc123",
+      "rootName": "gode",
+      "path": "roadmap/001-desktop-custom-user-extensions.md",
+      "name": "001-desktop-custom-user-extensions.md",
+      "kind": "file",
+      "hasChildren": false,
+      "size": 4096,
+      "modifiedMs": 1770000100
+    }
+  ]
+}
+```
+
+Behavior:
+
+- Without `rootId`, returns one directory entry per registered root.
+- With `rootId`, `path` is a relative directory path inside that root. Empty
+  path or omitted `path` lists the root's direct children.
+- Paths must be relative and cannot escape the root.
+- Results are direct children only. Clients expand directories by issuing
+  another `workspace/files/children` request.
+
+### `workspace/files/query`
+
+Purpose: Ranked fuzzy file query for tree search, `@mentions`, and command-p
+quick-open.
+
+Request:
+
+```json
+{
+  "workspaceId": "ws_abc123",
+  "query": "desktop custom",
+  "limit": 20
+}
+```
+
+Response:
+
+```json
+{
+  "status": {
+    "workspaceId": "ws_abc123",
+    "state": "ready",
+    "stale": false,
+    "roots": [],
+    "fileCount": 12874,
+    "directoryCount": 932
+  },
+  "matches": [
+    {
+      "entry": {
+        "rootId": "root_abc123",
+        "rootName": "gode",
+        "path": "roadmap/001-desktop-custom-user-extensions.md",
+        "name": "001-desktop-custom-user-extensions.md",
+        "kind": "file",
+        "hasChildren": false
+      },
+      "score": 824,
+      "matchPositions": [12, 13, 14]
+    }
+  ],
+  "indexedFileCount": 12874
+}
+```
+
+Behavior:
+
+- `rootId` is optional. Omit it to query all roots in the workspace.
+- Exact basename and path-segment matches rank above weaker path and
+  subsequence matches.
+- `limit` clamps the response size. It does not cap the underlying index.
+
+### `workspace/files/read`
+
+Purpose: Read a bounded preview for a selected indexed workspace file.
+
+Request:
+
+```json
+{
+  "workspaceId": "ws_abc123",
+  "rootId": "root_abc123",
+  "path": "roadmap/001-desktop-custom-user-extensions.md",
+  "offset": 0,
+  "limit": 65536
+}
+```
+
+Response:
+
+```json
+{
+  "entry": {
+    "rootId": "root_abc123",
+    "rootName": "gode",
+    "path": "roadmap/001-desktop-custom-user-extensions.md",
+    "name": "001-desktop-custom-user-extensions.md",
+    "kind": "file",
+    "hasChildren": false
+  },
+  "encoding": "utf8",
+  "text": "# Desktop Custom User Extensions\n",
+  "offset": 0,
+  "limit": 65536,
+  "totalBytes": 4096,
+  "hasMore": false,
+  "truncated": false
+}
+```
+
+Behavior:
+
+- `path` is relative to the selected root and must already be indexed.
+- Text reads snap offsets and ends to UTF-8 character boundaries.
+- Binary files return `encoding: "binary"` and no `text`.
+- Unsupported text encodings return `encoding: "unsupported"` and no `text`.
+- Large files are bounded and report `hasMore` or `truncated` for preview UI.
+- VCS badges in file trees should be overlaid by matching these relative paths
+  against `vcs/changes/list`; VCS status is not embedded in file entries.
+
 ### `fs/readFile`
 
-Purpose: Read a file from the host filesystem.
+Purpose: Low-level absolute host file read.
 
 Request:
 
@@ -1670,7 +1920,7 @@ Errors:
 
 ### `fs/readDirectory`
 
-Purpose: List direct children of an absolute host directory.
+Purpose: Low-level direct child listing for an absolute host directory.
 
 Request:
 
@@ -1694,6 +1944,8 @@ Behavior:
 
 - Entries are sorted by `fileName`.
 - Only direct children are returned.
+- Workspace file trees, mentions, and quick-open clients should use
+  `workspace/files/*` instead of recursively calling this method.
 
 ### `command/exec`
 

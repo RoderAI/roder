@@ -102,6 +102,7 @@ pub struct AppServer {
         RwLock<std::collections::HashMap<String, ProtocolThreadModelSelection>>,
     pub(crate) protocol_notifications: broadcast::Sender<JsonRpcNotification>,
     pub(crate) workspaces: crate::workspaces::WorkspaceRegistry,
+    pub(crate) workspace_files: crate::workspace_files::WorkspaceFileService,
     pub(crate) command_registry: OnceCell<CommandsRegistry>,
 }
 
@@ -602,6 +603,36 @@ impl AppServer {
             "workspace/create" => {
                 self.decode_and(req.params, |p| async move {
                     self.handle_workspace_create(p).await
+                })
+                .await
+            }
+            "workspace/files/status" => {
+                self.decode_and(req.params, |p| async move {
+                    self.handle_workspace_files_status(p).await
+                })
+                .await
+            }
+            "workspace/files/rebuild" => {
+                self.decode_and(req.params, |p| async move {
+                    self.handle_workspace_files_rebuild(p).await
+                })
+                .await
+            }
+            "workspace/files/children" => {
+                self.decode_and(req.params, |p| async move {
+                    self.handle_workspace_files_children(p).await
+                })
+                .await
+            }
+            "workspace/files/query" => {
+                self.decode_and(req.params, |p| async move {
+                    self.handle_workspace_files_query(p).await
+                })
+                .await
+            }
+            "workspace/files/read" => {
+                self.decode_and(req.params, |p| async move {
+                    self.handle_workspace_files_read(p).await
                 })
                 .await
             }

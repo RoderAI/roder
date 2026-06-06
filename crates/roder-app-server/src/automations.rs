@@ -119,6 +119,8 @@ impl AppServer {
             .workspace_registry_path
             .clone()
             .unwrap_or_else(|| roder_config::config_dir().join("workspaces.json"));
+        let workspace_files =
+            crate::workspace_files::WorkspaceFileService::new(protocol_notifications.clone());
         Self {
             runtime,
             workflows,
@@ -130,6 +132,7 @@ impl AppServer {
             protocol_thread_models: RwLock::new(std::collections::HashMap::new()),
             protocol_notifications,
             workspaces: crate::workspaces::WorkspaceRegistry::new(workspace_registry_path),
+            workspace_files,
             command_registry: tokio::sync::OnceCell::new(),
         }
     }
