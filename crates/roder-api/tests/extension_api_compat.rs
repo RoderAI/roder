@@ -6,7 +6,11 @@ use roder_api::capabilities::{
 use roder_api::extension::{
     ExtensionManifest, ExtensionRegistryBuilder, ProvidedService, RoderExtension,
 };
-use roder_api::inference::ProviderAuthType;
+use roder_api::inference::{ModelSelection, ProviderAuthType};
+use roder_api::inference_routing::{
+    InferenceRouter, InferenceRoutingContext, InferenceRoutingDecision,
+    InferenceRoutingOptionDescriptor,
+};
 use roder_api::speech::{
     SpeechAudio, SpeechCapabilities, SpeechModelDescriptor, SpeechProviderContext,
     SpeechProviderMetadata, SpeechSynthesisCapabilities, SpeechSynthesisModelDescriptor,
@@ -148,6 +152,53 @@ fn registry_installs_speech_synthesizers() {
 }
 
 #[test]
+fn registry_installs_inference_routers() {
+    let mut builder = ExtensionRegistryBuilder::new();
+    builder.install(RouterExtension).unwrap();
+
+    let registry = builder.build().unwrap();
+
+    assert!(registry.inference_router("test-router").is_some());
+    assert!(
+        registry
+            .provided_services()
+            .contains(&ProvidedService::InferenceRouter("test-router".to_string()))
+    );
+}
+
+#[test]
+fn inference_router_can_expose_route_options() {
+    let mut builder = ExtensionRegistryBuilder::new();
+    builder.install(RouterExtension).unwrap();
+
+    let registry = builder.build().unwrap();
+    let router = registry
+        .inference_router("test-router")
+        .expect("router installed");
+    let options = router.routing_options();
+
+    assert_eq!(options.len(), 1);
+    assert_eq!(options[0].id, "test-router:auto");
+    assert_eq!(options[0].label, "Auto: Test");
+    assert_eq!(options[0].baseline.provider, "test-provider");
+    assert_eq!(options[0].baseline.model, "test-model");
+}
+
+#[test]
+fn registry_build_rejects_duplicate_inference_router_ids() {
+    let mut builder = ExtensionRegistryBuilder::new();
+    builder.inference_router(Arc::new(TestRouter::new("dup-router")));
+    builder.inference_router(Arc::new(TestRouter::new("dup-router")));
+
+    let err = build_err(builder);
+
+    assert!(
+        err.to_string()
+            .contains("duplicate installed service InferenceRouter(dup-router)")
+    );
+}
+
+#[test]
 fn registry_build_rejects_denied_required_capability() {
     let mut builder = ExtensionRegistryBuilder::new();
     builder
@@ -241,6 +292,70 @@ impl RoderExtension for UninstalledServiceExtension {
 
     fn install(&self, _registry: &mut ExtensionRegistryBuilder) -> anyhow::Result<()> {
         Ok(())
+    }
+}
+
+struct RouterExtension;
+
+impl RoderExtension for RouterExtension {
+    fn manifest(&self) -> ExtensionManifest {
+        ExtensionManifest {
+            id: "router".to_string(),
+            name: "router".to_string(),
+            version: Version::new(0, 1, 0),
+            api_version: "0.1.0".to_string(),
+            description: None,
+            provides: vec![ProvidedService::InferenceRouter("test-router".to_string())],
+            required_capabilities: Vec::new(),
+        }
+    }
+
+    fn install(&self, registry: &mut ExtensionRegistryBuilder) -> anyhow::Result<()> {
+        registry.inference_router(Arc::new(TestRouter::new("test-router")));
+        Ok(())
+    }
+}
+
+struct TestRouter {
+    id: &'static str,
+}
+
+impl TestRouter {
+    fn new(id: &'static str) -> Self {
+        Self { id }
+    }
+}
+
+#[async_trait::async_trait]
+impl InferenceRouter for TestRouter {
+    fn id(&self) -> roder_api::extension::InferenceRouterId {
+        self.id.to_string()
+    }
+
+    fn routing_options(&self) -> Vec<InferenceRoutingOptionDescriptor> {
+        vec![InferenceRoutingOptionDescriptor::selectable(
+            "test-router:auto",
+            "Auto: Test",
+            self.id(),
+            ModelSelection {
+                provider: "test-provider".to_string(),
+                model: "test-model".to_string(),
+            },
+        )]
+    }
+
+    async fn route(
+        &self,
+        context: InferenceRoutingContext,
+    ) -> anyhow::Result<InferenceRoutingDecision> {
+        Ok(InferenceRoutingDecision::selected(
+            self.id(),
+            ModelSelection {
+                provider: context.default_selection.provider,
+                model: context.default_selection.model,
+            },
+            "test router preserves default",
+        ))
     }
 }
 

@@ -272,6 +272,7 @@ mod tests {
             preview: String::new(),
             model_provider: "mock".to_string(),
             model: "mock".to_string(),
+            selection_mode: None,
             created_at: 0,
             updated_at: 0,
             status: ThreadStatus {
