@@ -726,6 +726,8 @@ async fn send_responses_request_with_idle_timeout(
     let client = responses_stream_client(idle_timeout)?;
     let mut last_error = None;
     let mut retry_events = Vec::new();
+    let mut body = body.clone();
+    let mut recovered_missing_tool_output_call_ids = HashSet::new();
     for attempt in 1..=attempts {
         let mut request = client
             .post(format!("{}/responses", base_url))
@@ -736,7 +738,7 @@ async fn send_responses_request_with_idle_timeout(
         if let Some(thread_id) = grok_conversation_id.filter(|id| !id.is_empty()) {
             request = request.header("x-grok-conv-id", thread_id);
         }
-        let response = tokio::time::timeout(idle_timeout, request.json(body).send()).await;
+        let response = tokio::time::timeout(idle_timeout, request.json(&body).send()).await;
         match response {
             Ok(Ok(response)) if response.status().is_success() => {
                 return Ok(RetriedResponse {
@@ -751,6 +753,20 @@ async fn send_responses_request_with_idle_timeout(
                     .provider_retry_status_codes
                     .contains(&status.as_u16());
                 last_error = Some(format!("OpenAI Responses error {status}: {text}"));
+                if status == reqwest::StatusCode::BAD_REQUEST
+                    && attempt < attempts
+                    && let Some(call_id) = missing_function_call_output_call_id(&text)
+                    && recovered_missing_tool_output_call_ids.insert(call_id.clone())
+                    && remove_function_call_output(&mut body, &call_id)
+                {
+                    push_retry_event(
+                        &mut retry_events,
+                        attempt,
+                        "missing_function_call_output_call_id",
+                        &policy,
+                    );
+                    continue;
+                }
                 if retryable && attempt < attempts {
                     push_retry_event(
                         &mut retry_events,
@@ -803,6 +819,48 @@ async fn send_responses_request_with_idle_timeout(
         break;
     }
     anyhow::bail!(last_error.unwrap_or_else(|| "OpenAI Responses request failed".to_string()))
+}
+
+fn missing_function_call_output_call_id(body: &str) -> Option<String> {
+    if !body.contains("No tool call found for function call output with call_id") {
+        return None;
+    }
+
+    serde_json::from_str::<Value>(body)
+        .ok()
+        .and_then(|value| {
+            value
+                .get("error")
+                .and_then(|error| error.get("message"))
+                .and_then(Value::as_str)
+                .and_then(extract_missing_function_call_output_call_id)
+        })
+        .or_else(|| extract_missing_function_call_output_call_id(body))
+}
+
+fn extract_missing_function_call_output_call_id(message: &str) -> Option<String> {
+    const PREFIX: &str = "No tool call found for function call output with call_id ";
+    let tail = message.split_once(PREFIX)?.1;
+    let call_id = tail
+        .trim_start()
+        .trim_end_matches('.')
+        .split(|ch: char| ch.is_whitespace() || ch == '.' || ch == ',' || ch == '}' || ch == '"')
+        .next()
+        .unwrap_or_default()
+        .trim();
+    (!call_id.is_empty()).then(|| call_id.to_string())
+}
+
+fn remove_function_call_output(body: &mut Value, call_id: &str) -> bool {
+    let Some(input) = body.get_mut("input").and_then(Value::as_array_mut) else {
+        return false;
+    };
+    let before = input.len();
+    input.retain(|item| {
+        !(item.get("type").and_then(Value::as_str) == Some("function_call_output")
+            && item.get("call_id").and_then(Value::as_str) == Some(call_id))
+    });
+    input.len() != before
 }
 
 fn responses_stream_client(idle_timeout: Duration) -> anyhow::Result<reqwest::Client> {
@@ -1513,6 +1571,7 @@ fn response_input_items(
     let mut items = Vec::new();
     let mut provider_output_call_ids = HashSet::new();
     let completed_tool_call_ids = completed_tool_call_ids(&request.transcript);
+    let known_tool_call_ids = known_tool_call_ids(&request.transcript);
 
     for conversation_item in &request.transcript {
         let mapped = match conversation_item {
@@ -1549,11 +1608,17 @@ fn response_input_items(
                     }))
                 }
             }
-            roder_api::transcript::TranscriptItem::ToolResult(result) => Some(json!({
-                "type": "function_call_output",
-                "call_id": result.id,
-                "output": result.result
-            })),
+            roder_api::transcript::TranscriptItem::ToolResult(result) => {
+                if known_tool_call_ids.contains(&result.id) {
+                    Some(json!({
+                        "type": "function_call_output",
+                        "call_id": result.id,
+                        "output": result.result
+                    }))
+                } else {
+                    None
+                }
+            }
             roder_api::transcript::TranscriptItem::ContextCompaction(compaction) => Some(json!({
                 "type": "message",
                 "role": "user",
@@ -1577,6 +1642,32 @@ fn response_input_items(
     }
 
     items
+}
+
+fn known_tool_call_ids(transcript: &[roder_api::transcript::TranscriptItem]) -> HashSet<String> {
+    let mut ids = HashSet::new();
+    for item in transcript {
+        match item {
+            roder_api::transcript::TranscriptItem::ToolCall(call) => {
+                ids.insert(call.id.clone());
+            }
+            roder_api::transcript::TranscriptItem::ProviderMetadata(metadata) => {
+                if let Some(output) = metadata.get("output").and_then(Value::as_array) {
+                    ids.extend(output.iter().filter_map(|item| {
+                        (item.get("type").and_then(Value::as_str) == Some("function_call"))
+                            .then(|| {
+                                item.get("call_id")
+                                    .and_then(Value::as_str)
+                                    .map(str::to_string)
+                            })
+                            .flatten()
+                    }));
+                }
+            }
+            _ => {}
+        }
+    }
+    ids
 }
 
 fn completed_tool_call_ids(
@@ -2041,6 +2132,61 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn retry_recovers_by_removing_missing_function_call_output() {
+        let bodies = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let base_url = spawn_recording_server(
+            vec![
+                (
+                    "/responses",
+                    400,
+                    r#"{"error":{"message":"No tool call found for function call output with call_id call_missing.","type":"invalid_request_error","param":"input","code":null}}"#,
+                ),
+                (
+                    "/responses",
+                    200,
+                    "data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_1\"}}\n\n",
+                ),
+            ],
+            Arc::clone(&bodies),
+        )
+        .await;
+        let policy = ReliabilityRequestPolicy {
+            provider_retry_max_attempts: 2,
+            provider_retry_initial_backoff_ms: 0,
+            ..ReliabilityRequestPolicy::default()
+        };
+
+        let response = send_responses_request(
+            &base_url,
+            "secret",
+            &[],
+            None,
+            &json!({
+                "model": "gpt-5.5",
+                "input": [
+                    { "type": "message", "role": "user", "content": [{ "type": "input_text", "text": "continue" }] },
+                    { "type": "function_call_output", "call_id": "call_missing", "output": "stale" },
+                    { "type": "function_call_output", "call_id": "call_ok", "output": "keep" }
+                ]
+            }),
+            Some(&policy),
+        )
+        .await
+        .unwrap();
+
+        assert!(response.response.status().is_success());
+        assert_eq!(
+            response.retry_events[0]["cause"],
+            "missing_function_call_output_call_id"
+        );
+        let bodies = bodies.lock().unwrap();
+        assert_eq!(bodies.len(), 2);
+        assert!(bodies[0].contains("call_missing"));
+        assert!(!bodies[1].contains("call_missing"));
+        assert!(bodies[1].contains("call_ok"));
+    }
+
+    #[tokio::test]
     async fn responses_stream_surfaces_silent_provider_timeout() {
         let base_url = spawn_silent_responses_server().await;
         let response = send_responses_request_with_idle_timeout(
@@ -2170,6 +2316,48 @@ mod tests {
             }
         });
         format!("http://{addr}")
+    }
+
+    async fn spawn_recording_server(
+        routes: Vec<(&'static str, u16, &'static str)>,
+        bodies: Arc<std::sync::Mutex<Vec<String>>>,
+    ) -> String {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            for (expected_path, status, body) in routes {
+                let Ok((mut stream, _)) = listener.accept().await else {
+                    return;
+                };
+                let mut buf = [0_u8; 4096];
+                let n = stream.read(&mut buf).await.unwrap_or(0);
+                let request = String::from_utf8_lossy(&buf[..n]);
+                let path = request
+                    .lines()
+                    .next()
+                    .and_then(|line| line.split_whitespace().nth(1))
+                    .unwrap_or("");
+                assert_eq!(path, expected_path);
+                bodies
+                    .lock()
+                    .unwrap()
+                    .push(http_request_body(&request).to_string());
+                let status_text = if status == 200 { "OK" } else { "Bad Request" };
+                let response = format!(
+                    "HTTP/1.1 {status} {status_text}\r\ncontent-type: application/json\r\nconnection: close\r\ncontent-length: {}\r\n\r\n{body}",
+                    body.len()
+                );
+                stream.write_all(response.as_bytes()).await.unwrap();
+            }
+        });
+        format!("http://{addr}")
+    }
+
+    fn http_request_body(request: &str) -> &str {
+        request
+            .split_once("\r\n\r\n")
+            .map(|(_, body)| body)
+            .unwrap_or("")
     }
 
     async fn spawn_silent_responses_server() -> String {
@@ -2464,6 +2652,35 @@ mod tests {
             input
                 .iter()
                 .filter(|item| item["type"] == "function_call")
+                .count(),
+            0
+        );
+        assert_eq!(input.len(), 2);
+        assert_eq!(input[1]["role"], "user");
+    }
+
+    #[test]
+    fn skips_tool_results_without_matching_calls() {
+        let mut request = request();
+        request.transcript = vec![
+            TranscriptItem::UserMessage(UserMessage::text("continue")),
+            TranscriptItem::ToolResult(ToolResultRecord {
+                id: "call_orphan".to_string(),
+                name: Some("echo".to_string()),
+                result: "stale output".to_string(),
+                display_payload: None,
+                is_error: false,
+            }),
+            TranscriptItem::UserMessage(UserMessage::text("continue again")),
+        ];
+
+        let body = OpenAiResponsesEngine::map_request(&request);
+        let input = body["input"].as_array().unwrap();
+
+        assert_eq!(
+            input
+                .iter()
+                .filter(|item| item["type"] == "function_call_output")
                 .count(),
             0
         );
