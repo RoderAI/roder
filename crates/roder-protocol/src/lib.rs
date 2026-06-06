@@ -1049,6 +1049,186 @@ pub struct FsReadDirectoryResponse {
     pub entries: Vec<FsReadDirectoryEntry>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkspaceFilesStatusParams {
+    pub workspace_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub root_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub enum WorkspaceFilesIndexState {
+    Missing,
+    Building,
+    Ready,
+    /// Reserved: the index is built but known to be out of date. The server
+    /// does not emit this yet (watcher-backed staleness is future work); clients
+    /// should treat it like `Ready` and may offer a manual rebuild.
+    Stale,
+    Failed,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkspaceFilesRootStatus {
+    pub root_id: String,
+    pub root_name: String,
+    pub state: WorkspaceFilesIndexState,
+    pub stale: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub file_count: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub directory_count: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub build_time_ms: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub indexed_at_ms: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub message: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkspaceFilesStatus {
+    pub workspace_id: String,
+    pub state: WorkspaceFilesIndexState,
+    pub stale: bool,
+    pub roots: Vec<WorkspaceFilesRootStatus>,
+    pub file_count: u64,
+    pub directory_count: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub message: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkspaceFilesStatusResult {
+    pub status: WorkspaceFilesStatus,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkspaceFilesRebuildParams {
+    pub workspace_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub root_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkspaceFilesRebuildResult {
+    pub status: WorkspaceFilesStatus,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkspaceFilesChildrenParams {
+    pub workspace_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub root_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub path: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub enum WorkspaceFileKind {
+    Directory,
+    File,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkspaceFileEntry {
+    pub root_id: String,
+    pub root_name: String,
+    pub path: String,
+    pub name: String,
+    pub kind: WorkspaceFileKind,
+    pub has_children: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub size: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub modified_ms: Option<u64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkspaceFilesChildrenResult {
+    pub status: WorkspaceFilesStatus,
+    pub entries: Vec<WorkspaceFileEntry>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkspaceFilesQueryParams {
+    pub workspace_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub root_id: Option<String>,
+    pub query: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub limit: Option<usize>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkspaceFileQueryMatch {
+    pub entry: WorkspaceFileEntry,
+    pub score: i64,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub match_positions: Vec<usize>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkspaceFilesQueryResult {
+    pub status: WorkspaceFilesStatus,
+    pub matches: Vec<WorkspaceFileQueryMatch>,
+    pub indexed_file_count: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkspaceFilesReadParams {
+    pub workspace_id: String,
+    pub root_id: String,
+    pub path: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub offset: Option<usize>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub limit: Option<usize>,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub enum WorkspaceFilesReadEncoding {
+    Utf8,
+    Binary,
+    Unsupported,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkspaceFilesReadResult {
+    pub entry: WorkspaceFileEntry,
+    pub encoding: WorkspaceFilesReadEncoding,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub text: Option<String>,
+    pub offset: usize,
+    pub limit: usize,
+    pub total_bytes: u64,
+    pub has_more: bool,
+    pub truncated: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkspaceFilesStatusNotification {
+    pub status: WorkspaceFilesStatus,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct DesignWorkspaceParams {
@@ -3798,6 +3978,70 @@ mod tests {
         assert_eq!(value["status"]["stats"]["cachedEmbeddingCount"], 1);
         assert!(value["status"].get("store_path").is_none());
         assert!(value["status"]["stats"].get("chunk_count").is_none());
+    }
+
+    #[test]
+    fn workspace_files_protocol_structs_use_workspace_scoped_locators() {
+        let children: WorkspaceFilesChildrenParams = serde_json::from_value(serde_json::json!({
+            "workspaceId": "ws-1",
+            "rootId": "root-1",
+            "path": "roadmap"
+        }))
+        .unwrap();
+        assert_eq!(children.workspace_id, "ws-1");
+        assert_eq!(children.root_id.as_deref(), Some("root-1"));
+        assert_eq!(children.path.as_deref(), Some("roadmap"));
+
+        let status = WorkspaceFilesStatus {
+            workspace_id: "ws-1".to_string(),
+            state: WorkspaceFilesIndexState::Ready,
+            stale: false,
+            roots: vec![WorkspaceFilesRootStatus {
+                root_id: "root-1".to_string(),
+                root_name: "repo".to_string(),
+                state: WorkspaceFilesIndexState::Ready,
+                stale: false,
+                file_count: Some(1),
+                directory_count: Some(1),
+                build_time_ms: Some(4),
+                indexed_at_ms: Some(42),
+                message: None,
+            }],
+            file_count: 1,
+            directory_count: 1,
+            message: None,
+        };
+        let entry = WorkspaceFileEntry {
+            root_id: "root-1".to_string(),
+            root_name: "repo".to_string(),
+            path: "roadmap/status.md".to_string(),
+            name: "status.md".to_string(),
+            kind: WorkspaceFileKind::File,
+            has_children: false,
+            size: Some(12),
+            modified_ms: Some(99),
+        };
+        let result = WorkspaceFilesQueryResult {
+            status,
+            matches: vec![WorkspaceFileQueryMatch {
+                entry,
+                score: 120,
+                match_positions: vec![0, 8],
+            }],
+            indexed_file_count: 1,
+        };
+        let value = serde_json::to_value(result).unwrap();
+
+        assert_eq!(value["status"]["workspaceId"], "ws-1");
+        assert_eq!(value["status"]["roots"][0]["rootId"], "root-1");
+        assert_eq!(value["matches"][0]["entry"]["rootName"], "repo");
+        assert_eq!(value["matches"][0]["entry"]["kind"], "file");
+        assert_eq!(
+            value["matches"][0]["matchPositions"],
+            serde_json::json!([0, 8])
+        );
+        assert!(value["matches"][0]["entry"].get("root_id").is_none());
+        assert!(value.get("indexed_file_count").is_none());
     }
 
     #[test]

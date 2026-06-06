@@ -5,11 +5,11 @@ use roder_api::extension::{
     ExtensionManifest, ExtensionRegistryBuilder, ProvidedService, RoderExtension,
 };
 use roder_api::version_control::{
-    VcsChangedContentPage, VcsChangedFile, VcsDetectionClaim, VcsError, VcsLineOfWork,
-    VcsLineSwitchRequest, VcsListChangesRequest, VcsOperationResult, VcsProvider, VcsProviderId,
-    VcsReadChangedContentRequest, VcsRestoreRequest, VcsSelectionRequest, VcsSnapshot,
-    VcsSnapshotCreateRequest, VcsStatus, VcsStatusRequest, VcsStatusWithChanges, VcsSyncRequest,
-    VcsWorkspace,
+    VcsChangedContentPage, VcsChangedFile, VcsDetectionClaim, VcsError, VcsFileListing,
+    VcsLineOfWork, VcsLineSwitchRequest, VcsListChangesRequest, VcsListFilesRequest,
+    VcsOperationResult, VcsProvider, VcsProviderId, VcsReadChangedContentRequest,
+    VcsRestoreRequest, VcsSelectionRequest, VcsSnapshot, VcsSnapshotCreateRequest, VcsStatus,
+    VcsStatusRequest, VcsStatusWithChanges, VcsSyncRequest, VcsWorkspace,
 };
 use semver::Version;
 
@@ -88,6 +88,19 @@ impl VcsProvider for GitProvider {
     ) -> Result<Vec<VcsChangedFile>, VcsError> {
         tokio::task::spawn_blocking(move || {
             GitRepo::open(&request.workspace_root, GIT_VCS_PROVIDER_ID.to_string())?.list_changes()
+        })
+        .await
+        .map_err(join_error)?
+    }
+
+    async fn list_files(&self, request: VcsListFilesRequest) -> Result<VcsFileListing, VcsError> {
+        tokio::task::spawn_blocking(move || {
+            let files = GitRepo::open(&request.workspace_root, GIT_VCS_PROVIDER_ID.to_string())?
+                .list_files(&request.workspace_root)?;
+            Ok(VcsFileListing {
+                provider_id: GIT_VCS_PROVIDER_ID.to_string(),
+                files,
+            })
         })
         .await
         .map_err(join_error)?

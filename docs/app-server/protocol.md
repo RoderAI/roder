@@ -17,8 +17,13 @@ for app, TUI, CLI, SDK, and sibling clients.
 | `turn/steer` | steer active turn | Send additional user input to the active turn, enforcing `expectedTurnId` when provided. | Requires an active turn. |
 | `turn/interrupt` | stop button | Interrupt the active turn for a thread; `turnId` is optional when there is a single active turn. | Uses the runtime interrupt path. |
 | `model/list` | model picker | Return visible model descriptors with `id`, `name`, `modelProvider`, reasoning efforts, and default flags. | Protocol model-picker data. |
-| `fs/readFile` | file preview | Read an absolute host path and return base64 bytes as `dataBase64`. | Read-only filesystem method. |
-| `fs/readDirectory` | file browser | List direct children of an absolute host directory with `fileName`, `isDirectory`, and `isFile`. | Read-only filesystem method. |
+| `workspace/files/status` | file tree/search bootstrap | Read app-server-owned file-index state for a workspace and optional root. | Returns `missing`, `building`, `ready`, `stale`, or `failed`. |
+| `workspace/files/rebuild` | file tree/search refresh | Build or refresh the cached workspace file index. | Emits `workspace/files/statusChanged`; cache is keyed by canonical root, not selected root order. |
+| `workspace/files/children` | file tree expansion | List registered workspace roots or direct children under a root-relative directory. | Canonical file-tree method; paths are relative and scoped to registered roots. |
+| `workspace/files/query` | quick-open and mentions | Ranked fuzzy match over indexed workspace files. | Result limits do not cap the underlying index. |
+| `workspace/files/read` | file preview | Read bounded UTF-8 text, binary metadata, or unsupported-encoding metadata for an indexed workspace file. | Use with `rootId` and root-relative `path`. |
+| `fs/readFile` | low-level host file read | Read an absolute host path and return base64 bytes as `dataBase64`. | Not the workspace file-preview API. |
+| `fs/readDirectory` | low-level host directory read | List direct children of an absolute host directory with `fileName`, `isDirectory`, and `isFile`. | File browsers should not recursively call this; use `workspace/files/children`. |
 | `command/exec` | one-off command runner | Run an argv vector with optional absolute `cwd`, env overrides, timeout, output cap, and optional `command/exec/outputDelta` streaming. | PTY, streaming stdin, resize, write, and terminate are deferred. |
 | `processes/list`, `processes/get`, `processes/stop`, `processes/stopAll`, `processes/subscribe` | process monitor | Inspect and stop Roder-owned command, task, and remote-runner processes. | Does not enumerate arbitrary host OS processes. |
 | `skills/list`, `skills/read`, `skills/setEnabled`, `skills/setExposure` | skills manager | List/read skill descriptors and persist canonical enablement/exposure rules. | Mutating by ambiguous skill name returns an invalid-params error; select by canonical path. |

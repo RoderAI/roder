@@ -117,6 +117,33 @@ impl GitRepo {
         self.changed_files(&base.merge_base)
     }
 
+    /// Enumerate tracked and untracked-but-non-ignored files under `scope`,
+    /// returning absolute paths. `scope` is used as a git pathspec so a
+    /// workspace root that is a subdirectory of the repository only sees its
+    /// own files.
+    pub(crate) fn list_files(&self, scope: &Path) -> Result<Vec<PathBuf>, VcsError> {
+        let scope_arg = scope.to_string_lossy().to_string();
+        let output = self.git(
+            &[
+                "-c",
+                "core.quotePath=false",
+                "--literal-pathspecs",
+                "ls-files",
+                "--cached",
+                "--others",
+                "--exclude-standard",
+                "--",
+                &scope_arg,
+            ],
+            VcsOperation::FileList,
+        )?;
+        Ok(output
+            .lines()
+            .filter(|line| !line.trim().is_empty())
+            .map(|relative| self.root.join(relative))
+            .collect())
+    }
+
     pub(crate) fn list_changes_against_base(
         &self,
         base_sha: &str,
@@ -861,4 +888,58 @@ fn git_at(
 fn untracked_file_text(path: &Path) -> std::io::Result<Option<String>> {
     let bytes = std::fs::read(path)?;
     Ok(String::from_utf8(bytes).ok())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn unique_temp(prefix: &str) -> PathBuf {
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        std::env::temp_dir().join(format!("{prefix}-{}-{nanos}", std::process::id()))
+    }
+
+    fn run_git(root: &Path, args: &[&str]) {
+        let status = Command::new("git")
+            .arg("-C")
+            .arg(root)
+            .args(args)
+            .status()
+            .unwrap();
+        assert!(status.success(), "git {args:?} failed");
+    }
+
+    #[test]
+    fn list_files_includes_tracked_and_untracked_but_not_ignored() {
+        if Command::new("git").arg("--version").output().is_err() {
+            return;
+        }
+        let root = unique_temp("roder-ext-git-list-files");
+        std::fs::create_dir_all(&root).unwrap();
+        run_git(&root, &["init"]);
+        std::fs::write(root.join(".gitignore"), "ignored.txt\n").unwrap();
+        std::fs::write(root.join("tracked.txt"), "tracked").unwrap();
+        std::fs::write(root.join("untracked.txt"), "untracked").unwrap();
+        std::fs::write(root.join("ignored.txt"), "ignored").unwrap();
+        run_git(&root, &["add", ".gitignore", "tracked.txt"]);
+
+        let repo = GitRepo::open(&root, "git".to_string()).unwrap();
+        let files = repo.list_files(&root).unwrap();
+        let names = files
+            .iter()
+            .filter_map(|path| path.file_name())
+            .map(|name| name.to_string_lossy().to_string())
+            .collect::<BTreeSet<_>>();
+
+        assert!(names.contains(".gitignore"));
+        assert!(names.contains("tracked.txt"));
+        assert!(names.contains("untracked.txt"));
+        assert!(!names.contains("ignored.txt"));
+        assert!(files.iter().all(|path| path.is_absolute()));
+
+        let _ = std::fs::remove_dir_all(root);
+    }
 }
