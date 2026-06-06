@@ -27,7 +27,10 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use time::OffsetDateTime;
 
-use crate::ground::{GroundingAudit, audit_grounding, build_ground_index, is_walkthrough_question};
+use crate::ground::{
+    GroundIndex, GroundingAudit, audit_grounding, build_ground_index, is_walkthrough_question,
+    safe_specifics,
+};
 use crate::model::{AsOf, TemporalFact};
 use crate::reason::{Reasoner, extract_json};
 use crate::store::{GbrainStore, RecallParams};
@@ -249,20 +252,49 @@ impl<R: Reasoner> DecisionAgent<R> {
                 .await?;
             // Free deterministic guard: drop slug-shaped cites not in the pool.
             let draft = strip_phantom_cites(&draft, &evidence);
-            // Zero-LLM grounding audit: prove which specifics are absent from
-            // EVERY record (fabricated) vs absent from the record they CITE
-            // (misattributed) — handed to the strip as a proven flag list.
-            let audit = if std::env::var("GBRAIN_NO_GROUNDING_AUDIT").is_ok() {
-                GroundingAudit::default()
-            } else {
-                let idx = build_ground_index(&evidence);
-                audit_grounding(question, &draft, &idx, is_walkthrough_question(question))
+            let idx = build_ground_index(&evidence);
+            let walk = is_walkthrough_question(question);
+            let audit_disabled = std::env::var("GBRAIN_NO_GROUNDING_AUDIT").is_ok();
+            let audit = |a: &str| {
+                if audit_disabled {
+                    GroundingAudit::default()
+                } else {
+                    audit_grounding(question, a, &idx, walk)
+                }
             };
-            // One cheap DELETE-ONLY faithfulness audit over the same records —
-            // removes fabricated/irrelevant specifics, keeps faithful content.
+
+            // Pass 1: lenient, deterministic-flag-driven specific strip.
             self.progress.step("strip", "audit");
-            self.call("strip", STRIP_SYS, &strip_prompt(question, &draft, &evidence, &audit))
-                .await?
+            let stripped = self
+                .call("strip", STRIP_SYS, &strip_prompt(question, &draft, &evidence, &audit(&draft)))
+                .await?;
+            let stripped = strip_phantom_cites(&stripped, &evidence);
+
+            // Pass 2 (default ON; GBRAIN_FAITHFUL_VERIFY=0 -> exact v4): adversarial
+            // DELETE-ONLY concept/causal verify — the dimension the audit + strip
+            // miss. A one-way ratchet: accepted only if it preserved every grounded
+            // specific (else we keep the strip output), so overall cannot regress.
+            let verify_off = std::env::var("GBRAIN_FAITHFUL_VERIFY")
+                .map(|v| v == "0" || v.eq_ignore_ascii_case("off"))
+                .unwrap_or(false);
+            if verify_off {
+                stripped
+            } else {
+                self.progress.step("verify-faithful", "adversarial");
+                let verified = self
+                    .call(
+                        "verify-faithful",
+                        VERIFY_FAITHFUL_SYS,
+                        &faithful_verify_prompt(question, &stripped, &evidence, &audit(&stripped)),
+                    )
+                    .await?;
+                let verified = strip_phantom_cites(&verified, &evidence);
+                if accept_faithful_pass(question, &stripped, &verified, &idx, walk) {
+                    verified
+                } else {
+                    stripped
+                }
+            }
         };
 
         // Provenance = the cited records that actually appear in the answer.
@@ -287,7 +319,16 @@ impl<R: Reasoner> DecisionAgent<R> {
             verified: Vec::new(),
             dropped: Vec::new(),
             contradictions,
-            llm_calls: if evidence_empty { 0 } else { 2 },
+            llm_calls: if evidence_empty {
+                0
+            } else if std::env::var("GBRAIN_FAITHFUL_VERIFY")
+                .map(|v| v == "0" || v.eq_ignore_ascii_case("off"))
+                .unwrap_or(false)
+            {
+                2
+            } else {
+                3
+            },
             input_tokens: self.tokens_in.load(Ordering::Relaxed),
             output_tokens: self.tokens_out.load(Ordering::Relaxed),
         };
@@ -601,6 +642,34 @@ records you read first agree. If a named party's position is genuinely absent fr
 in the retrieved records — do NOT invent it, and do NOT assume the parties agreed unless a record explicitly \
 shows agreement.";
 
+const VERIFY_FAITHFUL_SYS: &str = "You are an ADVERSARIAL FAITHFULNESS VERIFIER running a final DELETE-ONLY \
+pass. You receive numbered RECORDS (the ONLY source of truth) and a DRAFT whose specific values were already \
+checked. Your sole job: DELETE every clause whose CONTENT cannot be traced to a record — even when it names no \
+date or number — while KEEPING every clause that paraphrases record content. METHOD — read ONE clause at a \
+time and ask: does at least one record actually state this concept / event / relationship? A faithful \
+paraphrase preserves a record's meaning and IS supported — keep it; you are NOT matching words and you must \
+NEVER require a verbatim quote. Treat as GUILTY-until-proven and delete unless you can point to a record \
+stating its content: (a) a FRAMING NOUN or distinctive named thing the records never introduce — a tool, \
+system, document, channel, market, meeting, audit, review, thread, prototype, anomaly, or product/tool name \
+(e.g. 'a Slack thread', 'investor pressure', 'the freight-forwarding market', 'a mid-morning engineering-lead \
+meeting', 'Figma prototype', 'Confluence path', 'Snowflake'); (b) a CAUSAL or motive claim ('because', 'due \
+to', 'driven by', 'as a result of', 'in order to', 'the reason was'); (c) an ATTRIBUTED event / quote / \
+participant LIST (someone said / flagged / confirmed / attended / proposed X) — a record of that exact event \
+must exist; (d) any date, time, number, percentage, money/credit/rate figure, version, or person not in the \
+records. MISATTRIBUTION is ungrounded too: if a value / event / link IS in some record but the draft attaches \
+it to a DIFFERENT actor, date, record, or event than that record states, delete the misattached part. If \
+deleting a fragment leaves a broken sentence, delete the whole sentence. HARD CONSTRAINTS — you are an EDITOR, \
+not an author: ONLY delete; NEVER add, rephrase, reorder, merge, or 'correct' anything; every word you keep \
+must be copied verbatim from the DRAFT; NEVER introduce a date, name, number, [SLUG], or word not already in \
+the draft; keep correct [SLUG] cites on their facts and NEVER move a [SLUG]. Do NOT delete supported content \
+that answers the question — removing a grounded fact is as wrong as keeping a fabrication; when a clause is \
+grounded, keep it untouched. Do NOT invent or assert a supersession, a resolution, or 'no contradiction'; for \
+conflict questions keep only each party's stated position and say a position is 'not in the retrieved records' \
+if no record states it. The prompt may list GROUNDING-AUDIT spans already proven absent or misattributed — \
+delete each and any clause depending on it. If after deleting nothing grounded remains, output exactly: The \
+available records do not contain enough evidence to answer this. Otherwise output ONLY the edited answer text \
+— no preamble, no notes, no claim list.";
+
 const STRIP_SYS: &str = "You are a STRICT faithfulness editor. You receive numbered RECORDS and a DRAFT \
 answer. Return a CORRECTED answer that keeps every well-supported statement VERBATIM but removes anything the \
 records do not support. RULES: 1) Check EVERY specific in the draft — each proper name, exact date, clock time \
@@ -811,6 +880,70 @@ fn strip_prompt(
     evidence: &[EvidenceItem],
     audit: &GroundingAudit,
 ) -> String {
+    audit_edit_prompt(
+        question,
+        draft,
+        evidence,
+        audit,
+        "DRAFT ANSWER TO AUDIT (correct it; keep supported parts verbatim):",
+    )
+}
+
+/// Accept the extra delete-only verify pass ONLY if it cannot have hurt coverage:
+/// it stayed delete-only, did not collapse, preserved EVERY correctly-attributed
+/// grounded specific, and introduced no new deterministic fabrication. Otherwise
+/// the caller keeps the strip output — so the extra pass is a one-way faithfulness
+/// ratchet that can never regress overall below the v4 strip's coverage floor.
+fn accept_faithful_pass(
+    question: &str,
+    before: &str,
+    after: &str,
+    idx: &GroundIndex,
+    walk: bool,
+) -> bool {
+    let nz = |s: &str| s.chars().filter(|c| !c.is_whitespace()).count();
+    let (a, b) = (nz(before), nz(after));
+    if b == 0 || b > a {
+        return false; // emptied, or grew => not delete-only
+    }
+    if a >= 80 && (b as f32) < 0.45 * (a as f32) {
+        return false; // removed >55% => over-prune
+    }
+    let after_lc = after.to_lowercase();
+    for g in safe_specifics(question, before, idx, walk) {
+        if !after_lc.contains(&g.to_lowercase()) {
+            return false; // dropped a correctly-attributed grounded fact
+        }
+    }
+    let f_before = audit_grounding(question, before, idx, walk).fabricated.len();
+    let f_after = audit_grounding(question, after, idx, walk).fabricated.len();
+    f_after <= f_before
+}
+
+/// The adversarial DELETE-ONLY faithfulness verify prompt (call #3).
+fn faithful_verify_prompt(
+    question: &str,
+    draft: &str,
+    evidence: &[EvidenceItem],
+    audit: &GroundingAudit,
+) -> String {
+    audit_edit_prompt(
+        question,
+        draft,
+        evidence,
+        audit,
+        "DRAFT TO VERIFY (delete every clause whose content is not stated by a record; keep grounded paraphrases verbatim):",
+    )
+}
+
+/// Shared record + grounding-audit-block renderer for both edit passes.
+fn audit_edit_prompt(
+    question: &str,
+    draft: &str,
+    evidence: &[EvidenceItem],
+    audit: &GroundingAudit,
+    draft_header: &str,
+) -> String {
     let mut s = format!("Question: {question}\n\nRecords:\n");
     for e in evidence {
         s.push_str(&format!(
@@ -821,7 +954,9 @@ fn strip_prompt(
             truncate(&e.text, 1200),
         ));
     }
-    s.push_str("\nDRAFT ANSWER TO AUDIT (correct it; keep supported parts verbatim):\n");
+    s.push('\n');
+    s.push_str(draft_header);
+    s.push('\n');
     s.push_str(draft);
     if !audit.fabricated.is_empty() {
         s.push_str(
@@ -855,7 +990,7 @@ fn strip_prompt(
             s.push_str(&format!("  - [{c}]\n"));
         }
     }
-    s.push_str("\n\nReturn ONLY the corrected answer.");
+    s.push_str("\n\nReturn ONLY the edited answer.");
     s
 }
 

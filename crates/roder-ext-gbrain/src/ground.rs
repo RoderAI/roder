@@ -175,6 +175,9 @@ pub fn audit_grounding(
             for q in quotes_in(line) {
                 check_span(q, "quote", false, &scope, idx, &mut fab, &mut mis);
             }
+            for n in numbers_in(line) {
+                check_span(n, "figure", false, &scope, idx, &mut fab, &mut mis);
+            }
         }
         for nm in grounded_name_spans(line) {
             if ql.contains(&nm.to_lowercase()) {
@@ -322,6 +325,87 @@ fn quotes_in(s: &str) -> Vec<String> {
         k += 2;
     }
     out
+}
+
+/// Distinctive numeric specifics with near-zero surface variance: slash-rate
+/// tokens ("100 req/min", "5/s") and version strings ("v1.2", "2.0.1"). Bare
+/// integers, "N days"/"N-day", %, and $ are intentionally NOT extracted here
+/// (high surface variance — handled leniently by the LLM passes) so a grounded
+/// figure is never force-removed over a hyphenation/wording difference.
+fn clean_num(w: &str) -> &str {
+    w.trim_matches(|c: char| !(c.is_ascii_alphanumeric() || c == '/' || c == '.'))
+}
+
+fn numbers_in(s: &str) -> Vec<String> {
+    let toks: Vec<&str> = s.split_whitespace().collect();
+    let mut out = Vec::new();
+    for (i, w) in toks.iter().enumerate() {
+        let t = clean_num(w);
+        if t.is_empty() {
+            continue;
+        }
+        let vbody = t.strip_prefix('v').or_else(|| t.strip_prefix('V')).unwrap_or(t);
+        let is_version = vbody.split('.').count() >= 2
+            && vbody.split('.').all(|p| !p.is_empty() && p.chars().all(|c| c.is_ascii_digit()));
+        if is_version {
+            out.push(t.to_lowercase());
+            continue;
+        }
+        if t.chars().all(|c| c.is_ascii_digit() || c == '.')
+            && t.chars().any(|c| c.is_ascii_digit())
+            && let Some(n) = toks.get(i + 1)
+        {
+            let nu = clean_num(n);
+            if nu.contains('/') && nu.chars().any(|c| c.is_ascii_alphabetic()) {
+                out.push(format!("{t} {nu}").to_lowercase());
+            }
+        }
+    }
+    out
+}
+
+/// Specifics in `answer` grounded IN THEIR CITED SCOPE — present in the pool and
+/// NOT flagged fabricated/misattributed. The faithful-verify guard requires all
+/// of these to survive, so the extra delete-only pass can only remove ungrounded
+/// narrative, never a correctly-attributed fact (the coverage floor).
+pub fn safe_specifics(question: &str, answer: &str, idx: &GroundIndex, walk: bool) -> Vec<String> {
+    let audit = audit_grounding(question, answer, idx, walk);
+    let flagged: HashSet<String> = audit
+        .fabricated
+        .iter()
+        .chain(audit.misattributed.iter())
+        .map(|f| f.span.to_lowercase())
+        .collect();
+    let mut out: Vec<String> = Vec::new();
+    let mut keep = |span: String, in_pool: bool, out: &mut Vec<String>| {
+        if in_pool && !flagged.contains(&span.to_lowercase()) {
+            out.push(span);
+        }
+    };
+    for raw in answer.lines() {
+        let line = raw.trim();
+        if line.is_empty() || is_heading(line) {
+            continue;
+        }
+        for d in iso_dates_in(line) {
+            let p = idx.pool_dates.contains(&d);
+            keep(d, p, &mut out);
+        }
+        for t in clock_times_in(line) {
+            let p = idx.pool_lc.contains(&norm(&t));
+            keep(t, p, &mut out);
+        }
+        for n in numbers_in(line) {
+            let p = idx.pool_lc.contains(&n);
+            keep(n, p, &mut out);
+        }
+        for nm in grounded_name_spans(line) {
+            let p = idx.pool_lc.contains(&nm.to_lowercase());
+            keep(nm, p, &mut out);
+        }
+    }
+    let mut seen = HashSet::new();
+    out.into_iter().filter(|s| seen.insert(s.to_lowercase())).collect()
 }
 
 const MONTHS: &[&str] = &[
