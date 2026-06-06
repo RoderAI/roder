@@ -27,6 +27,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use time::OffsetDateTime;
 
+use crate::ground::{GroundingAudit, audit_grounding, build_ground_index, is_walkthrough_question};
 use crate::model::{AsOf, TemporalFact};
 use crate::reason::{Reasoner, extract_json};
 use crate::store::{GbrainStore, RecallParams};
@@ -248,10 +249,19 @@ impl<R: Reasoner> DecisionAgent<R> {
                 .await?;
             // Free deterministic guard: drop slug-shaped cites not in the pool.
             let draft = strip_phantom_cites(&draft, &evidence);
+            // Zero-LLM grounding audit: prove which specifics are absent from
+            // EVERY record (fabricated) vs absent from the record they CITE
+            // (misattributed) — handed to the strip as a proven flag list.
+            let audit = if std::env::var("GBRAIN_NO_GROUNDING_AUDIT").is_ok() {
+                GroundingAudit::default()
+            } else {
+                let idx = build_ground_index(&evidence);
+                audit_grounding(question, &draft, &idx, is_walkthrough_question(question))
+            };
             // One cheap DELETE-ONLY faithfulness audit over the same records —
             // removes fabricated/irrelevant specifics, keeps faithful content.
             self.progress.step("strip", "audit");
-            self.call("strip", STRIP_SYS, &strip_prompt(question, &draft, &evidence))
+            self.call("strip", STRIP_SYS, &strip_prompt(question, &draft, &evidence, &audit))
                 .await?
         };
 
@@ -565,19 +575,25 @@ what AND why AND which alternatives AND current/resolution status) when the reco
 everything else. Tangential or 'maybe relevant' facts are WRONG, not thorough — every sentence must earn its \
 place by answering part of the question. Length should match what the question needs: don't pad, don't drop a \
 relevant part. 2) FAITHFUL — every specific (proper name, exact date, clock time, number, percentage, money/ \
-credit figure, version number, quoted phrase, causal link) MUST be copyable from a record; write [SLUG] right \
-after it. If a specific is not in the records, OMIT it — never guess or infer. Do NOT add clock timestamps \
-(HH:MM), severity labels, penalty/credit/revenue figures, or attendee names not written in a record, and \
-never carry a person or date from one record onto a fact stated by a different record. 3) If the records \
+credit figure, version number, quoted phrase, causal link) MUST be copyable from a record; write the [SLUG] of \
+the ONE record that contains a specific immediately after THAT specific. If a sentence mixes specifics from \
+two records, split it so each specific sits beside the record that states it. If a specific is not in the \
+records, OMIT it — never guess or infer. Do NOT add clock timestamps (HH:MM), severity labels, penalty/credit/ \
+revenue figures, or attendee names not written in a record, and never carry a person or date from one record \
+onto a fact stated by a different record. 3) If the records \
 genuinely do not answer, say so in one sentence. 4) 'now'/'currently' => give the most recent/current fact; \
 'as of <date>' => state what was known THEN, then note what has SINCE changed. Report a change ONLY where a \
 record EXPLICITLY states that a specific earlier fact was replaced/revised/superseded — do NOT treat every \
 later record as a change, do NOT infer or enumerate a sequence of changes the records do not state, and do \
-NOT invent dates/IDs for changes. If no record explicitly states a change to a fact, say it is unchanged / \
-still in effect. 5) ONLY when explicitly \
+NOT invent dates/IDs for changes. Words like 'subsequently / later / then / a further change / phase / \
+superseded' are FORBIDDEN unless a single record's text literally states the earlier fact was replaced (and \
+that record's [SLUG] must carry the statement). If no record explicitly states a change to a fact, say it is \
+unchanged / still in effect. 5) ONLY when explicitly \
 asked to 'walk through' or 'justify with evidence', list each supporting record with its [SLUG], labeled \
 direct (a first-hand message/email by the actor) or inferred (meeting notes, report, summary, third-party). \
-Otherwise do NOT enumerate records. 6) CONFLICT/DISPUTE questions: report EACH named party's own position \
+The records belong to several distinct events (event id = the slug without its final -NNN segment); ONE \
+conclusion is established by ONE event's artifacts — list only those, never add records from other events even \
+if topically similar, and never invent an extra case/incident. Otherwise do NOT enumerate records. 6) CONFLICT/DISPUTE questions: report EACH named party's own position \
 separately with its date and that party's [SLUG]; state whether the positions actually conflict; give \
 resolution status as exactly one of resolved / superseded / still unresolved with the resolving record's \
 [SLUG], or 'no retrieved record resolves it'. NEVER conclude 'no contradiction exists' merely because the \
@@ -600,8 +616,15 @@ faithful summaries. 3) NEVER add a fact, name, date, number, or [SLUG] not alrea
 rephrase supported content; keep correct [SLUG] cites attached to their facts. 4) CONFLICT/DISPUTE answers: if \
 the draft claims 'no contradiction exists' or invents one party's position or a resolution the records do not \
 state, correct it — state only what the records show, and say a party's position is 'not in the retrieved \
-records' if it is genuinely absent; never invent the missing side or a resolution. 5) Keep it relevant and \
-output ONLY the corrected answer text, no preamble or notes.";
+records' if it is genuinely absent; never invent the missing side or a resolution. 5) AUTOMATED GROUNDING \
+AUDIT: the prompt may list spans that were string-checked against the records. The 'FABRICATED (absent from \
+every record)' list is AUTHORITATIVE — remove each listed span and any clause or sentence that depends on it; \
+never re-add or relabel it. EXCEPTION: keep a span only if it is plainly the SAME value in a trivially \
+different surface form already present in a record. For the 'MISATTRIBUTED' list, re-read the EXACT [SLUG] \
+beside the span; if that record does not contain the value, delete the value (it belongs to a different \
+record) — do not move the [SLUG]. For 'OFF-CLUSTER records' in a walk-through answer, drop those records' \
+bullets unless their own text directly states the conclusion being justified. 6) Keep it relevant and output \
+ONLY the corrected answer text, no preamble or notes.";
 
 fn concise_prompt(
     question: &str,
@@ -782,7 +805,12 @@ fn strip_phantom_cites(answer: &str, evidence: &[EvidenceItem]) -> String {
     out
 }
 
-fn strip_prompt(question: &str, draft: &str, evidence: &[EvidenceItem]) -> String {
+fn strip_prompt(
+    question: &str,
+    draft: &str,
+    evidence: &[EvidenceItem],
+    audit: &GroundingAudit,
+) -> String {
     let mut s = format!("Question: {question}\n\nRecords:\n");
     for e in evidence {
         s.push_str(&format!(
@@ -795,6 +823,38 @@ fn strip_prompt(question: &str, draft: &str, evidence: &[EvidenceItem]) -> Strin
     }
     s.push_str("\nDRAFT ANSWER TO AUDIT (correct it; keep supported parts verbatim):\n");
     s.push_str(draft);
+    if !audit.fabricated.is_empty() {
+        s.push_str(
+            "\n\nGROUNDING AUDIT — FABRICATED (string-checked: absent from EVERY record). \
+             Remove each span and any clause that depends on it:\n",
+        );
+        for f in &audit.fabricated {
+            s.push_str(&format!("  - \"{}\" ({})\n", f.span, f.kind));
+        }
+    }
+    if !audit.misattributed.is_empty() {
+        s.push_str(
+            "\nGROUNDING AUDIT — MISATTRIBUTED (present in some record but NOT in the [SLUG] cited \
+             beside it). Re-check each against its exact cited record; delete the value if absent there:\n",
+        );
+        for f in &audit.misattributed {
+            s.push_str(&format!(
+                "  - \"{}\" ({}) cited to [{}]\n",
+                f.span,
+                f.kind,
+                f.cite.as_deref().unwrap_or("?")
+            ));
+        }
+    }
+    if !audit.off_cluster.is_empty() {
+        s.push_str(
+            "\nGROUNDING AUDIT — OFF-CLUSTER records (different event than the conclusion). \
+             Drop their bullets unless their text states the conclusion:\n",
+        );
+        for c in &audit.off_cluster {
+            s.push_str(&format!("  - [{c}]\n"));
+        }
+    }
     s.push_str("\n\nReturn ONLY the corrected answer.");
     s
 }

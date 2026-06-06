@@ -21,6 +21,7 @@ use semver::Version;
 pub mod agent;
 pub mod context;
 pub mod embed;
+pub mod ground;
 pub mod model;
 pub mod reason;
 pub mod render;
