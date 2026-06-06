@@ -78,6 +78,7 @@ roder-ext-disk-context = { path = "crates/roder-ext-disk-context" }
 roder-ext-gemini = { path = "crates/roder-ext-gemini" }
 roder-ext-firecrawl-search = { path = "crates/roder-ext-firecrawl-search" }
 roder-ext-git = { path = "crates/roder-ext-git" }
+roder-ext-inference-router = { path = "crates/roder-ext-inference-router" }
 roder-ext-jsonl-thread-store = { path = "crates/roder-ext-jsonl-thread-store" }
 roder-ext-memory = { path = "crates/roder-ext-memory" }
 roder-ext-notify-desktop = { path = "crates/roder-ext-notify-desktop" }

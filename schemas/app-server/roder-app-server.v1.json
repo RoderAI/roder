@@ -354,6 +354,81 @@
       "sideEffect": "localState"
     },
     {
+      "method": "design/batch_get",
+      "paramsType": "DesignBatchGetParams",
+      "resultType": "DesignBatchGetResult",
+      "stability": "stable",
+      "featureGroup": "design",
+      "idempotency": "idempotent",
+      "sideEffect": "readOnly"
+    },
+    {
+      "method": "design/export_nodes",
+      "paramsType": "DesignExportNodesParams",
+      "resultType": "DesignExportNodesResult",
+      "stability": "stable",
+      "featureGroup": "design",
+      "idempotency": "nonIdempotent",
+      "sideEffect": "localState"
+    },
+    {
+      "method": "design/get_editor_state",
+      "paramsType": "DesignGetEditorStateParams",
+      "resultType": "DesignGetEditorStateResult",
+      "stability": "stable",
+      "featureGroup": "design",
+      "idempotency": "idempotent",
+      "sideEffect": "readOnly"
+    },
+    {
+      "method": "design/get_guidelines",
+      "paramsType": "DesignGetGuidelinesParams",
+      "resultType": "DesignGetGuidelinesResult",
+      "stability": "stable",
+      "featureGroup": "design",
+      "idempotency": "idempotent",
+      "sideEffect": "readOnly"
+    },
+    {
+      "method": "design/get_variables",
+      "paramsType": "DesignGetVariablesParams",
+      "resultType": "DesignGetVariablesResult",
+      "stability": "stable",
+      "featureGroup": "design",
+      "idempotency": "idempotent",
+      "sideEffect": "readOnly"
+    },
+    {
+      "method": "design/patch",
+      "paramsType": "DesignPatchParams",
+      "resultType": "DesignPatchResult",
+      "stability": "stable",
+      "featureGroup": "design",
+      "idempotency": "nonIdempotent",
+      "sideEffect": "localState",
+      "notifications": [
+        "design/documentChanged"
+      ]
+    },
+    {
+      "method": "design/read",
+      "paramsType": "DesignReadParams",
+      "resultType": "DesignReadResult",
+      "stability": "stable",
+      "featureGroup": "design",
+      "idempotency": "idempotent",
+      "sideEffect": "readOnly"
+    },
+    {
+      "method": "design/snapshot_layout",
+      "paramsType": "DesignSnapshotLayoutParams",
+      "resultType": "DesignSnapshotLayoutResult",
+      "stability": "stable",
+      "featureGroup": "design",
+      "idempotency": "idempotent",
+      "sideEffect": "readOnly"
+    },
+    {
       "method": "discovery/groups",
       "paramsType": "DiscoveryGroupsParams",
       "resultType": "DiscoveryGroupsResult",
@@ -530,6 +605,24 @@
       "resultType": "IndexStatusResult",
       "stability": "stable",
       "featureGroup": "code-index",
+      "idempotency": "idempotent",
+      "sideEffect": "readOnly"
+    },
+    {
+      "method": "inference/routing/metrics",
+      "paramsType": "InferenceRoutingMetricsParams",
+      "resultType": "InferenceRoutingMetricsResult",
+      "stability": "stable",
+      "featureGroup": "inference",
+      "idempotency": "idempotent",
+      "sideEffect": "readOnly"
+    },
+    {
+      "method": "inference/routing/status",
+      "paramsType": "InferenceRoutingStatusParams",
+      "resultType": "InferenceRoutingStatusResult",
+      "stability": "stable",
+      "featureGroup": "inference",
       "idempotency": "idempotent",
       "sideEffect": "readOnly"
     },
@@ -739,6 +832,15 @@
       "featureGroup": "models",
       "idempotency": "idempotent",
       "sideEffect": "readOnly"
+    },
+    {
+      "method": "model/select",
+      "paramsType": "ModelSelectParams",
+      "resultType": "ModelSelectResult",
+      "stability": "stable",
+      "featureGroup": "models",
+      "idempotency": "nonIdempotent",
+      "sideEffect": "localState"
     },
     {
       "method": "plan/review/approve",

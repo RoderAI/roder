@@ -66,6 +66,7 @@ use roder_api::events::RoderEvent;
 use roder_api::inference::{
     HostedWebSearchMode, ProviderAuthType, ReasoningEffortDescriptor, TokenUsage,
 };
+use roder_api::inference_routing::ModelSelectionMode;
 use roder_api::policy_mode::{PolicyDecision, PolicyMode};
 use roder_api::skills::{SkillActivationState, SkillDescriptor};
 use roder_api::transcript::InputImage;
@@ -75,14 +76,15 @@ use roder_app_server::{
 };
 use roder_protocol::{
     AgentsListResult, CommandDescriptor, CommandsExpandParams, CommandsExpandResult,
-    CommandsListResult, Item, JsonRpcRequest, JsonRpcResponse, PendingPlanExitDescriptor,
-    ProviderAuthResult, ProviderClearParams, ProviderClearResult, ProviderConfigureParams,
-    ProviderConfigureResult, ProviderDescriptor, ProviderSelectParams, ProviderSelectResult,
-    ProvidersListResult, RunnersListResult, RunnersSelectParams, RunnersSelectResult,
-    SettingsGetResult, SettingsSetDefaultModeParams, SettingsSetDefaultModeResult,
-    SettingsSetFileBackedDynamicContextParams, SettingsSetFileBackedDynamicContextResult,
-    SettingsSetSearchIndexParams, SettingsSetSearchIndexResult, SettingsSetShellParams,
-    SettingsSetShellResult, SettingsSetWebSearchParams, SettingsSetWebSearchResult, ShellSettings,
+    CommandsListResult, Item, JsonRpcRequest, JsonRpcResponse, ModelSelectChoice,
+    ModelSelectParams, ModelSelectResult, PendingPlanExitDescriptor, ProviderAuthResult,
+    ProviderClearParams, ProviderClearResult, ProviderConfigureParams, ProviderConfigureResult,
+    ProviderDescriptor, ProviderSelectParams, ProvidersListResult, RunnersListResult,
+    RunnersSelectParams, RunnersSelectResult, SettingsGetResult, SettingsSetDefaultModeParams,
+    SettingsSetDefaultModeResult, SettingsSetFileBackedDynamicContextParams,
+    SettingsSetFileBackedDynamicContextResult, SettingsSetSearchIndexParams,
+    SettingsSetSearchIndexResult, SettingsSetShellParams, SettingsSetShellResult,
+    SettingsSetWebSearchParams, SettingsSetWebSearchResult, ShellSettings,
     SpeechProvidersListResult, TasksGetParams, TasksGetResult, TasksListResult, TeamReadParams,
     TeamReadResult, Thread, ThreadExitPlanParams, ThreadExitPlanResult, ThreadGoal,
     ThreadResolveApprovalParams, ThreadResolveApprovalResult, ThreadSetModeParams,
@@ -601,6 +603,7 @@ impl Theme {
 struct ProviderOption {
     provider_id: String,
     model_id: String,
+    routing_option_id: Option<String>,
     label: String,
     context_window: Option<u32>,
     default_reasoning: Option<String>,
@@ -1331,6 +1334,7 @@ where
             method: "thread/start".to_string(),
             params: Some(
                 serde_json::to_value(ThreadStartParams {
+                    selection: None,
                     workspace_id,
                     root_id: Some(root_id),
                     model: (!model.trim().is_empty()).then(|| model.clone()),
@@ -3204,9 +3208,9 @@ where
             thread_id,
             input: pending_turn_input(pending.message, pending.images),
             prompt: None,
-            model_provider: Some(self.provider.clone()),
-            model: Some(self.model.clone()),
-            reasoning: Some(self.reasoning_effort.clone()),
+            model_provider: None,
+            model: None,
+            reasoning: None,
             policy_mode: Some(self.policy_mode),
             task_ledger_required: false,
         };
@@ -5389,6 +5393,17 @@ where
     }
 
     async fn select_provider_model(&mut self, option: ProviderOption) {
+        if let Some(option_id) = option.routing_option_id.clone() {
+            self.select_model_params(
+                ModelSelectParams {
+                    selection: ModelSelectChoice::Auto { option_id },
+                    thread_id: Some(self.focused_thread_id().to_string()),
+                },
+                true,
+            )
+            .await;
+            return;
+        }
         if !option.reasoning_options.is_empty() {
             self.open_reasoning_submenu(option);
             return;
@@ -5530,70 +5545,86 @@ where
 
     async fn select_provider_model_params(&mut self, params: ProviderSelectParams) {
         let persist_as_default = params.model.is_some();
-        let mut params = params;
+        self.select_model_params(
+            ModelSelectParams {
+                selection: ModelSelectChoice::Manual {
+                    provider: params.provider,
+                    model: params.model,
+                    reasoning: params.reasoning,
+                },
+                thread_id: params.thread_id,
+            },
+            persist_as_default,
+        )
+        .await;
+    }
+
+    async fn select_model_params(
+        &mut self,
+        mut params: ModelSelectParams,
+        persist_as_default: bool,
+    ) {
         let focused_thread_id = persist_as_default
             .then(|| params.thread_id.take())
             .flatten();
-        self.apply_provider_model_selection(params, focused_thread_id)
-            .await;
+        self.apply_model_selection(params, focused_thread_id).await;
     }
 
-    async fn apply_provider_model_selection(
+    async fn apply_model_selection(
         &mut self,
-        params: ProviderSelectParams,
+        params: ModelSelectParams,
         focused_thread_id: Option<String>,
     ) {
-        match self.send_provider_select(params).await {
+        match self.send_model_select(params.clone()).await {
             Ok(selected) => {
-                self.provider = selected.provider;
-                self.model = selected.model;
-                self.reasoning_effort = selected.reasoning;
+                self.provider = selected.provider.clone();
+                self.model = selected.model.clone();
+                self.reasoning_effort = selected.reasoning.clone();
                 self.model_context_window =
                     context_window_from_options(&self.model_options, &self.provider, &self.model)
                         .or_else(|| context_window_for_provider_model(&self.provider, &self.model));
                 if let Some(thread_id) = focused_thread_id {
-                    if let Err(err) = self
-                        .send_provider_select(ProviderSelectParams {
-                            provider: self.provider.clone(),
-                            model: Some(self.model.clone()),
-                            reasoning: Some(self.reasoning_effort.clone()),
-                            thread_id: Some(thread_id),
-                        })
-                        .await
-                    {
-                        self.record_error(format!("providers/select thread update failed: {err}"));
+                    let mut thread_params = params;
+                    thread_params.thread_id = Some(thread_id);
+                    if let Err(err) = self.send_model_select(thread_params).await {
+                        self.record_error(format!("model/select thread update failed: {err}"));
                         self.show_provider_popup = false;
                         return;
                     }
                 }
+                let selection_label = model_selection_mode_label(
+                    &selected.selection_mode,
+                    &self.provider,
+                    &self.model,
+                );
                 self.timeline.push_system(format!(
-                    "switched provider/model to {}/{} with reasoning {}.",
-                    self.provider, self.model, self.reasoning_effort
+                    "switched model to {selection_label} with reasoning {}.",
+                    self.reasoning_effort
                 ));
                 self.push_event(format!(
-                    "provider selected: {}/{} ({})",
-                    self.provider, self.model, self.reasoning_effort
+                    "model selected: {selection_label} ({})",
+                    self.reasoning_effort
                 ));
                 self.show_provider_popup = false;
                 self.pending_reasoning_model = None;
             }
             Err(err) => {
-                self.record_error(format!("providers/select failed: {err}"));
+                self.record_error(format!("model/select failed: {err}"));
                 self.show_provider_popup = false;
             }
         }
     }
 
-    async fn send_provider_select(
+    async fn send_model_select(
         &self,
-        params: ProviderSelectParams,
-    ) -> anyhow::Result<ProviderSelectResult> {
+        params: ModelSelectParams,
+    ) -> anyhow::Result<ModelSelectResult> {
         decode_response(
             self.client
                 .send_request(JsonRpcRequest {
                     jsonrpc: "2.0".to_string(),
-                    id: Some(serde_json::json!("providers/select")),
-                    method: "providers/select".to_string(),
+                    id: Some(serde_json::json!("model/select")),
+                    method: "model/select".to_string(),
                     params: Some(serde_json::to_value(params).unwrap()),
                 })
                 .await,
@@ -7326,11 +7357,29 @@ fn truncate_for_transcript(text: &str, max_chars: usize) -> String {
 
 fn provider_options_from_list(list: &ProvidersListResult) -> Vec<ProviderOption> {
     let mut options = Vec::new();
+    for routing_option in &list.routing_options {
+        options.push(ProviderOption {
+            provider_id: routing_option.baseline.provider.clone(),
+            model_id: routing_option.baseline.model.clone(),
+            routing_option_id: Some(routing_option.id.clone()),
+            label: routing_option.label.clone(),
+            context_window: context_window_for_provider_model(
+                &routing_option.baseline.provider,
+                &routing_option.baseline.model,
+            ),
+            default_reasoning: routing_option
+                .reasoning
+                .clone()
+                .or_else(|| Some(list.active_reasoning.clone())),
+            reasoning_options: Vec::new(),
+        });
+    }
     for provider in &list.providers {
         if provider.models.is_empty() {
             options.push(ProviderOption {
                 provider_id: provider.id.clone(),
                 model_id: list.active_model.clone(),
+                routing_option_id: None,
                 label: provider_model_label(&provider.id, &list.active_model),
                 context_window: context_window_for_provider_model(&provider.id, &list.active_model),
                 default_reasoning: Some(list.active_reasoning.clone()),
@@ -7347,6 +7396,7 @@ fn provider_options_from_list(list: &ProvidersListResult) -> Vec<ProviderOption>
             options.push(ProviderOption {
                 provider_id: provider.id.clone(),
                 model_id: model.id.clone(),
+                routing_option_id: None,
                 label: provider_model_label(&provider.id, &model_name),
                 context_window: model
                     .context_window
@@ -7364,6 +7414,13 @@ fn provider_model_label(provider_id: &str, model_name: &str) -> String {
         model_name.to_string()
     } else {
         format!("{provider_id}/{model_name}")
+    }
+}
+
+fn model_selection_mode_label(mode: &ModelSelectionMode, provider: &str, model: &str) -> String {
+    match mode {
+        ModelSelectionMode::Auto { label, .. } => label.clone(),
+        ModelSelectionMode::Manual { .. } => provider_model_label(provider, model),
     }
 }
 
@@ -8487,7 +8544,7 @@ fn roadmap_slash_path(plan: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::Arc;
+    use std::sync::{Arc, Mutex as StdMutex};
 
     use ratatui::{Terminal, backend::TestBackend};
     use roder_api::teams::{TeamMemberDescriptor, TeamMemberRole, TeamMemberStatus};
@@ -8499,12 +8556,16 @@ mod tests {
     };
 
     fn test_app() -> TuiApp {
-        let theme = Theme::for_dark_background(true);
         let server = Arc::new(AppServer::new(Arc::new(
             Runtime::fake().expect("fake runtime"),
         )));
+        test_app_with_client(LocalAppClient::new(server.clone()), server)
+    }
+
+    fn test_app_with_client<C: AppClient>(client: C, server: Arc<AppServer>) -> TuiApp<C> {
+        let theme = Theme::for_dark_background(true);
         TuiApp {
-            client: LocalAppClient::new(server.clone()),
+            client,
             thread_id: "thread-test".to_string(),
             thread_title: None,
             thread_message_count: 0,
@@ -8595,6 +8656,91 @@ mod tests {
         }
     }
 
+    #[derive(Clone)]
+    struct RecordingClient {
+        requests: Arc<StdMutex<Vec<JsonRpcRequest>>>,
+        events: tokio::sync::broadcast::Sender<roder_api::events::EventEnvelope>,
+        notifications: tokio::sync::broadcast::Sender<roder_protocol::JsonRpcNotification>,
+    }
+
+    impl RecordingClient {
+        fn new() -> Self {
+            let (events, _) = tokio::sync::broadcast::channel(16);
+            let (notifications, _) = tokio::sync::broadcast::channel(16);
+            Self {
+                requests: Arc::new(StdMutex::new(Vec::new())),
+                events,
+                notifications,
+            }
+        }
+
+        async fn next_request(&self) -> JsonRpcRequest {
+            tokio::time::timeout(std::time::Duration::from_secs(1), async {
+                loop {
+                    if let Some(request) = self.requests.lock().unwrap().first().cloned() {
+                        break request;
+                    }
+                    tokio::task::yield_now().await;
+                }
+            })
+            .await
+            .expect("recorded request")
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl AppClient for RecordingClient {
+        type EventReceiver = tokio::sync::broadcast::Receiver<roder_api::events::EventEnvelope>;
+        type NotificationReceiver =
+            tokio::sync::broadcast::Receiver<roder_protocol::JsonRpcNotification>;
+
+        async fn send_request(&self, request: JsonRpcRequest) -> JsonRpcResponse {
+            let id = request.id.clone();
+            self.requests.lock().unwrap().push(request);
+            JsonRpcResponse {
+                jsonrpc: "2.0".to_string(),
+                id,
+                result: Some(serde_json::json!({ "turnId": "turn-recorded" })),
+                error: None,
+            }
+        }
+
+        fn subscribe_events(&self) -> Self::EventReceiver {
+            self.events.subscribe()
+        }
+
+        fn subscribe_notifications(&self) -> Self::NotificationReceiver {
+            self.notifications.subscribe()
+        }
+    }
+
+    #[tokio::test]
+    async fn start_prepared_prompt_omits_model_fields_for_routeable_defaults() {
+        let client = RecordingClient::new();
+        let server = Arc::new(AppServer::new(Arc::new(
+            Runtime::fake().expect("fake runtime"),
+        )));
+        let mut app = test_app_with_client(client.clone(), server);
+        app.provider = "mock".to_string();
+        app.model = "gpt-5.5".to_string();
+        app.reasoning_effort = "low".to_string();
+
+        app.start_prepared_prompt(PendingPrompt::with_images(
+            "find refactor opportunities",
+            "find refactor opportunities",
+            Vec::new(),
+        ))
+        .await;
+
+        let request = client.next_request().await;
+        assert_eq!(request.method, "turn/start");
+        let params = request.params.expect("turn/start params");
+        assert_eq!(params["threadId"], "thread-test");
+        assert!(params.get("modelProvider").is_none());
+        assert!(params.get("model").is_none());
+        assert!(params.get("reasoning").is_none());
+    }
+
     #[tokio::test]
     async fn remote_slash_command_starts_stops_and_displays_qr() {
         let mut app = test_app();
@@ -8629,6 +8775,7 @@ mod tests {
             preview: String::new(),
             model_provider: "mock".to_string(),
             model: "mock".to_string(),
+            selection_mode: None,
             created_at: 0,
             updated_at: 0,
             status: ThreadStatus {
@@ -8680,6 +8827,7 @@ mod tests {
             preview: String::new(),
             model_provider: "mock".to_string(),
             model: "mock".to_string(),
+            selection_mode: None,
             created_at: 0,
             updated_at: 0,
             status: ThreadStatus {
@@ -8704,6 +8852,7 @@ mod tests {
             preview: String::new(),
             model_provider: "mock".to_string(),
             model: "mock".to_string(),
+            selection_mode: None,
             created_at: 0,
             updated_at: 0,
             status: ThreadStatus {
@@ -9175,6 +9324,7 @@ mod tests {
                 method: "thread/start".to_string(),
                 params: Some(
                     serde_json::to_value(ThreadStartParams {
+                        selection: None,
                         workspace_id,
                         root_id: Some(root_id),
                         model: Some("mock".to_string()),
@@ -10645,6 +10795,8 @@ mod tests {
             active_provider: "mock".to_string(),
             active_model: "mock".to_string(),
             active_reasoning: "medium".to_string(),
+            selection_mode: None,
+            routing_options: Vec::new(),
             providers: vec![ProviderDescriptor {
                 id: "mock".to_string(),
                 name: "Mock".to_string(),
@@ -10676,6 +10828,51 @@ mod tests {
         assert_eq!(options[0].context_window, Some(123_000));
         assert_eq!(options[0].default_reasoning.as_deref(), Some("medium"));
         assert_eq!(options[0].reasoning_options.len(), 1);
+    }
+
+    #[test]
+    fn provider_options_include_auto_routing_options() {
+        let list = ProvidersListResult {
+            active_provider: "mock".to_string(),
+            active_model: "mock".to_string(),
+            active_reasoning: "medium".to_string(),
+            selection_mode: None,
+            routing_options: vec![
+                roder_api::inference_routing::InferenceRoutingOptionDescriptor::selectable(
+                    "test-router:coding",
+                    "Auto: Coding",
+                    "test-router",
+                    roder_api::inference::ModelSelection {
+                        provider: "mock".to_string(),
+                        model: "mock".to_string(),
+                    },
+                ),
+            ],
+            providers: vec![ProviderDescriptor {
+                id: "mock".to_string(),
+                name: "Mock".to_string(),
+                description: Some("Local".to_string()),
+                auth_type: ProviderAuthType::None,
+                auth_label: None,
+                authenticated: true,
+                auth_detail: None,
+                recommended: false,
+                sort_order: 100,
+                capabilities: roder_api::inference::InferenceCapabilities::text_only(),
+                models: Vec::new(),
+            }],
+        };
+
+        let options = provider_options_from_list(&list);
+
+        assert_eq!(options.len(), 2);
+        assert_eq!(
+            options[0].routing_option_id.as_deref(),
+            Some("test-router:coding")
+        );
+        assert_eq!(options[0].label, "Auto: Coding");
+        assert_eq!(options[0].provider_id, "mock");
+        assert_eq!(options[0].model_id, "mock");
     }
 
     #[test]
@@ -10717,18 +10914,26 @@ mod tests {
             Runtime::fake().expect("fake runtime"),
         )));
         let client = LocalAppClient::new(server.clone());
+        let (workspace_id, root_id) = create_single_root_workspace(&client, "/tmp").await.unwrap();
         let started: roder_protocol::ThreadStartResult = decode_response(
             client
                 .send_request(JsonRpcRequest {
                     jsonrpc: "2.0".to_string(),
                     id: Some(serde_json::json!("thread/start")),
                     method: "thread/start".to_string(),
-                    params: Some(serde_json::json!({
-                        "model": "mock",
-                        "modelProvider": "mock",
-                        "cwd": "/tmp",
-                        "ephemeral": false
-                    })),
+                    params: Some(
+                        serde_json::to_value(ThreadStartParams {
+                            selection: None,
+                            model: Some("mock".to_string()),
+                            model_provider: Some("mock".to_string()),
+                            reasoning: None,
+                            workspace_id: workspace_id.clone(),
+                            root_id: Some(root_id.clone()),
+                            cwd: None,
+                            ephemeral: false,
+                        })
+                        .unwrap(),
+                    ),
                 })
                 .await,
         )
@@ -10765,10 +10970,19 @@ mod tests {
                     jsonrpc: "2.0".to_string(),
                     id: Some(serde_json::json!("thread/start-next")),
                     method: "thread/start".to_string(),
-                    params: Some(serde_json::json!({
-                        "cwd": "/tmp",
-                        "ephemeral": false
-                    })),
+                    params: Some(
+                        serde_json::to_value(ThreadStartParams {
+                            selection: None,
+                            model: None,
+                            model_provider: None,
+                            reasoning: None,
+                            workspace_id,
+                            root_id: Some(root_id),
+                            cwd: None,
+                            ephemeral: false,
+                        })
+                        .unwrap(),
+                    ),
                 })
                 .await,
         )
@@ -10998,6 +11212,7 @@ mod tests {
             ProviderOption {
                 provider_id: "opencode".to_string(),
                 model_id: "big-pickle".to_string(),
+                routing_option_id: None,
                 label: "opencode/big-pickle (Big Pickle)".to_string(),
                 context_window: None,
                 default_reasoning: None,
@@ -11006,6 +11221,7 @@ mod tests {
             ProviderOption {
                 provider_id: "opencode-go".to_string(),
                 model_id: "qwen3.6-plus".to_string(),
+                routing_option_id: None,
                 label: "opencode-go/qwen3.6-plus (Qwen3.6 Plus)".to_string(),
                 context_window: None,
                 default_reasoning: None,
@@ -11014,6 +11230,7 @@ mod tests {
             ProviderOption {
                 provider_id: "anthropic".to_string(),
                 model_id: "claude-opus-4.1".to_string(),
+                routing_option_id: None,
                 label: "anthropic/claude-opus-4.1 (Claude Opus 4.1)".to_string(),
                 context_window: None,
                 default_reasoning: None,
@@ -11085,6 +11302,7 @@ mod tests {
             ProviderMenuItem::Model(ProviderOption {
                 provider_id: "codex".to_string(),
                 model_id: "gpt-5.5".to_string(),
+                routing_option_id: None,
                 label: "codex/gpt-5.5 (GPT-5.5)".to_string(),
                 context_window: Some(1_000_000),
                 default_reasoning: Some("medium".to_string()),
@@ -11111,6 +11329,7 @@ mod tests {
         let models = vec![ProviderOption {
             provider_id: "cursor".to_string(),
             model_id: "composer-2.5".to_string(),
+            routing_option_id: None,
             label: "cursor/composer-2.5 (Composer 2.5)".to_string(),
             context_window: Some(200_000),
             default_reasoning: None,
@@ -11138,6 +11357,7 @@ mod tests {
             ProviderMenuItem::Model(ProviderOption {
                 provider_id: "opencode-go".to_string(),
                 model_id: "qwen3.6-plus".to_string(),
+                routing_option_id: None,
                 label: "opencode-go/qwen3.6-plus (Qwen3.6 Plus)".to_string(),
                 context_window: None,
                 default_reasoning: None,
@@ -11193,6 +11413,7 @@ mod tests {
             ProviderMenuItem::Model(ProviderOption {
                 provider_id: "codex".to_string(),
                 model_id: "gpt-5.5".to_string(),
+                routing_option_id: None,
                 label: "codex/gpt-5.5 (GPT-5.5)".to_string(),
                 context_window: Some(1_000_000),
                 default_reasoning: Some("medium".to_string()),
