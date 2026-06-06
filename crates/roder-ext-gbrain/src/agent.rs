@@ -855,16 +855,6 @@ fn strip_prompt(
             s.push_str(&format!("  - [{c}]\n"));
         }
     }
-    if !audit.unsupported_changes.is_empty() {
-        s.push_str(
-            "\nGROUNDING AUDIT — UNSUPPORTED CHANGE CLAIMS (assert a fact was superseded/replaced/ \
-             revised, but the cited record states no such replacement). Delete each claim UNLESS a \
-             cited record's text literally states that replacement; keep 'remains current' statements:\n",
-        );
-        for c in &audit.unsupported_changes {
-            s.push_str(&format!("  - {c}\n"));
-        }
-    }
     s.push_str("\n\nReturn ONLY the corrected answer.");
     s
 }
