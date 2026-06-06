@@ -34,11 +34,17 @@ pub struct GroundingAudit {
     pub misattributed: Vec<GFlag>,
     /// Walk-through only: slugs from a non-modal event cluster (soft).
     pub off_cluster: Vec<String>,
+    /// Affirmative "X was superseded/replaced" sentences whose cited record(s)
+    /// contain no replacement language — invented supersession narratives.
+    pub unsupported_changes: Vec<String>,
 }
 
 impl GroundingAudit {
     pub fn is_empty(&self) -> bool {
-        self.fabricated.is_empty() && self.misattributed.is_empty() && self.off_cluster.is_empty()
+        self.fabricated.is_empty()
+            && self.misattributed.is_empty()
+            && self.off_cluster.is_empty()
+            && self.unsupported_changes.is_empty()
     }
 }
 
@@ -145,6 +151,7 @@ pub fn audit_grounding(
     let ql = question.to_lowercase();
     let mut fab: Vec<GFlag> = Vec::new();
     let mut mis: Vec<GFlag> = Vec::new();
+    let mut changes: Vec<String> = Vec::new();
     let mut clusters: Vec<(String, String)> = Vec::new();
     let mut last: Vec<String> = Vec::new();
 
@@ -164,6 +171,26 @@ pub fn audit_grounding(
             }
         }
         let heading = is_heading(line);
+
+        // Invented-supersession check: an AFFIRMATIVE change claim whose cited
+        // record(s) state no replacement is a fabricated narrative step.
+        if !heading {
+            let ll = line.to_lowercase();
+            if CHANGE_AFFIRM.iter().any(|w| ll.contains(w))
+                && !CHANGE_NEG.iter().any(|w| ll.contains(w))
+            {
+                let supported = scope.iter().any(|sl| {
+                    idx.by_slug
+                        .get(sl)
+                        .is_some_and(|r| SUPPORT_CUE.iter().any(|c| r.text_lc.contains(c)))
+                });
+                if !supported {
+                    let mut t = line.to_string();
+                    t.truncate(160);
+                    changes.push(t);
+                }
+            }
+        }
 
         if !heading {
             for d in iso_dates_in(line) {
@@ -201,10 +228,12 @@ pub fn audit_grounding(
             }
         }
     }
+    changes.dedup();
     GroundingAudit {
         fabricated: dedup_flags(fab),
         misattributed: dedup_flags(mis),
         off_cluster: off,
+        unsupported_changes: changes,
     }
 }
 
@@ -323,6 +352,26 @@ fn quotes_in(s: &str) -> Vec<String> {
     }
     out
 }
+
+// Affirmative supersession verbs in the ANSWER; negatives that mean "no change"
+// (skip them); and the replacement language a real supersession record carries.
+const CHANGE_AFFIRM: &[&str] = &[
+    "superseded by", "was superseded", "were superseded", "superseding event", "replaced by",
+    "was replaced", "were replaced", "later revised", "subsequently revised", "subsequently changed",
+    "later changed", "a further change", "was overridden", "was rescinded", "was amended",
+    "modified after",
+];
+const CHANGE_NEG: &[&str] = &[
+    "remains current", "remain current", "no record", "not superseded", "no replacement",
+    "still in effect", "unchanged", "no later", "never superseded", "no subsequent",
+    "no modification", "not modified", "no further", "no superseding", "still stands",
+    "no evidence", "does not", "no fact",
+];
+const SUPPORT_CUE: &[&str] = &[
+    "replac", "supersed", "revis", "no longer", "updated to", "changed to", "changed from",
+    "instead of", "rather than", "overrid", "rescind", "amend", "in place of", "moving to",
+    "moved to", "now ", "raised to", "lowered to", "increased to", "reduced to",
+];
 
 const MONTHS: &[&str] = &[
     "january", "february", "march", "april", "may", "june", "july", "august",
@@ -521,6 +570,39 @@ mod tests {
         let a = audit_grounding("q", "Raised on 2023-02-20 [ART-EV-2023-015-002].", &idx, false);
         assert!(a.fabricated.is_empty() && a.misattributed.is_empty());
         assert_eq!(event_cluster("ART-EV-2023-015-002"), Some("ART-EV-2023-015"));
+    }
+
+    #[test]
+    fn unsupported_supersession_flagged_but_real_and_negative_kept() {
+        let pool = vec![
+            ev("ART-EV-2023-004-001", "2023-02-10", "Nia Osei is leaving Helix to join a competitor."),
+            ev("ART-EV-2023-015-002", "2023-03-05", "The SLA target was raised to 99.9%, replacing the 99.5% goal."),
+        ];
+        let idx = build_ground_index(&pool);
+        // invented supersession: cited record has no replacement language -> flagged
+        let a = audit_grounding(
+            "q",
+            "Her exit was superseded by a 2023-09-15 reorg [ART-EV-2023-004-001].",
+            &idx,
+            false,
+        );
+        assert!(!a.unsupported_changes.is_empty());
+        // real supersession: cited record literally states the replacement -> NOT flagged
+        let b = audit_grounding(
+            "q",
+            "The 99.5% goal was superseded by 99.9% [ART-EV-2023-015-002].",
+            &idx,
+            false,
+        );
+        assert!(b.unsupported_changes.is_empty());
+        // negative "remains current" claim -> NOT flagged
+        let c = audit_grounding(
+            "q",
+            "No record supersedes this fact; it remains current [ART-EV-2023-004-001].",
+            &idx,
+            false,
+        );
+        assert!(c.unsupported_changes.is_empty());
     }
 
     #[test]
