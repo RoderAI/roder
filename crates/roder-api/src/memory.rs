@@ -1,4 +1,5 @@
 use std::collections::BTreeMap;
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
@@ -166,4 +167,7 @@ pub trait MemoryStore: Send + Sync {
 pub trait MemoryStoreFactory: Send + Sync + 'static {
     fn id(&self) -> MemoryStoreId;
     fn create(&self) -> Arc<dyn MemoryStore>;
+    fn storage_path(&self) -> Option<PathBuf> {
+        None
+    }
 }

@@ -961,6 +961,34 @@ impl AppServer {
                 )
                 .await
             }
+            "gbrain/graph" => {
+                self.decode_and(
+                    req.params,
+                    |p| async move { self.handle_gbrain_graph(p).await },
+                )
+                .await
+            }
+            "gbrain/node" => {
+                self.decode_and(
+                    req.params,
+                    |p| async move { self.handle_gbrain_node(p).await },
+                )
+                .await
+            }
+            "gbrain/search" => {
+                self.decode_and(
+                    req.params,
+                    |p| async move { self.handle_gbrain_search(p).await },
+                )
+                .await
+            }
+            "gbrain/status" => {
+                self.decode_and(
+                    req.params,
+                    |p| async move { self.handle_gbrain_status(p).await },
+                )
+                .await
+            }
             "tools/call" => {
                 self.decode_and(
                     req.params,

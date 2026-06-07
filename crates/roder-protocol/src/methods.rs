@@ -108,6 +108,8 @@ fn explicit_method_type_name(method: &str, suffix: &str) -> Option<&'static str>
         ("vcs/status", "Result") => Some("VcsStatus"),
         ("vcs/changes/read", "Result") => Some("VcsChangedContentPage"),
         ("vcs/lines/list", "Result") => Some("Vec<VcsLineOfWork>"),
+        ("gbrain/node", "Result") => Some("GbrainGraphNodeResult"),
+        ("gbrain/search", "Result") => Some("GbrainGraphResult"),
         ("vcs/lines/switch", "Params") => Some("VcsLineSwitchParams"),
         ("vcs/lines/switch", "Result")
         | ("vcs/restore", "Result")
@@ -285,6 +287,10 @@ const METHOD_SPECS: &[AppServerMethodSpecSeed] = &[
     method_spec!("extensions/list", "extensions", ReadOnly, Idempotent),
     method_spec!("fs/readDirectory", "filesystem", ReadOnly, Idempotent),
     method_spec!("fs/readFile", "filesystem", ReadOnly, Idempotent),
+    method_spec!("gbrain/graph", "gbrain", ReadOnly, Idempotent),
+    method_spec!("gbrain/node", "gbrain", ReadOnly, Idempotent),
+    method_spec!("gbrain/search", "gbrain", ReadOnly, Idempotent),
+    method_spec!("gbrain/status", "gbrain", ReadOnly, Idempotent),
     method_spec!("hunk/list", "plan-review", ReadOnly, Idempotent),
     method_spec!("hunk/read", "plan-review", ReadOnly, Idempotent),
     method_spec!("hunk/rollback", "plan-review", LocalState, NonIdempotent),

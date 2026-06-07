@@ -10,6 +10,7 @@ mod design;
 mod discovery;
 mod evals;
 mod fs;
+mod gbrain;
 mod goals;
 mod item_stream;
 mod marketplaces;

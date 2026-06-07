@@ -582,6 +582,42 @@
       "sideEffect": "readOnly"
     },
     {
+      "method": "gbrain/graph",
+      "paramsType": "GbrainGraphParams",
+      "resultType": "GbrainGraphResult",
+      "stability": "stable",
+      "featureGroup": "gbrain",
+      "idempotency": "idempotent",
+      "sideEffect": "readOnly"
+    },
+    {
+      "method": "gbrain/node",
+      "paramsType": "GbrainNodeParams",
+      "resultType": "GbrainGraphNodeResult",
+      "stability": "stable",
+      "featureGroup": "gbrain",
+      "idempotency": "idempotent",
+      "sideEffect": "readOnly"
+    },
+    {
+      "method": "gbrain/search",
+      "paramsType": "GbrainSearchParams",
+      "resultType": "GbrainGraphResult",
+      "stability": "stable",
+      "featureGroup": "gbrain",
+      "idempotency": "idempotent",
+      "sideEffect": "readOnly"
+    },
+    {
+      "method": "gbrain/status",
+      "paramsType": "GbrainStatusParams",
+      "resultType": "GbrainStatusResult",
+      "stability": "stable",
+      "featureGroup": "gbrain",
+      "idempotency": "idempotent",
+      "sideEffect": "readOnly"
+    },
+    {
       "method": "hunk/list",
       "paramsType": "HunkListParams",
       "resultType": "HunkListResult",

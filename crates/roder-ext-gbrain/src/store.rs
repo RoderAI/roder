@@ -158,6 +158,10 @@ impl GbrainStoreFactory {
             provider,
         }
     }
+
+    pub fn db_path(&self) -> PathBuf {
+        self.base_path.join("gbrain.sqlite3")
+    }
 }
 
 impl MemoryStoreFactory for GbrainStoreFactory {
@@ -167,12 +171,13 @@ impl MemoryStoreFactory for GbrainStoreFactory {
 
     fn create(&self) -> Arc<dyn MemoryStore> {
         Arc::new(
-            GbrainStore::open(
-                self.base_path.join("gbrain.sqlite3"),
-                Embedder::new(self.provider.clone()),
-            )
-            .expect("open gbrain store"),
+            GbrainStore::open(self.db_path(), Embedder::new(self.provider.clone()))
+                .expect("open gbrain store"),
         )
+    }
+
+    fn storage_path(&self) -> Option<PathBuf> {
+        Some(self.db_path())
     }
 }
 

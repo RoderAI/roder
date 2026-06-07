@@ -54,6 +54,10 @@ impl MemoryStoreFactory for SqliteMemoryStoreFactory {
             .unwrap(),
         )
     }
+
+    fn storage_path(&self) -> Option<PathBuf> {
+        Some(self.base_path.join("memories.sqlite3"))
+    }
 }
 
 pub struct SqliteMemoryStore {

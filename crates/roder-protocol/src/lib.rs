@@ -3509,6 +3509,223 @@ pub struct ToolCallResult {
     pub is_error: bool,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct GbrainGraphParams {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub scope: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub query: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub as_of: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub limit: Option<usize>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub node_kinds: Option<Vec<String>>,
+    #[serde(default)]
+    pub include_inactive: bool,
+    #[serde(default)]
+    pub include_evidence: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct GbrainNodeParams {
+    pub node_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub scope: Option<String>,
+    #[serde(default)]
+    pub include_inactive: bool,
+    #[serde(default)]
+    pub include_evidence: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct GbrainSearchParams {
+    pub query: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub scope: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub as_of: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub limit: Option<usize>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub node_kinds: Option<Vec<String>>,
+    #[serde(default)]
+    pub include_inactive: bool,
+    #[serde(default)]
+    pub include_evidence: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct GbrainStatusParams {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub scope: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct GbrainGraphResult {
+    pub scope_id: String,
+    pub generated_at: String,
+    pub nodes: Vec<GbrainGraphNode>,
+    pub edges: Vec<GbrainGraphEdge>,
+    #[serde(default)]
+    pub evidence_cards: Vec<GbrainEvidenceCard>,
+    #[serde(default)]
+    pub ontology: GbrainOntology,
+    #[serde(default)]
+    pub dream_runs: Vec<GbrainDreamRunSummary>,
+    pub stats: GbrainGraphStats,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct GbrainGraphNodeResult {
+    pub graph: GbrainGraphResult,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub node: Option<GbrainGraphNode>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct GbrainStatusResult {
+    pub scope_id: String,
+    pub generated_at: String,
+    pub store_path: String,
+    pub available: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub latest_dream_run: Option<GbrainDreamRunSummary>,
+    pub stats: GbrainGraphStats,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct GbrainGraphNode {
+    pub id: String,
+    pub label: String,
+    pub kind: String,
+    pub confidence: String,
+    pub active: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_artifact: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_fact_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_statement_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub created_by_run_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub temporal_status: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub summary: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct GbrainGraphEdge {
+    pub id: String,
+    pub source: String,
+    pub target: String,
+    pub relation: String,
+    pub confidence: String,
+    pub directed: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub valid_at: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub invalid_at: Option<String>,
+    #[serde(default)]
+    pub evidence_ids: Vec<String>,
+    pub active: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct GbrainEvidenceCard {
+    pub id: String,
+    pub title: String,
+    pub summary: String,
+    #[serde(default)]
+    pub quote_spans: Vec<serde_json::Value>,
+    #[serde(default)]
+    pub source_fact_ids: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub temporal_status: Option<String>,
+    #[serde(default)]
+    pub neighboring_event_ids: Vec<String>,
+    pub confidence: String,
+    pub active: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct GbrainOntology {
+    #[serde(default)]
+    pub nodes: Vec<GbrainOntologyNode>,
+    #[serde(default)]
+    pub edges: Vec<GbrainOntologyEdge>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct GbrainOntologyNode {
+    pub id: String,
+    pub version: String,
+    pub label: String,
+    pub node_class: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    pub active: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct GbrainOntologyEdge {
+    pub id: String,
+    pub version: String,
+    pub source: String,
+    pub target: String,
+    pub relation: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rationale: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub evidence_type: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub traversal_hint: Option<String>,
+    pub active: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct GbrainDreamRunSummary {
+    pub id: String,
+    pub mode: String,
+    pub status: String,
+    pub started_at: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub finished_at: Option<String>,
+    pub run_policy: String,
+    #[serde(default)]
+    pub input_fact_count: usize,
+    #[serde(default)]
+    pub derived_event_count: usize,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct GbrainGraphStats {
+    pub raw_fact_count: usize,
+    pub node_count: usize,
+    pub edge_count: usize,
+    pub evidence_card_count: usize,
+    pub ontology_node_count: usize,
+    pub ontology_edge_count: usize,
+    pub dream_run_count: usize,
+    pub fallback_raw: bool,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AgentsListResult {
     pub agents: Vec<AgentDescriptor>,

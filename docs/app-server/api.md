@@ -238,6 +238,10 @@ Tools, commands, files, agents, and tasks:
 | `skills/setEnabled` | Persist a skill enable/disable rule. |
 | `skills/setExposure` | Persist a skill exposure rule. |
 | `tools/call` | Directly call allowed workflow tools. |
+| `gbrain/status` | Inspect read-only bt-gbrain bridge availability and stats. |
+| `gbrain/graph` | Read a bt-gbrain graph projection for a scope. |
+| `gbrain/search` | Search a bt-gbrain graph projection. |
+| `gbrain/node` | Read one graph node with its projected neighborhood. |
 | `commands/list` | List configured slash commands. |
 | `commands/expand` | Expand a command to a model prompt and context blocks. |
 | `commands/run` | Expand a command and start a turn. |
@@ -2087,6 +2091,97 @@ Behavior:
 
 - Only `get_goal`, `create_goal`, and `update_goal` can be called directly.
 - Other tool names return code `-32602`.
+
+### Gbrain graph methods
+
+Purpose: expose a narrow read-only bt-gbrain graph bridge for external clients
+such as the Obsidian graph visualizer. These methods read the registered
+`gbrain-bitemporal` store over the app-server JSON-RPC transport; they do not
+expose import, dream, compaction, or other mutating gbrain operations.
+
+Methods:
+
+- `gbrain/status`
+- `gbrain/graph`
+- `gbrain/search`
+- `gbrain/node`
+
+Shared request shape:
+
+```json
+{
+  "scope": "project:gode",
+  "query": "retention owner",
+  "asOf": "2026-06-07T23:59:59Z",
+  "limit": 250,
+  "nodeKinds": ["person_role", "initiative"],
+  "includeInactive": false,
+  "includeEvidence": true
+}
+```
+
+Graph response shape:
+
+```json
+{
+  "scopeId": "project:gode",
+  "generatedAt": "2026-06-07T20:00:00Z",
+  "nodes": [
+    {
+      "id": "node:gode:owner",
+      "label": "Billing owner",
+      "kind": "person_role",
+      "confidence": "INFERRED",
+      "active": true,
+      "sourceArtifact": "artifact://decision.md",
+      "sourceFactId": "fact-1",
+      "sourceStatementId": "statement-1",
+      "createdByRunId": "dream-run-1"
+    }
+  ],
+  "edges": [
+    {
+      "id": "edge:gode:owns",
+      "source": "node:gode:owner",
+      "target": "node:gode:work",
+      "relation": "owns",
+      "confidence": "INFERRED",
+      "directed": true,
+      "validAt": "2026-06-01T00:00:00Z",
+      "evidenceIds": ["evidence-1"],
+      "active": true
+    }
+  ],
+  "evidenceCards": [],
+  "ontology": { "nodes": [], "edges": [] },
+  "dreamRuns": [],
+  "stats": {
+    "rawFactCount": 2,
+    "nodeCount": 1,
+    "edgeCount": 1,
+    "evidenceCardCount": 0,
+    "ontologyNodeCount": 0,
+    "ontologyEdgeCount": 0,
+    "dreamRunCount": 0,
+    "fallbackRaw": false
+  }
+}
+```
+
+Behavior:
+
+- `scope` defaults to `global`; valid values are `global`, `all`, `user:<id>`,
+  `workspace:<id>`, `project:<id>`, and `thread:<id>`.
+- `limit` defaults to 250 and is capped at 2000.
+- `gbrain/graph` and `gbrain/search` prefer dreamed `gbrain_nodes`,
+  `gbrain_edges`, ontology rows, evidence cards, and dream run metadata.
+- If no dreamed nodes match, graph/search fall back to raw `gbrain_facts` as
+  `raw_fact` nodes and `gbrain_links` as raw edges. `stats.fallbackRaw` is
+  `true` in this mode.
+- `gbrain/node` returns `{ graph, node }`; `node` is omitted when the requested
+  id is not present in the projected graph.
+- `gbrain/status` returns availability, store path, latest dream run, and
+  scoped counts without opening any mutating gbrain path.
 
 ### Discovery methods
 
