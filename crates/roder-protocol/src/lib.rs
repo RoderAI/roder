@@ -142,6 +142,8 @@ pub struct Thread {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub name: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub message_count: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub turns: Option<Vec<Turn>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub usage: Option<ThreadUsageMetadata>,
@@ -555,6 +557,8 @@ pub struct WorkspaceForgetResult {
 #[serde(rename_all = "camelCase")]
 pub struct ThreadListParams {
     pub limit: Option<usize>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cursor: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

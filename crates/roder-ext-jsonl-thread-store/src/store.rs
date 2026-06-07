@@ -5,8 +5,8 @@ use anyhow::Context;
 use roder_api::events::{EventEnvelope, RoderEvent, ThreadId};
 use roder_api::extension_state::ExtensionStateRecord;
 use roder_api::thread::{
-    ThreadItemEvent, ThreadMetadata, ThreadSnapshot, ThreadStore, ThreadStoreFactory,
-    project_turns_from_events, validate_thread_workspace,
+    ThreadItemEvent, ThreadListOptions, ThreadListPage, ThreadMetadata, ThreadSnapshot,
+    ThreadStore, ThreadStoreFactory, project_turns_from_events, validate_thread_workspace,
 };
 use roder_api::transcript::TranscriptItem;
 use time::OffsetDateTime;
@@ -122,13 +122,23 @@ impl ThreadStore for JsonlThreadStore {
     }
 
     async fn list_threads(&self) -> anyhow::Result<Vec<ThreadMetadata>> {
+        Ok(self
+            .list_threads_page(ThreadListOptions::default())
+            .await?
+            .threads)
+    }
+
+    async fn list_threads_page(
+        &self,
+        options: ThreadListOptions,
+    ) -> anyhow::Result<ThreadListPage> {
         if !self.base_path.exists() {
-            return Ok(Vec::new());
+            return Ok(ThreadListPage::default());
         }
         let mut entries = fs::read_dir(&self.base_path)
             .await
             .with_context(|| format!("read thread directory {}", self.base_path.display()))?;
-        let mut threads = Vec::new();
+        let mut candidates = Vec::new();
         while let Some(entry) = entries
             .next_entry()
             .await
@@ -145,14 +155,33 @@ impl ThreadStore for JsonlThreadStore {
                 if is_thread_directory_without_metadata(&entry.path()) {
                     continue;
                 }
-                let metadata = self
-                    .load_or_infer_metadata(&entry.path(), &thread_id)
-                    .await?;
-                threads.push(metadata);
+                let sort_key = thread_sort_key(&entry.path()).await?;
+                candidates.push((sort_key, thread_id, entry.path()));
             }
         }
+        candidates.sort_by(|left, right| right.0.cmp(&left.0).then_with(|| right.1.cmp(&left.1)));
+
+        let offset = options
+            .cursor
+            .as_deref()
+            .and_then(|cursor| cursor.parse::<usize>().ok())
+            .unwrap_or(0)
+            .min(candidates.len());
+        let limit = options
+            .limit
+            .unwrap_or(candidates.len().saturating_sub(offset));
+        let next_offset = offset.saturating_add(limit).min(candidates.len());
+        let mut threads = Vec::new();
+        for (_, thread_id, path) in candidates.iter().skip(offset).take(limit) {
+            let metadata = self.load_or_infer_metadata(path, thread_id).await?;
+            threads.push(metadata);
+        }
         threads.sort_by_key(|thread| std::cmp::Reverse(thread.updated_at));
-        Ok(threads)
+        Ok(ThreadListPage {
+            threads,
+            next_cursor: (next_offset < candidates.len()).then(|| next_offset.to_string()),
+            backwards_cursor: (offset > 0).then(|| offset.saturating_sub(limit).to_string()),
+        })
     }
 
     async fn load_thread(&self, thread_id: &ThreadId) -> anyhow::Result<Option<ThreadSnapshot>> {
@@ -606,6 +635,26 @@ fn archived_threads_root(active_threads_root: &Path) -> PathBuf {
         .parent()
         .map(|parent| parent.join("archived_threads"))
         .unwrap_or_else(|| active_threads_root.with_file_name("archived_threads"))
+}
+
+async fn thread_sort_key(dir: &Path) -> anyhow::Result<i128> {
+    let metadata_path = dir.join("metadata.json");
+    let path = if metadata_path.exists() {
+        metadata_path
+    } else {
+        dir.join("events.jsonl")
+    };
+    let metadata = match fs::metadata(&path).await {
+        Ok(metadata) => metadata,
+        Err(_) => std::fs::metadata(dir)
+            .with_context(|| format!("read thread directory metadata {}", dir.display()))?,
+    };
+    Ok(metadata
+        .modified()
+        .ok()
+        .and_then(|modified| modified.duration_since(std::time::UNIX_EPOCH).ok())
+        .map(|duration| duration.as_millis() as i128)
+        .unwrap_or(0))
 }
 
 fn is_thread_directory_without_metadata(dir: &Path) -> bool {
@@ -1479,6 +1528,62 @@ mod tests {
 
         assert_eq!(threads[0].message_count, 2);
         assert!(threads[0].updated_at > now);
+
+        let _ = fs::remove_dir_all(base_path).await;
+    }
+
+    #[tokio::test]
+    async fn list_threads_page_returns_newest_metadata_page() {
+        let base_path =
+            std::env::temp_dir().join(format!("roder-jsonl-page-test-{}", uuid::Uuid::new_v4()));
+        let store = JsonlThreadStore {
+            base_path: base_path.clone(),
+        };
+
+        for index in 0..3 {
+            let timestamp = OffsetDateTime::UNIX_EPOCH + time::Duration::seconds(index);
+            store
+                .create_thread(ThreadMetadata {
+                    thread_id: format!("thread-{index}"),
+                    title: Some(format!("Thread {index}")),
+                    workspace: test_workspace("workspace"),
+                    workspace_id: None,
+                    root_id: None,
+                    provider: Some("mock".to_string()),
+                    model: Some("mock".to_string()),
+                    runner_destination: None,
+                    runner_state: None,
+                    created_at: timestamp,
+                    updated_at: timestamp,
+                    message_count: index as u32,
+                    usage: None,
+                })
+                .await
+                .unwrap();
+        }
+
+        let first_page = store
+            .list_threads_page(ThreadListOptions {
+                limit: Some(2),
+                cursor: None,
+            })
+            .await
+            .unwrap();
+        assert_eq!(first_page.threads.len(), 2);
+        assert_eq!(first_page.threads[0].thread_id, "thread-2");
+        assert_eq!(first_page.threads[1].thread_id, "thread-1");
+        assert_eq!(first_page.next_cursor.as_deref(), Some("2"));
+
+        let second_page = store
+            .list_threads_page(ThreadListOptions {
+                limit: Some(2),
+                cursor: first_page.next_cursor,
+            })
+            .await
+            .unwrap();
+        assert_eq!(second_page.threads.len(), 1);
+        assert_eq!(second_page.threads[0].thread_id, "thread-0");
+        assert!(second_page.next_cursor.is_none());
 
         let _ = fs::remove_dir_all(base_path).await;
     }
